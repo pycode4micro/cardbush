@@ -54,7 +54,9 @@ window.renderScenario = async (status, language = 'zh') => {
   const task = await fetchSubagentTask(window.runtimeTask.taskId, undefined, 'parent');
   root.render(<React.StrictMode><div className="app theme-dark" style={{display:'flex',width:'100%',height:'100vh',padding:24,gap:24}}>
     <div className="chat-panel work-summary-requested" style={{position:'relative',flex:'0 0 370px',minWidth:0}}><ConversationWorkSummary key={'summary-'+id} language={language} sessionId="parent"
-      messages={[{id:'later-reply',role:'assistant',content:'其他任务已完成',status:'completed',turnId:'later-turn'}]}
+      messages={[{id:'later-reply',role:'assistant',content:'其他任务已完成',status:'completed',turnId:'later-turn',toolExecutions:[{
+        id:'dispatch',name:'subagent',state:'completed',metadata:{agentActivity:{kind:'subagent',action:'run',name:'接收端开发',taskIds:[window.runtimeTask.taskId]}}
+      }]}]}
       changeReports={[]} onOpenChangeReview={()=>{}} subagentObservabilityAvailable /></div>
   </div></React.StrictMode>);
 };

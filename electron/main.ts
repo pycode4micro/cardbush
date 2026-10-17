@@ -92,6 +92,7 @@ import {
 } from './productPlugins';
 import {
   SessionAttentionOpenQueue,
+  SessionAttentionNotificationGate,
   decodeSessionAttentionActivation,
   encodeSessionAttentionActivation,
 } from './sessionAttentionRouting';
@@ -347,6 +348,7 @@ let cardlingDragState: {
 let lastCardlingState: CardlingDesktopState | null = null;
 let sessionAttentionCount = 0;
 const sessionAttentionOpenQueue = new SessionAttentionOpenQueue();
+const sessionAttentionNotificationGate = new SessionAttentionNotificationGate();
 const activeSessionAttentionNotifications = new Set<Notification>();
 const terminalSessions = new Map<
   string,
@@ -1909,6 +1911,8 @@ function sanitizeSessionAttentionPayload(value: unknown) {
     title: String(payload.title ?? '').trim().slice(0, 120) || 'CardBush',
     body: String(payload.body ?? '').trim().slice(0, 500) || '任务已完成，点击查看结果。',
     kind: kind === 'waiting' || kind === 'error' ? kind : 'completed',
+    turnId: String(payload.turnId ?? '').trim(),
+    interactionId: String(payload.interactionId ?? '').trim(),
   } as const;
 }
 
@@ -1917,30 +1921,46 @@ function showSessionAttentionNotification(value: unknown) {
   if (!payload.sessionId) {
     return { shown: false };
   }
-  const shouldShow = mainWindow == null || mainWindow.isDestroyed() ||
-    !mainWindow.isVisible() || !mainWindow.isFocused();
-  if (!shouldShow || !Notification.isSupported()) {
+  if (!sessionAttentionNotificationGate.accept(payload)) return { shown: false };
+  const shouldShow = mainWindow == null || !isWindowVisible(mainWindow) || !mainWindow.isFocused();
+  if (!shouldShow) {
+    return { shown: false };
+  }
+  if (!Notification.isSupported()) {
+    sessionAttentionNotificationGate.forget(payload);
     return { shown: false };
   }
   const activationArguments = encodeSessionAttentionActivation(payload.sessionId);
-  const notification = new Notification({
-    id: `cardbush-attention-${randomUUID()}`,
-    title: payload.title,
-    body: payload.body,
-    icon: loadCardbushIcon(64),
-    // The renderer owns the configurable chime, including foreground replies.
-    silent: true,
-    ...(process.platform === 'win32'
-      ? { toastXml: sessionAttentionToastXml(payload.title, payload.body, activationArguments) }
-      : {}),
-  });
-  const release = () => activeSessionAttentionNotifications.delete(notification);
-  notification.on('click', () => activateSessionAttention(payload.sessionId));
-  notification.on('close', release);
-  notification.on('failed', release);
-  activeSessionAttentionNotifications.add(notification);
-  notification.show();
-  mainWindow?.flashFrame(true);
+  let notification: Notification | undefined;
+  const failed = (error: unknown) => {
+    if (notification) activeSessionAttentionNotifications.delete(notification);
+    sessionAttentionNotificationGate.forget(payload);
+    appendDebugLog('session-attention', { stage: 'failed', sessionId: payload.sessionId, kind: payload.kind,
+      error: error instanceof Error ? error.message : String(error) });
+  };
+  try {
+    notification = new Notification({
+      id: `cardbush-attention-${randomUUID()}`,
+      title: payload.title,
+      body: payload.body,
+      icon: loadCardbushIcon(64),
+      // The renderer owns the configurable chime, including foreground replies.
+      silent: true,
+      ...(process.platform === 'win32'
+        ? { toastXml: sessionAttentionToastXml(payload.title, payload.body, activationArguments) }
+        : {}),
+    });
+    const owned = notification;
+    notification.on('click', () => activateSessionAttention(payload.sessionId));
+    notification.on('close', () => activeSessionAttentionNotifications.delete(owned));
+    notification.on('failed', (_event, error) => failed(error));
+    activeSessionAttentionNotifications.add(notification);
+    notification.show();
+  } catch (error) {
+    failed(error);
+    return { shown: false };
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(true);
   return { shown: true };
 }
 
@@ -2506,6 +2526,7 @@ ipcMain.handle('creation:canvas', async (event, input: import('./creationCanvasF
     canvasFiles = new CreationCanvasFiles(async action => {
       const options: OpenDialogOptions = action === 'open'
         ? { title: '打开画板', properties: ['openFile'], filters: [{ name: 'Canvas', extensions: ['canvas.json'] }] }
+        : action === 'repository' ? { title: '选择代码文件夹', properties: ['openDirectory'] }
         : { title: '将创作空间保存到文件夹', properties: ['openDirectory', 'createDirectory'] };
       const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
       return result.canceled ? undefined : result.filePaths[0];

@@ -9,8 +9,7 @@
 :root { color-scheme: light dark; --background: #fff; --foreground: #222; --muted-foreground: #626262; --border: #dedede; --popover: #fff; --popover-foreground: #222; --viz-series-1: #2468c4; --font-sans: system-ui, sans-serif; }
 @media (prefers-color-scheme: dark) { :root { --background: #1c1b19; --foreground: #f0ede7; --muted-foreground: #b7afa5; --border: #393734; --popover: #32312f; --popover-foreground: #f0ede7; --viz-series-1: #6aa9ff; } }
 * { box-sizing: border-box; }
-html, body, body * { scrollbar-width: none; scrollbar-gutter: auto; }
-::-webkit-scrollbar { display: none; width: 0; height: 0; }
+:where(html, body, body *) { scrollbar-width: thin; scrollbar-color: var(--muted-foreground) transparent; }
 html { background: var(--background); color: var(--foreground); font: 14px var(--font-sans); }
 body { margin: 0; background: transparent; }
 main { position: relative; padding: 8px 0; }

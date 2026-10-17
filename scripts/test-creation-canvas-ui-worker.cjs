@@ -34,6 +34,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('canvas:command', (_, input) => service.command(input));
   ipcMain.handle('canvas:workspace', async (_, id) => { const root = join(directory, id); await mkdir(root, { recursive: true }); return root; });
   ipcMain.handle('canvas:pick', () => [join(directory, 'sample.md'), join(directory, 'sample.html')]);
+  ipcMain.handle('canvas:directory', () => directory);
   ipcMain.handle('canvas:text', async (_, path) => ({ content: await readFile(path, 'utf8'), truncated: false, encoding: 'utf-8' }));
   ipcMain.handle('canvas:design', (_, input) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `canvas-${++ordinal}`, name: 'design', argumentsText: JSON.stringify(input) }, { requestId: 'ui', sessionId: 'ui', turnId: 'turn', round: 1, ordinal }, undefined, { request: { protocol: 'bush.model_request.v1', requestId: 'ui', sessionId: 'ui', turnId: 'turn', model: 'fixture', tools: registry.definitions(), messages: [], permissionMode: 'all_free', metadata: { workspaceDir: directory } }, contextMessages: [] }));
   const win = new BrowserWindow({ show: false, width: 1440, height: 1020, webPreferences: { offscreen: true, webviewTag: true, preload: join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
@@ -63,6 +64,19 @@ app.whenReady().then(async () => {
   const design = async input => { const result = await run(`testBridge.design(${JSON.stringify(input)})`); assert.equal(result.kind, 'returned', JSON.stringify(result)); return result.result; };
   try {
     await win.loadFile(join(directory, 'app/index.html')); await until('!!document.querySelector("[data-canvas-item=document]")');
+    if (process.env.CARDBUSH_CANVAS_PREVIEW) {
+      const preview = await readCanvas(resolve(process.env.CARDBUSH_CANVAS_PREVIEW));
+      await run(`canvasStore.acceptCanvas(${JSON.stringify(preview)})`);
+      await until(`document.querySelectorAll('[data-canvas-item]').length===${preview.document.items.length} && !document.querySelector('.markdown-fallback') && document.querySelectorAll('.right-inspector-preview.ready').length===${preview.document.items.filter(item => item.kind === 'file').length}`);
+      const imageCount = preview.document.items.filter(item => item.kind === 'file' && /\.(png|jpe?g|webp|gif)$/i.test(item.source)).length;
+      await until(`document.querySelectorAll('.inspector-image-open img').length===${imageCount} && Array.from(document.querySelectorAll('.canvas-item-content img')).every(image=>image.complete && image.naturalWidth>0) && !document.querySelector('.inspector-media-error')`);
+      await delay(700); // Let the existing preview reveal and canvas resize animations settle.
+      assert.equal(await run('Array.from(document.querySelectorAll(".inspector-image-open img")).every(image=>image.getBoundingClientRect().height>0 && getComputedStyle(image).opacity!=="0")'), true);
+      await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      await writeFile(resolve('tmp/canvas-development-desk-preview.png'), (await win.webContents.capturePage()).toPNG());
+      console.log('PASS: opened existing development desk with native file previews.');
+      return;
+    }
     assert.match(await run('document.querySelector(".canvas-markdown").textContent'), /Preserve my writing/);
     await require('./helpers/sidebar-app-dock.cjs')({read:run,frame:()=>run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'),win,sidebar:'.canvas-sidebar'});
     assert.equal(await run(`canvasFileTarget('图 #1%25.png','C:/root #1/space.canvas.json')`), 'C:/root #1/图 #1%25.png');
@@ -72,11 +86,39 @@ app.whenReady().then(async () => {
     await writeFile(resolve('tmp/creation-canvas-empty.png'), (await win.webContents.capturePage()).toPNG());
     await clickText('素材'); await until('document.querySelectorAll("[data-canvas-item]").length===2');
     await until('document.querySelector(".canvas-stage").textContent.includes("A real Markdown file")');
-    assert.equal(await run('!!document.querySelector(".canvas-board-label")'), false, 'logical canvas dimensions are not presented as an inner artboard');
-    assert.equal(await run('(()=>{const stage=getComputedStyle(document.querySelector(".canvas-stage")),plane=getComputedStyle(document.querySelector(".canvas-plane"));return stage.backgroundImage.includes("radial-gradient")&&plane.backgroundImage==="none"&&plane.boxShadow==="none"&&plane.backgroundColor==="rgba(0, 0, 0, 0)"})()'), true, 'grid covers the workspace and the coordinate plane is transparent');
+    assert.equal(await run('!!document.querySelector(".canvas-board-label")'), false, 'no extra canvas dimension label');
+    assert.equal(await run('(()=>{const stage=getComputedStyle(document.querySelector(".canvas-stage")),board=getComputedStyle(document.querySelector(".canvas-size"));return stage.backgroundImage==="none"&&board.backgroundImage.includes("radial-gradient")&&board.outlineStyle==="solid"})()'), true, 'the visible boundary and grid identify the actual placement area');
+    const initialSize = win.getContentSize();
+    for (const [width, height] of [[1440, 1020], [1000, 780], [680, 860], initialSize]) {
+      win.setContentSize(width, height); await until(`window.innerWidth===${width} && window.innerHeight===${height}`);
+      await delay(150); await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      const edges = await run(`(()=>{const rect=selector=>document.querySelector(selector).getBoundingClientRect();return{title:rect('.topbar h1').left,name:rect('[aria-label=画板名称]').left,board:rect('.canvas-size').left,zoom:rect('.canvas-zoom').left,right:rect('.canvas-size').right,stageRight:rect('.canvas-stage').right}})()`);
+      for (const name of ['name','board','zoom']) assert.ok(Math.abs(edges.title - edges[name]) < .6, `${width}px viewport: ${name} shares the creation title edge: ${JSON.stringify(edges)}`);
+      assert.ok(edges.right < edges.stageRight, 'fitted board retains a small right gutter');
+    }
+    await writeFile(resolve('tmp/creation-canvas-boundaries.png'), (await win.webContents.capturePage()).toPNG());
     const entry = await selected(), current = await design({ action: 'inspect', path: entry.path });
+    const tutorialId = current.document.items.find(item => item.kind === 'file' && item.source.endsWith('sample.md')).id;
+    await run(`document.querySelector('[data-canvas-item="${tutorialId}"] [aria-label=固定此版本]').click()`);
+    await until(`document.querySelector('[data-canvas-item="${tutorialId}"]')?.dataset.canvasSource?.includes('canvas-versions/')`);
+    assert.equal(await run('!!document.querySelector(".canvas-notice.error")'), false, 'tutorial code examples never trigger missing-file errors');
+    await run(`document.querySelector('[data-canvas-item="${tutorialId}"] [aria-label=恢复更新]').click()`);
+    await until(`window.canvasPendingWrites===0 && !!document.querySelector('[data-canvas-item="${tutorialId}"] [aria-label=固定此版本]')`);
+    const afterVersion = await design({ action: 'inspect', path: entry.path });
+    const missing = { id: 'missing-reference', kind: 'markdown', title: 'Missing reference', markdown: '![Missing](missing.png)', frame: { x: 800, y: 400, width: 400, height: 200 } };
+    await design({ action: 'update', path: entry.path, expected_revision: afterVersion.revision, upsert: [missing] });
+    await until('!!document.querySelector("[data-canvas-item=missing-reference]")');
+    const viewportBeforeError = await run('(()=>{const r=document.querySelector(".canvas-size").getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}})()');
+    await run('document.querySelector("[data-canvas-item=missing-reference] [aria-label=固定此版本]").click()');
+    await until('document.querySelector(".canvas-notice.error")?.textContent.includes("missing.png")');
+    assert.doesNotMatch(await run('document.querySelector(".canvas-notice.error").textContent'), /ENOENT|Error invoking|task-workspaces/);
+    assert.deepEqual(await run('(()=>{const r=document.querySelector(".canvas-size").getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}})()'), viewportBeforeError, 'notifications never resize or shift the canvas');
+    const afterError = await design({ action: 'inspect', path: entry.path });
+    await design({ action: 'update', path: entry.path, expected_revision: afterError.revision, remove: ['missing-reference'] });
+    await run('document.querySelector("[aria-label=关闭提示]").click()');
+    const latest = await design({ action: 'inspect', path: entry.path });
     const html = { id: 'interactive', title: 'Interactive HTML', kind: 'html', html: '<style>body{margin:20px;background:#252e40;color:#cde}h1{font-size:24px}button{padding:10px}</style><h1>Canvas interaction</h1><button onclick="this.textContent=Number(this.textContent)+1">0</button>', frame: { x: 40, y: 500, width: 550, height: 260 } };
-    await design({ action: 'update', path: entry.path, expected_revision: current.revision, upsert: [html] });
+    await design({ action: 'update', path: entry.path, expected_revision: latest.revision, upsert: [html] });
     await until('!!document.querySelector("[data-canvas-item=interactive] iframe")'); await delay(250);
     const childFrame = () => win.webContents.mainFrame.frames.find(frame => frame.url.startsWith('about:srcdoc'));
     const frameDeadline = Date.now() + 10000;
@@ -98,7 +140,7 @@ app.whenReady().then(async () => {
     // Exercise the actual pointer path at the small zoom reported by the user.
     const beforeGeometry = await readCanvas(entry.path);
     const peer = { id: 'alignment', kind: 'markdown', title: 'Alignment reference', markdown: '# Alignment reference\n\n' + 'A scrollable paragraph.\n\n'.repeat(40), frame: { x: 900, y: 580, width: 300, height: 200 } };
-    await design({ action: 'update', path: entry.path, expected_revision: beforeGeometry.revision,
+    await design({ action: 'update', path: entry.path, expected_revision: beforeGeometry.revision, layout: true,
       remove: beforeGeometry.document.items.filter(item => item.id !== 'interactive').map(item => item.id), upsert: [html, peer] });
     await until('document.querySelectorAll("[data-canvas-item]").length===2 && !!document.querySelector("[data-canvas-item=alignment]")');
     const geometryFrame = async () => (await readCanvas(entry.path)).document.items.find(item => item.id === 'interactive').frame;
@@ -175,7 +217,7 @@ app.whenReady().then(async () => {
     await childFrame().executeJavaScript(`document.elementFromPoint(${buttonInFrame.x},${buttonInFrame.y}).click()`);
     assert.equal(await childFrame().executeJavaScript('document.querySelector("button").textContent'), '2', 'interactive content stays reachable after panning and resizing');
     const afterGeometry = await readCanvas(entry.path);
-    await design({ action: 'update', path: entry.path, expected_revision: afterGeometry.revision, canvas: { title: beforeGeometry.document.title }, remove: ['alignment'], upsert: beforeGeometry.document.items });
+    await design({ action: 'update', path: entry.path, expected_revision: afterGeometry.revision, layout: true, canvas: { title: beforeGeometry.document.title }, remove: ['alignment'], upsert: beforeGeometry.document.items });
     await until('document.querySelectorAll("[data-canvas-item]").length===3 && !document.querySelector("[data-canvas-item=alignment]")');
     await run('document.querySelector("[data-canvas-item=interactive]").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
     await run('canvasSend("Make the selected part concise")');
@@ -213,6 +255,7 @@ app.whenReady().then(async () => {
     const layout = await run('JSON.parse(localStorage.getItem("cardbush.html_components.v1")).welcomeLayout');
     assert.ok(layout.items.some(item=>item.componentId==='system-input'&&item.composerDock==='bottom')); assert.equal(layout.items.length,2);
     await require('./helpers/canvas-markdown-workspace.cjs')({ run, until, clickText, selected, win, teams, directory });
+    await require('./helpers/canvas-development-desk.cjs')({ run, until, clickText, selected, win, teams, directory, design });
     console.log('PASS: canvas previews and geometry; shared Markdown editing, autosave, line context, document switching, conflicts and Team round trip');
   } catch (error) { await writeFile(resolve('tmp/creation-canvas-failure.png'), (await win.webContents.capturePage()).toPNG()); console.error('Pointer diagnostic', await run('window.pointerLog?.slice(-8)')); console.error('Wheel diagnostic', await run('window.canvasWheelLog')); throw error; } finally { win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

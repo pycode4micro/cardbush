@@ -838,11 +838,12 @@ function planUpdate(
   };
 }
 
-function subagentDispatches(
+export function subagentDispatches(
   record: ToolExecutionRecord,
   event: Extract<RuntimeEvent, { kind: 'tool_returned' | 'tool_failed' }>,
 ) {
-  if (agentToolActivity(record)?.action !== 'run') return [];
+  const activity = agentToolActivity(record);
+  if (activity?.action !== 'run') return [];
   const output = object(record.result);
   const members = Array.isArray(output.members)
     ? output.members.map((item) => object(item))
@@ -850,32 +851,35 @@ function subagentDispatches(
   const items = record.toolCall.name === 'team_delegate' && members.length > 0
     ? members
     : [output];
-  return items.map((item) => {
+  return items.flatMap((item) => {
+    // Validation/transport failures before dispatch do not create child tasks.
+    const taskId = optionalString(item.taskId);
+    if (!taskId) return [];
     const statusValue = item.status ?? output.status;
-    const status = statusValue == null && record.outcome !== 'returned'
-      ? 'failed'
-      : subagentTaskStatusSchema.parse(statusValue);
+    const parsed = subagentTaskStatusSchema.safeParse(statusValue === 'message_queued' ? 'running' : statusValue);
+    if (!parsed.success) return [];
+    const status = parsed.data;
     const terminal = status !== 'running';
-    return {
-    protocol: 'bush.subagent_task.v1',
+    return [{
+    protocol: 'bush.subagent_task.v1' as const,
     phase: record.outcome === 'returned' ? 'dispatched' as const : 'failed' as const,
     status,
     terminal,
     accepted: record.outcome === 'returned',
-    taskId: optionalString(item.taskId),
+    taskId,
     toolCallId: record.toolCall.id,
     parentSessionId: event.sessionId,
     parentTurnId: event.turnId,
     childSessionId: optionalString(item.childSessionId),
     childTurnId: optionalString(item.childTurnId),
-    origin: record.toolCall.name === 'team_delegate' ? 'team' : 'subagent',
+    origin: record.toolCall.name === 'team_delegate' ? 'team' as const : 'subagent' as const,
     teamId: optionalString(output.teamId),
     teamMemberId: optionalString(item.memberId),
     agentProfileId: optionalString(item.agentProfileId),
-    agentName: optionalString(item.agentName),
+    agentName: optionalString(item.agentName) ?? (items.length === 1 ? activity.name : undefined),
     errorCode: record.error?.code,
     raw: item,
-    };
+    }];
   });
 }
 

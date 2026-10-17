@@ -9,7 +9,7 @@ const protocol = 'bush.builtin_schema.v1';
 const revision = (definition: ToolDefinition) => createHash('sha256').update(JSON.stringify(definition)).digest('hex');
 const runFields: Record<string, string[]> = {
   subagent: ['action', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'mode', 'run_in_background'],
-  team: ['action', 'team_id', 'run_id', 'input', 'section', 'query', 'offset', 'limit', 'yield_time_ms', 'node_ids'],
+  team: ['action', 'team_id', 'run_id', 'input', 'canvas_path', 'section', 'query', 'offset', 'limit', 'yield_time_ms', 'node_ids'],
 };
 const replacements: Record<string, string> = {
   parallel_tools: 'run_tools', manage_tool_calls: 'tasks', manage_plugin_agents: 'tasks',
@@ -61,7 +61,7 @@ export function projectBuiltinDefinitions(registry: ToolRegistry, request: Model
     if (properties.action) properties.action = { type: 'string', enum: definition.name === 'subagent' ? ['run']
       : unified ? ['list', 'get', 'run', 'resume'] : ['list', 'get', 'run', 'status', 'wait', 'stop', 'resume'] };
     const description = definition.name === 'subagent'
-      ? `Dispatch prompt to a saved agent_id, plugin agent_type or a fork; follow up with task_id. Continue independent work; use ${taskManagementTool(request, 'await_subagents')} when results are needed. For employee registration or a new clean agent's configuration, load get_tool_schema(name="subagent"), then use call_tool with its full arguments.`
+      ? `Delegate work to a saved agent_id, plugin agent_type or a fork; follow up with the owned task_id. Use ${taskManagementTool(request, 'await_subagents')} to inspect/wait for results${unified ? ' or read the child conversation' : ''}. Independent peers use the AgentChatroom plugin; never use their conversation IDs as child task IDs. For employee registration or a new clean agent's configuration, load get_tool_schema(name="subagent"), then use call_tool with its full arguments.`
       : `Find saved workflows with list/get; run starts independently; resume retries unfinished nodes. ${unified ? 'Use tasks to inspect/wait/stop runs.' : 'Use status/wait/stop to observe or stop runs.'} For definitions or selected node outputs, load get_tool_schema(name="team"), then use call_tool with its full arguments.`;
     return { ...definition, description, inputSchema: { ...definition.inputSchema, properties } };
   });
@@ -92,6 +92,7 @@ export function builtinSchemaRequiredError(name: string) {
 export function nativeToolSchemaIsCurrent(registry: ToolRegistry, request: ModelRequest, name: string): boolean {
   const registration = registry.resolve(name);
   if (!registration?.registrationOwner?.startsWith('extension:') || registration.mcpHook) return true;
+  if (registration.deferredSchema) return (request.metadata.builtinToolSchemas as Record<string, string> | undefined)?.[name] === revision(registration.definition);
   const snapshot = request.metadata.mcpModelToolSnapshot as { tools?: ToolDefinition[] } | undefined;
   if (!snapshot?.tools) return true;
   const declared = snapshot.tools.find(tool => tool.name === name);

@@ -7,6 +7,7 @@ import * as shared from '../../backend/api';
 import { resolvePromptReferenceContext, rejectRemoteBrowserReferences } from '../../backend/promptReferenceContext';
 import type { ConversationBackend } from '../../backend/conversationBackend';
 import type { ConversationRuntime } from '../../backend/conversationRuntime';
+import { readHostConversationStatus } from '../../backend/watchLocalConversation';
 import { streamRuntimeTurnEvents } from '../../backend/runtimeChat';
 import { parseGoalCommand } from '../../backend/goalCommand';
 import { ProtocolRuntimeClient } from '../../runtime-client/ProtocolRuntimeClient';
@@ -19,7 +20,7 @@ export type AgentCall = <T = unknown>(operation: AgentOperation, input?: Record<
 type Watch = (request: Parameters<AgentDesktopApi['watchEvents']>[1], listener: Parameters<AgentDesktopApi['watchEvents']>[2]) => () => void;
 
 /** SSE and IPC carry the same decoded Runtime events. Neither owns task execution. */
-export function agentRuntimeClient(call: AgentCall, watch?: Watch) {
+export function agentRuntimeClient(call: AgentCall, watch?: Watch, hostOwnsTurn?: (turnId: string) => boolean) {
   return new ProtocolRuntimeClient({
     async sendCommand(command, signal) {
       signal?.throwIfAborted();
@@ -33,7 +34,9 @@ export function agentRuntimeClient(call: AgentCall, watch?: Watch) {
     },
     async *openEventStream(request: RuntimeStreamRequest) {
       let cursor = request.cursor?.afterSequence;
-      if (!watch) {
+      // The service's SSE job guard only knows queued service jobs. Runtime-owned
+      // coordination turns use the existing durable event long-poll transport.
+      if (!watch || hostOwnsTurn?.(request.turnId ?? '')) {
         while (!request.signal?.aborted) {
           const result = await call<{ events: RuntimeEvent[]; ended: boolean }>('chat.events', {
             sessionId: request.sessionId, turnId: request.turnId, afterSequence: cursor, waitMs: 20000,
@@ -88,6 +91,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   hostOptions: { sharedSettings?: boolean; enhanced?: boolean; visualInputAvailable?: boolean; onSubmitted?: (sessionId: string) => void } = {}) {
   const guidanceKey = `cardbush-agent-guidance:${connectionId}`;
   const guidance = new Map<string, { command: Record<string, unknown>; message: ChatMessage }>();
+  const observedHostTurns = new Map<string, string>();
   try { for (const entry of JSON.parse(sessionStorage.getItem(guidanceKey) ?? '[]')) guidance.set(entry.message.id, entry); } catch { /* Ignore invalid stored drafts. */ }
   const saveGuidance = () => { try { sessionStorage.setItem(guidanceKey, JSON.stringify([...guidance.values()])); } catch { /* Retain in-memory identity if storage is full. */ } };
   const client = agentRuntimeClient(async <T,>(operation: AgentOperation, input?: Record<string, unknown>): Promise<T> => {
@@ -109,7 +113,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
       entry.message.status = 'failed'; entry.message.metadata = { ...entry.message.metadata, guidance_delivery: 'failed' }; saveGuidance();
       throw error;
     }
-  }, watch);
+  }, watch, turnId => observedHostTurns.has(turnId));
   const interactions = createRuntimeInteractions();
   const runtime: ConversationRuntime = { client, interactions, dispose() {},
     resolveBrowserReferences: rejectRemoteBrowserReferences,
@@ -234,7 +238,12 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     },
     stopTurn: async turnId => {
       const job = (await getJobs()).find(job => job.turnId === turnId);
-      if (!job) throw new Error('Unknown Agent turn.');
+      if (!job) {
+        const sessionId = observedHostTurns.get(turnId);
+        if (!sessionId) throw new Error('Unknown Agent turn.');
+        const result = await client.stopTurn({ sessionId, turnId });
+        return { ...result, turnId, alreadyInactive: !result.accepted, raw: result };
+      }
       const result = await call<{ accepted: boolean }>('chat.stop', { id: job.id });
       return { turnId, reason: '', accepted: result.accepted, alreadyInactive: !['queued', 'running'].includes(job.status), terminal: false, raw: result };
     },
@@ -262,9 +271,13 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
       let alive = true; let timer: ReturnType<typeof setTimeout>;
       const poll = async () => {
         try {
-          const { jobs, locked, revision } = await call<{ jobs: Job[]; locked: boolean; revision: number }>('chat.queue', { action: 'get', sessionId }); if (!alive) return;
+          const [{ jobs, locked, revision }, hostStatus] = await Promise.all([
+            call<{ jobs: Job[]; locked: boolean; revision: number }>('chat.queue', { action: 'get', sessionId }),
+            readHostConversationStatus(client, sessionId),
+          ]); if (!alive) return;
           const running = jobs.find(job => job.status === 'running');
-          listener({ activeTurnId: running?.turnId, queueState: { locked, revision }, revision: `${locked}|${jobs.map(job => `${job.id}:${job.status}`).join('|')}`,
+          if (hostStatus.activeTurnId && hostStatus.activeTurnId !== running?.turnId) observedHostTurns.set(hostStatus.activeTurnId, sessionId);
+          listener({ activeTurnId: running?.turnId ?? hostStatus.activeTurnId, queueState: { locked, revision }, revision: `${locked}|${jobs.map(job => `${job.id}:${job.status}`).join('|')}|${hostStatus.revision}`,
             queued: jobs.filter(job => job.status === 'queued' && !job.goalContinuation).map(job => ({ id: job.id, text: authoredPromptContent(job.text, job.userMessageMetadata),
               promptContext: readUserPrompt(job.text, job.userMessageMetadata).context, createdAt: job.createdAt,
               conversation: { id: sessionId, title: '', preview: '', updatedAt: job.createdAt } })) });

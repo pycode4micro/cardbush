@@ -10,6 +10,8 @@ import type { ConversationStylePreferences } from './features/settings/conversat
 
 export type AppSection = 'chat' | 'assistant' | 'plugins' | 'skills' | 'subagents' | 'team' | 'automations' | 'agents' | 'components' | 'md-presentation';
 export type SettingsSection =
+  | 'general'
+  | 'notifications'
   | 'projects'
   | 'instructions'
   | 'profile'

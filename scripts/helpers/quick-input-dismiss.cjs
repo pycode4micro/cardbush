@@ -46,6 +46,29 @@ module.exports = async ({ run, until, pause, window, guest, guestId }) => {
   window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
   window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
   await verifyPreviewClosed();
+  await run(`
+    window.coverChangeSaved={messages:coverProps.messages,changeReports:coverProps.changeReports,onOpenChangeReview:coverProps.onOpenChangeReview};
+    window.coverFileReview=null;
+    coverUpdate({messages:[...coverProps.messages,{id:'cover-file-change',role:'assistant',turnId:'cover-turn',status:'streaming',content:''}],
+      changeReports:[{id:'cover-edit',messageId:'cover-file-change',turnId:'cover-turn',fileCount:1,additions:3,deletions:1,
+        files:[{path:'apple-vs-banana.html',additions:3,deletions:1,diff:'',lines:[]}]}],
+      onOpenChangeReview:(...args)=>{window.coverFileReview=args;}});void 0
+  `);
+  await until('!!document.querySelector(".inspector-quick-input .turn-change-review")', 'file summary follows the floating input');
+  const openFiles = async () => {
+    await run('document.querySelector(".turn-change-review").dispatchEvent(new PointerEvent("pointerout",{bubbles:true,pointerType:"mouse"}));document.querySelector(".turn-change-review").dispatchEvent(new PointerEvent("pointerover",{bubbles:true,pointerType:"mouse"}));void 0');
+    await until('!!document.querySelector(".turn-change-file-action")', 'floating input file list opens');
+  };
+  await openFiles(); await click('.turn-change-file-action');
+  assert.deepEqual(await run('coverFileReview'), ['apple-vs-banana.html','cover-turn'], 'file action reaches the intended review');
+  assert.equal(await run('coverWorkspace.quickInputOpen'), true, 'clicking a portaled file row does not dismiss the conversation');
+  await openFiles();
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  await until('!document.querySelector(".turn-change-preview")', 'Escape closes the file list');
+  assert.equal(await run('coverWorkspace.quickInputOpen'), true, 'Escape belongs to the file list before the floating conversation');
+  assert.equal(await run('document.querySelector(".inspector-quick-input textarea").value'), draft);
+  await run('coverUpdate(coverChangeSaved);void 0');
   await click('.right-inspector-toolbar');
   await until('!coverWorkspace.quickInputOpen && !document.querySelector(".inspector-quick-input")', 'outside host click dismisses quick input');
   assert.equal(await run('coverWorkspace.inspectorCover'), true, 'dismissal leaves the browser in cover mode');

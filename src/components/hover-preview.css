@@ -28,6 +28,15 @@
 }
 .hover-preview[data-interactive="true"][data-side="right"]::before { right: 100%; }
 .hover-preview[data-interactive="true"][data-side="left"]::before { left: 100%; }
+.hover-preview[data-interactive="true"]:is([data-side="top"], [data-side="bottom"])::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: calc(var(--hover-preview-gap, 8px) + 2px);
+}
+.hover-preview[data-interactive="true"][data-side="top"]::before { top: 100%; }
+.hover-preview[data-interactive="true"][data-side="bottom"]::before { bottom: 100%; }
 
 .hover-preview-title {
   display: flex;

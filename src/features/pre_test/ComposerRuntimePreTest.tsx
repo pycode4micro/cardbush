@@ -11,7 +11,7 @@ import {
   type ThinkingNotice,
 } from '../composer';
 import { TurnRuntimeDetails } from '../chat/TurnRuntimeDetails';
-import { AssistantThinkingDetail, TurnChangeReviewButton } from '../chatMessages/AssistantThinkingProcessLine';
+import { AssistantThinkingDetail, TurnChangeSummary } from '../chatMessages/AssistantThinkingProcessLine';
 import { reorderScopedQueue } from '../composer/queueOrdering';
 import { PermissionRequestCard } from '../interactions/PermissionRequestCard';
 import type { ConversationChangeSummary } from '../tools';
@@ -38,6 +38,11 @@ const changeSummaryFixture: ConversationChangeSummary = {
   fileCount: 3,
   additions: 99,
   deletions: 27,
+  files: [
+    { path: 'src/App.tsx', additions: 68, deletions: 14 },
+    { path: 'src/styles.css', additions: 24, deletions: 10 },
+    { path: 'README.md', additions: 7, deletions: 3 },
+  ],
 };
 
 const taskPlanFixture: TaskPlanSnapshot = {
@@ -212,7 +217,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
               )}
               <Composer
                 compact
-                topAccessory={showChanges && <TurnChangeReviewButton language={language} summary={changeSummaryFixture} />}
+                topAccessory={showChanges && <TurnChangeSummary language={language} summary={changeSummaryFixture} />}
                 language={language}
                 draft={shadowOpen ? shadowDraft : draft}
                 onDraftChange={shadowOpen ? setShadowDraft : setDraft}

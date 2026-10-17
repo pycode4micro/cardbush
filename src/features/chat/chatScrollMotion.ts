@@ -1,5 +1,6 @@
 import { prefersReducedMotion } from '../../shared/motionPreference';
 import { suspendScrollAnchoring } from '../scrollAnchoring';
+import { cancelConversationWheel } from './conversationWheelScrolling';
 
 type MotionKind = 'follow' | 'submission' | 'jump';
 type Target = number | (() => number);
@@ -79,6 +80,7 @@ export function createChatScrollMotion() {
         if (motion.kind === 'submission') motion.followTarget = target;
         return;
       }
+      cancelConversationWheel(scroller);
       const now = performance.now();
       if (motion?.scroller === scroller && motion.kind === 'follow' && kind === 'follow') {
         motion.target = target;

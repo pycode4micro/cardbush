@@ -12,6 +12,7 @@ import {
 
 import { createHash } from "node:crypto";
 import type { ToolRegistry } from "./toolRegistry.js";
+import { withoutToolDisplayTitle } from './toolDisplay.js';
 import type { ContextTurnSource } from "./contextAssembler.js";
 import { runtimeInputTokenProjection, type InputTokenCalibration } from "./inputTokenBasis.js";
 
@@ -383,7 +384,7 @@ function checkpointSummary(value: unknown, field: string): string {
 
 /** Decode old saved tool catalogs without silently overriding their identity claims. */
 export function decodeContextCheckpointInput(value: unknown): ContextCheckpointInput {
-  const candidate = checkpointObject(value, "input");
+  const candidate = checkpointObject(withoutToolDisplayTitle(value), "input");
   const sessionRevision = Number(candidate.session_revision);
   if (!Number.isInteger(sessionRevision) || sessionRevision < 1) {
     throw new ContextCheckpointInputError("session_revision", "a positive integer", candidate.session_revision);
@@ -432,7 +433,7 @@ export function bindContextCheckpointInput(
   authorized: ContextCompactionState,
   format: ContextCheckpointFormat = 'ordered',
 ): ContextCheckpointInput {
-  const candidate = checkpointObject(value, "input");
+  const candidate = checkpointObject(withoutToolDisplayTitle(value), "input");
   if (format === 'identified') {
     for (const key of Object.keys(candidate)) {
       if (!['session_revision', 'summaries', 'active_turn'].includes(key)) {

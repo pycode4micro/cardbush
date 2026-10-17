@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async ({ run, until, click, edit, window, root }) => {
-  await click('个性化');
+  await click('通知');
   await until("!!document.querySelector('#notification-sound-volume')");
   await run(`window.soundToggle = () => [...document.querySelectorAll('.settings-switch')].find(node => node.textContent.includes('提醒音效')).querySelector('input');
     window.soundStarts = 0; window.originalSoundContext = window.AudioContext;
@@ -24,7 +24,7 @@ module.exports = async ({ run, until, click, edit, window, root }) => {
     await click('试听');
     await until('soundStarts===2');
     assert.equal(await run('notificationSoundTest.playNotificationSound()'), false, 'muted automatic events remain silent after preview');
-    await click('外观与语言'); await click('个性化');
+    await click('外观'); await click('通知');
     await until("!!document.querySelector('#notification-sound-volume')");
     assert.equal(await run('soundToggle().checked'), false);
     assert.equal(await run("document.querySelector('#notification-sound-volume').value"), '35');
@@ -61,7 +61,7 @@ module.exports = async ({ run, until, click, edit, window, root }) => {
     fs.writeFileSync(path.join(root, 'tmp', 'settings-notification-sound.png'), (await window.webContents.capturePage()).toPNG());
     await edit('.settings-search input', '提醒');
     await until("document.querySelectorAll('.settings-nav').length===1");
-    assert.equal(await run("document.querySelector('.settings-nav').dataset.settingsSection"), 'profile');
+    assert.equal(await run("document.querySelector('.settings-nav').dataset.settingsSection"), 'notifications');
   } finally {
     await run('window.AudioContext = originalSoundContext; void 0');
   }

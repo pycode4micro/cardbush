@@ -135,6 +135,8 @@ declare global {
         title: string;
         body: string;
         kind: 'completed' | 'waiting' | 'error';
+        turnId?: string;
+        interactionId?: string;
       }) => Promise<{ shown: boolean }>;
       setSessionAttentionCount: (count: number) => Promise<void>;
       consumeSessionAttentionOpen: () => Promise<{

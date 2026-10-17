@@ -35,7 +35,7 @@ assert.match(
 );
 assert.match(main, /stage:\s*'background-applied'/);
 assert.match(main, /const actualBackground = target\.getBackgroundColor\(\)/);
-assert.match(main, /!mainWindow\.isVisible\(\) \|\| !mainWindow\.isFocused\(\)/);
+assert.match(main, /!isWindowVisible\(mainWindow\) \|\| !mainWindow\.isFocused\(\)/);
 assert.match(main, /notification\.on\('click',[\s\S]*?attention:open-session/);
 assert.match(main, /Notification\.handleActivation\(/);
 assert.match(main, /toastXml:\s*sessionAttentionToastXml/);

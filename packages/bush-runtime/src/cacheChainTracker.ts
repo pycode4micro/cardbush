@@ -24,17 +24,20 @@ export class CacheChainTracker {
   }
 
   observe(request: ModelRequest): CacheChainObservationPayload {
-    const stableInputDigest = digest(
-      JSON.stringify({
-        model: request.model,
-        providerBinding: request.providerBinding ?? null,
-        tools: request.tools,
-        maxOutputTokens: request.maxOutputTokens ?? null,
-        temperature: request.temperature ?? null,
-        topP: request.topP ?? null,
-        reasoningEffort: request.reasoningEffort ?? null,
-      }),
-    );
+    const parameters = {
+      model: request.model,
+      providerBinding: request.providerBinding ?? null,
+      tools: request.tools,
+      maxOutputTokens: request.maxOutputTokens ?? null,
+      temperature: request.temperature ?? null,
+      topP: request.topP ?? null,
+      reasoningEffort: request.reasoningEffort ?? null,
+    };
+    // Keep the aggregate digest compatible with old checkpoints; new snapshots
+    // also retain individual hashes so diagnostics can name changed fields.
+    const stableInputDigest = digest(JSON.stringify(parameters));
+    const parameterDigests = Object.fromEntries(Object.entries(parameters).map(([key, value]) =>
+      [key, digest(JSON.stringify(value))]));
     const messageDigests = request.messages.map((message) =>
       digest(JSON.stringify(message)),
     );
@@ -42,6 +45,10 @@ export class CacheChainTracker {
     const stableInputChanged =
       previousStableInput !== undefined &&
       previousStableInput !== stableInputDigest;
+    const changedParameters = this.#state.parameterDigests
+      ? changedParameterNames(this.#state.parameterDigests, parameterDigests)
+      : stableInputChanged ? undefined : [];
+    const prefixComparisonAvailable = this.#state.requestOrdinal > 0;
     let sharedPrefixMessages = 0;
     const limit = Math.min(this.#state.messageDigests.length, messageDigests.length);
     while (
@@ -51,9 +58,7 @@ export class CacheChainTracker {
       sharedPrefixMessages += 1;
     }
     const frozenPrefixBreak =
-      previousStableInput !== undefined &&
-      (stableInputChanged ||
-        sharedPrefixMessages < this.#state.messageDigests.length);
+      prefixComparisonAvailable && sharedPrefixMessages < this.#state.messageDigests.length;
     const requestOrdinal = this.#state.requestOrdinal + 1;
     const observation: CacheChainObservationPayload = {
       requestOrdinal,
@@ -61,25 +66,19 @@ export class CacheChainTracker {
       previousMessageCount: this.#state.messageDigests.length,
       sharedPrefixMessages,
       appendedMessages: messageDigests.length - sharedPrefixMessages,
+      prefixComparisonAvailable,
+      parametersChanged: stableInputChanged,
+      ...(changedParameters ? { changedParameters } : {}),
       frozenPrefixBreak,
-      breakIndex: frozenPrefixBreak
-        ? stableInputChanged
-          ? 0
-          : sharedPrefixMessages
-        : undefined,
-      ...(sharedPrefixMessages < this.#state.messageDigests.length ? { messageBreakIndex: sharedPrefixMessages } : {}),
+      ...(frozenPrefixBreak ? { breakIndex: sharedPrefixMessages, messageBreakIndex: sharedPrefixMessages } : {}),
       stableInputDigest,
-      sharedPrefixDigest: digest(
-        JSON.stringify({
-          stableInputDigest,
-          messages: messageDigests.slice(0, sharedPrefixMessages),
-        }),
-      ),
+      sharedPrefixDigest: digest(JSON.stringify(messageDigests.slice(0, sharedPrefixMessages))),
     };
     this.#state = {
       protocol: BUSH_CACHE_CHAIN_STATE_PROTOCOL,
       requestOrdinal,
       stableInputDigest,
+      parameterDigests,
       messageDigests,
       ...(this.#state.providerInput ? { providerInput: this.#state.providerInput } : {}),
     };
@@ -88,30 +87,29 @@ export class CacheChainTracker {
 
   observeProviderInput(projection: ProviderInputProjection): ProviderInputObservation {
     const previous = this.#state.providerInput;
-    const changedParameters = previous ? [...new Set([
-      ...Object.keys(previous.parameterDigests), ...Object.keys(projection.parameterDigests),
-    ])].filter(key => previous.parameterDigests[key] !== projection.parameterDigests[key]).sort() : [];
-    if (previous && previous.format !== projection.format) changedParameters.unshift("projection_format");
+    const changedParameters = previous ? changedParameterNames(previous.parameterDigests, projection.parameterDigests) : [];
+    const projectionFormatChanged = Boolean(previous && previous.format !== projection.format);
+    const prefixComparisonAvailable = Boolean(previous && !projectionFormatChanged);
     let shared = 0;
-    if (previous) {
+    if (previous && prefixComparisonAvailable) {
       while (shared < Math.min(previous.inputDigests.length, projection.inputDigests.length) &&
         previous.inputDigests[shared] === projection.inputDigests[shared]) shared++;
     }
-    const frozenPrefixBreak = Boolean(previous &&
-      (changedParameters.length || shared < previous.inputDigests.length));
+    const frozenPrefixBreak = Boolean(previous && prefixComparisonAvailable && shared < previous.inputDigests.length);
     const stableInputDigest = digest(JSON.stringify({ format: projection.format, parameters: projection.parameterDigests }));
     this.#state.providerInput = structuredClone(projection);
     return {
       requestOrdinal: this.#state.requestOrdinal,
       format: projection.format, transport: projection.transport,
       previousProjectionAvailable: Boolean(previous), changedParameters,
+      projectionFormatChanged, prefixComparisonAvailable,
+      parametersChanged: changedParameters.length > 0,
       ...(projection.cacheRouting ? { cacheRouting: projection.cacheRouting } : {}),
       ...(projection.images ? { images: imageObservation(previous, projection) } : {}),
       messageCount: projection.inputDigests.length,
       previousMessageCount: previous?.inputDigests.length ?? 0,
       sharedPrefixMessages: shared, appendedMessages: projection.inputDigests.length - shared,
-      frozenPrefixBreak, ...(frozenPrefixBreak ? { breakIndex: changedParameters.length ? 0 : shared } : {}),
-      ...(previous && shared < previous.inputDigests.length ? { messageBreakIndex: shared } : {}),
+      frozenPrefixBreak, ...(frozenPrefixBreak ? { breakIndex: shared, messageBreakIndex: shared } : {}),
       stableInputDigest,
       sharedPrefixDigest: digest(JSON.stringify(projection.inputDigests.slice(0, shared))),
     };
@@ -120,6 +118,11 @@ export class CacheChainTracker {
   snapshot(): CacheChainState {
     return structuredClone(this.#state);
   }
+}
+
+function changedParameterNames(previous: Record<string, string>, current: Record<string, string>): string[] {
+  return [...new Set([...Object.keys(previous), ...Object.keys(current)])]
+    .filter(key => previous[key] !== current[key]).sort();
 }
 
 function imageObservation(previous: ProviderInputProjection | undefined, current: ProviderInputProjection): ProviderInputObservation['images'] {

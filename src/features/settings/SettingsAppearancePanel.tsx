@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Monitor, Moon, RotateCcw, Sun, Upload } from 'lucide-react';
-import type { AppLanguage, AppLanguageMode, AppSettingsState, ThemePreference, ThemeMode } from '../../types';
+import type { AppLanguage, AppSettingsState, ThemePreference, ThemeMode } from '../../types';
 import type { WindowMaterialPreference } from '../appearance/windowAppearance';
 import { appearanceProfileKey, appearanceVariables, normalizeAppearance, setSeparateAppearanceModes, updateAppearanceProfile,
   type AppearancePreferences, type AppearanceProfile } from '../appearance/appearancePreferences';
@@ -8,14 +8,13 @@ import { SettingsCard, SettingsSelect, SettingsSwitch } from './SettingsControls
 import './appearanceSettings.css';
 
 export function SettingsAppearancePanel({ themePreference, windowMaterial, onWindowMaterialChange, language,
-  languageMode, systemLanguage, settings, onThemePreferenceChange, onLanguageModeChange, onSettingsChange,
+  settings, onThemePreferenceChange, onSettingsChange,
   onImportFont, onResetFont, onImportThemeStyle, onResetImportedThemeStyle,
 }: {
   themePreference: ThemePreference; windowMaterial: WindowMaterialPreference;
   onWindowMaterialChange?: (value: WindowMaterialPreference) => void;
-  language: AppLanguage; languageMode: AppLanguageMode; systemLanguage: AppLanguage; settings: AppSettingsState;
+  language: AppLanguage; settings: AppSettingsState;
   onThemePreferenceChange: (value: ThemePreference) => void;
-  onLanguageModeChange: (value: AppLanguageMode) => void;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
   onImportFont: () => void; onResetFont: () => void; onImportThemeStyle: () => void; onResetImportedThemeStyle: () => void;
 }) {
@@ -111,11 +110,6 @@ export function SettingsAppearancePanel({ themePreference, windowMaterial, onWin
         <button type="button" className="secondary-button" onClick={() => onSettingsChange(current => ({ ...current, appearance: normalizeAppearance() }))}><RotateCcw size={14} />{zh ? '恢复外观默认设置' : 'Reset appearance defaults'}</button>
       </div>
     </details>
-    <SettingsCard title={zh ? '语言' : 'Language'}>
-      <SettingsSelect name="language-mode" title={zh ? '界面语言' : 'Interface language'} value={languageMode} onChange={value => onLanguageModeChange(value as AppLanguageMode)}>
-        <option value="system">{zh ? '跟随系统' : 'System'} · {systemLanguage === 'zh' ? '中文' : 'English'}</option><option value="zh">中文</option><option value="en">English</option>
-      </SettingsSelect>
-    </SettingsCard>
   </div>;
 }
 

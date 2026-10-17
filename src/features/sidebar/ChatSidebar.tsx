@@ -61,7 +61,8 @@ import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { useHoverPreview } from '../../components/HoverPreview';
 import { ConversationHoverPreview } from './ConversationHoverPreview';
-import { sessionAttentionLabel } from '../sessionAttention';
+import { isCardbushForeground, sessionAttentionLabel } from '../sessionAttention';
+import { watchWindowVisibility } from '../../shared/windowVisibility';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import type {
   AppLanguage,
@@ -428,7 +429,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   useEffect(() => {
     if (!conversationReadState.initialized || !activeConversationId) return;
     const markVisibleConversationRead = () => {
-      if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+      if (!isCardbushForeground()) return;
       const active = conversationItems.find((item) => item.id === activeConversationId);
       if (!active) return;
       const nextReceipt = conversationReadReceipt(
@@ -452,10 +453,10 @@ export const ChatSidebar = memo(function ChatSidebar({
     };
     markVisibleConversationRead();
     window.addEventListener('focus', markVisibleConversationRead);
-    document.addEventListener('visibilitychange', markVisibleConversationRead);
+    const unwatchVisibility = watchWindowVisibility(markVisibleConversationRead);
     return () => {
       window.removeEventListener('focus', markVisibleConversationRead);
-      document.removeEventListener('visibilitychange', markVisibleConversationRead);
+      unwatchVisibility();
     };
   }, [
     activeConversationId,

@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import { WebError, type WebModel } from './webCommon.mjs';
 
 type ManagedModel = WebModel & { enabled: boolean };
@@ -89,13 +90,13 @@ export class WebModelSettings {
     if (new Set(settings.models.map(model => model.id)).size !== settings.models.length || settings.models.length > 50) throw new WebError(400, '模型标识不可重复，最多配置 50 个模型。');
     for (const model of settings.models) {
       if (!model.apiKey) throw new WebError(400, '请填写 API 密钥。');
-      if ((model.maxOutputTokens ?? 128000) >= (model.maxContextTokens ?? 400000)) throw new WebError(400, '最大输出必须小于上下文窗口。');
+      if ((model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS) >= (model.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS)) throw new WebError(400, '最大输出必须小于上下文窗口。');
     }
   }
   async initialize() {
     const initial: Settings = { defaultModelId: this.target.defaultModelId,
       models: this.target.models.map(model => ({ ...model, enabled: true, apiProtocol: model.apiProtocol ?? 'openai_responses',
-        maxContextTokens: model.maxContextTokens ?? 400000, maxOutputTokens: model.maxOutputTokens ?? 128000,
+        maxContextTokens: model.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS, maxOutputTokens: model.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
         reasoningEffort: model.reasoningEffort === undefined ? 'medium' : model.reasoningEffort })),
       ...(this.target.imageModel ? { imageModel: this.target.imageModel } : {}) };
     this.#validate(initial);

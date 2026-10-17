@@ -179,6 +179,42 @@ module.exports = async ({run, until, pause, window, root}) => {
     document.querySelectorAll('.tool-image-thumbnail img').length===4`, 'completed image tools replace status tiles with thumbnails');
   assert.equal(await run("document.querySelectorAll('.loop-image-status').length"), 0);
   assert.doesNotMatch(await run("document.querySelector('.loop-image-previews .loop-preview-summary').textContent"), /进行中|失败/);
+  // Replay three rejected memory arguments followed by three successful retries.
+  // No rejected call is a child, even while live dispatch events are being emitted.
+  const replay = await run(`(() => {
+    window.replayRoles=['概念策划','视觉设计','体验策划'];
+    const records = replayRoles.flatMap((name,index) => {
+      const base={sessionId:'parent',turnId:'loop-turn',round:1,ordinal:index,recordedAt:'2026-09-16T00:00:02Z',workspaceChanges:[]};
+      const args={mode:'clean',prompt:'PRIVATE ASSIGNMENT',system_prompt:'你是'+name+'。PRIVATE ROLE INSTRUCTIONS'};
+      return [{...base,outcome:'failed',toolCall:{id:'rejected-'+index,name:'subagent',argumentsText:JSON.stringify({...args,memory:'none'})},
+        display:{title:'派发'+name+'失败'},error:{kind:'protocol',code:'tool_arguments_schema_invalid',message:'unsupported subagent arguments: memory',
+          details:{execution:{dispatch:'not_started',effects:'none',result:'known',recovery:'correct_input'}}}},
+        {...base,outcome:'returned',toolCall:{id:'named-'+index,name:'subagent',argumentsText:JSON.stringify(args)},
+          result:{taskId:'named-'+index,childSessionId:'named-child-'+index,status:'completed'}}];
+    });
+    const events=records.map(record=>views.subagentDispatches(record,{sessionId:'parent',turnId:'loop-turn'}));
+    const guidance=views.subagentDispatches({...records[1],result:{taskId:'named-0',status:'message_queued',agentName:'概念策划'}},{sessionId:'parent',turnId:'later-turn'});
+    const unknown=views.subagentDispatches({...records[1],result:{taskId:'named-0',status:'unexpected'}},{sessionId:'parent',turnId:'loop-turn'});
+    const children=replayRoles.map((name,index)=>({...loopTask,taskId:'named-'+index,childSessionId:'named-child-'+index,status:'completed',agentName:undefined}));
+    loopTask=children[0];loopMoreTasks=children.slice(1);
+    loopReply={...loopReply,toolExecutions:records.map(record=>({...loopExecutions[2],...views.runtimeHistoryToolExecution(record)}))};
+    showArchivedLoop(); dispatchEvent(new Event('focus'));
+    return {lengths:events.map(items=>items.length),names:events.flat().map(item=>item.agentName),guidance:guidance[0].status,unknown};
+  })()`);
+  assert.deepEqual(replay.lengths, [0,1,0,1,0,1], 'invalid dispatches must not enter the live task feed');
+  assert.deepEqual(replay.names, ['概念策划','视觉设计','体验策划']);
+  assert.equal(replay.guidance, 'running', 'guidance receipts keep the existing child running');
+  assert.deepEqual(replay.unknown, [], 'unknown receipt states cannot interrupt the message stream');
+  await until("document.querySelectorAll('.loop-subagent-preview:not(:disabled)').length===3", 'only three actual children appear');
+  assert.deepEqual(await run("[...document.querySelectorAll('.loop-subagent-preview strong')].map(el=>el.textContent)"), replay.names);
+  assert.match(await run("document.querySelector('.loop-subagent-previews .loop-preview-summary').textContent"), /3 个子 Agent/);
+  assert.doesNotMatch(await run("document.querySelector('.loop-subagent-previews .loop-preview-summary').textContent"), /失败/);
+  assert.match(await run("document.querySelector('.tool-execution-block').textContent"), /派发.*失败/);
+  assert.doesNotMatch(await run('document.body.innerText'), /PRIVATE ASSIGNMENT|PRIVATE ROLE/);
+  await click('.loop-subagent-preview[data-task-id="named-1"]');
+  await until("loopOpened.at(-1)?.task.taskId==='named-1'", 'named legacy task opens its inspector');
+  assert.equal(await run('loopOpened.at(-1).task.agentName'), '视觉设计', 'the inspector receives the same legacy role name');
+  await fs.writeFile(path.join(root,'tmp/loop-previews-named-agents.png'), (await window.webContents.capturePage()).toPNG());
   await run('renderView(null)'); await pause();
   const reads = await run('loopReads');
   await run("dispatchEvent(new Event('focus'))"); await pause();

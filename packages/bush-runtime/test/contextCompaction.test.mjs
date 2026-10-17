@@ -226,6 +226,17 @@ test("binds summary text to runtime-owned revision, Turn order and active bounda
   assert.deepEqual(state, before.state);
 });
 
+for (const format of ['ordered', 'separate', 'identified']) test(`${format} checkpoint ignores only top-level display metadata without changing source identities`, () => {
+  const state = authorization();
+  const input = format === 'identified' ? legacyDraft() : format === 'separate'
+    ? { summaries: draft().summaries.slice(0, 2), active_summary: draft().summaries[2] } : draft();
+  const decorated = { ...input, _display_title: { zh: '整理上下文', en: 'Compact context' } };
+  const original = structuredClone(decorated);
+  assert.deepEqual(bindContextCheckpointInput(decorated, state, format), bindContextCheckpointInput(input, state, format));
+  assert.deepEqual(decorated, original);
+  assert.throws(() => bindContextCheckpointInput({ ...decorated, unexpected: true }, state, format), { field: 'input' });
+});
+
 test("supports preceding-only and active-only summaries without fabricated segments", () => {
   const preceding = { ...authorization(), activeTurn: undefined };
   assert.equal(bindContextCheckpointInput({ summaries: draft().summaries.slice(0, 2) }, preceding).activeTurn, undefined);

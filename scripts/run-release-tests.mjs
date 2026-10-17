@@ -26,7 +26,7 @@ run(['--test', '--test-concurrency=3', '--test-timeout=300000', ...tests]);
 run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs']);
 run(['--test', 'scripts/test-release-privacy.mjs', 'scripts/test-repository-privacy.mjs']);
 run(['--test', 'scripts/test-process-host-build.mjs']);
-run(['--test', 'scripts/test-notification-sound.mjs']);
+run(['--test', 'scripts/test-notification-sound.mjs', 'scripts/test-session-attention-delivery.mjs']);
 run(['--test', 'scripts/test-next-step-prediction.mjs']);
 run(['--test', 'scripts/test-tool-result-presentation.mjs']);
 run(['--test', 'scripts/test-window-visibility.mjs']);

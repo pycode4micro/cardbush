@@ -84,6 +84,78 @@ test('malformed JSON, empty arrays, duplicate and foreign sources produce real r
   assert.deepEqual(newHints.history, loop.history, 'Changing receipt hints must never rewrite prior acceptance facts or cached receipts.');
 });
 
+test('checkpoint titles are presentation metadata; valid sources survive invalid entries and raw exchanges survive restart', () => {
+  const loop = new IncrementalCheckpoint(state, notice);
+  const response = result('with-title', { updates: [
+    { source: 0, summary: 'Verified initial work.' },
+    { source: 1, summary: 'Follow-up feedback.' },
+    { source: 2, summary: 'Current changes are still pending.' },
+    { source: 3, summary: 'Not a requested source.' },
+  ], _display_title: { zh: '压缩上下文', en: 'Compact context' } });
+  response.providerReplay = { format: 'fixture', data: { arguments: response.toolCalls[0].argumentsText } };
+  const original = structuredClone(response);
+  assert.equal(loop.submit(response), true);
+  assert.deepEqual(receipt(loop).accepted, [0, 1, 2]);
+  assert.equal(receipt(loop).rejected.length, 1);
+  assert.equal(receipt(loop).rejected[0].entry, 3);
+  assert.equal(loop.failures, 0);
+  assert.deepEqual(response, original);
+  assert.equal(loop.history.at(-2).toolCalls[0].argumentsText, original.toolCalls[0].argumentsText);
+  assert.deepEqual(loop.history.at(-2).providerReplay, original.providerReplay);
+  const restored = new IncrementalCheckpoint(state, notice, structuredClone(loop.history));
+  assert.deepEqual(restored.value, loop.value);
+  assert.deepEqual(restored.history, loop.history);
+
+  const rejected = new IncrementalCheckpoint(state, notice);
+  rejected.submit(result('unknown', { updates: [{ source: 0, summary: 'Not accepted.' }],
+    unexpected: true, _display_title: 'Ignored UI metadata' }));
+  assert.deepEqual(receipt(rejected).accepted, [], 'unrecognized business fields remain invalid');
+  rejected.submit(result('nested', { updates: [{ source: 0, summary: 'Not accepted.', _display_title: 'Not top-level metadata' }] }));
+  assert.deepEqual(receipt(rejected).accepted, [], 'metadata inside a summary entry must not alter its schema');
+
+  const oldHistory = structuredClone(loop.history);
+  oldHistory.at(-1).content = JSON.stringify({ accepted: [], accepted_sources: [],
+    remaining: [0, 1, 2].map(source => ({ source })), rejected: [{ reason: 'Previously rejected metadata.' }], complete: false });
+  const old = new IncrementalCheckpoint(state, notice, oldHistory);
+  assert.equal(old.complete, false, 'new validation must not retroactively accept old rejected calls');
+  assert.equal(old.failures, 1);
+  assert.deepEqual(old.history, oldHistory);
+});
+
+test('host completes compaction with a stray display title and resumes the task without correction requests', async t => {
+  const { store, journal } = seeded();
+  const original = structuredClone(store.snapshot('s').turns);
+  let maintenanceCalls = 0;
+  let argumentsText;
+  const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: {
+    countInputTokens: pressureCount,
+    async *stream(input) {
+      if (isMaintenance(input)) {
+        maintenanceCalls++;
+        argumentsText = JSON.stringify({ updates: summaries.map((summary, source) => ({ source, summary })),
+          _display_title: { zh: '压缩上下文', en: 'Compact context' } });
+        yield event(input, 0, 'tool_call_delta', { index: 0, toolCallId: 'title-checkpoint', nameDelta: 'checkpoint_context', argumentsDelta: argumentsText });
+        yield event(input, 1, 'response_completed', { finishReason: 'tool_calls' });
+      } else {
+        const call = input.messages.flatMap(m => m.role === 'assistant' ? m.toolCalls : []).find(c => c.id === 'title-checkpoint');
+        assert.equal(call.argumentsText, argumentsText);
+        yield event(input, 0, 'text_delta', { delta: '已继续检查。' });
+        yield event(input, 1, 'response_completed', { finishReason: 'stop' });
+      }
+    },
+  } });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const terminal = await host.runSessionTurn(request());
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
+  assert.equal(maintenanceCalls, 1);
+  assert.equal(host.events('s', 'current').filter(e => e.kind === 'context_compaction_completed').length, 1);
+  assert.equal(host.events('s', 'current').filter(e => e.kind === 'context_compaction_failed').length, 0);
+  assert.deepEqual(store.snapshot('s').turns.slice(0, original.length), original);
+  const restored = new SessionStore({ persistence: { load: () => journal, append() {} } });
+  assert.deepEqual(assembleContext({ session: restored.snapshot('s'), prefix: request().prefixMessages }),
+    assembleContext({ session: store.snapshot('s'), prefix: request().prefixMessages }));
+});
+
 test('same-loop partial submissions keep native input and wire prefixes stable, then persist all accepted texts in the final receipt', async t => {
   const { store, journal } = seeded();
   const original = structuredClone(store.snapshot('s').turns);
@@ -211,6 +283,37 @@ test('a cumulative active source and earlier sources can be selected independent
   assert.equal(transaction.accept(result('past', { updates: [{ source: 0, summary: '用户只允许本地预览；草稿已准备。' }] })), true);
   assert.equal(transaction.incremental.checkpoint.activeTurn.throughMessageId, 'read-receipt');
   assert.match(transaction.incremental.checkpoint.activeTurn.summary, /读取失败/);
+});
+
+test('restart during coordination compaction retains its separate task budget and accepted sources', async t => {
+  const { store, journal } = seeded(), checkpoints = new InMemoryRuntimeCheckpointStore(), eventLog = new InMemoryRuntimeEventLog();
+  const controller = new AbortController(), paused = Promise.withResolvers();
+  let calls = 0;
+  const first = new InMemoryRuntimeHost({ sessionStore: store, checkpointStore: checkpoints, eventLog,
+    registerDefaultWorkspaceTools: false, provider: { countInputTokens: pressureCount, async *stream(input) {
+      if (++calls === 1) yield* checkpoint(input, 'before-restart', [{ source: 0, summary: summaries[0] }]);
+      else { paused.resolve(); await new Promise(() => {}); }
+    } } });
+  t.after(() => first.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const input = request(); input.metadata.peerMessageWake = true; input.metadata.pluginAgentMaxTurns = 1;
+  const running = first.runSessionTurn(input, { signal: controller.signal }); await paused.promise;
+  const saved = structuredClone(checkpoints.load('s', 'current'));
+  const events = structuredClone(eventLog.replay('s', 'current')), sessions = structuredClone(journal);
+  assert.equal(saved.sessionCommit.taskModelRounds, 0);
+  controller.abort(); await running;
+  const recovered = new InMemoryRuntimeCheckpointStore(); recovered.save(saved);
+  let taskCalls = 0;
+  const second = new InMemoryRuntimeHost({ checkpointStore: recovered,
+    sessionStore: new SessionStore({ persistence: { load: () => sessions, append: event => sessions.push(event) } }),
+    eventLog: new InMemoryRuntimeEventLog({ persistence: { load: () => events, append: event => events.push(event) } }),
+    registerDefaultWorkspaceTools: false, provider: { countInputTokens: pressureCount, async *stream(req) {
+      if (isMaintenance(req)) yield* checkpoint(req, 'after-restart', [{ source: 1, summary: summaries[1] }, { source: 2, summary: summaries[2] }]);
+      else { taskCalls++; yield event(req, 0, 'text_delta', { delta: 'Coordination handled.' }); yield event(req, 1, 'response_completed', { finishReason: 'stop' }); }
+    } } });
+  t.after(() => second.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const terminal = await second.resumeModelTurn('s', 'current');
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
+  assert.equal(taskCalls, 1);
 });
 
 test('user guidance queued between partial checkpoints is applied before normal work resumes', async t => {

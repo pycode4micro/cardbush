@@ -1,6 +1,11 @@
 import type { RuntimeSessionTurnRequest, SessionSnapshot, SessionMessage } from '@cardbush/bush-protocol';
 import { CHILD_AGENT_ASSIGNMENT_PREFIX } from './childAgentPolicy.js';
 
+export function childConversationReadHint(taskId?: string): string {
+  const target = taskId ? JSON.stringify(taskId) : 'task_id';
+  return `Use tasks(action="conversation", task_ids=[${target}]) and conversation.nextCursor for ordered child inputs and final replies. If conversation is absent from the declared actions, load get_tool_schema(name="tasks") and use call_tool with the current schema.`;
+}
+
 /** A human continuation stays in the child identity and its original execution boundary. */
 export function continueChildConversation(input: RuntimeSessionTurnRequest, saved: RuntimeSessionTurnRequest): RuntimeSessionTurnRequest {
   if (saved.sessionId !== input.sessionId || saved.metadata.agentRole !== 'child') throw new Error('The original child execution configuration is unavailable.');

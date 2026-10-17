@@ -23,8 +23,8 @@ module.exports = async ({ run, until, window, root }) => {
       assert.equal(await run('document.querySelector(".model-select").title'), 'Model: Chat fixture');
       await run('document.querySelector(".model-select").click()');
       await until('!!document.querySelector(".model-reasoning-primary-options button")', `${surface} reasoning menu`);
-      assert.equal(await run('document.querySelector(".model-context-total").textContent'), 'Total context window400k');
-      assert.match(await run('document.querySelector(".model-context-section .model-picker-inline-label").textContent'), /Conversation context windowPending \/ 142k/);
+      assert.equal(await run('document.querySelector(".model-context-total").textContent'), 'Total context window530k');
+      assert.match(await run('document.querySelector(".model-context-section .model-picker-inline-label").textContent'), /Conversation context windowPending \/ 272k/);
       if (surface !== 'welcome') {
         await run(`updateChat({ contextWindowUsage: { usedTokens: 145045, maxTokens: 141952, totalTokens: 400000 } });`);
         await until('document.querySelector(".model-context-section strong")?.textContent.includes("102%")', 'occupancy is relative to the calculated conversation window');

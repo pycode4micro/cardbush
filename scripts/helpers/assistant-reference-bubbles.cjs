@@ -29,7 +29,14 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
     assert.equal(preview.text.includes('cardbush-reference://'), false);
     assert.equal(preview.text.includes('%'), false);
     assert.ok(preview.text.includes('达人首页'));
-    assert.equal(new URL(preview.href).searchParams.get('pageId'), '3');
+    // Rendered browser chips now use the stable tab-reference route. The
+    // original prompt (including pageId) is still checked above before render.
+    const link = new URL(preview.href);
+    assert.equal(link.protocol, 'cardbush-browser:');
+    assert.equal(link.hostname, 'tab');
+    assert.deepEqual(Object.fromEntries(link.searchParams), {
+      connectionId: 'cardbush', tabId: reference.tabId, title: reference.title, url: reference.url,
+    });
     assert.notEqual(preview.bubble, preview.container, theme + ' floating reply bubble remains distinct');
     assert.notEqual(preview.container, 'rgba(0, 0, 0, 0)', 'fixture uses the real floating container styles');
     assert.equal(preview.statusDisplay, 'flex');

@@ -40,6 +40,8 @@ app.whenReady().then(async () => {
     await read(`document.querySelector('.work-summary-subagent-task').click()`);
     assert.equal(await read('window.openedChild.task.childSessionId'), 'child');
     assert.equal(await read('window.openedChild.sessionId'), 'parent');
+    assert.equal(await read('window.openedChild.task.agentName'), '接收端开发');
+    assert.equal(await read('window.openedChild.title'), '接收端开发');
     assert.match(await read('window.openedChild.task.responsePrompt'), /接收端文件已生成，联调仍需父任务继续/);
     assert.equal(await read('document.querySelectorAll(".work-summary-subagent-task .spin").length'), 0);
     assert.doesNotMatch(await read('document.body.innerText'), /待父级审查|父级已接受|审查状态|契约状态/);
@@ -72,6 +74,7 @@ app.whenReady().then(async () => {
     assert.equal(await read("document.querySelectorAll('.work-summary-subagent-task').length"),1,'human continuation remains one child conversation');
     await read(`document.querySelector('.work-summary-subagent-task').click()`);
     assert.equal(await read('window.openedChild.task.requestPrompt'),'实现接收端网页','keep original assignment as conversation identity');
+    assert.equal(await read('window.openedChild.task.agentName'),'接收端开发','refresh and continuation preserve the display name');
     assert.equal(await read('window.sessionScans'), 0, 'polling must remain scoped to this task');
     await read('window.unmountFixture(); void 0');
     assert.deepEqual(errors, []);

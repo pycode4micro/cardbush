@@ -11,6 +11,7 @@ export interface RuntimeTaskHandle {
   summary?: string;
   result?: unknown;
   readResult?: () => Promise<unknown>;
+  readConversation?: (context: ToolHandlerContext<unknown>, cursor?: string) => Promise<unknown>;
   wait?: (signal: AbortSignal) => Promise<unknown>;
   stop?: (context: ToolHandlerContext<unknown>) => Promise<unknown>;
   cancelObservation?: () => void;
@@ -18,7 +19,8 @@ export interface RuntimeTaskHandle {
 export type TaskSource = (context: ToolHandlerContext<unknown>) => Promise<RuntimeTaskHandle[]> | RuntimeTaskHandle[];
 export const taskPending = (task: RuntimeTaskHandle) => ['running', 'pending', 'waiting_user', 'stopping'].includes(task.status);
 const schema = z.object({
-  action: z.enum(['list', 'inspect', 'wait', 'stop', 'cancel_observation']).default('list'),
+  action: z.enum(['list', 'inspect', 'conversation', 'wait', 'stop', 'cancel_observation']).default('list'),
+  cursor: z.string().regex(/^\d+:\d+$/).optional(),
   task_ids: z.array(z.string().min(1)).min(1).max(32).optional(),
   mode: z.enum(['any', 'all']).default('any'),
   yield_time_ms: z.number().int().min(0).max(30_000).default(1000),
@@ -51,14 +53,16 @@ export class RuntimeTaskTools {
   }
   register(registry: ToolRegistry) {
     registry.register({
-      definition: { name: 'tasks', description: 'Manage terminal, subagent, Team, MCP, question and script tasks. list returns handles; inspect reads results. wait wakes on any/all completion, user guidance or yield_time_ms (default 1000; 0=snapshot). Continue independent work first; do not poll or restart pending tasks. Pass after revisions to omit unchanged results. inspect/stop/cancel_observation require task_ids. stop uses the normal executor/permissions; cancel_observation only removes a completion subscription. Wait timeout/cancellation never stops tasks.', inputSchema: z.toJSONSchema(schema) },
+      definition: { name: 'tasks', description: 'Observe or control existing tasks; use subagent to dispatch or follow up. list returns handles; inspect reads results; conversation reads one owned child’s ordered inputs and final answers (one task_ids entry, optional cursor; follow nextCursor). Private reasoning and tool activity are excluded. wait wakes on any/all completion, user/peer guidance or yield_time_ms (default 1000; 0=snapshot). Continue independent work first; do not poll or restart pending tasks. after revisions omit unchanged results. inspect/conversation/stop/cancel_observation require task_ids. stop uses normal permissions; cancel_observation only removes a completion subscription. Wait cancellation never stops tasks. Independent peers use the AgentChatroom plugin, not task IDs.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'delegation', operation: 'tasks.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,
         after: Object.fromEntries((page.tasks as RuntimeTaskHandle[]).map(task => [task.task_id, task.revision])) })),
       decodeInput: value => schema.parse(value), execute: async context => {
         const input = context.input;
-        if (['inspect', 'stop', 'cancel_observation'].includes(input.action) && !input.task_ids) throw new Error('Explicit task_ids are required for this action.');
+        if (['inspect', 'conversation', 'stop', 'cancel_observation'].includes(input.action) && !input.task_ids) throw new Error('Explicit task_ids are required for this action.');
+        if (input.action === 'conversation' && input.task_ids?.length !== 1) throw new Error('Read one child conversation at a time.');
+        if (input.cursor !== undefined && input.action !== 'conversation') throw new Error('A conversation cursor requires action=conversation.');
         let snapshot = await this.snapshot(context);
         const all = snapshot.handles;
         const select = (items: RuntimeTaskHandle[], ids: string[]) => [...new Set(ids.map(id => {
@@ -67,6 +71,11 @@ export class RuntimeTaskTools {
           return task;
         }))];
         let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'wait' ? all.filter(taskPending).slice(0, 32) : all.slice(input.offset, input.offset + input.limit);
+        if (input.action === 'conversation') {
+          const task = selected[0]!;
+          if (!task.readConversation) throw new Error('This task has no readable child conversation. Use inspect for its result.');
+          return { task_id: task.task_id, kind: task.kind, conversation: await task.readConversation(context, input.cursor) };
+        }
         // Validate the entire selection before dispatching any controls.
         if (input.action === 'stop' && selected.some(task => !task.stop)) throw new Error('One or more selected tasks do not support stopping. No stop was dispatched.');
         if (input.action === 'cancel_observation' && selected.some(task => !task.cancelObservation)) throw new Error('One or more tasks have no cancellable subscription. No subscription was cancelled.');

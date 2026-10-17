@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 
-module.exports = async ({ run, until, pause }) => {
+module.exports = async ({ run, until, pause, window, root }) => {
   await run('window.changeTransitionSaved = { ...chatProps, transcriptDelivery: chatProps.transcriptDelivery }; window.changeTransitionTheme = window.viewTheme; void 0;');
   try {
     for (const [theme, delivery] of [['theme-dark', 'frame'], ['theme-bright', 'batched']]) {
@@ -67,6 +69,7 @@ module.exports = async ({ run, until, pause }) => {
         changeTransitionRunning = changeTransitionRunning.map(message => message.role === 'assistant'
           ? { ...message, toolExecutions: [changeTransitionEdit('next-turn', 3, 1)] } : message);
         window.changeTransitionMessages = [...changeTransitionHistory, ...changeTransitionRunning];
+        window.changeTransitionReview = null;
         updateChat({ messages: changeTransitionMessages, changeReports: views.changeReportsFromMessages(changeTransitionMessages),
           onOpenChangeReview: (...args) => { window.changeTransitionReview = args; } });
       `);
@@ -75,9 +78,92 @@ module.exports = async ({ run, until, pause }) => {
         'showing file changes does not remount the input');
       assert.equal(await run("document.querySelector('.turn-change-review').textContent"), 'file 1|+3-1',
         'live summary counts only this turn');
-      await run("document.querySelector('.turn-change-review').click()");
+      await run("document.querySelector('.turn-change-review').click();void 0");
+      assert.equal(await run('changeTransitionReview'), null, 'the statistics capsule does not open review');
+      assert.equal(await run("document.querySelector('.turn-change-review').matches('button,[role=button]')"), false,
+        'the capsule is a summary, not an action button');
+      await run("document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'}));void 0");
+      await until("!!document.querySelector('.turn-change-preview:popover-open')", 'file hover preview opens above the summary');
+      assert.equal(await run("document.querySelector('.turn-change-files').textContent"), 'next-turn.ts+3-1',
+        'hover shows only the active turn file and its counts');
+      assert.equal(await run(`(()=>{const tip=document.querySelector('.turn-change-preview').getBoundingClientRect();
+        const trigger=document.querySelector('.turn-change-review').getBoundingClientRect();
+        return tip.bottom <= trigger.top && tip.left >= 0 && tip.right <= innerWidth;})()`), true,
+        'hover is above the summary and within the window');
+      await pause(180);
+      await fs.writeFile(path.join(root, 'tmp', `file-change-hover-${theme}.png`), (await window.webContents.capturePage()).toPNG());
+      const pointer = (type, point) => window.webContents.sendInputEvent({ type, x: Math.round(point.x), y: Math.round(point.y), button: 'left', clickCount: 1 });
+      const targets = await run(`(()=>{const card=document.querySelector('.turn-change-preview').getBoundingClientRect(),
+        trigger=document.querySelector('.turn-change-review').getBoundingClientRect(),row=document.querySelector('.turn-change-file-action').getBoundingClientRect();
+        return{trigger:{x:trigger.x+trigger.width/2,y:trigger.y+trigger.height/2},gap:{x:trigger.x+trigger.width/2,y:(trigger.top+card.bottom)/2},row:{x:row.x+row.width/2,y:row.y+row.height/2}}})()`);
+      pointer('mouseMove', targets.trigger); await pause(40);
+      pointer('mouseMove', targets.gap); await pause(200);
+      assert.equal(await run("!!document.querySelector('.turn-change-preview:popover-open')"), true,
+        'slow movement across the gap keeps file actions reachable');
+      pointer('mouseMove', targets.row); pointer('mouseDown', targets.row); await pause(80);
+      assert.equal(await run("!!document.querySelector('.turn-change-preview:popover-open')"), true,
+        'pointerdown inside a file row does not dismiss it before click');
+      pointer('mouseUp', targets.row);
+      await until("changeTransitionReview?.[0] === 'src/next-turn.ts' && !document.querySelector('.turn-change-preview')", 'clicking the file opens its changes and closes the list');
+      assert.equal(await run('changeTransitionReview[1]'), 'next-turn', 'file review stays scoped to its owning turn');
+      await run("document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerout',{bubbles:true,pointerType:'mouse'}));document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'}));void 0");
+      await until("!!document.querySelector('.turn-change-preview')", 'file list reopens after review');
+      await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0");
+      await until("!document.querySelector('.turn-change-preview')", 'Escape dismisses the file hover');
+      await run(`
+        window.changeHoverReports = chatProps.changeReports;
+        updateChat({changeReports:[...changeHoverReports,
+          {id:'more-edits',messageId:'change-new-reply',turnId:'next-turn',fileCount:2,additions:6,deletions:1,
+            files:[{path:'src/next-turn.ts',additions:2,deletions:1,diff:'',lines:[]},
+              {path:'lib/next-turn.ts',additions:4,deletions:0,diff:'',lines:[]}]},
+          {id:'reverted-edit',messageId:'change-new-reply',turnId:'next-turn',fileCount:1,additions:100,deletions:50,reverted:true,
+            files:[{path:'reverted.ts',additions:100,deletions:50,diff:'',lines:[]}]}]});
+        document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerout',{bubbles:true,pointerType:'mouse'}));
+        document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'}));void 0;
+      `);
+      await until("document.querySelectorAll('.turn-change-files > li').length === 2", 'multiple edits to one file are combined');
+      assert.deepEqual(await run("[...document.querySelectorAll('.turn-change-files > li')].map(el=>el.textContent)"),
+        ['next-turn.tssrc/next-turn.ts+5-2','next-turn.tslib/next-turn.ts+4-0'],
+        'same-name files are distinguished by path; reverted changes stay excluded');
+      await run("document.querySelectorAll('.turn-change-file-action')[1].click();void 0");
+      assert.deepEqual(await run('changeTransitionReview'), ['lib/next-turn.ts', 'next-turn'], 'same-name files open their own path');
+      await run("document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerout',{bubbles:true,pointerType:'mouse'}));document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'}));void 0");
+      await run(`updateChat({changeReports:[...changeHoverReports,
+        {id:'many-edits',messageId:'change-new-reply',turnId:'next-turn',fileCount:20,additions:20,deletions:0,
+          files:Array.from({length:20},(_,index)=>({path:'src/file-'+index+'.ts',additions:1,deletions:0,diff:'',lines:[]}))}]});`);
+      await until("document.querySelectorAll('.turn-change-files > li').length === 21", 'hover refreshes while new changes arrive');
+      await run("document.querySelector('.turn-change-files').scrollTop=1000;void 0"); await pause(50);
+      assert.equal(await run("!!document.querySelector('.turn-change-preview:popover-open') && document.querySelector('.turn-change-files').scrollTop > 0"), true,
+        'a long file list scrolls without dismissing the hover');
+      await run("updateChat({changeReports:changeHoverReports});document.querySelector('.composer-surface textarea').dispatchEvent(new Event('scroll',{bubbles:false}));void 0");
+      await until("!document.querySelector('.turn-change-preview')", 'surrounding scroll dismisses the hover');
+      await run("document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerout',{bubbles:true,pointerType:'mouse'}));void 0");
+      const ownsDebugger = !window.webContents.debugger.isAttached();
+      if (ownsDebugger) window.webContents.debugger.attach('1.3');
+      try {
+        // Hidden Chromium windows need focus emulation for :focus-visible.
+        await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {enabled:true});
+        await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+        await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+        await run("document.querySelector('.turn-change-review').focus();void 0");
+        await until("!!document.querySelector('.turn-change-preview')", 'keyboard focus can reveal file details');
+        await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyDown',key:'ArrowUp',code:'ArrowUp',windowsVirtualKeyCode:38});
+        await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyUp',key:'ArrowUp',code:'ArrowUp',windowsVirtualKeyCode:38});
+        await until("document.activeElement?.classList.contains('turn-change-file-action')", 'keyboard can move from capsule into the file list');
+        await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0");
+        await until("!document.querySelector('.turn-change-preview') && document.activeElement?.classList.contains('turn-change-review')", 'Escape restores focus to the summary');
+        await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyDown',key:'ArrowUp',code:'ArrowUp',windowsVirtualKeyCode:38});
+        await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyUp',key:'ArrowUp',code:'ArrowUp',windowsVirtualKeyCode:38});
+        await until("document.activeElement?.classList.contains('turn-change-file-action')", 'keyboard reopens file actions after dismissal');
+        await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+        await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+        await until("!document.querySelector('.turn-change-preview')", 'activating a file opens review and dismisses the hover');
+      } finally {
+        await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {enabled:false});
+        if (ownsDebugger) window.webContents.debugger.detach();
+      }
       assert.equal(await run('changeTransitionReview[1]'), 'next-turn', 'review opens the owning turn');
-      assert.equal(await run('changeTransitionReview[0] == null'), true, 'review receives no click event as a file path');
+      assert.equal(await run('changeTransitionReview[0]'), 'src/next-turn.ts', 'keyboard review receives the file path');
       await run(`changeTransitionRunning = changeTransitionRunning.map(message => message.role === 'assistant'
         ? { ...message, content: 'Finishing the result.', metadata: { transcript_kind: 'assistant_final' } } : message);
         updateChat({messages:[...changeTransitionHistory, ...changeTransitionRunning]});`);

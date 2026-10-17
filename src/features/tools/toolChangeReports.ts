@@ -41,6 +41,7 @@ export type ConversationChangeSummary = {
   fileCount: number;
   additions: number;
   deletions: number;
+  files: Array<Pick<ToolFileChange, 'path' | 'additions' | 'deletions'>>;
 };
 
 type ConversationChangeReviewItem = {
@@ -271,7 +272,7 @@ export function summarizeChangeReports(
   if (reports.length === 0) {
     return null;
   }
-  const paths = new Set<string>();
+  const files = new Map<string, ConversationChangeSummary['files'][number]>();
   let fallbackFileCount = 0;
   let additions = 0;
   let deletions = 0;
@@ -282,14 +283,21 @@ export function summarizeChangeReports(
     for (const file of report.files) {
       const normalizedPath = normalizeChangeFilePath(file.path);
       if (normalizedPath) {
-        paths.add(normalizedPath);
+        const previous = files.get(normalizedPath);
+        if (previous) {
+          previous.additions += file.additions;
+          previous.deletions += file.deletions;
+        } else {
+          files.set(normalizedPath, { path: file.path, additions: file.additions, deletions: file.deletions });
+        }
       }
     }
   }
   return {
-    fileCount: paths.size > 0 ? paths.size : fallbackFileCount,
+    fileCount: files.size > 0 ? files.size : fallbackFileCount,
     additions,
     deletions,
+    files: [...files.values()],
   };
 }
 

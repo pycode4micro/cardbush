@@ -95,6 +95,8 @@ for (const turn of turns) {
     ),
     baselineBreak: baselineObservation.frozenPrefixBreak,
     baselineBreakIndex: baselineObservation.breakIndex,
+    baselineParametersChanged: baselineObservation.parametersChanged,
+    baselineChangedParameters: baselineObservation.changedParameters ?? null,
     baselineReusablePercent: sharedCharacterPercent(
       baselineFirst.messages,
       baselineObservation.sharedPrefixMessages,
@@ -102,6 +104,8 @@ for (const turn of turns) {
     ),
     bypassBreak: bypassObservation.frozenPrefixBreak,
     bypassBreakIndex: bypassObservation.breakIndex,
+    bypassParametersChanged: bypassObservation.parametersChanged,
+    bypassChangedParameters: bypassObservation.changedParameters ?? null,
     bypassReusablePercent: sharedCharacterPercent(
       bypassFirst.messages,
       bypassObservation.sharedPrefixMessages,

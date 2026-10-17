@@ -1,6 +1,7 @@
 import { flushSync } from 'react-dom';
 import { updateResponseSpacer } from './chat/responseSpacer';
 import { suspendScrollAnchoring } from './scrollAnchoring';
+import { cancelConversationWheel } from './chat/conversationWheelScrolling';
 
 const pendingToggleGuards = new WeakMap<HTMLElement, {
   releaseAnchoring: () => void;
@@ -15,8 +16,15 @@ export function preserveScrollPositionForToggle(
     update();
     return;
   }
-  const scroller = element.closest('.message-list') as HTMLElement | null;
+  let scroller = element.closest('.message-list') as HTMLElement | null;
+  // Inline previews also appear in compact conversation hosts. Their enclosing
+  // scrolling surface uses the same disclosure anchoring as the main list.
+  if (!scroller) {
+    scroller = element.parentElement;
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+  }
   const messageItem = element.closest('[data-message-id]') as HTMLElement | null;
+  if (scroller) cancelConversationWheel(scroller);
   const anchorElement =
     (element.querySelector(
       '.assistant-completed-summary, .tool-execution-summary, .tool-change-header, .assistant-loop-history-summary',

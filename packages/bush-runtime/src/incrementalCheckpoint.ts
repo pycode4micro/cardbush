@@ -1,5 +1,6 @@
 import type { ModelMessage } from '@cardbush/bush-protocol';
 import type { CompletedModelRound } from './modelRound.js';
+import { withoutToolDisplayTitle } from './toolDisplay.js';
 import { contextCompactionCorrectionMessage, isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
 import { bindContextCheckpointInput, contextCheckpointSlots, type ContextCompactionState, type ContextCompactionSource } from './contextCompaction.js';
 
@@ -16,6 +17,8 @@ export class IncrementalCheckpoint {
   readonly #accepted = new Map<number, string>();
   readonly #calls = new Set<string>();
   readonly #requested: Set<number>;
+  #attemptStart = 1;
+  #refinements = 0;
   failures = 0;
 
   constructor(readonly state: ContextCompactionState, notice: ModelMessage, saved: ModelMessage[] = [],
@@ -28,6 +31,14 @@ export class IncrementalCheckpoint {
     for (let index = 1; index < saved.length; index++) {
       const message = saved[index]!;
       if (isContextMaintenanceNotice(message, 'context_compaction_progress')) {
+        const progress = JSON.parse(message.content);
+        if (progress.kind === 'refinement') {
+          if (progress.job !== 'root' || typeof progress.message !== 'string' || !this.refine(progress.message)) {
+            throw new Error('Invalid saved checkpoint refinement.');
+          }
+          this.history[this.history.length - 1] = structuredClone(message);
+          continue;
+        }
         this.history.push(structuredClone(message)); continue;
       }
       if (isContextMaintenanceNotice(message, 'context_compaction_correction')) {
@@ -73,6 +84,20 @@ export class IncrementalCheckpoint {
   }
   get checkpoint() { return bindContextCheckpointInput(this.value, this.state, 'ordered'); }
 
+  /** Earlier candidates remain durable facts. A budget rejection starts a new
+   * bounded attempt against the same sources, without replaying oversized drafts. */
+  get attemptHistory(): ModelMessage[] { return [this.history[0]!, ...this.history.slice(this.#attemptStart)]; }
+  refine(message: string): boolean {
+    if (this.scope || !this.complete || this.#refinements >= 2) return false;
+    this.#refinements++;
+    this.#accepted.clear();
+    this.failures = 0;
+    this.#attemptStart = this.history.length;
+    this.history.push({ role: 'developer', name: 'context_compaction_progress',
+      content: JSON.stringify({ kind: 'refinement', job: 'root', message }) });
+    return true;
+  }
+
   retry(message: string): boolean {
     this.failures++;
     if (this.failures < 3) this.history.push(contextCompactionCorrectionMessage(message));
@@ -86,7 +111,7 @@ export class IncrementalCheckpoint {
     const accepted: number[] = [];
     const rejected: Array<{ entry?: number; source?: number; reason: string }> = [];
     let input: unknown;
-    try { input = JSON.parse(call.argumentsText); }
+    try { input = withoutToolDisplayTitle(JSON.parse(call.argumentsText)); }
     catch { rejected.push({ reason: 'Invalid JSON. Submit a complete updates object.' }); }
     if (!rejected.length) {
       const candidate = input as Record<string, unknown> | undefined;

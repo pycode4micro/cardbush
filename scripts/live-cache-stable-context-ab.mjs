@@ -211,6 +211,7 @@ async function runBranch(branch) {
       sum(turns, 'inputTokens'),
     ),
     frozenPrefixBreaks: turns.filter((turn) => turn.cacheChain?.frozenPrefixBreak).length,
+    parameterChanges: turns.filter((turn) => turn.cacheChain?.parametersChanged).length,
     totalDurationMs: sum(turns, 'durationMs'),
   };
 }
@@ -243,6 +244,7 @@ function summarize(branch) {
     totalCachedInputTokens: branch.totalCachedInputTokens,
     totalUncachedInputTokens: branch.totalUncachedInputTokens,
     frozenPrefixBreaks: branch.frozenPrefixBreaks,
+    parameterChanges: branch.parameterChanges,
     totalDurationMs: branch.totalDurationMs,
     turns: branch.turns.map((turn) => ({
       turn: turn.turn,
@@ -251,6 +253,8 @@ function summarize(branch) {
       uncachedInputTokens: turn.uncachedInputTokens,
       frozenPrefixBreak: turn.cacheChain?.frozenPrefixBreak ?? null,
       breakIndex: turn.cacheChain?.breakIndex ?? null,
+      parametersChanged: turn.cacheChain?.parametersChanged ?? null,
+      changedParameters: turn.cacheChain?.changedParameters ?? null,
       durationMs: turn.durationMs,
       terminalStatus: turn.terminal.status,
       response: turn.response,

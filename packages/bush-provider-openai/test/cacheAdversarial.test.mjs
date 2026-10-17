@@ -100,10 +100,14 @@ test('capability projection and generation-parameter changes report their first 
   observe(tracker, req);
   const fallback = observe(tracker, req, 'function');
   assert.equal(fallback.logical.frozenPrefixBreak, false);
-  assert.equal(fallback.wire.frozenPrefixBreak, true);
+  assert.equal(fallback.wire.frozenPrefixBreak, false);
+  assert.equal(fallback.wire.parametersChanged, true);
+  assert.equal(fallback.wire.breakIndex, undefined);
   assert.deepEqual(fallback.wire.changedParameters, ['tools']);
   const changed = observe(tracker, { ...req, reasoningEffort: 'high' }, 'function');
   assert.deepEqual(changed.wire.changedParameters, ['reasoning']);
   assert.equal(JSON.stringify(tracker.snapshot()).includes('Inspect the facts.'), false);
-  assert.equal(changed.wire.breakIndex, 0);
+  assert.equal(changed.wire.parametersChanged, true);
+  assert.equal(changed.wire.frozenPrefixBreak, false);
+  assert.equal(changed.wire.breakIndex, undefined);
 });

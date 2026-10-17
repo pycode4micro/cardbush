@@ -9,7 +9,7 @@ module.exports = async ({run,until,click,edit,pause=ms=>new Promise(r=>setTimeou
   await click('个性化');await until("!!document.querySelector('#conversation-style-mode')");
   assert.equal(await run("document.querySelector('.settings-target')===null"),true);
   assert.deepEqual(await run("[...document.querySelectorAll('.settings-nav')].map(button=>button.dataset.settingsSection)"),
-    ['browser','computer-use','mcp','models','voice','profile','summary_for_user','shortcuts','usage','appearance','ssh','runtime','proxy','cache','diagnostics']);
+    ['general','notifications','appearance','voice','profile','summary_for_user','shortcuts','usage','cache','mcp','models','browser','computer-use','ssh','runtime','proxy','diagnostics']);
   await edit('#global-agent-instructions','Shared rules for local and cloud.',true);await click('保存');
   await until("file.content==='Shared rules for local and cloud.'");
   await run("settingsProps.agentId='b';renderSettings()");
@@ -17,7 +17,7 @@ module.exports = async ({run,until,click,edit,pause=ms=>new Promise(r=>setTimeou
   await click('模型管理');await until("document.querySelectorAll('.model-row').length===2");
   assert.ok(await run("document.querySelector('.settings-content').textContent.includes('deepseek')"));
   assert.equal(await run("document.querySelector('.settings-target')===null"),true);
-  await click('外观与语言');await until("!!document.querySelector('[name=theme-mode]')");
+  await click('外观');await until("!!document.querySelector('[name=theme-mode]')");
   await click('快捷键');await until("!!document.querySelector('[data-shortcut-row]')");
   await click('个性化');await until("!!document.querySelector('#conversation-style-mode')");
   assert.deepEqual(await run('agentSettingsCalls'),[],'all entry points edit the same source; remote synchronization happens at cloud use');

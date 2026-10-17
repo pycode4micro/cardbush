@@ -4,6 +4,7 @@ import { returnedToolError } from '@cardbush/bush-protocol';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import type { JoinedSubagentResult } from './subagentTool.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
+import { RuntimeTurnSignals, type TurnWakeReason } from './turnSignals.js';
 
 const startSchema = z.object({
   name: z.string().min(1), arguments: z.record(z.string(), z.unknown()),
@@ -14,7 +15,6 @@ const startSchema = z.object({
 const manageSchema = z.object({ action: z.enum(['list', 'wait', 'cancel']).default('list'),
   task_ids: z.array(z.string().min(1)).min(1).max(32).optional(), mode: z.enum(['any', 'all']).default('any'),
   yield_time_ms: z.number().int().min(0).max(30_000).default(1000).describe('Maximum time to suspend this call, not the background job. Use 0 for a snapshot. Do independent work before waiting; pending results arrive automatically.') }).strict();
-type WakeReason = 'task_completed' | 'user_message' | 'turn_ended' | 'yield_timeout';
 export type BackgroundToolJob = { id: string; key: string; name: string; controller: AbortController; status: string;
   attempts: number; promise: Promise<JoinedSubagentResult['message']>; stop?: string };
 type Job = BackgroundToolJob;
@@ -22,20 +22,22 @@ type Job = BackgroundToolJob;
 /** Active-turn work only: no scheduled wakeups, new conversations or plugin-specific protocol. */
 export class BackgroundToolCalls {
   private jobs = new Map<string, Job>();
-  private waiters = new Map<string, Set<(reason: 'user_message' | 'turn_ended') => void>>();
+  private readonly signals: RuntimeTurnSignals;
   constructor(private registry: ToolRegistry, private onResult: (session: string, turn: string, id: string,
     result: Promise<JoinedSubagentResult['message']>) => void,
     private extraJobs?: (session: string, turn: string) => BackgroundToolJob[],
-    private hasGuidance: (session: string, turn: string) => boolean = () => false,
-    private store?: ToolExecutionStore) {}
+    hasGuidance: (session: string, turn: string) => boolean = () => false,
+    private store?: ToolExecutionStore, signals?: RuntimeTurnSignals) {
+    this.signals = signals ?? new RuntimeTurnSignals((session, turn) => hasGuidance(session, turn) ? 'user_message' : undefined);
+  }
   private key(session: string, turn: string) { return JSON.stringify([session, turn]); }
   list(session: string, turn: string) { return [...this.jobs.values(), ...this.extraJobs?.(session, turn) ?? []].filter(job => job.key === this.key(session, turn)); }
   stopReason(session: string, turn: string) { return [...this.jobs.values()].find(job => job.key === this.key(session, turn) && job.stop)?.stop; }
   wakeForGuidance(session: string, turn: string) {
-    for (const wake of this.waiters.get(this.key(session, turn)) ?? []) wake('user_message');
+    this.signals.wake(session, turn);
   }
   endTurn(session: string, turn: string) {
-    for (const wake of this.waiters.get(this.key(session, turn)) ?? []) wake('turn_ended');
+    this.signals.endTurn(session, turn);
     for (const [id, job] of this.jobs) if (job.key === this.key(session, turn)) { job.controller.abort(); this.jobs.delete(id); }
   }
   register() {
@@ -65,34 +67,8 @@ export class BackgroundToolCalls {
     });
   }
   /** Suspend the observer only. Jobs keep running when the model receives new guidance or a yield. */
-  async waitForWork(session: string, turn: string, promises: Promise<unknown>[], mode: 'any' | 'all', signal?: AbortSignal, yieldTimeMs?: number): Promise<WakeReason> {
-    signal?.throwIfAborted();
-    if (this.hasGuidance(session, turn)) return 'user_message';
-    const key = this.key(session, turn);
-    return new Promise<WakeReason>((resolve, reject) => {
-      let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const waiters = this.waiters.get(key) ?? new Set();
-      const cleanup = () => {
-        clearTimeout(timer);
-        waiters.delete(wake);
-        if (!waiters.size) this.waiters.delete(key);
-        signal?.removeEventListener('abort', abort);
-      };
-      const finish = (reason: WakeReason) => {
-        if (settled) return;
-        settled = true; cleanup(); resolve(reason);
-      };
-      const fail = (error: unknown) => { if (!settled) { settled = true; cleanup(); reject(error); } };
-      const wake = (reason: 'user_message' | 'turn_ended') => finish(reason);
-      const abort = () => fail(signal?.reason ?? new DOMException('Wait cancelled', 'AbortError'));
-      waiters.add(wake); this.waiters.set(key, waiters);
-      signal?.addEventListener('abort', abort, { once: true });
-      if (signal?.aborted) abort();
-      if (yieldTimeMs !== undefined) timer = setTimeout(() => finish('yield_timeout'), yieldTimeMs);
-      const completion = mode === 'all' ? Promise.all(promises) : Promise.race(promises);
-      void completion.then(() => finish('task_completed'), fail);
-    });
+  waitForWork(session: string, turn: string, promises: Promise<unknown>[], mode: 'any' | 'all', signal?: AbortSignal, yieldTimeMs?: number): Promise<TurnWakeReason> {
+    return this.signals.wait(session, turn, promises, mode, signal, yieldTimeMs);
   }
   private start(context: ToolHandlerContext<z.infer<typeof startSchema>>) {
     if (!context.turn || !this.registry.resolve('mcp_call')) throw new Error('Background MCP calls require an active host turn.');

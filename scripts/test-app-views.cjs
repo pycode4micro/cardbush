@@ -158,6 +158,7 @@ async function buildViews() {
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews' ? [
       'src/backend/runtimeSessionMessageProjection.ts', 'src/features/chatMessages/transcript/messageProjection.ts',
+      'src/backend/runtimeHistoryToolExecution.ts', 'src/backend/runtimeChat.ts',
     ] : []),
     'src/features/tools/WorkspaceChangeStateContext.ts',
     'src/features/tools/toolChangeReports.ts',
@@ -932,7 +933,7 @@ app.whenReady().then(async () => {
       return;
     }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'submission-motion') {
-      await require('./helpers/chat-change-summary-transition.cjs')({ run, until, pause });
+      await require('./helpers/chat-change-summary-transition.cjs')({ run, until, pause, window, root });
       await require('./helpers/chat-submission-motion.cjs')({ run, until, pause, window, root });
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'submission-motion') {

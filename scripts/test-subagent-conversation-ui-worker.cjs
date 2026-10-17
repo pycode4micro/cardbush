@@ -59,10 +59,10 @@ app.whenReady().then(async () => {
     await read(`window.setSource(false,'a')`);
     await type('完成后检查字体'); await send();
     await read(`window.setSource(true,'a')`);
-    await until(`!!document.querySelector('.composer-queue-button')`);
+    await until(`document.querySelector('.runtime-queue-item')?.textContent.includes('完成后检查字体')`);
     await read(`window.show('b')`); await until(`window.streams.has('b')`);
     await until(`document.querySelector('.model-select')?.textContent.includes('deepseek-flash')`);
-    assert.equal(await read(`document.querySelectorAll('.composer-queue-button').length`),0,'sibling does not inherit child queue');
+    assert.equal(await read(`document.querySelectorAll('.runtime-queue-item').length`),0,'sibling does not inherit child queue');
     await read(`window.finish('a')`);
     await until(`window.calls.some(item=>item.kind==='send'&&item.sessionId==='a'&&item.text==='完成后检查字体') && window.streams.has('a')`);
     assert.equal(await read(`window.calls.filter(item=>item.kind==='send'&&item.text==='完成后检查字体').length`),1,'accepted queue continues once after closing its view');

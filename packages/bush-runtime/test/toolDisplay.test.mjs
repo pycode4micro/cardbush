@@ -88,8 +88,8 @@ test('MCP gateway title stays on its single receipt and never reaches strict nat
   assert.equal(calls, 1);
 });
 
-test('summary_for_user ignores stray presentation metadata without accepting unknown business fields', async () => {
-  const summary = { ...definition, name: 'summary_for_user' };
+for (const name of ['summary_for_user', 'checkpoint_context']) test(`${name} ignores stray presentation metadata without accepting unknown business fields`, async () => {
+  const summary = { ...definition, name };
   assert.deepEqual(withToolDisplayTitle(summary), summary, 'summary remains an invisible maintenance call');
   const registry = new ToolRegistry(); let executions = 0;
   registry.register({ definition: summary, manifest, decodeInput: strictInput, execute: () => { executions++; return { saved: true }; } });

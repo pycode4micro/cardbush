@@ -1,0 +1,26 @@
+{
+  "name": "agentchatroom",
+  "version": "0.2.0",
+  "description": "Project-aware coordination between independent CardBush agents, with voluntary rooms and message wake.",
+  "author": { "name": "CardBush" },
+  "license": "Apache-2.0",
+  "skills": "./skills",
+  "interface": {
+    "displayName": "AgentChatroom",
+    "shortDescription": "Coordinate independent agents across related projects",
+    "longDescription": "Discover active project agents, voluntarily join shared rooms and coordinate responsibilities and interfaces. Explicit invitations link projects. Runtime delivers message notifications and bounded idle wake while preserving parent-child boundaries.",
+    "developerName": "CardBush",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": ["Coordinate this task with other agents working on the project"],
+    "logo": "./assets/logo.svg"
+  },
+  "cardbush": {
+    "runtimeExtension": { "apiVersion": 1, "entry": "./runtime/index.mjs" },
+    "localizations": { "zh": {
+      "shortDescription": "让同项目和关联项目的独立 Agent 按需沟通",
+      "longDescription": "发现正在处理项目的 Agent，主动加入房间并协调分工与接口。通过明确邀请关联其他项目，支持消息通知和有限次数的空闲唤醒。子 Agent 仍由父 Agent 统一协调。",
+      "defaultPrompt": ["与正在处理这个项目的其他 Agent 协调当前任务"]
+    } }
+  }
+}

@@ -161,9 +161,11 @@ export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequ
   const allowAdditions = request.metadata.mcpCatalogUpdates === 'additions' &&
     request.metadata.agentRole !== 'child' && !request.metadata.pluginAgentId && !request.metadata.automationRunId;
   const visible = new Set(request.tools.map(tool => tool.name));
-  const current = registry.definitions().filter(definition => {
+  const advertised = new Set(registry.definitions().map(tool => tool.name));
+  const current = registry.definitions({ includeSuperseded: true }).filter(definition => {
     if (!allowAdditions && !visible.has(definition.name)) return false;
     const registration = registry.resolve(definition.name)!;
+    if (!visible.has(definition.name) && !advertised.has(definition.name)) return false;
     return registration.registrationOwner?.startsWith('extension:') || registration.registrationOwner === 'runtime_mcp' &&
       registration.mcpHook && registration.mcpHook.modelVisible !== false;
   });
@@ -201,6 +203,7 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
     if (parsed.success) return parsed.data;
   }
   const tools = request.tools.filter(tool => registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
+    !registry.resolve(tool.name)?.deferredSchema &&
     (!tool.name.startsWith('agent_memory_') || request.metadata.pluginAgentMemoryActive === true) &&
     (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(withToolDisplayTitle);
   // Keep discovery entry points when the catalog is empty, so connect/disconnect preserves them.

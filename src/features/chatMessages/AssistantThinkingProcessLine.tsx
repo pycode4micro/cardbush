@@ -1,5 +1,7 @@
 import { ChevronDown, LoaderCircle } from 'lucide-react';
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { HoverPreview, useHoverPreview } from '../../components/HoverPreview';
+import { basename } from '../../shared/localPaths';
 import type { AppLanguage, ChatToolExecution } from '../../types';
 import { modelLogoFor } from '../composer/modelLogos';
 import type { ThinkingNotice } from '../composer/thinkingNoticeProjection';
@@ -25,16 +27,55 @@ export function AssistantThinkingProcessLine(props: {
   return <AssistantThinkingDetail {...props} notice={notice} animate={scope.running} />;
 }
 
-export function TurnChangeReviewButton({ summary, language, onOpen }: {
-  summary: ConversationChangeSummary; language: AppLanguage; onOpen?: () => void;
+export function TurnChangeSummary({ summary, language, onOpen }: {
+  summary: ConversationChangeSummary; language: AppLanguage; onOpen?: (filePath: string) => void;
 }) {
-  return <button className="turn-change-review" type="button" onClick={() => onOpen?.()}
+  const preview = useHoverPreview(summary.files.length === 0, { interactive: true });
+  const focusRequested = useRef(false);
+  useEffect(() => {
+    if (preview.anchor && focusRequested.current) {
+      focusRequested.current = false;
+      document.getElementById(preview.id)?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    }
+  }, [preview.anchor, preview.id]);
+  const names = new Set<string>(), repeatedNames = new Set<string>();
+  if (preview.anchor) for (const file of summary.files) {
+    const name = basename(file.path);
+    if (names.has(name)) repeatedNames.add(name);
+    names.add(name);
+  }
+  return <><div {...preview.triggerProps} className="turn-change-review" role="group" tabIndex={summary.files.length ? 0 : undefined}
+    aria-haspopup={summary.files.length ? 'dialog' : undefined} aria-describedby={undefined} aria-controls={preview.anchor ? preview.id : undefined}
+    aria-keyshortcuts="ArrowUp ArrowDown"
+    onKeyDown={event => {
+      if (!summary.files.length || !['ArrowUp', 'ArrowDown', 'Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      const first = document.getElementById(preview.id)?.querySelector<HTMLButtonElement>('button:not(:disabled)');
+      if (first) first.focus();
+      else { focusRequested.current = true; preview.open(event.currentTarget); }
+    }}
     aria-label={language === 'zh'
-      ? `查看本轮 ${summary.fileCount} 个文件改动，新增 ${summary.additions} 行，删除 ${summary.deletions} 行`
-      : `Review ${summary.fileCount} changed files, ${summary.additions} additions, ${summary.deletions} deletions`}>
+      ? `本轮 ${summary.fileCount} 个文件改动，新增 ${summary.additions} 行，删除 ${summary.deletions} 行`
+      : `${summary.fileCount} changed files, ${summary.additions} additions, ${summary.deletions} deletions`}>
     <span>file {summary.fileCount}</span><span className="turn-change-separator" aria-hidden="true">|</span>
     <b className="diff-count add">+{summary.additions}</b><b className="diff-count del">-{summary.deletions}</b>
-  </button>;
+  </div>
+    <HoverPreview preview={preview} placement="top" className="turn-change-preview" interactiveLabel={language === 'zh' ? '本轮文件改动' : 'Changed files this turn'}>
+      {preview.anchor && <ul className="turn-change-files">
+        {summary.files.map(file => <li key={file.path}><button type="button" className="turn-change-file-action" disabled={!onOpen}
+          aria-label={language === 'zh' ? `查看 ${file.path} 的改动` : `Review changes to ${file.path}`}
+          onClick={() => { preview.dismiss(); onOpen?.(file.path); }}>
+          <span className="turn-change-file-name">
+            <span>{basename(file.path)}</span>
+            {repeatedNames.has(basename(file.path)) && <small>{file.path}</small>}
+          </span>
+          <span className="turn-change-file-counts">
+            <b className="diff-count add">+{file.additions}</b><b className="diff-count del">-{file.deletions}</b>
+          </span>
+        </button></li>)}
+      </ul>}
+    </HoverPreview>
+  </>;
 }
 
 export function AssistantThinkingDetail({ language, model, execution, notice, statusLabel, animate = true }: {

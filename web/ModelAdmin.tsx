@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, RefreshCw, X } from 'lucide-react';
+import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import { api, requestId } from './api';
 
 type Model = { id: string; name: string; model: string; baseURL: string; apiProtocol: string; enabled: boolean;
@@ -58,7 +59,7 @@ function ModelEditor({ value, isDefault, busy, error, close, save }: { value: Mo
     <label>API 地址<input name="baseURL" type="url" required maxLength={2048} defaultValue={value?.baseURL ?? 'https://ark.cn-beijing.volces.com/api/v3'}/></label>
     <label>接口协议<select name="apiProtocol" aria-label="接口协议" defaultValue={value?.apiProtocol ?? 'openai_responses'}>{Object.entries(protocols).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
     <label>API 密钥<input name="apiKey" type="password" autoComplete="new-password" required={!value?.hasApiKey} maxLength={8192} placeholder={value?.hasApiKey ? '已配置；留空不修改' : '填写服务商密钥'}/></label>
-    <div className="org-form-grid"><label>上下文窗口（tokens）<input name="maxContextTokens" type="number" min={2048} max={2000000} step={1} required defaultValue={value?.maxContextTokens ?? 400000}/></label><label>最大输出（tokens）<input name="maxOutputTokens" type="number" min={1} max={1000000} step={1} required defaultValue={value?.maxOutputTokens ?? 128000}/></label></div>
+    <div className="org-form-grid"><label>上下文窗口（tokens）<input name="maxContextTokens" type="number" min={2048} max={2000000} step={1} required defaultValue={value?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS}/></label><label>最大输出（tokens）<input name="maxOutputTokens" type="number" min={1} max={1000000} step={1} required defaultValue={value?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS}/></label></div>
     <p className="muted org-help">请按模型实际能力填写；最大输出需小于上下文窗口。系统会预留输出空间，并在接近上下文容量时自动整理历史。</p>
     <label>思考强度<select name="reasoningEffort" aria-label="思考强度" defaultValue={value ? value.reasoningEffort ?? 'default' : 'medium'}>{Object.entries(efforts).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
     <label className="org-checkbox"><input name="enabled" type="checkbox" defaultChecked={value?.enabled ?? true} disabled={isDefault}/>启用模型{isDefault && '（当前默认）'}</label>

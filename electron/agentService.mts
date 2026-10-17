@@ -8,6 +8,7 @@ import { sourcePreferenceText } from '@cardbush/bush-product-agent';
 import { individuationSettingsSchema } from '@cardbush/bush-protocol';
 import { AgentSharedConfiguration, recoverSharedConfiguration } from './agentSharedConfiguration.mjs';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
@@ -68,6 +69,7 @@ export class AgentService {
   #mutations: Promise<unknown> = Promise.resolve();
   #busy = new Map<string, AbortController>();
   #assigned = new Map<string, string>();
+  #waitingForHost = new Set<string>();
   #closing = false;
   #storageFailure?: string;
   #stateListeners = new Set<() => void>();
@@ -445,10 +447,11 @@ export class AgentService {
         const job = this.#state.jobs.find(item => item.id === value.id);
         if (!job) throw new Error('Unknown queued message.');
         if (value.action === 'guide' && (job.guidance?.applied || job.manualRelease)) return { accepted: true };
-        if (job.status !== 'queued' || this.#assigned.get(job.sessionId) === job.id) throw new Error('This message has already started. Refresh before changing it.');
+        if (job.status !== 'queued' || this.#assigned.get(job.sessionId) === job.id && (value.action === 'reorder' || !this.#waitingForHost.has(job.id))) throw new Error('This message has already started. Refresh before changing it.');
         if (job.guidance && value.action !== 'guide') throw new Error('Guidance delivery is pending. Retry delivery before changing this message.');
         if (value.action === 'remove') {
           await this.#write(state => { state.jobs.find(item => item.id === job.id)!.status = 'stopped'; });
+          if (this.#assigned.get(job.sessionId) === job.id) this.#busy.get(job.sessionId)?.abort();
         } else if (value.action === 'reorder') {
           await this.#write(state => {
             const from = state.jobs.findIndex(item => item.id === job.id);
@@ -460,16 +463,17 @@ export class AgentService {
           });
         } else {
           const active = this.#state.jobs.find(item => item.sessionId === job.sessionId && item.status === 'running');
-          if (!active && !job.guidance) {
+          const activeTurnId = active?.turnId ?? await this.#hostConversationTurn(job.sessionId);
+          if (!activeTurnId && !job.guidance) {
             // A manual send releases only this item; the session lock stays on.
             await this.#write(state => { state.jobs.find(item => item.id === job.id)!.manualRelease = true; });
             this.#pump(); return { accepted: true };
           }
-          if (!job.guidance && (!active || active.turnId !== value.turnId)) throw new Error('The target turn is no longer running.');
+          if (!job.guidance && activeTurnId !== value.turnId) throw new Error('The target turn is no longer running.');
           // Reserve durably before delivery. A crash or an uncertain reply cannot
           // allow the queue pump to execute the same text as an ordinary turn.
           if (!job.guidance) await this.#write(state => { state.jobs.find(item => item.id === job.id)!.guidance = {
-            turnId: active!.turnId, messageId: `queued-guidance-${job.id}`, createdAt: new Date().toISOString(), mode: value.mode ?? 'append_context' }; });
+            turnId: activeTurnId!, messageId: `queued-guidance-${job.id}`, createdAt: new Date().toISOString(), mode: value.mode ?? 'append_context' }; });
           const reserved = this.#state.jobs.find(item => item.id === job.id)!;
           try {
             await this.#command('runtime.enqueue_guidance', { protocol: 'bush.runtime_guidance.v1', sessionId: job.sessionId,
@@ -487,6 +491,7 @@ export class AgentService {
             throw error;
           }
           await this.#write(state => { const item = state.jobs.find(item => item.id === job.id)!; item.status = 'stopped'; item.guidance!.applied = true; });
+          if (this.#assigned.get(job.sessionId) === job.id) this.#busy.get(job.sessionId)?.abort();
         }
         this.#pump(); return { accepted: true };
       }
@@ -560,6 +565,29 @@ export class AgentService {
       new ConversationExtractStore(join(this.root, 'conversation-extracts'), (sessionId, keys) =>
         this.#command('runtime.extract_session', { sessionId, keys }) as Promise<ConversationExtractSource>));
   }
+  async #hostConversationTurn(sessionId: string): Promise<string | undefined> {
+    const kind = 'plugin.agentchatroom.session_status';
+    const capabilities = await this.#command('runtime.get_capabilities') as { supportedCommands: string[] };
+    if (!capabilities.supportedCommands.includes(kind)) return;
+    const status = await this.#command(kind, { sessionId }) as { activeTurnId?: string };
+    return status.activeTurnId;
+  }
+  async #waitForHostConversation(job: AgentJob, signal: AbortSignal) {
+    // A joined conversation can be woken directly by Runtime. Keep human work
+    // queued and guideable until that turn finishes; do not create a competing turn.
+    this.#waitingForHost.add(job.id);
+    try {
+      while (!signal.aborted) {
+        const turnId = await this.#hostConversationTurn(job.sessionId);
+        if (!turnId) return;
+        for await (const event of this.runtime.transport.openEventStream({ sessionId: job.sessionId, turnId, signal })) {
+          if ((event as RuntimeEvent).kind === 'turn_terminal') break;
+        }
+        // The terminal event precedes admission release by a finalization boundary.
+        await delay(20, undefined, { signal });
+      }
+    } finally { this.#waitingForHost.delete(job.id); }
+  }
   #pump() {
     if (this.#closing || this.#storageFailure) return;
     for (const job of this.#state.jobs) {
@@ -576,8 +604,18 @@ export class AgentService {
     }
   }
   async #run(jobId: string, signal: AbortSignal) {
+    const queued = this.#state.jobs.find(item => item.id === jobId)!;
+    try { await this.#waitForHostConversation(queued, signal); }
+    catch (error) {
+      if (!signal.aborted) await this.#write(state => {
+        const current = state.jobs.find(item => item.id === jobId)!;
+        current.status = 'failed'; current.completedAt = new Date().toISOString(); current.error = error instanceof Error ? error.message : String(error);
+      });
+      return;
+    }
     await this.#write(state => {
       const job = state.jobs.find(item => item.id === jobId)!;
+      if (signal.aborted || job.guidance) return;
       if (state.sessions?.[job.sessionId]?.queueLocked && !job.manualRelease && !job.goalContinuation) return;
       if (job.status === 'queued') { job.status = 'running'; job.startedAt = new Date().toISOString(); }
     });
@@ -656,6 +694,13 @@ export class AgentService {
         });
       }
     } catch (error) {
+      if (!signal.aborted && (error as { code?: string }).code === 'runtime_session_busy') {
+        // A host wake may win the small gap between observation and admission.
+        // Runtime rejected the request before execution, so retaining the queue is safe.
+        await this.#write(state => { const current = state.jobs.find(item => item.id === jobId)!; current.status = 'queued'; delete current.startedAt; });
+        await delay(100);
+        return;
+      }
       await this.#write(state => { const current = state.jobs.find(item => item.id === jobId)!; current.status = signal.aborted ? 'stopped' : 'failed'; current.completedAt = new Date().toISOString(); current.error = error instanceof Error ? error.message : String(error); });
     }
   }

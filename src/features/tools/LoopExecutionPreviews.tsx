@@ -21,8 +21,8 @@ const imageTools = new Set(['inject_image_input', 'view_image']);
 export const isLoopPreviewExecution = (execution: ChatToolExecution) => {
   const activity = toolAgentActivity(execution);
   return isDefinitionActivity(activity) || imageTools.has(execution.name) || (agentTools.has(execution.name) && (
-    activity?.action === 'run' && (!!activity.taskIds?.length || execution.state === 'failed' || execution.state === 'cancelled') ||
-    !activity && execution.metadata.nativeResultDeferred === true));
+    activity?.action === 'run' && !!activity.taskIds?.length ||
+    !activity && execution.state === 'completed' && execution.metadata.nativeResultDeferred === true));
 };
 
 export function LoopExecutionPreviews({ executions, message, language, active }: {
@@ -110,23 +110,27 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
     const members = Array.isArray(output.members) ? output.members.map(asRecord) : [output];
     const ids = new Set(activity?.taskIds ?? members.map(item => String(item.taskId ?? '')).filter(Boolean));
     if (Array.isArray(output.taskIds)) output.taskIds.forEach(id => ids.add(String(id)));
-    const slots = ids.size ? [...ids] : [''];
-    for (const taskId of slots) {
-      const key = taskId || execution.id;
+    // A rejected dispatch has no child identity. Its error stays in the tool row.
+    for (const taskId of ids) {
+      const key = taskId;
       // Repeated dispatch results can refer to the same child. Show that task once.
       if (agentRows.has(key) || employeeRows.has(key)) continue;
-      const task = tasks.find(item => item.parentTurnId === (execution.turnId ?? turnId) && item.taskId === taskId);
-      const running = task ? task.status === 'running' : isToolRunningInContext(execution, active) || output.status === 'running';
+      const storedTask = tasks.find(item => item.taskId === taskId);
+      const task = storedTask && !storedTask.agentName && ids.size === 1 && activity?.name
+        ? { ...storedTask, agentName: activity.name } : storedTask;
+      const member = members.find(item => item.taskId === taskId);
+      const returnedStatus = member?.status ?? output.status;
+      const running = task ? task.status === 'running' : isToolRunningInContext(execution, active) || returnedStatus === 'running' || returnedStatus === 'message_queued';
       const employee = task ? isEmployeeTask(task) : activity?.kind === 'employee';
-      const failed = task ? task.status === 'failed' : execution.state === 'failed';
+      const failed = task ? task.status === 'failed' : execution.state === 'failed' || returnedStatus === 'failed';
+      const stopped = task ? task.status === 'stopped' : execution.state === 'cancelled' || returnedStatus === 'stopped';
       if (employee) { runningEmployees += Number(running); failedEmployees += Number(failed); }
       else { runningAgents += Number(running); failedAgents += Number(failed); }
       const status = task ? subagentTaskPresentation(task, language).label :
-        running ? (zh ? '运行中' : 'Running') : execution.state === 'failed' ? (zh ? '执行失败' : 'Failed') :
-        execution.state === 'cancelled' ? (zh ? '已停止' : 'Stopped') : (zh ? '已派发' : 'Dispatched');
-      const title = task ? employeeTaskTitle(task, language) : activity?.name || activity?.id || (zh ? '子 Agent' : 'Subagent');
-      const Icon = running ? LoaderCircle : task?.status === 'failed' || execution.state === 'failed' ? TriangleAlert :
-        task?.status === 'stopped' || execution.state === 'cancelled' ? CircleStop : task?.status === 'completed' ? CheckCircle2 : GitFork;
+        running ? (zh ? '运行中' : 'Running') : failed ? (zh ? '执行失败' : 'Failed') :
+        stopped ? (zh ? '已停止' : 'Stopped') : returnedStatus === 'completed' ? (zh ? '已完成' : 'Completed') : (zh ? '已派发' : 'Dispatched');
+      const title = task ? employeeTaskTitle(task, language) : typeof member?.agentName === 'string' ? member.agentName : activity?.name || activity?.id || (zh ? '子 Agent' : 'Subagent');
+      const Icon = running ? LoaderCircle : failed ? TriangleAlert : stopped ? CircleStop : task?.status === 'completed' || returnedStatus === 'completed' ? CheckCircle2 : GitFork;
       (employee ? employeeRows : agentRows).set(key, <button key={key} type="button" className="tool-preview-card loop-subagent-preview"
         data-execution-id={execution.id} data-task-id={taskId || undefined} disabled={!task} title={`${title} · ${status}`}
         onClick={() => task && openSummary({ kind: 'subagent-task', sessionId, task, title })}>

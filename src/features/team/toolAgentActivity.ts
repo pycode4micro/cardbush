@@ -1,5 +1,5 @@
 import { agentToolActivity, agentToolActivitySchema, type AgentToolActivity } from '@cardbush/bush-protocol';
-import type { ChatMessage, ChatToolExecution } from '../../types';
+import type { ChatMessage, ChatToolExecution, SubagentTaskSnapshot } from '../../types';
 import { parseToolOutputJson } from '../tools/toolPayload';
 
 export function toolAgentActivity(execution: ChatToolExecution): AgentToolActivity | undefined {
@@ -14,6 +14,19 @@ export function toolAgentActivity(execution: ChatToolExecution): AgentToolActivi
 export type DefinitionActivity = AgentToolActivity & { kind: 'employee' | 'team'; action: 'save'; id: string };
 export function isDefinitionActivity(activity?: AgentToolActivity): activity is DefinitionActivity {
   return !!activity?.id && activity.action === 'save' && activity.kind !== 'subagent';
+}
+
+/** Enrich older unnamed tasks from their dispatch receipts without rewriting history. */
+export function withConversationAgentNames(tasks: SubagentTaskSnapshot[], messages: ChatMessage[]) {
+  const names = new Map<string, string>();
+  for (const message of messages) for (const execution of message.toolExecutions ?? []) {
+    const activity = toolAgentActivity(execution);
+    if (activity?.action === 'run' && activity.name && activity.taskIds?.length === 1 && !names.has(activity.taskIds[0])) {
+      names.set(activity.taskIds[0], activity.name);
+    }
+  }
+  return tasks.map(task => !task.agentName && task.taskId && names.has(task.taskId)
+    ? { ...task, agentName: names.get(task.taskId) } : task);
 }
 
 /** Conversation receipts only; browsing the summary never enumerates the global registry. */

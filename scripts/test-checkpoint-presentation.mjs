@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import vm from 'node:vm';
+import * as protocol from '@cardbush/bush-protocol';
+
+const require = name => { assert.equal(name, '@cardbush/bush-protocol'); return protocol; };
 
 const source = readFileSync('src/backend/runtimeSessionMessageProjection.ts', 'utf8');
 const transpiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
 const module = { exports: {} };
-vm.runInNewContext(transpiled.outputText, { module, exports: module.exports, Set, Array, Object, String, Number, Date });
+vm.runInNewContext(transpiled.outputText, { module, exports: module.exports, require, Set, Array, Object, String, Number, Date });
 const createdAt = '2026-09-11T00:00:00Z';
 const raw = [
   { role: 'user', content: 'Continue the analysis.' },
@@ -28,7 +31,7 @@ assert.deepEqual(turn, original, 'UI filtering cannot mutate model history');
 const visibilitySource = readFileSync('src/backend/runtimeMessageVisibility.ts', 'utf8');
 const visibilityCode = ts.transpileModule(visibilitySource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
 const visibilityModule = { exports: {} };
-vm.runInNewContext(visibilityCode.outputText, { module: visibilityModule, exports: visibilityModule.exports, Set });
+vm.runInNewContext(visibilityCode.outputText, { module: visibilityModule, exports: visibilityModule.exports, require, Set });
 const { isInternalRuntimeMessage } = visibilityModule.exports;
 for (const name of ['context_pressure', 'context_compaction_correction']) {
   assert.equal(isInternalRuntimeMessage({ message: { role: 'developer', name, content: 'Maintenance.' } }), true);

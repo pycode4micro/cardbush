@@ -60,7 +60,13 @@ export function adjustCanvasFrame({ frame, dx, dy, handle, bounds, peers = [], z
   return { frame: { x: left, y: top, width: right - left, height: bottom - top }, guides };
 }
 
-/** Keep the canvas point under the zoom anchor stationary. Coordinates are relative to the view centre. */
+/** Fit against the same left edge as the workspace title, leaving room for item handles. */
+export function fitCanvasViewport(view: Bounds, board: Bounds, inset: number) {
+  return { zoom: clamp(Math.min((view.width - inset * 2) / board.width, (view.height - 80) / board.height), .02, 2),
+    origin: { x: inset, y: 40 } };
+}
+
+/** Keep the canvas point under the zoom anchor stationary. Coordinates are relative to the fitted origin. */
 export function zoomCanvasPan(pan: { x: number; y: number }, from: number, to: number, anchor = { x: 0, y: 0 }) {
   const ratio = to / from;
   return { x: pan.x * ratio + anchor.x * (1 - ratio), y: pan.y * ratio + anchor.y * (1 - ratio) };

@@ -31,6 +31,8 @@ export const cacheChainStateSchema = z.object({
   protocol: z.literal(BUSH_CACHE_CHAIN_STATE_PROTOCOL),
   requestOrdinal: z.number().int().nonnegative(),
   stableInputDigest: z.string().min(1).optional(),
+  // Optional for checkpoints written before per-parameter diagnostics existed.
+  parameterDigests: z.record(z.string(), z.string().min(1)).optional(),
   messageDigests: z.array(z.string().min(1)),
   providerInput: providerInputProjectionSchema.optional(),
 });
@@ -62,9 +64,15 @@ export const cacheChainObservationPayloadSchema = z.object({
   previousMessageCount: z.number().int().nonnegative(),
   sharedPrefixMessages: z.number().int().nonnegative(),
   appendedMessages: z.number().int().nonnegative(),
+  // New observations compare only the historical message/input-item prefix.
+  // Absence of prefixComparisonAvailable identifies legacy combined diagnostics.
+  prefixComparisonAvailable: z.boolean().optional(),
+  parametersChanged: z.boolean().optional(),
+  // Names can be unavailable on the first request restored from a legacy state.
+  changedParameters: z.array(z.string()).optional(),
   frozenPrefixBreak: z.boolean(),
   breakIndex: z.number().int().nonnegative().optional(),
-  // Independent message boundary, even when a parameter change also breaks at 0.
+  // Compatibility alias for the message boundary, independent of parameters.
   messageBreakIndex: z.number().int().nonnegative().optional(),
   stableInputDigest: z.string().min(1),
   sharedPrefixDigest: z.string().min(1),
@@ -79,6 +87,7 @@ export const providerInputObservationSchema = cacheChainObservationPayloadSchema
   format: z.string().min(1),
   transport: z.enum(["full", "continuation"]),
   previousProjectionAvailable: z.boolean(),
+  projectionFormatChanged: z.boolean().optional(),
   changedParameters: z.array(z.string()),
   cacheRouting: cacheRoutingSchema.optional(),
   images: z.object({
@@ -91,3 +100,24 @@ export const providerInputObservationSchema = cacheChainObservationPayloadSchema
   }).optional(),
 });
 export type ProviderInputObservation = z.infer<typeof providerInputObservationSchema>;
+
+/** Read both old and new diagnostics without treating the legacy combined flag
+ * as a proven message rewrite. Undefined means the comparison is unavailable.
+ * None of these fields proves a provider cache hit or miss.
+ */
+export function cacheChainChanges(observation: CacheChainObservationPayload & { projectionFormatChanged?: boolean }) {
+  const projectionFormatChanged = observation.projectionFormatChanged ??
+    observation.changedParameters?.includes('projection_format') ?? false;
+  let prefixBreak: boolean | undefined;
+  if (observation.prefixComparisonAvailable !== undefined) {
+    if (observation.prefixComparisonAvailable) prefixBreak = observation.frozenPrefixBreak;
+  } else if (!projectionFormatChanged) {
+    // Old events already retain independent prefix counts, even if breakIndex
+    // was forced to zero by a simultaneous parameter change.
+    prefixBreak = observation.sharedPrefixMessages < observation.previousMessageCount;
+  }
+  const parametersChanged = observation.parametersChanged ?? (observation.changedParameters
+    ? observation.changedParameters.some(key => key !== 'projection_format')
+    : observation.frozenPrefixBreak ? prefixBreak === false ? true : undefined : false);
+  return { prefixBreak, parametersChanged, projectionFormatChanged };
+}

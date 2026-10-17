@@ -6,8 +6,18 @@ import { creationCanvasSchema, emptyCanvas } from '@cardbush/bush-protocol';
 
 const source = await readFile(new URL('../src/features/creationCanvas/canvasGeometry.ts', import.meta.url), 'utf8');
 const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { adjustCanvasFrame: adjust, zoomCanvasPan } = await import('data:text/javascript;base64,' + Buffer.from(output).toString('base64'));
+const { adjustCanvasFrame: adjust, fitCanvasViewport, zoomCanvasPan } = await import('data:text/javascript;base64,' + Buffer.from(output).toString('base64'));
 const frame = { x: 100, y: 100, width: 200, height: 140 }, bounds = { width: 1000, height: 800 };
+
+test('fit shares a stable title edge across wide, tall and narrow viewports', () => {
+  const board = { width: 1440, height: 960 };
+  for (const view of [{ width: 1200, height: 720 }, { width: 900, height: 1000 }, { width: 520, height: 550 }]) {
+    const inset = view.width < 600 ? 10 : 14, fit = fitCanvasViewport(view, board, inset);
+    assert.deepEqual(fit.origin, { x: inset, y: 40 });
+    assert.ok(fit.origin.x + board.width * fit.zoom <= view.width - inset + 1e-9);
+    assert.ok(fit.origin.y + board.height * fit.zoom <= view.height - 40 + 1e-9);
+  }
+});
 
 test('movement stays inside the board without changing size at either boundary', () => {
   assert.deepEqual(adjust({ frame, bounds, dx: -1000, dy: 1000 }).frame, { ...frame, x: 0, y: 660 });

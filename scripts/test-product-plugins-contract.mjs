@@ -17,6 +17,7 @@ import {
 const bundledRoot = resolve('assets', 'plugins');
 const catalog = await loadProductPluginCatalog([{ path: bundledRoot, source: 'bundled' }]);
 assert.deepEqual(catalog.map((plugin) => plugin.id), [
+  'agentchatroom',
   'computer-use',
   'chrome',
   'xlsx', 'pptx', 'docx', 'pdf',
@@ -98,6 +99,8 @@ try {
       appsConfigPath,
     ),
     [
+      ...catalog.filter(plugin => plugin.id === 'agentchatroom').flatMap(plugin =>
+        plugin.skillRoots.map(path => ({ path, pluginId: plugin.id, pluginName: plugin.name, pluginSource: 'bundled' }))),
       ...(computerUsePlugin?.skillRoots ?? []).map((skillRoot) => ({
         path: skillRoot,
         pluginId: 'computer-use',

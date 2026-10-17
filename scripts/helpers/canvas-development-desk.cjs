@@ -1,0 +1,53 @@
+const assert = require('node:assert/strict');
+const { writeFile } = require('node:fs/promises');
+const { join, resolve } = require('node:path');
+module.exports = async ({ run, until, clickText, selected, win, teams, directory, design }) => {
+  await clickText('新建画板'); await until('!!document.querySelector(".canvas-empty")');
+  await clickText('从 CardBush 开发桌面开始');
+  await until('document.querySelectorAll("[data-canvas-item]").length===5 && document.querySelector("[aria-label=画板名称]").value==="CardBush 开发桌面"');
+  const entry = await selected(), initial = await design({ action: 'inspect', path: entry.path });
+  assert.equal(initial.document.desktop.repository, directory);
+  assert.equal(await run('document.querySelector(".creation-canvas-app").textContent.includes("项目")'), false);
+  await run('document.querySelector("[aria-label=更多操作]").click()');
+  await until('document.querySelector("[aria-label=协作流程]")?.options.length>1');
+  const teamId = teams[0].definition.id;
+  await run(`(()=>{const select=document.querySelector('[aria-label=协作流程]');select.value=${JSON.stringify(teamId)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await until('canvasPendingWrites===0 && !document.querySelector(".canvas-menu")');
+  assert.equal((await design({ action: 'inspect', path: entry.path })).document.team.id, teamId);
+  await run('document.querySelector("[data-canvas-item=release] [aria-label=讨论此区域]").click()');
+  await until('document.querySelector(".canvas-chat-region")?.textContent.includes("准备发布")');
+  await run('document.querySelector("[data-canvas-item=changes]").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
+  await run('canvasSend("检查这里缺什么")');
+  assert.match(await run('lastCanvasPrompt.context.at(-1).content'), /"selectedId":"release"/, 'a different selection cannot silently retarget the conversation');
+  await clickText('更新桌面'); await until('!!window.canvasDraft');
+  await run('canvasSend(canvasDraft)');
+  assert.doesNotMatch(await run('lastCanvasPrompt.context.at(-1).content'), /"selectedId":/, 'whole-desk refresh clears prior region context');
+  const source = join(directory, 'desk-release.md'); await writeFile(source, '# 准备发布\n\n- [x] 布局保持\n- [ ] 发布确认\n\n第一版记录');
+  let current = await design({ action: 'inspect', path: entry.path });
+  await design({ action: 'update', path: entry.path, expected_revision: current.revision, content: [{ id: 'release', content: { kind: 'file', source } }] });
+  await until('document.querySelector("[data-canvas-item=release]").textContent.includes("第一版记录")');
+  await run('document.querySelector("[data-canvas-item=release] [aria-label=固定此版本]").click()');
+  await until('!!document.querySelector("[data-canvas-item=release] [aria-label=恢复更新]") && canvasPendingWrites===0');
+  assert.equal(await run('!!document.querySelector(\'[data-canvas-item=release] [aria-label="编辑 Markdown"]\')'), false);
+  current = await design({ action: 'inspect', path: entry.path });
+  await writeFile(source, '# 准备发布\n\n第二版记录');
+  await design({ action: 'update', path: entry.path, expected_revision: current.revision, content: [
+    { id: 'changes', content: { kind: 'markdown', markdown: '## 最近改动\n\n已读取新的变更记录。\n\n来源：本地测试夹具' } },
+    { id: 'verification', content: { kind: 'markdown', markdown: '## 验证与问题\n\n布局和固定版本回归测试正在运行。' } },
+  ] });
+  await until('document.querySelector("[data-canvas-item=changes]").textContent.includes("已读取新的变更记录")');
+  assert.match(await run('document.querySelector("[data-canvas-item=release]").textContent'), /第一版记录/);
+  const updated = await design({ action: 'inspect', path: entry.path });
+  assert.deepEqual(updated.document.items.map(item => item.frame), initial.document.items.map(item => item.frame));
+  const loaded = new Promise(resolve => win.webContents.once('did-finish-load', resolve)); win.reload(); await loaded;
+  await until('document.querySelector("[data-canvas-item=release]")?.textContent.includes("第一版记录")');
+  await until('!!document.querySelector("[data-canvas-item=release] h1") && !!document.querySelector("[data-canvas-item=changes] h2")');
+  assert.equal((await selected()).path, entry.path);
+  await run('document.querySelector("[data-canvas-item=release]").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
+  await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+  await writeFile(resolve('tmp/canvas-development-desk.png'), (await win.webContents.capturePage()).toPNG());
+  await run('document.querySelector("[data-canvas-item=release] [aria-label=恢复更新]").click()');
+  await until('document.querySelector("[data-canvas-item=release]").textContent.includes("第二版记录")');
+  assert.deepEqual((await design({ action: 'inspect', path: entry.path })).document.items.map(item => item.frame), initial.document.items.map(item => item.frame));
+  console.log('PASS: development desk, Team binding, stable refresh, fixed versions, selection chat and reopen.');
+};

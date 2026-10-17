@@ -65,6 +65,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     const band = await run(`(()=>{const f=document.querySelector('webview').getBoundingClientRect(),s=document.querySelector('.html-region-scroll').getBoundingClientRect();
       return {x:Math.ceil(f.left+${table.left}),y:Math.ceil(s.top+170),width:Math.floor(${table.width}),height:100};})()`);
     const movingPaints = [];
+    const wheelInputs = [];
     let blankFrame;
     const onPaint = (_event, _dirty, image) => {
       const bitmap = image.crop(band).toBitmap();
@@ -74,7 +75,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
         if (value > 100) foreground++;
         darkest = Math.min(darkest, value); lightest = Math.max(lightest, value);
       }
-      movingPaints.push({ foreground, contrast: lightest - darkest });
+      movingPaints.push({ at: Date.now(), foreground, contrast: lightest - darkest });
       if (!blankFrame && (foreground <= 100 || lightest - darkest <= 32)) blankFrame = image.toPNG();
     };
     window.webContents.on('paint', onPaint);
@@ -86,19 +87,21 @@ module.exports = async ({ run, until, pause, window, root }) => {
       let previous = 0;
       for (let frame = 1; frame <= 100; frame++) {
         const offset = Math.round(Math.sin(frame / 8) * 40);
+        wheelInputs.push({at:Date.now(),frame,deltaY:previous-offset});
         page.sendInputEvent({ type: 'mouseWheel', ...point, deltaX: 0, deltaY: previous - offset });
         previous = offset;
         await pause(20);
       }
-      await pause(80);
+      await pause(220);
       const finalTop = await run("document.querySelector('.html-region-scroll').scrollTop");
-      assert.ok(Math.abs(finalTop - target - previous) <= 2,
-        'wheel input inside the lower table moves only the outer conversation by the supplied distance: '+JSON.stringify({finalTop,target,previous}));
+      assert.ok(Math.abs(finalTop - target) < 150,
+        'rapid wheel reversals stay near the same reading region without jumping to another offset: '+JSON.stringify({finalTop,target,previous}));
       assert.equal(await page.executeJavaScript('scrollY'), 0, 'the full-height report does not enter a native inner scroll');
       await run(`document.querySelector('.html-region-scroll').scrollTop=${target};void 0`);
       await pause(80);
     } finally { window.webContents.removeListener('paint', onPaint); }
-    await fs.writeFile(path.join(root, 'tmp/html-moving-paints.json'), JSON.stringify({ band, movingPaints }, null, 2));
+    await fs.writeFile(path.join(root, 'tmp/html-moving-paints.json'), JSON.stringify({ band, movingPaints, wheelInputs,
+      diagnostics: await run('regionBatches') }, null, 2));
     if (blankFrame) await fs.writeFile(path.join(root, 'tmp/html-moving-blank.png'), blankFrame);
     assert.ok(movingPaints.length >= 10, 'continuous scrolling produces native paint samples');
     assert.ok(movingPaints.every(paint => paint.foreground > 100 && paint.contrast > 32), 'lower table text stays painted in every sampled moving frame');

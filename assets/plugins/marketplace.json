@@ -5,6 +5,12 @@
   },
   "plugins": [
     {
+      "name": "agentchatroom",
+      "source": { "source": "local", "path": "./agentchatroom" },
+      "policy": { "installation": "INSTALLED_BY_DEFAULT" },
+      "category": "Productivity"
+    },
+    {
       "name": "computer-use",
       "source": {
         "source": "local",

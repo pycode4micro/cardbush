@@ -1,5 +1,5 @@
-import { emptyCanvas, type CanvasItem, type CanvasSnapshot, type CreationCanvas, type UserPromptInput } from '@cardbush/bush-protocol';
-import { Copy, FilePlus2, FolderDown, LayoutTemplate, MoreHorizontal, Plus, Scan, X } from 'lucide-react';
+import { developmentDesktop, emptyCanvas, replaceCanvasContent, type CanvasItem, type CanvasSnapshot, type CreationCanvas, type UserPromptInput } from '@cardbush/bush-protocol';
+import { Copy, FilePlus2, FolderDown, LayoutTemplate, MoreHorizontal, Plus, RefreshCw, Scan, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { TopBar } from '../../components/TopBar';
 import type { CreationChatOptions, CreationInspectorContext } from '../mdPresentation/CreationConversation';
@@ -19,7 +19,9 @@ import { createCanvas, prepareCanvas, updateCanvasEntry, useCanvases } from './c
 import { canvasFileTarget, canvasRequest, placeCanvasItems } from './canvasModel';
 import { extractCanvasComponents } from './canvasComponents';
 import { CanvasStage } from './CanvasStage';
+import { canvasErrorMessage } from './canvasErrors';
 import { CanvasMarkdownWorkspace } from './CanvasMarkdownWorkspace';
+import { useTeamChoices } from '../team/teamWorkspaceStore';
 import '../inspector/inspectorWorkspace.css';
 import './creationCanvas.css';
 
@@ -41,10 +43,12 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
   const [error, setError] = useState(''), [readError, setReadError] = useState(''), [notice, setNotice] = useState('');
   const [chatOpen, setChatOpen] = useState(false), [inputTarget, setInputTarget] = useState<HTMLDivElement | null>(null);
   const [selectedId, setSelectedId] = useState<string>(), [fileView, setFileView] = useState<{ target: string; title: string; region: boolean }>();
+  const [chatRegion, setChatRegion] = useState<string>();
   const [editor, setEditor] = useState<{ itemId: string; pageId: string }>();
   const [selection, setSelection] = useState<MarkdownSelection>();
   const autoOpened = useRef('');
   const [menu, setMenu] = useState(false), [busy, setBusy] = useState(false), [chat, setChat] = useState<CreationInspectorContext | null>(null);
+  const teamChoices = useTeamChoices(menu);
   const alive = useRef(true), saving = useRef(false), operating = useRef(false), readSequence = useRef(0), viewport = useRef({ width: 0, height: 0, zoom: 1 });
   const inspectorCallback = useRef(onInspectorContext); inspectorCallback.current = onInspectorContext;
   const inspect = useCallback((value: CreationInspectorContext | null) => { setChat(value); inspectorCallback.current?.(value); }, []);
@@ -95,13 +99,14 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
   });
   const add = async () => { try { const paths = await window.cardbushDesktop?.pickAttachments(); if (alive.current && paths) await addPaths(paths); } catch (cause) { setError(String((cause as Error).message)); } };
   const openDocument = async (item: CanvasItem) => {
+    if (item.fixed) throw Error(t('这是固定版本，请先恢复更新。', 'This version is fixed. Resume updates before editing.'));
     if (editor) await saveCreationFile(editor.pageId);
     const snapshot = current.current; if (!snapshot) return;
     let file;
     if (item.kind === 'markdown') {
       file = await markdownFile({ action: 'create', rootPath: parentDirectory(snapshot.path), path: `document-${crypto.randomUUID().slice(0, 8)}.md`, text: item.markdown });
       if (!file || !alive.current) return;
-      const replacement: CanvasItem = { id: item.id, title: item.title || t('未命名文档', 'Untitled document'), frame: item.frame, kind: 'file', source: file.path };
+      const replacement: CanvasItem = { ...replaceCanvasContent(item, { kind: 'file', source: file.path }), title: item.title || t('未命名文档', 'Untitled document') };
       await commit({ ...snapshot.document, items: snapshot.document.items.map(value => value.id === item.id ? replacement : value) }, snapshot.revision);
     } else if (item.kind === 'file') {
       const path = canvasFileTarget(item.source, snapshot.path);
@@ -125,12 +130,32 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
     await openDocument(next.items.find(value => value.id === item.id)!);
   });
   const startChat = () => { if (externalComposerControls) onOpenComposer?.(); else setChatOpen(true); };
+  const discuss = (item: CanvasItem) => { setSelectedId(item.id); setChatRegion(item.id); startChat(); };
+  const makeDesktop = () => action(async () => {
+    const repository = await window.cardbushDesktop?.creationCanvas({ action: 'repository' });
+    if (!repository || !alive.current) return;
+    // A new desk never replaces an existing canvas or its conversation.
+    createCanvas(developmentDesktop(repository.path, language));
+  });
+  const version = (item: CanvasItem) => action(async () => {
+    const value = current.current; if (!value) return;
+    if (saving.current) throw Error(t('正在保存，请稍后重试。', 'Saving. Please retry shortly.'));
+    saving.current = true; readSequence.current++;
+    try {
+      const result = await window.cardbushDesktop!.creationCanvas({ action: item.fixed ? 'unfreeze' : 'freeze', path: value.path, expectedRevision: value.revision, itemId: item.id });
+      if (result && 'document' in result && alive.current) {
+        accept(result); updateCanvasEntry(entry.id, { updatedAt: Date.now() });
+        setNotice(item.fixed ? t('已恢复更新，位置保持不变。', 'Updates resumed; layout preserved.') : t('已固定此版本，后续更新会保留它。', 'Version fixed and preserved during future updates.'));
+      }
+    } finally { saving.current = false; }
+  });
   const beforeSend = async (input: UserPromptInput) => {
+    const targetId = chatRegion || selectedId;
     if (editor) await saveCreationFile(editor.pageId);
     const page = editor ? getBushItPages().pages.find(page => page.id === editor.pageId) : undefined;
     const prepared = await prepareCanvas(entry.id);
     if (!alive.current) throw Error('Canvas changed before sending.');
-    accept(prepared); return canvasRequest(creationRequest(input, page, selection, language), prepared, selectedId, viewport.current);
+    accept(prepared); return canvasRequest(creationRequest(input, page, selection, language), prepared, targetId, viewport.current);
   };
   const reference = async (region: PreviewRegion, image: string) => {
     const snapshot = current.current, source = fileView?.target;
@@ -152,17 +177,30 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
   }}>
     <TopBar title={t('创作', 'Create')} language={language} inspectorOpen={!!inspectorOpen} onToggleInspector={onToggleInspector}/>
     <div className="canvas-toolbar"><input aria-label={t('画板名称', 'Canvas name')} key={snapshot?.document.title} defaultValue={snapshot?.document.title || ''} placeholder={t('无标题画板', 'Untitled canvas')} maxLength={200} onBlur={event => { const value = event.target.value.trim(); const snapshot = current.current; if (snapshot && value !== snapshot.document.title) void commit({ ...snapshot.document, title: value }).catch(() => {}); }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}/>
+      {snapshot?.document.desktop && <button disabled={busy || !chat || chat.busy} onClick={() => {
+        setChatRegion(undefined); setSelectedId(undefined); startChat();
+        // Keep the request editable; submitting later uses the whole desk context.
+        chat?.appendDraft(t('更新这张开发桌面：读取上次记录之后的实际改动，更新发布准备和验证情况，保留现有布局与固定版本。', 'Update this development desk from changes since the previous record. Refresh release preparation and verification, preserving layout and fixed versions.'));
+      }}><RefreshCw size={15}/>{t('更新桌面', 'Update desk')}</button>}
       <button disabled={busy || !snapshot} onClick={() => void newDocument()}><FilePlus2 size={16}/>{t('新建文档', 'New document')}</button>
       <button disabled={busy || !snapshot} onClick={() => void add()}><Plus size={16}/>{t('素材', 'Add files')}</button>
       <div className="canvas-menu-wrap"><button aria-label={t('更多操作', 'More actions')} aria-expanded={menu} onClick={() => setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu && <><button className="canvas-menu-dismiss" aria-label={t('关闭菜单', 'Close menu')} onClick={() => setMenu(false)}/><div className="canvas-menu" role="menu">
+        <button role="menuitem" disabled={busy} onClick={() => void makeDesktop()}><LayoutTemplate size={16}/>{t('CardBush 开发桌面', 'CardBush development desk')}</button>
+        <label className="canvas-team-choice">Team<select aria-label={t('协作流程', 'Workflow')} disabled={busy || !snapshot || teamChoices.loading} value={snapshot?.document.team?.id || ''} onChange={event => {
+          const id = event.target.value; void action(async () => { const value = current.current; if (value) await commit({ ...value.document, team: id ? { id } : undefined }, value.revision); });
+        }}><option value="">{t('由 Agent 安排', 'Let the agent arrange')}</option>
+          {snapshot?.document.team && !teamChoices.choices.some(choice => choice.id === snapshot.document.team!.id) && <option value={snapshot.document.team.id}>{t('流程暂不可用', 'Workflow unavailable')}</option>}
+          {teamChoices.choices.map(choice => <option key={choice.id} value={choice.id}>{choice.name}</option>)}
+        </select></label>
+        {teamChoices.error && <small role="alert">{teamChoices.error}</small>}
         <button role="menuitem" disabled={busy || !snapshot} onClick={() => void action(async () => { const value = current.current!; const result = await window.cardbushDesktop!.creationCanvas({ action: 'export', path: value.path, expectedRevision: value.revision }); if (result) setNotice(`${t('已保存到', 'Saved to')} ${result.path}`); })}><FolderDown size={16}/>{t('保存到文件夹', 'Save to folder')}</button>
         <button role="menuitem" disabled={busy || !selectedId} onClick={() => void extract(false)}><Copy size={16}/>{t('提取所选内容为组件', 'Extract selection as a component')}</button>
         <button role="menuitem" disabled={busy || !snapshot?.document.items.length} onClick={() => void extract(true)}><LayoutTemplate size={16}/>{t('用作新会话布局', 'Use as new-chat layout')}</button>
       </div></>}</div>
     </div>
-    {(error || readError || notice) && <div className={`canvas-notice${error || readError ? ' error' : ''}`} role={error || readError ? 'alert' : 'status'}>{error || readError || notice}<button aria-label={t('关闭提示', 'Dismiss')} onClick={() => { setError(''); setReadError(''); setNotice(''); }}><X size={13}/></button></div>}
     <div className="canvas-workspace">
-      <div className="canvas-stage-view" hidden={!!editor}><HtmlComponentContext.Provider value={null}>{snapshot ? <CanvasStage snapshot={snapshot} language={language} selectedId={selectedId} onSelect={setSelectedId} onChange={commit} onAdd={() => void add()} onChat={startChat} onViewport={setViewport} onError={setError} onEditMarkdown={item => void editDocument(item)} onOpenFile={(item, region) => { if (item.kind === 'file') setFileView({ target: canvasFileTarget(item.reference?.source || item.source, snapshot.path), title: item.title, region }); }}/>
+      {(error || readError || notice) && <div className={`canvas-notice${error || readError ? ' error' : ''}`} role={error || readError ? 'alert' : 'status'}><span>{error || readError ? canvasErrorMessage(error || readError, language) : notice}</span><button aria-label={t('关闭提示', 'Dismiss')} onClick={() => { setError(''); setReadError(''); setNotice(''); }}><X size={13}/></button></div>}
+      <div className="canvas-stage-view" hidden={!!editor}><HtmlComponentContext.Provider value={null}>{snapshot ? <CanvasStage snapshot={snapshot} language={language} selectedId={selectedId} onSelect={setSelectedId} onChange={commit} onAdd={() => void add()} onChat={startChat} onDiscuss={discuss} onVersion={item => void version(item)} onDesktop={() => void makeDesktop()} busy={busy} onViewport={setViewport} onError={setError} onEditMarkdown={item => void editDocument(item)} onOpenFile={(item, region) => { if (item.kind === 'file') { setChatRegion(item.id); setFileView({ target: canvasFileTarget(item.source, snapshot.path), title: item.title, region }); } }}/>
         : <div className="canvas-loading" role="status">{t('正在打开画板…', 'Opening canvas…')}</div>}</HtmlComponentContext.Provider>
       </div>
       {snapshot && editor && <CanvasMarkdownWorkspace snapshot={snapshot} {...editor} language={language} sessionId={entry.sessionId} root={entry.root || ''}
@@ -174,6 +212,7 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
           await commit(placeCanvasItems(value.document, [{ id: crypto.randomUUID(), kind: 'markdown', title: t('保留的草稿', 'Retained draft'), markdown: source }]), value.revision);
         }}/>}
       {localControls && <InspectorCoverControls language={language} inputOpen={chatOpen} status={chat?.inputStatus} onTargetChange={setInputTarget} onToggleInput={() => setChatOpen(value => !value)}/>}
+      {chatRegion && <div className="canvas-chat-region"><span>{t('讨论', 'Discussing')} · {snapshot?.document.items.find(item => item.id === chatRegion)?.title || t('已移除的区域', 'Removed region')}</span><button aria-label={t('取消区域选择', 'Clear conversation region')} onClick={() => { setChatRegion(undefined); setSelectedId(undefined); }}><X size={13}/></button></div>}
     </div>
     {snapshot && <Suspense fallback={null}><CreationConversation key={entry.sessionId} {...chatOptions} sessionId={entry.sessionId} root={entry.root || ''} language={language}
       preparation={!entry.sessionCreated ? { title: `${t('创作', 'Create')} · ${entry.title || t('无标题画板', 'Untitled canvas')}`, metadata: { creation_workspace: true, creation_canvas: snapshot.path }, onCreated: () => updateCanvasEntry(entry.id, { sessionCreated: true }) } : undefined}

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { modelRequestSchema, providerInputProjectionSchema } from '@cardbush/bush-protocol';
 import { executeModelRound, InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
-import { OpenAIResponsesProvider, OpenAIChatCompletionsProvider, toResponsesCreateParams,
+import { OpenAIResponsesProvider, OpenAIChatCompletionsProvider, AnthropicMessagesProvider, toResponsesCreateParams,
   toResponsesInputTokenCountParams, toChatCompletionsParams, toAnthropicMessagesParams } from '../dist/index.js';
 import { responsesInputFingerprint } from '../dist/responsesInputFingerprint.js';
 import { imageFixture, png } from '../../bush-runtime/test/helpers/modelImages.mjs';
@@ -141,4 +141,57 @@ test('shared Runtime loop preserves tool images and associates image additions w
 function turn() {
   return { protocol: 'bush.session_turn_request.v1', requestId: 'request-1', sessionId: 'conversation-A', turnId: 'turn-1',
     model: 'fixture', prefixMessages: [], tools: [], inputMessages: [{ messageId: 'user-1', message: { role: 'user', content: 'Inspect the image' } }] };
+}
+
+function messagesCompleted() {
+  const events = [
+    { type: 'message_start', message: { id: 'message-1', role: 'assistant', type: 'message', model: 'fixture', content: [], stop_reason: null,
+      usage: { input_tokens: 20, cache_read_input_tokens: 80, output_tokens: 0 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'Done' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 10 } },
+    { type: 'message_stop' },
+  ];
+  return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+    { headers: { 'content-type': 'text/event-stream' } });
+}
+
+for (const [Provider, response, outputField] of [
+  [OpenAIResponsesProvider, completed, 'max_output_tokens'],
+  [OpenAIChatCompletionsProvider, chatCompleted, 'max_completion_tokens'],
+  [AnthropicMessagesProvider, messagesCompleted, 'max_tokens'],
+]) {
+  test(`${Provider.name}: changed generation parameters keep the actual prefix and provider cache usage`, async t => {
+    const wires = [];
+    const provider = new Provider({ apiKey: 'fixture', baseURL: 'https://fixture.invalid/v1', fetch: async (_url, init) => {
+      wires.push(JSON.parse(init.body)); return response();
+    } });
+    const host = new InMemoryRuntimeHost({ provider, registerDefaultWorkspaceTools: false });
+    t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+    for (const [index, output] of [1024, 2048].entries()) {
+      const turnId = `settings-${index}`;
+      const terminal = await host.runSessionTurn({ ...turn(), requestId: turnId, turnId,
+        maxOutputTokens: output, temperature: index === 0 ? 0.2 : 0.4,
+        inputMessages: [{ messageId: turnId, message: { role: 'user', content: 'Continue' } }] });
+      assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
+    }
+    assert.equal(wires.length, 2);
+    assert.deepEqual(wires.map(body => body[outputField]), [1024, 2048]);
+    const key = Provider === OpenAIResponsesProvider ? 'input' : 'messages';
+    assert.deepEqual(wires[1][key].slice(0, wires[0][key].length), wires[0][key]);
+    const events = host.events('conversation-A', 'settings-1');
+    const runtime = events.find(event => event.kind === 'cache_chain_observed').payload;
+    const wire = events.find(event => event.kind === 'provider_input_observed').payload;
+    for (const observation of [runtime, wire]) {
+      assert.equal(observation.parametersChanged, true);
+      assert.equal(observation.prefixComparisonAvailable, true);
+      assert.equal(observation.frozenPrefixBreak, false);
+      assert.equal(observation.breakIndex, undefined);
+    }
+    assert.deepEqual(runtime.changedParameters, ['maxOutputTokens', 'temperature']);
+    assert.deepEqual(wire.changedParameters, [outputField, 'temperature'].sort());
+    const usage = events.find(event => event.kind === 'model_request_usage').payload;
+    assert.equal(usage.inputTokens, 100);
+    assert.equal(usage.cachedInputTokens, 80, 'diagnostics do not infer or replace provider-reported cache usage');
+  });
 }

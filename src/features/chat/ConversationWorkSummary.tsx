@@ -36,6 +36,7 @@ import type { ProjectPathAlias } from '../conversationScope';
 import { workSummaryOutputs } from './workSummaryOutputs';
 import { TeamWorkSummary } from '../team/TeamWorkSummary';
 import { isEmployeeTask } from '../team/employeePresentation';
+import { withConversationAgentNames } from '../team/toolAgentActivity';
 const subagentTaskPageSize = 3;
 const outputPageSize = 5;
 const noPathAliases: ProjectPathAlias[] = [];
@@ -66,7 +67,7 @@ export function ConversationWorkSummary({
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
   const taskFeed = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
-  const allTasks = useMemo(() => childConversationSummaries(taskFeed), [taskFeed]);
+  const allTasks = useMemo(() => childConversationSummaries(withConversationAgentNames(taskFeed, messages)), [taskFeed, messages]);
   const subagentTasks = allTasks.filter(task => !isEmployeeTask(task));
   const visibleSubagentTasks = subagentTasks.slice(0, visibleSubagentTaskCount);
   const remainingSubagentTaskCount = Math.max(
@@ -365,6 +366,7 @@ function mergeSubagentTasks(
       ...preferred,
       taskId: preferred.taskId || fallback.taskId,
       toolCallId: preferred.toolCallId || fallback.toolCallId,
+      agentName: preferred.agentName || fallback.agentName,
       requestPrompt: preferred.requestPrompt || fallback.requestPrompt,
       responsePrompt: preferred.responsePrompt || fallback.responsePrompt,
       errorMessage: preferred.errorMessage || fallback.errorMessage,

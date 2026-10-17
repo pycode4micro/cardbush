@@ -3,6 +3,35 @@ export const sessionAttentionIntentLimit = 20;
 export const sessionAttentionDuplicateWindowMs = 2_000;
 const activationPrefix = 'cardbush-attention-v1:';
 
+type AttentionIdentity = {
+  sessionId: string;
+  kind: string;
+  turnId?: string;
+  interactionId?: string;
+};
+
+/** Delivery is independent of unread badges, which disappear when a result is read. */
+export class SessionAttentionNotificationGate {
+  readonly #seen = new Map<string, number>();
+
+  #key(event: AttentionIdentity) {
+    return JSON.stringify([event.sessionId, event.kind, event.turnId ?? '', event.interactionId ?? '']);
+  }
+
+  accept(event: AttentionIdentity, now = Date.now()): boolean {
+    for (const [key, expires] of this.#seen) if (expires <= now) this.#seen.delete(key);
+    const key = this.#key(event);
+    if (this.#seen.has(key)) return false;
+    this.#seen.set(key, event.turnId || event.interactionId ? Infinity : now + sessionAttentionDuplicateWindowMs);
+    if (this.#seen.size > 512) this.#seen.delete(this.#seen.keys().next().value!);
+    return true;
+  }
+
+  forget(event: AttentionIdentity) {
+    this.#seen.delete(this.#key(event));
+  }
+}
+
 export type SessionAttentionOpenIntent = {
   sessionId: string;
   queuedAt: number;

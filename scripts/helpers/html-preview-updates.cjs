@@ -74,18 +74,22 @@ module.exports = async ({ run, until, pause, window, root, directory, guest, rea
 
     await write(7, 330, 3000);
     await focus(); await changed(currentId);
-    await until("document.querySelector('.inline-html-preview.is-folded') && document.querySelector('webview').clientHeight===2400", 'oversized replacement stays folded');
+    await until("document.querySelector('.inline-html-preview.is-folded') && document.querySelector('webview').clientHeight===3354", 'long replacement stays folded with full intrinsic height');
     await clickHost('.inline-html-expand-toggle');
-    await until("document.querySelector('.inline-html-viewport').clientHeight===2400", 'oversized chart expands to its cap');
+    await until("document.querySelector('.inline-html-viewport').clientHeight===3354", 'long chart expands to its entire height');
     let longPage = await guest();
-    await longPage.executeJavaScript('scrollTo(0,420); void 0');
+    await run('updateScroller.scrollTop=2700; void 0'); await pause(80);
+    const longPosition = await run('updateScroller.scrollTop');
     await write(8, 330, 3400);
     await focus(); await changed(longPage.id);
     await pause(150);
     longPage = await guest();
-    assert.equal(await longPage.executeJavaScript('scrollY'), 420, 'file updates preserve internal reading position beyond the expanded height cap');
+    await until("document.querySelector('.inline-html-viewport').clientHeight===3754", 'expanded replacement reveals all updated content');
+    assert.equal(await longPage.executeJavaScript('scrollY'), 0, 'file updates have no internal scroll offset to restore');
+    assert.ok(Math.abs(await run('updateScroller.scrollTop')-longPosition)<=2, 'file updates preserve the conversation reading position beyond the former height cap');
+    await run('updateScroller.scrollTop=0; void 0'); await pause(80);
     await clickHost('.inline-html-collapse-top');
-    assert.equal(await longPage.executeJavaScript('scrollY'), 0, 'collapsing an internally scrolled chart returns to the first complete plot');
+    assert.equal(await longPage.executeJavaScript('scrollY'), 0, 'collapsing retains the same zero page offset');
     await write(4, 330, 700);
     await focus(); await changed(longPage.id);
     await until("document.querySelector('.inline-html-viewport').clientHeight===330", 'chart returns to its complete first section');

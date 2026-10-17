@@ -43,7 +43,7 @@ import { ScrollBottomButton } from './ScrollBottomButton';
 import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
 import { GuidanceActivity, guidanceActivityMessages } from '../chatMessages/GuidanceActivity';
-import { TurnChangeReviewButton } from '../chatMessages/AssistantThinkingProcessLine';
+import { TurnChangeSummary } from '../chatMessages/AssistantThinkingProcessLine';
 import { isGuidanceSealedAssistantSegment, isTurnGuidanceMessage } from '../chatMessages/transcript/messageFacts';
 import {
   MessageListFooter,
@@ -64,6 +64,7 @@ import {
 } from '../chatMessages';
 import { QuickContextRail } from './QuickContextRail';
 import { createChatScrollMotion } from './chatScrollMotion';
+import { connectConversationWheelScrolling, scrollConversationByWheel } from './conversationWheelScrolling';
 import { observeConversationReflow } from './conversationReflow';
 import { submittedUserReadingOffset, updateResponseSpacer } from './responseSpacer';
 import {
@@ -2425,7 +2426,9 @@ export function ChatPanel({
       capture: true,
       passive: false,
     });
+    const disconnectWheel = connectConversationWheelScrolling(scroller);
     return () => {
+      disconnectWheel();
       scroller.removeEventListener('wheel', handleNativeWheel, {
         capture: true,
       });
@@ -2461,7 +2464,7 @@ export function ChatPanel({
         markUserDetachedFromBottom(event.deltaY < 0 ? 'wheel-up-hotzone' : 'wheel-down-hotzone');
         manualScrollDirectionRef.current = Math.sign(event.deltaY);
         const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
-        scroller.scrollBy({ top: event.deltaY * unit, behavior: 'instant' });
+        scrollConversationByWheel(scroller, event.deltaY * unit);
       };
       ref.addEventListener('wheel', handleNativeWheel, {
         capture: true,
@@ -2735,9 +2738,9 @@ export function ChatPanel({
           <ComposerPresentationContext.Provider value={showWelcome && !composerPresentation ? { style: inputStyle } : composerPresentation}>
             <Composer
               key={composerMount.key}
-              topAccessory={!showWelcome && currentTurnChangeSummary && <TurnChangeReviewButton
+              topAccessory={!showWelcome && currentTurnChangeSummary && <TurnChangeSummary
                 summary={currentTurnChangeSummary} language={language}
-                onOpen={() => onOpenChangeReview(undefined, activeTurnId)} />}
+                onOpen={filePath => onOpenChangeReview(filePath, activeTurnId)} />}
               portalCommands={showWelcome && customWelcome}
               fileDropTarget={chatBodyRef}
               compact

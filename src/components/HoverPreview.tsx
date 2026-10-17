@@ -16,6 +16,11 @@ export function useHoverPreview(disabled = false, { interactive = false }: { int
     setAnchor(null);
   }, []);
   const keepOpen = useCallback(() => window.clearTimeout(closeTimer.current), []);
+  const open = useCallback((element: HTMLElement) => {
+    if (disabled || !element.isConnected || element.closest('[inert]')) return;
+    window.clearTimeout(openTimer.current); window.clearTimeout(closeTimer.current);
+    pending.current = null; dismissed.current = null; setAnchor(element);
+  }, [disabled]);
   const dismiss = useCallback(() => { dismissed.current = anchor ?? pending.current; close(); }, [anchor, close]);
   const leave = useCallback(() => {
     dismissed.current = null;
@@ -56,18 +61,19 @@ export function useHoverPreview(disabled = false, { interactive = false }: { int
     window.clearTimeout(openTimer.current);
     window.clearTimeout(closeTimer.current);
   }, []);
-  return { id, anchor, close, dismiss, keepOpen, leave, triggerProps: {
+  return { id, anchor, open, close, dismiss, keepOpen, leave, triggerProps: {
     onPointerEnter: pointer, onPointerMove: pointer, onPointerLeave: leave,
     onFocus: focus, onBlur: leave, onPointerDown: dismiss,
     'aria-describedby': anchor ? id : undefined,
   } };
 }
 
-export function HoverPreview({ preview, className = '', boundarySelector, interactiveLabel, children }: {
+export function HoverPreview({ preview, className = '', boundarySelector, interactiveLabel, placement = 'side', children }: {
   preview: ReturnType<typeof useHoverPreview>;
   className?: string;
   boundarySelector?: string;
   interactiveLabel?: string;
+  placement?: 'side' | 'top';
   children: ReactNode;
 }) {
   const node = useRef<HTMLDivElement>(null);
@@ -82,7 +88,19 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
       if (!anchor.isConnected || !trigger.width || !trigger.height) { close(); return; }
       const area = boundary?.getBoundingClientRect() ?? { left: 0, right: innerWidth, top: 0, bottom: innerHeight };
       element.style.maxWidth = `${Math.max(0, Math.min(innerWidth, area.right) - Math.max(0, area.left) - 24)}px`;
-      const bounds = element.getBoundingClientRect(), right = trigger.right + 12;
+      const bounds = element.getBoundingClientRect();
+      if (placement === 'top') {
+        const above = trigger.top - bounds.height - 8;
+        const top = above >= area.top + 12 ? above : trigger.bottom + 8;
+        const positionedTop = Math.max(area.top + 12, Math.min(area.bottom - bounds.height - 12, top));
+        element.style.left = `${Math.max(area.left + 12, Math.min(area.right - bounds.width - 12, trigger.left + (trigger.width - bounds.width) / 2))}px`;
+        element.style.top = `${positionedTop}px`;
+        const gap = positionedTop >= trigger.bottom ? positionedTop - trigger.bottom : trigger.top - positionedTop - bounds.height;
+        element.dataset.side = gap < 0 ? 'overlap' : positionedTop >= trigger.bottom ? 'bottom' : 'top';
+        element.style.setProperty('--hover-preview-gap', `${Math.max(0, gap)}px`);
+        return;
+      }
+      const right = trigger.right + 12;
       const left = right + bounds.width <= area.right - 12 ? right : trigger.left - bounds.width - 12;
       const positionedLeft = Math.max(area.left + 12, Math.min(area.right - bounds.width - 12, left));
       element.style.left = `${positionedLeft}px`;
@@ -97,7 +115,7 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
     observer.observe(anchor);
     if (boundary) observer.observe(boundary);
     return () => observer.disconnect();
-  }, [anchor, boundarySelector, children, close]);
+  }, [anchor, boundarySelector, children, close, placement]);
   useEffect(() => {
     if (!anchor) return;
     const pointerDown = (event: globalThis.PointerEvent) => {
@@ -106,23 +124,30 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
     };
     const key = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (interactiveLabel) { event.preventDefault(); event.stopPropagation(); }
       const restoreFocus = interactiveLabel && node.current?.contains(document.activeElement);
       close();
       if (restoreFocus) anchor.focus({ preventScroll: true });
+    };
+    const scroll = (event: Event) => {
+      // A long preview may scroll internally; only surrounding content moving
+      // invalidates its anchor and dismisses it.
+      if (event.target instanceof Node && node.current?.contains(event.target)) return;
+      close();
     };
     document.addEventListener('pointerdown', pointerDown, true);
     document.addEventListener('keydown', key, true);
     document.addEventListener('visibilitychange', close);
     window.addEventListener('blur', close);
     window.addEventListener('resize', close);
-    window.addEventListener('scroll', close, true);
+    window.addEventListener('scroll', scroll, true);
     return () => {
       document.removeEventListener('pointerdown', pointerDown, true);
       document.removeEventListener('keydown', key, true);
       document.removeEventListener('visibilitychange', close);
       window.removeEventListener('blur', close);
       window.removeEventListener('resize', close);
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', scroll, true);
     };
   }, [anchor, close, interactiveLabel]);
   if (!anchor) return null;

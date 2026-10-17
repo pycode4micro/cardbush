@@ -27,7 +27,7 @@ module.exports = async ({ run, until, pause, window, root, directory, guest, rea
     await run("document.querySelector('.inline-html-expand-toggle').scrollIntoView({block:'center'});void 0");
     await pause(100);
     await clickHost('.inline-html-expand-toggle');
-    await until("document.querySelector('.inline-html-viewport').clientHeight===2400", 'reported long document expands');
+    await until("document.querySelector('.inline-html-viewport').clientHeight===document.querySelector('webview').clientHeight && !document.querySelector('.is-folded')", 'reported long document expands to its entire height');
     const page = await guest();
     const point = await page.executeJavaScript(`(()=>{const r=document.querySelector('#gridToggle').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
     await run(`document.querySelector('.html-scroll-review').scrollTop=${point.y}-180;void 0`);
@@ -41,6 +41,7 @@ module.exports = async ({ run, until, pause, window, root, directory, guest, rea
     await pause(120);
     assert.equal(await page.executeJavaScript("document.querySelector('#gridToggle').getAttribute('aria-pressed')"), 'true', 'native click changes the reported interactive state');
     await page.executeJavaScript('scrollTo(0,80);void 0');await pause(240);
+    assert.equal(await page.executeJavaScript('scrollY'),0,'reported document cannot acquire an internal page offset');
     await page.executeJavaScript('scrollTo(0,0);void 0');await pause(240);
     await run(`window.scrollReviewStates=[];window.scrollReviewObserver=new MutationObserver(()=>scrollReviewStates.push(document.querySelector('.inline-html-viewport')?.className));
       scrollReviewObserver.observe(document.querySelector('.file-memo-reference'),{attributes:true,childList:true,subtree:true});void 0`);

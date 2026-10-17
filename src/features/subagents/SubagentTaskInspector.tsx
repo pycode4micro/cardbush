@@ -57,6 +57,7 @@ function mergeTask(current: SubagentTaskSnapshot, next: SubagentTaskSnapshot) {
     ...next,
     taskId: next.taskId || current.taskId,
     toolCallId: next.toolCallId || current.toolCallId,
+    agentName: next.agentName || current.agentName,
     requestPrompt: next.requestPrompt || current.requestPrompt,
     responsePrompt: next.responsePrompt || current.responsePrompt,
     errorMessage: next.errorMessage,

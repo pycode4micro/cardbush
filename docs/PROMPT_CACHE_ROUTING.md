@@ -25,7 +25,17 @@ Responses 和 Chat Completions 适配器向已确认支持的 HTTPS 接口发送
 | `images.remoteCount` | 以 HTTP(S) URL 引用的图片数；URL 不变不能证明远端像素未变 |
 | `images.comparisonAvailable` | 是否有相同协议的上一份图片诊断可供比较 |
 | `images.addedCount` / `removedCount` | 按图片块摘要及出现次数计算的增减；重复追加同图也会计为新增 |
-| `frozenPrefixBreak` / `changedParameters` | 原有历史输入及参数变化检测，继续保留 |
+| `prefixComparisonAvailable` | 是否有可直接比较的历史前缀；首次请求、Provider 协议格式切换时为 false |
+| `frozenPrefixBreak` | 仅表示可比较的历史消息/输入项被改写、插入或截断；末尾追加不算断链 |
+| `breakIndex` / `messageBreakIndex` | 历史消息/输入项的首个实际断点；参数变化不会把位置强行设为 0 |
+| `parametersChanged` / `changedParameters` | 请求参数是否变化及变化的字段名，独立于消息前缀；不记录参数原值 |
+| `projectionFormatChanged` | Provider 投影格式切换；重新建立比较基准，不推断旧消息被改写 |
+
+Runtime 的 `cache_chain_observed` 也区分参数与消息前缀。改变最大输出、温度、推理强度、模型、连接绑定或顶层工具定义时，单独记录参数变化；如果同一次请求也改写了历史消息，两类变化同时记录，断点仍指向实际消息位置。Provider 的顶层 `system`、`tools` 也属于请求参数，它们可能影响缓存，但不能冒充消息数组的改写。`parametersChanged=false` 不代表已命中缓存。
+
+状态只新增每个参数的摘要。旧检查点仍可恢复：可以比较整体参数摘要，但第一次无法补造变化字段名；下一次起可正常比较各字段。`sharedPrefixDigest` 只反映共有消息/输入项，不随参数改变。
+
+旧事件没有 `prefixComparisonAvailable`，其 `frozenPrefixBreak` 曾同时包含参数变化。`cacheChainChanges` 用旧事件保留的独立前缀计数识别真实消息变化，参数依据不足时保留未知；格式切换不进行消息比较。历史回放报告分别列出 `structuralBreaks`、`parameterChanges`、`projectionChanges`，不修改原始日志。
 
 图片诊断读取三种协议的实际图片块，覆盖用户图片和工具图片；不解析正文中看起来像图片的 JSON。用于比较的摘要保存在投影状态中，不额外存放原始像素、图片 URL 或提示词。图片摘要包含细节选项；修改已有图片与新增图片都应结合前缀变化判断，不能只看新增数量。
 

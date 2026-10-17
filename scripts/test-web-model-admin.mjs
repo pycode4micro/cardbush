@@ -20,7 +20,7 @@ async function fixture() { const target = config(), repository = new Repository(
 test('imports deployed defaults once, encrypts secrets and persists edits across restarts', async () => {
   const { target, repository, settings } = await fixture();
   assert.equal(target.models[0].maxOutputTokens, 128000); assert.equal(target.models[0].reasoningEffort, 'medium');
-  assert.equal(target.models[0].maxContextTokens, 400000);
+  assert.equal(target.models[0].maxContextTokens, 530000);
   assert.ok(!JSON.stringify(settings.view()).includes('private-'));
   assert.ok(!repository.row.payload.includes('private-'));
   await save(settings, input(settings, { name: 'Updated', maxOutputTokens: 64000, reasoningEffort: 'low', apiKey: '' }));
@@ -49,7 +49,7 @@ test('new models can be enabled, selected as default, disabled and deleted witho
 
 test('rejects invalid budgets, unknown settings, unsafe endpoints and credential reuse on a changed origin', async () => {
   const { settings } = await fixture();
-  await assert.rejects(save(settings, input(settings, { maxOutputTokens: 400000 })), /最大输出/);
+  await assert.rejects(save(settings, input(settings, { maxOutputTokens: 530000 })), /最大输出/);
   await assert.rejects(save(settings, input(settings, { baseURL: 'https://elsewhere.test/v1', apiKey: '' })), /重新填写密钥/);
   for (const baseURL of ['file:///etc/passwd', 'https://user:pass@provider.test', 'https://provider.test/?secret=1']) await assert.rejects(save(settings, input(settings, { baseURL })));
   await assert.rejects(save(settings, { ...input(settings), toolsEnabled: true }));

@@ -2,6 +2,7 @@ import * as local from './api';
 import { onRuntimeInteractionsChanged } from '../runtime-client/RuntimeInteractionBridge';
 import type { ChatStreamRequest } from './api';
 import type { QueuedChatMessage } from '../hooks/useCardbushChat';
+import { watchLocalConversation } from './watchLocalConversation';
 
 export const localConversationBackend = {
   cancelInteraction: local.cancelInteraction, createConversation: local.createConversation,
@@ -15,10 +16,11 @@ export const localConversationBackend = {
   stopTurn: local.stopTurn, streamChat: local.streamChat, streamTurnEvents: local.streamTurnEvents,
   updateConversation: local.updateConversation, switchConversationWorkspace: local.switchConversationWorkspace,
   updateExperimentalGoal: local.updateExperimentalGoal, onRuntimeInteractionsChanged,
+  watchSession: watchLocalConversation,
 };
 
 /** Conversation behavior is shared; the host supplies transport and durable work ownership. */
-export type ConversationBackend = typeof localConversationBackend & {
+export type ConversationBackend = Omit<typeof localConversationBackend, 'watchSession'> & {
   scope?: string;
   keepRunningOnUnmount?: boolean;
   isSubmissionRetry?: (sessionId: string, userInput: string, promptContext?: import('@cardbush/bush-protocol').PromptContext[]) => boolean;

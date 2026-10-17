@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, rm, readFile, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { teamWorkflowSchema } from '@cardbush/bush-protocol';
+import { teamWorkflowSchema, developmentDesktop } from '@cardbush/bush-protocol';
 import { RegisteredAgentStore, TeamWorkflowManager, ToolRegistry, registerSubagentTool, SubagentTaskStore } from '../dist/index.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice, teamRunResult } from '../dist/teamResults.js';
 
@@ -19,11 +19,11 @@ async function setup(t, run) {
   const manager = new TeamWorkflowManager(agents, subagents.dispatch, { directory: join(root, 'teams') });
   manager.register(registry);
   const parent = new AbortController(); let serial = 0;
-  const call = async (input, overrides = {}, signal = parent.signal) => {
+  const call = async (input, overrides = {}, signal = parent.signal, invokeTool = async () => { throw Error('unexpected nested tool'); }) => {
     const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 'parent', turnId: 'turn', model: 'model', tools: registry.definitions(), permissionMode: 'all_free', messages: [{ role: 'system', content: 'PRIVATE PARENT' }], metadata: {}, ...overrides };
     const registration = registry.resolve('team');
     return registration.execute({ input: registration.decodeInput(input), requestId: 'r', sessionId: 'parent', turnId: 'turn', toolCall: { id: `call-${++serial}` },
-      signal, turn: { request, contextMessages: request.messages }, capabilityIds: [], invokeTool: async () => { throw Error('unexpected nested tool'); }, recordWorkspaceChange: () => {} });
+      signal, turn: { request, contextMessages: request.messages }, capabilityIds: [], invokeTool, recordWorkspaceChange: () => {} });
   };
   t.after(() => manager.close());
   return { root, manager, call, agents, parent, tasks, subagents };
@@ -38,6 +38,31 @@ test('Team validates dependencies before execution', () => {
   assert.throws(() => teamWorkflowSchema.parse({ ...flow, nodes: [{ id: 'a', agent_id: 'stock', prompt: 'a', depends_on: ['missing'] }] }), /acyclic/);
   assert.throws(() => teamWorkflowSchema.parse({ ...flow, nodes: [{ id: 'a', agent_id: 'stock', prompt: 'a', depends_on: ['b'] }, { id: 'b', agent_id: 'stock', prompt: 'b', depends_on: ['a'] }] }), /acyclic/);
   assert.throws(() => teamWorkflowSchema.parse({ ...flow, nodes: [flow.nodes[0], flow.nodes[0]] }), /Duplicate/);
+});
+
+test('Team canvas runs give clean members persistent assignments and let them inspect through their own lifecycle', async t => {
+  const requests = [];
+  const f = await setup(t, async request => { requests.push(request); return outcome(request, 'Actual result'); });
+  const canvas = developmentDesktop(f.root), path = join(f.root, 'space.canvas.json');
+  canvas.items[0].assignment = { teamId: flow.id, nodeId: 'stock' };
+  canvas.items[1].assignment = { teamId: flow.id, nodeId: 'shipping' };
+  let reads = 0;
+  const inspect = async (name, input) => { assert.equal(name, 'design'); assert.deepEqual(input, { action: 'inspect', path }); reads++; return { path, revision: String(reads), document: canvas }; };
+  await f.call({ action: 'save', definition: flow, expected_revision: 0 });
+  const started = await f.call({ action: 'run', team_id: flow.id, input: 'Update the desk', canvas_path: path }, {}, undefined, inspect);
+  const finished = await f.call({ action: 'wait', run_id: started.run_id, yield_time_ms: 10000 });
+  assert.equal(finished.status, 'completed'); assert.equal(reads, 1, 'background members must not reuse the finished parent tool invocation');
+  const expectedCanvas = { path, assignments: { stock: ['changes'], shipping: ['release'], review: [] } };
+  assert.deepEqual(finished.canvas, expectedCanvas);
+  assert.equal(requests.length, 3);
+  for (const request of requests) {
+    const text = JSON.stringify(request), nodeId = request.metadata.teamMemberId;
+    assert.doesNotMatch(text, /PRIVATE PARENT/); assert.match(text, /Canvas workspace/); assert.match(text, /parent for integration/); assert.match(text, /own design\(action=inspect\)/);
+    const expected = nodeId === 'stock' ? ['changes'] : nodeId === 'shipping' ? ['release'] : [];
+    assert.ok(text.includes(JSON.stringify(expected).replaceAll('"', '\\"')), `${nodeId} receives its region IDs`);
+  }
+  const reopened = new TeamWorkflowManager(f.agents, f.subagents.dispatch, { directory: join(f.root, 'teams') }); t.after(() => reopened.close());
+  assert.deepEqual((await reopened.configure({ action: 'status', run_id: started.run_id })).canvas, expectedCanvas);
 });
 
 test('bush-it presentation survives execution-only edits and persistence without becoming task instructions', async t => {

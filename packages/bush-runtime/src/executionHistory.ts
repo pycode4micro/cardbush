@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { projectCatalogPage } from './catalogPage.js';
 import { resolve, win32 } from 'node:path';
-import { toolExecutionError, type ToolExecutionRecord } from '@cardbush/bush-protocol';
+import { agentToolActivity, toolExecutionError, type ToolExecutionRecord } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import type { SessionMetadataEntry } from './sessionStore.js';
@@ -9,7 +9,7 @@ import { executionHistoryResults, normalizeHistoryText, searchExecutionSummaries
 export { searchExecutionSummaries } from './executionHistorySearch.js';
 
 export const EXECUTION_HISTORY_TOOL = 'search_execution_history';
-export const EXECUTION_HISTORY_SUMMARY_VERSION = 5;
+export const EXECUTION_HISTORY_SUMMARY_VERSION = 6;
 export interface ExecutionHistoryEntry {
   summaryVersion?: number;
   id: string;
@@ -83,6 +83,8 @@ export function summarizeExecution(record: ToolExecutionRecord): ExecutionHistor
     if (text && !seen.has(fragment)) { seen.add(fragment); fragments.push(fragment); }
   };
   const result = plain(record.result);
+  const agent = agentToolActivity(record);
+  if (agent?.action === 'run') add('agent', agent.name, 80);
   const error = toolExecutionError(record);
   if (error) { add('error', error.code, 80); add('message', error.message, 180); }
   for (const fields of [result, plain(result?.structuredContent)]) {

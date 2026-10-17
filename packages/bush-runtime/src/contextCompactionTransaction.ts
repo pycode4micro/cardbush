@@ -34,7 +34,7 @@ interface Node {
 
 type SourceRange = CompactionJob['sourceRanges'][number];
 type CompactionProgress = { kind: 'partition'; job: string; parts: SourceRange[][] }
-  | { kind: 'correction'; job: string; message: string };
+  | { kind: 'correction' | 'refinement'; job: string; message: string };
 
 export interface CompactionJob {
   id: string;
@@ -65,6 +65,7 @@ export class ContextCompactionTransaction {
   readonly #callIds = new Set<string>();
   #current: Node;
   #nodes = 1;
+  readonly #maximumNodes: number;
   #attempts: number;
   #correctionRecovery = false;
   readonly incremental?: IncrementalCheckpoint;
@@ -97,6 +98,9 @@ export class ContextCompactionTransaction {
       units: completeContextUnits(this.#messages.slice(source.startMessage, source.endMessageExclusive)),
     }));
     if (!fragments.length) throw new Error('No authorized context sources can be compacted.');
+    // Each split strictly divides complete source units. Bound work by those
+    // units, not by an arbitrary number of preceding Turns (formerly 64 nodes).
+    this.#maximumNodes = 2 * fragments.reduce((sum, fragment) => sum + fragment.units.length, 0) + 1;
     if (this.#format === 'incremental') this.incremental = new IncrementalCheckpoint(this.#state,
       contextPressureNotice(this.#state, this.#pressure, this.#format, this.#sources), input.continuation, this.#sources);
     this.#root = this.#node('root', fragments);
@@ -192,6 +196,19 @@ export class ContextCompactionTransaction {
     return node.failures < 3;
   }
 
+  /** Reopen only an uncommitted final candidate. Original sources and every
+   * receipt stay in the journal; earlier partition jobs are not reused as facts
+   * accepted under the new, tighter output target. */
+  refine(message: string): boolean {
+    if (!this.isRoot) return false;
+    if (!this.incremental) return this.retry(message);
+    if (!this.incremental.refine(message)) return false;
+    this.#root.children = undefined;
+    this.#nodes = 1;
+    this.#restoredFailures.clear();
+    return true;
+  }
+
   /** One bounded fallback, keeping existing source ownership and full Tool
    * exchanges. Current and historical work no longer compete in one job. */
   partitionForCorrection(): boolean {
@@ -218,14 +235,18 @@ export class ContextCompactionTransaction {
       ? node.fragments.filter(fragment => !this.incremental!.hasAccepted(this.#sourceNumber(fragment))) : node.fragments;
     if (!fragments.length) return false;
     let parts: Fragment[][];
-    if (node.fragments.length > 1) parts = fragments.map(fragment => [fragment]);
+    if (node.fragments.length > 1) {
+      // Split by serialized volume, then let the provider's actual preflight
+      // decide whether each batch needs another split. Many small sources share
+      // one request, while a large source can still split at exchange boundaries.
+      const boundary = balancedBoundary(fragments.map(fragment => JSON.stringify(fragment.units).length));
+      parts = fragments.length === 1 ? [fragments] : [fragments.slice(0, boundary), fragments.slice(boundary)];
+    }
     else {
       const fragment = fragments[0]!;
       if (fragment.units.length < 2) return false;
       const lengths = fragment.units.map(unit => JSON.stringify(unit).length);
-      const target = lengths.reduce((sum, value) => sum + value, 0) / 2;
-      let length = 0, boundary = 0;
-      do { length += lengths[boundary++]!; } while (length < target && boundary < lengths.length - 1);
+      const boundary = balancedBoundary(lengths);
       const messageBoundary = fragment.startMessage + fragment.units.slice(0, boundary).reduce((sum, unit) => sum + unit.length, 0);
       parts = [
         [{ ...fragment, endMessageExclusive: messageBoundary, units: fragment.units.slice(0, boundary) }],
@@ -237,7 +258,7 @@ export class ContextCompactionTransaction {
 
   #partition(parts: Fragment[][]): boolean {
     const node = this.#current;
-    if (this.#nodes + parts.length > 64) return false;
+    if (this.#nodes + parts.length > this.#maximumNodes) return false;
     this.#nodes += parts.length;
     if (this.incremental) this.#recordProgress({ kind: 'partition', job: node.id,
       parts: parts.map(fragments => fragments.map(({ turnId, startMessage, endMessageExclusive }) => ({ turnId, startMessage, endMessageExclusive }))) });
@@ -315,7 +336,7 @@ export class ContextCompactionTransaction {
   #incrementalJob(): CompactionJob {
     const node = this.#current;
     if (node === this.#root && !node.children) return { id: node.id, state: this.originalState,
-      messages: this.canonicalMessages, outputTokens: node.outputTokens,
+      messages: [...this.#messages, ...this.incremental!.attemptHistory], outputTokens: node.outputTokens,
       failures: node.loop!.failures, sourceRanges: this.#ranges(node) };
     const messages = [...this.#prefix];
     if (node !== this.#root) {
@@ -375,12 +396,13 @@ export class ContextCompactionTransaction {
 
   #savedJobHistory(job: string): ModelMessage[] {
     const history: ModelMessage[] = [{ role: 'developer', name: 'context_pressure', content: 'Staged context checkpoint.' }];
-    const saved = this.incremental!.history;
+    const saved = this.incremental!.attemptHistory;
     for (let index = 1; index < saved.length; index++) {
       const message = saved[index]!;
       if (isContextMaintenanceNotice(message, 'context_compaction_progress')) {
         const progress = JSON.parse(message.content) as CompactionProgress;
         if (progress.kind === 'correction' && progress.job === job) history.push(contextCompactionCorrectionMessage(progress.message));
+        else if (progress.kind === 'refinement' && job === 'root') history.push(message);
       } else if (isContextMaintenanceNotice(message, 'context_compaction_correction')) {
         if (job === 'root') history.push(message);
       } else {
@@ -394,12 +416,12 @@ export class ContextCompactionTransaction {
 
   #restorePartitions(): void {
     const nodes = new Map([['root', this.#root]]);
-    for (const message of this.incremental!.history) {
+    for (const message of this.incremental!.attemptHistory) {
       if (!isContextMaintenanceNotice(message, 'context_compaction_progress')) continue;
       const progress = JSON.parse(message.content) as CompactionProgress;
       if (progress.kind !== 'partition') continue;
       const node = nodes.get(progress.job);
-      if (!node || node.children || !progress.parts.length || this.#nodes + progress.parts.length > 64) throw new Error('Invalid saved context partition.');
+      if (!node || node.children || !progress.parts.length || this.#nodes + progress.parts.length > this.#maximumNodes) throw new Error('Invalid saved context partition.');
       const parts = progress.parts.map(ranges => ranges.map(range => {
         const origin = node.fragments.find(fragment => fragment.turnId === range.turnId &&
           fragment.startMessage <= range.startMessage && fragment.endMessageExclusive >= range.endMessageExclusive);
@@ -425,6 +447,18 @@ export class ContextCompactionTransaction {
   #ranges(node: Node) {
     return node.fragments.map(({ turnId, startMessage, endMessageExclusive }) => ({ turnId, startMessage, endMessageExclusive }));
   }
+}
+
+/** Preserve order while balancing serialized size, not the number of source Turns. */
+function balancedBoundary(lengths: number[]): number {
+  const target = lengths.reduce((sum, length) => sum + length, 0) / 2;
+  let total = 0, boundary = 1, distance = Infinity;
+  for (let index = 0; index < lengths.length - 1; index++) {
+    total += lengths[index]!;
+    const next = Math.abs(target - total);
+    if (next < distance) { distance = next; boundary = index + 1; }
+  }
+  return boundary;
 }
 
 /** Preserve assistant reasoning, all parallel calls and all their receipts as

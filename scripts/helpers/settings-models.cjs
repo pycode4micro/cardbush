@@ -57,6 +57,8 @@ module.exports = async ({ run, until, click, edit, window: win, root }) => {
     await reachHeaders();
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: ['control'] });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: ['control'] });
+    // Native key events are queued; wait for Select All before inserting text.
+    await until("(() => {const input=document.querySelector('dialog textarea');return input.selectionStart===0 && input.selectionEnd===input.value.length})()");
     await win.webContents.insertText(value);
     await until('document.querySelector("dialog textarea").value === ' + JSON.stringify(value));
   };

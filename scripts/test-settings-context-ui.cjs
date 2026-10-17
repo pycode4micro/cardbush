@@ -124,7 +124,8 @@ app.whenReady().then(async () => {
         settings: { conversationStyle: views.readConversationStyle(), managedModelConfigs: [fixtureModel, { ...fixtureModel, id: 'vision', modelName: 'deepseek-v4-flash-vision-exp' }], terminal: { runtime: 'powershell' }, browser: {}, proxy: { mode:'none', httpProxy:'', httpsProxy:'', noProxy:'' }, thinking: {visible:true}, guidance: {deliveryMode:'queue'}, user: {}, font: {}, companion: {} },
         selectedModel: 'fixture', availableModels: [fixtureModel], backendCapabilities: {terminalRuntimes:['powershell','wsl'], runtimeAssetResetCategories:[], browserPrivacyMode:false, reasoningStream:true}, runtimeBusy: false, conversations: [], skills: [], disabledSkillNames: new Set(),
         initialSection: 'instructions', initialPluginTab: 'plugins', onBack: noop,
-        onThemePreferenceChange: value => { settingsProps.themePreference = value; renderSettings(); }, onLanguageModeChange: noop,
+        onThemePreferenceChange: value => { settingsProps.themePreference = value; renderSettings(); },
+        onLanguageModeChange: value => { settingsProps.languageMode = value; renderSettings(); },
         onSettingsChange: fn => { settingsProps.settings = fn(settingsProps.settings); localStorage.setItem(views.APPEARANCE_STORAGE_KEY, JSON.stringify(views.normalizeAppearance(settingsProps.settings.appearance))); views.saveConversationStyle(settingsProps.settings.conversationStyle); renderSettings(); }, onUseModel: noop, onSidebarWidthChange: noop,
         onToggleSkill: noop, onReloadSkills: async () => [], onLoadSkillDetail: async () => null,
         visualInputAvailable: true, visualInputEnabled: false, onVisualInputEnabledChange: value => { settingsProps.visualInputEnabled = value; renderSettings(); },
@@ -174,6 +175,47 @@ app.whenReady().then(async () => {
       renderSettings();
     `);
     await until("document.querySelector('#global-agent-instructions')?.value.includes('中文')");
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'navigation') {
+      await run("settingsProps.initialSection='general'; renderSettings()");
+      await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='general'");
+      assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav-group-label'), node => node.textContent)"), ['个人', '集成', '系统']);
+      assert.equal(await run("document.querySelector('.settings-nav')?.getAttribute('aria-current')"), 'page', 'the first entry is the default page');
+      await choose('[name=language-mode] + [role=combobox]', 'system');
+      assert.equal(await run('settingsProps.languageMode'), 'system');
+      await choose('[name=guidance-delivery-mode] + [role=combobox]', 'immediate');
+      assert.equal(await run('settingsProps.settings.guidance.deliveryMode'), 'immediate');
+      await click('通知'); await until("!!document.querySelector('#notification-sound-volume')");
+      await edit('.settings-search input', '语言');
+      await until("document.querySelectorAll('.settings-nav').length===1");
+      assert.equal(await run("document.querySelector('.settings-nav').dataset.settingsSection"), 'general', 'language search points to its new location');
+      // Reopening must reset even when the requested section has not changed.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await edit('.settings-search input', '没有这项设置');
+        await until("!!document.querySelector('.settings-search-empty')");
+        await click('返回应用'); await until("!!document.querySelector('.settings-inactive')");
+        await run('setSettingsActive(true)');
+        await until("document.querySelector('.settings-search input').value==='' && document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='general'");
+        assert.equal(await run("document.querySelector('.settings-navigation').scrollTop"), 0);
+        assert.equal(await run("document.querySelector('.settings-content').scrollTop"), 0);
+      }
+      await click('诊断与关于');
+      await run("document.querySelector('.settings-navigation').scrollTop=document.querySelector('.settings-navigation').scrollHeight");
+      await until("document.querySelector('.settings-navigation').scrollTop>0");
+      await click('返回应用'); await until("!!document.querySelector('.settings-inactive')");
+      await run('setSettingsActive(true)');
+      await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='general' && document.querySelector('.settings-navigation').scrollTop===0");
+      assert.equal(await run("document.querySelector('[name=guidance-delivery-mode]').value"), 'immediate', 'moving settings retains user preferences');
+      fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+      win.webContents.invalidate(); await pause(120);
+      fs.writeFileSync(path.join(root, 'tmp/settings-general-navigation.png'), (await win.webContents.capturePage()).toPNG());
+      await click('返回应用'); await until("!!document.querySelector('.settings-inactive')");
+      await run("settingsProps.initialSection='shortcuts'; setSettingsActive(true); renderSettings()");
+      await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='shortcuts'");
+      assert.equal(await run("document.querySelector('.settings-search input').value"), '', 'explicit settings destinations remain supported');
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
+      console.log('Settings navigation passed: General first, relocated controls, search, clean reopen, scroll reset, preserved preferences and explicit destinations.');
+      return;
+    }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'version') {
       const expectedVersion = process.env.VITE_CARDBUSH_APP_VERSION || require('../package.json').version;
       await run(`Object.defineProperty(navigator, 'clipboard', { configurable:true,
@@ -313,7 +355,7 @@ app.whenReady().then(async () => {
     await run('renderSettings()');
     await until("!!document.querySelector('.settings-content')");
 
-    const expectedSettingsSections = ['browser', 'computer-use', 'mcp', 'models', 'voice', 'profile', 'summary_for_user', 'shortcuts', 'usage', 'appearance', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics'];
+    const expectedSettingsSections = ['general', 'notifications', 'appearance', 'voice', 'profile', 'summary_for_user', 'shortcuts', 'usage', 'cache', 'mcp', 'models', 'browser', 'computer-use', 'ssh', 'runtime', 'proxy', 'diagnostics'];
     assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), expectedSettingsSections, 'each supported local setting page has one navigation entry');
     await click('快捷键');
     await until("document.querySelectorAll('[data-shortcut-row]').length === views.shortcutDefinitions.length");
@@ -326,7 +368,7 @@ app.whenReady().then(async () => {
     assert.equal(await run("document.querySelector('[name=theme-mode]')"), null, 'appearance is separate from conversation preferences');
     await edit('.settings-search input', '浏览器');
     await until("document.querySelectorAll('.settings-nav').length === 2");
-    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), ['browser', 'mcp'], 'browser search includes its dedicated settings and plugins');
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), ['mcp', 'browser'], 'browser search includes its dedicated settings and plugins');
     await click('插件');
     await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection === 'mcp'");
     assert.equal(await run("document.querySelector('.settings-search input').value"), '');
@@ -367,9 +409,11 @@ app.whenReady().then(async () => {
       console.log('Network settings UI passed: draft isolation, failed-save retention, host application, persisted fields, tabs and narrow English layout.');
       win.destroy(); app.exit(0); return;
     }
-    await click('外观与语言');
+    await click('常规');
+    await until("!!document.querySelector('[name=language-mode]')");
+    await click('外观');
     await until("!!document.querySelector('[name=theme-mode]')");
-    assert.equal(await run("document.querySelector('[name=language-mode]') !== null"), true);
+    assert.equal(await run("document.querySelector('[name=language-mode]') !== null"), false, 'language is in General');
     assert.equal(await run("document.querySelector('.settings-disclosure').open"), false, 'advanced appearance stays collapsed');
     for (const theme of ['light', 'system', 'dark']) {
       await run('document.querySelector(\'[name=theme-mode][value=' + theme + ']\').click()');
@@ -391,11 +435,17 @@ app.whenReady().then(async () => {
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await until('document.hasFocus()');
-    await run("document.querySelector('.usage-heatmap-cell[tabindex=\"0\"]').focus()");
-    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Left'});
-    win.webContents.sendInputEvent({type:'keyUp',keyCode:'Left'});
-    await until("document.querySelector('.global-tooltip:popover-open')?.textContent.includes('Token')");
-    assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 1, 'heatmap uses only the shared capsule tooltip');
+    await run("document.querySelector('.usage-heatmap-cell[tabindex=\"0\"]').scrollIntoView({block:'center'})");
+    await pause(80);
+    await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+    await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+    await run("document.querySelector('.usage-heatmap-cell[tabindex=\"0\"]').focus({preventScroll:true})");
+    const focusedDay = await run("document.activeElement.getAttribute('aria-label')");
+    await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyDown',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37});
+    await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', {type:'keyUp',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37});
+    await until(`document.activeElement.matches('.usage-heatmap-cell') && document.activeElement.getAttribute('aria-label') !== ${JSON.stringify(focusedDay)}`);
+    assert.match(await run("document.activeElement.getAttribute('aria-label')"), /Token/, 'keyboard navigation retains the accessible daily usage description');
+    assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 0, 'accessible labels alone do not create implicit tooltips');
     await pause(140);
     fs.writeFileSync(path.join(root, 'tmp/settings-usage-reorganized.png'), (await win.webContents.capturePage()).toPNG());
     await run("document.activeElement.blur()");
@@ -428,9 +478,9 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('.composer-surface')");
     await run("Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '添加' || button.title === '添加').click()");
     await until("!!document.querySelector('.composer-add-menu')");
-    assert.equal(await run("document.querySelectorAll('.composer-add-menu button').length"), 2);
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('.composer-add-menu button strong'), node=>node.textContent)"), ['文件和文件夹', 'Source', '任务计划', '个性化记忆']);
     assert.doesNotMatch(await run("document.querySelector('.composer-add-menu').textContent"), /Skills|Git|项目上下文|视觉功能/);
-    await run("document.querySelector('.composer-add-menu [role=switch]').click()");
+    await run("document.querySelector('.composer-add-menu [aria-label=任务计划]').click()");
     await until("composerProps.referencePlanMode === 'off'");
     fs.writeFileSync(path.join(root, 'tmp/composer-add-menu.png'), (await win.webContents.capturePage()).toPNG());
     await run('renderWorkspace(false)');
@@ -450,7 +500,7 @@ app.whenReady().then(async () => {
     assert.deepEqual(await run('checkouts[0]'), { root: 'D:/fixture', branch: 'preview' });
     assert.deepEqual(await run('failures'), []);
     assert.deepEqual(errors, []);
-    console.log('Settings context UI passed: grouped navigation, custom dropdowns and keyboard selection, blue controls, recorded usage with animation/tooltips/error recovery, responsive layout, saved styles, model limits and retained composer/Git operations.');
+    console.log('Settings context UI passed: grouped navigation, custom dropdowns and keyboard selection, blue controls, recorded usage with animation/keyboard access/error recovery, responsive layout, saved styles, model limits and retained composer/Git operations.');
   } finally { win.destroy(); }
   app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });

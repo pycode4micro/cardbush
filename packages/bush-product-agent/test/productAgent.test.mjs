@@ -7,11 +7,11 @@ import {
   CHILD_AGENT_SYSTEM_PROMPT,
 } from "../dist/index.js";
 
-test('an unspecified context window defaults to 400k while explicit model limits are preserved', () => {
+test('an unspecified context window defaults to 530k while explicit model limits are preserved', () => {
   const input = { requestId: 'context', sessionId: 'context', turnId: 'context', messageId: 'context',
     createdAt: '2026-09-08T00:00:00Z', localDate: '2026-09-08', userText: 'test', model: 'fixture', tools: [] };
-  assert.equal(DEFAULT_MAX_CONTEXT_TOKENS, 400_000);
-  assert.equal(createProductAgentTurnRequest(input).metadata.contextWindowTokens, 400_000);
+  assert.equal(DEFAULT_MAX_CONTEXT_TOKENS, 530_000);
+  assert.equal(createProductAgentTurnRequest(input).metadata.contextWindowTokens, 530_000);
   assert.equal(createProductAgentTurnRequest({ ...input, maxContextTokens: 128_000 }).metadata.contextWindowTokens, 128_000);
 });
 

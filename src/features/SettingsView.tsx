@@ -4,6 +4,8 @@ import { useSettingsHost } from './settings/SettingsHostContext';
 import { SandboxSettingsPanel } from './settings/SandboxSettingsPanel';
 import { ModelsSettingsPanel } from './settings/ModelsSettingsPanel';
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
+import { SettingsGeneralPanel } from './settings/SettingsGeneralPanel';
+import { NotificationSoundSettings } from './settings/NotificationSoundSettings';
 import { SettingsSummaryPanel } from './settings/SettingsSummaryPanel';
 import { VoiceSettingsPanel } from './voice/VoiceSettingsPanel';
 import { BrowserSettingsPanel } from './browser/BrowserSettingsPanel';
@@ -30,6 +32,7 @@ import {
   AlertCircle,
   Archive,
   BarChart3,
+  Bell,
   Brain,
   ArrowLeft,
   Check,
@@ -128,6 +131,7 @@ const defaultFontSettings = {
   filePath: '',
 };
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
+  general: Settings, notifications: Bell,
   voice: Mic,
   profile: SlidersHorizontal, summary_for_user: Brain, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
   models: Cpu, mcp: PluginIcon, browser: Monitor, 'computer-use': Keyboard,
@@ -234,6 +238,7 @@ export function SettingsView({
   const [settingsQuery, setSettingsQuery] = useState('');
   const [networkTab, setNetworkTab] = usePageState<'models' | 'plugins'>('network-tab', 'models');
   const settingsContentRef = useRef<HTMLElement>(null);
+  const settingsNavigationRef = useRef<HTMLElement>(null);
   const sectionScrollPositions = useRef<Record<string, number>>({});
   const effectiveSection = section === 'projects' ? 'models' : section;
   const scrollKey = effectiveSection;
@@ -246,14 +251,21 @@ export function SettingsView({
     onReady();
   }, [onReady]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!active) return;
     setLocalSection(visibleSettingsSection(initialSection));
     setSettingsQuery('');
-  }, [initialSection]);
+  }, [initialSection, active]);
 
   useLayoutEffect(() => {
-    if (settingsContentRef.current) settingsContentRef.current.scrollTop = sectionScrollPositions.current[scrollKey] ?? 0;
-  }, [scrollKey]);
+    if (!active) return;
+    if (settingsContentRef.current) settingsContentRef.current.scrollTop = scrollKey === 'general' ? 0 : sectionScrollPositions.current[scrollKey] ?? 0;
+  }, [scrollKey, active]);
+
+  useLayoutEffect(() => {
+    if (!active) return;
+    if (effectiveSection === 'general') settingsNavigationRef.current?.scrollTo({ top: 0 });
+  }, [effectiveSection, settingsQuery, active]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -340,20 +352,24 @@ export function SettingsView({
   }, [updateSettings]);
 
   const content = (() => {
+    if (effectiveSection === 'general') return <SettingsGeneralPanel language={language} languageMode={languageMode}
+      systemLanguage={systemLanguage} settings={settings} reasoningStreamAvailable={backendCapabilities.reasoningStream}
+      onLanguageModeChange={onLanguageModeChange} onSettingsChange={updateSettings} />;
+    if (effectiveSection === 'notifications') return <div className="settings-stack"><NotificationSoundSettings language={language}/></div>;
     if (effectiveSection === 'voice') return <VoiceSettingsPanel language={language} />;
     if (effectiveSection === 'shortcuts') return <SettingsKeyboardPanel language={language} />;
     if (effectiveSection === 'browser') return <BrowserSettingsPanel language={language} />;
     if (effectiveSection === 'ssh') return <SshConnectionsPanel language={language} projects={projects} />;
     if (effectiveSection === 'computer-use') return <ComputerUseSettingsPanel language={language} />;
     if (effectiveSection === 'profile') return <SettingsPersonalizationPanel language={language} settings={settings}
-      reasoningStreamAvailable={backendCapabilities.reasoningStream} onSettingsChange={updateSettings} />;
+      onSettingsChange={updateSettings} />;
     if (effectiveSection === 'summary_for_user') return <SettingsSummaryPanel language={language} settings={settings}
       onSettingsChange={updateSettings} modelId={selectedModel} modelLabel={availableModels.find(model=>model.id===selectedModel)?.modelName} connections={agentConnections}/>;
     if (effectiveSection === 'usage') return <UsageStatisticsPanel language={language} active={active} />;
     if (effectiveSection === 'appearance') return <SettingsAppearancePanel
       themePreference={themePreference} windowMaterial={windowMaterial} onWindowMaterialChange={onWindowMaterialChange}
-      language={language} languageMode={languageMode} systemLanguage={systemLanguage} settings={settings}
-      onThemePreferenceChange={onThemePreferenceChange} onLanguageModeChange={onLanguageModeChange}
+      language={language} settings={settings}
+      onThemePreferenceChange={onThemePreferenceChange}
       onSettingsChange={updateSettings}
       onImportFont={importFont} onResetFont={resetFont} onImportThemeStyle={importThemeStyle} onResetImportedThemeStyle={resetImportedThemeStyle} />;
     if (effectiveSection === 'runtime') {
@@ -606,7 +622,7 @@ export function SettingsView({
             onKeyDown={event => { if (event.key === 'Escape') setSettingsQuery(''); }} />
           {settingsQuery && <button type="button" aria-label={language === 'zh' ? '清除搜索' : 'Clear search'} onClick={() => setSettingsQuery('')}><X size={14} /></button>}
         </label>
-        <nav className="settings-navigation" aria-label={language === 'zh' ? '设置分类' : 'Settings sections'}>
+        <nav className="settings-navigation" ref={settingsNavigationRef} aria-label={language === 'zh' ? '设置分类' : 'Settings sections'}>
           {filteredNavigation.map((group) => (
             <div className="settings-nav-group" key={group.label.en}>
               <span className="settings-nav-group-label">{group.label[language]}</span>

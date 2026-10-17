@@ -489,18 +489,17 @@
   display: flex; align-items: center; gap: 10px; min-width: 0;
   color: var(--text-soft); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.4;
 }
-.inline-html-heading { min-height: 32px; margin-bottom: 8px; }
-.inline-html-footer { min-height: 36px; margin-top: 8px; flex-wrap: wrap; }
-.inline-html-rule { flex: 1; min-width: 12px; height: 1px; background: var(--border); }
-.inline-html-expand-toggle, .inline-html-collapse-top, .inline-html-open-full {
+.inline-html-heading { justify-content: flex-end; min-height: 28px; margin-bottom: 4px; }
+.inline-html-footer { justify-content: center; min-height: 28px; margin-top: 4px; flex-wrap: wrap; }
+.inline-html-expand-toggle, .inline-html-collapse-top {
   display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   min-height: 28px; padding: 4px 8px; border: 0; border-radius: 5px;
   background: transparent; color: var(--text-mid); font: inherit; cursor: pointer;
 }
-.inline-html-expand-toggle:hover, .inline-html-collapse-top:hover, .inline-html-open-full:hover {
+.inline-html-expand-toggle:hover, .inline-html-collapse-top:hover {
   color: var(--text); background: var(--surface-raised);
 }
-.inline-html-expand-toggle:focus-visible, .inline-html-collapse-top:focus-visible, .inline-html-open-full:focus-visible, .inline-html-menu-toggle:focus-visible {
+.inline-html-expand-toggle:focus-visible, .inline-html-collapse-top:focus-visible, .inline-html-menu-toggle:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .is-folded .inline-html-viewport::after {
@@ -564,9 +563,9 @@
   position: relative;
   display: block;
   height: clamp(300px, 55vh, 520px);
-  contain: layout paint;
+  contain: layout;
 }
-.is-visualization > .inline-html-viewport { overflow: hidden; }
+.is-folded > .inline-html-viewport { overflow: clip; }
 .inline-html-webview { display: flex; width: 100%; height: 100%; border: 0; }
 .inline-html-viewport.is-loading .inline-html-webview { visibility: hidden; }
 /* Webview guests paint directly. Persistent clip/transform animations create

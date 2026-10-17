@@ -1,10 +1,71 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, GET_RUNTIME_SESSION_COMMAND } from '@cardbush/bush-protocol';
+import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, GET_RUNTIME_SESSION_COMMAND, developmentDesktop } from '@cardbush/bush-protocol';
 import { InMemoryRuntimeHost } from '../dist/index.js';
+
+test('development desk Team updates through real child tools after the parent finishes, preserving the fixed comparison and layout', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-desk-team-')), path = join(root, 'space.canvas.json');
+  const document = developmentDesktop(root); document.team = { id: 'desk' };
+  document.items[0].assignment = { teamId: 'desk', nodeId: 'changes' };
+  document.items[3].fixed = { capturedAt: new Date().toISOString(), original: { kind: 'markdown', markdown: document.items[3].markdown } };
+  await writeFile(path, JSON.stringify(document));
+  let host, release; const gate = new Promise(done => { release = done; });
+  t.after(async () => { release(); await host?.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-desk-team-')); await rm(root, { recursive: true, force: true }); });
+  const rounds = new Map(), inspections = [];
+  const provider = { async *stream(request) {
+    const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+    const round = (rounds.get(request.turnId) ?? 0) + 1; rounds.set(request.turnId, round);
+    let call;
+    if (request.metadata.registeredAgentId) {
+      await gate;
+      assert.match(JSON.stringify(request.messages), /own design\(action=inspect\)/);
+      if (round === 1) call = request.metadata.teamMemberId === 'verify' ? ['read_file', { path }] : ['design', { action: 'inspect', path }];
+      else if (round === 2) {
+        const result = request.messages.filter(message => message.role === 'tool').at(-1).content;
+        const receipt = request.metadata.teamMemberId === 'verify' ? { content: result } : JSON.parse(result);
+        inspections.push(receipt);
+        if (request.metadata.teamMemberId === 'changes') call = ['design', { action: 'update', path, expected_revision: receipt.revision,
+          content: [{ id: 'changes', content: { kind: 'markdown', markdown: '## Actual changes\n\nUpdated through the existing Team child tools.' } }] }];
+        else { assert.equal(request.metadata.registeredAgentReadOnly, true); assert.match(receipt.content, /Updated through/); }
+      }
+    } else if (round === 1) call = ['team', { action: 'run', team_id: 'desk', input: 'Update the development desk', canvas_path: path }];
+    if (call) {
+      yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `${request.turnId}-${round}`, nameDelta: call[0], argumentsDelta: JSON.stringify(call[1]) };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
+    }
+    yield { ...base, sequence: 0, kind: 'text_delta', delta: 'Desk result available.' };
+    yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'stop' };
+  } };
+  host = new InMemoryRuntimeHost({ dataRoot: root, provider });
+  await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
+    id: 'desk-worker', name: 'Desk worker', system_prompt: 'Update only assigned regions using verified evidence.', memory: 'none', allowed_tools: ['design', 'read_file', 'edit_file'],
+  } } });
+  await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
+    id: 'desk-reviewer', name: 'Desk reviewer', system_prompt: 'Read the current canvas and verify the result.', memory: 'none', allowed_tools: ['read_file'], guards: ['read_only'],
+  } } });
+  await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
+    id: 'desk', name: 'Desk maintenance', nodes: [
+      { id: 'changes', agent_id: 'desk-worker', prompt: 'Update the changes region.' },
+      { id: 'verify', agent_id: 'desk-reviewer', prompt: 'Inspect the updated desk.', depends_on: ['changes'] },
+    ],
+  } } });
+  const tools = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
+  const parent = new AbortController();
+  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'desk-request', sessionId: 'desk-parent', turnId: 'desk-turn', model: 'fixture',
+    prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Update the desk.' } }], tools, permissionMode: 'all_free', metadata: { workspaceDir: root, individuation: { habits: false, predictions: false } } }, parent.signal);
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal)); parent.abort(); release();
+  let run;
+  for (let i = 0; i < 500; i++) { run = (await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'list' } })).runs[0]; if (run?.status !== 'running') break; await new Promise(done => setTimeout(done, 10)); }
+  assert.equal(run?.status, 'completed', JSON.stringify(run)); assert.equal(inspections.length, 2);
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  assert.match(saved.items[0].markdown, /Updated through/);
+  assert.deepEqual(saved.items.map(item => item.frame), document.items.map(item => item.frame));
+  assert.deepEqual(saved.items[3], document.items[3]);
+});
 
 test('native Team uses real session execution and employee memory without holding its parent turn open', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-native-team-host-'));

@@ -61,7 +61,7 @@ assert.match(childConversation, /employeeTaskTitle\(task, language\)/);
 assert.match(read('src', 'features', 'team', 'employeePresentation.ts'), /task\.teamMemberId/);
 assert.match(api, /teamMemberId: task\.teamMemberId/);
 assert.doesNotMatch(api, /decodeSubagentTaskStatus|subagentTaskFromPayload/);
-assert.match(runtimeChat, /subagentTaskStatusSchema\.parse\(statusValue\)/);
+assert.match(runtimeChat, /subagentTaskStatusSchema\.safeParse/);
 assert.match(childConversation, /subagentTaskPresentation\(/);
 assert.doesNotMatch(summary + inspector, /reviewStatus|contractState|Awaiting parent review|待父级审查/);
 assert.match(presentation, /satisfies Record<SubagentTaskStatus/);

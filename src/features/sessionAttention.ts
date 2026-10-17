@@ -1,6 +1,7 @@
 import { taskPlanWaitingSchema } from '@cardbush/bush-protocol';
 import type { AppLanguage, SessionAttentionState } from '../types';
 import { taskPlanWaitingLabel } from './taskPlanWaiting';
+import { isWindowVisible } from '../shared/windowVisibility';
 
 const sessionAttentionStorageKey = 'cardbush_session_attention_v1';
 const maxPersistedAttentionAgeMs = 30 * 24 * 60 * 60 * 1000;
@@ -69,5 +70,5 @@ export function sessionAttentionLabel(attention: Pick<SessionAttentionState, 'ki
 }
 
 export function isCardbushForeground() {
-  return document.visibilityState === 'visible' && document.hasFocus();
+  return isWindowVisible() && document.hasFocus();
 }

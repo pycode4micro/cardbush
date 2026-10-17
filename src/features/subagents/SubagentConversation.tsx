@@ -181,7 +181,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         <button type="button" disabled={refreshing} title={zh ? '刷新会话' : 'Refresh conversation'} onClick={() => void refreshAll().catch(error => setError(String(error)))}><RefreshCw size={15} className={refreshing ? 'spin' : ''}/></button>
       </header>
       <ChatPanel embedded welcomeEnabled={false} workSummaryAvailable={false}
-        language={language} theme={theme} title={task.agentName || 'Subagent'} sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => openReview()}
+        language={language} theme={theme} title={employeeTaskTitle(task, language)} sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => openReview()}
         activeConversationId={host?.id ?? sessionId} activeProjectDir={chat.activeConversation ? conversationWorkspaceRoot(chat.activeConversation) : undefined}
         projectPathAliases={[]} selectedProjectDir="" availableProjects={[]} onWelcomeProjectChange={nothingAsync}
         messages={messages} changeReports={reports} activeTurnId={chat.activeTurnId}

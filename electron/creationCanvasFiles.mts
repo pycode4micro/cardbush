@@ -2,16 +2,18 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { CANVAS_FILE_NAME, CANVAS_MAX_BYTES, creationCanvasSchema, emptyCanvas, serializeCanvas, type CanvasSnapshot, type CreationCanvas } from '@cardbush/bush-protocol';
-import { withCanvasFileLock } from '@cardbush/bush-runtime';
+import { assertCanvasVersionsUnchanged, CANVAS_FILE_NAME, CANVAS_MAX_BYTES, creationCanvasSchema, emptyCanvas, serializeCanvas, type CanvasSnapshot, type CreationCanvas } from '@cardbush/bush-protocol';
+import { captureCanvasVersion, releaseCanvasVersion, resourceFormat, rewriteCanvasResources as rewriteResources, withCanvasFileLock } from '@cardbush/bush-runtime';
 import { replaceFileWithRetry } from './atomicJsonFile.mjs';
 
 export type CanvasFileRequest =
   | { action: 'create'; root: string; document?: CreationCanvas }
   | { action: 'read'; path: string }
   | { action: 'save'; path: string; expectedRevision: string; document: CreationCanvas }
+  | { action: 'freeze' | 'unfreeze'; path: string; expectedRevision: string; itemId: string }
   | { action: 'image'; path: string; data: string }
   | { action: 'open' }
+  | { action: 'repository' }
   | { action: 'export'; path: string; expectedRevision: string };
 export type CanvasFileResponse = CanvasSnapshot | { path: string } | null;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -34,10 +36,11 @@ export async function readCanvas(file: string): Promise<CanvasSnapshot> {
 }
 
 export class CreationCanvasFiles {
-  constructor(private choose: (action: 'open' | 'export') => Promise<string | undefined>) {}
+  constructor(private choose: (action: 'open' | 'export' | 'repository') => Promise<string | undefined>) {}
   async command(input: CanvasFileRequest): Promise<CanvasFileResponse> {
     if (!input || typeof input !== 'object') throw Error('Invalid canvas request.');
     if (input.action === 'open') { const selected = await this.choose('open'); return selected ? readCanvas(selected) : null; }
+    if (input.action === 'repository') { const selected = await this.choose('repository'); return selected ? { path: selected } : null; }
     if (input.action === 'create') {
       if (!path.isAbsolute(input.root) || !(await fs.stat(input.root)).isDirectory()) throw Error('Canvas workspace is unavailable.');
       const target = path.join(input.root, CANVAS_FILE_NAME);
@@ -46,11 +49,24 @@ export class CreationCanvasFiles {
       return readCanvas(target);
     }
     if (input.action === 'read') return readCanvas(input.path);
-    if (input.action === 'save') {
-      const content = serialize(input.document);
+    if (input.action === 'save' || input.action === 'freeze' || input.action === 'unfreeze') {
       return withCanvasFileLock(input.path, async () => {
         const current = await readCanvas(input.path);
         if (current.revision !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: 画板已有新修改，请刷新后重试。');
+        let document: CreationCanvas;
+        if (input.action === 'save') {
+          document = creationCanvasSchema.parse(input.document);
+          assertCanvasVersionsUnchanged(current.document, document);
+        } else {
+          const item = current.document.items.find(item => item.id === input.itemId);
+          if (!item) throw Error('画板区域已移除。 / Region no longer exists.');
+          const replacement = input.action === 'unfreeze' ? releaseCanvasVersion(item) : await captureCanvasVersion(item, input.path, {
+            read: async file => { if ((await fs.stat(file)).size > 128 * 1024 * 1024) throw Error('File exceeds 128 MiB.'); return fs.readFile(file); },
+            write: async (file, bytes) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, bytes, { flag: 'wx' }); },
+          });
+          document = { ...current.document, items: current.document.items.map(value => value.id === item.id ? replacement : value) };
+        }
+        const content = serialize(document);
         const temporary = `${input.path}.${randomUUID()}.tmp`;
         try { await fs.writeFile(temporary, content, { flag: 'wx' }); await replaceFileWithRetry(temporary, input.path, async () => {
           if (digest(await fs.readFile(input.path, 'utf8')) !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: 画板已有新修改，请刷新后重试。');
@@ -105,7 +121,7 @@ export async function exportCanvas(snapshot: CanvasSnapshot, parent: string) {
         const [file, suffix = ''] = value.split(/(?=[?#])/s, 2);
         const result = await copy(decodeURIComponent(file), path.dirname(original));
         return result.startsWith('assets/') ? result.slice(7).split('/').map(encodeURIComponent).join('/') + suffix : result;
-      }, extension === '.js' || extension === '.mjs');
+      }, resourceFormat(extension));
       await fs.writeFile(path.join(folder, destination), portable);
     } else await fs.copyFile(original, path.join(folder, destination));
     return destination;
@@ -118,8 +134,10 @@ export async function exportCanvas(snapshot: CanvasSnapshot, parent: string) {
         if (!value || /^(?:#|https?:|data:|mailto:|tel:|\/\/)/i.test(value)) return value;
         const [file, suffix = ''] = value.split(/(?=[?#])/s, 2);
         return (await copy(decodeURIComponent(file), path.dirname(snapshot.path))).split('/').map(encodeURIComponent).join('/') + suffix;
-      });
-      if (item.reference) item.reference.source = await copy(item.reference.source, path.dirname(snapshot.path));
+      }, 'markdown');
+      if (item.reference) item.reference.source = item.fixed
+        ? /^(?:https?:|file:)/i.test(item.reference.source) ? item.reference.source : path.resolve(path.dirname(snapshot.path), item.reference.source)
+        : await copy(item.reference.source, path.dirname(snapshot.path));
     }
     await fs.writeFile(path.join(folder, CANVAS_FILE_NAME), serialize(document));
     await fs.writeFile(path.join(folder, 'index.html'), canvasExportHtml(document));
@@ -128,24 +146,6 @@ export async function exportCanvas(snapshot: CanvasSnapshot, parent: string) {
   } catch (error) { await fs.rm(folder, { recursive: true, force: true }); throw error; }
 }
 
-async function rewriteResources(text: string, replace: (value: string) => Promise<string>, javascript = false) {
-  const pattern = javascript
-    ? /(?:\b(?:import|export)\s+(?:[^;'"\n]*?\s+from\s+)?|\bimport\s*\(\s*)['"](\.{1,2}\/[^'"]+)['"]/g
-    : /(?:\b(?:src|href|poster)\s*=\s*["']([^"']+)["']|url\(\s*["']?([^\s)'";]+)["']?\s*\)|!?\[[^\]]*\]\(([^\s)]+)\)|@import\s+["']([^"']+)["'])/gi;
-  const matches = [...text.matchAll(pattern)];
-  for (const match of matches.reverse()) {
-    const value = match[1] ?? match[2] ?? match[3] ?? match[4];
-    let result = await replace(value);
-    if (javascript && !/^(?:\.{1,2}\/|\/|[a-z][\w+.-]*:)/i.test(result)) result = './' + result;
-    text = text.slice(0, match.index) + match[0].replace(value, result) + text.slice(match.index! + match[0].length);
-  }
-  if (!javascript) for (const match of [...text.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)].reverse()) {
-    if (/data:/i.test(match[1])) continue;
-    const entries = await Promise.all(match[1].split(',').map(async entry => { const [url, ...descriptor] = entry.trim().split(/\s+/); return [await replace(url), ...descriptor].join(' '); }));
-    text = text.slice(0, match.index) + match[0].replace(match[1], entries.join(', ')) + text.slice(match.index! + match[0].length);
-  }
-  return text;
-}
 function canvasExportHtml(document: CreationCanvas) {
   const items = document.items.map(item => {
     const frame = item.frame;

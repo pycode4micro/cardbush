@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async ({ run, until, click, choose, edit, pause, window, root }) => {
-  await click('外观与语言');
+  await click('外观');
   await until("document.querySelectorAll('[name=theme-mode]').length === 3");
   assert.equal(await run("document.body.textContent.includes('赛博朋克')"), false);
   const select = async (name, value) => {

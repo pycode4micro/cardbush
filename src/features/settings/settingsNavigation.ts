@@ -4,12 +4,14 @@ export type VisibleSettingsSection = Exclude<SettingsSection, 'companion' | 'sub
 type LocalizedText = { zh: string; en: string };
 
 export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
+  general: { zh: '常规', en: 'General' },
+  notifications: { zh: '通知', en: 'Notifications' },
   voice: { zh: '语音', en: 'Voice' },
   projects: { zh: '项目', en: 'Projects' },
   ssh: { zh: 'SSH 连接', en: 'SSH connections' },
   profile: { zh: '个性化', en: 'Personalization' },
   summary_for_user: { zh: '记忆与预测', en: 'Memory & predictions' },
-  appearance: { zh: '外观与语言', en: 'Appearance & language' },
+  appearance: { zh: '外观', en: 'Appearance' },
   shortcuts: { zh: '快捷键', en: 'Keyboard shortcuts' },
   usage: { zh: '使用统计', en: 'Usage' },
   models: { zh: '模型管理', en: 'Models' },
@@ -23,12 +25,14 @@ export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
 };
 
 export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText> = {
+  general: { zh: '设置界面语言和日常对话的交互方式。', en: 'Set the interface language and everyday conversation behavior.' },
+  notifications: { zh: '设置回复完成、需要确认和发生错误时的提醒。', en: 'Manage alerts for completed responses, requests for input, and errors.' },
   voice: { zh: '配置录音转文字、语音通话和 Agent 音色。', en: 'Configure transcription, voice calls, and the Agent voice.' },
   projects: { zh: '管理当前 Agent 的项目目录和默认项目。', en: 'Manage this Agent’s project directories and default project.' },
   ssh: { zh: '管理远程主机，通过项目或 @ 引用接入。', en: 'Manage remote hosts for projects and @ references.' },
-  profile: { zh: '调整对话语气、交互方式和长期偏好。', en: 'Set the conversation tone, interaction preferences, and shared instructions.' },
+  profile: { zh: '调整回复风格和全局指令。', en: 'Set the response style and shared instructions.' },
   summary_for_user: { zh: '管理用户习惯、下一步预测和记忆总结。', en: 'Manage habits, next-step predictions, and memory summaries.' },
-  appearance: { zh: '调整颜色、字体、显示效果和界面语言。', en: 'Adjust colors, typography, display effects, and interface language.' },
+  appearance: { zh: '调整主题、颜色、字体和显示效果。', en: 'Adjust themes, colors, typography, and display effects.' },
   shortcuts: { zh: '查看和自定义快捷键，让操作更顺手。', en: 'View and customize keyboard shortcuts.' },
   usage: { zh: '查看实际记录的 Token 用量和使用活动。', en: 'Review recorded token usage and activity.' },
   models: { zh: '管理模型服务、输入能力和上下文长度。', en: 'Manage model services, input capabilities, and context limits.' },
@@ -42,18 +46,20 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
 };
 
 export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: VisibleSettingsSection[] }> = [
-  { label: { zh: '能力', en: 'Capabilities' }, sections: ['browser', 'computer-use', 'mcp', 'models', 'voice'] },
-  { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'summary_for_user', 'shortcuts', 'usage', 'appearance'] },
-  { label: { zh: '系统', en: 'System' }, sections: ['ssh', 'runtime', 'proxy', 'cache', 'diagnostics'] },
+  { label: { zh: '个人', en: 'Personal' }, sections: ['general', 'notifications', 'appearance', 'voice', 'profile', 'summary_for_user', 'shortcuts', 'usage', 'cache'] },
+  { label: { zh: '集成', en: 'Integrations' }, sections: ['mcp', 'models', 'browser', 'computer-use'] },
+  { label: { zh: '系统', en: 'System' }, sections: ['ssh', 'runtime', 'proxy', 'diagnostics'] },
 ];
 
 const keywords: Record<VisibleSettingsSection, string> = {
+  general: '语言 中文 English 对话 交互 引导 排队 队列 思考 消息 发送 general language interaction guidance queue thinking messages send',
+  notifications: '消息 提醒 音效 音量 声音 通知 回复 完成 确认 错误 notification sound volume alerts response approval error',
   voice: '语音 通话 录音 转写 男声 女声 麦克风 音色 voice audio speech microphone transcription call TTS',
   summary_for_user: '习惯 记忆 预测 命中 总结 压缩 阈值 Token summary_for_user check_habit memory habit prediction summary threshold consolidation',
   projects: '项目 工作区 目录 project workspace directory',
   ssh: 'SSH 远程 连接 主机 服务器 私钥 项目 remote connection server key project',
-  profile: '对话 风格 角色 自然 专业 直率 简短 自定义 语气 全局约束 AGENTS.md 提示词 引导 排队 队列 思考 消息 提醒 音效 音量 声音 通知 instructions tone persona style natural professional direct concise guidance queue thinking notification sound volume',
-  appearance: '主题 深色 浅色 系统 窗口 玻璃 透明 导入 字体 字号 强调色 背景 前景 对比度 动画 指针 差异 中文 English theme font size color background foreground accent contrast motion cursor diff language glass',
+  profile: '对话 风格 角色 自然 专业 直率 简短 自定义 语气 全局约束 AGENTS.md 提示词 instructions tone persona style natural professional direct concise',
+  appearance: '主题 深色 浅色 系统 窗口 玻璃 透明 导入 字体 字号 强调色 背景 前景 对比度 动画 指针 差异 theme font size color background foreground accent contrast motion cursor diff glass',
   shortcuts: '快捷键 键盘 按键 引导 发送 排队 Ctrl Enter keyboard shortcuts hotkeys guidance queue',
   usage: '统计 Token 用量 活跃 热力图 会话次数 usage activity',
   models: '模型 API key 密钥 服务商 上下文 输出 视觉 图片 provider context vision',

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import {
   registeredAgentSchema,
+  resolveSubagentName,
+  SUBAGENT_NAME_MAX_LENGTH,
   type SessionSnapshot,
   type RemoteSubagentRequest,
   type RemoteSubagentResult,
@@ -25,7 +27,7 @@ import { assertParentAgent } from './childAgentPolicy.js';
 import { registerSubagentOptions } from './subagentOptions.js';
 import { CLEAN_AGENT_SETTINGS_SCHEMA, decodeCleanAgentSettings, decodeToolOrSkillNames, type CleanAgentSettings, type SubagentModelCatalog } from './cleanAgentSettings.js';
 import { pluginAgentTools, validateAgentSkills, type PluginAgent } from './pluginExtensions.js';
-import { childConversationPage, type ChildConversationSource } from './subagentConversation.js';
+import { childConversationPage, childConversationReadHint, type ChildConversationSource } from './subagentConversation.js';
 
 export const SUBAGENT_TOOL = "subagent" as const;
 export const AWAIT_SUBAGENTS_TOOL = "await_subagents" as const;
@@ -39,6 +41,7 @@ export interface RemoteSubagentBridge {
 
 export interface SubagentInput {
   prompt: string;
+  name?: string;
   mode: 'fork' | 'clean';
   systemPrompt?: string;
   allowedTools?: string[];
@@ -60,6 +63,7 @@ export interface SubagentExecutionOptions {
 }
 export interface SubagentDispatcher {
   dispatch(context: ToolHandlerContext<SubagentInput>, options?: SubagentExecutionOptions): Promise<unknown>;
+  readConversation?(context: ToolHandlerContext<unknown>, taskId: string, cursor?: string): Promise<unknown>;
 }
 
 interface AwaitSubagentsInput {
@@ -115,6 +119,18 @@ export function registerSubagentTool(
     loadHooks?: () => Promise<PluginHook[]>;
   } = {},
 ): SubagentDispatcher | undefined {
+  // Both the tasks facade and legacy calls use the same ownership check,
+  // remote bridge and privacy-preserving conversation projection.
+  const readConversation = async (context: ToolHandlerContext<unknown>, taskId: string, cursor?: string) => {
+    assertParentAgent(context.turn?.request);
+    const task = tasks.get(context.sessionId, taskId);
+    if (!task) throw new Error('This child task does not belong to the current parent conversation.');
+    const session = task.remote
+      ? await options.remoteAgents?.read?.({ ...task.remote, parentSessionId: context.sessionId, sessionId: task.childSessionId }, context.signal)
+      : options.readChildConversation?.(task.childSessionId);
+    if (!session) throw new Error('The child conversation is not available yet.');
+    return { taskId: task.taskId, ...(task.agentName ? { agentName: task.agentName } : {}), status: task.status, ...childConversationPage(session, cursor) };
+  };
   if (options.readChildConversation && !registry.resolve('read_subagent_conversation')) registry.register<{ taskId: string; cursor?: string }>({
     definition: { name: 'read_subagent_conversation',
       description: 'Read the ordered inputs and final answers of a child dispatched by this parent: parent assignments, direct user messages or guidance, and one final answer per completed turn. Intermediate loop messages, reasoning and tool activity are excluded. Use nextCursor until null for remaining content; a completed dispatch may have later human follow-ups. This reads conversation history, not a status polling loop.',
@@ -123,6 +139,7 @@ export function registerSubagentTool(
       } } },
     manifest: { effect_kind: 'observation', operation: 'agent.read_conversation', risk: 'low', owner: 'runtime_subagent', dispatch_scope: 'parent_session', mutating: false },
     visibleToChild: false,
+    supersededBy: 'tasks',
     decodeInput: value => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Provide a task_id and optional conversation cursor.');
       const input = value as Record<string, unknown>;
@@ -130,16 +147,7 @@ export function registerSubagentTool(
         (input.cursor !== undefined && (typeof input.cursor !== 'string' || !/^\d+:\d+$/.test(input.cursor)))) throw new Error('Provide a task_id and optional conversation cursor.');
       return { taskId: input.task_id, cursor: input.cursor as string | undefined };
     },
-    execute: async context => {
-      assertParentAgent(context.turn?.request);
-      const task = tasks.get(context.sessionId, context.input.taskId);
-      if (!task) throw new Error('This child task does not belong to the current parent conversation.');
-      const session = task.remote
-        ? await options.remoteAgents?.read?.({ ...task.remote, parentSessionId: context.sessionId, sessionId: task.childSessionId }, context.signal)
-        : options.readChildConversation!(task.childSessionId);
-      if (!session) throw new Error('The child conversation is not available yet.');
-      return { taskId: task.taskId, status: task.status, ...childConversationPage(session, context.input.cursor) };
-    },
+    execute: context => readConversation(context, context.input.taskId, context.input.cursor),
   });
   if (registry.resolve(SUBAGENT_TOOL)) return;
   registerSubagentOptions(registry, options);
@@ -153,7 +161,7 @@ export function registerSubagentTool(
     definition: {
       name: SUBAGENT_TOOL,
       description:
-        "Dispatch useful parallel work, or follow up on an existing child with task_id. Omit task_id only for new work; an existing running child receives guidance immediately, while a finished child resumes its original session and instructions. Fork continuations inherit the parent's current model configuration; explicitly configured clean children retain their own configuration. Continue independent parent work, then reconcile subagent_result; use await_subagents when only child results remain instead of polling. Background tasks may outlive this Turn and are managed by manage_plugin_agents. Host permissions and child-state restrictions remain enforced.",
+        "Delegate work, or follow up on an owned child with task_id and prompt. Give each new ad-hoc child a short name describing its responsibility, so results and later reviews identify it. A running child receives guidance; a finished child resumes its original session and name. Fork continuations inherit the parent's current model; configured clean children retain theirs. Continue independent work and reconcile subagent_result. Use tasks to inspect, wait, stop or read a child conversation. Independent peer conversations use AgentChatroom; their agent IDs are not child task IDs. Host permissions and child restrictions remain enforced.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -165,9 +173,10 @@ export function registerSubagentTool(
             expected_revision: { type: 'integer', minimum: 0, description: 'Required for save/delete. 0 creates a new definition; otherwise use its observed revision.' },
           } : {}),
           prompt: { type: "string", minLength: 1, description: "Child assignment as a user message: necessary facts, original user's communication language, expected output, your concurrent next steps and handoffs. Distinguish pending dependencies from confirmed facts." },
-          ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt and target_agent only; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),
+          name: { type: 'string', minLength: 1, maxLength: SUBAGENT_NAME_MAX_LENGTH, description: 'Short responsibility label in the user\'s language, e.g. 视觉设计 or API reviewer. Supply for a new ad-hoc child; registered employees and task_id follow-ups keep their existing name. This labels the task without changing its instructions or permissions.' },
+          ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt, target_agent and optional name; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),
           ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Follow up on a subagent owned by this parent. Running children receive guidance without a new task; finished children retain their history and execution host. Fork children inherit the current parent model; clean children and remote hosts retain their own configuration. Supply task_id and prompt only, with optional run_in_background for continuations; do not override configuration or create a duplicate task.' } } : {}),
-          mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork is a snapshot of the pre-dispatch conversation and intent; later parent messages are not synchronized. clean uses a registered agent_id, or explicit independent system_prompt/settings. Discover reusable employees with list_subagent_options. Clean tasks have independent conversations and employee-scoped memory.' },
+          mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork is a snapshot of the pre-dispatch conversation and intent; later parent messages are not synchronized. clean uses a registered agent_id, or explicit independent system_prompt/settings. Discover reusable employees with list_subagent_options. Ad-hoc clean tasks have independent conversations without employee memory. Persistent memory is configured only in a registered employee definition (agent.memory when saving), never as a run argument.' },
           system_prompt: { type: 'string', minLength: 1, description: 'Required for an unregistered clean Agent; omit when using agent_id or fork. Sets the actual system message. Host permissions cannot be overridden.' },
           allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no tools. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
           settings: CLEAN_AGENT_SETTINGS_SCHEMA,
@@ -192,7 +201,7 @@ export function registerSubagentTool(
   if (options.awaitAsyncResults && !registry.resolve(AWAIT_SUBAGENTS_TOOL)) {
     registerAwaitSubagentsTool(registry, options.awaitAsyncResults, tasks);
   }
-  return { dispatch };
+  return { dispatch, ...(options.readChildConversation ? { readConversation } : {}) };
 
   async function dispatch(context: ToolHandlerContext<SubagentInput>, execution: SubagentExecutionOptions = {}) {
       if (!context.turn) throw new Error("Subagent dispatch requires the parent Turn context.");
@@ -227,7 +236,7 @@ export function registerSubagentTool(
               createdAt: new Date().toISOString(), mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent',
                 realtimeParent: true, realtimeParentSessionId: context.sessionId, realtimeTaskId: running.taskId } });
           }
-          return { status: 'message_queued', taskId: running.taskId, childSessionId: running.childSessionId, receipt };
+          return { status: 'message_queued', taskId: running.taskId, ...(running.agentName ? { agentName: running.agentName } : {}), childSessionId: running.childSessionId, receipt };
         } catch (error) {
           if (tasks.get(context.sessionId, running.taskId)?.status === 'running') throw error;
           // If completion raced guidance, continue in the original session below.
@@ -250,6 +259,7 @@ export function registerSubagentTool(
         const childSessionId = previous?.childSessionId ?? `delegated-${taskId}`;
         const childTurnId = `turn-${taskId}`;
         tasks.start({ taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId, childSessionId, childTurnId,
+          agentName: previous?.agentName ?? resolveSubagentName({ name: context.input.name ?? target.name, prompt: previous?.prompt ?? context.input.prompt }),
           prompt: context.input.prompt, inheritContext: false, inheritedMessageCount: 0, remote, ...(previous ? { resumedFromTaskId: previous.taskId } : {}) });
         const completion = options.remoteAgents.run({ ...remote, taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
           sessionId: childSessionId, turnId: childTurnId, prompt: context.input.prompt,
@@ -282,6 +292,10 @@ export function registerSubagentTool(
       const inherited = previous ? [] : inheritedChildMessages(context, inheritContext);
       const agentType = registered ? undefined : previous?.agentProfileId ?? context.input.agentType;
       const profile = agentType ? (await options.loadPluginAgents?.())?.find(agent => agent.id === agentType) : undefined;
+      const agentName = previous?.agentName ?? registered?.definition.name ?? resolveSubagentName({
+        name: context.input.name ?? profile?.name, systemPrompt: context.input.systemPrompt,
+        prompt: previous?.prompt ?? context.input.prompt,
+      });
       const background = !execution.waitForResult && (previous?.background === true || context.input.runInBackground === true || profile?.background === true);
       if (background && !options.runBackground) throw new Error('Background Agent execution is unavailable in this host.');
       if (agentType && !profile) throw new Error('The requested plugin Agent is not installed and enabled.');
@@ -303,7 +317,7 @@ export function registerSubagentTool(
         cleanSettings: context.input.settings,
         cleanModel: selectedModel,
         inherited,
-        metadata: { subagentTaskId: taskId, subagentMode: context.input.mode, pluginBackground: background,
+        metadata: { subagentTaskId: taskId, subagentName: agentName, subagentMode: context.input.mode, pluginBackground: background,
           ...(execution.team ? { teamId: execution.team.id, teamRunId: execution.team.runId, teamMemberId: execution.team.nodeId } : {}),
           ...(registered ? { registeredAgent: registered, registeredAgentId: registered.definition.id, registeredAgentHooks: registered.definition.hooks,
             registeredAgentReadOnly: registered.definition.guards.includes('read_only'), individuation: { habits: false, predictions: false } } : {}),
@@ -366,7 +380,7 @@ export function registerSubagentTool(
       if (previous && tasks.list(context.sessionId).some(task => task.childSessionId === previous.childSessionId && task.status === 'running')) throw new Error('This child session is still running.');
 
       tasks.start({ taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
-        agentName: registered?.definition.name ?? profile?.name,
+        agentName,
         childSessionId, childTurnId, background, agentProfileId: registered ? `registered:${registered.definition.id}` : profile?.id, prompt: context.input.prompt, inheritContext, inheritedMessageCount: saved?.prefixMessages.length ?? inherited.length,
         ...(execution.team ? { origin: 'team', teamId: execution.team.id, teamMemberId: execution.team.nodeId } : {}),
         ...(previous ? { resumedFromTaskId: previous.taskId } : {}) });
@@ -470,7 +484,7 @@ export function asyncResultMessage(
   return {
     role: "user",
     name: "subagent_result",
-    content: `<subagent_result task_id="${task.taskId}" status="${task.status}">\n${body}\nRead read_subagent_conversation with this task_id for the ordered child conversation, including direct user interventions and later replies.\n</subagent_result>`,
+    content: `<subagent_result task_id="${task.taskId}"${task.agentName ? ` agent_name="${task.agentName.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}"` : ''} status="${task.status}">\n${body}\n${childConversationReadHint(task.taskId)}\n</subagent_result>`,
   };
 }
 
@@ -506,7 +520,8 @@ async function finishTask(input: {
 
 function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<string, unknown> {
   return {
-    ...(task.agentProfileId ? { agentProfileId: task.agentProfileId, agentName: task.agentName } : {}),
+    ...(task.agentProfileId ? { agentProfileId: task.agentProfileId } : {}),
+    ...(task.agentName ? { agentName: task.agentName } : {}),
     taskId: task.taskId,
     status: task.status,
     ...(task.status === 'running' ? { next_step: 'Continue independent work now. The child result arrives automatically; wait only when it blocks the next step.' } : {}),
@@ -520,7 +535,8 @@ function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<s
 
 function taskResult(task: ReturnType<SubagentTaskStore["finish"]>): Record<string, unknown> {
   return {
-    ...(task.agentProfileId ? { agentProfileId: task.agentProfileId, agentName: task.agentName } : {}),
+    ...(task.agentProfileId ? { agentProfileId: task.agentProfileId } : {}),
+    ...(task.agentName ? { agentName: task.agentName } : {}),
     taskId: task.taskId,
     status: task.status,
     childSessionId: task.childSessionId,
@@ -540,9 +556,9 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   }
   const object = input as Record<string, unknown>;
   const unexpected = Object.keys(object).filter(
-    (key) => !['prompt', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'inherit_context', 'agent_type', 'run_in_background', 'task_id', 'target_agent', 'action', 'agent_id', 'agent', 'expected_revision'].includes(key),
+    (key) => !['prompt', 'name', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'inherit_context', 'agent_type', 'run_in_background', 'task_id', 'target_agent', 'action', 'agent_id', 'agent', 'expected_revision'].includes(key),
   );
-  if (unexpected.length > 0) throw new Error(`unsupported subagent arguments: ${unexpected.join(", ")}`);
+  if (unexpected.length > 0) throw new Error(`unsupported subagent arguments: ${unexpected.join(", ")}${unexpected.includes('memory') ? '. Ad-hoc clean tasks have no employee memory; omit memory when running. Persistent memory belongs to agent.memory when saving a registered employee.' : ''}`);
   if (object.action !== undefined && !['run', 'save', 'delete'].includes(String(object.action))) throw new Error('Invalid subagent action.');
   if (object.action === 'save' || object.action === 'delete') {
     const allowed = object.action === 'save' ? ['action', 'agent', 'expected_revision'] : ['action', 'agent_id', 'expected_revision'];
@@ -553,6 +569,10 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   if (object.agent !== undefined || object.expected_revision !== undefined) throw new Error('agent and expected_revision require a registration action.');
   const prompt = typeof object.prompt === "string" ? object.prompt.trim() : "";
   if (!prompt) throw new Error("prompt is required.");
+  if (object.name !== undefined && (typeof object.name !== 'string' || !object.name.trim() || object.name.length > SUBAGENT_NAME_MAX_LENGTH || /[\r\n]/.test(object.name))) {
+    throw new Error(`name must be a non-empty single-line label of at most ${SUBAGENT_NAME_MAX_LENGTH} characters.`);
+  }
+  const name = typeof object.name === 'string' ? object.name.trim() : undefined;
   if (object.agent_id !== undefined) {
     if (typeof object.agent_id !== 'string' || !object.agent_id.trim() || object.mode !== undefined && object.mode !== 'clean' ||
         Object.keys(object).some(key => !['action', 'prompt', 'agent_id', 'mode', 'run_in_background'].includes(key))) throw new Error('A registered employee accepts agent_id, prompt, clean mode and optional run_in_background only.');
@@ -561,8 +581,8 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   }
   if (object.target_agent !== undefined) {
     if (typeof object.target_agent !== 'string' || !object.target_agent.trim()) throw new Error('target_agent must be a saved Agent connection ID.');
-    if (Object.keys(object).some(key => !['action', 'prompt', 'target_agent'].includes(key))) throw new Error('Remote delegation accepts prompt and target_agent only; the server owns its configuration.');
-    return { prompt, mode: 'clean', targetAgent: object.target_agent.trim() };
+    if (Object.keys(object).some(key => !['action', 'prompt', 'target_agent', 'name'].includes(key))) throw new Error('Remote delegation accepts prompt, target_agent and optional name only; the server owns its configuration.');
+    return { prompt, name, mode: 'clean', targetAgent: object.target_agent.trim() };
   }
   if (object.task_id !== undefined) {
     if (typeof object.task_id !== 'string' || !object.task_id.trim()) throw new Error('task_id must be non-empty.');
@@ -583,7 +603,7 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   const settings = object.settings === undefined ? undefined : decodeCleanAgentSettings(object.settings);
   if (object.agent_type !== undefined && (typeof object.agent_type !== 'string' || !object.agent_type.trim())) throw new Error('agent_type must be a non-empty string.');
   if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
-  return { prompt, mode, systemPrompt: object.system_prompt as string | undefined, allowedTools, settings, agentType: object.agent_type as string | undefined, runInBackground: object.run_in_background as boolean | undefined };
+  return { prompt, name, mode, systemPrompt: object.system_prompt as string | undefined, allowedTools, settings, agentType: object.agent_type as string | undefined, runInBackground: object.run_in_background as boolean | undefined };
 }
 
 const decodeInput = decodeSubagentInput;

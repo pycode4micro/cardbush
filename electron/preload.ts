@@ -39,6 +39,8 @@ type SessionAttentionPayload = {
   title: string;
   body: string;
   kind: 'completed' | 'waiting' | 'error';
+  turnId?: string;
+  interactionId?: string;
 };
 
 type RuntimeStartupStatus = {

@@ -20,6 +20,7 @@ export function teamResultNodeIds(run: TeamRun): string[] {
 export function teamRunResult(run: TeamRun, outputNodeIds?: string[]) {
   const selected = new Set(outputNodeIds);
   return { run_id: run.id, team_id: run.teamId, status: run.status, result_version: resultVersion(run),
+    ...(run.canvas ? { canvas: run.canvas } : {}),
     createdAt: run.createdAt, updatedAt: run.updatedAt, result_node_ids: teamResultNodeIds(run),
     error: outputNodeIds ? run.error : briefText(run.error),
     ...(outputNodeIds ? { output_node_ids: outputNodeIds, guidance: teamResultGuidance } : {}),

@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react';
+import { scrollConversationByWheel } from './conversationWheelScrolling';
 import { useComponents } from '../components/componentStore';
 import { welcomeComposerFlow, welcomeInputStyle } from '../components/componentModel';
 import { composerHorizontalBounds, composerVerticalBounds } from '../components/composerLayoutGeometry';
@@ -217,7 +218,7 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
         node = node.parentElement;
       }
       event.preventDefault();
-      scroller.scrollBy({ top: event.deltaY * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? scroller.clientHeight : 1), behavior: 'instant' });
+      scrollConversationByWheel(scroller, event.deltaY * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? scroller.clientHeight : 1));
     };
     body.addEventListener('wheel', wheel, { passive: false });
     return () => { observer.disconnect(); scroller.removeEventListener('scroll', position); body.removeEventListener('wheel', wheel); if (frame != null) cancelAnimationFrame(frame); };

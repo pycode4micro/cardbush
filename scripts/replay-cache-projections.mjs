@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { modelRequestSchema } from '@cardbush/bush-protocol';
+import { modelRequestSchema, cacheChainChanges } from '@cardbush/bush-protocol';
 import { assembleContext, CacheChainTracker, projectSession } from '@cardbush/bush-runtime';
 import { toResponsesCreateParams } from '@cardbush/bush-provider-openai';
 import { estimateResponsesInputTokens } from '../packages/bush-provider-openai/dist/responsesInputEstimate.js';
@@ -32,7 +32,7 @@ for (const turn of session.turns) {
     messagePayloadOnly: { oldJournalEstimate: Math.ceil(JSON.stringify(request.messages).length / 4), wireEstimate: estimateResponsesInputTokens(wire),
       caveat: 'Messages only; excludes historical stable instructions and tool catalog. These are character estimates, not API token counts.' },
     checkpoint: turn.contextCheckpoint?.projectionVersion ?? (turn.contextCheckpoint ? 'legacy' : null),
-    actualUsage: { requests: 0, input: 0, cached: 0 }, structuralBreaks: [], compactions: [], lastRequests: [] };
+    actualUsage: { requests: 0, input: 0, cached: 0 }, structuralBreaks: [], parameterChanges: [], projectionChanges: [], compactions: [], lastRequests: [] };
   const path = join(root, 'events', hash(JSON.stringify([sessionId, turn.turnId])) + '.jsonl');
   let runtimeEvents = [];
   try { const value = await readFile(path); sourceBytes.set(path, value); runtimeEvents = value.toString('utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line).event); }
@@ -44,8 +44,16 @@ for (const turn of session.turns) {
       row.lastRequests.push({ round: p.round, input: p.inputTokens, cached: p.cachedInputTokens, preflight: p.preflightInputTokens,
         measurement: p.preflightMeasurement, usableInput: p.usableInputTokens });
     }
-    if (event.kind === 'cache_chain_observed' && event.payload.frozenPrefixBreak) row.structuralBreaks.push({
-      ordinal: event.payload.requestOrdinal, index: event.payload.breakIndex, scope: 'runtime_messages_only' });
+    if (event.kind === 'cache_chain_observed' || event.kind === 'provider_input_observed') {
+      const p = event.payload, changes = cacheChainChanges(p);
+      const detail = { ordinal: p.requestOrdinal, sequence: event.sequence,
+        scope: event.kind === 'cache_chain_observed' ? 'runtime_messages_only' : 'provider_input',
+        prefixBreak: changes.prefixBreak ?? null, parametersChanged: changes.parametersChanged ?? null,
+        changedParameters: p.changedParameters ?? null, projectionFormatChanged: changes.projectionFormatChanged };
+      if (changes.prefixBreak) row.structuralBreaks.push({ ...detail, index: p.messageBreakIndex ?? p.sharedPrefixMessages });
+      if (changes.parametersChanged) row.parameterChanges.push(detail);
+      if (changes.projectionFormatChanged) row.projectionChanges.push(detail);
+    }
     if (event.kind === 'context_compaction_started') row.compactions.push(event.payload);
   }
   row.lastRequests = row.lastRequests.slice(-4);

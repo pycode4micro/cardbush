@@ -76,6 +76,7 @@ import {
 } from '../features/sessionAttention';
 import { taskPlanWaitingLabel, turnPlanWaiting } from '../features/taskPlanWaiting';
 import { notifyAttentionSound } from '../features/notificationSound';
+import { watchWindowVisibility } from '../shared/windowVisibility';
 import {
   samePath,
 } from '../shared/localPaths';
@@ -468,19 +469,8 @@ export function useCardbushChat(
       && (kind === 'completed' || (kind === 'waiting' && waiting !== 'user'))) return;
     const notify = sessionAttentionNeedsNotification({ kind, waitingKind: waiting });
     if (notify) notifyAttentionSound({ sessionId: normalized, scope: backend.scope, kind, turnId, notificationId });
-    if (
-      kind === 'completed' &&
-      viewActiveRef.current &&
-      activeConversationIdRef.current === normalized &&
-      isCardbushForeground()
-    ) {
-      if (existing?.kind === 'waiting' && existing.turnId === normalizedTurnId) {
-        clearSessionAttention(normalized, 'waiting');
-      }
-      clearSessionAttention(normalized, 'completed');
-      return;
-    }
-    if (existing?.kind === kind && existing.waitingKind === waiting && normalizedTurnId && existing.turnId === normalizedTurnId && existing.body === body.trim()) {
+    if (existing?.kind === kind && existing.waitingKind === waiting && normalizedTurnId && existing.turnId === normalizedTurnId
+      && existing.body === body.trim() && existing.interactionId === (kind === 'waiting' ? notificationId : undefined)) {
       return;
     }
     const conversation = conversationsRef.current.find((item) => item.id === normalized);
@@ -499,13 +489,27 @@ export function useCardbushChat(
       turnId: normalizedTurnId || undefined,
       updatedAt: new Date().toISOString(),
     };
+    // Native window state decides toast delivery. Chromium can still report
+    // focus/visibility while a minimize event is on its way to this renderer.
+    if (!backend.scope && notify) void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
+    if (
+      kind === 'completed' &&
+      viewActiveRef.current &&
+      activeConversationIdRef.current === normalized &&
+      isCardbushForeground()
+    ) {
+      if (existing?.kind === 'waiting' && existing.turnId === normalizedTurnId) {
+        clearSessionAttention(normalized, 'waiting');
+      }
+      clearSessionAttention(normalized, 'completed');
+      return;
+    }
     const next = {
       ...attentionByConversationRef.current,
       [normalized]: attention,
     };
     attentionByConversationRef.current = next;
     setAttentionByConversation(next);
-    if (!backend.scope && notify) void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
   }, [clearSessionAttention, localize]);
 
   useEffect(() => {
@@ -535,11 +539,11 @@ export function useCardbushChat(
       clearSessionAttention(activeConversationIdRef.current, 'completed');
     };
     window.addEventListener('focus', clearVisibleCompletion);
-    document.addEventListener('visibilitychange', clearVisibleCompletion);
+    const unwatchVisibility = watchWindowVisibility(clearVisibleCompletion);
     clearVisibleCompletion();
     return () => {
       window.removeEventListener('focus', clearVisibleCompletion);
-      document.removeEventListener('visibilitychange', clearVisibleCompletion);
+      unwatchVisibility();
     };
   }, [activeConversationId, requestContext.viewActive, clearSessionAttention]);
 
@@ -1301,6 +1305,8 @@ export function useCardbushChat(
     };
     const assistantId = `goal-turn-${normalizedTurnId}`;
     let terminalSnapshot: TurnTerminalSnapshot | null = null;
+    let finalAssistantText = '';
+    let terminalAttentionPromise: Promise<void> | undefined;
     const initialCursor = goalTurnCursorRef.current[normalizedTurnId] ?? {
       sequence: 0,
       lastEventId: '',
@@ -1357,6 +1363,7 @@ export function useCardbushChat(
       },
       onDelta: (delta, chunk) => streamBuffer.push(delta, chunk),
       onAssistantSegmentCompleted: (content, chunk) => {
+        if (chunk.finalResponse) finalAssistantText = content;
         void streamBuffer.completeSegment(content, chunk);
       },
       onExecution: (update) => {
@@ -1375,6 +1382,7 @@ export function useCardbushChat(
       },
       onAssistantRevision: (revision) => {
         if (revision.channel && revision.channel !== 'assistant') return;
+        if (revision.reason === 'assistant_final') finalAssistantText = revision.content ?? '';
         ensureAssistant();
         const route = {
           messageId: revision.messageId ?? '',
@@ -1433,6 +1441,7 @@ export function useCardbushChat(
         );
       },
       onFinalAssistantText: (text, chunk) => {
+        finalAssistantText = text;
         ensureAssistant(chunk.createdAt);
         void streamBuffer.completeRoute(text, chunk).then(() => {
           setMessagesByConversation((state) =>
@@ -1449,6 +1458,10 @@ export function useCardbushChat(
       },
       onDone: (terminal) => {
         terminalSnapshot = withTerminalTurnId(terminal, normalizedTurnId);
+        // Delivery must not wait for the transport's final history reconciliation.
+        if (!controller.signal.aborted) {
+          terminalAttentionPromise ??= markTurnAttention(normalizedSessionId, terminalSnapshot, finalAssistantText);
+        }
         terminalTurnIdsRef.current.add(normalizedTurnId);
         if (goalStreamCheckpointsRef.current[normalizedSessionId]?.turnId === normalizedTurnId) {
           delete goalStreamCheckpointsRef.current[normalizedSessionId];
@@ -1519,6 +1532,7 @@ export function useCardbushChat(
         }
       })
       .finally(async () => {
+        await terminalAttentionPromise;
         await streamBuffer.flushAllStreaming();
         if (!terminalTurnIdsRef.current.has(normalizedTurnId) &&
             goalTurnControllersRef.current[normalizedSessionId]?.controller === controller) {
@@ -1542,11 +1556,11 @@ export function useCardbushChat(
             clearSessionRunning(normalizedSessionId);
           }
         }
-        if (refreshedGoal?.status === 'complete' || refreshedGoal?.status === 'blocked') {
+        if (!terminalSnapshot && !controller.signal.aborted) {
           await markTurnAttention(
             normalizedSessionId,
-            terminalSnapshot ?? matchingTerminalSnapshot(loaded?.latestTurn, normalizedTurnId),
-            refreshedGoal.statusReason || refreshedGoal.objective,
+            matchingTerminalSnapshot(loaded?.latestTurn, normalizedTurnId),
+            finalAssistantText || refreshedGoal?.statusReason || refreshedGoal?.objective || '',
             refreshedGoal,
           );
         }
@@ -2504,6 +2518,7 @@ export function useCardbushChat(
       );
       controllersRef.current[sessionId] = controller;
       let finalSnapshotPromise: Promise<void> | null = null;
+      let terminalAttentionPromise: Promise<void> | undefined;
       let finalAssistantText = '';
       let streamStarted = false;
       let terminalSnapshot: TurnTerminalSnapshot | null = null;
@@ -2670,6 +2685,9 @@ export function useCardbushChat(
               terminal,
               activeTurnIdsRef.current[sessionId],
             );
+            if (!controller.signal.aborted) {
+              terminalAttentionPromise ??= markTurnAttention(sessionId, terminalSnapshot, finalAssistantText);
+            }
             if (terminalSnapshot.turnId) {
               terminalTurnIdsRef.current.add(terminalSnapshot.turnId);
             }
@@ -2735,6 +2753,7 @@ export function useCardbushChat(
             }));
           },
         });
+        await terminalAttentionPromise;
         if (finalSnapshotPromise) {
           await finalSnapshotPromise;
         }
@@ -2746,7 +2765,6 @@ export function useCardbushChat(
         if (loadedMessages && loadedMessages.length > 0) {
           applyHistoryRead(historyRead, loadedMessages);
         }
-        await markTurnAttention(sessionId, terminalSnapshot, finalAssistantText);
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (isPendingInteractionConflictError(caught)) {
@@ -3076,6 +3094,7 @@ export function useCardbushChat(
       const startIds = new Set(startedMessageIds ?? [tempAssistant.id]);
       const replacementIds = temporaryMessageIds ?? [tempAssistant.id];
       let finalSnapshotPromise: Promise<void> | null = null;
+      let terminalAttentionPromise: Promise<void> | undefined;
       let finalAssistantText = '';
       let streamStarted = false;
       let terminalSnapshot: TurnTerminalSnapshot | null = null;
@@ -3225,6 +3244,9 @@ export function useCardbushChat(
               terminal,
               activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId,
             );
+            if (!controller.signal.aborted) {
+              terminalAttentionPromise ??= markTurnAttention(sessionId, terminalSnapshot, finalAssistantText);
+            }
             if (terminalSnapshot.turnId) {
               terminalTurnIdsRef.current.add(terminalSnapshot.turnId);
             }
@@ -3291,6 +3313,7 @@ export function useCardbushChat(
             }));
           },
         });
+        await terminalAttentionPromise;
         if (finalSnapshotPromise) {
           await finalSnapshotPromise;
         }
@@ -3303,7 +3326,6 @@ export function useCardbushChat(
         if (loadedMessages && loadedMessages.length > 0) {
           applyHistoryRead(historyRead, loadedMessages);
         }
-        await markTurnAttention(sessionId, terminalSnapshot, finalAssistantText);
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (

@@ -20,7 +20,7 @@ module.exports = async ({ run, until, pause, window: win, root }) => {
     settingsProps.settings.proxy={mode:'none',httpProxy:'',httpsProxy:'',noProxy:''};
     renderSettings();
   `);
-  const pages = ['appearance', 'profile', 'browser', 'computer-use', 'models', 'shortcuts', 'usage', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics', 'mcp'];
+  const pages = ['appearance', 'general', 'notifications', 'profile', 'browser', 'computer-use', 'models', 'shortcuts', 'usage', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics', 'mcp'];
   const inspect = `(() => {
     const content = document.querySelector('.settings-content');
     const visible = node => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0;
@@ -63,8 +63,8 @@ module.exports = async ({ run, until, pause, window: win, root }) => {
       assert.deepEqual(state.overlappingRows, [], `${page} at ${width}px: labels and controls do not overlap`);
       assert.ok(state.cards.length, `${page}: settings use grouped cards`);
       if (page === 'appearance') reference = state.cards[0];
-      for (const card of state.cards) assert.deepEqual(card, reference, `${page}: card surface matches Appearance & language`);
-      if (['profile', 'browser', 'models', 'shortcuts', 'ssh', 'mcp', 'usage', 'runtime', 'diagnostics'].includes(page)) {
+      for (const card of state.cards) assert.deepEqual(card, reference, `${page}: card surface matches Appearance`);
+      if (['general', 'notifications', 'profile', 'browser', 'models', 'shortcuts', 'ssh', 'mcp', 'usage', 'runtime', 'diagnostics'].includes(page)) {
         fs.writeFileSync(path.join(root, `tmp/settings-unified-${page}-${width}.png`), (await win.webContents.capturePage()).toPNG());
       }
       if (page === 'proxy') {
@@ -76,5 +76,5 @@ module.exports = async ({ run, until, pause, window: win, root }) => {
       }
     }
   }
-  console.log('Unified settings layout passed: 13 pages, shared card surfaces, dark/light themes, Chinese/English and narrow controls without overlap or overflow.');
+  console.log('Unified settings layout passed: 15 pages, shared card surfaces, dark/light themes, Chinese/English and narrow controls without overlap or overflow.');
 };

@@ -41,9 +41,16 @@ export function toolCallDisplay(call: ToolCall, definition?: ToolDefinition): To
 }
 
 export function stripToolDisplayTitle(input: unknown, definition: ToolDefinition): unknown {
-  // Summary calls still cross the normal coordinator. A stray UI title must not
-  // reject an otherwise valid memory write; checkpoint_context stays strict.
-  if ((!acceptsDisplayTitle(definition) && definition.name !== 'summary_for_user') || !input || typeof input !== 'object' || Array.isArray(input) ||
+  // Maintenance calls do not advertise titles, but a stray UI title must not
+  // reject an otherwise valid memory write or context checkpoint.
+  if (!acceptsDisplayTitle(definition) && !['summary_for_user', 'checkpoint_context'].includes(definition.name)) return input;
+  return withoutToolDisplayTitle(input);
+}
+
+/** Normalize only the decoded input; preserve raw calls and provider replay in
+ * the journal. Maintenance paths bypass the normal Tool coordinator. */
+export function withoutToolDisplayTitle(input: unknown): unknown {
+  if (!input || typeof input !== 'object' || Array.isArray(input) ||
       !Object.prototype.hasOwnProperty.call(input, TOOL_DISPLAY_TITLE)) return input;
   const { [TOOL_DISPLAY_TITLE]: _title, ...argumentsOnly } = input as Record<string, unknown>;
   return argumentsOnly;

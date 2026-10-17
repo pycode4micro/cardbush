@@ -55,6 +55,7 @@ module.exports = async ({ run, until, pause, window }) => {
     await until("!document.querySelector('.scroll-bottom').classList.contains('hidden')", 'bottom button visible');
     const beforeWheel = await run('motionList().scrollTop');
     await run("document.querySelector('.scroll-bottom').dispatchEvent(new WheelEvent('wheel', { deltaY: -70, bubbles: true, cancelable: true }))");
+    await pause(220);
     assert.ok(Math.abs(await run('motionList().scrollTop') - beforeWheel + 70) < 2, 'Wheel input on the floating button must scroll the conversation');
     const fs = require('node:fs');
     const path = require('node:path');
@@ -106,6 +107,7 @@ module.exports = async ({ run, until, pause, window }) => {
     await run("document.querySelector('.scroll-bottom').click()");
     await pause(80);
     await run('motionWheel(-12)');
+    await pause(220);
     const interrupted = await run('motionList().scrollTop');
     await run('motionAppend()');
     await pause(450);

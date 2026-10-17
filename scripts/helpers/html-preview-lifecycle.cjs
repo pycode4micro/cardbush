@@ -29,6 +29,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     const openIds = new Set();
     await ready(0);
     const first = await idAt(0); openIds.add(first);
+    const initialHeight = await run("lifecycleCard(0).querySelector('.inline-html-viewport').clientHeight");
     await webContents.fromId(first).executeJavaScript("document.querySelector('button').click()");
     await run('lifecycleJump(1)'); await ready(1); await pause(320);
     assert.equal(await idAt(0), first, 'one-screen neighbour retains its existing guest');
@@ -49,7 +50,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await ready(80);
     await until(`!lifecycleCard(0).querySelector('webview')`, 'unused guests are reclaimed after scroll settles');
     assert.equal(webContents.fromId(first), undefined, 'far-away old guest is actually destroyed');
-    assert.equal(await run("lifecycleCard(0).querySelector('.inline-html-viewport').clientHeight>300"), true, 'placeholder preserves scrolling geometry');
+    assert.equal(await run("lifecycleCard(0).querySelector('.inline-html-viewport').clientHeight"), initialHeight, 'placeholder preserves measured scrolling geometry');
     assert.ok(await run("document.querySelectorAll('webview').length<=4"), '200 Turns do not create 200 guests');
     assert.equal(await run("(()=>{const scroller=document.querySelector('.html-lifecycle-scroll'),bounds=scroller.getBoundingClientRect();return [...document.querySelectorAll('.inline-html-webview')].every(view=>{const r=view.closest('.inline-html-preview').getBoundingClientRect();return r.bottom>bounds.top-scroller.clientHeight&&r.top<bounds.bottom+scroller.clientHeight})})()"), true, 'only visible and adjacent pages stay mounted');
     for (const index of [3, 160, 20, 198, 0]) {
@@ -75,10 +76,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     const reopened = await idAt(0); openIds.add(reopened);
     assert.notEqual(reopened, beforeClose);
 
-    // A late reload reply must not recreate a guest after the user closed it.
-    await run("window.lifecycleLateGuest=lifecycleCard(0).querySelector('webview');const original=lifecycleLateGuest.executeJavaScript.bind(lifecycleLateGuest);lifecycleLateGuest.executeJavaScript=code=>code==='scrollY'?new Promise(resolve=>window.lifecycleFinishRead=resolve):original(code);lifecycleCard(0).querySelector('[aria-label=\"重新加载 HTML\"]').click()");
-    await until("typeof lifecycleFinishRead==='function'", 'reload read is pending');
-    await run("lifecycleCard(0).querySelector('.inline-html-close').click();lifecycleFinishRead(0)"); await pause(200);
+    // Reload no longer waits for a guest scroll read. Closing during loading
+    // must still win over any late event from the detached document.
+    await run("window.lifecycleLateGuest=lifecycleCard(0).querySelector('webview');lifecycleCard(0).querySelector('[aria-label=\"重新加载 HTML\"]').click();lifecycleCard(0).querySelector('.inline-html-close').click();lifecycleLateGuest.dispatchEvent(new Event('dom-ready'))"); await pause(200);
     assert.equal(await run("lifecycleCard(0).querySelector('webview')===null"), true, 'late reload cannot reopen a closed preview');
 
     await run('lifecycleJump(1)'); await ready(1);
@@ -121,7 +121,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.equal(webContents.getAllWebContents().filter(view=>view.getType()==='webview').length, 0, 'all preview guests are disposed');
     console.log('HTML lifecycle passed: 200 Turns, visible-first loading, viewport buffers, real guest destruction, preserved nearby interaction, manual close/reopen, late reload, hidden page and 3 themes.');
   } finally {
-    await run("renderView(null);delete document.visibilityState;window.lifecycleLateGuest=null;window.lifecycleFinishRead=null;"); await pause();
+    await run("renderView(null);delete document.visibilityState;window.lifecycleLateGuest=null;"); await pause();
     assert.equal(path.dirname(path.resolve(directory)), path.resolve(parent));
     assert.ok(path.basename(directory).startsWith('html-lifecycle-'));
     await fs.rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:100});

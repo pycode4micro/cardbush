@@ -194,10 +194,12 @@ import {
 import { SubagentTaskStore } from "./subagentTaskStore.js";
 import { SubagentResumeStore } from './subagentResumeStore.js';
 import { BackgroundToolCalls } from './backgroundToolCalls.js';
+import { RuntimeTurnSignals } from './turnSignals.js';
 import { TerminalCompletionNotifications } from './terminalCompletionNotifications.js';
 import { asyncResultMessage } from './subagentTool.js';
-import { childFinalMessageIds, continueChildConversation, type ChildConversationSource } from './subagentConversation.js';
+import { childFinalMessageIds, childConversationReadHint, continueChildConversation, type ChildConversationSource } from './subagentConversation.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
+import { RuntimeConversations, type RuntimeConversation } from './runtimeConversations.js';
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
 import { parseSshWorkspace } from '@cardbush/bush-protocol';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
@@ -319,7 +321,7 @@ class ProviderInputTokenCountError extends Error {
   }
 }
 
-type SettledAgentGuidance = JoinedSubagentResult;
+type SettledAgentGuidance = { taskId: string; message: ModelMessage & { role: 'user' } };
 
 export class InMemoryRuntimeHost {
   readonly #requestBackgroundPermission?: InMemoryRuntimeHostOptions['requestBackgroundPermission'];
@@ -366,6 +368,7 @@ export class InMemoryRuntimeHost {
   readonly #registeredAgents: RegisteredAgentStore;
   readonly #teams: TeamWorkflowManager;
   readonly #backgroundTools: BackgroundToolCalls;
+  readonly #turnSignals: RuntimeTurnSignals;
   readonly #asyncJobs: RuntimeAsyncJobs;
   readonly #terminalNotifications: TerminalCompletionNotifications;
   readonly #extensionApi: Omit<RuntimeExtensionApi, 'tools' | 'dataDirectory'>;
@@ -391,6 +394,7 @@ export class InMemoryRuntimeHost {
     mode?: 'append_context' | 'interrupt_and_continue';
   }>>();
   readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
+  readonly #conversations: RuntimeConversations;
   readonly #contextCompactionAuthorizations = new Map<string, { state: ContextCompactionState; format: ContextCheckpointFormat }>();
   #shuttingDown = false;
   #cacheMaintenance: Promise<void> | undefined;
@@ -403,6 +407,15 @@ export class InMemoryRuntimeHost {
   readonly #workspaceRedo: WorkspaceRedoStore;
 
   constructor(options: InMemoryRuntimeHostOptions) {
+    this.#turnSignals = new RuntimeTurnSignals((session, turn) =>
+      this.#guidanceQueues.get(JSON.stringify([session, turn]))?.length ? 'user_message'
+        : this.#conversations.hasPending(session, turn) ? 'peer_message' : undefined);
+    this.#conversations = new RuntimeConversations({
+      busy: sessionId => this.#shuttingDown || this.#sessionAdmissions.has(sessionId) || !!this.#cacheMaintenance || this.#workspaceActions > 0,
+      signal: (sessionId, turnId) => this.#turnSignals.wake(sessionId, turnId, 'peer_message'),
+      run: request => this.runSessionTurn(request),
+      error: error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))),
+    });
     this.#remoteWorkspace = options.remoteWorkspace;
     this.#remoteAgents = options.remoteAgents;
     this.#workspaceRedo = new WorkspaceRedoStore(options.dataRoot ? join(options.dataRoot, 'workspace-redo') : undefined);
@@ -594,7 +607,7 @@ export class InMemoryRuntimeHost {
     this.#backgroundTools = new BackgroundToolCalls(this.#toolRegistry, (session, turn, id, result) =>
       this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result),
       (session, turn) => this.#terminalNotifications.list(session, turn),
-      (session, turn) => Boolean(this.#guidanceQueues.get(JSON.stringify([session, turn]))?.length), this.#toolExecutions);
+      undefined, this.#toolExecutions, this.#turnSignals);
     this.#backgroundTools.register();
     this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks, this.#toolRegistry);
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
@@ -646,7 +659,7 @@ export class InMemoryRuntimeHost {
       if (!subagents) throw new Error('The native subagent dispatcher is unavailable.');
       return subagents.dispatch(context, input);
     }, { directory: options.dataRoot ? join(runtimeDataRoot, 'teams') : undefined,
-      waitForWork: (context, promise, duration) => this.#backgroundTools.waitForWork(context.sessionId, context.turnId, [promise], 'all', context.signal, duration),
+      waitForWork: (context, promise, duration) => this.#turnSignals.wait(context.sessionId, context.turnId, [promise], 'all', context.signal, duration),
       onResult: (run, promise) => {
         // Do not join an independent Team at the parent's terminal barrier.
         // Publish only a settled result to a still-active parent; idle parents can
@@ -665,12 +678,13 @@ export class InMemoryRuntimeHost {
     registerAsyncInteraction(this.#toolRegistry, this.#solutions, this.#asyncJobs);
     registerToolScript(this.#toolRegistry, this.#asyncJobs);
     const taskTools = new RuntimeTaskTools((context, promises, mode, signal, duration) =>
-      this.#backgroundTools.waitForWork(context.sessionId, context.turnId, promises, mode, signal, duration));
+      this.#turnSignals.wait(context.sessionId, context.turnId, promises, mode, signal, duration));
     taskTools.addSource(this.#asyncJobs.source);
     taskTools.addSource(context => this.#teams.taskHandles(context.sessionId));
     taskTools.addSource(context => this.#subagentTasks.list(context.sessionId).filter(task => task.origin !== 'team').map(task => ({
       task_id: task.taskId, kind: 'subagent' as const, status: task.status, revision: String(task.revision), summary: task.agentName ?? task.prompt.slice(0, 160),
       result: { session_id: task.childSessionId, turn_id: task.childTurnId, ...(task.status !== 'running' ? { output: task.finalResponse, error: task.errorMessage } : {}) },
+      ...(subagents?.readConversation ? { readConversation: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>, cursor?: string) => subagents.readConversation!(ctx, task.taskId, cursor) } : {}),
       wait: (signal: AbortSignal) => this.#subagentTasks.waitForCompletion(context.sessionId, task.taskId, signal),
       ...(task.background ? { stop: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>) => ctx.invokeTool('manage_plugin_agents', { action: 'stop', task_ids: [task.taskId] }, { record: true }) }
         : !task.remote ? { stop: async () => this.sendCommand({ kind: STOP_RUNTIME_TURN_COMMAND, payload: { sessionId: task.childSessionId, turnId: task.childTurnId } }) } : {}),
@@ -708,6 +722,9 @@ export class InMemoryRuntimeHost {
       (await options.remoteWorkspace!.request('terminals', { owner: context.sessionId }, context.signal)).sessions, false));
     taskTools.register(this.#toolRegistry);
     this.#extensionApi = {
+      conversations: { list: () => this.#conversations.list(), notify: (id, notice) => this.#conversations.notify(id, notice),
+        dismiss: (id, key) => this.#conversations.dismiss(id, key),
+        wait: (id, turn, event, signal) => this.#turnSignals.wait(id, turn, [event], 'any', signal) },
       subagentTasks: this.#subagentTasks,
       hasActiveTurns: () => this.hasActiveTurns(),
       getToolDefinitions: () => this.#toolRegistry.definitions(),
@@ -867,7 +884,13 @@ export class InMemoryRuntimeHost {
   /** Stage registrations, then atomically admit a plugin. A bad factory cannot leave partial tools behind. */
   installExtension(create: RuntimeExtensionFactory, options: { id?: string; enabled?: boolean; dataDirectory?: string; replace?: boolean } = {}): string {
     const staged = new ToolRegistry();
-    const extension = create({ ...this.#extensionApi, tools: staged, dataDirectory: options.dataDirectory });
+    const extension = create({ ...this.#extensionApi, tools: staged, dataDirectory: options.dataDirectory,
+      conversations: { ...this.#extensionApi.conversations, notify: (id, notice) => {
+        const current = this.#extensions.get(extension.id);
+        return current?.extension === extension && current.enabled && !current.retired
+          ? this.#conversations.notify(id, { ...notice, key: `${extension.id}:${notice.key}` }) : false;
+      }, dismiss: (id, key) => this.#conversations.dismiss(id, `${extension.id}:${key}`) },
+    });
     try {
       if (!extension || !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(extension.id) || (options.id && extension.id !== options.id)) throw new Error('Runtime extension identity is empty, invalid, or does not match its package.');
       if (!Array.isArray(extension.features) || extension.features.some(value => typeof value !== 'string' || !value.trim())) throw new Error('Invalid Runtime extension features.');
@@ -883,7 +906,7 @@ export class InMemoryRuntimeHost {
       }
       const owner = runtimeExtensionOwner(extension.id);
       const entry = { extension, enabled: options.enabled === true, uses: 0 };
-      this.#toolRegistry.replaceOwned(owner, staged.catalog().map(item => {
+      this.#toolRegistry.replaceOwned(owner, staged.catalog({ includeSuperseded: true }).map(item => {
         const registration = staged.resolve(item.definition.name)!;
         return { ...registration,
           execute: context => this.#useExtension(entry, () => registration.execute(context)),
@@ -893,9 +916,10 @@ export class InMemoryRuntimeHost {
       this.#extensions.set(extension.id, entry);
       this.#toolRegistry.setOwnerEnabled(owner, options.enabled === true);
       if (prior) this.#retireExtension(prior);
+      if (entry.enabled) this.#refreshConversationExtension(entry);
       return extension.id;
     } catch (error) {
-      try { extension?.dispose?.(); } catch { /* preserve admission error */ }
+      try { void Promise.resolve(extension?.dispose?.()).catch(() => {}); } catch { /* preserve admission error */ }
       throw error;
     }
   }
@@ -912,7 +936,8 @@ export class InMemoryRuntimeHost {
   #retireExtension(entry: { extension: RuntimeExtension; uses: number; retired?: boolean }): void {
     entry.retired = true;
     if (!entry.uses) {
-      try { entry.extension.dispose?.(); } catch (error) { console.warn('Extension cleanup failed', error); }
+      try { void Promise.resolve(entry.extension.dispose?.()).catch(error => console.warn('Extension cleanup failed', error)); }
+      catch (error) { console.warn('Extension cleanup failed', error); }
     }
   }
 
@@ -945,8 +970,25 @@ export class InMemoryRuntimeHost {
   setExtensionEnabled(id: string, enabled: boolean): void {
     const entry = this.#extensions.get(id);
     if (!entry) throw new Error(`Runtime extension ${id} is not available in this host.`);
+    const wasEnabled = entry.enabled;
     entry.enabled = enabled;
+    if (!enabled) this.#conversations.revoke(`${id}:`);
     this.#toolRegistry.setOwnerEnabled(runtimeExtensionOwner(id), enabled);
+    if (enabled && !wasEnabled) this.#refreshConversationExtension(entry);
+  }
+
+  #refreshConversationExtension(entry: { extension: RuntimeExtension; enabled: boolean; uses: number; retired?: boolean }) {
+    if (!entry.extension.conversationContext) return;
+    // Hot loading observes already-running conversations at their next normal model boundary.
+    void (async () => {
+      for (const fact of this.#conversations.list()) {
+        if (fact.status !== 'running' || entry.retired || !entry.enabled) continue;
+        const messages = await this.#useExtension(entry, () => entry.extension.conversationContext!(fact));
+        if (!entry.retired && entry.enabled) messages.forEach((message, index) => this.#conversations.notify(fact.agentId, {
+          key: `${entry.extension.id}:catalog:${index}`, content: message.content,
+        }));
+      }
+    })().catch(error => this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))));
   }
 
   isExtensionCommand(kind: string): boolean {
@@ -1463,7 +1505,7 @@ export class InMemoryRuntimeHost {
             metadata: { ...guidance.metadata, guidance_mode: guidance.mode ?? 'append_context' },
           });
           this.#guidanceQueues.set(key, queue);
-          this.#backgroundTools.wakeForGuidance(guidance.sessionId, guidance.turnId);
+          this.#turnSignals.wake(guidance.sessionId, guidance.turnId);
           if (guidance.mode === 'interrupt_and_continue') modelRequestInterrupted = this.#modelRequests.interrupt(key);
           if (child?.metadata.agentRole === 'child' && typeof child.metadata.parentSessionId === 'string' && typeof child.metadata.subagentTaskId === 'string') {
             this.#notifyChildConversation(child.metadata.parentSessionId, child.metadata.subagentTaskId,
@@ -1482,6 +1524,7 @@ export class InMemoryRuntimeHost {
       }
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
+        this.#conversations.close();
         await this.#teams.close();
         this.#assistant.close();
         for (const controller of this.#voiceMaintenance.values()) controller.abort();
@@ -1493,6 +1536,7 @@ export class InMemoryRuntimeHost {
         this.#cacheCleanupTimer = undefined;
         this.#pluginBackground.stop();
         for (const controller of this.#activeTurnControllers.values()) controller.abort();
+        for (const id of this.#extensions.keys()) this.removeExtension(id);
         await Promise.allSettled([...this.#pluginStartedSessions].filter(sessionId => ![...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId)).map(sessionId => this.#pluginHooks.closeSession(sessionId)));
         return { accepted: true, activeTurns: this.#activeTurns.size };
       case STOP_RUNTIME_TURN_COMMAND: {
@@ -1515,6 +1559,7 @@ export class InMemoryRuntimeHost {
           reason: "turn_not_active",
         };
         this.#pluginInterruptedTurns.add(key);
+        this.#conversations.stop(identity.sessionId);
         this.#pluginBackground.stop(identity.sessionId, identity.turnId);
         controller.abort();
         return {
@@ -1632,7 +1677,7 @@ export class InMemoryRuntimeHost {
     for (const key of this.#activeTurns) {
       if (JSON.parse(key)[0] !== parentSessionId) continue;
       this.#trackAgentGuidance(key, `child_update_${randomUUID()}`, Promise.resolve({ role: 'user', name: 'subagent_result',
-        content: `Child conversation ${taskId} was updated. These are messages in the child session, not a new parent-user instruction.\n${content}\nUse read_subagent_conversation with task_id=${taskId} for the ordered messages.` }));
+        content: `Child conversation ${taskId} was updated. These are messages in the child session, not a new parent-user instruction.\n${content}\n${childConversationReadHint(taskId)}` }));
     }
   }
 
@@ -1668,7 +1713,7 @@ export class InMemoryRuntimeHost {
         return latest ? [{ taskId: task.taskId, sessionId: task.childSessionId, messageId: latest.messageId }] : [];
       });
       if (updates.length) candidate.prefixMessages.push({ role: 'developer', name: 'subagent_conversation_updates',
-        content: `These child conversations contain direct user interventions. They remain scoped to their child sessions. Read read_subagent_conversation with task_id and its nextCursor to inspect the ordered parent assignments, user messages and child replies before relying on an earlier result.\n${JSON.stringify(updates)}` });
+        content: `These child conversations contain direct user interventions scoped to their child sessions. Inspect them before relying on an earlier result. ${childConversationReadHint()}\n${JSON.stringify(updates)}` });
     }
     // Keep the app's current inbox snapshot separate from the authored input.
     let unreadReminder: Awaited<ReturnType<AutomationScheduler['reminder']>> | undefined;
@@ -1719,6 +1764,7 @@ export class InMemoryRuntimeHost {
     const prepared = this.#sessions.prepare(
       candidate,
     );
+    const conversation = this.#conversations.begin(candidate, input);
     const memorySettings = normalizeIndividuation(candidate.metadata.individuation);
     // Persist exactly what is sent. New inbox observations never replace old history.
     const reminderMessage = unreadReminder && this.#automationReminderMessage(unreadReminder, prepared.modelRequest.messages);
@@ -1732,7 +1778,22 @@ export class InMemoryRuntimeHost {
       prepared.sessionCommit.initialMessageCount++;
     }
     let workspaceStarted = false;
+    let conversationStopped = true;
     try {
+      if (conversation) {
+        for (const entry of this.#extensions.values()) if (entry.enabled && entry.extension.conversationContext) {
+          try {
+            const context = await this.#useExtension(entry, () => entry.extension.conversationContext!(conversation));
+            for (const message of context) {
+              const internal: ModelMessage = { role: 'user', name: 'workspace_agents', visibility: 'internal', content: message.content };
+              prepared.modelRequest.messages.push(internal);
+              prepared.sessionCommit.inputMessages.push({ messageId: `peers_${randomUUID()}`, createdAt: prepared.sessionCommit.createdAt, message: internal });
+              prepared.sessionCommit.initialMessageCount++;
+            }
+          } catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
+        }
+        await this.#publishConversation(conversation);
+      }
       if (authoredInput && candidate.metadata.agentRole !== 'child' && !candidate.metadata.pluginHookEvaluation && !candidate.metadata.shadowMode) {
         try {
           const message = await recallIndividuation(this.#memory.store, memorySettings, authoredInput.message.content, prepared.modelRequest.messages, candidate, options.signal);
@@ -1757,6 +1818,7 @@ export class InMemoryRuntimeHost {
         ...(workspaceStarted ? { finalizeWorkspace: () => this.#finalizeWorkspace(candidate.sessionId, candidate.turnId, workspace!.workspaceDir) } : {}),
       });
       if (!this.#shuttingDown) this.#memory.schedule(memorySettings);
+      conversationStopped = terminal.kind !== 'turn_terminal' || terminal.payload.status !== 'completed';
       return terminal;
     } catch (error) {
       this.#sessions.abandon(input.sessionId, input.turnId);
@@ -1765,6 +1827,16 @@ export class InMemoryRuntimeHost {
         catch { /* The checkpoint retains its explicit pending/failed status. */ }
       }
       throw error;
+    } finally {
+      const ended = this.#conversations.end(candidate.sessionId, candidate.turnId, conversationStopped);
+      if (ended) await this.#publishConversation(ended);
+    }
+  }
+
+  async #publishConversation(conversation: RuntimeConversation) {
+    for (const entry of this.#extensions.values()) if (entry.enabled && entry.extension.conversationChanged) {
+      try { await this.#useExtension(entry, () => entry.extension.conversationChanged!(conversation)); }
+      catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
     }
   }
 
@@ -1992,6 +2064,7 @@ export class InMemoryRuntimeHost {
     }
     let pluginStopContinuations = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_plugin_stop_${request.turnId}_`)).length ?? 0;
     let contextCompactionFailures = 0;
+    let taskModelRounds = input.sessionCommit?.taskModelRounds ?? Math.max(0, input.nextRound - 1);
     let compactionTransaction: ContextCompactionTransaction | undefined;
     const priorOverflowRetries = this.#eventLog.replay(request.sessionId, request.turnId)
       .filter(event => event.kind === 'provider_retry' && event.payload.code === 'context_length_recovery');
@@ -2036,6 +2109,7 @@ export class InMemoryRuntimeHost {
             // Legacy checkpoints carried a blind continuation retry budget.
             outputLimitContinuations: 0,
             toolCallRepairAttempts,
+            taskModelRounds,
             ...(activeContextCheckpoint ? { activeContextCheckpoint } : {}),
           }
         : undefined;
@@ -2362,7 +2436,6 @@ export class InMemoryRuntimeHost {
             messages.push(message); generatedMessages.push({ messageId: `msg_${delivery.id}_${index}`, createdAt: this.#sessionNow(), message });
           }
         }
-        if (Number.isInteger(request.metadata.pluginAgentMaxTurns) && round > Number(request.metadata.pluginAgentMaxTurns)) return await finalize({ status: 'failed', reason: 'plugin_agent_turn_limit', details: { rounds: round - 1 } });
         let dispatchPressure: ContextPressure | undefined;
         if (input.signal?.aborted) return await stop();
         const readyAtRoundBoundary = compactionTransaction || activeContextCompaction ? [] : this.#takeSettledAgentGuidance(turnKey);
@@ -2422,6 +2495,7 @@ export class InMemoryRuntimeHost {
             const restoredFailures = new Map<string, RestoredCompactionFailure>();
             for (const event of priorContextCompactionEvents) {
               if (event.kind !== 'context_compaction_retrying' || event.payload.compactionId !== activeContextCompaction?.compactionId) continue;
+              if (event.payload.reason === 'checkpoint_result_over_budget') restoredFailures.clear();
               const detail = event.payload.diagnostics;
               if (typeof detail?.jobId === 'string' && Number.isInteger(detail.failures) && Number.isInteger(detail.outputTokens)) {
                 restoredFailures.set(detail.jobId, { failures: Number(detail.failures), outputTokens: Number(detail.outputTokens),
@@ -2569,6 +2643,13 @@ export class InMemoryRuntimeHost {
           }
         }
 
+        // Maintenance may need many fragments. It does not consume the bounded
+        // coordination/child task budget, and exhausting that budget is not success.
+        if (!compactionTransaction) {
+          if (request.metadata.peerMessageWake === true && taskModelRounds >= 8) return await finalize({ status: 'stopped', reason: 'peer_coordination_turn_limit', details: { rounds: taskModelRounds } });
+          if (Number.isInteger(request.metadata.pluginAgentMaxTurns) && taskModelRounds >= Number(request.metadata.pluginAgentMaxTurns)) return await finalize({ status: 'failed', reason: 'plugin_agent_turn_limit', details: { rounds: taskModelRounds } });
+          taskModelRounds++;
+        }
         let completedRound:
           | Extract<
               Awaited<ReturnType<typeof executeModelRound>>,
@@ -3061,7 +3142,7 @@ export class InMemoryRuntimeHost {
             // Journal the real model output and its receipt together. The
             // checkpoint references these facts, so recovery and committed
             // history project the same exchange without inventing a role.
-            generatedMessages.push({
+            const candidateMessages: GeneratedMessageFact[] = [{
               messageId: completedProjector.messageId,
               createdAt: this.#sessionNow(),
               metadata: { runtimeMaintenance: "context_compaction" },
@@ -3079,45 +3160,74 @@ export class InMemoryRuntimeHost {
                   ? JSON.parse(compactionTransaction.incremental.history.at(-1)!.content) : {}),
                 ...checkpointResult(checkpoint, session),
               }) },
-            });
-            activeContextCheckpoint = {
+            }];
+            const candidateCheckpoint: TurnContextCheckpoint = {
               projectionVersion: "exchange_v1", throughMessageId: receiptId,
               inputMessageCount: input.sessionCommit!.inputMessages.length,
               exchangeMessageIds: [completedProjector.messageId, receiptId],
               coveredTurnIds: [...covered],
             };
+            const preference = latestConversationPreference(messages);
+            const sourcePreference = [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'source_preference');
+            const individuationPreference = [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'individuation_preference');
+            const candidateContext = this.#rebuildCompactedMessages(
+              request.sessionId,
+              request.turnId,
+              input.sessionCommit!,
+              [...generatedMessages, ...candidateMessages],
+              candidateCheckpoint,
+            );
+            if (preference && latestConversationPreference(candidateContext)?.content !== preference.content) {
+              const message = structuredClone(preference);
+              candidateContext.push(message);
+              candidateMessages.push({ messageId: `msg_preferences_${request.turnId}_${round}`,
+                createdAt: this.#sessionNow(), message });
+            }
+            if (sourcePreference && [...candidateContext].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'source_preference')?.content !== sourcePreference.content) {
+              const message = structuredClone(sourcePreference);
+              candidateContext.push(message);
+              candidateMessages.push({ messageId: `msg_source_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
+            }
+            if (individuationPreference && [...candidateContext].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'individuation_preference')?.content !== individuationPreference.content) {
+              const message = structuredClone(individuationPreference);
+              candidateContext.push(message);
+              candidateMessages.push({ messageId: `msg_individuation_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
+            }
+            // A complete summary is only a candidate: its real call, receipt,
+            // retained instructions and provider framing must fit the next input.
+            // Do not persist coverage or announce completion before this check.
+            const candidatePressure = await this.#measureContextPressure(request, candidateContext,
+              freshResponseChain(), input.signal);
+            if (candidatePressure && !fitsContextRequest(candidatePressure)) {
+              const diagnostics = { estimatedPromptTokens: candidatePressure.estimatedPromptTokens,
+                usableInputTokens: candidatePressure.usableInputTokens, measurement: candidatePressure.measurement,
+                ...(candidatePressure.requestBody ? { requestBody: candidatePressure.requestBody } : {}),
+                ...(candidatePressure.countFailure ? { countFailure: candidatePressure.countFailure } : {}) };
+              const correction = `The checkpoint is not applied: the full next request exceeds its input budget (${JSON.stringify(diagnostics)}). ` +
+                'Start a new checkpoint attempt for all indexed sources. Make the summaries substantially shorter, preserving user constraints, exact identifiers and pending work. ' +
+                'Return only checkpoint_context; avoid redundant prose. Previous accepted drafts remain recorded but do not count toward this attempt.';
+              if (compactionTransaction?.refine(correction)) {
+                const job = compactionTransaction.job();
+                retryContextCompaction('checkpoint_result_over_budget', correction, { ...diagnostics,
+                  jobId: job.id, failures: job.failures, outputTokens: job.outputTokens });
+                saveIncrementalMessages();
+                this.#recovery.save({ request, messages, nextRound: round + 1,
+                  cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
+                continue;
+              }
+              saveIncrementalMessages();
+              return await finalize({ status: 'failed', reason: 'context_compaction_result_limit_exceeded',
+                details: { ...diagnostics, message: 'The complete checkpoint still exceeds the next input budget after bounded refinement. Original history is preserved.' } });
+            }
+            generatedMessages.push(...candidateMessages);
+            activeContextCheckpoint = candidateCheckpoint;
+            messages = candidateContext;
             completeContextCompaction(checkpoint);
             this.#contextCompactionAuthorizations.delete(turnKey);
             compactionTransaction = undefined;
             contextCompactionFailures = 0;
             inputTokenUsage = undefined;
-            const preference = latestConversationPreference(messages);
-            const sourcePreference = [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'source_preference');
-            const individuationPreference = [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'individuation_preference');
-            messages = this.#rebuildCompactedMessages(
-              request.sessionId,
-              request.turnId,
-              input.sessionCommit!,
-              generatedMessages,
-              activeContextCheckpoint,
-            );
-            if (preference && latestConversationPreference(messages)?.content !== preference.content) {
-              const message = structuredClone(preference);
-              messages.push(message);
-              generatedMessages.push({ messageId: `msg_preferences_${request.turnId}_${round}`,
-                createdAt: this.#sessionNow(), message });
-            }
-            if (sourcePreference && [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'source_preference')?.content !== sourcePreference.content) {
-              const message = structuredClone(sourcePreference);
-              messages.push(message);
-              generatedMessages.push({ messageId: `msg_source_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
-            }
             const postCompact = await runHook('PostCompact', { signal: input.signal, trigger: 'auto' });
-            if (individuationPreference && [...messages].reverse().find(message => message.role === 'user' && message.visibility === 'internal' && message.name === 'individuation_preference')?.content !== individuationPreference.content) {
-              const message = structuredClone(individuationPreference);
-              messages.push(message);
-              generatedMessages.push({ messageId: `msg_individuation_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
-            }
             if (postCompact.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: postCompact.stopTurn } });
             if (request.metadata.agentRole !== 'child') {
               const compactStart = await runHook('SessionStart', { signal: input.signal, source: 'compact' });
@@ -3144,6 +3254,10 @@ export class InMemoryRuntimeHost {
             });
             continue;
           } catch (error) {
+            if (input.signal?.aborted || error instanceof ProviderInputTokenCountError) {
+              saveIncrementalMessages();
+              throw error;
+            }
             const failure = contextCheckpointFailure(error, checkpointCalls[0]!.argumentsText);
             if (compactionTransaction) {
               if (failure.diagnostics.code !== 'checkpoint_apply_failed' && retryMaintenance('checkpoint_rejected',
@@ -3683,18 +3797,20 @@ export class InMemoryRuntimeHost {
   }
 
   #takeSettledAgentGuidance(turnKey: string): SettledAgentGuidance[] {
+    const [sessionId, turnId] = JSON.parse(turnKey) as [string, string];
+    const peers = this.#conversations.take(sessionId, turnId);
     const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
-    if (pending.length === 0) return [];
+    if (pending.length === 0) return peers;
     const settled = pending.filter(
       (entry): entry is PendingAgentGuidance & { message: JoinedSubagentResult["message"] } =>
         entry.settled && entry.message !== undefined,
     );
-    if (settled.length === 0) return [];
+    if (settled.length === 0) return peers;
     const settledSet = new Set<PendingAgentGuidance>(settled);
     const remaining = pending.filter((entry) => !settledSet.has(entry));
     if (remaining.length > 0) this.#pendingAgentGuidance.set(turnKey, remaining);
     else this.#pendingAgentGuidance.delete(turnKey);
-    return settled.map((entry) => ({ taskId: entry.taskId, message: entry.message }));
+    return [...peers, ...settled.map((entry) => ({ taskId: entry.taskId, message: entry.message }))];
   }
 
   async #joinPendingAgentGuidance(
@@ -3702,7 +3818,7 @@ export class InMemoryRuntimeHost {
     taskIds: string[] = [],
     mode: 'any' | 'all' = 'any',
     yieldTimeMs?: number,
-  ): Promise<SettledAgentGuidance[]> {
+  ): Promise<JoinedSubagentResult[]> {
     const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
     const joining = taskIds.length > 0
       ? taskIds.map((taskId) => {
@@ -3713,7 +3829,7 @@ export class InMemoryRuntimeHost {
       : [...pending];
     if (joining.length === 0) return [];
     const [sessionId, turnId] = JSON.parse(turnKey) as [string, string];
-    await this.#backgroundTools.waitForWork(sessionId, turnId, joining.map(entry => entry.promise), mode,
+    await this.#turnSignals.wait(sessionId, turnId, joining.map(entry => entry.promise), mode,
       this.#activeTurnControllers.get(turnKey)?.signal, yieldTimeMs);
     const ready = joining.filter(entry => entry.settled && entry.message);
     const joiningSet = new Set(ready);
@@ -3959,6 +4075,7 @@ export class InMemoryRuntimeHost {
       const remaining = (this.#sessionAdmissions.get(sessionId) ?? 1) - 1;
       if (remaining) this.#sessionAdmissions.set(sessionId, remaining);
       else { this.#sessionAdmissions.delete(sessionId); this.#toolExecutions.protect(sessionId, false); }
+      this.#conversations.settled();
     }
   }
 
@@ -3979,7 +4096,12 @@ export class InMemoryRuntimeHost {
     }
     this.#switchingWorkspaceSession = sessionId;
     this.#workspaceActions++;
-    try { return await operation(); } finally { this.#workspaceActions--; this.#switchingWorkspaceSession = undefined; }
+    try {
+      const result = await operation();
+      // Old project membership cannot wake a conversation into a workspace it has left.
+      this.#conversations.forget(sessionId);
+      return result;
+    } finally { this.#workspaceActions--; this.#switchingWorkspaceSession = undefined; this.#conversations.settled(); }
   }
 
   async #sessionDeletionScope(sessionId: string): Promise<Set<string>> {
@@ -4010,6 +4132,7 @@ export class InMemoryRuntimeHost {
       // neither collide with that guard nor inherit this operation's failure.
       this.#cacheMaintenance = undefined;
       release();
+      this.#conversations.settled();
     }
   }
 
@@ -4022,6 +4145,7 @@ export class InMemoryRuntimeHost {
 
   async #deleteSession(sessionId: string) {
     this.#assistant.forget(sessionId);
+    this.#conversations.forget(sessionId);
     await this.#subagentResume.remove(sessionId);
     for (const task of this.#subagentTasks.list(sessionId)) await this.#subagentResume.remove(task.childSessionId);
     await this.#pluginHooks.closeSession(sessionId);
@@ -4131,7 +4255,7 @@ export class InMemoryRuntimeHost {
     }
     this.#workspaceActions++;
     this.#workspaceActionSessions = sessionIds;
-    try { return await operation(); } finally { this.#workspaceActions--; this.#workspaceActionSessions = undefined; }
+    try { return await operation(); } finally { this.#workspaceActions--; this.#workspaceActionSessions = undefined; this.#conversations.settled(); }
   }
 
   #publishWorkspace(workspace: WorkspaceDescriptor) {

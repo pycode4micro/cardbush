@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from 'r
 import { useConversationComposerLayout } from '../chat/useConversationComposerLayout';
 import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { createChatScrollMotion } from '../chat/chatScrollMotion';
+import { connectConversationWheelScrolling } from '../chat/conversationWheelScrolling';
 import { scrollDebug } from '../chat/scrollDebug';
 import { suspendScrollAnchoring } from '../scrollAnchoring';
 import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
@@ -110,6 +111,7 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     };
     scroller.addEventListener('scroll', scroll, { passive: true });
     scroller.addEventListener('wheel', wheel, { passive: true });
+    const disconnectWheel = connectConversationWheelScrolling(scroller);
     scroller.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -117,7 +119,7 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     window.addEventListener('blur', up);
     scroller.addEventListener('keydown', key);
     return () => {
-      motion.cancel(); scroller.removeEventListener('scroll', scroll); scroller.removeEventListener('wheel', wheel);
+      disconnectWheel(); motion.cancel(); scroller.removeEventListener('scroll', scroll); scroller.removeEventListener('wheel', wheel);
       scroller.removeEventListener('pointerdown', down); scroller.removeEventListener('keydown', key);
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
       window.removeEventListener('blur', up);

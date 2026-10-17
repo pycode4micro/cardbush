@@ -291,6 +291,8 @@ export const runtimeSessionCommitCheckpointSchema = z.object({
   outputLimitContinuations: z.number().int().nonnegative().max(2).optional(),
   // Execution retry state survives semantic compaction.
   toolCallRepairAttempts: z.number().int().nonnegative().max(1).optional(),
+  // Task execution limits exclude Runtime maintenance such as compaction.
+  taskModelRounds: z.number().int().nonnegative().optional(),
   supersession: sessionSupersessionSchema.optional(),
 });
 

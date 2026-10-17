@@ -12,7 +12,7 @@ import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
 import { AgentConnectionManager } from '../dist-electron/agentConnections.mjs';
 import { runRemoteSubagent } from '../dist-electron/remoteSubagent.mjs';
-import { createTurnTimeContext } from '../packages/bush-product-agent/dist/index.js';
+import { createProductAgentTurnRequest, createTurnTimeContext } from '../packages/bush-product-agent/dist/index.js';
 
 const tempRoot = resolve('tmp/agent-service-tests');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -61,15 +61,50 @@ async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   return { calls, url: `http://127.0.0.1:${server.address().port}/v1` };
 }
-async function openService(t, name = 'fixture', delay = 80, tool, compatibility = false) {
+async function openService(t, name = 'fixture', delay = 80, tool, compatibility = false, bundledRoot) {
   const root = await directory(t); const model = await modelFixture(t, delay, tool, compatibility);
-  const service = await AgentService.open({ dataRoot: root, name, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
+  const service = await AgentService.open({ dataRoot: root, name, bundledRoot, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
   // Cleanup hooks execute in registration order; close before removing the root.
   t.after(() => service.close());
   await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture-secret', baseURL: model.url }] } });
   return { root, model, service };
 }
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+
+for (const guide of [false, true]) test(`Runtime-owned collaboration turns retain the service queue and accept ${guide ? 'guidance' : 'subsequent human turns'}`, async t => {
+  const gate = Promise.withResolvers(); let dispatches = 0;
+  const f = await openService(t, 'native-coordination', () => ++dispatches === 1 ? gate.promise : Promise.resolve(), undefined, false, resolve('assets'));
+  let native;
+  try {
+    await f.service.call('sessions.create', { sessionId: 'native' });
+    const selected = await f.service.product.resolveSubagentModel('fixture');
+    const request = createProductAgentTurnRequest({ requestId: 'peer-request', sessionId: 'native', turnId: 'peer-turn', messageId: 'peer-message', createdAt: new Date().toISOString(),
+      userText: 'Coordinate the existing task', model: selected.model, providerBinding: selected.binding, tools: [], permissionMode: 'task_free' });
+    request.metadata.peerMessageWake = true;
+    native = f.service.runtime.runOwnedCommand({ kind: 'runtime.run_session_turn', payload: request }, new AbortController().signal);
+    await until(() => f.model.calls.length, count => count === 1);
+    const status = await f.service.call('runtime.command', { kind: 'plugin.agentchatroom.session_status', payload: { sessionId: 'native' } });
+    assert.equal(status.activeTurnId, 'peer-turn');
+    const queued = await f.service.call('chat.send', { ...input('native', 'queued-native', 'Check the revised contract'), queueOnly: true });
+    await pause(150);
+    assert.equal((await f.service.call('chat.jobs')).find(item => item.id === queued.id).status, 'queued', 'native work must not fail or consume a queued human message');
+    if (guide) {
+      await f.service.call('chat.queue', { action: 'guide', id: queued.id, turnId: 'peer-turn', mode: 'interrupt_and_continue' });
+      await native;
+      const job = (await f.service.call('chat.jobs')).find(item => item.id === queued.id);
+      assert.equal(job.guidance.applied, true);
+      assert.equal(job.status, 'stopped');
+      const saved = await f.service.call('sessions.get', { sessionId: 'native' });
+      assert.equal(saved.turns.length, 1);
+      assert.match(JSON.stringify(f.model.calls[1].input), /Check the revised contract/);
+    } else {
+      gate.resolve(); await native;
+      await until(() => f.service.call('chat.jobs'), jobs => jobs.find(item => item.id === queued.id)?.status === 'completed');
+      assert.equal((await f.service.call('sessions.get', { sessionId: 'native' })).turns.length, 2);
+    }
+    assert.equal(f.model.calls.length, 2);
+  } finally { gate.resolve(); await native?.catch(() => {}); await f.service.close(); }
+});
 
 test('prompt context stays out of public job text while queued and executing', async t => {
   const f = await openService(t, 'prompt-context');

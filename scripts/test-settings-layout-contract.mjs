@@ -11,6 +11,7 @@ const settings = read('src', 'features', 'SettingsView.tsx');
 const navigation = read('src', 'features', 'settings', 'settingsNavigation.ts');
 const controls = read('src', 'features', 'settings', 'SettingsControls.tsx');
 const profilePanel = read('src', 'features', 'settings', 'SettingsPersonalizationPanel.tsx');
+const generalPanel = read('src', 'features', 'settings', 'SettingsGeneralPanel.tsx');
 const appearancePanel = read('src', 'features', 'settings', 'SettingsAppearancePanel.tsx');
 const usagePanel = read('src', 'features', 'settings', 'UsageStatisticsPanel.tsx');
 const modelsPanel = read('src', 'features', 'settings', 'ModelsSettingsPanel.tsx');
@@ -23,6 +24,8 @@ const startup = read('index.html');
 const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 
 const expectedSections = [
+  'general',
+  'notifications',
   'profile',
   'appearance',
   'shortcuts',
@@ -68,9 +71,9 @@ assert.match(settings, /className="settings-page-header"/);
 assert.match(controls, /className="settings-card-body"/);
 assert.doesNotMatch(settings, /settings\.thinking\.accentColor|思考颜色|Thinking color/);
 assert.doesNotMatch(app, /defaultThinkingAccentColor|cardbush_thinking_accent_color'\s*,\s*normalizeHexColor/);
-assert.match(profilePanel, /name="guidance-delivery-mode"/);
-assert.match(profilePanel, /'加入队列' : 'Add to queue'/);
-assert.match(profilePanel, /'马上发送' : 'Send immediately'/);
+assert.match(generalPanel, /name="guidance-delivery-mode"/);
+assert.match(generalPanel, /'加入队列' : 'Add to queue'/);
+assert.match(generalPanel, /'马上发送' : 'Send immediately'/);
 assert.match(app, /cardbush_guidance_delivery_mode/);
 assert.match(app, /settings\.guidance\?\.deliveryMode === 'immediate'/);
 assert.match(navigation, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
@@ -78,11 +81,13 @@ assert.match(settings, /profile: SlidersHorizontal/);
 const runtimePanel = settings.match(
   /if \(effectiveSection === 'runtime'\)[\s\S]*?if \(effectiveSection === 'proxy'\)/,
 )?.[0] ?? '';
-assert.match(profilePanel, /name="guidance-delivery-mode"/);
+assert.match(generalPanel, /name="language-mode"/);
 assert.doesNotMatch(runtimePanel, /name="guidance-delivery-mode"/);
 assert.match(profilePanel, /<ConversationStyleSettings/);
 assert.match(profilePanel, /<GlobalInstructionsPanel/);
 assert.doesNotMatch(profilePanel, /UsageStatisticsPanel|theme-mode|language-mode/);
+assert.doesNotMatch(profilePanel, /guidance-delivery-mode|NotificationSoundSettings/);
+assert.doesNotMatch(appearancePanel, /language-mode/);
 assert.match(appearancePanel, /name="theme-mode"/);
 assert.doesNotMatch(appearancePanel, /parchment|羊皮纸|Parchment/);
 assert.match(appearancePanel, /onThemePreferenceChange\(mode\)/);

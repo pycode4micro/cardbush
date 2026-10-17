@@ -104,6 +104,28 @@ test('sources accepted before a budget split are retained and never restaged or 
   assert.deepEqual(tx.incremental.value.summaries, ['Accepted A.', 'Consolidated B.']);
 });
 
+test('refinement rebuilds partition work and recovery never promotes an earlier oversized draft', () => {
+  const input = fixture(), first = new ContextCompactionTransaction(input);
+  first.partition();
+  first.accept(result('old-a', updates(first.job())));
+  first.accept(result('old-b', updates(first.job())));
+  assert.equal(first.accept(result('oversized-draft', updates(first.job()))), true);
+  const oldHistory = structuredClone(first.incremental.history);
+  assert.equal(first.refine('The final input is too large. Submit shorter summaries for all sources.'), true);
+  assert.equal(first.incremental.complete, false);
+  assert.equal(first.partition(), true);
+  first.accept(result('new-a', [{ source: 0, summary: 'Short fragment A.' }]));
+  const pending = first.job();
+  const restored = new ContextCompactionTransaction({ ...input, continuation: structuredClone(first.incremental.history) });
+  assert.deepEqual(restored.job(), pending);
+  assert.deepEqual(restored.incremental.history.slice(0, oldHistory.length), oldHistory);
+  assert.equal(restored.incremental.hasAccepted(0), false, 'even revised fragments still require whole-source consolidation');
+  restored.accept(result('new-b', [{ source: 1, summary: 'Short fragment B.' }]));
+  assert.equal(restored.accept(result('admissible-draft', [{ source: 0, summary: 'Short A.' }, { source: 1, summary: 'Short B.' }])), true);
+  assert.deepEqual(restored.incremental.value.summaries, ['Short A.', 'Short B.']);
+  validateConversation(restored.canonicalMessages);
+});
+
 const event = (request, sequence, kind, payload = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId,
   sequence, kind, createdAt: now, ...payload });
 function* checkpoint(request, id) {

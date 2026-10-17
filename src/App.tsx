@@ -306,7 +306,7 @@ function CardbushApp() {
   const [settingsMounted, setSettingsMounted] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
-    useState<SettingsSection>('profile');
+    useState<SettingsSection>('general');
   const [settingsPluginTab, setSettingsPluginTab] = useState<'plugins' | 'skills'>('plugins');
   const [projectItems, setProjectItems] = useState<ProjectItem[]>(readProjectItems);
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectItem | null>(null);
@@ -1935,7 +1935,7 @@ function CardbushApp() {
   }, [chat.activeConversationId, openChangeReviewInspector]);
 
   const openSettings = useCallback((
-    targetSection: SettingsSection = 'profile',
+    targetSection: SettingsSection = 'general',
     pluginTab: 'plugins' | 'skills' = 'plugins',
   ) => {
     setSettingsInitialSection(targetSection);
@@ -2016,8 +2016,8 @@ function CardbushApp() {
     if (compactLayout) collapseSidebar();
   }, [openChangeReviewInspector, compactLayout, collapseSidebar]);
   const handleSidebarOpenSettings = useCallback(() => {
-    openSettings('profile', 'plugins');
-  }, [openSettings, section, agents.selectedId]);
+    openSettings();
+  }, [openSettings]);
   const handleSearchOpenConversation = useCallback((conversationId: string) => {
     setSettingsOpen(false);
     openConversation(conversationId);
@@ -2084,7 +2084,7 @@ function CardbushApp() {
     newConversation: () => { handleSearchCreateConversation(); setConversationPromptFocus(value => value + 1); },
     openProject: window.cardbushDesktop?.pickProjectDirectory ? handleSearchAddProject : undefined,
     openFiles: window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined,
-    openSettings: () => openSettings('profile'),
+    openSettings: () => openSettings(),
     showShortcuts: () => openSettings('shortcuts'),
     openDiagnostics: () => openSettings('diagnostics'),
     toggleSidebar,
@@ -2139,7 +2139,7 @@ function CardbushApp() {
       <AppCenterProvider language={language} onNavigate={(application, environmentId) => {
         if (application.kind === 'web') { setSettingsOpen(false); openInspectorTarget({ target: application.target, title: application.title }); return; }
         if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins'); return; }
-        if (environmentId && application.kind === 'builtin' && application.target === 'settings') { openSettings('profile', 'plugins'); return; }
+        if (environmentId && application.kind === 'builtin' && application.target === 'settings') { openSettings(); return; }
         if (application.target === 'settings' && application.kind === 'builtin') { handleSidebarOpenSettings(); return; }
         setSettingsOpen(false);
         if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
@@ -2237,7 +2237,7 @@ function CardbushApp() {
                 <NativeTeamSidebar
                   language={language}
                   onBack={() => setSection('chat')}
-                  onOpenSettings={() => openSettings('profile')}
+                  onOpenSettings={() => openSettings()}
                   softVisible={sidebarPresence.visible}
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}
                 />

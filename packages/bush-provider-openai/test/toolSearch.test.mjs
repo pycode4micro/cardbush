@@ -530,8 +530,9 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
     inputMessages: [{ messageId: 'human', message: { role: 'user', content: 'Read project documents' } }] });
   assert.equal(terminal.payload.status, 'completed'); assert.equal(round, 4); assert.equal(executed, 1);
   assert.equal(host.events('s', 'progressive').find(event => event.kind === 'tool_returned' && event.payload.toolCallId === 'use').payload.display.title, '查阅项目文档');
-  const breaks = host.events('s', 'progressive').filter(event => event.kind === 'provider_input_observed' && event.payload.frozenPrefixBreak);
-  assert.deepEqual(breaks.map(event => event.payload.changedParameters), mode === 'native' ? [] : [['tools']],
+  const observations = host.events('s', 'progressive').filter(event => event.kind === 'provider_input_observed');
+  assert.ok(observations.every(event => !event.payload.frozenPrefixBreak));
+  assert.deepEqual(observations.filter(event => event.payload.parametersChanged).map(event => event.payload.changedParameters), mode === 'native' ? [] : [['tools']],
     'only the initial explicit protocol rejection changes parameters; search/load/call keeps the accepted prefix');
 });
 

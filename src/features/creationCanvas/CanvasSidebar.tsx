@@ -2,6 +2,7 @@ import { ArrowLeft, FolderOpen, Plus, RotateCcw, Search, Square, Trash2 } from '
 import { useState } from 'react';
 import { acceptCanvas, archiveCanvas, createCanvas, selectCanvas, useCanvases } from './canvasStore';
 import { AppCenterDock } from '../appCenter/AppCenter';
+import { canvasErrorMessage } from './canvasErrors';
 import '../mdPresentation/bush-it-sidebar.css';
 import './creationCanvas.css';
 
@@ -14,7 +15,7 @@ export function CanvasSidebar({ language, onBack, onSelect, softVisible = true }
       <header className="creation-sidebar-heading"><h2>{t('创作', 'Create')}</h2><button onClick={onBack} aria-label={t('返回对话', 'Back to chats')}><ArrowLeft size={16}/></button><button aria-label={t('搜索画板', 'Search canvases')} aria-expanded={search} onClick={() => setSearch(!search)}><Search size={16}/></button></header>
       <button className="bush-new-page" onClick={() => { createCanvas(); setTrash(false); setQuery(''); onSelect?.(); }}><Plus size={16}/>{t('新建画板', 'New canvas')}</button>
       {search && <label className="bush-page-search"><Search size={14}/><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder={t('搜索画板…', 'Search canvases…')} aria-label={t('搜索画板', 'Search canvases')}/></label>}
-      {(error || state.error) && <p className="md-error" role="alert">{error || state.error}</p>}
+      {(error || state.error) && <p className="md-error" role="alert">{canvasErrorMessage(error || state.error, language)}</p>}
       <div className="creation-sidebar-library"><div className="creation-section-heading">{trash ? t('回收站', 'Trash') : t('最近更新', 'Recently updated')}</div><div className="bush-page-list">
         {state.canvases.filter(item => !!item.archived === trash && item.title.toLowerCase().includes(query.toLowerCase())).sort((a, b) => b.updatedAt - a.updatedAt).map(item => <div key={item.id} className={item.id === state.selectedId && !trash ? 'active' : ''}>
           <button disabled={trash} onClick={() => { selectCanvas(item.id); onSelect?.(); }}><Square size={15}/><span>{item.title || t('无标题画板', 'Untitled canvas')}</span></button>
