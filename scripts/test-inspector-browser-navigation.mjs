@@ -12,6 +12,7 @@ const local = file => resolve(file).replaceAll('\\', '/');
 const source = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import { InspectorWebview } from '${local('src/features/inspector/InspectorWebview.tsx')}';
 import { InspectorTabPages } from '${local('src/features/inspector/InspectorTabPages.tsx')}';
 import { addPanel, panelRects, resizePanelSplit, swapPanels } from '${local('src/features/inspector/panelLayout.ts')}';
@@ -23,6 +24,7 @@ import { localInspectorWorkspace } from '${local('src/features/inspector/inspect
 import { useSoftPanelPresence } from '${local('src/hooks/useSoftPanelPresence.ts')}';
 import { InspectorActions } from '${local('src/features/inspector/InspectorActions.tsx')}';
 import { InspectorTabStrip } from '${local('src/features/inspector/InspectorTabStrip.tsx')}';
+import { InspectorTabLock } from '${local('src/features/inspector/InspectorTabLock.tsx')}';
 import { useInspectorTabStrip } from '${local('src/hooks/useInspectorTabStrip.ts')}';
 import { BrowserSiteIcon } from '${local('src/features/browser/BrowserSiteIcon.tsx')}';
 import { BrowserTabAudioButton } from '${local('src/features/browser/BrowserTabAudioButton.tsx')}';
@@ -54,6 +56,7 @@ function Harness() {
   const [width,setWidth]=React.useState(820);
   const [language,setLanguage]=React.useState('zh');
   const [citation,setCitation]=React.useState('');
+  const [tabContext,setTabContext]=React.useState(null);
   const inspectorOpen=tabs.open,setInspectorOpen=tabs.setOpen;
   const presence=useSoftPanelPresence(inspectorOpen,240,{keepMounted:true});
   const open=React.useCallback(detail=>{
@@ -86,7 +89,8 @@ function Harness() {
     <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} softVisible={presence.visible} label="Resize workspace"/>
     <div className="right-inspector-viewport"><div className="right-inspector-content">
       <header className="right-inspector-toolbar with-tabs"><InspectorTabStrip language={language} stripRef={strip.ref} onNewTab={()=>open(newBrowserTab(language))}>
-      {tabs.tabs.map(tab=><div className={'right-inspector-tab'+(tab.id===tabs.activeId?' active':'')} key={tab.id} data-inspector-tab-id={tab.id}>
+      {tabs.tabs.map(tab=><div className={'right-inspector-tab'+(tab.id===tabs.activeId?' active':'')} key={tab.id} data-inspector-tab-id={tab.id}
+        onContextMenu={event=>{event.preventDefault();setTabContext({id:tab.id,x:Math.min(event.clientX,innerWidth-196),y:event.clientY});}}>
         <button role="tab" aria-selected={tab.id===tabs.activeId} className="right-inspector-tab-select" data-tab={tab.id}
           title={(navigation[tab.id]?.title||tab.detail.title||tab.id)+'\\n'+(navigation[tab.id]?.url||tab.detail.target)} onClick={()=>tabs.activateTab(tab.id)}>
           <BrowserSiteIcon url={navigation[tab.id]?.url||tab.detail.target} icon={navigation[tab.id]?.faviconUrl} icons={navigation[tab.id]?.faviconUrls} revision={navigation[tab.id]?.faviconRevision}/>
@@ -94,6 +98,14 @@ function Harness() {
         </button><BrowserTabAudioButton navigation={navigation[tab.id]} handle={refs.current[tab.id]} language={language} title={navigation[tab.id]?.title||tab.id}/>
         <button className="right-inspector-tab-close" aria-label="关闭标签页" onClick={()=>tabs.closeTabs(new Set([tab.id]))}>×</button></div>)}
       </InspectorTabStrip><BrowserMenu language={language} navigation={active} handle={refs.current[tabs.activeId]} onNavigate={url=>open({target:url,newTab:true})} onSettings={()=>toolClicks.push('browser-settings')}/></header>
+      {tabContext && createPortal(<div className="right-inspector-tab-context-menu" role="menu" style={{left:tabContext.x,top:tabContext.y}}>
+        <InspectorTabLock contextMenu language={language} locked={tabs.lockedIds.has(tabContext.id)}
+          onToggle={()=>{tabs.toggleLock(tabContext.id);setTabContext(null);}}/>
+        <BrowserTabAudioButton contextMenu language={language} title={navigation[tabContext.id]?.title||tabContext.id}
+          navigation={navigation[tabContext.id]} handle={refs.current[tabContext.id]} onAction={()=>setTabContext(null)}/>
+        <div role="separator"/>
+        <button role="menuitem" onClick={()=>{tabs.closeTabs(new Set([tabContext.id]));setTabContext(null);}}>关闭标签页</button>
+      </div>,document.querySelector('.app') ?? document.body)}
       <nav><button id="new-tab" onClick={()=>open(newBrowserTab(language))}>新标签页</button>
       <button id="back" disabled={!active?.canGoBack} onClick={()=>refs.current[tabs.activeId]?.goBack()}>后退</button>
       <button id="forward" disabled={!active?.canGoForward} onClick={()=>refs.current[tabs.activeId]?.goForward()}>前进</button>

@@ -54,6 +54,30 @@ test('replayed lifecycle events do not duplicate executions and session state is
   const complete=ui.writeLiveSegment(replayed,job.turnId,'assistant-1','authoritative',true);
   assert.equal(complete[job.turnId].segments['assistant-1'].content,'authoritative');
 });
+
+test('live image completion defers to durable details and preserves authorized preview paths', () => {
+  const events = ['tool_running', 'tool_returned'].map(kind => ({ kind,
+    payload: { toolCallId: 'view-reference', toolName: 'inject_image_input', assistantMessageId: 'assistant-1' } }));
+  let live = replay([events[0]]);
+  assert.equal(live[job.turnId].tools['view-reference'].metadata.nativeResultDeferred, false);
+  live = replay([events[1]], live);
+  const execution = ui.pendingTranscript(sessions[1].id, { ...job, status: 'running' }, live[job.turnId])[1].toolExecutions[0];
+  assert.equal(execution.state, 'completed');
+  assert.equal(execution.metadata.nativeResultDeferred, true);
+  assert.equal(execution.output, '');
+  const record = { ...fixtureRecords()[0], toolCall: { id: 'view-reference', name: 'inject_image_input', argumentsText: '{}' },
+    result: { queued: true, artifacts: [
+      { type: 'image', path: '/data/workspaces/uploads/reference.png', display: 'inline' },
+      { type: 'image', path: '/data/runtime-state/model-images/private.png' },
+      { type: 'image', path: '/another-user/private.png' },
+      { type: 'image', path: 'https://outside.invalid/reference.png' },
+    ] } };
+  const detail = ui.webToolExecution(record);
+  assert.deepEqual(plain(detail.artifacts.map(item => item.path)), ['/data/workspaces/uploads/reference.png']);
+  assert.equal(detail.metadata.nativeResultDeferred, undefined);
+  const failed = replay([{ ...events[1], kind: 'tool_failed', payload: { ...events[1].payload, error: { message: 'Denied' } } }]);
+  assert.equal(failed[job.turnId].tools['view-reference'].metadata.nativeResultDeferred, false);
+});
 test('stopped execution retains its transcript instead of disappearing or becoming a successful final', () => {
   const live=replay(initialEvents);const messages=ui.pendingTranscript(sessions[1].id,{...job,status:'stopped'},live[job.turnId]);
   assert.equal(messages[1].metadata.stopped,true);assert.match(messages[1].content,/针织开衫/);

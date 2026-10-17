@@ -107,7 +107,11 @@ export function applyTranscriptEvent(live: LiveTranscript, event: NonNullable<Fr
     success: event.kind === 'tool_returned', durationMs: 0, createdAt: previous?.createdAt || event.createdAt || '',
     contentOffset: previous?.contentOffset ?? turn.segments[assistantMessageId]?.content.length ?? 0, contentOffsetExplicit: true,
     assistantMessageId, turnId, sequence: previous?.sequence ?? event.sequence,
-    metadata: { ...previous?.metadata, displayTitle: display?.title || webToolTitle(payload.toolName), displayTitles: display?.titles, error: payload.error } };
+    // SSE carries lifecycle facts only. Completed tools have durable details;
+    // use the same lazy detail path as history instead of treating absent bytes
+    // in the event as an empty image result.
+    metadata: { ...previous?.metadata, displayTitle: display?.title || webToolTitle(payload.toolName), displayTitles: display?.titles,
+      nativeResultDeferred: event.kind === 'tool_returned', error: payload.error } };
   return { ...live, [turnId]: { ...turn, tools: { ...turn.tools, [execution.id]: execution } } };
 }
 

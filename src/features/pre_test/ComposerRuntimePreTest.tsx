@@ -166,7 +166,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
       <main className="composer-runtime-pre-test-stage">
         <div className="composer-runtime-pre-test-copy">
           <small>{language === 'zh' ? '运行中的会话' : 'Active conversation'}</small>
-          <h2>{language === 'zh' ? '运行状态归入会话，输入区只保留引导队列。' : 'Runtime progress stays in the conversation; the composer shows queued guidance.'}</h2>
+          <h2>{language === 'zh' ? '运行状态归入会话，文件改动居中显示在输入框上方。' : 'Runtime progress stays in the conversation; file changes sit above the composer.'}</h2>
           <p>{language === 'zh' ? '思考、计划和目标跟随当前回合；排队消息单独管理。' : 'Thinking, plans and goals stay with the current turn; queued messages are managed separately.'}</p>
         </div>
         <div className="composer-runtime-pre-test-dock runtime-attached">
@@ -183,8 +183,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
           ) : (
             <>
               {(showThinking || showChanges) && <AssistantThinkingDetail language={language} model=""
-                notice={showThinking ? thinkingFixture : undefined}
-                accessory={showChanges && <TurnChangeReviewButton language={language} summary={changeSummaryFixture} />} />}
+                notice={showThinking ? thinkingFixture : undefined} />}
               <TurnRuntimeDetails
                 language={language}
                 running={fixture !== 'queue'}
@@ -213,6 +212,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
               )}
               <Composer
                 compact
+                topAccessory={showChanges && <TurnChangeReviewButton language={language} summary={changeSummaryFixture} />}
                 language={language}
                 draft={shadowOpen ? shadowDraft : draft}
                 onDraftChange={shadowOpen ? setShadowDraft : setDraft}

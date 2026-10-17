@@ -25,25 +25,34 @@ IDs are batch-local strings. Evidence has already been reviewed; do not review i
 For feedback, propose a conditional habit only from at least two distinct rated turns clearly supporting the same preference. Ratings have no specific reason and do not endorse every claim in a reply. Cite only feedback IDs for a feedback-derived habit; omit ambiguous candidates.
 Merge synonymous memories only when meanings and conditions agree. Keep corrections, dates, qualifications, domain aliases and uncertainty. Preserve every source condition. The host inherits expiry automatically; do not calculate expiry or copy metadata timestamps into text. Use the user's language. Each note and condition must fit 400 estimated tokens; prefer under 100. Omitted sources remain unchanged automatically: do not echo them. Empty arrays are valid. Return only concise JSON.`;
 
-/** Bounded maintenance batches on the shared Runtime, with independently durable progress. */
+/** Local maintenance by default; explicit model consolidation reuses the shared Runtime. */
 export class IndividuationMemory {
   readonly store:IndividuationStore;
   private running?:Promise<PersonalizationStatus>;
   private controller?:AbortController;
   private progress?:PersonalizationStatus['summaryProgress'];
+  private maintenance?:Promise<PersonalizationStatus>;
+  private nextMaintenanceAt=0;
   private closed=false;
   constructor(path:string,private readonly runTask:RuntimeInternalTaskRunner) { this.store=new IndividuationStore(path); }
 
   async status(settings:IndividuationSettings,signal?:AbortSignal) {
-    const status=await this.store.status(settings,signal);
+    const status=await this.store.maintain(settings,signal);
     // Each stage releases its lease; the job stays running between stages.
     return {...status,running:Boolean(this.running)||status.running,summaryProgress:this.progress};
   }
 
-  schedule(settings:IndividuationSettings,model:MemoryModel) {
+  schedule(settings:IndividuationSettings) {
     if(this.closed || this.running || !settings.habits&&!settings.predictions) return;
-    // Failure is retained in the status panel; never turn a successful user task into a failure.
-    void this.compact(settings,model,false).catch(()=>undefined);
+    if(this.maintenance)return this.maintenance;
+    if(Date.now()<this.nextMaintenanceAt)return;
+    // Conversation hooks never invoke a model. Coalesce local housekeeping across turns.
+    const operation=this.store.maintain(settings).then(status=>{
+      this.nextMaintenanceAt=Date.now()+60_000;return status;
+    }).finally(()=>{if(this.maintenance===operation)this.maintenance=undefined;});
+    this.maintenance=operation;
+    void operation.catch(()=>undefined);
+    return operation;
   }
   compact(settings:IndividuationSettings,model:MemoryModel,manual=true,signal?:AbortSignal):Promise<PersonalizationStatus> {
     if(this.closed) return Promise.reject(new Error('Memory service is closed.'));
@@ -66,7 +75,7 @@ export class IndividuationMemory {
       signal.throwIfAborted();
       // An explicit request processes events first; an under-threshold habit stage
       // does not immediately re-summarize its output. Habit-only maintenance remains available.
-      const force=manual&&(stage==='events'||initial.eventTokens===0||initial.habitTokens>=settings.habitTokenThreshold||initial.lastError?.includes('stage=habits')===true);
+      const force=manual&&(stage==='events'||initial.eventTokens+(initial.evidenceTokens??0)===0||initial.habitTokens>=settings.habitTokenThreshold||initial.lastError?.includes('stage=habits')===true);
       const snapshot=await this.store.begin(settings,stage,force,signal,retryKey);
       if(!snapshot)continue;
       const instructions=memorySummaryInstructions+`\nStage: ${stage}. Habits enabled: ${settings.habits}. Predictions enabled: ${settings.predictions}. Disabled arrays must be empty.`+
@@ -170,7 +179,7 @@ export class IndividuationMemory {
           :error instanceof Error&&'code' in error&&error.code==='memory_snapshot_changed'?new SummaryFailure('snapshot_changed',true,'reason' in error&&typeof error.reason==='string'?error.reason:undefined)
           :error instanceof MemorySummaryValidationError?new SummaryFailure('invalid_summary',false,error.reason+(error.detail?`/${error.detail}`:''))
           :new SummaryFailure('provider_failure',true);
-        const retry=failure.retryable?'Temporary failure; retry later.':'Automatic retries of unchanged records are paused; retry manually or update the records/configuration.';
+        const retry=failure.retryable?'Temporary failure; retry manually later.':'Review the records/configuration before retrying manually.';
         const finish=['stop','length','max_tokens','tool_calls','end_turn'].includes(progress?.finishReason??'')?progress!.finishReason:'other';
         const message=`memory_summary_${failure.code}: stage=${stage}, ${failure.detail?`reason=${failure.detail}, `:''}finish=${finish}, input=${progress?.inputTokens??'unknown'}, output=${progress?.outputTokens??'unknown'}/${budget.outputTokens}, records=${snapshot.records.length}, batch=${batchIndex}/${batchCount}, elapsedMs=${progress?Math.max(0,Date.now()-progress.startedAt):0}, textChars=${progress?.textChars??0}, reasoningChars=${progress?.reasoningChars??0}. Valid completed batches were saved; remaining originals retained. ${retry}`;
         await this.store.fail(snapshot.lease,message,{fingerprint:snapshot.fingerprint,code:failure.code,retryable:failure.retryable,stage,settings,retryKey});
@@ -179,5 +188,5 @@ export class IndividuationMemory {
     }
     return this.store.status(settings,signal);
   }
-  async close() { this.closed=true;this.controller?.abort(); await this.running?.catch(()=>undefined); }
+  async close() { this.closed=true;this.controller?.abort(); await this.running?.catch(()=>undefined);await this.maintenance?.catch(()=>undefined); }
 }

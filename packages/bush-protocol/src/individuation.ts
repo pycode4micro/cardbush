@@ -114,6 +114,7 @@ export const personalizationCommandSchema = z.object({
 export const personalizationStatusSchema = z.object({
   estimatedTokens: z.number().nonnegative(), records: z.number().nonnegative(),
   eventTokens: z.number().nonnegative(), habitTokens: z.number().nonnegative(),
+  evidenceRecords: z.number().nonnegative().optional(), evidenceTokens: z.number().nonnegative().optional(),
   habits: z.number().nonnegative(), predictions: z.number().nonnegative(), notes: z.number().nonnegative(),
   feedback: z.number().nonnegative().default(0),
   hits: z.number().nonnegative(), misses: z.number().nonnegative(),

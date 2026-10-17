@@ -80,16 +80,20 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const row = details.parentElement.querySelector('.message-row.assistant').getBoundingClientRect();
       const progress = details.getBoundingClientRect();
       const review = document.querySelector('.turn-change-review').getBoundingClientRect();
-      const status = layoutThinking.querySelector('summary').getBoundingClientRect();
+      const input = document.querySelector('.composer-surface').getBoundingClientRect();
+      const jump = document.querySelector('.scroll-bottom').getBoundingClientRect();
       return { left: progress.left - row.left, right: progress.right - row.right,
-        reviewLeft: review.left - row.left, reviewRight: review.right - row.right,
-        reviewGap: review.left - status.right, reviewTop: review.top - status.top };
+        reviewLeft: review.left - input.left, reviewRight: review.right - input.right,
+        center: (review.left + review.right - input.left - input.right) / 2,
+        inputGap: input.top - review.bottom, jumpGap: review.top - jump.bottom };
     })()`);
     assert.ok(Math.abs(alignment.left) < 1 && Math.abs(alignment.right) < 1,
       `${width}px progress shares the message reading track: ${JSON.stringify(alignment)}`);
     assert.ok(alignment.reviewLeft >= 0 && alignment.reviewRight <= 1 &&
-      alignment.reviewGap >= 0 && alignment.reviewGap <= 10 && Math.abs(alignment.reviewTop) < 1,
-      `${width}px changed-files capsule stays beside the activity inside the conversation: ${JSON.stringify(alignment)}`);
+      Math.abs(alignment.center) < 1 && alignment.inputGap >= 7 && alignment.inputGap <= 9,
+      `${width}px changed-files capsule is centered above the input: ${JSON.stringify(alignment)}`);
+    assert.ok(alignment.jumpGap >= 7,
+      `${width}px the scroll button stays above the capsule without overlap: ${JSON.stringify(alignment)}`);
   }
   await run("document.querySelector('.chat-panel').style.width = ''; document.querySelector('.chat-panel').style.removeProperty('--chat-track-width')");
   await pause(150);

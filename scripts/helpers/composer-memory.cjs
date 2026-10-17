@@ -8,7 +8,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     renderView(null); localStorage.removeItem(views.individuationStorageKey);
     window.memorySends=[];
     window.memoryCalls=[];
-    window.memoryStats={estimatedTokens:1200,eventTokens:800,habitTokens:400,records:8,habits:2,predictions:2,notes:4,hits:3,misses:1,running:false,lastSummaryAt:null,lastError:null};
+    window.memoryStats={estimatedTokens:1200,eventTokens:800,habitTokens:400,evidenceRecords:153,evidenceTokens:25000,records:8,habits:2,predictions:2,notes:4,hits:3,misses:1,running:false,lastSummaryAt:null,lastError:null};
     window.memoryCall=async(input,connection)=>{memoryCalls.push({input,connection});if(input.action==='summarize'){
       if(window.failMemorySummary)throw Error('fixture model unavailable');
       if(window.holdMemorySummary)return new Promise(resolve=>window.finishMemorySummary=resolve);
@@ -97,6 +97,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.querySelector(".summary-settings").textContent.includes("Memory & predictions")'),true,'settings use a readable title');
   assert.equal(await run('document.querySelector(".summary-settings").textContent.includes("selected model: Fixture model")'),true,'the selected model is named');
   assert.equal(await run('document.querySelector(".summary-settings").textContent.includes("fixture-model")'),false,'internal model IDs stay out of settings text');
+  assert.equal(await run('document.querySelector(".summary-manual-settings").open'),false,'model consolidation is optional and collapsed by default');
+  assert.equal(await run('document.querySelector(".summary-settings").textContent.includes("without model calls")'),true,'default local maintenance is explained');
+  assert.equal(await run('memoryCalls.some(c=>c.input.action==="summarize")'),false,'opening settings never starts model consolidation');
+  assert.equal(await run('document.querySelector(".summary-memory-status").textContent.includes("153 pending evidence records")'),true,'retained evidence is displayed separately');
+  assert.equal(await run('document.querySelector(".summary-memory-status strong").textContent.startsWith("1,200")'),true,'evidence never inflates active memory usage');
+  fs.writeFileSync(path.join(root,'tmp','summary-memory-maintenance.png'),(await window.webContents.capturePage()).toPNG());
+  await run('document.querySelector(".summary-manual-settings > summary").click()');
   await run('document.querySelector(".summary-threshold input").focus();document.querySelector(".summary-threshold input").select()');
   await window.webContents.insertText('999');await pause();await run('document.querySelector(".summary-threshold input").blur()');
   // Hidden windows do not always emit focusout when HTMLElement.blur() is called.
@@ -112,7 +119,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('document.querySelectorAll(".summary-threshold input")[1].dispatchEvent(new FocusEvent("focusout",{bubbles:true}))');
   await until('views.readIndividuation().habitTokenThreshold===23456','independent habit threshold persisted');
   assert.equal(await run('views.readIndividuation().eventTokenThreshold'),12345);
-  assert.deepEqual(await run('[...document.querySelectorAll(".summary-memory-status progress")].map(p=>p.max)'),[12345,23456]);
+  assert.equal(await run('document.querySelectorAll(".summary-memory-status progress").length'),0,'stored memory is not shown as a model-trigger quota');
+  assert.equal(await run('document.querySelector(".summary-manual-settings").textContent.includes("never trigger background requests")'),true);
   await run('window.listCallsBeforeSummary=memoryListCalls;document.querySelector(".summary-memory-actions .primary-button").click()');
   await until('document.querySelector(".summary-memory-status strong")?.textContent.startsWith("300")','manual summary result replaces status');
   await until('memoryListCalls>listCallsBeforeSummary','manual summary refreshes memory records');

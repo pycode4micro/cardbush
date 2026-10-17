@@ -24,7 +24,13 @@ export class MemorySummaryValidationError extends Error {
   constructor(readonly reason:'history_full'|'unsupported_sources'|'unsupported_promotion'|'invalid_review'|'insufficient_reduction'|'disabled_category'|'note_too_long'|'condition_lost'|'expired_output'|'retired_source',message:string,readonly detail?:string) { super(message); }
 }
 const mask = (settings: IndividuationSettings) => (settings.habits ? 1 : 0) | (settings.predictions ? 2 : 0);
-const emptyStatus = (): PersonalizationStatus => ({ estimatedTokens:0,eventTokens:0,habitTokens:0,records:0,habits:0,predictions:0,notes:0,feedback:0,hits:0,misses:0,running:false,lastSummaryAt:null,lastError:null,inactiveRecords:0,historyChanges:0 });
+const emptyStatus = (): PersonalizationStatus => ({ estimatedTokens:0,eventTokens:0,habitTokens:0,evidenceRecords:0,evidenceTokens:0,records:0,habits:0,predictions:0,notes:0,feedback:0,hits:0,misses:0,running:false,lastSummaryAt:null,lastError:null,inactiveRecords:0,historyChanges:0 });
+// Storage guards are independent of recall budgets and optional model consolidation thresholds.
+export const MAX_ACTIVE_MEMORY_RECORDS=8000;
+export const MAX_ACTIVE_EVIDENCE_RECORDS=8000;
+// An explicitly requested consolidation accounts for all of its material. This
+// is a result-size check, not the storage-admission or recall budget.
+const consolidationTokens=(status:PersonalizationStatus)=>status.estimatedTokens+(status.evidenceTokens??0);
 const isForecast = (row: MemoryRow) => row.kind==='prediction' || row.kind==='note' && (row.scope & 2)!==0;
 function reviewIssue(prediction:MemoryRow|undefined,evidence:MemoryRow|undefined):string|undefined {
   if(!prediction||!evidence)return 'unknown_record';
@@ -108,9 +114,9 @@ export class IndividuationStore {
     }
     db.exec('UPDATE memory_state SET revision=revision+1 WHERE id=1'); return {id,changed:true};
   }
-  private full(db: DatabaseSync, settings: IndividuationSettings) {
-    const totals=db.prepare("SELECT COUNT(*) count,COALESCE(SUM(tokens),0) tokens FROM memory_records WHERE state='active' AND (expires IS NULL OR expires>?)").get(this.now()) as {count:number;tokens:number};
-    return totals.count>=8000 || totals.tokens>Math.max(40_000,(settings.eventTokenThreshold+settings.habitTokenThreshold)*4);
+  private full(db: DatabaseSync, additional=1) {
+    const total=db.prepare("SELECT COUNT(*) count FROM memory_records WHERE kind!='evidence' AND state='active' AND (expires IS NULL OR expires>?)").get(this.now())!;
+    return additional>0 && Number(total.count)+additional>MAX_ACTIVE_MEMORY_RECORDS;
   }
   async summarize(input: SummaryForUserInput, settings: IndividuationSettings, owner: MemoryOwner, user = '', signal?:AbortSignal) {
     signal?.throwIfAborted();
@@ -125,7 +131,8 @@ export class IndividuationStore {
     if(invalid)return {saved:false,writes:[...writes,...entries.map(entry=>({category:entry.kind,status:'rejected' as const,
       reason:entry===invalid?(entry.note.expires_at&&Date.parse(entry.note.expires_at)<=this.now()?'already_expired':'note_too_long'):'atomic_write_rejected'}))]};
     return this.transaction((db,now)=>this.withReceipt(db,owner,input,now,()=>{
-      const blocked=this.full(db,settings)?'summary_required':memoryHistoryFull(db)?'history_full':undefined;
+      const additions=entries.filter(({kind,note})=>!getMemoryRow(db,noteId(kind,note))).length;
+      const blocked=this.full(db,additions)?'memory_capacity_reached':memoryHistoryFull(db)?'history_full':undefined;
       if(blocked)return {saved:false,writes:[...writes,...entries.map(entry=>({category:entry.kind,status:'rejected' as const,reason:blocked}))]};
       const before:MemoryRow[]=[],changed:string[]=[];
       for(const {kind,scope,note} of entries) {
@@ -152,7 +159,7 @@ export class IndividuationStore {
     if(!input.rating&&!existsSync(this.path))return {status:'ok'};
     const owner={sessionId:input.sessionId,turnId:input.turnId,operationId};
     return this.transaction((db,now)=>this.withReceipt(db,owner,input,now,()=>{
-      if(input.rating&&this.full(db,settings)&&!getMemoryRow(db,feedbackRecordId(input)))return {status:'rejected',reason:'summary_required'};
+      if(input.rating&&this.full(db)&&!getMemoryRow(db,feedbackRecordId(input)))return {status:'rejected',reason:'memory_capacity_reached'};
       return writeAssistantFeedback(db,now,input,context);
     }),signal);
   }
@@ -364,10 +371,12 @@ export class IndividuationStore {
       return row&&(row.scope&mask(settings))===row.scope&&version!==revision?[{id,revision:version!,state:memoryView(row,now).state,replaced_by:JSON.parse(row.replaced_by) as string[]}]:[];
     }).slice(0,20),signal);
   }
+  /** Explicit evaluation intake only; ordinary conversation recall never collects evidence. */
   async observe(text:string,settings:IndividuationSettings,owner:MemoryOwner,signal?:AbortSignal) {
     if(!settings.predictions || !text.trim()) return;
     await this.transaction((db,now)=>{
-      if(this.full(db,settings)) return;
+      const total=db.prepare("SELECT COUNT(*) count FROM memory_records WHERE kind='evidence' AND state='active' AND (expires IS NULL OR expires>?)").get(now)!;
+      if(Number(total.count)>=MAX_ACTIVE_EVIDENCE_RECORDS)return;
       const relevant=this.search(db,text,settings).filter(isForecast);
       const recent=db.prepare("SELECT * FROM memory_records WHERE kind IN ('note','prediction') AND state='active' AND (expires IS NULL OR expires>?) AND (scope & 2)=2 AND (scope & ?)=scope ORDER BY updated DESC LIMIT 8").all(now,mask(settings)) as MemoryRow[];
       relevant.push(...recent.filter(row=>metadata(row).session===owner.sessionId).slice(0,2));
@@ -380,12 +389,25 @@ export class IndividuationStore {
     if(!existsSync(this.path)) return emptyStatus();
     return this.transaction((db,now)=>this.readStatus(db,settings,now),signal);
   }
+  async maintain(settings:IndividuationSettings,signal?:AbortSignal):Promise<PersonalizationStatus> {
+    signal?.throwIfAborted();
+    if(!existsSync(this.path))return emptyStatus();
+    return this.transaction((db,now)=>{
+      const state=db.prepare('SELECT lease,lease_until FROM memory_state WHERE id=1').get()!;
+      // Do not invalidate a manual model job's frozen sources. Expiry itself is
+      // already enforced in every active read, without rewriting durable preferences.
+      if(mask(settings)&&!(state.lease&&Number(state.lease_until)>now))this.archiveReviewedEvidence(db,settings,now,'maintenance');
+      return this.readStatus(db,settings,now);
+    },signal);
+  }
   private readStatus(db:DatabaseSync,settings:IndividuationSettings,now:number):PersonalizationStatus {
     const state=db.prepare('SELECT * FROM memory_state WHERE id=1').get()!;
     const records=db.prepare("SELECT kind,COUNT(*) count,COALESCE(SUM(tokens),0) tokens FROM memory_records WHERE state='active' AND (expires IS NULL OR expires>?) AND (scope & ?)=scope GROUP BY kind").all(now,mask(settings));
     const count=(kind:string)=>Number(records.find(row=>row.kind===kind)?.count??0);
-    return {estimatedTokens:records.reduce((n,r)=>n+Number(r.tokens),0),records:records.reduce((n,r)=>n+Number(r.count),0),
-      habitTokens:Number(records.find(row=>row.kind==='habit')?.tokens??0),eventTokens:records.filter(row=>row.kind!=='habit').reduce((n,r)=>n+Number(r.tokens),0),
+    const recallable=records.filter(row=>row.kind!=='evidence');
+    return {estimatedTokens:recallable.reduce((n,r)=>n+Number(r.tokens),0),records:recallable.reduce((n,r)=>n+Number(r.count),0),
+      habitTokens:Number(records.find(row=>row.kind==='habit')?.tokens??0),eventTokens:recallable.filter(row=>row.kind!=='habit').reduce((n,r)=>n+Number(r.tokens),0),
+      evidenceRecords:count('evidence'),evidenceTokens:Number(records.find(row=>row.kind==='evidence')?.tokens??0),
       habits:count('habit'),predictions:count('prediction'),notes:count('note'),feedback:count('feedback'),hits:Number(state.hits),misses:Number(state.misses),
       running:Boolean(state.lease && Number(state.lease_until)>now),lastSummaryAt:state.last_summary as number|null,lastError:state.last_error as string|null,
       inactiveRecords:Number(db.prepare("SELECT COUNT(*) count FROM memory_records WHERE kind!='evidence' AND (state!='active' OR expires<=?) AND (scope & ?)=scope").get(now,mask(settings))!.count),
@@ -396,15 +418,19 @@ export class IndividuationStore {
       .all(now,mask(settings),stage==='habits'?1:0) as MemoryRow[];
   }
   /** No live forecast can use these observations. Archive, retaining the exact originals and undo. */
-  private archiveReviewedEvidence(db:DatabaseSync,settings:IndividuationSettings,now:number) {
+  private archiveReviewedEvidence(db:DatabaseSync,settings:IndividuationSettings,now:number,actor='summary') {
+    if(!db.prepare("SELECT 1 FROM memory_records WHERE kind='evidence' AND state='active' AND (expires IS NULL OR expires>?) AND (scope & ?)=scope LIMIT 1").get(now,mask(settings)))return;
     const rows=this.stageRows(db,settings,'events',now), candidates=memoryReviewCandidates(rows);
     const orphaned=rows.filter(row=>row.kind==='evidence'&&(candidates.get(row.id)??[]).every(prediction=>
-      db.prepare('SELECT 1 FROM memory_reviews WHERE id=?').get(memoryHash(`${prediction}:${row.id}`))));
+      db.prepare('SELECT 1 FROM memory_reviews WHERE id=?').get(memoryHash(`${prediction}:${row.id}`)))).slice(0,128);
     if(!orphaned.length)return;
-    if(memoryHistoryFull(db))throw new MemorySummaryValidationError('history_full','Memory history is full; original records were retained.');
+    const after=orphaned.map(row=>({...row,state:'consolidated',updated:now,revision:row.revision+1}));
+    // Keeping old evidence is safe: it has a separate quota and never blocks recall
+    // or new memories. Housekeeping must not fail just because undo history is full.
+    if(memoryHistoryFull(db,Buffer.byteLength(JSON.stringify(orphaned))+Buffer.byteLength(JSON.stringify(after))))return;
     for(const row of orphaned)db.prepare("UPDATE memory_records SET state='consolidated',updated=?,revision=revision+1 WHERE id=?").run(now,row.id);
-    recordMemoryChange(db,orphaned,orphaned.map(row=>row.id),'summary','Archive evidence with no pending forecast review',now);
-    db.prepare('UPDATE memory_state SET revision=revision+1,last_summary=? WHERE id=1').run(now);
+    recordMemoryChange(db,orphaned,orphaned.map(row=>row.id),actor,'Archive evidence with no pending forecast review',now);
+    db.exec('UPDATE memory_state SET revision=revision+1 WHERE id=1');
   }
   async begin(settings:IndividuationSettings,stage:MemoryStage,manual:boolean,signal?:AbortSignal,retryKey=''):Promise<MemorySnapshot|null> {
     if(!mask(settings) || !existsSync(this.path)) return null;
@@ -412,7 +438,7 @@ export class IndividuationStore {
       const state=db.prepare('SELECT * FROM memory_state WHERE id=1').get()!;
       if(state.lease && Number(state.lease_until)>now) return null;
       const status=this.readStatus(db,settings,now);
-      const tokens=stage==='events'?status.eventTokens:status.habitTokens;
+      const tokens=stage==='events'?status.eventTokens+(status.evidenceTokens??0):status.habitTokens;
       const threshold=stage==='events'?settings.eventTokenThreshold:settings.habitTokenThreshold;
       if(!tokens || !manual&&tokens<threshold) return null;
       if(stage==='events')this.archiveReviewedEvidence(db,settings,now);
@@ -473,7 +499,7 @@ export class IndividuationStore {
       if(!options.partial&&snapshot.stage==='events'&&(db.prepare("SELECT * FROM memory_records WHERE kind='evidence' AND state='active' AND (expires IS NULL OR expires>?)").all(now) as MemoryRow[])
         .some(row=>!originals.has(row.id)&&(metadata(row).related??[]).some(id=>originals.has(id))))
         throw Object.assign(new Error('New evidence arrived while summarizing; original records were retained.'),{code:'memory_snapshot_changed'});
-      const before=this.readStatus(db,settings,now).estimatedTokens;
+      const before=consolidationTokens(this.readStatus(db,settings,now));
       // Savings from this job's review may fund a supported habit in its later
       // consolidation task. The combined active view still cannot grow.
       const ceiling=before+Math.max(0,options.reductionCredit??0);
@@ -588,7 +614,7 @@ export class IndividuationStore {
         // The global review ledger is exact; inherited per-record support is conservative.
         db.prepare('UPDATE memory_records SET observations=?,hits=?,misses=? WHERE id=?').run(Math.min(100,Math.max(previous?.observations??0,sourceRows.reduce((n,r)=>n+r.observations,0))),
           Math.max(previous?.hits??0,inheritedHits),Math.max(previous?.misses??0,inheritedMisses),saved.id);
-        if(this.readStatus(db,settings,now).estimatedTokens>ceiling)
+        if(consolidationTokens(this.readStatus(db,settings,now))>ceiling)
           throw new MemorySummaryValidationError('insufficient_reduction','Summary increased active memory; original records were retained.');
         db.exec('RELEASE memory_item');
         }catch(error){
@@ -600,7 +626,7 @@ export class IndividuationStore {
       }
       // Compare the committed active view, including conditions, provenance and promoted
       // habits. Throwing here rolls back notes, review counts and history together.
-      if(this.readStatus(db,settings,now).estimatedTokens>ceiling)
+      if(consolidationTokens(this.readStatus(db,settings,now))>ceiling)
         throw new MemorySummaryValidationError('insufficient_reduction','Summary increased active memory; original records were retained.');
       const changeId=affected.size||reviewIds.length?recordMemoryChange(db,[...historyBefore.values()],affected,'summary','Consolidate memory',now,
         {hits:[...hits.values()].reduce((a,b)=>a+b,0),misses:[...misses.values()].reduce((a,b)=>a+b,0)}):null;
@@ -613,7 +639,7 @@ export class IndividuationStore {
         db.exec('DELETE FROM memory_summary_attempts WHERE fingerprint NOT IN (SELECT fingerprint FROM memory_summary_attempts ORDER BY updated DESC LIMIT 256)');
       }
       const status=this.readStatus(db,settings,now);
-      return {...status,rejected,reducedTokens:before-status.estimatedTokens,changedRecords:[...affected].map(id=>getMemoryRow(db,id)!),reviewedPairs:reviewIds};
+      return {...status,rejected,reducedTokens:before-consolidationTokens(status),changedRecords:[...affected].map(id=>getMemoryRow(db,id)!),reviewedPairs:reviewIds};
     },signal);
   }
   async finish(snapshot:MemorySnapshot,settings:IndividuationSettings,rejected=0,signal?:AbortSignal) {

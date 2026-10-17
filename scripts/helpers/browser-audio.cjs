@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 
 function toneDataUrl() {
   const rate = 8000, samples = rate, wav = Buffer.alloc(44 + samples * 2);
@@ -20,6 +22,40 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   const button = id => `document.querySelector(${JSON.stringify(audio(id))})`;
   const nav = id => `browserFixture.navigation[${JSON.stringify(id)}]`;
   assert.equal(await read(button(firstId)), null, 'silent tabs reserve no audio button');
+
+  const contextMenu = '.right-inspector-tab-context-menu';
+  const lockItem = contextMenu + ' [role=menuitemcheckbox]:first-child';
+  const muteItem = contextMenu + ' [role=menuitemcheckbox]:nth-child(2)';
+  const openContext = async id => {
+    // Wait for Chromium to remove the previous menu's hit-test surface.
+    await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await click(window.webContents, tab(id)+' [role=tab]', 'right');
+    await waitFor(`document.querySelector('${contextMenu}')!==null`, 'right-click opens tab actions');
+  };
+  await openContext(firstId);
+  assert.equal(await read(`document.querySelector('${lockItem}').getAttribute('aria-checked')`),'false');
+  assert.equal(await read(`document.querySelector('${muteItem}').disabled`),false,'a silent ready page can be muted before playback');
+  await click(window.webContents, lockItem);
+  await waitFor(`browserFixture.lockedIds.has(${JSON.stringify(firstId)}) && !document.querySelector('${contextMenu}')`, 'lock uses the shared tab state and dismisses the menu');
+  await openContext(firstId);
+  assert.match(await read(`document.querySelector('${lockItem}').textContent`), /解锁标签页/);
+  assert.equal(await read(`document.querySelector('${lockItem}').getAttribute('aria-checked')`),'true');
+  await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+  assert.ok(await read(`(()=>{const item=document.querySelector('${muteItem}'),r=item.getBoundingClientRect();return r.width>100&&r.height>=32&&item.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()`),'menu actions have a full row hit target above the page');
+  await fs.mkdir(path.resolve('tmp'),{recursive:true});
+  await fs.writeFile(path.resolve('tmp','browser-tab-context-actions.png'),(await window.webContents.capturePage()).toPNG());
+  await click(window.webContents, lockItem);
+  await waitFor(`!browserFixture.lockedIds.has(${JSON.stringify(firstId)})`, 'unlock updates the same state');
+  await openContext(firstId);
+  await click(window.webContents, muteItem);
+  await until(()=>original.isAudioMuted(),'context menu mutes a quiet page');
+  await waitFor(`!document.querySelector('${contextMenu}')`, 'mute dismisses its menu');
+  await openContext(firstId);
+  assert.match(await read(`document.querySelector('${muteItem}').textContent`), /取消标签页静音/);
+  assert.equal(await read(`document.querySelector('${muteItem}').getAttribute('aria-checked')`),'true');
+  await click(window.webContents,muteItem);
+  await until(()=>!original.isAudioMuted(),'context menu restores audio before playback');
+  await waitFor(`${button(firstId)}===null`, 'unmuted silent page again reserves no audio icon');
 
   // A playing video with no audio track must not be mistaken for an audible tab.
   await original.executeJavaScript(`(async()=>{
@@ -64,8 +100,10 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   const secondId = await read('browserFixture.activeId');
   const second = webContents.fromId(await read(`${nav(secondId)}.guestWebContentsId`));
   assert.equal(await read(button(secondId)), null, 'silent neighbor does not inherit indicator');
-  await click(window.webContents, audio(firstId));
-  await until(() => original.isAudioMuted(), 'background tab can be muted');
+  await openContext(firstId);
+  assert.equal(await read('browserFixture.activeId'), secondId, 'right-clicking a background tab does not select it');
+  await click(window.webContents, muteItem);
+  await until(() => original.isAudioMuted(), 'background tab can be muted from its context menu');
   assert.equal(await read('browserFixture.activeId'), secondId, 'background mute does not select the tab');
   assert.equal(second.isAudioMuted(), false, 'muting is isolated per guest');
   await original.executeJavaScript('testContext.close()');
@@ -87,5 +125,5 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   assert.equal(await read('browserFixture.activeId'), secondId);
   assert.equal(second.isAudioMuted(), false);
   assert.equal(await read('document.querySelectorAll(".right-inspector-tab-audio").length'), 0);
-  console.log('Browser audio passed: silent/video tabs hidden, native HTML and iframe Web Audio events, mute/unmute without pausing, button placement, background isolation, reload/navigation retention, and guest cleanup.');
+  console.log('Browser audio passed: context lock/unlock, pre-playback mute, background context targeting, silent/video tabs hidden, native HTML and iframe Web Audio, mute/unmute, reload/navigation retention, and guest cleanup.');
 };

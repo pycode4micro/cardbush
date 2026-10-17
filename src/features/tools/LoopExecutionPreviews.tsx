@@ -29,23 +29,44 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
   executions: ChatToolExecution[]; message: ChatMessage; language: AppLanguage; active: boolean;
 }) {
   const media = useContext(ToolMediaContext);
-  const [details, setDetails] = useState<ChatToolExecution[]>([]);
-  const [failed, setFailed] = useState(false);
+  const [detailState, setDetails] = useState<{ scope: string; records: ChatToolExecution[] }>({ scope: '', records: [] });
+  const [detailsFailed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const deferred = executions.filter(execution => isLoopPreviewExecution(execution) && execution.metadata.nativeResultDeferred === true && !toolAgentActivity(execution))
     .map(execution => execution.id).join('\0');
   const sessionId = message.conversationId ?? '';
   const turnId = executions[0]?.turnId ?? message.turnId ?? '';
   const host = useContext(ConversationHostContext);
+  const detailScope = JSON.stringify([host?.id ?? 'local', sessionId, turnId]);
+  const details = detailState.scope === detailScope ? detailState.records : [];
   useEffect(() => {
-    setDetails([]); setFailed(false);
+    setFailed(false);
     if (!deferred || !sessionId || !turnId) return;
     let disposed = false;
-    void (host ? host.toolDetails(sessionId, turnId) : fetchRuntimeTurnToolExecutionDetails({ sessionId, turnId })).then(value => {
-      if (!disposed) setDetails(value);
-    }).catch(() => { if (!disposed) setFailed(true); });
-    return () => { disposed = true; };
-  }, [host?.toolDetails, sessionId, turnId, deferred, retry]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const requested = deferred.split('\0');
+    const read = async (attempt: number) => {
+      try {
+        const value = await (host ? host.toolDetails(sessionId, turnId) : fetchRuntimeTurnToolExecutionDetails({ sessionId, turnId }));
+        if (disposed) return;
+        setDetails(current => {
+          const records = new Map((current.scope === detailScope ? current.records : []).map(record => [record.id, record]));
+          for (const record of value) records.set(record.id, record);
+          return { scope: detailScope, records: [...records.values()] };
+        });
+        // A coalesced read may precede a second completion in the same turn.
+        // Retry just that short persistence window; do not poll whole history.
+        const complete = requested.every(id => value.some(record => record.id === id &&
+          !['queued', 'running'].includes(record.state) && record.metadata.nativeResultDeferred !== true));
+        if (!complete) {
+          if (attempt < 3) timer = setTimeout(() => void read(attempt + 1), [150, 400, 800][attempt]);
+          else setFailed(true);
+        }
+      } catch { if (!disposed) setFailed(true); }
+    };
+    void read(0);
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [host?.toolDetails, detailScope, sessionId, turnId, deferred, retry]);
   const hydrated = executions.map(base => details.find(detail => detail.id === base.id) ?? base);
   const agents = hydrated.filter(execution => toolAgentActivity(execution)?.action === 'run');
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
@@ -64,6 +85,8 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
     const images = media.get(execution.id) ?? execution.artifacts ?? [];
     if (!isLoopPreviewExecution(execution) && !images.some(artifact => artifact.type === 'image')) continue;
     if (!agentTools.has(execution.name)) {
+      const loadingPreview = execution.metadata.nativeResultDeferred === true && !detailsFailed;
+      const previewFailed = execution.metadata.nativeResultDeferred === true && detailsFailed;
       const pending = isToolRunningInContext(execution, active);
       // Pending and cancelled executions also have success=false; state is authoritative.
       const failed = execution.state === 'failed';
@@ -75,9 +98,9 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
       }
       if (!images.some(artifact => artifact.type === 'image')) imageStates.push(
         <span key={execution.id} className="loop-image-status" data-execution-id={execution.id}>
-          {pending ? <LoaderCircle size={16} className="spin" /> : failed ? <TriangleAlert size={16} /> :
+          {pending || loadingPreview ? <LoaderCircle size={16} className="spin" /> : failed || previewFailed ? <TriangleAlert size={16} /> :
             execution.state === 'cancelled' ? <CircleStop size={16} /> : <Images size={16} />}
-          <span>{pending ? activeToolStatusLabel(execution, language) : failed ? (zh ? '执行失败' : 'Failed') :
+          <span>{pending ? activeToolStatusLabel(execution, language) : loadingPreview ? (zh ? '正在加载预览' : 'Loading preview') : previewFailed ? (zh ? '预览加载失败' : 'Preview failed') : failed ? (zh ? '执行失败' : 'Failed') :
             execution.state === 'cancelled' ? (zh ? '已停止' : 'Stopped') : (zh ? '暂无预览' : 'No preview')}</span>
         </span>,
       );
@@ -115,7 +138,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
   }
   const images = [...imagesByPath.values()];
   const registrations = hydrated.some(execution => isDefinitionActivity(toolAgentActivity(execution)));
-  if (!registrations && !agentRows.size && !employeeRows.size && !images.length && !imageStates.length && !failed) return null;
+  if (!registrations && !agentRows.size && !employeeRows.size && !images.length && !imageStates.length && !detailsFailed) return null;
   const statusLabel = (running: number, failed: number) => [
     running ? (zh ? `${running} 项进行中` : `${running} running`) : '',
     failed ? (zh ? `${failed} 项失败` : `${failed} failed`) : '',
@@ -137,6 +160,6 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
       <ToolImageArtifactViewer artifacts={images} language={language} variant="thumbnail" />
       {imageStates}
     </LoopPreviewGroup>}
-    {failed && <button className="loop-preview-retry" type="button" onClick={() => setRetry(value => value + 1)}>{zh ? '重试读取预览' : 'Retry previews'}</button>}
+    {detailsFailed && <button className="loop-preview-retry" type="button" onClick={() => setRetry(value => value + 1)}>{zh ? '重试读取预览' : 'Retry previews'}</button>}
   </div>;
 }

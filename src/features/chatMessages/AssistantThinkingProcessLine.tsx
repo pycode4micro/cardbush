@@ -1,5 +1,5 @@
 import { ChevronDown, LoaderCircle } from 'lucide-react';
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useState } from 'react';
 import type { AppLanguage, ChatToolExecution } from '../../types';
 import { modelLogoFor } from '../composer/modelLogos';
 import type { ThinkingNotice } from '../composer/thinkingNoticeProjection';
@@ -9,7 +9,6 @@ import type { ConversationChangeSummary } from '../tools/toolChangeReports';
 
 export const AssistantThinkingScope = createContext<{
   activeConversationId: string; activeTurnId: string; enabled: boolean; running: boolean;
-  changeSummary?: ConversationChangeSummary | null; onOpenChangeReview?: () => void;
 }>({
   activeConversationId: '', activeTurnId: '', enabled: false, running: false,
 });
@@ -23,9 +22,7 @@ export function AssistantThinkingProcessLine(props: {
   const scope = useContext(AssistantThinkingScope);
   // Reasoning updates only this tail slot, leaving the transcript and media intact.
   const notice = useLiveThinkingNotice(scope);
-  const changes = scope.changeSummary;
-  return <AssistantThinkingDetail {...props} notice={notice} animate={scope.running}
-    accessory={changes && <TurnChangeReviewButton summary={changes} language={props.language} onOpen={scope.onOpenChangeReview} />} />;
+  return <AssistantThinkingDetail {...props} notice={notice} animate={scope.running} />;
 }
 
 export function TurnChangeReviewButton({ summary, language, onOpen }: {
@@ -40,21 +37,20 @@ export function TurnChangeReviewButton({ summary, language, onOpen }: {
   </button>;
 }
 
-export function AssistantThinkingDetail({ language, model, execution, notice, statusLabel, animate = true, accessory }: {
+export function AssistantThinkingDetail({ language, model, execution, notice, statusLabel, animate = true }: {
   language: AppLanguage;
   model: string;
   execution?: ChatToolExecution;
   notice?: ThinkingNotice | null;
   statusLabel?: string;
   animate?: boolean;
-  accessory?: ReactNode;
 }) {
   const logo = modelLogoFor(model);
   const thinking = execution ? null : notice;
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const expanded = Boolean(thinking && expandedId === thinking.id);
   return (
-    <div className={`assistant-activity-line${accessory ? ' has-accessory' : ''}`}>
+    <div className="assistant-activity-line">
     <details className="turn-thinking-detail" open={expanded}>
       <summary
         className={`assistant-thinking-process${animate ? ' running-mask' : ''}`}
@@ -84,7 +80,6 @@ export function AssistantThinkingDetail({ language, model, execution, notice, st
       </summary>
       {thinking && expanded && <div className="turn-thinking-content">{thinking.content}</div>}
     </details>
-    {accessory}
     </div>
   );
 }

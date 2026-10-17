@@ -12,6 +12,7 @@ import { WebReadCache, conversationPageQuery, historyPage } from './webSessionRe
 import { WebArtifactArchives, archiveRequest } from './webArtifactArchives.mjs';
 import { webArtifactManifest } from './webArtifactManifest.mjs';
 import { WebModelSettings, PostgresModelSettingsRepository } from './webModelSettings.mjs';
+import { WebModelRequests, WEB_MODEL_REQUEST_MAX_BYTES } from './webModelRequests.mjs';
 import type { SessionSnapshot } from '@cardbush/bush-protocol';
 import { cookie, csrfToken, digest, equalSecret, json, imageToken, modelToken, readJson, WebError, type WebModel, type WebUser } from './webCommon.mjs';
 
@@ -33,6 +34,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
   const mutations = new Map<string, Promise<unknown>>();
   const reads = new WebReadCache();
   const archives = new WebArtifactArchives(agents);
+  const modelRequests = new WebModelRequests();
   const serial = async <T,>(key: string, work: () => Promise<T>) => {
     const operation = (mutations.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
     mutations.set(key, operation);
@@ -67,7 +69,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       if (path.startsWith('/internal/') || path.startsWith(`${prefix}/`)) await modelSettings?.refresh();
       if (path.startsWith('/internal/image/')) { await proxyImage(request, response, url, config, store, abort.signal); return; }
       if (path.startsWith('/internal/model/')) {
-        await proxyModel(request, response, url, config, store, abort.signal); return;
+        await proxyModel(request, response, url, config, store, modelRequests, abort.signal); return;
       }
       if (!path.startsWith(`${prefix}/`)) {
         if (path.startsWith('/api/') || path.startsWith('/internal/')) throw new WebError(404, '接口不存在。');
@@ -387,7 +389,7 @@ async function proxyImage(request: IncomingMessage, response: ServerResponse, ur
   response.end();
 }
 
-async function proxyModel(request: IncomingMessage, response: ServerResponse, url: URL, config: WebServerConfig, store: WebStore, signal: AbortSignal) {
+async function proxyModel(request: IncomingMessage, response: ServerResponse, url: URL, config: WebServerConfig, store: WebStore, requests: WebModelRequests, signal: AbortSignal) {
   const match = url.pathname.match(/^\/internal\/model\/([^/]+)\/([^/]+)\/(responses(?:\/input_tokens)?|chat\/completions|messages(?:\/count_tokens)?)$/);
   if (!match || request.method !== 'POST' || request.headers.origin !== undefined) throw new WebError(404, 'Not found.');
   const [, encodedUser, encodedModel, endpoint] = match, userId = decodeURIComponent(encodedUser), modelId = decodeURIComponent(encodedModel);
@@ -395,19 +397,38 @@ async function proxyModel(request: IncomingMessage, response: ServerResponse, ur
   const authorization = request.headers.authorization ?? `Bearer ${request.headers['x-api-key'] ?? ''}`;
   if (!equalSecret(authorization, `Bearer ${expected}`)) throw new WebError(401, 'Unauthorized.');
   const user = await store.user(userId); if (!user?.is_active) throw new WebError(401, 'Account is inactive.');
-  const model = config.models.find(item => item.id === modelId); if (!model) throw new WebError(400, 'Model is unavailable.');
-  const body = await readJson(request, 16 * 1024 * 1024);
-  if (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.some((tool: any) => !['function', undefined].includes(tool.type) || !webToolAllowed(String(tool.function?.name ?? tool.name))))) throw new WebError(403, 'Tool outside the deployment allowlist.');
-  body.model = model.model; if (!endpoint.startsWith('messages')) body.store = false;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` };
-  if (model.apiProtocol === 'anthropic_messages') { headers['x-api-key'] = model.apiKey; headers['anthropic-version'] = '2023-06-01'; }
-  const upstream = await fetch(`${model.baseURL.replace(/\/$/, '')}/${endpoint}`, { method: 'POST', headers, body: JSON.stringify(body), signal, redirect: 'error' });
+  if (!config.models.some(item => item.id === modelId)) throw new WebError(400, 'Model is unavailable.');
+  const release = await requests.acquire(AbortSignal.any([signal, AbortSignal.timeout(120_000)]));
+  let upstream: Response;
+  let model: WebModel;
+  try {
+    signal.throwIfAborted();
+    if (!(await store.user(userId))?.is_active) throw new WebError(401, 'Account is inactive.');
+    const selected = config.models.find(item => item.id === modelId); if (!selected) throw new WebError(400, 'Model is unavailable.');
+    model = selected;
+    // Keep large JSON objects out of the response-stream scope. The slot ends
+    // when upstream headers arrive; ongoing SSE replies do not block other users.
+    upstream = await forwardModelRequest(request, model, endpoint, signal);
+  } finally { release(); }
   if (!upstream.ok) {
     const raw = (await upstream.text()).split(model.apiKey).join('[redacted]');
     response.writeHead(upstream.status, { 'Content-Type': 'application/json' }).end(raw.slice(0, 16000)); return;
   }
   response.writeHead(200, { 'Content-Type': upstream.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'no-store' });
   if (upstream.body) await pipeline(Readable.fromWeb(upstream.body as never), response, { signal }); else response.end();
+}
+
+async function forwardModelRequest(request: IncomingMessage, model: WebModel, endpoint: string, signal: AbortSignal) {
+  const tooLarge = () => new WebError(413, '模型请求超过 40 MB 传输上限（包含历史图片），已有会话和产物已保留。此限制与最大输出及上下文 Token 设置无关。');
+  if (Number(request.headers['content-length']) > WEB_MODEL_REQUEST_MAX_BYTES) throw tooLarge();
+  let body: Record<string, unknown>;
+  try { body = await readJson(request, WEB_MODEL_REQUEST_MAX_BYTES); }
+  catch (error) { if (error instanceof WebError && error.status === 413) throw tooLarge(); throw error; }
+  if (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.some((tool: any) => !['function', undefined].includes(tool.type) || !webToolAllowed(String(tool.function?.name ?? tool.name))))) throw new WebError(403, 'Tool outside the deployment allowlist.');
+  body.model = model.model; if (!endpoint.startsWith('messages')) body.store = false;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` };
+  if (model.apiProtocol === 'anthropic_messages') { headers['x-api-key'] = model.apiKey; headers['anthropic-version'] = '2023-06-01'; }
+  return fetch(`${model.baseURL.replace(/\/$/, '')}/${endpoint}`, { method: 'POST', headers, body: JSON.stringify(body), signal, redirect: 'error' });
 }
 
 if (process.argv[1]?.endsWith('webServer.mjs')) {

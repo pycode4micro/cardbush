@@ -51,6 +51,8 @@
 
 队列、停止、SSE 断线重放、上下文压缩和进程资源管理沿用原生 CardBush。前端直接复用 Electron 的 `MessageBubble`、消息投影与分组、执行过程折叠、`ToolExecutionBlock`、Markdown 和图片预览。`web/transcript.ts` 只做传输字段适配，`web/NativeTranscript.tsx` 通过 `ConversationHost` 接入受保护的个人文件和工具记录；网站主题由 `web/nativeTranscript.css` 提供。中间说明和工具执行归入同轮历史，最终答案只展示一次。工具结果先读取原生摘要，展开时按需读取完整记录；两个接口都先校验当前账号的会话归属。图片继续使用按账号隔离的浏览器缓存，切换会话复用图片 Blob，退出账号释放资源。
 
+模型中转请求体上限与原生 Provider 对齐为 40,000,000 字节，包含历史图片的 Base64 和工具记录；这个传输限制与上下文 Token、最大输出设置分别计算。大请求的读取、JSON 校验和上传使用有界队列，收到供应商响应头后立即释放处理位，后续 SSE 回复继续并发。取消排队、账号停用和工具白名单检查仍生效。回归：`node --test scripts/test-web-model-request-size.mjs`，覆盖原先 16 MiB 边界、40 MB 上限、分块请求、并发流式回复和账号隔离。
+
 图片任务复用火山插件 `ImageJobs` 的 SQLite 回执、幂等提交、并发限制及 `generation_wait`，不新建任务引擎，不自动重试已付费或结果未知的请求。broker 同时检查会话任务和图片任务，活动任务不会因空闲回收而被停止。渲染回归：`node --test scripts/test-web-transcript.mjs`；浏览器夹具：`node scripts/fixtures/web-transcript-browser.mjs`（127.0.0.1:5210，合成账号 alice/bob，任意测试密码，控制页 `/__test`，不调用模型）。`node scripts/build-web-release.mjs` 同时记录原生渲染依赖清单，便于审计前端发布，不重建 Agent Runtime。
 
 已完成的生图回复在复制、时间旁显示“产物”，展开后逐张“下载”原图。入口复用 Electron 的 `TurnArtifactsMenu`，网页只提供下载操作。点击入口时，服务端按需从当前会话的真实图片工具回执生成清单，并校验正文引用的文件；拼图同时携带其源原图，包含前几轮生成并在本轮使用的图片。错误或不存在的正文图片路径不会混入下载清单，网络读取失败则允许重试。清单按个人生成文件路径去重，上传的参考图、视频、外部地址和其他账号文件不进入列表。清单校验只读取元数据，单张下载复用账号内的原图 Blob 缓存，不再次调用生图模型。回归：`node --test scripts/test-web-artifact-manifest.mjs scripts/test-web-artifacts.mjs scripts/test-web-transcript.mjs scripts/test-web-files-ui.mjs scripts/test-web-cache.mjs`。初始发布记录见 [NAS-20261011-artifacts.md](NAS-20261011-artifacts.md)。

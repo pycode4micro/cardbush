@@ -43,6 +43,7 @@ import { ScrollBottomButton } from './ScrollBottomButton';
 import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
 import { GuidanceActivity, guidanceActivityMessages } from '../chatMessages/GuidanceActivity';
+import { TurnChangeReviewButton } from '../chatMessages/AssistantThinkingProcessLine';
 import { isGuidanceSealedAssistantSegment, isTurnGuidanceMessage } from '../chatMessages/transcript/messageFacts';
 import {
   MessageListFooter,
@@ -2591,7 +2592,6 @@ export function ChatPanel({
         readOnlyActions={readOnlyActions}
         guidanceAvailable={guidanceAvailable}
         changeSummaryMessages={completedGuidanceTurnMessages.get(message.id)}
-        liveChangeSummary={activeAssistantForRender?.message.id === message.id ? currentTurnChangeSummary : undefined}
         language={language}
         sending={sending}
         activeTurnId={activeTurnId}
@@ -2735,6 +2735,9 @@ export function ChatPanel({
           <ComposerPresentationContext.Provider value={showWelcome && !composerPresentation ? { style: inputStyle } : composerPresentation}>
             <Composer
               key={composerMount.key}
+              topAccessory={!showWelcome && currentTurnChangeSummary && <TurnChangeReviewButton
+                summary={currentTurnChangeSummary} language={language}
+                onOpen={() => onOpenChangeReview(undefined, activeTurnId)} />}
               portalCommands={showWelcome && customWelcome}
               fileDropTarget={chatBodyRef}
               compact

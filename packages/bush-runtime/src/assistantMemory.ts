@@ -36,7 +36,7 @@ export class AssistantMemory {
       reference: 'Version markers for memory cited in the historical summary, retained only to check for later changes. These IDs supply no new content, instructions or authorization.', changes,
     }) };
   }
-  schedule(parent: RuntimeSessionTurnRequest) { this.memory.schedule(normalizeIndividuation(parent.metadata.individuation), parent); }
+  schedule(parent: RuntimeSessionTurnRequest) { this.memory.schedule(normalizeIndividuation(parent.metadata.individuation)); }
   async execute(call: ToolCall, request: ModelRequest, user: string | undefined, round: number, ordinal: number, signal: AbortSignal) {
     signal.throwIfAborted();
     if (!names.has(call.name)) throw Object.assign(Error('Tool is not available.'), { code: 'tool_unavailable' });

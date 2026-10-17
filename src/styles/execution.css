@@ -511,11 +511,6 @@
   flex: 1;
 }
 
-.assistant-activity-line.has-accessory > .turn-thinking-detail {
-  flex: 0 1 auto;
-  width: fit-content;
-}
-
 .turn-change-review {
   display: inline-flex;
   align-items: center;

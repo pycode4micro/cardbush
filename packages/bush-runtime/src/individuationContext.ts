@@ -4,8 +4,9 @@ import { deliveredMemoryIds, deliveredMemoryVersions } from './individuationTool
 
 /** The same bounded, non-authoritative reference for normal and assistant turns. */
 export async function recallIndividuation(store: IndividuationStore, settings: IndividuationSettings,
-  text: string, messages: ModelMessage[], owner: { sessionId: string; turnId: string }, signal?: AbortSignal): Promise<ModelMessage | undefined> {
-  await store.observe(text, settings, owner, signal);
+  text: string, messages: ModelMessage[], _owner: { sessionId: string; turnId: string }, signal?: AbortSignal): Promise<ModelMessage | undefined> {
+  // Recall is read-only. Prediction evaluation must not copy every user message
+  // into a second, automatically growing evidence queue.
   const recall = await store.read({ topics: [text.slice(0, 4000) || 'memory'], count_only: settings.recallMode === 'hint' },
     settings, deliveredMemoryIds(messages), 510, signal);
   signal?.throwIfAborted();

@@ -32,10 +32,11 @@ module.exports = async ({ run, until, pause }) => {
       await until("!!document.querySelector('[data-message-id=change-old-reply] .turn-artifacts-trigger')", 'completed file edits render');
       await run(`
         window.changeTransitionOldArtifact = document.querySelector('[data-message-id=change-old-reply] .turn-artifacts-trigger');
+        window.changeTransitionComposer = document.querySelector('.composer-surface textarea');
         window.changeTransitionFrames = [];
         window.sampleChangeTransition = () => {
           changeTransitionFrames.push({
-            live: document.querySelectorAll('.message-list .turn-change-review').length,
+            live: document.querySelectorAll('.composer-top-accessory .turn-change-review').length,
             retained: changeTransitionOldArtifact === document.querySelector('[data-message-id=change-old-reply] .turn-artifacts-trigger'),
           });
           window.changeTransitionFrame = requestAnimationFrame(sampleChangeTransition);
@@ -69,7 +70,9 @@ module.exports = async ({ run, until, pause }) => {
         updateChat({ messages: changeTransitionMessages, changeReports: views.changeReportsFromMessages(changeTransitionMessages),
           onOpenChangeReview: (...args) => { window.changeTransitionReview = args; } });
       `);
-      await until("!!document.querySelector('[data-message-id=change-new-reply] .turn-change-review')", 'actual new edits render');
+      await until("!!document.querySelector('.composer-top-accessory .turn-change-review')", 'actual new edits render above the input');
+      assert.equal(await run("document.querySelector('.composer-surface textarea') === changeTransitionComposer"), true,
+        'showing file changes does not remount the input');
       assert.equal(await run("document.querySelector('.turn-change-review').textContent"), 'file 1|+3-1',
         'live summary counts only this turn');
       await run("document.querySelector('.turn-change-review').click()");
@@ -79,13 +82,17 @@ module.exports = async ({ run, until, pause }) => {
         ? { ...message, content: 'Finishing the result.', metadata: { transcript_kind: 'assistant_final' } } : message);
         updateChat({messages:[...changeTransitionHistory, ...changeTransitionRunning]});`);
       await until("!!document.querySelector('.assistant-final-answer')", 'final response starts streaming');
-      assert.equal(await run("document.querySelectorAll('.assistant-activity-line .turn-change-review').length"), 1,
-        'file changes remain beside the live status until the turn finishes');
+      assert.equal(await run("document.querySelectorAll('.composer-top-accessory .turn-change-review').length"), 1,
+        'file changes remain above the input until the turn finishes');
+      assert.equal(await run("document.querySelectorAll('.assistant-activity-line .turn-change-review').length"), 0,
+        'thinking and generation lines contain no duplicate changes button');
       await run(`updateChat({ sending: false, activeTurnId: '', messages: [...changeTransitionHistory,
         ...changeTransitionRunning.map(message => ({ ...message, status: 'completed',
           content: message.role === 'assistant' ? 'Next file updated.' : message.content }))] });`);
       await until("!!document.querySelector('[data-message-id=change-new-reply] .turn-artifacts-trigger')", 'new edits remain available after completion');
       assert.equal(await run("document.querySelectorAll('.turn-change-review').length"), 0, 'completed progress leaves no duplicate summary');
+      assert.equal(await run("document.querySelector('.composer-surface textarea') === changeTransitionComposer"), true,
+        'hiding file changes does not remount the input');
       assert.equal(await run("document.querySelectorAll('.turn-artifacts-trigger').length"), 2, 'both turns retain their own artifacts');
     }
   } finally {

@@ -46,6 +46,18 @@
   pointer-events: auto;
 }
 
+.composer-top-accessory {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  padding-bottom: 8px;
+  pointer-events: none;
+}
+
+.composer-top-accessory > * {
+  pointer-events: auto;
+}
+
 .composer-stack.shadow-active .composer-surface {
   border-color: color-mix(in srgb, var(--shadow-accent) 72%, var(--border));
   box-shadow:

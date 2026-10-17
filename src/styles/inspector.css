@@ -163,7 +163,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   min-height: 32px;
   display: flex;
   flex: 0 1 auto;
-  width: calc(var(--inspector-tab-count) * 248px);
+  width: calc(var(--inspector-tab-count) * 250px - 2px);
   align-items: center;
   gap: 2px;
   padding: 0;
@@ -351,6 +351,8 @@ body.right-inspector-resizing .right-inspector-resizer {
   position: fixed;
   z-index: 120;
   width: 188px;
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   display: grid;
   gap: 2px;
   padding: 5px;
@@ -381,13 +383,29 @@ body.right-inspector-resizing .right-inspector-resizer {
   opacity: 0.35;
 }
 
+.right-inspector-tab-context-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.right-inspector-tab-context-action > svg {
+  flex: none;
+}
+
+.right-inspector-tab-context-menu > [role="separator"] {
+  margin: 4px 6px;
+  border-top: 1px solid var(--border);
+}
+
 .right-inspector-tab {
   position: relative;
-  min-width: 148px;
+  min-width: 36px;
   max-width: 248px;
   height: 34px;
   display: flex;
-  flex: 1 0 148px;
+  flex: 1 1 248px;
+  container: inspector-tab / inline-size;
   align-items: center;
   overflow: hidden;
   color: var(--text-mid);
@@ -407,6 +425,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .right-inspector-tab.active {
   --right-inspector-active-tab-background: color-mix(in srgb, var(--text) 9%, var(--surface));
+  min-width: 64px;
   color: var(--text);
   background: var(--right-inspector-active-tab-background);
   border-color: var(--border);
@@ -514,6 +533,38 @@ body.right-inspector-resizing .right-inspector-resizer {
 .right-inspector-tab:is(:hover, :has(:focus-visible)) > :is(.right-inspector-tab-lock, .right-inspector-tab-audio) {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Compress every tab before scrolling. Secondary actions remain in the all-tabs menu. */
+@container inspector-tab (max-width: 180px) {
+  .right-inspector-tab > :is(.right-inspector-tab-lock, .right-inspector-tab-audio) {
+    display: none;
+  }
+}
+
+@container inspector-tab (max-width: 104px) {
+  .right-inspector-tab-select {
+    gap: 6px;
+    padding: 0 4px 0 6px;
+  }
+
+  .right-inspector-tab:not(.active) > .right-inspector-tab-close {
+    display: none;
+  }
+}
+
+@container inspector-tab (max-width: 76px) {
+  .right-inspector-tab-select {
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  /* Keep the full title in the accessible name and native hover tooltip. */
+  .right-inspector-tab-select > .right-inspector-tab-title {
+    flex: 0 0 0;
+    width: 0;
+  }
 }
 
 .right-inspector-navigation {

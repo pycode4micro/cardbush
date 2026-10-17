@@ -81,8 +81,50 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   assert.equal(await read(`document.querySelector('${active}webview').getWebContentsId()`), guestId, 'bookmark navigation reuses the live browser');
 
   await read(`browserFixture.setWidth(380); void 0`); await pause(350);
-  await waitFor(`(()=>{const strip=document.querySelector('.right-inspector-tabs');const tab=document.querySelector('.right-inspector-tab.active').getBoundingClientRect();const r=strip.getBoundingClientRect();return strip.scrollWidth>strip.clientWidth&&tab.left>=r.left-1&&tab.right<=r.right+1;})()`, 'narrow pane scrolls to the active tab');
-  const narrow = await read(`(()=>{const strip=document.querySelector('.right-inspector-tabs');const plus=document.querySelector('.right-inspector-new-tab').getBoundingClientRect();return {min:Math.min(...Array.from(strip.children).map(tab=>tab.getBoundingClientRect().width)),right:plus.right,width:innerWidth};})()`);
-  assert.ok(narrow.min >= 148 && narrow.right < narrow.width, 'tabs remain readable and the new-tab button stays visible');
-  console.log('Browser appearance passed: live frequent sites from native history, clear-history refresh, native favicons, 55-bookmark search/paging, direct navigation, narrow active-tab reveal, and light/dark rendering.');
+  const tabLayout = () => read(`(()=>{
+    const strip=document.querySelector('.right-inspector-tabs'), viewport=strip.getBoundingClientRect();
+    const tabs=Array.from(strip.children), active=tabs.find(tab=>tab.classList.contains('active'));
+    const visible=element=>{const r=element.getBoundingClientRect();return r.width>0&&r.left>=viewport.left-1&&r.right<=viewport.right+1;};
+    const plus=document.querySelector('.right-inspector-new-tab').getBoundingClientRect();
+    return {overflow:strip.scrollWidth>strip.clientWidth+1,allVisible:tabs.every(visible),activeVisible:visible(active),
+      iconsVisible:tabs.every(tab=>visible(tab.querySelector('.browser-site-icon'))),
+      widths:tabs.map(tab=>tab.getBoundingClientRect().width),activeCloseVisible:visible(active.querySelector('.right-inspector-tab-close')),
+      plusVisible:plus.right<=document.querySelector('.right-inspector').getBoundingClientRect().right,
+      plusGap:plus.left-viewport.right,left:strip.scrollLeft};
+  })()`);
+  const narrow = await tabLayout();
+  assert.ok(!narrow.overflow && narrow.allVisible && narrow.iconsVisible, 'three tabs shrink to fit a narrow panel: '+JSON.stringify(narrow));
+  assert.ok(narrow.widths.every(width=>width<148) && narrow.activeCloseVisible && narrow.plusVisible, 'compression preserves active close and new-tab actions');
+  assert.equal(await read(`document.querySelector('${active}webview').getWebContentsId()`), guestId, 'resizing never recreates the page');
+
+  await read("document.querySelector('.right-inspector-new-tab').click(); browserFixture.setWidth(574); void 0"); await activeReady();
+  await pause(350);
+  for (const theme of ['bright', 'dark']) {
+    await read(`document.querySelector('.app').className='app theme-${theme}'; void 0`); await pause(160);
+    const layout = await tabLayout();
+    assert.ok(layout.allVisible && !layout.overflow && layout.iconsVisible && layout.plusGap>=0 && layout.plusGap<=8, 'four tabs and add button fit together: '+JSON.stringify(layout));
+    await fs.writeFile(path.resolve('tmp', `browser-tabs-four-${theme}.png`), (await window.webContents.capturePage()).toPNG());
+  }
+  // Enough tabs to exercise the icon-only size and then the minimum-width fallback.
+  for (let i=0;i<4;i++) {
+    await read("document.querySelector('.right-inspector-new-tab').click(); void 0"); await activeReady();
+  }
+  const crowded = await tabLayout();
+  assert.ok(!crowded.overflow && crowded.allVisible && crowded.iconsVisible && crowded.activeCloseVisible, 'eight tabs retain distinct clickable icons: '+JSON.stringify(crowded));
+  const hiddenCloses = await read("Array.from(document.querySelectorAll('.right-inspector-tab:not(.active) .right-inspector-tab-close')).every(button=>getComputedStyle(button).display==='none')");
+  assert.ok(hiddenCloses, 'narrow inactive tabs use their space for the page instead of a close button');
+  await fs.writeFile(path.resolve('tmp', 'browser-tabs-eight.png'), (await window.webContents.capturePage()).toPNG());
+  await click(window.webContents, '.right-inspector-tab:first-child [role=tab]'); await activeReady();
+  assert.equal(await read(`document.querySelector('${active}webview').getWebContentsId()`), original.id, 'a compressed tab still selects its retained guest');
+  await read('browserFixture.setWidth(380); void 0'); await pause(350);
+  await click(window.webContents, '.right-inspector-new-tab'); await activeReady();
+  const overflow = await tabLayout();
+  assert.ok(overflow.overflow && overflow.activeVisible && overflow.activeCloseVisible && overflow.plusVisible, 'only minimum-width overflow scrolls and reveals the active tab: '+JSON.stringify(overflow));
+  assert.ok(overflow.widths.every(width=>width>=36), 'overflow never collapses tabs below the clickable minimum');
+  await click(window.webContents, '.right-inspector-tab.active .right-inspector-tab-close'); await activeReady();
+  assert.equal(await read('browserFixture.tabs.length'), 8, 'compact active close still works');
+  await read('browserFixture.setWidth(820); void 0'); await pause(350);
+  assert.ok((await tabLayout()).allVisible && (await tabLayout()).left===0, 'growing the panel restores all tabs without stale scroll offset');
+  assert.equal(await read('document.documentElement.scrollLeft'),0,'tab reveal never scrolls the application');
+  console.log('Browser appearance passed: live history, favicons, bookmark search/navigation, adaptive 3/4/8-tab layouts, compact selection/close, minimum-width overflow, resize restoration, and light/dark rendering.');
 };

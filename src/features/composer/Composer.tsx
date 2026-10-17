@@ -354,8 +354,10 @@ export function Composer({
   inputReadOnly = false,
   portalCommands = false,
   retainUntilAccepted = false,
+  topAccessory,
 }: {
   compact?: boolean;
+  topAccessory?: ReactNode;
   fileDropTarget?: React.RefObject<HTMLElement | null>;
   autoFocus?: boolean;
   language: AppLanguage;
@@ -1359,6 +1361,7 @@ export function Composer({
           onClose={() => setPreviewImage(null)}
         />
       )}
+      {topAccessory && <div className="composer-top-accessory">{topAccessory}</div>}
       <ComposerRuntimeRail language={language} queuedMessageCount={queuedMessageCount}
         queuedMessagePreview={queuedMessagePreview} queuedMessages={queuedMessages}
         queueLocked={queueLocked} queueLockPending={queueLockPending} onToggleQueueLock={onToggleQueueLock}

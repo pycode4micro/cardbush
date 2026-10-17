@@ -125,7 +125,6 @@ import {
   ToolExecutionBlock,
   toolExecutionFinishedAt,
   type ConversationChangeReport,
-  type ConversationChangeSummary,
 } from '../tools';
 import {
   toolChangeReportFromExecutions,
@@ -690,7 +689,6 @@ function reactNodeText(node: ReactNode): string {
 function MessageBubbleView({
   message,
   changeSummaryMessages,
-  liveChangeSummary,
   language,
   sending,
   activeTurnId,
@@ -708,7 +706,6 @@ function MessageBubbleView({
 }: {
   message: ChatMessage;
   changeSummaryMessages?: ChatMessage[];
-  liveChangeSummary?: ConversationChangeSummary | null;
   language: AppLanguage;
   sending: boolean;
   activeTurnId: string;
@@ -1347,9 +1344,6 @@ function MessageBubbleView({
             </AssistantCompletedDisclosure>
           )}
           {showFinalAnswer && finalAnswerBody}
-          {showFinalAnswer && isActiveAssistantTurn && liveChangeSummary &&
-            <AssistantThinkingProcessLine language={language} model={selectedModel}
-              statusLabel={language === 'zh' ? '生成中' : 'Generating'} />}
           {timeoutPresentation && (
             <div
               className="assistant-timeout-notice"
@@ -2953,7 +2947,6 @@ function sameMessageBubbleProps(
 ) {
   if (
     previous.message !== next.message ||
-    previous.liveChangeSummary !== next.liveChangeSummary ||
     previous.language !== next.language ||
     previous.sending !== next.sending ||
     previous.activeConversationId !== next.activeConversationId ||
@@ -2997,10 +2990,8 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubbleVie
   const activeTurnId = props.activeTurnId || props.message.turnId || '';
   const enabled = props.thinkingVisible === true;
   const running = isActiveMessageBubble(props);
-  const changeSummary = running ? props.liveChangeSummary : undefined;
-  const onOpenChangeReview = props.onOpenChangeReview;
-  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running, changeSummary, onOpenChangeReview }),
-    [activeConversationId, activeTurnId, enabled, running, changeSummary, onOpenChangeReview]);
+  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running }),
+    [activeConversationId, activeTurnId, enabled, running]);
   return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId} sourceReferences={props.message.role === 'assistant'}>
     <WorkspaceRevertAvailability.Provider value={props.canRevertWorkspace !== false}>
       <AssistantThinkingScope.Provider value={thinkingScope}>

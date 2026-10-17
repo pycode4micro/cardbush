@@ -1756,7 +1756,7 @@ export class InMemoryRuntimeHost {
         cacheChainState: prepared.cacheChainState,
         ...(workspaceStarted ? { finalizeWorkspace: () => this.#finalizeWorkspace(candidate.sessionId, candidate.turnId, workspace!.workspaceDir) } : {}),
       });
-      if (!this.#shuttingDown) this.#memory.schedule(memorySettings, prepared.modelRequest);
+      if (!this.#shuttingDown) this.#memory.schedule(memorySettings);
       return terminal;
     } catch (error) {
       this.#sessions.abandon(input.sessionId, input.turnId);

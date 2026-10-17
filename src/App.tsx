@@ -979,7 +979,7 @@ function CardbushApp() {
     event.preventDefault();
     event.stopPropagation();
     const width = 188;
-    const height = 164;
+    const height = 244;
     setInspectorTabContextMenu({
       tabId,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
@@ -2677,6 +2677,15 @@ function CardbushApp() {
                   role="menu"
                   style={{ left: inspectorTabContextMenu.x, top: inspectorTabContextMenu.y }}
                 >
+                  <InspectorTabLock language={language} contextMenu locked={lockedInspectorTabs.has(inspectorTabContextTarget.id)}
+                    onToggle={() => { toggleInspectorTabLock(inspectorTabContextTarget.id); setInspectorTabContextMenu(null); }}/>
+                  {inspectorTabContextTarget.kind === 'resource' && isInspectorBrowserTarget(inspectorTabContextTarget.detail.target, inspectorTabContextTarget.detail.mediaType) &&
+                    <BrowserTabAudioButton contextMenu language={language}
+                      navigation={inspectorNavigationByTarget[inspectorTabContextTarget.id]}
+                      handle={inspectorWebviewRefs.current.get(inspectorTabContextTarget.id)}
+                      title={inspectorNavigationByTarget[inspectorTabContextTarget.id]?.title || inspectorTabLabel(inspectorTabContextTarget.detail)}
+                      onAction={() => setInspectorTabContextMenu(null)}/>}
+                  <div role="separator"/>
                   <button
                     type="button"
                     role="menuitem"

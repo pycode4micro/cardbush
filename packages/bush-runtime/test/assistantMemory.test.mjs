@@ -94,11 +94,11 @@ test('automatic recall is relevant, bounded and deduplicated across turns and re
   const command = f.send('报表导出 XLSX'); await f.idle();
   assert.deepEqual(refs(f.requests[0]).flatMap(r => r.memories.map(m => m.id)), [memoryId]);
   assert.ok(JSON.stringify(refs(f.requests[0])).length < 2100);
-  f.assistant.command(command); await f.idle(); assert.equal(f.observations.length, 1);
+  f.assistant.command(command); await f.idle(); assert.equal(f.observations.length, 0);
   f.restart(); f.send('继续报表导出 XLSX'); await f.idle();
   assert.equal(refs(f.requests.at(-1)).length, 1);
   assert.deepEqual(f.requests.at(-1).messages.slice(0, f.requests[0].messages.length), f.requests[0].messages, 'existing model prefix stays unchanged');
-  assert.equal(f.observations.length, 2);
+  assert.equal(f.observations.length, 0, 'recall does not create an evaluation queue across turns or restarts');
 });
 
 test('hint mode injects only counts; disabled categories do not load or save memory', async t => {
@@ -130,7 +130,7 @@ test('check_habit is repeatable; summary reuses validation, category switches an
   const saved = await f.store.read({ ids: [firstId(results[2])] }, on);
   assert.equal(saved.memories[0].source.session_id, id);
   assert.equal(saved.memories[0].text, '以后报表默认提供 XLSX 文件。');
-  assert.equal(f.observations.length, 1, 'transcribed voice is real user input even when hidden from the UI');
+  assert.equal(f.observations.length, 0, 'voice preferences are saved without separately collecting the transcript for evaluation');
 });
 
 test('corrections need the current user quote and cannot overwrite pinned records', async t => {
@@ -212,11 +212,11 @@ test('unavailable memory does not block replies or claim that a note was saved',
   assert.equal(f.read().entries.at(-1).content, '已了解。');
 });
 
-test('provider retries reuse the same reference without observing the user twice', async t => {
+test('provider retries reuse the same reference without collecting evaluation evidence', async t => {
   const f = fixture(t, (_, round) => round === 0 ? { failure: true } : {});
   await f.seed('报表默认使用 XLSX。');
   f.send('报表导出 XLSX'); await f.idle();
-  assert.equal(f.requests.length, 2); assert.equal(f.observations.length, 1);
+  assert.equal(f.requests.length, 2); assert.equal(f.observations.length, 0);
   assert.deepEqual(f.requests[1].messages, f.requests[0].messages);
   assert.equal(refs(f.requests[1]).length, 1);
 });
