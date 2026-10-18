@@ -11,6 +11,7 @@ type AssistantTurnTiming = {
 };
 
 type AssistantTurnTimingCache = Record<string, AssistantTurnTiming>;
+const hydratedTimingMessages = new WeakMap<ChatMessage, ChatMessage>();
 
 export function formatCompactDuration(durationMs: number | null) {
   if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
@@ -34,13 +35,22 @@ export function hydrateAssistantTurnTiming(messages: ChatMessage[]) {
   const groups = new Map<string, ChatMessage[]>();
   messages.forEach((message, index) => {
     const key = groupKeys[index];
-    groups.set(key, [...(groups.get(key) ?? []), message]);
+    const group = groups.get(key) ?? [];
+    group.push(message);
+    groups.set(key, group);
   });
+  // Derive each Turn's timing once, not once for every loop message in it.
+  const derived = new Map([...groups].map(([key, group]) => [key, {
+    startedAt: earliestMessageTimestamp(group),
+    // A live Turn has no completion time. Its activity clock owns elapsed time;
+    // appending a Tool must not rewrite all earlier segments' timing metadata.
+    completedAt: group.some(message => message.status === 'streaming')
+      ? undefined : latestAssistantTimestamp(group),
+  }]));
 
   return messages.map((message, index) => {
     if (message.role !== 'assistant') return message;
     const metadata = message.metadata ?? {};
-    const group = groups.get(groupKeys[index]) ?? [message];
     const cached = cachedTimingForMessage(cache, message);
     const explicitStartedAt = firstTimestampString([
       metadata.cardbush_turn_started_at,
@@ -62,8 +72,8 @@ export function hydrateAssistantTurnTiming(messages: ChatMessage[]) {
       metadata.finished_at,
       metadata.finishedAt,
     ]);
-    const derivedStartedAt = earliestMessageTimestamp(group);
-    const derivedCompletedAt = latestAssistantTimestamp(group);
+    const derivedStartedAt = derived.get(groupKeys[index])?.startedAt;
+    const derivedCompletedAt = derived.get(groupKeys[index])?.completedAt;
     const startedAt = explicitStartedAt ?? cached?.startedAt ?? derivedStartedAt;
     const completedAt = explicitCompletedAt ?? cached?.completedAt ?? derivedCompletedAt;
     const explicitDurationMs = timingDurationMs(metadata);
@@ -75,18 +85,24 @@ export function hydrateAssistantTurnTiming(messages: ChatMessage[]) {
     if (startedAt == null && completedAt == null && durationMs == null) {
       return message;
     }
-    return {
-      ...message,
-      metadata: {
-        ...metadata,
-        ...(startedAt ? { cardbush_turn_started_at: startedAt } : {}),
-        ...(completedAt ? { cardbush_turn_completed_at: completedAt } : {}),
-        ...(durationMs != null ? { cardbush_turn_duration_ms: durationMs } : {}),
-        ...(!explicitStartedAt && !explicitCompletedAt && !cached
-          ? { cardbush_turn_timing_source: 'derived_from_transcript' }
-          : {}),
-      },
+    const nextMetadata: Record<string, unknown> = {
+      ...metadata,
+      ...(startedAt ? { cardbush_turn_started_at: startedAt } : {}),
+      ...(completedAt ? { cardbush_turn_completed_at: completedAt } : {}),
+      ...(durationMs != null ? { cardbush_turn_duration_ms: durationMs } : {}),
+      ...(!explicitStartedAt && !explicitCompletedAt && !cached
+        ? { cardbush_turn_timing_source: 'derived_from_transcript' }
+        : {}),
     };
+    const previous = hydratedTimingMessages.get(message) ?? message;
+    if (Object.keys(nextMetadata).length === Object.keys(previous.metadata ?? {}).length &&
+        Object.keys(nextMetadata).every(key => previous.metadata?.[key] === nextMetadata[key])) return previous;
+    const hydrated = {
+      ...message,
+      metadata: nextMetadata,
+    };
+    hydratedTimingMessages.set(message, hydrated);
+    return hydrated;
   });
 }
 

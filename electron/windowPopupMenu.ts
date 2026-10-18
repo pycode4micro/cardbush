@@ -3,10 +3,12 @@ import type { BrowserWindow, Menu } from 'electron';
 const openMenus = new WeakMap<BrowserWindow, () => void>();
 
 /** A popup belongs to one visible window, not to the lifetime of the app. */
-export function showWindowPopupMenu(target: BrowserWindow, menu: Menu): void {
+export function showWindowPopupMenu(target: BrowserWindow, menu: Menu): Promise<void> {
   openMenus.get(target)?.();
-  if (target.isDestroyed() || target.webContents.isDestroyed() || !target.isVisible() || target.isMinimized()) return;
+  if (target.isDestroyed() || target.webContents.isDestroyed() || !target.isVisible() || target.isMinimized()) return Promise.resolve();
   const contents = target.webContents;
+  let finish!: () => void;
+  const closed = new Promise<void>(resolve => { finish = resolve; });
   let finished = false;
   const cleanup = () => {
     if (finished) return;
@@ -16,6 +18,7 @@ export function showWindowPopupMenu(target: BrowserWindow, menu: Menu): void {
     target.removeListener('closed', close);
     contents.removeListener('destroyed', close);
     if (openMenus.get(target) === close) openMenus.delete(target);
+    finish();
   };
   const close = () => {
     if (finished) return;
@@ -30,4 +33,5 @@ export function showWindowPopupMenu(target: BrowserWindow, menu: Menu): void {
   contents.once('destroyed', close);
   try { menu.popup({ window: target, callback: cleanup }); }
   catch (error) { cleanup(); throw error; }
+  return closed;
 }

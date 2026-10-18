@@ -3596,7 +3596,7 @@ ipcMain.handle('shell:file-context-menu', async (event, targetPath: string, opti
     copyFile: () => copyLocalFileToClipboard(normalizedPath),
     onError: error => { void showWindowError(sourceWindow, options.language === 'en' ? 'File operation failed' : '文件操作失败', error instanceof Error ? error.message : String(error)); },
   }));
-  showWindowPopupMenu(sourceWindow, menu);
+  await showWindowPopupMenu(sourceWindow, menu);
   return '';
 });
 

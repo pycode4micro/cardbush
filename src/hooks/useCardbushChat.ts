@@ -6,6 +6,7 @@ import type { ConversationEntry } from '@cardbush/bush-protocol';
 import type { VoiceTarget } from '../features/voice/voiceSession';
 import { adoptDraftConversationSource, resolveConversationSource } from '../features/settings/conversationSource';
 import { adoptDraftConversationStyle } from '../features/settings/conversationStyle';
+import { adoptConversationDraft } from '../shared/conversationDraft';
 import { useConversationViewState } from '../shared/conversationViewState';
 import { submissionReceipt } from '../shared/submissionReceipt';
 import { selectedTeamReference, teamReferenceInstructions } from '../shared/promptReferences';
@@ -1931,6 +1932,7 @@ export function useCardbushChat(
     if (!backend.scope && !activeConversationIdRef.current) adoptDraftConversationStyle(draft.id);
     if (!activeConversationIdRef.current) adoptDraftConversationSource(draft.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
     if (!activeConversationIdRef.current) adoptDraftConversationModel(draft.id, selectedModel, backend.scope);
+    if (!activeConversationIdRef.current) adoptConversationDraft(draft.id, backend.scope);
     setActiveConversationId(draft.id);
     setError(null);
     return draft;
@@ -2007,6 +2009,7 @@ export function useCardbushChat(
   ) => {
     const optimistic = localConversation(projectDir, initialTitle, projectId);
     if (!activeConversationIdRef.current) adoptDraftConversationModel(optimistic.id, selectedModel, backend.scope);
+    if (!activeConversationIdRef.current) adoptConversationDraft(optimistic.id, backend.scope);
     setConversations((current) => [
       optimistic,
       ...current.filter((item) => item.id !== optimistic.id),

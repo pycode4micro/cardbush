@@ -357,6 +357,11 @@ export function isSupersededLoopAssistant(message: ChatMessage) {
   );
 }
 
+/** Final presentation starts before the running turn has completed. */
+export function isAssistantFinalResponse(message: ChatMessage) {
+  return message.role === 'assistant' && assistantTranscriptKind(message) === 'assistant_final';
+}
+
 export function isAssistantFinalTranscript(message: ChatMessage) {
   if (message.role !== 'assistant') {
     return false;

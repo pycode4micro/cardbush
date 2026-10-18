@@ -177,6 +177,7 @@ import { registerPluginCommandTools, parsePluginCommandInvocation } from './plug
 import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
 import { pluginAgentTools } from './pluginExtensions.js';
 import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery, synchronizeMcpCatalog } from './mcpToolDiscovery.js';
+import { createToolNameScope, type ToolNameScope } from './toolReferenceNames.js';
 import { registerBuiltinToolDisclosure, taskManagementTool } from './builtinToolDisclosure.js';
 import { toolDefinitionUsage } from './toolDefinitionUsage.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
@@ -1248,7 +1249,7 @@ export class InMemoryRuntimeHost {
           const deleted = await this.#deleteSession(identity.sessionId);
           if (deleted) this.#scheduleCacheCleanup();
           return { sessionId: identity.sessionId, deleted };
-        }, await this.#sessionDeletionScope(identity.sessionId));
+        }, () => this.#sessionDeletionScope(identity.sessionId, signal));
       }
       case COLLECT_RUNTIME_CACHE_COMMAND:
         return this.#withCacheMaintenance(() => this.#collectCaches());
@@ -2657,6 +2658,7 @@ export class InMemoryRuntimeHost {
             >
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
+        let completedToolNameScope: ToolNameScope | undefined;
         let retryAfterModelRecovery = false;
         const hasImmediateGuidance = () => !contextCompactionRequired && !activeContextCompaction &&
           this.#guidanceQueues.get(turnKey)?.some(item => item.mode === 'interrupt_and_continue');
@@ -2697,6 +2699,7 @@ export class InMemoryRuntimeHost {
             maxOutputTokens: dispatchOutputTokens,
             providerState: dispatchProviderState,
           });
+          const roundToolNameScope = createToolNameScope(roundRequest);
           if (
             contextCompactionRequired &&
             (!roundRequest.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL) ||
@@ -2887,6 +2890,7 @@ export class InMemoryRuntimeHost {
           if (result.status === "completed") {
             completedRound = { ...result, status: "completed" };
             completedProjector = projector;
+            completedToolNameScope = roundToolNameScope;
             break;
           }
           const failureAction = modelFailureAction(result.error);
@@ -3156,6 +3160,7 @@ export class InMemoryRuntimeHost {
               messageId: receiptId, createdAt: this.#sessionNow(),
               metadata: { runtimeMaintenance: "context_compaction" },
               message: { role: "tool", toolCallId: call.id, content: JSON.stringify({
+                ...compactionTransaction?.receiptEvidence,
                 ...(compactionTransaction?.incremental
                   ? JSON.parse(compactionTransaction.incremental.history.at(-1)!.content) : {}),
                 ...checkpointResult(checkpoint, session),
@@ -3481,6 +3486,7 @@ export class InMemoryRuntimeHost {
           signal: input.signal,
           request,
           contextMessages: messages,
+          toolNameScope: completedToolNameScope,
           modelContextIngressBudgetTokens: contextToolIngressTokenBudget({
             pressure: dispatchPressure,
             actualInputTokens: completedRound.usage.inputTokens,
@@ -4104,9 +4110,10 @@ export class InMemoryRuntimeHost {
     } finally { this.#workspaceActions--; this.#switchingWorkspaceSession = undefined; this.#conversations.settled(); }
   }
 
-  async #sessionDeletionScope(sessionId: string): Promise<Set<string>> {
+  async #sessionDeletionScope(sessionId: string, signal?: AbortSignal): Promise<Set<string>> {
     const related = new Set([sessionId]);
-    const sessions = await this.#sessions.listMetadata();
+    const sessions = await this.#sessions.listMetadata(signal);
+    signal?.throwIfAborted();
     // A child can be admitted before it has a persisted session snapshot.
     for (const id of related) {
       const parent = sessions.find(session => session.sessionId === id)?.metadata?.parentSessionId;
@@ -4117,16 +4124,21 @@ export class InMemoryRuntimeHost {
     return related;
   }
 
-  async #withCacheMaintenance<T>(operation: () => Promise<T>, sessionIds?: ReadonlySet<string>): Promise<T> {
-    // A single deletion closes only that session's resources. Shared cache
-    // collection still waits for every owner; it is deferred until idle.
-    if (this.#activeAppCommands || this.#mcpApps.busy || this.#activeExtensionCommands.size ||
-        (!sessionIds && (this.#pluginBackground.busy || this.#automation?.busy))) {
-      throw new Error('Cache maintenance requires background tasks and app actions to settle first.');
-    }
+  async #withCacheMaintenance<T>(operation: () => Promise<T>, sessionScope?: () => Promise<ReadonlySet<string>>): Promise<T> {
+    // Acquire before resolving the deletion scope: queued reads and deletes must
+    // not overtake an operation while its session metadata is being loaded.
     let release!: () => void;
     this.#cacheMaintenance = new Promise<void>(resolve => { release = resolve; });
-    try { return await this.#withWorkspaceAction(operation, sessionIds); }
+    try {
+      const sessionIds = sessionScope ? await sessionScope() : undefined;
+      // A single deletion closes only that session's resources. Shared cache
+      // collection still waits for every owner; it is deferred until idle.
+      if (this.#activeAppCommands || this.#mcpApps.busy || this.#activeExtensionCommands.size ||
+          (!sessionIds && (this.#pluginBackground.busy || this.#automation?.busy))) {
+        throw new Error('Cache maintenance requires background tasks and app actions to settle first.');
+      }
+      return await this.#withWorkspaceAction(operation, sessionIds);
+    }
     finally {
       // Release only after the workspace guard is gone. Waiting callers must
       // neither collide with that guard nor inherit this operation's failure.

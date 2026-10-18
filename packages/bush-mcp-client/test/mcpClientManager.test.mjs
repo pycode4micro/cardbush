@@ -32,6 +32,7 @@ test('resource exits preserve measured limits in tool errors and service recover
   assert.equal(outcome.error.code, 'mcp_service_connection_lost');
   assert.deepEqual(outcome.error.details.failure.details.resource, resource);
   assert.equal(outcome.error.details.interruptedCallReplayed, false);
+  assert.deepEqual(outcome.execution, { dispatch: 'started', effects: 'possible', result: 'unknown', recovery: 'inspect_existing' });
   assert.match(outcome.error.message, /does not resume interrupted background jobs/);
   gate.resolve(); await waitFor(() => manager.snapshot().servers[0].health === 'ready');
   assert.equal(recovered.calls.length, 0);
@@ -51,6 +52,42 @@ test('native exit information supersedes generic EOF during the same recovery', 
   assert.equal(states.at(-1).failure.code, 'resource_memory_pressure');
   gate.resolve(); await waitFor(() => manager.snapshot().servers[0].health === 'ready');
   assert.equal(manager.snapshot().servers[0].restartAttempts, 1);
+});
+
+test('recovering MCP calls report no dispatch directly and through delegation without changing schemas', async t => {
+  const registry = new ToolRegistry(), first = fakeClient(successfulToolResult), second = fakeClient(successfulToolResult);
+  const clients = [first, second], gate = Promise.withResolvers();
+  const manager = new McpClientManager({ registry, createClient: () => clients.shift(),
+    createTransport: () => ({ async send() {} }), wait: () => gate.promise });
+  t.after(async () => { gate.resolve(); await manager.close(); });
+  await manager.apply(snapshot({ permission: 'allow' }));
+  registry.register({ definition: { name: 'delegate_mcp', description: 'Fixture', inputSchema: { type: 'object' } },
+    manifest: { owner: 'runtime', operation: 'fixture', effect_kind: 'delegation', risk: 'low', dispatch_scope: 'turn', mutating: true },
+    delegatesToolExecution: true, decodeInput: value => value,
+    execute: context => context.invokeTool('mcp__server__echo_tool', {}) });
+  const catalogSchemas = () => JSON.stringify(registry.definitions().sort((a, b) => a.name.localeCompare(b.name)));
+  const schemas = catalogSchemas();
+  const turn = { request: { protocol: 'bush.model_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn',
+    model: 'fixture', tools: registry.definitions(), messages: [], metadata: {} }, contextMessages: [] };
+  const topLevelSchemas = JSON.stringify(turn.request.tools);
+  first.onclose();
+  const coordinator = new ToolExecutionCoordinator({ registry });
+  for (const name of ['mcp__server__echo_tool', 'delegate_mcp']) {
+    const outcome = await coordinator.execute({ protocol: 'bush.tool_call.v1', id: name, name, argumentsText: '{}' },
+      { requestId: 'request', sessionId: 'session', turnId: 'turn', round: 1, ordinal: 0 }, undefined, turn);
+    assert.equal(outcome.error.code, 'mcp_service_restarting');
+    assert.deepEqual(outcome.execution, { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'retry' });
+    assert.deepEqual(outcome.error.details.execution, outcome.execution);
+  }
+  assert.equal(first.calls.length, 0);
+  assert.equal(second.calls.length, 0);
+  assert.equal(catalogSchemas(), schemas);
+  assert.equal(JSON.stringify(turn.request.tools), topLevelSchemas);
+  gate.resolve(); await waitFor(() => manager.snapshot().servers[0].health === 'ready');
+  assert.equal((await executeEcho(coordinator, 'after_recovery', undefined, turn)).kind, 'returned');
+  assert.equal(second.calls.length, 1);
+  assert.equal(catalogSchemas(), schemas);
+  assert.equal(JSON.stringify(turn.request.tools), topLevelSchemas);
 });
 
 test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
@@ -348,6 +385,30 @@ test("preserves adversarial standard MCP fields without deriving Runtime semanti
   assert.equal(outcome.kind, "returned");
   assert.deepEqual(outcome.result, native);
   await manager.close();
+});
+
+test("signed zero in MCP review/status data survives the host result boundary", async (t) => {
+  const native = JSON.parse('{"content":[{"type":"text","text":"{\\"offset\\":-0}"}],"structuredContent":{"offset":-0,"checks":[{"gain":-0.0,"passed":false}]},"isError":false}');
+  const fake = fakeClient(native);
+  const registry = new ToolRegistry();
+  const manager = new McpClientManager({
+    registry,
+    createClient: () => fake,
+    createTransport: () => ({ async send() {} }),
+  });
+  t.after(() => manager.close());
+  await manager.apply(snapshot({ permission: "allow" }));
+  const coordinator = new ToolExecutionCoordinator({
+    registry,
+    permissions: { request: async () => { throw new Error("permission was not expected"); } },
+  });
+  const outcome = await executeEcho(coordinator, "call_signed_zero");
+  assert.equal(outcome.kind, "returned", JSON.stringify(outcome));
+  assert.deepEqual(outcome.result, JSON.parse(JSON.stringify(native)));
+  assert.equal(outcome.result.content[0].text, '{"offset":-0}', "opaque text remains unchanged");
+  assert.equal(outcome.result.structuredContent.checks[0].passed, false, "the host does not reinterpret review verdicts");
+  assert.equal(Object.is(native.structuredContent.offset, -0), true);
+  assert.equal(fake.calls.length, 1, "valid results need no retry");
 });
 
 test("rejects non-JSON MCP extensions instead of silently deleting them", async () => {

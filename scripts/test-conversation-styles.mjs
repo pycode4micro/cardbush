@@ -90,11 +90,16 @@ test('real new-conversation preparation adopts only the unassigned local draft',
   for (const [scope, active, expected] of [[undefined, '', true], [undefined, 'existing', false], ['remote', '', false]]) {
     setup(); api.saveConversationStyle(preferences); api.selectConversationStyle('', 'coach');
     sourceApi.setConversationSource(false);
+    const lifecycle = [];
     const context = { exports:{}, backend:{scope}, activeConversationIdRef:{current:active}, preparedConversationsRef:{current:{}},
       navigationRevisionRef:{current:0}, conversationMatchesScope:()=>false, localConversation:()=>({id:'prepared'}),
-      setPreparedConversationsById(){}, setMessagesByConversation(){}, setMessageHistoryLoading(){}, setActiveConversationId(){}, setError(){},
+      setPreparedConversationsById(){}, setMessagesByConversation(){}, setMessageHistoryLoading(){}, setActiveConversationId(id){lifecycle.push(['select', id]);}, setError(){},
+      selectedModel:'fixture', adoptDraftConversationModel(){},
+      adoptConversationDraft:(id, connectionId)=>lifecycle.push(['adopt', id, connectionId]),
       adoptDraftConversationStyle:api.adoptDraftConversationStyle, adoptDraftConversationSource:sourceApi.adoptDraftConversationSource };
     vm.runInNewContext(code, context); context.exports.prepare();
+    assert.deepEqual(lifecycle, active ? [['select', 'prepared']] : [['adopt', 'prepared', scope], ['select', 'prepared']],
+      'only unassigned drafts transfer UI ownership, before selecting the prepared session');
     assert.equal(api.resolveConversationStyle('prepared').mode, expected ? 'custom' : 'professional');
     assert.equal(api.readConversationStyleOverride(''), expected ? null : 'coach');
     assert.equal(sourceApi.resolveConversationSource('prepared'), !expected);

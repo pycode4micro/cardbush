@@ -65,6 +65,26 @@ test("preserves every JSON-native shape without interpreting hostile semantic fi
   assert.equal({}.polluted, undefined);
 });
 
+test("accepts signed zero from JSON tools and snapshots it in canonical wire form", async () => {
+  // JSON.parse preserves -0, including results produced by non-JavaScript MCP servers.
+  const source = JSON.parse('{"offset":-0,"nested":[-0.0,{"gain":-0e0,"text":"-0"}]}');
+  Object.freeze(source.nested[1]);
+  Object.freeze(source.nested);
+  Object.freeze(source);
+  for (const [index, value] of [-0, source].entries()) {
+    const outcome = await executeValue(() => value, index);
+    assert.equal(outcome.kind, "returned", JSON.stringify(outcome));
+    assert.deepEqual(outcome.result, JSON.parse(JSON.stringify(value)));
+    const store = new ToolExecutionStore({ now: () => "2026-09-01T00:00:00.000Z" });
+    const record = store.record(call, { ...identity, ordinal: index }, outcome);
+    assert.doesNotThrow(() => toolExecutionRecordSchema.parse(record));
+    assert.deepEqual(store.get(identity.sessionId, identity.turnId, call.id).result, outcome.result);
+  }
+  assert.equal(Object.is(source.offset, -0), true, "the tool-owned result is not mutated");
+  assert.equal(Object.is(source.nested[0], -0), true);
+  assert.equal(Object.is(source.nested[1].gain, -0), true);
+});
+
 test("rejects non-JSON and lossy JavaScript values instead of silently rewriting them", async (t) => {
   const cycle = { label: "cycle" };
   cycle.self = cycle;
@@ -93,7 +113,7 @@ test("rejects non-JSON and lossy JavaScript values instead of silently rewriting
     ["undefined", undefined],
     ["NaN", Number.NaN],
     ["Infinity", Number.POSITIVE_INFINITY],
-    ["negative zero", -0],
+    ["negative Infinity", Number.NEGATIVE_INFINITY],
     ["bigint", 1n],
     ["symbol", Symbol("value")],
     ["function", () => "value"],

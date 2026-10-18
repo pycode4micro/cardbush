@@ -16,6 +16,7 @@ const allowed = {
   messageProjection: ['messageFacts', 'loopHistory', 'toolExecutionMerge'],
 };
 const adapters = new Set([
+  '@cardbush/bush-protocol',
   '../assistantTurnTiming', '../../../shared/goalState',
   '../../../shared/motionPreference',
   '../../../shared/windowVisibility',

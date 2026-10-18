@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { returnedToolError } from '@cardbush/bush-protocol';
+import type { RuntimeToolError } from '@cardbush/bush-protocol';
 import type { ToolHandlerContext } from './toolRegistry.js';
 import type { RuntimeTaskHandle, TaskSource } from './taskTools.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
@@ -28,19 +28,27 @@ export class RuntimeAsyncJobs {
     this.jobs.set(id, job);
     const message = (async (): Promise<JoinedSubagentResult['message']> => {
       let result: unknown;
+      let failure: RuntimeToolError | undefined;
       const hookMessages: string[] = [];
       try { controller.signal.throwIfAborted(); result = await run(controller.signal, (messages, stop) => { hookMessages.push(...messages); job.hookStop ??= stop; }); job.status = 'completed'; }
       catch (error) {
         job.status = controller.signal.aborted ? 'cancelled' : 'failed';
-        result = { error: { code: (error as { code?: string })?.code ?? 'async_task_failed', message: error instanceof Error ? error.message : String(error),
-          details: (error as { details?: unknown })?.details }, recovery: kind === 'script' ? 'inspect_existing' : 'do_not_retry' };
+        const code = (error as { code?: unknown })?.code;
+        const recovery = kind === 'script' ? 'inspect_existing' : 'do_not_retry';
+        failure = { kind: job.status === 'cancelled' ? 'cancelled' : 'tool',
+          code: job.status === 'cancelled' ? 'async_task_cancelled' : typeof code === 'string' && code.trim() ? code : 'async_task_failed',
+          message: error instanceof Error ? error.message : String(error),
+          details: { source: `${kind}_completion`, recovery, cause: (error as { details?: unknown })?.details } };
+        result = { error: failure, recovery };
       } finally { outer?.removeEventListener('abort', cancel); }
       job.revision = '2';
       const rendered = JSON.stringify(result) ?? 'null';
       result = JSON.parse(rendered);
+      if (failure) failure = (result as { error: RuntimeToolError }).error;
       this.store.record({ protocol: 'bush.tool_call.v1', id, name: `${kind}_completion`, argumentsText: '{}' },
         { requestId: context.requestId, sessionId: context.sessionId, turnId: context.turnId, round: 1, ordinal: 0 },
-        { kind: 'returned', result, ...(job.status === 'failed' || job.status === 'cancelled' ? { resultError: returnedToolError(`${kind}_completion`, result) } : {}), actionManifest: { ...context.actionManifest, mutating: false, effect_kind: 'observation', operation: `${kind}.completion` }, workspaceChanges: [] }, rendered);
+        { ...(failure ? { kind: job.status === 'cancelled' ? 'cancelled' as const : 'failed' as const, error: failure } : { kind: 'returned' as const, result }),
+          actionManifest: { ...context.actionManifest, mutating: false, effect_kind: 'observation', operation: `${kind}.completion` }, workspaceChanges: [] }, rendered);
       const locator = `tool-result://${[context.sessionId, context.turnId, id].map(encodeURIComponent).join('/')}`;
       job.result = { locator, ...(rendered.length <= 6000 ? { value: result } : { preview: rendered.slice(0, 6000), truncated: true }) };
       return { role: 'user', name: 'background_tool_result', content: JSON.stringify({ task_id: id, kind, status: job.status,

@@ -701,7 +701,7 @@ assert.match(
   'Chat messages must receive the guarded right-side review action',
 );
 assert.match(
-  bubbleSource,
+  readSourceFile(path.resolve('src/shared/localPaths.ts'), 'utf8'),
   /function resolveChangedFilePath[\s\S]*?isAbsoluteLocalPath\(path\)/,
   'Relative change paths must resolve against the active workspace',
 );
@@ -971,7 +971,7 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /coalesceAssistantTranscript\(transcript\)/,
+  /return presentTranscript\(transcript\)/,
   'Live and stopped Turns use the same compact narration groups.',
 );
 assert.match(

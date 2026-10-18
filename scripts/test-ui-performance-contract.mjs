@@ -203,7 +203,7 @@ assert.doesNotMatch(
 );
 assert.match(
   apiSource,
-  /getConversationSession\(sessionId\)/,
+  /getConversationSession\(sessionId, options\.signal\)/,
   'history reads must request the transcript transport projection',
 );
 assert.match(

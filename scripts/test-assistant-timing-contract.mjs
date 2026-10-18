@@ -4,6 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import ts from 'typescript';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const source = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'assistantTurnTiming.ts'),
@@ -43,33 +44,12 @@ const {
   persistAssistantTurnTiming,
 } = loaded.exports;
 
-const projectionTranspiled = ts.transpileModule(
-  fs.readFileSync(
-    path.join(process.cwd(), 'src', 'backend', 'runtimeSessionMessageProjection.ts'),
-    'utf8',
-  ),
-  {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
-  },
-);
-const projectionModule = { exports: {} };
-vm.runInNewContext(projectionTranspiled.outputText, {
-  module: projectionModule,
-  exports: projectionModule.exports,
-  Set,
-  Array,
-  Object,
-  String,
-  Number,
-  Date,
-  decodeURIComponent,
+const projection = await loadChatTranscript({
+  source: `export * from ${JSON.stringify(path.resolve('src/backend/runtimeSessionMessageProjection.ts'))};`,
 });
 
 assert.equal(formatCompactDuration(null), '');
-const continuationProjection = projectionModule.exports.projectRuntimeTurnMessages({
+const continuationProjection = projection.projectRuntimeTurnMessages({
   turnId: 'continued', createdAt: '2026-09-06T00:00:00Z', completedAt: '2026-09-06T00:01:00Z', status: 'completed',
   messages: [
     { messageId: 'internal-continue', createdAt: '2026-09-06T00:00:20Z', message: {
@@ -205,12 +185,12 @@ const legacyTurn = {
     },
   ],
 };
-const restoredLegacyTurn = projectionModule.exports.restoreRuntimeTurnAttachmentMetadata(legacyTurn);
+const restoredLegacyTurn = projection.restoreRuntimeTurnAttachmentMetadata(legacyTurn);
 assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].name, 'brief.xlsx');
 assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].type, 'document');
 assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].path, 'C:\\work\\brief.xlsx');
 
-const projectedLoopTurn = projectionModule.exports.projectRuntimeTurnMessages({
+const projectedLoopTurn = projection.projectRuntimeTurnMessages({
   turnId: 'turn-with-loop',
   turnSequence: 2,
   createdAt: '2026-09-01T01:00:02Z',

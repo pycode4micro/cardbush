@@ -199,6 +199,62 @@ test('deletion is acknowledged before unrelated cache enumeration finishes', asy
   }
 });
 
+for (const outcome of ['deleted', 'failed', 'cancelled']) test(`deletion preparation keeps queued operations behind the guard (${outcome})`, async t => {
+  const f = await fixture(t);
+  for (const id of ['first', 'second', 'keep']) f.sessionStore.ensureSession(id);
+  const gate = deferred(), entered = deferred(), metadata = f.sessionStore.listMetadata.bind(f.sessionStore);
+  let scopes = 0;
+  f.sessionStore.listMetadata = async signal => {
+    if (++scopes === 1) {
+      entered.resolve(); await gate.promise;
+      if (outcome === 'failed') throw Error('Fixture metadata read failed');
+    }
+    return metadata(signal);
+  };
+  const controller = new AbortController();
+  const deletion = f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'first' } }, controller.signal);
+  const first = outcome === 'deleted' ? deletion : assert.rejects(deletion,
+    outcome === 'cancelled' ? { name: 'AbortError' } : /Fixture metadata read failed/);
+  const jobs = [first];
+  try {
+    await entered.promise;
+    const second = f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'second' } }); jobs.push(second);
+    let readSettled = false;
+    const listing = f.runtime.sendCommand({ kind: 'runtime.list_sessions', payload: {} }).then(result => { readSettled = true; return result; }); jobs.push(listing);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(scopes, 1, 'another deletion cannot begin preflight before the first releases its guard');
+    assert.equal(readSettled, false, 'reads wait during metadata loading, before resource cleanup starts');
+    if (outcome === 'cancelled') controller.abort();
+    gate.resolve();
+    const result = await first;
+    if (outcome === 'deleted') assert.equal(result.deleted, true);
+    assert.equal((await second).deleted, true, 'a failed or cancelled preflight does not poison the next operation');
+    assert.deepEqual((await listing).map(session => session.sessionId).sort(), outcome === 'deleted' ? ['keep'] : ['first', 'keep']);
+    assert.equal(f.runtime.hasActiveSession('keep'), false);
+  } finally { gate.resolve(); await Promise.allSettled(jobs); }
+});
+
+test('deletion rechecks related turn admissions after loading its scope', async t => {
+  const gate = deferred(), entered = deferred(), running = deferred(), finish = deferred();
+  const f = await fixture(t, { provider: provider(async () => { running.resolve(); await finish.promise; }) });
+  f.sessionStore.ensureSession('parent');
+  f.subagentTaskStore.start({ taskId: 'child-task', parentSessionId: 'parent', parentTurnId: 'parent-turn',
+    childSessionId: 'child', childTurnId: 'child-turn', prompt: 'fixture', inheritContext: false, inheritedMessageCount: 0 });
+  const metadata = f.sessionStore.listMetadata.bind(f.sessionStore);
+  f.sessionStore.listMetadata = async signal => { entered.resolve(); await gate.promise; return metadata(signal); };
+  const deletion = assert.rejects(f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'parent' } }), /Wait for this conversation/);
+  const jobs = [deletion];
+  try {
+    await entered.promise;
+    const turn = f.runtime.runSessionTurn(request('child')); jobs.push(turn);
+    await within(running.promise, 1000);
+    gate.resolve(); await deletion;
+    assert.ok(f.sessionStore.snapshot('parent'), 'a newly admitted child protects its parent from deletion');
+    finish.resolve(); await turn;
+    assert.equal((await f.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'parent' } })).deleted, true);
+  } finally { gate.resolve(); finish.resolve(); await Promise.allSettled(jobs); }
+});
+
 test('consecutive deletes preserve queued identities without a cache sweep per deletion', async t => {
   const gates = [deferred(), deferred()], entered = [deferred(), deferred()];
   let deletion = 0;

@@ -551,9 +551,9 @@
 .turn-change-file-action:hover:not(:disabled),.turn-change-file-action:focus-visible { background: color-mix(in srgb, var(--text) 7%, transparent); }
 .turn-change-file-action:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .turn-change-file-action:disabled { cursor: default; }
-.turn-change-file-name { flex: 1; min-width: 0; }
-.turn-change-file-name > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.turn-change-file-name > small { display: block; color: var(--text-soft); font-size: 11px; overflow-wrap: anywhere; }
+.turn-change-file-name { display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0; }
+.turn-change-file-name > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-change-file-name > small { min-width: 0; max-width: 50%; color: var(--text-soft); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .turn-change-file-counts { display: inline-flex; flex: 0 0 auto; gap: 6px; font-variant-numeric: tabular-nums; }
 .turn-change-file-counts .diff-count { margin: 0; padding: 0; font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 500; }
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fromJsonSchema } from '@modelcontextprotocol/client';
 
 import {
   CoordinationStore,
@@ -112,3 +113,54 @@ function identity(ordinal) {
     ordinal,
   };
 }
+
+test('plan schema and decoder agree on action requirements, optional defaults and unknown fields', async () => {
+  const registry = new ToolRegistry(); registerCoordinationTools(registry, new CoordinationStore());
+  const tool = registry.resolve('update_task_plan'), nodes = [{ id: 'one', step: 'Inspect', status: 'pending' }];
+  const valid = [{ nodes }, { action: 'replace', nodes }, { nodes, explanation: '' }, { nodes, active: false },
+    { action: 'get' }, { action: 'patch', expected_revision: 0 }, { action: 'patch', expected_revision: 2, updates: [{ id: 'one', status: 'completed' }] }];
+  const invalid = [{}, { action: 'replace' }, { nodes, explanation: 1 }, { nodes, active: null },
+    { action: 'get', nodes }, { action: 'get', expected_revision: 0 }, { action: 'patch', updates: [] },
+    { action: 'patch', expected_revision: 0, nodes }, { nodes, updates: [] }, { nodes, unknown: true },
+    { nodes: [{ ...nodes[0], unknown: true }] }, { nodes, scopeChangeReason: false }, { action: null, nodes },
+    { action: 'patch', expected_revision: 1, updates: null }, { action: 'patch', expected_revision: 1, append_nodes: [{ ...nodes[0], id: '' }] },
+    { action: 'patch', expected_revision: 1, updates: [{ id: 'one', status: ['pending'] }] },
+    { action: 'patch', expected_revision: -1 }, { action: 'patch', expected_revision: 1, append_nodes: [{ ...nodes[0], unknown: true }] }];
+  for (const input of valid) {
+    const parsed = await fromJsonSchema(tool.definition.inputSchema)['~standard'].validate(input);
+    assert.equal(parsed.issues, undefined, JSON.stringify({ input, issues: parsed.issues }));
+    assert.doesNotThrow(() => tool.decodeInput(input));
+  }
+  for (const input of invalid) {
+    const parsed = await fromJsonSchema(tool.definition.inputSchema)['~standard'].validate(input);
+    assert.ok(parsed.issues, JSON.stringify(input));
+    assert.throws(() => tool.decodeInput(input), JSON.stringify(input));
+  }
+  assert.equal(tool.decodeInput({ nodes }).explanation, '');
+  assert.equal(tool.decodeInput({ nodes }).active, true);
+  assert.equal(tool.decodeInput({ nodes: [{ step: 'Done', status: 'completed' }] }).active, false);
+  assert.equal(tool.decodeInput({ action: 'patch', expected_revision: 0 }).active, undefined);
+});
+
+test('minimal replace works, get is read-only, patch preserves omitted fields, and stale updates are atomic', async () => {
+  const registry = new ToolRegistry(), store = new CoordinationStore(); registerCoordinationTools(registry, store);
+  const coordinator = new ToolExecutionCoordinator({ registry }), nodes = [{ id: 'one', step: 'Inspect', status: 'pending' }];
+  let ordinal = 0;
+  const run = input => coordinator.execute(toolCall('plan-' + ++ordinal, 'update_task_plan', input), identity(ordinal));
+  const first = await run({ nodes });
+  assert.equal(first.kind, 'returned'); assert.equal(first.result.plan.active, true); assert.equal(first.result.plan.explanation, '');
+  const replaced = await run({ action: 'replace', nodes: [{ ...nodes[0], status: 'completed' }], explanation: 'Retained', active: false, expected_revision: 1 });
+  assert.equal(replaced.kind, 'returned', JSON.stringify(replaced));
+  assert.deepEqual((await run({ action: 'get' })).result, replaced.result);
+  const patch = await run({ action: 'patch', expected_revision: 2, updates: [{ id: 'one', step: 'Checked' }] });
+  assert.equal(patch.kind, 'returned'); assert.equal(patch.result.plan.explanation, 'Retained'); assert.equal(patch.result.plan.active, false);
+  for (const input of [{ nodes, expected_revision: 2 }, { action: 'replace', nodes, expected_revision: 2 },
+    { action: 'patch', expected_revision: 2, explanation: 'Stale' }]) {
+    const failed = await run(input); assert.equal(failed.kind, 'failed'); assert.match(failed.error.message, /revision conflict/);
+    assert.deepEqual(store.getPlan('session_1'), patch.result);
+  }
+  const reopened = await run({ action: 'replace', nodes });
+  assert.equal(reopened.kind, 'returned'); assert.equal(reopened.result.plan.active, true); assert.equal(reopened.result.plan.explanation, '');
+  const completed = await run({ nodes: [{ ...nodes[0], status: 'completed' }] });
+  assert.equal(completed.kind, 'returned'); assert.equal(completed.result.plan.active, false);
+});

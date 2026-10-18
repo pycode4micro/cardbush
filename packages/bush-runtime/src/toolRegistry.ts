@@ -13,6 +13,7 @@ import {
   type ModelMessage,
   type ModelRequest,
 } from "@cardbush/bush-protocol";
+import type { ToolNameScope } from './toolReferenceNames.js';
 
 export interface ToolPermissionRequest {
   reason: string;
@@ -39,6 +40,8 @@ export interface ToolAdmissionContext<TInput = unknown> {
     request: ModelRequest;
     contextMessages: ModelMessage[];
     signal?: AbortSignal;
+    /** Ephemeral aliases from this completed model request; never persisted as authority. */
+    toolNameScope?: ToolNameScope;
   };
 }
 

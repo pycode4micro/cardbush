@@ -15,6 +15,8 @@ import type { ToolRegistry } from "./toolRegistry.js";
 import { withoutToolDisplayTitle } from './toolDisplay.js';
 import type { ContextTurnSource } from "./contextAssembler.js";
 import { runtimeInputTokenProjection, type InputTokenCalibration } from "./inputTokenBasis.js";
+import { CHECKPOINT_SKILL_CONSTRAINT_GUIDANCE, hasInheritedCheckpointSkillConstraints } from './checkpointSkillConstraints.js';
+import { collectCheckpointSkillExcerpts } from './checkpointSkillEvidence.js';
 
 export const CHECKPOINT_CONTEXT_TOOL = "checkpoint_context" as const;
 export { CONTEXT_COMPACTION_HARD_PRESSURE, contextMaintenanceInputReserveTokens, resolveContextBudget, resolveContextOutputTokens, type ContextBudget } from '@cardbush/bush-protocol';
@@ -253,6 +255,10 @@ export function projectContextCompactionMaintenanceMessages(input: {
   const targetRemovedChars = contextMaintenanceTargetRemovedChars(input.pressure);
   let removedChars = 0;
   let compactedToolResults = 0;
+  // Source facts must survive the emergency projection too. This does not
+  // bypass admission: indivisible oversized reads still fail closed or split
+  // at complete exchange boundaries, rather than losing a middle requirement.
+  const skillReads = new Set(collectCheckpointSkillExcerpts(messages).map(item => item.read));
 
   for (
     let index = messages.length - 1;
@@ -263,7 +269,12 @@ export function projectContextCompactionMaintenanceMessages(input: {
     if (
       message.role !== "tool" ||
       message.content.length < CONTEXT_MAINTENANCE_TOOL_RESULT_MIN_CHARS ||
-      isContextMaintenanceReceipt(message.content)
+      skillReads.has(message.toolCallId) ||
+      isContextMaintenanceReceipt(message.content) ||
+      // A complete incremental receipt can be the only visible copy of an
+      // earlier accepted source's constraints. Keep its genuine exchange;
+      // partition/admission still enforce the normal input and memory limits.
+      (index > 0 && hasInheritedCheckpointSkillConstraints([messages[index - 1]!, message]))
     ) {
       continue;
     }
@@ -589,9 +600,9 @@ export function contextPressureNotice(
       ...(sources.some(source => source.checkpointSummaries) ? ['For staged sources, checkpointSummaries points to the exact model-authored summaries in genuine Tool receipts. Match each entry by its source number; other entries belong to other sources.'] : []),
       'Summarize only the selected source’s own facts. Use surrounding conversation to understand references, authorization and corrections; explicitly distinguish later corrections from work performed in this source. Do not import another source’s actions or pending work.',
       'Preserve user intent and authorization, verified actions and Tool results, important findings and resource locators, unresolved work and next action. Keep proposals and unverified assistant claims distinct from Tool execution facts. Retain uncertainty. Do not repeat completed side effects.',
-      SKILL_SUMMARY_GUIDANCE,
+      CHECKPOINT_SKILL_CONSTRAINT_GUIDANCE,
       ...(activeSlot ? ['The current Turn source must be cumulative: retain facts already carried by earlier checkpoints inside it, together with work through its recorded boundary.'] : []),
-      'Keep archived Tool-result locators when omitted evidence may need to be read again. Omit routine logs and repetition. Summary meaning is your responsibility; the Tool checks source identity and text format only.',
+      'Keep archived Tool-result locators when omitted evidence may need to be read again. Omit routine logs and repetition. You judge applicability; Runtime checks source/coverage/evidence structure, not semantics.',
       '</context_pressure>',
     ].join('\n'),
   };
@@ -616,7 +627,7 @@ export function contextPressureNotice(
       `Summarize only each indexed source into its named field. Current context marked not_requested must not be attributed to any preceding Turn. Other summaries are background context, not additional source segments. Ignore context_pressure and context_compaction_correction maintenance notices within a source range.`,
       ...(format === 'ordered' ? ['Return the JSON object shown in the template, with summaries as its only field. The current Turn, when listed, is already included in that array. Runtime binds the filled slots to the existing Turn IDs, revision and message boundaries.'] : []),
       "Each natural-language summary must preserve: user intent; inspected scope; conclusions; files or resources changed; external side effects; test/build/publish results; important errors, paths, URLs, hashes or task IDs; and unresolved work.",
-      SKILL_SUMMARY_GUIDANCE,
+      CHECKPOINT_SKILL_CONSTRAINT_GUIDANCE,
       "If a Tool result is represented by an archived compact receipt and its preview is insufficient to establish a fact, preserve its exact locator and make reading that locator an unresolved next action; never guess the omitted content.",
       "Omit ordinary Tool-call order, repeated reads/searches, raw logs, call IDs, and intermediate conclusions superseded later.",
       "Keep user authorization and completed actions exact. A proposed action is not an approved or completed action. If a fact is uncertain, retain that uncertainty.",

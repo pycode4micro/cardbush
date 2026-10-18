@@ -1,6 +1,9 @@
 import type { ToolExecutionFacts } from '@cardbush/bush-protocol';
 
-type FailureFacts = Pick<ToolExecutionFacts, 'effects' | 'result'>;
+type FailureFacts = Pick<ToolExecutionFacts, 'effects' | 'result'> & {
+  dispatch?: 'not_started';
+  recovery?: ToolExecutionFacts['recovery'];
+};
 const failures = new WeakMap<Error, Readonly<FailureFacts>>();
 
 /** Executor-owned facts, never inferred from error text or deserialized tool data. */

@@ -1,5 +1,5 @@
 import { ChevronDown, LoaderCircle } from 'lucide-react';
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { HoverPreview, useHoverPreview } from '../../components/HoverPreview';
 import { basename } from '../../shared/localPaths';
 import type { AppLanguage, ChatToolExecution } from '../../types';
@@ -27,8 +27,9 @@ export function AssistantThinkingProcessLine(props: {
   return <AssistantThinkingDetail {...props} notice={notice} animate={scope.running} />;
 }
 
-export function TurnChangeSummary({ summary, language, onOpen }: {
+export function TurnChangeSummary({ summary, language, onOpen, onContextMenu }: {
   summary: ConversationChangeSummary; language: AppLanguage; onOpen?: (filePath: string) => void;
+  onContextMenu?: (event: MouseEvent<HTMLElement>, filePath: string) => void | Promise<void>;
 }) {
   const preview = useHoverPreview(summary.files.length === 0, { interactive: true });
   const focusRequested = useRef(false);
@@ -38,11 +39,22 @@ export function TurnChangeSummary({ summary, language, onOpen }: {
       document.getElementById(preview.id)?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
     }
   }, [preview.anchor, preview.id]);
-  const names = new Set<string>(), repeatedNames = new Set<string>();
+  const groups = new Map<string, Array<{ path: string; parents: string[] }>>();
+  const parentLabels = new Map<string, string>();
   if (preview.anchor) for (const file of summary.files) {
     const name = basename(file.path);
-    if (names.has(name)) repeatedNames.add(name);
-    names.add(name);
+    const group = groups.get(name) ?? [];
+    group.push({ path: file.path, parents: file.path.replaceAll('\\', '/').split('/').filter(Boolean).slice(0, -1) });
+    groups.set(name, group);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    for (const file of group) {
+      let depth = 1;
+      while (depth < file.parents.length && group.some(other => other !== file &&
+        other.parents.slice(-depth).join('/') === file.parents.slice(-depth).join('/'))) depth++;
+      parentLabels.set(file.path, file.parents.slice(-depth).join('/') || '.');
+    }
   }
   return <><div {...preview.triggerProps} className="turn-change-review" role="group" tabIndex={summary.files.length ? 0 : undefined}
     aria-haspopup={summary.files.length ? 'dialog' : undefined} aria-describedby={undefined} aria-controls={preview.anchor ? preview.id : undefined}
@@ -63,11 +75,16 @@ export function TurnChangeSummary({ summary, language, onOpen }: {
     <HoverPreview preview={preview} placement="top" className="turn-change-preview" interactiveLabel={language === 'zh' ? '本轮文件改动' : 'Changed files this turn'}>
       {preview.anchor && <ul className="turn-change-files">
         {summary.files.map(file => <li key={file.path}><button type="button" className="turn-change-file-action" disabled={!onOpen}
+          title={file.path}
           aria-label={language === 'zh' ? `查看 ${file.path} 的改动` : `Review changes to ${file.path}`}
+          onContextMenu={onContextMenu ? event => {
+            const completion = onContextMenu(event, file.path);
+            if (completion) preview.keepOpenUntil(completion);
+          } : undefined}
           onClick={() => { preview.dismiss(); onOpen?.(file.path); }}>
           <span className="turn-change-file-name">
             <span>{basename(file.path)}</span>
-            {repeatedNames.has(basename(file.path)) && <small>{file.path}</small>}
+            {parentLabels.has(file.path) && <small>{parentLabels.get(file.path)}</small>}
           </span>
           <span className="turn-change-file-counts">
             <b className="diff-count add">+{file.additions}</b><b className="diff-count del">-{file.deletions}</b>

@@ -13,6 +13,9 @@ import { QueueActionsMenu } from '../composer/QueueActionsMenu';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { ExtractionSelector } from './ConversationExtraction';
 import { ConversationHostContext } from '../conversationHost';
+import { remapProjectPath } from '../conversationScope';
+import { openFileContextMenu } from '../../shared/fileContextMenu';
+import { resolveChangedFilePath } from '../../shared/localPaths';
 import {
   type CSSProperties,
   type ReactNode,
@@ -44,7 +47,7 @@ import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { useBatchedTranscript } from '../chatMessages/useBatchedTranscript';
 import { GuidanceActivity, guidanceActivityMessages } from '../chatMessages/GuidanceActivity';
 import { TurnChangeSummary } from '../chatMessages/AssistantThinkingProcessLine';
-import { isGuidanceSealedAssistantSegment, isTurnGuidanceMessage } from '../chatMessages/transcript/messageFacts';
+import { isAssistantFinalResponse, isGuidanceSealedAssistantSegment, isTurnGuidanceMessage } from '../chatMessages/transcript/messageFacts';
 import {
   MessageListFooter,
   absoluteBottomScrollTop,
@@ -444,13 +447,14 @@ export function ChatPanel({
     () => activeAssistantForRender?.message ?? null,
     [activeAssistantForRender],
   );
+  const streamingFinalResponse = !!activeRuntimeAssistant && isAssistantFinalResponse(activeRuntimeAssistant);
   const currentTurnChangeSummary = useMemo(() => {
     const turnId = activeRuntimeAssistant?.turnId?.trim();
     // The optimistic assistant has no turn yet. Never borrow historical edits
     // while admission is pending or the controller and transcript are catching up.
-    if (!turnId || turnId !== activeTurnId.trim()) return null;
+    if (!turnId || turnId !== activeTurnId.trim() || streamingFinalResponse) return null;
     return summarizeChangeReports(changeReports.filter(report => report.turnId?.trim() === turnId));
-  }, [activeRuntimeAssistant?.turnId, activeTurnId, changeReports]);
+  }, [activeRuntimeAssistant?.turnId, activeTurnId, changeReports, streamingFinalResponse]);
   const activeTaskPlan = useMemo(() => {
     if (!activeRuntimeAssistant) return undefined;
     if (activeRuntimeAssistant.taskPlan) return activeRuntimeAssistant.taskPlan;
@@ -2609,7 +2613,6 @@ export function ChatPanel({
         onRetryMessage={onRetryMessage}
         onRetryGuidance={onRetryGuidance}
         onRevertChangeReport={onRevertChangeReport}
-        onOpenChangeReview={filePath => onOpenChangeReview(filePath, message.turnId)}
         onOpenScene={openScene}
       />
       {guidanceActivities.has(message.id) && <GuidanceActivity message={message}
@@ -2740,6 +2743,8 @@ export function ChatPanel({
               key={composerMount.key}
               topAccessory={!showWelcome && currentTurnChangeSummary && <TurnChangeSummary
                 summary={currentTurnChangeSummary} language={language}
+                onContextMenu={host ? undefined : (event, filePath) => openFileContextMenu(event,
+                  remapProjectPath(resolveChangedFilePath(filePath, activeProjectDir), projectPathAliases), { language })}
                 onOpen={filePath => onOpenChangeReview(filePath, activeTurnId)} />}
               portalCommands={showWelcome && customWelcome}
               fileDropTarget={chatBodyRef}

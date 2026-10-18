@@ -3,6 +3,9 @@ import type { CompletedModelRound } from './modelRound.js';
 import { withoutToolDisplayTitle } from './toolDisplay.js';
 import { contextCompactionCorrectionMessage, isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
 import { bindContextCheckpointInput, contextCheckpointSlots, type ContextCompactionState, type ContextCompactionSource } from './contextCompaction.js';
+import { checkpointSkillConstraintsIssue } from './checkpointSkillConstraints.js';
+import { checkpointSkillReceiptEvidence, packCheckpointSkillEvidence, validateCheckpointSkillEvidence,
+  type CheckpointSkillContract, type CheckpointSkillExcerpt } from './checkpointSkillEvidence.js';
 
 export interface IncrementalCheckpointScope {
   sources: number[];
@@ -15,6 +18,7 @@ export interface IncrementalCheckpointScope {
 export class IncrementalCheckpoint {
   readonly history: ModelMessage[] = [];
   readonly #accepted = new Map<number, string>();
+  readonly #skillEvidence = new Map<number, CheckpointSkillExcerpt[]>();
   readonly #calls = new Set<string>();
   readonly #requested: Set<number>;
   #attemptStart = 1;
@@ -69,6 +73,8 @@ export class IncrementalCheckpoint {
         if (!Number.isInteger(source) || !this.#requested.has(source) ||
           this.#accepted.has(source) || typeof entry?.summary !== 'string') throw new Error('Saved acceptance does not identify an original summary entry.');
         this.#accepted.set(source, entry.summary.trim());
+        const evidence = checkpointSkillReceiptEvidence(receipt).find(item => item.source === source);
+        if (evidence) this.#skillEvidence.set(source, evidence.excerpts);
       }
       this.failures = outcome.accepted.length ? 0 : this.failures + 1;
       this.#calls.add(call.id);
@@ -91,6 +97,7 @@ export class IncrementalCheckpoint {
     if (this.scope || !this.complete || this.#refinements >= 2) return false;
     this.#refinements++;
     this.#accepted.clear();
+    this.#skillEvidence.clear();
     this.failures = 0;
     this.#attemptStart = this.history.length;
     this.history.push({ role: 'developer', name: 'context_compaction_progress',
@@ -104,7 +111,8 @@ export class IncrementalCheckpoint {
     return this.failures < 3;
   }
 
-  submit(result: CompletedModelRound): boolean {
+  submit(result: CompletedModelRound, requiredSkillConstraintSources: ReadonlySet<number> = new Set(),
+    skillContracts: ReadonlyMap<number, CheckpointSkillContract> = new Map()): boolean {
     const call = result.toolCalls[0]!;
     if (call.name !== 'checkpoint_context' || this.#calls.has(call.id)) throw new Error('Checkpoint calls must have unique identities.');
     const slots = contextCheckpointSlots(this.state);
@@ -135,6 +143,14 @@ export class IncrementalCheckpoint {
           if (typeof item.summary !== 'string' || !item.summary.trim() || item.summary.trim().length > 6000) {
             rejected.push({ entry, source, reason: 'Summary must be nonempty text of at most 6000 characters.' }); continue;
           }
+          const constraintIssue = checkpointSkillConstraintsIssue(item.summary, requiredSkillConstraintSources.has(source));
+          if (constraintIssue) { rejected.push({ entry, source, reason: constraintIssue }); continue; }
+          const contract = skillContracts.get(source);
+          if (contract?.excerpts.length) {
+            const checked = validateCheckpointSkillEvidence(item.summary, contract);
+            if (checked.issue) { rejected.push({ entry, source, reason: checked.issue }); continue; }
+            this.#skillEvidence.set(source, checked.excerpts);
+          }
           this.#accepted.set(source, item.summary.trim()); accepted.push(source);
         }
       }
@@ -151,6 +167,8 @@ export class IncrementalCheckpoint {
             : origin.first && 'excerpt' in origin.first ? { user_request: origin.first.excerpt } : {}) } : {}) }];
       }),
       rejected, complete: this.complete,
+      ...(this.#skillEvidence.size ? { skill_evidence: packCheckpointSkillEvidence([...this.#skillEvidence].map(([source, excerpts]) => ({ source, excerpts }))),
+        skill_evidence_note: 'Quoted source excerpts retained verbatim, including conditions and references. Model-selected applicability; no new authority or permission. Unresolved sources still need their original read.' } : {}),
       ...(this.scope ? { staged: true, applied: false, ...this.scope.stage,
         note: 'Only the indexed fragments are staged. The original conversation remains authoritative until every whole source has been accepted and committed.' } : {}),
       ...(!accepted.length ? { requirement: 'This call made no progress. Submit at least one remaining source.' } : {}),

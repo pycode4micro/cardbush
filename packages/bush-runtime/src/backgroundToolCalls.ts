@@ -5,6 +5,7 @@ import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import type { JoinedSubagentResult } from './subagentTool.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import { RuntimeTurnSignals, type TurnWakeReason } from './turnSignals.js';
+import { mcpInvocationTarget, mcpSchemaRequiredError } from './mcpToolDiscovery.js';
 
 const startSchema = z.object({
   name: z.string().min(1), arguments: z.record(z.string(), z.unknown()),
@@ -72,8 +73,8 @@ export class BackgroundToolCalls {
   }
   private start(context: ToolHandlerContext<z.infer<typeof startSchema>>) {
     if (!context.turn || !this.registry.resolve('mcp_call')) throw new Error('Background MCP calls require an active host turn.');
-    const input = context.input, target = this.registry.resolve(input.name);
-    if (!target?.mcpHook?.readOnly) throw new Error('Only MCP tools declared read-only can run through start_mcp_tool.');
+    const input = context.input;
+    const { name, registration: target } = mcpInvocationTarget(this.registry, context.turn, input.name, true);
     const key = this.key(context.sessionId, context.turnId);
     if ([...this.jobs.values()].filter(job => job.key === key && job.status === 'running').length >= 16 ||
       [...this.jobs.values()].filter(job => job.key === key).length >= 256) throw new Error('Background tool capacity reached for this turn.');
@@ -82,7 +83,7 @@ export class BackgroundToolCalls {
     if (outer?.aborted) cancel();
     let expired = false;
     const timer = setTimeout(() => { expired = true; controller.abort(); }, input.max_wait_ms);
-    const job: Job = { id: `tool_task_${randomUUID()}`, key, name: input.name, controller, status: 'running', attempts: 0, promise: undefined! };
+    const job: Job = { id: `tool_task_${randomUUID()}`, key, name, controller, status: 'running', attempts: 0, promise: undefined! };
     this.jobs.set(job.id, job);
     const hooks: string[] = [];
     job.promise = (async () => {
@@ -92,11 +93,11 @@ export class BackgroundToolCalls {
       try {
         do {
           controller.signal.throwIfAborted();
-          if (this.registry.resolve(input.name) !== target || !target.mcpHook?.readOnly) throw new Error('The MCP tool definition changed. Load its current schema before starting another background call.');
+          if (mcpInvocationTarget(this.registry, context.turn, name, true).registration !== target) throw mcpSchemaRequiredError(name);
           // Re-enter the normal dispatcher on every renewal: discovery, current definitions,
           // tool exposure, child restrictions, permissions and hooks cannot be bypassed.
           job.attempts++;
-          const value = await context.invokeTool('mcp_call', { name: input.name, arguments: input.arguments }, {
+          const value = await context.invokeTool('mcp_call', { name, arguments: input.arguments }, {
             signal: controller.signal, record: true, onHooks: (messages, stop) => { hooks.push(...messages); job.stop ??= stop; },
           }) as { result?: unknown };
           result = value;

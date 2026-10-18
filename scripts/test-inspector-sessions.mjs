@@ -19,6 +19,42 @@ const resource = id => ({ id, kind: 'resource', detail: { target: 'https://examp
 const open = (state, workspaceId, id) => reduce(reduce(state, { type: 'tabs', workspaceId, action: { type: 'open', tab: resource(id) } }), { type: 'open-state', workspaceId, update: true });
 const act = (state, workspaceId, action) => reduce(state, { type: 'tabs', workspaceId, action });
 
+for (const collapsed of [false, true]) test(`first-send adoption retains draft tabs, selection and panel state (collapsed: ${collapsed})`, () => {
+  const draft = local(''), session = local('created');
+  let state = open(open(open(emptyInspectorSessions, draft, 'one'), draft, 'two'), local('other'), 'foreign');
+  state = reduce(state, { type: 'toggle-lock', id: 'one' });
+  state = act(state, draft, { type: 'activate', id: 'one' });
+  state = reduce(state, { type: 'open-state', workspaceId: draft, update: !collapsed });
+  state = open(state, session, 'early-background');
+  const original = retained(state), other = state.workspaces[local('other')];
+  state = reduce(state, { type: 'adopt-draft', from: draft, to: session });
+  assert.deepEqual(view(state, session).tabs.map(tab => tab.id), ['one', 'two', 'early-background']);
+  assert.equal(view(state, session).activeId, 'one');
+  assert.equal(view(state, session).open, !collapsed);
+  assert.equal(state.workspaces[draft], undefined, 'the next blank chat cannot inherit adopted pages');
+  assert.equal(state.workspaces[local('other')], other);
+  assert.equal(owner(state, 'one'), session, 'a draft-owned locked page also gets its real owner');
+  for (const tab of original) assert.equal(retained(state).find(item => item.id === tab.id), tab, 'never recreate a guest');
+  const repeated = reduce(state, { type: 'adopt-draft', from: draft, to: session });
+  assert.equal(repeated, state, 'repeated preparation is a no-op once the draft was consumed');
+});
+
+test('draft adoption is scoped to its host and moves layout objects without copying them', () => {
+  const { adoptInspectorSessionState } = load('src/features/inspector/inspectorSessions.ts');
+  const draft = remote('host-a', ''), session = remote('host-a', 'created');
+  let state = open(open(open(emptyInspectorSessions, local(''), 'local'), remote('host-b', ''), 'remote-b'), draft, 'remote-a');
+  state = reduce(state, { type: 'adopt-draft', from: draft, to: session });
+  assert.equal(owner(state, 'local'), local(''));
+  assert.equal(owner(state, 'remote-b'), remote('host-b', ''));
+  assert.equal(owner(state, 'remote-a'), session);
+  const layout = { kind: 'page', id: 'remote-a' }, values = { [draft]: layout, [local('')]: null };
+  const adopted = adoptInspectorSessionState(values, { from: draft, to: session });
+  assert.equal(adopted[session], layout);
+  assert.equal(Object.hasOwn(adopted, draft), false);
+  assert.equal(adopted[local('')], null);
+  assert.equal(values[draft], layout, 'state updates do not mutate earlier snapshots');
+});
+
 test('explicit browser references move original resources out of the draft and retain locked ownership', () => {
   let state = open(open(open(emptyInspectorSessions, local(''), 'referenced'), local(''), 'unrelated'), local('other'), 'locked');
   state = reduce(state, { type: 'toggle-lock', id: 'locked' });
@@ -140,7 +176,7 @@ for (const parentSelected of [true, false]) test(`browser actions belong to the 
   assert.equal(browser.hasScope('parent'), parentSelected, 'UI ownership never creates parent browser grants');
   const page = await browser.request('tabs.create', { scopeId: 'grandchild', url: 'https://example.com/' });
   for (const scopeId of ['parent', 'child', 'grandchild']) {
-    assert.deepEqual((await browser.request('tabs.list', { scopeId })).map(page => page.id), [page.id], 'created pages return to every trusted ancestor');
+    assert.deepEqual((await browser.request('tabs.list', { scopeId })).pages.map(page => page.id), [page.id], 'created pages return to every trusted ancestor');
   }
   assert.equal(view(state, local('parent')).activeId, page.tabId, 'the page appears in the root inspector');
   assert.equal(view(state, local('grandchild')).tabs.length, 0, 'no hidden child workspace is created');
@@ -148,7 +184,7 @@ for (const parentSelected of [true, false]) test(`browser actions belong to the 
   await browser.request('tabs.activate', { scopeId: 'grandchild', tabId: page.id });
   await browser.request('tabs.close', { scopeId: 'grandchild', tabId: page.id });
   for (const scopeId of ['parent', 'child', 'grandchild']) {
-    assert.deepEqual(await browser.request('tabs.list', { scopeId }), [], 'explicit close removes the shared page from all granted scopes');
+    assert.deepEqual((await browser.request('tabs.list', { scopeId })).pages, [], 'explicit close removes the shared page from all granted scopes');
   }
   assert.deepEqual(actions.filter(action => action.action !== 'inspect').map(action => [action.action, action.sessionId]), [['open', 'parent'], ['activate', 'parent'], ['close', 'parent']]);
   assert.equal(view(state, local('parent')).tabs.length, 0);

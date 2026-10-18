@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto';
 import { withToolDisplayTitle } from './toolDisplay.js';
 import { projectBuiltinDefinitions, synchronizeBuiltinSchemas } from './builtinToolDisclosure.js';
 import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
-import type { ToolRegistry } from './toolRegistry.js';
+import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
+import { resolveToolReferenceName, unknownToolReferenceError, wrongToolRouteError } from './toolReferenceNames.js';
+import { withToolFailureFacts } from './toolFailureFacts.js';
 import { DEFAULT_TOOL_RESULT_MAX_CHARS, fitToolResultPage } from './toolResultBudget.js';
 import { discoveryDescription } from './catalogPage.js';
 import { resolveSearchResultLimit, type SearchResultLimitProvider } from './searchResultLimit.js';
@@ -113,10 +115,27 @@ export function clearMcpDiscovery(registry: ToolRegistry, request: ModelRequest)
 
 /** A recoverable schema prerequisite, derived from the existing discovery state. */
 export function mcpSchemaRequiredError(name: string) {
-  return Object.assign(new Error('This MCP tool is available, but its current schema is not loaded in the model context. Call mcp_search with the action and exact query in details.load, read the returned schema, then retry the tool (using mcp_call when available). The tool has not executed; this does not indicate a service connection failure.'), {
+  return withToolFailureFacts(Object.assign(new Error('This MCP tool is available, but its current schema is not loaded in the model context. Call mcp_search with the action and exact query in details.load, wait for and read the returned schema, then retry the tool (using mcp_call when available). Do not run the dependent call in parallel with loading. The tool has not executed; this does not indicate a service connection failure.'), {
     code: 'mcp_discovery_required',
     details: { toolName: name, load: { name: 'mcp_search', arguments: { action: 'load', query: name } } },
-  });
+  }), { effects: 'none', result: 'known' });
+}
+
+/** Shared preflight only; execution still re-enters the normal coordinator for every call. */
+export function mcpInvocationTarget(registry: ToolRegistry, turn: ToolHandlerContext['turn'], reference: string, readOnly = false) {
+  const name = resolveToolReferenceName(reference, turn), registration = registry.resolve(name);
+  if (!registration) throw unknownToolReferenceError(reference, 'mcp');
+  if (!turn || !turn.request.tools.some(tool => tool.name === name) || registration.mcpHook?.modelVisible === false ||
+    registration.sessionScope && registration.sessionScope !== turn.request.sessionId) {
+    throw withToolFailureFacts(Object.assign(new Error('This MCP tool is not available to this turn. Use mcp_search to check the current catalog; loading a schema cannot restore an unavailable tool.'), { code: 'tool_not_exposed' }), { effects: 'none', result: 'known' });
+  }
+  if (!registration.mcpHook) throw wrongToolRouteError(name, 'native');
+  if (readOnly && !registration.mcpHook.readOnly) throw withToolFailureFacts(Object.assign(
+    new Error('Only MCP tools declared read-only can run through start_mcp_tool. Use mcp_call for this tool after loading its schema; its normal permissions still apply. No tool was executed.'),
+    { code: 'mcp_background_read_only_required', details: { toolName: name, invoke: 'mcp_call' } },
+  ), { effects: 'none', result: 'known' });
+  if (!mcpToolWasDiscovered(registry, { ...turn.request, metadata: { ...turn.request.metadata, mcpToolDiscovery: true } }, name)) throw mcpSchemaRequiredError(name);
+  return { name, registration };
 }
 
 /** Rebuild from the exact model context after restart or compaction, without rewriting history.
@@ -264,8 +283,9 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
         if (context.input.server && mcp.server !== context.input.server) return [];
         return [{ definition, server: mcp.server, tool: mcp.tool }];
       });
-      const candidates = context.input.action === 'load' ? catalog.flatMap(entry => [entry.definition.name, entry.tool].includes(context.input.query)
-        ? [{ ...entry, score: entry.definition.name === context.input.query ? 2 : 1 }] : []).sort((a, b) => b.score - a.score)
+      const query = context.input.action === 'load' ? resolveToolReferenceName(context.input.query, context.turn) : context.input.query;
+      const candidates = context.input.action === 'load' ? catalog.flatMap(entry => [entry.definition.name, entry.tool].includes(query)
+        ? [{ ...entry, score: entry.definition.name === query ? 2 : 1 }] : []).sort((a, b) => b.score - a.score)
         : rankMcpTools(catalog, context.input.query);
       const fingerprint = context.input.action === 'search' ? mcpSearchFingerprint(request.sessionId, context.input.query, context.input.server, candidates) : '';
       if (context.input.cursor && context.input.cursor.fingerprint !== fingerprint) {
@@ -314,14 +334,9 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
       return { name: value.name, arguments: value.arguments as Record<string, unknown> };
     },
     execute: async context => {
-      const mcp = registry.resolve(context.input.name)?.mcpHook;
-      if (!context.turn || !mcp || !available(registry, context.turn.request, context.input.name)) {
-        throw Object.assign(new Error('This MCP tool is not available to this turn. Use mcp_search to check the current catalog; loading a schema cannot restore an unavailable tool.'), { code: 'tool_not_exposed' });
-      }
-      if (!mcpToolWasDiscovered(registry, { ...context.turn.request, metadata: { ...context.turn.request.metadata, mcpToolDiscovery: true } }, context.input.name)) {
-        throw mcpSchemaRequiredError(context.input.name);
-      }
-      return { mcp: { server: mcp.server, tool: mcp.tool, name: context.input.name }, result: await context.invokeTool(context.input.name, context.input.arguments) };
+      const { name, registration } = mcpInvocationTarget(registry, context.turn, context.input.name);
+      const mcp = registration.mcpHook!;
+      return { mcp: { server: mcp.server, tool: mcp.tool, name }, result: await context.invokeTool(name, context.input.arguments) };
     },
     renderModelResult: value => {
       const output = value as { mcp: { name: string }; result: unknown };

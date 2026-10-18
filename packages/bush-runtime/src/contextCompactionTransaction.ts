@@ -3,6 +3,11 @@ import type { CompletedModelRound } from './modelRound.js';
 export { isContextLengthFailure } from './modelFailurePolicy.js';
 import { validateConversation } from './sessionStore.js';
 import { IncrementalCheckpoint } from './incrementalCheckpoint.js';
+import { checkpointSkillConstraintsIssue, hasActiveCheckpointSkillConstraints,
+  hasInheritedCheckpointSkillConstraints } from './checkpointSkillConstraints.js';
+import { checkpointSkillContractNotice, checkpointSkillReceiptEvidence, collectCheckpointSkillExcerpts,
+  mergeCheckpointSkillExcerpts, packCheckpointSkillEvidence, validateCheckpointSkillEvidence, type CheckpointSkillContract,
+  type CheckpointSkillEvidence } from './checkpointSkillEvidence.js';
 import { contextCompactionCorrectionMessage, isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
 import { bindContextCheckpointInput, ContextCheckpointInputError, contextCheckpointSlots, contextPressureNotice, type ContextCompactionSource,
   type ContextCheckpointFormat, type ContextCompactionState, type ContextPressure } from './contextCompaction.js';
@@ -69,6 +74,13 @@ export class ContextCompactionTransaction {
   #attempts: number;
   #correctionRecovery = false;
   readonly incremental?: IncrementalCheckpoint;
+  #jobSources: ContextCompactionSource[] = [];
+  #skillContracts = new Map<number, CheckpointSkillContract>();
+  #skillEvidence: CheckpointSkillEvidence[] = [];
+
+  get receiptEvidence(): Record<string, unknown> {
+    return this.#skillEvidence.length ? { skill_evidence: packCheckpointSkillEvidence(this.#skillEvidence) } : {};
+  }
 
   constructor(input: { messages: ModelMessage[]; prefixMessageCount: number;
     sources: ContextCompactionSource[]; state: ContextCompactionState; pressure: ContextPressure;
@@ -130,6 +142,40 @@ export class ContextCompactionTransaction {
   }
 
   job(): CompactionJob {
+    const job = this.#baseJob();
+    this.#skillContracts = new Map();
+    for (const fragment of this.#current.fragments) {
+      const source = this.#sourceNumber(fragment);
+      const children = this.#current.children?.filter(child => child.fragments.some(part => part.turnId === fragment.turnId));
+      const excerpts = children?.length
+        ? mergeCheckpointSkillExcerpts(children.map(child => checkpointSkillReceiptEvidence(child.result![1])
+          .filter(item => item.source === source).flatMap(item => item.excerpts)))
+        : collectCheckpointSkillExcerpts(fragment.units.flat());
+      const range = this.#jobSources.find(item => item.turnId === fragment.turnId);
+      const evidenceMessages = new Set<number>();
+      if (range) for (let index = range.startMessage; index < range.endMessageExclusive; index++) evidenceMessages.add(index);
+      // A later, uncompressed user correction can retire an earlier source's
+      // obligation. Do not import another source's Tool facts as completion.
+      for (const background of this.#jobSources.filter(item => item.target === 'not_requested')) {
+        for (let index = background.startMessage; index < background.endMessageExclusive; index++) {
+          if (job.messages[index]?.role === 'user') evidenceMessages.add(index);
+        }
+      }
+      this.#skillContracts.set(source, { excerpts, messages: job.messages, evidenceMessages });
+    }
+    const notice = checkpointSkillContractNotice(this.#skillContracts);
+    if (!notice) return job;
+    // Append only to this dispatch's maintenance notice, never mutate the
+    // canonical history, frozen system prefix or top-level Tool definitions.
+    const messages = [...job.messages];
+    let index = messages.length - 1;
+    while (index >= 0 && !isContextMaintenanceNotice(messages[index]!, 'context_pressure')) index--;
+    if (index < 0) throw new Error('Missing checkpoint maintenance notice.');
+    messages[index] = { ...messages[index]!, content: messages[index]!.content + notice };
+    return { ...job, messages };
+  }
+
+  #baseJob(): CompactionJob {
     if (this.incremental) return this.#incrementalJob();
     const node = this.#current;
     const state = this.#nodeState(node);
@@ -165,6 +211,7 @@ export class ContextCompactionTransaction {
       });
     }
     validateConversation(messages);
+    this.#jobSources = sources;
     const notice = contextPressureNotice(state, this.#pressure, this.#format, sources);
     if (node !== this.#root || node.children) {
       notice.content += '\n' + (node === this.#root
@@ -278,9 +325,11 @@ export class ContextCompactionTransaction {
     if (this.#callIds.has(call.id)) {
       throw new ContextCheckpointInputError('tool_call_id', 'a unique identity for this checkpoint exchange', call.id);
     }
+    this.job(); // Also supports callers that submit before inspecting job().
+    const requiredSkillConstraints = this.#requiredSkillConstraintSources();
     if (this.#current.loop) {
       const node = this.#current;
-      const complete = node.loop!.submit(result);
+      const complete = node.loop!.submit(result, requiredSkillConstraints, this.#skillContracts);
       this.#callIds.add(call.id);
       if (this.isRoot) return complete;
       const pair = node.loop!.history.slice(-2) as [ModelMessage, ModelMessage];
@@ -291,7 +340,20 @@ export class ContextCompactionTransaction {
       }
       return false;
     }
-    bindContextCheckpointInput(JSON.parse(call.argumentsText), this.#nodeState(this.#current), this.#format);
+    const checkpoint = bindContextCheckpointInput(JSON.parse(call.argumentsText), this.#nodeState(this.#current), this.#format);
+    const skillEvidence: CheckpointSkillEvidence[] = [];
+    for (const item of [...checkpoint.summaries, ...(checkpoint.activeTurn ? [checkpoint.activeTurn] : [])]) {
+      const source = this.#sourceNumber(item);
+      const issue = checkpointSkillConstraintsIssue(item.summary, requiredSkillConstraints.has(source));
+      if (issue) throw new ContextCheckpointInputError(`source ${source}.summary`, issue, item.summary);
+      const contract = this.#skillContracts.get(source);
+      if (contract?.excerpts.length) {
+        const checked = validateCheckpointSkillEvidence(item.summary, contract);
+        if (checked.issue) throw new ContextCheckpointInputError(`source ${source}.summary`, checked.issue, item.summary);
+        skillEvidence.push({ source, excerpts: checked.excerpts });
+      }
+    }
+    this.#skillEvidence = skillEvidence;
     if (this.isRoot) return true;
     this.#callIds.add(call.id);
     this.#current.result = [{ role: 'assistant', content: result.text,
@@ -300,10 +362,36 @@ export class ContextCompactionTransaction {
       toolCalls: [{ id: call.id, name: call.name, argumentsText: call.argumentsText }],
     }, { role: 'tool', toolCallId: call.id, content: JSON.stringify({
       staged: true, applied: false, job: this.#current.id, sourceRanges: this.#ranges(this.#current),
+      ...this.receiptEvidence,
       note: 'This fragment is staged for consolidation. The original conversation remains authoritative until the complete checkpoint is committed.',
     }) }];
     this.#current = this.#next(this.#root)!;
     return false;
+  }
+
+  /** Require an explicit review only where an actual prior checkpoint carried
+   * active constraints. No cross-source inheritance from background fragments,
+   * no semantic completion check and no extra persistence or generated files. */
+  #requiredSkillConstraintSources(): Set<number> {
+    const required = new Set<number>();
+    for (const fragment of this.#current.fragments) {
+      if (hasInheritedCheckpointSkillConstraints(fragment.units.flat())) required.add(this.#sourceNumber(fragment));
+    }
+    for (const child of this.#current.children ?? []) {
+      if (!child.result) continue;
+      const assistant = child.result[0];
+      if (assistant.role !== 'assistant') throw new Error('A staged checkpoint must retain its assistant call.');
+      const checkpoint = child.loop
+        ? undefined : bindContextCheckpointInput(JSON.parse(assistant.toolCalls[0]!.argumentsText), this.#nodeState(child), this.#format);
+      const summaries: Array<{ turnId: string; summary: string }> = child.loop
+        ? (JSON.parse(child.result[1].content).summaries as Array<{ turn_id: string; summary: string }>)
+          .map(item => ({ turnId: item.turn_id, summary: item.summary }))
+        : [...checkpoint!.summaries, ...(checkpoint!.activeTurn ? [checkpoint!.activeTurn] : [])];
+      for (const item of summaries) {
+        if (hasActiveCheckpointSkillConstraints(item.summary)) required.add(this.#sourceNumber(item));
+      }
+    }
+    return required;
   }
 
   #next(node: Node): Node | undefined {
@@ -329,15 +417,18 @@ export class ContextCompactionTransaction {
     return node;
   }
 
-  #sourceNumber(fragment: Fragment): number {
+  #sourceNumber(fragment: Pick<Fragment, 'turnId'>): number {
     return contextCheckpointSlots(this.#state).findIndex(slot => slot.turnId === fragment.turnId);
   }
 
   #incrementalJob(): CompactionJob {
     const node = this.#current;
-    if (node === this.#root && !node.children) return { id: node.id, state: this.originalState,
+    if (node === this.#root && !node.children) {
+      this.#jobSources = this.#sources;
+      return { id: node.id, state: this.originalState,
       messages: [...this.#messages, ...this.incremental!.attemptHistory], outputTokens: node.outputTokens,
       failures: node.loop!.failures, sourceRanges: this.#ranges(node) };
+    }
     const messages = [...this.#prefix];
     if (node !== this.#root) {
       // Earlier completed fragments provide reference/authorization context
@@ -372,6 +463,7 @@ export class ContextCompactionTransaction {
             ? { userRequest: { ...original, message: startMessage + original.message - fragment.startMessage } } : {}) };
       });
     validateConversation(messages);
+    this.#jobSources = sources;
     const notice = contextPressureNotice(this.#state, this.#pressure, 'incremental', sources);
     notice.content += '\n' + (node.children
       ? 'Consolidate the indexed staged receipts into one summary for each selected source number. Only the quoted summaries fields belong to that source. No fragment has replaced the original conversation.'

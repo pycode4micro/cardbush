@@ -43,6 +43,7 @@ import {
   type ToolHandlerContext,
   type ToolRegistration,
   ToolRegistry,
+  withToolFailureFacts,
 } from "@cardbush/bush-runtime";
 
 interface ConnectedServer {
@@ -655,7 +656,7 @@ export class McpClientManager {
     const decodeInput = mcpInputDecoder(tool.runtimeName, tool.remote.inputSchema);
     const use = <T>(operation: () => Promise<T>): Promise<T> => {
       if (!isDeepStrictEqual(connection.tools.find(item => item.runtimeName === tool.runtimeName), tool)) {
-        return Promise.reject(codedMcpError('tool_definition_changed', 'This MCP tool changed before dispatch. Load its current definition before calling again.',
+        return Promise.reject(preflightMcpError('tool_definition_changed', 'This MCP tool changed before dispatch. Load its current definition before calling again.',
           { serverId: connection.config.id, inputDispatched: false, recovery: { tool: 'mcp_search', action: 'load', query: tool.runtimeName } }));
       }
       return this.#useConnection(connection, operation);
@@ -673,7 +674,8 @@ export class McpClientManager {
         appCallable: ui ? !ui.visibility || ui.visibility.includes('app') : meta['openai/outputTemplate'] ? meta['openai/widgetAccessible'] === true : true,
         call: async (input, options) => use(async () => {
           const validated = decodeInput(input);
-          if (connection.retired || connection.health !== 'ready') throw new Error(`MCP service ${connection.config.id} is not connected.`);
+          if (connection.retired || connection.health !== 'ready') throw preflightMcpError('mcp_service_unavailable',
+            `MCP service ${connection.config.id} is not connected.`, { serverId: connection.config.id });
           try { return await this.#interactive.run(connection.client, { serverId: connection.config.id, sessionId: options.request.sessionId, turnId: options.request.turnId, signal: options.signal },
             Math.min(options.timeoutMs, connection.config.toolTimeoutMs ?? 60_000), signal => connection.client.callTool({ name: tool.remote.name, arguments: validated,
             _meta: mcpRequestMetadata({ requestId: options.request.requestId, sessionId: options.request.sessionId, turnId: options.request.turnId, turn: { request: options.request, contextMessages: [] } }, connection.config.id, tool.remote) },
@@ -721,10 +723,11 @@ export class McpClientManager {
         };
       },
       execute: async (context) => use(async () => {
-        if (connection.retired) throw codedMcpError('mcp_service_unavailable', `MCP service ${connection.config.id} has been disconnected.`, { serverId: connection.config.id });
-        if (connection.health === 'configuration_required') throw new McpOAuthConfigurationRequired(connection.lastError);
+        if (connection.retired) throw preflightMcpError('mcp_service_unavailable', `MCP service ${connection.config.id} has been disconnected.`, { serverId: connection.config.id });
+        if (connection.health === 'configuration_required') throw withToolFailureFacts(new McpOAuthConfigurationRequired(connection.lastError),
+          { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input' });
         if (connection.health !== "ready" && connection.health !== 'auth_required') {
-          throw codedMcpError(
+          throw preflightMcpError(
             connection.health === "restarting"
               ? "mcp_service_restarting"
               : "mcp_service_unavailable",
@@ -736,6 +739,7 @@ export class McpClientManager {
               retryable: true,
               ...(connection.lastFailure ? { failure: connection.lastFailure } : {}),
             },
+            'retry',
           );
         }
         const activeClient = connection.client;
@@ -1009,7 +1013,7 @@ export class McpClientManager {
   readonly #drainingConnections = new Set<ConnectedServer>();
 
   async #useConnection<T>(connection: ConnectedServer, operation: () => Promise<T>): Promise<T> {
-    if (connection.draining || connection.retired) throw codedMcpError('tool_definition_changed',
+    if (connection.draining || connection.retired) throw preflightMcpError('tool_definition_changed',
       `MCP service ${connection.config.id} is updating. This call was not dispatched; load the current tool definition before calling again.`,
       { serverId: connection.config.id, inputDispatched: false, recovery: { tool: 'mcp_search', action: 'load' } });
     connection.activeUses = (connection.activeUses ?? 0) + 1;
@@ -1167,6 +1171,12 @@ function authenticationFailure(error: unknown) {
   if (error instanceof OpenAiAuthError) return { health: 'auth_required' as const, error };
   if (error instanceof UnauthorizedError || mcpErrorCode(error) === SdkErrorCode.ClientHttpAuthentication || (error as { code?: unknown })?.code === 'mcp_auth_required') return { health: 'auth_required' as const, error: new McpAuthenticationRequired() };
   return undefined;
+}
+
+function preflightMcpError(code: string, message: string, details: Record<string, unknown>, recovery: 'retry' | 'correct_input' = 'correct_input') {
+  return withToolFailureFacts(codedMcpError(code, message, details), {
+    dispatch: 'not_started', effects: 'none', result: 'known', recovery,
+  });
 }
 
 function codedMcpError(

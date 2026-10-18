@@ -128,6 +128,16 @@ export function compactPath(value?: string) {
   return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
 }
 
+/** Changes and delivered artifacts resolve against the same owning workspace. */
+export function resolveChangedFilePath(pathValue: string, workspaceRoot = '') {
+  const path = stripWrappingQuotes(pathValue.trim());
+  const root = stripWrappingQuotes(workspaceRoot.trim());
+  if (!path || !root || isAbsoluteLocalPath(path) || /^(?:https?|file|cardbush-file|ssh):/i.test(path)) return path;
+  const separator = root.includes('\\') ? '\\' : '/';
+  const relative = path.replace(/^[.][\\/]/, '').replace(/[\\/]+/g, separator);
+  return `${root.replace(/[\\/]+$/, '')}${separator}${relative}`;
+}
+
 export function fileUrl(value: string) {
   const normalized = stripWrappingQuotes(value.trim());
   const kind = resourceTargetKind(normalized);

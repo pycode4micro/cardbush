@@ -106,7 +106,8 @@ export function useInspectorWorkspace({
   useLayoutEffect(() => {
     const previous = previousWorkspace.current;
     previousWorkspace.current = { workspaceId, coverRestore, multiPageRestore };
-    if (previous.workspaceId === workspaceId) return;
+    // Preparing a draft changes its ID, but retains the workspace and geometry.
+    if (previous.workspaceId === workspaceId || previous.coverRestore === coverRestore) return;
     // Leave the old conversation's cover/layout intact. Only restore shared
     // geometry and dismiss transient input when navigating to another workspace.
     const restore = previous.coverRestore.current ?? previous.multiPageRestore.current;

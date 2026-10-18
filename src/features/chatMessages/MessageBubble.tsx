@@ -52,6 +52,7 @@ import {
   isVideoPath,
   mediaResourceUrl,
   resourceTargetKind,
+  resolveChangedFilePath,
   stripWrappingQuotes,
   splitExplicitAttachmentMentions,
 } from '../../shared/localPaths';
@@ -142,7 +143,8 @@ import { turnActivityExecutions } from './assistantRunActivity';
 import { mcpActivations } from './mcpActivation';
 import { McpActivationStatus } from './McpActivationStatus';
 import { TurnArtifactsMenu, type TurnArtifactEntry } from './TurnArtifactsMenu';
-import { coalesceAssistantTranscript } from './assistantTranscriptPresentation';
+import { createAssistantTranscriptProjector } from './assistantTranscriptPresentation';
+import { isAssistantFinalResponse } from './transcript/messageFacts';
 
 type UserMessageDeliveryState = 'pending' | 'failed';
 
@@ -726,7 +728,6 @@ function MessageBubbleView({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenChangeReview?: (filePath?: string) => void;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const host = useContext(ConversationHostContext);
@@ -735,6 +736,7 @@ function MessageBubbleView({
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const keyboardShortcuts = useKeyboardShortcuts();
   const [presentToolOutputs] = useState(createToolOutputProjector);
+  const [presentTranscript] = useState(createAssistantTranscriptProjector);
   const contentParts = splitMessageMedia(message.content);
   const userContentParts =
     message.role === 'user'
@@ -1089,8 +1091,7 @@ function MessageBubbleView({
   const failedAssistantRound = isFailedAssistantMessage(message);
   // Final-display intent is independent of turn completion. Keep stop/actions
   // and task state live, but archive the process as soon as final text streams.
-  const streamingFinalResponse = isActiveAssistantTurn &&
-    String(message.metadata?.transcript_kind ?? message.metadata?.transcriptKind ?? '') === 'assistant_final';
+  const streamingFinalResponse = isActiveAssistantTurn && isAssistantFinalResponse(message);
   const showActiveProcess = isActiveAssistantTurn && !streamingFinalResponse;
   const guidanceBoundaryRound =
     !isActiveAssistantTurn && isGuidanceBoundaryAssistantMessage(message);
@@ -1102,6 +1103,7 @@ function MessageBubbleView({
     ? activeAssistantTranscriptMessages(
         loopHistory,
         message,
+        presentTranscript,
       )
     : [];
   const renderActiveTranscript =
@@ -1527,19 +1529,6 @@ function AssistantTurnArtifacts({ message, report, artifacts, language, onRevert
     }} />;
 }
 
-function resolveChangedFilePath(pathValue: string, workspaceRoot: string) {
-  const path = stripWrappingQuotes(pathValue.trim());
-  const root = stripWrappingQuotes(workspaceRoot.trim());
-  if (!path || !root || isAbsoluteLocalPath(path) || /^(?:https?|file|ssh):/i.test(path)) {
-    return path;
-  }
-  const separator = root.includes('\\') ? '\\' : '/';
-  const normalizedRelative = path
-    .replace(/^[.][\\/]/, '')
-    .replace(/[\\/]+/g, separator);
-  return `${root.replace(/[\\/]+$/, '')}${separator}${normalizedRelative}`;
-}
-
 function TaskPlanBlock({
   plan,
   language,
@@ -1627,29 +1616,9 @@ function AssistantActiveTranscript({
     .find(execution => isToolRunningInContext(execution, active));
   return (
     <div className="assistant-active-transcript">
-      {visibleMessages.map((segment) => {
-        const executions = segment.toolExecutions ?? [];
-        return (
-          <section
-            key={segment.id}
-            className="assistant-active-transcript-segment"
-            data-segment-id={segment.id}
-          >
-            <AssistantSegmentAttachments message={segment} language={language} />
-            <AssistantMessageContent
-              content={segment.content}
-              executions={executions}
-              language={language}
-              message={segment}
-              active={active}
-              historyLabel={false}
-              selectedModel={selectedModel}
-              onRevertChangeReport={onRevertChangeReport}
-              onOpenScene={onOpenScene}
-            />
-          </section>
-        );
-      })}
+      {visibleMessages.map(segment => <AssistantTranscriptSegment key={segment.id}
+        message={segment} language={language} active={active}
+        onRevertChangeReport={onRevertChangeReport} onOpenScene={onOpenScene} />)}
       {/* One stable tail slot: queued/running/thinking changes its text, never
           removes a row of height or reparents the preceding media. */}
       {active && <AssistantThinkingProcessLine key="activity" language={language}
@@ -1661,11 +1630,24 @@ function AssistantActiveTranscript({
 function activeAssistantTranscriptMessages(
   loopHistory: ChatMessage[],
   currentMessage: ChatMessage,
+  presentTranscript: ReturnType<typeof createAssistantTranscriptProjector>,
 ) {
   const transcript = [...loopHistory, currentMessage]
     .filter(hasVisibleLoopHistoryMessage);
-  return coalesceAssistantTranscript(transcript);
+  return presentTranscript(transcript);
 }
+
+const AssistantTranscriptSegment = memo(function AssistantTranscriptSegment({
+  message, language, active, onRevertChangeReport, onOpenScene,
+}: Pick<Parameters<typeof AssistantMessageContent>[0],
+  'message' | 'language' | 'active' | 'onRevertChangeReport' | 'onOpenScene'>) {
+  return <section className="assistant-active-transcript-segment" data-segment-id={message.id}>
+    <AssistantSegmentAttachments message={message} language={language} />
+    <AssistantMessageContent content={message.content} executions={message.toolExecutions ?? []}
+      language={language} message={message} active={active} historyLabel={false}
+      onRevertChangeReport={onRevertChangeReport} onOpenScene={onOpenScene} />
+  </section>;
+});
 
 function AssistantMessageContent({
   content,
@@ -2420,7 +2402,8 @@ export function AssistantLoopHistoryBlock({
   ) => Promise<void>;
   onOpenScene?: (scene: CardlingScene) => void;
 }) {
-  const visibleHistory = coalesceAssistantTranscript(history).filter(hasVisibleLoopHistoryMessage);
+  const [presentTranscript] = useState(createAssistantTranscriptProjector);
+  const visibleHistory = presentTranscript(history).filter(hasVisibleLoopHistoryMessage);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const [presentToolOutputs] = useState(createToolOutputProjector);
   const outputPresentation = presentToolOutputs(turnActivityExecutions({ loopHistory: history }), pathAliases);
@@ -2465,7 +2448,7 @@ export function AssistantLoopHistoryBlock({
   );
 }
 
-function AssistantLoopHistoryItem({
+const AssistantLoopHistoryItem = memo(function AssistantLoopHistoryItem({
   message,
   language,
   active,
@@ -2503,7 +2486,7 @@ function AssistantLoopHistoryItem({
       ) : null}
     </section>
   );
-}
+});
 
 function hasVisibleLoopHistoryMessage(message: ChatMessage) {
   return Boolean(
@@ -2947,6 +2930,7 @@ function sameMessageBubbleProps(
 ) {
   if (
     previous.message !== next.message ||
+    previous.changeSummaryMessages !== next.changeSummaryMessages ||
     previous.language !== next.language ||
     previous.sending !== next.sending ||
     previous.activeConversationId !== next.activeConversationId ||
@@ -2962,7 +2946,6 @@ function sameMessageBubbleProps(
     previous.onRetryMessage !== next.onRetryMessage ||
     previous.onRetryGuidance !== next.onRetryGuidance ||
     previous.onRevertChangeReport !== next.onRevertChangeReport ||
-    previous.onOpenChangeReview !== next.onOpenChangeReview ||
     previous.onOpenScene !== next.onOpenScene
   ) {
     return false;

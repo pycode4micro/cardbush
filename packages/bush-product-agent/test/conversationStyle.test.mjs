@@ -52,7 +52,11 @@ test("all tones keep content-focused concision without length limits and readabl
     const request = createProductAgentTurnRequest({ ...input,
       conversationStyle: mode ? { mode, customTone: "Act like a patient colleague; write long reports." } : undefined });
     const instructions = request.prefixMessages[0].content;
-    assert.match(instructions, /Keep the final user-facing response concise in every conversation style/);
+    assert.match(instructions, /Keep all user-facing messages concise in every conversation style/);
+    assert.match(instructions, /including opening intent, Tool-loop progress, discussion and final replies/);
+    assert.match(instructions, /In Tool loops, report only meaningful changes/);
+    assert.match(instructions, /Concision governs communication, not task scope, verification or the contents of requested artifacts and Tool arguments/);
+    assert.doesNotMatch(instructions, /Concision applies only to the final response/);
     assert.match(instructions, /remove redundancy, not necessary substance/);
     assert.match(instructions, /Honor requested detail without fixed length limits/);
     assert.match(instructions, /necessary explanations, evidence, verification, failures, unfinished work/);

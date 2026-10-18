@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { ToolRegistry, ToolHandlerContext } from './toolRegistry.js';
 import type { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
 import { ToolResourceScheduler } from './toolResourceScheduler.js';
+import { resolveToolReferenceName, unknownToolReferenceError } from './toolReferenceNames.js';
 
 const schema = z.object({ code: z.string().min(1).max(64000) }).strict();
 export function registerToolScript(registry: ToolRegistry, jobs: RuntimeAsyncJobs) {
@@ -31,11 +32,12 @@ export async function executeToolScript(code: string, context: ToolHandlerContex
     try { return action(); } finally { cpu += performance.now() - start; }
   };
   const bridge = vm.newFunction('__toolCall', (nameHandle, argumentsHandle) => {
-    const name = vm.getString(nameHandle), text = vm.getString(argumentsHandle);
+    const name = resolveToolReferenceName(vm.getString(nameHandle), context.turn), text = vm.getString(argumentsHandle);
     if (++calls > 32 || pending.size >= 8) throw new Error('Tool script limit: 32 calls total, 8 in flight.');
     if (text.length > 2 * 1024 * 1024) throw new Error('Tool arguments exceed 2 MiB.');
     const registration = registry.resolve(name);
-    if (!registration || registration.nestedCallable === false) throw new Error('Tool is unavailable for nested execution. Call it directly.');
+    if (!registration) throw unknownToolReferenceError(name, 'native');
+    if (registration.nestedCallable === false) throw new Error('Tool is unavailable for nested execution. Call it directly.');
     const input = JSON.parse(text), promise = vm.newPromise(); deferred.add(promise);
     const operation = (async () => {
       let envelope: unknown;

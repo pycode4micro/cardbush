@@ -4,6 +4,7 @@ import type { ModelMessage, ModelRequest, ToolDefinition } from '@cardbush/bush-
 import type { ToolRegistry } from './toolRegistry.js';
 import { toolSchemaReceipts } from './toolSchemaReceipts.js';
 import { withToolDisplayTitle } from './toolDisplay.js';
+import { resolveToolReferenceName, unknownToolReferenceError, wrongToolRouteError } from './toolReferenceNames.js';
 
 const protocol = 'bush.builtin_schema.v1';
 const revision = (definition: ToolDefinition) => createHash('sha256').update(JSON.stringify(definition)).digest('hex');
@@ -102,10 +103,12 @@ export function nativeToolSchemaIsCurrent(registry: ToolRegistry, request: Model
 
 function callableDefinition(registry: ToolRegistry, request: ModelRequest | undefined, name: string) {
   const registration = registry.resolve(name);
-  if (!request || !registration || registration.mcpHook || !request.tools.some(tool => tool.name === name) ||
+  if (!registration) throw unknownToolReferenceError(name, 'native');
+  if (!request || !request.tools.some(tool => tool.name === name) || registration.mcpHook?.modelVisible === false ||
     !available(request, name) || registration.sessionScope && registration.sessionScope !== request.sessionId) {
     throw Object.assign(new Error('This native tool is not available to this turn. Loading a schema grants no access.'), { code: 'tool_not_exposed' });
   }
+  if (registration.mcpHook) throw wrongToolRouteError(name, 'mcp');
   if (registration.forwardToolCall || directTools.has(name)) {
     throw Object.assign(new Error(`Call ${name} directly using its declared schema.`), { code: 'tool_requires_direct_call' });
   }
@@ -119,7 +122,7 @@ export function registerBuiltinToolDisclosure(registry: ToolRegistry) {
     manifest: { effect_kind: 'observation', operation: 'tools.schema', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false },
     parallelSafe: true, decodeInput: value => schema.parse(value),
     execute: context => {
-      const definition = callableDefinition(registry, context.turn?.request, context.input.name);
+      const definition = callableDefinition(registry, context.turn?.request, resolveToolReferenceName(context.input.name, context.turn));
       return { protocol, sessionId: context.sessionId, action: 'load', matches: [{ name: definition.name, revision: revision(definition), definition }],
         invocation: { tool: 'call_tool', name: definition.name, arguments: 'Use the fields described by definition.inputSchema inside arguments.' } };
     },
@@ -131,7 +134,7 @@ export function registerBuiltinToolDisclosure(registry: ToolRegistry) {
     delegatesToolExecution: true, nestedCallable: false,
     decodeInput: value => callSchema.parse(value),
     forwardToolCall: context => {
-      const definition = callableDefinition(registry, context.turn?.request, context.input.name);
+      const definition = callableDefinition(registry, context.turn?.request, resolveToolReferenceName(context.input.name, context.turn));
       synchronizeBuiltinSchemas(registry, context.turn!.request, context.turn!.contextMessages);
       if ((context.turn!.request.metadata.builtinToolSchemas as Record<string, string>)[definition.name] !== revision(definition)) throw builtinSchemaRequiredError(definition.name);
       return { name: definition.name, input: context.input.arguments };

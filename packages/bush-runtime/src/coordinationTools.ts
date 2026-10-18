@@ -44,23 +44,30 @@ export function registerCoordinationTools(
       definition: {
         name: UPDATE_TASK_PLAN_TOOL,
         description:
-          "Manage a visible task plan when it materially helps delivery or review. action=get reads the plan and revision. action=patch requires expected_revision and changes supplied updates (by node ID), append_nodes, remove_ids or plan fields; action=replace (default) submits the whole plan. Preserve node IDs; removing active-plan nodes requires scopeChangeReason. pending=not started; in_progress=current work (at most one); completed=finished. For waiting, set waitingFor to the concrete reason and waitingKind: user=needs user confirmation/input, background=awaits an already-started task, dependency=awaits a prerequisite step. Only user waits request the user's attention. Keep active true while unfinished. Updates are atomic; stale revisions require rereading. Reported progress is not independent verification and does not force another response.",
+          "Manage a visible task plan when it materially helps delivery or review. action=get reads the plan and revision and accepts no other fields. action=patch requires expected_revision and changes only supplied updates (by node ID), append_nodes, remove_ids or plan fields. action=replace (default) requires nodes; omitted explanation defaults to an empty string and active reflects whether any node is unfinished. Preserve node IDs; removing active-plan nodes requires scopeChangeReason. pending=not started; in_progress=current work (at most one); completed=finished. For waiting, set waitingFor to the concrete reason and waitingKind: user=needs user confirmation/input, background=awaits an already-started task, dependency=awaits a prerequisite step. Only user waits request the user's attention. Keep active true while unfinished. Updates are atomic; stale revisions require rereading. Reported progress is not independent verification and does not force another response.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
+          anyOf: [
+            { properties: { action: { enum: ['get'] } }, required: ['action'],
+              not: { anyOf: ['expected_revision', 'updates', 'append_nodes', 'remove_ids', 'nodes', 'explanation', 'active', 'scopeChangeReason'].map(field => ({ required: [field] })) } },
+            { properties: { action: { enum: ['replace'] } }, required: ['nodes'],
+              not: { anyOf: ['updates', 'append_nodes', 'remove_ids'].map(field => ({ required: [field] })) } },
+            { properties: { action: { enum: ['patch'] } }, required: ['action', 'expected_revision'], not: { required: ['nodes'] } },
+          ],
           properties: {
             action: { enum: ['get', 'replace', 'patch'], default: 'replace' },
             expected_revision: { type: 'integer', minimum: 0 },
             updates: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, required: ['id'], properties: {
-              id: { type: 'string', minLength: 1 }, step: { type: 'string', minLength: 1 },
-              status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: ['string', 'null'] },
+              id: { type: 'string', minLength: 1, pattern: '\\S' }, step: { type: 'string', minLength: 1, pattern: '\\S' },
+              status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: ['string', 'null'], minLength: 1, pattern: '\\S' },
               waitingKind: { enum: [...taskPlanWaitingKindSchema.options, null] },
             } } },
             append_nodes: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, required: ['step', 'status'], properties: {
-              step: { type: 'string', minLength: 1 }, status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: 'string' },
+              step: { type: 'string', minLength: 1, pattern: '\\S' }, status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: 'string', minLength: 1, pattern: '\\S' },
               waitingKind: { enum: taskPlanWaitingKindSchema.options },
             } } },
-            remove_ids: { type: 'array', maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1 } },
+            remove_ids: { type: 'array', maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1, pattern: '\\S' } },
             nodes: {
               type: "array",
               minItems: 1,
@@ -71,9 +78,9 @@ export function registerCoordinationTools(
                 required: ["step", "status"],
                 properties: {
                   id: { type: "string" },
-                  step: { type: "string" },
+                  step: { type: "string", minLength: 1, pattern: '\\S' },
                   status: { enum: ["pending", "in_progress", "waiting", "completed"] },
-                  waitingFor: { type: "string", minLength: 1, description: "Required for waiting: the concrete external dependency or user action needed to continue." },
+                  waitingFor: { type: "string", minLength: 1, pattern: '\\S', description: "Required for waiting: the concrete external dependency or user action needed to continue." },
                   waitingKind: { enum: taskPlanWaitingKindSchema.options, description: "For waiting: user confirmation/input, an already-started background task, or a prerequisite step." },
                 },
               },
@@ -177,8 +184,9 @@ function coordinationManifest(operation: string) {
 function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
   const object = plainObject(input, "update_task_plan input");
   if (Object.keys(object).some(key => !['action', 'expected_revision', 'updates', 'append_nodes', 'remove_ids', 'nodes', 'explanation', 'active', 'scopeChangeReason'].includes(key))) throw new Error('Unknown plan input field.');
-  const action = object.action ?? 'replace';
-  if (!['get', 'replace', 'patch'].includes(String(action))) throw new Error('action must be get, replace or patch.');
+  const action = object.action === undefined ? 'replace' : object.action;
+  if (typeof action !== 'string' || !['get', 'replace', 'patch'].includes(action)) throw new Error('action must be get, replace or patch.');
+  if (object.scopeChangeReason !== undefined) stringValue(object.scopeChangeReason, 'scopeChangeReason');
   if (object.expected_revision !== undefined && (!Number.isSafeInteger(object.expected_revision) || Number(object.expected_revision) < 0)) throw new Error('expected_revision must be a nonnegative integer.');
   if (action === 'get') {
     if (Object.keys(object).some(key => key !== 'action')) throw new Error('action=get accepts no update fields.');
@@ -186,19 +194,19 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
   }
   if (action === 'patch') {
     if (object.nodes !== undefined || object.expected_revision === undefined) throw new Error('Patches require expected_revision; use updates or append_nodes instead of nodes.');
-    const array = (key: string): unknown[] => { const value = object[key] ?? []; if (!Array.isArray(value) || value.length > 20) throw new Error(`${key} must contain at most 20 entries.`); return value; };
+    const array = (key: string): unknown[] => { const value = object[key] === undefined ? [] : object[key]; if (!Array.isArray(value) || value.length > 20) throw new Error(`${key} must contain at most 20 entries.`); return value; };
     const updates = array('updates').map(value => {
       const node = plainObject(value, 'updates');
       if (Object.keys(node).some(key => !['id', 'step', 'status', 'waitingFor', 'waitingKind'].includes(key))) throw new Error('Unknown plan patch field.');
-      if (node.status !== undefined && !['pending', 'in_progress', 'waiting', 'completed'].includes(String(node.status))) throw new Error('Invalid node status.');
+      if (node.status !== undefined && (typeof node.status !== 'string' || !['pending', 'in_progress', 'waiting', 'completed'].includes(node.status))) throw new Error('Invalid node status.');
       return { id: requiredString(node.id, 'id'), ...(node.step !== undefined ? { step: requiredString(node.step, 'step') } : {}),
         ...(node.status !== undefined ? { status: node.status as TaskPlan['nodes'][number]['status'] } : {}),
         ...(node.waitingKind !== undefined ? { waitingKind: node.waitingKind === null ? null : taskPlanWaitingKindSchema.parse(node.waitingKind) } : {}),
         ...(node.waitingFor !== undefined ? { waitingFor: node.waitingFor === null ? null : requiredString(node.waitingFor, 'waitingFor') } : {}) };
     });
     const appended = array('append_nodes');
+    if (appended.some(node => Object.hasOwn(plainObject(node, 'append_nodes'), 'id'))) throw new Error('New nodes receive IDs from Runtime.');
     const appendNodes = appended.length ? decodeTaskPlanInput({ nodes: appended, explanation: '', active: true }).nodes : [];
-    if (appendNodes.some(node => node.id)) throw new Error('New nodes receive IDs from Runtime.');
     const removeIds = array('remove_ids').map(id => requiredString(id, 'remove_ids'));
     if (new Set(removeIds).size !== removeIds.length) throw new Error('remove_ids must be unique.');
     return { action, expectedRevision: Number(object.expected_revision), nodes: [], updates, appendNodes, removeIds,
@@ -213,7 +221,9 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
     action: 'replace', expectedRevision: object.expected_revision as number | undefined,
     nodes: object.nodes.map((candidate, index) => {
       const node = plainObject(candidate, `nodes[${index}]`);
-      const status = requiredString(node.status, `nodes[${index}].status`);
+      if (Object.keys(node).some(key => !['id', 'step', 'status', 'waitingFor', 'waitingKind'].includes(key))) throw new Error('Unknown plan node field.');
+      if (node.id !== undefined) stringValue(node.id, `nodes[${index}].id`);
+      const status = stringValue(node.status, `nodes[${index}].status`);
       if (!["pending", "in_progress", "waiting", "completed"].includes(status)) {
         throw new Error(`nodes[${index}].status is invalid.`);
       }
@@ -225,8 +235,8 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
         ...(node.waitingFor !== undefined ? { waitingFor: requiredString(node.waitingFor, `nodes[${index}].waitingFor`) } : {}),
       };
     }),
-    explanation: stringValue(object.explanation, "explanation"),
-    active: booleanValue(object.active, "active"),
+    explanation: object.explanation === undefined ? '' : stringValue(object.explanation, "explanation"),
+    active: object.active === undefined ? object.nodes.some(node => node.status !== 'completed') : booleanValue(object.active, "active"),
     scopeChangeReason: optionalString(object.scopeChangeReason) ?? "",
   };
 }

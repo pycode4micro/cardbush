@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolveToolReferenceName } from './toolReferenceNames.js';
 import { omitToolImageData, omitToolImageDataFromText, snapshotMcpImages } from './toolImageContent.js';
 import { isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -255,14 +256,15 @@ function registerParallel(registry: ToolRegistry) {
     },
     execute: async (context) => {
       const catalog = new Map(registry.catalog().map((item) => [item.definition.name, item]));
-      const disallowed = context.input.calls.filter((call) => {
+      const calls = context.input.calls.map(call => ({ ...call, name: resolveToolReferenceName(call.name, context.turn) }));
+      const disallowed = calls.filter((call) => {
         const entry = catalog.get(call.name);
         return !entry?.parallelSafe || entry.manifest.mutating || entry.manifest.effect_kind === 'interaction' || registry.resolve(call.name)?.nestedCallable === false;
       });
       if (disallowed.length) {
         throw new Error(`parallel_tools only accepts read-only parallel-safe tools: ${disallowed.map((item) => item.name).join(", ")}`);
       }
-      const results = await Promise.all(context.input.calls.map(async (call) => {
+      const results = await Promise.all(calls.map(async (call) => {
         try {
           const child = await context.invokeTool(call.name, call.arguments, { record: true });
           return { name: call.name, returned: true, result: child };

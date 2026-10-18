@@ -78,6 +78,7 @@ async function buildViews() {
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-sessions' ? [
       'src/hooks/useInspectorTabs.ts', 'src/features/inspector/inspectorSessions.ts',
+      'src/hooks/useCardbushChat.ts',
       'src/features/inspector/InspectorTabLock.tsx', 'src/features/inspector/panelLayout.ts',
       'src/features/inspector/ConversationInspector.tsx',
       'src/features/inspector/useInspectorBrowserActions.ts', 'src/hooks/useSoftPanelPresence.ts',
@@ -194,6 +195,15 @@ async function buildViews() {
     plugins: [react(), {
       name: 'app-view-test-entry',
       enforce: 'pre',
+      transform(source, id) {
+        if (process.env.CARDBUSH_APP_VIEWS_CASE !== 'long-transcript' || !id.replaceAll('\\', '/').endsWith('/chatMessages/MessageBubble.tsx')) return;
+        // Count real content renders without adding instrumentation to the product.
+        const ast = ts.createSourceFile(id, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+        const render = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'AssistantMessageContent');
+        assert.ok(render?.body, 'the long-transcript fixture must measure the real content renderer');
+        const offset = render.body.getStart(ast) + 1;
+        return source.slice(0, offset) + '\n(window as any).__transcriptRenders?.push(message.id);\n' + source.slice(offset);
+      },
       resolveId: (value, importer) => {
         if (process.env.CARDBUSH_APP_VIEWS_CASE === 'assistant-feedback' && value.endsWith('runtime-client/ElectronRuntimeSession')) return '\0assistant-feedback-runtime';
         if (process.env.CARDBUSH_APP_VIEWS_CASE === 'team-composer' && value.endsWith('runtime-client/ElectronRuntimeSession')) return '\0team-composer-runtime';
@@ -903,6 +913,12 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'terminal-task') {
       await require('./helpers/terminal-task-status.cjs')({ run, until, pause });
       assert.deepEqual(await run('failures'), [], 'no terminal status renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'long-transcript') {
+      await require('./helpers/chat-long-transcript.cjs')({ run, until, pause });
+      assert.deepEqual(await run('failures'), [], 'no long transcript renderer errors');
       assert.deepEqual(errors, []);
       return;
     }

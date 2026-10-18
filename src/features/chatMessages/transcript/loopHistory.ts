@@ -509,8 +509,14 @@ function flattenLoopHistoryMessages(messages: ChatMessage[]) {
   return flattened;
 }
 
+// Transcript reducers replace messages on updates. Keep snapshots of unchanged
+// records stable so a new live event does not copy every historical Tool again.
+const loopHistorySnapshots = new WeakMap<ChatMessage, ChatMessage>();
+
 export function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
-  return {
+  const cached = loopHistorySnapshots.get(message);
+  if (cached) return cached;
+  const snapshot: ChatMessage = {
     id: message.id,
     messageId: message.messageId,
     role: message.role,
@@ -535,6 +541,9 @@ export function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
     taskPlan: message.taskPlan,
     metadata: message.metadata ? { ...message.metadata } : undefined,
   };
+  loopHistorySnapshots.set(message, snapshot);
+  loopHistorySnapshots.set(snapshot, snapshot);
+  return snapshot;
 }
 
 export function hasVisibleLoopHistory(message: ChatMessage) {

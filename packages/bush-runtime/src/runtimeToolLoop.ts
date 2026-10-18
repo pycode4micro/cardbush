@@ -3,6 +3,7 @@ import { projectArchivedToolResult } from './archivedToolResultProjection.js';
 import { DEFAULT_TOOL_RESULT_MAX_CHARS } from './toolResultBudget.js';
 import { toolCallDisplay } from './toolDisplay.js';
 import { modelMcpAppReference } from './mcpAppReference.js';
+import type { ToolNameScope } from './toolReferenceNames.js';
 import {
   type ModelMessage,
   type ModelRequest,
@@ -191,6 +192,7 @@ export class RuntimeToolLoop {
       signal?: AbortSignal;
       request?: ModelRequest;
       contextMessages?: ModelMessage[];
+      toolNameScope?: ToolNameScope;
       modelContextIngressBudgetTokens?: number;
     },
   ): Promise<RuntimeToolRoundResult> {
@@ -235,7 +237,7 @@ export class RuntimeToolLoop {
           executionIdentity,
           controller.signal,
           input.request && input.contextMessages
-            ? { request: input.request, contextMessages: input.contextMessages, signal: input.signal }
+            ? { request: input.request, contextMessages: input.contextMessages, signal: input.signal, toolNameScope: input.toolNameScope }
             : undefined,
         );
         hookStopTurn ??= outcome.hookStopTurn;

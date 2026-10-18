@@ -17,6 +17,8 @@ import { registerBuiltinToolDisclosure, synchronizeBuiltinSchemas } from '../dis
 import { modelToolDefinitions } from '../dist/mcpToolDiscovery.js';
 import { SubagentTaskStore } from '../dist/subagentTaskStore.js';
 import { withToolFailureFacts } from '../dist/toolFailureFacts.js';
+import { toolExecutionError } from '@cardbush/bush-protocol';
+import { summarizeExecution } from '../dist/executionHistory.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture', owner: 'runtime', risk: 'low', dispatch_scope: 'session', mutating: false };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -131,6 +133,107 @@ test('executor failure facts are trusted only in process and cannot erase nested
   const written = await f.run('delegate_recorded_write', {});
   assert.equal(readFileSync(join(f.root, 'recorded.md'), 'utf8'), 'saved');
   assert.deepEqual(written.execution, { dispatch: 'started', effects: 'recorded', result: 'known', recovery: 'inspect_existing' });
+});
+
+test('pre-dispatch facts propagate through delegation and cannot erase earlier child execution', async t => {
+  const f = fixture(t);
+  const facts = { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'retry' };
+  f.add('blocked_before_dispatch', () => { throw withToolFailureFacts(new Error('Admission blocked'), facts); }, { manifest: { ...manifest, mutating: true } });
+  f.add('delegate_preflight', context => context.invokeTool('blocked_before_dispatch', {}), { delegatesToolExecution: true, manifest: { ...manifest, mutating: true } });
+  assert.deepEqual((await f.run('delegate_preflight', {})).execution, facts);
+  f.add('write_then_preflight', async context => {
+    await context.invokeTool('write_file', { path: 'before-preflight.md', content: 'keep this change' }, { record: true });
+    return context.invokeTool('blocked_before_dispatch', {});
+  }, { delegatesToolExecution: true, manifest: { ...manifest, mutating: true } });
+  assert.deepEqual((await f.run('write_then_preflight', {})).execution,
+    { dispatch: 'started', effects: 'recorded', result: 'known', recovery: 'inspect_existing' });
+  assert.equal(readFileSync(join(f.root, 'before-preflight.md'), 'utf8'), 'keep this change');
+  f.add('read_only_child', () => ({ observed: true }));
+  f.add('read_then_preflight', async context => {
+    await context.invokeTool('read_only_child', {});
+    throw withToolFailureFacts(new Error('Local preflight failed'), facts);
+  }, { delegatesToolExecution: true });
+  assert.equal((await f.run('read_then_preflight', {})).execution.dispatch, 'started');
+  let localEffect = false;
+  f.add('ordinary_mutator', context => {
+    localEffect = true;
+    return context.invokeTool('blocked_before_dispatch', {});
+  }, { manifest: { ...manifest, mutating: true } });
+  assert.deepEqual((await f.run('ordinary_mutator', {})).execution,
+    { dispatch: 'started', effects: 'possible', result: 'unknown', recovery: 'inspect_existing' },
+    'an ordinary executor may have its own effects before a child is rejected');
+  assert.ok(localEffect);
+});
+
+test('async script failures keep task, native journal, summaries and history in agreement', async t => {
+  const f = fixture(t);
+  f.add('fail_after_write', () => { throw Object.assign(new Error('Fixture failure'), { code: 'fixture_failure' }); });
+  const { start, completion } = await f.script('await tools.write_file({path:"partial.md",content:"saved"}); return await tools.fail_after_write({});');
+  assert.equal(completion.status, 'failed');
+  assert.equal(completion.result.value.error.code, 'fixture_failure');
+  assert.equal(completion.result.value.recovery, 'inspect_existing');
+  const record = f.store.get('s', 't', start.result.task_id);
+  assert.equal(record.outcome, 'failed');
+  assert.equal(record.error.code, 'fixture_failure');
+  assert.equal(toolExecutionError(record).code, 'fixture_failure');
+  assert.equal(record.error.details.recovery, 'inspect_existing');
+  const summary = f.store.listTurnSummaries('s', 't').find(item => item.toolCall.id === start.result.task_id);
+  assert.equal(summary.outcome, 'failed');
+  assert.equal(summary.error.code, 'fixture_failure');
+  assert.equal(summarizeExecution(record).outcome, 'failed');
+  assert.match(summarizeExecution(record).summary, /fixture_failure/);
+  assert.equal(readFileSync(join(f.root, 'partial.md'), 'utf8'), 'saved');
+  const inspected = await f.run('tasks', { action: 'inspect', task_ids: [start.result.task_id] });
+  assert.equal(inspected.result.tasks[0].status, 'failed');
+  assert.equal(inspected.result.tasks[0].result.locator, completion.result.locator);
+});
+
+test('stopped scripts keep cancelled receipts and completed children remain recorded', async t => {
+  const f = fixture(t), waiting = Promise.withResolvers();
+  f.add('wait_for_stop', context => new Promise((resolve, reject) => {
+    const cancel = () => reject(context.signal.reason);
+    context.signal.addEventListener('abort', cancel, { once: true });
+    waiting.resolve();
+  }));
+  const start = await f.run('run_tools', { code: 'await tools.write_file({path:"before-stop.md",content:"saved"}); return await tools.wait_for_stop({});' });
+  await waiting.promise;
+  const stopped = await f.run('tasks', { action: 'stop', task_ids: [start.result.task_id] });
+  assert.equal(stopped.result.controls[0].result.stop_requested, true);
+  const completion = JSON.parse((await f.deliveries.find(item => item.id === start.result.task_id).message).content);
+  assert.equal(completion.status, 'cancelled');
+  assert.equal(completion.result.value.error.code, 'async_task_cancelled');
+  const record = f.store.get('s', 't', start.result.task_id);
+  assert.equal(record.outcome, 'cancelled');
+  assert.equal(record.error.kind, 'cancelled');
+  assert.equal(summarizeExecution(record).outcome, 'cancelled');
+  assert.equal(f.store.listTurnSummaries('s', 't').find(item => item.toolCall.id === start.result.task_id).outcome, 'cancelled');
+  assert.equal(readFileSync(join(f.root, 'before-stop.md'), 'utf8'), 'saved');
+});
+
+test('successful async scripts keep error-looking business values as ordinary results', async t => {
+  const f = fixture(t);
+  const { start, completion } = await f.script('return {error:{code:"business_value",message:"example"}};');
+  assert.equal(completion.status, 'completed');
+  const record = f.store.get('s', 't', start.result.task_id);
+  assert.equal(record.outcome, 'returned');
+  assert.equal(toolExecutionError(record), undefined);
+  assert.equal(record.result.result.error.code, 'business_value');
+  assert.equal(summarizeExecution(record).outcome, 'returned');
+});
+
+test('cancelling an unanswered async question persists cancellation without inferring an answer', async t => {
+  const f = fixture(t);
+  const start = await f.run('request_user_input_async', { prompt: 'Choose a fixture version', options: ['Current', 'Previous'] });
+  await f.run('tasks', { action: 'stop', task_ids: [start.result.task_id] });
+  const completion = JSON.parse((await f.deliveries.find(item => item.id === start.result.task_id).message).content);
+  assert.equal(completion.status, 'cancelled');
+  assert.equal(completion.result.value.recovery, 'do_not_retry');
+  assert.equal(completion.result.value.error.kind, 'cancelled');
+  const record = f.store.get('s', 't', start.result.task_id);
+  assert.equal(record.outcome, 'cancelled');
+  assert.equal(record.error.code, 'async_task_cancelled');
+  assert.equal(summarizeExecution(record).outcome, 'cancelled');
+  assert.equal(record.result, undefined);
 });
 
 test('patch preflight is all-or-none and a successful add/update/move/delete retains undo evidence', async t => {

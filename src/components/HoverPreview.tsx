@@ -8,6 +8,7 @@ export function useHoverPreview(disabled = false, { interactive = false }: { int
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const pending = useRef<HTMLElement | null>(null);
   const dismissed = useRef<HTMLElement | null>(null);
+  const heldOpen = useRef(0);
   const openTimer = useRef(0), closeTimer = useRef(0);
   const close = useCallback(() => {
     window.clearTimeout(openTimer.current);
@@ -21,14 +22,34 @@ export function useHoverPreview(disabled = false, { interactive = false }: { int
     window.clearTimeout(openTimer.current); window.clearTimeout(closeTimer.current);
     pending.current = null; dismissed.current = null; setAnchor(element);
   }, [disabled]);
-  const dismiss = useCallback(() => { dismissed.current = anchor ?? pending.current; close(); }, [anchor, close]);
+  const dismiss = useCallback(() => {
+    if (heldOpen.current) return;
+    dismissed.current = anchor ?? pending.current; close();
+  }, [anchor, close]);
   const leave = useCallback(() => {
     dismissed.current = null;
     window.clearTimeout(openTimer.current);
     pending.current = null;
     window.clearTimeout(closeTimer.current);
+    if (heldOpen.current) return;
     closeTimer.current = window.setTimeout(close, 120);
   }, [close]);
+  const keepOpenUntil = useCallback((completion: Promise<unknown>) => {
+    // Native menus temporarily own pointer/focus events. Keep their parent card
+    // mounted and avoid recording that handoff as an explicit hover dismissal.
+    heldOpen.current += 1;
+    window.clearTimeout(closeTimer.current);
+    dismissed.current = null;
+    const release = () => {
+      heldOpen.current -= 1;
+      if (heldOpen.current || !anchor?.isConnected) return;
+      dismissed.current = null;
+      if (document.visibilityState === 'hidden') { close(); return; }
+      const card = document.getElementById(id);
+      if (!anchor.matches(':hover') && !card?.matches(':hover') && !card?.contains(document.activeElement)) leave();
+    };
+    void completion.then(release, release);
+  }, [anchor, close, id, leave]);
   const requestOpen = useCallback((element: HTMLElement) => {
     keepOpen();
     if (disabled || dismissed.current === element || anchor === element || pending.current === element) return;
@@ -54,14 +75,14 @@ export function useHoverPreview(disabled = false, { interactive = false }: { int
   }, [anchor, close, interactive, keepOpen, requestOpen]);
   const focus = useCallback((event: FocusEvent<HTMLElement>) => {
     if (event.target === event.currentTarget && event.currentTarget.matches(':focus-visible')) requestOpen(event.currentTarget);
-    else close();
+    else if (!heldOpen.current) close();
   }, [close, requestOpen]);
   useEffect(() => { if (disabled) close(); }, [close, disabled]);
   useEffect(() => () => {
     window.clearTimeout(openTimer.current);
     window.clearTimeout(closeTimer.current);
   }, []);
-  return { id, anchor, open, close, dismiss, keepOpen, leave, triggerProps: {
+  return { id, anchor, open, close, dismiss, keepOpen, keepOpenUntil, leave, triggerProps: {
     onPointerEnter: pointer, onPointerMove: pointer, onPointerLeave: leave,
     onFocus: focus, onBlur: leave, onPointerDown: dismiss,
     'aria-describedby': anchor ? id : undefined,
@@ -152,7 +173,7 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
   }, [anchor, close, interactiveLabel]);
   if (!anchor) return null;
   return createPortal(<div ref={node} id={preview.id} popover="manual" role={interactiveLabel ? 'dialog' : 'tooltip'} aria-label={interactiveLabel}
-    className={`hover-preview ${className}`} data-interactive={!!interactiveLabel} onPointerEnter={preview.keepOpen}
+    className={`hover-preview ${className}`} data-interactive={!!interactiveLabel} onPointerEnter={preview.keepOpen} onPointerMove={preview.keepOpen}
     onPointerLeave={() => {
       if (interactiveLabel && node.current?.contains(document.activeElement)) return;
       preview.leave();

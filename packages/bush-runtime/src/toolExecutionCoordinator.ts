@@ -26,10 +26,12 @@ import { childAgentToolDenial } from './childAgentPolicy.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
 import { webToolDenial } from './webToolPolicy.js';
 import { toolResourceScheduler } from './toolResourceScheduler.js';
-import { toolFailureFacts } from './toolFailureFacts.js';
+import { toolFailureFacts, withToolFailureFacts } from './toolFailureFacts.js';
+import { resolveToolReferenceName } from './toolReferenceNames.js';
 
 interface ExecutionTrace {
   dispatched: boolean;
+  nestedDispatched: boolean;
   nestedEffects: ToolExecutionFacts['effects'];
   nestedUncertain: boolean;
   denied: boolean;
@@ -107,7 +109,7 @@ export class ToolExecutionCoordinator {
     toolCall: ToolCall, identity: ToolExecutionIdentity, signal?: AbortSignal,
     turn?: ToolHandlerContext['turn'], parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
   ): Promise<ToolExecutionOutcome> {
-    const trace: ExecutionTrace = { dispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false };
+    const trace: ExecutionTrace = { dispatched: false, nestedDispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false };
     const outcome = await this.executeAttempt(toolCall, identity, signal, turn, parentLifecycle, trace);
     const error = outcome.kind === 'returned' ? outcome.resultError : outcome.error;
     const mutating = outcome.actionManifest?.mutating ?? this.#registry.resolve(toolCall.name)?.manifest.mutating ?? true;
@@ -115,13 +117,16 @@ export class ToolExecutionCoordinator {
       : trace.failureFacts?.effects ?? (trace.dispatched && mutating ? 'possible' : 'none');
     const result = trace.nestedUncertain ? 'unknown'
       : trace.failureFacts?.result ?? (outcome.kind === 'returned' || !trace.dispatched ? 'known' : 'unknown');
+    // A local preflight cannot erase a child that already ran or a recorded write.
+    const dispatched = trace.dispatched && (trace.failureFacts?.dispatch !== 'not_started'
+      || trace.nestedDispatched || effects !== 'none');
     const execution: ToolExecutionFacts = {
-      dispatch: outcome.kind === 'returned' ? 'returned' : trace.dispatched ? 'started' : 'not_started',
+      dispatch: outcome.kind === 'returned' ? 'returned' : dispatched ? 'started' : 'not_started',
       effects,
       result,
       recovery: !error ? 'none' : trace.denied || error.kind === 'permission' || outcome.kind === 'cancelled' ? 'do_not_retry'
-        : effects !== 'none' || trace.dispatched && mutating && result === 'unknown' ? 'inspect_existing'
-        : trace.dispatched && retryableObservation(error) ? 'retry' : 'correct_input',
+        : effects !== 'none' || dispatched && mutating && result === 'unknown' ? 'inspect_existing'
+        : trace.failureFacts?.recovery ?? (trace.dispatched && retryableObservation(error) ? 'retry' : 'correct_input'),
     };
     if (error) error.details = { ...error.details, execution };
     return { ...outcome, execution };
@@ -133,7 +138,7 @@ export class ToolExecutionCoordinator {
     signal?: AbortSignal,
     turn?: ToolHandlerContext["turn"],
     parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
-    trace: ExecutionTrace = { dispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false },
+    trace: ExecutionTrace = { dispatched: false, nestedDispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false },
   ): Promise<ToolExecutionOutcome> {
     if (turn?.request.metadata.toolExecutionPolicy === 'none') {
       return failedResult('tools_disabled', 'All tools are disabled by this service.', undefined, {}, 'permission');
@@ -386,6 +391,7 @@ export class ToolExecutionCoordinator {
           signal,
           turn,
           invokeTool: async (name, input, nestedOptions) => {
+            name = resolveToolReferenceName(name, turn);
             if (this.#registry.resolve(name)?.nestedCallable === false) throw Object.assign(new Error(`Tool ${name} must be called directly, not nested.`), { code: 'nested_tool_disallowed' });
             if (nestedOrdinal >= 128 || toolCall.id.split(':child:').length > 8) throw Object.assign(new Error('Nested tool call limit exceeded.'), { code: 'nested_tool_limit' });
             if (nestedHookStopTurn) throw Object.assign(new Error(nestedHookStopTurn), { code: 'plugin_hook_blocked' });
@@ -402,6 +408,7 @@ export class ToolExecutionCoordinator {
             const nested = await this.execute(nestedCall, nestedIdentity,
               nestedOptions?.signal ? AbortSignal.any([...(signal ? [signal] : []), nestedOptions.signal]) : signal, turn,
               nestedOptions?.record ? undefined : lifecycle);
+            trace.nestedDispatched ||= nested.execution?.dispatch !== 'not_started';
             if (nested.execution?.effects === 'recorded' || trace.nestedEffects === 'none' && nested.execution?.effects === 'possible') trace.nestedEffects = nested.execution.effects;
             trace.nestedUncertain ||= nested.execution?.result === 'unknown';
             trace.denied ||= nested.kind !== 'returned' && nested.error.kind === 'permission';
@@ -416,11 +423,17 @@ export class ToolExecutionCoordinator {
               if (nested.hookFeedback !== undefined) nestedHookFeedback.push(nested.hookFeedback);
               return nested.result;
             }
-            throw Object.assign(new Error(nested.error.message), {
+            const failure = Object.assign(new Error(nested.error.message), {
               ...(nested.kind === 'cancelled' ? { name: 'AbortError' } : {}),
               code: nested.error.code,
               details: nested.error.details,
             });
+            // Carry only coordinator-owned facts across delegation, never facts
+            // asserted by a remote tool's JSON or error details.
+            throw registration.delegatesToolExecution && nested.execution ? withToolFailureFacts(failure, {
+              ...(nested.execution.dispatch === 'not_started' ? { dispatch: 'not_started' } : {}),
+              effects: nested.execution.effects, result: nested.execution.result, recovery: nested.execution.recovery,
+            }) : failure;
           },
           recordWorkspaceChange: (change) => workspaceChanges.push(change),
         }));
@@ -435,10 +448,10 @@ export class ToolExecutionCoordinator {
         "Tool execution was cancelled.",
       );
     } catch (error) {
+      trace.failureFacts = toolFailureFacts(error);
       if (isAbortError(error)) {
         return { ...cancelledResult("tool_execution_cancelled", actionManifest), workspaceChanges };
       }
-      trace.failureFacts = toolFailureFacts(error);
       const failed = failedResult(
         errorCode(error, "tool_execution_exception"),
         errorMessage(error),
@@ -632,7 +645,9 @@ function assertJsonValue(value: unknown, ancestors = new Set<object>()): void {
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error("Tool results require finite numbers.");
-    if (Object.is(value, -0)) throw new Error("Tool results cannot contain negative zero.");
+    // -0 is valid JSON (and JSON.parse preserves it). The snapshot below
+    // canonicalizes it to 0 for model delivery and persistence without mutating
+    // tool-owned data. Reject only numbers JSON would silently replace with null.
     return;
   }
   if (typeof value !== "object") {

@@ -13,14 +13,17 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 25));
 app.whenReady().then(async () => {
   protocol.handle('cardbush-file', request => net.fetch(pathToFileURL(localFileSystemPathFromProtocolUrl(request.url)).href));
   const win = new BrowserWindow({ show: false, width: 1050, height: 1000, webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false, offscreen: true } });
-  const menus = [], actions = [], errors = []; let failCopy = false;
+  const menus = [], actions = [], errors = []; let failCopy = false, holdMenu = false, closeMenu;
   // Exercise the real IPC handler and Windows clipboard helper while keeping the user's clipboard intact.
   const main = fs.readFileSync('electron/main.ts', 'utf8'), ast = ts.createSourceFile('main.ts', main, ts.ScriptTarget.Latest, true);
   const functions = ['normalizeShellPath', 'copyLocalFileToClipboard', 'copyWindowsFileToClipboard'].map(name => ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast));
   const ipcHandler = ast.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(ast) === 'ipcMain.handle' && node.expression.arguments[0]?.text === 'shell:file-context-menu');
   const source = ts.transpileModule([...functions, ipcHandler.getText(ast)].join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const dependencies = { fs, path, process, localPath: require('@cardbush/platform').localPath, BrowserWindow, ipcMain, mainWindow: win, shadowWindows: new Map(), buildFileContextMenu,
-    showWindowPopupMenu: (target, menu) => menu.popup({ window: target }),
+    showWindowPopupMenu: (target, menu) => {
+      menu.popup({ window: target });
+      return holdMenu ? new Promise(resolve => { closeMenu = resolve; }) : Promise.resolve();
+    },
     localPathFromProtocolUrl: localFileSystemPathFromProtocolUrl,
     Menu: { buildFromTemplate: items => { const menu = Menu.buildFromTemplate(items); menus.push(menu); return { popup() {} }; } },
     clipboard: { writeText: value => actions.push(['path', value]) },
@@ -76,6 +79,13 @@ app.whenReady().then(async () => {
     await until(() => menus.length > beforeMissing);
     assert.equal(menus.at(-1).items.find(item => item.label === '复制文件').enabled, false);
     assert.equal(menus.at(-1).items.find(item => item.label === '复制路径').enabled, true);
+    holdMenu = true;
+    const beforeHeld = menus.length;
+    await read('window.fileMenuSettled = false; void cardbushDesktop.showFileContextMenu(files.document).then(() => { fileMenuSettled = true; })');
+    await until(() => menus.length > beforeHeld); await pause();
+    assert.equal(await read('fileMenuSettled'), false, 'file-menu IPC must remain pending while the native popup is open');
+    closeMenu();
+    await until(() => read('fileMenuSettled'));
     console.log('Media file menus passed: real chat/preview/inspector right clicks, copy-file only, no path captions, native file-drop routing, open-with, remote images, missing files and error dialogs without navigation.');
   } finally { win.destroy(); clearTimeout(deadline); }
 }).then(() => app.exit(0), error => { console.error(error); clearTimeout(deadline); app.exit(1); });

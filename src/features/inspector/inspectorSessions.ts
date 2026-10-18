@@ -1,14 +1,31 @@
 import { inspectorTabsReducer, type InspectorTabsAction, type InspectorTabsState } from './inspectorTabs';
+import { onConversationDraftAdopted } from '../../shared/conversationDraft';
 
 export function localInspectorWorkspace(sessionId: string) { return `local:${JSON.stringify(sessionId)}`; }
 export function agentInspectorWorkspace(connectionId: string, sessionId: string) {
   return `agent:${JSON.stringify([connectionId, sessionId])}`;
 }
 
+export type InspectorDraftAdoption = { from: string; to: string };
+export function onInspectorDraftAdopted(listener: (adoption: InspectorDraftAdoption) => void) {
+  return onConversationDraftAdopted(({ sessionId, connectionId }) => listener({
+    from: connectionId ? agentInspectorWorkspace(connectionId, '') : localInspectorWorkspace(''),
+    to: connectionId ? agentInspectorWorkspace(connectionId, sessionId) : localInspectorWorkspace(sessionId),
+  }));
+}
+
+export function adoptInspectorSessionState<T>(values: Record<string, T>, { from, to }: InspectorDraftAdoption): Record<string, T> {
+  if (from === to || !Object.hasOwn(values, from)) return values;
+  const next = { ...values, [to]: values[from] };
+  delete next[from];
+  return next;
+}
+
 type Workspace = InspectorTabsState & { open: boolean };
 export type InspectorSessionsState = { workspaces: Record<string, Workspace>; lockedIds: ReadonlySet<string> };
 export const emptyInspectorSessions: InspectorSessionsState = { workspaces: {}, lockedIds: new Set() };
 export type InspectorSessionsAction =
+  | ({ type: 'adopt-draft' } & InspectorDraftAdoption)
   | { type: 'tabs'; workspaceId: string; action: InspectorTabsAction }
   | { type: 'open-state'; workspaceId: string; update: boolean | ((open: boolean) => boolean) }
   | { type: 'bind-browser'; workspaceId: string; ids: string[] }
@@ -35,6 +52,17 @@ export function inspectorSession(state: InspectorSessionsState, workspaceId: str
 
 /** Resource pages have one owner. A lock shares visibility, never a second guest. */
 export function inspectorSessionsReducer(state: InspectorSessionsState, action: InspectorSessionsAction): InspectorSessionsState {
+  if (action.type === 'adopt-draft') {
+    const draft = state.workspaces[action.from];
+    if (!draft || action.from === action.to) return state;
+    const destination = state.workspaces[action.to];
+    const workspaces = adoptInspectorSessionState(state.workspaces, action);
+    workspaces[action.to] = { ...draft,
+      tabs: [...draft.tabs, ...(destination?.tabs ?? []).filter(tab => !draft.tabs.some(own => own.id === tab.id))],
+      activeId: draft.activeId || destination?.activeId || '',
+    };
+    return { ...state, workspaces };
+  }
   if (action.type === 'bind-browser') {
     // An explicit @ reference carries the existing guest into its conversation.
     // Move unlocked resources atomically; locked tabs remain shared by their owner.

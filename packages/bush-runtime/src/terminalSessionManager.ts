@@ -1,6 +1,7 @@
 import { commandInvocation, decodeCommandOutput as decodeProcessOutput } from '@cardbush/platform';
 import { randomUUID } from 'node:crypto';
-import { spawnResourceManagedProcess, type ProcessResourceGovernor, type GuardedProcess } from './processResourceGuard.js';
+import { spawnResourceManagedProcess, reserveProcessResources, isResourceAdmissionError, type ProcessResourceGovernor, type GuardedProcess } from './processResourceGuard.js';
+import { withToolFailureFacts } from './toolFailureFacts.js';
 import { isWithin, normalizeIdentity } from './workspaceAccessPolicy.js';
 import type { ExecutionSandboxPolicy } from './executionSandbox.js';
 import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
@@ -90,13 +91,28 @@ export class TerminalSessionManager {
     }
     this.#runningCommands.set(commandKey, sessionId);
     let guarded: GuardedProcess;
-    try { guarded = await spawnResourceManagedProcess({
-      executable: invocation.executable,
-      args: invocation.args,
-      cwd: input.cwd,
-      governor: this.#resourceGovernor,
-      sandbox: input.sandbox,
-    }); } catch (error) { this.#runningCommands.delete(commandKey); releaseResources(); throw error; }
+    let admitted = false;
+    try {
+      // Reserve through the existing governor before spawn, so an admission
+      // rejection is distinguishable from a process that ran and then failed.
+      const resourceLease = this.#resourceGovernor
+        ? this.#resourceGovernor.acquire('task') : await reserveProcessResources('task', input.signal);
+      admitted = true;
+      guarded = await spawnResourceManagedProcess({
+        executable: invocation.executable,
+        args: invocation.args,
+        cwd: input.cwd,
+        resourceLease,
+        sandbox: input.sandbox,
+      });
+    } catch (error) {
+      this.#runningCommands.delete(commandKey); releaseResources();
+      if (!admitted) throw withToolFailureFacts(error instanceof Error ? error : new Error(String(error)), {
+        dispatch: 'not_started', effects: 'none', result: 'known',
+        recovery: isResourceAdmissionError(error) ? 'retry' : 'correct_input',
+      });
+      throw error;
+    }
     const child = guarded.child;
     const terminal: ManagedTerminalSession = {
       sessionId,

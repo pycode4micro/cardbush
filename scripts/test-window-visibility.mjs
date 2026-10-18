@@ -123,6 +123,26 @@ test('hidden windows do not create native menus; one window cannot close another
   b.webContents.emit('destroyed'); assert.equal(menuB.closed, 1);
 });
 
+test('popup completion waits for dismissal and settles for every owner lifecycle', async () => {
+  for (const reason of ['dismiss', 'replace', 'hide', 'minimize', 'closed', 'destroyed']) {
+    const { target, contents } = windowFixture(); target.visible = true;
+    const menu = menuFixture(); let settled = false;
+    const completion = showWindowPopupMenu(target, menu).then(() => { settled = true; });
+    await Promise.resolve();
+    assert.equal(settled, false, reason + ': opening a native menu is not completion');
+    if (reason === 'dismiss') menu.options.callback();
+    else if (reason === 'replace') {
+      const replacement = menuFixture(); showWindowPopupMenu(target, replacement); replacement.options.callback();
+    } else if (reason === 'destroyed') contents.emit('destroyed');
+    else target.emit(reason);
+    await completion;
+    assert.equal(settled, true, reason + ': parent interactions can resume after closure');
+    assert.deepEqual(target.eventNames(), []);
+    assert.deepEqual(contents.eventNames(), []);
+  }
+  await showWindowPopupMenu(windowFixture().target, menuFixture());
+});
+
 const rendererCode = ts.transpileModule(readFileSync('src/shared/windowVisibility.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
