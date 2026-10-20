@@ -50,6 +50,10 @@ test('search keeps long descriptions compact and only an explicitly loaded schem
   synchronizeMcpDiscovery(registry, request, messages);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__seedream__generate'), false, 'a search receipt cannot authorize a call');
   const full = await search({ action: 'load', query: 'mcp__seedream__generate' });
+  assert.equal(full.invocation.tool, 'mcp_call');
+  assert.deepEqual(Object.keys(full.invocation.arguments), ['name', 'arguments']);
+  assert.match(full.invocation.note, /directly/);
+  assert.deepEqual(JSON.parse(projectMcpDiscoveryResult(JSON.stringify(full))).invocation, full.invocation);
   messages.push({ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'mcp_search', argumentsText: '{"action":"load","query":"mcp__seedream__generate"}' }] },
     { role: 'tool', toolCallId: 'load', content: projectMcpDiscoveryResult(JSON.stringify(full)) });
   synchronizeMcpDiscovery(registry, request, messages);

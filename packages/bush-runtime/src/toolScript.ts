@@ -1,24 +1,40 @@
 import { getQuickJS, type QuickJSDeferredPromise, type QuickJSHandle } from 'quickjs-emscripten';
-import { returnedToolError } from '@cardbush/bush-protocol';
+import { returnedToolError, type UsageRecipeIdentity, type UsageRecipeInvocation } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import type { ToolRegistry, ToolHandlerContext } from './toolRegistry.js';
 import type { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
 import { ToolResourceScheduler } from './toolResourceScheduler.js';
 import { resolveToolReferenceName, unknownToolReferenceError } from './toolReferenceNames.js';
+import { withToolFailureFacts } from './toolFailureFacts.js';
+import { toolScriptInputSchema as schema } from './toolScriptSchema.js';
 
-const schema = z.object({ code: z.string().min(1).max(64000) }).strict();
-export function registerToolScript(registry: ToolRegistry, jobs: RuntimeAsyncJobs) {
+type PreparedUsageScript = { code: string; allowedTools: string[]; identity: UsageRecipeIdentity };
+export function registerToolScript(registry: ToolRegistry, jobs: RuntimeAsyncJobs,
+  prepareUsage?: (context: ToolHandlerContext<unknown>, input: UsageRecipeInvocation) => Promise<PreparedUsageScript>) {
   registry.register({
-    definition: { name: 'run_tools', description: 'Run a small JavaScript async function body to compose registered tools and filter/transform their results. Returns a task_id immediately; continue independent work and receive the result automatically, or use tasks when it is needed. Call await tools.NAME({...}) or await tools.call("NAME", {...}); return only useful JSON data. Example: const r = await tools.read_file({path:"data.json"}); return JSON.parse(r.content).slice(0,10). Promise.all supports independent calls (max 8 in flight, 32 total); dependent writes must be awaited. Tools keep their ordinary permissions, scope, hooks, resource locks and journal. MCP schemas must already be loaded. No Node, filesystem, network, timers or imports in JavaScript; use registered tools. No nested run_tools/tasks/questions/parallel_tools. CPU/memory/time limits apply. A failed or cancelled script may have completed tool actions: inspect records before rerunning.', inputSchema: z.toJSONSchema(schema) },
+    definition: { name: 'run_tools', description: 'Compose registered tools with a small JavaScript async body in code, or run a teacher-packaged method with usage:{recipe_id,expected_revision,parameters,bindings}. Read usage(action="recipe") for business parameters and use its capability recommendations to choose compatible local bindings; no model-written code is needed for a packaged method. Returns a task_id immediately; continue independent work and receive results automatically, or use tasks. In code, await tools.NAME({...}) or tools.call("NAME", {...}); return useful JSON. Promise.all supports independent calls (max 8 in flight, 32 total); await dependent writes. Tools keep ordinary permissions, scope, hooks, locks and journal. MCP schemas must be loaded. No Node, filesystem, network, timers or imports; use registered tools. No nested dispatchers/questions. CPU/memory/time limits apply. Failed/cancelled scripts may have completed actions; inspect records before rerunning.', inputSchema: z.toJSONSchema(schema, { io: 'input' }) },
     manifest: { effect_kind: 'delegation', operation: 'tools.script', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
     delegatesToolExecution: true, nestedCallable: false,
     decodeInput: value => schema.parse(value),
-    execute: context => jobs.start(context, 'script', (signal, onHooks) => executeToolScript(context.input.code, context, registry, signal, onHooks)),
+    execute: async context => {
+      let prepared: PreparedUsageScript | undefined;
+      try {
+        if (context.input.usage !== undefined) {
+          if (!prepareUsage) throw new Error('Usage methods are unavailable on this host.');
+          prepared = await prepareUsage(context, context.input.usage);
+        }
+      } catch (error) {
+        throw withToolFailureFacts(error instanceof Error ? error : new Error(String(error)),
+          { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input' });
+      }
+      const code = prepared?.code ?? context.input.code ?? '';
+      return jobs.start(context, 'script', (signal, onHooks) => executeToolScript(code, context, registry, signal, onHooks, prepared?.allowedTools), prepared?.identity);
+      },
   });
 }
 
 /** QuickJS/WASM owns the guest heap. Never evaluate tool scripts in Node's realm. */
-export async function executeToolScript(code: string, context: ToolHandlerContext<unknown>, registry: ToolRegistry, signal: AbortSignal, onHooks?: (messages: string[], stop?: string) => void) {
+export async function executeToolScript(code: string, context: ToolHandlerContext<unknown>, registry: ToolRegistry, signal: AbortSignal, onHooks?: (messages: string[], stop?: string) => void, allowedTools?: readonly string[]) {
   const engine = await getQuickJS(); signal.throwIfAborted();
   const runtime = engine.newRuntime(); runtime.setMemoryLimit(32 * 1024 * 1024); runtime.setMaxStackSize(512 * 1024);
   const vm = runtime.newContext(), scheduler = new ToolResourceScheduler();
@@ -33,6 +49,7 @@ export async function executeToolScript(code: string, context: ToolHandlerContex
   };
   const bridge = vm.newFunction('__toolCall', (nameHandle, argumentsHandle) => {
     const name = resolveToolReferenceName(vm.getString(nameHandle), context.turn), text = vm.getString(argumentsHandle);
+    if (allowedTools && !allowedTools.includes(name)) throw new Error('This packaged method can only call its declared, locally bound capabilities.');
     if (++calls > 32 || pending.size >= 8) throw new Error('Tool script limit: 32 calls total, 8 in flight.');
     if (text.length > 2 * 1024 * 1024) throw new Error('Tool arguments exceed 2 MiB.');
     const registration = registry.resolve(name);

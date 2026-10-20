@@ -188,7 +188,7 @@ await serveStdio(()=>{const s=new McpServer({name:'hook-fixture',version:'1'});s
       async *stream(req) {
         compactRequests.push(structuredClone(req)); yield event(req, 0, 'response_started');
         if (compactRequests.length > 1 && req.messages.some(value => value.name === 'context_pressure')) {
-          yield event(req, 1, 'tool_call_delta', { index: 0, toolCallId: 'checkpoint', nameDelta: 'checkpoint_context', argumentsDelta: JSON.stringify({ summaries: ['The previous user message was answered.'] }) });
+          yield event(req, 1, 'tool_call_delta', { index: 0, toolCallId: 'checkpoint', nameDelta: 'checkpoint_context', argumentsDelta: JSON.stringify({ updates: [{ source: 0, summary: 'The previous user message was answered.' }] }) });
           yield event(req, 2, 'response_completed', { finishReason: 'tool_calls' });
         } else { yield event(req, 1, 'text_delta', { delta: 'done' }); yield event(req, 2, 'response_completed', { finishReason: 'stop' }); }
       }

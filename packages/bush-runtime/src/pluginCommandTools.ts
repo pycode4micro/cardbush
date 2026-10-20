@@ -17,7 +17,7 @@ export function parsePluginCommandInvocation(text: string) {
 /** Commands retain their own identity and invocation lifecycle; no Skill files are generated. */
 export function registerPluginCommandTools(registry: ToolRegistry, load: () => Promise<PluginCommand[]>, options: {
   skill?: boolean;
-  onInvoke?: (command: PluginCommand, context: ToolHandlerContext<unknown>) => Promise<void>;
+  onInvoke?: (command: PluginCommand, context: ToolHandlerContext<unknown>) => Promise<string | void>;
   fork?: (command: PluginCommand, prompt: string, context: ToolHandlerContext<unknown>) => Promise<string>;
 } = {}) {
   const toolName = options.skill ? 'run_skill' : 'run_plugin_command';
@@ -66,6 +66,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
       const childDenial = command.context === 'fork' ? childAgentDispatchDenial(context.turn?.request) : undefined;
       if (childDenial) return deny(childDenial.code, childDenial.message);
       const userInvoked = context.turn?.request.metadata.pluginCommandUserCallId === context.toolCall.id && context.turn.request.metadata.pluginCommandUserId === command.id;
+      if (command.usage && !userInvoked) return deny('usage_user_selection_required', 'Usage 手册只能由用户通过 /命令选择或停用。');
       if (userInvoked ? !command.userInvocable : command.disableModelInvocation) return deny('plugin_command_invocation_disabled', userInvoked ? '此命令不允许通过用户输入直接调用。' : '此命令只能由用户通过 /命令名 调用。');
       const disabled = stringArray(context.turn?.request.metadata.disabledSkills), allowed = context.turn?.request.metadata.allowedSkills;
       if (options.skill && (disabled.includes(command.name) || disabled.includes(command.id) || (Array.isArray(allowed) && !allowed.includes(command.name) && !allowed.includes(command.id)))) return deny('plugin_skill_disabled', '此技能已停用或不在当前任务允许的技能范围内。');
@@ -111,7 +112,8 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
         prompt += result.stdout.slice(0, 24000);
       }
       if (!/\$(?:ARGUMENTS\b|\d+\b)/.test(command.prompt) && !command.arguments.some(name => command.prompt.includes(`$${name}`)) && plan.arguments.trim()) prompt += `\n\nArguments: ${plan.arguments}`;
-      await options.onInvoke?.(command, context);
+      const activation = await options.onInvoke?.(command, context);
+      if (activation) prompt += `\n\n${activation}`;
       if (command.context === 'fork') {
         if (!options.fork) throw new Error('Isolated Skill/Command execution is unavailable.');
         const result = await options.fork(command, prompt, context);
@@ -157,7 +159,10 @@ const bashQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 const powershellQuote = (text: string) => `'${text.replaceAll("'", "''")}'`;
 async function prepareCommand(command: PluginCommand, args: string, request?: ModelRequest): Promise<CommandPlan> {
   if (args.length > 64000 || command.prompt.length > 256000) throw new Error('Command input is too large.');
-  const plan: CommandPlan = { command, arguments: args, tokens: commandArguments(args), cwd: String(request?.metadata.workspaceDir || request?.metadata.projectDir || process.cwd()), pieces: [] };
+  const plan: CommandPlan = { command, arguments: args, tokens: command.usage ? [] : commandArguments(args), cwd: String(request?.metadata.workspaceDir || request?.metadata.projectDir || process.cwd()), pieces: [] };
+  // A manual may quote shell examples. Loading it must not interpret those
+  // examples as dynamic Command context; executable methods have separate entries.
+  if (command.usage) { plan.pieces.push({ text: command.prompt }); return plan; }
   const matches = [...command.prompt.matchAll(/```![ \t]*\r?\n([\s\S]*?)\r?\n```|!`([^`\r\n]+)`/g)];
   if (matches.length > 20) throw new Error('Command exceeds 20 dynamic context steps.');
   let offset = 0;

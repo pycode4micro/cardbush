@@ -89,7 +89,7 @@ test('loaded definitions cannot bypass scope, child restrictions, native denial 
   assert.equal((await f.call({ value: 'denied' })).error.code, 'native_denied');
   f.request.tools = f.request.tools.filter(tool => tool.name !== 'fixture_save');
   assert.equal((await f.call({ value: 'removed' })).error.code, 'tool_not_exposed');
-  assert.equal((await f.run('get_tool_schema', { name: 'call_tool' })).error.code, 'tool_requires_direct_call');
+  assert.equal((await f.run('get_tool_schema', { name: 'call_tool' })).result.invocation.tool, 'call_tool');
   assert.equal((await f.run('call_tool', { name: 'call_tool', arguments: {} })).error.code, 'tool_requires_direct_call');
   assert.equal(f.counts().executed, 0);
 });
@@ -97,7 +97,11 @@ test('loaded definitions cannot bypass scope, child restrictions, native denial 
 test('discovery and maintenance preserve their direct call receipts', async () => {
   for (const name of ['mcp_search', 'mcp_call', 'read_archived_tool_result', 'checkpoint_context', 'summary_for_user']) {
     const f = fixture({ definition: { name, description: 'Direct receipt', inputSchema: { type: 'object' } } });
-    assert.equal((await f.run('get_tool_schema', { name })).error.code, 'tool_requires_direct_call');
+    const loaded = await f.run('get_tool_schema', { name });
+    assert.equal(loaded.kind, 'returned');
+    assert.equal(loaded.result.invocation.tool, name);
+    assert.equal(typeof loaded.result.invocation.arguments, 'string');
+    assert.equal(loaded.result.matches[0].definition.name, name);
     assert.equal((await f.run('call_tool', { name, arguments: { value: 'wrong boundary' } })).error.code, 'tool_requires_direct_call');
     assert.equal(f.counts().executed, 0);
     assert.equal((await f.run(name, { value: 'direct' })).kind, 'returned');

@@ -2,6 +2,7 @@ import { toolSchemaReceipts } from './toolSchemaReceipts.js';
 import { createHash } from 'node:crypto';
 import { withToolDisplayTitle } from './toolDisplay.js';
 import { projectBuiltinDefinitions, synchronizeBuiltinSchemas } from './builtinToolDisclosure.js';
+import { repairLegacyToolScriptSchema } from './toolScriptSchema.js';
 import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
@@ -13,6 +14,15 @@ import { resolveSearchResultLimit, type SearchResultLimitProvider } from './sear
 import { MCP_SEARCH_CURSOR_LIMIT, MCP_SEARCH_QUERY_LIMIT, mcpSearchFingerprint, rankMcpTools, readMcpSearchCursor, writeMcpSearchCursor, type McpSearchCursor } from './mcpToolSearch.js';
 
 export const MCP_DISCOVERY_PROTOCOL = 'bush.mcp_discovery.v1';
+export function mcpToolInvocation(request: ModelRequest, name = 'Use the exact name from matches.') {
+  if (request.tools.some(tool => tool.name === 'mcp_call')) return {
+    tool: 'mcp_call', arguments: { name, arguments: 'Use the loaded inputSchema fields here.' },
+    note: 'Call mcp_call directly. Do not wrap it in call_tool or invoke MCP targets through call_tool. Loading and invoking are sequential.',
+  };
+  return request.metadata.mcpToolDiscovery
+    ? { tool: null, note: 'mcp_call is not exposed in this scope. Use an available execution interface; schema loading does not add a gateway or grant access.' }
+    : { tool: name, arguments: 'Use the loaded inputSchema fields directly.' };
+}
 
 /** Keep the index visible and only emit complete definitions. The native result
  * stays in the execution journal; this is its bounded model presentation. */
@@ -219,12 +229,22 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
   const saved = request.metadata.mcpModelToolSnapshot as { identity?: string; tools?: unknown[] } | undefined;
   if (saved?.identity === key(request) && Array.isArray(saved.tools)) {
     const parsed = toolDefinitionSchema.array().safeParse(saved.tools);
-    if (parsed.success) return parsed.data;
+    if (parsed.success) {
+      let changed = false;
+      const tools = parsed.data.map(definition => {
+        const repaired = repairLegacyToolScriptSchema(definition);
+        if (repaired === definition) return definition;
+        changed = true;
+        return withToolDisplayTitle(repaired);
+      });
+      if (changed) request.metadata.mcpModelToolSnapshot = { identity: key(request), tools: structuredClone(tools) };
+      return tools;
+    }
   }
   const tools = request.tools.filter(tool => registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
     !registry.resolve(tool.name)?.deferredSchema &&
     (!tool.name.startsWith('agent_memory_') || request.metadata.pluginAgentMemoryActive === true) &&
-    (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(withToolDisplayTitle);
+    (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(repairLegacyToolScriptSchema).map(withToolDisplayTitle);
   // Keep discovery entry points when the catalog is empty, so connect/disconnect preserves them.
   const projected = projectBuiltinDefinitions(registry, request, tools);
   request.metadata.mcpModelToolSnapshot = { identity: key(request), tools: structuredClone(projected) };
@@ -270,6 +290,7 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
           } catch (error) { context.signal?.throwIfAborted(); errors.push({ name, error: error instanceof Error ? error.message : String(error) }); }
         }
         return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: context.turn.request.sessionId, action: 'load', matches,
+          invocation: mcpToolInvocation(context.turn.request, matches.length === 1 && typeof matches[0]!.name === 'string' ? matches[0]!.name : undefined),
           ...(matches.some(match => 'interface' in match) ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
           ...(errors.length ? { errors } : {}) };
       }
@@ -315,6 +336,7 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
       remember(registry, request, loaded);
       const next = offset + matches.length;
       return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, action: context.input.action,
+        ...(context.input.action === 'load' ? { invocation: mcpToolInvocation(request, matches[0]?.name) } : {}),
         ...(context.input.action === 'load' && matches.some(match => 'interface' in match) ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
         matches, total: context.input.action === 'load' ? 1 : candidates.length,
         more: context.input.action !== 'load' && candidates.length > next,

@@ -9,6 +9,7 @@ export * from "./contextAssembler.js";
 export * from "./contextCompaction.js";
 export * from "./coordinationStore.js";
 export * from "./coordinationTools.js";
+export * from './usageGuidance.js';
 export * from "./fileCoordinationPersistence.js";
 export * from "./inMemoryRuntimeHost.js";
 export type { RuntimeInternalTaskOptions, RuntimeInternalTaskRunner } from './runtimeInternalTask.js';

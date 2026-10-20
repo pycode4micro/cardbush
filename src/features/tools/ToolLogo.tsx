@@ -33,6 +33,7 @@ const toolLogos: Record<string, LucideIcon> = {
   linux_computer_use: Globe,
   linux_browser_use: Globe,
   search_skills: BookOpenCheck,
+  usage: BookOpenCheck,
   read_archived_tool_result: FileText,
   inject_image_input: Image,
   schedule_task: CalendarClock,

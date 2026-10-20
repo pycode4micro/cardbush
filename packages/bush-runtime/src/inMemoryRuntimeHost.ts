@@ -161,6 +161,7 @@ import { projectActiveTurnContext } from "./contextAssembler.js";
 
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
+import { UsageGuidance } from './usageGuidance.js';
 import { registerInteractionTools, registerAsyncInteraction } from "./interactionTools.js";
 import { RuntimeTaskTools } from './taskTools.js';
 import { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
@@ -360,6 +361,7 @@ export class InMemoryRuntimeHost {
   readonly #sessionAdmissions = new Map<string, number>();
   readonly #capabilityGrants = new InMemoryRuntimeCapabilityStore();
   readonly #coordination: CoordinationStore;
+  readonly #usageGuidance: UsageGuidance;
   readonly #subagentTasks: SubagentTaskStore;
   #realtimeAgents?: RealtimeAgentDispatcher;
   readonly #assistant: AssistantConversation;
@@ -463,7 +465,9 @@ export class InMemoryRuntimeHost {
     this.#mcpApps = new McpAppsHost(join(runtimeDataRoot, 'mcp-apps'), this.#toolRegistry, this.#toolExecutions, this.#capabilityGrants, request => {
       const run = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => {
         const extensions = await this.#loadPluginExtensions?.();
-        return this.#pluginHooks.run(await this.#pluginHookScopes.select(extensions?.hooks ?? [], request), event, { ...context, request });
+        const usage = await this.#usageGuidance.pluginState(request, extensions);
+        if (event === 'PreToolUse' && usage.blocked) return { messages: [], blocked: usage.blocked };
+        return this.#pluginHooks.run(await this.#pluginHookScopes.select(extensions?.hooks ?? [], request, usage.commandId), event, { ...context, request });
       };
       return {
         before: context => run('PreToolUse', { toolName: context.toolCall.name, input: context.input, signal: context.signal }),
@@ -554,7 +558,10 @@ export class InMemoryRuntimeHost {
         if (result.status !== 'completed') throw new Error(result.errorMessage);
         return result.finalResponse;
       };
-      registerPluginCommandTools(this.#toolRegistry, async () => (await options.loadPluginExtensions!()).commands ?? [], { fork, onInvoke: async (command, context) => { if (command.context !== 'fork') await this.#pluginHookScopes.activate(context.sessionId, command.id); } });
+      registerPluginCommandTools(this.#toolRegistry, async () => (await options.loadPluginExtensions!()).commands ?? [], { fork, onInvoke: async (command, context) => {
+        if (command.usage) return this.#usageGuidance.loadCommand(command, context);
+        if (command.context !== 'fork') await this.#pluginHookScopes.activate(context.sessionId, command.id);
+      } });
       registerPluginCommandTools(this.#toolRegistry, async () => (await options.loadPluginExtensions!()).skills ?? [], { skill: true, fork,
         onInvoke: async (command, context) => { if (command.context !== 'fork') await this.#pluginHookScopes.activate(context.sessionId, command.id); } });
     }
@@ -588,6 +595,9 @@ export class InMemoryRuntimeHost {
     if (options.settleOrphanedTurns === true) this.#settleOrphanedTurns();
     this.#coordination = options.coordinationStore ?? new CoordinationStore();
     registerCoordinationTools(this.#toolRegistry, this.#coordination);
+    this.#usageGuidance = new UsageGuidance(this.#toolRegistry, this.#toolExecutions,
+      options.dataRoot ? join(runtimeDataRoot, 'usage-guidance') : undefined, { coordination: this.#coordination, loadExtensions: options.loadPluginExtensions });
+    this.#usageGuidance.register();
     this.#workspaceObservations =
       options.workspaceObservationStore ?? new WorkspaceObservationStore({
         persistencePath: options.dataRoot
@@ -677,7 +687,7 @@ export class InMemoryRuntimeHost {
     this.#asyncJobs = new RuntimeAsyncJobs(this.#toolExecutions, (session, turn, id, result) =>
       this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result));
     registerAsyncInteraction(this.#toolRegistry, this.#solutions, this.#asyncJobs);
-    registerToolScript(this.#toolRegistry, this.#asyncJobs);
+    registerToolScript(this.#toolRegistry, this.#asyncJobs, (context, input) => this.#usageGuidance.prepareRecipe(context, input));
     const taskTools = new RuntimeTaskTools((context, promises, mode, signal, duration) =>
       this.#turnSignals.wait(context.sessionId, context.turnId, promises, mode, signal, duration));
     taskTools.addSource(this.#asyncJobs.source);
@@ -2005,6 +2015,7 @@ export class InMemoryRuntimeHost {
     const { request, identity } = input;
     const turnKey = JSON.stringify([request.sessionId, request.turnId]);
     let pluginExtensions: PluginExtensions = { hooks: [], agents: [] };
+    let usageSelectionPending = false;
     let hookOrdinal = 0;
     const hookIdentities = new Map<string, { ordinal: number; round: number }>();
     const observeHook = (entry: PluginHookObservation) => {
@@ -2033,7 +2044,14 @@ export class InMemoryRuntimeHost {
     const runHook = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => {
       if (input.internalTask || request.metadata.pluginHookEvaluation) return { messages: [] } as import('./pluginExtensions.js').PluginHookResult;
       const current = await this.#loadPluginExtensions?.() ?? pluginExtensions;
-      return this.#pluginHooks.run(await this.#pluginHookScopes.select(current.hooks, request), event, { ...context, request }, observeHook);
+      const usage = await this.#usageGuidance.pluginState(request, current);
+      const selection = usageSelectionPending && (event === 'SessionStart' || event === 'UserPromptSubmit') ||
+        context.toolName === 'run_plugin_command' && context.toolCallId === request.metadata.pluginCommandUserCallId &&
+        current.commands?.some(command => command.id === request.metadata.pluginCommandUserId && command.usage);
+      if (event === 'PreToolUse' && usage.blocked && !selection && !['usage', 'get_tool_schema', 'list_plugin_commands'].includes(context.toolName ?? '')) {
+        return { messages: [], blocked: usage.blocked };
+      }
+      return this.#pluginHooks.run(await this.#pluginHookScopes.select(current.hooks, request, selection ? undefined : usage.commandId), event, { ...context, request }, observeHook);
     };
     const toolLoop = new RuntimeToolLoop({
       eventLog: this.#eventLog,
@@ -2332,6 +2350,13 @@ export class InMemoryRuntimeHost {
         request.metadata.builtinPluginCommandsAvailable = Boolean(pluginExtensions.commands?.length);
         if (input.nextRound === 1) {
           const child = request.metadata.agentRole === 'child';
+          const currentInput = input.sessionCommit?.inputMessages.map(item => item.message) ?? request.messages;
+          const userMessage = [...currentInput].reverse().find(message => message.role === 'user');
+          const parsedInvocation = !child && userMessage ? parsePluginCommandInvocation(userMessage.content) : undefined;
+          const matches = parsedInvocation ? [...pluginExtensions.commands ?? [], ...pluginExtensions.skills ?? []].filter(component => component.id === parsedInvocation.command || component.name === parsedInvocation.command) : [];
+          // The old manual cannot veto a user's explicit switch/stop before the
+          // command even runs. Other plugin scopes retain their normal hooks.
+          usageSelectionPending = matches.length === 1 && Boolean(matches[0]?.usage);
           const initialHookMessages: string[] = [];
           if (!child) {
             const backgroundResults = await this.#pluginBackground.results(request.sessionId);
@@ -2357,10 +2382,7 @@ export class InMemoryRuntimeHost {
             const message: ModelMessage = { role: 'developer', name: 'plugin_hook_feedback', content };
             messages.push(message); generatedMessages.push({ messageId: `msg_plugin_start_${request.turnId}_${index}`, createdAt: this.#sessionNow(), message });
           }
-          const currentInput = input.sessionCommit?.inputMessages.map(item => item.message) ?? request.messages;
-          const userMessage = [...currentInput].reverse().find(message => message.role === 'user');
-          const parsedInvocation = !child && userMessage ? parsePluginCommandInvocation(userMessage.content) : undefined;
-          const matches = parsedInvocation ? [...pluginExtensions.commands ?? [], ...pluginExtensions.skills ?? []].filter(component => component.id === parsedInvocation.command || component.name === parsedInvocation.command) : [];
+          usageSelectionPending = false;
           if (matches.length > 1) return await finalize({ status: 'failed', reason: 'ambiguous_plugin_invocation', details: { candidates: matches.map(component => component.id) } });
           const invocation = parsedInvocation && (matches.length || parsedInvocation.command.includes(':')) ? { ...parsedInvocation, command: matches[0]?.id ?? parsedInvocation.command } : undefined;
           if (invocation && request.metadata.pluginCommandCompletedTurn !== request.turnId && !generatedMessages.some(message => message.messageId === `msg_plugin_command_${request.turnId}`)) {
@@ -2403,6 +2425,13 @@ export class InMemoryRuntimeHost {
         // before there is a model request to interrupt. Maintenance is atomic.
         if (!compactionTransaction && !activeContextCompaction) {
           messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
+        }
+        if (!input.internalTask && !compactionTransaction && !activeContextCompaction && !request.metadata.pluginHookEvaluation) {
+          const message = await this.#usageGuidance.context(request, messages);
+          if (message) {
+            messages.push(message);
+            generatedMessages.push({ messageId: `usage_guidance_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
+          }
         }
         if (!input.internalTask && !compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           try {
@@ -4156,6 +4185,7 @@ export class InMemoryRuntimeHost {
   }
 
   async #deleteSession(sessionId: string) {
+    await this.#usageGuidance.removeSession(sessionId);
     this.#assistant.forget(sessionId);
     this.#conversations.forget(sessionId);
     await this.#subagentResume.remove(sessionId);

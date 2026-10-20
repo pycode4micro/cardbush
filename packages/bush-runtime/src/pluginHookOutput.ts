@@ -16,6 +16,9 @@ export async function interpretHookOutput(hook: PluginHook, context: PluginHookC
   const legacy = hook.dialect === 'claude';
   const decision = specific.permissionDecision ?? parsed.decision;
   const reason = String(specific.permissionDecisionReason || parsed.reason || parsed.stopReason || output.stderr || 'Blocked by plugin hook.');
+  if (hook.scope?.kind === 'usage' && event === 'PreToolUse' && output.exitCode !== 2 && !['allow', 'deny', 'block'].includes(String(decision))) {
+    throw new Error('Usage guard must explicitly return allow or deny; empty or unknown output cannot authorize an action.');
+  }
   const feedback = `${hook.pluginId}: ${reason}`;
   const background = hook.async && event !== 'SessionEnd' && hook.type !== 'mcp_tool';
   if (background) {

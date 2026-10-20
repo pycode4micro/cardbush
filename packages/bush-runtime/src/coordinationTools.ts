@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { z } from 'zod';
 
 import {
   BUSH_TASK_PLAN_PROTOCOL,
   taskPlanWaitingKindSchema,
+  usagePlanBindingSchema,
   type TaskPlan,
 } from "@cardbush/bush-protocol";
 
@@ -15,7 +17,7 @@ export const UPDATE_GOAL_TOOL = "update_goal" as const;
 interface TaskPlanToolInput {
   action: 'get' | 'replace' | 'patch';
   expectedRevision?: number;
-  updates?: Array<{ id: string; step?: string; status?: TaskPlan['nodes'][number]['status']; waitingFor?: string | null; waitingKind?: TaskPlan['nodes'][number]['waitingKind'] | null }>;
+  updates?: Array<{ id: string; step?: string; status?: TaskPlan['nodes'][number]['status']; waitingFor?: string | null; waitingKind?: TaskPlan['nodes'][number]['waitingKind'] | null; usage?: TaskPlan['nodes'][number]['usage'] | null }>;
   appendNodes?: TaskPlan['nodes'];
   removeIds?: string[];
   nodes: TaskPlan["nodes"];
@@ -44,7 +46,7 @@ export function registerCoordinationTools(
       definition: {
         name: UPDATE_TASK_PLAN_TOOL,
         description:
-          "Manage a visible task plan when it materially helps delivery or review. action=get reads the plan and revision and accepts no other fields. action=patch requires expected_revision and changes only supplied updates (by node ID), append_nodes, remove_ids or plan fields. action=replace (default) requires nodes; omitted explanation defaults to an empty string and active reflects whether any node is unfinished. Preserve node IDs; removing active-plan nodes requires scopeChangeReason. pending=not started; in_progress=current work (at most one); completed=finished. For waiting, set waitingFor to the concrete reason and waitingKind: user=needs user confirmation/input, background=awaits an already-started task, dependency=awaits a prerequisite step. Only user waits request the user's attention. Keep active true while unfinished. Updates are atomic; stale revisions require rereading. Reported progress is not independent verification and does not force another response.",
+          "Manage a visible task plan when it materially helps delivery or review. action=get reads the plan and revision and accepts no other fields. action=patch requires expected_revision and changes only supplied updates (by node ID), append_nodes, remove_ids or plan fields. action=replace (default) requires nodes; omitted explanation defaults to an empty string and active reflects whether any node is unfinished. Preserve node IDs; removing active-plan nodes requires scopeChangeReason. pending=not started; in_progress=current work (at most one); completed=finished. For waiting, set waitingFor to the concrete reason and waitingKind: user=needs user confirmation/input, background=awaits an already-started task, dependency=awaits a prerequisite step. Only user waits request the user's attention. Keep active true while unfinished. Optional usage references come from a user-loaded manual's plan_template; preserve them when adapting or renaming steps, or patch usage:null to detach. Usage guidance follows this plan without another progress tool. Updates are atomic; stale revisions require rereading. Reported progress is not independent verification and does not force another response.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -62,10 +64,12 @@ export function registerCoordinationTools(
               id: { type: 'string', minLength: 1, pattern: '\\S' }, step: { type: 'string', minLength: 1, pattern: '\\S' },
               status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: ['string', 'null'], minLength: 1, pattern: '\\S' },
               waitingKind: { enum: [...taskPlanWaitingKindSchema.options, null] },
+              usage: { anyOf: [z.toJSONSchema(usagePlanBindingSchema, { io: 'input' }), { type: 'null' }] },
             } } },
             append_nodes: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, required: ['step', 'status'], properties: {
               step: { type: 'string', minLength: 1, pattern: '\\S' }, status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: 'string', minLength: 1, pattern: '\\S' },
               waitingKind: { enum: taskPlanWaitingKindSchema.options },
+              usage: z.toJSONSchema(usagePlanBindingSchema, { io: 'input' }),
             } } },
             remove_ids: { type: 'array', maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1, pattern: '\\S' } },
             nodes: {
@@ -78,6 +82,7 @@ export function registerCoordinationTools(
                 required: ["step", "status"],
                 properties: {
                   id: { type: "string" },
+                  usage: z.toJSONSchema(usagePlanBindingSchema, { io: 'input' }),
                   step: { type: "string", minLength: 1, pattern: '\\S' },
                   status: { enum: ["pending", "in_progress", "waiting", "completed"] },
                   waitingFor: { type: "string", minLength: 1, pattern: '\\S', description: "Required for waiting: the concrete external dependency or user action needed to continue." },
@@ -107,6 +112,7 @@ export function registerCoordinationTools(
           nodes = before.plan.nodes.filter(node => !removed.has(node.id!)).map(node => {
             const update = updates.get(node.id!);
             const next = { ...node, ...update };
+            if (next.usage === null) delete next.usage;
             if (next.waitingFor === null || (update?.status && update.status !== 'waiting')) delete next.waitingFor;
             if (next.waitingKind === null || (update?.status && update.status !== 'waiting')) delete next.waitingKind;
             // A changed reason must not inherit a prior user-action classification accidentally.
@@ -197,9 +203,10 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
     const array = (key: string): unknown[] => { const value = object[key] === undefined ? [] : object[key]; if (!Array.isArray(value) || value.length > 20) throw new Error(`${key} must contain at most 20 entries.`); return value; };
     const updates = array('updates').map(value => {
       const node = plainObject(value, 'updates');
-      if (Object.keys(node).some(key => !['id', 'step', 'status', 'waitingFor', 'waitingKind'].includes(key))) throw new Error('Unknown plan patch field.');
+      if (Object.keys(node).some(key => !['id', 'step', 'status', 'waitingFor', 'waitingKind', 'usage'].includes(key))) throw new Error('Unknown plan patch field.');
       if (node.status !== undefined && (typeof node.status !== 'string' || !['pending', 'in_progress', 'waiting', 'completed'].includes(node.status))) throw new Error('Invalid node status.');
       return { id: requiredString(node.id, 'id'), ...(node.step !== undefined ? { step: requiredString(node.step, 'step') } : {}),
+        ...(node.usage !== undefined ? { usage: node.usage === null ? null : usagePlanBindingSchema.parse(node.usage) } : {}),
         ...(node.status !== undefined ? { status: node.status as TaskPlan['nodes'][number]['status'] } : {}),
         ...(node.waitingKind !== undefined ? { waitingKind: node.waitingKind === null ? null : taskPlanWaitingKindSchema.parse(node.waitingKind) } : {}),
         ...(node.waitingFor !== undefined ? { waitingFor: node.waitingFor === null ? null : requiredString(node.waitingFor, 'waitingFor') } : {}) };
@@ -221,7 +228,7 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
     action: 'replace', expectedRevision: object.expected_revision as number | undefined,
     nodes: object.nodes.map((candidate, index) => {
       const node = plainObject(candidate, `nodes[${index}]`);
-      if (Object.keys(node).some(key => !['id', 'step', 'status', 'waitingFor', 'waitingKind'].includes(key))) throw new Error('Unknown plan node field.');
+      if (Object.keys(node).some(key => !['id', 'step', 'status', 'waitingFor', 'waitingKind', 'usage'].includes(key))) throw new Error('Unknown plan node field.');
       if (node.id !== undefined) stringValue(node.id, `nodes[${index}].id`);
       const status = stringValue(node.status, `nodes[${index}].status`);
       if (!["pending", "in_progress", "waiting", "completed"].includes(status)) {
@@ -229,6 +236,7 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
       }
       return {
         ...(optionalString(node.id) ? { id: optionalString(node.id) } : {}),
+        ...(node.usage !== undefined ? { usage: usagePlanBindingSchema.parse(node.usage) } : {}),
         step: requiredString(node.step, `nodes[${index}].step`),
         status: status as TaskPlanToolInput["nodes"][number]["status"],
         ...(node.waitingKind !== undefined ? { waitingKind: taskPlanWaitingKindSchema.parse(node.waitingKind) } : {}),

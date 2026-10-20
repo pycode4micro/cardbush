@@ -54,6 +54,18 @@ export function projectBuiltinDefinitions(registry: ToolRegistry, request: Model
   }).map(candidate => {
     const definition = taskDescription(candidate, unified);
     const original = registry.resolve(definition.name)?.definition;
+    if (disclose && definition.name === 'usage') return { ...definition,
+      description: 'Author and inspect task manuals. guide: format; capture: receipt references; review: draft checks, not quality certification. export returns a CardBush plugin package. Users select installed manuals through slash commands; reuse/adapt plan_template with native update_task_plan and keep usage references for node guidance and recovery. Recommend capabilities by purpose; recipe describes a wrapped method for run_tools. Load get_tool_schema(name="usage") before authoring/import. import(enabled:false) stages. status inspects guidance; never auto-select a manual. No teacher approval gate. expected_revision: status (0 initially).',
+      inputSchema: { type: 'object', required: ['action'], additionalProperties: false, properties: {
+        action: { type: 'string', enum: ['guide', 'capture', 'review', 'recommend', 'recipe', 'status', 'export', 'import', 'enable', 'disable', 'focus'] },
+        capability_id: { type: 'string' }, recipe_id: { type: 'string' },
+        expected_revision: { type: 'integer', minimum: 0 }, node_id: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        enabled: { type: 'boolean' }, usage: { type: 'object', description: 'Draft for review or full definition for import; load the full schema.' },
+        asset_root: { type: 'string', description: 'Import: absolute local directory of bundled assets.' },
+        turn_id: { type: 'string' }, tool_call_ids: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 },
+        limit: { type: 'integer', minimum: 1, maximum: 8 },
+      } },
+    };
     const fields = runFields[definition.name];
     if (!disclose || !original || !fields) return definition;
     const properties = Object.fromEntries(Object.entries(definition.inputSchema.properties as Record<string, unknown> ?? {})
@@ -101,7 +113,14 @@ export function nativeToolSchemaIsCurrent(registry: ToolRegistry, request: Model
     (request.metadata.builtinToolSchemas as Record<string, string> | undefined)?.[name] === revision(registration.definition);
 }
 
-function callableDefinition(registry: ToolRegistry, request: ModelRequest | undefined, name: string) {
+/** Discovery may describe direct entry points; invocation must not wrap them. */
+export function nativeToolInvocation(registry: ToolRegistry, name: string, request?: ModelRequest) {
+  return registry.resolve(name)?.forwardToolCall || directTools.has(name) || request && !request.tools.some(tool => tool.name === 'call_tool')
+    ? { tool: name, arguments: 'Use definition.inputSchema fields directly. Do not wrap this call in call_tool.' }
+    : { tool: 'call_tool', arguments: { name, arguments: 'Use definition.inputSchema fields here.' } };
+}
+
+function callableDefinition(registry: ToolRegistry, request: ModelRequest | undefined, name: string, discovery = false) {
   const registration = registry.resolve(name);
   if (!registration) throw unknownToolReferenceError(name, 'native');
   if (!request || !request.tools.some(tool => tool.name === name) || registration.mcpHook?.modelVisible === false ||
@@ -109,8 +128,10 @@ function callableDefinition(registry: ToolRegistry, request: ModelRequest | unde
     throw Object.assign(new Error('This native tool is not available to this turn. Loading a schema grants no access.'), { code: 'tool_not_exposed' });
   }
   if (registration.mcpHook) throw wrongToolRouteError(name, 'mcp');
-  if (registration.forwardToolCall || directTools.has(name)) {
-    throw Object.assign(new Error(`Call ${name} directly using its declared schema.`), { code: 'tool_requires_direct_call' });
+  if (!discovery && (registration.forwardToolCall || directTools.has(name))) {
+    throw Object.assign(new Error(`Call ${name} directly using its declared schema. Do not put it inside call_tool.`), {
+      code: 'tool_requires_direct_call', details: { invocation: nativeToolInvocation(registry, name), definition: registration.definition },
+    });
   }
   return registration.definition;
 }
@@ -118,13 +139,13 @@ function callableDefinition(registry: ToolRegistry, request: ModelRequest | unde
 export function registerBuiltinToolDisclosure(registry: ToolRegistry) {
   const schema = z.object({ name: z.string().min(1).max(200) }).strict();
   registry.register({
-    definition: { name: 'get_tool_schema', description: 'Load the complete definition of a native tool for advanced configuration or a newly available extension. The schema is returned only in this result; top-level tools stay unchanged. Use call_tool with the loaded name and full arguments. Common subagent/Team calls remain directly callable. This grants no permissions. For MCP tools use mcp_search and mcp_call.', inputSchema: z.toJSONSchema(schema) },
+    definition: { name: 'get_tool_schema', description: 'Load the complete definition and invocation route of a native tool, including direct entry points such as mcp_call. Follow the returned invocation: some tools must be called directly, others through call_tool. Top-level tools stay unchanged. Common subagent/Team calls remain directly callable. This grants no permissions. For MCP target schemas use mcp_search.', inputSchema: z.toJSONSchema(schema) },
     manifest: { effect_kind: 'observation', operation: 'tools.schema', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false },
     parallelSafe: true, decodeInput: value => schema.parse(value),
     execute: context => {
-      const definition = callableDefinition(registry, context.turn?.request, resolveToolReferenceName(context.input.name, context.turn));
+      const definition = callableDefinition(registry, context.turn?.request, resolveToolReferenceName(context.input.name, context.turn), true);
       return { protocol, sessionId: context.sessionId, action: 'load', matches: [{ name: definition.name, revision: revision(definition), definition }],
-        invocation: { tool: 'call_tool', name: definition.name, arguments: 'Use the fields described by definition.inputSchema inside arguments.' } };
+        invocation: { ...nativeToolInvocation(registry, definition.name, context.turn?.request), name: definition.name } };
     },
   });
   const callSchema = z.object({ name: z.string().min(1).max(200), arguments: z.record(z.string(), z.unknown()) }).strict();

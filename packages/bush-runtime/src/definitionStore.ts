@@ -62,4 +62,11 @@ export class DefinitionStore<T extends { id: string }> {
       if (this.directory) await unlink(this.file(id)); else this.records.delete(id);
     });
   }
+  /** Owner lifecycle cleanup; unlike user edits, deletion must tolerate corrupt state. */
+  discard(id: string): Promise<void> {
+    return this.serialize(async () => {
+      if (this.directory) await unlink(this.file(id)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      this.records.delete(id);
+    });
+  }
 }

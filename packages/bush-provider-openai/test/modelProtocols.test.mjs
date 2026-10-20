@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { modelEventSchema, modelRequestSchema, modelRequestHeaders, modelHeadersSchema } from '@cardbush/bush-protocol';
-import { modelReplayMessageHash, InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
+import { modelEventSchema, modelRequestSchema, modelRequestHeaders, modelHeadersSchema, usageRecipeInvocationSchema } from '@cardbush/bush-protocol';
+import { modelReplayMessageHash, modelToolDefinitions, InMemoryRuntimeHost, ToolRegistry, SessionStore } from '@cardbush/bush-runtime';
+import { z } from 'zod';
 import { OpenAIChatCompletionsProvider, AnthropicMessagesProvider, OpenAIResponsesProvider,
   ModelProviderRegistry, createModelProvider, toResponsesCreateParams, toChatCompletionsParams, toAnthropicMessagesParams } from '../dist/index.js';
 
@@ -48,6 +49,64 @@ const anthropicEvents = (stop = 'tool_use', args = '{"path":"file.txt"}') => [
   { type: 'message_delta', delta: { stop_reason: stop }, usage: { output_tokens: 10 } },
   { type: 'message_stop' },
 ];
+
+test('actual SDK requests keep object tool schemas in new sessions and sessions with the legacy run_tools union', async t => {
+  for (const Provider of [OpenAIResponsesProvider, OpenAIChatCompletionsProvider, AnthropicMessagesProvider]) {
+    for (const legacy of [false, true]) await t.test(`${Provider.name}: ${legacy ? 'saved legacy contract' : 'current contract'}`, async t => {
+      const bodies = [], registry = new ToolRegistry(), sessions = new SessionStore(), sessionId = 'schema-compat';
+      const provider = new Provider({ apiKey: 'fixture', baseURL: 'https://schema-fixture.invalid/v1', fetch: async (_url, init) => {
+        const body = JSON.parse(init.body); bodies.push(body);
+        for (const tool of body.tools) {
+          const name = tool.function?.name ?? tool.name;
+          const parameters = tool.function?.parameters ?? tool.parameters ?? tool.input_schema;
+          assert.equal(parameters.type, 'object', `${name} must have an object root in the actual SDK request`);
+          if (name === 'run_tools') {
+            assert.equal(parameters.anyOf, undefined); assert.equal(parameters.oneOf, undefined);
+            assert.equal(parameters.properties.code.type, 'string'); assert.equal(parameters.properties.usage.type, 'object');
+            assert.ok(parameters.properties._display_title);
+            // Recursive business parameters must retain valid local references after migration.
+            const checkRefs = value => {
+              if (!value || typeof value !== 'object') return;
+              if (typeof value.$ref === 'string') {
+                assert.ok(value.$ref.startsWith('#/'));
+                let target = parameters;
+                for (const key of value.$ref.slice(2).split('/')) target = target?.[key.replace(/~1/g, '/').replace(/~0/g, '~')];
+                assert.notEqual(target, undefined, `Unresolved schema reference ${value.$ref}`);
+              }
+              Object.values(value).forEach(checkRefs);
+            };
+            checkRefs(parameters);
+          }
+        }
+        if (Provider === OpenAIResponsesProvider) return sse([{ type: 'response.output_text.delta', delta: 'Done.' },
+          { type: 'response.completed', response: { id: 'schema-response', status: 'completed', output: [], store: false } }]);
+        if (Provider === OpenAIChatCompletionsProvider) return sse([chunk({ content: 'Done.' }, 'stop')], true);
+        return sse(anthropicEvents('end_turn').filter(e => !(e.type.startsWith('content_block') && e.index === 2)));
+      } });
+      const host = new InMemoryRuntimeHost({ toolRegistry: registry, sessionStore: sessions, provider });
+      t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+      const system = { role: 'system', content: 'Keep this conversation and its tool catalog stable.' };
+      let oldContract;
+      if (legacy) {
+        sessions.ensureSession(sessionId);
+        const tools = modelToolDefinitions(registry, req({ tools: registry.definitions() }));
+        tools.find(tool => tool.name === 'run_tools').inputSchema = z.toJSONSchema(z.union([
+          z.object({ code: z.string().min(1).max(64000) }).strict(), z.object({ usage: usageRecipeInvocationSchema }).strict(),
+        ]));
+        oldContract = sessions.bindModelContract(sessionId, { policyId: 'schema-compat', version: '1', system, tools });
+      }
+      for (const turn of ['first', 'next']) {
+        const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: turn, sessionId, turnId: turn,
+          model: 'fixture', tools: registry.definitions(), prefixMessages: [system], metadata: { systemPolicy: { id: 'schema-compat', version: '1' } },
+          inputMessages: [{ messageId: turn, message: { role: 'user', content: 'Reply briefly.' } }] });
+        assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
+      }
+      assert.equal(bodies.length, 2); assert.ok(bodies[0].tools.some(tool => (tool.function?.name ?? tool.name) === 'run_tools'));
+      assert.deepEqual(bodies[1].tools, bodies[0].tools, 'repair must be stable across turns');
+      if (legacy) assert.deepEqual(sessions.modelContract(sessionId), oldContract, 'wire compatibility must not rewrite historical contracts');
+    });
+  }
+});
 
 test('all three adapters use a 40 MB default and dispatch bodies above the former 32 MB cap', async t => {
   const input = req({ messages: [{ role: 'user', content: 'Inspect the image.',

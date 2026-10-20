@@ -1,5 +1,6 @@
 import { memoryCacheEntry, type CacheEntry } from './cacheMaintenance.js';
 import { summarizeExecution, type ExecutionHistoryPage } from './executionHistory.js';
+import { usageRecipeFromRecord } from './usageSignals.js';
 import {
   BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
   BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
@@ -15,6 +16,7 @@ import {
   type ToolCall,
   type ToolExecutionRecord,
   type ToolExecutionSummary,
+  type UsageRecipeIdentity,
 } from "@cardbush/bush-protocol";
 
 import type {
@@ -33,6 +35,16 @@ export interface ToolExecutionPersistence {
 
 export interface FileMemoLocator { number: number; sessionId: string; turnId: string; toolCallId: string; sourceNumber?: number }
 type MemoIdentity = Omit<FileMemoLocator, 'number' | 'sourceNumber'>;
+
+/** Small facts for loop guidance; no argument, result body or error prose. */
+export interface ToolExecutionSignal {
+  turnId: string;
+  toolCallId: string;
+  tool: string;
+  outcome: 'returned' | 'failed' | 'cancelled';
+  errorCode?: string;
+  usageRecipe?: UsageRecipeIdentity;
+}
 
 export class ToolExecutionStore {
   readonly #coldWorkspaceRecords = new WeakSet<ToolExecutionRecord>();
@@ -143,6 +155,22 @@ export class ToolExecutionStore {
       .filter((record) => record.turnId === turnId))
       .sort((left, right) => left.round - right.round || left.ordinal - right.ordinal)
       .map((record) => structuredClone(record));
+  }
+
+  /** Completion order, including nested/async calls; never infer order from rounds. */
+  signalsAfter(sessionId: string, after: { turnId: string; toolCallId: string }): ToolExecutionSignal[] {
+    const rows = this.#load(sessionId);
+    const boundary = rows.findIndex(row => row.turnId === after.turnId && row.toolCall.id === after.toolCallId);
+    // A missing activation receipt is not permission to recall an older task.
+    if (boundary < 0) return [];
+    return rows.slice(boundary + 1).map(row => {
+      const failure = toolExecutionError(row);
+      const usageRecipe = usageRecipeFromRecord(row);
+      return { turnId: row.turnId, toolCallId: row.toolCall.id, tool: row.toolCall.name,
+        outcome: row.outcome === 'cancelled' ? 'cancelled' : failure ? 'failed' : row.outcome,
+        ...(usageRecipe ? { usageRecipe } : {}),
+        ...(failure ? { errorCode: failure.code } : {}) };
+    });
   }
 
   fork(sourceSessionId: string, sessionId: string, turnIds: Set<string>): void {

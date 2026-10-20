@@ -37,11 +37,11 @@ function searchRegistration(
   return {
     definition: {
       name: "search_skills",
-      description: "Search installed Skills by capability or name. Returns brief descriptions, total, next_offset, mainResource (SKILL.md), environment=local and an invocation id for plugin Skills. Continue with next_offset as offset and the same query. Read the selected file with read_file in that environment, even in an SSH workspace; local means this Runtime host. Inspect its references/ directory when present and read relevant documents even if unlinked, resolving paths relative to the Skill directory. Reuse resources already in context. To invoke a plugin Skill, pass its exact id to run_skill; other Skills are applied by reading their files.",
+      description: "Search installed Skills by capability or name; query='*' lists all visible Skills. total counts matches for this query, not all installed Skills. Returns brief descriptions, next_offset, mainResource (SKILL.md), environment=local and an invocation id for plugin Skills. Continue with next_offset as offset and the same query. Read the selected file with read_file in that environment, even in an SSH workspace; local means this Runtime host. Inspect its references/ directory when present and read relevant documents even if unlinked, resolving paths relative to the Skill directory. Reuse resources already in context. To invoke a plugin Skill, pass its exact id to run_skill; other Skills are applied by reading their files.",
       inputSchema: {
         type: "object",
         properties: {
-          query: { type: "string", minLength: 1 },
+          query: { type: "string", minLength: 1, description: "Capability keywords or '*': list all Skills visible in the current scope." },
           limit: { ...searchLimitParameter },
           offset: catalogPageProperties.offset,
         },
@@ -64,6 +64,7 @@ function searchRegistration(
     execute: async (context) => {
       const limit = await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
       const activeRoots = await roots();
+      const listAll = normalize(context.input.query).trim() === '*';
       const terms = tokens(context.input.query);
       const configured = context.turn?.request.metadata.allowedSkills;
       const allowed = Array.isArray(configured)
@@ -75,7 +76,7 @@ function searchRegistration(
         (allowed === undefined || allowed.has(skill.name) || allowed.has(skill.unqualifiedName!)) && !disabled.has(skill.name) && !disabled.has(skill.unqualifiedName!),
       );
       const matches = skills
-        .map((skill) => ({ ...skill, score: score(skill, terms) }))
+        .map((skill) => ({ ...skill, score: listAll ? 1 : score(skill, terms) }))
         .filter((skill) => skill.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
         .map(skill => ({

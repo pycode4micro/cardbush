@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -74,6 +74,27 @@ test('resolves active Skill roots for every search', async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('wildcard lists visible Skills with pagination and never bypasses disabled, manual or allowed scopes', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-skill-list-'));
+  t.after(async () => { assert.equal(dirname(resolve(root)), resolve(tmpdir())); await rm(root, { recursive: true, force: true }); });
+  for (const name of ['alpha', 'beta', 'gamma', 'disabled', 'manual']) await writeSkill(root, name, 'Example method');
+  await writeFile(join(root, 'manual', 'SKILL.md'), '---\nname: manual\ndescription: Manual invocation only\ndisable-model-invocation: true\n---\n# Manual');
+  const registry = new ToolRegistry(); registerSkillTools(registry, [root]);
+  const search = registry.resolve('search_skills'), metadata = { disabledSkills: ['disabled'] };
+  const run = input => search.execute({ ...context(search.decodeInput(input), 'search'), turn: { request: { metadata } } });
+  const first = await run({ query: '*', limit: 1 });
+  assert.deepEqual(first.matches.map(item => item.name), ['alpha']); assert.equal(first.total, 3); assert.equal(first.next_offset, 1);
+  const rest = await run({ query: '*', offset: first.next_offset, limit: 2 });
+  assert.deepEqual(rest.matches.map(item => item.name), ['beta', 'gamma']); assert.equal(rest.total, 3); assert.equal(rest.next_offset, null);
+  assert.equal((await run({ query: ' ＊ ' })).total, 3);
+  assert.equal((await run({ query: 'unrelated-query' })).total, 0, 'no keyword matches does not mean no installed Skills');
+  assert.equal((await run({ query: '???' })).total, 0, 'only the explicit wildcard lists everything');
+  metadata.allowedSkills = ['beta', 'disabled', 'manual'];
+  assert.deepEqual((await run({ query: '*' })).matches.map(item => item.name), ['beta']);
+  metadata.allowedSkills = [];
+  assert.equal((await run({ query: '*' })).total, 0);
 });
 
 test('discovers additions, edits and removals during a turn while preserving disabled skills', async () => {

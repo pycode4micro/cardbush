@@ -128,16 +128,38 @@ export async function readPluginExtensions(root: string, manifest: Json, options
       const allowedTools = metadata['allowed-tools'] === undefined ? undefined : toolRules(metadata['allowed-tools']);
       const disallowedTools = metadata['disallowed-tools'] === undefined ? undefined : toolRules(metadata['disallowed-tools']);
       if (disallowedTools?.some(value => /[()*]/.test(value))) { addIssue(`commands.${name}: scoped disallowed-tools`); continue; }
+      let usage: PluginCommand['usage'];
+      if (metadata.usage !== undefined) {
+        try {
+          const spec = typeof metadata.usage === 'string' ? { file: metadata.usage, action: 'load' } : object(metadata.usage);
+          if (typeof spec.file !== 'string' || Object.keys(spec).some(key => !['file', 'action'].includes(key)) ||
+            (spec.action !== undefined && !['load', 'unload'].includes(String(spec.action))) || metadata.context !== undefined) throw new Error('usage requires a package-relative file and load/unload action in the current session');
+          const content = await readFile(await pluginChild(root, spec.file), 'utf8');
+          if (content.length > 300000) throw new Error('usage definition exceeds its size limit');
+          const { usageDefinitionSchema } = await import('@cardbush/bush-protocol');
+          usage = { definition: usageDefinitionSchema.parse(JSON.parse(content)), action: spec.action === 'unload' ? 'unload' : 'load', sourceHash: '', guardHashes: [] };
+        } catch (error) { addIssue(`commands.${name}.usage: ${error instanceof Error ? error.message : String(error)}`); continue; }
+      }
       if (metadata.model && metadata.model !== 'inherit') notes.push(`Command ${name}: model inherits the current CardBush session (${String(metadata.model)} is not selected automatically).`);
       if (allowedTools?.length) notes.push(`Command ${name}: declared tool preapprovals remain subject to CardBush permissions.`);
       if (metadata.hooks !== undefined) {
-        const local = await readPluginExtensions(root, { name: pluginId, hooks: metadata.hooks }, { ...options, hooksOnly: true, scope: { kind: 'skill', id: `${pluginId}:${name}` } });
+        const local = await readPluginExtensions(root, { name: pluginId, hooks: metadata.hooks }, { ...options, hooksOnly: true, scope: { kind: usage ? 'usage' : 'skill', id: `${pluginId}:${name}` } });
+        if (usage) {
+          const guards = local.hooks.filter(hook => hook.event === 'PreToolUse');
+          if (usage.action === 'unload' || local.issues.length || guards.some(hook => hook.async || !['command', 'mcp_tool'].includes(hook.type ?? ''))) {
+            addIssue(`commands.${name}.usage: load hooks must be valid; PreToolUse guards must be synchronous command or mcp_tool handlers; unload commands cannot declare hooks`); continue;
+          }
+          usage.guardHashes = guards.map(hook => hook.definitionHash!);
+        }
         hooks.push(...local.hooks); issues.push(...local.issues); notes.push(...local.notes);
       }
+      if (usage) usage.sourceHash = createHash('sha256').update(JSON.stringify(stableJson({ root: resolve(root), metadata, body, definition: usage.definition,
+        hooks: hooks.filter(hook => hook.scope?.kind === 'usage' && hook.scope.id === `${pluginId}:${name}`).map(hook => hook.definitionHash) }))).digest('hex');
       commands.push({ id: `${pluginId}:${name}`, pluginId, root, path: file, name,
         description: String(metadata.description ?? body.trim().split(/\r?\n/)[0]).slice(0, 1536), prompt: body,
         argumentHint: String(metadata['argument-hint'] ?? ''), arguments: argumentNames, allowedTools, disallowedTools,
-        userInvocable: flag(metadata['user-invocable'], true), disableModelInvocation: flag(metadata['disable-model-invocation'], false),
+        userInvocable: usage ? true : flag(metadata['user-invocable'], true), disableModelInvocation: usage ? true : flag(metadata['disable-model-invocation'], false),
+        ...(usage ? { usage } : {}),
         shell: metadata.shell === 'powershell' ? 'powershell' : 'bash',
         ...(metadata.context === 'fork' ? { context: 'fork', agent: String(metadata.agent || 'general-purpose'), background: metadata.background !== false } : {}) });
     }

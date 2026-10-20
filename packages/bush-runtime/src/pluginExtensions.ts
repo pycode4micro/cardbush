@@ -1,10 +1,10 @@
-import type { ModelRequest } from '@cardbush/bush-protocol';
+import type { ModelRequest, UsageDefinition } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 
 export const PLUGIN_HOOK_EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'PostCompact', 'Stop', 'Interrupt', 'SubagentStart', 'SubagentStop'] as const;
 export type PluginHookEvent = typeof PLUGIN_HOOK_EVENTS[number];
 export interface PluginHook {
-  scope?: { kind: 'skill' | 'agent'; id: string };
+  scope?: { kind: 'skill' | 'agent' | 'usage'; id: string };
   id: string;
   pluginId: string;
   root: string;
@@ -55,6 +55,7 @@ export interface PluginAgent {
   skills?: Array<{ name: string; path: string; prompt: string; dependencyServers?: string[] }>;
 }
 export interface PluginCommand {
+  usage?: { definition: UsageDefinition; action: 'load' | 'unload'; sourceHash: string; guardHashes: string[] };
   background?: boolean;
   kind?: 'command' | 'skill';
   id: string;
