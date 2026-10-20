@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile, rm, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { authorDocument, renderPdf, withOutputs, convertDocument, findOffice } from '../dist/jobs.mjs';
-import { inspectDocument, workbookStructure } from '../dist/inspect.mjs';
+import { inspectDocument, workbookStructure, validateDocument } from '../dist/inspect.mjs';
 import { fingerprint, officePackage, safeForOfficeConversion, xml } from '../dist/files.mjs';
 import { createDocumentServer, runDocumentJob } from '../dist/server.mjs';
 
@@ -80,6 +80,36 @@ test('wide spreadsheet output stays bounded and every cell remains reachable by 
     start_column = next;
   } while (start_column !== null);
   assert.equal(addresses.length, 90); assert.equal(new Set(addresses).size, 90);
+});
+
+test('PPTX invalid table anchors fail before publishing any outputs; valid alignment remains editable', async t => {
+  const root = await fixture(t), original = join(root, 'original.pptx');
+  const code = valign => `const ppt = new tools.PptxGenJS();
+    const slide = ppt.addSlide(); slide.addTable([['Header', 'Value'], ['文档', '8']], { x:1, y:1, w:6, h:2, valign:${JSON.stringify(valign)} });
+    for (const output of outputs) await ppt.writeFile({fileName:output});`;
+  const created = await authorDocument('pptx', { outputs: [original], code: code('middle') });
+  assert.equal(created.validations[0].presentation.tables, 1);
+  assert.equal(created.validations[0].visual, 'not_checked');
+  const before = await fingerprint(original), good = join(root, 'good.pptx'), bad = join(root, 'bad.pptx');
+  await assert.rejects(authorDocument('pptx', { outputs: [good, bad], code: `const ppt = new tools.PptxGenJS();
+    ppt.addSlide().addText('Valid output', {x:1,y:1,w:4,h:1}); await ppt.writeFile({fileName:outputs[0]});
+    ppt.addSlide().addTable([['A', 'B']], {x:1,y:1,w:6,h:2,valign:'mid'}); await ppt.writeFile({fileName:outputs[1]});` }), /slide2.xml.*anchor="mid".*middle/);
+  await assert.rejects(access(good)); await assert.rejects(access(bad));
+  assert.equal(await fingerprint(original), before);
+  for (const alignment of ['top', 'bottom']) await authorDocument('pptx', { outputs: [join(root, `${alignment}.pptx`)], code: code(alignment) });
+});
+
+test('PPTX validation rejects broken package targets and dangling slide references', async t => {
+  const root = await fixture(t), original = join(root, 'original.pptx');
+  await authorDocument('pptx', { outputs: [original], code: `const ppt = new tools.PptxGenJS(); ppt.addSlide(); await ppt.writeFile({fileName:outputs[0]});` });
+  const zip = await officePackage(await readFile(original));
+  zip.remove('ppt/slides/slide1.xml');
+  const missing = join(root, 'missing.pptx'); await writeFile(missing, await zip.generateAsync({type:'nodebuffer'}));
+  await assert.rejects(validateDocument('pptx', missing), /references a missing part/);
+  const dangling = await officePackage(await readFile(original));
+  dangling.file('ppt/presentation.xml', (await dangling.file('ppt/presentation.xml').async('string')).replace(/r:id="[^"]+"/, 'r:id="missing"'));
+  const target = join(root, 'dangling.pptx'); await writeFile(target, await dangling.generateAsync({type:'nodebuffer'}));
+  await assert.rejects(validateDocument('pptx', target), /unknown relationship missing/);
 });
 
 test('DOCX writes real paragraphs and tables and reads them progressively', async t => {

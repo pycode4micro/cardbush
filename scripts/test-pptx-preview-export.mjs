@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import PptxGenJS from 'pptxgenjs';
+import JSZip from 'jszip';
 import { Client } from '@modelcontextprotocol/client';
 import { ManagedStdioClientTransport } from '../packages/bush-mcp-client/dist/managedStdio.js';
 import { loadEnabledProductPluginMcpServers } from '../dist-electron/productPlugins.js';
@@ -17,6 +18,50 @@ import { loadEnabledProductPluginMcpServers } from '../dist-electron/productPlug
 const require = createRequire(import.meta.url), electron = require('electron');
 const execute = promisify(execFile), sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+
+test('native charts draw real SVG pixels on lazy slides and unsupported charts fail explicitly', { timeout: 180000 }, async t => {
+  const parent = resolve('tmp'); await mkdir(parent, { recursive: true });
+  const root = await mkdtemp(join(parent, 'pptx-chart-test-'));
+  t.after(async () => { assert.equal(dirname(resolve(root)), parent); await rm(root, { recursive: true, force: true, maxRetries: 5 }); });
+  const source = join(root, 'charts.pptx'), deck = new PptxGenJS(); deck.layout = 'LAYOUT_WIDE';
+  for (const type of ['bar', 'line', 'pie', 'area', 'scatter', 'bar']) {
+    const slide = deck.addSlide();
+    const data = type === 'scatter' ? [{name:'x', values:[1,2,3,4]}, {name:'文件', values:[8,5,3,2]}]
+      : [{name:'文件', labels:['文档','表格','演示','视频'], values:[8,5,3,2]}];
+    slide.addChart(deck.ChartType[type], data,
+      {x:1,y:1,w:10,h:5, showLegend:true, showValue:true, showTitle:false});
+  }
+  await deck.writeFile({fileName:source});
+  const original = sha(await readFile(source));
+  async function render(file, pages, key) {
+    const output = join(root, `${key}.png`), receipt = join(root, `${key}.receipt.json`), job = join(root, `${key}.job.json`);
+    await writeFile(job, JSON.stringify({path:file, output, pages, width:1280, expected_sha256:sha(await readFile(file))}));
+    await execute(electron, [resolve('dist-electron/bootstrap.js'), '--cardbush-presentation-export', job, receipt], {env,windowsHide:true,timeout:90000})
+      .catch(error => { if (error.code !== 1 || error.killed) throw error; });
+    return {...JSON.parse(await readFile(receipt,'utf8')),output};
+  }
+  for (let page = 1; page <= 6; page++) {
+    const result = await render(source, [page], `page-${page}`);
+    assert.equal(result.ok, true, result.error);
+    const image = await decode(result.output);
+    let colored = 0;
+    for (let y=120; y<570; y++) for (let x=170; x<1030; x++) {
+      const [r,g,b] = pixel(image,x,y);
+      if (Math.max(r,g,b)-Math.min(r,g,b)>15 && Math.min(r,g,b)<245) colored++;
+    }
+    assert.ok(colored > (page === 2 || page === 5 ? 100 : 2000), `slide ${page} has no visible chart (${colored} pixels)`);
+  }
+  assert.equal(sha(await readFile(source)),original);
+  const zip = await JSZip.loadAsync(await readFile(source));
+  // Native doughnut charts are outside this parser's supported chart set.
+  const chart = await zip.file('ppt/charts/chart1.xml').async('string');
+  zip.file('ppt/charts/chart1.xml',chart.replaceAll('c:barChart','c:doughnutChart'));
+  const unsupported = join(root,'unsupported.pptx'); await writeFile(unsupported,await zip.generateAsync({type:'nodebuffer'}));
+  const result = await render(unsupported,[1],'unsupported');
+  assert.equal(result.ok,false); assert.match(result.error,/chart preview failed/i);
+  await assert.rejects(access(result.output));
+  assert.equal((await render(unsupported,[6],'supported-page')).ok,true,'unsupported charts elsewhere must not block a supported page');
+});
 
 async function decode(file) {
   const image = await loadImage(await readFile(file)), canvas = createCanvas(image.width, image.height);
@@ -47,6 +92,7 @@ test('native preset geometry, lazy slides, PNG scaling, ASAR and the presentatio
   for (const [index, color] of ['FFFFFF', '00CC88', 'FF8800', '0070C0'].entries()) {
     const slide = deck.addSlide(); slide.background = { color };
     slide.addText(`Lazy slide ${index + 2}`, { x: 1, y: 3, w: 10, h: 1, fontSize: 30 });
+    if (index === 3) slide.addChart(deck.ChartType.bar, [{name:'ASAR chart',labels:['One','Two'],values:[8,3]}],{x:1,y:4,w:5,h:2});
   }
   await deck.writeFile({ fileName: source });
   const original = sha(await readFile(source));

@@ -36,6 +36,9 @@ export function presentationSnapshot(adapter: FileRenderExportAdapter) {
         slide.style.display = visible ? 'block' : 'none';
       });
       const slide = slides[page - 1], style = getComputedStyle(slide);
+      if (slide.querySelector('[data-cardbush-chart-state="failed"], [data-file-viewer-missing-capability="pptx-charts"]')) {
+        throw Error(`PPTX chart preview failed on slide ${page}. No complete visual verification is available; the source presentation is unchanged.`);
+      }
       const nativeWidth = parseFloat(style.width), nativeHeight = parseFloat(style.height);
       if (!(nativeWidth > 0 && nativeHeight > 0)) throw Error('Invalid slide dimensions.');
       const scale = width / nativeWidth, height = Math.round(nativeHeight * scale);

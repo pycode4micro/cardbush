@@ -2,6 +2,7 @@
 import { extname, posix } from 'node:path';
 import { assertFormat, absolute, elements, fileBytes, fingerprint, officePackage, part } from './files.mjs';
 import { pdfReader } from './sdk.mjs';
+import { validatePresentation } from './pptxValidation.mjs';
 
 const clip = (value, limit = 1000) => String(value ?? '').slice(0, limit);
 const text = node => elements(node, 't').map(item => item.textContent).join('');
@@ -124,7 +125,7 @@ export async function validateDocument(kind, path) {
       if (cell.getAttribute('t') === 'e') errorCount++;
     }
   }
-  return { structure: 'package_checked', visual: 'not_checked', ...(kind === 'xlsx' ? { formulas, missingCaches, errorCount,
+  return { structure: 'package_checked', visual: 'not_checked', ...(kind === 'pptx' ? { presentation: await validatePresentation(zip) } : {}), ...(kind === 'xlsx' ? { formulas, missingCaches, errorCount,
     calculation: formulas ? 'not_verified' : 'not_needed' } : {}) };
 }
 

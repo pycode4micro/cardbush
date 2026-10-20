@@ -254,6 +254,7 @@ async function renderOfficeFile() {
     renderedInstance = await renderFileViewerSpreadsheet(buffer, surface, 'xlsx', context);
     await waitForSpreadsheetReady();
   } else if (extension === '.pptx') {
+    await import('./office/pptxCharts');
     const { default: renderPptx } = await import('@file-viewer/renderer-pptx');
     renderedInstance = await renderPptx(buffer, surface, 'pptx', context);
   } else {
