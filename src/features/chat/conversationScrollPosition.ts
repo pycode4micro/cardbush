@@ -1,10 +1,12 @@
 import { absoluteBottomScrollTop } from '../chatScroll';
 import { cssEscape } from '../../shared/cssEscape';
+import { captureResponseSpacer, rememberConversationMessageSizes, responseFollowScrollTop, restoreResponseSpacer } from './responseSpacer';
 
 export type ConversationScrollPosition = {
   scrollTop: number;
   followLatest: boolean;
   responseAnchorKey: string;
+  responseSpace?: ReturnType<typeof captureResponseSpacer>;
   submittedUserReadingAnchor: string;
   anchor: { messageId: string; offset: number } | null;
 };
@@ -37,6 +39,7 @@ export function captureConversationScrollPosition(
     scrollTop: scroller.scrollTop,
     followLatest,
     responseAnchorKey: scroller.querySelector<HTMLElement>('.assistant-response-spacer')?.dataset.anchorKey ?? '',
+    responseSpace: captureResponseSpacer(scroller),
     submittedUserReadingAnchor: scroller.style.getPropertyValue('--submitted-user-reading-anchor'),
     anchor,
   };
@@ -45,30 +48,14 @@ export function captureConversationScrollPosition(
 export function restoreConversationScrollPosition(
   scroller: HTMLElement,
   position: ConversationScrollPosition | undefined,
-  composerBottomInset: number,
 ) {
-  // Chromium forgets the auto intrinsic size when a keyed list is remounted.
-  // Seed the lazy-layout fallback from this mount's actual geometry, otherwise
-  // removing the restoration override puts the 220px estimate back above the
-  // reading anchor. Batch all reads before writes to avoid per-message reflow.
-  const measurements = Array.from(
-    scroller.querySelectorAll<HTMLElement>('.message-list-item'),
-    (item) => {
-      const style = getComputedStyle(item);
-      const contentHeight = item.getBoundingClientRect().height
-        - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
-        - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth);
-      return { item, contentHeight };
-    },
-  );
-  for (const { item, contentHeight } of measurements) {
-    item.style.containIntrinsicBlockSize = `auto ${Math.max(0, contentHeight)}px`;
-  }
+  // Keyed remounts forget Chromium's measured auto intrinsic size. Restore it
+  // before returning history to lazy layout, using the same row measurement.
+  rememberConversationMessageSizes(scroller);
+  restoreResponseSpacer(scroller, position?.responseAnchorKey ?? '', position?.responseSpace);
   const maximum = absoluteBottomScrollTop(scroller);
-  const stage = scroller.querySelector<HTMLElement>('.assistant-response-spacer')?.dataset.anchorKey
-    ? scroller.querySelector<HTMLElement>('.message-list-item:last-child') : null;
   let top = position?.scrollTop ?? maximum;
-  if (!position || (position.followLatest && !stage)) {
+  if (!position) {
     top = maximum;
   } else {
     const anchor = position.anchor && scroller.querySelector<HTMLElement>(
@@ -78,11 +65,7 @@ export function restoreConversationScrollPosition(
     if (anchor && position.anchor) {
       top = scroller.scrollTop + anchor.getBoundingClientRect().top - viewport.top - position.anchor.offset;
     }
-    if (position.followLatest && stage) {
-      const tailTop = scroller.scrollTop + stage.getBoundingClientRect().bottom
-        - (viewport.bottom - composerBottomInset - 18);
-      top = Math.max(top, tailTop);
-    }
+    if (position.followLatest) top = responseFollowScrollTop(scroller, top);
   }
   // Session restoration is a layout operation, never a user scroll animation.
   scroller.scrollTo({ top: Math.max(0, Math.min(maximum, top)), behavior: 'instant' });

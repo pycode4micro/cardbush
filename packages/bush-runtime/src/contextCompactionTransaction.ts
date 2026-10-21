@@ -74,7 +74,6 @@ export class ContextCompactionTransaction {
   #attempts: number;
   #correctionRecovery = false;
   readonly incremental?: IncrementalCheckpoint;
-  #jobSources: ContextCompactionSource[] = [];
   #skillContracts = new Map<number, CheckpointSkillContract>();
   #skillEvidence: CheckpointSkillEvidence[] = [];
 
@@ -151,17 +150,7 @@ export class ContextCompactionTransaction {
         ? mergeCheckpointSkillExcerpts(children.map(child => checkpointSkillReceiptEvidence(child.result![1])
           .filter(item => item.source === source).flatMap(item => item.excerpts)))
         : collectCheckpointSkillExcerpts(fragment.units.flat());
-      const range = this.#jobSources.find(item => item.turnId === fragment.turnId);
-      const evidenceMessages = new Set<number>();
-      if (range) for (let index = range.startMessage; index < range.endMessageExclusive; index++) evidenceMessages.add(index);
-      // A later, uncompressed user correction can retire an earlier source's
-      // obligation. Do not import another source's Tool facts as completion.
-      for (const background of this.#jobSources.filter(item => item.target === 'not_requested')) {
-        for (let index = background.startMessage; index < background.endMessageExclusive; index++) {
-          if (job.messages[index]?.role === 'user') evidenceMessages.add(index);
-        }
-      }
-      this.#skillContracts.set(source, { excerpts, messages: job.messages, evidenceMessages });
+      this.#skillContracts.set(source, { excerpts });
     }
     const notice = checkpointSkillContractNotice(this.#skillContracts);
     if (!notice) return job;
@@ -211,7 +200,6 @@ export class ContextCompactionTransaction {
       });
     }
     validateConversation(messages);
-    this.#jobSources = sources;
     const notice = contextPressureNotice(state, this.#pressure, this.#format, sources);
     if (node !== this.#root || node.children) {
       notice.content += '\n' + (node === this.#root
@@ -424,7 +412,6 @@ export class ContextCompactionTransaction {
   #incrementalJob(): CompactionJob {
     const node = this.#current;
     if (node === this.#root && !node.children) {
-      this.#jobSources = this.#sources;
       return { id: node.id, state: this.originalState,
       messages: [...this.#messages, ...this.incremental!.attemptHistory], outputTokens: node.outputTokens,
       failures: node.loop!.failures, sourceRanges: this.#ranges(node) };
@@ -463,7 +450,6 @@ export class ContextCompactionTransaction {
             ? { userRequest: { ...original, message: startMessage + original.message - fragment.startMessage } } : {}) };
       });
     validateConversation(messages);
-    this.#jobSources = sources;
     const notice = contextPressureNotice(this.#state, this.#pressure, 'incremental', sources);
     notice.content += '\n' + (node.children
       ? 'Consolidate the indexed staged receipts into one summary for each selected source number. Only the quoted summaries fields belong to that source. No fragment has replaced the original conversation.'

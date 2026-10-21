@@ -167,13 +167,17 @@ test('the shared Node Runtime exposes desktop tools only for the explicit servic
   } finally { await runtime.close(); assert.ok(root.startsWith(base)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); }
 });
 
-test('default real Agent remains headless despite DISPLAY and inherited desktop flags', { timeout: 45000 }, async () => {
+test('the built-in isolated desktop remains opt-in without making claims about plugin desktop access', { timeout: 45000 }, async () => {
   const base = resolve('tmp/agent-desktop-tests'); await mkdir(base, { recursive: true });
   const root = await mkdtemp(join(base, 'headless-'));
   const service = await AgentService.open({ dataRoot: root, env: { DISPLAY: ':99', CARDBUSH_AGENT_DESKTOP: '1' } });
   let http;
   try {
     for (const key of ['desktop', 'computerUse', 'browserUi']) assert.equal(service.info().capabilities[key], false);
+    const status = await service.call('desktop.status');
+    assert.equal(status.available, false);
+    assert.ok(['not_enabled','needs_setup','probe_failed'].includes(status.setup.state));
+    assert.deepEqual(service.info().desktopSetup, status.setup);
     await assert.rejects(service.call('desktop.frame'), /Desktop is disabled/);
     const catalog = await service.call('runtime.command', { kind: 'runtime.get_tool_catalog', payload: {} });
     assert.doesNotMatch(JSON.stringify(catalog), /linux_computer_use|linux_browser_use/);

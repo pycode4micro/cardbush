@@ -245,6 +245,9 @@ export class McpClientManager {
       snapshotId: desired.snapshotId,
       revision: this.#snapshot?.snapshotId === desired.snapshotId ? this.#snapshot.revision : desired.revision,
       applicationState: this.#pending ? (this.#applicationError ? 'failed' : 'pending') : 'applied',
+      backgroundConnectionPending: Boolean(this.#pending && !this.#applicationError && !this.#atomicUpdate &&
+        !removed.length && [...this.#updates.values()].every(update =>
+          update.state !== 'waiting_for_catalog' && !this.#replacement(update)?.activeUses)),
       ...(this.#pending ? { pendingRevision: desired.revision, pendingServerIds,
         ...(!this.#applicationError ? { applicationPhase: connecting ? 'connecting' : waitingForResources ? 'waiting_for_resources' : waitingForCalls ? 'waiting_for_calls' : 'waiting_for_idle' } : {}),
       } : {}),

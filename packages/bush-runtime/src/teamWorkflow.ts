@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { TASK_WAIT_MAX_MS, TASK_WAIT_DEFAULT_MS } from './taskLimits.js';
 import { join } from 'node:path';
-import { creationCanvasSchema, teamWorkflowSchema, teamRunSchema, type TeamWorkflow, type TeamRun } from '@cardbush/bush-protocol';
+import { creationCanvasSchema, teamWorkflowSchema, TEAM_WORKFLOW_MAX_NODES, teamRunSchema, type TeamWorkflow, type TeamRun } from '@cardbush/bush-protocol';
 import { DefinitionStore } from './definitionStore.js';
 import type { RegisteredAgentStore } from './registeredAgents.js';
 import type { SubagentDispatcher, SubagentInput } from './subagentTool.js';
@@ -10,20 +12,21 @@ import { settleAtAbort } from './abortSettlement.js';
 import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, projectCatalogPage, type CatalogQuery } from './catalogPage.js';
 import { teamResultNodeIds, teamRunResult } from './teamResults.js';
 import type { RuntimeTaskHandle } from './taskTools.js';
+import { presentTool } from './toolPresentation.js';
+import { actionFieldSchema, validateActionFields } from './toolActionRules.js';
 
-const definitionSchema = { type: 'object', additionalProperties: false, required: ['id', 'name', 'nodes'], properties: {
-  id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, max_parallel: { type: 'integer', minimum: 1, maximum: 8 },
-  presentation: { type: 'object', additionalProperties: false, required: ['markdown'], properties: {
-    markdown: { type: 'string', maxLength: 2 * 1024 * 1024, description: 'Optional Create Markdown document: rationale, headings, notes and visual layout. Presentation only; execution uses nodes and depends_on.' },
-  } },
-  nodes: { type: 'array', minItems: 1, maxItems: 64, items: { type: 'object', additionalProperties: false, required: ['id', 'agent_id', 'prompt'], properties: {
-    id: { type: 'string' }, agent_id: { type: 'string' }, prompt: { type: 'string' }, depends_on: { type: 'array', items: { type: 'string' } },
-    name: { type: 'string', description: 'Optional node label for the graph.' },
-    position: { type: 'object', additionalProperties: false, required: ['x', 'y'], properties: { x: { type: 'number', minimum: -100000, maximum: 100000 }, y: { type: 'number', minimum: -100000, maximum: 100000 } } },
-  } } },
-} };
+const teamActions = {
+  list: { required: [], optional: ['section', 'query', 'offset', 'limit'] }, get: { required: ['team_id'] },
+  save: { required: ['definition', 'expected_revision'] }, delete: { required: ['team_id', 'expected_revision'] },
+  run: { required: ['team_id', 'input'], optional: ['canvas_path'] }, status: { required: ['run_id'] },
+  wait: { required: ['run_id'], optional: ['node_ids', 'yield_time_ms'] }, stop: { required: ['run_id'] }, resume: { required: ['run_id'] },
+} as const;
+
+// Drop Zod's non-enumerable Standard Schema helpers before nesting this JSON data.
+const definitionSchema = structuredClone(z.toJSONSchema(teamWorkflowSchema, { io: 'input' }));
+
 interface TeamInput extends CatalogQuery {
-  action: 'list' | 'get' | 'save' | 'delete' | 'run' | 'status' | 'wait' | 'stop' | 'resume';
+  action: keyof typeof teamActions;
   team_id?: string; run_id?: string; definition?: unknown; expected_revision?: number; input?: string;
   canvas_path?: string;
   section?: 'teams' | 'runs';
@@ -48,16 +51,28 @@ export class TeamWorkflowManager {
   }
   register(registry: ToolRegistry) {
     registry.register<TeamInput>({
-      definition: { name: 'team', description: 'Manage workflows of registered clean Agents. list returns summaries (section=runs for this conversation); get reads configuration. Save acyclic dependencies, deliverables and acceptance criteria. Independent nodes run in parallel; dependents receive direct upstream results. run starts independently; resume retries unfinished nodes, retaining completed ones. Use tasks for progress/results/stop when available; otherwise use status/wait/stop here. wait returns leaf outputs, or selected node_ids for intermediate evidence. Completed means execution ended, not content validated. Nodes execute through subagent.',
+      definition: { name: 'team', description: 'Use for saved dependency workflows of registered clean Agents: the host schedules ready nodes, passes direct upstream results and resumes unfinished steps. For ad-hoc independent assignments, use subagent even with several agents. list finds definitions (section=runs finds this conversation\'s executions); get reads configuration. Save acyclic dependencies, deliverables and acceptance criteria. run starts a new execution; resume retains completed nodes. Use tasks for progress/results/stop when available; otherwise use status/wait/stop here. wait reads final outputs or selected node_ids. Completed means execution ended, not content validated. Nodes reuse subagent execution.',
         inputSchema: { type: 'object', additionalProperties: false, required: ['action'], properties: {
-          action: { type: 'string', enum: ['list', 'get', 'save', 'delete', 'run', 'status', 'wait', 'stop', 'resume'] },
+          action: actionFieldSchema(teamActions),
           definition: definitionSchema, expected_revision: { type: 'integer', minimum: 0 },
-          team_id: { type: 'string' }, run_id: { type: 'string' }, input: { type: 'string', description: 'Explicit task input for this run. Parent conversation history is not copied.' },
+          team_id: { type: 'string', description: 'Workflow definition ID from team list/save; used by get, run and delete. Identifies the saved workflow, not an execution or employee.' },
+          run_id: { type: 'string', description: 'Execution ID returned by team run or list with section=runs. Used by resume/status/wait/stop. The same run is exposed as task_id with kind=team in tasks; never substitute team_id or a node ID.' },
+          input: { type: 'string', description: 'Explicit task input for this run. Parent conversation history is not copied.' },
           canvas_path: { type: 'string', description: 'run only: optional canvas manifest. Each node receives the path and its assigned region IDs, then inspects current layout/content through design. Assign regions before running; parent integrates unassigned results.' },
-          yield_time_ms: { type: 'integer', minimum: 0, maximum: 30000, default: 1000, description: 'wait only: bounded observation, never cancels the Team. Use 0 for current results; continue independent work before waiting.' },
-          node_ids: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string' }, description: 'wait only. Omit for final node outputs; provide IDs from status to read selected node outputs in full.' },
+          yield_time_ms: { type: 'integer', minimum: 0, maximum: TASK_WAIT_MAX_MS, default: TASK_WAIT_DEFAULT_MS, description: 'wait only: bounded observation, never cancels the Team. Use 0 for current results; continue independent work before waiting.' },
+          node_ids: { type: 'array', minItems: 1, maxItems: TEAM_WORKFLOW_MAX_NODES, uniqueItems: true, items: { type: 'string' }, description: 'wait only. Omit for final node outputs; provide IDs from status to read selected node outputs in full.' },
           section: { type: 'string', enum: ['teams', 'runs'], default: 'teams', description: 'list only.' }, ...catalogPageProperties,
         } } },
+      projectModelDefinition: (definition, scope) => {
+        if (!scope.canRecall) return definition;
+        const actions = scope.hasTool('tasks') ? ['list', 'get', 'run', 'resume'] as const : ['list', 'get', 'run', 'status', 'wait', 'stop', 'resume'] as const;
+        const rules = Object.fromEntries(actions.map(action => [action, teamActions[action]]));
+        return presentTool(definition, {
+          fields: ['action', ...new Set(Object.values(rules).flatMap(rule => [...rule.required, ...('optional' in rule ? rule.optional : [])]))],
+          properties: { action: actionFieldSchema(rules) },
+          description: `Run saved dependency workflows: the host schedules nodes, passes upstream results and resumes unfinished steps. For ad-hoc independent assignments use subagent, even with several agents. list/get find definitions; run starts with team_id; resume uses the returned run_id and retains completed nodes. ${scope.hasTool('tasks') ? 'Use tasks to inspect/wait/stop the returned task_id (the same execution as run_id).' : 'Use status/wait/stop with run_id to observe or stop runs.'} Employee IDs, team_id and node IDs are not run IDs. For definitions or selected node outputs, load get_tool_schema(name="team"), then use call_tool with its full arguments.`,
+        });
+      },
       manifest: { effect_kind: 'delegation', operation: 'agent.team', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },
       visibleToChild: false, parallelSafe: false, decodeInput: decodeTeamInput,
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['teams', 'runs']),
@@ -69,7 +84,7 @@ export class TeamWorkflowManager {
     if (value.action === 'list') return { teams: await this.definitions.list(), runs: await this.listRuns() };
     if (value.action === 'get') {
       const team = await this.definitions.get(value.team_id!);
-      if (!team) throw new Error('Team definition is unavailable.');
+      if (!team) throw new Error('Team definition is unavailable. Use team_id from team list/save; run_id identifies an execution, not a workflow definition.');
       return team;
     }
     if (value.action === 'save') {
@@ -125,7 +140,7 @@ export class TeamWorkflowManager {
   }
   private async readRun(id: string, parentSessionId?: string) {
     const record = await this.runs.get(id);
-    if (!record || parentSessionId && record.definition.parentSessionId !== parentSessionId) throw new Error('Team run is unavailable in this conversation.');
+    if (!record || parentSessionId && record.definition.parentSessionId !== parentSessionId) throw new Error('Team run is unavailable in this conversation. Use run_id from team run or team list with section=runs; team_id, employee IDs and node IDs do not identify a run.');
     return this.settleInterrupted(record.definition);
   }
   private result = teamRunResult;
@@ -157,7 +172,7 @@ export class TeamWorkflowManager {
     if (input.action === 'run') {
       if (this.closed || !context.turn) throw new Error('Team execution is unavailable.');
       const team = await this.definitions.get(input.team_id!);
-      if (!team) throw new Error('Team definition is unavailable.');
+      if (!team) throw new Error('Team definition is unavailable. Use team_id from team list/save; run_id identifies an execution, not a workflow definition.');
       const id = `team-run-${createHash('sha256').update(JSON.stringify([context.sessionId, context.turnId, context.toolCall.id])).digest('hex').slice(0, 32)}`;
       const prior = await this.runs.get(id);
       if (prior) return this.result(await this.readRun(id, context.sessionId));
@@ -182,7 +197,7 @@ export class TeamWorkflowManager {
     if (input.action === 'wait') {
       if (input.node_ids?.some(id => !run.nodes.some(node => node.id === id))) throw new Error('Unknown Team node ID. Use status to inspect this run\'s nodes.');
       const pending = this.active.get(run.id)?.promise;
-      const duration = input.yield_time_ms ?? 1000;
+      const duration = input.yield_time_ms ?? TASK_WAIT_DEFAULT_MS;
       if (pending && duration) {
         if (this.options.waitForWork) await this.options.waitForWork(context, pending, duration);
         else {
@@ -282,22 +297,20 @@ export class TeamWorkflowManager {
 export function decodeTeamInput(value: unknown): TeamInput {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Team input must be an object.');
   const input = value as Record<string, unknown>;
-  const fields: Record<TeamInput['action'], string[]> = { list: ['section', 'query', 'offset', 'limit'], get: ['team_id'], save: ['definition', 'expected_revision'], delete: ['team_id', 'expected_revision'],
-    run: ['team_id', 'input', 'canvas_path'], status: ['run_id'], wait: ['run_id', 'node_ids', 'yield_time_ms'], stop: ['run_id'], resume: ['run_id'] };
-  const action = String(input.action) as TeamInput['action'];
-  if (!Object.hasOwn(fields, action) || Object.keys(input).some(key => key !== 'action' && !fields[action].includes(key))) throw new Error('Invalid Team action or arguments.');
+  const action = validateActionFields(input, teamActions, 'Team');
   if (action === 'list') {
     if (input.section !== undefined && input.section !== 'teams' && input.section !== 'runs') throw new Error('Team list section must be teams or runs.');
     return { action, section: input.section as TeamInput['section'], ...decodeCatalogQuery(input) };
   }
-  for (const key of fields[action]) {
+  const rule = teamActions[action];
+  for (const key of [...rule.required, ...('optional' in rule ? rule.optional : [])]) {
     if (key === 'canvas_path' && input[key] === undefined) continue;
     if (key === 'yield_time_ms') {
-      if (input[key] !== undefined && (!Number.isInteger(input[key]) || Number(input[key]) < 0 || Number(input[key]) > 30000)) throw new Error('yield_time_ms must be between 0 and 30000.');
+      if (input[key] !== undefined && (!Number.isInteger(input[key]) || Number(input[key]) < 0 || Number(input[key]) > TASK_WAIT_MAX_MS)) throw new Error(`yield_time_ms must be between 0 and ${TASK_WAIT_MAX_MS}.`);
     } else if (key === 'node_ids') {
       const ids = input[key];
-      if (ids !== undefined && (!Array.isArray(ids) || ids.length === 0 || ids.length > 64 ||
-          ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length)) throw new Error('node_ids must contain 1–64 unique node IDs.');
+      if (ids !== undefined && (!Array.isArray(ids) || ids.length === 0 || ids.length > TEAM_WORKFLOW_MAX_NODES ||
+          ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length)) throw new Error(`node_ids must contain 1–${TEAM_WORKFLOW_MAX_NODES} unique node IDs.`);
     } else if (key === 'expected_revision') { if (!Number.isSafeInteger(input[key]) || Number(input[key]) < 0) throw new Error('expected_revision is required.'); }
     else if (key === 'definition') teamWorkflowSchema.parse(input[key]);
     else if (typeof input[key] !== 'string' || !String(input[key]).trim()) throw new Error(`${key} is required.`);

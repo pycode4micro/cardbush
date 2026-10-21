@@ -75,7 +75,6 @@ import {
   readSessionAttentionState,
   sessionAttentionNeedsNotification,
 } from '../features/sessionAttention';
-import { taskPlanWaitingLabel, turnPlanWaiting } from '../features/taskPlanWaiting';
 import { notifyAttentionSound } from '../features/notificationSound';
 import { watchWindowVisibility } from '../shared/windowVisibility';
 import {
@@ -439,10 +438,12 @@ export function useCardbushChat(
   const clearSessionAttention = useCallback((
     sessionId: string,
     expectedKind?: SessionAttentionKind,
+    expectedInteractionId?: string,
   ) => {
     const normalized = sessionId.trim();
     const currentAttention = attentionByConversationRef.current[normalized];
-    if (!normalized || !currentAttention || (expectedKind && currentAttention.kind !== expectedKind)) {
+    if (!normalized || !currentAttention || (expectedKind && currentAttention.kind !== expectedKind)
+      || (expectedInteractionId && currentAttention.interactionId !== expectedInteractionId)) {
       return;
     }
     const next = { ...attentionByConversationRef.current };
@@ -457,21 +458,17 @@ export function useCardbushChat(
     body: string,
     turnId = '',
     notificationId?: string,
-    waitingKind: SessionAttentionState['waitingKind'] = 'user',
   ) => {
     const normalized = sessionId.trim();
-    if (!normalized) return;
-    const waiting = kind === 'waiting' ? waitingKind : undefined;
+    if (!normalized || !sessionAttentionNeedsNotification({ kind, interactionId: notificationId })) return;
     const existing = attentionByConversationRef.current[normalized];
     const normalizedTurnId = turnId.trim();
-    // A still-open question is stronger evidence than a plan's passive wait or completion.
-    if (existing?.kind === 'waiting' && existing.waitingKind === 'user' && existing.interactionId
-      && existing.turnId === normalizedTurnId
-      && (kind === 'completed' || (kind === 'waiting' && waiting !== 'user'))) return;
-    const notify = sessionAttentionNeedsNotification({ kind, waitingKind: waiting });
-    if (notify) notifyAttentionSound({ sessionId: normalized, scope: backend.scope, kind, turnId, notificationId });
-    if (existing?.kind === kind && existing.waitingKind === waiting && normalizedTurnId && existing.turnId === normalizedTurnId
-      && existing.body === body.trim() && existing.interactionId === (kind === 'waiting' ? notificationId : undefined)) {
+    // An actual pending interaction can outlive its originating model turn.
+    if (existing?.kind === 'interaction' && existing.interactionId
+      && existing.turnId === normalizedTurnId && kind === 'completed') return;
+    notifyAttentionSound({ sessionId: normalized, scope: backend.scope, kind, turnId, notificationId });
+    if (existing?.kind === kind && normalizedTurnId && existing.turnId === normalizedTurnId
+      && existing.body === body.trim() && existing.interactionId === (kind === 'interaction' ? notificationId : undefined)) {
       return;
     }
     const conversation = conversationsRef.current.find((item) => item.id === normalized);
@@ -479,11 +476,10 @@ export function useCardbushChat(
     const attention: SessionAttentionState = {
       sessionId: normalized,
       kind,
-      ...(kind === 'waiting' ? { waitingKind: waiting } : {}),
-      ...(kind === 'waiting' && notificationId ? { interactionId: notificationId } : {}),
+      ...(kind === 'interaction' ? { interactionId: notificationId } : {}),
       title,
-      body: body.trim() || (kind === 'waiting'
-        ? taskPlanWaitingLabel(waiting, languageRef.current)
+      body: body.trim() || (kind === 'interaction'
+        ? localize('有待处理的方案或审批请求。', 'A solution or approval request needs your response.')
         : kind === 'error'
           ? localize('任务遇到问题，点击查看详情。', 'The task needs attention. Click to view details.')
           : localize('任务已完成，点击查看结果。', 'Task complete. Click to view the result.')),
@@ -492,17 +488,14 @@ export function useCardbushChat(
     };
     // Native window state decides toast delivery. Chromium can still report
     // focus/visibility while a minimize event is on its way to this renderer.
-    if (!backend.scope && notify) void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
+    if (!backend.scope) void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
     if (
       kind === 'completed' &&
       viewActiveRef.current &&
       activeConversationIdRef.current === normalized &&
       isCardbushForeground()
     ) {
-      if (existing?.kind === 'waiting' && existing.turnId === normalizedTurnId) {
-        clearSessionAttention(normalized, 'waiting');
-      }
-      clearSessionAttention(normalized, 'completed');
+      clearSessionAttention(normalized);
       return;
     }
     const next = {
@@ -512,6 +505,26 @@ export function useCardbushChat(
     attentionByConversationRef.current = next;
     setAttentionByConversation(next);
   }, [clearSessionAttention, localize]);
+
+  const syncInteractionAttention = useCallback((
+    sessionId: string,
+    interaction: PendingInteraction | null,
+    fallbackTurnId = '',
+  ) => {
+    if (!interaction) {
+      clearSessionAttention(sessionId, 'interaction');
+    } else if ((interaction.type === 'solution_selection' || interaction.type === 'path_permission_request')
+      && (!interaction.sessionId || interaction.sessionId === sessionId)) {
+      markSessionAttention(sessionId, 'interaction', truncateText(
+        interaction.reason || interaction.questions?.[0]?.question || interaction.description || '', 180),
+      interaction.turnId || fallbackTurnId, interaction.id);
+    }
+  }, [clearSessionAttention, markSessionAttention]);
+
+  // Interaction lifecycle events also clear badges on inactive/local or remote sessions.
+  useEffect(() => onRuntimeInteractionsChanged((sessionId, interaction) => {
+    syncInteractionAttention(sessionId, interaction);
+  }), [onRuntimeInteractionsChanged, syncInteractionAttention]);
 
   useEffect(() => {
     if (backend.scope) return;
@@ -1032,23 +1045,9 @@ export function useCardbushChat(
         localize('任务执行失败。', 'The task failed.'), terminal.turnId);
       return;
     }
-    if (terminal.status !== 'completed' && terminal.status !== 'awaiting_user_action') return;
-    const goal = knownGoal === undefined ? await refreshGoal(sessionId) : knownGoal;
-    const planWaiting = turnPlanWaiting(terminal);
-    if (planWaiting) {
-      markSessionAttention(sessionId, 'waiting', truncateText(
-        planWaiting.reason || taskPlanWaitingLabel(planWaiting.kind, languageRef.current), 180),
-      terminal.turnId, undefined, planWaiting.kind);
-      return;
-    }
-    if (goal?.status === 'active') return;
-    if (goal?.status === 'blocked') {
-      markSessionAttention(sessionId, 'waiting', truncateText(
-        goal?.statusReason || goal?.objective ||
-        localize('任务需要你的确认。', 'The task needs your input.'), 180), terminal.turnId);
-      return;
-    }
     if (terminal.status !== 'completed') return;
+    const goal = knownGoal === undefined ? await refreshGoal(sessionId) : knownGoal;
+    if (goal?.status === 'active') return;
     markSessionAttention(sessionId, 'completed', truncateText(
       body.replace(/\s+/g, ' ').trim() || goal?.statusReason || goal?.objective || '', 180), terminal.turnId);
   }, [localize, markSessionAttention, refreshGoal]);
@@ -1433,13 +1432,7 @@ export function useCardbushChat(
           },
           activeConversationIdRef.current,
         ));
-        markSessionAttention(
-          normalizedSessionId,
-          'waiting',
-          localize('目标需要你的确认，点击继续处理。', 'The goal needs your input. Click to continue.'),
-          interaction.turnId ?? normalizedTurnId,
-          interaction.id,
-        );
+        syncInteractionAttention(normalizedSessionId, interaction, normalizedTurnId);
       },
       onFinalAssistantText: (text, chunk) => {
         finalAssistantText = text;
@@ -1577,6 +1570,7 @@ export function useCardbushChat(
     scheduleQueuedMessage,
     localize,
     markSessionAttention,
+    syncInteractionAttention,
     markTurnAttention,
     markSessionDone,
     markSessionRunning,
@@ -1749,6 +1743,7 @@ export function useCardbushChat(
       .then((interaction) => {
         if (!cancelled && current === revision) {
           setPendingInteraction(interaction);
+          syncInteractionAttention(sessionId, interaction);
         }
       })
       .catch(() => undefined);
@@ -1759,7 +1754,7 @@ export function useCardbushChat(
       cancelled = true;
       unsubscribe();
     };
-  }, [activeConversationId]);
+  }, [activeConversationId, syncInteractionAttention]);
 
   useEffect(() => {
     const sessionId = activeConversationId.trim();
@@ -2655,13 +2650,7 @@ export function useCardbushChat(
               },
               activeConversationIdRef.current,
             ));
-            markSessionAttention(
-              sessionId,
-              'waiting',
-              localize('需要你的确认，点击继续处理。', 'Your input is required. Click to continue.'),
-              interaction.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
-              interaction.id,
-            );
+            syncInteractionAttention(sessionId, interaction, activeTurnIdsRef.current[sessionId]);
           },
           onFinalAssistantText: (text, chunk) => {
             finalAssistantText = text;
@@ -2872,6 +2861,7 @@ export function useCardbushChat(
       loadTeamFlow,
       localize,
       markSessionAttention,
+      syncInteractionAttention,
       markTurnAttention,
       markSessionDone,
       markSessionRunning,
@@ -3214,13 +3204,7 @@ export function useCardbushChat(
               },
               activeConversationIdRef.current,
             ));
-            markSessionAttention(
-              sessionId,
-              'waiting',
-              localize('需要你的确认，点击继续处理。', 'Your input is required. Click to continue.'),
-              interaction.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
-              interaction.id,
-            );
+            syncInteractionAttention(sessionId, interaction, activeTurnIdsRef.current[sessionId]);
           },
           onFinalAssistantText: (text, chunk) => {
             finalAssistantText = text;
@@ -3397,6 +3381,7 @@ export function useCardbushChat(
       loadTeamFlow,
       localize,
       markSessionAttention,
+      syncInteractionAttention,
       markTurnAttention,
       markSessionDone,
       markSessionRunning,
@@ -3780,7 +3765,10 @@ export function useCardbushChat(
       const turnId = message.turnId?.trim() ?? '';
       const conversationId = message.conversationId?.trim() || activeConversationId;
       const active = activeTurnIdsRef.current[conversationId]?.trim() ?? '';
-      if (!isSessionSending(conversationId)) {
+      // A lost send receipt can race a poll that already sees the original Turn.
+      // Retry that request with its existing ID, never reinterpret it as guidance.
+      const submissionRetry = backend.isSubmissionRetry?.(conversationId, splitStreamAttachmentMentions(text).userInput, prompt.context);
+      if (submissionRetry || !isSessionSending(conversationId)) {
         const conversation =
           conversations.find((item) => item.id === conversationId) ?? activeConversation;
         return submissionReceipt(accepted => sendMessage({ ...prompt, text }, conversation, undefined, undefined, undefined, undefined, accepted));
@@ -3861,6 +3849,7 @@ export function useCardbushChat(
       activeConversation,
       activeConversationId,
       applyConnectionRecoveryUpdate,
+      backend,
       conversations,
       isSessionSending,
       sendMessage,
@@ -4136,7 +4125,7 @@ export function useCardbushChat(
           );
         }
         if (!nextInteraction) {
-          clearSessionAttention(sessionId, 'waiting');
+          clearSessionAttention(sessionId, 'interaction', interaction.id);
         }
         setError(null);
       } catch (caught) {
@@ -4146,7 +4135,7 @@ export function useCardbushChat(
             setPendingInteraction(nextInteraction);
           }
           if (!nextInteraction) {
-            clearSessionAttention(sessionId, 'waiting');
+            clearSessionAttention(sessionId, 'interaction', interaction.id);
           }
           setError(null);
           return;
@@ -4175,7 +4164,7 @@ export function useCardbushChat(
         );
       }
       if (!nextInteraction) {
-        clearSessionAttention(sessionId, 'waiting');
+        clearSessionAttention(sessionId, 'interaction', interaction.id);
       }
       setError(null);
     } catch (caught) {
@@ -4185,7 +4174,7 @@ export function useCardbushChat(
           setPendingInteraction(nextInteraction);
         }
         if (!nextInteraction) {
-          clearSessionAttention(sessionId, 'waiting');
+          clearSessionAttention(sessionId, 'interaction', interaction.id);
         }
         setError(null);
         return;

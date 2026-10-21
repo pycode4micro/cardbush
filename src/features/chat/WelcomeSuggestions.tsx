@@ -5,15 +5,17 @@ import { fetchWelcomeHistory } from '../../backend/welcomeHistory';
 import { buildWelcomeSuggestions, type WelcomeSuggestion } from './welcomeSuggestionRanking';
 import { ConversationHostContext } from '../conversationHost';
 
-export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect }: {
+export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect, preview = false }: {
   language: 'zh' | 'en'; disabled: boolean; hasDraft: boolean; onSelect: (suggestion: WelcomeSuggestion) => void;
+  preview?: boolean;
 }) {
   const [history, setHistory] = useState<RuntimeUserPrompt[]>([]);
   const host = useContext(ConversationHostContext);
   const readHistory = host ? host.welcomeHistory : fetchWelcomeHistory;
   useEffect(() => {
-    const controller = new AbortController();
     setHistory([]);
+    if (preview) return;
+    const controller = new AbortController();
     let pending = false, lastRead = 0;
     const refresh = () => {
       if (!readHistory || document.hidden || pending || Date.now() - lastRead < 60000) return;
@@ -32,8 +34,8 @@ export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect }: {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [readHistory]);
-  const suggestions = useMemo(() => buildWelcomeSuggestions(history, language), [history, language]);
+  }, [readHistory, preview]);
+  const suggestions = useMemo(() => buildWelcomeSuggestions(preview ? [] : history, language), [history, language, preview]);
   const hasHistory = suggestions.some(item => item.fromHistory);
   return <div className="welcome-suggestions">
     <p className="welcome-suggestions-caption">{hasHistory
@@ -41,7 +43,7 @@ export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect }: {
       : language === 'zh' ? '从一个想法开始' : 'Start with an idea'}</p>
     <div className="welcome-suggestions-list">
       {suggestions.map(item => <button key={item.text} type="button" className="welcome-suggestion"
-        disabled={disabled || (hasDraft && !item.sessionId)} onClick={() => onSelect(item)}
+        disabled={preview || disabled || (hasDraft && !item.sessionId)} onClick={() => onSelect(item)}
         title={item.sessionId ? `${language === 'zh' ? '打开会话' : 'Open conversation'}: ${item.text}` : item.text}>
         <span className="welcome-suggestion-topic">{item.topic}<span>{item.fromHistory
           ? language === 'zh' ? '最近常聊' : 'Recent'

@@ -19,7 +19,11 @@ export class ToolResourceScheduler {
     const normalized = new Map<string, ToolResource>();
     for (const resource of resources) {
       if (!resource.key.trim()) throw Error('A tool resource requires a canonical key.');
-      if (normalized.get(resource.key)?.mode !== 'write') normalized.set(resource.key, resource);
+      if (resource.capacity !== undefined && (!Number.isSafeInteger(resource.capacity) || resource.capacity < 1)) throw Error('Tool resource capacity must be a positive integer.');
+      const previous = normalized.get(resource.key);
+      const capacity = Math.min(previous?.capacity ?? Infinity, resource.capacity ?? Infinity);
+      normalized.set(resource.key, { key: resource.key, mode: previous?.mode === 'write' ? 'write' : resource.mode,
+        ...(Number.isFinite(capacity) ? { capacity } : {}) });
     }
     return new Promise((resolve, reject) => {
       const request: Request = { resources: [...normalized.values()], grant: () => {
@@ -36,7 +40,12 @@ export class ToolResourceScheduler {
   private drain() {
     const blocked: Request[] = [];
     for (const request of [...this.pending]) {
-      if ([...this.active, ...blocked].some(prior => conflicts(prior.resources, request.resources))) { blocked.push(request); continue; }
+      const atCapacity = request.resources.some(resource => {
+        const readers = [...this.active].flatMap(prior => prior.resources.filter(active => active.key === resource.key));
+        const capacity = Math.min(resource.capacity ?? Infinity, ...readers.map(active => active.capacity ?? Infinity));
+        return readers.length >= capacity;
+      });
+      if (atCapacity || [...this.active, ...blocked].some(prior => conflicts(prior.resources, request.resources))) { blocked.push(request); continue; }
       this.pending = this.pending.filter(item => item !== request); request.grant();
     }
   }

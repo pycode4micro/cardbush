@@ -1251,9 +1251,6 @@ function MessageBubbleView({
           onOpenScene={onOpenScene}
         />
       )}
-      {taskPlan && !isActiveAssistantTurn && !archiveTaskPlanInHistory && (
-        <TaskPlanBlock plan={taskPlan} language={language} />
-      )}
     </>
   );
   const assistantBody = (

@@ -124,7 +124,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
       await run(`updateChat({ messages: chatProps.messages.map(message => message.id === 'submit-reply'
         ? { ...message, content: 'Compact response' } : message) });`);
       await pause(100);
-      assert.ok(await run('document.querySelector(".assistant-response-spacer").getBoundingClientRect().height > 0'));
+      assert.equal(await run('document.querySelector(".assistant-response-spacer").getBoundingClientRect().height'), 0,
+        'shrinking a long reply does not recreate a reserve that was already consumed');
       await run(`window.submissionFinished = { ...chatProps, sending: false, activeTurnId: '' };
         updateChat({ activeConversationId: 'submission-other', sending: false, activeTurnId: '',
           messages: [{ id: 'other-user', role: 'user', content: 'Another task' }] });`);

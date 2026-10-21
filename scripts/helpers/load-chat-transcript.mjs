@@ -33,6 +33,9 @@ export async function loadChatTranscript({ globals = {}, source, conditions } = 
       write: false,
       minify: false,
       lib: { entry: path.join(transcriptDirectory, '__transcript_test_entry__.ts'), formats: ['cjs'] },
+      // The isolated VM evaluates one entry; keep lazy dependencies in that
+      // bundle instead of emitting sibling chunks that it cannot require.
+      rolldownOptions: { output: { codeSplitting: false } },
     },
   });
   const chunks = (Array.isArray(result) ? result : [result]).flatMap(r => r.output);

@@ -1,3 +1,4 @@
+import { taskObserverPresentation } from './toolPresentation.js';
 import { createDisplayDiff } from './workspaceDiff.js';
 import { withToolFailureFacts } from './toolFailureFacts.js';
 import { applyFilePatch, parseWorkspacePatch, type FilePatch } from './workspacePatch.js';
@@ -13,6 +14,7 @@ import {
   unlink,
 } from "node:fs/promises";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { projectFileSourceResult } from './fileSourceReceipt.js';
 import { dirname } from "node:path";
 
 import type {
@@ -298,6 +300,7 @@ export function registerWorkspaceTools(
     parallelSafe: true,
     decodeInput: decodeRead,
     renderModelResult: (result) => renderTextFields(result, ["content"]),
+    projectModelResult: projectFileSourceResult,
     authorize: authorizePath("read"),
     execute: async (context: ToolHandlerContext<ReadFileInput>) => {
       const path = await resolveToolPath(context, context.input.path);
@@ -473,9 +476,10 @@ export function registerWorkspaceTools(
   });
 
   registerIfMissing(registry, {
+    projectModelDefinition: taskObserverPresentation('manage_tool_calls'),
     definition: {
       name: "terminal_exec",
-      description: terminalToolDescription() + (options.remote ? ' For SSH execution use shell="posix"; environment="local" uses this host and its native shell.' : ''),
+      description: terminalToolDescription() + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. environment="local" uses this host and its native shell.' : ''),
       inputSchema: objectSchema({
         command: { type: "string", minLength: 1 },
         cwd: {
@@ -496,8 +500,8 @@ export function registerWorkspaceTools(
         shell: {
           type: "string",
           enum: options.remote ? ['cmd', 'powershell', 'posix'] : availableTerminalShells(),
-          default: defaultTerminalShell(),
-          description: "Explicit command interpreter. Runtime never rewrites commands between shell syntaxes.",
+          ...(options.remote ? {} : { default: defaultTerminalShell() }),
+          description: "Explicit command interpreter. When omitted, uses the selected environment's native default. Runtime never rewrites commands between shell syntaxes.",
         },
         notify_on_exit: { type: 'boolean', default: true, description: 'After yielding a running command, Runtime delivers one completion notification during this turn and waits before ending it. Do other independent work; do not repeatedly poll. Set false for persistent servers or interactive processes that should outlive the task. Notifications stop when the turn is stopped; the command is not restarted.' },
         additional_permissions: {
@@ -558,6 +562,7 @@ export function registerWorkspaceTools(
   });
 
   registerIfMissing(registry, {
+    projectModelDefinition: taskObserverPresentation('manage_tool_calls'),
     definition: {
       name: "terminal_poll",
       description: [

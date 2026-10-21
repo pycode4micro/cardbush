@@ -3,13 +3,15 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { z } from 'zod';
-import { AgentHttpClient, AgentHttpError, AgentIdentityError, AgentNetworkError, agentBaseUrl } from './agentHttpClient.mjs';
-import type { AgentInfo, AgentOperation, AgentConnection, AgentConnectionInput, AgentDesktopApi, AgentEventRequest, AgentSyncPlugin } from './agentTypes.js';
+import { AgentHttpClient, AgentHttpError, AgentIdentityError, AgentNetworkError, agentBaseUrl, isAgentBusyError } from './agentHttpClient.mjs';
+import { AgentBusyError } from './agentErrors.mjs';
+import type { AgentInfo, AgentJob, AgentOperation, AgentConnection, AgentConnectionInput, AgentDesktopApi, AgentEventRequest, AgentSyncPlugin } from './agentTypes.js';
 import type { SshConnectionManager } from './sshConnections.mjs';
 import type { SshTunnel } from './sshTunnel.mjs';
 type Saved = Omit<AgentConnection, 'hasToken' | 'connected' | 'info' | 'connectionState' | 'connectionError'> & { token?: string; legacyLaunch?: Record<string, unknown> };
 type Live = { client: AgentHttpClient; info: AgentInfo };
 type Entry = { promise: Promise<Live>; abort: AbortController; client?: AgentHttpClient; tunnel?: SshTunnel };
+type DeferredConfiguration = { live: Live; error: Error; timer?: ReturnType<typeof setTimeout>; checking?: Promise<void> };
 const tunnelSchema = z.object({ connectionId: z.string().min(1), remoteHost: z.enum(['127.0.0.1', 'localhost', '::1']), remotePort: z.number().int().min(1).max(65535) }).strict();
 function sshAgentUrl(tunnel: z.infer<typeof tunnelSchema>, previousUrl?: string) {
   const url = new URL(`http://${tunnel.remoteHost === '::1' ? '[::1]' : tunnel.remoteHost}:${tunnel.remotePort}/`);
@@ -30,11 +32,12 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   #closing = false;
   #configuration = new Map<string, { plugins: boolean; promise: Promise<SharedConfigurationReceipt> }>();
   #configurationRetry = new Map<string, { until: number; error: Error }>();
+  #deferredConfiguration = new Map<string, DeferredConfiguration>();
   #configurationErrors = new Map<string, string>();
   #configurationWarnings = new Map<string, string[]>();
   constructor(readonly path: string, readonly cipher: { encrypt(value: string): string; decrypt(value: string): string },
     readonly options: { sharedConfiguration?: (options: SharedConfigurationOptions) => Promise<SharedConfigurationArchive>; syncCatalog?: () => Promise<AgentSyncPlugin[]>;
-      ssh?: Pick<SshConnectionManager, 'list' | 'tunnel'>; reconnectDelayMs?: number; healthIntervalMs?: number } = {}) {}
+      ssh?: Pick<SshConnectionManager, 'list' | 'tunnel'>; reconnectDelayMs?: number; healthIntervalMs?: number; configurationRetryMs?: number } = {}) {}
   /** Restore saved managed tunnels without delaying desktop startup. */
   async restore() {
     if (this.#closing) return;
@@ -124,6 +127,8 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
       assertCurrent();
       const live = { client, info }; this.#live.set(id, live); this.#errors.delete(id); this.#attempts.delete(id);
       this.#health(id, entry);
+      const deferred = this.#deferredConfiguration.get(id);
+      if (deferred) this.#deferConfiguration(id, live, deferred.error);
       return live;
     })().catch(error => { this.#failed(id, entry, error); throw error; });
     return entry.promise;
@@ -144,6 +149,8 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   #failed(id: string, entry: Entry, error: unknown) {
     if (this.#clients.get(id) !== entry) return;
     this.#clients.delete(id); this.#live.delete(id); this.#clearTimer(id);
+    this.#configuration.delete(id);
+    clearTimeout(this.#deferredConfiguration.get(id)?.timer);
     entry.abort.abort(); entry.client?.close();
     const closed = entry.tunnel?.close() ?? Promise.resolve();
     this.#errors.set(id, error instanceof Error ? error.message : String(error));
@@ -165,6 +172,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   async connect(id: string) { if (this.#closing) throw Error('Agent connections are closing.'); this.#desired.add(id); return (await this.#connection(id)).info; }
   async disconnect(id: string) {
     this.#desired.delete(id); this.#managed.delete(id); this.#clearTimer(id); this.#attempts.delete(id); this.#errors.delete(id);
+    this.#cancelDeferredConfiguration(id); this.#configuration.delete(id);
     const entry = this.#clients.get(id); this.#clients.delete(id); this.#live.delete(id);
     entry?.abort.abort(); entry?.client?.close(); await entry?.tunnel?.close();
     await entry?.promise.catch(() => undefined);
@@ -172,28 +180,98 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   }
   async syncCatalog() { return this.options.syncCatalog ? this.options.syncCatalog() : []; }
   async syncConfiguration(id: string) { return this.#syncConfiguration(id, await this.#connection(id), true); }
-  async #syncConfiguration(id: string, live: Live, manual = false): Promise<SharedConfigurationReceipt> {
+  #current(id: string, live: Live) { return !this.#closing && this.#live.get(id)?.client === live.client; }
+  #cancelDeferredConfiguration(id: string) {
+    clearTimeout(this.#deferredConfiguration.get(id)?.timer);
+    this.#deferredConfiguration.delete(id);
+  }
+  #deferConfiguration(id: string, live: Live, error: Error) {
+    if (!this.#current(id, live)) return;
+    this.#configurationErrors.delete(id); this.#configurationRetry.delete(id);
+    let deferred = this.#deferredConfiguration.get(id);
+    if (deferred?.live.client !== live.client) {
+      this.#cancelDeferredConfiguration(id);
+      deferred = { live, error }; this.#deferredConfiguration.set(id, deferred);
+    }
+    if (!deferred.timer && !deferred.checking) this.#scheduleConfigurationRetry(id, deferred);
+  }
+  #scheduleConfigurationRetry(id: string, deferred: DeferredConfiguration) {
+    deferred.timer = setTimeout(() => {
+      deferred.timer = undefined;
+      void this.#retryDeferredConfiguration(id);
+    }, this.options.configurationRetryMs ?? 2_000);
+    deferred.timer.unref();
+  }
+  async #retryDeferredConfiguration(id: string) {
+    const deferred = this.#deferredConfiguration.get(id);
+    if (!deferred || deferred.checking || !this.#current(id, deferred.live)) return;
+    clearTimeout(deferred.timer); deferred.timer = undefined;
+    deferred.checking = (async () => {
+      // Only inspect durable jobs while busy; do not repeatedly package plugins or apply configuration.
+      const jobs = await deferred.live.client.call('chat.jobs', {}) as AgentJob[];
+      if (this.#deferredConfiguration.get(id) !== deferred || !this.#current(id, deferred.live)) return;
+      if (!jobs.some(job => job.status === 'queued' || job.status === 'running')) {
+        await this.#syncConfiguration(id, deferred.live, false, true);
+      }
+    })().catch(error => {
+      if (this.#deferredConfiguration.get(id) !== deferred || !this.#current(id, deferred.live)) return;
+      if (error instanceof AgentNetworkError) {
+        const entry = this.#clients.get(id); if (entry) this.#failed(id, entry, error);
+      } else if (!isAgentBusyError(error)) {
+        this.#configurationErrors.set(id, error instanceof Error ? error.message : 'Configuration sync failed.');
+        this.#cancelDeferredConfiguration(id);
+      }
+    }).finally(() => {
+      deferred.checking = undefined;
+      if (this.#deferredConfiguration.get(id) === deferred && this.#current(id, deferred.live)) this.#scheduleConfigurationRetry(id, deferred);
+    });
+    await deferred.checking;
+  }
+  async #syncConfiguration(id: string, live: Live, manual = false, retryDeferred = false): Promise<SharedConfigurationReceipt> {
     const pending = this.#configuration.get(id);
     if (pending && (!manual || pending.plugins)) return pending.promise;
     if (pending) { await pending.promise.catch(() => undefined); return this.#syncConfiguration(id, live, manual); }
+    const deferred = this.#deferredConfiguration.get(id);
+    if (!manual && !retryDeferred && deferred?.live.client === live.client) throw deferred.error;
     const backoff = this.#configurationRetry.get(id);
     if (!manual && backoff && backoff.until > Date.now()) throw backoff.error;
     // Register before reading settings so simultaneous catalog/model/task requests share one job.
     const entry = { plugins: manual, promise: undefined! as Promise<SharedConfigurationReceipt> };
     this.#configuration.set(id, entry);
+    const assertCurrent = () => {
+      if (!this.#current(id, live) || this.#configuration.get(id) !== entry) throw new Error('Agent connection was closed.');
+    };
     entry.promise = (async () => {
+      assertCurrent();
       if (!live.info.capabilities.sharedConfiguration || live.info.capabilities.sharedConfigurationVersion !== 2) throw new Error('请更新云端 Agent 服务以使用分包同步。Update the Agent service to support shared configuration v2.');
       if (!this.options.sharedConfiguration) throw new Error('Shared configuration source is unavailable.');
+      if (!manual) {
+        const jobs = await live.client.call('chat.jobs', {}) as AgentJob[];
+        assertCurrent();
+        if (jobs.some(job => job.status === 'queued' || job.status === 'running')) throw new AgentBusyError();
+      }
       const saved = (await this.#read()).find(item => item.id === id);
+      assertCurrent();
       if (!saved) throw new Error('Agent connection was removed.');
       entry.plugins = manual || saved.autoSyncPlugins === true;
       const snapshot = await this.options.sharedConfiguration({ syncPlugins: entry.plugins,
         excludedPluginIds: saved.excludedPluginIds ?? [], syncSkills: saved.syncSkills !== false });
-      const receipt = await sendSharedConfiguration(input => live.client.call('configuration.sync', input), snapshot);
+      assertCurrent();
+      const receipt = await sendSharedConfiguration(input => { assertCurrent(); return live.client.call('configuration.sync', input); }, snapshot);
+      assertCurrent();
+      this.#cancelDeferredConfiguration(id);
       this.#configurationWarnings.set(id, receipt.warnings); this.#configurationErrors.delete(id); this.#configurationRetry.delete(id);
       return receipt;
     })().catch(error => {
       const failure = error instanceof Error ? error : new Error('Configuration sync failed.');
+      if (!this.#current(id, live) || this.#configuration.get(id) !== entry) throw failure;
+      if (isAgentBusyError(failure)) {
+        if (!manual) this.#deferConfiguration(id, live, failure);
+        throw failure;
+      }
+      // Let the deferred worker reconnect the transport without losing its pending sync.
+      if (failure instanceof AgentNetworkError && this.#deferredConfiguration.has(id)) throw failure;
+      this.#cancelDeferredConfiguration(id);
       this.#configurationErrors.set(id, failure.message);
       this.#configurationRetry.set(id, { until: Date.now() + 15_000, error: failure });
       throw failure;
@@ -202,16 +280,18 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   }
   async call(id: string, operation: AgentOperation, input: Record<string, unknown> = {}) {
     this.#desired.add(id);
-    const { client, info } = await this.#connection(id);
+    const live = await this.#connection(id), { client } = live;
     try {
       const acknowledged = this.options.sharedConfiguration && (operation === 'chat.send' || operation === 'delegation.submit')
         ? (await client.call('chat.jobs', { sessionId: input.sessionId }) as Array<{ id: string }>).some(job => job.id === (operation === 'chat.send' ? input.requestId : input.taskId)) : false;
       if (!acknowledged && this.options.sharedConfiguration && (operation === 'chat.send' || operation === 'delegation.submit' || operation === 'conversation.catalog' ||
           operation === 'product.command' && input.kind === 'models.get')) {
-        try { await this.#syncConfiguration(id, { client, info }); }
+        try { await this.#syncConfiguration(id, live); }
         catch (error) {
-          // Reading existing state remains available; a new task must not silently run with stale model credentials.
-          if (operation === 'chat.send' || operation === 'delegation.submit') throw error;
+          // Busy tasks and their queued guidance retain the last applied configuration until idle.
+          if (isAgentBusyError(error)) this.#deferConfiguration(id, live, error);
+          // Genuine sync failures still block new tasks; existing state remains readable.
+          else if (operation === 'chat.send' || operation === 'delegation.submit') throw error;
         }
       }
       // Never replay a failed mutation. Task submissions have their own durable identity.
@@ -222,7 +302,10 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   async *events(id: string, input: AgentEventRequest, signal: AbortSignal, format: 'sse' | 'ndjson' = 'sse') {
     this.#desired.add(id);
     const { client } = await this.#connection(id);
-    yield* client.events(input, signal, format);
+    for await (const frame of client.events(input, signal, format)) {
+      if (frame.type === 'end') void this.#retryDeferredConfiguration(id);
+      yield frame;
+    }
   }
-  async close() { this.#closing = true; await Promise.allSettled([...new Set([...this.#clients.keys(), ...this.#desired])].map(id => this.disconnect(id))); await this.#writes; }
+  async close() { this.#closing = true; await Promise.allSettled([...new Set([...this.#clients.keys(), ...this.#desired, ...this.#deferredConfiguration.keys()])].map(id => this.disconnect(id))); await this.#writes; }
 }

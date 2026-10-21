@@ -114,7 +114,6 @@ import {
   RuntimeClient,
   type RuntimeTransport,
 } from './RuntimeClient';
-
 export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
   terminalControl(input: { sessionId: string; terminalSessionId: string; action: 'status' | 'stop' }, signal?: AbortSignal) {
     return this.command({ kind: RUNTIME_TERMINAL_CONTROL_COMMAND, payload: runtimeTerminalControlSchema.parse(input) },

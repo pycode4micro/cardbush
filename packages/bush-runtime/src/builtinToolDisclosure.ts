@@ -8,22 +8,8 @@ import { resolveToolReferenceName, unknownToolReferenceError, wrongToolRouteErro
 
 const protocol = 'bush.builtin_schema.v1';
 const revision = (definition: ToolDefinition) => createHash('sha256').update(JSON.stringify(definition)).digest('hex');
-const runFields: Record<string, string[]> = {
-  subagent: ['action', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'mode', 'run_in_background'],
-  team: ['action', 'team_id', 'run_id', 'input', 'canvas_path', 'section', 'query', 'offset', 'limit', 'yield_time_ms', 'node_ids'],
-};
-const replacements: Record<string, string> = {
-  parallel_tools: 'run_tools', manage_tool_calls: 'tasks', manage_plugin_agents: 'tasks',
-  await_subagents: 'tasks', solution_selection: 'request_user_input_async',
-};
-const commandTools = new Set(['list_plugin_commands', 'run_plugin_command']);
-// These calls are recognized at their own history boundary by discovery and
-// context maintenance. Keep their declared entry points and receipt identities.
-const directTools = new Set(['get_tool_schema', 'mcp_search', 'mcp_call', 'read_archived_tool_result', 'checkpoint_context', 'summary_for_user']);
-
-function available(request: ModelRequest, name: string) {
-  // Unknown capability state is not evidence of an empty catalog. Never hide Skills here.
-  return !commandTools.has(name) || request.metadata.builtinPluginCommandsAvailable !== false;
+function available(registry: ToolRegistry, request: ModelRequest, name: string) {
+  return registry.resolve(name)?.modelAvailable?.(request) !== false;
 }
 
 /** Return guidance for the caller's actual catalog, including restricted/legacy hosts. */
@@ -31,52 +17,15 @@ export function taskManagementTool(request: ModelRequest | undefined, fallback: 
   return request?.tools.some(tool => tool.name === 'tasks') ? 'tasks' : fallback;
 }
 
-function taskDescription(definition: ToolDefinition, unified: boolean): ToolDefinition {
-  if (!unified) return definition;
-  // Only descriptions authored by these built-ins need compatibility-name rewriting.
-  // Keep native schemas, parameter names and extension-authored text unchanged.
-  if (!['terminal_exec', 'terminal_poll', 'start_mcp_tool', 'subagent'].includes(definition.name)) return definition;
-  return { ...definition, description: definition.description.replace(/\b(manage_tool_calls|manage_plugin_agents|await_subagents)\b/g, 'tasks') };
-}
-
-/** Provider presentation only: the authoritative scope and decoders are unchanged. */
+/** Bind presentation from each registration once; never refresh a frozen catalog. */
 export function projectBuiltinDefinitions(registry: ToolRegistry, request: ModelRequest, definitions: ToolDefinition[]) {
-  // Forks share a stable provider prefix with their parent. Execution-time child
-  // restrictions must not rewrite that prefix; explicitly scoped catalogs still
-  // retain a legacy entry when their replacement is absent.
-  const exposed = (name: string) => definitions.some(tool => tool.name === name);
-  const disclose = exposed('get_tool_schema') && exposed('call_tool');
-  const unified = exposed('tasks');
-  return definitions.filter(definition => {
-    if (!available(request, definition.name)) return false;
-    const replacement = replacements[definition.name];
-    return !disclose || !replacement || !exposed(replacement);
-  }).map(candidate => {
-    const definition = taskDescription(candidate, unified);
-    const original = registry.resolve(definition.name)?.definition;
-    if (disclose && definition.name === 'usage') return { ...definition,
-      description: 'Author and inspect task manuals. guide: format; capture: receipt references; review: draft checks, not quality certification. export returns a CardBush plugin package. Users select installed manuals through slash commands; reuse/adapt plan_template with native update_task_plan and keep usage references for node guidance and recovery. Recommend capabilities by purpose; recipe describes a wrapped method for run_tools. Load get_tool_schema(name="usage") before authoring/import. import(enabled:false) stages. status inspects guidance; never auto-select a manual. No teacher approval gate. expected_revision: status (0 initially).',
-      inputSchema: { type: 'object', required: ['action'], additionalProperties: false, properties: {
-        action: { type: 'string', enum: ['guide', 'capture', 'review', 'recommend', 'recipe', 'status', 'export', 'import', 'enable', 'disable', 'focus'] },
-        capability_id: { type: 'string' }, recipe_id: { type: 'string' },
-        expected_revision: { type: 'integer', minimum: 0 }, node_id: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-        enabled: { type: 'boolean' }, usage: { type: 'object', description: 'Draft for review or full definition for import; load the full schema.' },
-        asset_root: { type: 'string', description: 'Import: absolute local directory of bundled assets.' },
-        turn_id: { type: 'string' }, tool_call_ids: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 },
-        limit: { type: 'integer', minimum: 1, maximum: 8 },
-      } },
-    };
-    const fields = runFields[definition.name];
-    if (!disclose || !original || !fields) return definition;
-    const properties = Object.fromEntries(Object.entries(definition.inputSchema.properties as Record<string, unknown> ?? {})
-      .filter(([name]) => (fields.includes(name) || name === '_display_title') &&
-        !(definition.name === 'team' && unified && ['yield_time_ms', 'node_ids'].includes(name))));
-    if (properties.action) properties.action = { type: 'string', enum: definition.name === 'subagent' ? ['run']
-      : unified ? ['list', 'get', 'run', 'resume'] : ['list', 'get', 'run', 'status', 'wait', 'stop', 'resume'] };
-    const description = definition.name === 'subagent'
-      ? `Delegate work to a saved agent_id, plugin agent_type or a fork; follow up with the owned task_id. Use ${taskManagementTool(request, 'await_subagents')} to inspect/wait for results${unified ? ' or read the child conversation' : ''}. Independent peers use the AgentChatroom plugin; never use their conversation IDs as child task IDs. For employee registration or a new clean agent's configuration, load get_tool_schema(name="subagent"), then use call_tool with its full arguments.`
-      : `Find saved workflows with list/get; run starts independently; resume retries unfinished nodes. ${unified ? 'Use tasks to inspect/wait/stop runs.' : 'Use status/wait/stop to observe or stop runs.'} For definitions or selected node outputs, load get_tool_schema(name="team"), then use call_tool with its full arguments.`;
-    return { ...definition, description, inputSchema: { ...definition.inputSchema, properties } };
+  const hasTool = (name: string) => definitions.some(tool => tool.name === name);
+  const scope = { hasTool, canRecall: hasTool('get_tool_schema') && hasTool('call_tool') };
+  return definitions.flatMap(definition => {
+    if (!available(registry, request, definition.name)) return [];
+    const project = registry.resolve(definition.name)?.projectModelDefinition;
+    const presented = project ? project(structuredClone(definition), scope) : definition;
+    return presented ? [presented] : [];
   });
 }
 
@@ -115,7 +64,7 @@ export function nativeToolSchemaIsCurrent(registry: ToolRegistry, request: Model
 
 /** Discovery may describe direct entry points; invocation must not wrap them. */
 export function nativeToolInvocation(registry: ToolRegistry, name: string, request?: ModelRequest) {
-  return registry.resolve(name)?.forwardToolCall || directTools.has(name) || request && !request.tools.some(tool => tool.name === 'call_tool')
+  return registry.resolve(name)?.forwardToolCall || registry.resolve(name)?.directInvocation || request && !request.tools.some(tool => tool.name === 'call_tool')
     ? { tool: name, arguments: 'Use definition.inputSchema fields directly. Do not wrap this call in call_tool.' }
     : { tool: 'call_tool', arguments: { name, arguments: 'Use definition.inputSchema fields here.' } };
 }
@@ -124,11 +73,11 @@ function callableDefinition(registry: ToolRegistry, request: ModelRequest | unde
   const registration = registry.resolve(name);
   if (!registration) throw unknownToolReferenceError(name, 'native');
   if (!request || !request.tools.some(tool => tool.name === name) || registration.mcpHook?.modelVisible === false ||
-    !available(request, name) || registration.sessionScope && registration.sessionScope !== request.sessionId) {
+    !available(registry, request, name) || registration.sessionScope && registration.sessionScope !== request.sessionId) {
     throw Object.assign(new Error('This native tool is not available to this turn. Loading a schema grants no access.'), { code: 'tool_not_exposed' });
   }
   if (registration.mcpHook) throw wrongToolRouteError(name, 'mcp');
-  if (!discovery && (registration.forwardToolCall || directTools.has(name))) {
+  if (!discovery && (registration.forwardToolCall || registry.resolve(name)?.directInvocation)) {
     throw Object.assign(new Error(`Call ${name} directly using its declared schema. Do not put it inside call_tool.`), {
       code: 'tool_requires_direct_call', details: { invocation: nativeToolInvocation(registry, name), definition: registration.definition },
     });
@@ -139,6 +88,7 @@ function callableDefinition(registry: ToolRegistry, request: ModelRequest | unde
 export function registerBuiltinToolDisclosure(registry: ToolRegistry) {
   const schema = z.object({ name: z.string().min(1).max(200) }).strict();
   registry.register({
+    directInvocation: true,
     definition: { name: 'get_tool_schema', description: 'Load the complete definition and invocation route of a native tool, including direct entry points such as mcp_call. Follow the returned invocation: some tools must be called directly, others through call_tool. Top-level tools stay unchanged. Common subagent/Team calls remain directly callable. This grants no permissions. For MCP target schemas use mcp_search.', inputSchema: z.toJSONSchema(schema) },
     manifest: { effect_kind: 'observation', operation: 'tools.schema', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false },
     parallelSafe: true, decodeInput: value => schema.parse(value),
@@ -155,7 +105,20 @@ export function registerBuiltinToolDisclosure(registry: ToolRegistry) {
     delegatesToolExecution: true, nestedCallable: false,
     decodeInput: value => callSchema.parse(value),
     forwardToolCall: context => {
-      const definition = callableDefinition(registry, context.turn?.request, resolveToolReferenceName(context.input.name, context.turn));
+      const name = resolveToolReferenceName(context.input.name, context.turn);
+      let definition: ToolDefinition;
+      try { definition = callableDefinition(registry, context.turn?.request, name); }
+      catch (error) {
+        if (error && typeof error === 'object' && 'code' in error &&
+          ['tool_requires_direct_call', 'tool_route_mismatch'].includes(String(error.code))) {
+          const failure = error as Error & { code: string; details: Record<string, unknown> };
+          failure.details = { ...failure.details, corrected_call: failure.code === 'tool_requires_direct_call'
+            ? { name, arguments: context.input.arguments }
+            : { name: 'mcp_call', arguments: { name, arguments: context.input.arguments } },
+            note: 'This is a suggested call only. No target was executed; schema loading, scope, permissions and Hooks still apply.' };
+        }
+        throw error;
+      }
       synchronizeBuiltinSchemas(registry, context.turn!.request, context.turn!.contextMessages);
       if ((context.turn!.request.metadata.builtinToolSchemas as Record<string, string>)[definition.name] !== revision(definition)) throw builtinSchemaRequiredError(definition.name);
       return { name: definition.name, input: context.input.arguments };

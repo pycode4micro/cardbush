@@ -1,13 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { networkProxySchema } from '@cardbush/bush-protocol';
 import { CardbushAppsConfigStore, ProductModelConfigStore, ProductMcpConfigStore, decodeProductSubagentConfig } from '@cardbush/product-host';
+import { replaceFileWithRetry, writePrivateJson as writeJson } from './atomicJsonFile.mjs';
 import { loadProductPluginCatalog } from './productPlugins.js';
 import { materializePluginArchive } from './pluginArchiveTree.js';
 import { resolvePluginManifest, pluginRootForManifest } from './pluginManifest.js';
+import { redactTroubleshootingText } from './pluginTroubleshooting.mjs';
 import { ignoredSharedPackagePath, packSharedPackage, sharedDigestSchema, sharedFileFingerprint, sharedHash, SharedPackageError,
   sharedPackageFingerprint, sharedPackageLimits, sharedPackagePathSchema, sharedPackageReferenceSchema, sharedPackageSchema,
   sharedPluginCompatibility, type SharedPackageReference } from './agentSharedPackages.mjs';
@@ -16,6 +18,14 @@ const protocol = 'cardbush.shared_configuration.v2' as const;
 const maximumBytes = 64 * 1024 * 1024;
 const chunkBytes = 512 * 1024;
 class SharedConfigurationError extends Error {}
+type ApplicationState = { snapshotId?: string; revision?: number; pendingRevision?: number;
+  applicationState?: string; applicationPhase?: string; applicationError?: string; backgroundConnectionPending?: boolean };
+// Config validators and plugin launch errors may echo arbitrary configured values.
+function configurationValues(value: unknown): string[] {
+  if (typeof value === 'string') return value ? [value] : [];
+  if (!value || typeof value !== 'object') return [];
+  return Object.values(value).flatMap(configurationValues);
+}
 const artifactPaths = pathsForFingerprint();
 function pathsForFingerprint() { return ['config/models.json', 'config/apps.json', 'config/mcp-servers.json', 'config/subagents.json', 'config/network.json', 'config/sandbox.json', 'AGENTS.md', 'plugins', 'skills']; }
 async function configurationFingerprint(root: string, tracked = artifactPaths) {
@@ -90,9 +100,12 @@ export async function packSharedConfiguration(input: Omit<SharedConfiguration, '
       packages.push(reference);
     }
   }
-  const apps = syncPlugins ? { ...input.apps, plugins: ((input.apps.plugins as Array<{ id: string }> | undefined) ?? []).filter(plugin => !excluded.has(plugin.id)) } : {};
-  // Opting out must also keep plugin credentials and standalone MCP configuration off the wire.
-  const snapshot = payloadSchema.parse({ ...input, apps, mcp: syncPlugins ? input.mcp : {}, protocol, sourceId, sourcePlatform: process.platform, syncPlugins, packages });
+  const apps = syncPlugins ? { ...input.apps, plugins: ((input.apps.plugins as Array<{ id: string }> | undefined) ?? []).filter(plugin => !excluded.has(plugin.id))
+    .map(plugin => ({ ...plugin, config: {} })) } : {};
+  // Installation transfers packages and enabled state. Runtime settings belong to
+  // the receiving Agent; do not export this machine's environment or credentials.
+  const snapshot = payloadSchema.parse({ ...input, apps, mcp: {}, protocol, sourceId, sourcePlatform: process.platform,
+    syncPlugins, packages });
   const data = gzipSync(JSON.stringify(snapshot));
   if (data.length > maximumBytes) throw new Error('Shared configuration archive exceeds 64 MiB.');
   return { digest: hash(data), data, packages: archives };
@@ -129,12 +142,6 @@ const requestSchema = z.discriminatedUnion('action', [
 ]);
 
 type Transaction = { id: string; entries: Array<{ path: string; existed: boolean }> };
-async function writeJson(path: string, value: unknown) {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = path + '.' + randomUUID() + '.tmp';
-  await writeFile(temporary, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
-  await rename(temporary, path);
-}
 function transactionPaths(root: string, id: string) {
   z.string().uuid().parse(id);
   return { stage: join(root, 'shared-configuration', 'staging', id), backup: join(root, 'shared-configuration', 'backups', id) };
@@ -181,7 +188,7 @@ async function rollback(root: string, transaction: Transaction) {
     if (await exists(previous)) {
       await rm(target, { recursive: true, force: true });
       await mkdir(dirname(target), { recursive: true });
-      await rename(previous, target);
+      await replaceFileWithRetry(previous, target);
     } else if (!entry.existed) await rm(target, { recursive: true, force: true });
   }
   if (transaction.entries.some(entry => entry.path === 'config/mcp-servers.json')) {
@@ -204,8 +211,46 @@ export async function recoverSharedConfiguration(root: string) {
 export class AgentSharedConfiguration {
   #upload?: { digest: string; size: number; kind: 'configuration' | 'package'; data: Buffer[]; received: number; updated: number };
   constructor(readonly root: string, readonly bundledRoot: string, readonly assertIdle: () => void, readonly refresh: () => Promise<unknown>,
-    readonly host: { platform: string; capabilities: Record<string, unknown> } = { platform: process.platform, capabilities: {} }) {}
-  private hostFingerprint() { return hash(JSON.stringify([this.host.platform, Object.entries(this.host.capabilities).sort(([a], [b]) => a.localeCompare(b))])); }
+    readonly host: { platform: string; capabilities: Record<string, unknown>; capabilityIssue?: (name: string) => string | undefined } = { platform: process.platform, capabilities: {} },
+    readonly application: { read: () => Promise<unknown>; timeoutMs?: number; pollMs?: number;
+      preparePluginUpdate?: (pluginId: string) => Promise<unknown> } | undefined = undefined) {}
+  private async refreshAndWait(secrets: string[]): Promise<void> {
+    const clean = (value: string) => redactTroubleshootingText(redactTroubleshootingText(value, secrets));
+    const failure = (detail: string) => new SharedConfigurationError(`配置应用未完成：${clean(detail)} / Agent configuration was not applied.`);
+    let state: ApplicationState;
+    try { state = await this.refresh() as ApplicationState; }
+    catch (error) { throw failure(error instanceof Error ? error.message : String(error)); }
+    const expectedRevision = state?.pendingRevision ?? state?.revision;
+    const expectedId = state?.snapshotId;
+    const deadline = Date.now() + (this.application?.timeoutMs ?? 30_000);
+    while (true) {
+      if (!state || !['pending', 'applied', 'failed'].includes(state.applicationState ?? '')) throw failure('Runtime did not return an application state.');
+      if (state.applicationError || state.applicationState === 'failed') throw failure(state.applicationError || 'Runtime rejected the configuration.');
+      if (expectedId !== state.snapshotId || expectedRevision !== (state.pendingRevision ?? state.revision)) throw failure('Configuration changed while awaiting application.');
+      if (state.applicationState === 'applied') return;
+      // Optional MCP connections can initialize independently after a validated
+      // configuration is accepted. A slow or unavailable optional plugin must
+      // not roll back model settings or hold the service mutation queue.
+      if (state.backgroundConnectionPending === true) return;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw failure(`Timed out waiting for configuration (${state.applicationPhase ?? 'pending'}).`);
+      if (!this.application) throw failure('Runtime application status is unavailable.');
+      await new Promise(resolve => setTimeout(resolve, Math.min(remaining, this.application!.pollMs ?? 100)));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        state = await Promise.race([
+          this.application.read(),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error('Timed out reading configuration status.')), Math.max(1, deadline - Date.now())); }),
+        ]) as ApplicationState;
+      } catch (error) { throw failure(error instanceof Error ? error.message : String(error)); }
+      finally { clearTimeout(timer); }
+    }
+  }
+  private hostFingerprint() {
+    const capabilities = Object.entries(this.host.capabilities).sort(([a], [b]) => a.localeCompare(b));
+    const issues = capabilities.filter(([, value]) => value !== true).map(([name]) => [name, this.host.capabilityIssue?.(name) ?? null]);
+    return hash(JSON.stringify(['plugin-files-only-v1', this.host.platform, capabilities, issues]));
+  }
   private packagePath(digest: string) { return join(this.root, 'shared-configuration', 'packages', digestSchema.parse(digest) + '.gz'); }
   async call(input: unknown): Promise<SharedConfigurationReceipt | null | { accepted: true } | { missing: string[] }> {
     const request = requestSchema.parse(input);
@@ -255,22 +300,47 @@ export class AgentSharedConfiguration {
   private async apply(payload: SharedConfiguration, digest: string, current: { packages?: Record<string, { digest: string; fingerprint: string; platform?: string }> } | null): Promise<SharedConfigurationReceipt> {
     const id = randomUUID(), { stage, backup } = transactionPaths(this.root, id);
     const warnings: string[] = [];
-    const target = (key: string) => key.startsWith('bundled/') ? join(this.bundledRoot, key.slice(8)) : join(this.root, key);
-    const translate = (value: unknown): unknown => {
-      if (typeof value === 'string') {
-        for (const mapping of [...payload.roots].sort((a, b) => b.source.length - a.source.length)) {
-          const normalized = value.replaceAll('\\', '/'), prefix = mapping.source.replaceAll('\\', '/').replace(/\/$/, '');
-          if ((payload.sourcePlatform === 'win32' ? normalized.toLowerCase() : normalized).startsWith((payload.sourcePlatform === 'win32' ? prefix.toLowerCase() : prefix) + '/')) return target(mapping.target) + normalized.slice(prefix.length).split('/').join(sep);
-          if (normalized === prefix) return target(mapping.target);
-        }
-        return value;
-      }
-      if (Array.isArray(value)) return value.map(translate);
-      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, translate(item)]));
-      return value;
-    };
+    const secrets = configurationValues([payload.models, payload.apps, payload.mcp, payload.network]);
+    // Rollback diagnostics may mention credentials from the previous configuration too.
+    for (const file of ['models.json', 'apps.json', 'mcp-servers.json', 'network.json']) {
+      try { secrets.push(...configurationValues(JSON.parse(await readFile(join(this.root, 'config', file), 'utf8')))); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
     let transaction: Transaction | undefined;
     let phase = '插件与技能文件 / plugin and skill files';
+    let replacementPath: string | undefined, preserveStage = false, activating = false;
+    const changedPluginIds: string[] = [];
+    // Use the existing plugin teardown protocol while the transaction journal
+    // owns the temporary disabled settings. Never reconnect against half-swapped files.
+    const suspendChangedPlugins = async () => {
+      if (!changedPluginIds.length || !this.application?.preparePluginUpdate) return;
+      phase = '释放旧插件进程 / plugin process release';
+      replacementPath = 'config/apps.json';
+      const appsPath = join(this.root, replacementPath), previous = join(backup, replacementPath);
+      if (await exists(appsPath) && !await exists(previous)) {
+        await mkdir(dirname(previous), { recursive: true, mode: 0o700 });
+        await copyFile(appsPath, previous);
+      }
+      const store = new CardbushAppsConfigStore(appsPath, { loadCatalog: () => loadProductPluginCatalog([
+        { path: join(this.bundledRoot, 'plugins'), source: 'bundled' }, { path: join(this.root, 'plugins'), source: 'user' },
+      ]) });
+      const existing = await store.read();
+      await writeJson(appsPath, { ...existing, revision: existing.revision + 1,
+        plugins: existing.plugins.map(plugin => changedPluginIds.includes(plugin.id) ? { ...plugin, enabled: false } : plugin) });
+      if (!activating) {
+        const stagedAppsPath = join(stage, replacementPath);
+        const staged = JSON.parse(await readFile(stagedAppsPath, 'utf8'));
+        await writeJson(stagedAppsPath, { ...staged, revision: Math.max(staged.revision, existing.revision + 2) });
+      }
+      for (const pluginId of changedPluginIds) {
+        replacementPath = payload.packages.find(item => item.pluginId === pluginId)?.path;
+        const state = await this.application.preparePluginUpdate(pluginId) as ApplicationState;
+        if (state?.applicationState !== 'applied' || state.applicationError) {
+          throw new SharedConfigurationError('插件尚未释放，未替换文件 / Plugin processes have not been released: ' +
+            redactTroubleshootingText(redactTroubleshootingText(state?.applicationError || pluginId, secrets)));
+        }
+      }
+    };
     try {
       await mkdir(stage, { recursive: true, mode: 0o700 });
       const changed: string[] = [], failed = new Set<string>();
@@ -305,6 +375,7 @@ export class AgentSharedConfiguration {
           }
         }
         changed.push(item.path);
+        if (item.pluginId) changedPluginIds.push(item.pluginId);
         packages[item.path] = { digest: item.digest!, fingerprint: await sharedPackageFingerprint(directory), platform: this.host.platform };
       }
       phase = '插件清单 / plugin catalog';
@@ -320,6 +391,7 @@ export class AgentSharedConfiguration {
         await writeFile(join(stage, 'config', 'apps.json'), await readFile(join(this.root, 'config', 'apps.json')), { mode: 0o600 });
       }
       const apps = structuredClone(payload.apps) as { plugins?: Array<Record<string, unknown>> } & Record<string, unknown>;
+      const remoteApps = JSON.parse(await readFile(join(stage, 'config', 'apps.json'), 'utf8').catch(() => '{"plugins":[]}'));
       apps.plugins = (apps.plugins ?? []).flatMap(plugin => {
         const name = String(plugin.id);
         if (failed.has(name)) return [];
@@ -327,41 +399,38 @@ export class AgentSharedConfiguration {
           if (plugin.installed) warnings.push(`${name}: 云端缺少此插件；请更新 Agent 内置插件包 / plugin unavailable on Agent`);
           return [];
         }
-        const result = { ...plugin, config: translate(plugin.config) };
+        // Ignore source settings even from an older sender. Never overwrite a
+        // working target interpreter, environment, credential or tool policy.
+        const config = structuredClone(remoteApps.plugins?.find((p: { id: string }) => p.id === name)?.config ?? {});
+        const result = { ...plugin, config };
         return [result];
       });
       for (const plugin of apps.plugins) {
         if (!plugin.enabled) continue;
         const entry = catalog.find(item => item.id === plugin.id)!;
         const resolved = await resolvePluginManifest(pluginRootForManifest(entry.manifestPath), this.host.platform);
-        const reason = sharedPluginCompatibility(resolved.manifest, plugin.config, this.host.platform, this.host.capabilities);
+        const reason = sharedPluginCompatibility(resolved.manifest, plugin.config, this.host.platform, this.host.capabilities, this.host.capabilityIssue);
         if (reason) { plugin.enabled = false; warnings.push(`${plugin.id}: ${reason}；配置已同步，暂未启用 / settings synchronized; not enabled`); }
       }
       if (payload.syncPlugins) {
-        const nextApps = await new CardbushAppsConfigStore(join(stage, 'config', 'apps.json'), { loadCatalog: async () => catalog }).write(apps);
+        // The catalog was read from staging to validate the replacement. Persist
+        // its final locations; staging is removed when this transaction commits.
+        const finalPath = (path: string) => path.startsWith(stage + sep) ? this.root + path.slice(stage.length) : path;
+        const committedCatalog = catalog.map(plugin => ({ ...plugin,
+          manifestPath: finalPath(plugin.manifestPath), logoPath: finalPath(plugin.logoPath), logoDarkPath: finalPath(plugin.logoDarkPath),
+          ...(plugin.skillRoots ? { skillRoots: plugin.skillRoots.map(finalPath) } : {}),
+        }));
+        const nextApps = await new CardbushAppsConfigStore(join(stage, 'config', 'apps.json'), { loadCatalog: async () => committedCatalog }).write(apps);
         const oldAppsRevision = await readFile(join(this.root, 'config', 'apps.json'), 'utf8').then(text => Number(JSON.parse(text).revision) || 0, () => 0);
         await writeJson(join(stage, 'config', 'apps.json'), { ...nextApps, revision: oldAppsRevision + 1 });
-      }
-      phase = 'MCP 配置 / MCP configuration';
-      const mcp = translate(payload.mcp) as { servers?: Array<Record<string, unknown>> };
-      const servers = (mcp.servers ?? []).map(server => {
-        if (this.host.platform !== 'win32' && server.transport === 'stdio' && /[A-Za-z]:[\\/]|\\\\|\.exe(?:"|$)/.test(JSON.stringify([server.command, server.args, server.cwd]))) {
-          warnings.push('MCP ' + String(server.id) + ' 使用本机平台路径，云端暂未启用。MCP requires a portable command.'); return { ...server, enabled: false };
-        }
-        return server;
-      });
-      if (payload.syncPlugins) {
-        const remoteMcp = await new ProductMcpConfigStore(join(this.root, 'config', 'mcp-servers.json')).read();
-        const nextMcp = await new ProductMcpConfigStore(join(stage, 'config', 'mcp-servers.json')).write({ servers });
-        await writeJson(join(stage, 'config', 'mcp-servers.json'), { ...nextMcp, revision: remoteMcp.revision + 1 });
       }
       phase = '子代理配置 / child agent configuration';
       await writeJson(join(stage, 'config', 'subagents.json'), decodeProductSubagentConfig(payload.subagents));
       if (payload.network) await writeJson(join(stage, 'config', 'network.json'), payload.network);
       if (payload.sandbox) await writeJson(join(stage, 'config', 'sandbox.json'), payload.sandbox);
       await writeFile(join(stage, 'AGENTS.md'), payload.instructions, { mode: 0o600 });
-      const replacing = [...paths.filter(path => !['plugins', 'skills'].includes(path) &&
-        (payload.syncPlugins || !['config/apps.json', 'config/mcp-servers.json'].includes(path))), ...changed];
+      const replacing = [...paths.filter(path => !['plugins', 'skills', 'config/mcp-servers.json'].includes(path) &&
+        (payload.syncPlugins || path !== 'config/apps.json')), ...changed];
       const trackedPaths = replacing.filter(path => path !== 'shared-configuration/current.json').concat(payload.packages.filter(item => item.digest && !changed.includes(item.path) && !failed.has(item.pluginId ?? '')).map(item => item.path));
       const receipt = { digest, warnings, sourceId: payload.sourceId, packages, trackedPaths, platform: this.host.platform, hostFingerprint: this.hostFingerprint() };
       await writeJson(join(stage, 'shared-configuration', 'current.json'), receipt);
@@ -375,31 +444,52 @@ export class AgentSharedConfiguration {
         transaction.entries.push({ path, existed: await exists(join(this.root, path)) });
       }
       await writeJson(join(this.root, 'shared-configuration', 'transaction.json'), transaction);
+      await suspendChangedPlugins();
+      phase = '配置文件替换 / configuration replacement';
       for (const entry of transaction.entries) {
+        replacementPath = entry.path;
         const destination = join(this.root, entry.path), previous = join(backup, entry.path);
         await mkdir(dirname(previous), { recursive: true, mode: 0o700 });
-        if (entry.existed) await rename(destination, previous);
-        await rename(join(stage, entry.path), destination);
+        // apps.json may already be backed up before temporarily disabling plugins.
+        if (entry.existed && !await exists(previous)) await replaceFileWithRetry(destination, previous);
+        await replaceFileWithRetry(join(stage, entry.path), destination);
       }
       phase = '插件启用 / plugin activation';
-      const refreshed = await this.refresh() as { applicationState?: string; applicationError?: string };
-      if (refreshed?.applicationError || (refreshed?.applicationState && refreshed.applicationState !== 'applied')) throw new SharedConfigurationError('云端未能应用插件配置；已保留上一套配置。The Agent could not apply plugin configuration.');
+      replacementPath = undefined;
+      activating = true;
+      await this.refreshAndWait(secrets);
       await writeJson(join(this.root, 'shared-configuration', 'current.json'), { ...receipt, appliedFingerprint: await configurationFingerprint(this.root, trackedPaths) });
       await rm(join(this.root, 'shared-configuration', 'transaction.json'), { force: true });
       await pruneBackups(this.root).catch(() => undefined);
       await prunePackageCache(this.root).catch(() => undefined);
       return { digest, warnings };
     } catch (error) {
+      const failedPhase = phase, failedPath = replacementPath;
       if (transaction && await exists(join(this.root, 'shared-configuration', 'transaction.json'))) {
-        await rollback(this.root, transaction);
-        const restored = await this.refresh().catch(() => null) as { applicationState?: string; applicationError?: string } | null;
-        if (!restored || restored.applicationError || restored.applicationState && restored.applicationState !== 'applied') {
+        try {
+          // An activation failure can leave newly started MCP processes holding
+          // the replacement directories. Release them before restoring backups.
+          if (activating) await suspendChangedPlugins();
+          await rollback(this.root, transaction);
+        } catch (recoveryError) {
+          preserveStage = true;
+          throw new Error('配置同步回滚未完成，已保留恢复记录和原配置备份 / Configuration recovery is pending; journal and backups retained.',
+            { cause: new AggregateError([error, recoveryError]) });
+        }
+        const restored = await this.refreshAndWait(secrets).then(() => true, () => false);
+        if (!restored) {
           const receiptPath = join(this.root, 'shared-configuration', 'current.json');
           if (await exists(receiptPath)) await writeJson(receiptPath, { ...JSON.parse(await readFile(receiptPath, 'utf8')), recoveryRequired: true });
         }
       }
       // Store validators can include supplied values. Do not return credentials in diagnostics.
-      throw new Error(error instanceof SharedConfigurationError ? error.message : '配置同步失败（' + phase + '），未提交新配置。Shared configuration was not committed.', { cause: error });
-    } finally { await rm(stage, { recursive: true, force: true }); }
+      const code = (error as NodeJS.ErrnoException)?.code;
+      // This is a validated managed relative path, not an arbitrary filesystem
+      // exception message (which may contain command arguments or credentials).
+      const fileDetail = failedPath ? '；' + failedPath : '';
+      const codeDetail = typeof code === 'string' && /^E[A-Z0-9]+$/.test(code) ? '；' + code : '';
+      throw new Error(error instanceof SharedConfigurationError ? error.message + ' 新配置未提交；原配置文件已保留。'
+        : '配置同步失败（' + failedPhase + fileDetail + codeDetail + '），未提交新配置。Shared configuration was not committed.', { cause: error });
+    } finally { if (!preserveStage) await rm(stage, { recursive: true, force: true }); }
   }
 }

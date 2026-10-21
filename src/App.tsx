@@ -90,10 +90,8 @@ import { useCanvasSessionId as useCreationSessionId } from './features/creationC
 import type { CreationInspectorContext } from './features/mdPresentation/CreationConversation';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
 import { agentInspectorWorkspace, localInspectorWorkspace } from './features/inspector/inspectorSessions';
-import { ComposerReferenceContext, inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
+import { inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
 import { useInspectorBrowserActions } from './features/inspector/useInspectorBrowserActions';
-import { Composer } from './features/composer';
-import { WelcomeProjectSwitcher } from './features/chat/WelcomeComposer';
 import { ConversationExtractionProvider } from './features/chat/ConversationExtraction';
 import { workSummaryInspectorTab, type InspectorTab, type InspectorResourceTab, type InspectorReviewTab } from './features/inspector/inspectorTabs';
 import { useOutsideDismiss } from './hooks/useOutsideDismiss';
@@ -2299,35 +2297,6 @@ function CardbushApp() {
               <HtmlComponentContext.Provider value={{ revision: chat.activeConversationId || '__new__', sessionId: chat.activeConversationId, language, running: chat.sending,
                 draft: activeDraft, notice: chat.error || chat.notice || undefined,
                 selectSuggestion: suggestion => { if (suggestion.sessionId) openConversation(suggestion.sessionId); else setActiveDraft(suggestion.text); },
-                composer: section === 'components' ? <ComposerReferenceContext.Provider value={{ sessionId: chat.activeConversationId, browserTabs: composerBrowserTabs,
-                  messages: chat.activeMessages, projects: projectItems, onWorkspaceSelect: chat.sending ? undefined : changeWelcomeProject }}>
-                  <div className="builtin-workspace-control"><WelcomeProjectSwitcher language={language}
-                    projects={projectItems.filter(project => !project.archived && !project.missing)} selectedProjectDir={activeConversationProjectDir}
-                    disabled={chat.sending} onSelect={changeWelcomeProject}/></div>
-                  <Composer compact portalCommands language={language} draft={activeDraft} onDraftChange={setActiveDraft}
-                    sending={chat.sending} stopping={chat.stopping} cancelEnabled={Boolean(chat.activeTurnId)}
-                    guidanceDeliveryMode={appSettings.guidance.deliveryMode}
-                    selectedModel={chat.selectedModel} availableModels={availableModels}
-                    teamAvailable={backendCapabilities.teamMode} goalAvailable={chat.goalAvailable}
-                    referencePlanAvailable={backendCapabilities.taskPlan} referencePlanMode={chat.referencePlanMode}
-                    permissionMode={chat.permissionMode} subagentPermissionRouting={chat.subagentPermissionRouting}
-                    reasoningLevelAvailable={backendCapabilities.reasoningLevelSelection} reasoningLevel={chat.reasoningLevel} reasoningLevels={backendCapabilities.reasoningLevels}
-                    onModelChange={chat.setSelectedModel} onReferencePlanModeChange={chat.setReferencePlanMode}
-                    onPermissionModeChange={chat.setPermissionMode} onSubagentPermissionRoutingChange={chat.setSubagentPermissionRouting} onReasoningLevelChange={chat.setReasoningLevel}
-                    onConfigureModels={() => openSettings('models')} onCreateConversation={handleSidebarCreateConversation}
-                    skills={chat.skills} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled}
-                    queuedMessageCount={chat.queuedMessageCount} queuedMessages={chat.queuedMessages}
-                    queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending} onToggleQueueLock={chat.toggleQueueLock}
-                    onEditQueuedMessage={item => { chat.removeQueuedMessage(item.id); setActiveDraft(activeDraft.trim() ? `${activeDraft.trimEnd()}\n${item.text.trim()}` : item.text); }}
-                    onGuideQueuedMessage={id => chat.sendQueuedMessageAsGuidance(id, 'interrupt_and_continue')} onRemoveQueuedMessage={chat.removeQueuedMessage}
-                    onSend={(text, options) => {
-                      if (chat.sending && chat.activeTurnId && (options?.immediate || appSettings.guidance.deliveryMode === 'immediate')) {
-                        return chat.sendTurnGuidance({ id: chat.activeTurnId, role: 'assistant', content: '', createdAt: new Date().toISOString(),
-                          conversationId: chat.activeConversationId, turnId: chat.activeTurnId }, text, 'interrupt_and_continue');
-                      }
-                      return chat.sendMessage(text);
-                    }} onCancel={chat.cancelSending}/>
-                </ComposerReferenceContext.Provider> : undefined,
                 fill: text => { setActiveDraft(text); setSection('chat'); },
                 send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
                   onError: error => { void showUiError(language === 'zh' ? '组件消息发送失败' : 'Component message failed', error instanceof Error ? error.message : String(error)); } }),

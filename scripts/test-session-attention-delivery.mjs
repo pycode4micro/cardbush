@@ -74,7 +74,7 @@ test('viewed completions and replayed terminals do not become late or duplicate 
 
 test('questions in one turn and failures have separate identities and retain click navigation', () => {
   const f = fixture();
-  const question = { ...attention, kind: 'waiting', interactionId: 'question-1' };
+  const question = { ...attention, kind: 'interaction', interactionId: 'question-1' };
   assert.equal(f.show(question).shown, true);
   assert.equal(f.show(question).shown, false);
   assert.equal(f.show({ ...question, interactionId: 'question-2' }).shown, true);
@@ -83,6 +83,14 @@ test('questions in one turn and failures have separate identities and retain cli
   assert.deepEqual(f.opened, ['chat']);
   assert.match(f.notices[1].options.toastXml, /cardbush-attention-v1:chat/);
   assert.equal(f.notices[1].options.silent, true, 'keep the configured chime as the sole sound source');
+});
+
+test('legacy waits, unknown states and unidentified Solutions do not become native notifications', () => {
+  const f = fixture();
+  for (const kind of ['waiting', 'warning', 'approval', 'interaction', undefined]) {
+    assert.equal(f.show({ ...attention, kind }).shown, false);
+  }
+  assert.equal(f.notices.length, 0);
 });
 
 test('native failures release ownership, record diagnostics and allow a later delivery attempt', () => {

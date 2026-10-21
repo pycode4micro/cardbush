@@ -35,9 +35,25 @@ const api = await loadChatTranscript({
     `export { streamRuntimeTurnEvents } from ${JSON.stringify(path.resolve('src/backend/runtimeChat.ts'))};`,
     `export { applyTaskPlanUpdate } from ${JSON.stringify(path.resolve('src/features/chatMessages/transcript/liveMessageUpdates.ts'))};`,
     `export { fetchSessionMessages } from ${JSON.stringify(path.resolve('src/backend/api.ts'))};`,
+    `export { conversationTaskPlan } from ${JSON.stringify(path.resolve('src/features/chat/conversationTaskPlan.ts'))};`,
   ].join('\n'),
   globals: { console, AbortController, DOMException, TextEncoder, TextDecoder, structuredClone, setTimeout, clearTimeout,
     process: { env: { NODE_ENV: 'test' } }, window: { setTimeout, clearTimeout, cardbushDesktop: { runtime: bridge } } },
+});
+test('summary follows the latest task through loops, guidance, completion and a new task', () => {
+  const old = { planId: 'old', nodes: [] };
+  const current = { planId: 'current', nodes: [] };
+  const user = { id: 'u', role: 'user', turnId: 'current', content: 'task' };
+  const answer = { id: 'a', role: 'assistant', turnId: 'current', content: '', loopHistory: [
+    { role: 'assistant', taskPlan: old }, { role: 'assistant', taskPlan: current },
+  ] };
+  const messages = [user, answer];
+  assert.equal(api.conversationTaskPlan(messages, 'current'), current);
+  assert.equal(api.conversationTaskPlan([...messages, { role: 'user', turnId: 'current', content: 'guidance' }], 'current'), current);
+  assert.equal(api.conversationTaskPlan(messages), current, 'completion retains the most recent plan');
+  assert.equal(api.conversationTaskPlan(messages, 'new'), undefined, 'admission does not borrow a previous plan');
+  assert.equal(api.conversationTaskPlan([...messages, { role: 'user', content: 'new task' }]), undefined);
+  assert.equal(api.conversationTaskPlan([{ ...answer, taskPlan: current }]), current);
 });
 function plan(revision, count, active, explanation) {
   return { protocol: 'bush.plan_state.v1', sessionId, revision, updatedAt: now,

@@ -1,6 +1,6 @@
 import { memoryCacheEntry, type CacheEntry } from './cacheMaintenance.js';
 import { summarizeExecution, type ExecutionHistoryPage } from './executionHistory.js';
-import { usageRecipeFromRecord } from './usageSignals.js';
+import { isAbsolute, resolve } from 'node:path';
 import {
   BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
   BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
@@ -16,7 +16,6 @@ import {
   type ToolCall,
   type ToolExecutionRecord,
   type ToolExecutionSummary,
-  type UsageRecipeIdentity,
 } from "@cardbush/bush-protocol";
 
 import type {
@@ -43,7 +42,6 @@ export interface ToolExecutionSignal {
   tool: string;
   outcome: 'returned' | 'failed' | 'cancelled';
   errorCode?: string;
-  usageRecipe?: UsageRecipeIdentity;
 }
 
 export class ToolExecutionStore {
@@ -150,6 +148,25 @@ export class ToolExecutionStore {
     return record ? structuredClone(this.#fullRecords(sessionId, [record])[0]) : undefined;
   }
 
+  /** Project only explicit native artifacts; never clone image bytes or treat
+   * paths in arguments, model prose or script output as file-read grants. */
+  hasImageArtifact(sessionId: string, path: string): boolean {
+    if (!isAbsolute(path)) return false;
+    const key = imagePathKey(path);
+    return this.#load(sessionId).some(record => {
+      if (record.outcome !== 'returned' || toolExecutionError(record)) return false;
+      const native = artifactObject(record.result);
+      const result = typeof artifactObject(native.mcp).name === 'string' ? artifactObject(native.result) : native;
+      if (native.isError === true || result.isError === true) return false;
+      return [result.artifacts, artifactObject(result.structuredContent).artifacts].some(artifacts =>
+        Array.isArray(artifacts) && artifacts.some(value => {
+          const artifact = artifactObject(value);
+          return artifact.type === 'image' && typeof artifact.path === 'string' &&
+            isAbsolute(artifact.path) && imagePathKey(artifact.path) === key;
+        }));
+    });
+  }
+
   listTurn(sessionId: string, turnId: string): ToolExecutionRecord[] {
     return this.#fullRecords(sessionId, this.#load(sessionId)
       .filter((record) => record.turnId === turnId))
@@ -158,17 +175,21 @@ export class ToolExecutionStore {
   }
 
   /** Completion order, including nested/async calls; never infer order from rounds. */
-  signalsAfter(sessionId: string, after: { turnId: string; toolCallId: string }): ToolExecutionSignal[] {
+  latestSignalMarker(sessionId: string): { turnId: string; toolCallId: string } | null {
+    const last = this.#load(sessionId).at(-1);
+    return last ? { turnId: last.turnId, toolCallId: last.toolCall.id } : null;
+  }
+
+  signalsAfter(sessionId: string, after: { turnId: string; toolCallId: string } | null): ToolExecutionSignal[] {
     const rows = this.#load(sessionId);
-    const boundary = rows.findIndex(row => row.turnId === after.turnId && row.toolCall.id === after.toolCallId);
+    const boundary = after ? rows.findIndex(row => row.turnId === after.turnId && row.toolCall.id === after.toolCallId) : -1;
     // A missing activation receipt is not permission to recall an older task.
-    if (boundary < 0) return [];
+    // null is an explicit native selection before this session had any receipts.
+    if (after && boundary < 0) return [];
     return rows.slice(boundary + 1).map(row => {
       const failure = toolExecutionError(row);
-      const usageRecipe = usageRecipeFromRecord(row);
       return { turnId: row.turnId, toolCallId: row.toolCall.id, tool: row.toolCall.name,
         outcome: row.outcome === 'cancelled' ? 'cancelled' : failure ? 'failed' : row.outcome,
-        ...(usageRecipe ? { usageRecipe } : {}),
         ...(failure ? { errorCode: failure.code } : {}) };
     });
   }
@@ -324,6 +345,14 @@ export class ToolExecutionStore {
       return parsed;
     });
   }
+}
+
+function artifactObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+function imagePathKey(path: string): string {
+  const normalized = resolve(path);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<object>): ToolExecutionSummary {

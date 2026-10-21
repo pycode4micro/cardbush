@@ -3,6 +3,7 @@ import { Building2, ChevronRight, Pencil, Plus, Search, Trash2, Users, X } from 
 import { api, type Company, type Department, type Organization, type User } from './api';
 import { PluginAdmin } from './AgentWidgets';
 import { ModelAdmin } from './ModelAdmin';
+import { RemoteAgentAdmin } from './RemoteAgentAdmin';
 
 type Scope = { kind: 'all' | 'unassigned' | 'company' | 'department'; id?: string };
 type Editor = { kind: 'company'; item?: Company } | { kind: 'department'; item?: Department; companyId?: string } | { kind: 'user'; item?: User; companyId?: string; departmentId?: string };
@@ -12,7 +13,7 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : '
 
 export function OrganizationAdmin({ currentUserId }: { currentUserId: string }) {
   const [org,setOrg] = useState<Organization>({ companies:[],departments:[] }), [users,setUsers] = useState<User[]>([]), [deleted,setDeleted] = useState<User[]>([]);
-  const [scope,setScope] = useState<Scope>({kind:'all'}), [query,setQuery] = useState(''), [status,setStatus] = useState('all'), [tab,setTab] = useState<'people'|'deleted'|'plugins'|'models'>('people');
+  const [scope,setScope] = useState<Scope>({kind:'all'}), [query,setQuery] = useState(''), [status,setStatus] = useState('all'), [tab,setTab] = useState<'people'|'deleted'|'plugins'|'models'|'remote-agents'>('people');
   const [editor,setEditor] = useState<Editor|null>(null), [removal,setRemoval] = useState<Removal|null>(null), [busy,setBusy] = useState(false), [loading,setLoading] = useState(true), [error,setError] = useState(''), [notice,setNotice] = useState('');
   const refresh = useCallback(async () => {
     const [organization,people,removed] = await Promise.all([api<Organization>('/admin/organization'),api<User[]>('/admin/users'),api<User[]>('/admin/users?deleted=1')]);
@@ -46,9 +47,9 @@ export function OrganizationAdmin({ currentUserId }: { currentUserId: string }) 
     });
   }
   return <section className="admin-panel organization-admin"><div className="admin-heading"><div><span className="eyebrow">组织与访问权限</span><h1>管理中心</h1><p className="muted">按公司、部门管理人员，保留每个人独立的对话空间。</p></div></div>
-    <div className="admin-tabs" role="tablist" aria-label="管理功能">{(['people','deleted','plugins','models'] as const).map(value=><button key={value} role="tab" aria-selected={tab===value} onClick={()=>{setTab(value);setQuery('');setStatus('all');setError('');setNotice('');}}>{value==='people'?'组织与人员':value==='deleted'?`已删除 (${deleted.length})`:value==='plugins'?'插件管理':'模型管理'}</button>)}</div>
+    <div className="admin-tabs" role="tablist" aria-label="管理功能">{(['people','deleted','plugins','models','remote-agents'] as const).map(value=><button key={value} role="tab" aria-selected={tab===value} onClick={()=>{setTab(value);setQuery('');setStatus('all');setError('');setNotice('');}}>{value==='people'?'组织与人员':value==='deleted'?`已删除 (${deleted.length})`:value==='plugins'?'插件管理':value==='models'?'模型管理':'远程 Agent'}</button>)}</div>
     {error&&!editor&&!removal&&<p className="form-error" role="alert">{error}</p>}{notice&&<p className="form-notice" role="status">{notice}</p>}
-    {tab==='models'?<ModelAdmin/>:loading?<p className="status-line">正在加载组织…</p>:tab==='plugins'?<PluginAdmin users={users}/>:<div className={`organization-layout ${tab==='deleted'?'without-tree':''}`}>
+    {tab==='models'?<ModelAdmin/>:loading?<p className="status-line">正在加载组织…</p>:tab==='remote-agents'?<RemoteAgentAdmin users={users}/>:tab==='plugins'?<PluginAdmin users={users}/>:<div className={`organization-layout ${tab==='deleted'?'without-tree':''}`}>
       {tab==='people'&&<nav className="organization-tree" aria-label="公司和部门"><header><strong>组织架构</strong><button className="icon-button" aria-label="新增公司" title="新增公司" onClick={()=>edit({kind:'company'})}><Plus size={17}/></button></header>
         <button className={`org-tree-row ${scope.kind==='all'?'selected':''}`} onClick={()=>select({kind:'all'})}><Users size={15}/>全部人员<span>{users.length}</span></button>
         <button className={`org-tree-row ${scope.kind==='unassigned'?'selected':''}`} onClick={()=>select({kind:'unassigned'})}><Users size={15}/>待分配<span>{users.filter(user=>!user.department_id).length}</span></button>

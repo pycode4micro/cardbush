@@ -36,14 +36,12 @@ export class PluginHookScopes {
     });
     this.queue.set(session, pending.catch(() => {})); await pending;
   }
-  async select(hooks: PluginHook[], request: ModelRequest, usageCommandId?: string): Promise<PluginHook[]> {
+  async select(hooks: PluginHook[], request: ModelRequest): Promise<PluginHook[]> {
     await this.queue.get(request.sessionId);
     const skills = new Set([...await this.read(request.sessionId), ...(Array.isArray(request.metadata.pluginScopedSkillIds) ? request.metadata.pluginScopedSkillIds.filter((id): id is string => typeof id === 'string') : [])]);
     const disabled = Array.isArray(request.metadata.disabledSkills) ? request.metadata.disabledSkills : [];
     const selected = Array.isArray(request.metadata.registeredAgentHooks) ? request.metadata.registeredAgentHooks : [];
-    return hooks.filter(hook => hook.scope?.kind === 'usage'
-      ? request.metadata.agentRole !== 'child' && hook.scope.id === usageCommandId
-      : !hook.scope || selected.includes(hook.id) && hook.trusted === true || (hook.scope.kind === 'agent'
+    return hooks.filter(hook => !hook.scope || selected.includes(hook.id) && hook.trusted === true || (hook.scope.kind === 'agent'
       ? hook.scope.id === request.metadata.pluginAgentId
       : skills.has(hook.scope.id) && !disabled.includes(hook.scope.id) && !disabled.includes(hook.scope.id.split(':').at(-1))));
   }

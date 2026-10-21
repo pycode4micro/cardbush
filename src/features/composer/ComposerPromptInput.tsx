@@ -1,18 +1,19 @@
 import { forwardRef, useContext, useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
-import type { AppLanguage, CardbushAppPlugin, SkillSummary } from '../../types';
+import type { AppLanguage, CardbushAppPlugin, PluginCommandSummary, SkillSummary } from '../../types';
 import { fileUrl } from '../../shared/localPaths';
 import { focusEditor, observeEditorFocus, restoreNativeEditorFocus } from '../../shared/editorFocus';
 import { pluginPromptParts, type PluginPromptPart } from '../plugins/pluginPrompts';
 import { promptReferenceParts, type PromptReference } from '../../shared/promptReferences';
 import { openPromptReference } from './PromptReferenceLink';
 import { CONVERSATION_DRAG_TYPE } from '../chat/ConversationExtraction';
-import { skillPromptParts, type SkillLinkReference } from '../skills/skillReferences';
+import { skillPromptParts, type SkillPromptPart } from '../skills/skillReferences';
 import { ConversationHostContext } from '../conversationHost';
 import { ComposerReferenceContext } from './ComposerReferenceContext';
 
-type ComposerPromptPart = PluginPromptPart & { contextReference?: PromptReference; skillReference?: SkillLinkReference; skill?: SkillSummary };
+type ComposerPromptPart = PluginPromptPart & SkillPromptPart & { contextReference?: PromptReference };
 
 const emptySkills: SkillSummary[] = [];
+const emptyCommands: PluginCommandSummary[] = [];
 const isReference = (part: ComposerPromptPart) => Boolean(part.plugin || part.contextReference || part.skillReference);
 const referenceTitle = (part: ComposerPromptPart) => part.plugin?.name || part.skill?.displayName || part.skillReference?.title || part.contextReference?.title || '';
 
@@ -26,6 +27,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   value: string;
   plugins: CardbushAppPlugin[];
   skills?: SkillSummary[];
+  pluginCommands?: PluginCommandSummary[];
   language: AppLanguage;
   autoFocus?: boolean;
   readOnly?: boolean;
@@ -36,7 +38,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   onChange(value: string, caret: number): void;
   onSelectionChange(caret: number): void;
   onKeyDown(event: KeyboardEvent<HTMLElement>): void;
-}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, language, autoFocus, readOnly = false, richReferences = true, ariaLabel, ariaDescribedBy, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
+}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, pluginCommands = emptyCommands, language, autoFocus, readOnly = false, richReferences = true, ariaLabel, ariaDescribedBy, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
   const host = useContext(ConversationHostContext);
   const { sessionId } = useContext(ComposerReferenceContext);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -48,11 +50,11 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   const removedSelection = useRef<{ value: string; caret: number } | null>(null);
   const change = useRef(onChange);
   change.current = onChange;
-  const parsedParts = skillPromptParts(value, skills).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
+  const parsedParts = skillPromptParts(value, skills, pluginCommands).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
     : pluginPromptParts(skillPart.text, plugins).flatMap<ComposerPromptPart>(part => part.reference ? [{ ...part, start: skillPart.start + part.start }]
       : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: skillPart.start + part.start + contextPart.start, contextReference: contextPart.reference }))));
-  // Remote application references have no local file resolver or launch side effects.
-  const parts = richReferences === 'applications' ? parsedParts.map(part => ['application', 'team'].includes(part.contextReference?.kind ?? '') ? part : { text: part.text, start: part.start }) : parsedParts;
+  // Remote application references and catalog-backed Skill commands need no local file resolver.
+  const parts = richReferences === 'applications' ? parsedParts.map(part => part.skillCommand || ['application', 'team'].includes(part.contextReference?.kind ?? '') ? part : { text: part.text, start: part.start }) : parsedParts;
   const rich = Boolean(richReferences) && parts.some(isReference);
   useImperativeHandle(ref, () => ({
     focus: () => focusEditor(rich ? editor.current : textarea.current),
@@ -91,7 +93,8 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       if (part.plugin) chip.dataset.pluginReference = part.text;
       else if (part.skillReference) chip.dataset.skillReference = part.text;
       else chip.dataset.contextReference = part.text;
-      chip.title = part.skillReference?.path || (part.plugin ? part.plugin.name : reference?.kind === 'browser' ? reference.url : title);
+      chip.title = part.skillCommand ? [part.text, part.skillReference?.path].filter(Boolean).join('\n')
+        : part.skillReference?.path || (part.plugin ? part.plugin.name : reference?.kind === 'browser' ? reference.url : title);
       if (reference?.kind === 'team') {
         chip.title = `Team · ${title}`;
         chip.classList.add('composer-team-token');
@@ -99,7 +102,8 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
         chip.setAttribute('role', 'link');
         chip.setAttribute('aria-label', `${language === 'zh' ? '查看 Team' : 'View team'} ${title}`);
       }
-      const logo = part.plugin?.logoPath || part.plugin?.logoDarkPath || part.skill?.logoPath || part.skill?.logoDarkPath;
+      const logo = richReferences === 'applications' ? undefined
+        : part.plugin?.logoPath || part.plugin?.logoDarkPath || part.skill?.logoPath || part.skill?.logoDarkPath;
       if (logo) {
         const image = document.createElement('img'); image.src = fileUrl(logo); image.alt = ''; image.draggable = false;
         image.onerror = () => image.replaceWith(referenceGlyph('plugin'));

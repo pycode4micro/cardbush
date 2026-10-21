@@ -37,6 +37,9 @@ test('system policy keeps cross-tool obligations without a second tool manual', 
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /do not repeat external side effects/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /As a child Agent.*do not delegate further/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Before waiting on any background task, complete useful work/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Batch independent reads and searches.*wait for dependencies/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /direct calls for simple work.*script orchestration.*filter or combine/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Inspect each failure in a batch/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /verified files.*exact Tool-returned reference or absolute path/);
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /mcp_search|read_archived_tool_result|edit_file|terminal_poll|completion_notification|context_pressure|solution_selection|await_subagents|resume_task_id|_display_title|run_skill|update_goal|system_prompt/);
 });
@@ -60,7 +63,7 @@ test('execution-specific guidance is discoverable on the tool or its parameter',
   const subagent = tool('subagent');
   assert.match(subagent.description, /owned child with task_id and prompt/);
   assert.match(subagent.description, /Continue independent work and reconcile subagent_result/);
-  assert.match(subagent.description, /Use tasks to inspect, wait, stop or read a child conversation/);
+  assert.match(subagent.description, /Use tasks to inspect, wait, stop or read child conversations/);
   assert.match(subagent.inputSchema.properties.mode.description, /clean uses a registered agent_id/);
   assert.match(subagent.inputSchema.properties.mode.description, /Ad-hoc clean tasks have independent conversations without employee memory/);
   assert.match(subagent.inputSchema.properties.mode.description, /Persistent memory is configured only in a registered employee definition/);

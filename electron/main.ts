@@ -1906,19 +1906,23 @@ function sanitizeSessionAttentionPayload(value: unknown) {
     ? value as Record<string, unknown>
     : {};
   const kind = String(payload.kind ?? '').trim().toLowerCase();
+  const interactionId = String(payload.interactionId ?? '').trim();
+  if (!['completed', 'interaction', 'error'].includes(kind) || (kind === 'interaction' && !interactionId)) return null;
   return {
     sessionId: String(payload.sessionId ?? '').trim(),
     title: String(payload.title ?? '').trim().slice(0, 120) || 'CardBush',
-    body: String(payload.body ?? '').trim().slice(0, 500) || '任务已完成，点击查看结果。',
-    kind: kind === 'waiting' || kind === 'error' ? kind : 'completed',
+    body: String(payload.body ?? '').trim().slice(0, 500) || (kind === 'interaction'
+      ? '有待处理的方案或审批请求。'
+      : kind === 'error' ? '任务执行出错，点击查看详情。' : '任务已完成，点击查看结果。'),
+    kind,
     turnId: String(payload.turnId ?? '').trim(),
-    interactionId: String(payload.interactionId ?? '').trim(),
+    interactionId,
   } as const;
 }
 
 function showSessionAttentionNotification(value: unknown) {
   const payload = sanitizeSessionAttentionPayload(value);
-  if (!payload.sessionId) {
+  if (!payload?.sessionId) {
     return { shown: false };
   }
   if (!sessionAttentionNotificationGate.accept(payload)) return { shown: false };
@@ -4297,11 +4301,11 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
           return (await browserUseRouter()).inheritScope(input?.parentSessionId, input?.childSessionId, signal);
         }
         if (operation === 'ssh.workspace') {
-          const input = payload as { action: string; uri: string; path?: string; write?: boolean; owner: string; name: string; input: Record<string, unknown> };
+          const input = payload as { action: string; uri: string; path?: string; write?: boolean; terminal?: { shell?: string }; owner: string; name: string; input: Record<string, unknown> };
           const manager = await sshConnections();
           if (input.action === 'directory') return manager.directory(input.uri);
           if (input.action === 'terminals') return manager.listTerminals(input.owner);
-          if (input.action === 'authorize') return manager.authorize(input.uri, String(input.path ?? '.'), input.write);
+          if (input.action === 'authorize') return manager.authorize(input.uri, String(input.path ?? '.'), input.write, input.terminal, signal);
           if (input.action === 'execute') return manager.execute(input.uri, input.owner, input.name, input.input, signal);
           throw Error('Unknown SSH workspace operation.');
         }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { RuntimeToolError, UsageRecipeIdentity } from '@cardbush/bush-protocol';
+import type { RuntimeToolError } from '@cardbush/bush-protocol';
 import type { ToolHandlerContext } from './toolRegistry.js';
 import type { RuntimeTaskHandle, TaskSource } from './taskTools.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
@@ -13,7 +13,7 @@ export class RuntimeAsyncJobs {
     private readonly deliver: (session: string, turn: string, id: string, result: Promise<JoinedSubagentResult['message']>) => void) {}
   readonly source: TaskSource = context => [...this.jobs.values()].filter(job => job.session === context.sessionId && job.turn === context.turnId);
   stopReason(session: string, turn: string) { return [...this.jobs.values()].find(job => job.session === session && job.turn === turn && job.hookStop)?.hookStop; }
-  start(context: ToolHandlerContext<unknown>, kind: 'question' | 'script', run: (signal: AbortSignal, onHooks: (messages: string[], stop?: string) => void) => Promise<unknown>, usageRecipe?: UsageRecipeIdentity) {
+  start(context: ToolHandlerContext<unknown>, kind: 'question' | 'script', run: (signal: AbortSignal, onHooks: (messages: string[], stop?: string) => void) => Promise<unknown>) {
     if (!context.turn) throw new Error('An active turn is required.');
     if ([...this.jobs.values()].filter(job => job.session === context.sessionId && job.turn === context.turnId).length >= 128) throw new Error('Turn background task capacity reached.');
     if ([...this.jobs.values()].filter(job => job.session === context.sessionId && ['running', 'waiting_user'].includes(job.status)).length >= 8) throw new Error('At most eight question/script tasks can be pending in a conversation. Reuse existing task handles.');
@@ -38,12 +38,10 @@ export class RuntimeAsyncJobs {
         failure = { kind: job.status === 'cancelled' ? 'cancelled' : 'tool',
           code: job.status === 'cancelled' ? 'async_task_cancelled' : typeof code === 'string' && code.trim() ? code : 'async_task_failed',
           message: error instanceof Error ? error.message : String(error),
-          details: { source: `${kind}_completion`, recovery, cause: (error as { details?: unknown })?.details,
-            ...(usageRecipe ? { usage_recipe: usageRecipe } : {}) } };
+          details: { source: `${kind}_completion`, recovery, cause: (error as { details?: unknown })?.details } };
         result = { error: failure, recovery };
       } finally { outer?.removeEventListener('abort', cancel); }
       job.revision = '2';
-      if (usageRecipe && !failure) result = { usage_recipe: usageRecipe, execution: result };
       const rendered = JSON.stringify(result) ?? 'null';
       result = JSON.parse(rendered);
       if (failure) failure = (result as { error: RuntimeToolError }).error;

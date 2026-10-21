@@ -149,6 +149,42 @@ test('Real host projects MCP schemas only through discovery to the provider', as
   const terminal = await host.runModelTurn(request(registry)); assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal)); assert.equal(round, 3);
 });
 
+test('forked builtin roles stay read-only while a plugin named Plan follows its declared tools', async t => {
+  for (const [label, profile, expectedChanges] of [
+    ['builtin', undefined, 0],
+    ['declared', { ...agent, id: 'demo:Plan', name: 'Plan', tools: ['change'], maxTurns: 7 }, 1],
+    ['restricted', { ...agent, id: 'demo:Plan', name: 'Plan', tools: ['change', 'inspect'], disallowedTools: ['change'] }, 0],
+  ]) await t.test(label, async t => {
+    const root = await temp(t), registry = new ToolRegistry(); let changes = 0, childRounds = 0;
+    registry.register({ definition: { name: 'change', description: 'Fixture change', inputSchema: { type: 'object' } },
+      manifest: { ...manifest, mutating: true }, decodeInput: x => x, execute: () => { changes++; return {}; } });
+    registry.register({ definition: { name: 'inspect', description: 'Fixture observation', inputSchema: { type: 'object' } },
+      manifest, decodeInput: x => x, execute: () => ({}) });
+    const skill = { id: 'demo:role', kind: 'skill', pluginId: 'demo', root, path: join(root, 'SKILL.md'), name: 'role',
+      description: 'Role fixture', prompt: 'Perform fixture change', arguments: [], argumentHint: '', userInvocable: true,
+      disableModelInvocation: false, shell: 'bash', context: 'fork', agent: 'Plan' };
+    const host = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry, registerDefaultWorkspaceTools: false,
+      loadPluginExtensions: async () => ({ hooks: [], agents: profile ? [profile] : [], skills: [skill] }),
+      provider: { async *stream(req) {
+        const base = { protocol: 'bush.model_event.v1', requestId: req.requestId, createdAt: new Date().toISOString() };
+        yield { ...base, sequence: 0, kind: 'response_started' };
+        if (req.metadata.agentRole === 'child' && ++childRounds === 1) {
+          if (profile?.maxTurns) assert.equal(req.metadata.pluginAgentMaxTurns, profile.maxTurns);
+          yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: 'fixture-change', nameDelta: 'change', argumentsDelta: '{}' };
+          yield { ...base, sequence: 2, kind: 'response_completed', finishReason: 'tool_calls' };
+        } else {
+          yield { ...base, sequence: 1, kind: 'text_delta', delta: 'Finished fixture.' };
+          yield { ...base, sequence: 2, kind: 'response_completed', finishReason: 'stop' };
+        }
+      } },
+    });
+    t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+    const terminal = await host.runModelTurn(request(registry, { permissionMode: 'all_free', messages: [{ role: 'user', content: '/demo:role' }] }));
+    assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
+    assert.ok(childRounds > 0); assert.equal(changes, expectedChanges);
+  });
+});
+
 test('Background child continues after parent completion and asks through its own host UI route', async t => {
   const root = await temp(t), registry = new ToolRegistry(); let releaseChild, changed = 0, approvals = 0, childRounds = 0;
   registry.register({ definition: { name: 'change', description: 'Fixture change', inputSchema: { type: 'object' } }, manifest: { ...manifest, mutating: true }, decodeInput: x => x,

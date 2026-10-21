@@ -1,4 +1,5 @@
 import { readFile, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { load, JSON_SCHEMA } from 'js-yaml';
 import type { PluginCommand } from './pluginExtensions.js';
@@ -45,7 +46,11 @@ export function skillToolRules(value: unknown): string[] | undefined {
   return texts.flatMap(text => text.match(/[^,\s()]+(?:\([^)]*\))?/g) ?? []);
 }
 export async function readPluginSkill(path: string, pluginId = '', root = dirname(path)) {
-  const { metadata, body } = parseSkillMarkdown(await readFile(path, 'utf8'));
+  const bytes = await readFile(path);
+  const raw = bytes.toString('utf8');
+  const { metadata, body } = parseSkillMarkdown(raw);
+  const sourceSnapshot = { sha256: createHash('sha256').update(bytes).digest('hex'),
+    startLine: 1 + (raw.slice(0, raw.length - body.length).match(/\r\n|\r|\n/g)?.length ?? 0) };
   const name = String(metadata.name || basename(dirname(path)));
   if (!/^[A-Za-z0-9_-]+$/.test(name) || !body.trim()) throw new Error(`Invalid Skill ${name}.`);
   const sidecarPath = join(dirname(path), 'agents', 'openai.yaml');
@@ -71,7 +76,7 @@ export async function readPluginSkill(path: string, pluginId = '', root = dirnam
   if (disallowedTools?.some(rule => /[()*]/.test(rule))) issues.push(`skills.${name}: scoped disallowed-tools`);
   const command: PluginCommand = { kind: 'skill', id: pluginId ? `${pluginId}:${name}` : name, pluginId, root, path, name,
     ...(metadata.context === 'fork' ? { background: skillFlag(metadata.background, true) } : {}),
-    description: String(metadata.description || presentation.short_description || ''), prompt: body,
+    description: String(metadata.description || presentation.short_description || ''), prompt: body, sourceSnapshot,
     argumentHint: String(metadata['argument-hint'] || ''), arguments: [],
     allowedTools: skillToolRules(metadata['allowed-tools']), disallowedTools,
     userInvocable: skillFlag(metadata['user-invocable'], true),

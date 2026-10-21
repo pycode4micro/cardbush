@@ -1,11 +1,18 @@
 import { z } from 'zod';
 import { Agent as HttpAgent, type buildConnector } from 'undici';
 import { agentApiPath, type AgentEventFrame, type AgentEventRequest, type AgentInfo, type AgentOperation } from './agentTypes.js';
+import { AgentBusyError, agentBusyMessage } from './agentErrors.mjs';
 
 export class AgentNetworkError extends Error {}
 export class AgentIdentityError extends Error {}
 export class AgentHttpError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
+  constructor(message: string, readonly status: number, readonly code?: string) { super(message); }
+}
+
+export function isAgentBusyError(error: unknown): error is AgentBusyError | AgentHttpError {
+  // Older services returned this exact idle-guard message under operation_failed.
+  return error instanceof AgentBusyError || error instanceof AgentHttpError && error.status === 409 &&
+    (error.code === 'agent_busy' || (!error.code || error.code === 'operation_failed') && error.message === agentBusyMessage);
 }
 
 function connectionError(error: unknown, url: URL, viaSsh: boolean): Error {
@@ -74,8 +81,8 @@ export class AgentHttpClient {
       throw connectionError(error, url, Boolean(this.connector));
     }
     if (!response.ok) {
-      const data = await response.json().catch(() => null) as { error?: { message?: string } } | null;
-      throw new AgentHttpError(data?.error?.message || `Agent HTTP request failed (${response.status}).`, response.status);
+      const data = await response.json().catch(() => null) as { error?: { message?: string; code?: string } } | null;
+      throw new AgentHttpError(data?.error?.message || `Agent HTTP request failed (${response.status}).`, response.status, data?.error?.code);
     }
     if (this.#agentId && response.headers.get('x-cardbush-agent-id') !== this.#agentId) {
       await response.body?.cancel(); throw new AgentIdentityError('Agent identity changed. Add a new connection after verifying the server.');
@@ -93,6 +100,7 @@ export class AgentHttpClient {
   }
   async call(operation: AgentOperation, input: Record<string, unknown>) {
     const timeout = operation === 'plugins.marketplace' && input.action === 'install' ? 660_000
+      : operation === 'configuration.sync' && input.action === 'apply' ? 120_000
       : operation === 'plugins.marketplace' || (operation === 'product.command' && input.kind === 'sandbox.install') ? 300_000 : 60_000;
     const response = await this.#fetch('call', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ operation, input }) }, AbortSignal.timeout(timeout));
     const data = await response.json() as { result: unknown }; return data.result;

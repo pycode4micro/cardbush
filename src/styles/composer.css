@@ -574,6 +574,11 @@
   background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 
+.composer-command-mode.usage {
+  display: flex;
+  animation: none;
+}
+
 @keyframes composer-command-mode-enter {
   from {
     opacity: 0;

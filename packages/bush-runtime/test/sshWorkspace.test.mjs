@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { InMemoryRuntimeHost, TaskWorkspaceManager, ToolExecutionCoordinator, ToolRegistry, registerWorkspaceTools, registerSkillTools } from '../dist/index.js';
 import { parseSshWorkspace, sshWorkspace } from '@cardbush/bush-protocol';
-import { protectedPosixTerminalDeletion } from '../dist/terminalCommandSafety.js';
+import { protectedPosixTerminalDeletion, protectedTerminalDeletion } from '../dist/terminalCommandSafety.js';
 
 const remote=sshWorkspace('test-connection','/home/user/My Project');
 async function storage(t){const root=await realpath(await mkdtemp(join(tmpdir(),'cardbush-ssh-runtime-')));t.after(async()=>{assert.equal(dirname(root).toLowerCase(),(await realpath(tmpdir())).toLowerCase());await rm(root,{recursive:true,force:true,maxRetries:5});});return root;}
@@ -35,12 +35,15 @@ test('Runtime validates SSH directories, rejects switching while remote processe
   fail=false;await switchTo();assert.equal((await command('get_workspace',{sessionId:'chat'})).workspace.workspaceDir,next);
   assert.ok(requests.some(item=>item.payload.name==='workspace_busy'));
 });
-test('the next SSH turn uses the switched directory even with stale caller metadata',async t=>{
-  const root=await storage(t),next=sshWorkspace('test-connection','/home/user/my project');
+for (const [platform, next] of [
+  ['posix', sshWorkspace('test-connection', '/home/user/my project')],
+  ['windows', sshWorkspace('test-connection', 'C:\\Users\\111')],
+]) test(`the next ${platform} SSH turn uses the switched directory even with stale caller metadata`,async t=>{
+  const root=await storage(t);
   const reads=[],modelRequests=[];let round=0;
   const host=new InMemoryRuntimeHost({dataRoot:root,remoteWorkspace:{async request(action,payload){
     if(action==='directory')return {uri:payload.uri};
-    if(action==='authorize')return {path:payload.uri+'/package.json',root:payload.uri,inside:true,home:'/home/user'};
+    if(action==='authorize')return {path:payload.uri+'/package.json',root:payload.uri,inside:true,platform,home:platform==='windows'?'/C:/Users/111':'/home/user'};
     if(payload.name==='workspace_busy')return {running:false};
     assert.equal(payload.name,'read_file');reads.push(payload);return {path:payload.uri+'/package.json',content:'{"name":"new-project"}'};
   }},provider:{async *stream(request){
@@ -64,6 +67,11 @@ test('the next SSH turn uses the switched directory even with stale caller metad
     metadata:{workspaceDir:remote,projectDir:remote},inputMessages:[{messageId:'user',message:{role:'user',content:'Read the selected project.'}}]});
   assert.equal(reads.length,1);assert.equal(reads[0].uri,next);
   assert.ok(modelRequests.length>0);assert.ok(modelRequests.every(request=>request.metadata.workspaceDir===next&&request.metadata.projectDir===next));
+  const binding = modelRequests[0].messages.find(message => message.name === 'ssh_workspace_binding')?.content;
+  assert.ok(binding?.includes(parseSshWorkspace(next).path));
+  assert.match(binding, /Omit shell for the detected remote default/);
+  assert.match(binding, /powershell\/cmd on Windows and posix on Linux/);
+  assert.doesNotMatch(binding, /Use POSIX paths and shell="posix" remotely/);
 });
 
 test('built-in files/terminals route via SSH, permissions name remote paths, and absent adapter fails closed',async()=>{
@@ -102,6 +110,46 @@ function routedTools(bridge, metadata, permitted = () => true) {
     { request: { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: owner, turnId: 't', model: 'fixture', messages: [],
       tools: registry.definitions(), metadata }, contextMessages: [] }) };
 }
+
+test('Windows remote deletion protection uses the remote home, native paths and shell', () => {
+  const check = (command, shell = 'powershell') => protectedTerminalDeletion({
+    command, shell, cwd: 'D:\\Users\\111\\Project', projectRoots: ['D:\\Users\\111\\Project'],
+    remoteWindows: { home: 'D:\\Users\\111' },
+  });
+  for (const command of ['Remove-Item -LiteralPath D:\\ -Recurse', 'Remove-Item $HOME -Recurse',
+    'Remove-Item -LiteralPath d:\\users\\111\\project -Recurse', 'Set-Location ..; Remove-Item . -Recurse',
+    'Push-Location child; Pop-Location; Remove-Item . -Recurse']) assert.ok(check(command), command);
+  for (const command of ['rd /s /q D:\\', 'rd /s /q "%USERPROFILE%"', 'cd /d D:\\Users\\111\\Project & rd /s /q .']) assert.ok(check(command, 'cmd'), command);
+  assert.equal(check('Remove-Item -LiteralPath .\\build -Recurse'), null);
+  assert.equal(check('rd /s /q build', 'cmd'), null);
+});
+
+test('Windows SSH routes native paths, binds permissions and leaves tool schemas fixed', async () => {
+  const workspace = sshWorkspace('windows-host', '/C:/Users/111/Project'), requests = [];
+  const setup = routedTools({ async request(action, payload) {
+    requests.push({ action, payload });
+    if (action === 'authorize') return { platform: 'windows', home: '/C:/Users/111', root: workspace,
+      path: payload.path.startsWith('ssh:') ? payload.path : sshWorkspace('windows-host', payload.path), inside: true };
+    return { terminalSessionId: 'windows-owned', state: 'completed', exitCode: 0 };
+  } }, { workspaceDir: workspace, taskRoots: [workspace] });
+  const schemas = JSON.stringify(setup.registry.definitions());
+  assert.equal(setup.registry.definitions().find(tool => tool.name === 'terminal_exec').inputSchema.properties.shell.default, undefined);
+  const base = { command: 'echo test', cwd: 'C:\\Users\\111\\Project', yield_time_ms: 1 };
+  assert.equal((await setup.execute('terminal_exec', base)).kind, 'returned');
+  assert.equal(requests.at(-1).payload.input.shell, 'powershell');
+  assert.equal((await setup.execute('terminal_exec', { ...base, shell: 'cmd' })).kind, 'returned');
+  assert.equal(requests.at(-1).payload.input.shell, 'cmd');
+  assert.equal(JSON.stringify(setup.registry.definitions()), schemas);
+  assert.deepEqual(setup.permissions.at(-1).scope.roots, [workspace]);
+  assert.equal(setup.permissions.at(-1).targets[0].value, workspace);
+  const dispatched = () => requests.filter(item => item.action === 'execute').length;
+  const before = dispatched();
+  const blocked = await setup.execute('terminal_exec', { ...base, command: 'Remove-Item C:\\Users\\111 -Recurse' });
+  assert.equal(blocked.error.code, 'protected_path_delete_denied');
+  assert.notEqual((await setup.execute('terminal_exec', { ...base, shell: 'posix' })).kind, 'returned');
+  assert.notEqual((await setup.execute('terminal_exec', { ...base, additional_permissions: { network: true } })).kind, 'returned');
+  assert.equal(dispatched(), before, 'protected deletion, wrong shell and sandbox extensions never run');
+});
 
 test('SSH defaults coexist with local skill resources and observed local edits in one session', async t => {
   const root = await storage(t), skill = join(root, 'deploy'), main = join(skill, 'SKILL.md');

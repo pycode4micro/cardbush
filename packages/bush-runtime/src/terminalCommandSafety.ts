@@ -1,11 +1,7 @@
 import { homedir } from "node:os";
 import {
-  dirname,
-  isAbsolute,
-  parse,
-  relative,
-  resolve,
   posix,
+  win32,
 } from "node:path";
 
 export type TerminalCommandShell = "cmd" | "powershell" | "posix";
@@ -25,7 +21,10 @@ interface TerminalCommandSafetyInput {
   cwd: string;
   shell: TerminalCommandShell;
   projectRoots?: string[];
+  remoteWindows?: { home: string };
 }
+type SafetyPaths = { path: typeof posix; home: string; caseInsensitive: boolean };
+const localPaths = (): SafetyPaths => ({ path: process.platform === 'win32' ? win32 : posix, home: homedir(), caseInsensitive: process.platform === 'win32' });
 
 interface CommandToken {
   value: string;
@@ -85,13 +84,15 @@ export function protectedTerminalDeletion(
   input: TerminalCommandSafetyInput,
 ): ProtectedTerminalDeletion | null {
   const segments = commandSegments(input.command);
-  let currentDirectory = resolve(input.cwd);
+  const paths: SafetyPaths = input.remoteWindows ? { path: win32, home: input.remoteWindows.home, caseInsensitive: true } : localPaths();
+  let currentDirectory = paths.path.resolve(input.cwd);
   const directoryStack: string[] = [];
   for (const segment of segments) {
     const directoryChange = workingDirectoryChange(
       segment,
       input.shell,
       currentDirectory,
+      paths,
     );
     if (directoryChange?.kind === "push") {
       directoryStack.push(currentDirectory);
@@ -109,9 +110,9 @@ export function protectedTerminalDeletion(
     const invocation = deletionInvocation(segment, input.shell);
     if (!invocation) continue;
     for (const candidate of deletionTargets(invocation.args, invocation.shell)) {
-      const target = resolveDeletionTarget(candidate, currentDirectory);
+      const target = resolveDeletionTarget(candidate, currentDirectory, paths);
       if (!target) continue;
-      const protection = protectedTarget(target, input.projectRoots ?? []);
+      const protection = protectedTarget(target, input.projectRoots ?? [], paths);
       if (!protection) continue;
       return {
         protection,
@@ -156,6 +157,7 @@ function workingDirectoryChange(
   segment: CommandToken[],
   shell: TerminalCommandShell,
   cwd: string,
+  paths: SafetyPaths,
 ): { kind: "set" | "push"; path: string } | { kind: "pop" } | null {
   const values = segment.map((token) => token.value).filter(Boolean);
   const command = normalizedCommand(values[0] ?? "");
@@ -166,8 +168,8 @@ function workingDirectoryChange(
       ? "set"
       : null;
   if (!kind) return null;
-  const target = deletionTargets(values.slice(1), shell)[0] ?? homedir();
-  const resolvedPath = resolveDeletionTarget(target, cwd);
+  const target = deletionTargets(values.slice(1), shell)[0] ?? paths.home;
+  const resolvedPath = resolveDeletionTarget(target, cwd, paths);
   return resolvedPath ? { kind, path: resolvedPath } : null;
 }
 
@@ -340,14 +342,15 @@ function isDeletionOption(value: string, shell: TerminalCommandShell): boolean {
   return /^-[a-z][a-z0-9:-]*(?:=.*)?$/i.test(value);
 }
 
-function resolveDeletionTarget(value: string, cwd: string): string | null {
+function resolveDeletionTarget(value: string, cwd: string, paths: SafetyPaths): string | null {
   let candidate = value
     .replace(/^Microsoft\.PowerShell\.Core\\FileSystem::/i, "")
     .replace(/^\\\\\?\\/, "")
     .trim();
   if (!candidate) return null;
 
-  const home = resolve(homedir());
+  const { resolve, parse, isAbsolute } = paths.path;
+  const home = resolve(paths.home);
   const filesystemRoot = parse(home).root;
   const replacements: Array<[RegExp, string]> = [
     [/^~(?=$|[\\/])/, home],
@@ -379,11 +382,13 @@ function resolveDeletionTarget(value: string, cwd: string): string | null {
 function protectedTarget(
   target: string,
   projectRoots: string[],
+  paths: SafetyPaths,
 ): ProtectedTerminalDeletion["protection"] | null {
-  const home = resolve(homedir());
-  const normalizedTarget = identity(target);
-  if (normalizedTarget === identity(resolve(parse(target).root))) return "filesystem_root";
-  if (sameOrAncestor(target, home)) return "user_home";
+  const { resolve, parse, dirname, relative, isAbsolute } = paths.path;
+  const home = resolve(paths.home);
+  const normalizedTarget = identity(target, paths);
+  if (normalizedTarget === identity(resolve(parse(target).root), paths)) return "filesystem_root";
+  if (sameOrAncestor(target, home, paths)) return "user_home";
 
   const homeParent = dirname(home);
   const fromHomeParent = relative(homeParent, target);
@@ -392,27 +397,27 @@ function protectedTarget(
     !fromHomeParent.startsWith("..") &&
     !isAbsolute(fromHomeParent) &&
     !/[\\/]/.test(fromHomeParent) &&
-    identity(target) !== identity(home)
+    identity(target, paths) !== identity(home, paths)
   ) {
     return "user_home_sibling";
   }
 
   for (const projectRoot of projectRoots) {
-    if (projectRoot.trim() && sameOrAncestor(target, resolve(projectRoot))) {
+    if (projectRoot.trim() && sameOrAncestor(target, resolve(projectRoot), paths)) {
       return "project_root";
     }
   }
   return null;
 }
 
-function sameOrAncestor(candidate: string, protectedPath: string): boolean {
-  const value = relative(resolve(candidate), resolve(protectedPath));
-  return value === "" || (!value.startsWith("..") && !isAbsolute(value));
+function sameOrAncestor(candidate: string, protectedPath: string, paths: SafetyPaths): boolean {
+  const value = paths.path.relative(paths.path.resolve(candidate), paths.path.resolve(protectedPath));
+  return value === "" || (!value.startsWith("..") && !paths.path.isAbsolute(value));
 }
 
-function identity(value: string): string {
-  const normalized = resolve(value);
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+function identity(value: string, paths: SafetyPaths): string {
+  const normalized = paths.path.resolve(value);
+  return paths.caseInsensitive ? normalized.toLowerCase() : normalized;
 }
 
 function protectedDeletionMessage(

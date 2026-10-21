@@ -1,8 +1,8 @@
-import { parseSshWorkspace, sshWorkspace, workspaceChangeSchema } from '@cardbush/bush-protocol';
+import { parseSshWorkspace, sshWorkspace, windowsShellPath, workspaceChangeSchema } from '@cardbush/bush-protocol';
 import { posix } from 'node:path';
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistration } from './toolRegistry.js';
 import type { RemoteWorkspaceBridge, TerminalSessionManager } from './workspaceTools.js';
-import { protectedPosixTerminalDeletion } from './terminalCommandSafety.js';
+import { protectedPosixTerminalDeletion, protectedTerminalDeletion, type TerminalCommandShell } from './terminalCommandSafety.js';
 import { resolveToolPath, normalizeIdentity } from './workspaceAccessPolicy.js';
 import { sandboxError } from './executionSandbox.js';
 import { commandPermission, terminalInputPermission } from './commandPermission.js';
@@ -110,7 +110,8 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Tool arguments must be an object.');
       const decoded = registration.decodeInput(value);
       const selected = environment((value as Record<string, unknown>)?.environment);
-      return { ...decoded, ...(selected === undefined ? {} : { environment: selected }) };
+      return { ...decoded, ...(selected === undefined ? {} : { environment: selected }),
+        ...(name === 'terminal_exec' ? { shellSpecified: (value as Record<string, unknown>)?.shell !== undefined } : {}) };
     },
     authorize: async context => {
       if (name === 'terminal_list') return { kind: 'allow' as const };
@@ -139,20 +140,30 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       const reference = parseSshWorkspace(value);
       if (value.startsWith('ssh:') && !reference) throw Error('Invalid SSH path.');
       if (reference && reference.connectionId !== target.connectionId) throw Error('Path and execution environment refer to different SSH connections.');
-      if (/^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value)) throw Error('SSH tools require POSIX paths. To access a local file, use environment="local".');
-      const path = reference ? value : sshWorkspace(target.connectionId, posix.resolve(target.path, value));
+      if (/^(?:\\\\|\/\/)/.test(value)) throw Error('UNC/device SSH paths are not supported; use an absolute drive path.');
+      // The manager validates native paths against the detected remote OS. A
+      // Windows-looking path must never cause a fallback to the local host.
+      const path = reference || /^[A-Za-z]:/.test(value) ? value : sshWorkspace(target.connectionId, posix.resolve(target.path, value || '.'));
       // Only the user-selected workspace is an implicit permission root. A model-
       // supplied environment must not turn an arbitrary server directory into one.
       const selectedRoot = defaultRoot(context);
       const trusted = parseSshWorkspace(selectedRoot)?.connectionId === target.connectionId ? selectedRoot : undefined;
-      const resolved = await remote.request('authorize', { uri: trusted ?? uri, path, write: name === 'write_file' }, context.signal);
+      const resolved = await remote.request('authorize', { uri: trusted ?? uri, path, write: name === 'write_file',
+        ...(name === 'terminal_exec' ? { terminal: { ...(input.shellSpecified ? { shell: input.shell } : {}) } } : {}) }, context.signal);
+      if (resolved.platform !== 'windows' && /^[a-z]:/i.test(value)) throw Error('This SSH host requires POSIX paths. For local files use environment="local".');
       const access = name === 'read_file' || name === 'search_file_content' ? 'read' : name === 'terminal_exec' ? 'execute' : 'write';
       if (name === 'terminal_exec') {
         const extra = input.additionalPermissions as { readRoots: string[]; writeRoots: string[]; network: boolean } | undefined;
         if (extra && (extra.readRoots.length || extra.writeRoots.length || extra.network)) throw sandboxError('sandbox_remote_unavailable', 'Direct SSH cannot enforce sandbox extensions. Connect to a CardBush Agent with its own execution policy. No remote command was sent.');
-        if (input.shell !== 'posix') throw Error('SSH remote terminals require shell="posix".');
+        const windows = resolved.platform === 'windows';
+        const shell = input.shellSpecified ? String(input.shell) : windows ? 'powershell' : 'posix';
+        if (!(windows ? ['cmd', 'powershell'] : ['posix']).includes(shell)) throw Error(`SSH host is ${windows ? 'Windows; use shell="powershell" or shell="cmd"' : 'POSIX; use shell="posix"'}. No user command was sent.`);
+        input.shell = shell;
         for (const root of [parseSshWorkspace(resolved.root)!.path, target.path]) {
-          const denied = protectedPosixTerminalDeletion({ command: String(input.command), cwd: parseSshWorkspace(resolved.path)!.path, root, home: resolved.home ?? '/' });
+          const denied = windows
+            ? protectedTerminalDeletion({ command: String(input.command), cwd: windowsShellPath(parseSshWorkspace(resolved.path)!.path), shell: shell as TerminalCommandShell,
+              projectRoots: root === '/' ? [] : [windowsShellPath(root)], remoteWindows: { home: windowsShellPath(resolved.home) } })
+            : protectedPosixTerminalDeletion({ command: String(input.command), cwd: parseSshWorkspace(resolved.path)!.path, root, home: resolved.home ?? '/' });
           if (denied) return { kind: 'deny' as const, code: 'protected_path_delete_denied', message: denied.message, details: { protection: denied.protection, target: denied.target } };
         }
         return commandPermission({ command: String(input.command), cwd: resolved.path, shell: String(input.shell),

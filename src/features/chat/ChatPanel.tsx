@@ -69,7 +69,7 @@ import { QuickContextRail } from './QuickContextRail';
 import { createChatScrollMotion } from './chatScrollMotion';
 import { connectConversationWheelScrolling, scrollConversationByWheel } from './conversationWheelScrolling';
 import { observeConversationReflow } from './conversationReflow';
-import { submittedUserReadingOffset, updateResponseSpacer } from './responseSpacer';
+import { reconcileResponseLayout, releaseResponseSpacer, responseFollowScrollTop, submittedUserReadingOffset, updateResponseSpacer } from './responseSpacer';
 import {
   captureConversationScrollPosition,
   restoreConversationScrollPosition,
@@ -240,6 +240,7 @@ export function ChatPanel({
   onDraftChange,
   headerActions,
   composerAccessory,
+  welcomeWorkspaceControl,
   transcriptFooter,
   interactionContent,
   readOnlyActions = false,
@@ -356,6 +357,7 @@ export function ChatPanel({
   onDraftChange: (value: string) => void;
   headerActions?: ReactNode;
   composerAccessory?: ReactNode;
+  welcomeWorkspaceControl?: ReactNode;
   transcriptFooter?: ReactNode;
   interactionContent?: ReactNode;
   readOnlyActions?: boolean;
@@ -404,6 +406,12 @@ export function ChatPanel({
     return latest;
   }, [renderMessages]);
   const latestMessage = renderMessages.at(-1);
+  const latestTaskStartIndex = useMemo(() => {
+    for (let index = renderMessages.length - 1; index >= 0; index--) {
+      if (renderMessages[index].role === 'user' && !isTurnGuidanceMessage(renderMessages[index])) return index;
+    }
+    return Math.max(0, renderMessages.length - 1);
+  }, [renderMessages]);
   const latestCompletedMessageId = !sending && latestMessage?.role === 'assistant' ? latestMessage.id : '';
   const completedGuidanceTurnMessages = useMemo(() => {
     const byTurn = new Map<string, ChatMessage[]>();
@@ -455,13 +463,6 @@ export function ChatPanel({
     if (!turnId || turnId !== activeTurnId.trim() || streamingFinalResponse) return null;
     return summarizeChangeReports(changeReports.filter(report => report.turnId?.trim() === turnId));
   }, [activeRuntimeAssistant?.turnId, activeTurnId, changeReports, streamingFinalResponse]);
-  const activeTaskPlan = useMemo(() => {
-    if (!activeRuntimeAssistant) return undefined;
-    if (activeRuntimeAssistant.taskPlan) return activeRuntimeAssistant.taskPlan;
-    return [...(activeRuntimeAssistant.loopHistory ?? [])]
-      .reverse()
-      .find((message) => message.taskPlan)?.taskPlan;
-  }, [activeRuntimeAssistant]);
   const goalMessageId = useMemo(() => {
     if (!activeGoal) return '';
     if (activeGoal.status === 'active') return lastAssistantMessage(renderMessages)?.message.id ?? '';
@@ -557,8 +558,7 @@ export function ChatPanel({
     conversationId: '',
     ids: [],
   });
-  const streamScrollFrameRef = useRef<number | null>(null);
-  const outerResizeFollowFrameRef = useRef<number | null>(null);
+  const reconcileTranscriptRef = useRef<() => void>(() => {});
   const outerResizeSizesRef = useRef(new WeakMap<Element, string>());
   const conversationReflowRef = useRef<ReturnType<typeof observeConversationReflow> | null>(null);
   const scrollTraceSequenceRef = useRef(0);
@@ -638,9 +638,8 @@ export function ChatPanel({
   }, []);
 
   const releaseAssistantStageReservation = useCallback(() => {
-    assistantStageAnchorRef.current = '';
     const scroller = listScrollerRef.current;
-    if (scroller) updateResponseSpacer(scroller, '');
+    if (!scroller || releaseResponseSpacer(scroller)) assistantStageAnchorRef.current = '';
   }, []);
 
   const finishConversationScrollRestoration = useCallback(() => {
@@ -654,12 +653,6 @@ export function ChatPanel({
       scrollRestoreFrameRef.current = null;
     }
   }, []);
-
-  useLayoutEffect(() => {
-    if (!sending) {
-      releaseAssistantStageReservation();
-    }
-  }, [sending, activeConversationId, scrollMountRevision, releaseAssistantStageReservation]);
 
   const readBottomMetrics = useCallback((scroller: HTMLElement): ScrollBottomMetrics => {
     const absoluteBottomDistance = absoluteBottomScrollTop(scroller) - scroller.scrollTop;
@@ -925,7 +918,7 @@ export function ChatPanel({
           scrollHeight: scroller.scrollHeight,
         });
       }
-      scrollMotion.move(scroller, nextTop, 'submission');
+      scrollMotion.move(scroller, nextTop, 'submission', () => reconcileTranscriptRef.current());
     },
     [scrollMotion],
   );
@@ -947,83 +940,37 @@ export function ChatPanel({
     [positionMessageAtReadingAnchor, setScrollBottomVisible],
   );
 
-  const ensureMessageBottomVisible = useCallback(
-    (messageId: string) => {
-      if (composerAnchored) return;
+  const reconcileTranscriptLayout = useCallback(
+    () => {
       const scroller = listScrollerRef.current;
-      if (!scroller) {
-        return;
+      if (!scroller || scrollActivationRef.current?.restoring ||
+          scroller.dataset.cardbushPreserveScroll === '1' || conversationReflowRef.current?.isReflowing()) return;
+      const following = !composerAnchored && autoFollowStreamRef.current &&
+        !userDetachedFromBottomRef.current && !scrollbarDragActiveRef.current &&
+        Date.now() >= scrollbarDragUntilRef.current && Date.now() >= manualScrollDetachUntilRef.current;
+      const changed = reconcileResponseLayout(scroller, {
+        anchorKey: assistantStageAnchorRef.current,
+        follow: following,
+        navigationActive: scrollMotion.isActive(),
+        readingTop: following ? lastScrollTopRef.current : undefined,
+      });
+      if (changed || (following && !scrollMotion.isActive() &&
+          Math.abs(lastScrollTopRef.current - scroller.scrollTop) > 0.5)) {
+        // Native scroll events arrive later. Classify this synchronous layout
+        // correction (including a browser clamp after shrink) now, so it
+        // cannot be mistaken for a user gesture.
+        lastScrollTopRef.current = scroller.scrollTop;
+        programmaticScrollUntilRef.current = Date.now() + 100;
       }
-      const item = scroller.querySelector(
-        `[data-message-id="${cssEscape(messageId)}"]`,
-      );
-      if (!(item instanceof HTMLElement)) {
-        return;
-      }
-      const scrollerRect = scroller.getBoundingClientRect();
-      const itemRect = item.getBoundingClientRect();
-      const visibleBottom =
-        scrollerRect.bottom - Math.max(0, quickContextBottomInset) - streamStatusHeight - 18;
-      if (itemRect.bottom <= visibleBottom) {
-        return;
-      }
-      const delta = Math.ceil(itemRect.bottom - visibleBottom);
-      scrollMotion.move(scroller, scroller.scrollTop + delta, 'follow');
+      if (following && !scrollMotion.isActive()) setScrollBottomVisible(false);
     },
-    [quickContextBottomInset, scrollMotion, streamStatusHeight, composerAnchored],
+    [scrollMotion, composerAnchored, setScrollBottomVisible],
   );
+  useLayoutEffect(() => { reconcileTranscriptRef.current = reconcileTranscriptLayout; });
 
   const cancelScheduledStreamFollow = useCallback(() => {
     scrollMotion.cancel();
-    for (const pending of [streamScrollFrameRef, outerResizeFollowFrameRef]) {
-      if (pending.current != null) window.cancelAnimationFrame(pending.current);
-      pending.current = null;
-    }
   }, [scrollMotion]);
-
-  const scheduleActiveAssistantFollow = useCallback(
-    (messageId: string, _index: number) => {
-      if (composerAnchored) return;
-      const scroller = listScrollerRef.current;
-      if (!scroller || scrollActivationRef.current?.restoring) return;
-      if (streamScrollFrameRef.current != null) {
-        window.cancelAnimationFrame(streamScrollFrameRef.current);
-      }
-      programmaticScrollUntilRef.current = Date.now() + 900;
-      streamScrollFrameRef.current = window.requestAnimationFrame(() => {
-        streamScrollFrameRef.current = null;
-        if (
-          listScrollerRef.current !== scroller ||
-          scrollActivationRef.current?.restoring ||
-          !autoFollowStreamRef.current ||
-          userDetachedFromBottomRef.current ||
-          Date.now() < manualScrollDetachUntilRef.current
-        ) {
-          return;
-        }
-        const item = scroller.querySelector(
-          `[data-message-id="${cssEscape(messageId)}"]`,
-        );
-        if (!(item instanceof HTMLElement)) {
-          streamScrollFrameRef.current = window.requestAnimationFrame(() => {
-            streamScrollFrameRef.current = null;
-            if (
-              listScrollerRef.current === scroller &&
-              !scrollActivationRef.current?.restoring &&
-              autoFollowStreamRef.current &&
-              !userDetachedFromBottomRef.current &&
-              Date.now() >= manualScrollDetachUntilRef.current
-            ) {
-              ensureMessageBottomVisible(messageId);
-            }
-          });
-          return;
-        }
-        ensureMessageBottomVisible(messageId);
-      });
-    },
-    [composerDockHeight, ensureMessageBottomVisible, streamStatusHeight, composerAnchored],
-  );
 
   const restoreWheelLockedScrollTop = useCallback(
     (
@@ -1270,7 +1217,7 @@ export function ChatPanel({
         event.defaultPrevented ||
         wheelAlreadyHandled(event) ||
         wheelTargetIsListSurface(event.target) ||
-        event.target instanceof Element && Boolean(event.target.closest('.quick-context-rail'))
+        event.target instanceof Element && Boolean(event.target.closest('.quick-context-rail, .conversation-work-summary'))
       ) {
         return;
       }
@@ -1309,7 +1256,7 @@ export function ChatPanel({
         event.defaultPrevented ||
         wheelAlreadyHandled(event) ||
         wheelTargetIsListSurface(event.target) ||
-        event.target instanceof Element && Boolean(event.target.closest('.quick-context-rail'))
+        event.target instanceof Element && Boolean(event.target.closest('.quick-context-rail, .conversation-work-summary'))
       ) {
         return;
       }
@@ -1541,6 +1488,7 @@ export function ChatPanel({
         lastScrollTopRef.current = scroller.scrollTop;
         return;
       }
+      if (userDetachedFromBottomRef.current) releaseAssistantStageReservation();
       const previousScrollTop = lastScrollTopRef.current;
       const scrollDelta = scroller.scrollTop - previousScrollTop;
       lastScrollTopRef.current = scroller.scrollTop;
@@ -1804,7 +1752,7 @@ export function ChatPanel({
     };
   }, [captureScrollGeometry, loading, pendingInteraction, hasInteraction, showWelcome, composerAnchored]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (loading || showWelcome || composerAnchored) return undefined;
     const chatBody = chatBodyRef.current;
     const chatPanel = chatBody?.closest('.chat-panel');
@@ -1859,81 +1807,24 @@ export function ChatPanel({
         beforeScrollHeight,
         beforeBottom: beforeBottom == null ? null : Math.round(beforeBottom),
       });
-      if (
-        !scroller ||
-        listScrollerRef.current !== scroller ||
-        scrollActivationRef.current?.restoring ||
-        scroller.dataset.cardbushPreserveScroll === '1' ||
-        scrollbarDragActiveRef.current ||
-        Date.now() < scrollbarDragUntilRef.current ||
-        Date.now() < manualScrollDetachUntilRef.current ||
-        userDetachedFromBottomRef.current ||
-        !autoFollowStreamRef.current
-      ) {
-        return;
-      }
-      if (outerResizeFollowFrameRef.current != null) {
-        window.cancelAnimationFrame(outerResizeFollowFrameRef.current);
-      }
-      outerResizeFollowFrameRef.current = window.requestAnimationFrame(() => {
-        outerResizeFollowFrameRef.current = null;
-        if (
-          listScrollerRef.current !== scroller ||
-          scrollActivationRef.current?.restoring ||
-          scroller.dataset.cardbushPreserveScroll === '1' ||
-          scrollbarDragActiveRef.current ||
-          Date.now() < scrollbarDragUntilRef.current ||
-          Date.now() < manualScrollDetachUntilRef.current ||
-          userDetachedFromBottomRef.current ||
-          !autoFollowStreamRef.current
-        ) {
-          captureScrollGeometry('trace-outer-resize-follow-abort');
-          return;
-        }
-        const preparedMessageId = assistantStageAnchorRef.current
-          ? scroller.querySelector<HTMLElement>('.message-list-item:last-child')?.dataset.messageId ?? ''
-          : '';
-        if (preparedMessageId) {
-          ensureMessageBottomVisible(preparedMessageId);
-          lastScrollTopRef.current = scroller.scrollTop;
-          setScrollBottomVisible(false);
-          captureScrollGeometry('trace-outer-resize-follow', {
-            strategy: 'response-tail-spacer',
-            preparedMessageId,
-            scrollTopBeforeCorrection: Math.round(scroller.scrollTop),
-          });
-          return;
-        }
-        const scrollTopBeforeCorrection = scroller.scrollTop;
-        const targetScrollTop = absoluteBottomScrollTop(scroller);
-        if (Math.abs(targetScrollTop - scrollTopBeforeCorrection) > 0.5) {
-          programmaticScrollUntilRef.current = Date.now() + 520;
-          scrollMotion.move(scroller, targetScrollTop, 'follow');
-        }
-        lastScrollTopRef.current = scroller.scrollTop;
-        atBottomRef.current = true;
-        setScrollBottomVisible(false);
-        captureScrollGeometry('trace-outer-resize-follow', {
-          scrollTopBeforeCorrection: Math.round(scrollTopBeforeCorrection),
-          targetScrollTop: Math.round(targetScrollTop),
-          correction: Math.round(targetScrollTop - scrollTopBeforeCorrection),
-        });
+      if (!scroller || listScrollerRef.current !== scroller) return;
+      // ResizeObserver runs before paint, including child-only tool/media
+      // updates. Use the exact same transaction as the React layout commit.
+      reconcileTranscriptRef.current();
+      captureScrollGeometry('trace-outer-resize-follow', {
+        strategy: 'synchronous-layout',
+        correction: Math.round(scroller.scrollTop - (beforeScrollTop ?? scroller.scrollTop)),
       });
     });
     observed.forEach((element) => observer.observe(element));
     return () => {
       observer.disconnect();
-      if (outerResizeFollowFrameRef.current != null) {
-        window.cancelAnimationFrame(outerResizeFollowFrameRef.current);
-        outerResizeFollowFrameRef.current = null;
-      }
     };
   }, [
     captureScrollGeometry,
-    ensureMessageBottomVisible,
     loading,
-    scrollMotion,
-    setScrollBottomVisible,
+    scrollMountRevision,
+    activeConversationId,
     showWelcome,
     composerAnchored,
   ]);
@@ -1941,12 +1832,6 @@ export function ChatPanel({
   useEffect(() => {
     return () => {
       scrollMotion.cancel();
-      if (streamScrollFrameRef.current != null) {
-        window.cancelAnimationFrame(streamScrollFrameRef.current);
-      }
-      if (outerResizeFollowFrameRef.current != null) {
-        window.cancelAnimationFrame(outerResizeFollowFrameRef.current);
-      }
       for (const timer of userMessageEntryTimersRef.current.values()) {
         window.clearTimeout(timer);
       }
@@ -2026,8 +1911,7 @@ export function ChatPanel({
       if (isTurnGuidanceMessage(message)) {
         // Guidance extends this turn. Keep its reading position and consume the
         // existing tail reservation, revealing the new bubble only if needed.
-        if (scroller) updateResponseSpacer(scroller, assistantStageAnchorRef.current);
-        ensureMessageBottomVisible(message.id);
+        reconcileTranscriptLayout();
       } else {
         assistantStageAnchorRef.current = message.renderKey ?? message.id;
         if (scroller) updateResponseSpacer(scroller, assistantStageAnchorRef.current);
@@ -2037,7 +1921,7 @@ export function ChatPanel({
     messageSnapshotRef.current = { conversationId: activeConversationId, ids };
   }, [
     activeConversationId,
-    ensureMessageBottomVisible,
+    reconcileTranscriptLayout,
     focusSubmittedUserMessage,
     loading,
     renderMessages,
@@ -2048,29 +1932,8 @@ export function ChatPanel({
   ]);
 
   useLayoutEffect(() => {
-    const scroller = listScrollerRef.current;
-    if (scroller) updateResponseSpacer(scroller, assistantStageAnchorRef.current);
-  }, [renderMessages, quickContextBottomInset, streamStatusHeight, scrollMountRevision]);
-
-  useEffect(() => {
-    const scroller = listScrollerRef.current;
-    if (!scroller) return;
-    let frame: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (frame != null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        updateResponseSpacer(scroller, assistantStageAnchorRef.current);
-      });
-    });
-    for (const node of [scroller, scroller.querySelector('.message-list-content'), scroller.querySelector('.message-list-footer')]) {
-      if (node) observer.observe(node);
-    }
-    return () => {
-      observer.disconnect();
-      if (frame != null) window.cancelAnimationFrame(frame);
-    };
-  }, [activeConversationId, scrollMountRevision]);
+    if (!loading && !showWelcome) reconcileTranscriptLayout();
+  }, [renderMessages, sending, loading, showWelcome, reconcileTranscriptLayout, scrollMountRevision]);
 
   useEffect(() => {
     setActiveScene(null);
@@ -2124,33 +1987,6 @@ export function ChatPanel({
     showScene(latestScene, { autoPlay: true });
   }, [activeTurnId, renderMessages, sending, showScene]);
 
-  useEffect(() => {
-    if (
-      loading ||
-      showWelcome ||
-      !sending ||
-      !autoFollowStreamRef.current
-    ) {
-      return;
-    }
-    const activeAssistant = activeAssistantForRender;
-    if (!activeAssistant) {
-      return;
-    }
-    scheduleActiveAssistantFollow(
-      activeAssistant.message.id,
-      activeAssistant.index,
-    );
-  }, [
-    activeAssistantForRender,
-    activeTurnId,
-    loading,
-    renderMessages,
-    scheduleActiveAssistantFollow,
-    sending,
-    showWelcome,
-  ]);
-
   const applyQuickLoad = useCallback(
     (payload: QuickLoadPayload) => {
       const loaded = quickPayloadText(payload);
@@ -2184,6 +2020,8 @@ export function ChatPanel({
       if (!scroller) return;
       finishConversationScrollRestoration();
       cancelScheduledStreamFollow();
+      assistantStageAnchorRef.current = '';
+      updateResponseSpacer(scroller, '');
       scrollTraceSequenceRef.current += 1;
       activeScrollTraceIdRef.current = `${Date.now().toString(36)}-${scrollTraceSequenceRef.current}`;
       scrollTraceObserveUntilRef.current = Date.now() + 3000;
@@ -2207,6 +2045,7 @@ export function ChatPanel({
         lastScrollTopRef.current = scroller.scrollTop;
         atBottomRef.current = true;
         setScrollBottomVisible(false);
+        reconcileTranscriptRef.current();
         captureScrollGeometry('trace-jump-complete', {
           strategy: 'native-message-list',
         });
@@ -2257,7 +2096,7 @@ export function ChatPanel({
         scrollDebug('session-scroll-save', { conversationId: activeConversationId, position });
       }
       cancelScheduledStreamFollow();
-      for (const frame of [outerResizeFollowFrameRef, scrollRestoreFrameRef]) {
+      for (const frame of [scrollRestoreFrameRef]) {
         if (frame.current != null) window.cancelAnimationFrame(frame.current);
         frame.current = null;
       }
@@ -2310,7 +2149,7 @@ export function ChatPanel({
     if (!anchor || !scroller) return;
     if (anchor.sessionId !== activeConversationId) { prependAnchor.current = undefined; return; }
     if (anchor.firstId === renderMessages[0]?.id) return;
-    restoreConversationScrollPosition(scroller, anchor.position, quickContextBottomInset);
+    restoreConversationScrollPosition(scroller, anchor.position);
     lastScrollTopRef.current = scroller.scrollTop;
     prependAnchor.current = undefined;
   }, [activeConversationId, renderMessages, quickContextBottomInset]);
@@ -2323,7 +2162,7 @@ export function ChatPanel({
     composerDockHeight, quickContextBottomInset, pendingInteraction: Boolean(pendingInteraction),
     manualDetachRemainingMs: Math.max(0, manualScrollDetachUntilRef.current - Date.now()),
     programmaticRemainingMs: Math.max(0, programmaticScrollUntilRef.current - Date.now()),
-    pendingFollow: streamScrollFrameRef.current != null, pendingResizeFollow: outerResizeFollowFrameRef.current != null,
+    navigationAnimating: scrollMotion.isActive(),
   });
   useEffect(() => {
     const scroller = listScrollerRef.current;
@@ -2338,7 +2177,7 @@ export function ChatPanel({
       if (scrollActivationRef.current !== activation || !activation.restoring) return;
       const position = composerAnchored ? { scrollTop: 0, responseAnchorKey: '', submittedUserReadingAnchor: '', anchor: null,
         ...activation.position, followLatest: false } : activation.position;
-      restoreConversationScrollPosition(activation.scroller, position, quickContextBottomInset);
+      restoreConversationScrollPosition(activation.scroller, position);
       lastScrollTopRef.current = activation.scroller.scrollTop;
       scrollDebug('session-scroll-restore', {
         conversationId: activeConversationId,
@@ -2383,11 +2222,8 @@ export function ChatPanel({
     beforeRestore: cancelScheduledStreamFollow,
     followTop: (readingTop: number) => {
       const scroller = listScrollerRef.current!;
-      const stage = assistantStageAnchorRef.current && scroller.querySelector<HTMLElement>('.message-list-item:last-child');
-      if (!stage) return absoluteBottomScrollTop(scroller);
-      updateResponseSpacer(scroller, assistantStageAnchorRef.current);
-      const bottom = scroller.getBoundingClientRect().bottom - quickContextBottomInset - streamStatusHeight - 18;
-      return Math.max(readingTop, scroller.scrollTop + stage.getBoundingClientRect().bottom - bottom);
+      updateResponseSpacer(scroller, assistantStageAnchorRef.current, 'consume');
+      return responseFollowScrollTop(scroller, readingTop);
     },
     restored: () => {
       const scroller = listScrollerRef.current!;
@@ -2552,7 +2388,8 @@ export function ChatPanel({
     ],
   );
 
-  const { showWorkSummary, workSummaryDocked, workSummaryAnchorRight, workSummaryPresence, updateWorkSummaryLayout, setWorkSummaryVisible } =
+  const { showWorkSummary, workSummaryDocked, workSummaryAnchorRight, workSummaryPresence,
+    toggleWorkSummary, workSummaryHoverProps, workSummaryPanelProps, keepWorkSummaryOpenUntil } =
     useConversationWorkSummary(chatBodyRef, activeConversationId, inspectorOpen);
   const openChangeReview = useCallback((filePath?: string) => {
     onOpenChangeReview(filePath);
@@ -2572,6 +2409,8 @@ export function ChatPanel({
       key={message.renderKey ?? message.id}
       className={`message-list-item${index === 0 ? ' first' : ''}${
         sending && activeTurnId && message.turnId === activeTurnId ? ' live-turn' : ''
+      }${
+        index >= latestTaskStartIndex ? ' latest-turn' : ''
       }${
         message.role === 'user' && (
           enteringUserMessageIds.has(message.id) ||
@@ -2626,7 +2465,6 @@ export function ChatPanel({
           language={language}
           running={sending && activeAssistantForRender?.message.id === message.id}
           stopping={stopping && activeAssistantForRender?.message.id === message.id}
-          taskPlan={activeAssistantForRender?.message.id === message.id ? activeTaskPlan : undefined}
           goal={goalMessageId === message.id ? activeGoal : undefined}
           goalRounds={activeGoalRounds}
           goalCancelling={goalCancelling}
@@ -2693,17 +2531,11 @@ export function ChatPanel({
         language={language}
         conversationContentAvailable={renderMessages.length > 0}
         workSummaryVisible={showWorkSummary}
+        workSummaryHoverProps={workSummaryHoverProps}
         inspectorOpen={inspectorOpen}
         workspaceControl={headerActions}
         onToggleWorkSummary={workSummaryAvailable && renderMessages.length > 0
-          ? (anchor) => {
-              if (showWorkSummary) {
-                setWorkSummaryVisible(false);
-                return;
-              }
-              updateWorkSummaryLayout(anchor);
-              setWorkSummaryVisible(true);
-            }
+          ? toggleWorkSummary
           : undefined}
         onToggleInspector={onToggleInspector}
       />}
@@ -2752,6 +2584,7 @@ export function ChatPanel({
               language={language}
               draft={draft}
               onDraftChange={onDraftChange}
+              onDraftRestored={() => setDraftContext(draftContext)}
               sending={sending}
               submissionPending={submissionPending}
               inputReadOnly={inputReadOnly}
@@ -2811,6 +2644,10 @@ export function ChatPanel({
             pathAliases={projectPathAliases}
             subagentObservabilityAvailable={subagentObservabilityAvailable}
             softVisible={workSummaryPresence.visible}
+            running={sending}
+            activeTurnId={activeTurnId}
+            hoverProps={workSummaryPanelProps}
+            keepOpenUntil={keepWorkSummaryOpenUntil}
           />
         )}
         {!loading && !showWelcome && (
@@ -2875,7 +2712,7 @@ export function ChatPanel({
             onReorderQueuedMessage={onReorderQueuedMessage}
             onSend={handleComposerSend}
             onCancel={onCancel}
-            workspaceControl={host ? composerAccessory ?? null : undefined}
+            workspaceControl={host ? welcomeWorkspaceControl ?? null : undefined}
             submissionPending={submissionPending}
           />
         ) : (

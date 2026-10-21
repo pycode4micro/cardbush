@@ -61,5 +61,5 @@ export function wrongToolRouteError(name: string, domain: 'native' | 'mcp') {
   const invoke = domain === 'mcp' ? 'mcp_call' : 'call_tool';
   return withToolFailureFacts(Object.assign(new Error(`This is ${domain === 'mcp' ? 'an MCP' : 'a native'} tool. Use ${load.name} to load its schema, wait for the result, then use ${invoke} with the exact name and arguments. No tool was executed.`), {
     code: 'tool_route_mismatch', details: { toolName: name, load, invoke },
-  }), { effects: 'none', result: 'known' });
+  }), { dispatch: 'not_started', effects: 'none', result: 'known' });
 }

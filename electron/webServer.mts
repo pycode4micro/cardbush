@@ -13,6 +13,8 @@ import { WebArtifactArchives, archiveRequest } from './webArtifactArchives.mjs';
 import { webArtifactManifest } from './webArtifactManifest.mjs';
 import { WebModelSettings, PostgresModelSettingsRepository } from './webModelSettings.mjs';
 import { WebModelRequests, WEB_MODEL_REQUEST_MAX_BYTES } from './webModelRequests.mjs';
+import { WebRemoteAgents, PostgresRemoteAgentRepository } from './webRemoteAgents.mjs';
+import { WebRemoteAgentBridge } from './webRemoteAgentBridge.mjs';
 import type { SessionSnapshot } from '@cardbush/bush-protocol';
 import { cookie, csrfToken, digest, equalSecret, json, imageToken, modelToken, readJson, WebError, type WebModel, type WebUser } from './webCommon.mjs';
 
@@ -25,7 +27,7 @@ const messageSchema = z.object({ requestId: z.string().uuid(), text: z.string().
 /** This is an authenticated web application, not a proxy for the owner API.
  * The authenticated account selects the runtime; every session route also checks
  * its durable ownership record before touching that runtime. */
-export async function serveWeb(config: WebServerConfig, store: WebStore, agents: WebAgents, modelSettings?: WebModelSettings) {
+export async function serveWeb(config: WebServerConfig, store: WebStore, agents: WebAgents, modelSettings?: WebModelSettings, remoteAgents?: WebRemoteAgents) {
   const publicOrigin = new URL(config.origin).origin;
   if (publicOrigin !== config.origin || config.modelSecret.length < 48) throw new Error('Invalid web origin or model secret.');
   if (!config.models.some(model => model.id === config.defaultModelId)) throw new Error('A configured default model is required.');
@@ -35,6 +37,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
   const reads = new WebReadCache();
   const archives = new WebArtifactArchives(agents);
   const modelRequests = new WebModelRequests();
+  const remoteBridge = remoteAgents ? new WebRemoteAgentBridge(remoteAgents, store) : undefined;
   const serial = async <T,>(key: string, work: () => Promise<T>) => {
     const operation = (mutations.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
     mutations.set(key, operation);
@@ -67,6 +70,10 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       const method = request.method ?? 'GET';
       if (path === '/healthz' && method === 'GET') { json(response, 200, { ok: true, service: 'cardbush-web', toolsEnabled: true }); return; }
       if (path.startsWith('/internal/') || path.startsWith(`${prefix}/`)) await modelSettings?.refresh();
+      if (path.startsWith('/internal/remote-agents/')) {
+        if (!remoteBridge) throw new WebError(503, '远程 Agent 服务尚未初始化。');
+        await remoteBridge.handle(request, response, path, abort.signal); return;
+      }
       if (path.startsWith('/internal/image/')) { await proxyImage(request, response, url, config, store, abort.signal); return; }
       if (path.startsWith('/internal/model/')) {
         await proxyModel(request, response, url, config, store, modelRequests, abort.signal); return;
@@ -112,6 +119,14 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         if (!modelSettings) throw new WebError(503, '模型配置存储尚未初始化。');
         await modelSettings.refresh(true);
         json(response, 200, method === 'GET' ? modelSettings.view() : await modelSettings.update(await readJson(request, 24000))); return;
+      }
+      if (path === `${prefix}/admin/remote-agents` && ['GET', 'POST'].includes(method)) {
+        if (user.role !== 'admin') throw new WebError(403, '需要管理员权限。');
+        if (!remoteAgents) throw new WebError(503, '远程 Agent 配置存储尚未初始化。');
+        await remoteAgents.refresh();
+        if (method === 'GET') json(response, 200, remoteAgents.view());
+        else json(response, 200, await remoteAgents.update(await readJson(request, 100_000), new Set((await store.users()).map(item => item.id))));
+        return;
       }
       if (path === `${prefix}/auth/logout` && method === 'POST') {
         await store.logout(token); setCookie(response, ''); json(response, 200, { ok: true });
@@ -439,7 +454,9 @@ if (process.argv[1]?.endsWith('webServer.mjs')) {
   const modelSettings = new WebModelSettings(config, new PostgresModelSettingsRepository(store.pool));
   await modelSettings.initialize();
   const agents = new BrokerWebAgents(config, userId => store.imageAllowed(userId));
-  const listener = await serveWeb(config, store, agents, modelSettings);
+  const remoteAgents = new WebRemoteAgents(config.modelSecret, new PostgresRemoteAgentRepository(store.pool));
+  await remoteAgents.initialize();
+  const listener = await serveWeb(config, store, agents, modelSettings, remoteAgents);
   console.log(`CardBush web listening on ${listener.port}; restricted tools and isolated personal folders.`);
   let closing = false;
   const close = () => { if (closing) return; closing = true; void listener.close().finally(() => store.pool.end()); };

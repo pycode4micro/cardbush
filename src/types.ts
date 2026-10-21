@@ -4,7 +4,6 @@ import type {
   RuntimePermissionRequest,
   SubagentTask,
   TaskPlan,
-  TaskPlanWaiting,
 } from '@cardbush/bush-protocol';
 import type { ConversationStylePreferences } from './features/settings/conversationStyle';
 
@@ -363,12 +362,11 @@ export interface ConversationSummary {
   workspaceContext?: WorkspaceContext;
 }
 
-export type SessionAttentionKind = 'completed' | 'waiting' | 'error';
+export type SessionAttentionKind = 'completed' | 'interaction' | 'error';
 
 export interface SessionAttentionState {
   sessionId: string;
   kind: SessionAttentionKind;
-  waitingKind?: TaskPlanWaiting['kind'];
   interactionId?: string;
   title: string;
   body: string;

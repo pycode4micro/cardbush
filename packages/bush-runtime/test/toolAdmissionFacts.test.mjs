@@ -69,3 +69,22 @@ test('worker resource RPC rejections gain facts at the terminal admission bounda
   assert.deepEqual(outcome.execution, noExecution);
   f.verifySchemas();
 });
+
+test('missing Windows supervisor reports no command started through native and delegated tools', { skip: process.platform !== 'win32' }, async t => {
+  const previous = process.env.CARDBUSH_PROCESS_HOST_PATH;
+  process.env.CARDBUSH_PROCESS_HOST_PATH = new URL('./missing-process-host.exe', import.meta.url).pathname;
+  t.after(() => { if (previous === undefined) delete process.env.CARDBUSH_PROCESS_HOST_PATH; else process.env.CARDBUSH_PROCESS_HOST_PATH = previous; });
+  const governor = new ProcessResourceGovernor({ limits: defaultProcessResourceLimits(8 * 1024 ** 3), availableMemory: () => 8 * 1024 ** 3, observe: false });
+  const f = fixture(new TerminalSessionManager({ resourceGovernor: governor }));
+  const expected = { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'do_not_retry' };
+  for (const name of ['terminal_exec', 'delegate_terminal']) {
+    const outcome = await f.run(name, { command: 'echo must-not-run', cwd: process.cwd(), shell: 'cmd', yield_time_ms: 1 });
+    assert.equal(outcome.kind, 'failed');
+    assert.equal(outcome.error.code, 'resource_protection_unavailable');
+    assert.deepEqual(outcome.execution, expected);
+    assert.deepEqual(outcome.error.details.execution, expected);
+  }
+  const lease = governor.acquire(); lease.release();
+  assert.deepEqual((await f.run('post_dispatch_failure')).execution, unknownExecution);
+  f.verifySchemas();
+});

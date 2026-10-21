@@ -306,7 +306,8 @@ export function Composer({
   autoFocus = false,
   language,
   draft,
-  onDraftChange,
+  onDraftChange: changeDraft,
+  onDraftRestored,
   sending,
   stopping = false,
   guidanceDeliveryMode = 'queue',
@@ -363,6 +364,7 @@ export function Composer({
   language: AppLanguage;
   draft: string;
   onDraftChange: (value: string) => void;
+  onDraftRestored?: () => void;
   sending: boolean;
   stopping?: boolean;
   guidanceDeliveryMode?: 'queue' | 'immediate';
@@ -412,6 +414,17 @@ export function Composer({
   retainUntilAccepted?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
+  const referenceContext = useContext(ComposerReferenceContext);
+  const attachmentKey = conversationViewKey(host?.id, referenceContext.sessionId, 'attachments');
+  const [, rememberDraft, currentSubmittedDraft] = useConversationViewState(`${attachmentKey}:text`,
+    () => ({ text: draft, revision: 0 }), value => Boolean(value.text));
+  const onDraftChange = useCallback((text: string) => {
+    rememberDraft(current => ({ text, revision: current.revision + 1 }));
+    changeDraft(text);
+  }, [changeDraft, rememberDraft]);
+  useLayoutEffect(() => {
+    rememberDraft(current => current.text === draft ? current : { text: draft, revision: current.revision + 1 });
+  }, [draft, rememberDraft]);
   const portalTarget = useContext(ComposerPortalContext);
   const presentation = useContext(ComposerPresentationContext);
   const components = useComponents();
@@ -435,22 +448,33 @@ export function Composer({
   const immediatePendingRef = useRef(false);
   const immediateHandlerRef = useRef<(fromQueue?: boolean) => Promise<void>>(async () => {});
   const runtimeReady = runtimeStartup.phase === 'ready';
-  const submissionRef = useRef<{ alreadyRunning: boolean } | null>(null);
-  const [startingSubmission, setStartingSubmission] = useState(false);
-  const submissionPending = externalSubmissionPending || startingSubmission;
+  const [startingSubmission, setStartingSubmission, currentSubmission] = useConversationViewState<{ alreadyRunning: boolean } | null>(
+    `${attachmentKey}:submission`, () => null, Boolean);
+  const submissionPending = externalSubmissionPending || Boolean(startingSubmission);
   // onSend may live for the whole turn. Admission ends as soon as the parent
   // reports it running, so users can continue typing guidance while it works.
   useLayoutEffect(() => {
-    if (sending && submissionRef.current && !submissionRef.current.alreadyRunning) {
-      submissionRef.current = null;
-      setStartingSubmission(false);
+    // Remote running state is optimistic or polled; only its receipt confirms admission.
+    const pending = currentSubmission();
+    if (!host && !retainUntilAccepted && sending && pending && !pending.alreadyRunning) {
+      setStartingSubmission(null);
     }
-  }, [sending]);
+  }, [host, retainUntilAccepted, sending, currentSubmission, setStartingSubmission]);
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const voiceComposer = useVoiceComposer(!presentation?.preview, composerSurfaceRef);
   const textareaRef = useRef<ComposerPromptInputHandle>(null);
+  const commandSelection = useRef<{ draft: string; caret: number } | null>(null);
+  useLayoutEffect(() => {
+    const selection = commandSelection.current;
+    commandSelection.current = null;
+    if (!selection || selection.draft !== draft) return;
+    // The child may have switched from a textarea to a token editor. Commit the
+    // caret with that render so immediate typing cannot land before its separator.
+    textareaRef.current?.focus();
+    textareaRef.current?.setSelectionRange(selection.caret, selection.caret);
+  }, [draft]);
   useEffect(() => {
     if (!portalTarget || presentation?.preview) return;
     const frame = requestAnimationFrame(() => textareaRef.current?.focus());
@@ -463,7 +487,6 @@ export function Composer({
   const plugins = usePluginCatalog();
   const applications = useApplications(language);
   const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
-  const referenceContext = useContext(ComposerReferenceContext);
   const memory = useIndividuation();
   const predictionHintId = useId();
   const source = useConversationSource(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
@@ -497,13 +520,10 @@ export function Composer({
     window.addEventListener('focus', refresh);
     return () => { active = false; unsubscribe?.(); window.removeEventListener('focus', refresh); };
   }, [host]);
-  const attachmentKey = conversationViewKey(host?.id, referenceContext.sessionId, 'attachments');
-  const [imageAttachments, setImageAttachments] = useConversationViewState<ComposerImageAttachment[]>(`${attachmentKey}:images`, () => [], value => value.length > 0);
-  const [fileAttachments, setFileAttachments] = useConversationViewState<ComposerFileAttachment[]>(`${attachmentKey}:files`, () => [], value => value.length > 0);
+  const [imageAttachments, setImageAttachments, currentImages] = useConversationViewState<ComposerImageAttachment[]>(`${attachmentKey}:images`, () => [], value => value.length > 0);
+  const [fileAttachments, setFileAttachments, currentFiles] = useConversationViewState<ComposerFileAttachment[]>(`${attachmentKey}:files`, () => [], value => value.length > 0);
   const [attachmentUploads, setAttachmentUploads, currentAttachmentUploads] = useConversationViewState(`${attachmentKey}:uploads`, () => 0, value => value > 0);
   const pastedTextApi = host ? host.pastedTextAttachments : window.cardbushDesktop?.pastedTextAttachments;
-  const [, rememberDraft, currentSubmittedDraft] = useConversationViewState(`${attachmentKey}:text`, () => draft, value => Boolean(value));
-  useLayoutEffect(() => { rememberDraft(draft); }, [draft, rememberDraft]);
   const dropTargetRef = fileDropTarget ?? composerStackRef;
   const fileDragActive = useFileDropZone(dropTargetRef, transfer => {
     void handleDrop(transfer).catch(error => showUiError(
@@ -613,7 +633,7 @@ export function Composer({
   ]);
 
   async function submit(immediate = false) {
-    if (submissionPending || submissionRef.current || inputReadOnly || currentAttachmentUploads() > 0) return;
+    if (submissionPending || currentSubmission() || inputReadOnly || currentAttachmentUploads() > 0) return;
     const styleCommand = styleAvailable ? detectComposerCommand(draft, draft.length) : null;
     if (styleCommand?.mode === 'style') {
       if (commandState?.mode === 'style' && commandItems.length) applyCommand(commandItems[Math.min(commandIndex, commandItems.length - 1)]);
@@ -644,9 +664,9 @@ export function Composer({
     const prompt = !draftTeam && selectedTeam
       ? withTeamReference(draft, { kind: 'team', id: selectedTeam.id, title: selectedTeam.name }).content : draft;
     const value = [...attachmentPaths, prompt.trimEnd()].filter(Boolean).join('\n');
+    const submittedDraft = currentSubmittedDraft();
     const submission = { alreadyRunning: sending };
-    submissionRef.current = submission;
-    setStartingSubmission(true);
+    setStartingSubmission(submission);
     try {
       const pastedIds = fileAttachments.flatMap(file => file.pastedText ? [file.pastedText.id] : []);
       if (pastedIds.length) {
@@ -662,21 +682,44 @@ export function Composer({
         } finally { setAttachmentUploads(current => current - 1); }
       }
       const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
+      if (host?.optimisticSubmission) {
+        let clearedDraft: ReturnType<typeof currentSubmittedDraft> | undefined;
+        if (currentSubmittedDraft() === submittedDraft) {
+          onDraftChange('');
+          clearedDraft = currentSubmittedDraft();
+        }
+        setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
+        setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
+        let accepted = false;
+        try {
+          accepted = await onSend(value, immediate ? { immediate: true } : undefined) !== false;
+        } finally {
+          // Never overwrite a later draft, even when it has the same text. The
+          // failed bubble remains available for retry if the user has moved on.
+          if (!accepted && clearedDraft && currentSubmittedDraft() === clearedDraft && !clearedDraft.text &&
+              !currentImages().length && !currentFiles().length && !currentAttachmentUploads()) {
+            onDraftChange(draft);
+            onDraftRestored?.();
+            setImageAttachments(imageAttachments);
+            setFileAttachments(fileAttachments);
+          }
+        }
+        return;
+      }
       if (host || retainUntilAccepted) {
         if (await onSend(value, immediate ? { immediate: true } : undefined) === false) return;
-        if (currentSubmittedDraft() === draft) onDraftChange('');
+        if (currentSubmittedDraft() === submittedDraft) onDraftChange('');
         setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
         setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
         return;
       }
-      if (currentSubmittedDraft() === draft) onDraftChange('');
+      if (currentSubmittedDraft() === submittedDraft) onDraftChange('');
       setImageAttachments(current => current.filter(item => !submittedIds.has(item.id)));
       setFileAttachments(current => current.filter(item => !submittedIds.has(item.id)));
       await onSend(value, immediate ? { immediate: true } : undefined);
     } finally {
-      if (submissionRef.current === submission) {
-        submissionRef.current = null;
-        setStartingSubmission(false);
+      if (currentSubmission() === submission) {
+        setStartingSubmission(null);
       }
     }
   }
@@ -861,7 +904,7 @@ export function Composer({
   }
 
   function capturePastedText(event: React.ClipboardEvent<HTMLDivElement>) {
-    if (inputReadOnly || submissionPending) { event.preventDefault(); event.stopPropagation(); return; }
+    if (inputReadOnly || (submissionPending && !host?.optimisticSubmission)) { event.preventDefault(); event.stopPropagation(); return; }
     if (event.clipboardData.files.length) return;
     const text = event.clipboardData.getData('text/plain');
     const summary = pastedTextSummary(text);
@@ -982,10 +1025,12 @@ export function Composer({
     const before = draft.slice(0, state.start);
     const after = draft.slice(state.end);
     const next = `${before}${replacement}${after}`;
+    const nextCaret = before.length + replacement.length;
+    if (next !== draft) commandSelection.current = { draft: next, caret: nextCaret };
     onDraftChange(next);
     setCommandState(null);
     if (replacement === '/style ') setCommandState({ mode: 'style', start: before.length, end: before.length + replacement.length, query: '' });
-    focusComposer(before.length + replacement.length);
+    if (next === draft) focusComposer(nextCaret);
   }
 
   function removeCommandToken(restoreFocus = true) {
@@ -1497,11 +1542,12 @@ export function Composer({
           </div>
         )}
         <ComposerPromptInput
-          readOnly={inputReadOnly || submissionPending}
+          readOnly={inputReadOnly || (submissionPending && !host?.optimisticSubmission)}
           richReferences={host ? 'applications' : true}
           ref={textareaRef}
           plugins={plugins}
           skills={skills}
+          pluginCommands={pluginCommands}
           language={language}
           autoFocus={autoFocus && !presentation?.preview}
           ariaDescribedBy={prediction ? predictionHintId : undefined}

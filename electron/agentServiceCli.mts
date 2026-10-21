@@ -4,6 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { AgentService } from './agentService.mjs';
 import { serveAgentHttp } from './agentServer.mjs';
+import { verifyAgentBundledAssets, verifyAgentBundledMcp } from './agentBundledAssets.mjs';
 
 const { values } = parseArgs({ options: {
   'data-dir': { type: 'string' }, name: { type: 'string' }, transport: { type: 'string', default: 'http' },
@@ -24,10 +25,13 @@ if (values.help) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port.');
   if (values.sandbox && !['off', 'auto', 'required'].includes(values.sandbox)) throw new Error('--sandbox 只支持 off、auto 或 required。');
   if (values['sandbox-network'] && !['disabled', 'enabled'].includes(values['sandbox-network'])) throw new Error('--sandbox-network 只支持 disabled 或 enabled。');
-  const service = await AgentService.open({ dataRoot: resolve(values['data-dir']), name: values.name, desktop: values.desktop, toolsEnabled: !values['disable-tools'], webRestricted: values['web-restricted'], env: {
+  const bundledRoot = await verifyAgentBundledAssets();
+  if (!values['disable-tools'] && !values['web-restricted']) await verifyAgentBundledMcp(resolve(bundledRoot, '..'));
+  const service = await AgentService.open({ dataRoot: resolve(values['data-dir']), bundledRoot, name: values.name, desktop: values.desktop, toolsEnabled: !values['disable-tools'], webRestricted: values['web-restricted'], env: {
     ...(values.sandbox ? { CARDBUSH_EXECUTION_SANDBOX: values.sandbox } : {}),
     ...(values['sandbox-network'] ? { CARDBUSH_SANDBOX_NETWORK: values['sandbox-network'] } : {}),
   } });
+  await service.inspectDesktop();
   let listener: { close: () => Promise<void> };
   try {
     const tokenPath = join(service.root, 'access-token');

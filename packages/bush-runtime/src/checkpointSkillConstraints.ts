@@ -5,6 +5,7 @@ export const CHECKPOINT_SKILL_CONSTRAINT_GUIDANCE =
   'In each source summary, retain applicable Skill requirements in one <skill_constraints>...</skill_constraints> block within the existing budget. ' +
   'Review the previous checkpoint block against user corrections and verified progress. Keep critical wording, task scope/future trigger and exact source locator (read path/section or archived receipt; keep existing hash/version). ' +
   'Continuous constraints remain after being followed once; completed one-time steps belong in completed facts, not pending rules. ' +
+  'Use concise Markdown bullets with individual requirements, applicability/conditions and source line links; include why/when to reread deferred references. Do not copy whole Skills or produce keep/retire JSON. ' +
   'Follow the Skill source index when supplied; otherwise if all retire use <skill_constraints>none: reason</skill_constraints>. Sources without Skill requirements need no block. ' +
   'The model judges applicability/completion; Skills do not override user instructions or grant permission. In consolidation, use only indexed source summaries and preserve future requirements. ' +
   'Do not create a remember file or reread all Skills; use existing references for details or uncertainty.';
@@ -51,7 +52,8 @@ export function hasInheritedCheckpointSkillConstraints(messages: ModelMessage[])
       const result = JSON.parse(receipt.content);
       if ((result.complete === true || Array.isArray(result.summarized_turns)) && Array.isArray(result.skill_evidence)) {
         if (result.skill_evidence.some((item: { excerpts?: unknown[] }) => item.excerpts?.length)) return true;
-        continue;
+        // An authored handoff can predate source registration. Empty mechanical
+        // evidence does not erase that block or authorize dropping its meaning.
       }
       if (result.complete === true && Array.isArray(result.summaries)) {
         if (result.summaries.some((item: { summary?: unknown }) => typeof item?.summary === 'string' &&

@@ -12,10 +12,10 @@ export type AgentToolActivity = z.infer<typeof agentToolActivitySchema>;
 
 export const SUBAGENT_NAME_MAX_LENGTH = 80;
 
-/** Older dispatches can still show a bounded role/assignment label without a model call. */
-export function resolveSubagentName(input: { name?: unknown; systemPrompt?: unknown; prompt?: unknown }): string | undefined {
+/** Names come from an explicit label or role, never from the assignment message. */
+export function resolveSubagentName(input: { name?: unknown; systemPrompt?: unknown }): string | undefined {
   const role = text(input.systemPrompt)?.match(/^(?:你是|你的角色是|you are\s+(?:(?:a|an|the)\s+)?)([^\r\n。；;.!]+)/i)?.[1];
-  const label = text(input.name) || text(role) || text(input.prompt)?.split(/[\r\n]/, 1)[0];
+  const label = text(input.name) || text(role);
   if (!label) return;
   const compact = label.replace(/\s+/g, ' ').trim();
   return compact.length <= SUBAGENT_NAME_MAX_LENGTH ? compact : `${compact.slice(0, SUBAGENT_NAME_MAX_LENGTH - 1)}…`;
@@ -46,7 +46,7 @@ export function agentToolActivity(record: {
   const profileId = text(output.agentProfileId);
   const employeeId = text(input.agent_id) || (profileId?.startsWith('registered:') ? profileId.slice('registered:'.length) : undefined);
   return { kind: employeeId ? 'employee' : 'subagent', action: 'run', id: employeeId,
-    name: text(output.agentName) || resolveSubagentName({ name: input.name, systemPrompt: input.system_prompt, prompt: input.prompt }), taskIds };
+    name: text(output.agentName) || resolveSubagentName({ name: input.name, systemPrompt: input.system_prompt }), taskIds };
 }
 
 function object(value: unknown): Record<string, unknown> {

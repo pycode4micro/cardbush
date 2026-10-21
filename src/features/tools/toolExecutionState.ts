@@ -58,7 +58,6 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
     parallel_tools: ['执行任务', 'Run tasks'], start_mcp_tool: ['启动后台任务', 'Start background task'],
     manage_tool_calls: ['查看任务进度', 'Check task progress'], await_subagents: ['等待任务结果', 'Wait for task results'],
     subagent: ['分配任务', 'Delegate task'], update_task_plan: ['更新计划', 'Update plan'],
-    usage: ['执行指导', 'Execution guidance'],
     request_permission: ['申请授权', 'Request permission'], solution_selection: ['确认方案', 'Select solution'],
     runtime_context_compaction: ['整理上下文', 'Organize context'],
   };

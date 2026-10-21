@@ -13,7 +13,7 @@ import {
   Archive,
   CircleAlert,
   CircleCheck,
-  Clock3,
+  TriangleAlert,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -1438,14 +1438,6 @@ function ConversationRow({
         }
       }}
     >
-      {unread && !editingTitle && (
-        <span
-          className="conversation-unread-indicator"
-          role="status"
-          aria-label={language === 'zh' ? '未读对话' : 'Unread chat'}
-          title={language === 'zh' ? '未读' : 'Unread'}
-        />
-      )}
       {editingTitle ? (
         <form
           className={`conversation-rename-form${renameFailed ? ' invalid' : ''}`}
@@ -1504,7 +1496,7 @@ function ConversationRow({
       ) : (
         <ScrollingConversationTitle title={displayTitle} />
       )}
-      {!editingTitle && running && (
+      {!editingTitle && running && attention?.kind !== 'interaction' && attention?.kind !== 'error' && (
         <span
           className="conversation-running-indicator"
           role="status"
@@ -1513,16 +1505,16 @@ function ConversationRow({
           <LoaderCircle size={14} aria-hidden="true" />
         </span>
       )}
-      {!editingTitle && !running && attention && (
+      {!editingTitle && attention && (!running || attention.kind === 'interaction' || attention.kind === 'error') && (
         <span
-          className={`conversation-attention-indicator ${attention.kind}${attention.kind === 'waiting' ? ` waiting-${attention.waitingKind ?? 'unspecified'}` : ''}`}
+          className={`conversation-attention-indicator ${attention.kind}`}
           role="status"
           aria-label={sessionAttentionLabel(attention, language)}
         >
           {attention.kind === 'completed'
             ? <CircleCheck size={15} />
-            : attention.kind === 'waiting' && attention.waitingKind !== 'user'
-              ? <Clock3 size={15} />
+            : attention.kind === 'error'
+              ? <TriangleAlert size={15} />
               : <CircleAlert size={15} />}
         </span>
       )}
@@ -1565,7 +1557,7 @@ function ConversationRow({
         <Archive size={15} />
       </button>}
     </div>
-    <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} attention={running ? undefined : attention} onRename={beginRename} />
+    <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} attention={running && attention?.kind === 'completed' ? undefined : attention} onRename={beginRename} />
   </>);
 }
 

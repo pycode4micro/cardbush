@@ -126,9 +126,9 @@ assert.match(storage, /cardbush_session_attention_v1/);
 assert.match(storage, /maxPersistedAttentionAgeMs/);
 assert.match(hook, /attentionByConversation/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'completed'/);
-assert.match(hook, /markSessionAttention\([\s\S]*?'waiting'/);
+assert.match(hook, /markSessionAttention\([\s\S]*?'interaction'/);
 assert.match(hook, /setSessionAttentionCount\?\.\(Object\.values\(attentionByConversation\)\.filter\(sessionAttentionNeedsNotification\)\.length\)/);
-assert.match(hook, /clearSessionAttention\(normalized, 'completed'\)/);
+assert.match(hook, /clearSessionAttention\(activeConversationIdRef.current, 'completed'\)/);
 
 assert.match(app, /attentionByConversation=\{chat\.attentionByConversation\}/);
 assert.match(app, /onOpenSessionAttention[\s\S]*?consumeSessionAttentionOpen/);

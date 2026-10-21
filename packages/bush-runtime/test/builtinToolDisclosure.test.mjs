@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,10 +9,20 @@ import { modelToolDefinitions } from '../dist/mcpToolDiscovery.js';
 import { toolDefinitionUsage } from '../dist/toolDefinitionUsage.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false };
+// Fixtures keep test executors but use metadata authored by the real tool owners.
+const nativeRegistry = new ToolRegistry();
+const catalogHost = new InMemoryRuntimeHost({ toolRegistry: nativeRegistry,
+  loadPluginExtensions: async () => ({ hooks: [], agents: [], commands: [], skills: [] }) });
+after(() => catalogHost.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
 function fixture(names) {
   const registry = new ToolRegistry();
-  for (const name of names) registry.register({ definition: { name, description: `Inspect ${name}`, inputSchema: {
-    type: 'object', properties: {}, additionalProperties: false } }, manifest, decodeInput: x => x, execute: () => ({ inspected: name }) });
+  for (const name of names) {
+    const native = nativeRegistry.resolve(name);
+    registry.register({ definition: structuredClone(native?.definition ?? { name, description: `Inspect ${name}`,
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false } }),
+      projectModelDefinition: native?.projectModelDefinition, modelAvailable: native?.modelAvailable, directInvocation: native?.directInvocation,
+      manifest, decodeInput: x => x, execute: () => ({ inspected: name }) });
+  }
   registerBuiltinToolDisclosure(registry);
   const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',
     tools: registry.definitions(), messages: [], permissionMode: 'all_free', metadata: {} };
@@ -74,12 +84,13 @@ test('common Team calls use tasks, selected node outputs stay loadable, and plug
   const f = fixture(['tasks', 'team', 'subagent']);
   const team = f.registry.resolve('team').definition, subagent = f.registry.resolve('subagent').definition;
   team.inputSchema.properties = Object.fromEntries(['action', 'team_id', 'run_id', 'input', 'yield_time_ms', 'node_ids', 'definition'].map(name => [name, { type: 'string' }]));
-  subagent.inputSchema.properties = Object.fromEntries(['action', 'prompt', 'agent_id', 'agent_type', 'system_prompt', 'settings'].map(name => [name, { type: 'string' }]));
+  subagent.inputSchema.properties = Object.fromEntries(['action', 'name', 'prompt', 'agent_id', 'agent_type', 'system_prompt', 'settings'].map(name => [name, { type: 'string' }]));
   f.request.tools = f.registry.definitions();
   let definitions = f.definitions();
   assert.deepEqual(definitions.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
   assert.ok(!definitions.find(tool => tool.name === 'team').inputSchema.properties.node_ids);
   assert.ok(definitions.find(tool => tool.name === 'subagent').inputSchema.properties.agent_type);
+  assert.ok(definitions.find(tool => tool.name === 'subagent').inputSchema.properties.name);
   const receipt = await f.load('team');
   assert.ok(receipt.matches[0].definition.inputSchema.properties.node_ids);
   assert.ok(receipt.matches[0].definition.inputSchema.properties.definition);

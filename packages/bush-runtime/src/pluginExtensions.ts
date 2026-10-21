@@ -1,10 +1,10 @@
-import type { ModelRequest, UsageDefinition } from '@cardbush/bush-protocol';
+import type { ModelRequest } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 
 export const PLUGIN_HOOK_EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'PostCompact', 'Stop', 'Interrupt', 'SubagentStart', 'SubagentStop'] as const;
 export type PluginHookEvent = typeof PLUGIN_HOOK_EVENTS[number];
 export interface PluginHook {
-  scope?: { kind: 'skill' | 'agent' | 'usage'; id: string };
+  scope?: { kind: 'skill' | 'agent'; id: string };
   id: string;
   pluginId: string;
   root: string;
@@ -55,7 +55,6 @@ export interface PluginAgent {
   skills?: Array<{ name: string; path: string; prompt: string; dependencyServers?: string[] }>;
 }
 export interface PluginCommand {
-  usage?: { definition: UsageDefinition; action: 'load' | 'unload'; sourceHash: string; guardHashes: string[] };
   background?: boolean;
   kind?: 'command' | 'skill';
   id: string;
@@ -66,6 +65,8 @@ export interface PluginCommand {
   description: string;
   prompt: string;
   argumentHint: string;
+  /** Revision of the bytes from which prompt was parsed, never a later reread. */
+  sourceSnapshot?: { sha256: string; startLine: number };
   arguments: string[];
   allowedTools?: string[];
   disallowedTools?: string[];
@@ -114,6 +115,21 @@ export const CLAUDE_TOOL_NAMES: Record<string, string[]> = {
   Agent: ['subagent', 'await_subagents'], Task: ['subagent', 'await_subagents'], Skill: ['search_skills', 'run_skill', 'read_file'],
   WebFetch: ['web_fetch'], WebSearch: ['web_search'], TodoWrite: ['update_task_plan'],
 };
+export const PLUGIN_AGENT_DEFAULT_MAX_TURNS = 50;
+export const PLUGIN_INVOCATION_MAX_DEPTH = 4;
+const builtinForkRoles: Readonly<Record<string, { readOnly: boolean }>> = Object.freeze({
+  'general-purpose': { readOnly: false }, Explore: { readOnly: true }, Plan: { readOnly: true },
+});
+
+/** Declared plugin profiles take precedence; a display name never implies a guard. */
+export function resolvePluginForkRole(agents: PluginAgent[], pluginId: string, requested?: string) {
+  const name = requested || 'general-purpose';
+  const profile = agents.find(agent => agent.id === name || agent.id === `${pluginId}:${name}`);
+  const builtin = Object.hasOwn(builtinForkRoles, name) ? builtinForkRoles[name] : undefined;
+  if (!profile && !builtin) throw new Error(`Plugin Agent ${name} is unavailable.`);
+  return { profile, readOnly: !profile && builtin?.readOnly === true, maxTurns: profile?.maxTurns ?? PLUGIN_AGENT_DEFAULT_MAX_TURNS };
+}
+
 export function pluginAgentTools(agent: PluginAgent, exposed: string[]): string[] {
   const expand = (names: string[]) => new Set(names.flatMap(name => {
     if (name.startsWith('mcp__')) {

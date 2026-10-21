@@ -1,6 +1,6 @@
 import { NotebookText, PanelRightOpen } from 'lucide-react';
 import type { AppLanguage } from '../types';
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 import { conversationDisplayTitle } from '../shared/conversationTitle';
 
 export function TopBar({
@@ -10,6 +10,7 @@ export function TopBar({
   workSummaryVisible,
   inspectorOpen,
   onToggleWorkSummary,
+  workSummaryHoverProps,
   onToggleInspector,
   workspaceControl,
   titleIcon,
@@ -20,6 +21,7 @@ export function TopBar({
   workSummaryVisible?: boolean;
   inspectorOpen: boolean;
   onToggleWorkSummary?: (anchor: HTMLElement) => void;
+  workSummaryHoverProps?: HTMLAttributes<HTMLButtonElement>;
   onToggleInspector?: () => void;
   workspaceControl?: ReactNode;
   titleIcon?: ReactNode;
@@ -32,6 +34,7 @@ export function TopBar({
       {workspaceControl}
       {conversationContentAvailable && onToggleWorkSummary && (
         <button
+          {...workSummaryHoverProps}
           className={`topbar-inspector-action icon-only ${workSummaryVisible ? 'active' : ''}`}
           type="button"
           data-work-summary-toggle

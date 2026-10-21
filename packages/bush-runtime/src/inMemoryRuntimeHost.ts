@@ -54,6 +54,8 @@ import {
   LIST_RUNTIME_TURN_EVENTS_COMMAND,
   UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+  HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND,
+  toolImageArtifactRequestSchema,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
   RESUME_MODEL_TURN_COMMAND,
   RUN_MODEL_TURN_COMMAND,
@@ -161,7 +163,6 @@ import { projectActiveTurnContext } from "./contextAssembler.js";
 
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
-import { UsageGuidance } from './usageGuidance.js';
 import { registerInteractionTools, registerAsyncInteraction } from "./interactionTools.js";
 import { RuntimeTaskTools } from './taskTools.js';
 import { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
@@ -176,7 +177,7 @@ import { PluginHookRunner, type PluginHookObservation } from './pluginHookRunner
 import { PluginTerminalHooks } from './pluginToolHooks.js';
 import { registerPluginCommandTools, parsePluginCommandInvocation } from './pluginCommandTools.js';
 import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
-import { pluginAgentTools } from './pluginExtensions.js';
+import { pluginAgentTools, resolvePluginForkRole, PLUGIN_AGENT_DEFAULT_MAX_TURNS, PLUGIN_INVOCATION_MAX_DEPTH } from './pluginExtensions.js';
 import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery, synchronizeMcpCatalog } from './mcpToolDiscovery.js';
 import { createToolNameScope, type ToolNameScope } from './toolReferenceNames.js';
 import { registerBuiltinToolDisclosure, taskManagementTool } from './builtinToolDisclosure.js';
@@ -361,7 +362,6 @@ export class InMemoryRuntimeHost {
   readonly #sessionAdmissions = new Map<string, number>();
   readonly #capabilityGrants = new InMemoryRuntimeCapabilityStore();
   readonly #coordination: CoordinationStore;
-  readonly #usageGuidance: UsageGuidance;
   readonly #subagentTasks: SubagentTaskStore;
   #realtimeAgents?: RealtimeAgentDispatcher;
   readonly #assistant: AssistantConversation;
@@ -465,9 +465,7 @@ export class InMemoryRuntimeHost {
     this.#mcpApps = new McpAppsHost(join(runtimeDataRoot, 'mcp-apps'), this.#toolRegistry, this.#toolExecutions, this.#capabilityGrants, request => {
       const run = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => {
         const extensions = await this.#loadPluginExtensions?.();
-        const usage = await this.#usageGuidance.pluginState(request, extensions);
-        if (event === 'PreToolUse' && usage.blocked) return { messages: [], blocked: usage.blocked };
-        return this.#pluginHooks.run(await this.#pluginHookScopes.select(extensions?.hooks ?? [], request, usage.commandId), event, { ...context, request });
+        return this.#pluginHooks.run(await this.#pluginHookScopes.select(extensions?.hooks ?? [], request), event, { ...context, request });
       };
       return {
         before: context => run('PreToolUse', { toolName: context.toolCall.name, input: context.input, signal: context.signal }),
@@ -496,7 +494,7 @@ export class InMemoryRuntimeHost {
           sessionMetadata: { agentRole: 'child', parentSessionId: parent.sessionId, parentTurnId: parent.turnId },
           metadata: { ...parent.metadata, pluginHookEvaluation: true, agentRole: 'child', parentSessionId: parent.sessionId, parentTurnId: parent.turnId,
             permissionScopeSessionId: parent.sessionId, permissionEventRequestId: parent.requestId, permissionEventSessionId: parent.sessionId, permissionEventTurnId: parent.turnId,
-            pluginAgentMaxTurns: hook.type === 'agent' ? 50 : 1 },
+            pluginAgentMaxTurns: hook.type === 'agent' ? PLUGIN_AGENT_DEFAULT_MAX_TURNS : 1 },
         };
         const terminal = await this.runSessionTurn(child, { signal: context.signal });
         const result = resolveChildTurn({ terminal, session: this.#sessions.snapshot(child.sessionId) }, child.turnId);
@@ -524,14 +522,11 @@ export class InMemoryRuntimeHost {
     if (options.loadPluginExtensions) {
       const fork: NonNullable<Parameters<typeof registerPluginCommandTools>[2]>['fork'] = async (command, prompt, context) => {
         if (!context.turn) throw new Error('A parent task is required.');
-        if (Number(context.turn.request.metadata.pluginInvocationDepth ?? 0) >= 4) throw new Error('Plugin invocation nesting limit reached.');
-        const name = command.agent || 'general-purpose';
-        const profiles = (await options.loadPluginExtensions!()).agents;
-        const profile = profiles.find(agent => agent.id === name || agent.id === `${command.pluginId}:${name}`);
-        if (!profile && !['general-purpose', 'Explore', 'Plan'].includes(name)) throw new Error(`Plugin Agent ${name} is unavailable.`);
+        if (Number(context.turn.request.metadata.pluginInvocationDepth ?? 0) >= PLUGIN_INVOCATION_MAX_DEPTH) throw new Error('Plugin invocation nesting limit reached.');
+        const { profile, readOnly, maxTurns } = resolvePluginForkRole((await options.loadPluginExtensions!()).agents, command.pluginId, command.agent);
         let names = context.turn.request.tools.map(tool => tool.name).filter(name => this.#toolRegistry.childDefinitions().some(tool => tool.name === name));
         if (profile) names = pluginAgentTools(profile, names);
-        if (name === 'Explore' || name === 'Plan') names = names.filter(name => this.#toolRegistry.resolve(name)?.manifest.mutating === false);
+        if (readOnly) names = names.filter(name => this.#toolRegistry.resolve(name)?.manifest.mutating === false);
         const id = randomUUID();
         const child = buildChildTurnRequest({ context, registry: this.#toolRegistry,
           ids: { requestId: `plugin-r-${id}`, sessionId: `plugin-s-${id}`, turnId: `plugin-t-${id}`, messageId: `plugin-m-${id}` },
@@ -539,7 +534,7 @@ export class InMemoryRuntimeHost {
           allowedToolNames: names,
           metadata: { pluginInvocationDepth: Number(context.turn.request.metadata.pluginInvocationDepth ?? 0) + 1,
             pluginScopedSkillIds: [command.id],
-            pluginAgentId: profile?.id, pluginAgentMaxTurns: profile?.maxTurns ?? 50,
+            pluginAgentId: profile?.id, pluginAgentMaxTurns: maxTurns,
             pluginCommandDisallowedTools: [...new Set([...(Array.isArray(context.turn.request.metadata.pluginCommandDisallowedTools) ? context.turn.request.metadata.pluginCommandDisallowedTools : []), ...command.disallowedTools ?? []])] },
           additionalPrefixMessages: profile ? [{ role: 'developer', content: `${profile.prompt}\n${(profile.skills ?? []).map(skill => `Skill ${skill.name} (${skill.path}):\n${skill.prompt}`).join('\n')}` }] : [],
         });
@@ -559,7 +554,6 @@ export class InMemoryRuntimeHost {
         return result.finalResponse;
       };
       registerPluginCommandTools(this.#toolRegistry, async () => (await options.loadPluginExtensions!()).commands ?? [], { fork, onInvoke: async (command, context) => {
-        if (command.usage) return this.#usageGuidance.loadCommand(command, context);
         if (command.context !== 'fork') await this.#pluginHookScopes.activate(context.sessionId, command.id);
       } });
       registerPluginCommandTools(this.#toolRegistry, async () => (await options.loadPluginExtensions!()).skills ?? [], { skill: true, fork,
@@ -595,9 +589,6 @@ export class InMemoryRuntimeHost {
     if (options.settleOrphanedTurns === true) this.#settleOrphanedTurns();
     this.#coordination = options.coordinationStore ?? new CoordinationStore();
     registerCoordinationTools(this.#toolRegistry, this.#coordination);
-    this.#usageGuidance = new UsageGuidance(this.#toolRegistry, this.#toolExecutions,
-      options.dataRoot ? join(runtimeDataRoot, 'usage-guidance') : undefined, { coordination: this.#coordination, loadExtensions: options.loadPluginExtensions });
-    this.#usageGuidance.register();
     this.#workspaceObservations =
       options.workspaceObservationStore ?? new WorkspaceObservationStore({
         persistencePath: options.dataRoot
@@ -687,7 +678,7 @@ export class InMemoryRuntimeHost {
     this.#asyncJobs = new RuntimeAsyncJobs(this.#toolExecutions, (session, turn, id, result) =>
       this.#trackAgentGuidance(JSON.stringify([session, turn]), id, result));
     registerAsyncInteraction(this.#toolRegistry, this.#solutions, this.#asyncJobs);
-    registerToolScript(this.#toolRegistry, this.#asyncJobs, (context, input) => this.#usageGuidance.prepareRecipe(context, input));
+    registerToolScript(this.#toolRegistry, this.#asyncJobs);
     const taskTools = new RuntimeTaskTools((context, promises, mode, signal, duration) =>
       this.#turnSignals.wait(context.sessionId, context.turnId, promises, mode, signal, duration));
     taskTools.addSource(this.#asyncJobs.source);
@@ -825,6 +816,7 @@ export class InMemoryRuntimeHost {
         CANCEL_RUNTIME_TOOL_COMMAND,
         RUNTIME_TERMINAL_CONTROL_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+        HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND,
         RESOLVE_FILE_MEMO_COMMAND,
         RESOLVE_SOURCE_MEMO_COMMAND,
         RESOLVE_SOURCE_REFERENCES_COMMAND,
@@ -1363,6 +1355,11 @@ export class InMemoryRuntimeHost {
           fileName: typeof payload.fileName === 'string' ? payload.fileName : undefined,
         }, this.#remoteWorkspace);
       }
+      case HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND: {
+        const input = toolImageArtifactRequestSchema.parse(command.payload);
+        if (!this.#sessions.hasSession(input.sessionId)) throw new Error('Conversation is unavailable.');
+        return { found: this.#toolExecutions.hasImageArtifact(input.sessionId, input.path) };
+      }
       case GET_RUNTIME_TOOL_EXECUTION_COMMAND: {
         const identity = toolExecutionIdentitySchema.parse(command.payload);
         return this.#toolExecutions.get(
@@ -1757,7 +1754,7 @@ export class InMemoryRuntimeHost {
       });
       const remote = parseSshWorkspace(workspace.workspaceDir);
       if (remote) candidate.prefixMessages.push({ role: 'developer', name: 'ssh_workspace_binding', content:
-        `The user selected an SSH workspace as the default environment. Saved connection ID: ${remote.connectionId}. Remote project directory: ${remote.path}. SSH is an additional environment, not a replacement for the local Runtime host. Built-in file and terminal tools default to this remote directory; use environment="local" with absolute local paths for local skills, source files and local commands. To explicitly address another saved SSH environment use environment="ssh://connection-id/absolute/directory". Use POSIX paths and shell="posix" remotely; use the local host's native shell for local commands. Each result identifies its executionEnvironment. Terminal handles stay on the host that created them; omit environment for terminal_poll/write/stop, and terminal_list lists this session's terminals across hosts. Connection failures never fall back to local execution. Remote tools do not provide local checkpoint/revert. Other tools and plugins retain their declared execution environments; do not assume they moved remotely. Read the relevant project's AGENTS.md before editing on either host.` });
+        `The user selected an SSH workspace as the default environment. Saved connection ID: ${remote.connectionId}. Remote project directory: ${remote.path}. SSH is an additional environment, not a replacement for the local Runtime host. Built-in file and terminal tools default to this remote directory; use environment="local" with absolute local paths for local skills, source files and local commands. To explicitly address another saved SSH environment use environment="ssh://connection-id/absolute/directory". Omit shell for the detected remote default, or explicitly use powershell/cmd on Windows and posix on Linux. Windows paths accept C:\\Users\\name or /C:/Users/name; / is only its SFTP browsing root. Match command syntax to the returned platform and shell; local commands use the local host's native shell. Each result identifies its executionEnvironment. Terminal handles stay on the host that created them; omit environment for terminal_poll/write/stop, and terminal_list lists this session's terminals across hosts. Connection failures never fall back to local execution. Remote tools do not provide local checkpoint/revert. Other tools and plugins retain their declared execution environments; do not assume they moved remotely. Read the relevant project's AGENTS.md before editing on either host.` });
     }
     await this.#attachments.prepare(candidate, this.#modelImages, options.signal);
     const automationContext = this.#automation ? structuredClone(candidate) : undefined;
@@ -2015,7 +2012,6 @@ export class InMemoryRuntimeHost {
     const { request, identity } = input;
     const turnKey = JSON.stringify([request.sessionId, request.turnId]);
     let pluginExtensions: PluginExtensions = { hooks: [], agents: [] };
-    let usageSelectionPending = false;
     let hookOrdinal = 0;
     const hookIdentities = new Map<string, { ordinal: number; round: number }>();
     const observeHook = (entry: PluginHookObservation) => {
@@ -2044,14 +2040,7 @@ export class InMemoryRuntimeHost {
     const runHook = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => {
       if (input.internalTask || request.metadata.pluginHookEvaluation) return { messages: [] } as import('./pluginExtensions.js').PluginHookResult;
       const current = await this.#loadPluginExtensions?.() ?? pluginExtensions;
-      const usage = await this.#usageGuidance.pluginState(request, current);
-      const selection = usageSelectionPending && (event === 'SessionStart' || event === 'UserPromptSubmit') ||
-        context.toolName === 'run_plugin_command' && context.toolCallId === request.metadata.pluginCommandUserCallId &&
-        current.commands?.some(command => command.id === request.metadata.pluginCommandUserId && command.usage);
-      if (event === 'PreToolUse' && usage.blocked && !selection && !['usage', 'get_tool_schema', 'list_plugin_commands'].includes(context.toolName ?? '')) {
-        return { messages: [], blocked: usage.blocked };
-      }
-      return this.#pluginHooks.run(await this.#pluginHookScopes.select(current.hooks, request, selection ? undefined : usage.commandId), event, { ...context, request }, observeHook);
+      return this.#pluginHooks.run(await this.#pluginHookScopes.select(current.hooks, request), event, { ...context, request }, observeHook);
     };
     const toolLoop = new RuntimeToolLoop({
       eventLog: this.#eventLog,
@@ -2354,9 +2343,6 @@ export class InMemoryRuntimeHost {
           const userMessage = [...currentInput].reverse().find(message => message.role === 'user');
           const parsedInvocation = !child && userMessage ? parsePluginCommandInvocation(userMessage.content) : undefined;
           const matches = parsedInvocation ? [...pluginExtensions.commands ?? [], ...pluginExtensions.skills ?? []].filter(component => component.id === parsedInvocation.command || component.name === parsedInvocation.command) : [];
-          // The old manual cannot veto a user's explicit switch/stop before the
-          // command even runs. Other plugin scopes retain their normal hooks.
-          usageSelectionPending = matches.length === 1 && Boolean(matches[0]?.usage);
           const initialHookMessages: string[] = [];
           if (!child) {
             const backgroundResults = await this.#pluginBackground.results(request.sessionId);
@@ -2382,7 +2368,6 @@ export class InMemoryRuntimeHost {
             const message: ModelMessage = { role: 'developer', name: 'plugin_hook_feedback', content };
             messages.push(message); generatedMessages.push({ messageId: `msg_plugin_start_${request.turnId}_${index}`, createdAt: this.#sessionNow(), message });
           }
-          usageSelectionPending = false;
           if (matches.length > 1) return await finalize({ status: 'failed', reason: 'ambiguous_plugin_invocation', details: { candidates: matches.map(component => component.id) } });
           const invocation = parsedInvocation && (matches.length || parsedInvocation.command.includes(':')) ? { ...parsedInvocation, command: matches[0]?.id ?? parsedInvocation.command } : undefined;
           if (invocation && request.metadata.pluginCommandCompletedTurn !== request.turnId && !generatedMessages.some(message => message.messageId === `msg_plugin_command_${request.turnId}`)) {
@@ -2425,13 +2410,6 @@ export class InMemoryRuntimeHost {
         // before there is a model request to interrupt. Maintenance is atomic.
         if (!compactionTransaction && !activeContextCompaction) {
           messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
-        }
-        if (!input.internalTask && !compactionTransaction && !activeContextCompaction && !request.metadata.pluginHookEvaluation) {
-          const message = await this.#usageGuidance.context(request, messages);
-          if (message) {
-            messages.push(message);
-            generatedMessages.push({ messageId: `usage_guidance_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
-          }
         }
         if (!input.internalTask && !compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           try {
@@ -4185,7 +4163,6 @@ export class InMemoryRuntimeHost {
   }
 
   async #deleteSession(sessionId: string) {
-    await this.#usageGuidance.removeSession(sessionId);
     this.#assistant.forget(sessionId);
     this.#conversations.forget(sessionId);
     await this.#subagentResume.remove(sessionId);
@@ -4287,11 +4264,12 @@ export class InMemoryRuntimeHost {
     return result;
   }
 
-  async #withWorkspaceAction<T>(operation: () => Promise<T>, sessionIds?: ReadonlySet<string>): Promise<T> {
+  async #withWorkspaceAction<T>(operation: () => Promise<T>, sessionIds?: ReadonlySet<string>, busyMessage?: string): Promise<T> {
     const active = sessionIds
       ? [...sessionIds].some(id => this.#sessionAdmissions.has(id)) || [...this.#activeTurns].some(key => sessionIds.has(JSON.parse(key)[0]))
       : this.#activeTurns.size || this.#turnAdmissions;
     if (active || this.#workspaceActions) {
+      if (busyMessage) throw new Error(busyMessage);
       if (sessionIds) throw new Error('请等待此会话及其子任务结束，再删除会话。 / Wait for this conversation and its child tasks before deleting it.');
       throw new Error("Workspace actions require active Turns and other workspace actions to settle first.");
     }

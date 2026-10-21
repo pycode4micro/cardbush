@@ -4,15 +4,33 @@ import { z } from 'zod';
 
 const chunkSize = 512 * 1024;
 const maxSize = 64 * 1024 * 1024;
-function inside(root: string, path: string) {
+interface CaptureAccess {
+  roots: string[];
+  hasImageArtifact(path: string): Promise<boolean>;
+}
+function isInside(root: string, path: string) {
   const rel = relative(root, path);
-  if (isAbsolute(rel) || rel === '..' || rel.startsWith('../') || rel.startsWith('..\\')) throw new Error('File is outside this conversation workspace.');
+  return !isAbsolute(rel) && rel !== '..' && !rel.startsWith('../') && !rel.startsWith('..\\');
+}
+function inside(root: string, path: string) {
+  if (!isInside(root, path)) throw new Error('File is outside this conversation workspace.');
   return path;
 }
-export async function agentFileRead(root: string, input: Record<string, unknown>) {
+export async function agentFileRead(root: string, input: Record<string, unknown>, captures?: CaptureAccess) {
   const value = z.object({ path: z.string().min(1), offset: z.number().int().nonnegative().default(0) }).parse(input);
   const canonical = await realpath(root);
-  const path = inside(canonical, await realpath(isAbsolute(value.path) ? value.path : join(canonical, value.path)));
+  const path = await realpath(isAbsolute(value.path) ? value.path : join(canonical, value.path));
+  if (!isInside(canonical, path)) {
+    // A capture directory is not a blanket read grant. Both its real location
+    // and this conversation's persisted native artifact receipt must agree.
+    let owned = false;
+    for (const captureRoot of captures?.roots ?? []) {
+      if (!isInside(captureRoot, path)) continue;
+      const actualRoot = await realpath(captureRoot);
+      if (isInside(actualRoot, path)) { owned = true; break; }
+    }
+    if (!owned || !await captures!.hasImageArtifact(path)) inside(canonical, path);
+  }
   const file = await open(path, 'r');
   try {
     const info = await file.stat();

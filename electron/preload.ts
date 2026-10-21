@@ -38,7 +38,7 @@ type SessionAttentionPayload = {
   sessionId: string;
   title: string;
   body: string;
-  kind: 'completed' | 'waiting' | 'error';
+  kind: 'completed' | 'interaction' | 'error';
   turnId?: string;
   interactionId?: string;
 };

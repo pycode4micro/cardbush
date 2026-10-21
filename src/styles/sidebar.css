@@ -684,22 +684,6 @@ body.sidebar-resizing .right-inspector {
   opacity: 0.5;
 }
 
-.conversation-unread-indicator {
-  position: absolute;
-  left: calc(var(--sidebar-tree-base) - 9px);
-  top: 50%;
-  transform: translateY(-50%);
-  width: 6px;
-  height: 6px;
-  background: var(--accent);
-  border-radius: 999px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.conversation-row.nested .conversation-unread-indicator {
-  left: calc(var(--sidebar-tree-child) - 9px);
-}
-
 .conversation-row.unread .conversation-title {
   color: var(--sidebar-text, var(--text));
   font-weight: 720;
@@ -745,18 +729,10 @@ body.sidebar-resizing .right-inspector {
   height: 18px;
   display: inline-grid;
   place-items: center;
-  color: var(--accent);
+  color: var(--info);
   pointer-events: none;
   transform: translateY(-50%);
   transition: opacity 100ms ease;
-}
-
-.conversation-attention-indicator.waiting {
-  color: var(--text-soft);
-}
-
-.conversation-attention-indicator.waiting-user {
-  color: var(--warning);
 }
 
 .conversation-hover-preview-status {
@@ -766,7 +742,7 @@ body.sidebar-resizing .right-inspector {
 }
 
 .conversation-attention-indicator.error {
-  color: var(--danger);
+  color: var(--warning);
 }
 
 .conversation-row:has(.conversation-attention-indicator) .conversation-title {

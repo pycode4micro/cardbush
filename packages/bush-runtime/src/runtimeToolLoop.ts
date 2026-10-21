@@ -1,9 +1,11 @@
 import { projectMcpDiscoveryResult } from "./mcpToolDiscovery.js";
 import { projectArchivedToolResult } from './archivedToolResultProjection.js';
+import { withFileSourceLocator } from './fileSourceReceipt.js';
 import { DEFAULT_TOOL_RESULT_MAX_CHARS } from './toolResultBudget.js';
 import { toolCallDisplay } from './toolDisplay.js';
 import { modelMcpAppReference } from './mcpAppReference.js';
 import type { ToolNameScope } from './toolReferenceNames.js';
+import { scheduledToolName as resolveScheduledToolName } from './toolScheduling.js';
 import {
   type ModelMessage,
   type ModelRequest,
@@ -196,6 +198,8 @@ export class RuntimeToolLoop {
       modelContextIngressBudgetTokens?: number;
     },
   ): Promise<RuntimeToolRoundResult> {
+    const schedulingTurn = input.request ? { request: input.request, contextMessages: input.contextMessages ?? [], toolNameScope: input.toolNameScope } : undefined;
+    const targetFor = (call: ToolCall) => scheduledToolName(call, schedulingTurn);
     const executionIdentities = toolCalls.map((toolCall, ordinal) => ({
       ...this.#executionIdentity(input, ordinal),
       display: toolCallDisplay(toolCall, this.#registry.resolve(toolCall.name)?.definition),
@@ -223,9 +227,9 @@ export class RuntimeToolLoop {
       }
       this.#activeToolControllers.set(toolCall.id, {
         controller,
-        toolName: scheduledToolName(toolCall),
+        toolName: targetFor(toolCall),
       });
-      if (this.#hasConcurrentPermissionAdmission(toolCall, toolCalls)) {
+      if (this.#hasConcurrentPermissionAdmission(toolCall, toolCalls, targetFor)) {
         controller.abort(new DOMException(
           "Desktop control was deferred because another concurrent Tool may request permission.",
           "AbortError",
@@ -239,6 +243,8 @@ export class RuntimeToolLoop {
           input.request && input.contextMessages
             ? { request: input.request, contextMessages: input.contextMessages, signal: input.signal, toolNameScope: input.toolNameScope }
             : undefined,
+          undefined,
+          () => hookStopTurn,
         );
         hookStopTurn ??= outcome.hookStopTurn;
         // Forwarded calls keep their wire identity; result handling and journals
@@ -252,7 +258,18 @@ export class RuntimeToolLoop {
           : [];
         renderedResults[ordinal] = outcome.kind === "returned"
           ? outcome.hookFeedback ?? this.#registry.renderModelResult(executedCall.name, outcome.result) : undefined;
+        if (outcome.kind === 'returned' && outcome.hookFeedback !== undefined &&
+          ['read_file', 'run_skill'].includes(executedCall.name)) {
+          // The replacement is visible feedback, not evidence that the original
+          // file bytes were delivered. Keep the native outcome in the journal.
+          renderedResults[ordinal] = JSON.stringify({ source_replaced: true }) + '\n\n[instructions]\n' + outcome.hookFeedback;
+        }
         if (renderedResults[ordinal] !== undefined) renderedResults[ordinal] = omitToolImageDataFromText(renderedResults[ordinal]!);
+        if (outcome.kind === 'returned' && !outcome.resultError && outcome.hookFeedback === undefined &&
+          ['read_file', 'run_skill'].includes(executedCall.name)) {
+          const locator = `tool-result://${encodeURIComponent(this.#identity.sessionId)}/${encodeURIComponent(this.#identity.turnId)}/${encodeURIComponent(toolCall.id)}`;
+          renderedResults[ordinal] = withFileSourceLocator(renderedResults[ordinal] ?? serializeNativeToolResult(outcome.result), locator);
+        }
         if (outcome.kind === 'returned' && outcome.resultError && outcome.hookFeedback === undefined) {
           // Keep recovery facts at the front of budgeted output; the native
           // response remains unchanged in its execution record.
@@ -280,13 +297,13 @@ export class RuntimeToolLoop {
       }
     };
     // Commands can activate turn-scoped restrictions across execution channels.
-    const outcomes = toolCalls.some(call => ['run_plugin_command', 'run_skill'].includes(scheduledToolName(call)))
+    const outcomes = toolCalls.some(call => ['run_plugin_command', 'run_skill'].includes(targetFor(call)))
       ? await executeSequentially(toolCalls, executeOne)
       : await executeByChannel(
       toolCalls,
       executeOne,
-      (toolCall) => this.#registry.executionChannel(scheduledToolName(toolCall)),
-      (toolCall) => this.#registry.isParallelSafe(scheduledToolName(toolCall)),
+      (toolCall) => this.#registry.executionChannel(targetFor(toolCall)),
+      (toolCall) => this.#registry.isParallelSafe(targetFor(toolCall)),
     );
     const nativeResults = outcomes.map((outcome) =>
       outcome.kind === "returned" ? outcome.result : { runtimeError: outcome.error }
@@ -382,18 +399,18 @@ export class RuntimeToolLoop {
     };
   }
 
-  #hasConcurrentPermissionAdmission(toolCall: ToolCall, toolCalls: ToolCall[]): boolean {
-    const registration = this.#registry.resolve(scheduledToolName(toolCall));
+  #hasConcurrentPermissionAdmission(toolCall: ToolCall, toolCalls: ToolCall[], targetFor: (call: ToolCall) => string): boolean {
+    const registration = this.#registry.resolve(targetFor(toolCall));
     if (registration?.manifest.effect_kind !== "desktop_control") return false;
     return toolCalls.some((candidate) => {
       if (candidate.id === toolCall.id) return false;
-      const candidateRegistration = this.#registry.resolve(scheduledToolName(candidate));
+      const candidateRegistration = this.#registry.resolve(targetFor(candidate));
       if (!candidateRegistration?.authorize) return false;
-      const sameChannel = this.#registry.executionChannel(scheduledToolName(candidate)) ===
-        this.#registry.executionChannel(scheduledToolName(toolCall));
+      const sameChannel = this.#registry.executionChannel(targetFor(candidate)) ===
+        this.#registry.executionChannel(targetFor(toolCall));
       return !sameChannel || (
-        this.#registry.isParallelSafe(scheduledToolName(candidate)) &&
-        this.#registry.isParallelSafe(scheduledToolName(toolCall))
+        this.#registry.isParallelSafe(targetFor(candidate)) &&
+        this.#registry.isParallelSafe(targetFor(toolCall))
       );
     });
   }
@@ -476,14 +493,9 @@ export class RuntimeToolLoop {
 }
 
 /** Scheduling hint only; the coordinator validates the envelope and target. */
-function scheduledToolName(call: ToolCall): string {
-  if (call.name === 'call_tool') {
-    try {
-      const name = JSON.parse(call.argumentsText).name;
-      if (typeof name === 'string') return name;
-    } catch { /* Malformed arguments are rejected by normal admission. */ }
-  }
-  return call.name;
+function scheduledToolName(call: ToolCall, turn?: Parameters<typeof resolveScheduledToolName>[2]): string {
+  try { return resolveScheduledToolName(call.name, JSON.parse(call.argumentsText), turn); }
+  catch { return call.name; /* Malformed arguments are rejected by normal admission. */ }
 }
 
 function projectNativeToolResult(

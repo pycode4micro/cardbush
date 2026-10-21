@@ -34,7 +34,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
         additions: 8, deletions: 3, files: [{ path: 'src/layout.ts', additions: 8, deletions: 3, diff: '', lines: [] }] }],
       onCancelGoal: async () => { goalCancelled++; }, onOpenChangeReview: (...args) => turnReviews.push(args) });
   `);
-  await until("!!document.querySelector('.message-list .runtime-plan-detail')", 'live plan belongs to the current turn');
+  await until("!!document.querySelector('[data-work-summary-toggle]')", 'summary entry');
+  assert.equal(await run("document.querySelector('.message-list .runtime-plan-detail')"), null, 'live plan does not occupy the transcript');
+  await run("document.querySelector('[data-work-summary-toggle]').click()");
+  await until("!!document.querySelector('.conversation-work-summary .runtime-plan-detail')", 'live plan belongs to the summary');
   assert.deepEqual(await run("[...document.querySelectorAll('.runtime-plan-detail li.waiting small')].map(el => el.textContent)"),
     [' — 等待用户确认：确认生成设置', ' — 等待后台任务：生成任务完成', ' — 等待前置步骤：收到结果后审查'], 'live plan shows the exact wait category');
   assert.equal(await run("getComputedStyle(document.querySelector('.runtime-plan-spinner')).animationName"), 'cardbush-spin', 'live plan spinner no longer requires the removed processing panel');
@@ -47,7 +50,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("document.querySelector('.message-row.assistant .message-actions')"), null,
     'running loops mount no copy, retry or feedback actions');
   assert.equal(await run("document.querySelector('.composer-runtime-rail')"), null, 'empty queue leaves no status rail');
-  await run("document.querySelector('.runtime-goal-cancel').click(); document.querySelector('.turn-change-review').click()");
+  await run(`document.querySelector('.runtime-goal-cancel').click();
+    document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));`);
+  await until("!!document.querySelector('.turn-change-file-action')", 'hover exposes the changed-file action');
+  await run("document.querySelector('.turn-change-file-action').click()");
   assert.equal(await run('goalCancelled'), 1);
   assert.equal((await run('turnReviews'))[0][1], 'layout-turn', 'review targets this turn');
   await run(`window.layoutThinking = document.querySelector('.assistant-active-transcript > .assistant-activity-line > .turn-thinking-detail');
@@ -118,7 +124,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("getComputedStyle(document.querySelector('.runtime-queue-list')).scrollbarGutter"), 'stable');
   await run(`window.completedLayoutPlan = { ...layoutPlan, nodes: layoutPlan.nodes.map(node => ({ ...node, status: 'completed' })) };
     updateChat({ messages: [layoutUser, { ...layoutAssistant, taskPlan: completedLayoutPlan }] });`);
-  await until("!document.querySelector('.runtime-plan-detail')", 'all completed steps hide the live board before the turn finishes');
+  await until("document.querySelectorAll('.conversation-work-summary .runtime-plan-detail li.completed').length === 5",
+    'completed plan remains available in the summary');
   assert.equal(await run("getComputedStyle(document.querySelector('.assistant-thinking-label')).animationName"), 'thinking-mask-sweep', 'finishing the plan preserves the thinking animation while work continues');
   assert.ok(await run("!!document.querySelector('.runtime-goal-detail') && !!document.querySelector('.turn-change-review')"),
     'plan completion preserves the goal and changed-files entry');

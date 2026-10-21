@@ -173,8 +173,8 @@ assert.match(sidebarSource, /document\.visibilityState !== 'visible' \|\| !docum
 assert.match(sidebarSource, /key: options\.unread \? 'mark-read' : 'mark-unread'/);
 assert.match(sidebarSource, /标记为已读/);
 assert.match(sidebarSource, /标记为未读/);
-assert.match(sidebarSource, /className="conversation-unread-indicator"/);
-assert.match(stylesSource, /\.conversation-unread-indicator\s*\{[\s\S]*?background:\s*var\(--accent\)/);
+assert.doesNotMatch(sidebarSource, /className="conversation-unread-indicator"/);
+assert.doesNotMatch(stylesSource, /\.conversation-unread-indicator/);
 assert.match(stylesSource, /\.conversation-row\.unread \.conversation-title\s*\{/);
 assert.doesNotMatch(sidebarSource, /window\.prompt\([\s\S]{0,120}重命名对话/);
 assert.doesNotMatch(appSource, /window\.prompt\([\s\S]{0,120}重命名项目/);

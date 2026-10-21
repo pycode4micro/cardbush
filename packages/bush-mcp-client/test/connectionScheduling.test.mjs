@@ -53,6 +53,8 @@ test('independent transports start concurrently with a bound and publish in conf
   t.after(async () => { gates.forEach(gate => gate.resolve()); await update; await manager.close(); });
   await until(() => started.length === 2);
   assert.deepEqual(started, [0, 1]);
+  assert.equal(manager.snapshot().backgroundConnectionPending, true, 'optional startup can continue after settings commit');
+  assert.equal(mcpSnapshotResultSchema.parse(manager.snapshot()).backgroundConnectionPending, true, 'readiness survives the transport schema');
   assert.equal(registry.definitions().length, 0, 'partial discovery is not a committed tool catalog');
   gates[1].resolve(); await until(() => started.includes(2));
   gates[2].resolve(); await until(() => started.includes(3));
@@ -61,6 +63,7 @@ test('independent transports start concurrently with a bound and publish in conf
   assert.deepEqual((await update).servers.map(s => s.id), ['s0', 's1', 's2', 's3', 's4']);
   assert.equal(peak, 2);
   assert.equal(registry.definitions().length, 5);
+  assert.equal(manager.snapshot().backgroundConnectionPending, false);
 });
 
 test('reconnecting one server does not retry unrelated unavailable or authentication-required servers', async t => {
@@ -104,8 +107,10 @@ test('failed required additions settle parallel work and preserve the previous c
   t.after(async () => { gate.resolve(); await manager.close(); });
   await manager.apply(snapshot([server('old')]));
   const update = manager.apply(snapshot([server('old'), server('bad', { required: true }), server('slow'), server('never')], 2));
+  assert.equal(manager.snapshot().backgroundConnectionPending, false, 'required connections retain transactional readiness');
   const rejected = assert.rejects(update, /Required fixture failed/);
   await began.promise; await delay(5); gate.resolve(); await rejected;
+  assert.equal(manager.snapshot().backgroundConnectionPending, false, 'required failure cannot be treated as background startup');
   assert.equal(clients.never, undefined, 'queued connections stop after a required failure');
   assert.equal(clients.slow.closeCalls, 1, 'late successful connection is retired');
   assert.equal(clients.old.closeCalls, 0);

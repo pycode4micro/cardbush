@@ -204,7 +204,6 @@ export class PluginHookRunner {
       const cancelled = context.signal?.aborted === true;
       observe?.({ id, hook, phase: cancelled ? 'cancelled' : 'completed', output: recordedOutput, error: detail });
       if (cancelled) throw context.signal?.reason ?? error;
-      if (hook.scope?.kind === 'usage' && hook.event === 'PreToolUse') return { messages: [], blocked: `${hook.pluginId}: Usage guard could not complete: ${detail}` };
       return { messages: [] };
     }
   }

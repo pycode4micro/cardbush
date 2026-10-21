@@ -5,8 +5,13 @@ import { pipeline } from 'node:stream/promises';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 
 /** Standard MCP over an authenticated loopback endpoint owned by the desktop host. */
-export async function startDesktopMcpServer(createServerInstance: () => McpServer) {
-  const token = randomBytes(32).toString('hex');
+export async function startDesktopMcpServer(createServerInstance: () => McpServer, options: {
+  port?: number; token?: string; status?: () => Promise<unknown>;
+} = {}) {
+  const token = options.token ?? randomBytes(32).toString('hex');
+  if (!/^[a-f0-9]{64}$/.test(token) || !Number.isInteger(options.port ?? 0) || (options.port ?? 0) < 0 || (options.port ?? 0) > 65535) {
+    throw new Error('Invalid desktop MCP listener configuration.');
+  }
   const authorization = Buffer.from(`Bearer ${token}`);
   const handleMcp = createMcpHandler(createServerInstance);
   const requests = new Set<AbortController>();
@@ -17,6 +22,13 @@ export async function startDesktopMcpServer(createServerInstance: () => McpServe
         supplied.length !== authorization.length || !timingSafeEqual(supplied, authorization)) {
       response.writeHead(403).end();
       request.resume();
+      return;
+    }
+    if (request.url === '/status' && request.method === 'GET' && options.status) {
+      request.resume();
+      void options.status().then(status => {
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }).end(JSON.stringify(status));
+      }, () => response.writeHead(503).end());
       return;
     }
     if (request.url !== '/mcp') {
@@ -55,7 +67,7 @@ export async function startDesktopMcpServer(createServerInstance: () => McpServe
   server.headersTimeout = 10_000;
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(options.port ?? 0, '127.0.0.1', () => {
       server.removeListener('error', reject);
       const address = server.address();
       if (!address || typeof address === 'string') { reject(new Error('Desktop MCP endpoint did not bind.')); return; }
@@ -64,13 +76,14 @@ export async function startDesktopMcpServer(createServerInstance: () => McpServe
     });
   });
   server.unref();
+  let closing: Promise<void> | undefined;
   return {
     url, token,
-    close: async () => {
+    close: () => closing ??= (async () => {
       for (const request of requests) request.abort();
       server.closeAllConnections();
       await handleMcp.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-    },
+    })(),
   };
 }

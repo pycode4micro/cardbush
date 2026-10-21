@@ -93,6 +93,66 @@ module.exports = async ({ run, until, pause, window, root }) => {
   };
   try {
     await until("!!document.querySelector('[data-work-summary-toggle]')", 'summary toolbar');
+    await run(`window.summaryPlan = { protocol: 'bush.task_plan.v1', planId: 'summary-plan',
+      sessionId: 'summary-layout', active: true, explanation: '计划通过摘要查看，更新不会挤压正文。',
+      nodes: Array.from({ length: 11 }, (_, i) => ({ step: '验证步骤 ' + (i + 1),
+        status: i < 3 ? 'completed' : i === 3 ? 'in_progress' : 'pending' })) };
+      window.summaryPlanMessages = chatProps.messages;
+      renderSummaryLayout({ sending: true, activeTurnId: 'summary-turn',
+        messages: chatProps.messages.map(message => message.role === 'assistant'
+          ? { ...message, taskPlan: summaryPlan } : message) });`);
+    await pause(650);
+    const beforeHover = await run(`({ ...summaryBounds(), scrollTop: document.querySelector('.message-list').scrollTop,
+      scrollHeight: document.querySelector('.message-list').scrollHeight })`);
+    await run(`document.querySelector('[data-work-summary-toggle]').dispatchEvent(
+      new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))`);
+    await until("!!document.querySelector('.conversation-work-summary.soft-panel-visible .runtime-plan-detail')", 'hover opens plan without clicking');
+    await pause(250);
+    const hovered = await run(`({ ...summaryBounds(), scrollTop: document.querySelector('.message-list').scrollTop,
+      scrollHeight: document.querySelector('.message-list').scrollHeight })`);
+    assert.equal(hovered.inset, 0, 'hover preview never docks or reflows the reading track');
+    assert.equal(hovered.content.width, beforeHover.content.width);
+    assert.equal(hovered.scrollTop, beforeHover.scrollTop);
+    assert.equal(hovered.scrollHeight, beforeHover.scrollHeight);
+    assert.equal(await run("document.querySelector('.message-list .runtime-plan-detail')"), null);
+    window.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(hovered.toggle.left + 12),
+      y: Math.round(hovered.toggle.bottom + 3) });
+    await pause(300);
+    assert.equal(await run("!!document.querySelector('.conversation-work-summary.soft-panel-visible')"), true,
+      'slow travel through the toolbar gap retains the hover preview');
+    window.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(hovered.toggle.left + 12),
+      y: Math.round(hovered.summary.top + 20) });
+    await pause(350);
+    assert.equal(await run("!!document.querySelector('.conversation-work-summary.soft-panel-visible')"), true,
+      'the summary stays open when moving from its button into the panel');
+    await run(`renderSummaryLayout({ messages: chatProps.messages.map(message => message.role === 'assistant'
+      ? { ...message, taskPlan: { ...summaryPlan, nodes: summaryPlan.nodes.map(node => ({ ...node, status: 'completed' })) } } : message) });`);
+    await until("document.querySelectorAll('.work-summary-plan li.completed').length === 11", 'live plan updates inside hover');
+    assert.equal(await run("document.querySelector('.message-list').scrollHeight"), beforeHover.scrollHeight, 'plan updates add no transcript height');
+    fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'tmp', 'summary-plan-hover.png'), (await window.capturePage()).toPNG());
+    await run(`window.summaryMenuOriginal = cardbushDesktop.showFileContextMenu;
+      window.summaryReportsOriginal = chatProps.changeReports;
+      cardbushDesktop.showFileContextMenu = () => new Promise(resolve => { window.finishSummaryMenu = resolve; });
+      renderSummaryLayout({ changeReports: chatProps.changeReports.map(report => ({ ...report,
+        files: report.files.map(file => ({ ...file, path: 'C:/fixture/ChatPanel.tsx' })) })) });`);
+    await until("document.querySelector('.work-summary-file-list button')?.title === 'C:/fixture/ChatPanel.tsx'", 'native menu fixture');
+    await run(`document.querySelector('.work-summary-file-list button').dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      document.querySelector('.conversation-work-summary').dispatchEvent(
+      new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }));
+      dispatchEvent(new Event('blur'));`);
+    await pause(300);
+    assert.equal(await run("!!document.querySelector('.conversation-work-summary.soft-panel-visible')"), true,
+      'a native file menu retains its parent summary');
+    await run(`finishSummaryMenu(''); cardbushDesktop.showFileContextMenu = summaryMenuOriginal;
+      renderSummaryLayout({ changeReports: summaryReportsOriginal });`);
+    await run("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    await until("!document.querySelector('.conversation-work-summary')", 'Escape dismisses hover');
+    await run(`document.querySelector('[data-work-summary-toggle]').dispatchEvent(
+      new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }));
+      renderSummaryLayout({ sending: false, activeTurnId: '', messages: summaryPlanMessages });`);
+    await pause(200);
     await open();
     assert.equal(await run("document.querySelector('.work-summary-header h2').textContent"), '工作摘要');
     assert.equal(await run("document.querySelector('.work-summary-file-name').textContent"), 'ChatPanel.tsx');

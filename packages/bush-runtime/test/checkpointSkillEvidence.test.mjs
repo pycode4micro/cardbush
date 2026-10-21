@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { ContextCompactionTransaction } from '../dist/contextCompactionTransaction.js';
-import { collectCheckpointSkillExcerpts, checkpointSkillExcerpts, checkpointSkillReceiptEvidence } from '../dist/checkpointSkillEvidence.js';
+import { collectCheckpointSkillExcerpts, checkpointSkillExcerpts, checkpointSkillReceiptEvidence, checkpointSkillSourceLink, validateCheckpointSkillEvidence } from '../dist/checkpointSkillEvidence.js';
 import { projectContextCompactionMaintenanceMessages, registerContextCompactionTool } from '../dist/contextCompaction.js';
 import { ToolRegistry } from '../dist/toolRegistry.js';
 import { InMemoryRuntimeHost, SessionStore } from '../dist/index.js';
@@ -13,9 +13,18 @@ import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 const recorded = JSON.parse(readFileSync(new URL('./fixtures/skill-compaction-recorded.json', import.meta.url)));
 const fixed = { role: 'system', content: 'Frozen system prefix.' };
 const user = content => ({ role: 'user', content });
-const block = value => `<skill_constraints>${JSON.stringify(value)}</skill_constraints>`;
-const all = block({ keep: 'all', retire: [] });
+const block = text => `<skill_constraints>
+${text}
+</skill_constraints>`;
 const normalize = text => text.replace(/\s+/g, ' ').trim();
+const rangeFor = (item, quote) => {
+  const match = new RegExp(quote.trim().split(/\s+/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')).exec(item.source.content);
+  assert.ok(match, quote);
+  const offset = match.index;
+  const start = item.source.content.slice(0, offset).split('\n').length;
+  return { path: item.source.path, start, end: start + match[0].split('\n').length - 1 };
+};
+const all = item => block(item.rubric.map(rule => `- ${rule.check} ${checkpointSkillSourceLink(rangeFor(item, rule.quote), rule.id)}`).join('\n'));
 const result = (id, updates, format = 'incremental') => ({ status: 'completed', text: '', reasoning: '', usage: {}, finishReason: 'tool_calls',
   toolCalls: [{ id, name: 'checkpoint_context', argumentsText: JSON.stringify(format === 'incremental' ? { updates } : { summaries: updates.map(item => item.summary) }) }] });
 const receipt = tx => JSON.parse(tx.incremental.history.at(-1).content);
@@ -38,153 +47,96 @@ const setup = (histories, format = 'incremental') => {
 };
 const entries = tx => checkpointSkillReceiptEvidence(tx.incremental.history.at(-1)).flatMap(row => row.excerpts);
 const conserved = (item, excerpts) => {
-  for (const rule of item.rubric) assert.ok(excerpts.some(excerpt => normalize(excerpt.text).includes(normalize(rule.quote))), `${item.name} ${rule.id}: original wording/condition lost`);
+  for (const rule of item.rubric) {
+    const range = rangeFor(item, rule.quote);
+    assert.ok(excerpts.some(e => e.start <= range.start && e.end >= range.end), `${rule.id}: source range lost`);
+  }
   for (const excerpt of excerpts) {
     assert.equal(excerpt.path, item.source.path);
     assert.equal(excerpt.revision, item.source.sha256);
-    assert.ok(item.source.content.includes(excerpt.text), 'source wording is never generated from a summary');
+    assert.equal(excerpt.text, '', 'the checkpoint must not repeat source paragraphs');
   }
 };
 
 for (const item of recorded.cases) {
-  test(`${item.name}: reject all five recorded prose-only checkpoints, then bind every original requirement and source`, () => {
-    for (const pass of item.passes) {
-      const input = setup([[user(item.request), ...read(item)]]), tx = new ContextCompactionTransaction(input);
-      assert.equal(tx.accept(result(`bad-${pass.pass}`, [{ source: 0, summary: pass.summary }])), false);
-      assert.match(receipt(tx).rejected[0].reason, /Skill coverage/);
-      assert.deepEqual(tx.canonicalMessages.slice(0, input.messages.length), input.messages);
-      // A deterministic correction exercises the protocol; it is NOT a new
-      // model-generated summary or evidence of post-fix model quality.
-      assert.equal(tx.accept(result(`fixed-${pass.pass}`, [{ source: 0, summary: all }])), true);
-      conserved(item, entries(tx));
-    }
-  });
-
-  test(`${item.name}: five consecutive disk-equivalent checkpoints retain atomic wording, scope and source without rereads`, () => {
+  test(`${item.name}: recorded incomplete handoffs require source links; five offline compactions preserve authored conditions and references`, () => {
     let history = [user(item.request), ...read(item)];
-    const expected = collectCheckpointSkillExcerpts(history);
     const registry = new ToolRegistry(); registerContextCompactionTool(registry, () => { throw Error('No execution'); });
     const catalog = JSON.stringify(registry.definitions());
+    let expected;
     for (const pass of item.passes) {
       if (pass.stage.user) history.push(user(pass.stage.user));
       const input = setup([history]);
       let tx = new ContextCompactionTransaction(input);
-      const job = tx.job();
-      assert.deepEqual(job.messages[0], fixed);
-      assert.deepEqual(tx.job(), job, 'reading a dispatch cannot mutate the canonical notice/cache prefix');
-      assert.equal(tx.accept(result(`carry-${pass.pass}`, [{ source: 0, summary: all }])), true);
+      const job = tx.job(); assert.deepEqual(job.messages[0], fixed); assert.deepEqual(tx.job(), job);
+      assert.doesNotMatch(job.messages.at(-1).content, /Every ID must|"keep":"all"/);
+      assert.equal(tx.accept(result(`bad-${pass.pass}`, [{ source: 0, summary: pass.summary }])), false);
+      assert.deepEqual(tx.canonicalMessages.slice(0, input.messages.length), input.messages);
+      // This authored fixture tests transport/validation, not model understanding.
+      const handoff = `${pass.stage.note}\n${all(item)}`;
+      assert.equal(tx.accept(result(`fixed-${pass.pass}`, [{ source: 0, summary: handoff }])), true, JSON.stringify(receipt(tx)));
       const saved = JSON.parse(JSON.stringify(tx.incremental.history));
       tx = new ContextCompactionTransaction({ ...input, continuation: saved });
       conserved(item, entries(tx));
-      assert.deepEqual(entries(tx), expected, 'no source/path drift or repeated expansion across compactions/restart');
+      expected ??= entries(tx); assert.deepEqual(entries(tx), expected);
+      for (const rule of item.rubric) assert.ok(receipt(tx).summaries[0].summary.includes(rule.check));
+      assert.ok(!JSON.stringify(receipt(tx).skill_evidence).includes(item.source.content));
       history = JSON.parse(JSON.stringify(tx.incremental.history.slice(-2)));
       assert.equal(JSON.stringify(registry.definitions()), catalog);
     }
   });
-
-  test(`${item.name}: omission of any recorded rubric item's source excerpt is rejected`, () => {
-    const history = [user(item.request), ...read(item)], units = collectCheckpointSkillExcerpts(history);
-    for (const rule of item.rubric) {
-      const missing = units.find(unit => normalize(unit.text).includes(normalize(rule.quote)));
-      assert.ok(missing, rule.id);
-      const tx = new ContextCompactionTransaction(setup([history]));
-      const partial = block({ keep: units.filter(unit => unit.id !== missing.id).map(unit => unit.id), retire: [] });
-      assert.equal(tx.accept(result(rule.id, [{ source: 0, summary: partial }])), false, rule.id);
-      assert.match(receipt(tx).rejected[0].reason, /Unaccounted Skill/);
-      assert.ok(receipt(tx).rejected[0].reason.includes(missing.id));
-    }
-  });
 }
 
-test('native text rendering, forwarded calls, partial reads and actual referenced documents preserve locators', () => {
-  const item = recorded.cases[1];
-  const direct = collectCheckpointSkillExcerpts(read(item));
-  assert.deepEqual(collectCheckpointSkillExcerpts(read(item, `read-${item.name}`, 'text')), direct);
-  assert.deepEqual(collectCheckpointSkillExcerpts(read(item, `read-${item.name}`, 'forwarded')), direct);
-  const fragment = checkpointSkillExcerpts({ path: item.source.path, content: item.source.content.split('\n').slice(179, 187).join('\n'),
-    read: 'range', revision: item.source.sha256, start: 180 });
-  assert.ok(fragment.every(unit => unit.start >= 180 && unit.end <= 187));
-  assert.ok(fragment.some(unit => unit.text.includes('tail_padding')));
-  const ref = { name: 'reference', source: { path: item.source.path.replace('SKILL.md', 'generated-hooks.md'),
-    content: 'Read the actual generated result before attaching it.', sha256: 'reference-revision' } };
-  const combined = collectCheckpointSkillExcerpts([...read(item), ...read(ref)]);
-  assert.ok(combined.some(unit => unit.path === ref.source.path));
-  assert.deepEqual(collectCheckpointSkillExcerpts(read(ref)), [], 'an unrelated document is not promoted to Skill requirements');
+test('file versions, line coverage and source membership are checked without claiming semantic validation', () => {
+  const item = recorded.cases[0], other = structuredClone(item);
+  other.source.sha256 = 'new-revision';
+  const excerpts = collectCheckpointSkillExcerpts([...read(item), ...read(other, 'changed')]);
+  const contract = { excerpts, messages: [], evidenceMessages: new Set() };
+  const check = link => validateCheckpointSkillEvidence(block(`- Before editing, reread the applicable constraints. ${link}`), contract);
+  assert.match(check(checkpointSkillSourceLink(rangeFor(item, item.rubric[0].quote))).issue, /Ambiguous/);
+  const ref = { ...rangeFor(item, item.rubric[0].quote), revision: item.source.sha256 };
+  assert.equal(check(checkpointSkillSourceLink(ref)).issue, undefined);
+  assert.match(check(checkpointSkillSourceLink({ ...ref, revision: 'invented' })).issue, /Unknown/);
+  assert.match(check(checkpointSkillSourceLink({ ...ref, start: 99999, end: 99999 })).issue, /not delivered/);
+  assert.match(check(checkpointSkillSourceLink({ ...ref, path: 'C:/other/SKILL.md' })).issue, /Unknown/);
+  assert.match(validateCheckpointSkillEvidence(block('- Missing source.'), contract).issue, /source line link/);
+  assert.match(validateCheckpointSkillEvidence(block('{"keep":"all","retire":[]}'), contract).issue, /Markdown/);
+  assert.deepEqual(validateCheckpointSkillEvidence(block('none: User ended the workflow; no future execution remains.'), contract), { excerpts: [] });
 });
 
-test('unknown IDs, source substitutions and source-content tampering do not pass as retained requirements', () => {
-  const [item, other] = recorded.cases, history = [user(item.request), ...read(item)];
-  const tx = new ContextCompactionTransaction(setup([history]));
-  assert.equal(tx.accept(result('wrong-source', [{ source: 0, summary: block({ keep: collectCheckpointSkillExcerpts(read(other)).map(x => x.id), retire: [] }) }])), false);
-  assert.match(receipt(tx).rejected[0].reason, /Unknown/);
-  assert.equal(tx.accept(result('good', [{ source: 0, summary: all }])), true);
-  for (const change of ['text', 'path', 'revision', 'section']) {
-    const pair = structuredClone(tx.incremental.history.slice(-2));
-    const data = JSON.parse(pair[1].content), unit = data.skill_evidence[0].excerpts[0];
-    if (change === 'section') unit.section = ['Changed applicability'];
-    else if (change === 'path' || change === 'revision') data.skill_evidence[0].origins[0][change] = 'Changed';
-    else unit[change] = 'Changed';
+test('native/forwarded reads, partial text archives and reference reads in reverse order track only delivered lines', () => {
+  const item = recorded.cases[1];
+  assert.deepEqual(collectCheckpointSkillExcerpts(read(item, 'read', 'text')), collectCheckpointSkillExcerpts(read(item, 'read')));
+  assert.deepEqual(collectCheckpointSkillExcerpts(read(item, 'read', 'forwarded')), collectCheckpointSkillExcerpts(read(item, 'read')));
+  const pair = read(item, 'archive', 'text');
+  const prefix = pair[1].content.slice(0, pair[1].content.indexOf('\n\n[content]\n') + 12) + 'first complete line\npartial condition';
+  pair[1].content = JSON.stringify({ archived: true, format: 'text', locator: 'tool-result://s/t/archive', originalChars: 20000 }) + '\n\n' + prefix;
+  const actual = collectCheckpointSkillExcerpts(pair);
+  assert.equal(actual[0].text, 'first complete line\n'); assert.equal(actual[0].end, 1);
+  assert.equal(actual[1].start, 2); assert.equal(actual[1].unresolved, 'tool-result://s/t/archive');
+  const reference = { name: 'reference', source: { path: item.source.path.replace('SKILL.md', 'resources.md'), content: 'Use the shared queue.', sha256: 'ref-version' } };
+  assert.equal(collectCheckpointSkillExcerpts(read(reference)).length, 0);
+  assert.ok(collectCheckpointSkillExcerpts([...read(reference), ...read(item)]).some(e => e.path === reference.source.path));
+  const tx = new ContextCompactionTransaction(setup([[...read(item), ...read(reference)]]));
+  const summary = block(`- Before a heavy task, reread the resource policy. ${checkpointSkillSourceLink({ path: reference.source.path, start: 1, end: 1 })}`);
+  assert.equal(tx.accept(result('reference-only', [{ source: 0, summary }])), true);
+  const revised = structuredClone(reference); revised.source.sha256 = 'ref-version-2';
+  const retained = collectCheckpointSkillExcerpts([...tx.incremental.history.slice(-2), ...read(revised, 'reread-reference')]);
+  assert.deepEqual(new Set(retained.map(e => e.revision)), new Set(['ref-version', 'ref-version-2']), 'a known support file remains tracked after its parent text is compacted');
+  const ranged = read(item); ranged[1].content = JSON.stringify({ path: item.source.path, sha256: item.source.sha256, start_line: 180, content: 'one\ntwo\n' });
+  assert.deepEqual(collectCheckpointSkillExcerpts(ranged).map(e => [e.start, e.end]), [[180, 181]]);
+});
+
+test('saved compact references reject tampered ranges, versions and text', () => {
+  const item = recorded.cases[0], tx = new ContextCompactionTransaction(setup([[user(item.request), ...read(item)]]));
+  assert.equal(tx.accept(result('good', [{ source: 0, summary: all(item) }])), true);
+  for (const field of ['start', 'revision', 'text']) {
+    const pair = structuredClone(tx.incremental.history.slice(-2)); const data = JSON.parse(pair[1].content);
+    if (field === 'revision') data.skill_evidence[0].origins[0].revision = 'forged';
+    else data.skill_evidence[0].excerpts[0][field] = field === 'text' ? 'forged source' : 99999;
     pair[1].content = JSON.stringify(data);
     assert.throws(() => collectCheckpointSkillExcerpts(pair), /Invalid saved checkpoint Skill evidence/);
   }
-});
-
-test('retirements require model decisions plus quoted source evidence; future conditions cannot silently disappear', () => {
-  const item = recorded.cases[0], initial = [user(item.request), ...read(item)];
-  const units = collectCheckpointSkillExcerpts(initial);
-  const conditional = units.find(unit => unit.text.includes('具体设计版本'));
-  assert.ok(conditional);
-  const stop = '取消服装设计任务，只解释之前的设计。';
-  const history = [...initial, user(stop)], input = setup([history]);
-  const attempt = retirement => {
-    const tx = new ContextCompactionTransaction(input);
-    const accepted = tx.accept(result('retire', [{ source: 0, summary: block({ keep: 'all', retire: [retirement] }) }]));
-    return { accepted, tx };
-  };
-  for (const bad of [
-    { id: conditional.id, kind: 'out_of_scope', reason: 'No longer applies.' },
-    { id: conditional.id, kind: 'out_of_scope', reason: '', evidence: { message: 4, quote: stop } },
-    { id: conditional.id, kind: 'out_of_scope', reason: 'Cancelled.', evidence: { message: 4, quote: 'Invented confirmation' } },
-    { id: conditional.id, kind: 'completed_once', reason: 'Completed.', evidence: { message: 4, quote: stop } },
-    { id: conditional.id, kind: 'out_of_scope', reason: 'Cancelled.', evidence: { message: 3, quote: '具体设计版本' } },
-  ]) assert.equal(attempt(bad).accepted, false);
-  const valid = { id: conditional.id, kind: 'out_of_scope', reason: 'The user ended the design workflow.', evidence: { message: 4, quote: stop } };
-  const { accepted, tx } = attempt(valid);
-  assert.equal(accepted, true);
-  assert.ok(!entries(tx).some(unit => unit.id === conditional.id));
-  const next = new ContextCompactionTransaction(setup([tx.incremental.history.slice(-2)]));
-  assert.equal(next.accept(result('next', [{ source: 0, summary: all }])), true);
-  assert.deepEqual(entries(next), entries(tx), 'an explicitly retired item does not resurrect');
-});
-
-for (const format of ['incremental', 'ordered']) test(`${format}: staged evidence survives merge and restart without cross-source inheritance`, () => {
-  const input = setup(recorded.cases.map(item => [user(item.request), ...read(item)]), format);
-  let tx = new ContextCompactionTransaction(input);
-  assert.equal(tx.partition(), true);
-  assert.equal(tx.accept(result('child-a', [{ source: 0, summary: all }], format)), false);
-  if (format === 'incremental') tx = new ContextCompactionTransaction({ ...input, continuation: structuredClone(tx.incremental.history) });
-  assert.equal(tx.accept(result('child-b', [{ source: 1, summary: all }], format)), false);
-  assert.equal(tx.job().id, 'root');
-  assert.equal(tx.accept(result('parent', [{ source: 0, summary: all }, { source: 1, summary: all }], format)), true);
-  const evidence = checkpointSkillReceiptEvidence({ role: 'tool', toolCallId: 'final', content: JSON.stringify({ complete: true,
-    ...(format === 'incremental' ? receipt(tx) : tx.receiptEvidence) }) });
-  for (const [index, item] of recorded.cases.entries()) {
-    const own = evidence.find(row => row.source === index).excerpts;
-    conserved(item, own);
-    assert.ok(own.every(unit => unit.path === item.source.path));
-  }
-});
-
-test('partial acceptance preserves unrelated work and cannot use another source as retirement evidence', () => {
-  const item = recorded.cases[0], stop = 'Stop the other task.';
-  const input = setup([[user(item.request), ...read(item)], [user(stop)]]);
-  const tx = new ContextCompactionTransaction(input);
-  assert.equal(tx.accept(result('part', [{ source: 0, summary: item.passes[4].summary }, { source: 1, summary: 'Other task stopped.' }])), false);
-  assert.deepEqual(receipt(tx).accepted, [1]);
-  const id = collectCheckpointSkillExcerpts(read(item))[0].id;
-  assert.equal(tx.accept(result('cross', [{ source: 0, summary: block({ keep: 'all', retire: [{ id, kind: 'out_of_scope', reason: 'Stopped.', evidence: { message: 4, quote: stop } }] }) }])), false);
-  assert.equal(tx.accept(result('own', [{ source: 0, summary: all }])), true);
-  assert.equal(tx.incremental.value.summaries[1], 'Other task stopped.');
 });
 
 test('emergency projection retains complete Skill excerpts and still archives ordinary large results', () => {
@@ -202,15 +154,17 @@ test('emergency projection retains complete Skill excerpts and still archives or
 test('committed ordered receipts retain exact Skill sources across five compactions', () => {
   const item = recorded.cases[1];
   let history = [user(item.request), ...read(item)];
-  const original = collectCheckpointSkillExcerpts(history);
+  let original;
   for (let round = 0; round < 5; round++) {
     const tx = new ContextCompactionTransaction(setup([history], 'ordered'));
-    const candidate = result(`ordered-${round}`, [{ source: 0, summary: all }], 'ordered');
+    const candidate = result(`ordered-${round}`, [{ source: 0, summary: all(item) }], 'ordered');
     assert.equal(tx.accept(candidate), true);
     history = [{ role: 'assistant', content: '', toolCalls: candidate.toolCalls },
       { role: 'tool', toolCallId: candidate.toolCalls[0].id,
         content: JSON.stringify({ ...tx.receiptEvidence, summarized_turns: ['turn-0'] }) }];
+    original ??= collectCheckpointSkillExcerpts(history);
     assert.deepEqual(collectCheckpointSkillExcerpts(history), original);
+    conserved(item, original);
   }
 });
 
@@ -231,7 +185,7 @@ for (const ordered of [false, true]) test(`retained Skill evidence is included i
     },
     async *stream(request) {
       assert.ok(request.messages.some(m => m.name === 'context_pressure'), 'oversized final context is never dispatched');
-      const call = result(`budget-${++attempts}`, [{ source: 0, summary: all }], ordered ? 'ordered' : 'incremental').toolCalls[0];
+      const call = result(`budget-${++attempts}`, [{ source: 0, summary: all(item) }], ordered ? 'ordered' : 'incremental').toolCalls[0];
       yield { protocol: 'bush.model_event.v1', requestId: request.requestId, sequence: 0, kind: 'tool_call_delta', createdAt: now,
         index: 0, toolCallId: call.id, nameDelta: call.name, argumentsDelta: call.argumentsText };
       yield { protocol: 'bush.model_event.v1', requestId: request.requestId, sequence: 1, kind: 'response_completed', createdAt: now, finishReason: 'tool_calls' };

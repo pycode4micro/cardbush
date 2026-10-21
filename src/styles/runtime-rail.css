@@ -809,6 +809,17 @@ body.queue-reordering :is(webview, iframe) { pointer-events: none !important; }
     box-shadow var(--panel-motion-duration) var(--panel-motion-ease);
 }
 
+/* Bridge the toolbar-to-panel gap so slow pointer travel cannot close a preview. */
+[data-work-summary-toggle][data-summary-preview="true"] { position: relative; }
+[data-work-summary-toggle][data-summary-preview="true"]::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 24px;
+}
+
 .conversation-work-summary.soft-panel-hidden {
   opacity: 0;
   transform: translateX(14px) scale(0.985);
@@ -848,11 +859,36 @@ body.queue-reordering :is(webview, iframe) { pointer-events: none !important; }
   overflow: hidden;
 }
 
+.work-summary-plan .runtime-plan-detail {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  animation: none;
+}
+
+.work-summary-plan .runtime-plan-detail > p {
+  max-height: 100px;
+  overflow: auto;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+
+.work-summary-plan .runtime-plan-detail > ol > li {
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.work-summary-plan .runtime-detail-heading strong {
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
 .work-summary-overview {
   height: 100%;
   min-height: 0;
   padding: 17px 18px 18px;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   scrollbar-width: none;
 }
 

@@ -114,7 +114,7 @@ function identity(ordinal) {
   };
 }
 
-test('plan schema and decoder agree on action requirements, optional defaults and unknown fields', async () => {
+test('portable plan envelope describes action rules and the decoder enforces them before dispatch', async () => {
   const registry = new ToolRegistry(); registerCoordinationTools(registry, new CoordinationStore());
   const tool = registry.resolve('update_task_plan'), nodes = [{ id: 'one', step: 'Inspect', status: 'pending' }];
   const valid = [{ nodes }, { action: 'replace', nodes }, { nodes, explanation: '' }, { nodes, active: false },
@@ -131,9 +131,15 @@ test('plan schema and decoder agree on action requirements, optional defaults an
     assert.equal(parsed.issues, undefined, JSON.stringify({ input, issues: parsed.issues }));
     assert.doesNotThrow(() => tool.decodeInput(input));
   }
+  const actionOnly = [{}, { action: 'replace' }, { action: 'get', nodes }, { action: 'get', expected_revision: 0 },
+    { action: 'patch', updates: [] }, { action: 'patch', expected_revision: 0, nodes }, { nodes, updates: [] }];
+  assert.equal(tool.definition.inputSchema.anyOf, undefined);
+  assert.match(tool.definition.inputSchema.properties.action.description, /replace: requires nodes/);
+  assert.match(tool.definition.inputSchema.properties.action.description, /patch: requires expected_revision/);
   for (const input of invalid) {
     const parsed = await fromJsonSchema(tool.definition.inputSchema)['~standard'].validate(input);
-    assert.ok(parsed.issues, JSON.stringify(input));
+    if (actionOnly.some(value => JSON.stringify(value) === JSON.stringify(input))) assert.equal(parsed.issues, undefined);
+    else assert.ok(parsed.issues, JSON.stringify(input));
     assert.throws(() => tool.decodeInput(input), JSON.stringify(input));
   }
   assert.equal(tool.decodeInput({ nodes }).explanation, '');

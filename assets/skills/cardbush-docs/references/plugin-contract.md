@@ -26,6 +26,8 @@
 
 同时创建实际图标 `assets/logo.svg` 和 `skills/example-helper/SKILL.md`。后者至少具有 `name`、`description` 的 YAML frontmatter 和具体任务指令。替换示例 ID、作者和描述为实际信息，不使用不存在的图标路径。
 
+需要运行环境的包，在其 Skill 中链接依赖声明和适用条件，让接收端按实际环境完成配置；打包与验证建议见 [插件管理](plugin-management.md)。不将私有配置、源机虚拟环境或固定主机路径作为可移植包的一部分。
+
 - 当前 name 校验为 `^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`，并拒绝 Windows 保留路径名。插件身份和安装目录由清单 name 决定，来源文件夹或 ZIP 名称可以带版本号，无需改名。新包建议使用小写连字符命名。
 - 根清单提供身份信息，固定 `skills/` 和 `mcp.json` 提供标准能力；`extensions.com.openai` 提供展示信息与 Hooks。内联 OpenAI 对象存在时，完整替代 `.codex-plugin/plugin.json` 的扩展设置；否则使用该旧文件作扩展回退。扩展不能覆盖根清单身份，也不能改变标准 Skills/MCP 的发现位置。
 - 标准 `mcp.json` 声明 `$schema: https://agent-plugins.org/schemas/1.0.0/mcp.schema.json`，在 `mcpServers` 中配置服务，每项显式指定 `type: stdio` 或 `type: streamable-http`。

@@ -216,6 +216,56 @@ test('skill examples, escaped links, images and unrelated paths remain editable 
     assert.equal(parts.map(part => part.text).join(''), value);
   }
 });
+
+test('plugin Skill tokens preserve the Runtime invocation, arguments and following references', async () => {
+  const { parsePluginCommandInvocation } = await import('../packages/bush-runtime/dist/pluginCommandTools.js');
+  const command = { id: 'baiying-replay:baiying-replay', name: 'baiying-replay', kind: 'skill', path: 'C:\\plugins\\baiying-replay\\SKILL.md' };
+  const skill = { name: command.id, displayName: '百应回放', path: 'c:/plugins/baiying-replay/SKILL.md' };
+  const link = '[reference](<D:/skills/reference/SKILL.md>)';
+  for (const prefix of ['/', '$']) {
+    for (const id of [command.id, command.name]) {
+      const value = ` \n${prefix}${id} "KST 1606"\n按原声剪辑 ${link}`;
+      const parts = skillRefs.skillPromptParts(value, [skill], [command]);
+      const tokens = parts.filter(part => part.skillReference);
+      assert.equal(tokens.length, 2);
+      assert.equal(tokens[0].text, prefix + id);
+      assert.equal(tokens[0].skill, skill, 'catalog paths normalize without guessing a same-name Skill');
+      assert.equal(tokens[0].skillCommand, command);
+      assert.equal(tokens[0].skillReference.title, command.name);
+      const copied = parts.map(part => part.text).join('');
+      assert.equal(copied, value);
+      assert.deepEqual(parsePluginCommandInvocation(copied), { command: id, arguments: `"KST 1606"\n按原声剪辑 ${link}` });
+      for (const part of parts) assert.equal(value.slice(part.start, part.start + part.text.length), part.text);
+    }
+  }
+});
+
+test('plugin Skill rendering follows the available command catalog without rewriting saved drafts', () => {
+  const command = { id: 'demo:review', name: 'review', kind: 'skill', path: 'C:/plugins/review/SKILL.md' };
+  const value = '/demo:review ';
+  const wrongCopy = { name: command.id, displayName: 'Other installation', path: 'D:/other/review/SKILL.md' };
+  assert.equal(skillRefs.skillPromptParts(value, [wrongCopy])[0].skillReference, undefined);
+  const loaded = skillRefs.skillPromptParts(value, [wrongCopy], [command]);
+  assert.equal(loaded[0].skillReference.title, 'review', 'the command catalog alone can render a selected Skill');
+  assert.equal(loaded[0].skill, undefined, 'a different path must not supply its title or logo');
+  assert.equal(loaded.map(part => part.text).join(''), value);
+  assert.equal(skillRefs.skillPromptParts(value, [wrongCopy], [])[0].text, value, 'removed commands remain editable text');
+  assert.equal(skillRefs.skillPromptParts('/demo:review', [], [command])[0].skillCommand.id, command.id);
+});
+
+test('ordinary commands, partial names, ambiguous aliases and literal examples are not Skill tokens', () => {
+  const skill = { id: 'demo:review', name: 'review', kind: 'skill', path: 'C:/plugins/review/SKILL.md' };
+  const commands = [skill, { id: 'other:review', name: 'review', kind: 'command' }, { id: 'demo:run', name: 'run', kind: 'command' }];
+  for (const value of ['/demo:rev', '/demo:review-more ', '/demo:review/no', '/demo:review.', '/unknown:review ',
+    '/review args', '/demo:run args', '说明 /demo:review', '`/demo:review`', '```text\n/demo:review\n```',
+    '\\/demo:review', 'https://example.test/demo:review', '/demo:review（说明）']) {
+    const parts = skillRefs.skillPromptParts(value, [], commands);
+    assert.equal(parts.some(part => part.skillReference), false, value);
+    assert.equal(parts.map(part => part.text).join(''), value);
+  }
+  assert.equal(skillRefs.skillPromptParts('/demo:review', [], commands)[0].skillCommand, skill, 'qualified IDs still disambiguate');
+});
+
 const browser = { kind: 'browser', tabId: 'tab-1', url: 'https://example.test/a?term=中文&next=(x)#section', title: '已打开的网页' };
 const raw = { messageId: user.messageId, turnId: user.turnId, turnSequence: 1, messageIndex: 0, createdAt: '2026-09-12T00:00:00Z', message: { role: 'user', content: '完整原文\n' + '内容'.repeat(6000) } };
 const snapshot = { sessionId: 'current', supersededMessageIds: [], turns: [{ turnId: user.turnId, messages: [raw, { ...raw, messageId: 'assistant', message: { role: 'assistant', content: 'Do not attach this response.' } }] }] };

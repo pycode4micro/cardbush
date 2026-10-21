@@ -47,17 +47,17 @@ assert.match(
 );
 assert.match(
   appSource,
-  /--composer-surface-center-x[\s\S]*?surfaceRect\.left \+ surfaceRect\.width \/ 2 - chatBodyRect\.left/,
+  /const surfaceRect = composerLayoutBox\(composerSurface, chatBody\)[\s\S]*?--composer-surface-center-x[\s\S]*?surfaceRect\.left \+ surfaceRect\.width \/ 2/,
   'The bottom button must use the measured composer center instead of viewport-centered pixels',
 );
 assert.match(
   appSource,
-  /--composer-surface-top[\s\S]*?surfaceRect\.top - chatBodyRect\.top/,
+  /--composer-surface-top[\s\S]*?Math\.max\(0, surfaceRect\.top\)/,
   'The bottom button must use the measured composer top instead of a hard-coded bottom offset',
 );
 assert.match(
   appSource,
-  /--composer-content-top[\s\S]*?visibleTop - chatBodyRect\.top/,
+  /composerLayoutBox\(firstVisibleElement, chatBody\)\.top[\s\S]*?--composer-content-top[\s\S]*?Math\.max\(0, visibleTop\)/,
   'The bottom button must stay above the complete composer content, including runtime bars.',
 );
 assert.match(
@@ -99,17 +99,17 @@ assert.match(
 );
 assert.match(
   appSource,
-  /trace-outer-resize-follow[\s\S]*?scrollMotion\.move\(scroller, targetScrollTop, 'follow'\)/,
-  'An outer layout change must ease toward the real bottom while automatic follow is active',
+  /reconcileTranscriptRef\.current\(\)[\s\S]*?trace-outer-resize-follow/,
+  'ResizeObserver uses the same synchronous layout transaction as React commits',
 );
 assert.match(
   appSource,
-  /scrollMotion\.move\(scroller, scroller\.scrollTop \+ delta, 'follow'\)/,
-  'Streaming content must ease into view instead of snapping the reading surface',
+  /useLayoutEffect\(\(\) => \{\s*if \(!loading && !showWelcome\) reconcileTranscriptLayout\(\)/,
+  'Content commits settle reserve and viewport before paint',
 );
 assert.match(
   appSource,
-  /const desiredTop = submittedUserReadingOffset\([\s\S]*?itemRect.height[\s\S]*?--submitted-user-reading-anchor[\s\S]*?scrollMotion\.move\(scroller, nextTop, 'submission'\)/,
+  /const desiredTop = submittedUserReadingOffset\([\s\S]*?itemRect.height[\s\S]*?--submitted-user-reading-anchor[\s\S]*?scrollMotion\.move\(scroller, nextTop, 'submission',/,
   'Submission positioning uses available viewport and bubble height, preserving context above it',
 );
 assert.match(
@@ -119,13 +119,13 @@ assert.match(
 );
 assert.match(
   appSource,
-  /isTurnGuidanceMessage\(message\)[\s\S]*?ensureMessageBottomVisible\(message.id\)[\s\S]*?else \{\s*assistantStageAnchorRef.current = message.renderKey \?\? message.id/,
+  /isTurnGuidanceMessage\(message\)[\s\S]*?reconcileTranscriptLayout\(\)[\s\S]*?else \{\s*assistantStageAnchorRef.current = message.renderKey \?\? message.id/,
   'Only a normal submission establishes a new reading anchor; guidance extends the current turn',
 );
 assert.match(
   appSource,
   /const releaseAssistantStageReservation = useCallback[\s\S]*?assistantStageAnchorRef.current = ''[\s\S]*?if \(event\.deltaY !== 0\) \{\s*releaseAssistantStageReservation\(\)/,
-  'Any manual wheel movement must release the synthetic response height instead of exposing blank scroll content',
+  'Manual gestures retire response space without taking ownership of the reading position',
 );
 assert.match(
   spacerSource,
@@ -163,7 +163,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /cardbushPreserveScroll[\s\S]*?userDetachedFromBottomRef\.current[\s\S]*?!autoFollowStreamRef\.current/,
+  /cardbushPreserveScroll[\s\S]*?autoFollowStreamRef\.current[\s\S]*?!userDetachedFromBottomRef\.current/,
   'Outer resize correction must not override explicit user or disclosure scrolling',
 );
 assert.match(

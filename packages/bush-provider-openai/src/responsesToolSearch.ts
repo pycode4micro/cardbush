@@ -1,6 +1,7 @@
 import type { FunctionTool, ResponseInputItem, Tool } from "openai/resources/responses/responses";
 import { toolDefinitionSchema, type ModelRequest, type ToolDefinition } from "@cardbush/bush-protocol";
-import { mcpDiscoveryResults, withToolDisplayTitle } from "@cardbush/bush-runtime";
+import { mcpDiscoveryResults } from "@cardbush/bush-runtime";
+import { providerToolInputSchema } from './toolSchemas.js';
 import { replayToolSearchMode, type ResponsesToolSearchMode } from "./responsesReplay.js";
 import { providerToolName } from "./toolNames.js";
 import { discoveryReceipt } from './modelInputs.js';
@@ -25,7 +26,7 @@ export function historicalToolSearchMode(request: ModelRequest): ResponsesToolSe
 
 export function responseFunctionTool(tool: ToolDefinition): FunctionTool {
   return { type: "function", name: providerToolName(tool.name), description: tool.description,
-    parameters: withToolDisplayTitle(tool).inputSchema, strict: false };
+    parameters: providerToolInputSchema(tool), strict: false };
 }
 
 export function responseTools(request: ModelRequest, mode: ResponsesToolSearchMode): Tool[] | undefined {

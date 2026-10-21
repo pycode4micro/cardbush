@@ -8,7 +8,7 @@ import {
   CircleStop,
   TriangleAlert,
 } from 'lucide-react';
-import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState, type HTMLAttributes } from 'react';
 
 import {
   fetchSubagentTask,
@@ -37,6 +37,8 @@ import { workSummaryOutputs } from './workSummaryOutputs';
 import { TeamWorkSummary } from '../team/TeamWorkSummary';
 import { isEmployeeTask } from '../team/employeePresentation';
 import { withConversationAgentNames } from '../team/toolAgentActivity';
+import { conversationTaskPlan } from './conversationTaskPlan';
+import { RuntimeTaskPlan } from './TurnRuntimeDetails';
 const subagentTaskPageSize = 3;
 const outputPageSize = 5;
 const noPathAliases: ProjectPathAlias[] = [];
@@ -51,6 +53,10 @@ export function ConversationWorkSummary({
   pathAliases = noPathAliases,
   subagentObservabilityAvailable = false,
   softVisible = true,
+  running = false,
+  activeTurnId = '',
+  hoverProps,
+  keepOpenUntil,
 }: {
   language: AppLanguage;
   sessionId: string;
@@ -61,6 +67,10 @@ export function ConversationWorkSummary({
   pathAliases?: ProjectPathAlias[];
   subagentObservabilityAvailable?: boolean;
   softVisible?: boolean;
+  running?: boolean;
+  activeTurnId?: string;
+  hoverProps?: HTMLAttributes<HTMLElement>;
+  keepOpenUntil?: (completion: Promise<unknown>) => void;
 }) {
   const host = useContext(ConversationHostContext);
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
@@ -83,6 +93,8 @@ export function ConversationWorkSummary({
     [messages, changeReports, workspaceRoot, pathAliases],
   );
   const recentOutputs = outputsExpanded ? outputs : outputs.slice(0, outputPageSize);
+  const plan = useMemo(() => conversationTaskPlan(messages, running ? activeTurnId : ''),
+    [messages, running, activeTurnId]);
 
   useEffect(() => {
     setVisibleSubagentTaskCount(subagentTaskPageSize);
@@ -91,6 +103,7 @@ export function ConversationWorkSummary({
 
   return (
     <aside
+      {...hoverProps}
       className={`conversation-work-summary soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       aria-hidden={!softVisible}
     >
@@ -108,6 +121,10 @@ export function ConversationWorkSummary({
               </div>
             </header>
 
+            {plan && <div className="work-summary-section work-summary-plan">
+              <RuntimeTaskPlan plan={plan} language={language} running={running} />
+            </div>}
+
             <div className="work-summary-section outputs">
               <div className="work-summary-section-title">
                 <FileOutput size={14} />
@@ -121,7 +138,10 @@ export function ConversationWorkSummary({
                       type="button"
                       key={output.key}
                       title={output.path.startsWith('data:') ? output.name : output.path}
-                      onContextMenu={host ? undefined : event => openFileContextMenu(event, output.path, { language })}
+                      onContextMenu={host ? undefined : event => {
+                        const completion = openFileContextMenu(event, output.path, { language });
+                        if (completion) keepOpenUntil?.(completion);
+                      }}
                       onClick={() => {
                         if (host) { if (output.change && output.type === 'document') onOpenChangeReview(output.change.path); else host.openFile(output.path); return; }
                         if (output.type !== 'document') openMediaInspector(output.path, output.type, output.name);

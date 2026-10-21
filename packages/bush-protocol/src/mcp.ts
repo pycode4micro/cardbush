@@ -140,6 +140,9 @@ export const mcpSnapshotResultSchema = z.object({
   pendingRevision: z.number().int().positive().optional(),
   // Services affected by an uncommitted update; absent on older runtimes.
   pendingServerIds: z.array(z.string().min(1)).optional(),
+  // Accepted configuration; only optional connections remain. Their readiness
+  // is still pending and must not be mistaken for a published tool catalog.
+  backgroundConnectionPending: z.boolean().optional(),
   applicationError: z.string().optional(),
   servers: z.array(z.object({
     id: z.string().min(1),

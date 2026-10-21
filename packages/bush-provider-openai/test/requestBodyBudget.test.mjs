@@ -99,7 +99,17 @@ for (const format of ['ordered', 'incremental']) test(`${format}: byte pressure 
     inputMessages: [{ messageId: 'current', message: { role: 'user', content: 'Continue.' } }],
     metadata: { contextWindowTokens: 400000 } });
   assert.equal(result.payload.status, 'completed', JSON.stringify(result.payload));
-  assert.ok(requests.length >= 5, 'three source fragments, consolidation, then normal response');
+  // Batches are bounded by bytes, not by turn count: two images may share one
+  // fragment. Check complete source delivery rather than requiring extra calls.
+  const imageMessages = body => body.input.filter(item => Array.isArray(item.content) &&
+    item.content.some(part => part.type === 'input_image'));
+  const fragments = requests.filter(body => imageMessages(body).length);
+  assert.ok(fragments.length >= 2, 'oversized history must be split before dispatch');
+  const sourceTexts = fragments.flatMap(imageMessages).flatMap(item => item.content)
+    .filter(part => part.type === 'input_text').map(part => part.text);
+  assert.deepEqual(sourceTexts.sort(), ['Inspect image 0', 'Inspect image 1', 'Inspect image 2'],
+    'every source image is delivered exactly once to the source summaries');
+  assert.ok(requests.length >= fragments.length + 2, 'source summaries are consolidated before the normal response');
   assert.ok(counts.length > 0, 'also exercises the provider counting path');
   const events = host.events('bytes', 'current');
   const started = events.find(event => event.kind === 'context_compaction_started');

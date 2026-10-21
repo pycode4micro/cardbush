@@ -5,6 +5,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   for (const file of ['src/features/inspector/inspectorWorkspace.css','src/features/components/components.css','src/features/components/welcomeLayout.css']) await window.webContents.insertCSS(fs.readFileSync(path.join(root,file),'utf8'));
   await run(`
     window.componentEvents=[];window.componentReports=[];
+    // The bookmark fixture uses an embedded favicon; external requests stay forbidden.
+    localStorage.setItem('cardbush.browser_site_icons.v1',JSON.stringify([['https://example.test',document.createElement('canvas').toDataURL()]]));
     addEventListener('message',e=>{if(e.data?.test==='component-ready')componentReports.push(e.data);});
     window.componentHost={revision:'session-a',sessionId:'session-a',language:'zh',running:false,
       fill:text=>componentEvents.push(['fill',text]),send:async text=>{componentEvents.push(['send',text]);},openBrowser:url=>componentEvents.push(['browser',url])};
@@ -47,12 +49,23 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('componentReports[0].error'),'CAPABILITY_DENIED');
   assert.equal(await run('componentEvents.length'),1);
   await run(`
-    window.canvasSnapshot={version:1,revision:0,items:[{...component,id:'canvas-a',html:'<p>Canvas A</p>'},{...component,id:'canvas-b',title:'Second',order:1,html:'<p>Canvas B</p>'}]};
+    componentReports=[];
+    localStorage.setItem('cardbush.component-state.canvas-a',JSON.stringify({draft:'live component draft'}));
+    window.canvasSnapshot={version:1,revision:0,items:[{...component,id:'canvas-a',html:componentHtml,allowActions:true},{...component,id:'canvas-b',title:'Second',order:1,html:'<p>Canvas B</p>'}]};
     views.saveComponents(canvasSnapshot,0);
     window.showComponents=()=>renderView(h(views.HtmlComponentContext.Provider,{value:componentHost},h(views.ComponentsApp,{language:'zh'})));
     showComponents();
   `);
   await until('document.querySelectorAll(".html-component-frame").length===2','component canvas');
+  await until('componentReports.length>0','gallery HTML can render and initialize its SDK');
+  assert.equal(await run('componentReports[0].error'),'INACTIVE_SURFACE','automatic preview script cannot write live component state');
+  const previewGuest=window.webContents.mainFrame.framesInSubtree.find(frame=>frame.url==='about:srcdoc');
+  assert.equal(await previewGuest.executeJavaScript('cardbush.context'),null,'gallery does not expose active conversation context');
+  for (const [command,args] of [['conversation.send',{text:'preview'}],['composer.fill',{text:'preview'}],['browser.open',{url:'https://example.test/'}]]) {
+    assert.equal(await previewGuest.executeJavaScript(`cardbush.invoke(${JSON.stringify(command)},${JSON.stringify(args)}).then(()=>"bad",e=>e.message)`),'INACTIVE_SURFACE',command+' is blocked in gallery');
+  }
+  assert.equal(await run('componentEvents.length'),1,'gallery scripts do not dispatch conversation or browser actions');
+  assert.equal(await run('JSON.parse(localStorage.getItem("cardbush.component-state.canvas-a")).draft'),'live component draft');
   await run(`
     window.outerCancelCount=0;
     renderView(h('dialog',{className:'cancel-test-parent',ref:node=>{if(node&&!node.open)node.showModal()},
@@ -110,8 +123,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('document.querySelector(".inspector-bookmark-button").click();');
   await until('document.querySelector(".inspector-bookmark-button").getAttribute("aria-pressed")==="true"','bookmark saved');
   await run(`renderView(h(views.InspectorActions,{language:'zh',filesAvailable:false,shadowUnavailableReason:'',onOpenFiles:()=>{},onOpenShadow:()=>{},onOpenBrowser:()=>{},onAddPage:()=>{},onMultiPage:()=>{},onOpenBookmark:url=>componentEvents.push(['bookmark',url])}));`);
-  await until('document.querySelector(".inspector-bookmark-entry")?.textContent==="Example"','bookmark in empty page');
-  await run('document.querySelector(".inspector-bookmark-entry").click();');
+  await until('!!document.querySelector("[data-site-view=bookmarks]")','bookmark collection entry');
+  await run('document.querySelector("[data-site-view=bookmarks]").click()');
+  await until('document.querySelector(".inspector-bookmark-link strong")?.textContent==="Example"','bookmark in empty page');
+  await run('document.querySelector(".inspector-bookmark-link").click();');
   assert.deepEqual(await run('componentEvents.at(-1)'),['bookmark','https://example.test/a']);
   await run(`
     window.tileTabs=['a','b'].map(id=>({id,kind:'resource',detail:{target:'about:blank',title:id}}));

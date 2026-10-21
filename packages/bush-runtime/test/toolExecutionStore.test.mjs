@@ -43,6 +43,32 @@ test("model text survives restart independently of native result data", (t) => {
   reopened.close();
 });
 
+test('image lookup uses explicit native receipts without granting paths from text, arguments or failed tools', t => {
+  const root = temporaryRoot(t);
+  const image = { ...artifact(), path: join(root, 'capture.png') };
+  const variants = [
+    [{ artifacts: [image] }, true],
+    [{ structuredContent: { artifacts: [image] } }, true],
+    [{ mcp: { name: 'mcp__fixture__capture' }, result: { structuredContent: { artifacts: [image] } } }, true],
+    [{ content: [{ type: 'text', text: JSON.stringify({ artifacts: [image] }) }] }, false],
+    [{ path: image.path }, false],
+    [{ result: { artifacts: [image] }, calls: 1 }, false],
+    [{ artifacts: [{ ...image, type: 'file' }] }, false],
+    [{ isError: true, artifacts: [image] }, false],
+  ];
+  const store = new ToolExecutionStore();
+  for (const [index, [result, allowed]] of variants.entries()) {
+    const sessionId = `session_${index}`;
+    store.record({ ...toolCall(), argumentsText: JSON.stringify({ artifacts: [image] }) }, { ...identity(), sessionId },
+      outcome({ result, workspaceChanges: [] }), JSON.stringify({ artifacts: [image] }));
+    assert.equal(store.hasImageArtifact(sessionId, image.path), allowed, `variant ${index}`);
+    assert.equal(store.hasImageArtifact(sessionId, join(root, 'other.png')), false);
+    assert.equal(store.hasImageArtifact(sessionId, 'capture.png'), false);
+  }
+  assert.equal(store.hasImageArtifact('other_session', image.path), false);
+  if (process.platform === 'win32') assert.equal(store.hasImageArtifact('session_0', image.path.toUpperCase().replaceAll('\\', '/')), true);
+});
+
 test("rejects conflicting identities and duplicate Runtime workspace changes", () => {
   const store = new ToolExecutionStore({ now: () => NOW });
   store.record(toolCall(), identity(), outcome());

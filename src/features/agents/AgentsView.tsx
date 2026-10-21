@@ -1,4 +1,4 @@
-import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
+import type { UserPromptInput } from '@cardbush/bush-protocol';
 import { createPortal } from 'react-dom';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Folder, LoaderCircle, Monitor, Plus, RefreshCw, Server, Settings } from 'lucide-react';
@@ -8,6 +8,7 @@ import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import './agents.css';
 import { AgentConnectionForm } from './AgentConnectionForm';
 import { AgentConnectionStatus } from './AgentConnectionStatus';
+import { AgentConfigurationDialog } from './AgentConfigurationDialog';
 import { AgentDesktopPanel as AgentDesktopView } from './AgentDesktopPanel';
 import type { AgentConnectionsController } from './useAgentConnections';
 import { TopBar } from '../../components/TopBar';
@@ -90,6 +91,7 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
       onEdit={() => onSelect(selected.id, undefined, 'settings')} onRetry={() => setReconnect(value => value + 1)}/>}
     {connections.filter(item => connectedHosts[item.id]).map(connection => <AgentWorkspace {...appearance} key={connection.id}
       active={active && connection.id === selectedId} connection={connection} info={connectedHosts[connection.id]} language={language} agents={agents}
+      configurationDialogEnabled={!adding && !connectionToEdit}
       onReconnect={() => { void api().disconnect(connection.id).then(() => setReconnect(value => value + 1)).catch(error => setError(errorText(error))); }}
       onEdit={() => onSelect(connection.id, undefined, 'settings')}/>)}
     {active && (adding || connectionToEdit) && <AgentConnectionForm key={managingConnection ? `connection-settings:${selectedId}` : 'new-connection'} language={language} initial={connectionToEdit} onClose={() => {
@@ -107,7 +109,7 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
   </div>;
 }
 
-function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdit, active, ...appearance }: { active: boolean; connection: AgentConnection; info: AgentInfo; language: AppLanguage; agents: AgentConnectionsController; onReconnect: () => void; onEdit: () => void } & AgentChatAppearance) {
+function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdit, active, configurationDialogEnabled, ...appearance }: { active: boolean; configurationDialogEnabled: boolean; connection: AgentConnection; info: AgentInfo; language: AppLanguage; agents: AgentConnectionsController; onReconnect: () => void; onEdit: () => void } & AgentChatAppearance) {
   const zh = language === 'zh';
   const inspector = useContext(ConversationInspectorContext);
   const inspectorRef = useRef(inspector); inspectorRef.current = inspector;
@@ -176,8 +178,7 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
     {info.capabilities.desktop && inspector?.outlets.get(desktopId) && createPortal(<AgentDesktopView call={call} name={connection.name} language={language}
       active={inspector.visibleTabIds?.has(desktopId) ?? (active && inspector.visible)}/>, inspector.outlets.get(desktopId)!)}
     {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
-    {active && connection.configurationError ? <div className="agents-config-notice" role="status"><p>{connection.configurationError}</p><button onClick={onEdit}>{zh ? '连接设置与同步' : 'Connection settings and sync'}</button></div> : null}
-    {active && connection.configurationWarnings?.length ? <div className="agents-config-notice" role="status">{connection.configurationWarnings.map(warning => <p key={warning}>{warning}</p>)}</div> : null}
+    <AgentConfigurationDialog connection={connection} language={language} active={active && configurationDialogEnabled} onEdit={onEdit}/>
     {active && error && connection.connectionState !== 'reconnecting' && <div className="agents-error" role="alert">{error}</div>}
     {[...visitedSessions.current].map(retainedSessionId => <AgentChat key={retainedSessionId} {...appearance} active={active && retainedSessionId === sessionId}
       title={String(sessions.find(item => item.sessionId === retainedSessionId)?.metadata?.title || connection.name)} headerActions={headerActions} onCreate={() => void create()} call={call}
@@ -213,7 +214,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
     setSummary({ ...detail, sessionId: detail.sessionId || sessionId });
     inspectorRef.current?.open(summaryId, detail.title || (language === 'zh' ? '执行详情' : 'Execution details'));
   }, [sessionId, summaryId, language, setSummary]);
-  const host = useMemo(() => ({ ...baseHost, conversationStyleAvailable: sharedSettings, sessionId, runtime: connection.runtime, openWorkSummary }), [baseHost, sharedSettings, sessionId, connection, openWorkSummary]);
+  const host = useMemo(() => ({ ...baseHost, optimisticSubmission: true, conversationStyleAvailable: sharedSettings, sessionId, runtime: connection.runtime, openWorkSummary }), [baseHost, sharedSettings, sessionId, connection, openWorkSummary]);
   // Reopening the chat must preserve its selected tab. Only a new file request
   // should activate the preview (including clicks from a locked remote page).
   useEffect(() => { if (preview) inspectorRef.current?.open(previewId, preview.name); }, [preview, previewId]);
@@ -221,8 +222,10 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
     inspectorRef.current?.close(summaryId); inspectorRef.current?.close(previewId); closePreview();
   }, [summaryId, previewId, closePreview]);
   const [draft, updateDraft] = useConversationViewState(viewKey('draft'), () => sessionStorage.getItem(storageKey) ?? '', Boolean);
+  const draftRevision = useRef(0);
   const setDraft = useCallback((value: string | ((current: string) => string)) => updateDraft(current => {
     const next = typeof value === 'function' ? value(current) : value;
+    draftRevision.current++;
     sessionStorage.setItem(storageKey, next);
     return next;
   }), [storageKey, updateDraft]);
@@ -332,7 +335,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
         queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending} onToggleQueueLock={chat.toggleQueueLock}
                 queuedMessageCount={chat.queuedMessageCount} queuedMessagePreview={chat.queuedMessagePreview} queuedMessages={chat.queuedMessages}
         pendingInteraction={chat.pendingInteraction ? { ...chat.pendingInteraction, sessionId: host.id } : null}
-        connectionRecovery={chat.activeConnectionRecovery} composerAccessory={projectPicker}
+        connectionRecovery={chat.activeConnectionRecovery} welcomeWorkspaceControl={projectPicker}
         error={error || hostError || chat.error} notice={chat.notice} onClearError={() => { setError(''); chat.clearError(); }} onClearNotice={chat.clearNotice}
         draft={draft} onDraftChange={setDraft} selectedModel={chat.selectedModel} selectedModelConfig={selectedModel} availableModels={models.models} onModelChange={chat.setSelectedModel} onConfigureModels={onConfigure}
         contextWindowMaxTokens={maxContextTokens} contextWindowUsage={chat.activeContextWindowUsage}
@@ -343,8 +346,13 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
         onSend={sendComposerMessage} onVoiceSend={chat.sendVoiceMessage} submissionPending={submissionPending} onCancel={() => chat.cancelSending()}
         onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={onCreate} onOpenConversation={onOpenSession}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
-        onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(current => current.trim() === readUserPrompt(text).text.trim() ? '' : current); return accepted; }}
-        onRetryGuidance={message => chat.retryTurnGuidance(message, () => setDraft(current => current.trim() === message.content.trim() ? '' : current))}
+        onGuideMessage={(message, text, mode) => chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode)}
+        onRetryGuidance={message => {
+          const revision = draftRevision.current;
+          return chat.retryTurnGuidance(message, () => {
+            if (draftRevision.current === revision) setDraft(current => current.trim() === message.content.trim() ? '' : current);
+          });
+        }}
         onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={openReview} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>
       </ComposerPortalContext.Provider>}

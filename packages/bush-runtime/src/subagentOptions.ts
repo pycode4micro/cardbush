@@ -59,6 +59,10 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
     decodeInput: decodeOptions,
     execute: async context => {
       if (!context.turn) throw new Error('Subagent options require the current Turn context.');
+      if (context.turn.request.metadata.toolExecutionPolicy === 'web_restricted') {
+        return { remote_agents: await options.remoteAgents?.list(context.signal) ?? [], default_mode: 'remote',
+          instructions: 'Use prompt and target_agent for a new remote task, or prompt and task_id for an owned remote follow-up. Local agents, plugin roles and automatic assembly are disabled.' };
+      }
       if (context.input.agentId) {
         const agent = await options.agents?.get(context.input.agentId);
         if (!agent) throw new Error('Registered Agent is unavailable.');

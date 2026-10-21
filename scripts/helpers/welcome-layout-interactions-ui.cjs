@@ -95,6 +95,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('!!document.querySelector(".welcome-component-preview iframe")', 'HTML hover preview'); await pause();
   const guest = window.webContents.mainFrame.framesInSubtree.find(frame => frame.url === 'about:srcdoc'); assert.ok(guest);
   const previous = await run('localStorage.getItem("cardbush.component-state.welcome-html")'), events = await run('componentEvents.length');
+  assert.equal(await guest.executeJavaScript('cardbush.context'),null,'hover preview does not expose the active conversation');
   assert.equal(await guest.executeJavaScript('cardbush.state.write({preview:true}).then(()=>"bad",error=>error.message)'), 'INACTIVE_SURFACE');
   assert.equal(await guest.executeJavaScript('cardbush.invoke("conversation.send",{text:"preview must not send"}).then(()=>"bad",error=>error.message)'), 'INACTIVE_SURFACE');
   assert.equal(await run('localStorage.getItem("cardbush.component-state.welcome-html")'), previous);
@@ -103,6 +104,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('!!document.querySelector(".welcome-component-preview [data-composer-input]")', 'actual composer preview');
   assert.equal(await run('document.activeElement.textContent'), '输入框', 'preview does not steal keyboard focus');
   assert.equal(await run('document.querySelector(".welcome-component-preview [data-composer-input]").closest("[inert]")!==null'), true);
+  assert.equal(await run('document.querySelector(".welcome-component-preview [data-composer-input]").value'), '');
+  assert.equal(await run('document.querySelector(".welcome-component-preview [data-composer-input]").readOnly'), true);
   await click('组件'); await until('!document.querySelector(".welcome-component-preview")', 'closing picker clears preview');
   const scrolled = await run('(()=>{const c=document.querySelector(".welcome-layout-surface");c.scrollTop=480;return c.scrollTop})()');
   assert.equal(await run('Number(document.querySelector(".welcome-layout-bottom-hint").dataset.layoutOverflow)'),overflow,'scrolling does not hide the total layout overflow');

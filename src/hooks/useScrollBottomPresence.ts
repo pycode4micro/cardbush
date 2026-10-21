@@ -38,12 +38,29 @@ export function useScrollBottomPresence({ scrollerRef, requestedVisible, scope, 
         }, bottomHoldMs);
       }
     };
+    let frame: number | undefined;
+    const scheduleSync = () => {
+      if (frame !== undefined) return;
+      frame = window.requestAnimationFrame(() => { frame = undefined; sync(); });
+    };
     scroller.addEventListener('scroll', sync, { passive: true });
-    const resize = new ResizeObserver(sync);
+    const resize = new ResizeObserver(scheduleSync);
+    const spacerChanges = new MutationObserver(scheduleSync);
     resize.observe(scroller);
-    for (const child of scroller.children) resize.observe(child);
+    for (const child of scroller.children) {
+      // The transcript consumes this synthetic space inside its content resize
+      // callback. Observing the sibling spacer's size creates a same-depth
+      // ResizeObserver loop. Watch its style instead and read settled geometry;
+      // content measurement and viewport compensation still happen before paint.
+      if (child.classList.contains('assistant-response-spacer')) {
+        spacerChanges.observe(child, { attributes: true, attributeFilter: ['style'] });
+      } else resize.observe(child);
+    }
     sync();
-    return () => { cancelHide(); scroller.removeEventListener('scroll', sync); resize.disconnect(); };
+    return () => {
+      cancelHide(); if (frame !== undefined) window.cancelAnimationFrame(frame);
+      scroller.removeEventListener('scroll', sync); resize.disconnect(); spacerChanges.disconnect();
+    };
   }, [scrollerRef, requestedVisible, scope, enabled, revision]);
   return enabled && presence.scope === scope && presence.visible;
 }

@@ -20,7 +20,7 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
     window.sidebarFixtureProps = {
       language: 'zh', section: 'chat', activeConversationId: 'sidebar-active',
       runningConversationIds: new Set(['sidebar-running']),
-      attentionByConversation: { 'sidebar-waiting': { sessionId: 'sidebar-waiting', kind: 'waiting', updatedAt: '2026-09-05T00:00:00Z' } },
+      attentionByConversation: { 'sidebar-waiting': { sessionId: 'sidebar-waiting', kind: 'interaction', interactionId: 'selection-1', updatedAt: '2026-09-05T00:00:00Z' } },
       projects: [{ id: 'fixture-project', title: 'apex', rootPath: 'D:/fixture-project' }],
       conversations: sidebarIds.map((id, index) => ({
         id, title: sidebarTitles[index], projectId: 'fixture-project', projectDir: 'D:/fixture-project',
@@ -202,25 +202,49 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
         'completion without an attention marker returns the space to the title');
     }
     assert.ok(await run("!!sidebarRow(1).querySelector('.conversation-attention-indicator.completed svg')"));
-    for (const kind of ['waiting', 'error']) {
+    for (const [kind, label, icon, color] of [
+      ['completed', '已完成，待查看', 'circle-check', '--info'],
+      ['interaction', '等待确认', 'circle-alert', '--info'],
+      ['error', '执行出错', 'triangle-alert', '--warning'],
+    ]) {
       await run(`showSidebarFixture({ attentionByConversation: { 'sidebar-running': {
-        sessionId: 'sidebar-running', kind: '${kind}', updatedAt: '2026-09-05T00:00:00Z' } } })`);
+        sessionId: 'sidebar-running', kind: '${kind}', interactionId: 'request-1', updatedAt: '2026-09-05T00:00:00Z' } } })`);
       await until(`!!sidebarRow(1).querySelector('.conversation-attention-indicator.${kind}')`, kind + ' status marker');
+      assert.equal(await run("sidebarRow(1).querySelector('.conversation-attention-indicator').getAttribute('aria-label')"), label);
+      assert.equal(await run(`!!sidebarRow(1).querySelector('.conversation-attention-indicator .lucide-${icon}')`), true);
+      assert.equal(await run(`(() => {
+        const marker = sidebarRow(1).querySelector('.conversation-attention-indicator');
+        const reference = document.createElement('span'); reference.style.color = 'var(${color})';
+        marker.append(reference);
+        const matches = getComputedStyle(marker).color === getComputedStyle(reference).color;
+        reference.remove(); return matches;
+      })()`), true, `${theme}: ${kind} uses ${color} instead of an inferred category or accent`);
       assert.equal((await run('sidebarGeometry(1)')).titleRect.width, baseline[1].titleRect.width - 28, kind + ' keeps status lane');
-    }
-    for (const [waitingKind, label] of [['user', '等待用户确认'], ['background', '等待后台任务'], ['dependency', '等待前置步骤'], ['unspecified', '等待中']]) {
-      await run(`showSidebarFixture({ attentionByConversation: { 'sidebar-running': {
-        sessionId: 'sidebar-running', kind: 'waiting', waitingKind: '${waitingKind}', body: '详细等待原因', updatedAt: '2026-09-05T00:00:00Z' } } })`);
-      await until(`sidebarRow(1).querySelector('.conversation-attention-indicator')?.getAttribute('aria-label') === '${label}'`, label);
-      assert.equal(await run("!!sidebarRow(1).querySelector('.conversation-attention-indicator .lucide-circle-alert')"), waitingKind === 'user');
-      assert.equal(await run("!!sidebarRow(1).querySelector('.conversation-attention-indicator .lucide-clock-3')"), waitingKind !== 'user');
-      assert.equal((await run('sidebarGeometry(1)')).titleRect.width, baseline[1].titleRect.width - 28, 'all waiting states share the same stable lane');
+      if (kind !== 'completed') {
+        await run("showSidebarFixture({ runningConversationIds: new Set(['sidebar-running']) })");
+        await until("!sidebarRow(1).querySelector('.conversation-running-indicator')", 'explicit attention takes precedence over running');
+        assert.ok(await run(`!!sidebarRow(1).querySelector('.conversation-attention-indicator.${kind}')`));
+        await hover(1);
+        await until(`document.querySelector('.conversation-hover-preview-status')?.textContent.includes('${label}')`, 'pending/running hover shows the explicit reason');
+        await moveAway();
+        await run('showSidebarFixture({ runningConversationIds: new Set() })');
+      }
     }
     await run('showSidebarFixture({ attentionByConversation: {} })');
     await until("!sidebarRow(1).querySelector('.conversation-attention-indicator')", 'attention clears');
     assert.equal((await run('sidebarGeometry(1)')).titleColor, baseline[1].titleColor, 'viewed completion restores background title color');
     assert.equal((await run('sidebarGeometry(1)')).titleRect.width, baseline[1].titleRect.width,
       'clearing attention returns the status lane to the title');
+    await run(`showSidebarFixture({ runningConversationIds: new Set(['sidebar-running']), attentionByConversation: {
+      'sidebar-active': { sessionId: 'sidebar-active', kind: 'completed' },
+      'sidebar-running': { sessionId: 'sidebar-running', kind: 'interaction', interactionId: 'selection-1' },
+      'sidebar-waiting': { sessionId: 'sidebar-waiting', kind: 'error' },
+    } })`);
+    await until("document.querySelectorAll('.conversation-attention-indicator').length === 3", 'all three attention icons');
+    fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    window.webContents.invalidate();
+    await pause(150);
+    fs.writeFileSync(path.join(root, 'tmp', `sidebar-attention-${theme}.png`), (await window.webContents.capturePage()).toPNG());
   }
   await run("showSidebarFixture({ language: 'en', attentionByConversation: {}, runningConversationIds: new Set(['sidebar-active']) })");
   await until("sidebarRow(0).querySelector('.conversation-running-indicator')?.getAttribute('aria-label') === 'Session running'", 'accessible running state follows UI language');

@@ -1,6 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { promisify } from 'node:util';
+import { withToolFailureFacts } from './toolFailureFacts.js';
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { freemem, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -246,10 +248,10 @@ export class ManagedProcessScope {
 }
 
 let pinnedProcessHost: string | undefined;
-export function resolveProcessResourceHost(): string {
-  const supplied = process.env.CARDBUSH_PROCESS_HOST_PATH;
-  if (pinnedProcessHost && !supplied) return pinnedProcessHost;
-  const directory = process.env.CARDBUSH_PROCESS_HOST_DIRECTORY
+export function resolveProcessResourceHost(env: NodeJS.ProcessEnv = process.env): string {
+  const supplied = env.CARDBUSH_PROCESS_HOST_PATH;
+  if (pinnedProcessHost && env === process.env && !supplied) return pinnedProcessHost;
+  const directory = env.CARDBUSH_PROCESS_HOST_DIRECTORY
     || fileURLToPath(new URL("../../../dist-native/process-guard", import.meta.url));
   let fileName = "";
   if (!supplied) {
@@ -259,11 +261,33 @@ export function resolveProcessResourceHost(): string {
     } catch { /* Refuse execution below if the complete native asset is unavailable. */ }
   }
   const candidate = supplied || (fileName ? join(directory, fileName) : "");
-  if (!existsSync(candidate)) {
+  let available = false;
+  try { available = statSync(candidate).isFile(); } catch { /* Fail closed below. */ }
+  if (!available) {
     throw resourceError("resource_protection_unavailable", "The Windows process resource host is missing. Rebuild or reinstall CardBush. The command was not started without protection.");
   }
-  if (!supplied) pinnedProcessHost = candidate;
+  if (!supplied && env === process.env) pinnedProcessHost = candidate;
   return candidate;
+}
+
+/** Deployment preflight: probe only the trusted supervisor, never a user command. */
+export async function verifyProcessResourceHost(env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+  if (process.platform !== 'win32') return undefined;
+  const hostPath = resolveProcessResourceHost(env);
+  try {
+    const { stdout } = await promisify(execFile)(hostPath, ['--capabilities'], {
+      env, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: 'utf8',
+    });
+    const capabilities = JSON.parse(stdout);
+    if (capabilities.protocol !== 'cardbush.process-host.v1' || capabilities.sandboxVersion !== 1) {
+      throw Error('Incompatible process host capabilities.');
+    }
+    return hostPath;
+  } catch (error) {
+    throw resourceError('resource_protection_unavailable',
+      `The Windows process resource host failed its startup check: ${hostPath}. Install the matching trusted component; resource protection remains required.`,
+      { causeCode: (error as NodeJS.ErrnoException).code });
+  }
 }
 
 // Pin a complete native version when Runtime loads, so a later in-place build
@@ -398,7 +422,8 @@ function manageLifecycle(child: ChildProcessWithoutNullStreams, protectedTree: b
 }
 
 function resourceError(code: string, message: string, details?: Record<string, unknown>): Error & { code: string } {
-  return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
+  return withToolFailureFacts(Object.assign(new Error(message), { code, ...(details ? { details } : {}) }),
+    { dispatch: 'not_started', effects: 'none', result: 'known', recovery: code === 'resource_protection_unavailable' ? 'do_not_retry' : 'retry' });
 }
 
 async function removeReceiptDirectory(directory: string): Promise<void> {

@@ -1,3 +1,4 @@
+import { presentTool } from '../dist/toolPresentation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
@@ -52,6 +53,24 @@ function fixture(t) {
   };
   return { root, registry, store, jobs, deliveries, broker, tasks, background, controller, request, run, add, script };
 }
+
+test('retired guidance cannot be loaded through tools, host commands or script jobs', async t => {
+  const f = fixture(t), registry = new ToolRegistry();
+  const host = new InMemoryRuntimeHost({ toolRegistry: registry, dataRoot: join(f.root, 'runtime'), registerDefaultWorkspaceTools: false });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  assert.equal(registry.resolve('usage'), undefined);
+  for (const kind of ['runtime.get_usage', 'runtime.update_usage']) {
+    assert.equal(host.capabilities().supportedCommands.includes(kind), false);
+    await assert.rejects(host.sendCommand({ kind, payload: { sessionId: 's' } }), /Unsupported Runtime command/);
+  }
+  for (const input of [{ usage: { recipe_id: 'old-method' } }, { code: 'return 1', usage: { recipe_id: 'old-method' } }]) {
+    const result = await f.run('run_tools', input);
+    assert.equal(result.kind, 'failed');
+    assert.equal(result.execution.dispatch, 'not_started');
+  }
+  assert.equal(f.deliveries.length, 0, 'invalid retired calls cannot start background work');
+  assert.deepEqual((await f.script('return { value: 42 };')).completion.result.value.result, { value: 42 });
+});
 
 test('resource scheduler allows independent work and readers, respects a queued writer, and removes aborted waiters', async () => {
   const scheduler = new ToolResourceScheduler();
@@ -332,7 +351,7 @@ test('task waits yield and abort without stopping work; stopping and cancelling 
 
 test('progressive schemas stay fixed while complete receipts enable invocation until compaction', async t => {
   const f = fixture(t);
-  f.add('subagent', () => ({}));
+  f.add('subagent', () => ({}), { projectModelDefinition: (definition, scope) => scope.canRecall ? presentTool(definition, { fields: ['action', 'prompt'] }) : definition });
   // Replace fixture with a realistic large config schema.
   const definition = f.registry.resolve('subagent').definition;
   definition.inputSchema.properties = { action: {}, prompt: {}, agent: { description: 'config '.repeat(500) }, settings: {} };

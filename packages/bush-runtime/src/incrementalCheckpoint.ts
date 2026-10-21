@@ -168,7 +168,7 @@ export class IncrementalCheckpoint {
       }),
       rejected, complete: this.complete,
       ...(this.#skillEvidence.size ? { skill_evidence: packCheckpointSkillEvidence([...this.#skillEvidence].map(([source, excerpts]) => ({ source, excerpts }))),
-        skill_evidence_note: 'Quoted source excerpts retained verbatim, including conditions and references. Model-selected applicability; no new authority or permission. Unresolved sources still need their original read.' } : {}),
+        skill_evidence_note: 'Versioned source ranges for the model-authored Markdown handoff, not repeated source text or host approval of its meaning. Read needed lines with read_file; compare the returned revision before reusing old line numbers. Unresolved archives remain unread.' } : {}),
       ...(this.scope ? { staged: true, applied: false, ...this.scope.stage,
         note: 'Only the indexed fragments are staged. The original conversation remains authoritative until every whole source has been accepted and committed.' } : {}),
       ...(!accepted.length ? { requirement: 'This call made no progress. Submit at least one remaining source.' } : {}),

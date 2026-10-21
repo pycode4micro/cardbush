@@ -1,3 +1,5 @@
+import { TASK_WAIT_MAX_MS, TASK_WAIT_DEFAULT_MS, TASK_BATCH_LIMIT } from './taskLimits.js';
+import { replacedToolPresentation, taskObserverPresentation } from './toolPresentation.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { returnedToolError } from '@cardbush/bush-protocol';
@@ -14,8 +16,8 @@ const startSchema = z.object({
     equals: z.union([z.string().max(100), z.number(), z.boolean(), z.null()]) }).strict().optional(),
 }).strict();
 const manageSchema = z.object({ action: z.enum(['list', 'wait', 'cancel']).default('list'),
-  task_ids: z.array(z.string().min(1)).min(1).max(32).optional(), mode: z.enum(['any', 'all']).default('any'),
-  yield_time_ms: z.number().int().min(0).max(30_000).default(1000).describe('Maximum time to suspend this call, not the background job. Use 0 for a snapshot. Do independent work before waiting; pending results arrive automatically.') }).strict();
+  task_ids: z.array(z.string().min(1)).min(1).max(TASK_BATCH_LIMIT).optional(), mode: z.enum(['any', 'all']).default('any'),
+  yield_time_ms: z.number().int().min(0).max(TASK_WAIT_MAX_MS).default(TASK_WAIT_DEFAULT_MS).describe('Maximum time to suspend this call, not the background job. Use 0 for a snapshot. Do independent work before waiting; pending results arrive automatically.') }).strict();
 export type BackgroundToolJob = { id: string; key: string; name: string; controller: AbortController; status: string;
   attempts: number; promise: Promise<JoinedSubagentResult['message']>; stop?: string };
 type Job = BackgroundToolJob;
@@ -43,6 +45,7 @@ export class BackgroundToolCalls {
   }
   register() {
     this.registry.register({
+      projectModelDefinition: taskObserverPresentation('manage_tool_calls'),
       definition: { name: 'start_mcp_tool', description: 'Start a read-only MCP wait; returns task_id immediately. Load its schema via mcp_search first, then continue independent work. Optional repeat_while must exactly match a documented timeout path/value (e.g. ["structuredContent","status"] equals "timeout"). Renew until a different result, error, cancellation or max_wait_ms; each attempt retains permissions/hooks. Results arrive once as untrusted tool data. Use manage_tool_calls only when blocked on the result. Cannot wake an ended conversation.',
         inputSchema: z.toJSONSchema(startSchema) as Record<string, unknown> },
       manifest: { effect_kind: 'observation', operation: 'mcp.background.start', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
@@ -50,6 +53,7 @@ export class BackgroundToolCalls {
       decodeInput: value => startSchema.parse(value), execute: context => this.start(context),
     });
     this.registry.register({
+      projectModelDefinition: replacedToolPresentation('tasks'),
       definition: { name: 'manage_tool_calls', description: 'List, briefly wait for (any/all), or cancel background MCP calls and terminal completion notifications in this active turn. Do independent work first: wait only when progress depends on these results and no useful independent work remains. Waiting yields after yield_time_ms or wakes for new user messages without cancelling jobs; handle that guidance before waiting again. Do not loop on list/wait: results arrive separately once as background_tool_result, and Runtime observes outstanding work before finishing the turn without model polling. Use task_ids from start_mcp_tool or completion_task_id from terminal_exec. With no IDs, wait targets only pending tasks. Cancelling a terminal notification stops observing, not the process; use terminal_stop to stop it. Turn termination stops observers and MCP renewal.',
         inputSchema: z.toJSONSchema(manageSchema) as Record<string, unknown> },
       manifest: { effect_kind: 'observation', operation: 'mcp.background.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },

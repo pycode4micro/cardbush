@@ -12,6 +12,12 @@ export const BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL =
   "bush.tool_execution_summary.v1" as const;
 export const GET_RUNTIME_TOOL_EXECUTION_COMMAND =
   "runtime.get_tool_execution" as const;
+export const HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND =
+  "runtime.has_tool_image_artifact" as const;
+export const toolImageArtifactRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  path: z.string().min(1),
+});
 export const LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND =
   "runtime.list_turn_tool_executions" as const;
 export const GET_RUNTIME_TOOL_CATALOG_COMMAND = "runtime.get_tool_catalog" as const;

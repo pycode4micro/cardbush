@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
 import { z } from 'zod';
 import { AgentService } from './agentService.mjs';
+import { AgentBusyError } from './agentErrors.mjs';
 import { agentApiPath, agentOperations, type AgentEventFrame } from './agentTypes.js';
 
 class HttpError extends Error {
@@ -99,7 +100,7 @@ export async function serveAgentHttp(service: AgentService, options: { host?: st
     })().catch(error => {
       if (!response.headersSent && !response.destroyed) {
         const status = error instanceof HttpError ? error.status : error instanceof z.ZodError ? 400 : 409;
-        json(response, status, { error: { code: error instanceof HttpError ? error.code : status === 400 ? 'invalid_request' : 'operation_failed', message: error instanceof Error ? error.message : 'Agent request failed.' } });
+        json(response, status, { error: { code: error instanceof HttpError || error instanceof AgentBusyError ? error.code : status === 400 ? 'invalid_request' : 'operation_failed', message: error instanceof Error ? error.message : 'Agent request failed.' } });
       } else if (!response.writableEnded) response.destroy();
       request.resume();
     });

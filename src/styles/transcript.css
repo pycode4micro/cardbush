@@ -126,10 +126,12 @@
   contain-intrinsic-block-size: none;
 }
 
-/* A growing turn must never collapse to the offscreen height estimate while
-   its transcript or tools are being appended. History keeps lazy layout. */
+/* The latest task keeps real geometry through completion: switching a short
+   reply to an offscreen estimate would incorrectly consume its reserve.
+   Older turns retain lazy layout with their last measured dimensions. */
 .message-list-item.streaming,
 .message-list-item.live-turn,
+.message-list-item.latest-turn,
 .message-list-item.user-message-entering {
   content-visibility: visible;
   contain-intrinsic-block-size: none;
@@ -171,6 +173,7 @@
 }
 
 .message-list-footer {
+  overflow-anchor: none;
   height: calc(
     var(--quick-context-bottom-inset, var(--composer-dock-height, 0px)) +
     var(--stream-status-height, 0px) +

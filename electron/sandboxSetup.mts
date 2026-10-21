@@ -105,7 +105,7 @@ export class SandboxSetup {
           const manifest = JSON.parse(await readFile(join(directory, 'current.json'), 'utf8'));
           if (!/^CardBushProcessHost-[a-f0-9]{16}\.exe$/.test(manifest.fileName)) throw Error('Invalid sandbox component manifest.');
           hostPath = join(directory, manifest.fileName); await stat(hostPath);
-        } else hostPath = resolveProcessResourceHost();
+        } else hostPath = resolveProcessResourceHost(this.#env);
       } else linuxExecutable = await resolveLinuxSandboxExecutable(this.#env.CARDBUSH_BWRAP_PATH, this.#env.PATH);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const AGENT_REGISTRY_COMMAND = 'runtime.agent_registry' as const;
 export const TEAM_WORKFLOW_COMMAND = 'runtime.team_workflow' as const;
+export const TEAM_WORKFLOW_MAX_NODES = 64;
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/);
 const names = z.array(z.string().trim().min(1)).max(512).refine(items => new Set(items).size === items.length, 'Duplicate names.');
 
@@ -18,14 +19,14 @@ export type RegisteredAgent = z.infer<typeof registeredAgentSchema>;
 export const teamWorkflowSchema = z.object({
   id, name: z.string().trim().min(1).max(160), description: z.string().max(4000).default(''),
   // bush-it retains the surrounding document independently of execution fields.
-  presentation: z.object({ markdown: z.string().max(2 * 1024 * 1024) }).strict().optional(),
+  presentation: z.object({ markdown: z.string().max(2 * 1024 * 1024).describe('Optional Create Markdown document: rationale, headings, notes and visual layout. Presentation only; execution uses nodes and depends_on.') }).strict().optional(),
   max_parallel: z.number().int().min(1).max(8).default(3),
   nodes: z.array(z.object({
     id, agent_id: id, prompt: z.string().trim().min(1).max(40000),
-    depends_on: z.array(id).max(64).default([]),
-    name: z.string().trim().min(1).max(160).optional(),
+    depends_on: z.array(id).max(TEAM_WORKFLOW_MAX_NODES).default([]),
+    name: z.string().trim().min(1).max(160).optional().describe('Optional node label for the graph.'),
     position: z.object({ x: z.number().min(-100000).max(100000), y: z.number().min(-100000).max(100000) }).strict().optional(),
-  }).strict()).min(1).max(64),
+  }).strict()).min(1).max(TEAM_WORKFLOW_MAX_NODES),
 }).strict().superRefine((team, context) => {
   const nodes = new Map(team.nodes.map(node => [node.id, node]));
   if (nodes.size !== team.nodes.length) context.addIssue({ code: 'custom', message: 'Duplicate workflow node IDs.' });

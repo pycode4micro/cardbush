@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentToolActivity, resolveSubagentName } from '@cardbush/bush-protocol';
 import { FileSubagentTaskPersistence, SubagentTaskStore, ToolExecutionCoordinator, ToolRegistry, registerSubagentTool } from '../dist/index.js';
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import { summarizeExecution } from '../dist/executionHistory.js';
+import { modelToolDefinitions } from '../dist/mcpToolDiscovery.js';
 
 function childResult(request) {
   return { terminal: { kind: 'turn_terminal', payload: { status: 'completed', finalMessageId: 'answer' } },
@@ -21,11 +23,30 @@ function fixture(options = {}, tasks = new SubagentTaskStore(), runChild = async
   });
   const prefix = [{ role: 'system', content: 'Frozen instructions' }, { role: 'user', content: 'Original user objective' }];
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('Unexpected permission'); } } });
+  const request = { requestId: 'r', sessionId: 'parent', turnId: 'turn', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' };
   const invoke = args => coordinator.execute({ protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name: 'subagent', argumentsText: JSON.stringify(args) },
     { requestId: 'r', sessionId: 'parent', turnId: 'turn', round: 1, ordinal: 0 }, undefined,
-    { request: { requestId: 'r', sessionId: 'parent', turnId: 'turn', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' }, contextMessages: prefix });
-  return { invoke, tasks, requests, prefix };
+    { request, contextMessages: prefix });
+  return { invoke, tasks, requests, prefix, request, registry };
 }
+
+test('the common model catalog exposes child naming without advanced schema recall', async () => {
+  const f = fixture();
+  registerBuiltinToolDisclosure(f.registry);
+  f.request.tools = f.registry.definitions();
+  const original = structuredClone(f.request.tools);
+  const projected = modelToolDefinitions(f.registry, f.request);
+  const subagent = projected.find(tool => tool.name === 'subagent');
+  assert.deepEqual(subagent.inputSchema.properties.name, f.registry.resolve('subagent').definition.inputSchema.properties.name);
+  assert.equal(subagent.inputSchema.properties.name.type, 'string');
+  assert.match(subagent.description, /short responsibility name/);
+  assert.equal(subagent.inputSchema.properties.system_prompt, undefined, 'advanced clean configuration stays deferred');
+  const result = await f.invoke({ name: '接口检查', prompt: 'Inspect every changed API and report the findings.' });
+  assert.equal(result.kind, 'returned');
+  assert.equal(result.result.agentName, '接口检查');
+  assert.deepEqual(modelToolDefinitions(f.registry, f.request), projected, 'dispatch does not change frozen declarations');
+  assert.deepEqual(f.request.tools, original);
+});
 
 test('a named ad-hoc fork retains its exact inherited prefix, name and identity through continuation', async () => {
   const f = fixture();
@@ -65,14 +86,27 @@ test('unsupported memory fails before dispatch and a corrected named clean call 
   assert.equal(f.requests[0].metadata.registeredAgent, undefined);
 });
 
-test('older calls without a name use a bounded role or assignment label', async () => {
+test('unnamed children use their role or a stable identity, never assignment text', async () => {
   const f = fixture();
   const result = await f.invoke({ prompt: 'Draft three palettes', mode: 'clean', system_prompt: '你是服装视觉与材质设计。后面是完整任务配置。', allowed_tools: [] });
   assert.equal(result.result.agentName, '服装视觉与材质设计');
-  assert.equal((await f.invoke({ prompt: 'Review compatibility\nPrivate supporting details' })).result.agentName, 'Review compatibility');
+  const first = await f.invoke({ prompt: 'Review compatibility\nPrivate supporting details' });
+  assert.equal(first.result.agentName, `子 Agent ${first.result.childSessionId.slice(-8)}`);
+  const second = await f.invoke({ prompt: 'A different assignment', task_id: first.result.taskId });
+  assert.equal(second.result.agentName, first.result.agentName);
+  assert.equal(second.result.childSessionId, first.result.childSessionId);
+  f.request.metadata.uiLanguage = 'en';
+  const another = await f.invoke({ prompt: 'Review compatibility\nOther private details' });
+  assert.equal(another.result.agentName, `Subagent ${another.result.childSessionId.slice(-8)}`);
+  assert.notEqual(another.result.agentName, first.result.agentName);
+  assert.equal(f.requests.at(-1).metadata.subagentName, another.result.agentName);
   assert.equal(resolveSubagentName({ name: 'Explicit', systemPrompt: 'You are a reviewer.' }), 'Explicit');
   assert.equal(resolveSubagentName({ systemPrompt: 'You are an API reviewer. Keep it concise.' }), 'API reviewer');
-  assert.equal(resolveSubagentName({ prompt: 'a'.repeat(200) }).length, 80);
+  assert.equal(resolveSubagentName({ name: 'a'.repeat(200) }).length, 80);
+  assert.equal(resolveSubagentName({ prompt: 'This message is not an agent name' }), undefined);
+  const record = { toolCall: { name: 'subagent', argumentsText: JSON.stringify({ prompt: 'Private assignment text' }) } };
+  assert.equal(agentToolActivity(record).name, undefined, 'running activity does not invent a name from the prompt');
+  assert.equal(agentToolActivity({ ...record, result: first.result }).name, first.result.agentName);
 });
 
 test('invalid labels never start a child', async () => {

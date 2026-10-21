@@ -2,7 +2,6 @@ import { toolSchemaReceipts } from './toolSchemaReceipts.js';
 import { createHash } from 'node:crypto';
 import { withToolDisplayTitle } from './toolDisplay.js';
 import { projectBuiltinDefinitions, synchronizeBuiltinSchemas } from './builtinToolDisclosure.js';
-import { repairLegacyToolScriptSchema } from './toolScriptSchema.js';
 import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
@@ -229,22 +228,14 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
   const saved = request.metadata.mcpModelToolSnapshot as { identity?: string; tools?: unknown[] } | undefined;
   if (saved?.identity === key(request) && Array.isArray(saved.tools)) {
     const parsed = toolDefinitionSchema.array().safeParse(saved.tools);
-    if (parsed.success) {
-      let changed = false;
-      const tools = parsed.data.map(definition => {
-        const repaired = repairLegacyToolScriptSchema(definition);
-        if (repaired === definition) return definition;
-        changed = true;
-        return withToolDisplayTitle(repaired);
-      });
-      if (changed) request.metadata.mcpModelToolSnapshot = { identity: key(request), tools: structuredClone(tools) };
-      return tools;
-    }
+    // A read must never upgrade or rewrite an established conversation contract.
+    if (parsed.success) return parsed.data;
   }
+
   const tools = request.tools.filter(tool => registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
     !registry.resolve(tool.name)?.deferredSchema &&
     (!tool.name.startsWith('agent_memory_') || request.metadata.pluginAgentMemoryActive === true) &&
-    (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(repairLegacyToolScriptSchema).map(withToolDisplayTitle);
+    (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(withToolDisplayTitle);
   // Keep discovery entry points when the catalog is empty, so connect/disconnect preserves them.
   const projected = projectBuiltinDefinitions(registry, request, tools);
   request.metadata.mcpModelToolSnapshot = { identity: key(request), tools: structuredClone(projected) };
@@ -254,6 +245,7 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
 export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLimit?: SearchResultLimitProvider): void {
   const manifest = { effect_kind: 'observation' as const, operation: 'mcp.search', risk: 'low' as const, owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
   registry.register<{ action: 'search' | 'load'; query: string; names?: string[]; server?: string; limit?: number; cursor?: McpSearchCursor }>({
+    directInvocation: true,
     definition: { name: 'mcp_search', description: 'Discover MCP tools. action=search (default) returns short summaries, not schemas. Start with query (keywords or * to list), optionally server. Continue by passing next_cursor as cursor, without query/server; a changed query starts a new search. Partial or empty matches do not prove a capability unavailable: try alternate keywords or its server. action=load accepts one exact query OR names (up to 16 exact names) to load schemas together. Batch errors are per name; deferred names exceeded the result budget and still need loading. Load tools with loaded=false before calling via mcp_call; reuse visible schemas, reload only after change or compaction. Oversized single schemas use read_archived_tool_result. Discovery executes no tool and grants no permission.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['search', 'load'], default: 'search' }, query: { type: 'string', minLength: 1, maxLength: MCP_SEARCH_QUERY_LIMIT }, names: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1 } }, server: { type: 'string', maxLength: 512 }, limit: { ...searchLimitParameter }, cursor: { type: 'string', minLength: 1, maxLength: MCP_SEARCH_CURSOR_LIMIT } }, additionalProperties: false } },
     manifest, parallelSafe: true,
     decodeInput: input => {
@@ -346,6 +338,7 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
     },
   });
   registry.register<{ name: string; arguments: Record<string, unknown> }>({
+    directInvocation: true,
     definition: { name: 'mcp_call', description: 'Call an MCP tool whose current schema was loaded by mcp_search in this conversation. Reuse its exact name and schema across turns. Search again if its definition changed or left context. The selected tool retains its own approvals, Hooks, timeout and cancellation.', inputSchema: { type: 'object', properties: { name: { type: 'string' }, arguments: { type: 'object', additionalProperties: true } }, required: ['name', 'arguments'], additionalProperties: false } },
     manifest: { ...manifest, operation: 'mcp.invoke' }, delegatesToolExecution: true,
     decodeInput: input => {
@@ -356,7 +349,20 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
       return { name: value.name, arguments: value.arguments as Record<string, unknown> };
     },
     execute: async context => {
-      const { name, registration } = mcpInvocationTarget(registry, context.turn, context.input.name);
+      let target: ReturnType<typeof mcpInvocationTarget>;
+      try { target = mcpInvocationTarget(registry, context.turn, context.input.name); }
+      catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'tool_route_mismatch') {
+          const failure = error as Error & { details?: Record<string, unknown> };
+          const name = resolveToolReferenceName(context.input.name, context.turn);
+          const direct = registry.resolve(name)?.directInvocation || registry.resolve(name)?.forwardToolCall;
+          failure.details = { ...failure.details, corrected_call: direct
+            ? { name, arguments: context.input.arguments } : { name: 'call_tool', arguments: { name, arguments: context.input.arguments } },
+            note: 'Suggested call only; load the native schema first. No target was executed and its normal admission still applies.' };
+        }
+        throw error;
+      }
+      const { name, registration } = target;
       const mcp = registration.mcpHook!;
       return { mcp: { server: mcp.server, tool: mcp.tool, name }, result: await context.invokeTool(name, context.input.arguments) };
     },

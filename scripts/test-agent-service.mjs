@@ -7,7 +7,8 @@ import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { AgentHttpClient } from '../dist-electron/agentHttpClient.mjs';
+import { AgentHttpClient, AgentHttpError } from '../dist-electron/agentHttpClient.mjs';
+import { packSharedConfiguration } from '../dist-electron/agentSharedConfiguration.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
 import { AgentConnectionManager } from '../dist-electron/agentConnections.mjs';
@@ -169,6 +170,45 @@ test('an Agent can delete an idle conversation while another task keeps running'
     release();
     await until(() => service.call('chat.jobs'), jobs => jobs.find(item => item.id === job.id)?.status === 'completed');
   } finally { release(); await service.close(); }
+});
+
+test('busy automatic configuration sync preserves the active runtime and queued turns, then applies after both finish', async t => {
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  const f = await openService(t, 'deferred configuration', () => gate);
+  const token = 'offline-configuration-'.repeat(3);
+  const server = await serveAgentHttp(f.service, { token, port: 0 });
+  const client = new AgentHttpClient('http://127.0.0.1:' + server.port, token);
+  let packs = 0;
+  const manager = new AgentConnectionManager(join(f.root, 'connections.json'), { encrypt: v => v, decrypt: v => v }, {
+    configurationRetryMs: 20, sharedConfiguration: async settings => {
+      packs++;
+      return packSharedConfiguration({ roots: [], instructions: 'Rules applied only after task completion.',
+        models: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture-secret', baseURL: f.model.url }] },
+        apps: { serviceEnabled: true, plugins: [] }, mcp: { servers: [] }, subagents: {},
+      }, join(f.root, 'desktop-source'), settings);
+    },
+  });
+  try {
+    const [connection] = await manager.save({ name: 'Fixture', transport: 'http', url: 'http://127.0.0.1:' + server.port, token });
+    await f.service.call('sessions.create', { sessionId: 'busy-sync' });
+    await f.service.call('chat.send', input('busy-sync', 'active-job'));
+    await until(async () => f.model.calls.length, count => count === 1);
+    await assert.rejects(client.call('configuration.sync', { action: 'begin', digest: 'a'.repeat(64), size: 1 }),
+      error => error instanceof AgentHttpError && error.code === 'agent_busy');
+    await manager.call(connection.id, 'conversation.catalog');
+    await manager.call(connection.id, 'chat.send', input('busy-sync', 'queued-job'));
+    await pause(80);
+    assert.equal(packs, 0); assert.equal(f.model.calls.length, 1);
+    const jobs = await f.service.call('chat.jobs');
+    assert.equal(jobs.find(job => job.id === 'active-job').status, 'running');
+    assert.equal(jobs.find(job => job.id === 'queued-job').status, 'queued');
+    assert.equal((await manager.list())[0].configurationError, undefined);
+    release();
+    await until(() => f.service.call('chat.jobs'), jobs => jobs.length === 2 && jobs.every(job => job.status === 'completed'));
+    await until(() => f.service.instructions.read(), rules => rules.content === 'Rules applied only after task completion.');
+    assert.equal(packs, 1); assert.equal(f.model.calls.length, 2);
+    assert.equal((await manager.list())[0].configurationError, undefined);
+  } finally { release(); client.close(); await manager.close(); await server.close(); await f.service.close(); }
 });
 
 test('sandbox settings on the Agent enable installed isolation and persist an explicit opt-out across restart', async t => {
@@ -556,7 +596,7 @@ test('Agent network errors keep actionable causes without leaking credentials or
   } finally { client.close(); }
 });
 
-test('headless service uses existing Runtime, private directories and durable sessions', async t => {
+test('independent service uses existing Runtime without assuming desktop availability', async t => {
   const f = await openService(t);
   try {
     assert.equal(f.service.info().capabilities.computerUse, false);
@@ -570,7 +610,9 @@ test('headless service uses existing Runtime, private directories and durable se
     assert.equal(snapshot.turns.length, 1);
     assert.ok(snapshot.turns[0].messages.some(item => item.message.content === 'answer-1'));
     const payload = JSON.stringify(f.model.calls[0]);
-    assert.match(payload, /independent headless/);
+    assert.match(payload, /independent CardBush Agent/);
+    assert.match(payload, /actual observations/);
+    assert.doesNotMatch(payload, /independent headless|graphical browser control are unavailable/);
     assert.doesNotMatch(payload, /mcp__computer_use|mcp__chrome_devtools/);
     const events = await f.service.call('chat.events', { sessionId: 'chat-one', turnId: submitted.turnId, waitMs: 500 });
     assert.equal(events.ended, true);
@@ -661,6 +703,10 @@ test('standalone HTTP CLI survives client removal and stdin EOF, and persists it
     const endpoint = await launch();
     const [connection] = await manager.save({ name: 'local', transport: 'http', ...endpoint });
     const first = await manager.connect(connection.id);
+    const catalog = await manager.call(connection.id, 'product.command', { kind: 'apps.get' });
+    for (const name of ['agentchatroom','computer-use','chrome','xlsx','pptx','docx','pdf']) {
+      assert.ok(catalog.plugins.some(plugin => plugin.id === name), `CLI discovers release-owned ${name} without copying it into the data directory`);
+    }
     await assert.rejects(manager.call(connection.id, 'invalid-operation'));
     await manager.call(connection.id, 'sessions.create', { sessionId: 'http-chat' });
     await manager.remove(connection.id);
@@ -1105,7 +1151,7 @@ test('unified configuration is applied before chat submission; acknowledged retr
   t.after(()=>{proxy.closeAllConnections();return new Promise(resolve=>proxy.close(resolve));});
   const snapshot = { roots: [], models: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'unified-secret', baseURL: f.model.url }] },
     apps: { serviceEnabled: true, plugins: [] }, mcp: { servers: [] }, subagents: {}, network:{mode:'manual',httpProxy:'http://127.0.0.1:'+proxy.address().port,httpsProxy:'',noProxy:''}, instructions: 'Shared developer preference: use a patient voice.' };
-  const server = await serveAgentHttp(f.service, {token:'u'.repeat(48)});
+  const server = await serveAgentHttp(f.service, {token:'u'.repeat(48),port:0});
   const manager = new AgentConnectionManager(join(source, 'connections.json'), {encrypt:value=>value,decrypt:value=>value}, {sharedConfiguration:()=>packSharedConfiguration(snapshot,source)});
   try {
     const [connection] = await manager.save({name:'Unified',transport:'http',url:'http://127.0.0.1:'+server.port,token:'u'.repeat(48)});

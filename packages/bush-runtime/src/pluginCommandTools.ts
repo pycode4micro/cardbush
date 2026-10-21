@@ -5,9 +5,11 @@ import { bashExecutable, executePluginProcess } from './pluginHookRunner.js';
 import type { ToolRegistry, ToolAdmissionDecision, ToolHandlerContext } from './toolRegistry.js';
 import { childAgentDispatchDenial, childAgentToolDenial } from './childAgentPolicy.js';
 import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, projectCatalogPage } from './catalogPage.js';
+import { renderTextFields } from './toolResultText.js';
+import { literalSourceSpans, projectFileSourceResult, type FileSourceSpan } from './fileSourceReceipt.js';
 
 interface CommandInput { command: string; arguments: string; prepared?: CommandPlan }
-interface CommandPlan { command: PluginCommand; arguments: string; tokens: string[]; cwd: string; pieces: Array<{ text?: string; script?: string; admissionScript?: string }> }
+interface CommandPlan { command: PluginCommand; arguments: string; tokens: string[]; cwd: string; pieces: Array<{ text?: string; sourceOffset?: number; script?: string; admissionScript?: string }> }
 
 export function parsePluginCommandInvocation(text: string) {
   const match = text.trimStart().match(/^(?:\/|\$)([A-Za-z0-9_.-]+(?::[A-Za-z0-9_-]+)?)(?:\s+([\s\S]*))?$/);
@@ -23,6 +25,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
   const toolName = options.skill ? 'run_skill' : 'run_plugin_command';
   if (!options.skill)
   registry.register({
+    modelAvailable: request => request.metadata.builtinPluginCommandsAvailable !== false,
     definition: { name: 'list_plugin_commands', description: 'Discover installed plugin Commands with brief descriptions and argument hints. Search with query and continue with next_offset. Pass command for one full description and argument hint. Invoke with run_plugin_command; user-only commands require the shown slash command from the user.', inputSchema: { type: 'object', properties: { ...catalogPageProperties, command: { type: 'string', minLength: 1 } }, additionalProperties: false } },
     manifest: { effect_kind: 'observation', operation: 'plugins.commands.list', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
     decodeInput: value => {
@@ -51,6 +54,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
     },
   });
   registry.register<CommandInput>({
+    modelAvailable: request => options.skill === true || request.metadata.builtinPluginCommandsAvailable !== false,
     definition: { name: toolName, description: `Invoke an installed plugin ${options.skill ? 'Skill using the exact plugin:name id from search_skills (reading SKILL.md alone does not invoke it)' : 'Command using its exact plugin:name id'} and argument string. The host checks invocation policy, dependencies and permissions, expands parameters and executes declared dynamic context. Follow the returned instructions.`,
       inputSchema: { type: 'object', properties: { command: { type: 'string' }, arguments: { type: 'string', default: '' } }, required: ['command'], additionalProperties: false } },
     manifest: { effect_kind: 'filesystem_change', operation: 'plugins.commands.invoke', risk: 'medium', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },
@@ -66,7 +70,6 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
       const childDenial = command.context === 'fork' ? childAgentDispatchDenial(context.turn?.request) : undefined;
       if (childDenial) return deny(childDenial.code, childDenial.message);
       const userInvoked = context.turn?.request.metadata.pluginCommandUserCallId === context.toolCall.id && context.turn.request.metadata.pluginCommandUserId === command.id;
-      if (command.usage && !userInvoked) return deny('usage_user_selection_required', 'Usage 手册只能由用户通过 /命令选择或停用。');
       if (userInvoked ? !command.userInvocable : command.disableModelInvocation) return deny('plugin_command_invocation_disabled', userInvoked ? '此命令不允许通过用户输入直接调用。' : '此命令只能由用户通过 /命令名 调用。');
       const disabled = stringArray(context.turn?.request.metadata.disabledSkills), allowed = context.turn?.request.metadata.allowedSkills;
       if (options.skill && (disabled.includes(command.name) || disabled.includes(command.id) || (Array.isArray(allowed) && !allowed.includes(command.name) && !allowed.includes(command.id)))) return deny('plugin_skill_disabled', '此技能已停用或不在当前任务允许的技能范围内。');
@@ -102,10 +105,15 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
         ...stringArray(context.turn.request.metadata.pluginCommandDisallowedTools), ...command.disallowedTools ?? [],
       ])];
       const contextResults: Array<{ command: string; stdout: string; stderr: string; exitCode: number }> = [];
+      const sourceSpans: FileSourceSpan[] = [];
       let prompt = '';
       for (const piece of plan.pieces) {
         if (context.signal?.aborted) throw context.signal.reason ?? new DOMException('Command cancelled.', 'AbortError');
-        if (piece.script === undefined) { prompt += substitute(piece.text ?? '', plan); continue; }
+        if (piece.script === undefined) {
+          if (options.skill && command.sourceSnapshot) sourceSpans.push(...literalSourceSpans(piece.text ?? '', piece.sourceOffset ?? 0,
+            command.sourceSnapshot.startLine, prompt.length, text => substitute(text, plan), command.prompt));
+          prompt += substitute(piece.text ?? '', plan); continue;
+        }
         const result = await executePluginProcess({ command: piece.script, shell: command.shell, timeout: 30 }, '', plan.cwd, { ...process.env }, context.signal);
         contextResults.push({ command: piece.script, ...result });
         if (result.exitCode !== 0) throw Object.assign(new Error(`Command /${command.id} context failed (${result.exitCode}): ${result.stderr || result.stdout}`), { code: 'plugin_command_context_failed', details: { contextResults } });
@@ -119,10 +127,17 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
         const result = await options.fork(command, prompt, context);
         return { command: command.id, source: command.path, contextResults, instructions: `Isolated ${command.kind ?? 'command'} ${command.id}:\n${result}` };
       }
+      const prefix = `Run command /${command.id} in the current task. Command resources: ${dirname(command.path)}. Plugin root: ${command.root}.\nUse CardBush tools and the current model. Host permission rules apply.\n${command.allowedTools?.length ? `Declared tool preapprovals: ${command.allowedTools.join(', ')}. These do not override CardBush permissions.\n` : ''}`;
       return { command: command.id, source: command.path, arguments: plan.arguments, contextResults,
-        instructions: `Run command /${command.id} in the current task. Command resources: ${dirname(command.path)}. Plugin root: ${command.root}.\nUse CardBush tools and the current model. Host permission rules apply.\n${command.allowedTools?.length ? `Declared tool preapprovals: ${command.allowedTools.join(', ')}. These do not override CardBush permissions.\n` : ''}${prompt}` };
+        ...(options.skill && command.sourceSnapshot ? { source_read: { path: command.path, sha256: command.sourceSnapshot.sha256, start_line: command.sourceSnapshot.startLine,
+          spans: sourceSpans.map(span => ({ ...span, offset: span.offset + prefix.length })) } } : {}),
+        instructions: prefix + prompt };
     },
-    renderModelResult: value => (value as { instructions?: string }).instructions,
+    renderModelResult: value => {
+      const result = value as { instructions?: string; source_read?: unknown };
+      return result.source_read ? renderTextFields({ source_read: result.source_read, instructions: result.instructions }, ['instructions']) : result.instructions;
+    },
+    ...(options.skill ? { projectModelResult: projectFileSourceResult } : {}),
   });
 }
 
@@ -159,15 +174,12 @@ const bashQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 const powershellQuote = (text: string) => `'${text.replaceAll("'", "''")}'`;
 async function prepareCommand(command: PluginCommand, args: string, request?: ModelRequest): Promise<CommandPlan> {
   if (args.length > 64000 || command.prompt.length > 256000) throw new Error('Command input is too large.');
-  const plan: CommandPlan = { command, arguments: args, tokens: command.usage ? [] : commandArguments(args), cwd: String(request?.metadata.workspaceDir || request?.metadata.projectDir || process.cwd()), pieces: [] };
-  // A manual may quote shell examples. Loading it must not interpret those
-  // examples as dynamic Command context; executable methods have separate entries.
-  if (command.usage) { plan.pieces.push({ text: command.prompt }); return plan; }
+  const plan: CommandPlan = { command, arguments: args, tokens: commandArguments(args), cwd: String(request?.metadata.workspaceDir || request?.metadata.projectDir || process.cwd()), pieces: [] };
   const matches = [...command.prompt.matchAll(/```![ \t]*\r?\n([\s\S]*?)\r?\n```|!`([^`\r\n]+)`/g)];
   if (matches.length > 20) throw new Error('Command exceeds 20 dynamic context steps.');
   let offset = 0;
   for (const match of matches) {
-    plan.pieces.push({ text: command.prompt.slice(offset, match.index) });
+    plan.pieces.push({ text: command.prompt.slice(offset, match.index), sourceOffset: offset });
     const raw = match[1] ?? match[2]!;
     let script: string;
     if (command.shell === 'powershell') {
@@ -181,6 +193,6 @@ async function prepareCommand(command: PluginCommand, args: string, request?: Mo
     // Admission inspects the original script with its real shell grammar, never an opaque launcher.
     plan.pieces.push({ script, admissionScript: script }); offset = match.index! + match[0].length;
   }
-  plan.pieces.push({ text: command.prompt.slice(offset) });
+  plan.pieces.push({ text: command.prompt.slice(offset), sourceOffset: offset });
   return plan;
 }

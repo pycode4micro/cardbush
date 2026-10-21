@@ -45,10 +45,11 @@ export function AgentConnectionForm({ language, initial, onClose, onSave, onRemo
   }
   if (managingSsh) return <div className="agents-modal-backdrop"><div className="agents-modal agents-form" role="dialog" aria-modal="true" aria-label="SSH">
     <header><h2>{zh ? 'SSH 连接' : 'SSH connections'}</h2><button type="button" onClick={() => setManagingSsh(false)}>{zh ? '返回 Agent 设置' : 'Back to Agent settings'}</button></header>
-    <SshConnectionsPanel language={language} compact onConnected={id => { setConnectionId(id); setManagingSsh(false); }}/>
+    <div className="agents-modal-body"><SshConnectionsPanel language={language} compact onConnected={id => { setConnectionId(id); setManagingSsh(false); }}/></div>
   </div></div>;
   return <div className="agents-modal-backdrop"><form className="agents-modal agents-form" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}>
     <header><h2>{title}</h2><button type="button" disabled={busy} onClick={onClose} aria-label={zh ? '关闭' : 'Close'}><X size={18}/></button></header>
+    <div className="agents-modal-body">
     <label>{zh ? '名称' : 'Name'}<input autoFocus required value={name} onChange={event => setName(event.target.value)} placeholder="Agent A"/></label>
     <label>{zh ? '连接方式' : 'Connection method'}<select value={tunneled ? 'ssh' : 'direct'} onChange={event => {
       const enabled = event.target.value === 'ssh'; setTunneled(enabled);
@@ -67,7 +68,7 @@ export function AgentConnectionForm({ language, initial, onClose, onSave, onRemo
     <fieldset className="agent-plugin-sync" disabled={busy}>
       <legend>{zh ? '同步本机插件' : 'Sync local plugins'}</legend>
       <label className="agent-sync-check"><input type="checkbox" checked={autoSyncPlugins} onChange={event => setAutoSyncPlugins(event.target.checked)}/>
-        <span>{zh ? '自动同步所选插件与配置' : 'Automatically sync selected plugins and settings'}</span></label>
+        <span>{zh ? '自动同步所选插件' : 'Automatically sync selected plugins'}</span></label>
       <p>{zh ? '插件默认全选，可取消勾选后点击同步。关闭自动同步时仅手动同步；未选中的插件保留云端原状态。' : 'All plugins are selected initially. Uncheck any you do not want, then sync. With automatic sync off, sync runs only on request. Unchecked plugins keep their existing Agent state.'}</p>
       {loadingPlugins ? <p role="status">{zh ? '正在读取插件…' : 'Loading plugins…'}</p> : pluginError ? <p className="agents-error" role="alert">{pluginError}</p> : <>
         {plugins.length > 0 && <label className="agent-sync-check agent-sync-all"><input type="checkbox" aria-label={zh ? '全选插件' : 'Select all plugins'}
@@ -77,24 +78,26 @@ export function AgentConnectionForm({ language, initial, onClose, onSave, onRemo
         <div className="agent-sync-plugin-list">
           {plugins.map(plugin => <label key={plugin.id} className="agent-sync-check" data-plugin-id={plugin.id}>
             <input type="checkbox" checked={!excludedPluginIds.includes(plugin.id)} onChange={event => setExcludedPluginIds(current => event.target.checked ? current.filter(id => id !== plugin.id) : [...current, plugin.id])}/>
-            <span>{plugin.name}<small>{plugin.source === 'bundled' ? zh ? '内置 · 同步启用状态与配置' : 'Built-in · settings and enabled state' : plugin.version}</small></span>
+            <span>{plugin.name}<small>{plugin.source === 'bundled' ? zh ? '内置 · 同步启用状态' : 'Built-in · enabled state' : plugin.version}</small></span>
           </label>)}
         </div>
         <label className="agent-sync-check"><input type="checkbox" checked={syncSkills} onChange={event => setSyncSkills(event.target.checked)}/><span>{zh ? '同时同步独立技能' : 'Also sync standalone skills'}</span></label>
       </>}
-      <p>{zh ? '同步包含所选插件保存的密钥与连接参数，不包含本机依赖环境或浏览器登录态。内置组件由 Agent 版本提供，能否启用取决于目标主机能力。' : 'Includes saved keys and connection settings for selected plugins. Local dependency environments and browser sessions are excluded. Built-in components come with the Agent; availability depends on the target host.'}</p>
+      <p>{zh ? '同步插件文件与启用状态，保留 Agent 已有的连接参数。不复制本机环境变量、密钥、依赖环境或浏览器登录态；依赖与环境配置由目标 Agent 参照插件说明处理。' : 'Syncs plugin files and enabled state, preserving existing Agent connection settings. Local environment variables, keys, dependency environments and browser sessions are not copied. The target Agent follows the plugin instructions to configure its environment.'}</p>
     </fieldset>
     <p>{tunneled
       ? zh ? '通过 SSH 直接连接服务器上的 Agent，无需本机转发端口。支持断线重连和启动恢复；关闭应用后，服务器上的任务继续运行。' : 'Connect directly to the Agent through SSH without a local forwarding port. Reconnects automatically, including after restarting the app; remote tasks continue when the app closes.'
       : zh ? '填写 Agent 的 HTTP(S) 地址和 access-token。本机服务可使用 HTTP，远程服务使用 HTTPS。' : 'Enter the Agent HTTP(S) address and access-token. Use HTTP locally or HTTPS remotely.'}</p>
     {error && <p className="agents-error" role="alert">{error}</p>}
+    </div>
     <footer>{initial && onRemove && <button className="agent-remove-action" type="button" disabled={busy} aria-expanded={confirmRemove} onClick={() => setConfirmRemove(value => !value)}><Unplug size={15}/>{zh ? '移除此连接' : 'Remove connection'}</button>}
       <button type="button" disabled={busy} onClick={onClose}>{zh ? '取消' : 'Cancel'}</button>
       <button type="submit" disabled={busy}>{zh ? '保存并连接' : 'Save and connect'}</button>
-      <button type="submit" data-sync="true" className="agents-primary" disabled={busy || loadingPlugins || Boolean(pluginError)}>{busy && <LoaderCircle className="spin" size={16}/>} {zh ? '同步' : 'Sync'}</button></footer>
+      <button type="submit" data-sync="true" className="agents-primary" disabled={busy || loadingPlugins || Boolean(pluginError)}>{busy && <LoaderCircle className="spin" size={16}/>} {zh ? '同步' : 'Sync'}</button>
     {confirmRemove && onRemove && <div className="agent-connection-removal"><p>{zh ? '仅从此设备移除连接。服务器上的 Agent、历史记录和运行任务都会保留。' : 'Remove this connection from this device. The remote Agent, history and running tasks are preserved.'}</p>
       <div className="settings-actions"><button type="button" disabled={busy} onClick={() => setConfirmRemove(false)}>{zh ? '取消移除' : 'Keep connection'}</button><button type="button" className="danger" disabled={busy} onClick={() => {
         setBusy(true); setError(''); void onRemove().catch(error => setError(agentErrorText(error))).finally(() => setBusy(false));
       }}>{zh ? '确认移除' : 'Confirm removal'}</button></div></div>}
+    </footer>
   </form></div>;
 }

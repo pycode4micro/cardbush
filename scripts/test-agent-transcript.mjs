@@ -308,6 +308,11 @@ test('unconfirmed guidance survives remount with its exact append identity and b
   const call = async (operation, input) => {
     if (operation === 'sessions.get') return null;
     if (operation === 'chat.jobs') return [];
+    if (operation === 'runtime.command' && input.kind === 'runtime.get_capabilities') return {
+      protocol: 'bush.runtime_capabilities.v1', hostId: 'guidance-remount', runtimeVersion: 'test',
+      eventProtocol: 'bush.runtime_event.v1', supportedEvents: [],
+      supportedCommands: ['runtime.get_session', 'runtime.get_user_message', 'runtime.enqueue_guidance'], features: [],
+    };
     if (operation === 'runtime.command' && input.kind === 'runtime.get_user_message') return null;
     assert.equal(operation, 'runtime.command'); assert.equal(input.kind, 'runtime.enqueue_guidance');
     received.push(plain(input));

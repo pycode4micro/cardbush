@@ -22,7 +22,7 @@ export const sharedHash = (value: string | Buffer) => createHash('sha256').updat
 /** Generated environments are rebuilt by the plugin's target-platform launcher.
  * Do not use .gitignore: published dist/, models and other runtime assets may be ignored by Git. */
 export function ignoredSharedPackagePath(path: string) {
-  return /(^|\/)(\.git|\.venv|venv|\.tools|\.python|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|\.cache|\.uv|\.npm)(\/|$)/i.test(path) ||
+  return /(^|\/)(\.git|\.venv|venv|\.tools|\.python|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|\.cache|\.gpu-cache|\.uv|\.npm)(\/|$)/i.test(path) ||
     /(^|\/)(\.DS_Store|\.runtime-ready\.json)$|\.(pyc|pyo)$/i.test(path);
 }
 
@@ -100,21 +100,15 @@ export async function packSharedPackage(root: string): Promise<SharedPackageArch
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 /** Compatibility is declared by the package and checked against the host, never inferred from SSH. */
-export function sharedPluginCompatibility(manifest: Record<string, unknown>, config: unknown, platform: string, capabilities: Record<string, unknown>) {
+export function sharedPluginCompatibility(manifest: Record<string, unknown>, _config: unknown, platform: string, capabilities: Record<string, unknown>, capabilityIssue?: (name: string) => string | undefined) {
   const runtime = record(record(manifest.cardbush).runtime);
-  if (Array.isArray(runtime.platforms) && !runtime.platforms.includes(platform)) return `需要 ${runtime.platforms.join(', ')} / unsupported Agent platform: ${platform}`;
-  const missing = Array.isArray(runtime.requires) ? runtime.requires.filter(value => typeof value === 'string' && capabilities[value] !== true) : [];
-  if (missing.length) return `Agent 未提供 ${missing.join(', ')} 能力 / required host capability unavailable`;
-  const policies = record(record(config).mcp_servers);
-  for (const [name, declaration] of Object.entries(record(manifest.mcpServers))) {
-    const policy = record(policies[name]);
-    if (policy.enabled === false) continue;
-    const server = { ...record(declaration), ...record(policy.connection) };
-    if (server.url || server.type && server.type !== 'stdio') continue;
-    const command = String(server.command ?? '');
-    const args = Array.isArray(server.args) ? server.args.map(String) : [];
-    if (platform !== 'win32' && (/(?:^|[\\/])(powershell(?:\.exe)?|cmd(?:\.exe)?)$/i.test(command) || /\.exe$/i.test(command) ||
-        [command, ...args, String(server.cwd ?? '')].some(value => /^[A-Za-z]:[\\/]|^\\\\/.test(value)))) return `MCP ${name} 使用 Windows 启动命令或路径，需要目标平台启动方式 / Windows-only launcher`;
-  }
+  if (Array.isArray(runtime.platforms) && !runtime.platforms.includes(platform)) return `此插件声明支持 ${runtime.platforms.join(', ')}，当前平台为 ${platform}；不代表主机无法配置桌面 / plugin platform mismatch`;
+  // The service's desktop flags describe its optional built-in control backend,
+  // not a plugin's own desktop/browser transport or the machine's display.
+  const missing = Array.isArray(runtime.requires) ? runtime.requires.filter(value => typeof value === 'string' &&
+    !['desktop', 'computerUse', 'browserUi'].includes(value) && capabilities[value] !== true) : [];
+  if (missing.length) return [...new Set(missing.map(name => capabilityIssue?.(name) || `${name} 当前未就绪，可检查并配置后重试 / required host capability not ready`))].join('; ');
+  // Interpreter paths and dependencies belong to the target Agent. Only the
+  // package's explicit requirements can disable it during installation.
   return undefined;
 }

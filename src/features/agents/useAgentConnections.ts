@@ -20,18 +20,30 @@ export function useAgentConnections() {
   const creates = useRef(new Set<string>());
   const selectionRevision = useRef(new Map<string, number>());
   const navigationRevision = useRef(0);
+  const sessionsRef = useRef(sessionsByAgent);
+  sessionsRef.current = sessionsByAgent;
+  const deletions = useRef(new Map<string, Map<string, { acknowledged: boolean }>>());
   const updateList = useCallback((id: string, patch: Partial<SessionList>) => {
-    setSessionsByAgent(current => ({ ...current, [id]: { ...(current[id] ?? { sessions: [] }), ...patch } }));
+    setSessionsByAgent(current => {
+      const next = { ...(current[id] ?? { sessions: [] }), ...patch };
+      next.sessions = next.sessions.filter(session => !deletions.current.get(id)?.has(session.sessionId));
+      return { ...current, [id]: next };
+    });
   }, []);
   const refreshSessions = useCallback((id: string): Promise<void> => {
     const pending = loads.current.get(id);
     if (pending) return pending;
     updateList(id, { loading: true, error: '' });
+    const acknowledged = [...(deletions.current.get(id) ?? [])].filter(([, entry]) => entry.acknowledged);
     const load = (async () => {
       try {
         const info = await api().connect(id);
         const sessions = await api().call(id, 'sessions.list', { projection: 'summary' }) as AgentSessionItem[];
         const projects = info.capabilities.conversationManagement ? await api().call(id, 'projects.list') as { projects: AgentProject[] } : undefined;
+        // Only a read started after acknowledgement can retire a tombstone.
+        // Older polls must not resurrect a conversation while deletion runs.
+        for (const [sessionId, entry] of acknowledged) if (!sessions.some(session => session.sessionId === sessionId) &&
+          deletions.current.get(id)?.get(sessionId) === entry) deletions.current.get(id)!.delete(sessionId);
         updateList(id, { sessions: sessions.filter(isVisibleConversationSession), loading: false, management: Boolean(info.capabilities.conversationManagement), projects: projects?.projects });
       } catch (error) { updateList(id, { loading: false, error: message(error) }); throw error; }
       finally { loads.current.delete(id); }
@@ -72,14 +84,31 @@ export function useAgentConnections() {
     } catch (error) { updateList(id, { error: message(error) }); return false; }
   }, [refreshSessions, updateList]);
   const deleteSession = useCallback(async (id: string, sessionId: string) => {
+    if (deletions.current.get(id)?.has(sessionId)) return;
+    const previous = sessionsRef.current[id]?.sessions.find(session => session.sessionId === sessionId);
+    const entry = { acknowledged: false };
+    if (!deletions.current.has(id)) deletions.current.set(id, new Map());
+    deletions.current.get(id)!.set(sessionId, entry);
+    selectionRevision.current.set(id, (selectionRevision.current.get(id) ?? 0) + 1);
+    setSelectedSessions(current => current[id] === sessionId ? { ...current, [id]: '' } : current);
+    updateList(id, { error: '' });
     try {
       await api().call(id, 'sessions.delete', { sessionId });
-      setSelectedSessions(current => current[id] === sessionId ? { ...current, [id]: '' } : current);
+      entry.acknowledged = true;
       sessionStorage.removeItem(`cardbush-agent-draft:${id}:${sessionId}`);
       sessionStorage.removeItem(`cardbush-agent-draft:${id}:${sessionId}:submission`);
-      await loads.current.get(id)?.catch(() => undefined);
-      await refreshSessions(id);
-    } catch (error) { updateList(id, { error: message(error) }); }
+    } catch (error) {
+      deletions.current.get(id)?.delete(sessionId);
+      setSessionsByAgent(current => {
+        const list = current[id] ?? { sessions: [] };
+        return { ...current, [id]: { ...list, error: message(error),
+          sessions: previous && !list.sessions.some(session => session.sessionId === sessionId) ? [...list.sessions, previous] : list.sessions } };
+      });
+      return;
+    }
+    // A later list failure cannot undo a deletion the server already confirmed.
+    await loads.current.get(id)?.catch(() => undefined);
+    await refreshSessions(id).catch(() => undefined);
   }, [refreshSessions, updateList]);
   const updateSession = useCallback(async (id: string, sessionId: string, patch: Record<string, unknown>) => {
     try {

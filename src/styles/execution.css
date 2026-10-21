@@ -500,6 +500,9 @@
 }
 
 .assistant-activity-line {
+  /* New prose/tools are inserted before this stable status slot. It is not a
+     reading anchor: native anchoring here would jump before managed following. */
+  overflow-anchor: none;
   display: flex;
   align-items: flex-start;
   gap: 8px;

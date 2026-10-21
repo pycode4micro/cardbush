@@ -202,8 +202,11 @@ test('restart during refinement preserves prior receipts and accepted new summar
   const checkpoints = new InMemoryRuntimeCheckpointStore(), events = new InMemoryRuntimeEventLog(), controller = new AbortController();
   let reached; const ready = new Promise(resolve => { reached = resolve; });
   const seen = [];
+  // Exercise refinement/restart, independently of maintenance wording size.
+  // Dispatch-size partitioning is covered by the large-source tests above.
+  const refinementCount = input => maintenance(input) ? { source: 'provider', inputTokens: 3000 } : count(input);
   const first = new InMemoryRuntimeHost({ sessionStore: store, checkpointStore: checkpoints, eventLog: events, registerDefaultWorkspaceTools: false,
-    provider: { countInputTokens: count, async *stream(input) {
+    provider: { countInputTokens: refinementCount, async *stream(input) {
       seen.push(structuredClone(input));
       if (seen.length === 1) yield* checkpoint(input, 'large-original', [0, 1, 2].map(source => ({ source, summary: oversized(source) })));
       else if (seen.length === 2) yield* checkpoint(input, 'small-accepted', [{ source: 1, summary: short(1) }]);
@@ -220,7 +223,7 @@ test('restart during refinement preserves prior receipts and accepted new summar
   const restoredEvents = new InMemoryRuntimeEventLog({ persistence: { load: () => savedEvents, append: item => savedEvents.push(item) } });
   let calls = 0;
   const second = new InMemoryRuntimeHost({ sessionStore: restoredStore, checkpointStore: restoredCheckpoints, eventLog: restoredEvents,
-    registerDefaultWorkspaceTools: false, provider: { countInputTokens: count, async *stream(input) {
+    registerDefaultWorkspaceTools: false, provider: { countInputTokens: refinementCount, async *stream(input) {
       calls++;
       if (maintenance(input)) {
         assert.deepEqual(input.messages, seen.at(-1).messages);

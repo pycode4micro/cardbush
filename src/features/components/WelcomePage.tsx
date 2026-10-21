@@ -8,9 +8,10 @@ import { HtmlComponentContext } from './HtmlComponentContext';
 import { HtmlComponentSurface } from './HtmlComponentSurface';
 import { defaultWelcomeIds, isBuiltinComponent, welcomeComposerFlow, type BuiltinKind, type ComponentCollection, type ComponentItem, type WelcomeLayout, type WelcomePlacement } from './componentModel';
 import { useWelcomeLayout } from './useWelcomeLayout';
+import { ComponentComposerPreview } from './ComponentComposerPreview';
 import './welcomeLayout.css';
 
-// Both the new-conversation page and its editor use these same live component views.
+// Share the layout, but keep editor previews independent of live conversation state.
 export function WelcomePage({ language, collection, layout, slots = {}, editing = false, canvasRef, controls, onMove, overlay, minHeight = 0 }: {
   language: AppLanguage; collection: ComponentCollection; layout?: WelcomeLayout;
   slots?: Partial<Record<BuiltinKind, ReactNode>>; editing?: boolean;
@@ -19,7 +20,7 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
   onMove?: (event: PointerEvent, item: ComponentItem) => void;
   overlay?: ReactNode; minHeight?: number;
 }) {
-  const host = useContext(HtmlComponentContext), zh = language === 'zh';
+  const context = useContext(HtmlComponentContext), host = editing ? null : context, zh = language === 'zh';
   const internalRef = useRef<HTMLDivElement>(null), pageRef = canvasRef ?? internalRef;
   const flow = welcomeComposerFlow({ ...collection, welcomeLayout: layout });
   useWelcomeLayout(pageRef, layout, flow, collection, editing);
@@ -27,14 +28,14 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
     if (!isBuiltinComponent(item)) return <HtmlComponentSurface component={item} active={!editing}/>;
     const inputStyle = placement?.inputStyle ?? item.inputStyle ?? 'standard';
     if (item.builtin === 'input') return <ComposerPresentationContext.Provider value={{ style: inputStyle, preview: editing }}>
-      <div className={`welcome-input-stack builtin-input ${inputStyle}`}>{slots.input ?? host?.composer}</div>
+      <div className={`welcome-input-stack builtin-input ${inputStyle}`}>{editing ? <ComponentComposerPreview language={language}/> : slots.input ?? host?.composer}</div>
     </ComposerPresentationContext.Provider>;
-    if (slots[item.builtin] !== undefined) return slots[item.builtin];
+    if (!editing && slots[item.builtin] !== undefined) return slots[item.builtin];
     if (item.builtin === 'brand') return <StarWordmark/>;
     if (item.builtin === 'greeting') return <h2>{zh ? '你想做些什么？' : 'What would you like to do?'}</h2>;
-    if (item.builtin === 'suggestions') return <WelcomeSuggestions language={language} disabled={!host || host.running} hasDraft={Boolean(host?.draft?.trim())}
+    if (item.builtin === 'suggestions') return <WelcomeSuggestions language={language} preview={editing} disabled={!host || host.running} hasDraft={Boolean(host?.draft?.trim())}
       onSelect={suggestion => host?.selectSuggestion ? host.selectSuggestion(suggestion) : host?.fill(suggestion.text)}/>;
-    return <BuiltinComponentSurface component={item} language={language}/>;
+    return <BuiltinComponentSurface component={item} language={language} preview={editing}/>;
   }
   function view(id: string, placement?: WelcomePlacement) {
     const item = collection.items.find(candidate => candidate.id === id); if (!item) return null;
@@ -53,7 +54,7 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
         <span className="composer-stays">{zh ? '已吸附底部 · 发送后不移动' : 'Docked · Stays here after sending'}</span>
       </span>
     </div> : null;
-  return <div className={`welcome-composer welcome-layout-surface ${layout ? 'custom-layout' : 'default-layout'}${editing ? ' is-editing' : ''}`} ref={pageRef}>
+  return <HtmlComponentContext.Provider value={host}><div className={`welcome-composer welcome-layout-surface ${layout ? 'custom-layout' : 'default-layout'}${editing ? ' is-editing' : ''}`} ref={pageRef}>
     {layout ? <div className="welcome-layout-canvas" style={{ minHeight: `max(${minHeight}px, calc(${Math.max(0, ...layout.items.filter(item => item.componentId !== 'system-input').map(item => item.y + item.height))}px * var(--welcome-height-scale, 1) + 20px))` }}>
       <div className="welcome-layout-widgets">{layout.items.filter(item => item.componentId !== 'system-input').map(item => view(item.componentId, item))}</div>
       {layout.items.filter(item => item.componentId === 'system-input').map(item => view(item.componentId, item))}
@@ -64,5 +65,5 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
       {view('system-input')}
       {landing}
     </>}
-  </div>;
+  </div></HtmlComponentContext.Provider>;
 }

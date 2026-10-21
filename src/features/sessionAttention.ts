@@ -1,6 +1,4 @@
-import { taskPlanWaitingSchema } from '@cardbush/bush-protocol';
 import type { AppLanguage, SessionAttentionState } from '../types';
-import { taskPlanWaitingLabel } from './taskPlanWaiting';
 import { isWindowVisible } from '../shared/windowVisibility';
 
 const sessionAttentionStorageKey = 'cardbush_session_attention_v1';
@@ -21,20 +19,16 @@ export function readSessionAttentionState(): Record<string, SessionAttentionStat
         const updatedTime = Date.parse(updatedAt);
         if (
           !normalizedId ||
-          !['completed', 'waiting', 'error'].includes(kind) ||
+          !sessionAttentionNeedsNotification({ kind, interactionId: item.interactionId }) ||
           !Number.isFinite(updatedTime) ||
           now - updatedTime > maxPersistedAttentionAgeMs
         ) return [];
-        const waitingKind = taskPlanWaitingSchema.shape.kind.safeParse(item.waitingKind);
         return [[normalizedId, {
           sessionId: normalizedId,
           kind: kind as SessionAttentionState['kind'],
           title: String(item.title ?? '').trim(),
-          // Legacy waiting badges did not distinguish user action from dependencies.
-          body: kind === 'waiting' && !waitingKind.success ? '' : String(item.body ?? '').trim(),
-          ...(kind === 'waiting' ? { waitingKind: waitingKind.success ? waitingKind.data : 'unspecified' as const } : {}),
-          ...(kind === 'waiting' && waitingKind.success && waitingKind.data === 'user' && typeof item.interactionId === 'string'
-            ? { interactionId: item.interactionId } : {}),
+          body: String(item.body ?? '').trim(),
+          ...(kind === 'interaction' ? { interactionId: String(item.interactionId).trim() } : {}),
           turnId: String(item.turnId ?? '').trim() || undefined,
           updatedAt,
         } satisfies SessionAttentionState]];
@@ -59,13 +53,14 @@ export function persistSessionAttentionState(
   }
 }
 
-export function sessionAttentionNeedsNotification(attention: Pick<SessionAttentionState, 'kind' | 'waitingKind'>) {
-  return attention.kind !== 'waiting' || attention.waitingKind === 'user';
+export function sessionAttentionNeedsNotification(attention: { kind: unknown; interactionId?: unknown }) {
+  return attention.kind === 'completed' || attention.kind === 'error'
+    || (attention.kind === 'interaction' && typeof attention.interactionId === 'string' && Boolean(attention.interactionId.trim()));
 }
 
-export function sessionAttentionLabel(attention: Pick<SessionAttentionState, 'kind' | 'waitingKind'>, language: AppLanguage) {
-  if (attention.kind === 'waiting') return taskPlanWaitingLabel(attention.waitingKind, language);
-  if (attention.kind === 'error') return language === 'zh' ? '需要关注' : 'Needs attention';
+export function sessionAttentionLabel(attention: Pick<SessionAttentionState, 'kind'>, language: AppLanguage) {
+  if (attention.kind === 'interaction') return language === 'zh' ? '等待确认' : 'Confirmation pending';
+  if (attention.kind === 'error') return language === 'zh' ? '执行出错' : 'Execution failed';
   return language === 'zh' ? '已完成，待查看' : 'Complete, not viewed';
 }
 

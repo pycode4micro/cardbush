@@ -6,6 +6,7 @@ import type { AgentDesktopFrame, AgentDesktopStatus } from './agentDesktopTypes.
 import { browserActionSchema, computerActionSchema, desktopInputSchema, desktopToolRequestSchema } from './agentDesktopSchema.mjs';
 import { AgentDesktopWorker, type DesktopWorker } from './agentDesktopWorker.mjs';
 import { checkedExternalWebUrl } from './externalWebUrl.js';
+import { probeAgentDesktop } from './agentDesktopProbe.mjs';
 
 const tokenSchema = z.string().uuid();
 const frameSchema = z.object({ width: z.number().int().min(1).max(4096), height: z.number().int().min(1).max(2160),
@@ -25,7 +26,10 @@ export class AgentDesktop {
   constructor(readonly worker: DesktopWorker, readonly now = Date.now) {}
 
   static async open(root: string, env: NodeJS.ProcessEnv) {
-    if (process.platform !== 'linux') throw new Error('--desktop requires the optional Linux Personal Agent image.');
+    const setup = await probeAgentDesktop(env);
+    if (setup.environment !== 'ready' || setup.backend !== 'available') {
+      throw new Error(`${setup.summary} ${setup.remediation.join(' ')}`);
+    }
     const profile = join(root, 'desktop', 'browser');
     await mkdir(profile, { recursive: true, mode: 0o700 });
     const desktop = new AgentDesktop(new AgentDesktopWorker(profile, env));

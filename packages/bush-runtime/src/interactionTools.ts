@@ -1,3 +1,4 @@
+import { replacedToolPresentation } from './toolPresentation.js';
 import type { ToolRegistry } from "./toolRegistry.js";
 import { SOLUTION_SELECTION_TOOL, solutionSelectionInputSchema, type SolutionSelectionInput } from '@cardbush/bush-protocol';
 import type { RuntimeSolutionBroker } from './runtimeSolutionBroker.js';
@@ -111,6 +112,7 @@ export function registerInteractionTools(
 
   if (solutions && !registry.resolve(SOLUTION_SELECTION_TOOL)) {
     registry.register<SolutionSelectionInput>({
+      projectModelDefinition: replacedToolPresentation('request_user_input_async'),
       definition: {
         name: SOLUTION_SELECTION_TOOL,
         description: 'Solution Selection — a last resort for one consequential ambiguity that remains after inspecting context and available tools, where guessing risks a materially wrong outcome. Offer concrete solutions, not teaching, surveys, progress updates, routine preferences, permission requests or reconfirmation of authorized work. Wait for the actual reply before dependent work. If dismissed, report the unresolved dependency; do not pick a default or repeat the request.',

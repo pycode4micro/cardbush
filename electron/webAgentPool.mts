@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { AgentHttpClient } from './agentHttpClient.mjs';
 import type { AgentEventFrame, AgentEventRequest, AgentOperation } from './agentTypes.js';
 import { imageToken, modelToken, tenantKey, WebError, type WebModel } from './webCommon.mjs';
+import { remoteAgentToken } from './webRemoteAgents.mjs';
 
 export interface WebAgent {
   call(operation: AgentOperation, input: Record<string, unknown>): Promise<unknown>;
@@ -28,7 +29,7 @@ export class BrokerWebAgents implements WebAgents {
     if (previous && previous.client !== client) previous.client.close();
     let ready = false;
     for (let attempt = 0; attempt < 35; attempt++) {
-      try { const info = await client.info(); if (info.capabilities.webRestricted !== true) throw new WebError(503, '个人目录和工具权限策略尚未生效。'); ready = true; break; }
+      try { const info = await client.info(); if (info.capabilities.webRestricted !== true || info.capabilities.webRemoteAgents !== true) throw new WebError(503, '个人目录或远程 Agent 权限策略尚未生效。'); ready = true; break; }
       catch (error) { if (error instanceof WebError) { client.close(); throw error; } if (attempt === 34) break; await pause(750); }
     }
     if (!ready) { client.close(); this.#clients.delete(userId); throw new WebError(503, '会话服务启动失败，请稍后重试。'); }
@@ -46,7 +47,8 @@ export class BrokerWebAgents implements WebAgents {
           reasoningEffort: model.reasoningEffort === undefined ? 'medium' : model.reasoningEffort })) } });
       this.#clients.set(userId, { client, containerId: result.containerId, configuredAt: Date.now(), modelFingerprint });
     }
-    await client.call('web.configure', { imageEnabled: await this.imageAllowed(userId), gateway: `${this.config.internalURL.replace(/\/$/, '')}/internal/image/${encodeURIComponent(userId)}/images/generations`, credential: imageToken(this.config.modelSecret, userId) });
+    await client.call('web.configure', { imageEnabled: await this.imageAllowed(userId), gateway: `${this.config.internalURL.replace(/\/$/, '')}/internal/image/${encodeURIComponent(userId)}/images/generations`, credential: imageToken(this.config.modelSecret, userId),
+      remoteAgents: { gateway: `${this.config.internalURL.replace(/\/$/, '')}/internal/remote-agents/${encodeURIComponent(userId)}`, credential: remoteAgentToken(this.config.modelSecret, userId) } });
     return client;
   }
   close() { for (const value of this.#clients.values()) value.client.close(); this.#clients.clear(); }

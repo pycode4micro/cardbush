@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { usagePlanBindingSchema } from './usage.js';
 
 export const BUSH_TASK_PLAN_PROTOCOL = "bush.task_plan.v1" as const;
 
@@ -19,7 +18,6 @@ export const taskNodeSchema = z.object({
   waitingFor: z.string().trim().min(1).optional(),
   // Optional for older journals and callers; missing classification never implies user action.
   waitingKind: taskPlanWaitingKindSchema.optional(),
-  usage: usagePlanBindingSchema.optional(),
 }).superRefine((node, context) => {
   if (node.status === "waiting" && !node.waitingFor) {
     context.addIssue({ code: "custom", path: ["waitingFor"], message: "waiting nodes must state the external dependency or user action needed to continue" });

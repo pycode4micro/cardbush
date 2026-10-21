@@ -313,6 +313,7 @@ export function registerContextCompactionTool(
   }) => { session: SessionSnapshot; checkpoint: ContextCheckpointInput },
 ): void {
   registry.register({
+    directInvocation: true,
     definition: {
       name: CHECKPOINT_CONTEXT_TOOL,
       description: [

@@ -411,7 +411,8 @@ async function decodeManifest(input: {
     capabilities: stringArray(interfaceMetadata.capabilities).slice(0, 12),
     keywords: stringArray(manifest.keywords).slice(0, 24),
     defaultPrompts: stringArray(interfaceMetadata.defaultPrompt).slice(0, 3),
-    localizations: pluginLocalizations(objectOrEmpty(manifest.cardbush).localizations),
+    localizations: pluginLocalizations(objectOrEmpty(manifest.cardbush).localizations
+      ?? objectOrEmpty(objectOrEmpty(manifest.extensions)['com.cardbush']).localizations),
     brandColor: string(interfaceMetadata.brandColor) || '#5f8f79',
     logoPath,
     logoDarkPath,

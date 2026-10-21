@@ -5,6 +5,7 @@ import { HtmlComponentSurface } from './HtmlComponentSurface';
 import { componentTitle, isBuiltinComponent, type ComponentItem } from './componentModel';
 import { layoutPoint, layoutSpace } from './welcomeLayoutGeometry';
 import { ComposerPortalContext } from '../composer/ComposerPortalContext';
+import { HtmlComponentContext } from './HtmlComponentContext';
 
 export function WelcomeComponentPreview({ item, language, anchor }: { item: ComponentItem; language: AppLanguage; anchor: HTMLElement }) {
   const preview = useRef<HTMLDivElement>(null);
@@ -37,7 +38,9 @@ export function WelcomeComponentPreview({ item, language, anchor }: { item: Comp
     <div className="welcome-preview-heading"><span>{componentTitle(item, language)}</span><span>{language === 'zh' ? '预览' : 'Preview'}</span></div>
     <div className="welcome-preview-surface" inert>
       <ComposerPortalContext.Provider value={null}>
-        {isBuiltinComponent(item) ? <BuiltinComponentSurface component={item} language={language} preview/> : <HtmlComponentSurface component={item} active={false}/>}
+        <HtmlComponentContext.Provider value={null}>
+          {isBuiltinComponent(item) ? <BuiltinComponentSurface component={item} language={language} preview/> : <HtmlComponentSurface component={item} active={false}/>}
+        </HtmlComponentContext.Provider>
       </ComposerPortalContext.Provider>
     </div>
   </div>;

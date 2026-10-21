@@ -1,0 +1,93 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+module.exports = async ({ run, until, pause, win, root }) => {
+  await run(`cardbushDesktop.sshConnections={list:async()=>[{id:'ssh-dialog',name:'Windows host',username:'fixture',host:'fixture.invalid',port:22}]};
+    cardbushDesktop.agents.syncCatalog=async()=>Array.from({length:30},(_,i)=>({id:'plugin-'+i,name:'Plugin '+i,source:'user',version:'1.0.0'}));
+    window.dialogWarnings=['video-face-stylizer: .gpu-cache/example.blob exceeds the file limit; previous Agent state retained'];
+    connections=connections.map(c=>c.id==='a'?{...c,configurationWarnings:dialogWarnings,sshTunnel:{connectionId:'ssh-dialog',remoteHost:'127.0.0.1',remotePort:4780}}:c);
+    snapshots.a=[{sessionId:'a1',revision:1,metadata:{title:'同步详情与连接设置'},turns:[{turnId:'history-a1',messages:[
+      {messageId:'q-a1',turnId:'history-a1',turnSequence:1,messageIndex:0,message:{role:'user',content:'检查现有工具'},createdAt:'2026-09-22T00:00:00Z'},
+      {messageId:'a-a1',turnId:'history-a1',turnSequence:1,messageIndex:1,message:{role:'assistant',content:Array.from({length:35},(_,i)=>'已有会话内容 '+i).join('\\n\\n')},createdAt:'2026-09-22T00:00:03Z'}]}]}];
+    [...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='a1').click();undefined;`);
+  await until("!!document.querySelector('.agent-chat textarea')&&document.querySelector('.agents-config-dialog')?.matches(':modal')", 'sync issues open directly in a modal');
+  assert.equal(await run("!!document.querySelector('.agents-config-notice')"), false, 'no notification strip occupies the conversation');
+  assert.ok(await run("document.querySelector('.agents-config-dialog header button svg').getBoundingClientRect().width>=16"), 'close icon remains legible');
+  await run("document.querySelector('.agents-config-dialog header button').click()");
+  await until("!document.querySelector('.agents-config-dialog')", 'close acknowledges the current result');
+  await pause(150);
+  await run(`window.dialogComposer=document.querySelector('.agent-chat textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(dialogComposer,'保留的草稿');dialogComposer.dispatchEvent(new Event('input',{bubbles:true}));
+    window.dialogTranscript=document.querySelector('.agent-chat .message-list');dialogTranscript.scrollTop=120;
+    window.transcriptScroll=dialogTranscript.scrollTop;window.agentChatTop=document.querySelector('.agent-chat').getBoundingClientRect().top;
+    dialogComposer.focus({preventScroll:true});undefined;`);
+  await run(`(async()=>{dialogWarnings=Array.from({length:35},(_,i)=>'plugin-'+i+': '+('C:/plugins/very-long-path/'.repeat(8))+'artifact.blob · 云端配置尚未就绪，请检查目标环境 / Check the target environment.');
+    connections=connections.map(c=>c.id==='a'?{...c,configurationWarnings:dialogWarnings}:c);await refreshAgentConnections();})()`);
+  await until("document.querySelector('.agents-config-dialog')?.matches(':modal')", 'details use a real modal with background focus isolation');
+  assert.equal(await run("document.querySelector('.agent-chat').getBoundingClientRect().top===agentChatTop"), true, 'new sync issues do not shift the conversation');
+  assert.deepEqual(await run("[...document.querySelectorAll('.agents-config-warning-list li')].map(e=>e.textContent)"), await run('dialogWarnings'), 'all warning text is preserved in the dialog');
+  await run("window.detailHeaderTop=document.querySelector('.agents-config-dialog header').getBoundingClientRect().top;document.querySelector('.agents-config-dialog .settings-dialog-body').scrollTop=10000;undefined;");
+  assert.ok(await run("document.querySelector('.agents-config-dialog .settings-dialog-body').scrollTop>0"), 'long details scroll in their body');
+  assert.equal(await run("document.querySelector('.agents-config-dialog header').getBoundingClientRect().top===detailHeaderTop"), true, 'details heading and close stay fixed');
+  assert.equal(await run('dialogTranscript.scrollTop'), await run('transcriptScroll'), 'reading details does not move the underlying conversation');
+  win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+  win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+  await until("!document.querySelector('.agents-config-dialog')", 'Escape closes the details');
+  assert.equal(await run('document.activeElement===dialogComposer'), true, 'closing restores the previous input focus');
+  await run("refreshAgentConnections()"); await pause(80);
+  assert.equal(await run("!!document.querySelector('.agents-config-dialog')"), false, 'polling the same result does not reopen the modal');
+  await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Local view').click()");
+  await pause(50);
+  await run("[...document.querySelectorAll('.fixture-nav button')].find(b=>b.textContent==='Agent view').click()");
+  await until("document.querySelector('.agent-chat textarea')?.value==='保留的草稿'", 'navigation restores the saved draft');
+  await pause(100); await run("dialogComposer=document.querySelector('.agent-chat textarea');undefined;");
+  assert.equal(await run("!!document.querySelector('.agents-config-dialog')||!!document.querySelector('.agents-config-notice')"), false, 'navigation does not repeat the dismissed result or leave a banner');
+  fs.writeFileSync(path.join(root, 'tmp/agent-sync-conversation.png'), (await win.webContents.capturePage()).toPNG());
+  await run(`(async()=>{connections=connections.map(c=>c.id==='a'?{...c,configurationError:'同步失败：目标环境暂不可用；原配置保留。'}:c);await refreshAgentConnections();})()`);
+  await until("document.querySelector('.agents-config-error')?.textContent.includes('原配置保留')", 'the full failure reason is available with the warnings');
+  await pause(100); fs.writeFileSync(path.join(root, 'tmp/agent-sync-details-dialog.png'), (await win.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.agents-config-dialog button[type=submit]').click()");
+  await until("!!document.querySelector('.agents-form')&&!document.querySelector('.agents-config-dialog')", 'details can open connection settings without stacking dialogs');
+  await until("document.querySelectorAll('.agent-sync-plugin-list input').length===30", 'settings plugin selection loads');
+  await run("(async()=>{connections=connections.map(c=>c.id==='a'?{...c,configurationError:'新的同步提示，等待设置关闭。'}:c);await refreshAgentConnections();})()");
+  await pause(80);
+  assert.equal(await run("!!document.querySelector('.agents-config-dialog')"), false, 'sync updates do not cover the active connection form');
+
+  async function checkFixedSettings(label) {
+    await run(`var body=document.querySelector('.agents-modal-body');body.scrollTop=0;
+      window.settingsHeaderTop=document.querySelector('.agents-form > header').getBoundingClientRect().top;
+      window.settingsCloseTop=document.querySelector('.agents-form [aria-label=关闭]').getBoundingClientRect().top;
+      window.settingsFooterTop=document.querySelector('.agents-form > footer').getBoundingClientRect().top;
+      body.scrollTop=body.scrollHeight;undefined;`);
+    assert.ok(await run("document.querySelector('.agents-modal-body').scrollTop>0"), label+': form actually overflows');
+    assert.equal(await run("document.querySelector('.agents-form > header').getBoundingClientRect().top===settingsHeaderTop"), true, label+': header does not scroll');
+    assert.equal(await run("document.querySelector('.agents-form [aria-label=关闭]').getBoundingClientRect().top===settingsCloseTop"), true, label+': close button does not scroll');
+    assert.equal(await run("document.querySelector('.agents-form > footer').getBoundingClientRect().top===settingsFooterTop"), true, label+': actions do not scroll');
+    assert.equal(await run("document.querySelector('.agents-form').scrollTop"), 0, label+': outer modal never scrolls');
+    assert.equal(await run("document.querySelector('.agents-form').scrollWidth<=document.querySelector('.agents-form').clientWidth"), true, label+': no horizontal overflow');
+    assert.equal(await run("(()=>{const button=document.querySelector('.agents-form [aria-label=关闭]'),r=button.getBoundingClientRect();return r.top>=0&&r.bottom<innerHeight&&button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})()"), true, label+': close remains visible and clickable');
+    assert.equal(await run("document.querySelector('.agents-form > footer').getBoundingClientRect().bottom<=innerHeight"), true, label+': footer stays in the viewport');
+  }
+  await checkFixedSettings('desktop');
+  await pause(100); fs.writeFileSync(path.join(root, 'tmp/agent-connection-fixed-header.png'), (await win.webContents.capturePage()).toPNG());
+  win.setContentSize(480, 540); await run("document.querySelector('.fixture-shell').classList.add('narrow')"); await pause(100);
+  await checkFixedSettings('small window');
+  await run("document.querySelector('.agent-remove-action').click()");
+  assert.equal(await run("document.querySelector('.agent-connection-removal').getBoundingClientRect().bottom<=innerHeight"), true, 'removal confirmation remains reachable in a small window');
+  await run("[...document.querySelectorAll('.agent-connection-removal button')].find(b=>b.textContent==='取消移除').click()");
+  await pause(100); fs.writeFileSync(path.join(root, 'tmp/agent-connection-fixed-header-small.png'), (await win.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.agents-form [aria-label=关闭]').click()");
+  await until("!document.querySelector('.agents-form')", 'fixed close button closes the scrolled settings');
+  assert.equal(await run("document.querySelector('.agent-chat textarea')===dialogComposer&&dialogComposer.value==='保留的草稿'"), true, 'modal transitions preserve the mounted composer and its draft');
+
+  await until("document.querySelector('.agents-config-dialog')?.matches(':modal')", 'new details deferred during settings open after the form closes');
+  assert.equal(await run("(()=>{const d=document.querySelector('.agents-config-dialog'),r=d.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&d.scrollWidth<=d.clientWidth})()"), true, 'long paths do not push the details dialog outside the window');
+  await run("(async()=>{connections=connections.map(c=>c.id==='a'?{...c,configurationError:undefined,configurationWarnings:[]}:c);await refreshAgentConnections();})()");
+  await until("!document.querySelector('.agents-config-notice')&&!document.querySelector('.agents-config-dialog')", 'successful synchronization clears stale details');
+  await run("(async()=>{connections=connections.map(c=>c.id==='a'?{...c,configurationWarnings:dialogWarnings}:c);await refreshAgentConnections();})()");
+  await until("document.querySelector('.agents-config-dialog')?.matches(':modal')", 'a recurring failure after a successful sync is presented again');
+  await run("document.querySelector('.agents-config-dialog header button').click()");
+  assert.equal(await run("calls.some(c=>['chat.send','chat.stop','sessions.create','sessions.delete','save'].includes(c.operation))"), false, 'viewing and dismissing details never modifies or reruns remote work');
+  console.log('PASS Agent dialogs: direct modal without banners, no repeat on polling/navigation, deferred during settings, complete details, Escape/focus, fixed header/footer, long forms, small windows, retained drafts.');
+};

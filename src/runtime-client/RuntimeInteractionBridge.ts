@@ -17,15 +17,15 @@ interface RuntimePermissionEntry {
 export function createRuntimeInteractions() {
   const permissions = new Map<string, RuntimePermissionEntry>();
   const solutions = new Map<string, PendingInteraction>();
-  const listeners = new Set<(sessionId: string) => void>();
+  const listeners = new Set<(sessionId: string, pendingInteraction: PendingInteraction | null) => void>();
   const revisions = new Map<string, number>();
   const runtimeInteractionsRevision = (sessionId: string) => revisions.get(sessionId) ?? 0;
   const changed = (sessionId: string) => {
     revisions.set(sessionId, runtimeInteractionsRevision(sessionId) + 1);
-    for (const listener of listeners) listener(sessionId);
+    for (const listener of listeners) listener(sessionId, pendingRuntimeInteraction(sessionId));
   };
 
-  function onRuntimeInteractionsChanged(listener: (sessionId: string) => void) {
+  function onRuntimeInteractionsChanged(listener: (sessionId: string, pendingInteraction: PendingInteraction | null) => void) {
     listeners.add(listener);
     return () => { listeners.delete(listener); };
   }
@@ -43,8 +43,12 @@ export function createRuntimeInteractions() {
   }
 
   function syncRuntimeSolutions(sessionId: string, requests: RuntimeSolutionSelection[]) {
+    const previous = [...solutions.values()].filter(entry => entry.sessionId === sessionId);
     for (const [id, entry] of solutions) if (entry.sessionId === sessionId) solutions.delete(id);
     for (const request of requests) if (request.sessionId === sessionId) registerRuntimeSolution(request, false);
+    const next = [...solutions.values()].filter(entry => entry.sessionId === sessionId);
+    // Publish authoritative reconciliation once; identical reads must not cause a refresh loop.
+    if (JSON.stringify(previous) !== JSON.stringify(next)) changed(sessionId);
   }
 
   function runtimeSolution(interactionId: string): PendingInteraction | undefined {

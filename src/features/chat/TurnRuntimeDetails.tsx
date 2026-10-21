@@ -6,15 +6,13 @@ import { taskPlanWaitingLabel } from '../taskPlanWaiting';
 
 type TurnRuntimeProps = {
   language: AppLanguage; running: boolean; stopping?: boolean;
-  taskPlan?: TaskPlanSnapshot; goal?: ExperimentalGoal | null; goalRounds?: GoalToolUpdate[];
+  goal?: ExperimentalGoal | null; goalRounds?: GoalToolUpdate[];
   goalCancelling?: boolean; goalWaiting?: boolean; onCancelGoal?: () => Promise<void>;
 };
-export function TurnRuntimeDetails({ language, running, stopping, taskPlan, goal, goalRounds = [], goalCancelling, goalWaiting,
+export function TurnRuntimeDetails({ language, running, stopping, goal, goalRounds = [], goalCancelling, goalWaiting,
   onCancelGoal,
 }: TurnRuntimeProps) {
-  const visiblePlan = taskPlan?.nodes.some(node => node.status !== 'completed') ? taskPlan : undefined;
-  const completedPlanSteps = visiblePlan?.nodes.filter(node => node.status === 'completed').length ?? 0;
-  if (!goal && !visiblePlan && !stopping) return null;
+  if (!goal && !stopping) return null;
   return <div className="turn-runtime-details" aria-label={language === 'zh' ? '本轮进度' : 'Turn progress'}>
     {stopping && <p role="status">{language === 'zh' ? '正在停止并保存本轮记录…' : 'Stopping and saving this turn…'}</p>}
     {goal && (
@@ -80,16 +78,22 @@ export function TurnRuntimeDetails({ language, running, stopping, taskPlan, goal
         )}
       </section>
     )}
-    {visiblePlan && (
-      <section className="runtime-plan-detail">
+  </div>;
+}
+
+/** Shared plan view for the summary and archived runtime details. */
+export function RuntimeTaskPlan({ plan, language, running = false }: {
+  plan: TaskPlanSnapshot; language: AppLanguage; running?: boolean;
+}) {
+  return <section className="runtime-plan-detail">
         <div className="runtime-detail-heading">
           <ListChecks size={14} />
           <strong>{language === 'zh' ? '计划' : 'Plan'}</strong>
-          <span>{completedPlanSteps}/{visiblePlan.nodes.length}</span>
+          <span>{plan.nodes.filter(node => node.status === 'completed').length}/{plan.nodes.length}</span>
         </div>
-        {visiblePlan.explanation && <p>{visiblePlan.explanation}</p>}
+        {plan.explanation && <p>{plan.explanation}</p>}
         <ol>
-          {visiblePlan.nodes.map((node, index) => (
+          {plan.nodes.map((node, index) => (
             <li className={node.status} key={`${index}:${node.step}`}>
               {node.status === 'completed' ? (
                 <CheckCircle2 size={13} />
@@ -102,9 +106,7 @@ export function TurnRuntimeDetails({ language, running, stopping, taskPlan, goal
             </li>
           ))}
         </ol>
-      </section>
-    )}
-  </div>;
+      </section>;
 }
 function goalTokenLabel(goal: ExperimentalGoal, language: AppLanguage) {
   const prefix = language === 'zh' ? 'Token' : 'Tokens';

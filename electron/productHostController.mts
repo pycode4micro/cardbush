@@ -64,6 +64,7 @@ export interface ElectronProductHostControllerOptions {
   logRoots?: string[];
   clearApplicationCaches?: () => Promise<CleanupResult>;
   clearCrashReports?: () => Promise<CleanupResult>;
+  prepareBundledMcp?: () => Promise<unknown>;
 }
 
 export class ElectronProductHostController {
@@ -84,6 +85,7 @@ export class ElectronProductHostController {
   readonly #logRoots: string[];
   readonly #clearApplicationCaches?: ElectronProductHostControllerOptions['clearApplicationCaches'];
   readonly #clearCrashReports?: ElectronProductHostControllerOptions['clearCrashReports'];
+  readonly #prepareBundledMcp?: ElectronProductHostControllerOptions['prepareBundledMcp'];
   readonly #stopDiagnosticRetention: () => Promise<void>;
 
   constructor(options: ElectronProductHostControllerOptions) {
@@ -92,6 +94,7 @@ export class ElectronProductHostController {
     this.#logRoots = [...new Set([...(options.logRoots ?? []), join(dataRoot, 'logs')].map(root => resolve(root)))];
     this.#clearApplicationCaches = options.clearApplicationCaches;
     this.#clearCrashReports = options.clearCrashReports;
+    this.#prepareBundledMcp = options.prepareBundledMcp;
     this.#userPluginRoot = resolve(options.userPluginRoot);
     this.#runtimeStateRoot = resolve(options.runtimeStateRoot);
     this.#bundledSkillRoot = resolve(options.bundledSkillRoot);
@@ -185,6 +188,7 @@ export class ElectronProductHostController {
   }
 
   async refreshMcp(uninstallPluginId?: string, updatePluginId?: string): Promise<unknown> {
+    await this.#prepareBundledMcp?.();
     const config = await this.#mcp.read();
     const snapshot = mcpSnapshotSchema.parse({
       protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,

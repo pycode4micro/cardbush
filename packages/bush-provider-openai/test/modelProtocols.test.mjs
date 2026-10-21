@@ -1,8 +1,8 @@
+import { legacyPlanDefinition } from './fixtures/legacyBuiltinSchemas.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { modelEventSchema, modelRequestSchema, modelRequestHeaders, modelHeadersSchema, usageRecipeInvocationSchema } from '@cardbush/bush-protocol';
+import { modelEventSchema, modelRequestSchema, modelRequestHeaders, modelHeadersSchema } from '@cardbush/bush-protocol';
 import { modelReplayMessageHash, modelToolDefinitions, InMemoryRuntimeHost, ToolRegistry, SessionStore } from '@cardbush/bush-runtime';
-import { z } from 'zod';
 import { OpenAIChatCompletionsProvider, AnthropicMessagesProvider, OpenAIResponsesProvider,
   ModelProviderRegistry, createModelProvider, toResponsesCreateParams, toChatCompletionsParams, toAnthropicMessagesParams } from '../dist/index.js';
 
@@ -50,7 +50,7 @@ const anthropicEvents = (stop = 'tool_use', args = '{"path":"file.txt"}') => [
   { type: 'message_stop' },
 ];
 
-test('actual SDK requests keep object tool schemas in new sessions and sessions with the legacy run_tools union', async t => {
+test('actual SDK requests keep portable object tool schemas in new and frozen sessions', async t => {
   for (const Provider of [OpenAIResponsesProvider, OpenAIChatCompletionsProvider, AnthropicMessagesProvider]) {
     for (const legacy of [false, true]) await t.test(`${Provider.name}: ${legacy ? 'saved legacy contract' : 'current contract'}`, async t => {
       const bodies = [], registry = new ToolRegistry(), sessions = new SessionStore(), sessionId = 'schema-compat';
@@ -60,9 +60,13 @@ test('actual SDK requests keep object tool schemas in new sessions and sessions 
           const name = tool.function?.name ?? tool.name;
           const parameters = tool.function?.parameters ?? tool.parameters ?? tool.input_schema;
           assert.equal(parameters.type, 'object', `${name} must have an object root in the actual SDK request`);
+          for (const keyword of ['oneOf', 'allOf', 'anyOf']) {
+            assert.equal(Object.hasOwn(parameters, keyword), false, `${name} must not send a root ${keyword} to a provider`);
+          }
           if (name === 'run_tools') {
             assert.equal(parameters.anyOf, undefined); assert.equal(parameters.oneOf, undefined);
-            assert.equal(parameters.properties.code.type, 'string'); assert.equal(parameters.properties.usage.type, 'object');
+            assert.equal(parameters.properties.code.type, 'string');
+            assert.deepEqual(parameters.required, ['code', '_display_title']);
             assert.ok(parameters.properties._display_title);
             // Recursive business parameters must retain valid local references after migration.
             const checkRefs = value => {
@@ -90,9 +94,8 @@ test('actual SDK requests keep object tool schemas in new sessions and sessions 
       if (legacy) {
         sessions.ensureSession(sessionId);
         const tools = modelToolDefinitions(registry, req({ tools: registry.definitions() }));
-        tools.find(tool => tool.name === 'run_tools').inputSchema = z.toJSONSchema(z.union([
-          z.object({ code: z.string().min(1).max(64000) }).strict(), z.object({ usage: usageRecipeInvocationSchema }).strict(),
-        ]));
+        const plan = tools.find(tool => tool.name === 'update_task_plan');
+        plan.inputSchema = legacyPlanDefinition(plan).inputSchema;
         oldContract = sessions.bindModelContract(sessionId, { policyId: 'schema-compat', version: '1', system, tools });
       }
       for (const turn of ['first', 'next']) {
@@ -103,6 +106,8 @@ test('actual SDK requests keep object tool schemas in new sessions and sessions 
       }
       assert.equal(bodies.length, 2); assert.ok(bodies[0].tools.some(tool => (tool.function?.name ?? tool.name) === 'run_tools'));
       assert.deepEqual(bodies[1].tools, bodies[0].tools, 'repair must be stable across turns');
+      assert.equal(!!sessions.modelContract(sessionId).tools.find(tool => tool.name === 'update_task_plan').inputSchema.anyOf, legacy,
+        'provider projection must retain either the legacy or current frozen validation contract');
       if (legacy) assert.deepEqual(sessions.modelContract(sessionId), oldContract, 'wire compatibility must not rewrite historical contracts');
     });
   }

@@ -2,9 +2,6 @@ import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
-
-import ts from 'typescript';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const projectionPath = path.join(
@@ -13,20 +10,9 @@ const projectionPath = path.join(
   'backend',
   'runtimeSessionMessageProjection.ts',
 );
-const projectionSource = fs.readFileSync(projectionPath, 'utf8');
-const projectionTranspiled = ts.transpileModule(projectionSource, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
+const { projectRuntimeTurnMessages } = await loadChatTranscript({
+  source: `export { projectRuntimeTurnMessages } from ${JSON.stringify(projectionPath)};`,
 });
-const projectionModule = { exports: {} };
-vm.runInNewContext(projectionTranspiled.outputText, {
-  module: projectionModule,
-  exports: projectionModule.exports,
-  Date,
-});
-const { projectRuntimeTurnMessages } = projectionModule.exports;
 
 const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),

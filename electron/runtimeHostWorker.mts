@@ -1,4 +1,5 @@
 import { tmpdir } from 'node:os';
+import { readAgentDesktopBridge, agentDesktopBridgeTransport, syncAgentDesktopBridgePolicy } from './agentDesktopBridge.mjs';
 import { z } from 'zod';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { parentPort as nodeParentPort } from 'node:worker_threads';
@@ -362,7 +363,9 @@ async function executeRuntimeCommand(
         const network = await mcpHost.request<{ default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> }>('network.configuration', {}, signal);
         combined.servers = combined.servers.map(server => ({
           // Desktop-owned loopback MCP must not leave the host through a plugin proxy.
-          ...server, networkProxy: server.id === 'cardbush_management' || server.id === 'browser_use' && server.transport.kind === 'streamable_http' && server.transport.url === process.env.CARDBUSH_BROWSER_USE_URL?.trim()
+          ...server, networkProxy: server.id === 'cardbush_management' ||
+            server.id === 'cardbush_apps' && Boolean(process.env.CARDBUSH_SERVICE_ID) && server.transport.kind === 'streamable_http' ||
+            server.id === 'browser_use' && server.transport.kind === 'streamable_http' && server.transport.url === process.env.CARDBUSH_BROWSER_USE_URL?.trim()
             ? { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' }
             : network.plugins[server.pluginId ?? ''] ?? network.servers?.[server.id] ?? network.default,
         }));
@@ -423,6 +426,8 @@ function withBundledAppsServer(input: unknown): unknown {
   const managementUrl = process.env.CARDBUSH_MCP_MANAGEMENT_URL?.trim();
   const managementToken = process.env.CARDBUSH_MCP_MANAGEMENT_TOKEN?.trim();
   const appsEntry = process.env.CARDBUSH_APPS_MCP_ENTRY?.trim();
+  const desktopBridge = process.env.CARDBUSH_SERVICE_ID
+    ? readAgentDesktopBridge(process.env.CARDBUSH_AGENT_DESKTOP_BRIDGE, process.env.CARDBUSH_SERVICE_ID) : undefined;
   const chromeConnectorEntry = process.env.CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY?.trim();
   const browserUseUrl = !process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1'
     ? process.env.CARDBUSH_BROWSER_USE_URL?.trim() : undefined;
@@ -439,6 +444,10 @@ function withBundledAppsServer(input: unknown): unknown {
   }
   const appsConfigPath = process.env.CARDBUSH_APPS_CONFIG_PATH?.trim();
   const appsConfig = readBundledAppsConfig(appsConfigPath);
+  if (desktopBridge) {
+    if (!appsConfigPath) throw Error('Agent desktop bridge requires its host Apps configuration.');
+    syncAgentDesktopBridgePolicy(process.env.CARDBUSH_AGENT_DESKTOP_BRIDGE!, appsConfigPath);
+  }
   const sourceRevision = Number(snapshot.revision);
   if (!Number.isSafeInteger(sourceRevision) || sourceRevision <= 0) {
     throw new Error('MCP snapshot revision must be a positive integer.');
@@ -464,7 +473,10 @@ function withBundledAppsServer(input: unknown): unknown {
     bundled.push({
       id: 'cardbush_apps',
       pluginId: 'computer-use',
-      transport: {
+      transport: desktopBridge ? { ...agentDesktopBridgeTransport(desktopBridge), headers: {
+        ...agentDesktopBridgeTransport(desktopBridge).headers,
+        'X-CardBush-Apps-Config': appsConfig.fingerprint,
+      } } : {
         kind: 'stdio',
         command: process.execPath,
         args: [appsEntry],
@@ -867,7 +879,7 @@ host = new InMemoryRuntimeHost({
   durableCoordination: Boolean(runtimeStateRoot),
   durableSubagentTasks: Boolean(runtimeStateRoot),
   subagentPermissionPolicy,
-  remoteAgents: process.env.CARDBUSH_SERVICE_ID ? undefined : {
+  remoteAgents: process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_WEB_REMOTE_AGENTS !== '1' ? undefined : {
     list: signal => mcpHost.request('agents.list', {}, signal),
     run: (input, signal) => mcpHost.request('agents.delegate', input, signal, true),
     read: (input, signal) => mcpHost.request('agents.read-child', input, signal),

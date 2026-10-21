@@ -9,6 +9,7 @@ import { componentId } from './componentId';
 import { BuiltinComponentSurface } from './BuiltinComponentSurface';
 import { WelcomeLayoutEditor } from './WelcomeLayoutEditor';
 import { ComposerLayoutSettings } from './ComposerLayoutSettings';
+import { HtmlComponentContext } from './HtmlComponentContext';
 import './components.css';
 
 export function ComponentsApp({ language }: { language: AppLanguage }) {
@@ -21,8 +22,8 @@ export function ComponentsApp({ language }: { language: AppLanguage }) {
       : zh ? '无法保存组件，请检查存储空间。' : 'Unable to save components. Check available storage.'); return false; }
   };
   if (editing) return <WelcomeLayoutEditor collection={saved} language={language} onClose={() => setEditing(false)}/>;
-  return <div className="components-app">
-    <header><div className="components-heading"><strong>{zh ? '组件' : 'Components'}</strong><span>{zh ? '选择组件，编排你的新会话页面。' : 'Choose components and arrange your new conversation page.'}</span></div><div>
+  return <HtmlComponentContext.Provider value={null}><div className="components-app">
+    <header><div className="components-heading"><strong>{zh ? '组件' : 'Components'}</strong><span>{zh ? '编排新会话页面。组件仅供预览，不执行会话操作。' : 'Arrange your new conversation page. Previews do not perform conversation actions.'}</span></div><div>
       <button type="button" onClick={() => setEditing(true)}>{zh ? '编辑布局' : 'Edit layout'}</button>
       <button type="button" onClick={() => setAdding(true)}><Plus size={15}/>{zh ? '自定义组件' : 'Custom component'}</button>
     </div></header>
@@ -30,9 +31,9 @@ export function ComponentsApp({ language }: { language: AppLanguage }) {
     <div className="components-grid">
       {saved.items.map(item => <article key={item.id} data-component-id={item.id} data-builtin={isBuiltinComponent(item) ? item.builtin : undefined} className="html-component-card"
         style={{ '--component-width': item.width, '--component-height': item.height + 'px', order: item.order } as CSSProperties}>
-        <div className="html-component-content">{isBuiltinComponent(item)
-          ? <BuiltinComponentSurface component={item} language={language}/>
-          : <HtmlComponentSurface component={item}/>}</div>
+        <div className="html-component-content" inert>{isBuiltinComponent(item)
+          ? <BuiltinComponentSurface component={item} language={language} preview/>
+          : <HtmlComponentSurface component={item} active={false}/>}</div>
         <header><span className="component-card-title">{componentTitle(item, language)}</span>
           {isBuiltinComponent(item) && item.builtin === 'input' && <div className="component-input-choices" role="group" aria-label={zh ? '输入框样式' : 'Composer style'}>
             {(['standard', 'simple'] as const).map(style => <button key={style} type="button" aria-pressed={(item.inputStyle ?? 'standard') === style}
@@ -52,7 +53,7 @@ export function ComponentsApp({ language }: { language: AppLanguage }) {
       if (!commit({ ...saved, items: [...saved.items, { ...component, order: Math.max(0, ...saved.items.map(item => item.order)) + 1 }] })) throw new Error(zh ? '保存失败' : 'Save failed');
       setAdding(false);
     }}/>}
-  </div>;
+  </div></HtmlComponentContext.Provider>;
 }
 
 function ComponentImport({ language, onClose, onAdd }: { language: AppLanguage; onClose: () => void; onAdd: (component: HtmlComponent) => void }) {

@@ -8,13 +8,15 @@ import { installProductPlugin } from './productPlugins.js';
 import type { ElectronProductHostController } from './productHostController.mjs';
 
 export const WEB_PLUGIN_ID = 'volcengine_images';
-const configuration = z.object({ imageEnabled: z.boolean(), gateway: z.string().url(), credential: z.string().min(48).max(128) }).strict();
+const gatewayCredential = z.object({ gateway: z.string().url(), credential: z.string().min(48).max(128) }).strict();
+const configuration = gatewayCredential.extend({ imageEnabled: z.boolean(), remoteAgents: gatewayCredential.optional() }).strict();
 export class AgentWebPolicy {
   #desired?: z.infer<typeof configuration>;
   #applied = '';
   #pending?: Promise<void>;
   constructor(readonly root: string, readonly product: ElectronProductHostController) {}
   get imageEnabled() { return this.#desired?.imageEnabled === true; }
+  get remoteAgents() { return this.#desired?.remoteAgents; }
   async active() {
     const file = join(this.root, 'plugin-state', 'images', 'jobs.sqlite3');
     if (!await stat(file).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return false; throw error; })) return false;
@@ -24,6 +26,10 @@ export class AgentWebPolicy {
   async configure(value: unknown) {
     const next = configuration.parse(value), url = new URL(next.gateway);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid private plugin gateway.');
+    if (next.remoteAgents) {
+      const remote = new URL(next.remoteAgents.gateway);
+      if (remote.origin !== url.origin || remote.username || remote.password || remote.search || remote.hash || !remote.pathname.startsWith('/internal/remote-agents/')) throw new Error('Invalid private remote Agent gateway.');
+    }
     if (JSON.stringify(next) !== JSON.stringify(this.#desired)) {
       await mkdir(join(this.root, 'config'), { recursive: true });
       await writeFile(join(this.root, 'config', 'web-policy.json'), JSON.stringify(next), { mode: 0o600 });

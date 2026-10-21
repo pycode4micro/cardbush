@@ -1,14 +1,19 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import type { RemoteSubagentRequest, RemoteSubagentResult, SessionSnapshot } from '@cardbush/bush-protocol';
-import type { AgentConnectionManager } from './agentConnections.mjs';
-import type { AgentJob } from './agentTypes.js';
+import type { AgentJob, AgentInfo, AgentOperation, AgentEventRequest, AgentEventFrame } from './agentTypes.js';
+
+export interface RemoteSubagentConnection {
+  connect(id: string): Promise<AgentInfo>;
+  call(id: string, operation: AgentOperation, input: Record<string, unknown>): Promise<unknown>;
+  events(id: string, input: AgentEventRequest, signal: AbortSignal): AsyncIterable<AgentEventFrame>;
+}
 
 function transient(error: unknown): boolean {
   return error instanceof TypeError || (error instanceof Error && (Boolean(error.cause) || /disconnected|stream timed out/.test(error.message)));
 }
 
 /** Credentials remain in the main process. A detached HTTP reader never owns the remote job. */
-export async function runRemoteSubagent(manager: AgentConnectionManager, request: RemoteSubagentRequest, signal?: AbortSignal): Promise<RemoteSubagentResult> {
+export async function runRemoteSubagent(manager: RemoteSubagentConnection, request: RemoteSubagentRequest, signal?: AbortSignal): Promise<RemoteSubagentResult> {
   signal?.throwIfAborted();
   const { connectionId, agentId, ...input } = request;
   const info = await manager.connect(connectionId);

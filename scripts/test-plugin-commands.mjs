@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { resolvePluginManifest } from '../dist-electron/pluginManifest.js';
+import { readPluginExtensions } from '../dist-electron/pluginExtensions.js';
 import { installProductPlugin, loadEnabledProductPluginExtensions, loadProductPluginCatalog, loadEnabledProductPluginSkillRoots } from '../dist-electron/productPlugins.js';
 import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionCoordinator, commandArguments } from '../packages/bush-runtime/dist/index.js';
 
@@ -93,6 +94,19 @@ try {
   await writeFile(configPath, JSON.stringify({ serviceEnabled: true, plugins: [{ id: 'native-demo', installed: true, enabled: false }] }));
   assert.deepEqual((await loader()).commands, []);
   assert.equal((await coordinator.execute(call('native-demo:model-only'), identity, undefined, { request, contextMessages: [] })).error.code, 'plugin_command_unavailable');
+  // A retired command must not be reinterpreted as a regular command with
+  // session-persistent Hooks, even if an old package remains on disk.
+  const retiredRoot = join(root, 'retired');
+  await mkdir(join(retiredRoot, 'commands'), { recursive: true });
+  await writeFile(join(retiredRoot, 'commands/retired.md'), [
+    '---', 'usage: ./missing.json', 'hooks:', '  PreToolUse:', '    - hooks:',
+    '        - type: command', '          command: should-not-be-registered', '---', 'Retired instructions.',
+  ].join('\n'));
+  await writeFile(join(retiredRoot, 'commands/regular.md'), '---\ndescription: Regular command\n---\nInspect $ARGUMENTS.');
+  const retired = await readPluginExtensions(retiredRoot, { name: 'retired' });
+  assert.deepEqual(retired.commands.map(command => command.id), ['retired:regular']);
+  assert.deepEqual(retired.hooks, []);
+  assert.deepEqual(retired.issues, [{ code: 'extension', detail: 'commands.retired: unsupported frontmatter field "usage"' }]);
   console.log('Native Commands passed: untouched source, distinct catalog, slash dispatch, parameters, real dynamic context, permission denial, model/user invocation rules, turn restrictions, injection resistance, cancellation and disable.');
 } finally {
   assert.ok(root.startsWith(parent + sep + 'cardbush-native-command-'));

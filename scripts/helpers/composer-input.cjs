@@ -11,6 +11,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('!document.querySelector(".chat-panel")', 'prior composer fixture unmounted');
   await run(`
     window.inputSavedProps = { ...chatProps }; window.inputSavedTheme = window.viewTheme;
+    window.inputSavedCommands = cardbushDesktop.pluginCommands;
+    window.inputSavedCatalogChanged = cardbushDesktop.onCapabilityCatalogChanged;
     window.inputSent = [];
     window.inputSkill = { name: 'seedance-ecommerce-video', displayName: 'Seedance 电商视频', description: '根据素材制作视频',
       path: 'C:/Users/Fixture/AppData/Roaming/cardbush/skills/seedance-ecommerce-video/SKILL.md' };
@@ -153,10 +155,104 @@ module.exports = async ({ run, until, pause, window, root }) => {
         assert.equal(await run('inputSent.length'), sentCount, 'confirming Chinese text never submits the message');
       }
     } finally { window.webContents.debugger.detach(); }
-    console.log('Composer input passed: padding focus, held arrows, native Chinese composition across rerenders, interrupted IME recovery, skill chips, exact copy/send, remove/Backspace and narrow layouts.');
+    // Plugin Skills use the command catalog, not Markdown links. Exercise the
+    // real picker and editor together so rendering cannot change invocation policy.
+    await run('renderView(null)');
+    await until('!document.querySelector(".chat-panel")', 'remount with plugin command services');
+    await run(`
+      window.inputPluginCommand = { id: 'baiying-replay:baiying-replay', pluginId: 'baiying-replay',
+        name: 'baiying-replay', kind: 'skill', description: '百应回放素材', argumentHint: '[商品]',
+        path: 'C:/plugins/baiying-replay/skills/baiying-replay/SKILL.md' };
+      window.inputCommandCatalog = [inputPluginCommand, { id: 'demo:review', name: 'review', kind: 'command', description: 'Review', argumentHint: '' }];
+      window.inputCatalogListeners = new Set();
+      window.inputCatalogReads = 0; window.inputCatalogFails = false;
+      cardbushDesktop.pluginCommands = async () => {
+        inputCatalogReads++;
+        if (inputCatalogFails) throw Error('offline fixture refresh failure');
+        return inputCommandCatalog;
+      };
+      cardbushDesktop.onCapabilityCatalogChanged = callback => { inputCatalogListeners.add(callback); return () => inputCatalogListeners.delete(callback); };
+      window.inputRefreshCommands = () => { for (const callback of inputCatalogListeners) callback(); };
+      window.inputPluginSkill = { name: inputPluginCommand.id, displayName: '百应回放', description: '素材获取', path: inputPluginCommand.path };
+      inputSent = [];
+      updateChat({ draft: '', skills: [...inputSkills, inputPluginSkill] });
+    `);
+    await until('!!document.querySelector("textarea[data-composer-input]") && inputCatalogReads > 0', 'plugin commands ready');
+    for (const selection of ['Tab', 'Enter', 'click']) {
+      await run('inputType("/baiying")');
+      await until('document.querySelectorAll(".composer-command-row").length === 1', 'plugin Skill search result');
+      if (selection === 'click') {
+        const point = await run(`(() => { const rect = document.querySelector('.composer-command-row').getBoundingClientRect();
+          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }; })()`);
+        window.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+        window.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+      } else await run(`inputKey(${JSON.stringify(selection)})`);
+      await until('!!document.querySelector(".composer-skill-token") && !document.querySelector(".composer-command-palette")', selection + ' selects a Skill token');
+      assert.equal(await run('document.querySelector(".composer-skill-token > span").textContent'), '百应回放');
+      assert.equal(await run('document.querySelector(".composer-skill-token").dataset.skillReference'), '/baiying-replay:baiying-replay');
+      assert.equal(await run('document.querySelector(".composer-skill-token").title'), '/baiying-replay:baiying-replay\nC:/plugins/baiying-replay/skills/baiying-replay/SKILL.md');
+      assert.equal(await run('chatProps.draft'), '/baiying-replay:baiying-replay ');
+      await until('document.activeElement === document.querySelector(".composer-prompt-editor")', 'selection retains typing focus');
+      await window.webContents.insertText('"KST 1606" 使用原声');
+      await until('chatProps.draft.endsWith("使用原声")', selection + ': arguments can be typed after the Skill');
+      await run(`(() => { inputSelectAll(); const clipboard = new DataTransfer();
+        document.activeElement.dispatchEvent(new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData: clipboard }));
+        window.inputPluginCopied = clipboard.getData('text/plain'); getSelection().collapseToEnd(); })()`);
+      assert.equal(await run('inputPluginCopied'), '/baiying-replay:baiying-replay "KST 1606" 使用原声');
+      const sentBefore = await run('inputSent.length');
+      await run('inputKey("Enter")');
+      await until(`inputSent.length === ${sentBefore + 1}`, 'submit the original Skill invocation');
+      assert.equal(await run('inputSent.at(-1)'), await run('inputPluginCopied'));
+      await until('!!document.querySelector("textarea[data-composer-input]") && !chatProps.draft', 'Skill clears after send');
+    }
+    await run('inputType("/baiying-replay:baiying-replay 保留这些参数")');
+    await until('!!document.querySelector(".composer-skill-token")', 'saved slash draft renders without selecting again');
+    await run('window.inputPluginEditor = document.querySelector(".composer-prompt-editor"); inputSelectAll(); getSelection().collapseToEnd(); inputCatalogFails = true; inputRefreshCommands();');
+    await pause(80);
+    assert.equal(await run('document.querySelector(".composer-prompt-editor") === inputPluginEditor'), true, 'failed refresh does not replace the editor');
+    await run('inputCatalogFails = false; updateChat({ skills: [] }); inputRefreshCommands();');
+    await until('document.querySelector(".composer-skill-token > span")?.textContent === "baiying-replay"', 'command catalog renders without the separate Skill catalog');
+    await run('updateChat({ skills: [inputPluginSkill] })');
+    await until('document.querySelector(".composer-skill-token > span")?.textContent === "百应回放"', 'late Skill metadata enriches the token');
+    await window.webContents.insertText('继续');
+    await until('chatProps.draft === "/baiying-replay:baiying-replay 保留这些参数继续"', 'refresh preserves the caret and draft');
+    await fs.writeFile(path.join(root, 'tmp/composer-plugin-skill.png'), (await window.capturePage()).toPNG());
+    await run('document.querySelector(".composer-skill-token button").click()');
+    await until('!!document.querySelector("textarea[data-composer-input]")', 'remove command token');
+    assert.equal(await run('chatProps.draft'), ' 保留这些参数继续', 'remove leaves only the user arguments');
+    await run('inputType("/baiying-replay:baiying-replay"); inputKey("Escape")');
+    await until('!!document.querySelector(".composer-skill-token")', 'command token ready for Backspace');
+    await run('inputSelectAll(); getSelection().collapseToEnd()');
+    window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
+    window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
+    await until('chatProps.draft === "" && !!document.querySelector("textarea[data-composer-input]")', 'Backspace removes the whole Skill command');
+    await run('inputType("/demo:review 文件"); inputKey("Escape")');
+    assert.equal(await run('document.querySelector(".composer-skill-token")'), null, 'ordinary commands keep plain text editing');
+    await run('inputType("/baiying-replay:baiying-replay 参数"); inputKey("Escape")');
+    await until('!!document.querySelector(".composer-skill-token")', 'Skill draft before catalog removal');
+    await run('inputCommandCatalog = []; inputRefreshCommands()');
+    await until('!!document.querySelector("textarea[data-composer-input]")', 'uninstalled Skill falls back to editable text');
+    assert.equal(await run('chatProps.draft'), '/baiying-replay:baiying-replay 参数', 'catalog removal never changes the prompt');
+    await run(`renderView(h(views.ComposerPromptInput, {
+      value: '/baiying-replay:baiying-replay 云端参数', plugins: [], pluginCommands: [inputPluginCommand],
+      skills: [{ ...inputPluginSkill, logoPath: 'C:/remote-host/skill-logo.png' }], richReferences: 'applications',
+      language: 'zh', placeholder: '', onChange: () => {}, onSelectionChange: () => {}, onKeyDown: () => {}
+    }))`);
+    await until('!!document.querySelector(".composer-skill-token")', 'remote Skill command uses the same token');
+    assert.equal(await run('document.querySelector(".composer-skill-token > span").textContent'), '百应回放');
+    assert.equal(await run('document.querySelector(".composer-skill-token img")'), null, 'remote filesystem logos must not resolve on the local host');
+    console.log('Composer input passed: plain and plugin Skill chips; Tab/Enter/click selection; exact copy/send and arguments; catalog refresh/removal; remove/Backspace; native IME, focus and narrow layouts.');
+  } catch (error) {
+    console.error('Composer fixture state:', await run(`JSON.stringify({ draft: chatProps.draft, sent: inputSent,
+      input: document.querySelector('[data-composer-input]')?.outerHTML,
+      focus: document.activeElement?.className, anchor: getSelection()?.anchorNode?.textContent, offset: getSelection()?.anchorOffset })`));
+    throw error;
   } finally {
     window.setBounds(originalBounds);
-    await run('window.viewTheme = inputSavedTheme; updateChat(inputSavedProps)');
+    await run(`renderView(null); cardbushDesktop.pluginCommands = inputSavedCommands;
+      cardbushDesktop.onCapabilityCatalogChanged = inputSavedCatalogChanged; window.viewTheme = inputSavedTheme;`);
+    await until('!document.querySelector(".chat-panel")', 'input fixture unmounted');
+    await run('updateChat(inputSavedProps)');
     await window.webContents.removeInsertedCSS(styleKey);
   }
 };

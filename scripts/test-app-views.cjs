@@ -96,6 +96,7 @@ async function buildViews() {
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components' ? [
       'src/shared/dialogEvents.ts',
+      'src/features/conversationHost.ts', 'src/features/components/BuiltinComponentSurface.tsx',
       'src/features/components/ComponentsApp.tsx', 'src/features/components/HtmlComponentSurface.tsx',
       'src/features/components/HtmlComponentContext.ts', 'src/features/components/componentStore.ts',
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts',
@@ -113,7 +114,7 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-reference-sizing' ? [
       'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
     ] : []),
-    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'team-composer' ? [
+    ...(['team-composer', 'composer-input'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
       'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerPromptInput.tsx',
       'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
@@ -496,7 +497,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center', 'composer-memory', 'team-composer'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'stream-follow', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center', 'composer-memory', 'team-composer'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     for (const [input, expected] of [
@@ -969,6 +970,12 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'stream-follow') {
+      await require('./helpers/chat-stream-follow.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no stream follow renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'window-scroll') {
       await require('./helpers/chat-reflow-scroll.cjs')({ run, until, pause });
       await require('./helpers/chat-window-scroll.cjs')({ run, until, pause, window });
@@ -1032,6 +1039,7 @@ app.whenReady().then(async () => {
     await require('./helpers/chat-session-scroll.cjs')({ run, until, pause });
     await window.webContents.insertCSS(readSourceFile(path.join(root, 'src/styles/appearance.css'), 'utf8'));
     await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root, theme: 'theme-dark' });
+    await require('./helpers/chat-stream-follow.cjs')({ run, until, pause, window, root });
     await require('./helpers/chat-tool-packages.cjs')({ run, until, pause, theme: 'theme-dark' });
     await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme: 'theme-dark' });
     await run("window.viewTheme = 'theme-dark'; void 0;");

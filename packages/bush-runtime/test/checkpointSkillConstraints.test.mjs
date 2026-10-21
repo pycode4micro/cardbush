@@ -65,9 +65,7 @@ for (const format of ['incremental', 'ordered']) test(`${format}: inherited cons
     assert.match(lastReceipt(tx).rejected[0].reason, /previous <skill_constraints>/);
   } else assert.throws(() => tx.accept(completed('omitted', args('Dependencies checked; continue.'))), /previous <skill_constraints>/);
   assert.deepEqual(tx.canonicalMessages.slice(0, input.messages.length), input.messages, 'rejection does not replace the source');
-  const retire = block(JSON.stringify({ keep: [], retire: collectCheckpointSkillExcerpts(input.messages).map(item => ({
-    id: item.id, kind: 'out_of_scope', reason: 'The user ended this workflow.', evidence: { message: 3, quote: instruction },
-  })) }));
+  const retire = retired;
   assert.equal(tx.accept(completed('retired', args(retire))), true);
   const receipt = format === 'incremental' ? lastReceipt(tx) : tx.receiptEvidence;
   const next = new ContextCompactionTransaction(fixture([savedCheckpoint('retired-prior', retire, { skill_evidence: receipt.skill_evidence })], format));
@@ -191,17 +189,11 @@ test('three active-Turn compactions and a restarted follow-up retain constraints
         }
         let summary = 'Dependencies checked. Continue.';
         if (!omit) {
-          const items = collectCheckpointSkillExcerpts(request.messages);
-          const retiring = compactions === 1 ? items.filter(item => item.text === oneTime) : compactions === 3 ? items : [];
-          const evidenceMessage = request.messages.findIndex(message => compactions === 3
-            ? message.role === 'user' && message.content === 'Stop using that workflow; only explain the existing result.'
-            : message.role === 'tool' && message.content === '{"verified":true}');
-          const coverage = { keep: 'all', retire: retiring.map(item => ({ id: item.id,
-            kind: compactions === 3 ? 'out_of_scope' : 'completed_once', reason: compactions === 3 ? 'Workflow withdrawn.' : 'Dependencies verified.',
-            evidence: { message: evidenceMessage, quote: request.messages[evidenceMessage]?.content },
-          })) };
-          summary = checkpointSummaries[compactions].replace(/<skill_constraints>[\s\S]*?<\/skill_constraints>/,
-            block(JSON.stringify(coverage)));
+          summary = checkpointSummaries[compactions];
+          if (compactions < 3) {
+            const withLink = (text, line) => `${text} [source](<C:/skills/local-preview/SKILL.md?revision=abc123#L${line}-L${line}>)`;
+            summary = summary.replace(continuous, withLink(continuous, 1)).replace(conditional, withLink(conditional, 3)).replace(oneTime, withLink(oneTime, 5));
+          }
           checkpointSummaries[compactions++] = summary;
         }
         forceCompaction = false;
@@ -214,9 +206,10 @@ test('three active-Turn compactions and a restarted follow-up retain constraints
         const receipt = JSON.parse(request.messages.findLast(m => m.role === 'tool').content);
         assert.equal(receipt.summaries[0].summary, checkpointSummaries[compactions - 1]);
         if (compactions <= 3) {
-          assert.ok(JSON.stringify(receipt.skill_evidence).includes(source));
-          assert.ok(JSON.stringify(receipt.skill_evidence).includes(continuous));
-          if (compactions > 1) assert.ok(!JSON.stringify(receipt.skill_evidence).includes(oneTime), 'completed prerequisite is no longer pending');
+          assert.ok(JSON.stringify(receipt.skill_evidence).includes('C:/skills/local-preview/SKILL.md'));
+          assert.ok(receipt.summaries[0].summary.includes(continuous));
+          assert.ok(!JSON.stringify(receipt.skill_evidence).includes(continuous), 'raw constraints are not reinjected');
+          if (compactions > 1) assert.ok(!receipt.summaries[0].summary.includes(oneTime), 'completed prerequisite is no longer pending');
         }
       }
       normalRounds++;

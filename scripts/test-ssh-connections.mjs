@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve, posix } from 'node:path';
 import { once } from 'node:events';
+import { gunzipSync } from 'node:zlib';
 import ssh2 from 'ssh2';
 import { SshConnectionManager } from '../dist-electron/sshConnections.mjs';
 import { sshWorkspace } from '@cardbush/bush-protocol';
@@ -14,48 +15,102 @@ import { registerSourceMemoTools, resolveSourceMemo } from '../packages/bush-run
 
 // A real loopback SSH transport, with deterministic remote SFTP/process fixtures.
 // This runs on Windows without requiring a Linux host or touching user SSH settings.
-async function fixture(t) {
+async function fixture(t, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'cardbush-ssh-test-'));
   const key = generateKeyPairSync('rsa', { modulusLength:2048 }).privateKey.export({format:'pem',type:'pkcs1'});
-  const files = new Map([['/work/file.txt',Buffer.from('first\n中文\nlast')],['/home/test/outside.txt',Buffer.from('outside')]]);
-  const directories = new Set(['/','/work','/work/child','/home','/home/test']);
-  const clients=new Set(), jobs=new Map(), commands=[]; let authCount=0, pid=700;
-  const canonical = path => path === '.' ? '/home/test' : path.replace('/work/link','/home/test');
+  const work = options.windows ? '/C:/Users/111' : '/work', home = options.windows ? work : '/home/test';
+  const files = new Map([[work+'/file.txt',Buffer.from('first\n中文\nlast')],['/home/test/outside.txt',Buffer.from('outside')]]);
+  const directories = new Set(['/','/work','/work/child','/home','/home/test', ...(options.windows ? ['/C:/','/C:/Users',work,work+'/child',work+"/项目 O'Brien & 测试"] : [])]);
+  const clients=new Set(), jobs=new Map(), jobNames=new Map(), commands=[], controls=[], launches=[]; let authCount=0, pid=700;
+  const canonical = path => {
+    path = path === '.' ? home : path.replace('/work/link','/home/test');
+    return options.windows ? [...directories,...files.keys()].find(value=>value.toLowerCase()===path.toLowerCase()) ?? path : path;
+  };
   const server = new ssh2.Server({hostKeys:[key]},client => {
     clients.add(client);client.on('error',()=>{});client.on('close',()=>clients.delete(client));
     client.on('authentication',ctx=>{authCount++; if(ctx.method==='password'&&ctx.username==='test'&&ctx.password==='secret-test-password')ctx.accept();else ctx.reject();});
     client.on('ready',()=>client.on('session',accept=>{
       const session=accept();
       session.on('exec',(accept,_reject,info)=>{
-        commands.push(info.command);const stream=accept();stream.on('error',()=>{});stream.resume();
+        const stream=accept();stream.on('error',()=>{});stream.resume();
+        let script = info.command;
+        if (info.command.includes('-EncodedCommand ')) {
+          script = Buffer.from(info.command.split('-EncodedCommand ')[1], 'base64').toString('utf16le');
+          if (script.includes('IO.Compression.GZipStream')) script = gunzipSync(Buffer.from(/FromBase64String\('([^']+)'\)/.exec(script)[1], 'base64')).toString('utf8');
+        }
+        if (info.command === 'uname -s' || script.includes('CARDBUSH_HOST_WINDOWS_V1')) {
+          controls.push(info.command);
+          if (options.unknownPlatform) { stream.exit(1); stream.end(); return; }
+          stream.write(options.windows ? 'CARDBUSH_HOST_WINDOWS_V1\n' : 'Linux\n'); stream.exit(0); stream.end(); return;
+        }
+        if (script.includes('[CardBushSshJob]::Stop(')) {
+          controls.push(script);
+          if (options.failStop) { stream.stderr.write('Access denied'); stream.exit(1); stream.end(); return; }
+          const name = /::Stop\('([^']+)'\)/.exec(script)[1], target = jobNames.get(name);
+          if (target) { target.exit(143); target.end(); jobNames.delete(name); for (const [pid, stream] of jobs) if (stream === target) jobs.delete(pid); }
+          stream.write('CARDBUSH_STOPPED_V1\n'); stream.exit(0); stream.end(); return;
+        }
+        commands.push(info.command);
         const kill=/^kill -(TERM|KILL) -(\d+)$/.exec(info.command);
         if(kill){const target=jobs.get(Number(kill[2]));if(target){target.exit(143);target.end();jobs.delete(Number(kill[2]));}stream.exit(0);stream.end();return;}
+        const runTerminal = script => {
         const current=++pid;jobs.set(current,stream);stream.on('close',()=>jobs.delete(current));
-        const marker=/CARDBUSH_PID_[a-z0-9]+:/.exec(info.command)?.[0];assert.ok(marker);
-        if(info.command.includes('fixture-stream')) {
+        const marker=/CARDBUSH_PID_[a-z0-9]+:/.exec(script)?.[0];assert.ok(marker);
+        const run = command => {
+        if(command.includes('fixture-stream')) {
           let pending='';
           stream.on('data',chunk=>{
             pending+=chunk.toString();
             while(pending.includes('\n')) {
               const end=pending.indexOf('\n'),input=pending.slice(0,end);pending=pending.slice(end+1);
-              if(input==='start') { stream.stderr.write(marker+current+'\n');stream.write('first 中文\n');stream.stderr.write('first warning\n'); }
+              if(input==='start') { if (!options.windows) stream.stderr.write(marker+current+'\n');stream.write('first 中文\n');stream.stderr.write('first warning\n'); }
               if(input==='finish') { stream.write('last chunk\n');stream.stderr.write('last warning\n');stream.exit(7);stream.end(); }
             }
           });
           return;
         }
-        stream.stderr.write(marker+current+'\n');
-        if(info.command.includes('fixture-sleep'))return;
-        if(info.command.includes('/work/child') && info.command.includes('git ')){stream.stderr.write('fatal: not a git repository (or any of the parent directories): .git');stream.exit(128);stream.end();return;}
+        if (!options.windows) stream.stderr.write(marker+current+'\n');
+        if(command.includes('fixture-sleep'))return;
+        if(command.includes('/work/child') && command.includes("'git'")){stream.stderr.write('fatal: not a git repository (or any of the parent directories): .git');stream.exit(128);stream.end();return;}
         // Delayed multiple writes catch implementations that confuse first output with completion.
-        if(info.command.includes("'rg'")){
-          const files = info.command.includes('--files-with-matches');
+        if(command.includes("'rg'")){
+          const files = command.includes('--files-with-matches');
           stream.write(files ? 'first.txt\n' : 'file.txt:1:1:first\n');
-          if(!info.command.includes('fixture-slow-search'))setTimeout(()=>{if(stream.destroyed)return;stream.write(files ? 'last.txt\n' : 'file.txt:3:1:last\n');stream.exit(0);stream.end();},60);
+          if(!command.includes('fixture-slow-search'))setTimeout(()=>{if(stream.destroyed)return;stream.write(files ? 'last.txt\n' : 'file.txt:3:1:last\n');stream.exit(0);stream.end();},60);
         }
-        else if(info.command.includes('branch')&&info.command.includes('--show-current')){stream.write('main\n');stream.exit(0);stream.end();}
-        else if(info.command.includes('--porcelain=v1')){stream.write(' M spaced file.txt\0R  new.txt\0old.txt\0');stream.exit(0);stream.end();}
+        else if(command.includes('branch')&&command.includes('--show-current')){stream.write('main\n');stream.exit(0);stream.end();}
+        else if(command.includes('--porcelain=v1')){stream.write(' M spaced file.txt\0R  new.txt\0old.txt\0');stream.exit(0);stream.end();}
         else {stream.write('remote only\n');stream.exit(0);stream.end();}
+        };
+        if (options.windows) {
+          const name = /::Attach\('([^']+)'\)/.exec(script)[1];
+          jobNames.set(name, stream); stream.on('close',()=>jobNames.delete(name));
+          const expected = /::ReadLine\(\) -cne '([^']+)'/.exec(script)[1];
+          const launch = { script, command: null }; launches.push(launch);
+          let pending = '', token;
+          const receive = chunk => {
+            pending += chunk.toString();
+            while (pending.includes('\n')) {
+              const end = pending.indexOf('\n'), line = pending.slice(0, end); pending = pending.slice(end+1);
+              if (token === undefined) { token = line; assert.equal(token, expected); }
+              else { stream.off('data',receive); launch.command = Buffer.from(line,'base64').toString('utf8'); run(launch.command); break; }
+            }
+          };
+          stream.on('data',receive);
+          stream.on('end',()=>{ if (launch.command === null) { stream.exit(125); stream.end(); } });
+          setTimeout(()=>{ if (!stream.destroyed) stream.stderr.write(marker+current+'\n'); },options.handshakeDelay ?? 0);
+        } else run(info.command);
+        };
+        if (script.includes('CARDBUSH_SSH_BOOTSTRAP_V1')) {
+          let prelude = '';
+          const receivePrelude = chunk => {
+            prelude += chunk.toString();
+            const end = prelude.indexOf('\n'); if (end < 0) return;
+            stream.off('data', receivePrelude);
+            runTerminal(Buffer.from(prelude.slice(0, end), 'base64').toString('utf8'));
+          };
+          stream.on('data', receivePrelude);
+        } else runTerminal(script);
       });
       session.on('sftp',accept=>{
         const sftp=accept(), handles=new Map();let index=0;
@@ -88,11 +143,11 @@ async function fixture(t) {
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const manager=new SshConnectionManager(join(directory,'connections.json'),{encrypt:value=>Buffer.from(value).toString('base64'),decrypt:value=>Buffer.from(value,'base64').toString()});
-  const input={name:'Test server',host:'127.0.0.1',port:server.address().port,username:'test',authentication:'password',password:'secret-test-password',defaultDirectory:'/work'};
+  const input={name:'Test server',host:'127.0.0.1',port:server.address().port,username:'test',authentication:'password',password:'secret-test-password',defaultDirectory:options.windows ? '/' : '/work'};
   const [connection]=await manager.save(input);
   t.after(async()=>{await manager.close();for(const client of clients)client.end();await new Promise(resolve=>server.close(resolve));assert.equal(dirname(resolve(directory)),resolve(tmpdir()));await rm(directory,{recursive:true,force:true,maxRetries:5});});
   async function trust(){const response=await manager.test(connection.id);assert.equal(response.needsTrust,true);assert.match(response.fingerprint,/^SHA256:/);await manager.save({...connection,fingerprint:response.fingerprint});assert.equal((await manager.test(connection.id)).ok,true);}
-  return {manager,connection,input,trust,files,commands,clients,jobs,directory,uri:sshWorkspace(connection.id,'/work'),authCount:()=>authCount};
+  return {manager,connection,input,trust,files,commands,controls,launches,clients,jobs,directory,uri:sshWorkspace(connection.id,work),authCount:()=>authCount};
 }
 
 // Exercise the actual workspace-tool decoding, SSH bridge and result validator.
@@ -102,7 +157,7 @@ function runtimeTools(f) {
   const store = new ToolExecutionStore(), outcomes = [];
   const remote = {request(action,payload,signal) {
     if(action==='terminals')return Promise.resolve(f.manager.listTerminals(payload.owner));
-    if(action==='authorize')return f.manager.authorize(payload.uri,payload.path,payload.write);
+    if(action==='authorize')return f.manager.authorize(payload.uri,payload.path,payload.write,payload.terminal,signal);
     if(action==='execute')return f.manager.execute(payload.uri,payload.owner,payload.name,payload.input,signal);
     throw Error('Unexpected bridge action: '+action);
   }};
@@ -123,6 +178,99 @@ function runtimeTools(f) {
   };
   return Object.assign(execute, { store, remote, outcomes });
 }
+
+test('Windows SSH uses the selected user directory, native shells and one cached OS probe', async t => {
+  const f = await fixture(t, { windows: true }); await f.trust(); const execute = runtimeTools(f);
+  assert.equal((await f.manager.list())[0].defaultDirectory, '/');
+  const read = await execute('read_file', { path: 'c:\\users\\111\\file.txt' });
+  assert.equal(read.content, 'first\n中文\nlast');
+  for (const [cwd, shell] of [['C:\\Users\\111', 'cmd'], ['/C:/Users/111', 'powershell'], ['.', undefined]]) {
+    const result = await execute('terminal_exec', { command: 'echo 中文 & echo test', cwd, ...(shell ? { shell } : {}), yield_time_ms: 100 });
+    assert.equal(result.cwd, 'C:\\Users\\111'); assert.equal(result.platform, 'windows');
+    assert.equal(result.shell, shell ?? 'powershell');
+    assert.equal(result.executionEnvironment.workspaceDir, f.uri);
+    assert.equal(result.exitCode, 0);
+    assert.doesNotMatch(result.stderr, /CARDBUSH_PID/);
+  }
+  assert.equal(f.controls.filter(command => command.includes('-EncodedCommand')).length, 1);
+  assert.equal(f.launches.length, 3); assert.ok(f.launches.every(item => item.command.includes('echo 中文 & echo test')));
+  assert.ok(f.commands.every(command => command.startsWith('powershell.exe ') && command.length < 8191));
+  assert.ok(f.launches.every(item => item.script.includes("Set-Location -LiteralPath $cwd") && !item.script.includes('/bin/sh')));
+  await assert.rejects(f.manager.execute(f.uri, 'wrong-shell', 'terminal_exec', { shell: 'posix', command: 'echo unsafe', cwd: '.' }), /host is windows/);
+  assert.equal(f.launches.length, 3, 'unsupported shells never reach the executor');
+});
+
+test('Windows SSH preserves quoted paths, edit revisions and search/Git argument quoting', async t => {
+  const f = await fixture(t, { windows: true }); await f.trust(); const execute = runtimeTools(f);
+  const current = await execute('read_file', { path: 'file.txt' });
+  await execute('edit_file', { path: '.\\file.txt', start_line: 2, end_line: 2, expected_sha256: current.sha256, new_text: '修改\n' });
+  assert.equal(f.files.get('/C:/Users/111/file.txt').toString(), 'first\n修改\nlast');
+  await execute('terminal_exec', { cwd: "C:\\Users\\111\\项目 O'Brien & 测试", command: 'echo fixture', yield_time_ms: 100 });
+  assert.match(f.launches.at(-1).script, /C:\\Users\\111\\项目 O''Brien & 测试/);
+  const searched = await execute('search_file_content', { path: '.', query: "a'b & 中文" });
+  assert.match(searched.output, /first/); assert.match(searched.output, /last/);
+  assert.match(f.launches.at(-1).command, /& 'rg'/);
+  assert.match(f.launches.at(-1).command, /'a''b & 中文'/);
+  assert.match(f.launches.at(-1).command, /'C:\\Users\\111'/);
+  const info = await f.manager.git(f.uri, 'info');
+  assert.equal(info.branch, 'main'); assert.equal(info.changedFiles.length, 2);
+  assert.ok(f.launches.some(item => item.command.includes("$env:GIT_TERMINAL_PROMPT='0'; & 'git'")));
+});
+
+test('Windows SSH stops the owned job and retains terminal ownership across workspace changes', async t => {
+  const f = await fixture(t, { windows: true }); await f.trust(); const execute = runtimeTools(f);
+  const started = await execute('terminal_exec', { command: 'fixture-sleep', yield_time_ms: 1 });
+  assert.equal(started.state, 'running'); assert.ok(started.pid);
+  await assert.rejects(f.manager.execute(f.uri, 'other', 'terminal_stop', { sessionId: started.terminalSessionId }), /不属于/);
+  const stopped = await execute('terminal_stop', { session_id: started.terminalSessionId }, f.directory);
+  assert.equal(stopped.state, 'stopped'); assert.equal(stopped.exitCode, 143);
+  assert.ok(f.controls.some(command => command.includes('[CardBushSshJob]::Stop(')));
+  assert.ok(!f.commands.some(command => command.startsWith('kill ')));
+  assert.equal(f.jobs.size, 0);
+});
+
+test('Windows SSH cancellation during startup never releases the command', async t => {
+  const f = await fixture(t, { windows: true, handshakeDelay: 400 }); await f.trust();
+  await f.manager.authorize(f.uri, '.');
+  const controller = new AbortController();
+  const started = f.manager.execute(f.uri, 'cancel', 'terminal_exec', { command: 'must-not-run', shell: 'cmd', yieldTimeMs: 1 }, controller.signal);
+  const timer = setTimeout(() => controller.abort(Error('cancel startup')), 80);
+  await assert.rejects(started, /cancel|取消/); clearTimeout(timer);
+  assert.ok(f.launches.every(item => item.command === null));
+});
+
+test('Windows SSH cannot report a failed stop as success and does not replay after disconnect', async t => {
+  const options = { windows: true, failStop: true }, f = await fixture(t, options); await f.trust();
+  const started = await f.manager.execute(f.uri, 'owner', 'terminal_exec', { command: 'fixture-sleep', shell: 'cmd', yieldTimeMs: 1 });
+  await assert.rejects(f.manager.execute(f.uri, 'owner', 'terminal_stop', { sessionId: started.terminalSessionId }), /无法确认/);
+  assert.equal(f.manager.listTerminals('owner').sessions[0].state, 'running');
+  options.failStop = false;
+  await f.manager.execute(f.uri, 'owner', 'terminal_stop', { sessionId: started.terminalSessionId });
+  const running = await f.manager.execute(f.uri, 'owner', 'terminal_exec', { command: 'fixture-sleep', shell: 'cmd', yieldTimeMs: 1 });
+  for (const client of f.clients) client.end();
+  for (let tries = 0; f.manager.listTerminals('owner').sessions.at(-1).state === 'running' && tries < 100; tries++) await new Promise(resolve => setTimeout(resolve, 10));
+  await assert.rejects(f.manager.execute(f.uri, 'owner', 'terminal_stop', { sessionId: running.terminalSessionId }), /无法确认/);
+  assert.equal(f.launches.length, 2);
+});
+
+test('SSH platform detection fails closed and rejects Windows paths on a POSIX server', async t => {
+  const f = await fixture(t, { unknownPlatform: true }); await f.trust();
+  await assert.rejects(f.manager.execute(f.uri, 'owner', 'terminal_exec', { command: 'must-not-run', shell: 'posix' }), /Cannot verify/);
+  assert.equal(f.commands.length, 0);
+  const linux = await fixture(t); await linux.trust();
+  await assert.rejects(linux.manager.execute(linux.uri, 'owner', 'terminal_exec', { cwd: 'C:\\Users\\111', command: 'must-not-run', shell: 'posix' }), /POSIX/);
+  assert.equal(linux.commands.length, 0);
+});
+
+for (const windows of [false, true]) test(`SFTP file access needs no command channel on ${windows ? 'Windows' : 'POSIX'} hosts`, async t => {
+  const f = await fixture(t, { windows, unknownPlatform: true }); await f.trust();
+  const execute = runtimeTools(f);
+  assert.equal((await execute('read_file', { path: 'file.txt' })).content, 'first\n中文\nlast');
+  await execute('write_file', { path: 'sftp-only.txt', content: '无需 Shell' });
+  assert.equal((await execute('read_file', { path: 'sftp-only.txt' })).content, '无需 Shell');
+  assert.equal(f.commands.length, 0);
+  assert.equal(f.controls.length, 0, 'file operations never attempt a shell probe');
+});
 
 test('one SSH conversation reads local source, uploads it, and routes both terminal hosts by handle', { timeout: 20_000 }, async t => {
   const f = await fixture(t); await f.trust(); const execute = runtimeTools(f);

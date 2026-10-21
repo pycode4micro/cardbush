@@ -38,7 +38,7 @@ const messageBubbleSource = readSourceFile(
 );
 const appSource = readAppViewSources();
 const slashBlock = source.match(
-  /const slashCommands[\s\S]*?const commandItems/,
+  /const slashCommands[\s\S]*?(?=\n  const commandItems)/,
 )?.[0] ?? '';
 
 assert.ok(slashBlock, 'slash quick-action block is missing');
@@ -142,7 +142,7 @@ assert.match(source, /useFileDropZone\(dropTargetRef, transfer =>/);
 assert.match(source, /const files = \[\.\.\.transfer\.files\];[\s\S]*?addTransferredFiles\(files\)/);
 assert.match(fileDropSource, /handlerRef\.current\(event\.dataTransfer!\)/);
 assert.match(fileDropSource, /transfer\.types\.includes\('Files'\)/);
-assert.match(source, /className=\{`composer-surface\$\{fileDragActive/);
+assert.match(source, /className=\{`composer-surface[^`\r\n]*\$\{fileDragActive \? ' is-file-dragging'/);
 assert.match(source, /composer-file-drop-overlay/);
 assert.match(stylesSource, /\.composer-surface\.is-file-dragging\s*\{/);
 assert.match(stylesSource, /\.composer-file-drop-overlay\s*\{/);
@@ -183,7 +183,7 @@ assert.match(
 );
 assert.match(
   source,
-  /if\s*\(!cancelReady\)/,
+  /async function stopGeneration\(\) \{[\s\S]*?!cancelReady[\s\S]*?return;[\s\S]*?await onCancel\(\)/,
   'The send control must not cancel a request before backend acceptance or during the double-click guard',
 );
 assert.match(
@@ -231,6 +231,9 @@ vm.runInNewContext(transpiled.outputText, {
 });
 const { composerGoalDraftPresentation, detectComposerCommand } = module.exports;
 const detect = (value, caret = value.length) => plain(detectComposerCommand(value, caret));
+assert.deepEqual(detect('/usage'), { mode: 'slash', start: 0, end: 6, query: 'usage' },
+  'retired commands use ordinary slash search without mounting guidance');
+assert.equal(detect('/sample:review').mode, 'slash', 'namespaced plugin commands keep their own route');
 
 assert.deepEqual(plain(composerGoalDraftPresentation('/goal ')), { content: '' });
 assert.equal(

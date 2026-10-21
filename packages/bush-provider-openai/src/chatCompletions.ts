@@ -2,10 +2,11 @@ import OpenAI from 'openai';
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { ChatCompletionCreateParamsStreaming, ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, protocolReasoningEffort, type ModelEvent, type ModelRequest } from '@cardbush/bush-protocol';
-import { modelReplayMatches, withToolDisplayTitle, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
+import { modelReplayMatches, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
 import type { ModelProviderConfig } from './providerConfig.js';
 import { resolveLocalImageInputs, namedMessageContent, portableMessages } from './modelInputs.js';
 import { providerToolName } from './toolNames.js';
+import { providerToolInputSchema } from './toolSchemas.js';
 import { providerFailureEvent } from './providerFailure.js';
 import { eventWriter, incompleteStream, recordProjection, toolCallEvents, type PortableCall } from './portableProvider.js';
 import { OpenRouterReasoning } from './openRouterReasoning.js';
@@ -50,7 +51,7 @@ export function toChatCompletionsParams(request: ModelRequest, baseURL?: string)
   return { model: request.model, messages, stream: true, stream_options: { include_usage: true },
     ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
     ...(request.tools.length ? { tools: request.tools.map(tool => ({ type: 'function' as const,
-      function: { name: providerToolName(tool.name), description: tool.description, parameters: withToolDisplayTitle(tool).inputSchema, strict: false } })) } : {}),
+      function: { name: providerToolName(tool.name), description: tool.description, parameters: providerToolInputSchema(tool), strict: false } })) } : {}),
     max_completion_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, temperature: request.temperature, top_p: request.topP,
     ...(request.reasoningEffort ? openRouter
       ? { reasoning: { effort: protocolReasoningEffort('openai_chat_completions', request.reasoningEffort) } }

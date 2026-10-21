@@ -29,7 +29,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.deepEqual(await ids(),original);
   assert.equal(await run('document.querySelector(".components-grid")'),null,'catalog is replaced by the new conversation page');
   assert.equal(await run('document.querySelectorAll("[data-composer-input]").length'),1,'only one composer is mounted');
-  assert.equal(await run('document.querySelector("[data-composer-input]").value'),'待发送的草稿');
+  assert.equal(await run('document.querySelector("[data-composer-input]").value'),'','editor does not mount the conversation draft');
+  assert.equal(await run('document.querySelector("[data-composer-input]").readOnly'),true);
   assert.equal(await run('[...document.querySelectorAll("button")].some(x=>x.textContent==="清空")'),false,'destructive option stays in secondary menu');
   assert.equal(await run('[...document.querySelectorAll("button")].find(x=>x.textContent==="撤回").disabled'),true);
   await until('!!document.querySelector(".welcome-layout-bottom-hint")', 'visible viewport bottom hint');

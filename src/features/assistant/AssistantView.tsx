@@ -218,7 +218,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
     <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
       titleIcon={<span title={callHere ? zh ? '通话中 · 切换页面仍可继续' : 'In call · continues in the background' : profile.name}><AssistantBulb size={22} working={busy}/></span>}
       workspaceControl={headerControls} conversationContentAvailable={timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
-      onToggleWorkSummary={anchor => { summary.updateWorkSummaryLayout(anchor); summary.setWorkSummaryVisible(value => !value); }}/>
+      workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
     {settings && active && <AssistantSettingsDialog language={language} onClose={() => setSettings(false)}/>}
     {(error || runtimeError) && <RuntimeStatusBanner language={language} tone="error" message={error || runtimeError}
       actionLabel={canRetry ? zh ? '重试回复' : 'Retry reply' : undefined} onAction={canRetry ? retryReply : undefined}
@@ -227,7 +227,9 @@ export function AssistantView({ active, language, connections, prepare, onManage
       update={{ ...retry, sessionId, state: 'retrying', source: 'provider', reason: retry.code }}/>}
     <div className="assistant-body"><div className="assistant-chat chat-body" ref={chatBody} style={{ '--work-summary-anchor-right': `${summary.workSummaryAnchorRight}px` } as CSSProperties}>
       {summary.workSummaryPresence.mounted && <ConversationWorkSummary language={language} sessionId={sessionId} messages={pageMessages} changeReports={[]}
-        onOpenChangeReview={() => {}} subagentObservabilityAvailable={subagentObservabilityAvailable} softVisible={summary.workSummaryPresence.visible}/>}
+        onOpenChangeReview={() => {}} subagentObservabilityAvailable={subagentObservabilityAvailable}
+        hoverProps={summary.workSummaryPanelProps} keepOpenUntil={summary.keepWorkSummaryOpenUntil}
+        running={busy} softVisible={summary.workSummaryPresence.visible}/>}
       <div className="chat-content-frame">
       <div className="assistant-messages message-list" ref={scroller} tabIndex={-1} role="log" aria-label={zh ? '助手对话' : 'Assistant conversation'}>
       <div className="message-list-content">

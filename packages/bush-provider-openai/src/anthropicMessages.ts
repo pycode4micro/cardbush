@@ -3,10 +3,11 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { ContentBlockParam, MessageCreateParamsStreaming, MessageParam, RawMessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
 import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, type ModelEvent, type ModelMessage, type ModelRequest } from '@cardbush/bush-protocol';
-import { modelReplayMatches, withToolDisplayTitle, ModelRequestAttempts, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
+import { modelReplayMatches, ModelRequestAttempts, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
 import type { ModelProviderConfig } from './providerConfig.js';
 import { resolveLocalImageInputs, namedMessageContent, portableMessages } from './modelInputs.js';
 import { providerToolName } from './toolNames.js';
+import { providerToolInputSchema } from './toolSchemas.js';
 import { anthropicValidationMessage, providerFailureEvent } from './providerFailure.js';
 import { InMemoryProviderCapabilityStore, modelProviderCapabilityScope, type ProviderCapabilityStore } from './providerCapabilities.js';
 import { eventWriter, incompleteStream, recordProjection, toolCallEvents, type PortableCall } from './portableProvider.js';
@@ -64,7 +65,7 @@ function replayContent(message: Extract<ModelMessage, { role: 'assistant' }>, re
 export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: 'adaptive' | 'budget' = 'adaptive', cache = true, discardThinking = false): MessageCreateParamsStreaming {
   const messages: MessageParam[] = [], system: string[] = [];
   const tools = request.tools.length ? request.tools.map(tool => ({ name: providerToolName(tool.name), description: tool.description,
-    input_schema: { ...withToolDisplayTitle(tool).inputSchema, type: 'object' as const } })) : undefined;
+    input_schema: { ...providerToolInputSchema(tool), type: 'object' as const } })) : undefined;
   // A legacy conversation may have needed one confirmed wire repair. Reproduce
   // that projection on later requests without editing its durable history.
   const discardBefore = discardThinking ? request.messages.length : request.messages.reduce((last, message, index) =>

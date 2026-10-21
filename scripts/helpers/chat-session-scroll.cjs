@@ -182,11 +182,36 @@ module.exports = async ({ run, until, pause, theme = 'theme-dark' }) => {
   assert.ok(submittedOffset >= 0 && submittedOffset < await run("document.querySelector('.composer-dock').getBoundingClientRect().top - scrollList().getBoundingClientRect().top"),
     'new requests remain visible above the composer');
   await assertRestored('b', bTop);
-  await run("selectScrollSession('a')");
+  await run(`window.submittedStageFrames = [];
+    window.sampleSubmittedStage = () => {
+      const user = document.querySelector('[data-message-id=scroll-submitted-user]');
+      if (user) submittedStageFrames.push(user.getBoundingClientRect().top - scrollList().getBoundingClientRect().top);
+      window.submittedStageFrame = requestAnimationFrame(sampleSubmittedStage);
+    };
+    requestAnimationFrame(sampleSubmittedStage); selectScrollSession('a');`);
   await until("!!document.querySelector('[data-message-id=scroll-submitted-user]')", 'reserved response stage restored');
   await pause(250);
   const returnedSubmissionOffset = await run("document.querySelector('[data-message-id=scroll-submitted-user]').getBoundingClientRect().top - scrollList().getBoundingClientRect().top");
-  assert.ok(Math.abs(returnedSubmissionOffset - submittedOffset) < 2, 'switching preserves the reserved response stage and reading anchor');
+  assert.ok(Math.abs(returnedSubmissionOffset - submittedOffset) < 2,
+    'switching preserves the reserved response stage and reading anchor: ' + JSON.stringify({ submittedOffset, returnedSubmissionOffset }));
+  const restoredStageFrames = await run('cancelAnimationFrame(submittedStageFrame); submittedStageFrames');
+  assert.ok(restoredStageFrames.length && restoredStageFrames.every(offset => Math.abs(offset - submittedOffset) < 2),
+    'reserved response restoration is stable from the first rendered frame: ' + JSON.stringify(restoredStageFrames));
+  await run(`scrollSessions.a.messages = scrollSessions.a.messages.map(message => message.id === 'scroll-submitted-assistant'
+    ? { ...message, content: 'Short completed reply.' } : message);
+    scrollSessions.a.sending = false; scrollSessions.a.activeTurnId = ''; selectScrollSession('a');`);
+  await pause(200);
+  const completedSpace = await run("parseFloat(scrollList().querySelector('.assistant-response-spacer').style.height)");
+  assert.ok(completedSpace > 0, 'the completed short reply still has reserved space');
+  await assertRestored('b', bTop);
+  await run("submittedStageFrames = []; requestAnimationFrame(sampleSubmittedStage); selectScrollSession('a')");
+  await until("!!document.querySelector('[data-message-id=scroll-submitted-user]')", 'completed reservation restored');
+  await pause(250);
+  const completedStageFrames = await run('cancelAnimationFrame(submittedStageFrame); submittedStageFrames');
+  assert.ok(completedStageFrames.length && completedStageFrames.every(offset => Math.abs(offset - submittedOffset) < 2),
+    'completed reservations preserve the reading position across sessions: ' + JSON.stringify(completedStageFrames));
+  assert.ok(Math.abs(await run("parseFloat(scrollList().querySelector('.assistant-response-spacer').style.height)") - completedSpace) < 2,
+    'restoration preserves remaining space instead of filling it again');
   await run("updateChat({ onSend: previousScrollTestSend }); void 0;");
   await run(`
     selectScrollSession('b');

@@ -28,6 +28,8 @@ import { webToolDenial } from './webToolPolicy.js';
 import { toolResourceScheduler } from './toolResourceScheduler.js';
 import { toolFailureFacts, withToolFailureFacts } from './toolFailureFacts.js';
 import { resolveToolReferenceName } from './toolReferenceNames.js';
+import { annotateToolRouteRecovery } from './toolRouteRecovery.js';
+import { mcpSchedulingResources } from './toolScheduling.js';
 
 interface ExecutionTrace {
   dispatched: boolean;
@@ -108,9 +110,10 @@ export class ToolExecutionCoordinator {
   async execute(
     toolCall: ToolCall, identity: ToolExecutionIdentity, signal?: AbortSignal,
     turn?: ToolHandlerContext['turn'], parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
+    dispatchStop?: () => string | undefined,
   ): Promise<ToolExecutionOutcome> {
     const trace: ExecutionTrace = { dispatched: false, nestedDispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false };
-    const outcome = await this.executeAttempt(toolCall, identity, signal, turn, parentLifecycle, trace);
+    const outcome = await this.executeAttempt(toolCall, identity, signal, turn, parentLifecycle, trace, dispatchStop);
     const error = outcome.kind === 'returned' ? outcome.resultError : outcome.error;
     const mutating = outcome.actionManifest?.mutating ?? this.#registry.resolve(toolCall.name)?.manifest.mutating ?? true;
     const effects = outcome.workspaceChanges.length ? 'recorded' : trace.nestedEffects !== 'none' ? trace.nestedEffects
@@ -128,7 +131,10 @@ export class ToolExecutionCoordinator {
         : effects !== 'none' || dispatched && mutating && result === 'unknown' ? 'inspect_existing'
         : trace.failureFacts?.recovery ?? (trace.dispatched && retryableObservation(error) ? 'retry' : 'correct_input'),
     };
-    if (error) error.details = { ...error.details, execution };
+    if (error) {
+      error.details = { ...error.details, execution };
+      if (execution.effects === 'none' && execution.dispatch === 'not_started') annotateToolRouteRecovery(error, toolCall, turn?.contextMessages ?? []);
+    }
     return { ...outcome, execution };
   }
 
@@ -139,7 +145,11 @@ export class ToolExecutionCoordinator {
     turn?: ToolHandlerContext["turn"],
     parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
     trace: ExecutionTrace = { dispatched: false, nestedDispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false },
+    dispatchStop?: () => string | undefined,
   ): Promise<ToolExecutionOutcome> {
+    if (signal?.aborted) return cancelledResult('turn_cancelled');
+    const initialStop = dispatchStop?.();
+    if (initialStop) return failedResult('plugin_hook_stopped', initialStop, undefined, {}, 'permission');
     if (turn?.request.metadata.toolExecutionPolicy === 'none') {
       return failedResult('tools_disabled', 'All tools are disabled by this service.', undefined, {}, 'permission');
     }
@@ -211,7 +221,7 @@ export class ToolExecutionCoordinator {
         // Preserve the wire call/result pair and permission anchor, but run every
         // native gate and journal the target with the same call identity.
         return this.executeAttempt({ ...toolCall, name: target.name, argumentsText: JSON.stringify(target.input) }, identity,
-          signal, turn, parentLifecycle ?? { toolCall, identity }, trace);
+          signal, turn, parentLifecycle ?? { toolCall, identity }, trace, dispatchStop);
       }
       if (hooks) {
         hookResult = await hooks.before({ toolCall, input: parsedArguments, turn, signal });
@@ -373,11 +383,17 @@ export class ToolExecutionCoordinator {
     const workspaceChanges: WorkspaceChange[] = [];
     try {
       let nestedOrdinal = 0;
-      if (registration.resources) {
-        const resources = await registration.resources({ ...identity, toolCall, input, actionManifest, signal, turn });
+      const resources = [...mcpSchedulingResources(registration),
+        ...(await registration.resources?.({ ...identity, toolCall, input, actionManifest, signal, turn }) ?? [])];
+      if (resources.length) {
         releaseResources = await toolResourceScheduler(this.#registry).acquire(resources, signal);
       }
       signal?.throwIfAborted();
+      const queuedStop = dispatchStop?.();
+      if (queuedStop) return failedResult('plugin_hook_stopped', queuedStop, actionManifest, {}, 'permission');
+      if ((registration.mcpHook || registration.registrationOwner?.startsWith('extension:')) && this.#registry.resolve(toolCall.name) !== registration) {
+        return failedResult('tool_definition_changed', 'The plugin changed while queued. Load its current definition before calling again.', actionManifest, { inputDispatched: false });
+      }
       this.#observer.running?.(lifecycle.toolCall, lifecycle.identity, toolCall);
       trace.dispatched = true;
       const execution = Promise.resolve(registration.execute({
@@ -405,35 +421,54 @@ export class ToolExecutionCoordinator {
               ...identity,
               ordinal: identity.ordinal * 1000 + (++nestedOrdinal),
             };
-            const nested = await this.execute(nestedCall, nestedIdentity,
-              nestedOptions?.signal ? AbortSignal.any([...(signal ? [signal] : []), nestedOptions.signal]) : signal, turn,
-              nestedOptions?.record ? undefined : lifecycle);
-            trace.nestedDispatched ||= nested.execution?.dispatch !== 'not_started';
-            if (nested.execution?.effects === 'recorded' || trace.nestedEffects === 'none' && nested.execution?.effects === 'possible') trace.nestedEffects = nested.execution.effects;
-            trace.nestedUncertain ||= nested.execution?.result === 'unknown';
-            trace.denied ||= nested.kind !== 'returned' && nested.error.kind === 'permission';
-            if (nestedOptions?.record) this.#observer.completed?.(nestedCall, nestedIdentity, nested);
-            nestedOptions?.onHooks?.(nested.hookMessages ?? [], nested.hookStopTurn);
-            nestedHookMessages.push(...(nested.hookMessages ?? []));
-            nestedHookStopTurn ??= nested.hookStopTurn;
-            if (nestedOptions?.onHooks && nested.hookStopTurn) throw Object.assign(new Error(nested.hookStopTurn), { code: 'plugin_hook_stopped' });
-            if (nested.kind === "returned") {
-              if (!nestedOptions?.record) workspaceChanges.push(...nested.workspaceChanges);
-              if (nested.rejectToolResult) throw Object.assign(new Error(nested.hookFeedback), { code: 'plugin_hook_result_blocked' });
-              if (nested.hookFeedback !== undefined) nestedHookFeedback.push(nested.hookFeedback);
-              return nested.result;
-            }
-            const failure = Object.assign(new Error(nested.error.message), {
-              ...(nested.kind === 'cancelled' ? { name: 'AbortError' } : {}),
-              code: nested.error.code,
-              details: nested.error.details,
-            });
-            // Carry only coordinator-owned facts across delegation, never facts
-            // asserted by a remote tool's JSON or error details.
-            throw registration.delegatesToolExecution && nested.execution ? withToolFailureFacts(failure, {
-              ...(nested.execution.dispatch === 'not_started' ? { dispatch: 'not_started' } : {}),
-              effects: nested.execution.effects, result: nested.execution.result, recovery: nested.execution.recovery,
-            }) : failure;
+            const nestedSignal = nestedOptions?.signal ? AbortSignal.any([...(signal ? [signal] : []), nestedOptions.signal]) : signal;
+            let releaseAdmission: (() => void) | undefined;
+            try {
+              let queuedFailure: ToolExecutionOutcome | undefined;
+              if (nestedOptions?.scheduling) {
+                try { releaseAdmission = await nestedOptions.scheduling.scheduler.acquire(nestedOptions.scheduling.resources, nestedSignal); }
+                catch (error) {
+                  queuedFailure = nestedSignal?.aborted || isAbortError(error) ? cancelledResult('tool_queue_cancelled')
+                    : failedResult('tool_queue_failed', errorMessage(error));
+                }
+              }
+              // A preceding call's Hook may have stopped this batch while it queued.
+              const stopped = nestedHookStopTurn ?? dispatchStop?.();
+              if (!queuedFailure && stopped) queuedFailure = failedResult('plugin_hook_stopped', stopped, undefined, {}, 'permission');
+              if (queuedFailure) {
+                const execution: ToolExecutionFacts = { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'do_not_retry' };
+                queuedFailure.execution = execution;
+                if (queuedFailure.kind !== 'returned') queuedFailure.error.details = { ...queuedFailure.error.details, execution };
+              }
+              const nested = queuedFailure ?? await this.execute(nestedCall, nestedIdentity, nestedSignal, turn,
+                nestedOptions?.record ? undefined : lifecycle, () => nestedHookStopTurn ?? dispatchStop?.());
+              trace.nestedDispatched ||= nested.execution?.dispatch !== 'not_started';
+              if (nested.execution?.effects === 'recorded' || trace.nestedEffects === 'none' && nested.execution?.effects === 'possible') trace.nestedEffects = nested.execution.effects;
+              trace.nestedUncertain ||= nested.execution?.result === 'unknown';
+              trace.denied ||= nested.kind !== 'returned' && nested.error.kind === 'permission';
+              if (nestedOptions?.record) this.#observer.completed?.(nestedCall, nestedIdentity, nested);
+              nestedOptions?.onHooks?.(nested.hookMessages ?? [], nested.hookStopTurn);
+              nestedHookMessages.push(...(nested.hookMessages ?? []));
+              nestedHookStopTurn ??= nested.hookStopTurn;
+              if (nestedOptions?.onHooks && nested.hookStopTurn) throw Object.assign(new Error(nested.hookStopTurn), { code: 'plugin_hook_stopped' });
+              if (nested.kind === "returned") {
+                if (!nestedOptions?.record) workspaceChanges.push(...nested.workspaceChanges);
+                if (nested.rejectToolResult) throw Object.assign(new Error(nested.hookFeedback), { code: 'plugin_hook_result_blocked' });
+                if (nested.hookFeedback !== undefined) nestedHookFeedback.push(nested.hookFeedback);
+                return nested.result;
+              }
+              const failure = Object.assign(new Error(nested.error.message), {
+                ...(nested.kind === 'cancelled' ? { name: 'AbortError' } : {}),
+                code: nested.error.code,
+                details: nested.error.details,
+              });
+              // Carry only coordinator-owned facts across delegation, never facts
+              // asserted by a remote tool's JSON or error details.
+              throw registration.delegatesToolExecution && nested.execution ? withToolFailureFacts(failure, {
+                ...(nested.execution.dispatch === 'not_started' ? { dispatch: 'not_started' } : {}),
+                effects: nested.execution.effects, result: nested.execution.result, recovery: nested.execution.recovery,
+              }) : failure;
+            } finally { releaseAdmission?.(); }
           },
           recordWorkspaceChange: (change) => workspaceChanges.push(change),
         }));

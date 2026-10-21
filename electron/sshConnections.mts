@@ -4,7 +4,8 @@ import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname, posix } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { openSshTunnel } from './sshTunnel.mjs';
-import { parseSshWorkspace, sshWorkspace, type SshConnection, type SshConnectionInput, type SshTestResult } from '@cardbush/bush-protocol';
+import { parseSshWorkspace, sshWorkspace, windowsSftpPath, windowsShellPath, type SshPlatform, type SshShell, type SshConnection, type SshConnectionInput, type SshTestResult } from '@cardbush/bush-protocol';
+import { posixQuote as quote, remoteShell, remoteProgram, windowsHostProbe, windowsTerminalCommand, windowsTerminalInput, windowsStopCommand } from './sshShell.mjs';
 import { workspaceEditRecoveryError } from '@cardbush/bush-runtime/workspace-edit-recovery';
 import { createDisplayDiff } from '@cardbush/bush-runtime/workspace-diff';
 import { WorkspaceSearchBudget, workspaceSearchArguments, type WorkspaceSearchInput } from '@cardbush/bush-runtime/workspace-search';
@@ -13,16 +14,21 @@ type Saved = Omit<SshConnection, 'hasPassword' | 'hasPassphrase' | 'status'> & {
 type Cipher = { encrypt(value: string): string; decrypt(value: string): string };
 type Terminal = { id: string; owner: string; connectionId: string; root: string; command: string; cwd: string;
   client: Client; channel: ClientChannel; pid?: number; state: string; exitCode?: number; stdout: string; stderr: string;
+  platform: SshPlatform; shell: SshShell; job?: string; ready?: Promise<void>; stop?: Promise<void>;
   truncated: boolean; changed: EventEmitter; startedAt: number; endedAt?: number; lastOutputAt?: number };
+type RemoteHost = { platform: SshPlatform; home: string; verifiedShell?: Promise<void> };
 const MAX_BYTES = 8 * 1024 * 1024;
-const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const sha = (value: Buffer) => createHash('sha256').update(value).digest('hex');
 const call = <T,>(operation: (done: (error: Error | null | undefined, value: T) => void) => void) => new Promise<T>((resolve, reject) => operation((error, value) => error ? reject(error) : resolve(value)));
-const within = (root: string, path: string) => path === root || path.startsWith(root === '/' ? '/' : root + '/');
+const within = (root: string, path: string, platform: SshPlatform) => {
+  if (platform === 'windows') { root = root.toLowerCase(); path = path.toLowerCase(); }
+  return path === root || path.startsWith(root.endsWith('/') ? root : root + '/');
+};
 
 /** Desktop-owned SSH connections. No private key or password is exposed to Runtime or models. */
 export class SshConnectionManager {
   #clients = new Map<string, Promise<Client>>();
+  #hosts = new WeakMap<Client, Promise<RemoteHost>>();
   #opening = new Map<string, Client>();
   #closing = false;
   #connected = new Set<string>();
@@ -53,8 +59,9 @@ export class SshConnectionManager {
       if (!input.name?.trim() || !/^[a-zA-Z0-9.:_-]+$/.test(input.host) || !/^[^\s\0\r\n]+$/.test(input.username) || !Number.isInteger(input.port) || input.port < 1 || input.port > 65535 || !['agent','key','password'].includes(input.authentication)) throw Error('请填写有效的名称、主机、端口和用户。');
       if (old && (old.host !== input.host || old.port !== input.port || old.username !== input.username)) throw Error('主机、端口或用户变化时请新增连接，避免已有项目指向另一台主机。');
       if (old && this.#busy(old.id)) throw Error('请先停止此 SSH 连接中的运行任务，再修改连接。');
-      const directory = input.defaultDirectory?.trim() || '/';
-      if (!directory.startsWith('/') || /[\0\r\n]/.test(directory)) throw Error('远程目录必须是 POSIX 绝对路径。');
+      const supplied = input.defaultDirectory?.trim() || '/';
+      const directory = /^[a-z]:[\\/]|^\/[a-z]:/i.test(supplied) ? windowsSftpPath(supplied) : supplied;
+      if (!directory.startsWith('/') || /[\0\r\n]/.test(directory)) throw Error('远程目录必须是绝对路径，例如 /home/user 或 C:\\Users\\user。');
       if (input.fingerprint && !/^SHA256:[A-Za-z0-9+/]{43}$/.test(input.fingerprint)) throw Error('Invalid SSH host fingerprint.');
       if (input.authentication === 'key' && !input.privateKeyPath?.trim()) throw Error('请选择私钥文件。');
       const item: Saved = { id: old?.id ?? randomUUID(), name: input.name.trim(), host: input.host, port: input.port, username: input.username,
@@ -123,8 +130,36 @@ export class SshConnectionManager {
     try { return await Promise.race([action(sftp), new Promise<never>((_, reject) => { timer = setTimeout(() => { sftp.end(); reject(Error('SSH 文件操作超时。')); }, 30_000); sftp.once('close', () => reject(signal?.reason ?? Error('SSH 文件通道已关闭。'))); })]); }
     finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); sftp.end(); }
   }
+  async #host(id: string, verifyShell = true): Promise<RemoteHost> {
+    const client = await this.#connection(id);
+    let pending = this.#hosts.get(client);
+    if (!pending) {
+      pending = this.#sftp(id, async sftp => {
+        const home = await this.#canonical(sftp, '.');
+        return { platform: /^\/[a-z]:\//i.test(home) ? 'windows' as const : 'posix' as const, home };
+      });
+      this.#hosts.set(client, pending);
+    }
+    let host: RemoteHost;
+    try { host = await pending; } catch (error) { this.#hosts.delete(client); throw error; }
+    // SFTP-only accounts retain file access without requiring an exec channel.
+    // A filesystem namespace is only a hint; commands need an actual OS probe.
+    if (!verifyShell) return host;
+    host.verifiedShell ??= (async () => {
+      if (host.platform === 'windows') {
+        const probe = await this.#captureChannel(client, windowsHostProbe, 10_000);
+        if (probe.exitCode === 0 && probe.stdout.trim() === 'CARDBUSH_HOST_WINDOWS_V1') return;
+      } else {
+        const probe = await this.#captureChannel(client, 'uname -s', 10_000);
+        if (probe.exitCode === 0 && /^(Linux|Darwin|FreeBSD|OpenBSD|NetBSD|SunOS)\s*$/.test(probe.stdout)) return;
+      }
+      throw Object.assign(Error('Cannot verify the SSH operating system and shell. No user command was sent.'), { code: 'ssh_platform_unavailable' });
+    })();
+    try { await host.verifiedShell; } catch (error) { host.verifiedShell = undefined; throw error; }
+    return host;
+  }
   async #canonical(sftp: SFTPWrapper, path: string, missing = false): Promise<string> {
-    try { return await call<string>(done => sftp.realpath(path, done)); }
+    try { const value = await call<string>(done => sftp.realpath(path, done)); return /^[a-z]:[\\/]|^\/[a-z]:/i.test(value) ? windowsSftpPath(value) : value; }
     catch (error) { if (!missing || (error as { code?: number }).code !== 2 || path === '/') throw error; return posix.join(await this.#canonical(sftp, posix.dirname(path), true), posix.basename(path)); }
   }
   async directory(uri: string) {
@@ -136,16 +171,26 @@ export class SshConnectionManager {
       return { path, uri: sshWorkspace(target.connectionId, path), entries: entries.filter(item => item.filename !== '.' && item.filename !== '..' && item.filename !== '.git').map(item => ({ name: item.filename, path: sshWorkspace(target.connectionId, posix.join(path, item.filename)), kind: (item.attrs.mode & 0o170000) === 0o040000 ? 'folder' as const : 'file' as const })).sort((a,b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name)) };
     });
   }
-  async authorize(uri: string, path: string, write = false) {
+  async authorize(uri: string, path: string, write = false, terminal?: { shell?: string }, signal?: AbortSignal) {
     const target = parseSshWorkspace(uri)!;
-    return this.#sftp(target.connectionId, async sftp => { const root = await this.#canonical(sftp, target.path); const resolved = await this.#canonical(sftp, this.#path(target.connectionId, root, path), write); return { path: sshWorkspace(target.connectionId, resolved), root: sshWorkspace(target.connectionId, root), home: await this.#canonical(sftp, '.'), inside: within(root, resolved) }; });
+    const host = await this.#host(target.connectionId, Boolean(terminal)); signal?.throwIfAborted();
+    const shell = terminal ? remoteShell(host.platform, terminal.shell) : undefined;
+    return this.#sftp(target.connectionId, async sftp => {
+      const root = await this.#canonical(sftp, target.path);
+      const resolved = await this.#canonical(sftp, this.#path(target.connectionId, root, path, host.platform), write);
+      return { path: sshWorkspace(target.connectionId, resolved), root: sshWorkspace(target.connectionId, root),
+        home: host.home, inside: within(root, resolved, host.platform), platform: host.platform,
+        ...(shell ? { shell, nativeCwd: host.platform === 'windows' ? windowsShellPath(resolved) : resolved } : {}) };
+    }, signal);
   }
-  #path(id: string, root: string, value = '.') {
+  #path(id: string, root: string, value = '.', platform: SshPlatform = 'posix') {
     const reference = parseSshWorkspace(value);
     if (value.startsWith('ssh:') && !reference) throw Error('Invalid SSH workspace path.');
     if (reference && reference.connectionId !== id) throw Error('文件属于另一条 SSH 连接，请先切换远程项目。');
-    const path = reference?.path ?? value;
-    if (/[\0\r\n]/.test(path) || /^[A-Za-z]:[\\/]/.test(path)) throw Error('远程工具需要 POSIX 路径。');
+    let path = reference?.path ?? value;
+    if (/[\0\r\n]/.test(path)) throw Error('Invalid remote path.');
+    if (platform === 'windows') return windowsSftpPath(posix.resolve(root, windowsSftpPath(path || '.')));
+    if (/^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path)) throw Error('This SSH host uses POSIX paths. For local files use environment="local".');
     return posix.resolve(root, path || '.');
   }
   async #readBytes(sftp: SFTPWrapper, path: string, limit = MAX_BYTES, prefix = false): Promise<Buffer> {
@@ -176,14 +221,14 @@ export class SshConnectionManager {
   }
   listTerminals(owner: string) {
     return { sessions: [...this.#terminals.values()].filter(item => item.owner === owner).map(item => ({
-      terminalSessionId: item.id, uri: item.root, state: item.state, command: item.command, cwd: item.cwd, exitCode: item.exitCode ?? null, ...terminalTiming(item),
+      terminalSessionId: item.id, uri: item.root, state: item.state, command: item.command, cwd: item.cwd, platform: item.platform, shell: item.shell, exitCode: item.exitCode ?? null, ...terminalTiming(item),
     })) };
   }
 
   async execute(uri: string, owner: string, name: string, input: Record<string, any>, signal?: AbortSignal): Promise<unknown> {
     const target = parseSshWorkspace(uri); if (!target) throw Error('Expected SSH workspace');
     signal?.throwIfAborted();
-    if (name === 'file_snapshot') return this.snapshot(sshWorkspace(target.connectionId, this.#path(target.connectionId, target.path, input.path)), input.maxBytes ?? 0, signal);
+    if (name === 'file_snapshot') return this.snapshot(sshWorkspace(target.connectionId, this.#path(target.connectionId, target.path, input.path, (await this.#host(target.connectionId, false)).platform)), input.maxBytes ?? 0, signal);
     if (name === 'workspace_busy') return { running: [...this.#terminals.values()].some(item => item.root === uri && item.state === 'running') };
     if (name === 'workspace_stop') { await Promise.all([...this.#terminals.values()].filter(item => item.root === uri).map(item => this.#stop(item))); return { stopped:true }; }
     if (name === 'terminal_list') return { sessions: [...this.#terminals.values()].filter(item => item.owner === owner && item.connectionId === target.connectionId).map(item => ({ terminalSessionId: item.id, state: item.state, command: item.command, cwd: item.cwd })) };
@@ -194,18 +239,19 @@ export class SshConnectionManager {
       if (name === 'terminal_stop') await this.#stop(terminal);
       return this.#poll(terminal, name === 'terminal_stop' ? 1 : input.yieldTimeMs, signal, name === 'terminal_observe');
     }
+    const host = await this.#host(target.connectionId, name === 'terminal_exec' || name === 'search_file_content'); signal?.throwIfAborted();
     if (name === 'terminal_exec' || name === 'search_file_content') {
-      const path = this.#path(target.connectionId, target.path, input.cwd ?? input.path);
-      if (name === 'terminal_exec' && input.shell !== 'posix') throw Error('SSH 远程终端请使用 shell="posix"。');
+      const path = this.#path(target.connectionId, target.path, input.cwd ?? input.path, host.platform);
+      const shell = remoteShell(host.platform, name === 'terminal_exec' ? input.shell : undefined);
       if (name === 'search_file_content') return this.#searchFileContent(uri, owner, path, input, signal);
       const command = input.command;
-      const terminal = await this.#start(target.connectionId, uri, owner, command, path, signal);
+      const terminal = await this.#start(target.connectionId, uri, owner, command, path, signal, undefined, shell);
       try { return await this.#poll(terminal, input.yieldTimeMs ?? 1000, signal); }
       catch (error) { await this.#stop(terminal).catch(() => {}); throw error; }
     }
     return this.#sftp(target.connectionId, async sftp => {
-      const path = await this.#canonical(sftp, this.#path(target.connectionId, target.path, input.path), name === 'write_file');
-      const identity = sshWorkspace(target.connectionId, path), observation = owner + ':' + identity;
+      const path = await this.#canonical(sftp, this.#path(target.connectionId, target.path, input.path, host.platform), name === 'write_file');
+      const identity = sshWorkspace(target.connectionId, path), mutation = host.platform === 'windows' ? identity.toLowerCase() : identity, observation = owner + ':' + mutation;
       if (name === 'read_file') {
         const bytes = await this.#readBytes(sftp, path), hash = sha(bytes); this.#observed.set(observation, hash);
         const text = bytes.toString(input.encoding ?? 'utf8');
@@ -214,7 +260,7 @@ export class SshConnectionManager {
         return { path: identity, sha256: hash, content: lines.slice(start,end).join(''), start_line: input.range.startLine, end_line: start < lines.length ? end : null, total_lines: lines.length, next_start_line: end < lines.length ? end + 1 : null };
       }
       if (name !== 'write_file' && name !== 'edit_file') throw Error('Unsupported remote workspace tool: ' + name);
-      if (this.#mutations.has(identity)) throw Error('此远程文件正在被另一个操作修改。'); this.#mutations.add(identity);
+      if (this.#mutations.has(mutation)) throw Error('此远程文件正在被另一个操作修改。'); this.#mutations.add(mutation);
       try {
         let before: Buffer | undefined;
         try { before = await this.#readBytes(sftp, path); } catch (error) { if ((error as { code?: number }).code !== 2 || name === 'edit_file') throw error; }
@@ -258,13 +304,16 @@ export class SshConnectionManager {
           workspaceChange: { change_id: changeId, path: identity, status: before ? 'modified' : 'added', additions: diff.additions, deletions: diff.deletions,
             ...(before ? { before_hash: sha(before) } : {}), after_hash: sha(next),
             metadata: { diff: diff.text, workspaceVersioned: false, revertSupported: false } } };
-      } finally { this.#mutations.delete(identity); }
+      } finally { this.#mutations.delete(mutation); }
     }, signal);
   }
-  async #start(id: string, root: string, owner: string, command: string, cwd: string, signal?: AbortSignal, onOutput?: (key: 'stdout' | 'stderr', chunk: string) => void) {
+  async #start(id: string, root: string, owner: string, command: string, cwd: string, signal?: AbortSignal, onOutput?: (key: 'stdout' | 'stderr', chunk: string) => void, requestedShell?: SshShell) {
+    const host = await this.#host(id), shell = remoteShell(host.platform, requestedShell);
+    signal?.throwIfAborted();
+    if (host.platform === 'windows' && Buffer.byteLength(command, 'utf8') > MAX_BYTES) throw Error('Windows SSH command exceeds 8 MiB.');
     for (const [key, terminal] of this.#terminals) if (this.#terminals.size > 200 && terminal.state !== 'running' && Date.now() - terminal.startedAt > 3_600_000) this.#terminals.delete(key);
     if (this.#starting + [...this.#terminals.values()].filter(item => item.state === 'running').length >= 16) throw Error('远程终端并发已达上限。');
-    const commandKey = JSON.stringify([id, owner, cwd, command]);
+    const commandKey = JSON.stringify([id, owner, host.platform === 'windows' ? cwd.toLowerCase() : cwd, shell, command]);
     const existing = this.#runningCommands.get(commandKey);
     if (existing) throw Object.assign(Error('相同命令仍在运行，请先处理其他独立工作，需要结果时使用现有终端，不要重复启动。'), {
       code: 'terminal_command_already_running', details: { terminalSessionId: existing, state: this.#terminals.get(existing)?.state ?? 'starting' },
@@ -275,18 +324,44 @@ export class SshConnectionManager {
     try {
     const client = await this.#connection(id); signal?.throwIfAborted();
     const marker = 'CARDBUSH_PID_' + randomUUID().replaceAll('-','') + ':';
+    const job = host.platform === 'windows' ? 'Global\\CardBushSsh_' + randomUUID().replaceAll('-', '') : undefined;
+    const startToken = randomUUID();
     const script = `printf ${quote(marker + '%s\n')} "$$" >&2; exec /bin/sh -c ${quote(command)}`;
     // sshd may already make its child a session leader. --wait preserves the
     // command's exit status when setsid must fork (setsid(1), util-linux).
-    const channel = await this.#execChannel(client, `cd ${quote(cwd)} && exec setsid --wait /bin/sh -c ${quote(script)}`, signal);
-    const terminal: Terminal = { id: terminalId, connectionId: id, root, owner, command, cwd, client, channel, state: 'running', stdout: '', stderr: '', truncated: false, changed: new EventEmitter(), startedAt: Date.now() };
+    const launch = job ? windowsTerminalCommand({ cwd, shell, job, marker, startToken })
+      : { command: `cd ${quote(cwd)} && exec setsid --wait /bin/sh -c ${quote(script)}`, prelude: '' };
+    const channel = await this.#execChannel(client, launch.command, signal);
+    const terminal: Terminal = { id: terminalId, connectionId: id, root, owner, command, cwd: host.platform === 'windows' ? windowsShellPath(cwd) : cwd,
+      platform: host.platform, shell, ...(job ? { job } : {}), client, channel, state: 'running', stdout: '', stderr: '', truncated: false, changed: new EventEmitter(), startedAt: Date.now() };
     this.#terminals.set(terminal.id, terminal); let pendingError = '';
     const append = (key: 'stdout' | 'stderr', chunk: string) => { if (chunk) terminal.lastOutputAt = Date.now(); if (onOutput) onOutput(key, chunk); else { terminal[key] += chunk; if (Buffer.byteLength(terminal[key]) > 512 * 1024) { terminal[key] = terminal[key].slice(-128 * 1024); terminal.truncated = true; } } terminal.changed.emit('data'); };
     channel.setEncoding('utf8'); channel.stderr.setEncoding('utf8');
     channel.on('data',(chunk: string) => append('stdout',chunk));
-    channel.stderr.on('data',(chunk: string) => { if (terminal.pid) return append('stderr',chunk); pendingError += chunk; const match = new RegExp(marker + '(\\d+)\\r?\\n').exec(pendingError); if (match) { terminal.pid = Number(match[1]); append('stderr',pendingError.replace(match[0],'')); pendingError = ''; } else if (pendingError.length > 4096) { append('stderr',pendingError); pendingError=''; } });
+    channel.stderr.on('data',(chunk: string) => { if (terminal.pid) return append('stderr',chunk); pendingError += chunk; const match = new RegExp(marker + '(\\d+)\\r?\\n').exec(pendingError); if (match) { terminal.pid = Number(match[1]); append('stderr',pendingError.replace(match[0],'')); pendingError = ''; terminal.changed.emit('data'); } else if (pendingError.length > 4096) { append('stderr',pendingError); pendingError=''; } });
     channel.on('error',(error: Error) => { append('stderr',error.message); terminal.state='failed'; terminal.endedAt=Date.now(); terminal.changed.emit('data'); });
     channel.on('close',(code: number, signal?: string) => { this.#runningCommands.delete(commandKey); if (pendingError) append('stderr',pendingError); if (terminal.state === 'running') terminal.state=typeof code === 'number' || signal ? 'completed' : 'disconnected'; terminal.exitCode=code; terminal.endedAt=Date.now(); terminal.changed.emit('data'); });
+    if (job) {
+      channel.write(launch.prelude);
+      // No user code runs until ownership is established and this request is
+      // still live. This also makes late channel delivery after cancellation safe.
+      terminal.ready = (async () => {
+        const deadline = Date.now() + 15_000;
+        while (!terminal.pid && terminal.state === 'running') {
+          if (Date.now() > deadline) throw Error('Windows SSH process ownership handshake timed out. No user command was released.');
+          await this.#poll(terminal, 100, signal, true);
+        }
+        signal?.throwIfAborted();
+        if (terminal.pid && terminal.state === 'running') channel.write(windowsTerminalInput(command, shell, startToken));
+      })();
+      try { await terminal.ready; }
+      catch (error) {
+        // EOF releases a wrapper waiting for the start token without running the command.
+        channel.end();
+        await this.#stop(terminal).catch(() => {});
+        throw error;
+      }
+    }
     return terminal;
     } catch (error) { this.#runningCommands.delete(commandKey); throw error; }
     finally { this.#starting--; }
@@ -306,9 +381,47 @@ export class SshConnectionManager {
       try { client.exec(command, (error, channel) => finish(error, channel)); } catch(error) { finish(error as Error); }
     });
   }
+  async #captureChannel(client: Client, command: string, timeout: number, signal?: AbortSignal) {
+    const budget = AbortSignal.any([AbortSignal.timeout(timeout), ...(signal ? [signal] : [])]);
+    const channel = await this.#execChannel(client, command, budget);
+    return new Promise<{ stdout: string; stderr: string; exitCode: number | null }>((resolve, reject) => {
+      let stdout = '', stderr = '', settled = false;
+      const finish = (error?: unknown, code?: number) => {
+        if (settled) return; settled = true; budget.removeEventListener('abort', abort);
+        if (error) { channel.close(); reject(error); }
+        else resolve({ stdout, stderr, exitCode: code ?? null });
+      };
+      const abort = () => finish(budget.reason);
+      channel.setEncoding('utf8'); channel.stderr.setEncoding('utf8');
+      const append = (kind: 'stdout'|'stderr', value: string) => {
+        if (kind === 'stdout') stdout += value; else stderr += value;
+        if (Buffer.byteLength(stdout + stderr) > 16_384) finish(Error('SSH control response exceeds its limit.'));
+      };
+      channel.on('data', (value: string) => append('stdout', value));
+      channel.stderr.on('data', (value: string) => append('stderr', value));
+      channel.on('error', finish); channel.once('close', (code: number) => finish(undefined, code));
+      budget.addEventListener('abort', abort, { once: true }); if (budget.aborted) abort();
+    });
+  }
   async #stop(terminal: Terminal) {
+    if (terminal.stop) return terminal.stop;
+    const pending = this.#stopOwned(terminal); terminal.stop = pending;
+    try { await pending; } finally { terminal.stop = undefined; }
+  }
+  async #stopOwned(terminal: Terminal) {
+    if (terminal.state === 'disconnected' || terminal.state === 'failed') throw Error('无法确认远程进程已停止，请重连后检查进程。');
     if (terminal.state !== 'running') return;
     const waitForExit = async () => { const deadline = Date.now() + 1500; while (terminal.state === 'running' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25)); };
+    if (terminal.job) {
+      // Close the startup gate as well as terminating a named, owned job. Never
+      // kill an arbitrary PID, and never turn a transport failure into "stopped".
+      if (!terminal.pid) terminal.channel.end();
+      const result = await this.#captureChannel(terminal.client, windowsStopCommand(terminal.job), 15_000);
+      if (result.exitCode !== 0 || result.stdout.trim() !== 'CARDBUSH_STOPPED_V1') throw Error('无法确认 Windows SSH 进程树已停止。' + result.stderr);
+      await waitForExit();
+      if (terminal.state === 'running' || terminal.state === 'disconnected' || terminal.state === 'failed') throw Error('无法确认 Windows SSH 进程通道已结束。');
+      terminal.state = 'stopped'; terminal.changed.emit('data'); return;
+    }
     // Wait briefly for the process group marker before trying to kill the group.
     const deadline = Date.now() + 1000;
     while (!terminal.pid && terminal.state === 'running' && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
@@ -342,7 +455,9 @@ export class SshConnectionManager {
     const timer = setTimeout(() => budget.stop('timeout'), search.timeoutMs);
     let terminal: Terminal | undefined;
     try {
-      terminal = await this.#start(target.connectionId, uri, owner, ['rg', ...workspaceSearchArguments(path, search)].map(quote).join(' '), target.path, budget.signal,
+      const host = await this.#host(target.connectionId);
+      const nativePath = host.platform === 'windows' ? windowsShellPath(path) : path;
+      terminal = await this.#start(target.connectionId, uri, owner, remoteProgram(host.platform, 'rg', workspaceSearchArguments(nativePath, search)), target.path, budget.signal,
         (key, chunk) => { if (key === 'stdout') budget.append(Buffer.from(chunk)); else if (chunk && !budget.limit) budget.warn(chunk); });
       while (terminal.state === 'running' && budget.check()) await this.#poll(terminal, 1000, budget.signal, true);
       return budget.result(terminal.exitCode ?? 2);
@@ -358,9 +473,10 @@ export class SshConnectionManager {
       }
     }
   }
-  async #capture(uri: string, command: string, accepted = [0], signal?: AbortSignal) {
+  async #capture(uri: string, command: string | ((platform: SshPlatform) => string), accepted = [0], signal?: AbortSignal) {
     const target = parseSshWorkspace(uri)!;
-    const terminal = await this.#start(target.connectionId, uri, '__desktop__', command, target.path, signal);
+    const host = await this.#host(target.connectionId);
+    const terminal = await this.#start(target.connectionId, uri, '__desktop__', typeof command === 'function' ? command(host.platform) : command, target.path, signal);
     let stdout = '', stderr = ''; const deadline = Date.now() + 30_000;
     try {
       do {
@@ -375,11 +491,15 @@ export class SshConnectionManager {
   }
   async searchFiles(uri: string, query: string) {
     const target = parseSshWorkspace(uri)!;
-    const { stdout } = await this.#capture(uri, "rg --files --hidden -g '!.git' --null", [0,1]);
-    return stdout.split('\0').filter(path => path && path.toLowerCase().includes(query.toLowerCase())).slice(0,100).map(path => ({ name: posix.basename(path), path: sshWorkspace(target.connectionId,posix.resolve(target.path,path)), relativePath:path, kind:'file' as const }));
+    const { stdout } = await this.#capture(uri, platform => remoteProgram(platform, 'rg', ['--files', '--hidden', '-g', '!.git', '--null']), [0,1]);
+    const host = await this.#host(target.connectionId);
+    return stdout.split('\0').filter(path => path && path.toLowerCase().includes(query.toLowerCase())).slice(0,100).map(path => {
+      const resolved = this.#path(target.connectionId, target.path, path, host.platform);
+      return { name: posix.basename(resolved), path: sshWorkspace(target.connectionId, resolved), relativePath: path, kind: 'file' as const };
+    });
   }
   async git(uri: string, action: 'info'|'branches'|'checkout'|'create-branch'|'commit'|'push', value = ''): Promise<any> {
-    const git = async (...args: string[]) => (await this.#capture(uri, 'LC_ALL=C GIT_TERMINAL_PROMPT=0 git ' + args.map(quote).join(' '))).stdout;
+    const git = async (...args: string[]) => (await this.#capture(uri, platform => remoteProgram(platform, 'git', args, { LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' }))).stdout;
     if (action === 'info') {
       try { const branch = (await git('branch','--show-current')).trim(), fields = (await git('status','--porcelain=v1','-z')).split('\0'), changedFiles = [];
         for (let index = 0; index < fields.length; index++) { const entry=fields[index]; if (!entry) continue; changedFiles.push({ status:entry.slice(0,2).trim(),path:entry.slice(3) }); if (/[RC]/.test(entry.slice(0,2))) index++; }
@@ -418,6 +538,8 @@ export class SshConnectionManager {
       state: terminal.state,
       command: terminal.command,
       cwd: terminal.cwd,
+      platform: terminal.platform,
+      shell: terminal.shell,
       stdout: terminal.stdout,
       stderr: terminal.stderr,
       exitCode: terminal.exitCode ?? null,

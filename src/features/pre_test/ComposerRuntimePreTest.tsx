@@ -10,7 +10,7 @@ import {
   Composer,
   type ThinkingNotice,
 } from '../composer';
-import { TurnRuntimeDetails } from '../chat/TurnRuntimeDetails';
+import { TurnRuntimeDetails, RuntimeTaskPlan } from '../chat/TurnRuntimeDetails';
 import { AssistantThinkingDetail, TurnChangeSummary } from '../chatMessages/AssistantThinkingProcessLine';
 import { reorderScopedQueue } from '../composer/queueOrdering';
 import { PermissionRequestCard } from '../interactions/PermissionRequestCard';
@@ -192,7 +192,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
               <TurnRuntimeDetails
                 language={language}
                 running={fixture !== 'queue'}
-                taskPlan={showProcessing ? taskPlanFixture : undefined}
                 goal={showProcessing ? goalFixture : null}
                 goalRounds={showProcessing ? [
                   {
@@ -204,6 +203,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                   },
                 ] : []}
               />
+              {showProcessing && <RuntimeTaskPlan language={language} plan={taskPlanFixture} running />}
               {shadowOpen && (
                 <ShadowTemporaryChat
                   language={language}

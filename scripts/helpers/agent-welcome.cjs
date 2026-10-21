@@ -29,10 +29,14 @@ module.exports = async ({ run, until, pause, win, root }) => {
   await run("document.querySelector('.agent-chat .send-button').click();undefined;");
   await until("welcomeSends===1&&document.querySelector('.agent-chat .message-list')?.textContent.includes('首次发送立即显示')", 'first message renders before remote admission');
   assert.equal(await run("!!document.querySelector('.agent-chat .welcome-composer')"), false);
+  assert.equal(await run("!!document.querySelector('.agent-chat .agent-project-picker')"), false, 'project selection disappears with the welcome page before remote admission');
   assert.equal(await run("document.querySelector('.agent-chat .send-button').disabled"), true, 'welcome-to-transcript handoff retains pending admission');
-  assert.equal(await run("document.querySelector('.agent-chat textarea').value"), '首次发送立即显示', 'draft is retained until acceptance');
+  assert.equal(await run("document.querySelector('.agent-chat textarea').value"), '', 'submitted draft leaves the input before acceptance');
   await run("holdWelcomeSend=false;releaseWelcomeSend();undefined;");
-  await until("document.querySelector('.agent-chat textarea')?.value===''", 'the accepted welcome draft is cleared after the composer remount');
+  await until("!document.querySelector('.agent-chat .send-button').disabled", 'admission is released after the composer remount');
+  assert.equal(await run("document.querySelector('.agent-chat textarea').value"), '', 'accepted welcome draft stays cleared');
+  assert.equal(await run("!!document.querySelector('.agent-chat .agent-project-picker')"), false, 'project selection stays hidden during the conversation');
+  fs.writeFileSync(path.join(root, 'tmp/agent-conversation-without-project-picker.png'), (await win.webContents.capturePage()).toPNG());
   assert.equal(await run('welcomeSends'), 1);
   console.log('Agent welcome passed: shared layout and suggestions, host-specific history/projects, theme rendering, optimistic first send and admission handoff.');
 };

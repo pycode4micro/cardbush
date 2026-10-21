@@ -19,7 +19,7 @@ module.exports = async ({ run, until, pause, win, root }) => {
   assert.equal(await run("document.querySelector('.agent-plugin-sync input').checked"),false,'automatic sync is separate from manual selection');
   assert.equal(await run("document.querySelector('[data-plugin-id=computer-use] input').disabled"),false,'SSH is not treated as Linux');
   await run(`document.querySelector('[data-plugin-id=chrome] input').click();document.querySelector('.agent-plugin-sync input').click();
-    var field=document.querySelector('.agents-form > label input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,'同步测试');field.dispatchEvent(new Event('input',{bubbles:true}));
+    var field=document.querySelector('.agents-modal-body > label input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,'同步测试');field.dispatchEvent(new Event('input',{bubbles:true}));
     var token=document.querySelector('input[type=password]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(token,'fixture-token');token.dispatchEvent(new Event('input',{bubbles:true}));undefined;`);
   await until("document.querySelector('.agent-sync-all input').indeterminate",'partial selection has a mixed select-all checkbox');
   await pause(100);

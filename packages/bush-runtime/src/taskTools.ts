@@ -1,3 +1,4 @@
+import { TASK_WAIT_MAX_MS, TASK_WAIT_DEFAULT_MS, TASK_BATCH_LIMIT, TASK_PAGE_DEFAULT } from './taskLimits.js';
 import { z } from 'zod';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import { briefText, projectCatalogPage } from './catalogPage.js';
@@ -21,11 +22,11 @@ export const taskPending = (task: RuntimeTaskHandle) => ['running', 'pending', '
 const schema = z.object({
   action: z.enum(['list', 'inspect', 'conversation', 'wait', 'stop', 'cancel_observation']).default('list'),
   cursor: z.string().regex(/^\d+:\d+$/).optional(),
-  task_ids: z.array(z.string().min(1)).min(1).max(32).optional(),
+  task_ids: z.array(z.string().min(1)).min(1).max(TASK_BATCH_LIMIT).optional().describe('Existing task_id handles from tasks list or launch results (subagent taskId, team task_id/run_id). Employee IDs, workflow definition IDs, node IDs and chat session IDs are not task handles.'),
   mode: z.enum(['any', 'all']).default('any'),
-  yield_time_ms: z.number().int().min(0).max(30_000).default(1000),
-  after: z.record(z.string(), z.string()).refine(value => Object.keys(value).length <= 32).optional(),
-  offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(32).default(20),
+  yield_time_ms: z.number().int().min(0).max(TASK_WAIT_MAX_MS).default(TASK_WAIT_DEFAULT_MS),
+  after: z.record(z.string(), z.string()).refine(value => Object.keys(value).length <= TASK_BATCH_LIMIT).optional(),
+  offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(TASK_BATCH_LIMIT).default(TASK_PAGE_DEFAULT),
 }).strict();
 
 /** A facade over existing executors; never creates a second task lifecycle. */
@@ -53,7 +54,7 @@ export class RuntimeTaskTools {
   }
   register(registry: ToolRegistry) {
     registry.register({
-      definition: { name: 'tasks', description: 'Observe or control existing tasks; use subagent to dispatch or follow up. list returns handles; inspect reads results; conversation reads one owned child’s ordered inputs and final answers (one task_ids entry, optional cursor; follow nextCursor). Private reasoning and tool activity are excluded. wait wakes on any/all completion, user/peer guidance or yield_time_ms (default 1000; 0=snapshot). Continue independent work first; do not poll or restart pending tasks. after revisions omit unchanged results. inspect/conversation/stop/cancel_observation require task_ids. stop uses normal permissions; cancel_observation only removes a completion subscription. Wait cancellation never stops tasks. Independent peers use the AgentChatroom plugin, not task IDs.', inputSchema: z.toJSONSchema(schema) },
+      definition: { name: 'tasks', description: 'Observe or control existing terminal, subagent, team, MCP, script and question tasks in this conversation. Creates no work: subagent dispatches/follows up on individual children; team starts/resumes saved dependency workflows. list returns task handles; inspect reads results; conversation reads one owned child’s ordered inputs and final answers (one task_ids entry; follow nextCursor). Private reasoning and tool activity are excluded. wait wakes on any/all completion, user/peer guidance or yield_time_ms (default 1000; 0=snapshot). Continue independent work first; do not poll or restart pending tasks. after revisions omit unchanged results. inspect/conversation/stop/cancel_observation require task_ids. stop uses normal permissions; cancel_observation only removes a completion subscription. Wait cancellation never stops tasks. Independent peers use an available collaboration plugin.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'delegation', operation: 'tasks.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,
@@ -66,11 +67,14 @@ export class RuntimeTaskTools {
         let snapshot = await this.snapshot(context);
         const all = snapshot.handles;
         const select = (items: RuntimeTaskHandle[], ids: string[]) => [...new Set(ids.map(id => {
-          const task = items.find(item => item.task_id === id || item.aliases?.includes(id));
-          if (!task) throw new Error(`Task ${id} is not available in this conversation. Use tasks list to inspect existing handles.`);
-          return task;
+          const exact = items.find(item => item.task_id === id);
+          if (exact) return exact;
+          const matches = items.filter(item => item.aliases?.includes(id));
+          if (matches.length > 1) throw new Error(`Task alias ${id} is ambiguous. Use an exact task_id from tasks list.`);
+          if (!matches.length) throw new Error(`Task ${id} is not available in this conversation. Use tasks list to find an existing task_id; employee IDs, workflow definition IDs, node IDs and chat session IDs are not task handles.`);
+          return matches[0]!;
         }))];
-        let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'wait' ? all.filter(taskPending).slice(0, 32) : all.slice(input.offset, input.offset + input.limit);
+        let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'wait' ? all.filter(taskPending).slice(0, TASK_BATCH_LIMIT) : all.slice(input.offset, input.offset + input.limit);
         if (input.action === 'conversation') {
           const task = selected[0]!;
           if (!task.readConversation) throw new Error('This task has no readable child conversation. Use inspect for its result.');

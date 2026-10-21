@@ -192,7 +192,7 @@ assert.match(app, /data-work-summary-toggle/);
 assert.match(app, /data-inspector-toggle/);
 assert.match(
   app,
-  /data-work-summary-toggle[\s\S]*?<Clipboard[\s\S]*?data-inspector-toggle[\s\S]*?<PanelRightOpen/,
+  /data-work-summary-toggle[\s\S]*?<NotebookText[\s\S]*?data-inspector-toggle[\s\S]*?<PanelRightOpen/,
   'The compact toolbar must place the summary before the far-right sidebar action',
 );
 assert.doesNotMatch(
@@ -204,11 +204,12 @@ assert.doesNotMatch(app, /onToggleTerminal|ConsoleDock|consoleMode|终端控制�
 assert.match(app, /--work-summary-anchor-right/);
 assert.match(app, /bodyBounds\.right - toggleBounds\.right/);
 assert.match(app, /onToggleWorkSummary\(event\.currentTarget\)/);
-assert.match(app, /setWorkSummaryDocked\(bodyBounds\.width >= 1100\)/);
+assert.match(app, /setWidePane\(bodyBounds\.width >= 1100\)/);
+assert.match(app, /const workSummaryDocked = pinnedLayout && widePane/);
 assert.match(app, /new ResizeObserver\(\(\) => updateWorkSummaryLayout\(\)\)/);
 assert.match(
   app,
-  /const showWorkSummary = workSummaryVisible;/,
+  /const showWorkSummary = workSummaryVisible \|\| Boolean\(hover\.anchor\);/,
   'The work summary must stay visible independently of the external inspector',
 );
 assert.doesNotMatch(
@@ -237,7 +238,8 @@ assert.match(
   /\.work-summary-docked\.work-summary-visible \.chat-content-frame\s*\{[\s\S]*?--work-summary-content-inset:\s*calc\(336px \+ var\(--work-summary-anchor-right, 12px\) \+ 12px\)/,
   'A docked summary must reserve its column without narrowing the scroll viewport',
 );
-assert.match(app, /const \[inspectorOpen, setInspectorOpen\] = useState\(false\)/);
+assert.match(app, /open: inspectorOpen, setOpen: setInspectorOpen[\s\S]*?useInspectorTabs\(inspectorWorkspaceId\)/,
+  'Inspector visibility belongs to its conversation workspace');
 assert.doesNotMatch(app, /sidebarPreviewWidth/);
 assert.match(app, /<SidebarResizer\s+language=\{language\}\s+width=\{sidebarWidth\}/);
 assert.match(sidebar, /soft-panel-motion/);

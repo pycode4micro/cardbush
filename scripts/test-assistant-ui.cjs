@@ -105,6 +105,7 @@ app.whenReady().then(async () => {
       await read('sessionStorage.setItem("cardbush_scroll_debug","true")');
       try { await require('./helpers/assistant-scroll.cjs')({ read, until, fill, click, pause, win, directory }); }
       finally { fs.writeFileSync(path.join(directory, 'scroll-diagnostics.json'), JSON.stringify(await read('window.__cardbushScrollDebug??[]'), null, 2)); }
+      assert.deepEqual(errors, [], 'scrolling must not produce renderer errors or resize observer loops');
       console.log('Assistant scroll UI passed. Diagnostics: ' + directory);
       return;
     }

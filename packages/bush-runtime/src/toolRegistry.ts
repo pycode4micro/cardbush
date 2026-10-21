@@ -14,6 +14,14 @@ import {
   type ModelRequest,
 } from "@cardbush/bush-protocol";
 import type { ToolNameScope } from './toolReferenceNames.js';
+import type { ToolDefinitionProjector } from './toolPresentation.js';
+import type { ToolResourceScheduler } from './toolResourceScheduler.js';
+
+/** Host-owned queue admission, never supplied through model arguments. */
+export interface ToolSchedulingAdmission {
+  scheduler: ToolResourceScheduler;
+  resources: ToolResource[];
+}
 
 export interface ToolPermissionRequest {
   reason: string;
@@ -49,11 +57,17 @@ export interface ToolHandlerContext<TInput = unknown>
   extends ToolAdmissionContext<TInput> {
   capabilityIds: string[];
   /** Internal calls share the caller's lifecycle unless record is true (independent background receipt). */
-  invokeTool: (name: string, input: unknown, options?: { signal?: AbortSignal; record?: boolean; onHooks?: (messages: string[], stop?: string) => void }) => Promise<unknown>;
+  invokeTool: (name: string, input: unknown, options?: { signal?: AbortSignal; record?: boolean; onHooks?: (messages: string[], stop?: string) => void; scheduling?: ToolSchedulingAdmission }) => Promise<unknown>;
   recordWorkspaceChange: (change: WorkspaceChange) => void;
 }
 
 export interface ToolRegistration<TInput = unknown> {
+  /** New-catalog presentation only. Frozen declarations are never passed here. */
+  projectModelDefinition?: ToolDefinitionProjector;
+  /** Capability availability for discovery, independent of argument validation and permission. */
+  modelAvailable?: (request: ModelRequest) => boolean;
+  /** History-bound maintenance/discovery calls cannot be wrapped by call_tool. */
+  directInvocation?: boolean;
   /** Independent from mutation and parallel safety. Dispatchers cannot recursively nest. */
   nestedCallable?: boolean;
   /** Canonical resources touched by this invocation. Admission still runs before locking. */
@@ -115,7 +129,12 @@ export interface PermissionResolver {
 }
 
 type AnyToolRegistration = ToolRegistration<unknown>;
-export type ToolResource = { key: string; mode: 'read' | 'write' };
+export type ToolResource = {
+  key: string;
+  mode: 'read' | 'write';
+  /** Optional maximum concurrent readers; writers remain exclusive. */
+  capacity?: number;
+};
 
 export class ToolRegistry {
   readonly #registrations = new Map<string, AnyToolRegistration>();
@@ -256,6 +275,9 @@ export class ToolRegistry {
 
 function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): AnyToolRegistration {
   return {
+    projectModelDefinition: candidate.projectModelDefinition,
+    modelAvailable: candidate.modelAvailable,
+    directInvocation: candidate.directInvocation,
     definition: toolDefinitionSchema.parse(candidate.definition),
     manifest: actionManifestTemplateSchema.parse(candidate.manifest),
     decodeInput: candidate.decodeInput as (input: unknown) => unknown,

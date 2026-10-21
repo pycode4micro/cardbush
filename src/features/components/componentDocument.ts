@@ -24,7 +24,7 @@ export function componentDocument(html: string, token: string) {
     window.cardbush=Object.freeze({version:1,ready,get context(){return context;},
       read:()=>request('context.read'),state:{read:()=>request('state.read'),write:value=>request('state.write',{value})},
       subscribe:(topic,callback)=>{if(!listeners.has(topic))listeners.set(topic,new Set());listeners.get(topic).add(callback);return()=>listeners.get(topic)?.delete(callback);},
-      invoke:async(command,args={},key)=>{await ready;return request('actions.invoke',{command,args,contextRevision:context.revision,idempotencyKey:key||newId()});}
+      invoke:async(command,args={},key)=>{await ready;return request('actions.invoke',{command,args,contextRevision:context?.revision,idempotencyKey:key||newId()});}
     });
   })();`;
   doc.head.prepend(policy, style, script);

@@ -10,6 +10,8 @@ export interface ConversationHost {
   id: string;
   environmentId?: string;
   conversationStyleAvailable?: boolean;
+  /** Clear the submitted snapshot immediately; admission still gates resubmission. */
+  optimisticSubmission?: boolean;
   sessionId?: string;
   runtime?: ConversationRuntime;
   openWorkSummary?(detail: WorkSummaryInspectorDetail): void;
