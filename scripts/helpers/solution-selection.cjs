@@ -51,6 +51,67 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('solutionCancels===1 && !document.querySelector(".solution-selection-card")', 'dismiss restores composer');
   assert.equal(await run('solutionReplies.length'), 2, 'dismissal does not select a default');
   window.setBounds(bounds);
+  await run(`
+    window.batchChoice = {...choice,id:'solution-batch',raw:{questions:[]},questions:[
+      {...choice.questions[0],id:'version'},
+      {id:'period',label:'时间',question:'采用哪个统计时间范围',options:[{id:'0',label:'最近七天'}]},
+      {id:'format',label:'格式',question:'选择导出格式',options:[{id:'0',label:'CSV'},{id:'1',label:'Excel'}]}
+    ]}; updateChat({pendingInteraction:batchChoice});
+  `);
+  await until('!!document.querySelector(".solution-selection-steps")', 'multi-question navigation');
+  const next = () => run(`document.querySelector('.solution-selection-actions button').click()`);
+  const prev = () => run(`document.querySelector('[aria-label="上一题"]').click()`);
+  assert.equal(await run('document.querySelector(".solution-selection-actions button").disabled'), true, 'no default answer');
+  await run(`document.querySelector('[aria-label="下一题"]').click()`);
+  await until('document.querySelector(".solution-selection-steps span").textContent.includes("2 / 3")', 'unanswered second question can be inspected');
+  await run(`document.querySelector('[aria-label="下一题"]').click()`);
+  await until('document.querySelector(".solution-selection-steps span").textContent.includes("3 / 3")', 'unanswered final question');
+  await run(`document.querySelectorAll('.solution-selection-options button')[1].click()`);
+  assert.equal(await run('document.querySelector(".solution-selection-actions button").disabled'), true, 'cannot submit missing first answers');
+  await prev(); await prev();
+  await until('document.querySelector(".solution-selection-steps span").textContent.includes("1 / 3")', 'return to first question');
+  await run(`document.querySelectorAll('.solution-selection-options button')[0].click()`);
+  assert.equal(await run('solutionReplies.length'), 2, 'choosing an option does not post a partial reply');
+  await next(); await type('上个月，按实际日期统计');
+  await next(); await prev();
+  assert.equal(await run('document.querySelector(".solution-selection-custom textarea").value'), '上个月，按实际日期统计');
+  await prev();
+  assert.equal(await run('document.querySelectorAll(".solution-selection-options button")[0].getAttribute("aria-pressed")'), 'true');
+  await run(`document.querySelectorAll('.solution-selection-options button')[1].click()`);
+  await next(); await next();
+  await run(`updateChat({activeConversationId:'session-b'})`);
+  await until('!document.querySelector(".solution-selection-card")', 'hide batch in other conversation');
+  await run(`updateChat({activeConversationId:'session-a'})`);
+  await until('document.querySelector(".solution-selection-steps span")?.textContent.includes("3 / 3")', 'restore step and all draft answers');
+  assert.equal(await run('document.querySelectorAll(".solution-selection-options button")[1].getAttribute("aria-pressed")'), 'true');
+  assert.equal(await run('document.querySelector(".solution-selection-actions button").disabled'), false);
+  await run('failSolution=true'); await next();
+  await until('!!document.querySelector(".solution-selection-error")', 'batch failure is retryable');
+  assert.equal(await run('solutionReplies.length'), 2);
+  await run(`failSolution=false;window.solutionAttempts=0;updateChat({onReplyInteraction:async answers=>{
+    solutionAttempts++;await new Promise(resolve=>window.finishSolution=resolve);solutionReplies.push(answers);updateChat({pendingInteraction:null});
+  }});`);
+  await run(`document.querySelector('.solution-selection-actions button').click();document.querySelector('.solution-selection-actions button').click()`);
+  await until('solutionAttempts===1', 'one atomic submission');
+  assert.equal(await run('document.querySelector(".solution-selection-steps button").disabled'), true, 'cannot edit during submit');
+  await run('finishSolution()');
+  await until('solutionReplies.length===3 && !document.querySelector(".solution-selection-card")', 'all answers submitted together');
+  assert.deepEqual(await run('solutionReplies[2]'), [
+    {questionId:'version',selectedOptionId:'1'}, {questionId:'period',text:'上个月，按实际日期统计'}, {questionId:'format',selectedOptionId:'1'}
+  ]);
+  assert.equal(await run('chatProps.draft'), '未发送的会话草稿');
+  await run(`updateChat({pendingInteraction:{...batchChoice,id:'solution-batch-cancel'}})`);
+  await until('!!document.querySelector(".solution-selection-steps")', 'batch cancel fixture');
+  await run(`document.querySelectorAll('.solution-selection-options button')[0].click()`);
+  await next(); await type('暂存的范围');
+  await capture('theme-dark', 'solution-selection-multi-dark.png');
+  await capture('theme-bright', 'solution-selection-multi-light.png');
+  window.setSize(540,760); await pause();
+  assert.ok(await run('document.querySelector(".solution-selection-card").scrollWidth <= document.querySelector(".solution-selection-card").clientWidth'), 'multi-question card fits narrow windows');
+  await run(`document.querySelector('.solution-selection-card header > button').click()`);
+  await until('solutionCancels===2 && !document.querySelector(".solution-selection-card")', 'cancel discards the entire batch');
+  assert.equal(await run('solutionReplies.length'), 3, 'cancel never publishes partial answers');
+  window.setBounds(bounds);
   await run(`document.querySelector('.app').className='app theme-dark';updateChat({language:'en',draft:'',sending:false,pendingInteraction:null,onReplyInteraction:async()=>{},onCancelInteraction:async()=>{}})`);
-  console.log('Solution Selection UI passed: scoped composer replacement, preserved drafts, option/free text replies, failure retry, dismissal, light/dark and narrow layout.');
+  console.log('Solution Selection UI passed: single-question compatibility, multi-step navigation, all drafts preserved across sessions, atomic submit/retry, missing answers, duplicate-submit guard, cancellation, light/dark and narrow layout.');
 };

@@ -89,8 +89,9 @@ export class AgentHttpClient {
     }
     return response;
   }
-  async info(): Promise<AgentInfo> {
-    const response = await this.#fetch('info', { headers: { Accept: 'application/json' } }, AbortSignal.timeout(30_000));
+  async info(signal?: AbortSignal): Promise<AgentInfo> {
+    const deadline = AbortSignal.timeout(30_000);
+    const response = await this.#fetch('info', { headers: { Accept: 'application/json' } }, signal ? AbortSignal.any([signal, deadline]) : deadline);
     const info = z.object({ protocol: z.literal('cardbush.agent.v1'), apiVersion: z.literal(1),
       eventStreams: z.tuple([z.literal('sse'), z.literal('ndjson')]), id: z.string().min(1), name: z.string(), platform: z.string(),
       capabilities: z.object({ durableQueue: z.literal(true) }).passthrough(),
@@ -98,11 +99,12 @@ export class AgentHttpClient {
     if (this.#agentId && info.id !== this.#agentId) throw new AgentIdentityError('Agent identity changed. Add a new connection after verifying the server.');
     this.#agentId = info.id; return info;
   }
-  async call(operation: AgentOperation, input: Record<string, unknown>) {
+  async call(operation: AgentOperation, input: Record<string, unknown>, signal?: AbortSignal) {
     const timeout = operation === 'plugins.marketplace' && input.action === 'install' ? 660_000
       : operation === 'configuration.sync' && input.action === 'apply' ? 120_000
       : operation === 'plugins.marketplace' || (operation === 'product.command' && input.kind === 'sandbox.install') ? 300_000 : 60_000;
-    const response = await this.#fetch('call', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ operation, input }) }, AbortSignal.timeout(timeout));
+    const deadline = AbortSignal.timeout(timeout);
+    const response = await this.#fetch('call', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ operation, input }) }, signal ? AbortSignal.any([signal, deadline]) : deadline);
     const data = await response.json() as { result: unknown }; return data.result;
   }
   async *events(input: AgentEventRequest, signal: AbortSignal, format: 'sse' | 'ndjson' = 'sse'): AsyncIterable<AgentEventFrame> {
@@ -121,7 +123,12 @@ export class AgentHttpClient {
       let buffer = ''; let data: string[] = []; let ended = false;
       let sequence = input.afterSequence ?? 0;
       while (true) {
-        const chunk = await reader.read(); if (chunk.done) break;
+        const chunk = await reader.read().catch(error => {
+          if (signal.aborted || this.#closed.signal.aborted) throw error;
+          if (abort.signal.aborted) throw abort.signal.reason;
+          throw connectionError(error, new URL(this.url), Boolean(this.connector));
+        });
+        if (chunk.done) break;
         clearTimeout(idle); idle = setTimeout(() => abort.abort(new Error('Agent event stream timed out.')), 45_000);
         buffer += decoder.decode(chunk.value, { stream: true });
         let newline: number;

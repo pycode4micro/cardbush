@@ -9,7 +9,8 @@ async function fixture(t) {
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(join(base, 'case-')), source = join(root, 'source');
   t.after(async () => { assert.ok(resolve(root).startsWith(base + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
-  for (const path of ['package.json', 'package-lock.json', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentService.mjs',
+  for (const path of ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentService.mjs',
+    'dist-electron/agentChatCli.mjs', 'dist-electron/agentHttpClient.mjs',
     'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs', 'packages/bush-runtime/package.json', 'packages/bush-runtime/dist/processResourceGuard.js',
     'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs', 'deploy/agent/install-windows-desktop.ps1',
     'dist-electron/agentBrowserConnector.mjs', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
@@ -34,6 +35,9 @@ test('Linux Agent packaging retains runtime and CommonJS dependencies without re
   const f = await fixture(t); await packageAgent(f.source, f.output, 'linux');
   await verifyAgentPackage(f.output, 'linux');
   await access(join(f.output, 'packages/cardbush-platform/dist-cjs/index.js'));
+  await access(join(f.output, 'dist-electron/agentChatCli.mjs'));
+  await access(join(f.output, 'bin/cardbush.mjs'));
+  assert.match(await readFile(join(f.output, 'DEPLOY.txt'), 'utf8'), /cardbush resume <session-id>/);
   await assert.rejects(packageAgent(f.source, f.output, 'linux'), { code: 'EEXIST' });
   await assert.rejects(packageAgent(f.source, f.root, 'linux'), /must not contain/);
 });

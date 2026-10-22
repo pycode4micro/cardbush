@@ -6,7 +6,8 @@ import { verifyProcessResourceHost } from '../packages/bush-runtime/dist/process
 import { verifyAgentBundledAssets, verifyAgentBundledMcp } from '../dist-electron/agentBundledAssets.mjs';
 
 const sourceRoot = resolve(import.meta.dirname, '..');
-const required = ['package.json', 'package-lock.json', 'dist-electron/agentServiceCli.mjs',
+const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist-electron/agentServiceCli.mjs',
+  'dist-electron/agentChatCli.mjs', 'dist-electron/agentHttpClient.mjs',
   'dist-electron/agentService.mjs', 'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs',
   'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs',
   'dist-electron/agentBrowserConnector.mjs', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
@@ -44,7 +45,7 @@ export async function packageAgent(root, output, platform = process.platform) {
   // An existing release is never overwritten. Dependencies are installed on the target.
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output);
-  for (const file of ['package.json', 'package-lock.json', 'dist-electron', 'assets']) {
+  for (const file of ['package.json', 'package-lock.json', 'bin', 'dist-electron', 'assets']) {
     await cp(join(root, file), join(output, file), { recursive: true });
   }
   await cp(join(root, 'scripts/agent-desktop'), join(output, 'scripts/agent-desktop'), { recursive: true });
@@ -74,6 +75,10 @@ export async function packageAgent(root, output, platform = process.platform) {
   await writeFile(join(output, 'DEPLOY.txt'),
     'Install Node.js 24. In this directory run: npm ci --omit=dev --ignore-scripts\n'
     + 'Start: node dist-electron/agentServiceCli.mjs --data-dir <separate-data-directory>\n'
+    + 'Register the terminal command once: npm link --ignore-scripts\n'
+    + 'Connect once: cardbush --token-file <separate-data-directory>/access-token\n'
+    + 'Then enter a working directory and run: cardbush (approval) or cardbush --full-access\n'
+    + 'Resume: cardbush resume <session-id> (keeps its workspace); options: cardbush --help\n'
     + 'Deploy the whole directory, including dist-native on Windows. Never copy credentials or task data into this release.\n');
   return output;
 }

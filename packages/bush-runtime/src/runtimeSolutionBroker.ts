@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { runtimeSolutionAnswerSchema, solutionSelectionInputSchema,
+import { runtimeSolutionAnswerSchema, solutionSelectionInputSchema, solutionSelectionQuestions,
   type RuntimeSolutionAnswer, type RuntimeSolutionSelection, type SolutionSelectionInput } from '@cardbush/bush-protocol';
 import type { InMemoryRuntimeEventLog, RuntimeEventIdentity } from './runtimeEventLog.js';
 
 export type SolutionResult = { status: 'selected'; source: 'option' | 'text'; text: string }
+  | { status: 'selected'; answers: Array<{ questionId: string; prompt: string; source: 'option' | 'text'; text: string }> }
   | { status: 'cancelled'; message: string };
 interface PendingSolution {
   request: RuntimeSolutionSelection;
@@ -32,7 +33,7 @@ export class RuntimeSolutionBroker {
     signal?: AbortSignal, blocking = false): { request: RuntimeSolutionSelection; result: Promise<SolutionResult> } {
     const input = solutionSelectionInputSchema.parse(candidate);
     signal?.throwIfAborted();
-    // One unresolved direction at a time; simultaneous calls must not stack questionnaires.
+    // One pending interaction per session; related questions belong in the same request.
     if (this.list(identity.sessionId).length) throw new Error('A solution selection is already pending in this session. Wait for that decision.');
     const request: RuntimeSolutionSelection = { ...input, selectionId: `solution_${randomUUID()}`,
       sessionId: identity.sessionId, turnId: identity.turnId, toolCallId, blocking, createdAt: new Date().toISOString() };
@@ -61,17 +62,34 @@ export class RuntimeSolutionBroker {
     if (entry.request.sessionId !== answer.sessionId || entry.request.turnId !== answer.turnId) {
       throw new Error('Solution selection belongs to a different session or Turn.');
     }
-    if (answer.kind === 'option' && answer.optionIndex >= entry.request.options.length) {
-      throw new Error('The selected solution does not exist.');
+    const questions = solutionSelectionQuestions(entry.request);
+    let result: SolutionResult;
+    if (answer.kind === 'cancel') {
+      result = { status: 'cancelled', message: 'The user dismissed this decision without selecting a solution. Do not infer approval, choose a default, or repeat the same request. Leave dependent work blocked and explain what remains unresolved; continue only independent work.' };
+    } else if (answer.kind === 'answers') {
+      if (!entry.request.questions || answer.answers.length !== questions.length
+        || answer.answers.some(item => !questions.some(question => question.id === item.questionId))) {
+        throw new Error('Answer every requested question exactly once.');
+      }
+      // Validate the entire batch before publishing any event or settling the wait.
+      result = { status: 'selected', answers: questions.map(question => {
+        const item = answer.answers.find(item => item.questionId === question.id)!;
+        if (item.kind === 'option' && item.optionIndex >= question.options.length) throw new Error('The selected solution does not exist.');
+        return { questionId: question.id, prompt: question.prompt, source: item.kind,
+          text: item.kind === 'text' ? item.text : question.options[item.optionIndex]! };
+      }) };
+    } else {
+      if (entry.request.questions) throw new Error('Submit all question answers together.');
+      if (answer.kind === 'option' && answer.optionIndex >= questions[0]!.options.length) throw new Error('The selected solution does not exist.');
+      result = { status: 'selected', source: answer.kind,
+        text: answer.kind === 'text' ? answer.text : questions[0]!.options[answer.optionIndex]! };
     }
     this.eventLog.append(entry.identity, answer.kind === 'cancel'
       ? { kind: 'solution_selection_cancelled', payload: { selectionId: answer.selectionId, reason: 'user_cancelled' } }
       : { kind: 'solution_selection_answered', payload: answer });
     this.#pending.delete(answer.selectionId);
     entry.detach();
-    entry.resolve(answer.kind === 'cancel'
-      ? { status: 'cancelled', message: 'The user dismissed this decision without selecting a solution. Do not infer approval, choose a default, or repeat the same request. Leave dependent work blocked and explain what remains unresolved; continue only independent work.' }
-      : { status: 'selected', source: answer.kind, text: answer.kind === 'text' ? answer.text : entry.request.options[answer.optionIndex]! });
+    entry.resolve(result);
     return answer;
   }
 }

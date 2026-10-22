@@ -15,7 +15,7 @@ import { WebModelSettings, PostgresModelSettingsRepository } from './webModelSet
 import { WebModelRequests, WEB_MODEL_REQUEST_MAX_BYTES } from './webModelRequests.mjs';
 import { WebRemoteAgents, PostgresRemoteAgentRepository } from './webRemoteAgents.mjs';
 import { WebRemoteAgentBridge } from './webRemoteAgentBridge.mjs';
-import type { SessionSnapshot } from '@cardbush/bush-protocol';
+import { runtimeSolutionAnswerSchema, type SessionSnapshot } from '@cardbush/bush-protocol';
 import { cookie, csrfToken, digest, equalSecret, json, imageToken, modelToken, readJson, WebError, type WebModel, type WebUser } from './webCommon.mjs';
 
 export type WebServerConfig = { origin: string; port?: number; host?: string; staticRoot: string; modelSecret: string; models: WebModel[]; defaultModelId: string; imageModel?: { model: string; baseURL: string; apiKey: string } };
@@ -315,8 +315,8 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       }
       if (!action && method === 'DELETE') { await agent.call('sessions.delete', { sessionId }); await store.remove(user.id, sessionId); json(response, 200, { deleted: true }); return; }
       if (action === 'solutions' && method === 'POST') {
-        const input = z.object({ selectionId: z.string().max(160), turnId: z.string().max(160), kind: z.enum(['option','text','cancel']), optionIndex: z.number().int().min(0).max(2).optional(), text: z.string().trim().min(1).max(8000).optional() }).strict().parse(await readJson(request, 10000));
-        json(response, 200, await agent.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: { ...input, sessionId } })); return;
+        const input = runtimeSolutionAnswerSchema.parse({ ...await readJson(request, 100000), sessionId });
+        json(response, 200, await agent.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: input })); return;
       }
       if (action === 'messages' && method === 'POST') {
         const input = messageSchema.parse(await readJson(request));

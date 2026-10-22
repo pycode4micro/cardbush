@@ -9,6 +9,7 @@ import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema
 import { conversationRuntime, type ConversationRuntime } from './conversationRuntime';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { defaultRuntimeInteractions } from '../runtime-client/RuntimeInteractionBridge';
+import { solutionInteractionAnswer } from '../features/interactions/solutionSelectionModel';
 import { defaultHostTerminalRuntime } from './hostPlatform';
 import { WORKSPACE_REVIEW_TURN_LIMIT, FORK_RUNTIME_SESSION_COMMAND, SWITCH_RUNTIME_WORKSPACE_COMMAND, sessionSnapshotSchema } from '@cardbush/bush-protocol';
 import { promptReferenceParts } from '../shared/promptReferences';
@@ -2322,18 +2323,10 @@ export async function replyInteraction({
   }
   const solution = runtimeSolution(normalized);
   if (solution) {
-    const answer = answers[0];
-    if (answers.length !== 1 || answer?.questionId !== 'solution' ||
-      (answer.selectedOptionId !== undefined) === Boolean(answer.text?.trim())) {
-      throw new Error(localizedClientMessage('请选择一个方案，或填写自己的方案', 'Choose one solution or write your own.'));
-    }
+    const answer = solutionInteractionAnswer(solution, answers);
     const runtime = conversationRuntime(runtimeOverride);
     try {
-      const identity = { selectionId: normalized, sessionId: solution.sessionId!, turnId: solution.turnId! };
-      if (answer.selectedOptionId !== undefined) {
-        if (!/^[0-2]$/.test(answer.selectedOptionId)) throw new Error('Invalid solution option.');
-        await runtime.client.answerSolutionSelection({ ...identity, kind: 'option', optionIndex: Number(answer.selectedOptionId) });
-      } else await runtime.client.answerSolutionSelection({ ...identity, kind: 'text', text: answer.text!.trim() });
+      await runtime.client.answerSolutionSelection(answer);
       removeRuntimeSolution(normalized);
     } finally { runtime.dispose(); }
     return;

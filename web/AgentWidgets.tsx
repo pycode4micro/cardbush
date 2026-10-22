@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, Paperclip, X } from 'lucide-react';
 import { SolutionSelectionCard } from '../src/features/interactions/SolutionSelectionCard';
+import { solutionInteractionAnswer, solutionInteractionQuestions } from '../src/features/interactions/solutionSelectionModel';
+import type { RuntimeSolutionSelection } from '@cardbush/bush-protocol';
 import { api, requestId, type User } from './api';
 import { seedCachedImage, useAccountCache, useCachedImage } from './BrowserCacheProvider';
 import { prepareAttachment, uploadInChunks } from './attachmentUpload';
@@ -60,9 +62,19 @@ export function UploadButton({ upload }: { upload: ReturnType<typeof useAttachme
   const input = useRef<HTMLInputElement>(null);
   return <><input ref={input} type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.txt,.md,.csv,.tsv,.json,.log,.pdf,.docx,.xlsx,.pptx" onChange={event => { void upload.add(Array.from(event.target.files ?? [])); event.target.value = ''; }}/><button className="icon-button" type="button" aria-label="上传图片或文件" title="大图自动优化，文档单个不超过 16 MB，不支持视频" disabled={upload.busy} onClick={() => input.current?.click()}><Paperclip size={18}/></button></>;
 }
-export type Solution = { selectionId: string; sessionId: string; turnId: string; prompt: string; options: string[] };
+export type Solution = RuntimeSolutionSelection;
 export function Solutions({ items, refresh }: { items: Solution[]; refresh: () => Promise<void> }) {
-  return <>{items.map(item => <SolutionSelectionCard key={item.selectionId} language="zh" interaction={{ id: item.selectionId, sessionId: item.sessionId, turnId: item.turnId, raw: item, questions: [{ id: item.selectionId, label: item.prompt, question: item.prompt, options: item.options.map((label,index) => ({ id: String(index), label })) }] }} onReply={async answers => { const answer = answers[0]; await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, ...(answer.selectedOptionId !== undefined ? { kind: 'option', optionIndex: Number(answer.selectedOptionId) } : { kind: 'text', text: answer.text }) }); await refresh(); }} onCancel={async () => { await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, kind: 'cancel' }); await refresh(); }}/>)}</>;
+  return <>{items.map(item => {
+    const interaction = { id: item.selectionId, sessionId: item.sessionId, turnId: item.turnId,
+      raw: item, questions: solutionInteractionQuestions(item) };
+    return <SolutionSelectionCard key={JSON.stringify([item.sessionId, item.selectionId])} language="zh" interaction={interaction}
+      onReply={async answers => {
+        const { sessionId: _, ...answer } = solutionInteractionAnswer(interaction, answers);
+        await api(`/sessions/${item.sessionId}/solutions`, 'POST', answer); await refresh();
+      }} onCancel={async () => {
+        await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, kind: 'cancel' }); await refresh();
+      }}/>;
+  })}</>;
 }
 type Plugin = { installed: boolean; enabled: boolean; grants: string[] };
 export function PluginAdmin({ users }: { users: User[] }) {

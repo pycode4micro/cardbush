@@ -74,6 +74,30 @@ deferList.resolve(); deferList = undefined;
 assert.equal(await oldRead, null, 'late pending snapshot cannot resurrect a dismissed card');
 assert.equal(modules.pendingRuntimeInteraction('a'), null);
 assert.equal(changes.at(-1).interaction, null, 'late reads cannot restore a cancelled attention marker');
+const batch = { questions: [{ id: 'version', ...input }, { id: 'period', prompt: '统计范围', options: ['本周'] }] };
+pending = broker.request(identity, 'multi', batch);
+card = await modules.fetchPendingInteraction('a');
+assert.deepEqual(Array.from(card.questions, question => question.id), ['version', 'period']);
+const batchReply = [{ questionId: 'version', selectedOptionId: '1' }, { questionId: 'period', text: '上个月' }];
+for (const invalid of [batchReply.slice(0, 1), [batchReply[0], batchReply[0]],
+  [batchReply[0], { ...batchReply[1], questionId: 'foreign' }],
+  [batchReply[0], { questionId: 'period', selectedOptionId: '2' }],
+  [batchReply[0], { questionId: 'period', selectedOptionId: '0', text: '同时填写' }] ]) {
+  const before = calls.length;
+  await assert.rejects(modules.replyInteraction({ interactionId: card.id, answers: invalid }));
+  assert.equal(calls.length, before, 'invalid batches are not sent over the bridge');
+}
+fail = true;
+await assert.rejects(modules.replyInteraction({ interactionId: card.id, answers: batchReply }), /disconnected/);
+assert.equal(modules.runtimeSolution(card.id).questions.length, 2);
+fail = false;
+await modules.replyInteraction({ interactionId: card.id, answers: [...batchReply].reverse() });
+assert.deepEqual((await pending).answers.map(answer => [answer.questionId, answer.text]), [['version', input.options[1]], ['period', '上个月']]);
+assert.equal(modules.pendingRuntimeInteraction('a'), null);
+pending = broker.request(identity, 'multi-cancel', batch);
+card = await modules.fetchPendingInteraction('a');
+await modules.cancelInteraction(card.id);
+assert.equal((await pending).status, 'cancelled');
 const answers = calls.filter(command => command.kind === 'runtime.answer_solution_selection').map(command => command.payload);
 assert.ok(answers.every(answer => answer.sessionId === 'a' && answer.turnId === 'turn-a'), 'reply identity is retained across the IPC boundary');
 unsubscribeChanges();

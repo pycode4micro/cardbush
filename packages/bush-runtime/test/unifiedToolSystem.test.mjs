@@ -338,6 +338,29 @@ test('async question yields immediately, independent tools run, answer arrives o
   assert.equal(f.deliveries.length, 1);
 });
 
+test('async multi-question request keeps one task pending until the full answer batch arrives', async t => {
+  const f = fixture(t); f.add('independent', () => ({ done: true }));
+  const start = await f.run('request_user_input_async', { questions: [
+    { id: 'version', prompt: '保留哪个版本', options: ['当前', '新版'] },
+    { id: 'scope', prompt: '处理哪些记录', options: ['本周', '全部'] },
+  ] });
+  assert.equal(start.kind, 'returned');
+  const request = f.broker.list('s')[0];
+  assert.equal(request.blocking, false);
+  assert.equal((await f.run('independent', {})).result.done, true);
+  assert.equal((await f.run('request_user_input_async', { prompt: '重复提问', options: ['忽略'] })).kind, 'failed');
+  const identity = { selectionId: request.selectionId, sessionId: 's', turnId: 't' };
+  const first = { questionId: 'version', kind: 'option', optionIndex: 1 };
+  assert.throws(() => f.broker.answer({ ...identity, kind: 'answers', answers: [first] }));
+  const waiting = await f.run('tasks', { action: 'inspect', task_ids: [start.result.task_id] });
+  assert.equal(waiting.result.tasks[0].status, 'waiting_user');
+  f.broker.answer({ ...identity, kind: 'answers', answers: [first, { questionId: 'scope', kind: 'text', text: '仅昨日记录' }] });
+  await f.deliveries[0].message;
+  const result = await f.run('tasks', { action: 'inspect', task_ids: [start.result.task_id] });
+  assert.deepEqual(result.result.tasks[0].result.value.answers.map(answer => answer.text), ['新版', '仅昨日记录']);
+  assert.equal(f.deliveries.length, 1);
+});
+
 test('task waits yield and abort without stopping work; stopping and cancelling observation are distinct', async t => {
   const f = fixture(t), gate = Promise.withResolvers(); let status = 'running', stopped = 0, unwatched = 0;
   f.tasks.addSource(() => [{ task_id: 'manual', kind: 'terminal', status, revision: status, wait: () => gate.promise,

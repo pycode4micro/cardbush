@@ -337,6 +337,29 @@ test('native solution choices survive reconnect and only the owning account can 
   const stream=await(await a.request(`/sessions/${session.id}/events?turnId=${job.turnId}`)).text();assert.match(stream,/solution_selection_requested/);
 });
 
+test('multi-question answers cross the web boundary atomically and remain account-scoped', async t => {
+  const questions = [{ id:'version',prompt:'选择版本',options:['当前','新版'] },{ id:'period',prompt:'统计范围',options:['本周'] }];
+  const f = await fixture(t, false, ({n}) => n === 1
+    ? { id:'batch',call_id:'batch',type:'function_call',name:'solution_selection',arguments:JSON.stringify({questions}),status:'completed' }
+    : { id:'done',type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:`reply-${n}`,annotations:[]}] });
+  const a = await f.login('alice'), b = await f.login('bob');
+  const session = await (await a.request('/sessions','POST',{requestId:randomUUID()})).json();
+  await a.request(`/sessions/${session.id}/messages`,'POST',{requestId:randomUUID(),text:'Ask two questions',modelId:'fixture'});
+  const state = await until(async () => (await a.request(`/sessions/${session.id}`)).json(), value => value.solutions?.length === 1);
+  const choice = state.solutions[0]; assert.deepEqual(choice.questions, questions);
+  const answer = { selectionId:choice.selectionId,turnId:choice.turnId,kind:'answers',answers:[
+    {questionId:'version',kind:'option',optionIndex:1},{questionId:'period',kind:'text',text:'上月'}
+  ] };
+  assert.equal((await b.request(`/sessions/${session.id}/solutions`,'POST',answer)).status,404);
+  assert.ok((await a.request(`/sessions/${session.id}/solutions`,'POST',{...answer,answers:answer.answers.slice(0,1)})).status >= 400);
+  assert.equal((await (await a.request(`/sessions/${session.id}`)).json()).solutions.length,1);
+  assert.equal(f.calls.length,1);
+  assert.equal((await a.request(`/sessions/${session.id}/solutions`,'POST',answer)).status,200);
+  await until(() => f.services.get('usr_alice').call('chat.jobs',{}),jobs => jobs.every(job => job.status === 'completed'));
+  assert.match(JSON.stringify(f.calls.at(-1)),/上月/);
+  assert.match(JSON.stringify(f.calls.at(-1)),/新版/);
+});
+
 test('native Office inspection gives the agent a bounded readable attachment',async t=>{
   const {default:JSZip}=await import('jszip');const root=await mkdtemp(join(resolve('tmp/web-tests'),'doc-'));t.after(()=>rm(root,{recursive:true,force:true}));
   const zip=new JSZip();zip.file('[Content_Types].xml','<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>');zip.file('word/document.xml','<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Private document fact 357</w:t></w:r></w:p></w:body></w:document>');

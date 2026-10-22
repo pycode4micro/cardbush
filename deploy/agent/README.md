@@ -4,6 +4,48 @@
 
 ## 默认服务
 
+### 原生终端对话
+
+已有 Agent 服务启动并配置模型后，在程序目录注册一次命令，并连接一次：
+
+```sh
+npm link --ignore-scripts
+cardbush --token-file "<Agent数据目录>/access-token"
+```
+
+之后在同一 Agent 主机上，进入要工作的文件夹，直接启动：
+
+```sh
+cd /path/to/project
+cardbush                         # 当前目录，默认申请审批
+cardbush --full-access           # 当前目录，本次启动使用完全访问
+cardbush resume <会话ID>          # 继续原会话，保留原工作区
+```
+
+CLI 使用 Node 自带 readline 和普通标准输入输出，保留终端滚动记录、复制和重定向，不使用全屏 TUI、浏览器或额外绘制层。新会话默认信任当前目录，复用 Agent 的项目登记和路径校验，将其作为直接工作区；不会弹出额外的目录信任确认。目录信任与工具审批分开，默认仍为申请审批，完全访问也保留宿主强制限制、沙盒策略和进程保护。执行账号仍是服务账号。
+
+- 直接输入并回车开始一轮；`/new` 新建会话，`/exit` 退出，`/help` 查看选项。
+- `--sessions` 列出会话；`cardbush resume ID` 恢复会话，兼容原有 `--session ID`。正在执行的任务继续读取原任务事件，不重复派发。
+- 正常退出、Ctrl+C 退出或任务报错后，只要已经有会话，都会显示 `cardbush resume ID`；终端中的 ID 使用蓝色，重定向或设置 `NO_COLOR` 时输出纯文本。
+- `--models`、`--projects` 列出可选项；`--model ID` 选择模型，`--project ID` 为新会话指定已有服务器项目。跨机器连接时用 `--project` 指定服务器目录，CLI 不上传或映射本地目录。
+- Ctrl+C 在执行时停止当前任务，空闲时退出。审批在终端逐次确认；默认权限为 `task_free`，`--full-access` 对应 `all_free`。恢复会话默认申请审批，需要完全访问时重新传入 `--full-access`。
+- 提问支持单题或最多 3 题一组。CLI 按顺序询问，收齐后统一提交；输入 `/cancel` 取消整组，已填写的部分不会发送。桌面和 Web 卡片支持前后切换、保留答案并在最后提交全部。
+- `--prompt "问题"` 执行一轮后退出；管道或输入重定向将整个标准输入作为一条提示，适合多行内容。回复写到 stdout，状态和提示写到 stderr。
+- 管道模式遇到审批或提问会停止本次任务，退出码为 2；用终端恢复会话后继续。成功为 0，错误为 1，停止为 130。
+
+例如：
+
+```sh
+cardbush --prompt "检查当前项目" > reply.md
+cardbush resume <会话ID> --full-access
+```
+
+首次显式使用 `--token-file` 连接成功后，将地址、Agent 身份和令牌文件的绝对位置保存到 `~/.cardbush/cli.json`，不复制令牌或模型密钥。之后无需再次传参。`CARDBUSH_CLI_CONFIG` 可指定独立的 CLI 配置文件。
+
+原有 `CARDBUSH_AGENT_TOKEN`、`CARDBUSH_AGENT_URL` 仍可使用；首次默认地址为 `http://127.0.0.1:4780`。切换到其他服务地址不会自动复用已保存的令牌。连接远端使用 HTTPS 或已有 SSH 隧道。CLI 不启动另一份服务、不修改模型和插件配置。未注册命令时仍可使用 `node <程序目录>/bin/cardbush.mjs` 或 `npm run agent:chat -- ...`；直接运行 `cardbush` / Node 时保留终端当前目录。
+
+### 部署与检查
+
 Windows 独立服务使用 `npm run package:agent -- --out <新的输出目录>` 收集部署文件。
 它复用 `build:agent` 的 Runtime 原生组件构建，并在收集前、收集后检查完整性。
 部署整个输出目录，在目标目录执行 `npm ci --omit=dev --ignore-scripts`，再启动 Agent。

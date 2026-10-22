@@ -4,13 +4,26 @@ import { SOLUTION_SELECTION_TOOL, solutionSelectionInputSchema, type SolutionSel
 import type { RuntimeSolutionBroker } from './runtimeSolutionBroker.js';
 import type { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
 
+const questionProperties = {
+  prompt: { type: 'string', minLength: 1, maxLength: 500, description: 'One self-contained question.' },
+  options: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true,
+    items: { type: 'string', minLength: 1, maxLength: 120 }, description: 'Concrete suggested answers. Free text is always available.' },
+};
+// A fixed object schema for both entry points; conditional validation stays in the decoder.
+const solutionToolInputSchema = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    questions: { type: 'array', minItems: 1, maxItems: 3,
+      description: 'Prefer one question; group up to three related questions when needed. Answers are submitted together. Do not also provide prompt/options.',
+      items: { type: 'object', additionalProperties: false, required: ['id', 'prompt', 'options'],
+        properties: { id: { type: 'string', minLength: 1, maxLength: 80, description: 'Unique stable question ID.' }, ...questionProperties } } },
+    ...questionProperties,
+  },
+};
+
 export function registerAsyncInteraction(registry: ToolRegistry, solutions: RuntimeSolutionBroker, jobs: RuntimeAsyncJobs) {
   registry.register<SolutionSelectionInput>({
-    definition: { name: 'request_user_input_async', description: 'Ask one necessary, self-contained question and immediately continue independent work. Provide 1–3 concise suggested answers; the UI also permits free text. Returns a task_id; the actual answer arrives separately. Do not start steps that depend on the answer, infer approval from elapsed time, repeat a dismissed question, or use this for permissions or progress updates.', inputSchema: {
-      type: 'object', additionalProperties: false, required: ['prompt', 'options'], properties: {
-        prompt: { type: 'string', minLength: 1, maxLength: 500 }, options: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 120 } },
-      },
-    } },
+    definition: { name: 'request_user_input_async', description: 'Ask necessary, self-contained questions and immediately continue independent work. Prefer one; group at most three related questions in questions, each with a unique id, prompt and 1–3 concise options. Legacy prompt/options still accepts one question. The UI permits free text and submits all answers together. Returns a task_id; the actual answers arrive separately. Do not start steps that depend on the answers, infer approval from elapsed time, repeat a dismissed question, or use this for permissions or progress updates.', inputSchema: solutionToolInputSchema },
     manifest: interactionManifest('solution.request_async'), nestedCallable: false, visibleToChild: false,
     decodeInput: value => solutionSelectionInputSchema.parse(value),
     authorize: context => context.turn?.request.requestCapabilities.interactiveRequests === true && context.turn.request.metadata.agentRole !== 'child'
@@ -115,12 +128,8 @@ export function registerInteractionTools(
       projectModelDefinition: replacedToolPresentation('request_user_input_async'),
       definition: {
         name: SOLUTION_SELECTION_TOOL,
-        description: 'Solution Selection — a last resort for one consequential ambiguity that remains after inspecting context and available tools, where guessing risks a materially wrong outcome. Offer concrete solutions, not teaching, surveys, progress updates, routine preferences, permission requests or reconfirmation of authorized work. Wait for the actual reply before dependent work. If dismissed, report the unresolved dependency; do not pick a default or repeat the request.',
-        inputSchema: { type: 'object', additionalProperties: false, required: ['prompt', 'options'], properties: {
-          prompt: { type: 'string', minLength: 1, maxLength: 500, description: 'One concrete unresolved decision, with enough context to answer.' },
-          options: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true,
-            items: { type: 'string', minLength: 1, maxLength: 120 }, description: '1–3 concrete solution strings. Omit Other; the UI already allows free-text replies.' },
-        } },
+        description: 'Solution Selection — a last resort for consequential ambiguity that remains after inspecting context and available tools, where guessing risks a materially wrong outcome. Prefer one question; group at most three related questions with unique IDs in questions, or use legacy prompt/options for a single question. Offer concrete solutions, not teaching, surveys, progress updates, routine preferences, permission requests or reconfirmation of authorized work. Wait for all answers before dependent work. If dismissed, report the unresolved dependency; do not pick a default or repeat the request.',
+        inputSchema: solutionToolInputSchema,
       },
       manifest: interactionManifest('solution.select'),
       visibleToChild: true,

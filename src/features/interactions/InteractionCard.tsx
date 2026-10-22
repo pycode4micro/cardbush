@@ -49,7 +49,7 @@ export function InteractionCard({
     }
   }
 
-  if (interaction.type === 'solution_selection') return <SolutionSelectionCard key={interaction.id}
+  if (interaction.type === 'solution_selection') return <SolutionSelectionCard key={JSON.stringify([interaction.sessionId, interaction.id])}
     language={language} interaction={interaction} onReply={onReply} onCancel={onCancel} />;
 
   return (

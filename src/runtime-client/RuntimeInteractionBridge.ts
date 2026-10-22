@@ -6,6 +6,7 @@ import type {
 } from '@cardbush/bush-protocol';
 
 import type { PendingInteraction } from '../types';
+import { solutionInteractionQuestions } from '../features/interactions/solutionSelectionModel';
 
 interface RuntimePermissionEntry {
   interaction: PendingInteraction;
@@ -34,8 +35,7 @@ export function createRuntimeInteractions() {
     const interaction: PendingInteraction = {
       id: request.selectionId, type: 'solution_selection', sessionId: request.sessionId, turnId: request.turnId,
       title: 'Solution Selection', toolName: 'solution_selection',
-      questions: [{ id: 'solution', label: 'Solution Selection', question: request.prompt,
-        options: request.options.map((label, index) => ({ id: String(index), label })) }], raw: { ...request },
+      questions: solutionInteractionQuestions(request), raw: { ...request },
     };
     solutions.set(request.selectionId, interaction);
     if (notify) changed(request.sessionId);
