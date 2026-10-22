@@ -4,6 +4,8 @@ import { BUSH_RUNTIME_IPC_PROTOCOL, decodeRuntimeIpcOutboundMessage, type Runtim
 import { ElectronRuntimeTransport, type ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
 import { handleMcpHostRequest, isMcpHostMessage, type McpHostOperation } from './mcpHostBridge.js';
 
+export type AgentRuntimeDiagnosticSink = (stream: 'stdout' | 'stderr', text: string) => void;
+
 /** Node host for the shared Runtime; never imports or launches Electron. */
 export class AgentRuntimeHost implements ElectronRuntimeBridge {
   readonly transport = new ElectronRuntimeTransport(this);
@@ -15,11 +17,13 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
   #failure?: Error;
   #closing = false;
 
-  constructor(env: NodeJS.ProcessEnv, handle: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>) {
+  constructor(env: NodeJS.ProcessEnv, handle: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>,
+    diagnostic: AgentRuntimeDiagnosticSink = (_stream, text) => { process.stderr.write(text); }) {
     this.#worker = new Worker(new URL('./runtimeHostWorker.mjs', import.meta.url), { env, stdout: true, stderr: true });
-    // Keep worker diagnostics together on the service's stderr.
-    this.#worker.stdout.on('data', chunk => process.stderr.write(chunk));
-    this.#worker.stderr.on('data', chunk => process.stderr.write(chunk));
+    // Worker replies/events use IPC. Its output is diagnostic, never chat text.
+    // A local CLI provides a file sink so late MCP logs cannot overwrite readline.
+    this.#worker.stdout.setEncoding('utf8').on('data', text => diagnostic('stdout', text));
+    this.#worker.stderr.setEncoding('utf8').on('data', text => diagnostic('stderr', text));
     this.ready = new Promise((resolve, reject) => {
       const timer = setTimeout(() => { const error = new Error('Agent Runtime startup timed out.'); reject(error); this.#fail(error); void this.#worker.terminate(); }, 30_000);
       this.#worker.on('message', (input: unknown) => {

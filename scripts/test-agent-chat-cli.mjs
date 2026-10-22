@@ -5,12 +5,12 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { followAgentTurn, resumeHint, terminalText } from '../dist-electron/agentChatCli.mjs';
 import { AgentHttpClient, AgentNetworkError } from '../dist-electron/agentHttpClient.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
+import { localDesktopProfile } from '../dist-electron/agentLocalChat.mjs';
 
 const entry = resolve('dist-electron/agentChatCli.mjs');
 const tempRoot = resolve('tmp/agent-chat-cli-tests');
@@ -50,8 +50,8 @@ function clientFixture(frames, { pending = true, status = 'completed' } = {}) {
 
 test('terminal output is plain data, not terminal escape commands', () => {
   assert.equal(terminalText('\x1b[2Jhello\r\n\x1b]52;c;YWJj\x07world\x00\b\t!'), 'hello\nworld\t!');
-  assert.equal(resumeHint('session-123', true), '\n继续此会话：cardbush resume \x1b[34msession-123\x1b[0m\n');
-  assert.equal(resumeHint('\x1b[2Jsession-123', false), '\n继续此会话：cardbush resume session-123\n');
+  assert.equal(resumeHint('session-123', true), '\nResume this session: cardbush --resume \x1b[34msession-123\x1b[0m\n');
+  assert.equal(resumeHint('\x1b[2Jsession-123', false), '\nResume this session: cardbush --resume session-123\n');
 });
 
 test('stream reconnect uses the cursor, preserves partial text and never resubmits', async () => {
@@ -67,6 +67,19 @@ test('stream reconnect uses the cursor, preserves partial text and never resubmi
   };
   assert.equal(await followAgentTurn(client, job, io, new AbortController().signal), 0);
   assert.deepEqual(client.cursors, [undefined, 1]); assert.equal(io.output, 'hello\n');
+  assert.ok(client.calls.every(call => call.operation !== 'chat.send'));
+});
+
+test('CLI preserves message identities and corrected final text while ignoring duplicate or foreign events', async () => {
+  const foreign = event('assistant_segment_delta', 99, { ...segment, delta: 'FOREIGN' }); foreign.event.sessionId = 'other-session';
+  const first = event('assistant_segment_delta', 1, { ...segment, delta: '草稿' });
+  const frames = [foreign, first, first, event('assistant_segment_completed', 2, { ...segment, content: '正式回复' }),
+    event('assistant_segment_delta', 3, { ...segment, messageId: 'second-message', delta: '另一个段落' }),
+    event('assistant_segment_completed', 4, { ...segment, messageId: 'second-message', content: '另一个段落' })];
+  const client = clientFixture(frames), io = terminal();
+  assert.equal(await followAgentTurn(client, job, io, new AbortController().signal), 0);
+  assert.equal(io.output, '草稿\n正式回复\n另一个段落\n'); assert.match(io.progress, /Response revised/);
+  assert.doesNotMatch(io.progress, /\p{Script=Han}/u, 'CLI status language is independent of model output');
   assert.ok(client.calls.every(call => call.operation !== 'chat.send'));
 });
 
@@ -121,6 +134,20 @@ for (const kind of ['permission_requested', 'solution_selection_requested']) tes
   assert.ok(client.calls.every(call => !call.input.kind?.startsWith('runtime.answer')));
 });
 
+test('English confirmation prompts preserve model-authored questions and approval reasons', async () => {
+  const cases = [
+    ['permission_requested', { ...permission, reason: '读取工作区以外的参考文件' }, 'n', 'Approval required: 读取工作区以外的参考文件', 'Allow once?'],
+    ['solution_selection_requested', { ...question, prompt: '选择哪个版本？', options: ['当前版本', '新版本'] }, '2', '1. 当前版本\n2. 新版本', 'Enter a number or your own answer'],
+  ];
+  for (const [kind, payload, answer, displayed, prompt] of cases) {
+    const client = clientFixture([event(kind, 1, payload)]), io = terminal(answer);
+    await followAgentTurn(client, job, io, new AbortController().signal);
+    assert.ok(io.progress.includes(displayed));
+    assert.ok(io.questions[0].startsWith(prompt));
+    assert.doesNotMatch(io.questions[0], /\p{Script=Han}/u);
+  }
+});
+
 const multiQuestion = { ...question, prompt: undefined, options: undefined, questions: [
   { id: 'version', prompt: 'Which version?', options: ['Current', 'New'] },
   { id: 'period', prompt: 'Which period?', options: ['This week'] },
@@ -159,11 +186,7 @@ async function until(read, predicate, timeout = 15000) {
 function cli(t, args, { env = {}, input = '', interactive = false, cwd = resolve('.'), executable = entry } = {}) {
   // Exercise Node's actual readline through pipes with TTY flags; no UI framework
   // or real model. Signals are delivered as native readline key sequences.
-  const bootstrap = `process.stdin.isTTY = process.stderr.isTTY = true;
-    const { main } = await import(${JSON.stringify(pathToFileURL(entry).href)});
-    try { process.exitCode = await main(process.argv.slice(1)); }
-    catch (error) { console.error(error.message); process.exitCode = error.exitCode ?? 1; }`;
-  const child = spawn(process.execPath, interactive ? ['--input-type=module', '-e', bootstrap, '--', ...args] : [executable, ...args],
+  const child = spawn(process.execPath, [interactive ? resolve('scripts/helpers/agent-chat-cli-terminal.mjs') : executable, ...args],
     { cwd, env: { ...process.env, CARDBUSH_AGENT_TOKEN: '', CARDBUSH_AGENT_URL: '', CARDBUSH_CLI_CONFIG: join(tempRoot, 'unconfigured.json'), ...env }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const state = { child, stdout: '', stderr: '', result: undefined };
   child.stdout.setEncoding('utf8').on('data', text => { state.stdout += text; });
@@ -177,25 +200,35 @@ function cli(t, args, { env = {}, input = '', interactive = false, cwd = resolve
 
 test('CLI help and argument errors do not need a server or credentials', async t => {
   const help = await cli(t, ['--help']).result;
-  assert.equal(help.code, 0); assert.match(help.stdout, /cardbush resume/); assert.match(help.stdout, /--full-access/);
+  assert.equal(help.code, 0); assert.match(help.stdout, /cardbush --resume/); assert.match(help.stdout, /--full-access/);
+  assert.match(help.stdout, /Usage: cardbush/); assert.doesNotMatch(help.stdout, /\p{Script=Han}/u);
+  assert.match(help.stdout, /\/quit \(or \/q, \/exit\) exits/);
   const invalid = await cli(t, ['--permission', 'invalid']).result;
   assert.equal(invalid.code, 1); assert.match(invalid.stderr, /Invalid --permission/);
-  const missing = await cli(t, ['--prompt', 'test']).result;
+  const missing = await cli(t, ['--url', 'http://127.0.0.1:1', '--prompt', 'test']).result;
   assert.equal(missing.code, 1); assert.match(missing.stderr, /--token-file/);
-  for (const args of [['resume'], ['resume', 's', 'extra'], ['unknown'], ['resume', 's', '--session', 's'],
-    ['resume', 's', '--project', 'p'], ['--full-access', '--permission', 'task_free']]) {
+  for (const args of [['resume'], ['--resume'], ['--resume', ''], ['--resume', 's', 'extra'], ['unknown'], ['--resume', 's', '--session', 's'], ['resume', 's', '--resume', 's'],
+    ['--resume', 's', '--project', 'p'], ['--full-access', '--permission', 'task_free'], ['--local', '--url', 'http://127.0.0.1:1'], ['--local', '--token-file', 'token']]) {
     assert.equal((await cli(t, args).result).code, 1, JSON.stringify(args));
   }
 });
 
+test('desktop profile discovery uses the current account, independent of cwd', () => {
+  assert.equal(localDesktopProfile({ APPDATA: 'C:/Users/me/AppData/Roaming' }, 'C:/Users/me', 'win32').replaceAll('\\', '/'), 'C:/Users/me/AppData/Roaming/cardbush');
+  assert.equal(localDesktopProfile({}, '/Users/me', 'darwin').replaceAll('\\', '/'), '/Users/me/Library/Application Support/cardbush');
+  assert.equal(localDesktopProfile({ XDG_CONFIG_HOME: '/settings' }, '/home/me', 'linux').replaceAll('\\', '/'), '/settings/cardbush');
+});
+
 async function fixture(t) {
   await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, 'case-'));
-  let nextTool, blocked = false; const calls = [];
+  let nextTool, nextFailure, blocked = false; const calls = [], pending = new Set();
+  const release = () => { blocked = false; for (const finish of pending) finish(); pending.clear(); };
   const model = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
     if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 100 })); return; }
     calls.push(body); const index = calls.length;
+    if (nextFailure) { const message = nextFailure; nextFailure = undefined; res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message, type: 'invalid_request_error' } })); return; }
     const selected = nextTool; nextTool = undefined;
     const text = `fixture-answer-${index}`;
     const item = selected ? { id: `function-${index}`, call_id: `call-${index}`, type: 'function_call', name: selected.name,
@@ -206,15 +239,20 @@ async function fixture(t) {
     const response = { id: `response-${index}`, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };
     emit({ type: 'response.created', response });
     emit({ type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } });
-    if (blocked) return;
-    emit(selected ? { type: 'response.function_call_arguments.delta', output_index: 0, delta: item.arguments }
-      : { type: 'response.output_text.delta', item_id: item.id, output_index: 0, content_index: 0, delta: text });
-    emit({ type: 'response.output_item.done', output_index: 0, item });
-    emit({ type: 'response.completed', response: { ...response, status: 'completed', output: [item], usage: { input_tokens: 100, output_tokens: 5, total_tokens: 105 } } }); res.end();
+    const finish = () => {
+      if (res.destroyed || res.writableEnded) return;
+      emit(selected ? { type: 'response.function_call_arguments.delta', output_index: 0, delta: item.arguments }
+        : { type: 'response.output_text.delta', item_id: item.id, output_index: 0, content_index: 0, delta: text });
+      emit({ type: 'response.output_item.done', output_index: 0, item });
+      emit({ type: 'response.completed', response: { ...response, status: 'completed', output: [item], usage: { input_tokens: 100, output_tokens: 5, total_tokens: 105 } } }); res.end();
+    };
+    if (blocked) { pending.add(finish); res.once('close', () => pending.delete(finish)); }
+    else finish();
   });
   model.listen(0, '127.0.0.1'); await once(model, 'listening');
   let service, http;
   t.after(async () => {
+    release();
     await http?.close(); await service?.close(); model.closeAllConnections(); await new Promise(resolve => model.close(resolve));
     assert.ok(resolve(root).startsWith(tempRoot + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
@@ -226,8 +264,93 @@ async function fixture(t) {
   http = await serveAgentHttp(service, { host: '127.0.0.1', port: 0, token });
   const env = { CARDBUSH_AGENT_URL: `http://127.0.0.1:${http.port}`, CARDBUSH_AGENT_TOKEN: token, CARDBUSH_CLI_CONFIG: join(root, 'cli.json') };
   const cwd = join(root, '当前工作区 with spaces'); await mkdir(cwd);
-  return { root, cwd, service, calls, env, tokenFile, setTool: tool => { nextTool = tool; }, block: value => { blocked = value; } };
+  return { root, cwd, service, calls, env, tokenFile, release, setTool: tool => { nextTool = tool; }, block: value => { blocked = value; }, failNext: message => { nextFailure = message; },
+    stopService: async () => { await http.close(); http = undefined; await service.close(); } };
 }
+
+async function sharedCliEnv(f) {
+  const profile = join(f.root, 'app-profile'), config = join(profile, 'product-host', 'config');
+  await mkdir(config, { recursive: true });
+  await writeFile(join(config, 'models.json'), await readFile(join(f.service.root, 'config', 'models.json')));
+  return { CARDBUSH_CLI_DATA_DIR: f.service.root, CARDBUSH_CLI_PROFILE_DIR: profile };
+}
+
+test('quit aliases exit locally with a resume hint and do not submit a model turn', async t => {
+  const f = await fixture(t); let sessionId;
+  for (const command of ['/q', '/quit', '/exit']) {
+    const process = cli(t, sessionId ? ['--resume', sessionId] : [], { env: f.env, cwd: f.cwd, interactive: true });
+    await until(() => process.stderr, text => text.includes('❯ '));
+    process.child.stdin.write(`  ${command}  \r`);
+    const result = await process.result;
+    assert.equal(result.code, 0, result.stderr);
+    const sessions = await f.service.call('sessions.list', { projection: 'summary' });
+    assert.equal(sessions.length, 1); sessionId = sessions[0].sessionId;
+    assert.match(result.stderr, /Resume this session: cardbush --resume/);
+    assert.ok(result.stderr.includes(sessionId));
+    assert.equal(f.calls.length, 0, `${command} must not be sent to the model`);
+    assert.deepEqual(await f.service.call('chat.jobs', { sessionId }), []);
+  }
+  const literal = await cli(t, ['--resume', sessionId, '--prompt', '/quit'], { env: f.env }).result;
+  assert.equal(literal.code, 0, literal.stderr); assert.equal(literal.stdout, 'fixture-answer-1\n');
+  assert.equal(f.calls.length, 1, 'explicit --prompt text is not interpreted as an interactive command');
+});
+
+test('live queue and guidance reuse Agent jobs, recover a lost receipt and retain a draft across turns', async t => {
+  const f = await fixture(t); f.block(true);
+  const original = f.service.call.bind(f.service); let lost = false;
+  f.service.call = async (operation, input, ...rest) => {
+    const result = await original(operation, input, ...rest);
+    if (operation === 'chat.send' && input.text === 'queued next task' && !lost) { lost = true; throw new Error('Fixture lost send receipt'); }
+    return result;
+  };
+  const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('first task\r');
+  await until(() => f.calls.length, count => count === 1);
+  process.child.stdin.write('queued next task\r');
+  await until(() => original('chat.jobs', {}), jobs => jobs.length === 2 && jobs[1].status === 'queued');
+  await until(() => process.stderr, text => text.includes('[Queued] Message saved'));
+  assert.equal(f.calls.length, 1, 'ordinary Enter does not interrupt the running turn');
+  f.block(false); process.child.stdin.write('/steer use the existing files\r');
+  await until(() => original('chat.jobs', {}), jobs => jobs.length === 3 && jobs[2].guidance?.applied);
+  process.child.stdin.write('preserved draft');
+  const jobs = await until(() => original('chat.jobs', {}), jobs => jobs.filter(job => !job.guidance).every(job => job.status === 'completed'));
+  await until(() => process.stderr, text => text.split('✓ Completed').length === 3);
+  assert.equal(jobs.length, 3); assert.equal(jobs[2].guidance.turnId, jobs[0].turnId);
+  assert.match(process.stderr, /\[Applied\] Guidance received/);
+  assert.match(JSON.stringify(f.calls[1].input), /use the existing files/);
+  assert.equal(f.calls.length, 3, 'one interrupted call, its continuation and one queued turn');
+  process.child.stdin.write(' completed\r');
+  await until(() => original('chat.jobs', {}), jobs => jobs.length === 4 && jobs[3].status === 'completed');
+  await until(() => process.stderr, text => text.split('✓ Completed').length === 4);
+  process.child.stdin.write('/quit\r'); const result = await process.result;
+  assert.equal(result.code, 0, result.stderr);
+  const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
+  assert.equal(state.jobs[3].input.text, 'preserved draft completed');
+  assert.equal(state.jobs.filter(job => job.input.text === 'queued next task').length, 1);
+});
+
+test('live guidance racing task completion runs the same queued job once as a new turn', async t => {
+  const f = await fixture(t); f.block(true);
+  const original = f.service.call.bind(f.service);
+  f.service.call = async (operation, input, ...rest) => {
+    if (operation === 'chat.queue' && input.action === 'guide') {
+      f.release();
+      await until(() => original('chat.jobs', {}), jobs => jobs[0]?.status === 'completed');
+    }
+    return original(operation, input, ...rest);
+  };
+  const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('finishing task\r'); await until(() => f.calls.length, count => count === 1);
+  process.child.stdin.write('/steer new instruction\r');
+  const jobs = await until(() => original('chat.jobs', {}), jobs => jobs.length === 2 && jobs.every(job => job.status === 'completed'));
+  await until(() => process.stderr, text => text.split('✓ Completed').length === 3);
+  assert.equal(jobs.filter(job => job.guidance).length, 0); assert.equal(f.calls.length, 2);
+  assert.match(process.stderr, /previous task ended/); assert.doesNotMatch(process.stderr, /\[Applied\]/);
+  process.child.stdin.write('/q\r'); const result = await process.result;
+  assert.equal(result.code, 0, result.stderr);
+});
 
 test('real Agent HTTP: one-shot, piped multiline, continuation, project and model reuse', async t => {
   const f = await fixture(t); const before = await f.service.call('product.command', { kind: 'models.get' });
@@ -240,7 +363,7 @@ test('real Agent HTTP: one-shot, piped multiline, continuation, project and mode
   const sessions = await f.service.call('sessions.list', { projection: 'summary' }); assert.equal(sessions.length, 1);
   assert.equal(sessions[0].metadata.projectId, project.id);
   const sessionId = sessions[0].sessionId;
-  assert.match(one.stderr, new RegExp(`cardbush resume ${sessionId}`));
+  assert.match(one.stderr, new RegExp(`cardbush --resume ${sessionId}`));
   const piped = await cli(t, ['--session', sessionId], { env: f.env, input: 'line one\n第二行\n' }).result;
   assert.equal(piped.code, 0, piped.stderr); assert.equal(piped.stdout, 'fixture-answer-2\n');
   const saved = await f.service.call('sessions.get', { sessionId }); assert.equal(saved.turns.length, 2);
@@ -249,35 +372,64 @@ test('real Agent HTTP: one-shot, piped multiline, continuation, project and mode
   const invalid = await cli(t, ['--model', 'missing', '--prompt', 'not sent'], { env: f.env }).result;
   assert.equal(invalid.code, 1); assert.equal(f.calls.length, 2);
   const large = await cli(t, [], { env: f.env, input: '中'.repeat(750000) }).result;
-  assert.equal(large.code, 1); assert.match(large.stderr, /过大/); assert.equal(f.calls.length, 2);
+  assert.equal(large.code, 1); assert.match(large.stderr, /too large/); assert.equal(f.calls.length, 2);
   assert.deepEqual(await f.service.call('product.command', { kind: 'models.get' }), before);
   assert.doesNotMatch([models, one, piped, listed, invalid].map(result => result.stdout + result.stderr).join('\n'), /fixture-model-secret|fixture-cli-token/);
+});
+
+test('real Agent file hints attach a completed reference only on Enter and --resume keeps its workspace', async t => {
+  const f = await fixture(t), file = join(f.cwd, 'Read Me.md'); await writeFile(file, 'FILE_REFERENCE_FIXTURE');
+  const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('查看 @Re');
+  await until(() => process.stderr, text => text.includes('Read Me.md') && text.includes('Tab complete'));
+  assert.equal(f.calls.length, 0, 'listing suggestions never invokes the model');
+  process.child.stdin.write('\t'); await delay(100);
+  assert.equal(f.calls.length, 0, 'Tab only fills the draft');
+  process.child.stdin.write('\r');
+  await until(() => process.stderr, text => text.includes('Completed'));
+  process.child.stdin.write('/exit\r');
+  const result = await process.result; assert.equal(result.code, 0, result.stderr);
+  let state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
+  const input = state.jobs.at(-1).input;
+  assert.equal(input.text, '查看 @"Read Me.md"'); assert.deepEqual(input.files, [file]);
+  assert.equal(input.language, 'en');
+  const sent = JSON.stringify(f.calls[0]);
+  assert.match(sent, /ui_language_fallback: en/);
+  assert.match(sent, /human user's explicit language preference/);
+  assert.match(sent, /查看/, 'the English UI never replaces the human language evidence');
+  const resumed = await cli(t, ['--resume', input.sessionId, '--prompt', '再次查看 @"Read Me.md"'], { env: f.env, cwd: f.root }).result;
+  assert.equal(resumed.code, 0, resumed.stderr);
+  state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
+  assert.equal(state.jobs.at(-1).input.sessionId, input.sessionId);
+  assert.deepEqual(state.jobs.at(-1).input.files, [file], 'resume uses the existing workspace, not the new shell cwd');
+  assert.match(JSON.stringify(f.calls.at(-1)), /Read Me\.md/);
 });
 
 test('real Agent and native readline: approval, question, multiple turns and Ctrl+C stop', async t => {
   const f = await fixture(t), outside = join(f.root, 'outside.txt'); await writeFile(outside, 'APPROVED_FILE');
   const process = cli(t, [], { env: { ...f.env, NO_COLOR: '', TERM: 'xterm' }, cwd: f.cwd, interactive: true });
-  await until(() => process.stderr, text => text.includes('你> '));
+  await until(() => process.stderr, text => text.includes('❯ '));
   f.setTool({ name: 'read_file', arguments: { path: outside } }); process.child.stdin.write('read file\n');
   await until(() => process.stderr, text => text.includes('[y/N]'));
   assert.equal(f.calls.length, 1); process.child.stdin.write('y\n');
-  await until(() => process.stderr, text => text.split('你> ').length >= 3);
+  await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'completed');
   assert.match(JSON.stringify(f.calls[1]), /APPROVED_FILE/);
   f.setTool({ name: 'solution_selection', arguments: { prompt: 'Pick a scope', options: ['First', 'Second'] } });
   process.child.stdin.write('choose scope\n');
   await until(() => process.stderr, text => text.includes('/cancel'));
   process.child.stdin.write('2\n');
-  await until(() => process.stderr, text => text.split('你> ').length >= 4);
+  await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'completed');
   assert.match(JSON.stringify(f.calls.at(-1)), /Second/);
   f.block(true); const previous = f.calls.length; process.child.stdin.write('long task\n');
   await until(() => f.calls.length, count => count > previous);
   process.child.stdin.write('\x03');
-  await until(() => process.stderr, text => text.includes('已请求停止'));
+  await until(() => process.stderr, text => text.includes('Stop requested'));
   await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'stopped');
   f.block(false); process.child.stdin.write('/exit\n');
   const result = await process.result; assert.equal(result.code, 0, result.stderr);
   const session = (await f.service.call('sessions.list', { projection: 'summary' }))[0];
-  assert.ok(result.stderr.endsWith(`继续此会话：cardbush resume ${session.sessionId}\n`), 'NO_COLOR and normal exit preserve a copyable resume command');
+  assert.ok(result.stderr.endsWith(`Resume this session: cardbush --resume ${session.sessionId}\n`), 'NO_COLOR and normal exit preserve a copyable resume command');
   assert.doesNotMatch(result.stdout + result.stderr, /\x1b\[\?1049[hl]/, 'never enters an alternate terminal screen');
   assert.equal(f.calls.length, previous + 1, 'Ctrl+C must not resubmit the task');
 });
@@ -285,7 +437,7 @@ test('real Agent and native readline: approval, question, multiple turns and Ctr
 test('real Agent and native readline submit all question answers to the offline provider together', async t => {
   const f = await fixture(t);
   const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
-  await until(() => process.stderr, text => text.includes('你> '));
+  await until(() => process.stderr, text => text.includes('❯ '));
   f.setTool({ name: 'solution_selection', arguments: { questions: multiQuestion.questions } });
   process.child.stdin.write('ask two questions\n');
   await until(() => process.stderr, text => text.includes('[1/2] Which version?') && text.includes('/cancel'));
@@ -293,7 +445,7 @@ test('real Agent and native readline submit all question answers to the offline 
   await until(() => process.stderr, text => text.includes('[2/2] Which period?'));
   assert.equal(f.calls.length, 1, 'provider has no partial answers');
   process.child.stdin.write('Last month\n');
-  await until(() => process.stderr, text => text.split('你> ').length >= 3);
+  await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'completed');
   assert.equal(f.calls.length, 2);
   const receipt = JSON.stringify(f.calls.at(-1));
   assert.match(receipt, /New/); assert.match(receipt, /Last month/); assert.match(receipt, /questionId/);
@@ -326,7 +478,7 @@ test('cardbush entry trusts cwd, remembers the connection and resumes without re
   assert.doesNotMatch(first.stdout + first.stderr, /\x1b\[/, 'redirected output contains no ANSI');
   const savedEnv = { CARDBUSH_CLI_CONFIG: f.env.CARDBUSH_CLI_CONFIG };
   const other = join(f.root, 'another directory'); await mkdir(other);
-  const resumed = await cli(t, ['resume', session.sessionId, '--prompt', 'continue'], { env: savedEnv, cwd: other, executable }).result;
+  const resumed = await cli(t, ['--resume', session.sessionId, '--prompt', 'continue'], { env: savedEnv, cwd: other, executable }).result;
   assert.equal(resumed.code, 0, resumed.stderr);
   assert.equal((await f.service.call('sessions.get', { sessionId: session.sessionId })).metadata.runtimeWorkspace.workspaceDir, await realpath(f.cwd));
   assert.match(JSON.stringify(f.calls[1].input), /current folder/);
@@ -342,6 +494,215 @@ test('cardbush entry trusts cwd, remembers the connection and resumes without re
   assert.equal(await readFile(f.env.CARDBUSH_CLI_CONFIG, 'utf8'), configText, 'ephemeral URL overrides do not overwrite the saved connection');
 });
 
+test('local CLI starts without a service or token, owns cwd, resumes and preserves approval modes', async t => {
+  const f = await fixture(t), dataRoot = f.service.root;
+  await f.stopService();
+  const env = { ...await sharedCliEnv(f), CARDBUSH_CLI_CONFIG: join(f.root, 'unused-connection.json') };
+  // A leftover CLI-only model file must not compete with App settings.
+  await writeFile(join(dataRoot, 'config', 'models.json'), '{"obsolete":true}');
+  const first = await cli(t, ['--prompt', 'local current folder'], { env, cwd: f.cwd }).result;
+  assert.equal(first.code, 0, first.stderr); assert.equal(first.stdout, 'fixture-answer-1\n');
+  let state = JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8'));
+  const sessionId = state.jobs[0].sessionId;
+  assert.equal(state.projects[0].path, await realpath(f.cwd));
+  assert.equal(state.jobs[0].input.permissionMode, 'task_free');
+  assert.match(first.stderr, new RegExp(`cardbush --resume ${sessionId}`));
+  await assert.rejects(readFile(join(dataRoot, 'access-token')), { code: 'ENOENT' });
+  await assert.rejects(readFile(env.CARDBUSH_CLI_CONFIG), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(dataRoot, 'agent.lock')), { code: 'ENOENT' });
+  const other = join(f.root, 'other'); await mkdir(other);
+  const resumed = await cli(t, ['--resume', sessionId, '--full-access', '--prompt', 'local continuation'], { env, cwd: other }).result;
+  assert.equal(resumed.code, 0, resumed.stderr);
+  state = JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8'));
+  assert.equal(state.projects.length, 1, 'resume never rebinds to the new terminal cwd');
+  assert.equal(state.jobs.at(-1).input.permissionMode, 'all_free');
+  assert.match(JSON.stringify(f.calls.at(-1).input), /local current folder/);
+  // An explicit local invocation ignores a stale remote config and env token.
+  await writeFile(env.CARDBUSH_CLI_CONFIG, 'not valid JSON');
+  const local = await cli(t, ['--local', '--prompt', 'local again'], { env: { ...env, CARDBUSH_AGENT_URL: 'http://127.0.0.1:1', CARDBUSH_AGENT_TOKEN: 'never-send-me' }, cwd: f.cwd }).result;
+  assert.equal(local.code, 0, local.stderr);
+  state = JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8'));
+  assert.equal(state.jobs.at(-1).input.permissionMode, 'task_free');
+  assert.doesNotMatch(first.stdout + first.stderr + resumed.stdout + resumed.stderr + local.stdout + local.stderr, /fixture-model-secret|never-send-me/);
+});
+
+test('local CLI shares desktop model and Skill settings without adopting desktop Runtime state', async t => {
+  const f = await fixture(t); await f.stopService();
+  const profile = join(f.root, 'desktop-profile'), dataRoot = join(f.root, 'local-agent');
+  await mkdir(join(profile, 'product-host', 'config'), { recursive: true });
+  const modelText = await readFile(join(f.service.root, 'config', 'models.json'), 'utf8');
+  await writeFile(join(profile, 'product-host', 'config', 'models.json'), modelText);
+  await mkdir(join(profile, 'runtime-state'), { recursive: true });
+  await writeFile(join(profile, 'runtime-state', 'sentinel'), 'DESKTOP_STATE');
+  const skillRoot = join(profile, 'skills', 'fixture-local'); await mkdir(skillRoot, { recursive: true });
+  await writeFile(join(skillRoot, 'SKILL.md'), '---\nname: fixture-local\ndescription: Local profile skill fixture\n---\nUse the fixture local profile.\n');
+  const env = { CARDBUSH_CLI_DATA_DIR: dataRoot, CARDBUSH_CLI_PROFILE_DIR: profile };
+  const local = await cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await until(() => local.stderr, text => text.includes('❯ '));
+  local.child.stdin.write('/exit\n');
+  const result = await local.result;
+  assert.equal(result.code, 0, result.stderr); assert.equal(f.calls.length, 0, 'idle startup never calls a model');
+  assert.equal(await readFile(join(profile, 'product-host', 'config', 'models.json'), 'utf8'), modelText);
+  assert.equal(await readFile(join(profile, 'runtime-state', 'sentinel'), 'utf8'), 'DESKTOP_STATE');
+  await assert.rejects(readFile(join(profile, 'agent.json')), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(dataRoot, 'config', 'models.json')), { code: 'ENOENT' });
+  const service = await AgentService.open({ dataRoot, local: true, localProfileRoot: profile });
+  try {
+    const catalog = await service.call('conversation.catalog', {});
+    assert.match(JSON.stringify(catalog), /fixture-local/);
+  } finally { await service.close(); }
+});
+
+test('local CLI keeps workspace permissions, handles Ctrl+C, and releases its ownership lock', async t => {
+  const f = await fixture(t), dataRoot = f.service.root; await f.stopService();
+  const env = await sharedCliEnv(f);
+  const outside = join(f.root, 'outside.txt'); await writeFile(outside, 'DO_NOT_PRINT');
+  f.setTool({ name: 'read_file', arguments: { path: outside } });
+  const denied = await cli(t, ['--prompt', 'read outside'], { env, cwd: f.cwd }).result;
+  assert.equal(denied.code, 2, denied.stderr); assert.doesNotMatch(denied.stdout, /DO_NOT_PRINT/);
+  const terminal = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await until(() => terminal.stderr, text => text.includes('❯ '));
+  const duplicate = await cli(t, ['--models'], { env, cwd: f.cwd }).result;
+  assert.equal(duplicate.code, 1); assert.match(duplicate.stderr, /already owns/);
+  terminal.child.stdin.write('\x03');
+  const stopped = await terminal.result; assert.equal(stopped.code, 130, stopped.stderr);
+  await assert.rejects(readFile(join(dataRoot, 'agent.lock')), { code: 'ENOENT' });
+  const next = await cli(t, ['--models'], { env, cwd: f.cwd }).result;
+  assert.equal(next.code, 0, next.stderr);
+});
+
+test('late noisy MCP diagnostics never overwrite a local draft, hide tool failures or pollute pipe output', async t => {
+  const f = await fixture(t); await f.stopService(); const env = await sharedCliEnv(f);
+  const trigger = join(f.root, 'emit-logs'), logPath = join(f.service.root, 'logs', 'runtime.log');
+  await writeFile(join(env.CARDBUSH_CLI_PROFILE_DIR, 'product-host', 'config', 'mcp-servers.json'), JSON.stringify({
+    protocol: 'cardbush.product_mcp_config.v1', revision: 1, servers: [{ id: 'noisy_fixture', enabled: true,
+      transport: 'stdio', command: process.execPath, args: [resolve('scripts/helpers/agent-chat-cli-noisy-mcp.mjs')], env: { FIXTURE_LOG_TRIGGER: trigger } }],
+  }));
+  const local = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await until(() => local.stderr, text => text.includes('❯ '));
+  await until(() => readFile(logPath, 'utf8').catch(() => ''), text => text.includes('unsupported server/discover'));
+  local.child.stdin.write('preserved draft');
+  await writeFile(trigger, 'go');
+  await until(() => readFile(logPath, 'utf8'), text => text.includes('late-fixture-log 99'));
+  assert.equal(f.calls.length, 0, 'background logs do not submit the partial draft');
+  assert.doesNotMatch(local.stderr + local.stdout, /runtime_browser_connection|runtime_mcp_|fixture startup|late-fixture-log|server\/discover/);
+  f.setTool({ name: 'read_file', arguments: { path: join(f.cwd, 'missing-file.txt') } });
+  local.child.stdin.write(' completed\n');
+  await until(() => local.stderr, text => text.includes('[Tool failed]') && text.includes('✓ Completed'));
+  assert.match(local.stderr, /\[Tool failed\]/, 'structured task failures remain visible');
+  local.child.stdin.write('/logs\n');
+  await until(() => local.stderr, text => text.includes(logPath));
+  local.child.stdin.write('/exit\n');
+  const result = await local.result; assert.equal(result.code, 0, result.stderr);
+  const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
+  assert.equal(state.jobs.length, 1); assert.equal(state.jobs[0].input.text, 'preserved draft completed');
+  const piped = await cli(t, [], { env, cwd: f.cwd, input: 'one piped message' }).result;
+  assert.equal(piped.code, 0, piped.stderr); assert.match(piped.stdout, /^fixture-answer-\d+\n$/);
+  assert.doesNotMatch(piped.stdout + piped.stderr, /runtime_browser_connection|runtime_mcp_|fixture startup|late-fixture-log|server\/discover/);
+});
+
+test('native model/settings commands share App JSON, preserve secrets, and recover after a provider failure', async t => {
+  const f = await fixture(t); await f.stopService(); const env = await sharedCliEnv(f);
+  const configPath = join(env.CARDBUSH_CLI_PROFILE_DIR, 'product-host', 'config', 'models.json');
+  const original = JSON.parse(await readFile(configPath, 'utf8'));
+  const local = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await until(() => local.stderr, text => text.includes('❯ '));
+  assert.match(local.stderr, /fixture-model · Approval mode/); assert.ok(local.stderr.includes(f.cwd));
+  // Editing the same App file is visible without creating/replacing any CLI config.
+  const updated = { ...original, defaultModelId: 'second', models: [...original.models, { ...original.models[0], id: 'second', model: 'second-model' }] };
+  const sharedText = JSON.stringify(updated, null, 2); await writeFile(configPath, sharedText);
+  local.child.stdin.write('/settings\n');
+  await until(() => local.stderr, text => text.includes('Save, then press Enter to reload'));
+  assert.ok(local.stderr.includes(configPath)); assert.match(local.stderr, /JSON settings shared with CardBush App/);
+  local.child.stdin.write('\n');
+  await until(() => local.stderr, text => text.includes('second-model · Approval mode'));
+  assert.equal(f.calls.length, 0, 'settings and model selection never call a provider');
+  local.child.stdin.write('/model\n');
+  await until(() => local.stderr, text => text.includes('Select a number or model ID'));
+  local.child.stdin.write('1\n');
+  await until(() => local.stderr, text => text.includes('Switched to: fixture-model'));
+  f.failNext('OFFLINE_PROVIDER_REJECTED'); local.child.stdin.write('failing turn\n');
+  await until(() => local.stderr, text => text.includes('[Error]') && text.includes('! Task failed ·'));
+  assert.equal(local.child.exitCode, null, 'a provider error returns to the prompt');
+  local.child.stdin.write('/model second\n');
+  await until(() => local.stderr, text => text.includes('Switched to: second-model'));
+  local.child.stdin.write('successful turn\n');
+  await until(() => local.stdout, text => text.includes('fixture-answer-2'));
+  await until(() => local.stderr, text => (text.match(/(?:✓ Completed|! Task failed) ·/g) ?? []).length >= 2);
+  local.child.stdin.write('/exit\n');
+  const result = await local.result; assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(f.calls.map(call => call.model), ['fixture-model', 'second-model']);
+  assert.equal(await readFile(configPath, 'utf8'), sharedText, 'model switching does not rewrite App defaults or credentials');
+  assert.doesNotMatch(result.stdout + result.stderr, /fixture-model-secret|\x1b\[\?1049[hl]/);
+  const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
+  assert.deepEqual(state.jobs.map(job => job.input.text), ['failing turn', 'successful turn']);
+  assert.deepEqual(state.jobs.map(job => job.status), ['failed', 'completed']);
+});
+
+test('unconfigured local CLI waits for file editing, reloads in place and never submits setup input', async t => {
+  const f = await fixture(t); await f.stopService();
+  const dataRoot = join(f.root, 'unconfigured'), profile = join(f.root, 'no-desktop'), configPath = join(profile, 'product-host', 'config', 'models.json');
+  const env = { CARDBUSH_CLI_DATA_DIR: dataRoot, CARDBUSH_CLI_PROFILE_DIR: profile };
+  const local = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await until(() => local.stderr, text => text.includes('Save, then press Enter to reload'));
+  assert.ok(local.stderr.includes(configPath)); assert.doesNotMatch(local.stderr, /❯ /);
+  assert.equal(f.calls.length, 0);
+  const template = JSON.parse(await readFile(configPath, 'utf8'));
+  assert.equal(template.version, 1); assert.ok(template._comment); assert.ok(template.models[0]._comment.apiProtocol);
+  assert.doesNotMatch(JSON.stringify(template), /\p{Script=Han}/u, 'generated configuration guidance is English');
+  assert.equal(template.models[0].apiKey, ''); assert.equal(template.models[0].model, '');
+  assert.deepEqual(JSON.parse(await readFile(join(profile, 'product-host', 'config', 'models.example.json'), 'utf8')), template);
+  // Parsing errors may contain fragments of a secret in Node's native message.
+  const broken = '{"apiKey":"DO_NOT_ECHO_SECRET", invalid}';
+  await writeFile(configPath, broken);
+  local.child.stdin.write('\n');
+  await until(() => local.stderr, text => text.includes('Invalid model configuration'));
+  assert.equal(await readFile(configPath, 'utf8'), broken, 'retry does not overwrite user edits');
+  assert.doesNotMatch(local.stderr, /DO_NOT_ECHO_SECRET/);
+  assert.equal(f.calls.length, 0);
+  const configured = JSON.parse(await readFile(join(f.service.root, 'config', 'models.json'), 'utf8'));
+  Object.assign(template.models[0], configured.models[0], { id: 'default' });
+  await writeFile(configPath, JSON.stringify(template));
+  local.child.stdin.write('\n');
+  await until(() => local.stderr, text => text.includes('❯ '));
+  assert.equal(f.calls.length, 0, 'configuration does not make a test request to the provider');
+  local.child.stdin.write('actual conversation\n');
+  await until(() => local.stdout, text => text.includes('fixture-answer-1'));
+  await until(() => local.stderr, text => text.includes('✓ Completed'));
+  local.child.stdin.write('/exit\n');
+  const result = await local.result; assert.equal(result.code, 0, result.stderr);
+  assert.equal(f.calls.length, 1);
+  const state = JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8'));
+  assert.equal(state.jobs.length, 1); assert.equal(state.jobs[0].input.text, 'actual conversation');
+  assert.equal(state.projects[0].path, await realpath(f.cwd));
+  assert.doesNotMatch(result.stdout + result.stderr, /fixture-model-secret|DO_NOT_ECHO_SECRET/);
+});
+
+test('empty or malformed local configuration preserves edits, exits pipes promptly, and can cancel setup', async t => {
+  const f = await fixture(t); await f.stopService();
+  const dataRoot = join(f.root, 'empty-models'), profile = join(f.root, 'no-desktop'), configPath = join(profile, 'product-host', 'config', 'models.json');
+  await mkdir(join(profile, 'product-host', 'config'), { recursive: true });
+  const content = '{"version":1,"defaultModelId":"","models":[],"_comment":"KEEP_MY_NOTE"}';
+  await writeFile(configPath, content);
+  const env = { CARDBUSH_CLI_DATA_DIR: dataRoot, CARDBUSH_CLI_PROFILE_DIR: profile };
+  const pipe = await cli(t, ['--prompt', 'do not send this before configuration'], { env, cwd: f.cwd }).result;
+  assert.equal(pipe.code, 2, pipe.stderr); assert.ok(pipe.stderr.includes(configPath));
+  assert.equal(await readFile(configPath, 'utf8'), content); assert.equal(f.calls.length, 0);
+  assert.equal(JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8')).jobs.length, 0);
+  await writeFile(configPath, '{"apiKey":"PRIVATE_CONFIG", broken}');
+  for (const command of ['/q\r', '/quit\r', '/exit\r', '\x03']) {
+    const local = cli(t, [], { env, cwd: f.cwd, interactive: true });
+    await until(() => local.stderr, text => text.includes('Save, then press Enter to reload'));
+    assert.doesNotMatch(local.stderr, /PRIVATE_CONFIG/);
+    local.child.stdin.write(command);
+    assert.equal((await local.result).code, command === '\x03' ? 130 : 0);
+    await assert.rejects(readFile(join(dataRoot, 'agent.lock')), { code: 'ENOENT' });
+    assert.match(await readFile(configPath, 'utf8'), /PRIVATE_CONFIG/);
+    assert.equal(JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8')).jobs.length, 0);
+  }
+  assert.equal(f.calls.length, 0);
+});
+
 test('full-access is explicit per launch; idle Ctrl+C prints a blue resume ID without an alternate screen', async t => {
   const f = await fixture(t), outside = join(f.root, 'outside.txt'); await writeFile(outside, 'FULL_ACCESS_FILE');
   f.setTool({ name: 'read_file', arguments: { path: outside } });
@@ -349,13 +710,13 @@ test('full-access is explicit per launch; idle Ctrl+C prints a blue resume ID wi
   assert.equal(full.code, 0, full.stderr); assert.match(JSON.stringify(f.calls[1].input), /FULL_ACCESS_FILE/);
   const session = (await f.service.call('sessions.list', { projection: 'summary' }))[0];
   assert.equal(JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8')).jobs[0].input.permissionMode, 'all_free');
-  const child = cli(t, ['resume', session.sessionId], { env: { ...f.env, NO_COLOR: undefined, TERM: 'xterm' }, cwd: f.cwd, interactive: true });
-  await until(() => child.stderr, text => text.includes('你> '));
-  assert.match(child.stderr, /申请审批/, 'resuming defaults to approval, not the previous full-access launch');
+  const child = cli(t, ['--resume', session.sessionId], { env: { ...f.env, NO_COLOR: undefined, TERM: 'xterm' }, cwd: f.cwd, interactive: true });
+  await until(() => child.stderr, text => text.includes('❯ '));
+  assert.match(child.stderr, /Approval mode/, 'resuming defaults to approval, not the previous full-access launch');
   child.child.stdin.write('\x03');
   const result = await child.result;
   assert.equal(result.code, 130, result.stderr);
-  assert.ok(result.stderr.endsWith(`cardbush resume \x1b[34m${session.sessionId}\x1b[0m\n`));
+  assert.ok(result.stderr.endsWith(`cardbush --resume \x1b[34m${session.sessionId}\x1b[0m\n`));
   assert.equal(f.calls.length, 2, 'resume and idle Ctrl+C do not submit another task');
 });
 

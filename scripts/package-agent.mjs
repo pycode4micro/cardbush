@@ -7,7 +7,9 @@ import { verifyAgentBundledAssets, verifyAgentBundledMcp } from '../dist-electro
 
 const sourceRoot = resolve(import.meta.dirname, '..');
 const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist-electron/agentServiceCli.mjs',
-  'dist-electron/agentChatCli.mjs', 'dist-electron/agentHttpClient.mjs',
+  'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs',
+  'dist-electron/agentChatTerminal.mjs', 'dist-electron/agentChatPresentation.mjs', 'dist-electron/agentChatInput.mjs', 'dist-electron/agentChatCompletion.mjs', 'dist-electron/agentChatViewport.mjs', 'packages/bush-protocol/dist/transcriptPresentation.js',
+  'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
   'dist-electron/agentService.mjs', 'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs',
   'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs',
   'dist-electron/agentBrowserConnector.mjs', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
@@ -76,9 +78,10 @@ export async function packageAgent(root, output, platform = process.platform) {
     'Install Node.js 24. In this directory run: npm ci --omit=dev --ignore-scripts\n'
     + 'Start: node dist-electron/agentServiceCli.mjs --data-dir <separate-data-directory>\n'
     + 'Register the terminal command once: npm link --ignore-scripts\n'
-    + 'Connect once: cardbush --token-file <separate-data-directory>/access-token\n'
-    + 'Then enter a working directory and run: cardbush (approval) or cardbush --full-access\n'
-    + 'Resume: cardbush resume <session-id> (keeps its workspace); options: cardbush --help\n'
+    + 'Local chat: enter a working directory and run cardbush (approval) or cardbush --full-access; no service token needed.\n'
+    + 'If no model is configured, edit the displayed models.json using its annotated example, then press Enter to reload.\n'
+    + 'Optional service connection: cardbush --url <Agent URL> --token-file <access-token file>\n'
+    + 'Resume: cardbush --resume <session-id> (keeps its workspace); options: cardbush --help\n'
     + 'Deploy the whole directory, including dist-native on Windows. Never copy credentials or task data into this release.\n');
   return output;
 }

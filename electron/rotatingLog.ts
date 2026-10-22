@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 
 /** A bounded diagnostic log. Each scope retains at most three previous files. */
 export function appendRotatingLog(file: string, value: unknown, maxBytes = 8 * 1024 * 1024) {
-  mkdirSync(dirname(file), { recursive: true });
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   let line = JSON.stringify(value);
   if (Buffer.byteLength(line, 'utf8') > maxBytes) line = JSON.stringify({ truncated: true, preview: line.slice(0, Math.floor(maxBytes / 8)) });
   line += '\n';
@@ -15,5 +15,5 @@ export function appendRotatingLog(file: string, value: unknown, maxBytes = 8 * 1
     for (let index = 2; index >= 1; index--) if (existsSync(`${file}.${index}`)) renameSync(`${file}.${index}`, `${file}.${index + 1}`);
     renameSync(file, `${file}.1`);
   }
-  appendFileSync(file, line, 'utf8');
+  appendFileSync(file, line, { encoding: 'utf8', mode: 0o600 });
 }

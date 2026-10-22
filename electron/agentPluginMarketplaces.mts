@@ -29,10 +29,10 @@ export class AgentPluginMarketplaces {
   private readonly dataRoot: string;
   private readonly networkPath: string;
   private readonly pending = new Set<Promise<unknown>>();
-  constructor(root: string, bundledRoot: string, replacePlugin: ProductPluginReplacement, env: NodeJS.ProcessEnv) {
+  constructor(root: string, bundledRoot: string, replacePlugin: ProductPluginReplacement, env: NodeJS.ProcessEnv, configurationRoot = root) {
     this.dataRoot = join(root, 'plugin-marketplaces');
-    this.networkPath = join(root, 'config', 'network.json');
-    this.network = new PluginNetwork(join(root, 'config', 'apps.json'), () => createHeadlessProxySession(env));
+    this.networkPath = join(configurationRoot, 'config', 'network.json');
+    this.network = new PluginNetwork(join(configurationRoot, 'config', 'apps.json'), () => createHeadlessProxySession(env));
     // A headless host has no desktop model-network preference. Inherit its process proxy environment.
     this.network.setModel({ mode: 'system' });
     this.market = new PluginMarketplaceService({

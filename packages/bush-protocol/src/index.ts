@@ -46,6 +46,7 @@ export * from './webApplications.js';
 export * from './agentWorkflow.js';
 export * from './agentToolActivity.js';
 export * from './toolResult.js';
+export * from './transcriptPresentation.js';
 export * from './filePatch.js';
 export * from './computerUseAppearance.js';
 export * from './userPrompt.js';
