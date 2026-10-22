@@ -1311,20 +1311,20 @@ export function useCardbushChat(
       sequence: 0,
       lastEventId: '',
     };
-    const ensureAssistant = (createdAt?: string) => {
+    const ensureAssistant = (timing?: { createdAt?: string; startedAt?: string }) => {
       setMessagesByConversation((state) =>
         ensureBackgroundTurnAssistant(
           state,
           normalizedSessionId,
           assistantId,
           normalizedTurnId,
-          createdAt,
+          timing,
         ),
       );
     };
     const streamBuffer = createFrameStreamBuffers(
       (delta, route, release) => {
-        ensureAssistant(route.createdAt);
+        ensureAssistant({ createdAt: route.createdAt });
         setMessagesByConversation((state) =>
           appendAssistantDelta(
             state,
@@ -1358,7 +1358,7 @@ export function useCardbushChat(
         };
       },
       onStart: (start) => {
-        ensureAssistant(start.createdAt);
+        ensureAssistant({ createdAt: start.createdAt, startedAt: start.createdAt });
         markSessionRunning(normalizedSessionId, start.turnId || normalizedTurnId);
       },
       onDelta: (delta, chunk) => streamBuffer.push(delta, chunk),
@@ -1436,7 +1436,7 @@ export function useCardbushChat(
       },
       onFinalAssistantText: (text, chunk) => {
         finalAssistantText = text;
-        ensureAssistant(chunk.createdAt);
+        ensureAssistant({ createdAt: chunk.createdAt });
         void streamBuffer.completeRoute(text, chunk).then(() => {
           setMessagesByConversation((state) =>
             markLocalAssistantTurnCompleted(
@@ -3112,7 +3112,7 @@ export function useCardbushChat(
             streamStarted = true;
             markSessionRunning(sessionId, start.turnId);
             void refreshGoal(sessionId);
-            const startedAt = new Date().toISOString();
+            const startedAt = start.createdAt ?? new Date().toISOString();
             setMessagesByConversation((current) => ({
               ...current,
               [sessionId]: (current[sessionId] ?? initialMessages).map((item) =>

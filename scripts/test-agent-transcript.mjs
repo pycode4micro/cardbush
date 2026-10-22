@@ -39,7 +39,7 @@ const api = await loadChatTranscript({ source: [
   ['src/backend/api.ts', 'editMessage'],
   ['src/backend/runtimeSessionMessageProjection.ts', 'projectRuntimeTurnMessages'],
   ['src/features/agents/agentConversationBackend.ts', 'createAgentConversationBackend, agentRuntimeClient'],
-  ['src/features/chatMessages/transcript/liveMessageUpdates.ts', 'appendAssistantDelta, appendToolExecution, applyTaskPlanUpdate, applyAssistantSegmentBoundary, applyAssistantRevision, applyTurnTerminalSnapshot'],
+  ['src/features/chatMessages/transcript/liveMessageUpdates.ts', 'appendAssistantDelta, appendToolExecution, applyTaskPlanUpdate, applyAssistantSegmentBoundary, applyAssistantRevision, applyTurnTerminalSnapshot, assignTurnToLocalMessages, ensureBackgroundTurnAssistant'],
   ['src/features/chatMessages/transcript/assistantStreamBuffer.ts', 'createSegmentedAssistantStreamBuffers'],
   ['src/features/chatMessages/transcript/messageProjection.ts', 'mergeFinalStreamMessages, mergeLoadedMessagesPreservingLocalState, normalizeChatMessagesForDisplay'],
 ].map(([file, names]) => `export { ${names} } from ${JSON.stringify(path.resolve(file))};`).join('\n'),
@@ -85,6 +85,52 @@ async function project(events, mode = 'remote', extra = {}) {
   return { rows: plain(flatten(state.s)), messages: plain(state.s), observations: plain(observations) };
 }
 const assistants = result => result.rows.filter(row => row.role === 'assistant');
+
+test('queued submissions and background replays use execution start on local and remote hosts', async () => {
+  const accepted = event(1, 'turn_accepted', { status: 'accepted' });
+  const terminal = event(9, 'turn_terminal', { status: 'completed', reason: 'complete', details: {} });
+  const queuedAt = new Date(Date.parse(now) - 140_000).toISOString();
+  fixture = { events: [accepted, text(3, 'm1', 'Check timings'), terminal] };
+  for (const mode of ['local', 'remote-submit', 'remote-background']) {
+    let state = { s: [
+      { id: 'u', conversationId: sessionId, turnId, role: 'user', content: 'Check timings', createdAt: queuedAt },
+      { id: 'active', conversationId: sessionId, turnId, role: 'assistant', content: '', createdAt: queuedAt },
+    ] };
+    const starts = [];
+    const request = { sessionId, turnId, userInput: 'Check timings', model: 'fixture',
+      onStart: start => {
+        starts.push(plain(start));
+        state = mode === 'remote-background'
+          ? api.ensureBackgroundTurnAssistant(state, sessionId, 'active', turnId, { createdAt: start.createdAt, startedAt: start.createdAt })
+          : api.assignTurnToLocalMessages(state, sessionId, turnId, ['u', 'active'],
+            { messageId: '', turnId, createdAt: start.createdAt }, start.userMessageId);
+      },
+      onDelta: (delta, route) => {
+        if (mode === 'remote-background') state = api.ensureBackgroundTurnAssistant(state, sessionId, 'active', turnId, { createdAt: route.createdAt });
+        state = api.appendAssistantDelta(state, sessionId, 'active', delta, route);
+      },
+      onDone: fact => { state = api.applyTurnTerminalSnapshot(state, sessionId, 'active', fact); },
+    };
+    if (mode === 'local') await api.streamRuntimeTurnEvents(request);
+    else {
+      const call = async (operation, input) => operation === 'chat.send'
+        ? { id: 'job', sessionId, turnId, status: 'queued', createdAt: queuedAt }
+        : remoteCall(operation, input);
+      const remote = api.createAgentConversationBackend(call, `timing-${mode}`, watch);
+      if (mode === 'remote-submit') await remote.backend.streamChat(request);
+      else await remote.backend.streamTurnEvents(request);
+    }
+    if (mode === 'remote-submit') {
+      assert.equal(starts[0].userMessageId, 'message-job', 'submission acknowledgement is still immediate');
+      assert.equal(starts[0].createdAt, undefined, 'queued acknowledgement must not claim an execution start');
+    }
+    assert.equal(starts.at(-1).createdAt, accepted.createdAt);
+    const reply = state.s.filter(message => message.role === 'assistant').at(-1);
+    assert.equal(reply.metadata.cardbush_turn_started_at, accepted.createdAt, mode);
+    assert.equal(reply.metadata.cardbush_turn_duration_ms, 8_000, mode);
+    assert.equal(state.s.find(message => message.role === 'user').createdAt, queuedAt);
+  }
+});
 
 test('local and remote carry the same action title through live events and receipt hydration', async () => {
   const store = new ToolExecutionStore({ now: () => now });

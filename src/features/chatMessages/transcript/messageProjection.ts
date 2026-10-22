@@ -279,8 +279,8 @@ function mergeFinalAssistantTimingMetadata(
     // Preserve those facts when replacing a streamed row with saved history.
     ...(existingMessage ? preserveLocalAssistantTimingMetadata(message, existingMessage) : message.metadata),
     cardbush_turn_started_at:
-      turnStartedAt ??
       message.metadata?.cardbush_turn_started_at ??
+      turnStartedAt ??
       existingMessage?.metadata?.cardbush_turn_started_at ??
       existingMessage?.createdAt ??
       message.createdAt,

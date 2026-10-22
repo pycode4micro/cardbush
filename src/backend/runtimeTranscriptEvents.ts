@@ -1,4 +1,4 @@
-import type { RuntimeEvent } from '@cardbush/bush-protocol';
+import { runtimeToolLifecycle, type RuntimeEvent } from '@cardbush/bush-protocol';
 import type { AssistantStreamChunk, ChatToolExecution, StreamExecutionUpdate, TurnTerminalSnapshot } from '../types';
 
 // Shared event identities for desktop and remote transcripts. Presentation only.
@@ -36,14 +36,14 @@ export function toolLifecycle(
     kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled';
   }>,
 ): ChatToolExecution {
-  const error = event.kind === 'tool_returned' ? event.payload.resultError : event.kind === 'tool_failed' ? event.payload.error : undefined;
+  const lifecycle = runtimeToolLifecycle(event), { error } = lifecycle;
   return {
     id: event.payload.toolCallId,
     name: event.payload.toolName,
-    state: error ? 'failed' : toolLifecycleState(event.kind),
-    summary: event.payload.display?.summary || event.payload.display?.title || event.payload.toolName,
+    state: lifecycle.state,
+    summary: lifecycle.summary,
     output: '',
-    success: event.kind === 'tool_returned' && !error,
+    success: lifecycle.success,
     durationMs: 0,
     createdAt: event.createdAt,
     contentOffset: 0,
@@ -73,18 +73,6 @@ export function terminalSnapshot(
     terminalEventSequence: event.sequence,
     raw: event,
   };
-}
-
-function toolLifecycleState(
-  kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled',
-): ChatToolExecution['state'] {
-  switch (kind) {
-    case 'tool_queued': return 'queued';
-    case 'tool_running': return 'running';
-    case 'tool_returned': return 'completed';
-    case 'tool_failed': return 'failed';
-    case 'tool_cancelled': return 'cancelled';
-  }
 }
 
 export function guidanceAppliedUpdate(

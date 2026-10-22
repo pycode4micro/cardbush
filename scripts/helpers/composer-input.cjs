@@ -241,7 +241,70 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await until('!!document.querySelector(".composer-skill-token")', 'remote Skill command uses the same token');
     assert.equal(await run('document.querySelector(".composer-skill-token > span").textContent'), '百应回放');
     assert.equal(await run('document.querySelector(".composer-skill-token img")'), null, 'remote filesystem logos must not resolve on the local host');
-    console.log('Composer input passed: plain and plugin Skill chips; Tab/Enter/click selection; exact copy/send and arguments; catalog refresh/removal; remove/Backspace; native IME, focus and narrow layouts.');
+
+    // Sending previously lost the token because the transcript had no command
+    // resolver. Exercise actual message Markdown and its owning host as well.
+    await run(`
+      window.inputBubbleContent = '/baiying-replay:baiying-replay 这里的**依赖**配置好了吗，参考 https://example.com/docs，继续检查。';
+      window.inputBubbleMessage = { id: 'skill-message', role: 'user', content: inputBubbleContent };
+      window.inputBubbleProps = { message: inputBubbleMessage, language: 'zh', sending: false,
+        activeTurnId: '', activeAssistantMessageId: '', onRegenerate: async () => {},
+        onEditUserMessage: async () => {}, onRetryGuidance: async () => {}, onRevertChangeReport: async () => {}, onOpenScene: () => {} };
+      window.inputSkillOpened = []; window.inputLocalSkillOpened = [];
+      window.inputObserveSkillOpen = event => inputLocalSkillOpened.push(event.detail.target);
+      addEventListener('cardbush:open-inspector', inputObserveSkillOpen);
+      inputCommandCatalog = [inputPluginCommand];
+      window.inputHistoryReads = inputCatalogReads;
+      renderView(h('div', null, Array.from({ length: 12 }, (_, i) =>
+        h(views.MessageBubble, { ...inputBubbleProps, key: i, message: { ...inputBubbleMessage, id: 'skill-' + i } }))));
+    `);
+    await until('document.querySelectorAll(".markdown-content .skill-reference-token").length === 12', 'saved messages render their Skill invocations');
+    assert.equal(await run('inputCatalogReads - inputHistoryReads'), 1, 'history messages share a single catalog request');
+    assert.equal(await run('document.querySelector(".user-message-body strong").textContent'), '依赖', 'argument Markdown remains intact');
+    assert.equal(await run(`document.querySelector('.user-message-body a[href^="https://"]').getAttribute('href')`), 'https://example.com/docs', 'Chinese URL boundaries and Skill tokens coexist');
+    await run('document.querySelector(".skill-reference-token").click()');
+    assert.deepEqual(await run('inputLocalSkillOpened'), [await run('inputPluginCommand.path')]);
+    await run(`
+      window.inputSkillHost = { id: 'remote-skill-fixture', plugins: [], pluginCommands: [],
+        openFile: path => inputSkillOpened.push(path), messageFeedbackAvailable: false };
+      window.inputRenderSkillMessage = () => renderView(h(views.ConversationHostContext.Provider, { value: inputSkillHost },
+        h(views.MessageBubble, { ...inputBubbleProps, key: inputBubbleMessage.id, message: inputBubbleMessage })));
+      inputHistoryReads = inputCatalogReads;
+      inputRenderSkillMessage();
+    `);
+    await until('document.querySelectorAll(".user-message-body").length === 1 && !document.querySelector(".skill-reference-token")', 'remote catalog never falls back to a cached local Skill');
+    await run(`inputSkillHost = { ...inputSkillHost, pluginCommands: [{ ...inputPluginCommand, path: 'C:/remote-agent/plugins/baiying/SKILL.md' }] }; inputRenderSkillMessage();`);
+    await until('!!document.querySelector(".markdown-content .skill-reference-token")', 'late remote catalog renders historical commands');
+    assert.equal(await run('inputCatalogReads'), await run('inputHistoryReads'), 'remote messages do not query local commands');
+    assert.equal(await run('document.querySelector(".skill-reference-token").dataset.skillReference'), '/baiying-replay:baiying-replay');
+    await run('document.querySelector(".skill-reference-token").click()');
+    assert.deepEqual(await run('inputSkillOpened'), ['C:/remote-agent/plugins/baiying/SKILL.md']);
+    assert.equal(await run('inputLocalSkillOpened.length'), 1, 'remote Skill click cannot open the local copy');
+    await run(`window.inputSavedClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.inputBubbleCopied = text; } } });
+      document.querySelector('.message-actions button[title="复制"]').click();`);
+    await until('inputBubbleCopied === inputBubbleContent', 'copy preserves the original command and all parameters');
+    await fs.writeFile(path.join(root, 'tmp/skill-message-reference.png'), (await window.capturePage()).toPNG());
+    await run(`document.querySelector('.message-actions button[title="编辑并重跑"]').click()`);
+    await until('!!document.querySelector(".user-edit-card textarea")', 'editing the saved message');
+    assert.equal(await run('document.querySelector(".user-edit-card textarea").value'), await run('inputBubbleContent'));
+    for (const id of ['demo:_review_', '__demo__:review', 'demo:_review']) {
+      const content = '/' + id + ' 参数_ 与**加粗** https://example.com/docs，检查链接。';
+      await run(`inputSkillHost = { ...inputSkillHost, pluginCommands: [{ ...inputPluginCommand, id: ${JSON.stringify(id)}, name: ${JSON.stringify(id.split(':')[1])} }] };
+        inputBubbleMessage = { id: ${JSON.stringify(id)}, role: 'user', content: ${JSON.stringify(content)} }; inputRenderSkillMessage();`);
+      await until(`document.querySelector('.markdown-content .skill-reference-token')?.dataset.skillReference === ${JSON.stringify('/' + id)}`, 'Markdown punctuation in command IDs');
+      assert.equal(await run('document.querySelector(".user-message-body strong").textContent'), '加粗');
+      assert.equal(await run(`document.querySelector('.user-message-body a[href^="https://"]').getAttribute('href')`), 'https://example.com/docs');
+      await run(`document.querySelector('.message-actions button[title="复制"]').click()`);
+      await until(`inputBubbleCopied === ${JSON.stringify(content)}`, 'rendering escapes never enter copied messages');
+    }
+    await run('inputSkillHost = { ...inputSkillHost, pluginCommands: [inputPluginCommand] }; void 0;');
+    for (const [role, content] of [['assistant', '/baiying-replay:baiying-replay 说明'], ['user', '`/baiying-replay:baiying-replay` 说明'], ['user', '/demo:review 文件']]) {
+      await run(`inputBubbleMessage = { id: ${JSON.stringify(role + content)}, role: ${JSON.stringify(role)}, content: ${JSON.stringify(content)} }; inputRenderSkillMessage();`);
+      await until('!!document.querySelector(".markdown-content") && !document.querySelector(".markdown-fallback")', 'literal message loaded');
+      assert.equal(await run('document.querySelector(".skill-reference-token")'), null, 'only user Skill invocations become tokens');
+    }
+    console.log('Composer and Skill messages passed: selection/send/copy/edit, Markdown, shared catalog, refresh/removal, local/remote file routing, literal examples and IME.');
   } catch (error) {
     console.error('Composer fixture state:', await run(`JSON.stringify({ draft: chatProps.draft, sent: inputSent,
       input: document.querySelector('[data-composer-input]')?.outerHTML,
@@ -250,7 +313,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   } finally {
     window.setBounds(originalBounds);
     await run(`renderView(null); cardbushDesktop.pluginCommands = inputSavedCommands;
-      cardbushDesktop.onCapabilityCatalogChanged = inputSavedCatalogChanged; window.viewTheme = inputSavedTheme;`);
+      cardbushDesktop.onCapabilityCatalogChanged = inputSavedCatalogChanged; window.viewTheme = inputSavedTheme;
+      if (window.inputObserveSkillOpen) removeEventListener('cardbush:open-inspector', inputObserveSkillOpen);
+      if (window.inputSavedClipboard) Object.defineProperty(navigator, 'clipboard', inputSavedClipboard);
+      else if (window.inputBubbleCopied !== undefined) delete navigator.clipboard;`);
     await until('!document.querySelector(".chat-panel")', 'input fixture unmounted');
     await run('updateChat(inputSavedProps)');
     await window.webContents.removeInsertedCSS(styleKey);

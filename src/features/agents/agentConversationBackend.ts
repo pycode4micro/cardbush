@@ -173,7 +173,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   };
   const run = async (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession'] }) => {
     const job = await submit(request, options);
-    request.onStart?.({ sessionId: job.sessionId, turnId: job.turnId, userMessageId: `message-${job.id}`, createdAt: job.createdAt });
+    request.onStart?.({ sessionId: job.sessionId, turnId: job.turnId, userMessageId: `message-${job.id}`, createdAt: job.startedAt });
     await observe({ ...request, turnId: job.turnId });
   };
   const observe: typeof shared.streamTurnEvents = async request => {

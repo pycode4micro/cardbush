@@ -1,7 +1,7 @@
 import { blobCacheEntries, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, open, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { link, mkdir, open, realpath, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import sharp from "sharp";
 import { compressModelImage, MAX_MODEL_IMAGE_SOURCE_BYTES, MODEL_IMAGE_DECODER_OPTIONS } from "./modelImageCompression.js";
 
@@ -78,6 +78,26 @@ export class ModelImageStore {
 
   constructor(dataRoot = join(process.cwd(), ".cardbush-runtime")) {
     this.#root = resolve(dataRoot, "model-images");
+  }
+
+  /** Read only an owned immutable snapshot. Callers must first establish a
+   * conversation receipt; knowing a content hash is not an access grant. */
+  async readSnapshot(path: string, signal?: AbortSignal): Promise<{ content: Buffer; mime: string }> {
+    const identity = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+    if (!isAbsolute(path) || identity(dirname(resolve(path))) !== identity(this.#root) ||
+        !/^[a-f0-9]{64}\.(png|jpeg|webp|gif|bmp)$/i.test(basename(path))) {
+      throw new ModelImageInputError('image_snapshot_invalid', 'Image is outside the runtime snapshot store.');
+    }
+    const [root, canonical] = await Promise.all([realpath(this.#root), realpath(path)]);
+    if (identity(canonical) !== identity(join(root, basename(path)))) {
+      throw new ModelImageInputError('image_snapshot_invalid', 'Image snapshot must not redirect to another file.');
+    }
+    const image = await readLocalModelImage(canonical, signal);
+    const name = `${createHash('sha256').update(image.content).digest('hex')}.${image.mime.slice(6)}`;
+    if (identity(basename(path)) !== name) {
+      throw new ModelImageInputError('image_snapshot_corrupt', 'Stored model image failed its content integrity check.');
+    }
+    return image;
   }
 
   async snapshot(source: string, signal?: AbortSignal, options: { original?: boolean } = {}): Promise<string> {

@@ -56,6 +56,8 @@ import {
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND,
   toolImageArtifactRequestSchema,
+  RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND,
+  runtimeFileReceiptRequestSchema,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
   RESUME_MODEL_TURN_COMMAND,
   RUN_MODEL_TURN_COMMAND,
@@ -817,6 +819,7 @@ export class InMemoryRuntimeHost {
         RUNTIME_TERMINAL_CONTROL_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND,
+        RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND,
         RESOLVE_FILE_MEMO_COMMAND,
         RESOLVE_SOURCE_MEMO_COMMAND,
         RESOLVE_SOURCE_REFERENCES_COMMAND,
@@ -1359,6 +1362,11 @@ export class InMemoryRuntimeHost {
         const input = toolImageArtifactRequestSchema.parse(command.payload);
         if (!this.#sessions.hasSession(input.sessionId)) throw new Error('Conversation is unavailable.');
         return { found: this.#toolExecutions.hasImageArtifact(input.sessionId, input.path) };
+      }
+      case RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND: {
+        const input = runtimeFileReceiptRequestSchema.parse(command.payload);
+        if (!this.#sessions.hasSession(input.sessionId)) throw new Error('Conversation is unavailable.');
+        return this.#toolExecutions.fileReceipt(input.sessionId, input.path) ?? null;
       }
       case GET_RUNTIME_TOOL_EXECUTION_COMMAND: {
         const identity = toolExecutionIdentitySchema.parse(command.payload);

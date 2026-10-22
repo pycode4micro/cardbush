@@ -215,11 +215,16 @@ module.exports = async ({ run, until, pause, window, root }) => {
     document.activeElement.blur();
     updateChat({ messages: [layoutUser, layoutAssistant] });`);
   await until("document.querySelector('.assistant-final-answer').textContent === '会话布局已优化。'", 'restore the completed reply');
-  await run(`window.nextLayoutUser = { ...layoutUser, id: 'layout-next-user', turnId: 'layout-next', content: '继续检查' };
+  await run(`window.queuedLayoutAt = new Date(Date.now() - 140000).toISOString();
+    window.executedLayoutAt = new Date(Date.now() - 3000).toISOString();
+    window.nextLayoutUser = { ...layoutUser, id: 'layout-next-user', turnId: 'layout-next', content: '继续检查', createdAt: queuedLayoutAt };
     window.nextLayoutAssistant = { id: 'layout-next-assistant', conversationId: 'layout-session', turnId: 'layout-next',
-      role: 'assistant', status: 'streaming', content: '正在检查。' };
+      role: 'assistant', status: 'streaming', content: '正在检查。', createdAt: queuedLayoutAt,
+      metadata: { cardbush_turn_started_at: executedLayoutAt } };
     updateChat({ messages: [layoutUser, layoutAssistant, nextLayoutUser, nextLayoutAssistant], selectedModel: 'gpt-6-astra', sending: true, activeTurnId: 'layout-next' });`);
   await until("!!document.querySelector('[data-message-id=layout-next-assistant] .assistant-thinking-process')", 'new turn starts');
+  assert.match(await run("document.querySelector('[data-message-id=layout-next-assistant] .assistant-run-label').textContent"),
+    /^处理中 \d+s$/, 'a queued task starts in seconds, not at its two-minute-old user/placeholder timestamp');
   await run("window.maskLabel=document.querySelector('[data-message-id=layout-next-assistant] .assistant-thinking-label');window.maskAnimation=maskLabel.getAnimations()[0];maskAnimation.pause();maskAnimation.currentTime=1100;undefined;");
   assert.equal(await run("getComputedStyle(maskLabel).animationName"), 'thinking-mask-sweep', 'a new planless turn shows the running text mask');
   assert.equal(await run("getComputedStyle(maskLabel).getPropertyValue('--thinking-mask-color').trim()"), '#000', 'dark theme uses a black mask over light text');

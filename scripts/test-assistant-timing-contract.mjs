@@ -45,7 +45,12 @@ const {
 } = loaded.exports;
 
 const projection = await loadChatTranscript({
-  source: `export * from ${JSON.stringify(path.resolve('src/backend/runtimeSessionMessageProjection.ts'))};`,
+  source: [
+    'src/backend/runtimeSessionMessageProjection.ts',
+    'src/features/chatMessages/transcript/liveMessageUpdates.ts',
+    'src/features/chatMessages/transcript/messageFacts.ts',
+    'src/features/chatMessages/transcript/messageProjection.ts',
+  ].map(file => `export * from ${JSON.stringify(path.resolve(file))};`).join('\n'),
 });
 
 assert.equal(formatCompactDuration(null), '');
@@ -227,16 +232,96 @@ const projectedLoopTurn = projection.projectRuntimeTurnMessages({
 }, 'session-with-loop');
 assert.equal(
   projectedLoopTurn[2].metadata.cardbush_turn_started_at,
-  '2026-09-01T01:00:00Z',
-  'the final assistant must start timing at the visible user bubble',
+  '2026-09-01T01:00:02Z',
+  'the final assistant must start timing at Runtime execution, not user submission',
 );
 assert.equal(
   projectedLoopTurn[2].metadata.cardbush_turn_completed_at,
   '2026-09-01T01:02:05Z',
   'the final assistant must stop timing at committed done',
 );
-assert.equal(projectedLoopTurn[2].metadata.cardbush_turn_duration_ms, 125_000);
+assert.equal(projectedLoopTurn[2].metadata.cardbush_turn_duration_ms, 123_000);
 assert.equal(projectedLoopTurn[2].metadata.cardbush_segment_duration_ms, 45_000);
+
+// Queue waiting and execution have different clocks, without changing message
+// chronology. Exercise the actual live reducers and committed-history merge.
+const enqueuedAt = '2026-10-22T10:00:00.000Z';
+const startedAt = '2026-10-22T10:02:20.000Z';
+const completedAt = '2026-10-22T10:02:40.000Z';
+const queuedUser = { id: 'queued-user', role: 'user', content: '检查耗时',
+  conversationId: 'queue-session', turnId: 'queued-turn', createdAt: enqueuedAt };
+const queuedAssistant = { id: 'queued-assistant', role: 'assistant', content: '', status: 'streaming',
+  conversationId: 'queue-session', turnId: 'queued-turn', createdAt: enqueuedAt,
+  metadata: { cardbush_turn_started_at: enqueuedAt } };
+let queued = { 'queue-session': [queuedUser, queuedAssistant] };
+queued = projection.assignTurnToLocalMessages(queued, 'queue-session', 'queued-turn',
+  ['queued-user', 'queued-assistant'], { messageId: '', turnId: 'queued-turn', createdAt: startedAt });
+assert.equal(queued['queue-session'][0].createdAt, enqueuedAt, 'keep the authored timestamp');
+assert.equal(queued['queue-session'][1].createdAt, enqueuedAt, 'keep placeholder ordering stable');
+assert.equal(queued['queue-session'][1].metadata.cardbush_turn_started_at, startedAt);
+assert.equal(projection.chatTurnStartedAt(queued['queue-session'], 'queued-turn'), startedAt);
+queued = projection.appendAssistantDelta(queued, 'queue-session', 'queued-assistant', '先检查。',
+  { turnId: 'queued-turn', messageId: 'queued-loop-1', createdAt: '2026-10-22T10:02:21.000Z' });
+queued = projection.appendAssistantDelta(queued, 'queue-session', 'queued-assistant', '继续检查。',
+  { turnId: 'queued-turn', messageId: 'queued-loop-2', createdAt: '2026-10-22T10:02:25.000Z' });
+for (const row of queued['queue-session'].filter(message => message.role === 'assistant')) {
+  assert.equal(row.metadata.cardbush_turn_started_at, startedAt, 'tool/model loops keep the execution clock');
+}
+assert.equal(projection.chatTurnStartedAt([
+  ...queued['queue-session'],
+  { ...queuedUser, id: 'later-user', turnId: 'later-turn' },
+  { ...queuedAssistant, id: 'later-assistant', turnId: 'later-turn',
+    metadata: { cardbush_turn_started_at: completedAt } },
+], 'later-turn'), completedAt, 'each queued task starts its own clock');
+for (const status of ['completed', 'failed', 'stopped']) {
+  const terminal = projection.applyTurnTerminalSnapshot(queued, 'queue-session', 'queued-assistant', {
+    turnId: 'queued-turn', status, stopped: status === 'stopped', completedAt,
+  });
+  const reply = terminal['queue-session'].filter(message => message.role === 'assistant').at(-1);
+  assert.equal(reply.metadata.cardbush_turn_duration_ms, 20_000, `${status} excludes queue wait`);
+}
+
+// A replayed start can arrive after the background placeholder. Subsequent
+// deltas/reconnects must neither discard its content nor restart its clock.
+let background = projection.ensureBackgroundTurnAssistant(
+  { 'queue-session': [queuedUser, { ...queuedAssistant, content: '已收到的内容' }] },
+  'queue-session', 'queued-assistant', 'queued-turn', { createdAt: startedAt, startedAt });
+assert.equal(background['queue-session'][1].metadata.cardbush_turn_started_at, startedAt);
+assert.equal(background['queue-session'][1].content, '已收到的内容');
+assert.equal(projection.ensureBackgroundTurnAssistant(background, 'queue-session', 'queued-assistant', 'queued-turn'), background);
+assert.equal(projection.ensureBackgroundTurnAssistant(background, 'queue-session', 'queued-assistant', 'queued-turn', { startedAt }), background);
+assert.equal(projection.ensureBackgroundTurnAssistant(background, 'queue-session', 'queued-assistant', 'queued-turn',
+  { createdAt: completedAt }), background, 'stream/final segment timestamps cannot restart the execution clock');
+background = projection.ensureBackgroundTurnAssistant({ 'queue-session': [queuedUser] },
+  'queue-session', 'queued-assistant', 'queued-turn', { createdAt: startedAt, startedAt });
+assert.equal(projection.chatTurnStartedAt(background['queue-session'], 'queued-turn'), startedAt);
+
+const savedQueue = projection.projectRuntimeTurnMessages({
+  turnId: 'queued-turn', turnSequence: 1, createdAt: startedAt, completedAt,
+  status: 'completed', reason: 'complete', usage: {}, messages: [
+    { messageId: 'queued-user', turnId: 'queued-turn', turnSequence: 1, messageIndex: 0,
+      createdAt: enqueuedAt, message: { role: 'user', content: '检查耗时' } },
+    { messageId: 'queued-final', turnId: 'queued-turn', turnSequence: 1, messageIndex: 1,
+      createdAt: completedAt, message: { role: 'assistant', content: '检查完成。' } },
+  ],
+}, 'queue-session');
+const mergedQueue = projection.mergeFinalStreamMessages(
+  { 'queue-session': [queuedUser, queuedAssistant] }, 'queue-session', savedQueue,
+  { turnId: 'queued-turn', temporaryMessageIds: ['queued-assistant'] });
+const mergedFinal = mergedQueue['queue-session'].find(message => message.role === 'assistant');
+assert.equal(mergedFinal.metadata.cardbush_turn_started_at, startedAt, 'committed history wins over a stale live placeholder');
+assert.equal(mergedFinal.metadata.cardbush_turn_duration_ms, 20_000);
+assert.equal(savedQueue[0].createdAt, enqueuedAt);
+
+persistAssistantTurnTiming({ 'queue-session': [{ ...queuedAssistant, status: 'completed',
+  metadata: { cardbush_turn_started_at: enqueuedAt, cardbush_turn_completed_at: completedAt,
+    cardbush_turn_duration_ms: 160_000 } }] });
+const correctedCache = hydrateAssistantTurnTiming([{ ...queuedAssistant, status: 'completed',
+  metadata: { cardbush_turn_started_at: startedAt, cardbush_turn_completed_at: completedAt } }]);
+assert.equal(correctedCache[0].metadata.cardbush_turn_duration_ms, 20_000, 'old cached queue wait cannot override Runtime timestamps');
+persistAssistantTurnTiming({ 'queue-session': correctedCache });
+assert.equal(hydrateAssistantTurnTiming([{ ...queuedAssistant, metadata: undefined, status: 'completed' }])[0]
+  .metadata.cardbush_turn_duration_ms, 20_000, 'corrected timing survives reload');
 
 console.log('assistant turn timing persistence contract tests passed');
 

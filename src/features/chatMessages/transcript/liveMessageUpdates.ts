@@ -414,12 +414,21 @@ export function ensureBackgroundTurnAssistant(
   sessionId: string,
   assistantId: string,
   turnId: string,
-  createdAt?: string,
+  timing: { createdAt?: string; startedAt?: string } = {},
 ) {
   const messages = current[sessionId] ?? [];
-  if (messages.some((message) => message.id === assistantId)) {
-    return current;
+  const existing = messages.find((message) => message.id === assistantId);
+  if (existing) {
+    // A placeholder can be restored before the accepted event is replayed.
+    // Segment timestamps must never restart the Turn's execution clock.
+    if (!timing.startedAt || existing.metadata?.cardbush_turn_started_at === timing.startedAt) return current;
+    return {
+      ...current,
+      [sessionId]: messages.map(message => message === existing
+        ? markLocalMessageTurnStarted(message, timing.startedAt!) : message),
+    };
   }
+  const startedAt = timing.startedAt ?? chatTurnStartedAt(messages, turnId);
   return {
     ...current,
     [sessionId]: [
@@ -430,10 +439,11 @@ export function ensureBackgroundTurnAssistant(
         content: '',
         conversationId: sessionId,
         turnId,
-        createdAt: createdAt || new Date().toISOString(),
+        createdAt: timing.createdAt || new Date().toISOString(),
         metadata: {
           background_turn: true,
           goal_auto_continuation: true,
+          ...(startedAt ? { cardbush_turn_started_at: startedAt } : {}),
         },
       },
     ],
@@ -656,7 +666,7 @@ export function assignTurnToLocalMessages(
 ) {
   const ids = new Set(messageIds);
   const messages = current[sessionId] ?? [];
-  const startedAt = chatTurnStartedAt(
+  const startedAt = route?.createdAt ?? chatTurnStartedAt(
     messages.filter((message) => ids.has(message.id)),
     undefined,
   ) ?? new Date().toISOString();
@@ -688,10 +698,7 @@ export function markLocalMessageTurnStarted(message: ChatMessage, startedAt: str
     ...message,
     metadata: {
       ...(message.metadata ?? {}),
-      cardbush_turn_started_at:
-        message.metadata?.cardbush_turn_started_at ??
-        message.createdAt ??
-        startedAt,
+      cardbush_turn_started_at: startedAt,
     },
   };
 }

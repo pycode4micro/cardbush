@@ -52,3 +52,45 @@ export function skillPromptParts(value: string, skills: SkillSummary[], commands
   if (cursor < value.length || !parts.length) parts.push({ text: value.slice(cursor), start: cursor });
   return parts;
 }
+
+type MarkdownNode = { type: string; value?: string; url?: string; children?: MarkdownNode[];
+  position?: { start: { offset?: number; column?: number }; end: { offset?: number; column?: number } };
+  data?: { hProperties?: Record<string, string>; originalLiteral?: string } };
+
+/** Escape Markdown punctuation only in a confirmed invocation. A command name
+ * such as /demo:_review_ is an identifier, not emphasis. Authored text stays intact. */
+export function skillMarkdownPresentation(content: string, commands: PluginCommandSummary[] = []) {
+  const invocation = commands.length ? skillPromptParts(content, [], commands).find(part => part.skillCommand) : undefined;
+  if (!invocation) return { content };
+  const prefix = content.slice(0, invocation.start);
+  const indentation = prefix.slice(Math.max(prefix.lastIndexOf('\n'), prefix.lastIndexOf('\r')) + 1);
+  if (!/^ {0,3}$/.test(indentation)) return { content }; // Indented code stays literal.
+  return { invocation, content: prefix + invocation.text.replaceAll('_', '\\_') + content.slice(invocation.start + invocation.text.length) };
+}
+
+/** Presentation only: retain the authored invocation for copy/edit/send and
+ * Runtime policy. Only the leading, catalog-confirmed Skill becomes a token. */
+export function remarkSkillCommands({ invocation: part }: { invocation?: SkillPromptPart }) {
+  return (tree: MarkdownNode) => {
+    const paragraph = tree.children?.[0], first = paragraph?.children?.[0];
+    if (!part?.skillReference || paragraph?.type !== 'paragraph' || first?.type !== 'text' || !first.value?.startsWith(part.text)) return;
+    const remaining: MarkdownNode[] = [];
+    if (first.value.length > part.text.length) {
+      const rest = { ...first, value: first.value.slice(part.text.length) };
+      const sourceLength = part.text.replaceAll('_', '\\_').length;
+      // Later citation parsing compares decoded text with its original source.
+      // Move both representations past the command, including escaped underscores.
+      if (first.position) rest.position = { ...first.position, start: { ...first.position.start,
+        offset: first.position.start.offset === undefined ? undefined : first.position.start.offset + sourceLength,
+        column: first.position.start.column === undefined ? undefined : first.position.start.column + sourceLength,
+      } };
+      if (first.data?.originalLiteral !== undefined) rest.data = { ...first.data, originalLiteral: first.data.originalLiteral.slice(sourceLength) };
+      remaining.push(rest);
+    }
+    paragraph.children!.splice(0, 1, {
+      type: 'link', url: part.skillReference.path || '#',
+      children: [{ type: 'text', value: part.skillReference.title }],
+      data: { hProperties: { 'data-skill-command': part.text, 'data-skill-path': part.skillReference.path } },
+    }, ...remaining);
+  };
+}

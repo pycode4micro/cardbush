@@ -77,9 +77,14 @@ export function hydrateAssistantTurnTiming(messages: ChatMessage[]) {
     const startedAt = explicitStartedAt ?? cached?.startedAt ?? derivedStartedAt;
     const completedAt = explicitCompletedAt ?? cached?.completedAt ?? derivedCompletedAt;
     const explicitDurationMs = timingDurationMs(metadata);
+    // Runtime timestamps supersede an older presentation cache that may have
+    // measured from enqueue time. A changed start invalidates that duration.
+    const cachedStartMatches = !explicitStartedAt || !cached?.startedAt ||
+      timestampValue(explicitStartedAt) === timestampValue(cached.startedAt);
     const durationMs =
       explicitDurationMs ??
-      cached?.durationMs ??
+      (explicitStartedAt || explicitCompletedAt ? durationBetween(startedAt, completedAt) : undefined) ??
+      (cachedStartMatches ? cached?.durationMs : undefined) ??
       durationBetween(startedAt, completedAt) ??
       summedToolDuration(message);
     if (startedAt == null && completedAt == null && durationMs == null) {

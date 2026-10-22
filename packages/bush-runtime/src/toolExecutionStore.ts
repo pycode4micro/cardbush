@@ -12,10 +12,12 @@ import {
   WORKSPACE_REVIEW_TURN_LIMIT,
   parseSourceMemoReference,
   sourceMemoSchema,
+  fileMemoSchema,
   toolExecutionRecordSchema,
   type ToolCall,
   type ToolExecutionRecord,
   type ToolExecutionSummary,
+  type RuntimeFileReceipt,
 } from "@cardbush/bush-protocol";
 
 import type {
@@ -165,6 +167,40 @@ export class ToolExecutionStore {
             isAbsolute(artifact.path) && imagePathKey(artifact.path) === key;
         }));
     });
+  }
+
+  /** Reuse host-issued observations, never model text or a plugin's claimed
+   * model_input_url. The file transport must still verify the stored bytes or
+   * canonical path/version; a receipt cannot authorize its parent directory. */
+  fileReceipt(sessionId: string, path: string): RuntimeFileReceipt | undefined {
+    if (!isAbsolute(path)) return;
+    const key = imagePathKey(path);
+    const records = this.#load(sessionId);
+    for (let index = records.length - 1; index >= 0; index--) {
+      const record = records[index]!;
+      if (record.outcome !== 'returned' || toolExecutionError(record) || record.actionManifest?.owner !== 'runtime') continue;
+      if (artifactObject(record.result).isError === true) continue;
+      if (record.toolCall.name === 'inject_image_input' && record.actionManifest.operation === 'image.inject') {
+        const result = artifactObject(record.result);
+        if (!Array.isArray(result.artifacts)) continue;
+        for (const value of result.artifacts) {
+          const artifact = artifactObject(value), metadata = artifactObject(artifact.metadata);
+          if (artifact.type === 'image' && typeof artifact.path === 'string' && isAbsolute(artifact.path) &&
+              imagePathKey(artifact.path) === key && metadata.model_input === true &&
+              typeof metadata.model_input_url === 'string' && isAbsolute(metadata.model_input_url)) {
+            return { kind: 'model_image', path: metadata.model_input_url };
+          }
+        }
+      }
+      if (record.toolCall.name === 'remember_file' && record.actionManifest.operation === 'file_memo') {
+        const memo = fileMemoSchema.safeParse(record.result);
+        if (memo.success && isAbsolute(memo.data.file.path) && imagePathKey(memo.data.file.path) === key) {
+          const { path, size, mtimeMs } = memo.data.file;
+          return { kind: 'file_memo', path, size, mtimeMs };
+        }
+      }
+    }
+    if (this.hasImageArtifact(sessionId, path)) return { kind: 'capture' };
   }
 
   listTurn(sessionId: string, turnId: string): ToolExecutionRecord[] {

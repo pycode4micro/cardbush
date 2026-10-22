@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, readdir, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { crc32 } from "node:zlib";
 import sharp from "sharp";
@@ -23,6 +23,26 @@ test("pins exact bytes across source overwrite, deletion, and store restart", as
   assert.deepEqual((await readLocalModelImage(second)).content, gif);
   assert.equal(await new ModelImageStore(root).snapshot(first), first);
   assert.deepEqual((await readLocalModelImage(first)).content, png);
+});
+
+test('preview snapshot reads verify ownership, real path and content digest', async context => {
+  const { root, source } = await imageFixture(context);
+  const store = new ModelImageStore(root), path = await store.snapshot(source);
+  await rm(source);
+  assert.deepEqual(await new ModelImageStore(root).readSnapshot(path), { content: png, mime: 'image/png' });
+  if (process.platform === 'win32') assert.deepEqual((await store.readSnapshot(path.toUpperCase().replaceAll('\\', '/'))).content, png);
+  await assert.rejects(store.readSnapshot(source), { code: 'image_snapshot_invalid' });
+  await assert.rejects(store.readSnapshot(basename(path)), { code: 'image_snapshot_invalid' });
+  const outside = join(root, 'outside'); await mkdir(outside);
+  await writeFile(join(outside, basename(path)), png);
+  await assert.rejects(store.readSnapshot(join(outside, basename(path))), { code: 'image_snapshot_invalid' });
+  await writeFile(path, gif);
+  await assert.rejects(store.readSnapshot(path), { code: 'image_snapshot_corrupt' });
+  await rm(path);
+  // An owned blob name must not redirect to an external file, even identical bytes.
+  try { await symlink(join(outside, basename(path)), path, 'file'); }
+  catch (error) { if (process.platform === 'win32' && error.code === 'EPERM') return; throw error; }
+  await assert.rejects(store.readSnapshot(path), { code: 'image_snapshot_invalid' });
 });
 
 test("concurrent injections atomically deduplicate identical bytes without temporary-file residue", async (context) => {

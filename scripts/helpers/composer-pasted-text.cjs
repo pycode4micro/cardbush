@@ -142,7 +142,47 @@ module.exports = async ({ run, until, pause, window, root }) => {
       await run('document.querySelector(".composer-file-remove").click()');
       await until('!document.querySelector("[data-pasted-text]")', 'theme remove');
     }
-    console.log('Pasted text UI passed: native/rich paste, exact files, preview/removal, pending send, conversation switching, failures, remote retry and both themes.');
+    for (const [label, rich, remote] of [['plain', false, false], ['rich', true, false], ['remote', false, true]]) {
+      await run(`
+        pasteSession = ${JSON.stringify('cumulative-' + label)}; pasteRemote = ${remote};
+        window.cumulativePrefix = ${JSON.stringify(rich ? '[fixture](<D:/skills/fixture/SKILL.md>) ' : '')};
+        pasteDrafts[pasteSession] = cumulativePrefix + '字'.repeat(7900 - cumulativePrefix.length); pasteMount();
+      `);
+      await until(`!!document.querySelector('${rich ? '.composer-prompt-editor' : 'textarea[data-composer-input]'}')`, label + ' cumulative input');
+      await run(`{
+        const input = document.querySelector('[data-composer-input]'); input.focus();
+        if (input instanceof HTMLTextAreaElement) input.setSelectionRange(input.value.length, input.value.length);
+        else { const range = document.createRange(); range.selectNodeContents(input); range.collapse(false);
+          getSelection().removeAllRanges(); getSelection().addRange(range); }
+      }`);
+      const addition = '尾'.repeat(100);
+      const handled = await run(`pasteText(${JSON.stringify(addition)})`);
+      if (!handled) await window.webContents.insertText(addition);
+      await until('pasteDrafts[pasteSession].length === 8000', label + ' exact limit remains inline');
+      assert.equal(await run('document.querySelector("[data-pasted-text]")'), null);
+      const original = await run('pasteDrafts[pasteSession]');
+      assert.equal(await run('pasteText("追加")'), true);
+      await until('!!document.querySelector("[data-pasted-text]") && !document.querySelector(".composer-attachment-progress")', label + ' cumulative overflow attaches');
+      assert.equal(await run('pasteDrafts[pasteSession]'), original, 'existing prompt and references stay in place');
+      assert.equal(await fs.readFile(created.at(-1).path, 'utf8'), '追加', 'only the incoming paste becomes a file');
+      assert.match(created.at(-1).path, remote ? /remote/ : /local/);
+      await run('document.querySelector(".composer-file-remove").click()');
+      await until('!document.querySelector("[data-pasted-text]")', label + ' remove cumulative attachment');
+
+      await run(`{
+        const input = document.querySelector('[data-composer-input]'); input.focus();
+        if (input instanceof HTMLTextAreaElement) input.setSelectionRange(input.value.length - 2, input.value.length, 'backward');
+        else { const tail = Array.from(input.childNodes).findLast(node => node.nodeType === Node.TEXT_NODE && node.textContent.length >= 2);
+          getSelection().setBaseAndExtent(tail, tail.textContent.length, tail, tail.textContent.length - 2); }
+      }`);
+      const replacementHandled = await run('pasteText("终")');
+      if (!replacementHandled) await window.webContents.insertText('终');
+      await until('pasteDrafts[pasteSession].length === 7999', label + ' replacement is measured from the selected range');
+      assert.equal(await run('pasteDrafts[pasteSession]'), original.slice(0, -2) + '终');
+      assert.equal(await run('document.querySelector("[data-pasted-text]")'), null);
+      if (rich) assert.ok(await run('document.querySelector(".composer-skill-token")'), 'replacement preserves the Skill token');
+    }
+    console.log('Pasted text UI passed: native/rich paste, cumulative limits, selected replacements, exact files, preview/removal, pending send, conversation switching, failures, remote retry and both themes.');
   } catch (error) {
     console.error('Paste fixture diagnostics:', events, await run('JSON.stringify({ errors: errorDialogs, randomUUID: typeof crypto.randomUUID })'));
     throw error;

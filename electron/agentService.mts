@@ -1,5 +1,6 @@
 import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
-import { readUserPrompt, promptContextMetadata, collectTurnAttachments, HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND } from '@cardbush/bush-protocol';
+import { readUserPrompt, promptContextMetadata, collectTurnAttachments, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
+import { ModelImageStore } from '@cardbush/bush-runtime';
 import { sessionSummarySchema, sessionHistoryPageSchema } from '@cardbush/bush-protocol';
 import { webToolAllowed, webToolDefinition } from '@cardbush/bush-runtime/web-policy';
 import { callWebRemoteAgent } from './agentWebRemoteAgents.mjs';
@@ -93,6 +94,7 @@ export class AgentService {
   #stateListeners = new Set<() => void>();
   #releaseLock: () => Promise<void>;
   #pastedTextStores = new Map<string, PastedTextAttachments>();
+  readonly #modelImages: ModelImageStore;
 
   private constructor(root: string, state: AgentState, release: () => Promise<void>, options: AgentServiceOptions, sandbox: SandboxSetup, desktop?: AgentDesktop) {
     this.#toolsEnabled = options.toolsEnabled !== false;
@@ -104,6 +106,7 @@ export class AgentService {
     this.#local = options.local === true;
     this.#desktop = desktop;
     const runtimeRoot = join(root, 'runtime-state');
+    this.#modelImages = new ModelImageStore(runtimeRoot);
     const bundled = options.bundledRoot ?? join(root, 'bundled');
     this.bundledRoot = bundled;
     // A local CLI reuses the desktop profile's authenticated browser connection;
@@ -387,10 +390,8 @@ export class AgentService {
         if (operation === 'files.list') return readWorkspaceDirectory({ rootPath: workspace.workspaceDir, directoryPath: z.string().optional().parse(data.directoryPath), offset: z.number().int().nonnegative().optional().parse(data.offset) });
         return operation === 'files.read' ? agentFileRead(workspace.workspaceDir, data, {
           roots: [join(this.root, 'runtime-state', 'captures'), join(this.root, 'desktop-bridge', 'captures'), join(this.root, 'browser-connector', 'artifacts')],
-          hasImageArtifact: async path => {
-            const receipt = await this.#command(HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND, { sessionId: sessionId(), path });
-            return (receipt as { found?: unknown } | null)?.found === true;
-          },
+          resolveReceipt: async path => await this.#command(RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, { sessionId: sessionId(), path }) as RuntimeFileReceipt | null,
+          readImageSnapshot: path => this.#modelImages.readSnapshot(path, readSignal),
         }) : agentFileUpload(workspace.workspaceDir, data);
       }
       case 'info': return this.info();

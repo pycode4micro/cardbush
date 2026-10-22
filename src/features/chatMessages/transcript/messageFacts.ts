@@ -413,12 +413,6 @@ export function chatTurnStartedAt(
   const matching = normalizedTurnId
     ? messages.filter((message) => chatMessageTurnId(message) === normalizedTurnId)
     : messages;
-  const userStartedAt = earliestValidTimestamp(
-    matching
-      .filter((message) => message.role === 'user' && !isTurnGuidanceMessage(message))
-      .map((message) => message.createdAt),
-  );
-  if (userStartedAt) return userStartedAt;
   const metadataStartedAt = earliestValidTimestamp(
     matching.flatMap((message) => [
       message.metadata?.cardbush_turn_started_at,
@@ -427,7 +421,13 @@ export function chatTurnStartedAt(
       message.metadata?.turnStartedAt,
     ]),
   );
-  return metadataStartedAt ?? earliestValidTimestamp([fallback]);
+  // The user timestamp can precede execution by the entire queue wait.
+  // Keep it only as a fallback for legacy transcripts without Runtime timing.
+  return metadataStartedAt ?? earliestValidTimestamp(
+    matching
+      .filter((message) => message.role === 'user' && !isTurnGuidanceMessage(message))
+      .map((message) => message.createdAt),
+  ) ?? earliestValidTimestamp([fallback]);
 }
 
 export function isTurnGuidanceMessage(message: ChatMessage) {

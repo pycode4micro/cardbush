@@ -20,6 +20,7 @@ const referenceTitle = (part: ComposerPromptPart) => part.plugin?.name || part.s
 export interface ComposerPromptInputHandle {
   focus(): void;
   setSelectionRange(start: number, end: number): void;
+  getSelectionRange(): { start: number; end: number };
 }
 
 /** Keep native text editing until an explicit reference needs an inline token. */
@@ -62,6 +63,17 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       lastCaret.current = end;
       if (rich && editor.current) selectOffsets(editor.current, start, end);
       else textarea.current?.setSelectionRange(start, end);
+    },
+    getSelectionRange: () => {
+      if (rich && editor.current) {
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : undefined;
+        if (range && editor.current.contains(range.commonAncestorContainer)) {
+          const start = promptOffset(editor.current, range.startContainer, range.startOffset);
+          return { start, end: range.collapsed ? start : promptOffset(editor.current, range.endContainer, range.endOffset) };
+        }
+      }
+      return { start: textarea.current?.selectionStart ?? lastCaret.current, end: textarea.current?.selectionEnd ?? lastCaret.current };
     },
   }), [rich]);
 
@@ -268,8 +280,12 @@ function readPrompt(node: Node, nativeEditing = false): string {
 function caretOffset(root: HTMLElement): number {
   const selection = window.getSelection();
   if (!selection?.rangeCount || !root.contains(selection.focusNode)) return 0;
+  return promptOffset(root, selection.focusNode!, selection.focusOffset);
+}
+
+function promptOffset(root: HTMLElement, node: Node, offset: number): number {
   const range = document.createRange(); range.selectNodeContents(root);
-  range.setEnd(selection.focusNode!, selection.focusOffset);
+  range.setEnd(node, offset);
   return readPrompt(range.cloneContents()).length;
 }
 

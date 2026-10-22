@@ -69,6 +69,55 @@ test('image lookup uses explicit native receipts without granting paths from tex
   if (process.platform === 'win32') assert.equal(store.hasImageArtifact('session_0', image.path.toUpperCase().replaceAll('\\', '/')), true);
 });
 
+test('file transport resolves only successful host image and file memo receipts in this session', t => {
+  const root = temporaryRoot(t), path = join(root, 'reference.png'), snapshot = join(root, 'model-images', 'snapshot.png');
+  const imageResult = { artifacts: [{ type: 'image', path, metadata: { model_input: true, model_input_url: snapshot } }] };
+  const memoResult = { protocol: 'bush.file_memo.v1', id: 'file_1', reference: 'cardbush-memo:1',
+    file: { path, name: 'reference.png', size: 123, mtimeMs: 456 }, note: { purpose: 'delivery', points: [] } };
+  const imageManifest = { protocol: 'bush.tool.action_manifest.v1', manifest_id: 'image',
+    effect_kind: 'observation', operation: 'image.inject', owner: 'runtime', risk: 'low', dispatch_scope: 'session', mutating: false };
+  const variants = [
+    ['inject_image_input', imageResult, imageManifest, { kind: 'model_image', path: snapshot }],
+    ['remember_file', memoResult, { ...imageManifest, operation: 'file_memo' }, { kind: 'file_memo', path, size: 123, mtimeMs: 456 }],
+    ['mcp__plugin__image', imageResult, { ...imageManifest, owner: 'plugin' }, { kind: 'capture' }],
+    ['mcp__plugin__memo', memoResult, imageManifest, undefined],
+    ['run_tools', { result: memoResult }, imageManifest, undefined],
+    ['inject_image_input', { isError: true, ...imageResult }, imageManifest, undefined],
+    ['remember_file', { isError: true, ...memoResult }, { ...imageManifest, operation: 'file_memo' }, undefined],
+    ['remember_file', memoResult, undefined, undefined],
+  ];
+  const persistence = new FileToolExecutionPersistence({ root: join(root, 'journal') });
+  const store = new ToolExecutionStore({ persistence });
+  for (const [index, [name, result, actionManifest, expected]] of variants.entries()) {
+    const sessionId = `receipts_${index}`;
+    store.record({ ...toolCall(), name, argumentsText: JSON.stringify(imageResult) }, { ...identity(), sessionId },
+      outcome({ result, actionManifest, workspaceChanges: [] }), JSON.stringify(memoResult));
+    assert.deepEqual(store.fileReceipt(sessionId, path), expected, name);
+    assert.equal(store.fileReceipt(sessionId, snapshot), undefined, 'snapshot hash alone grants nothing');
+    assert.equal(store.fileReceipt(sessionId, join(root, 'neighbor.png')), undefined);
+    assert.equal(store.fileReceipt(sessionId, 'reference.png'), undefined);
+  }
+  assert.equal(store.fileReceipt('another_session', path), undefined);
+  const updatedMemo = { ...memoResult, file: { ...memoResult.file, size: 124, mtimeMs: 789 } };
+  store.record({ ...toolCall(), id: 'memo-revision', name: 'remember_file' }, { ...identity(), sessionId: 'receipts_1' },
+    outcome({ result: updatedMemo, actionManifest: { ...imageManifest, operation: 'file_memo' }, workspaceChanges: [] }));
+  assert.deepEqual(store.fileReceipt('receipts_1', path), { kind: 'file_memo', path, size: 124, mtimeMs: 789 }, 'the latest host revision wins');
+  // Failed or cancelled calls cannot masquerade as an earlier successful read.
+  for (const kind of ['failed', 'cancelled']) {
+    store.record({ ...toolCall(), name: 'inject_image_input' }, { ...identity(), sessionId: kind },
+      { kind, actionManifest: imageManifest, error: { kind: 'tool', code: kind, message: kind, details: {} }, workspaceChanges: [] });
+    assert.equal(store.fileReceipt(kind, path), undefined);
+  }
+  persistence.close();
+  const recoveredPersistence = new FileToolExecutionPersistence({ root: join(root, 'journal') });
+  const recovered = new ToolExecutionStore({ persistence: recoveredPersistence });
+  assert.deepEqual(recovered.fileReceipt('receipts_0', path), { kind: 'model_image', path: snapshot });
+  recovered.fork('receipts_0', 'fork', new Set(['turn_1']));
+  assert.deepEqual(recovered.fileReceipt('fork', path), { kind: 'model_image', path: snapshot });
+  if (process.platform === 'win32') assert.deepEqual(recovered.fileReceipt('receipts_0', path.toUpperCase().replaceAll('\\', '/')), { kind: 'model_image', path: snapshot });
+  recoveredPersistence.close();
+});
+
 test("rejects conflicting identities and duplicate Runtime workspace changes", () => {
   const store = new ToolExecutionStore({ now: () => NOW });
   store.record(toolCall(), identity(), outcome());

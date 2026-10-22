@@ -30,6 +30,23 @@ test('thresholds and short previews cover plain, CRLF, CR and Unicode text', () 
   assert.ok(JSON.stringify(summary).length < 250);
 });
 
+test('successive pastes account for the draft and selected replacement without discarding either', () => {
+  const value = '界'.repeat(7999);
+  const end = { value, start: value.length, end: value.length };
+  assert.equal(pastedTextSummary('a', end).attach, false, 'exact threshold stays inline');
+  assert.equal(pastedTextSummary('ab', end).attach, true, 'small pastes cannot accumulate beyond the limit');
+  assert.equal(pastedTextSummary('ab', { ...end, start: 0, end: 1 }).attach, false, 'replacement subtracts the selected text');
+  assert.equal(pastedTextSummary('short', { value: 'a'.repeat(9000), start: 0, end: 9000 }).attach, false);
+  assert.equal(pastedTextSummary('', { ...end, value: value + 'extra' }).attach, false, 'empty clipboard does not create an attachment');
+  const lines = 'line\r\n'.repeat(199);
+  assert.equal(pastedTextSummary('last', { value: lines, start: lines.length, end: lines.length }).attach, false);
+  assert.equal(pastedTextSummary('last\nnext', { value: lines, start: lines.length, end: lines.length }).attach, true);
+  assert.equal(pastedTextSummary('last\nnext', { value: lines, start: 0, end: 6 }).attach, false);
+  assert.equal(pastedTextSummary('\nlast', { value: 'line\r'.repeat(199), start: 995, end: 995 }).attach, false, 'CRLF across the insertion boundary counts once');
+  const summary = pastedTextSummary('new\ntext', end);
+  assert.deepEqual(summary, { attach: true, lines: 2, preview: 'new text' }, 'attachment metadata describes only the incoming text');
+});
+
 test('UTF-8 file is exact; retaining preserves its path after restart, expiry and delayed removal', async t => {
   const root = await directory(t); let now = Date.now();
   const store = new PastedTextAttachments(root, () => now);

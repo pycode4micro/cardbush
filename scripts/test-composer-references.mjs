@@ -3,6 +3,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import ts from 'typescript';
 import * as protocol from '@cardbush/bush-protocol';
 import { createProductAgentTurnRequest } from '../packages/bush-product-agent/dist/index.js';
@@ -264,6 +269,75 @@ test('ordinary commands, partial names, ambiguous aliases and literal examples a
     assert.equal(parts.map(part => part.text).join(''), value);
   }
   assert.equal(skillRefs.skillPromptParts('/demo:review', [], commands)[0].skillCommand, skill, 'qualified IDs still disambiguate');
+});
+
+test('sent Skill invocations render a token without disturbing arguments or Markdown', () => {
+  const command = { id: 'baiying-replay:baiying-replay', name: 'baiying-replay', kind: 'skill', path: 'C:/skills/baiying/SKILL.md' };
+  for (const prefix of ['/', '$']) for (const id of [command.id, command.name]) {
+    const content = ` \n${prefix}${id} 这里的**依赖**配置好了吗\n\n- 后续要求\n- [文件](<D:/workspace/notes.md>)`;
+    const presentation = skillRefs.skillMarkdownPresentation(content, [command]);
+    const tree = fromMarkdown(presentation.content);
+    const original = structuredClone(tree);
+    skillRefs.remarkSkillCommands(presentation)(tree);
+    const [token, remaining, ...rest] = tree.children[0].children;
+    assert.equal(token.type, 'link');
+    assert.equal(token.url, command.path);
+    assert.equal(token.data.hProperties['data-skill-command'], prefix + id);
+    assert.equal(token.children[0].value, command.name);
+    assert.equal(remaining.value, ' 这里的');
+    assert.deepEqual(rest, original.children[0].children.slice(1), 'emphasis and the rest of the paragraph keep their structure');
+    assert.deepEqual(tree.children.slice(1), original.children.slice(1), 'subsequent blocks are unchanged');
+  }
+  for (const content of ['/unknown:skill 参数', '`/baiying-replay:baiying-replay` 参数',
+    '```text\n/baiying-replay:baiying-replay\n```', '引用 /baiying-replay:baiying-replay',
+    '/baiying-replay:baiying-replay-more', '\\/baiying-replay:baiying-replay', '    /baiying-replay:baiying-replay']) {
+    const presentation = skillRefs.skillMarkdownPresentation(content, [command]);
+    assert.equal(presentation.content, content);
+    const tree = fromMarkdown(presentation.content), original = structuredClone(tree);
+    skillRefs.remarkSkillCommands(presentation)(tree);
+    assert.deepEqual(tree, original, content);
+  }
+});
+
+test('Markdown punctuation in a Skill identifier cannot consume the command or format its arguments', () => {
+  for (const id of ['demo:_review_', '__demo__:review', 'demo:review_files', 'demo:_review']) {
+    const command = { id, name: id.split(':')[1], kind: 'skill', path: 'C:/skills/review/SKILL.md' };
+    for (const marker of ['/', '$']) {
+      const content = `${marker}${id} 参数_ 与**加粗**`;
+      const presentation = skillRefs.skillMarkdownPresentation(content, [command]);
+      const tree = fromMarkdown(presentation.content);
+      skillRefs.remarkSkillCommands(presentation)(tree);
+      const [token, remaining, bold] = tree.children[0].children;
+      assert.equal(token.data.hProperties['data-skill-command'], marker + id);
+      assert.equal(token.children[0].value, command.name);
+      assert.equal(remaining.value, ' 参数_ 与');
+      assert.equal(bold.type, 'strong');
+      assert.equal(skillRefs.skillPromptParts(content, [], [command]).map(part => part.text).join(''), content);
+    }
+    for (const content of [`    /${id}`, `\t/${id}`, `\`/${id}\``, `/${id.replaceAll('_', '\\_')}`]) {
+      if (content === '/' + id) continue;
+      assert.equal(skillRefs.skillMarkdownPresentation(content, [command]).content, content, 'code and escaped examples stay literal');
+    }
+  }
+});
+
+test('Skill tokens coexist with repaired URLs and source citations without losing literal escapes', () => {
+  const { remarkAutolinkBoundaries } = load('src/features/chatMessages/markdownFormat.ts');
+  const { remarkSourceMemoShorthand } = load('src/features/chatMessages/sourceMemoShorthand.ts');
+  for (const id of ['demo:review', 'demo:_review_']) for (const url of ['', ' https://example.com/docs，继续。']) {
+    const command = { id, name: id.split(':')[1], kind: 'skill', path: 'C:/skills/review/SKILL.md' };
+    const content = `/${id} 参考 [1]${url}\n\n\\[2\\] 与 \`[1]\``;
+    const presentation = skillRefs.skillMarkdownPresentation(content, [command]);
+    const html = renderToStaticMarkup(createElement(ReactMarkdown, {
+      remarkPlugins: [remarkGfm, remarkAutolinkBoundaries, [skillRefs.remarkSkillCommands, presentation],
+        [remarkSourceMemoShorthand, { references: new Map([[1, 'https://evidence.test/1'], [2, 'https://evidence.test/2']]) }]],
+    }, presentation.content));
+    assert.ok(html.includes(`data-skill-command="/${id}"`));
+    assert.equal((html.match(/href="https:\/\/evidence.test\/1"/g) ?? []).length, 1, 'the adjacent citation survives splitting a source text node');
+    assert.ok(!html.includes('href="https://evidence.test/2"'), 'escaped citations stay literal');
+    assert.ok(html.includes('<code>[1]</code>'));
+    if (url) assert.ok(html.includes('href="https://example.com/docs"'));
+  }
 });
 
 const browser = { kind: 'browser', tabId: 'tab-1', url: 'https://example.test/a?term=中文&next=(x)#section', title: '已打开的网页' };

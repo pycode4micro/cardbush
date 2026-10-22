@@ -62,6 +62,7 @@ import type {
   ChatMessage,
   ChatToolArtifact,
   ChatToolExecution,
+  PluginCommandSummary,
 } from '../../types';
 import type { CardlingScene } from '../cardling/scene';
 import { openInspector } from '../inspector/inspectorEvents';
@@ -99,7 +100,10 @@ import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import { InlineHtmlPreview, isHtmlPreviewPath } from './InlineHtmlPreview';
 import { InlineAudio, InlineVideo } from './InlineMedia';
 import { PluginReferenceLink } from '../plugins/PluginReferenceLink';
-import { PromptReferenceFallback, PromptReferenceLink } from '../composer/PromptReferenceLink';
+import { usePluginCommandCatalog } from '../plugins/pluginCatalog';
+import { remarkSkillCommands, skillMarkdownPresentation } from '../skills/skillReferences';
+import { SkillCommandReference, SkillPromptFallback } from '../skills/SkillCommandReference';
+import { PromptReferenceLink } from '../composer/PromptReferenceLink';
 import { selectedTeamReference } from '../../shared/promptReferences';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { MarkdownReference, parseMarkdownReference, UnavailableMarkdownReference } from './MarkdownReference';
@@ -340,6 +344,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     referenceMode: 'local' | 'remote';
     compactImages: boolean;
     streaming?: boolean;
+    skillCommands?: PluginCommandSummary[];
   };
   const MarkdownRenderContext = createContext<MarkdownRenderSettings>({
     workspaceRoot: '', pathAliases: noFilePathAliases, language: 'zh', referenceMode: 'local', compactImages: true,
@@ -355,11 +360,13 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       }
       return <div {...props}>{children}</div>;
     },
-    a: ({ href, children, ...props }) => {
+    a: ({ href, children, node, ...props }) => {
       const host = useContext(ConversationHostContext);
       const [missingAnchor, setMissingAnchor] = useState(false);
       const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const richFileReferences = useContext(RichFileReferencesContext);
+      if (node?.properties['data-skill-command']) return <SkillCommandReference
+        command={String(node.properties['data-skill-command'])} path={String(node.properties['data-skill-path'] ?? '')}>{children}</SkillCommandReference>;
       const reference = parseMarkdownReference(href);
       if (reference) return <MarkdownReference reference={reference} language={language} rich={richFileReferences}>{children}</MarkdownReference>;
       if (referenceMode === 'remote' && href && !/^(https?:\/\/|#)/i.test(href)) {
@@ -527,16 +534,21 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     referenceMode,
     compactImages,
     streaming,
+    skillCommands,
   }: MarkdownRenderSettings & { content: string }) {
     const host = useContext(ConversationHostContext);
     const richFileReferences = useContext(RichFileReferencesContext);
     const presentedMedia = useContext(PresentedMediaContext);
     const sourceReferences = useSourceMemoReferences(content, richFileReferences);
+    const markdown = useMemo(() => skillMarkdownPresentation(normalizeMarkdownContentForDisplay(content), skillCommands), [content, skillCommands]);
     const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode, compactImages }), [workspaceRoot, pathAliases, language, referenceMode, compactImages]);
     const remarkPlugins = useMemo(() => {
       const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm];
       if (streaming) plugins.push(remarkStreamingTables);
       plugins.push(remarkAutolinkBoundaries);
+      // URL boundary repair can reparse the document. Enrich references only
+      // after it finishes so generated Skill tokens survive that replacement.
+      if (markdown.invocation) plugins.push([remarkSkillCommands, { invocation: markdown.invocation }]);
       if (sourceReferences.size) plugins.push([remarkSourceMemoShorthand, { references: sourceReferences }]);
       if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
       if (compactImages && richFileReferences) plugins.push([remarkImageGroups, { eligible: (url: string) => {
@@ -551,7 +563,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           && !/^data:(?:audio|video)\//i.test(path) && !presentedMedia.has(mediaPresentationKey(path));
       } }]);
       return plugins;
-    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, compactImages, presentedMedia, streaming, host?.fileReferencePath]);
+    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, compactImages, presentedMedia, streaming, markdown.invocation, host?.fileReferencePath]);
     const urlTransform = useCallback((url: string, key: string) => {
       if (host?.fileReferencePath) {
         if (key === 'src' || !/^(https?:\/\/|#)/i.test(url)) return host.fileReferencePath(url) ?? '';
@@ -570,7 +582,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           urlTransform={urlTransform}
           components={components}
         >
-          {normalizeMarkdownContentForDisplay(content)}
+          {markdown.content}
         </ReactMarkdown>
       </MarkdownRenderContext.Provider>
     );
@@ -578,7 +590,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
 
   return { default: MarkdownRenderer };
 }, (props) => <>
-  <p className="markdown-fallback"><PromptReferenceFallback content={props.content} /></p>
+  <p className="markdown-fallback"><SkillPromptFallback content={props.content} commands={props.skillCommands}/></p>
   <DeferredModuleNotice language={props.language} basicPreview />
 </>);
 
@@ -1037,7 +1049,8 @@ function MessageBubbleView({
           )}
           {(goalCommand?.content ?? text) && (
             <UserMessageDisclosure key={feedbackId} language={language}>
-              <MarkdownContent content={goalCommand?.content ?? text} language={language} />
+              {goalCommand ? <MarkdownContent content={goalCommand.content} language={language}/>
+                : <UserMessageContent content={text} language={language}/>}
             </UserMessageDisclosure>
           )}
           <AutomationReminderCard value={message.metadata?.automationReminder} language={language}/>
@@ -2097,13 +2110,15 @@ function assistantTurnElapsedMs(
 ) {
   const metadata = message.metadata ?? {};
   const persistedDurationMs = assistantDurationFromMetadata(metadata);
-  const startedAt = earliestTimestamp([
+  const explicitStartedAt = [
     metadata.cardbush_turn_started_at,
     metadata.cardbushTurnStartedAt,
     metadata.turn_started_at,
     metadata.turnStartedAt,
     metadata.started_at,
     metadata.startedAt,
+  ].map(parseTimestamp).find((value) => value != null);
+  const startedAt = explicitStartedAt ?? earliestTimestamp([
     message.createdAt,
     ...executions.map((execution) => execution.createdAt),
   ]);
@@ -2886,25 +2901,32 @@ const MessageInlineMediaContent = memo(function MessageInlineMediaContent({
   );
 });
 
+function UserMessageContent({ content, language }: { content: string; language: AppLanguage }) {
+  const commands = usePluginCommandCatalog(/^\s*[/$]/.test(content));
+  return <MarkdownContent content={content} language={language} skillCommands={commands}/>;
+}
+
 export const MarkdownContent = memo(function MarkdownContent({
   content,
   language,
   referenceMode,
   compactImages = true,
   streaming = false,
+  skillCommands,
 }: {
   content: string;
   language: AppLanguage;
   referenceMode?: 'local' | 'remote';
   compactImages?: boolean;
   streaming?: boolean;
+  skillCommands?: PluginCommandSummary[];
 }) {
   const host = useContext(ConversationHostContext);
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   const pathAliases = useContext(FileReferencePathAliasesContext);
   return (
     <div className="markdown-content">
-      <Suspense fallback={<p className="markdown-fallback"><PromptReferenceFallback content={content} /></p>}>
+      <Suspense fallback={<p className="markdown-fallback"><SkillPromptFallback content={content} commands={skillCommands}/></p>}>
         <LazyMarkdownContent
           content={content}
           workspaceRoot={workspaceRoot}
@@ -2913,6 +2935,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           referenceMode={referenceMode ?? (host ? 'remote' : 'local')}
           compactImages={compactImages}
           streaming={streaming}
+          skillCommands={skillCommands}
         />
       </Suspense>
     </div>

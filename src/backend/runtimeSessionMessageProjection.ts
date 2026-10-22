@@ -70,7 +70,9 @@ export function projectRuntimeTurnMessages(
   let assistantSegmentIndex = 0;
   let segmentStartedAt = turn.createdAt;
   const lastAssistantIndex = findLastAssistantIndex(turn.messages);
-  const turnStartedAt = visibleTurnUserStartedAt(turn) ?? turn.createdAt;
+  // User messages retain their enqueue time. Only the Runtime Turn's clock
+  // measures execution, including when a queued message starts much later.
+  const turnStartedAt = turn.createdAt;
   const guidanceAfterAssistant = new Map<number, RuntimeSessionMessage>();
   let precedingAssistantIndex = -1;
   turn.messages.forEach((message, index) => {
@@ -205,14 +207,6 @@ export function projectRuntimeSessionMessage(
       : {}),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
-}
-
-function visibleTurnUserStartedAt(turn: RuntimeCommittedTurn) {
-  return turn.messages.find((message) =>
-    message.message.role === 'user' &&
-    message.message.visibility !== 'internal' &&
-    !isRuntimeGuidanceMessage(message)
-  )?.createdAt;
 }
 
 function runtimeMessageAttachments(

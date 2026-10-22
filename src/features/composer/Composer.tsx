@@ -4,7 +4,7 @@ import { useVoiceComposer, VoiceComposerPanel } from '../voice/VoiceComposer';
 import { useIndividuation } from '../settings/useIndividuation';
 import { useConversationStyle } from '../settings/useConversationStyle';
 import { conversationStyleName, conversationStylePresets } from '../settings/conversationStyle';
-import { usePluginCatalog } from '../plugins/pluginCatalog';
+import { usePluginCatalog, usePluginCommandCatalog } from '../plugins/pluginCatalog';
 import { useApplications } from '../appCenter/appCenterStore';
 import { applicationReference } from '../appCenter/appCenterModel';
 import { ApplicationIcon } from '../appCenter/AppCenter';
@@ -101,7 +101,6 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   SkillSummary,
-  PluginCommandSummary,
 } from '../../types';
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from '../chatMessages';
 import { openInspector } from '../inspector/inspectorEvents';
@@ -486,7 +485,7 @@ export function Composer({
   useEffect(() => { if (voiceComposer.visible) { setActiveMenu(null); setCommandState(null); } }, [voiceComposer.visible]);
   const plugins = usePluginCatalog();
   const applications = useApplications(language);
-  const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
+  const pluginCommands = usePluginCommandCatalog();
   const memory = useIndividuation();
   const predictionHintId = useId();
   const source = useConversationSource(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
@@ -505,21 +504,6 @@ export function Composer({
     current.onDraftChange(`${current.draft}${current.draft && !/\s$/.test(current.draft) ? ' ' : ''}${text} `);
     textareaRef.current?.focus();
   };
-  useEffect(() => {
-    if (host) { setPluginCommands(host.pluginCommands); return; }
-    const desktop = window.cardbushDesktop;
-    if (!desktop?.pluginCommands) return;
-    let active = true, generation = 0;
-    const refresh = () => {
-      const revision = ++generation;
-      void desktop.pluginCommands().then(commands => { if (active && revision === generation) setPluginCommands(commands); })
-        .catch(() => { /* Retain the last successful catalog during a transient refresh failure. */ });
-    };
-    refresh();
-    const unsubscribe = desktop.onCapabilityCatalogChanged?.(refresh);
-    window.addEventListener('focus', refresh);
-    return () => { active = false; unsubscribe?.(); window.removeEventListener('focus', refresh); };
-  }, [host]);
   const [imageAttachments, setImageAttachments, currentImages] = useConversationViewState<ComposerImageAttachment[]>(`${attachmentKey}:images`, () => [], value => value.length > 0);
   const [fileAttachments, setFileAttachments, currentFiles] = useConversationViewState<ComposerFileAttachment[]>(`${attachmentKey}:files`, () => [], value => value.length > 0);
   const [attachmentUploads, setAttachmentUploads, currentAttachmentUploads] = useConversationViewState(`${attachmentKey}:uploads`, () => 0, value => value > 0);
@@ -907,7 +891,8 @@ export function Composer({
     if (inputReadOnly || (submissionPending && !host?.optimisticSubmission)) { event.preventDefault(); event.stopPropagation(); return; }
     if (event.clipboardData.files.length) return;
     const text = event.clipboardData.getData('text/plain');
-    const summary = pastedTextSummary(text);
+    const selection = textareaRef.current?.getSelectionRange() ?? { start: composerInputValue.length, end: composerInputValue.length };
+    const summary = pastedTextSummary(text, { value: composerInputValue, ...selection });
     if (!summary.attach) return;
     // Capture before either textarea or rich-editor paste handling inserts text.
     event.preventDefault(); event.stopPropagation();

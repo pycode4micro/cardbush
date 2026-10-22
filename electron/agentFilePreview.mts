@@ -6,7 +6,7 @@ const filePart = z.object({ name: z.string(), size: z.number().int().min(0).max(
   offset: z.number().int().min(0), content: z.string().max(710_000).regex(/^[A-Za-z0-9+/]*={0,2}$/), done: z.boolean() });
 type Grant = { owner: number; connectionId: string; sessionId: string; absolute: boolean };
 
-/** An opaque, disposable origin reads only through the selected Agent's workspace API. */
+/** An opaque, disposable origin reads only through the selected Agent's scoped file API. */
 export class AgentFilePreviews {
   readonly #grants = new Map<string, Grant>();
   constructor(readonly read: (connectionId: string, input: { sessionId: string; path: string; offset: number }) => Promise<unknown>,
@@ -34,7 +34,7 @@ export class AgentFilePreviews {
     catch { return new Response('Invalid path', { status: 400 }); }
     if (!path || /[\x00-\x1f]/.test(path)) return new Response('Invalid path', { status: 400 });
     // Fetching arbitrary local/protocol URLs is never a fallback. The service
-    // resolves real paths and rejects escapes from this session's workspace.
+    // resolves real paths and requires the workspace or an exact host receipt.
     const read = async (offset: number) => {
       request.signal.throwIfAborted();
       if (this.#grants.get(url.hostname) !== grant) throw Error('Preview expired');
@@ -58,7 +58,7 @@ export class AgentFilePreviews {
         end = match[1] && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
         if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
       }
-      const headers = new Headers({ 'content-type': this.contentType(path), 'content-length': String(Math.max(0, end - start + 1)),
+      const headers = new Headers({ 'content-type': this.contentType(part.name), 'content-length': String(Math.max(0, end - start + 1)),
         'accept-ranges': 'bytes', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
         'content-security-policy': "default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; frame-src 'self' https:; form-action 'none'",
       });

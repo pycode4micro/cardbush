@@ -18,6 +18,13 @@ export const toolImageArtifactRequestSchema = z.object({
   sessionId: z.string().min(1),
   path: z.string().min(1),
 });
+// Host file transport only; this is not a model-visible tool or a directory grant.
+export const RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND = "runtime.resolve_file_receipt" as const;
+export const runtimeFileReceiptRequestSchema = toolImageArtifactRequestSchema;
+export type RuntimeFileReceipt =
+  | { kind: 'model_image'; path: string }
+  | { kind: 'file_memo'; path: string; size: number; mtimeMs: number }
+  | { kind: 'capture' };
 export const LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND =
   "runtime.list_turn_tool_executions" as const;
 export const GET_RUNTIME_TOOL_CATALOG_COMMAND = "runtime.get_tool_catalog" as const;
