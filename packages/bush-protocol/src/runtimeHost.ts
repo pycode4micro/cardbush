@@ -389,6 +389,10 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       targetInputTokens: z.number().int().nonnegative().optional(),
       recentTokenBudget: z.number().int().nonnegative().optional(),
       retainedInputTokens: z.number().int().nonnegative().optional(),
+      summaryGroupTurnIds: z.array(z.string().min(1)).optional(),
+      isolateSources: z.boolean().optional(),
+      method: z.enum(['checkpoint', 'prepared_tool_handoff']).optional(),
+      preparedTurnIds: z.array(z.string().min(1)).optional(),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({
@@ -408,8 +412,10 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       inputTokensBefore: z.number().int().nonnegative().optional(),
       inputTokensAfter: z.number().int().nonnegative().optional(),
       targetInputTokens: z.number().int().nonnegative().optional(),
+      admissionTargetInputTokens: z.number().int().nonnegative().optional(),
       retainedMessageCount: z.number().int().nonnegative().optional(),
       inputDigest: z.string().min(1).optional(),
+      method: z.enum(['checkpoint', 'prepared_tool_handoff']).optional(),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({

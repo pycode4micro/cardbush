@@ -10,6 +10,8 @@ import {
 
 import { validateConversation } from "./sessionStore.js";
 import { isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
+import { preparedToolHandoffText, preparedToolHandoffEvidence } from './preparedToolHandoff.js';
+import { conversationHistoryLocator, type ContextHistoryReference } from './conversationHistory.js';
 
 export interface AssembleContextInput {
   session: SessionSnapshot;
@@ -26,6 +28,9 @@ export interface ContextTurnSource {
   turnId: string;
   messages: ModelMessage[];
   messageIds?: Array<string | undefined>;
+  handoffEvidence?: { content: string; excerpts: import('./checkpointSkillEvidence.js').CheckpointSkillExcerpt[] };
+  summaryOnly?: boolean;
+  history?: ContextHistoryReference;
 }
 
 export const ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME = "active_turn_checkpoint" as const;
@@ -135,6 +140,8 @@ export function assembleContextProjection(input: AssembleContextInput): {
     throw new Error(`throughTurnSequence must be between 0 and ${lastSequence}.`);
   }
   const superseded = new Set(input.session.supersededMessageIds);
+  const turnsById = new Map(input.session.turns.map(turn => [turn.turnId, turn]));
+  const messageOwners = new Map(input.session.turns.flatMap(turn => turn.messages.map(item => [item.messageId, turn.turnId] as const)));
   const eligibleTurns = input.session.turns
     .filter((turn) => turn.turnSequence <= through)
     .map((turn) => ({
@@ -176,6 +183,22 @@ export function assembleContextProjection(input: AssembleContextInput): {
         }],
       }];
     }
+    if (turn.contextToolHandoff && source.length === turn.messages.length) {
+      const messages = turn.contextCheckpoint ? projectActiveTurnContext({ turnId: turn.turnId,
+        inputMessages: turn.messages.slice(0, turn.contextCheckpoint.inputMessageCount),
+        generatedMessages: turn.messages.slice(turn.contextCheckpoint.inputMessageCount), checkpoint: turn.contextCheckpoint,
+      }) : source.map(item => item.message);
+      // Keep original user/instruction messages and any existing checkpoint that
+      // carries earlier Turns. Only completed tool/progress facts are projected.
+      const checkpointIds = new Set(turn.contextCheckpoint?.projectionVersion === 'exchange_v1'
+        ? turn.contextCheckpoint.exchangeMessageIds : []);
+      const checkpointMessages = new Set(source.filter(item => checkpointIds.has(item.messageId)).map(item => item.message));
+      const content = preparedToolHandoffText(turn, turn.contextToolHandoff);
+      return [{ turnId: turn.turnId, source, handoffEvidence: { content, excerpts: preparedToolHandoffEvidence(turn, turn.contextToolHandoff) }, messages: [
+        ...messages.filter(message => (message.role !== 'assistant' && message.role !== 'tool') || checkpointMessages.has(message)),
+        { role: 'assistant' as const, content, toolCalls: [] },
+      ] }];
+    }
     if (turn.contextCheckpoint && source.length === turn.messages.length) {
       return [{
         turnId: turn.turnId,
@@ -189,7 +212,7 @@ export function assembleContextProjection(input: AssembleContextInput): {
       }];
     }
     return [{ turnId: turn.turnId, source, messages: source.map((item) => item.message) }];
-  }).map(({ turnId, source, messages }) => {
+  }).map(({ turnId, source, messages, ...extra }) => {
     // Projected messages retain the source message objects. Expire only notices
     // with Runtime provenance, including a stopped later compaction after an
     // earlier successful checkpoint. Keep actual calls/receipts and the journal.
@@ -199,6 +222,17 @@ export function assembleContextProjection(input: AssembleContextInput): {
     const ids = new Map(source.map(item => [item.message, item.messageId]));
     const visibleMessages = messages.filter(message => !coveredMessages.has(ids.get(message) ?? '') &&
       !expiredNotices.has(message) && !(message.role === 'developer' && message.name === 'lem_consult_reminder'));
+    const turn = turnsById.get(turnId)!;
+    const complete = source.length === turn.messages.length;
+    const kind: ContextHistoryReference['kind'] | undefined = complete
+      ? (turn.contextSummary ? 'turn_summary' : turn.contextToolHandoff ? 'prepared_handoff' : turn.contextCheckpoint ? 'checkpoint' : undefined)
+      : undefined;
+    const inherited = turn.contextCheckpoint?.projectionVersion === 'exchange_v1' ? [...new Set([
+      ...turn.contextCheckpoint.coveredTurnIds,
+      ...(turn.contextCheckpoint.coveredMessageIds ?? []).flatMap(id => messageOwners.get(id) ? [messageOwners.get(id)!] : []),
+    ])] : [];
+    const first = [turn, ...inherited.map(id => turnsById.get(id)).filter(item => item !== undefined)]
+      .reduce((a, b) => a.turnSequence < b.turnSequence ? a : b);
     return {
       turnId,
       source,
@@ -206,6 +240,11 @@ export function assembleContextProjection(input: AssembleContextInput): {
       // keep directing new Turns. Match only the old Runtime message identity.
       messages: visibleMessages,
       messageIds: visibleMessages.map(message => ids.get(message)),
+      ...(kind ? { summaryOnly: !visibleMessages.some(message => message.role === 'assistant' &&
+        message.toolCalls.some(call => !['checkpoint_context', 'summary_for_user'].includes(call.name))),
+        history: { kind, locator: conversationHistoryLocator(first.turnId, turnId), turnCount: inherited.length + 1,
+          firstTurnSequence: first.turnSequence } } : {}),
+      ...extra,
     };
   });
   const fixedChars = messageChars([...prefix, ...current]);
@@ -239,7 +278,7 @@ export function assembleContextProjection(input: AssembleContextInput): {
       omittedSummaryCount > 0 || selectedTurns.length < committedTurns.length,
   });
   return { context, turns: selectedTurns.filter(turn => turn.messages.length > 0)
-    .map(({ turnId, messages, messageIds }) => ({ turnId, messages, messageIds })) };
+    .map(({ turnId, messages, messageIds, ...extra }) => ({ turnId, messages, messageIds, ...extra })) };
 }
 
 function escapeAttribute(value: string): string {

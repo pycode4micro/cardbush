@@ -1,0 +1,1461 @@
+{
+  "version": 1,
+  "createdAt": "2026-10-23T08:15:26.100Z",
+  "model": "deepseek-flash",
+  "experiment": {
+    "startedAt": "2026-10-23T07:10:36.021Z",
+    "completedAt": "2026-10-23T07:21:08.402Z",
+    "modelRequests": 67,
+    "nowSentModelRequests": 0
+  },
+  "pricing": {
+    "currency": "CNY",
+    "unit": "per 1,000,000 tokens",
+    "rates": {
+      "cachedInput": 0.04,
+      "uncachedInput": 2,
+      "output": 8
+    },
+    "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+    "checkedOn": "2026-10-23",
+    "basis": "Public peak list-price estimate, not an account invoice. The recorded run was Friday 15:10–15:21 Asia/Shanghai. Off-peak prices are half."
+  },
+  "formula": "(inputTokens - cachedInputTokens) * uncachedInputPrice + cachedInputTokens * cachePrice + outputTokens * outputPrice, divided by 1e6",
+  "hitRateMethod": "sum(cachedInputTokens) / sum(inputTokens); not an unweighted average of per-request ratios",
+  "cacheChainMethod": "Replay saved visible request JSON through CacheChainTracker. Hidden reasoning and providerReplay were omitted when saved; this cannot reconstruct original provider wire prefixes or cache_chain_observed events. These diagnostics never replace actual provider usage.",
+  "variants": [
+    {
+      "variant": "baseline",
+      "all": {
+        "requests": 43,
+        "inputTokens": 732508,
+        "cachedInputTokens": 410879,
+        "uncachedInputTokens": 321629,
+        "outputTokens": 69323,
+        "totalTokens": 801831,
+        "inputCacheHitRate": 0.5609208363594664,
+        "cost": {
+          "cachedInput": 0.01643516,
+          "uncachedInput": 0.643258,
+          "output": 0.554584,
+          "total": 1.21427716
+        }
+      },
+      "excludingAudits": {
+        "requests": 39,
+        "inputTokens": 682753,
+        "cachedInputTokens": 363391,
+        "uncachedInputTokens": 319362,
+        "outputTokens": 46656,
+        "totalTokens": 729409,
+        "inputCacheHitRate": 0.5322437250367263,
+        "cost": {
+          "cachedInput": 0.01453564,
+          "uncachedInput": 0.638724,
+          "output": 0.373248,
+          "total": 1.02650764
+        }
+      },
+      "categories": [
+        {
+          "stage": "prepare",
+          "requests": 13,
+          "inputTokens": 309556,
+          "cachedInputTokens": 194943,
+          "uncachedInputTokens": 114613,
+          "outputTokens": 809,
+          "totalTokens": 310365,
+          "inputCacheHitRate": 0.629750352117226,
+          "cost": {
+            "cachedInput": 0.00779772,
+            "uncachedInput": 0.229226,
+            "output": 0.006472,
+            "total": 0.24349572
+          }
+        },
+        {
+          "stage": "maintenance",
+          "requests": 18,
+          "inputTokens": 280571,
+          "cachedInputTokens": 107904,
+          "uncachedInputTokens": 172667,
+          "outputTokens": 43145,
+          "totalTokens": 323716,
+          "inputCacheHitRate": 0.38458714549971307,
+          "cost": {
+            "cachedInput": 0.00431616,
+            "uncachedInput": 0.345334,
+            "output": 0.34516,
+            "total": 0.69481016
+          }
+        },
+        {
+          "stage": "continuation",
+          "requests": 8,
+          "inputTokens": 92626,
+          "cachedInputTokens": 60544,
+          "uncachedInputTokens": 32082,
+          "outputTokens": 2702,
+          "totalTokens": 95328,
+          "inputCacheHitRate": 0.6536393669164166,
+          "cost": {
+            "cachedInput": 0.00242176,
+            "uncachedInput": 0.064164,
+            "output": 0.021616,
+            "total": 0.08820176
+          }
+        },
+        {
+          "stage": "audit",
+          "requests": 4,
+          "inputTokens": 49755,
+          "cachedInputTokens": 47488,
+          "uncachedInputTokens": 2267,
+          "outputTokens": 22667,
+          "totalTokens": 72422,
+          "inputCacheHitRate": 0.954436740026128,
+          "cost": {
+            "cachedInput": 0.00189952,
+            "uncachedInput": 0.004534,
+            "output": 0.181336,
+            "total": 0.18776952
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "p1",
+          "requests": 9,
+          "inputTokens": 130846,
+          "cachedInputTokens": 98047,
+          "uncachedInputTokens": 32799,
+          "outputTokens": 6299,
+          "totalTokens": 137145,
+          "inputCacheHitRate": 0.7493312749338917,
+          "cost": {
+            "cachedInput": 0.00392188,
+            "uncachedInput": 0.065598,
+            "output": 0.050392,
+            "total": 0.11991188
+          }
+        },
+        {
+          "phase": "p2",
+          "requests": 9,
+          "inputTokens": 161402,
+          "cachedInputTokens": 87424,
+          "uncachedInputTokens": 73978,
+          "outputTokens": 13899,
+          "totalTokens": 175301,
+          "inputCacheHitRate": 0.5416537589373118,
+          "cost": {
+            "cachedInput": 0.00349696,
+            "uncachedInput": 0.147956,
+            "output": 0.111192,
+            "total": 0.26264496
+          }
+        },
+        {
+          "phase": "p3",
+          "requests": 11,
+          "inputTokens": 200673,
+          "cachedInputTokens": 93824,
+          "uncachedInputTokens": 106849,
+          "outputTokens": 14969,
+          "totalTokens": 215642,
+          "inputCacheHitRate": 0.4675467053365425,
+          "cost": {
+            "cachedInput": 0.00375296,
+            "uncachedInput": 0.213698,
+            "output": 0.119752,
+            "total": 0.33720296
+          }
+        },
+        {
+          "phase": "p4",
+          "requests": 10,
+          "inputTokens": 189832,
+          "cachedInputTokens": 84096,
+          "uncachedInputTokens": 105736,
+          "outputTokens": 11489,
+          "totalTokens": 201321,
+          "inputCacheHitRate": 0.44300223355387924,
+          "cost": {
+            "cachedInput": 0.00336384,
+            "uncachedInput": 0.211472,
+            "output": 0.091912,
+            "total": 0.30674784
+          }
+        }
+      ],
+      "visibleChainSummary": {
+        "comparableTransitions": 38,
+        "prefixBreaks": 30,
+        "parameterChanges": 7,
+        "pressureTimeToolHashes": [
+          "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4"
+        ]
+      },
+      "chain": [
+        {
+          "id": "001-p1-baseline-prepare-t01",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 10885,
+            "outputTokens": 174,
+            "cachedInputTokens": 10751
+          },
+          "inputCacheHitRate": 0.9876894809370693,
+          "projectionOnly": {
+            "previousMessageCount": 0,
+            "messageCount": 8,
+            "sharedPrefixMessages": 0,
+            "prefixComparisonAvailable": false,
+            "frozenPrefixBreak": false,
+            "changedParameters": []
+          }
+        },
+        {
+          "id": "002-p1-baseline-prepare-t01",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 11224,
+            "outputTokens": 23,
+            "cachedInputTokens": 11008
+          },
+          "inputCacheHitRate": 0.9807555238774056,
+          "projectionOnly": {
+            "previousMessageCount": 8,
+            "messageCount": 11,
+            "sharedPrefixMessages": 8,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": []
+          }
+        },
+        {
+          "id": "003-p1-baseline-prepare-t02",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 19177,
+            "outputTokens": 55,
+            "cachedInputTokens": 10624
+          },
+          "inputCacheHitRate": 0.5539969755436199,
+          "projectionOnly": {
+            "previousMessageCount": 11,
+            "messageCount": 16,
+            "sharedPrefixMessages": 7,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 7
+          }
+        },
+        {
+          "id": "004-p1-baseline-prepare-t03",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 27081,
+            "outputTokens": 48,
+            "cachedInputTokens": 19072
+          },
+          "inputCacheHitRate": 0.7042575975776375,
+          "projectionOnly": {
+            "previousMessageCount": 16,
+            "messageCount": 22,
+            "sharedPrefixMessages": 15,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 15
+          }
+        },
+        {
+          "id": "005-p1-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 13592,
+            "outputTokens": 1318,
+            "cachedInputTokens": 11520
+          },
+          "inputCacheHitRate": 0.8475573866980577,
+          "projectionOnly": {
+            "previousMessageCount": 22,
+            "messageCount": 14,
+            "sharedPrefixMessages": 12,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [
+              "tools"
+            ],
+            "breakIndex": 12
+          }
+        },
+        {
+          "id": "006-p1-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 14270,
+            "outputTokens": 1881,
+            "cachedInputTokens": 11264
+          },
+          "inputCacheHitRate": 0.7893482831114226,
+          "projectionOnly": {
+            "previousMessageCount": 14,
+            "messageCount": 12,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "007-p1-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 16144,
+            "outputTokens": 2327,
+            "cachedInputTokens": 11136
+          },
+          "inputCacheHitRate": 0.6897918731417245,
+          "projectionOnly": {
+            "previousMessageCount": 12,
+            "messageCount": 11,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "008-p1-baseline-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 8992,
+            "outputTokens": 458,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.3701067615658363,
+          "projectionOnly": {
+            "previousMessageCount": 11,
+            "messageCount": 8,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "009-p1-baseline-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 9481,
+            "outputTokens": 15,
+            "cachedInputTokens": 9344
+          },
+          "inputCacheHitRate": 0.9855500474633477,
+          "projectionOnly": {
+            "previousMessageCount": 8,
+            "messageCount": 10,
+            "sharedPrefixMessages": 8,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": []
+          }
+        },
+        {
+          "id": "022-p2-baseline-prepare-t04",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 16614,
+            "outputTokens": 55,
+            "cachedInputTokens": 2560
+          },
+          "inputCacheHitRate": 0.15408691465029492,
+          "projectionOnly": {
+            "previousMessageCount": 10,
+            "messageCount": 15,
+            "sharedPrefixMessages": 10,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": [
+              "tools"
+            ]
+          }
+        },
+        {
+          "id": "023-p2-baseline-prepare-t05",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 24666,
+            "outputTokens": 29,
+            "cachedInputTokens": 16512
+          },
+          "inputCacheHitRate": 0.6694234979323765,
+          "projectionOnly": {
+            "previousMessageCount": 15,
+            "messageCount": 24,
+            "sharedPrefixMessages": 14,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 14
+          }
+        },
+        {
+          "id": "024-p2-baseline-prepare-t06",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 32589,
+            "outputTokens": 41,
+            "cachedInputTokens": 24576
+          },
+          "inputCacheHitRate": 0.7541194881708552,
+          "projectionOnly": {
+            "previousMessageCount": 24,
+            "messageCount": 30,
+            "sharedPrefixMessages": 23,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 23
+          }
+        },
+        {
+          "id": "025-p2-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 4684,
+            "outputTokens": 590,
+            "cachedInputTokens": 3456
+          },
+          "inputCacheHitRate": 0.7378309137489325,
+          "projectionOnly": {
+            "previousMessageCount": 30,
+            "messageCount": 7,
+            "sharedPrefixMessages": 6,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [
+              "tools"
+            ],
+            "breakIndex": 6
+          }
+        },
+        {
+          "id": "026-p2-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 11676,
+            "outputTokens": 2251,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.2850291195614937,
+          "projectionOnly": {
+            "previousMessageCount": 7,
+            "messageCount": 12,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "027-p2-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 16302,
+            "outputTokens": 2809,
+            "cachedInputTokens": 11264
+          },
+          "inputCacheHitRate": 0.6909581646423751,
+          "projectionOnly": {
+            "previousMessageCount": 12,
+            "messageCount": 14,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "028-p2-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 19248,
+            "outputTokens": 4712,
+            "cachedInputTokens": 11264
+          },
+          "inputCacheHitRate": 0.5852036575228595,
+          "projectionOnly": {
+            "previousMessageCount": 14,
+            "messageCount": 19,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "029-p2-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 24087,
+            "outputTokens": 3324,
+            "cachedInputTokens": 11136
+          },
+          "inputCacheHitRate": 0.462324075227301,
+          "projectionOnly": {
+            "previousMessageCount": 19,
+            "messageCount": 15,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "030-p2-baseline-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 11536,
+            "outputTokens": 88,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.2884882108183079,
+          "projectionOnly": {
+            "previousMessageCount": 15,
+            "messageCount": 8,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "033-p3-baseline-prepare-t07",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 18760,
+            "outputTokens": 64,
+            "cachedInputTokens": 2560
+          },
+          "inputCacheHitRate": 0.13646055437100213,
+          "projectionOnly": {
+            "previousMessageCount": 8,
+            "messageCount": 13,
+            "sharedPrefixMessages": 8,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": [
+              "tools"
+            ]
+          }
+        },
+        {
+          "id": "034-p3-baseline-prepare-t08",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 26737,
+            "outputTokens": 75,
+            "cachedInputTokens": 18688
+          },
+          "inputCacheHitRate": 0.6989565022253805,
+          "projectionOnly": {
+            "previousMessageCount": 13,
+            "messageCount": 20,
+            "sharedPrefixMessages": 12,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 12
+          }
+        },
+        {
+          "id": "035-p3-baseline-prepare-t09",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 34736,
+            "outputTokens": 28,
+            "cachedInputTokens": 26624
+          },
+          "inputCacheHitRate": 0.7664670658682635,
+          "projectionOnly": {
+            "previousMessageCount": 20,
+            "messageCount": 26,
+            "sharedPrefixMessages": 19,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 19
+          }
+        },
+        {
+          "id": "036-p3-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 4678,
+            "outputTokens": 796,
+            "cachedInputTokens": 3456
+          },
+          "inputCacheHitRate": 0.7387772552372809,
+          "projectionOnly": {
+            "previousMessageCount": 26,
+            "messageCount": 7,
+            "sharedPrefixMessages": 6,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [
+              "tools"
+            ],
+            "breakIndex": 6
+          }
+        },
+        {
+          "id": "037-p3-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 14031,
+            "outputTokens": 3366,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.23718908131993444,
+          "projectionOnly": {
+            "previousMessageCount": 7,
+            "messageCount": 10,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "038-p3-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 17662,
+            "outputTokens": 3323,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.18842713169516476,
+          "projectionOnly": {
+            "previousMessageCount": 10,
+            "messageCount": 14,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "039-p3-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 21113,
+            "outputTokens": 3183,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.1576280017051106,
+          "projectionOnly": {
+            "previousMessageCount": 14,
+            "messageCount": 17,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "040-p3-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 24416,
+            "outputTokens": 2805,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.1363040629095675,
+          "projectionOnly": {
+            "previousMessageCount": 17,
+            "messageCount": 15,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "041-p3-baseline-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 11888,
+            "outputTokens": 495,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.27994616419919244,
+          "projectionOnly": {
+            "previousMessageCount": 15,
+            "messageCount": 8,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "042-p3-baseline-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 12815,
+            "outputTokens": 818,
+            "cachedInputTokens": 12288
+          },
+          "inputCacheHitRate": 0.958876316816231,
+          "projectionOnly": {
+            "previousMessageCount": 8,
+            "messageCount": 10,
+            "sharedPrefixMessages": 8,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": []
+          }
+        },
+        {
+          "id": "043-p3-baseline-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 13837,
+            "outputTokens": 16,
+            "cachedInputTokens": 13568
+          },
+          "inputCacheHitRate": 0.9805593698055937,
+          "projectionOnly": {
+            "previousMessageCount": 10,
+            "messageCount": 12,
+            "sharedPrefixMessages": 10,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": []
+          }
+        },
+        {
+          "id": "056-p4-baseline-prepare-t10",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 20922,
+            "outputTokens": 159,
+            "cachedInputTokens": 2560
+          },
+          "inputCacheHitRate": 0.12235923907848198,
+          "projectionOnly": {
+            "previousMessageCount": 12,
+            "messageCount": 17,
+            "sharedPrefixMessages": 12,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": [
+              "tools"
+            ]
+          }
+        },
+        {
+          "id": "057-p4-baseline-prepare-t11",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 29074,
+            "outputTokens": 32,
+            "cachedInputTokens": 20608
+          },
+          "inputCacheHitRate": 0.7088119969732407,
+          "projectionOnly": {
+            "previousMessageCount": 17,
+            "messageCount": 23,
+            "sharedPrefixMessages": 16,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 16
+          }
+        },
+        {
+          "id": "058-p4-baseline-prepare-t12",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 37091,
+            "outputTokens": 26,
+            "cachedInputTokens": 28800
+          },
+          "inputCacheHitRate": 0.7764686851257717,
+          "projectionOnly": {
+            "previousMessageCount": 23,
+            "messageCount": 29,
+            "sharedPrefixMessages": 22,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 22
+          }
+        },
+        {
+          "id": "059-p4-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 4665,
+            "outputTokens": 624,
+            "cachedInputTokens": 3456
+          },
+          "inputCacheHitRate": 0.7408360128617363,
+          "projectionOnly": {
+            "previousMessageCount": 29,
+            "messageCount": 7,
+            "sharedPrefixMessages": 6,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [
+              "tools"
+            ],
+            "breakIndex": 6
+          }
+        },
+        {
+          "id": "060-p4-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 16150,
+            "outputTokens": 3000,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.20606811145510837,
+          "projectionOnly": {
+            "previousMessageCount": 7,
+            "messageCount": 14,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "061-p4-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 17244,
+            "outputTokens": 1770,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.19299466481094874,
+          "projectionOnly": {
+            "previousMessageCount": 14,
+            "messageCount": 14,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "062-p4-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 19341,
+            "outputTokens": 1877,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.17206969649966392,
+          "projectionOnly": {
+            "previousMessageCount": 14,
+            "messageCount": 16,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "063-p4-baseline-boundary",
+          "category": "maintenance",
+          "usage": {
+            "inputTokens": 21268,
+            "outputTokens": 3189,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.15647921760391198,
+          "projectionOnly": {
+            "previousMessageCount": 16,
+            "messageCount": 15,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "064-p4-baseline-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 11498,
+            "outputTokens": 649,
+            "cachedInputTokens": 3328
+          },
+          "inputCacheHitRate": 0.28944164202469996,
+          "projectionOnly": {
+            "previousMessageCount": 15,
+            "messageCount": 8,
+            "sharedPrefixMessages": 2,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 2
+          }
+        },
+        {
+          "id": "065-p4-baseline-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 12579,
+            "outputTokens": 163,
+            "cachedInputTokens": 12032
+          },
+          "inputCacheHitRate": 0.9565148262977979,
+          "projectionOnly": {
+            "previousMessageCount": 8,
+            "messageCount": 10,
+            "sharedPrefixMessages": 8,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": []
+          }
+        }
+      ]
+    },
+    {
+      "variant": "prepared",
+      "all": {
+        "requests": 20,
+        "inputTokens": 426986,
+        "cachedInputTokens": 294016,
+        "uncachedInputTokens": 132970,
+        "outputTokens": 26287,
+        "totalTokens": 453273,
+        "inputCacheHitRate": 0.6885846374354194,
+        "cost": {
+          "cachedInput": 0.01176064,
+          "uncachedInput": 0.26594,
+          "output": 0.210296,
+          "total": 0.48799664
+        }
+      },
+      "excludingAudits": {
+        "requests": 16,
+        "inputTokens": 371325,
+        "cachedInputTokens": 240640,
+        "uncachedInputTokens": 130685,
+        "outputTokens": 20061,
+        "totalTokens": 391386,
+        "inputCacheHitRate": 0.6480576314549249,
+        "cost": {
+          "cachedInput": 0.0096256,
+          "uncachedInput": 0.26137,
+          "output": 0.160488,
+          "total": 0.4314836
+        }
+      },
+      "categories": [
+        {
+          "stage": "prepare",
+          "requests": 12,
+          "inputTokens": 318075,
+          "cachedInputTokens": 203776,
+          "uncachedInputTokens": 114299,
+          "outputTokens": 19690,
+          "totalTokens": 337765,
+          "inputCacheHitRate": 0.6406539338206397,
+          "cost": {
+            "cachedInput": 0.00815104,
+            "uncachedInput": 0.228598,
+            "output": 0.15752,
+            "total": 0.39426904
+          }
+        },
+        {
+          "stage": "maintenance",
+          "requests": 0,
+          "inputTokens": 0,
+          "cachedInputTokens": 0,
+          "uncachedInputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "inputCacheHitRate": null,
+          "cost": {
+            "cachedInput": 0,
+            "uncachedInput": 0,
+            "output": 0,
+            "total": 0
+          }
+        },
+        {
+          "stage": "continuation",
+          "requests": 4,
+          "inputTokens": 53250,
+          "cachedInputTokens": 36864,
+          "uncachedInputTokens": 16386,
+          "outputTokens": 371,
+          "totalTokens": 53621,
+          "inputCacheHitRate": 0.6922816901408451,
+          "cost": {
+            "cachedInput": 0.00147456,
+            "uncachedInput": 0.032772,
+            "output": 0.002968,
+            "total": 0.03721456
+          }
+        },
+        {
+          "stage": "audit",
+          "requests": 4,
+          "inputTokens": 55661,
+          "cachedInputTokens": 53376,
+          "uncachedInputTokens": 2285,
+          "outputTokens": 6226,
+          "totalTokens": 61887,
+          "inputCacheHitRate": 0.9589479168538114,
+          "cost": {
+            "cachedInput": 0.00213504,
+            "uncachedInput": 0.00457,
+            "output": 0.049808,
+            "total": 0.05651304
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "p1",
+          "requests": 4,
+          "inputTokens": 70171,
+          "cachedInputTokens": 46848,
+          "uncachedInputTokens": 23323,
+          "outputTokens": 4402,
+          "totalTokens": 74573,
+          "inputCacheHitRate": 0.6676262273588804,
+          "cost": {
+            "cachedInput": 0.00187392,
+            "uncachedInput": 0.046646,
+            "output": 0.035216,
+            "total": 0.08373592
+          }
+        },
+        {
+          "phase": "p2",
+          "requests": 4,
+          "inputTokens": 82814,
+          "cachedInputTokens": 48256,
+          "uncachedInputTokens": 34558,
+          "outputTokens": 4811,
+          "totalTokens": 87625,
+          "inputCacheHitRate": 0.58270340763639,
+          "cost": {
+            "cachedInput": 0.00193024,
+            "uncachedInput": 0.069116,
+            "output": 0.038488,
+            "total": 0.10953424
+          }
+        },
+        {
+          "phase": "p3",
+          "requests": 4,
+          "inputTokens": 100419,
+          "cachedInputTokens": 64128,
+          "uncachedInputTokens": 36291,
+          "outputTokens": 5739,
+          "totalTokens": 106158,
+          "inputCacheHitRate": 0.6386042482000418,
+          "cost": {
+            "cachedInput": 0.00256512,
+            "uncachedInput": 0.072582,
+            "output": 0.045912,
+            "total": 0.12105912
+          }
+        },
+        {
+          "phase": "p4",
+          "requests": 4,
+          "inputTokens": 117921,
+          "cachedInputTokens": 81408,
+          "uncachedInputTokens": 36513,
+          "outputTokens": 5109,
+          "totalTokens": 123030,
+          "inputCacheHitRate": 0.690360495586028,
+          "cost": {
+            "cachedInput": 0.00325632,
+            "uncachedInput": 0.073026,
+            "output": 0.040872,
+            "total": 0.11715432
+          }
+        }
+      ],
+      "visibleChainSummary": {
+        "comparableTransitions": 15,
+        "prefixBreaks": 12,
+        "parameterChanges": 7,
+        "pressureTimeToolHashes": [
+          "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4"
+        ]
+      },
+      "chain": [
+        {
+          "id": "011-p1-prepared-prepare-t01",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 11370,
+            "outputTokens": 1748,
+            "cachedInputTokens": 11136
+          },
+          "inputCacheHitRate": 0.9794195250659631,
+          "projectionOnly": {
+            "previousMessageCount": 0,
+            "messageCount": 8,
+            "sharedPrefixMessages": 0,
+            "prefixComparisonAvailable": false,
+            "frozenPrefixBreak": false,
+            "changedParameters": []
+          }
+        },
+        {
+          "id": "012-p1-prepared-prepare-t02",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 21257,
+            "outputTokens": 1396,
+            "cachedInputTokens": 11264
+          },
+          "inputCacheHitRate": 0.529896034247542,
+          "projectionOnly": {
+            "previousMessageCount": 8,
+            "messageCount": 14,
+            "sharedPrefixMessages": 7,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 7
+          }
+        },
+        {
+          "id": "013-p1-prepared-prepare-t03",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 30678,
+            "outputTokens": 1159,
+            "cachedInputTokens": 20992
+          },
+          "inputCacheHitRate": 0.6842688571614838,
+          "projectionOnly": {
+            "previousMessageCount": 14,
+            "messageCount": 20,
+            "sharedPrefixMessages": 13,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 13
+          }
+        },
+        {
+          "id": "014-p1-prepared-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 6866,
+            "outputTokens": 99,
+            "cachedInputTokens": 3456
+          },
+          "inputCacheHitRate": 0.5033498397902709,
+          "projectionOnly": {
+            "previousMessageCount": 20,
+            "messageCount": 9,
+            "sharedPrefixMessages": 3,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [
+              "tools"
+            ],
+            "breakIndex": 3
+          }
+        },
+        {
+          "id": "017-p2-prepared-prepare-t04",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 14568,
+            "outputTokens": 1287,
+            "cachedInputTokens": 3072
+          },
+          "inputCacheHitRate": 0.21087314662273476,
+          "projectionOnly": {
+            "previousMessageCount": 9,
+            "messageCount": 14,
+            "sharedPrefixMessages": 9,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": [
+              "tools"
+            ]
+          }
+        },
+        {
+          "id": "018-p2-prepared-prepare-t05",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 23910,
+            "outputTokens": 1355,
+            "cachedInputTokens": 14464
+          },
+          "inputCacheHitRate": 0.604935173567545,
+          "projectionOnly": {
+            "previousMessageCount": 14,
+            "messageCount": 23,
+            "sharedPrefixMessages": 13,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 13
+          }
+        },
+        {
+          "id": "019-p2-prepared-prepare-t06",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 33216,
+            "outputTokens": 2117,
+            "cachedInputTokens": 23808
+          },
+          "inputCacheHitRate": 0.7167630057803468,
+          "projectionOnly": {
+            "previousMessageCount": 23,
+            "messageCount": 29,
+            "sharedPrefixMessages": 22,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 22
+          }
+        },
+        {
+          "id": "020-p2-prepared-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 11120,
+            "outputTokens": 52,
+            "cachedInputTokens": 6912
+          },
+          "inputCacheHitRate": 0.6215827338129496,
+          "projectionOnly": {
+            "previousMessageCount": 29,
+            "messageCount": 18,
+            "sharedPrefixMessages": 11,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [
+              "tools"
+            ],
+            "breakIndex": 11
+          }
+        },
+        {
+          "id": "045-p3-prepared-prepare-t07",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 18793,
+            "outputTokens": 1334,
+            "cachedInputTokens": 6528
+          },
+          "inputCacheHitRate": 0.34736337998190814,
+          "projectionOnly": {
+            "previousMessageCount": 18,
+            "messageCount": 23,
+            "sharedPrefixMessages": 18,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": [
+              "tools"
+            ]
+          }
+        },
+        {
+          "id": "046-p3-prepared-prepare-t08",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 28098,
+            "outputTokens": 2020,
+            "cachedInputTokens": 18688
+          },
+          "inputCacheHitRate": 0.6651007189123781,
+          "projectionOnly": {
+            "previousMessageCount": 23,
+            "messageCount": 30,
+            "sharedPrefixMessages": 22,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 22
+          }
+        },
+        {
+          "id": "047-p3-prepared-prepare-t09",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 38101,
+            "outputTokens": 2343,
+            "cachedInputTokens": 27776
+          },
+          "inputCacheHitRate": 0.7290097372772368,
+          "projectionOnly": {
+            "previousMessageCount": 30,
+            "messageCount": 36,
+            "sharedPrefixMessages": 29,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 29
+          }
+        },
+        {
+          "id": "048-p3-prepared-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 15427,
+            "outputTokens": 42,
+            "cachedInputTokens": 11136
+          },
+          "inputCacheHitRate": 0.7218512996694108,
+          "projectionOnly": {
+            "previousMessageCount": 36,
+            "messageCount": 27,
+            "sharedPrefixMessages": 20,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [
+              "tools"
+            ],
+            "breakIndex": 20
+          }
+        },
+        {
+          "id": "051-p4-prepared-prepare-t10",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 23023,
+            "outputTokens": 1547,
+            "cachedInputTokens": 10624
+          },
+          "inputCacheHitRate": 0.46145159188637447,
+          "projectionOnly": {
+            "previousMessageCount": 27,
+            "messageCount": 32,
+            "sharedPrefixMessages": 27,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": false,
+            "changedParameters": [
+              "tools"
+            ]
+          }
+        },
+        {
+          "id": "052-p4-prepared-prepare-t11",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 32617,
+            "outputTokens": 1790,
+            "cachedInputTokens": 22912
+          },
+          "inputCacheHitRate": 0.7024557745960696,
+          "projectionOnly": {
+            "previousMessageCount": 32,
+            "messageCount": 38,
+            "sharedPrefixMessages": 31,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 31
+          }
+        },
+        {
+          "id": "053-p4-prepared-prepare-t12",
+          "category": "prepare",
+          "usage": {
+            "inputTokens": 42444,
+            "outputTokens": 1594,
+            "cachedInputTokens": 32512
+          },
+          "inputCacheHitRate": 0.7659975497125624,
+          "projectionOnly": {
+            "previousMessageCount": 38,
+            "messageCount": 44,
+            "sharedPrefixMessages": 37,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [],
+            "breakIndex": 37
+          }
+        },
+        {
+          "id": "054-p4-prepared-boundary",
+          "category": "continuation",
+          "usage": {
+            "inputTokens": 19837,
+            "outputTokens": 178,
+            "cachedInputTokens": 15360
+          },
+          "inputCacheHitRate": 0.7743106316479307,
+          "projectionOnly": {
+            "previousMessageCount": 44,
+            "messageCount": 35,
+            "sharedPrefixMessages": 29,
+            "prefixComparisonAvailable": true,
+            "frozenPrefixBreak": true,
+            "changedParameters": [
+              "tools"
+            ],
+            "breakIndex": 29
+          }
+        }
+      ]
+    }
+  ],
+  "comparison": {
+    "costSaving": 0.59502404,
+    "relativeCostReduction": 0.5796586569974287,
+    "totalTokenReduction": 0.46342038554500975,
+    "cachedInputReduction": 0.3377931759454692,
+    "uncachedInputReduction": 0.590793519579662,
+    "cacheHitRateIncreasePercentagePoints": 11.581390641819855,
+    "allThreeBilledCategoriesLower": true,
+    "allMissSensitivity": {
+      "baselineCost": 1.738754,
+      "preparedCost": 0.903138,
+      "note": "Hypothetical repricing of the recorded token volumes, not a new cold-cache experiment."
+    }
+  },
+  "limitations": [
+    "One continuous synthetic long-conversation sample per variant; does not establish universal cache behavior.",
+    "Earlier debug requests, audit requests, shared prefixes and raw controls can warm the provider cache. Removing audit charges does not remove their cache effects.",
+    "Preparation and boundary phases use different frozen test tool catalogs. Their observed tool changes are not evidence of dynamic top-level schema rewriting in production.",
+    "Visible prefix breaks are expected at compression boundaries, source changes and disposable probe instructions; they do not mean zero cache hits.",
+    "The comparison covers only requests recorded in this experiment. Synthetic business tool executions and identical fixed final prose were not billed; no production account invoice was queried.",
+    "Preparing summaries adds upfront output cost; conversations that never require compaction may not recover this cost.",
+    "Prices are explicit parameters. The default rates are the checked DeepSeek Flash peak CNY list prices."
+  ]
+}

@@ -1,0 +1,856 @@
+{
+  "recordedAt": "2026-10-23T04:22:04.070Z",
+  "config": {
+    "model": "deepseek-flash",
+    "adapter": "openai_responses",
+    "reasoningEffort": "max",
+    "maxOutputTokens": 128000,
+    "configuredContextWindow": 530000,
+    "simulatedContextWindow": 168000
+  },
+  "methodology": {
+    "syntheticFacts": true,
+    "fixedFinalRepliesIdenticalInBothArms": true,
+    "rubricHiddenFromModel": true,
+    "sameReasoningAndOutput": true,
+    "pressureCounter": "controlled JSON characters / 4 including tool definitions; not provider tokenizer",
+    "baseline": "Legacy empty final-display receipt; on-demand production checkpoint transaction.",
+    "prepared": "Real model writes each tool summary through summary_for_user; production runtime reuses it only at pressure.",
+    "preparationOverhead": "Both arms make real final-display calls. Baseline uses a fixed legacy schema without tool_summary. Final reply text is fixed and identical, so final text generation is excluded in both arms.",
+    "businessToolsExecuted": 0,
+    "userSessionsModified": false,
+    "repetitions": 1
+  },
+  "preparation": [
+    {
+      "case": "video",
+      "turn": "materials",
+      "elapsedMs": 6844,
+      "eligible": true,
+      "summary": "素材轮次已结束：已核对素材 A-17、A-18，校验和通过；未重复下载，也未执行发布。时间线仍为草稿 D-9，正文镜头最短 3.2 秒，尚未获准交付。音频仅测得 -16.1 LUFS，未实际试听。花字参考原图共 8 张，已列出但尚未逐张查看。执行记录中大量重复的 worker 存活采样未提供新的完成或审批证据，已忽略。\n\n<skill_constraints>\n- 每个正文镜头至少 3.2 秒，禁止快闪；D-9 仍须按此复核：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L2>)\n- 未实际试听，不能声称听感通过；当前只有 -16.1 LUFS 测量值：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L3>)\n- 音效必须绑定花字的时间和 ID：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L4>)\n- 不得用文字或 OCR 替代查看 8 张花字参考原图：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L5>)\n- 发布始终需要明确授权；本轮明确不发布，且未尝试发布：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L6>)\n</skill_constraints>\n\n未完成项：逐张查看 8 张花字参考图；完成时间线草稿复核并将音效绑定到花字时间与 ID；实际试听后再判断听感。发布仍需用户明确授权。",
+      "attempts": [
+        {
+          "usage": {
+            "inputTokens": 14561,
+            "outputTokens": 1255,
+            "cachedInputTokens": 14336
+          },
+          "status": "prepared"
+        }
+      ]
+    },
+    {
+      "case": "video",
+      "turn": "revision",
+      "elapsedMs": 7936,
+      "eligible": true,
+      "summary": "开头修订已记录在当前版本 V-12：开头改用原素材问句“你是不是也遇到过这种情况？”，不再用陈述句或蓝天白云；全身展示镜头为 3.6 秒（不低于 3.2 秒）；背景为原店内地场景。花字/音效绑定已在当前版本建立：音效 E-12 绑定花字 T-12，时间线位置 7.4 秒，增益 -18 dB；这是当前剪辑位置，不是片头 0 秒。仍需逐张查看 8 张花字参考原图后确认 T-12 的样式，不能仅凭 ID 认定花字已验收。\n\n渲染状态：旧任务 R-11 失败，原因 missing codec，无输出；当前任务 R-12 运行中，只能查询 R-12，不得重复提交。尚未交付，也尚未发布。音频仍未实际试听；虽已有 -16.1 LUFS 测量值，但不能据此声称听感通过。\n\n<skill_constraints>\n- 每个正文镜头至少 3.2 秒；当前全身镜头 3.6 秒符合下限，后续改动仍须复核：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L2>)\n- 未实际试听，不能声称听感通过；当前仅有响度测量：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L3>)\n- 音效须绑定花字的时间和 ID；当前为 E-12→T-12 @ 7.4 秒，-18 dB，后续调整须保持绑定：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L4>)\n- 不得用文字或 OCR 替代查看花字参考原图；8 张 PNG 尚未逐张查看：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L5>)\n- 发布始终需要明确授权；本轮未获授权且未发布：[Video policy](<C:/synthetic/video/SKILL.md?revision=c44315ad136e8bdd81b0660c0dcbe28c3e6961a5918f66ad0c1cf6801b35d7e9#L6>)\n</skill_constraints>\n\n未完成项：查询 R-12 直至结束（不重提）；逐张查看 8 张花字参考图并核对 T-12；实际试听后再判断音效听感；交付前复核时间线。若需重读，触发条件为继续渲染验收、调整花字或音效、或准备发布。",
+      "attempts": [
+        {
+          "usage": {
+            "inputTokens": 27288,
+            "outputTokens": 1426,
+            "cachedInputTokens": 14464
+          },
+          "status": "prepared"
+        }
+      ]
+    },
+    {
+      "case": "deployment",
+      "turn": "install",
+      "elapsedMs": 11425,
+      "eligible": true,
+      "summary": "本轮仅完成只读检查与安装准备；未执行重启、未开放公网端口、未改动服务。\n\n- 已读取部署策略并完成只读 fixture 观察；工具调用均成功，无失败尝试。\n- 隔离账号为 `cardbush-agent`，服务为 `AgentB`，监听 `127.0.0.1:4781`（回环地址）；沙盒保留。\n- 安装任务 `I-301` 的录制状态为 `completed`，但这只是安装作业状态，不能据此推断部署成功或服务可用。\n- 550 条例行样本（0–549）均为“worker alive；计数器未变化”，且没有审批或新的完成证据。进程宿主存在且签名已验证；进程资源保护须继续保留。\n- 配置备份录制路径为 `C:/synthetic/backups/config-19.json`，须保留至回滚验证完成。\n- `restartApproved=false`，本轮未重启；服务保持原状态。未发现任何公网暴露操作。\n- 未执行端到端部署验证、健康验证或回滚验证；这些均未完成，不能视为已验证。\n\n<skill_constraints>\n- [部署隔离与操作边界](<C:/synthetic/deploy/SKILL.md?revision=8bbd6696e3080314e78f4aa4d6360d9fcf30d20bd26af8972fffee28b2993479#L1-L5>)：必须使用隔离账号运行。\n- [进程资源保护](<C:/synthetic/deploy/SKILL.md?revision=8bbd6696e3080314e78f4aa4d6360d9fcf30d20bd26af8972fffee28b2993479#L1-L5>)：必须保留进程资源保护，不能移除。\n- [配置备份保留条件](<C:/synthetic/deploy/SKILL.md?revision=8bbd6696e3080314e78f4aa4d6360d9fcf30d20bd26af8972fffee28b2993479#L1-L5>)：配置备份保留到回滚验证完成。\n- [状态判读约束](<C:/synthetic/deploy/SKILL.md?revision=8bbd6696e3080314e78f4aa4d6360d9fcf30d20bd26af8972fffee28b2993479#L1-L5>)：检查状态不能推断为部署成功。\n</skill_constraints>\n\n后续限制：重启前需取得用户明确授权；删除配置备份前须先完成并核验回滚验证。若需重新判断，请重读上述策略文件及本次 fixture 记录。",
+      "attempts": [
+        {
+          "usage": {
+            "inputTokens": 14523,
+            "outputTokens": 2003,
+            "cachedInputTokens": 14336
+          },
+          "status": "prepared"
+        }
+      ]
+    },
+    {
+      "case": "deployment",
+      "turn": "config",
+      "elapsedMs": 12503,
+      "eligible": true,
+      "summary": "本轮仅完成只读核验；未提交配置、未重启、未中断正在执行的任务，也未改动目录或备份。\n\n- 用户要求已记录：配置变更不重启，等空闲后提交；工作目录使用 `D:/jobs/111`，旧路径 `C:/work` 不再适用。\n- 配置事务 `CFG-44` 的录制状态为 `pending`、`applied=false`，原因是 Agent busy with `JOB-77`；`JOB-77` 仍为 activeJob。`pending` 不是失败，但也不能视为已提交。\n- 上一次尝试 `CFG-43` 状态为 failed，但回滚状态为 verified。\n- 当前版本 `C-19`，待处理版本 `C-20`；工作区为 `D:/jobs/111`，Shell 为 PowerShell 7.4。\n- `restartApproved=false`；无重启、无“已应用”证据。550 条例行样本均显示 worker alive、计数器未变化，没有新的审批或完成证据。\n- 备份 `C:/synthetic/backups/config-19.json` 仍明确标记为必须保留；即使 `CFG-43` 回滚已验证，也不得据此删除该备份。\n- 桌面端未被探测，状态未知，不能据此声称其不可用。\n- 两次工具调用均成功，无失败尝试，未生成文件。\n\n<skill_constraints>\n- [隔离账号与进程保护](<C:/synthetic/deploy/SKILL.md?revision=42f30c1365f16cc926a916623cbfce25b687a4d522dd0c8c70871947e60bdcf5#L1-L5>)：仍须使用隔离账号并保留进程保护。\n- [busy 时延后](<C:/synthetic/deploy/SKILL.md?revision=42f30c1365f16cc926a916623cbfce25b687a4d522dd0c8c70871947e60bdcf5#L1-L5>)：同步遇到 busy 必须延后，不能中断正在执行的任务。\n- [提交状态判读](<C:/synthetic/deploy/SKILL.md?revision=42f30c1365f16cc926a916623cbfce25b687a4d522dd0c8c70871947e60bdcf5#L1-L5>)：只有 `applied` 才是已提交；`pending` 不是失败。\n- [备份保留](<C:/synthetic/deploy/SKILL.md?revision=42f30c1365f16cc926a916623cbfce25b687a4d522dd0c8c70871947e60bdcf5#L1-L5>)：回滚验证前不得删除备份；本事务还另有 `backupMustKeep` 标记。\n</skill_constraints>\n\n未完成事项：等待 `JOB-77` 结束且确认空闲后，再提交 `CFG-44`；全程不重启，提交后需重新核验是否变为 `applied`。如继续工作，重读策略文件和本记录。",
+      "attempts": [
+        {
+          "usage": {
+            "inputTokens": 28165,
+            "outputTokens": 2129,
+            "cachedInputTokens": 14208
+          },
+          "status": "prepared"
+        }
+      ]
+    }
+  ],
+  "baselinePreparation": [
+    {
+      "case": "video",
+      "turn": "materials",
+      "elapsedMs": 1490,
+      "usage": {
+        "inputTokens": 14119,
+        "outputTokens": 55,
+        "cachedInputTokens": 1920
+      }
+    },
+    {
+      "case": "video",
+      "turn": "revision",
+      "elapsedMs": 1026,
+      "usage": {
+        "inputTokens": 25463,
+        "outputTokens": 58,
+        "cachedInputTokens": 13824
+      }
+    },
+    {
+      "case": "deployment",
+      "turn": "install",
+      "elapsedMs": 639,
+      "usage": {
+        "inputTokens": 14081,
+        "outputTokens": 23,
+        "cachedInputTokens": 2560
+      }
+    },
+    {
+      "case": "deployment",
+      "turn": "config",
+      "elapsedMs": 1157,
+      "usage": {
+        "inputTokens": 25559,
+        "outputTokens": 37,
+        "cachedInputTokens": 13824
+      }
+    }
+  ],
+  "runs": [
+    {
+      "case": "video",
+      "variant": "baseline",
+      "stale": false,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "elapsedMs": 19495,
+      "pressureWaitMs": 17725,
+      "answer": "{\"asset_ids\":[\"A-17\",\"A-18\"],\"failed_job\":\"R-11\",\"pending_job\":\"R-12\",\"may_resubmit\":false,\"version\":\"V-12\",\"min_shot_seconds\":3.2,\"sfx_gain_db\":-18,\"sfx_start_seconds\":7.4,\"typography_id\":\"T-12\",\"listening_passed\":false,\"reference_images_viewed\":false,\"may_publish\":false,\"opening_full_body_seconds\":3.6}",
+      "passed": 13,
+      "total": 13,
+      "checks": [
+        {
+          "key": "asset_ids",
+          "passed": true,
+          "expected": [
+            "A-17",
+            "A-18"
+          ],
+          "actual": [
+            "A-17",
+            "A-18"
+          ]
+        },
+        {
+          "key": "failed_job",
+          "passed": true,
+          "expected": "R-11",
+          "actual": "R-11"
+        },
+        {
+          "key": "pending_job",
+          "passed": true,
+          "expected": "R-12",
+          "actual": "R-12"
+        },
+        {
+          "key": "may_resubmit",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "version",
+          "passed": true,
+          "expected": "V-12",
+          "actual": "V-12"
+        },
+        {
+          "key": "min_shot_seconds",
+          "passed": true,
+          "expected": 3.2,
+          "actual": 3.2
+        },
+        {
+          "key": "sfx_gain_db",
+          "passed": true,
+          "expected": -18,
+          "actual": -18
+        },
+        {
+          "key": "sfx_start_seconds",
+          "passed": true,
+          "expected": 7.4,
+          "actual": 7.4
+        },
+        {
+          "key": "typography_id",
+          "passed": true,
+          "expected": "T-12",
+          "actual": "T-12"
+        },
+        {
+          "key": "listening_passed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "reference_images_viewed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "may_publish",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "opening_full_body_seconds",
+          "passed": true,
+          "expected": 3.6,
+          "actual": 3.6
+        }
+      ],
+      "appliedHandoffs": [],
+      "maintenanceRequests": 2
+    },
+    {
+      "case": "video",
+      "variant": "prepared",
+      "stale": false,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "elapsedMs": 2288,
+      "pressureWaitMs": 11,
+      "answer": "```json\n{\n  \"asset_ids\": [\"A-17\", \"A-18\"],\n  \"failed_job\": \"R-11\",\n  \"pending_job\": \"R-12\",\n  \"may_resubmit\": false,\n  \"version\": \"V-12\",\n  \"min_shot_seconds\": 3.2,\n  \"sfx_gain_db\": -18,\n  \"sfx_start_seconds\": 7.4,\n  \"typography_id\": \"T-12\",\n  \"listening_passed\": false,\n  \"reference_images_viewed\": false,\n  \"may_publish\": false,\n  \"opening_full_body_seconds\": 3.6\n}\n```",
+      "passed": 13,
+      "total": 13,
+      "checks": [
+        {
+          "key": "asset_ids",
+          "passed": true,
+          "expected": [
+            "A-17",
+            "A-18"
+          ],
+          "actual": [
+            "A-17",
+            "A-18"
+          ]
+        },
+        {
+          "key": "failed_job",
+          "passed": true,
+          "expected": "R-11",
+          "actual": "R-11"
+        },
+        {
+          "key": "pending_job",
+          "passed": true,
+          "expected": "R-12",
+          "actual": "R-12"
+        },
+        {
+          "key": "may_resubmit",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "version",
+          "passed": true,
+          "expected": "V-12",
+          "actual": "V-12"
+        },
+        {
+          "key": "min_shot_seconds",
+          "passed": true,
+          "expected": 3.2,
+          "actual": 3.2
+        },
+        {
+          "key": "sfx_gain_db",
+          "passed": true,
+          "expected": -18,
+          "actual": -18
+        },
+        {
+          "key": "sfx_start_seconds",
+          "passed": true,
+          "expected": 7.4,
+          "actual": 7.4
+        },
+        {
+          "key": "typography_id",
+          "passed": true,
+          "expected": "T-12",
+          "actual": "T-12"
+        },
+        {
+          "key": "listening_passed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "reference_images_viewed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "may_publish",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "opening_full_body_seconds",
+          "passed": true,
+          "expected": 3.6,
+          "actual": 3.6
+        }
+      ],
+      "appliedHandoffs": [
+        "materials",
+        "revision"
+      ],
+      "maintenanceRequests": 0
+    },
+    {
+      "case": "video",
+      "variant": "prepared",
+      "stale": true,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "elapsedMs": 24489,
+      "pressureWaitMs": 16161,
+      "answer": "{\"asset_ids\":[\"A-17\",\"A-18\"],\"failed_job\":\"R-11\",\"pending_job\":null,\"may_resubmit\":false,\"version\":\"V-13\",\"min_shot_seconds\":3.2,\"sfx_gain_db\":-18,\"sfx_start_seconds\":7.4,\"typography_id\":\"T-12\",\"listening_passed\":false,\"reference_images_viewed\":false,\"may_publish\":false,\"opening_full_body_seconds\":3.6}",
+      "passed": 3,
+      "total": 3,
+      "checks": [
+        {
+          "key": "pending_job",
+          "passed": true,
+          "expected": null,
+          "actual": null
+        },
+        {
+          "key": "may_resubmit",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "version",
+          "passed": true,
+          "expected": "V-13",
+          "actual": "V-13"
+        }
+      ],
+      "appliedHandoffs": [],
+      "maintenanceRequests": 2
+    },
+    {
+      "case": "deployment",
+      "variant": "baseline",
+      "stale": false,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "elapsedMs": 25206,
+      "pressureWaitMs": 20851,
+      "answer": "{\n  \"account\": \"cardbush-agent\",\n  \"service\": \"AgentB\",\n  \"port\": 4781,\n  \"bind\": \"127.0.0.1\",\n  \"install_job\": \"I-301\",\n  \"config_transaction\": \"CFG-44\",\n  \"config_status\": \"pending\",\n  \"busy_job\": \"JOB-77\",\n  \"workspace\": \"D:/jobs/111\",\n  \"shell\": \"PowerShell 7.4\",\n  \"current_version\": \"C-19\",\n  \"pending_version\": \"C-20\",\n  \"backup\": \"C:/synthetic/backups/config-19.json\",\n  \"restart_approved\": false,\n  \"config_applied\": false,\n  \"desktop_state\": \"unknown\"\n}",
+      "passed": 16,
+      "total": 16,
+      "checks": [
+        {
+          "key": "account",
+          "passed": true,
+          "expected": "cardbush-agent",
+          "actual": "cardbush-agent"
+        },
+        {
+          "key": "service",
+          "passed": true,
+          "expected": "AgentB",
+          "actual": "AgentB"
+        },
+        {
+          "key": "port",
+          "passed": true,
+          "expected": 4781,
+          "actual": 4781
+        },
+        {
+          "key": "bind",
+          "passed": true,
+          "expected": "127.0.0.1",
+          "actual": "127.0.0.1"
+        },
+        {
+          "key": "install_job",
+          "passed": true,
+          "expected": "I-301",
+          "actual": "I-301"
+        },
+        {
+          "key": "config_transaction",
+          "passed": true,
+          "expected": "CFG-44",
+          "actual": "CFG-44"
+        },
+        {
+          "key": "config_status",
+          "passed": true,
+          "expected": "pending",
+          "actual": "pending"
+        },
+        {
+          "key": "busy_job",
+          "passed": true,
+          "expected": "JOB-77",
+          "actual": "JOB-77"
+        },
+        {
+          "key": "workspace",
+          "passed": true,
+          "expected": "D:/jobs/111",
+          "actual": "D:/jobs/111"
+        },
+        {
+          "key": "shell",
+          "passed": true,
+          "expected": "PowerShell 7.4",
+          "actual": "PowerShell 7.4"
+        },
+        {
+          "key": "current_version",
+          "passed": true,
+          "expected": "C-19",
+          "actual": "C-19"
+        },
+        {
+          "key": "pending_version",
+          "passed": true,
+          "expected": "C-20",
+          "actual": "C-20"
+        },
+        {
+          "key": "backup",
+          "passed": true,
+          "expected": "C:/synthetic/backups/config-19.json",
+          "actual": "C:/synthetic/backups/config-19.json"
+        },
+        {
+          "key": "restart_approved",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "config_applied",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "desktop_state",
+          "passed": true,
+          "expected": "unknown",
+          "actual": "unknown"
+        }
+      ],
+      "appliedHandoffs": [],
+      "maintenanceRequests": 4
+    },
+    {
+      "case": "deployment",
+      "variant": "prepared",
+      "stale": false,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "elapsedMs": 1933,
+      "pressureWaitMs": 9,
+      "answer": "```json\n{\n  \"account\": \"cardbush-agent\",\n  \"service\": \"AgentB\",\n  \"port\": 4781,\n  \"bind\": \"127.0.0.1\",\n  \"install_job\": \"I-301\",\n  \"config_transaction\": \"CFG-44\",\n  \"config_status\": \"pending\",\n  \"busy_job\": \"JOB-77\",\n  \"workspace\": \"D:/jobs/111\",\n  \"shell\": \"PowerShell 7.4\",\n  \"current_version\": \"C-19\",\n  \"pending_version\": \"C-20\",\n  \"backup\": \"C:/synthetic/backups/config-19.json\",\n  \"restart_approved\": false,\n  \"config_applied\": false,\n  \"desktop_state\": \"unknown\"\n}\n```",
+      "passed": 16,
+      "total": 16,
+      "checks": [
+        {
+          "key": "account",
+          "passed": true,
+          "expected": "cardbush-agent",
+          "actual": "cardbush-agent"
+        },
+        {
+          "key": "service",
+          "passed": true,
+          "expected": "AgentB",
+          "actual": "AgentB"
+        },
+        {
+          "key": "port",
+          "passed": true,
+          "expected": 4781,
+          "actual": 4781
+        },
+        {
+          "key": "bind",
+          "passed": true,
+          "expected": "127.0.0.1",
+          "actual": "127.0.0.1"
+        },
+        {
+          "key": "install_job",
+          "passed": true,
+          "expected": "I-301",
+          "actual": "I-301"
+        },
+        {
+          "key": "config_transaction",
+          "passed": true,
+          "expected": "CFG-44",
+          "actual": "CFG-44"
+        },
+        {
+          "key": "config_status",
+          "passed": true,
+          "expected": "pending",
+          "actual": "pending"
+        },
+        {
+          "key": "busy_job",
+          "passed": true,
+          "expected": "JOB-77",
+          "actual": "JOB-77"
+        },
+        {
+          "key": "workspace",
+          "passed": true,
+          "expected": "D:/jobs/111",
+          "actual": "D:/jobs/111"
+        },
+        {
+          "key": "shell",
+          "passed": true,
+          "expected": "PowerShell 7.4",
+          "actual": "PowerShell 7.4"
+        },
+        {
+          "key": "current_version",
+          "passed": true,
+          "expected": "C-19",
+          "actual": "C-19"
+        },
+        {
+          "key": "pending_version",
+          "passed": true,
+          "expected": "C-20",
+          "actual": "C-20"
+        },
+        {
+          "key": "backup",
+          "passed": true,
+          "expected": "C:/synthetic/backups/config-19.json",
+          "actual": "C:/synthetic/backups/config-19.json"
+        },
+        {
+          "key": "restart_approved",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "config_applied",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "desktop_state",
+          "passed": true,
+          "expected": "unknown",
+          "actual": "unknown"
+        }
+      ],
+      "appliedHandoffs": [
+        "install",
+        "config"
+      ],
+      "maintenanceRequests": 0
+    }
+  ],
+  "requests": [
+    {
+      "id": "01-video-legacy-prepare-materials",
+      "stage": "video-legacy-prepare-materials",
+      "maintenance": false,
+      "toolHash": "9bcb26617ad885ccb9da94e79238944c5befb8f60d90cb0d517691de4faf0252",
+      "elapsedMs": 1484,
+      "usage": {
+        "inputTokens": 14119,
+        "outputTokens": 55,
+        "cachedInputTokens": 1920
+      }
+    },
+    {
+      "id": "02-video-legacy-prepare-revision",
+      "stage": "video-legacy-prepare-revision",
+      "maintenance": false,
+      "toolHash": "9bcb26617ad885ccb9da94e79238944c5befb8f60d90cb0d517691de4faf0252",
+      "elapsedMs": 1022,
+      "usage": {
+        "inputTokens": 25463,
+        "outputTokens": 58,
+        "cachedInputTokens": 13824
+      }
+    },
+    {
+      "id": "03-video-prepare-materials",
+      "stage": "video-prepare-materials",
+      "maintenance": false,
+      "toolHash": "20107a4f85b7337198f181f1bdbc30270606f5e07f131bfbb610c7bc075da4b8",
+      "elapsedMs": 6815,
+      "usage": {
+        "inputTokens": 14561,
+        "outputTokens": 1255,
+        "cachedInputTokens": 14336
+      }
+    },
+    {
+      "id": "04-video-prepare-revision",
+      "stage": "video-prepare-revision",
+      "maintenance": false,
+      "toolHash": "20107a4f85b7337198f181f1bdbc30270606f5e07f131bfbb610c7bc075da4b8",
+      "elapsedMs": 7921,
+      "usage": {
+        "inputTokens": 27288,
+        "outputTokens": 1426,
+        "cachedInputTokens": 14464
+      }
+    },
+    {
+      "id": "05-video-baseline",
+      "stage": "video-baseline",
+      "maintenance": true,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 9069,
+      "usage": {
+        "inputTokens": 27975,
+        "outputTokens": 1647,
+        "cachedInputTokens": 14720
+      }
+    },
+    {
+      "id": "06-video-baseline",
+      "stage": "video-baseline",
+      "maintenance": true,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 8575,
+      "usage": {
+        "inputTokens": 29896,
+        "outputTokens": 1591,
+        "cachedInputTokens": 29568
+      }
+    },
+    {
+      "id": "07-video-baseline",
+      "stage": "video-baseline",
+      "maintenance": false,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 1675,
+      "usage": {
+        "inputTokens": 7295,
+        "outputTokens": 251,
+        "cachedInputTokens": 3328
+      }
+    },
+    {
+      "id": "08-video-prepared",
+      "stage": "video-prepared",
+      "maintenance": false,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 2179,
+      "usage": {
+        "inputTokens": 5082,
+        "outputTokens": 384,
+        "cachedInputTokens": 3328
+      }
+    },
+    {
+      "id": "09-video-stale-prepared",
+      "stage": "video-stale-prepared",
+      "maintenance": true,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 6791,
+      "usage": {
+        "inputTokens": 30967,
+        "outputTokens": 1264,
+        "cachedInputTokens": 14720
+      }
+    },
+    {
+      "id": "10-video-stale-prepared",
+      "stage": "video-stale-prepared",
+      "maintenance": true,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 9330,
+      "usage": {
+        "inputTokens": 32505,
+        "outputTokens": 1724,
+        "cachedInputTokens": 32128
+      }
+    },
+    {
+      "id": "11-video-stale-prepared",
+      "stage": "video-stale-prepared",
+      "maintenance": false,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 8266,
+      "usage": {
+        "inputTokens": 9137,
+        "outputTokens": 1461,
+        "cachedInputTokens": 3328
+      }
+    },
+    {
+      "id": "12-deployment-legacy-prepare-install",
+      "stage": "deployment-legacy-prepare-install",
+      "maintenance": false,
+      "toolHash": "9bcb26617ad885ccb9da94e79238944c5befb8f60d90cb0d517691de4faf0252",
+      "elapsedMs": 636,
+      "usage": {
+        "inputTokens": 14081,
+        "outputTokens": 23,
+        "cachedInputTokens": 2560
+      }
+    },
+    {
+      "id": "13-deployment-legacy-prepare-config",
+      "stage": "deployment-legacy-prepare-config",
+      "maintenance": false,
+      "toolHash": "9bcb26617ad885ccb9da94e79238944c5befb8f60d90cb0d517691de4faf0252",
+      "elapsedMs": 1155,
+      "usage": {
+        "inputTokens": 25559,
+        "outputTokens": 37,
+        "cachedInputTokens": 13824
+      }
+    },
+    {
+      "id": "14-deployment-prepare-install",
+      "stage": "deployment-prepare-install",
+      "maintenance": false,
+      "toolHash": "20107a4f85b7337198f181f1bdbc30270606f5e07f131bfbb610c7bc075da4b8",
+      "elapsedMs": 11413,
+      "usage": {
+        "inputTokens": 14523,
+        "outputTokens": 2003,
+        "cachedInputTokens": 14336
+      }
+    },
+    {
+      "id": "15-deployment-prepare-config",
+      "stage": "deployment-prepare-config",
+      "maintenance": false,
+      "toolHash": "20107a4f85b7337198f181f1bdbc30270606f5e07f131bfbb610c7bc075da4b8",
+      "elapsedMs": 12497,
+      "usage": {
+        "inputTokens": 28165,
+        "outputTokens": 2129,
+        "cachedInputTokens": 14208
+      }
+    },
+    {
+      "id": "16-deployment-baseline",
+      "stage": "deployment-baseline",
+      "maintenance": true,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 7462,
+      "usage": {
+        "inputTokens": 28049,
+        "outputTokens": 1422,
+        "cachedInputTokens": 14720
+      }
+    },
+    {
+      "id": "17-deployment-baseline",
+      "stage": "deployment-baseline",
+      "maintenance": true,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 3650,
+      "usage": {
+        "inputTokens": 29680,
+        "outputTokens": 766,
+        "cachedInputTokens": 29440
+      }
+    },
+    {
+      "id": "18-deployment-baseline",
+      "stage": "deployment-baseline",
+      "maintenance": true,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 6632,
+      "usage": {
+        "inputTokens": 30623,
+        "outputTokens": 1234,
+        "cachedInputTokens": 30336
+      }
+    },
+    {
+      "id": "19-deployment-baseline",
+      "stage": "deployment-baseline",
+      "maintenance": true,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 3012,
+      "usage": {
+        "inputTokens": 32120,
+        "outputTokens": 744,
+        "cachedInputTokens": 31744
+      }
+    },
+    {
+      "id": "20-deployment-baseline",
+      "stage": "deployment-baseline",
+      "maintenance": false,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 4321,
+      "usage": {
+        "inputTokens": 6070,
+        "outputTokens": 818,
+        "cachedInputTokens": 3328
+      }
+    },
+    {
+      "id": "21-deployment-prepared",
+      "stage": "deployment-prepared",
+      "maintenance": false,
+      "toolHash": "7429c5522826103852800e2aabc93f647aa904a48d14259a0355de583cf7a8d4",
+      "elapsedMs": 1857,
+      "usage": {
+        "inputTokens": 5012,
+        "outputTokens": 418,
+        "cachedInputTokens": 3328
+      }
+    }
+  ]
+}

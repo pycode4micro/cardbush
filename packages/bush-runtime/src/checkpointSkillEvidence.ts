@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import type { ModelMessage } from '@cardbush/bush-protocol';
+import { checkpointReceiptEntries } from './checkpointReceipt.js';
 import { decodeFileSourceReceipt } from './fileSourceReceipt.js';
 
 /** Observed source ranges. Text is used only while the read is in context;
@@ -124,7 +125,7 @@ function validExcerpt(value: unknown): value is CheckpointSkillExcerpt {
 
 export function checkpointSkillReceiptEvidence(receipt: ModelMessage): CheckpointSkillEvidence[] {
   const data = json(receipt.content);
-  if (!data || !(data.complete === true || data.staged === true || Array.isArray(data.accepted) ||
+  if (!data || !(data.complete === true || data.staged === true || data.final_response === true && data.context_handoff?.status === 'prepared' || Array.isArray(data.accepted) ||
     Array.isArray(data.summarized_turns)) || !Array.isArray(data.skill_evidence)) return [];
   return data.skill_evidence.map((row: unknown) => {
     const item = record(row);
@@ -179,6 +180,14 @@ export function collectCheckpointSkillExcerpts(messages: ModelMessage[]): Checkp
       const receipt = messages.slice(index + 1, index + 1 + message.toolCalls.length)
         .find(item => item.role === 'tool' && item.toolCallId === call.id);
       if (!receipt) continue;
+      if (call.name === 'summary_for_user') {
+        const data = json(receipt.content), args = json(call.argumentsText);
+        if (data?.status === 'ok' && data.final_response === true && data.context_handoff?.status === 'prepared' &&
+          typeof args?.tool_summary === 'string' && data.context_handoff.summary_sha256 === createHash('sha256').update(args.tool_summary.trim()).digest('hex')) {
+          add(checkpointSkillReceiptEvidence(receipt).flatMap(item => item.excerpts));
+        }
+        continue;
+      }
       if (call.name === 'checkpoint_context') {
         const data = json(receipt.content);
         if (!data || !(data.complete === true || Array.isArray(data.summarized_turns))) continue;
@@ -187,7 +196,7 @@ export function collectCheckpointSkillExcerpts(messages: ModelMessage[]): Checkp
         // authored handoff, including source locators outside its block. Never
         // claim this recovers requirements already absent from that handoff.
         const args = json(call.argumentsText);
-        const summaries = Array.isArray(data.summaries) ? data.summaries.map((item: any) => item?.summary)
+        const summaries = Array.isArray(data.summaries) || data.summary_from_call ? checkpointReceiptEntries(data, call).map(item => item?.summary)
           : [...(args?.summaries ?? []).map((item: any) => typeof item === 'string' ? item : item?.summary), args?.active_summary, args?.active_turn?.summary];
         for (const summary of summaries) if (typeof summary === 'string' && /<skill_constraints>(?!\s*none:)[\s\S]+<\/skill_constraints>/.test(summary)) {
           // Keep this as one opaque source, not Markdown containing nested tags.

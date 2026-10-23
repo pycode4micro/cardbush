@@ -150,6 +150,7 @@ test('three active-Turn compactions and a restarted follow-up retain constraints
     'Continue explaining the saved result; no new execution.',
   ];
   let normalRounds = 0, compactions = 0, attempts = 0, omittedOnce = false, forceCompaction = false, reads = 0;
+  let acceptedCompactionId;
   const createRegistry = () => {
     const registry = new ToolRegistry();
     for (const name of ['read_file', 'preview_step']) registry.register({
@@ -177,11 +178,14 @@ test('three active-Turn compactions and a restarted follow-up retain constraints
       const notice = request.messages.find(m => m.name === 'context_pressure');
       if (notice) {
         attempts++;
+        const compactionId = host.events('s', request.turnId).findLast(event => event.kind === 'context_compaction_started').payload.compactionId;
+        const continuingSource = acceptedCompactionId === compactionId;
+        const summaryIndex = continuingSource ? compactions - 1 : compactions;
         assert.match(notice.content, /previous checkpoint block/);
         const inherited = request.messages.filter(m => m.role === 'tool').flatMap(m => {
           try { return JSON.parse(m.content).summaries ?? []; } catch { return []; }
         });
-        if (compactions > 0) assert.ok(inherited.some(item => item.summary === checkpointSummaries[compactions - 1]),
+        if (request.turnId === 'preview' && compactions > 0) assert.ok(inherited.some(item => item.summary === checkpointSummaries[compactions - 1]),
           'prior authored handoff is available to review: ' + request.messages.findLast(message => message.role === 'tool')?.content);
         const omit = compactions === 1 && !omittedOnce;
         omittedOnce ||= omit;
@@ -192,12 +196,13 @@ test('three active-Turn compactions and a restarted follow-up retain constraints
         }
         let summary = 'Dependencies checked. Continue.';
         if (!omit) {
-          summary = checkpointSummaries[compactions];
-          if (compactions < 3) {
+          summary = checkpointSummaries[summaryIndex];
+          if (summaryIndex < 3) {
             const withLink = (text, line) => `${text} [source](<C:/skills/local-preview/SKILL.md?revision=abc123#L${line}-L${line}>)`;
             summary = summary.replace(continuous, withLink(continuous, 1)).replace(conditional, withLink(conditional, 3)).replace(oneTime, withLink(oneTime, 5));
           }
-          checkpointSummaries[compactions++] = summary;
+          checkpointSummaries[summaryIndex] = summary;
+          if (!continuingSource) { compactions++; acceptedCompactionId = compactionId; }
         }
         forceCompaction = false;
         const sources = notice.content.split('\n').filter(line => line.startsWith('{')).map(JSON.parse)

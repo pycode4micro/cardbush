@@ -1,0 +1,2868 @@
+{
+  "version": 1,
+  "createdAt": "2026-10-23T08:09:07.486Z",
+  "scope": "Synthetic recorded conversation. No business tools or user sessions executed. No credentials, hidden reasoning or provider replay included.",
+  "measurement": "Post-compaction actual provider input tokens include cached tokens; JSON/4 estimates are not used in these tables.",
+  "grading": "Strict original field checks are preserved. Semantic scores additionally accept explicitly listed representational equivalents, never missing/nonmatching facts. Every conversion is recorded. controlMatched reports only fields the uncompressed control answered correctly, to avoid automatically blaming compression for shared answer/grading issues.",
+  "primary": {
+    "layout": "normal",
+    "config": {
+      "model": "deepseek-flash",
+      "adapter": "openai_responses",
+      "reasoningEffort": "max",
+      "maxOutputTokens": 128000,
+      "configuredContextWindow": 530000,
+      "simulatedContextWindow": 168000
+    },
+    "methodology": {
+      "runtimeRevision": "isolated-sources-final-index-inherited-memory-oldest-two-thirds-v2",
+      "scenario": "long-video-revisions",
+      "layout": "normal",
+      "auditRevision": "v2",
+      "businessTurns": 12,
+      "pressureCheckpoints": 4,
+      "syntheticBusinessTools": true,
+      "actualBusinessToolsExecuted": 0,
+      "noUserSessionOrSettingsWrites": true,
+      "repeatedCompactionInSameSession": true,
+      "outputAndReasoningUnchanged": true,
+      "pressureCounter": "controlled JSON characters / 4, including tools; NOT actual provider tokenization",
+      "actualInputMeasurement": "provider usage.inputTokens for the first ordinary request after compaction and for a blind follow-up audit; cached tokens included",
+      "probeAnswersFedBack": false,
+      "rubricHiddenFromModel": true,
+      "auditQuestionRevealedOnlyAfterCompaction": true,
+      "fixedBusinessFinalRepliesIdentical": true,
+      "fixedFinalTextGenerationExcludedInBothArms": true,
+      "finalToolValidation": "Both arms receive up to two attempts, using the actual tool error receipt; all attempts count toward cost.",
+      "legacyDirectFinal": "A legacy preparation may return no tool call, as production permits direct terminal replies. It adds no fake receipt; the same fixed final prose is appended in both arms.",
+      "persistentBridgeReplies": "Real model produces a one-sentence acknowledgment; no audit result or correct answer is inserted into history.",
+      "reference": "One uncompressed raw-business transcript control at each checkpoint; it is not fed to either arm.",
+      "armOrder": "baseline first on odd phases, prepared first on even phases; no concurrent provider calls",
+      "maxModelRounds": 120,
+      "repetitions": 1
+    },
+    "startedAt": "2026-10-23T07:10:36.021Z",
+    "completedAt": "2026-10-23T07:21:08.402Z",
+    "modelRounds": 67,
+    "aggregates": [
+      {
+        "variant": "baseline",
+        "strict": {
+          "passed": 183,
+          "total": 192
+        },
+        "controlMatched": {
+          "passed": 183,
+          "total": 192
+        },
+        "semantic": {
+          "passed": 183,
+          "total": 192
+        },
+        "semanticControlMatched": {
+          "passed": 183,
+          "total": 192
+        },
+        "semanticRequirements": {
+          "passed": 59,
+          "total": 64
+        },
+        "semanticFacts": {
+          "passed": 76,
+          "total": 80
+        },
+        "semanticDecisions": {
+          "passed": 48,
+          "total": 48
+        },
+        "requirements": {
+          "passed": 59,
+          "total": 64
+        },
+        "facts": {
+          "passed": 76,
+          "total": 80
+        },
+        "decisions": {
+          "passed": 48,
+          "total": 48
+        },
+        "preparationRounds": 13,
+        "maintenanceRounds": 18,
+        "totalModelRounds": 43,
+        "actualChainInputTokens": 732508,
+        "actualChainOutputTokens": 69323,
+        "actualChainCachedInputTokens": 410879,
+        "actualNonAuditInputTokens": 682753,
+        "actualNonAuditOutputTokens": 46656,
+        "nonAuditRounds": 39,
+        "boundaryElapsedMs": 294517,
+        "fourFollowUpInputTokens": 49755,
+        "fourFirstContinuationInputTokens": 43914
+      },
+      {
+        "variant": "prepared",
+        "strict": {
+          "passed": 192,
+          "total": 192
+        },
+        "controlMatched": {
+          "passed": 192,
+          "total": 192
+        },
+        "semantic": {
+          "passed": 192,
+          "total": 192
+        },
+        "semanticControlMatched": {
+          "passed": 192,
+          "total": 192
+        },
+        "semanticRequirements": {
+          "passed": 64,
+          "total": 64
+        },
+        "semanticFacts": {
+          "passed": 80,
+          "total": 80
+        },
+        "semanticDecisions": {
+          "passed": 48,
+          "total": 48
+        },
+        "requirements": {
+          "passed": 64,
+          "total": 64
+        },
+        "facts": {
+          "passed": 80,
+          "total": 80
+        },
+        "decisions": {
+          "passed": 48,
+          "total": 48
+        },
+        "preparationRounds": 12,
+        "maintenanceRounds": 0,
+        "totalModelRounds": 20,
+        "actualChainInputTokens": 426986,
+        "actualChainOutputTokens": 26287,
+        "actualChainCachedInputTokens": 294016,
+        "actualNonAuditInputTokens": 371325,
+        "actualNonAuditOutputTokens": 20061,
+        "nonAuditRounds": 16,
+        "boundaryElapsedMs": 4782,
+        "fourFollowUpInputTokens": 55661,
+        "fourFirstContinuationInputTokens": 53250
+      }
+    ],
+    "uncompressedControl": {
+      "strict": {
+        "passed": 192,
+        "total": 192
+      },
+      "semantic": {
+        "passed": 192,
+        "total": 192
+      },
+      "failures": []
+    },
+    "rows": [
+      {
+        "phase": "p1",
+        "variant": "baseline",
+        "firstContinuationInputTokens": 8992,
+        "followUpInputTokens": 10006,
+        "rawControlInputTokens": 27970,
+        "strict": {
+          "passed": 48,
+          "total": 48
+        },
+        "controlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "semantic": {
+          "passed": 48,
+          "total": 48
+        },
+        "semanticControlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "representationDifferences": [],
+        "requirements": {
+          "passed": 16,
+          "total": 16
+        },
+        "facts": {
+          "passed": 20,
+          "total": 20
+        },
+        "decisions": {
+          "passed": 12,
+          "total": 12
+        },
+        "methods": [
+          "checkpoint"
+        ],
+        "maintenanceRounds": 3,
+        "previewedToolResultIds": [],
+        "failures": []
+      },
+      {
+        "phase": "p1",
+        "variant": "prepared",
+        "firstContinuationInputTokens": 6866,
+        "followUpInputTokens": 7475,
+        "rawControlInputTokens": 27970,
+        "strict": {
+          "passed": 48,
+          "total": 48
+        },
+        "controlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "semantic": {
+          "passed": 48,
+          "total": 48
+        },
+        "semanticControlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "representationDifferences": [],
+        "requirements": {
+          "passed": 16,
+          "total": 16
+        },
+        "facts": {
+          "passed": 20,
+          "total": 20
+        },
+        "decisions": {
+          "passed": 12,
+          "total": 12
+        },
+        "methods": [
+          "prepared_tool_handoff"
+        ],
+        "maintenanceRounds": 0,
+        "previewedToolResultIds": [],
+        "failures": []
+      },
+      {
+        "phase": "p2",
+        "variant": "baseline",
+        "firstContinuationInputTokens": 11536,
+        "followUpInputTokens": 12134,
+        "rawControlInputTokens": 51741,
+        "strict": {
+          "passed": 48,
+          "total": 48
+        },
+        "controlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "semantic": {
+          "passed": 48,
+          "total": 48
+        },
+        "semanticControlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "representationDifferences": [],
+        "requirements": {
+          "passed": 16,
+          "total": 16
+        },
+        "facts": {
+          "passed": 20,
+          "total": 20
+        },
+        "decisions": {
+          "passed": 12,
+          "total": 12
+        },
+        "methods": [
+          "checkpoint"
+        ],
+        "maintenanceRounds": 5,
+        "previewedToolResultIds": [],
+        "failures": []
+      },
+      {
+        "phase": "p2",
+        "variant": "prepared",
+        "firstContinuationInputTokens": 11120,
+        "followUpInputTokens": 11682,
+        "rawControlInputTokens": 51741,
+        "strict": {
+          "passed": 48,
+          "total": 48
+        },
+        "controlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "semantic": {
+          "passed": 48,
+          "total": 48
+        },
+        "semanticControlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "representationDifferences": [],
+        "requirements": {
+          "passed": 16,
+          "total": 16
+        },
+        "facts": {
+          "passed": 20,
+          "total": 20
+        },
+        "decisions": {
+          "passed": 12,
+          "total": 12
+        },
+        "methods": [
+          "prepared_tool_handoff"
+        ],
+        "maintenanceRounds": 0,
+        "previewedToolResultIds": [],
+        "failures": []
+      },
+      {
+        "phase": "p3",
+        "variant": "baseline",
+        "firstContinuationInputTokens": 11888,
+        "followUpInputTokens": 14363,
+        "rawControlInputTokens": 75476,
+        "strict": {
+          "passed": 46,
+          "total": 48
+        },
+        "controlMatched": {
+          "passed": 46,
+          "total": 48
+        },
+        "semantic": {
+          "passed": 46,
+          "total": 48
+        },
+        "semanticControlMatched": {
+          "passed": 46,
+          "total": 48
+        },
+        "representationDifferences": [],
+        "requirements": {
+          "passed": 15,
+          "total": 16
+        },
+        "facts": {
+          "passed": 19,
+          "total": 20
+        },
+        "decisions": {
+          "passed": 12,
+          "total": 12
+        },
+        "methods": [
+          "checkpoint"
+        ],
+        "maintenanceRounds": 5,
+        "previewedToolResultIds": [],
+        "failures": [
+          {
+            "category": "requirement",
+            "key": "opening_full_body_seconds",
+            "expected": 3,
+            "actual": null,
+            "passed": false
+          },
+          {
+            "category": "fact",
+            "key": "cancelled_job_ids",
+            "expected": [
+              "R-21"
+            ],
+            "actual": [],
+            "passed": false
+          }
+        ]
+      },
+      {
+        "phase": "p3",
+        "variant": "prepared",
+        "firstContinuationInputTokens": 15427,
+        "followUpInputTokens": 15979,
+        "rawControlInputTokens": 75476,
+        "strict": {
+          "passed": 48,
+          "total": 48
+        },
+        "controlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "semantic": {
+          "passed": 48,
+          "total": 48
+        },
+        "semanticControlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "representationDifferences": [],
+        "requirements": {
+          "passed": 16,
+          "total": 16
+        },
+        "facts": {
+          "passed": 20,
+          "total": 20
+        },
+        "decisions": {
+          "passed": 12,
+          "total": 12
+        },
+        "methods": [
+          "prepared_tool_handoff"
+        ],
+        "maintenanceRounds": 0,
+        "previewedToolResultIds": [],
+        "failures": []
+      },
+      {
+        "phase": "p4",
+        "variant": "baseline",
+        "firstContinuationInputTokens": 11498,
+        "followUpInputTokens": 13252,
+        "rawControlInputTokens": 99285,
+        "strict": {
+          "passed": 41,
+          "total": 48
+        },
+        "controlMatched": {
+          "passed": 41,
+          "total": 48
+        },
+        "semantic": {
+          "passed": 41,
+          "total": 48
+        },
+        "semanticControlMatched": {
+          "passed": 41,
+          "total": 48
+        },
+        "representationDifferences": [],
+        "requirements": {
+          "passed": 12,
+          "total": 16
+        },
+        "facts": {
+          "passed": 17,
+          "total": 20
+        },
+        "decisions": {
+          "passed": 12,
+          "total": 12
+        },
+        "methods": [
+          "checkpoint"
+        ],
+        "maintenanceRounds": 5,
+        "previewedToolResultIds": [],
+        "failures": [
+          {
+            "category": "requirement",
+            "key": "blue_sky_opening_allowed",
+            "expected": false,
+            "actual": null,
+            "passed": false
+          },
+          {
+            "category": "requirement",
+            "key": "workflow_binding_means_timestamp_zero",
+            "expected": false,
+            "actual": null,
+            "passed": false
+          },
+          {
+            "category": "requirement",
+            "key": "opening_full_body_seconds",
+            "expected": 3,
+            "actual": null,
+            "passed": false
+          },
+          {
+            "category": "fact",
+            "key": "reference_pngs_viewed",
+            "expected": 8,
+            "actual": [],
+            "passed": false
+          },
+          {
+            "category": "fact",
+            "key": "latest_failed_job",
+            "expected": "R-24",
+            "actual": null,
+            "passed": false,
+            "expectedLiteralPresentInProjectedContext": false
+          },
+          {
+            "category": "fact",
+            "key": "cancelled_job_ids",
+            "expected": [
+              "R-21",
+              "R-26"
+            ],
+            "actual": [
+              "R-26"
+            ],
+            "passed": false
+          },
+          {
+            "category": "requirement",
+            "key": "target_lufs",
+            "expected": -16,
+            "actual": null,
+            "passed": false
+          }
+        ]
+      },
+      {
+        "phase": "p4",
+        "variant": "prepared",
+        "firstContinuationInputTokens": 19837,
+        "followUpInputTokens": 20525,
+        "rawControlInputTokens": 99285,
+        "strict": {
+          "passed": 48,
+          "total": 48
+        },
+        "controlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "semantic": {
+          "passed": 48,
+          "total": 48
+        },
+        "semanticControlMatched": {
+          "passed": 48,
+          "total": 48
+        },
+        "representationDifferences": [],
+        "requirements": {
+          "passed": 16,
+          "total": 16
+        },
+        "facts": {
+          "passed": 20,
+          "total": 20
+        },
+        "decisions": {
+          "passed": 12,
+          "total": 12
+        },
+        "methods": [
+          "prepared_tool_handoff"
+        ],
+        "maintenanceRounds": 0,
+        "previewedToolResultIds": [],
+        "failures": []
+      }
+    ],
+    "requests": [
+      {
+        "id": "001-p1-baseline-prepare-t01",
+        "stage": "p1-baseline-prepare-t01",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 10885,
+          "outputTokens": 174,
+          "cachedInputTokens": 10751
+        },
+        "elapsedMs": 1333
+      },
+      {
+        "id": "002-p1-baseline-prepare-t01",
+        "stage": "p1-baseline-prepare-t01",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 11224,
+          "outputTokens": 23,
+          "cachedInputTokens": 11008
+        },
+        "elapsedMs": 616
+      },
+      {
+        "id": "003-p1-baseline-prepare-t02",
+        "stage": "p1-baseline-prepare-t02",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 19177,
+          "outputTokens": 55,
+          "cachedInputTokens": 10624
+        },
+        "elapsedMs": 1050
+      },
+      {
+        "id": "004-p1-baseline-prepare-t03",
+        "stage": "p1-baseline-prepare-t03",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 27081,
+          "outputTokens": 48,
+          "cachedInputTokens": 19072
+        },
+        "elapsedMs": 1549
+      },
+      {
+        "id": "005-p1-baseline-boundary",
+        "stage": "p1-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 13592,
+          "outputTokens": 1318,
+          "cachedInputTokens": 11520
+        },
+        "elapsedMs": 7799
+      },
+      {
+        "id": "006-p1-baseline-boundary",
+        "stage": "p1-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 14270,
+          "outputTokens": 1881,
+          "cachedInputTokens": 11264
+        },
+        "elapsedMs": 11819
+      },
+      {
+        "id": "007-p1-baseline-boundary",
+        "stage": "p1-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 16144,
+          "outputTokens": 2327,
+          "cachedInputTokens": 11136
+        },
+        "elapsedMs": 14418
+      },
+      {
+        "id": "008-p1-baseline-boundary",
+        "stage": "p1-baseline-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 8992,
+          "outputTokens": 458,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 3612
+      },
+      {
+        "id": "009-p1-baseline-boundary",
+        "stage": "p1-baseline-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 9481,
+          "outputTokens": 15,
+          "cachedInputTokens": 9344
+        },
+        "elapsedMs": 1025
+      },
+      {
+        "id": "010-p1-baseline-audit",
+        "stage": "p1-baseline-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 10006,
+          "outputTokens": 4560,
+          "cachedInputTokens": 9472
+        },
+        "elapsedMs": 24262
+      },
+      {
+        "id": "011-p1-prepared-prepare-t01",
+        "stage": "p1-prepared-prepare-t01",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 11370,
+          "outputTokens": 1748,
+          "cachedInputTokens": 11136
+        },
+        "elapsedMs": 9443
+      },
+      {
+        "id": "012-p1-prepared-prepare-t02",
+        "stage": "p1-prepared-prepare-t02",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 21257,
+          "outputTokens": 1396,
+          "cachedInputTokens": 11264
+        },
+        "elapsedMs": 7528
+      },
+      {
+        "id": "013-p1-prepared-prepare-t03",
+        "stage": "p1-prepared-prepare-t03",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 30678,
+          "outputTokens": 1159,
+          "cachedInputTokens": 20992
+        },
+        "elapsedMs": 6038
+      },
+      {
+        "id": "014-p1-prepared-boundary",
+        "stage": "p1-prepared-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 6866,
+          "outputTokens": 99,
+          "cachedInputTokens": 3456
+        },
+        "elapsedMs": 910
+      },
+      {
+        "id": "015-p1-prepared-audit",
+        "stage": "p1-prepared-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 7475,
+          "outputTokens": 1579,
+          "cachedInputTokens": 6912
+        },
+        "elapsedMs": 8040
+      },
+      {
+        "id": "016-p1-uncompressed-control-audit",
+        "stage": "p1-uncompressed-control-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 27970,
+          "outputTokens": 3939,
+          "cachedInputTokens": 27776
+        },
+        "elapsedMs": 21476
+      },
+      {
+        "id": "017-p2-prepared-prepare-t04",
+        "stage": "p2-prepared-prepare-t04",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 14568,
+          "outputTokens": 1287,
+          "cachedInputTokens": 3072
+        },
+        "elapsedMs": 6533
+      },
+      {
+        "id": "018-p2-prepared-prepare-t05",
+        "stage": "p2-prepared-prepare-t05",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 23910,
+          "outputTokens": 1355,
+          "cachedInputTokens": 14464
+        },
+        "elapsedMs": 7019
+      },
+      {
+        "id": "019-p2-prepared-prepare-t06",
+        "stage": "p2-prepared-prepare-t06",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 33216,
+          "outputTokens": 2117,
+          "cachedInputTokens": 23808
+        },
+        "elapsedMs": 11327
+      },
+      {
+        "id": "020-p2-prepared-boundary",
+        "stage": "p2-prepared-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 11120,
+          "outputTokens": 52,
+          "cachedInputTokens": 6912
+        },
+        "elapsedMs": 689
+      },
+      {
+        "id": "021-p2-prepared-audit",
+        "stage": "p2-prepared-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 11682,
+          "outputTokens": 1876,
+          "cachedInputTokens": 11136
+        },
+        "elapsedMs": 8839
+      },
+      {
+        "id": "022-p2-baseline-prepare-t04",
+        "stage": "p2-baseline-prepare-t04",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 16614,
+          "outputTokens": 55,
+          "cachedInputTokens": 2560
+        },
+        "elapsedMs": 1648
+      },
+      {
+        "id": "023-p2-baseline-prepare-t05",
+        "stage": "p2-baseline-prepare-t05",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 24666,
+          "outputTokens": 29,
+          "cachedInputTokens": 16512
+        },
+        "elapsedMs": 917
+      },
+      {
+        "id": "024-p2-baseline-prepare-t06",
+        "stage": "p2-baseline-prepare-t06",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 32589,
+          "outputTokens": 41,
+          "cachedInputTokens": 24576
+        },
+        "elapsedMs": 1405
+      },
+      {
+        "id": "025-p2-baseline-boundary",
+        "stage": "p2-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 4684,
+          "outputTokens": 590,
+          "cachedInputTokens": 3456
+        },
+        "elapsedMs": 4750
+      },
+      {
+        "id": "026-p2-baseline-boundary",
+        "stage": "p2-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 11676,
+          "outputTokens": 2251,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 13962
+      },
+      {
+        "id": "027-p2-baseline-boundary",
+        "stage": "p2-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 16302,
+          "outputTokens": 2809,
+          "cachedInputTokens": 11264
+        },
+        "elapsedMs": 18648
+      },
+      {
+        "id": "028-p2-baseline-boundary",
+        "stage": "p2-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 19248,
+          "outputTokens": 4712,
+          "cachedInputTokens": 11264
+        },
+        "elapsedMs": 30823
+      },
+      {
+        "id": "029-p2-baseline-boundary",
+        "stage": "p2-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 24087,
+          "outputTokens": 3324,
+          "cachedInputTokens": 11136
+        },
+        "elapsedMs": 21031
+      },
+      {
+        "id": "030-p2-baseline-boundary",
+        "stage": "p2-baseline-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 11536,
+          "outputTokens": 88,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 1380
+      },
+      {
+        "id": "031-p2-baseline-audit",
+        "stage": "p2-baseline-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 12134,
+          "outputTokens": 4826,
+          "cachedInputTokens": 11520
+        },
+        "elapsedMs": 25928
+      },
+      {
+        "id": "032-p2-uncompressed-control-audit",
+        "stage": "p2-uncompressed-control-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 51741,
+          "outputTokens": 2261,
+          "cachedInputTokens": 51584
+        },
+        "elapsedMs": 10884
+      },
+      {
+        "id": "033-p3-baseline-prepare-t07",
+        "stage": "p3-baseline-prepare-t07",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 18760,
+          "outputTokens": 64,
+          "cachedInputTokens": 2560
+        },
+        "elapsedMs": 1376
+      },
+      {
+        "id": "034-p3-baseline-prepare-t08",
+        "stage": "p3-baseline-prepare-t08",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 26737,
+          "outputTokens": 75,
+          "cachedInputTokens": 18688
+        },
+        "elapsedMs": 1184
+      },
+      {
+        "id": "035-p3-baseline-prepare-t09",
+        "stage": "p3-baseline-prepare-t09",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 34736,
+          "outputTokens": 28,
+          "cachedInputTokens": 26624
+        },
+        "elapsedMs": 1182
+      },
+      {
+        "id": "036-p3-baseline-boundary",
+        "stage": "p3-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 4678,
+          "outputTokens": 796,
+          "cachedInputTokens": 3456
+        },
+        "elapsedMs": 6020
+      },
+      {
+        "id": "037-p3-baseline-boundary",
+        "stage": "p3-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 14031,
+          "outputTokens": 3366,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 20558
+      },
+      {
+        "id": "038-p3-baseline-boundary",
+        "stage": "p3-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 17662,
+          "outputTokens": 3323,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 21106
+      },
+      {
+        "id": "039-p3-baseline-boundary",
+        "stage": "p3-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 21113,
+          "outputTokens": 3183,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 19823
+      },
+      {
+        "id": "040-p3-baseline-boundary",
+        "stage": "p3-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 24416,
+          "outputTokens": 2805,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 17315
+      },
+      {
+        "id": "041-p3-baseline-boundary",
+        "stage": "p3-baseline-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 11888,
+          "outputTokens": 495,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 4263
+      },
+      {
+        "id": "042-p3-baseline-boundary",
+        "stage": "p3-baseline-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 12815,
+          "outputTokens": 818,
+          "cachedInputTokens": 12288
+        },
+        "elapsedMs": 5062
+      },
+      {
+        "id": "043-p3-baseline-boundary",
+        "stage": "p3-baseline-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 13837,
+          "outputTokens": 16,
+          "cachedInputTokens": 13568
+        },
+        "elapsedMs": 683
+      },
+      {
+        "id": "044-p3-baseline-audit",
+        "stage": "p3-baseline-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 14363,
+          "outputTokens": 5853,
+          "cachedInputTokens": 13824
+        },
+        "elapsedMs": 32213
+      },
+      {
+        "id": "045-p3-prepared-prepare-t07",
+        "stage": "p3-prepared-prepare-t07",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 18793,
+          "outputTokens": 1334,
+          "cachedInputTokens": 6528
+        },
+        "elapsedMs": 6434
+      },
+      {
+        "id": "046-p3-prepared-prepare-t08",
+        "stage": "p3-prepared-prepare-t08",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 28098,
+          "outputTokens": 2020,
+          "cachedInputTokens": 18688
+        },
+        "elapsedMs": 10749
+      },
+      {
+        "id": "047-p3-prepared-prepare-t09",
+        "stage": "p3-prepared-prepare-t09",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 38101,
+          "outputTokens": 2343,
+          "cachedInputTokens": 27776
+        },
+        "elapsedMs": 12569
+      },
+      {
+        "id": "048-p3-prepared-boundary",
+        "stage": "p3-prepared-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 15427,
+          "outputTokens": 42,
+          "cachedInputTokens": 11136
+        },
+        "elapsedMs": 773
+      },
+      {
+        "id": "049-p3-prepared-audit",
+        "stage": "p3-prepared-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 15979,
+          "outputTokens": 1227,
+          "cachedInputTokens": 15360
+        },
+        "elapsedMs": 4774
+      },
+      {
+        "id": "050-p3-uncompressed-control-audit",
+        "stage": "p3-uncompressed-control-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 75476,
+          "outputTokens": 1954,
+          "cachedInputTokens": 75264
+        },
+        "elapsedMs": 9019
+      },
+      {
+        "id": "051-p4-prepared-prepare-t10",
+        "stage": "p4-prepared-prepare-t10",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 23023,
+          "outputTokens": 1547,
+          "cachedInputTokens": 10624
+        },
+        "elapsedMs": 6958
+      },
+      {
+        "id": "052-p4-prepared-prepare-t11",
+        "stage": "p4-prepared-prepare-t11",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 32617,
+          "outputTokens": 1790,
+          "cachedInputTokens": 22912
+        },
+        "elapsedMs": 9129
+      },
+      {
+        "id": "053-p4-prepared-prepare-t12",
+        "stage": "p4-prepared-prepare-t12",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 42444,
+          "outputTokens": 1594,
+          "cachedInputTokens": 32512
+        },
+        "elapsedMs": 8119
+      },
+      {
+        "id": "054-p4-prepared-boundary",
+        "stage": "p4-prepared-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 19837,
+          "outputTokens": 178,
+          "cachedInputTokens": 15360
+        },
+        "elapsedMs": 1708
+      },
+      {
+        "id": "055-p4-prepared-audit",
+        "stage": "p4-prepared-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 20525,
+          "outputTokens": 1544,
+          "cachedInputTokens": 19968
+        },
+        "elapsedMs": 6415
+      },
+      {
+        "id": "056-p4-baseline-prepare-t10",
+        "stage": "p4-baseline-prepare-t10",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 20922,
+          "outputTokens": 159,
+          "cachedInputTokens": 2560
+        },
+        "elapsedMs": 1641
+      },
+      {
+        "id": "057-p4-baseline-prepare-t11",
+        "stage": "p4-baseline-prepare-t11",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 29074,
+          "outputTokens": 32,
+          "cachedInputTokens": 20608
+        },
+        "elapsedMs": 1162
+      },
+      {
+        "id": "058-p4-baseline-prepare-t12",
+        "stage": "p4-baseline-prepare-t12",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 37091,
+          "outputTokens": 26,
+          "cachedInputTokens": 28800
+        },
+        "elapsedMs": 599
+      },
+      {
+        "id": "059-p4-baseline-boundary",
+        "stage": "p4-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 4665,
+          "outputTokens": 624,
+          "cachedInputTokens": 3456
+        },
+        "elapsedMs": 4716
+      },
+      {
+        "id": "060-p4-baseline-boundary",
+        "stage": "p4-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 16150,
+          "outputTokens": 3000,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 18026
+      },
+      {
+        "id": "061-p4-baseline-boundary",
+        "stage": "p4-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 17244,
+          "outputTokens": 1770,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 10867
+      },
+      {
+        "id": "062-p4-baseline-boundary",
+        "stage": "p4-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 19341,
+          "outputTokens": 1877,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 10676
+      },
+      {
+        "id": "063-p4-baseline-boundary",
+        "stage": "p4-baseline-boundary",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 21268,
+          "outputTokens": 3189,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 19583
+      },
+      {
+        "id": "064-p4-baseline-boundary",
+        "stage": "p4-baseline-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 11498,
+          "outputTokens": 649,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 4121
+      },
+      {
+        "id": "065-p4-baseline-boundary",
+        "stage": "p4-baseline-boundary",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 12579,
+          "outputTokens": 163,
+          "cachedInputTokens": 12032
+        },
+        "elapsedMs": 1816
+      },
+      {
+        "id": "066-p4-baseline-audit",
+        "stage": "p4-baseline-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 13252,
+          "outputTokens": 7428,
+          "cachedInputTokens": 12672
+        },
+        "elapsedMs": 39959
+      },
+      {
+        "id": "067-p4-uncompressed-control-audit",
+        "stage": "p4-uncompressed-control-audit",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 99285,
+          "outputTokens": 4682,
+          "cachedInputTokens": 99072
+        },
+        "elapsedMs": 22807
+      }
+    ]
+  },
+  "summaryMergeStress": {
+    "startedAt": "2026-10-23T07:58:53.208Z",
+    "completed": false,
+    "completedWork": "All three merge cycles and four audits finished; original-journal model readback did not finish and is not a pass.",
+    "config": {
+      "model": "deepseek-flash",
+      "adapter": "openai_responses",
+      "reasoningEffort": "max",
+      "maxOutputTokens": 128000,
+      "configuredContextWindow": 530000,
+      "simulatedContextWindow": 168000
+    },
+    "methodology": {
+      "test": "shared oldest-two-thirds summary fallback and original-journal readback",
+      "initialSummaries": "12 model-generated prepared handoffs from the supplied report, plus each original user correction and fixed final reply",
+      "simulatedPressure": "Fixed window: usable input = 1.8 * the initial provider local wire-input estimate. Before subsequent merges append synthetic no-change status summaries until the initial pressure level is reached again. These add no requirements, answers or new business facts.",
+      "inputEstimator": "Provider local wire projection, excluding duplicate internal providerReplay envelopes. Not billed tokenization or a production window change.",
+      "originalOnlyCanary": "A synthetic checksum is in t01 journal only, deliberately absent from initial summaries. Recovery audit must read it.",
+      "unchangedModelReasoningAndOutput": true,
+      "noBusinessTools": true,
+      "cycles": 3,
+      "auditAnswersFedBack": false
+    },
+    "cycles": [
+      {
+        "cycle": 1,
+        "simulatedUsableInput": 21325,
+        "beforeEstimate": 11847,
+        "afterEstimate": 7898,
+        "status": "completed",
+        "reason": "model_response_completed"
+      },
+      {
+        "cycle": 2,
+        "simulatedUsableInput": 21325,
+        "beforeEstimate": 12126,
+        "afterEstimate": 7956,
+        "status": "completed",
+        "reason": "model_response_completed"
+      },
+      {
+        "cycle": 3,
+        "simulatedUsableInput": 21325,
+        "beforeEstimate": 12184,
+        "afterEstimate": 7966,
+        "status": "completed",
+        "reason": "model_response_completed"
+      }
+    ],
+    "audits": [
+      {
+        "stage": "initial-summary-control",
+        "usage": {
+          "inputTokens": 20097,
+          "outputTokens": 2809,
+          "cachedInputTokens": 19963
+        },
+        "answer": "{\"state\":{\"only_original_footage\":true,\"blue_sky_opening_allowed\":false,\"publish_allowed\":false,\"may_repeat_verified_downloads\":false,\"may_resubmit_pending_job\":false,\"workflow_binding_means_timestamp_zero\":false,\"opening_full_body_seconds\":3,\"opening_text\":\"别再用宽松掩盖版型问题\",\"shot_min_seconds\":4,\"short_shot_exception\":null,\"duration_min_seconds\":32,\"duration_max_seconds\":36,\"cue_id\":\"E-24\",\"typography_id\":\"T-24\",\"cue_start_seconds\":6.8,\"cue_gain_db\":-23,\"reference_pngs_viewed\":8,\"asset_ids\":[\"M-17\",\"M-18\",\"M-21\"],\"excluded_asset_ids\":[\"M-19\",\"M-20\"],\"latest_version\":\"V-27\",\"pending_job\":null,\"latest_completed_job\":\"R-27\",\"latest_failed_job\":\"R-24\",\"cancelled_job_ids\":[\"R-21\",\"R-26\"],\"target_lufs\":-16,\"measured_lufs\":-16,\"full_voice_listening_passed\":true,\"full_continuous_viewing_passed\":true,\"sfx_intelligibility_passed\":false,\"overall_acceptance_passed\":false,\"measured_duration_seconds\":34.1,\"deliver_link_allowed\":true,\"delivery_path\":\"D:/synthetic/deliveries/release-v27/delivery.mp4\",\"same_cue_gain_next_version_db\":-23,\"reencode_generations\":1,\"crf\":18},\"decisions\":{\"may_use_B02_at_2_8_seconds\":false,\"may_start_same_cue_at_zero\":false,\"may_reuse_old_version_review_for_current\":false,\"may_publish_current\":false,\"may_claim_full_acceptance\":false,\"may_render_again_without_new_approval\":false,\"should_redownload_M17\":false,\"may_use_M19\":false,\"may_use_M20\":false,\"may_send_current_link\":true,\"would_3_6_second_body_shot_be_valid\":true,\"needs_sfx_listening_before_full_acceptance\":true}}",
+        "passed": 47,
+        "total": 48,
+        "checks": [
+          {
+            "key": "only_original_footage",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "blue_sky_opening_allowed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "publish_allowed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_repeat_verified_downloads",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_resubmit_pending_job",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "workflow_binding_means_timestamp_zero",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "opening_full_body_seconds",
+            "expected": 3,
+            "actual": 3,
+            "passed": true
+          },
+          {
+            "key": "opening_text",
+            "expected": "别再用宽松掩盖版型问题",
+            "actual": "别再用宽松掩盖版型问题",
+            "passed": true
+          },
+          {
+            "key": "shot_min_seconds",
+            "expected": 4,
+            "actual": 4,
+            "passed": true
+          },
+          {
+            "key": "short_shot_exception",
+            "expected": null,
+            "actual": null,
+            "passed": true
+          },
+          {
+            "key": "duration_min_seconds",
+            "expected": 32,
+            "actual": 32,
+            "passed": true
+          },
+          {
+            "key": "duration_max_seconds",
+            "expected": 36,
+            "actual": 36,
+            "passed": true
+          },
+          {
+            "key": "cue_id",
+            "expected": "E-24",
+            "actual": "E-24",
+            "passed": true
+          },
+          {
+            "key": "typography_id",
+            "expected": "T-24",
+            "actual": "T-24",
+            "passed": true
+          },
+          {
+            "key": "cue_start_seconds",
+            "expected": 6.8,
+            "actual": 6.8,
+            "passed": true
+          },
+          {
+            "key": "cue_gain_db",
+            "expected": -23,
+            "actual": -23,
+            "passed": true
+          },
+          {
+            "key": "reference_pngs_viewed",
+            "expected": 8,
+            "actual": 8,
+            "passed": true
+          },
+          {
+            "key": "asset_ids",
+            "expected": [
+              "M-17",
+              "M-18",
+              "M-21"
+            ],
+            "actual": [
+              "M-17",
+              "M-18",
+              "M-21"
+            ],
+            "passed": true
+          },
+          {
+            "key": "excluded_asset_ids",
+            "expected": [
+              "M-19",
+              "M-20"
+            ],
+            "actual": [
+              "M-19",
+              "M-20"
+            ],
+            "passed": true
+          },
+          {
+            "key": "latest_version",
+            "expected": "V-27",
+            "actual": "V-27",
+            "passed": true
+          },
+          {
+            "key": "pending_job",
+            "expected": null,
+            "actual": null,
+            "passed": true
+          },
+          {
+            "key": "latest_completed_job",
+            "expected": "R-27",
+            "actual": "R-27",
+            "passed": true
+          },
+          {
+            "key": "latest_failed_job",
+            "expected": "R-24",
+            "actual": "R-24",
+            "passed": true
+          },
+          {
+            "key": "cancelled_job_ids",
+            "expected": [
+              "R-21",
+              "R-26"
+            ],
+            "actual": [
+              "R-21",
+              "R-26"
+            ],
+            "passed": true
+          },
+          {
+            "key": "target_lufs",
+            "expected": -16,
+            "actual": -16,
+            "passed": true
+          },
+          {
+            "key": "measured_lufs",
+            "expected": -16,
+            "actual": -16,
+            "passed": true
+          },
+          {
+            "key": "full_voice_listening_passed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "full_continuous_viewing_passed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "sfx_intelligibility_passed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "overall_acceptance_passed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "measured_duration_seconds",
+            "expected": 34.1,
+            "actual": 34.1,
+            "passed": true
+          },
+          {
+            "key": "deliver_link_allowed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "delivery_path",
+            "expected": "D:/synthetic/deliveries/release-v27/delivery.mp4",
+            "actual": "D:/synthetic/deliveries/release-v27/delivery.mp4",
+            "passed": true
+          },
+          {
+            "key": "same_cue_gain_next_version_db",
+            "expected": -23,
+            "actual": -23,
+            "passed": true
+          },
+          {
+            "key": "reencode_generations",
+            "expected": 1,
+            "actual": 1,
+            "passed": true
+          },
+          {
+            "key": "crf",
+            "expected": 18,
+            "actual": 18,
+            "passed": true
+          },
+          {
+            "key": "may_use_B02_at_2_8_seconds",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_start_same_cue_at_zero",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_reuse_old_version_review_for_current",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_publish_current",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_claim_full_acceptance",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_render_again_without_new_approval",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "should_redownload_M17",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_use_M19",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_use_M20",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_send_current_link",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "would_3_6_second_body_shot_be_valid",
+            "expected": false,
+            "actual": true,
+            "passed": false
+          },
+          {
+            "key": "needs_sfx_listening_before_full_acceptance",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          }
+        ]
+      },
+      {
+        "stage": "after-1",
+        "usage": {
+          "inputTokens": 10447,
+          "outputTokens": 1275,
+          "cachedInputTokens": 9856
+        },
+        "answer": "```json\n{\n  \"state\": {\n    \"only_original_footage\": true,\n    \"blue_sky_opening_allowed\": false,\n    \"publish_allowed\": false,\n    \"may_repeat_verified_downloads\": false,\n    \"may_resubmit_pending_job\": false,\n    \"workflow_binding_means_timestamp_zero\": false,\n    \"opening_full_body_seconds\": 3,\n    \"opening_text\": \"别再用宽松掩盖版型问题\",\n    \"shot_min_seconds\": 4,\n    \"short_shot_exception\": null,\n    \"duration_min_seconds\": 32,\n    \"duration_max_seconds\": 36,\n    \"cue_id\": \"E-24\",\n    \"typography_id\": \"T-24\",\n    \"cue_start_seconds\": 6.8,\n    \"cue_gain_db\": -23,\n    \"reference_pngs_viewed\": 8,\n    \"asset_ids\": [\"M-17\", \"M-18\", \"M-21\"],\n    \"excluded_asset_ids\": [\"M-19\", \"M-20\"],\n    \"latest_version\": \"V-27\",\n    \"pending_job\": null,\n    \"latest_completed_job\": \"R-27\",\n    \"latest_failed_job\": \"R-24\",\n    \"cancelled_job_ids\": [\"R-21\", \"R-26\"],\n    \"target_lufs\": -16,\n    \"measured_lufs\": -16,\n    \"full_voice_listening_passed\": true,\n    \"full_continuous_viewing_passed\": true,\n    \"sfx_intelligibility_passed\": false,\n    \"overall_acceptance_passed\": false,\n    \"measured_duration_seconds\": 34.1,\n    \"deliver_link_allowed\": true,\n    \"delivery_path\": \"D:/synthetic/deliveries/release-v27/delivery.mp4\",\n    \"same_cue_gain_next_version_db\": -23,\n    \"reencode_generations\": 1,\n    \"crf\": 18\n  },\n  \"decisions\": {\n    \"may_use_B02_at_2_8_seconds\": false,\n    \"may_start_same_cue_at_zero\": false,\n    \"may_reuse_old_version_review_for_current\": false,\n    \"may_publish_current\": false,\n    \"may_claim_full_acceptance\": false,\n    \"may_render_again_without_new_approval\": false,\n    \"should_redownload_M17\": false,\n    \"may_use_M19\": false,\n    \"may_use_M20\": false,\n    \"may_send_current_link\": true,\n    \"would_3_6_second_body_shot_be_valid\": true,\n    \"needs_sfx_listening_before_full_acceptance\": true\n  }\n}\n```",
+        "passed": 47,
+        "total": 48,
+        "checks": [
+          {
+            "key": "only_original_footage",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "blue_sky_opening_allowed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "publish_allowed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_repeat_verified_downloads",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_resubmit_pending_job",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "workflow_binding_means_timestamp_zero",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "opening_full_body_seconds",
+            "expected": 3,
+            "actual": 3,
+            "passed": true
+          },
+          {
+            "key": "opening_text",
+            "expected": "别再用宽松掩盖版型问题",
+            "actual": "别再用宽松掩盖版型问题",
+            "passed": true
+          },
+          {
+            "key": "shot_min_seconds",
+            "expected": 4,
+            "actual": 4,
+            "passed": true
+          },
+          {
+            "key": "short_shot_exception",
+            "expected": null,
+            "actual": null,
+            "passed": true
+          },
+          {
+            "key": "duration_min_seconds",
+            "expected": 32,
+            "actual": 32,
+            "passed": true
+          },
+          {
+            "key": "duration_max_seconds",
+            "expected": 36,
+            "actual": 36,
+            "passed": true
+          },
+          {
+            "key": "cue_id",
+            "expected": "E-24",
+            "actual": "E-24",
+            "passed": true
+          },
+          {
+            "key": "typography_id",
+            "expected": "T-24",
+            "actual": "T-24",
+            "passed": true
+          },
+          {
+            "key": "cue_start_seconds",
+            "expected": 6.8,
+            "actual": 6.8,
+            "passed": true
+          },
+          {
+            "key": "cue_gain_db",
+            "expected": -23,
+            "actual": -23,
+            "passed": true
+          },
+          {
+            "key": "reference_pngs_viewed",
+            "expected": 8,
+            "actual": 8,
+            "passed": true
+          },
+          {
+            "key": "asset_ids",
+            "expected": [
+              "M-17",
+              "M-18",
+              "M-21"
+            ],
+            "actual": [
+              "M-17",
+              "M-18",
+              "M-21"
+            ],
+            "passed": true
+          },
+          {
+            "key": "excluded_asset_ids",
+            "expected": [
+              "M-19",
+              "M-20"
+            ],
+            "actual": [
+              "M-19",
+              "M-20"
+            ],
+            "passed": true
+          },
+          {
+            "key": "latest_version",
+            "expected": "V-27",
+            "actual": "V-27",
+            "passed": true
+          },
+          {
+            "key": "pending_job",
+            "expected": null,
+            "actual": null,
+            "passed": true
+          },
+          {
+            "key": "latest_completed_job",
+            "expected": "R-27",
+            "actual": "R-27",
+            "passed": true
+          },
+          {
+            "key": "latest_failed_job",
+            "expected": "R-24",
+            "actual": "R-24",
+            "passed": true
+          },
+          {
+            "key": "cancelled_job_ids",
+            "expected": [
+              "R-21",
+              "R-26"
+            ],
+            "actual": [
+              "R-21",
+              "R-26"
+            ],
+            "passed": true
+          },
+          {
+            "key": "target_lufs",
+            "expected": -16,
+            "actual": -16,
+            "passed": true
+          },
+          {
+            "key": "measured_lufs",
+            "expected": -16,
+            "actual": -16,
+            "passed": true
+          },
+          {
+            "key": "full_voice_listening_passed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "full_continuous_viewing_passed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "sfx_intelligibility_passed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "overall_acceptance_passed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "measured_duration_seconds",
+            "expected": 34.1,
+            "actual": 34.1,
+            "passed": true
+          },
+          {
+            "key": "deliver_link_allowed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "delivery_path",
+            "expected": "D:/synthetic/deliveries/release-v27/delivery.mp4",
+            "actual": "D:/synthetic/deliveries/release-v27/delivery.mp4",
+            "passed": true
+          },
+          {
+            "key": "same_cue_gain_next_version_db",
+            "expected": -23,
+            "actual": -23,
+            "passed": true
+          },
+          {
+            "key": "reencode_generations",
+            "expected": 1,
+            "actual": 1,
+            "passed": true
+          },
+          {
+            "key": "crf",
+            "expected": 18,
+            "actual": 18,
+            "passed": true
+          },
+          {
+            "key": "may_use_B02_at_2_8_seconds",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_start_same_cue_at_zero",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_reuse_old_version_review_for_current",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_publish_current",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_claim_full_acceptance",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_render_again_without_new_approval",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "should_redownload_M17",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_use_M19",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_use_M20",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_send_current_link",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "would_3_6_second_body_shot_be_valid",
+            "expected": false,
+            "actual": true,
+            "passed": false
+          },
+          {
+            "key": "needs_sfx_listening_before_full_acceptance",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          }
+        ]
+      },
+      {
+        "stage": "after-2",
+        "usage": {
+          "inputTokens": 8118,
+          "outputTokens": 1928,
+          "cachedInputTokens": 7552
+        },
+        "answer": "{\"state\":{\"only_original_footage\":true,\"blue_sky_opening_allowed\":false,\"publish_allowed\":false,\"may_repeat_verified_downloads\":false,\"may_resubmit_pending_job\":false,\"workflow_binding_means_timestamp_zero\":true,\"opening_full_body_seconds\":3,\"opening_text\":\"别再用宽松掩盖版型问题\",\"shot_min_seconds\":4,\"short_shot_exception\":null,\"duration_min_seconds\":32,\"duration_max_seconds\":36,\"cue_id\":\"E-24\",\"typography_id\":\"T-24\",\"cue_start_seconds\":6.8,\"cue_gain_db\":-23,\"reference_pngs_viewed\":8,\"asset_ids\":[\"M-17\",\"M-18\",\"M-21\"],\"excluded_asset_ids\":[\"M-19\",\"M-20\"],\"latest_version\":\"V-27\",\"pending_job\":null,\"latest_completed_job\":\"R-27\",\"latest_failed_job\":null,\"cancelled_job_ids\":[\"R-26\"],\"target_lufs\":-16,\"measured_lufs\":-16,\"full_voice_listening_passed\":true,\"full_continuous_viewing_passed\":true,\"sfx_intelligibility_passed\":false,\"overall_acceptance_passed\":false,\"measured_duration_seconds\":34.1,\"deliver_link_allowed\":true,\"delivery_path\":\"D:/synthetic/deliveries/release-v27/delivery.mp4\",\"same_cue_gain_next_version_db\":-23,\"reencode_generations\":1,\"crf\":18},\"decisions\":{\"may_use_B02_at_2_8_seconds\":null,\"may_start_same_cue_at_zero\":false,\"may_reuse_old_version_review_for_current\":false,\"may_publish_current\":false,\"may_claim_full_acceptance\":false,\"may_render_again_without_new_approval\":false,\"should_redownload_M17\":false,\"may_use_M19\":false,\"may_use_M20\":false,\"may_send_current_link\":true,\"would_3_6_second_body_shot_be_valid\":false,\"needs_sfx_listening_before_full_acceptance\":true}}",
+        "passed": 44,
+        "total": 48,
+        "checks": [
+          {
+            "key": "only_original_footage",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "blue_sky_opening_allowed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "publish_allowed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_repeat_verified_downloads",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_resubmit_pending_job",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "workflow_binding_means_timestamp_zero",
+            "expected": false,
+            "actual": true,
+            "passed": false
+          },
+          {
+            "key": "opening_full_body_seconds",
+            "expected": 3,
+            "actual": 3,
+            "passed": true
+          },
+          {
+            "key": "opening_text",
+            "expected": "别再用宽松掩盖版型问题",
+            "actual": "别再用宽松掩盖版型问题",
+            "passed": true
+          },
+          {
+            "key": "shot_min_seconds",
+            "expected": 4,
+            "actual": 4,
+            "passed": true
+          },
+          {
+            "key": "short_shot_exception",
+            "expected": null,
+            "actual": null,
+            "passed": true
+          },
+          {
+            "key": "duration_min_seconds",
+            "expected": 32,
+            "actual": 32,
+            "passed": true
+          },
+          {
+            "key": "duration_max_seconds",
+            "expected": 36,
+            "actual": 36,
+            "passed": true
+          },
+          {
+            "key": "cue_id",
+            "expected": "E-24",
+            "actual": "E-24",
+            "passed": true
+          },
+          {
+            "key": "typography_id",
+            "expected": "T-24",
+            "actual": "T-24",
+            "passed": true
+          },
+          {
+            "key": "cue_start_seconds",
+            "expected": 6.8,
+            "actual": 6.8,
+            "passed": true
+          },
+          {
+            "key": "cue_gain_db",
+            "expected": -23,
+            "actual": -23,
+            "passed": true
+          },
+          {
+            "key": "reference_pngs_viewed",
+            "expected": 8,
+            "actual": 8,
+            "passed": true
+          },
+          {
+            "key": "asset_ids",
+            "expected": [
+              "M-17",
+              "M-18",
+              "M-21"
+            ],
+            "actual": [
+              "M-17",
+              "M-18",
+              "M-21"
+            ],
+            "passed": true
+          },
+          {
+            "key": "excluded_asset_ids",
+            "expected": [
+              "M-19",
+              "M-20"
+            ],
+            "actual": [
+              "M-19",
+              "M-20"
+            ],
+            "passed": true
+          },
+          {
+            "key": "latest_version",
+            "expected": "V-27",
+            "actual": "V-27",
+            "passed": true
+          },
+          {
+            "key": "pending_job",
+            "expected": null,
+            "actual": null,
+            "passed": true
+          },
+          {
+            "key": "latest_completed_job",
+            "expected": "R-27",
+            "actual": "R-27",
+            "passed": true
+          },
+          {
+            "key": "latest_failed_job",
+            "expected": "R-24",
+            "actual": null,
+            "passed": false
+          },
+          {
+            "key": "cancelled_job_ids",
+            "expected": [
+              "R-21",
+              "R-26"
+            ],
+            "actual": [
+              "R-26"
+            ],
+            "passed": false
+          },
+          {
+            "key": "target_lufs",
+            "expected": -16,
+            "actual": -16,
+            "passed": true
+          },
+          {
+            "key": "measured_lufs",
+            "expected": -16,
+            "actual": -16,
+            "passed": true
+          },
+          {
+            "key": "full_voice_listening_passed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "full_continuous_viewing_passed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "sfx_intelligibility_passed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "overall_acceptance_passed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "measured_duration_seconds",
+            "expected": 34.1,
+            "actual": 34.1,
+            "passed": true
+          },
+          {
+            "key": "deliver_link_allowed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "delivery_path",
+            "expected": "D:/synthetic/deliveries/release-v27/delivery.mp4",
+            "actual": "D:/synthetic/deliveries/release-v27/delivery.mp4",
+            "passed": true
+          },
+          {
+            "key": "same_cue_gain_next_version_db",
+            "expected": -23,
+            "actual": -23,
+            "passed": true
+          },
+          {
+            "key": "reencode_generations",
+            "expected": 1,
+            "actual": 1,
+            "passed": true
+          },
+          {
+            "key": "crf",
+            "expected": 18,
+            "actual": 18,
+            "passed": true
+          },
+          {
+            "key": "may_use_B02_at_2_8_seconds",
+            "expected": false,
+            "actual": null,
+            "passed": false
+          },
+          {
+            "key": "may_start_same_cue_at_zero",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_reuse_old_version_review_for_current",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_publish_current",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_claim_full_acceptance",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_render_again_without_new_approval",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "should_redownload_M17",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_use_M19",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_use_M20",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_send_current_link",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "would_3_6_second_body_shot_be_valid",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "needs_sfx_listening_before_full_acceptance",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          }
+        ]
+      },
+      {
+        "stage": "after-3",
+        "usage": {
+          "inputTokens": 8060,
+          "outputTokens": 3363,
+          "cachedInputTokens": 7424
+        },
+        "answer": "{\"state\":{\"only_original_footage\":true,\"blue_sky_opening_allowed\":false,\"publish_allowed\":false,\"may_repeat_verified_downloads\":false,\"may_resubmit_pending_job\":false,\"workflow_binding_means_timestamp_zero\":false,\"opening_full_body_seconds\":3,\"opening_text\":\"别再用宽松掩盖版型问题\",\"shot_min_seconds\":4,\"short_shot_exception\":null,\"duration_min_seconds\":32,\"duration_max_seconds\":36,\"cue_id\":\"T-24\",\"typography_id\":\"E-24\",\"cue_start_seconds\":6.8,\"cue_gain_db\":-23,\"reference_pngs_viewed\":8,\"asset_ids\":[\"M-17\",\"M-18\",\"M-21\"],\"excluded_asset_ids\":[\"M-19\",\"M-20\"],\"latest_version\":\"V-27\",\"pending_job\":null,\"latest_completed_job\":\"R-27\",\"latest_failed_job\":null,\"cancelled_job_ids\":[\"R-26\"],\"target_lufs\":-16,\"measured_lufs\":-16,\"full_voice_listening_passed\":true,\"full_continuous_viewing_passed\":true,\"sfx_intelligibility_passed\":false,\"overall_acceptance_passed\":false,\"measured_duration_seconds\":34.1,\"deliver_link_allowed\":true,\"delivery_path\":\"D:/synthetic/deliveries/release-v27/delivery.mp4\",\"same_cue_gain_next_version_db\":-23,\"reencode_generations\":1,\"crf\":18},\"decisions\":{\"may_use_B02_at_2_8_seconds\":false,\"may_start_same_cue_at_zero\":false,\"may_reuse_old_version_review_for_current\":false,\"may_publish_current\":false,\"may_claim_full_acceptance\":false,\"may_render_again_without_new_approval\":false,\"should_redownload_M17\":false,\"may_use_M19\":false,\"may_use_M20\":false,\"may_send_current_link\":true,\"would_3_6_second_body_shot_be_valid\":false,\"needs_sfx_listening_before_full_acceptance\":true}}",
+        "passed": 44,
+        "total": 48,
+        "checks": [
+          {
+            "key": "only_original_footage",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "blue_sky_opening_allowed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "publish_allowed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_repeat_verified_downloads",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_resubmit_pending_job",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "workflow_binding_means_timestamp_zero",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "opening_full_body_seconds",
+            "expected": 3,
+            "actual": 3,
+            "passed": true
+          },
+          {
+            "key": "opening_text",
+            "expected": "别再用宽松掩盖版型问题",
+            "actual": "别再用宽松掩盖版型问题",
+            "passed": true
+          },
+          {
+            "key": "shot_min_seconds",
+            "expected": 4,
+            "actual": 4,
+            "passed": true
+          },
+          {
+            "key": "short_shot_exception",
+            "expected": null,
+            "actual": null,
+            "passed": true
+          },
+          {
+            "key": "duration_min_seconds",
+            "expected": 32,
+            "actual": 32,
+            "passed": true
+          },
+          {
+            "key": "duration_max_seconds",
+            "expected": 36,
+            "actual": 36,
+            "passed": true
+          },
+          {
+            "key": "cue_id",
+            "expected": "E-24",
+            "actual": "T-24",
+            "passed": false
+          },
+          {
+            "key": "typography_id",
+            "expected": "T-24",
+            "actual": "E-24",
+            "passed": false
+          },
+          {
+            "key": "cue_start_seconds",
+            "expected": 6.8,
+            "actual": 6.8,
+            "passed": true
+          },
+          {
+            "key": "cue_gain_db",
+            "expected": -23,
+            "actual": -23,
+            "passed": true
+          },
+          {
+            "key": "reference_pngs_viewed",
+            "expected": 8,
+            "actual": 8,
+            "passed": true
+          },
+          {
+            "key": "asset_ids",
+            "expected": [
+              "M-17",
+              "M-18",
+              "M-21"
+            ],
+            "actual": [
+              "M-17",
+              "M-18",
+              "M-21"
+            ],
+            "passed": true
+          },
+          {
+            "key": "excluded_asset_ids",
+            "expected": [
+              "M-19",
+              "M-20"
+            ],
+            "actual": [
+              "M-19",
+              "M-20"
+            ],
+            "passed": true
+          },
+          {
+            "key": "latest_version",
+            "expected": "V-27",
+            "actual": "V-27",
+            "passed": true
+          },
+          {
+            "key": "pending_job",
+            "expected": null,
+            "actual": null,
+            "passed": true
+          },
+          {
+            "key": "latest_completed_job",
+            "expected": "R-27",
+            "actual": "R-27",
+            "passed": true
+          },
+          {
+            "key": "latest_failed_job",
+            "expected": "R-24",
+            "actual": null,
+            "passed": false
+          },
+          {
+            "key": "cancelled_job_ids",
+            "expected": [
+              "R-21",
+              "R-26"
+            ],
+            "actual": [
+              "R-26"
+            ],
+            "passed": false
+          },
+          {
+            "key": "target_lufs",
+            "expected": -16,
+            "actual": -16,
+            "passed": true
+          },
+          {
+            "key": "measured_lufs",
+            "expected": -16,
+            "actual": -16,
+            "passed": true
+          },
+          {
+            "key": "full_voice_listening_passed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "full_continuous_viewing_passed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "sfx_intelligibility_passed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "overall_acceptance_passed",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "measured_duration_seconds",
+            "expected": 34.1,
+            "actual": 34.1,
+            "passed": true
+          },
+          {
+            "key": "deliver_link_allowed",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "delivery_path",
+            "expected": "D:/synthetic/deliveries/release-v27/delivery.mp4",
+            "actual": "D:/synthetic/deliveries/release-v27/delivery.mp4",
+            "passed": true
+          },
+          {
+            "key": "same_cue_gain_next_version_db",
+            "expected": -23,
+            "actual": -23,
+            "passed": true
+          },
+          {
+            "key": "reencode_generations",
+            "expected": 1,
+            "actual": 1,
+            "passed": true
+          },
+          {
+            "key": "crf",
+            "expected": 18,
+            "actual": 18,
+            "passed": true
+          },
+          {
+            "key": "may_use_B02_at_2_8_seconds",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_start_same_cue_at_zero",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_reuse_old_version_review_for_current",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_publish_current",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_claim_full_acceptance",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_render_again_without_new_approval",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "should_redownload_M17",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_use_M19",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_use_M20",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "may_send_current_link",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          },
+          {
+            "key": "would_3_6_second_body_shot_be_valid",
+            "expected": false,
+            "actual": false,
+            "passed": true
+          },
+          {
+            "key": "needs_sfx_listening_before_full_acceptance",
+            "expected": true,
+            "actual": true,
+            "passed": true
+          }
+        ]
+      }
+    ],
+    "requests": [
+      {
+        "id": 1,
+        "stage": "initial-summary-control",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 20097,
+          "outputTokens": 2809,
+          "cachedInputTokens": 19963
+        },
+        "elapsedMs": 14151
+      },
+      {
+        "id": 2,
+        "stage": "merge-1",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 16402,
+          "outputTokens": 1671,
+          "cachedInputTokens": 15616
+        },
+        "elapsedMs": 8051
+      },
+      {
+        "id": 3,
+        "stage": "merge-1",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 9923,
+          "outputTokens": 14,
+          "cachedInputTokens": 7680
+        },
+        "elapsedMs": 760
+      },
+      {
+        "id": 4,
+        "stage": "after-1",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 10447,
+          "outputTokens": 1275,
+          "cachedInputTokens": 9856
+        },
+        "elapsedMs": 5002
+      },
+      {
+        "id": 5,
+        "stage": "merge-2",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 13129,
+          "outputTokens": 1641,
+          "cachedInputTokens": 9856
+        },
+        "elapsedMs": 8148
+      },
+      {
+        "id": 6,
+        "stage": "merge-2",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 7584,
+          "outputTokens": 24,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 1227
+      },
+      {
+        "id": 7,
+        "stage": "after-2",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 8118,
+          "outputTokens": 1928,
+          "cachedInputTokens": 7552
+        },
+        "elapsedMs": 9170
+      },
+      {
+        "id": 8,
+        "stage": "merge-3",
+        "maintenance": true,
+        "usage": {
+          "inputTokens": 10803,
+          "outputTokens": 1383,
+          "cachedInputTokens": 7552
+        },
+        "elapsedMs": 6486
+      },
+      {
+        "id": 9,
+        "stage": "merge-3",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 7236,
+          "outputTokens": 314,
+          "cachedInputTokens": 3328
+        },
+        "elapsedMs": 2500
+      },
+      {
+        "id": 10,
+        "stage": "after-3",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 8060,
+          "outputTokens": 3363,
+          "cachedInputTokens": 7424
+        },
+        "elapsedMs": 16747
+      },
+      {
+        "id": 11,
+        "stage": "history-readback",
+        "maintenance": false,
+        "usage": {
+          "inputTokens": 6520,
+          "outputTokens": 239,
+          "cachedInputTokens": 1920
+        },
+        "elapsedMs": 1715
+      }
+    ],
+    "failure": {
+      "name": "Error",
+      "message": "Probe stopped; inspect sanitized report."
+    },
+    "followUp": "Probe now strips tool UI metadata through the same helper as the runtime and records visible readback calls. Not rerun with a real model; offline history and display-argument checks passed."
+  },
+  "offlineVerification": {
+    "contextBudget": {
+      "passed": 220,
+      "failed": 0,
+      "uiProjection": "passed",
+      "compilation": "passed"
+    },
+    "evidenceAndExtraction": {
+      "passed": 29,
+      "failed": 0
+    }
+  },
+  "limitations": [
+    "One continuous synthetic sample per variant; checks are not independent experiments.",
+    "Controlled pressure estimates are not billed tokenizer counts; use service usage for cost comparisons.",
+    "Cached input is included; shared prefixes and debug runs mean this is not a cold-cache comparison.",
+    "The later summary-only fixes were tested separately; main A/B did not enter the all-summary merge path.",
+    "Scoring code belongs to the experiment only; no semantic matching or correctness gate added to the runtime.",
+    "History tools can retrieve originals but do not guarantee the model notices and repairs missing facts."
+  ],
+  "excludedDebugRuns": [
+    {
+      "name": "optimized-compaction-long-20261023",
+      "requestRecords": 49,
+      "completed": true,
+      "status": "failed",
+      "scored": false
+    },
+    {
+      "name": "optimized-compaction-long-v2-20261023",
+      "requestRecords": 19,
+      "completed": false,
+      "status": "failed",
+      "scored": false
+    },
+    {
+      "name": "optimized-compaction-long-v3-20261023",
+      "requestRecords": 35,
+      "completed": true,
+      "status": "failed",
+      "scored": false
+    },
+    {
+      "name": "merged-compaction-live-20261023",
+      "requestRecords": 4,
+      "completed": false,
+      "status": "failed",
+      "scored": false
+    },
+    {
+      "name": "merged-compaction-live-v2-20261023",
+      "requestRecords": 4,
+      "completed": false,
+      "status": "failed",
+      "scored": false
+    },
+    {
+      "name": "merged-compaction-wire-20261023",
+      "requestRecords": 8,
+      "completed": false,
+      "status": "failed",
+      "scored": false
+    },
+    {
+      "name": "merged-compaction-wire-v2-20261023",
+      "requestRecords": 8,
+      "completed": false,
+      "status": "failed",
+      "scored": false
+    },
+    {
+      "name": "merged-compaction-growth-20261023",
+      "requestRecords": 7,
+      "completed": false,
+      "status": "failed",
+      "scored": false
+    },
+    {
+      "name": "merged-compaction-growth-final-20261023",
+      "requestRecords": 9,
+      "completed": false,
+      "status": "failed",
+      "scored": false
+    }
+  ]
+}

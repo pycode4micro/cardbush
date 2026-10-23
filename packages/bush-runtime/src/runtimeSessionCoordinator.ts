@@ -27,6 +27,7 @@ import {
 } from "./contextAssembler.js";
 import { SessionStore, projectSessionSupersession, validateConversation } from "./sessionStore.js";
 import { isConversationPreference, latestConversationPreference } from "./conversationPreferences.js";
+import { findPreparedToolHandoff } from './preparedToolHandoff.js';
 
 export interface GeneratedMessageFact {
   messageId: string;
@@ -142,6 +143,30 @@ export class RuntimeSessionCoordinator {
 
   contextSourceTurns(sessionId: string, coveredTurnIds?: string[], coveredMessageIds?: string[]) {
     return assembleContextProjection({ session: this.#contextSession(sessionId), coveredTurnIds, coveredMessageIds }).turns;
+  }
+
+  prepareToolHandoffContext(input: { sessionId: string; prefix: ModelMessage[]; current: ModelMessage[];
+    coveredTurnIds?: string[]; coveredMessageIds?: string[] }) {
+    const session = this.#contextSession(input.sessionId);
+    const visible = new Set(assembleContextProjection({ ...input, session }).turns.map(turn => turn.turnId));
+    const omitted = new Set([...session.supersededMessageIds, ...(input.coveredMessageIds ?? [])]);
+    const summaries = session.turns.flatMap(turn => {
+      if (!visible.has(turn.turnId) || turn.contextSummary || turn.contextToolHandoff ||
+        turn.messages.some(item => omitted.has(item.messageId))) return [];
+      const toolHandoff = findPreparedToolHandoff(turn);
+      return toolHandoff ? [{ turnId: turn.turnId, toolHandoff }] : [];
+    });
+    if (!summaries.length) return;
+    const candidate = structuredClone(session);
+    for (const item of summaries) candidate.turns.find(turn => turn.turnId === item.turnId)!.contextToolHandoff = item.toolHandoff;
+    return { expectedRevision: session.revision, summaries,
+      context: assembleContext({ ...input, session: candidate }) };
+  }
+
+  applyPreparedToolHandoffs(input: { sessionId: string; activeTurnId: string; expectedRevision: number;
+    summaries: Array<{ turnId: string; toolHandoff: import('@cardbush/bush-protocol').TurnToolHandoff }> }) {
+    if (this.#activeSessions.get(input.sessionId) !== input.activeTurnId) throw new Error('Only the active Turn may apply prepared handoffs.');
+    return this.#store.summarizeTurns(input);
   }
 
   summarizeContext(input: {

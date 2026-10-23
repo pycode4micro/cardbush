@@ -1,7 +1,9 @@
 import { authoredPromptContent } from '@cardbush/bush-protocol';
 import { randomUUID } from "node:crypto";
 import { summarizeSession, type SessionSummary, type SessionHistoryRequest } from '@cardbush/bush-protocol';
+import { turnContextSummaryUpdateSchema, type TurnContextSummaryUpdate } from '@cardbush/bush-protocol';
 import type { StoredHistoryPage } from './sessionReadIndex.js';
+import { validatePreparedToolHandoff, preparedToolHandoffReceipt } from './preparedToolHandoff.js';
 
 import {
   BUSH_SESSION_EVENT_PROTOCOL,
@@ -229,7 +231,23 @@ export class SessionStore {
           if (item.message.role === 'assistant') {
             delete item.message.providerReplay;
             item.message.content = rebase(item.message.content);
-            for (const call of item.message.toolCalls) if (call.name === 'checkpoint_context') call.argumentsText = rebase(call.argumentsText);
+            for (const call of item.message.toolCalls) {
+              if (call.name === 'checkpoint_context') call.argumentsText = rebase(call.argumentsText);
+              if (call.name === 'summary_for_user') {
+                let args;
+                try { args = JSON.parse(call.argumentsText); } catch { continue; }
+                if (typeof args.tool_summary === 'string') {
+                  args.tool_summary = rebase(args.tool_summary);
+                  call.argumentsText = JSON.stringify(args);
+                  const receipt = turn.messages.find(fact => fact.message.role === 'tool' && fact.message.toolCallId === call.id);
+                  if (receipt?.message.role === 'tool') {
+                    let result;
+                    try { result = JSON.parse(receipt.message.content); } catch { continue; }
+                    if (result.context_handoff?.status === 'prepared') receipt.message.content = JSON.stringify({ ...result, ...preparedToolHandoffReceipt(args.tool_summary) });
+                  }
+                }
+              }
+            }
           }
         }
         this.#append(sessionId, { kind: 'turn_committed', payload: turn });
@@ -274,7 +292,7 @@ export class SessionStore {
   commitTurn(sessionId: string, candidate: CommittedTurn): SessionSnapshot {
     const normalized = requireIdentity(sessionId, "sessionId");
     const turn = committedTurnSchema.parse(candidate);
-    if (turn.contextSummary) {
+    if (turn.contextSummary || turn.contextToolHandoff) {
       throw new Error("A new Turn cannot be committed with a context summary.");
     }
     const before = this.ensureSession(normalized);
@@ -350,7 +368,7 @@ export class SessionStore {
   summarizeTurns(input: {
     sessionId: string;
     expectedRevision: number;
-    summaries: Array<{ turnId: string; summary: string }>;
+    summaries: TurnContextSummaryUpdate[];
   }): SessionSnapshot {
     const sessionId = requireIdentity(input.sessionId, "sessionId");
     const before = this.snapshot(sessionId);
@@ -360,10 +378,7 @@ export class SessionStore {
         `Session ${sessionId} revision ${before.revision} does not match ${input.expectedRevision}.`,
       );
     }
-    const summaries = input.summaries.map((item) => ({
-      turnId: requireIdentity(item.turnId, "turnId"),
-      summary: requireIdentity(item.summary, "summary"),
-    }));
+    const summaries = input.summaries.map(item => turnContextSummaryUpdateSchema.parse(item));
     const ids = new Set<string>();
     const turns = new Map(before.turns.map((turn) => [turn.turnId, turn]));
     for (const item of summaries) {
@@ -373,6 +388,12 @@ export class SessionStore {
       if (!turn) throw new Error(`Turn ${item.turnId} does not exist.`);
       if (turn.contextSummary) {
         throw new Error(`Turn ${item.turnId} already has a context summary.`);
+      }
+      if ('toolHandoff' in item) {
+        if (turn.contextToolHandoff || turn.messages.some(fact => before.supersededMessageIds.includes(fact.messageId))) {
+          throw new Error('Prepared handoff source is already projected or was superseded.');
+        }
+        validatePreparedToolHandoff(turn, item.toolHandoff);
       }
     }
     this.#append(sessionId, {
@@ -502,7 +523,16 @@ export function projectSession(
         if (turn.contextSummary) {
           throw new Error(`Turn ${item.turnId} was summarized more than once.`);
         }
-        turn.contextSummary = item.summary;
+        if ('toolHandoff' in item) {
+          if (turn.contextToolHandoff || turn.messages.some(fact => superseded.has(fact.messageId))) {
+            throw new Error('Prepared handoff source is already projected or was superseded.');
+          }
+          validatePreparedToolHandoff(turn, item.toolHandoff);
+          turn.contextToolHandoff = item.toolHandoff;
+        } else {
+          turn.contextSummary = item.summary;
+          delete turn.contextToolHandoff;
+        }
       }
     }
     if (event.kind === "session_metadata_updated") {
@@ -546,6 +576,7 @@ export function addSupersededMessages(known: Set<string>, superseded: Set<string
 }
 
 export function validateCommittedTurn(turn: CommittedTurn): void {
+  if (turn.contextToolHandoff) validatePreparedToolHandoff(turn, turn.contextToolHandoff);
   const messageIds = new Set<string>();
   for (const [index, message] of turn.messages.entries()) {
     if (message.turnId !== turn.turnId) throw new Error("Message Turn identity mismatch.");
@@ -593,7 +624,7 @@ export function validateCommittedTurn(turn: CommittedTurn): void {
 }
 
 export function validateCheckpointCoverage(turn: CommittedTurn, priorTurnIds: Set<string>,
-  priorMessages: CommittedTurn['messages'] = []): void {
+  priorMessages?: CommittedTurn['messages'], priorMessageIds?: ReadonlySet<string>): void {
   if (turn.contextCheckpoint?.projectionVersion !== "exchange_v1") return;
   const ids = turn.contextCheckpoint.coveredTurnIds;
   if (new Set(ids).size !== ids.length || ids.some(id => !priorTurnIds.has(id))) {
@@ -601,12 +632,12 @@ export function validateCheckpointCoverage(turn: CommittedTurn, priorTurnIds: Se
   }
   const partial = turn.contextCheckpoint.coveredMessageIds ?? [];
   if (!partial.length) return;
-  const known = new Set(priorMessages.map(message => message.messageId));
+  const known = new Set(priorMessages?.map(message => message.messageId) ?? priorMessageIds ?? []);
   if (new Set(partial).size !== partial.length || partial.some(id => !known.has(id))) {
     throw new Error('Context checkpoint partial coverage must contain unique preceding message identities.');
   }
   const covered = new Set(partial);
-  validateConversation(priorMessages.filter(message => !covered.has(message.messageId)).map(message => message.message));
+  if (priorMessages) validateConversation(priorMessages.filter(message => !covered.has(message.messageId)).map(message => message.message));
 }
 
 export function validateConversation(

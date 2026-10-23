@@ -165,6 +165,30 @@ for (const ordered of [false, true]) test(`a fitting but ineffective checkpoint 
   assert.equal(host.events('scope', 'blocked').filter(event => event.kind === 'context_compaction_completed').length, 0);
 });
 
+for (const ordered of [false, true]) test(`bounded refinement accepts material headroom just above the preferred target (ordered=${ordered})`, async t => {
+  const store = new SessionStore(); seed(store, 'old', longHistory('EXACT_RECENT_CORRECTION'));
+  let calls = 0, normal = 0;
+  const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false,
+    provider: { countInputTokens: async request => {
+      if (!request.messages.some(message => message.role === 'tool' && message.content.includes('summarized_turns'))) return { source: 'provider', inputTokens: 13000 };
+      const started = host.events('scope', 'headroom').find(event => event.kind === 'context_compaction_started').payload;
+      return { source: 'provider', inputTokens: started.targetInputTokens + Math.floor((started.compactionTriggerTokens - started.targetInputTokens) * 0.4) };
+    }, async *stream(request) {
+      if (maintenance(request)) yield* checkpoint(request, `headroom-${++calls}`);
+      else { normal++; yield* done(request); }
+    } } });
+  t.after(() => shutdown(host));
+  const result = await host.runSessionTurn(input('headroom', ordered ? { tools: [orderedCheckpointTool] } : {}));
+  assert.equal(result.payload.status, 'completed', JSON.stringify(result.payload));
+  assert.equal(calls, 3, 'try the preferred target within the original bounded retry budget');
+  assert.equal(normal, 1, 'a usable checkpoint must not trigger another compaction immediately');
+  const completed = host.events('scope', 'headroom').find(event => event.kind === 'context_compaction_completed').payload;
+  assert.ok(completed.inputTokensAfter > completed.targetInputTokens);
+  assert.ok(completed.inputTokensAfter <= completed.admissionTargetInputTokens);
+  assert.ok(completed.inputTokensAfter < completed.inputTokensBefore);
+  assert.ok(assembleContext({ session: store.snapshot('scope') }).messages.some(message => message.content === 'Latest correction: EXACT_RECENT_CORRECTION'));
+});
+
 test('invalid retained facts and partial parallel-tool coverage fail closed', () => {
   const messages = [user('Work.'), { role: 'assistant', content: '', toolCalls: [
     { id: 'a', name: 'read', argumentsText: '{}' }, { id: 'b', name: 'read', argumentsText: '{}' }] },
@@ -242,4 +266,29 @@ test('restart preserves the selected scope even when token counts change', async
   assert.equal(result.payload.status, 'completed', JSON.stringify(result.payload));
   assert.ok(normal.messages.some(message => message.content === 'Latest correction: EXACT_RESTART_CORRECTION'));
   assert.equal(second.events('scope', 'restart').filter(event => event.kind === 'context_compaction_started').length, 1);
+});
+
+test('oversized checkpoint partitions before previewing result bodies, preserving facts in the middle', async t => {
+  const store = new SessionStore(), originals = [user('Verify the recorded results.')];
+  for (let i = 0; i < 5; i++) originals.push(
+    { role: 'assistant', content: '', toolCalls: [{ id: `read-${i}`, name: 'read_file', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: `read-${i}`, content: 'old log '.repeat(1600) + `EXACT_MIDDLE_${i}` + 'old log '.repeat(1600) });
+  seed(store, 'large', originals);
+  const seen = new Set(); let calls = 0;
+  const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false,
+    provider: { countInputTokens: count, async *stream(request) {
+      if (maintenance(request)) {
+        for (const message of request.messages.filter(m => m.role === 'tool')) {
+          assert.doesNotMatch(message.content, /"contextCheckpointProjection":true/);
+          for (const match of message.content.matchAll(/EXACT_MIDDLE_\d/g)) seen.add(match[0]);
+        }
+        yield* checkpoint(request, `whole-${++calls}`);
+      } else yield* done(request);
+    } } });
+  t.after(() => shutdown(host));
+  const result = await host.runSessionTurn(input('partition', { metadata: { contextWindowTokens: 18000 } }));
+  assert.equal(result.payload.status, 'completed', JSON.stringify(result.payload));
+  assert.deepEqual([...seen].sort(), Array.from({ length: 5 }, (_, i) => `EXACT_MIDDLE_${i}`));
+  assert.ok(host.events('scope', 'partition').some(e => e.kind === 'context_compaction_retrying' && e.payload.reason === 'checkpoint_source_partitioned'));
+  assert.deepEqual(store.snapshot('scope').turns[0].messages.map(item => item.message), originals);
 });

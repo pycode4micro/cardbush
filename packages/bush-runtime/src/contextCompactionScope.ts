@@ -1,6 +1,7 @@
 import { modelMessageSchema, type ModelMessage, type ModelRequest } from '@cardbush/bush-protocol';
 import { createHash } from 'node:crypto';
 import { validateConversation } from './sessionStore.js';
+import { conversationHistoryLocator } from './conversationHistory.js';
 import { contextBudgetForPressure, contextCheckpointSlots, type ContextCheckpointFormat,
   type ContextCompactionSource, type ContextCompactionState, type ContextPressure } from './contextCompaction.js';
 
@@ -20,6 +21,7 @@ export interface ContextCompactionScope {
   targetInputTokens: number;
   recentTokenBudget: number;
   retainedInputTokens: number;
+  summaryGroupTurnIds?: string[];
 }
 
 export function contextCompactionInputDigest(messages: ModelMessage[], request: ModelRequest): string {
@@ -51,6 +53,14 @@ export function contextCompactionTarget(pressure: ContextPressure): number {
   return Math.max(0, trigger - Math.min(16_000, Math.ceil(trigger * 0.2)));
 }
 
+/** After bounded refinement, keep at least half the desired trigger headroom.
+ * The preferred target is not a hard input limit: a materially smaller request
+ * a few tokens above it must not fail an otherwise usable conversation. */
+export function contextCompactionMinimumTarget(pressure: ContextPressure): number {
+  const trigger = contextBudgetForPressure(pressure).compactionTriggerTokens;
+  return trigger - Math.ceil((trigger - contextCompactionTarget(pressure)) / 2);
+}
+
 function estimate(messages: ModelMessage[]): number {
   return messages.reduce((total, message) => {
     const images = 'images' in message ? message.images : undefined;
@@ -73,6 +83,7 @@ export function selectContextCompactionScope(input: {
   messageIds: ReadonlyMap<string, Array<string | undefined>>;
   savedRanges?: CompactionSourceRange[];
   targetInputTokens?: number;
+  savedSummaryGroupTurnIds?: string[];
 }): ContextCompactionScope {
   const targetInputTokens = input.targetInputTokens ?? contextCompactionTarget(input.pressure);
   const recentTokenBudget = Math.min(16_000, Math.floor(targetInputTokens * 0.2),
@@ -107,7 +118,24 @@ export function selectContextCompactionScope(input: {
     cut = unit.start;
   }
 
-  let ranges = input.savedRanges ?? input.sources.filter(source => source.target !== 'not_requested' &&
+  const history = input.sources.filter(source => source.turnId !== input.activeTurnId && source.target !== 'not_requested')
+    .sort((a, b) => (a.history?.firstTurnSequence ?? a.startMessage) - (b.history?.firstTurnSequence ?? b.startMessage));
+  // Only journal-backed summary representations qualify. No text/keyword test
+  // decides importance. Keep the recent third; merge the oldest two thirds by
+  // serialized input volume, aligned to complete source boundaries.
+  let groupIds = input.savedSummaryGroupTurnIds ?? [];
+  const activeWorkTokens = active ? Math.ceil(estimate(input.messages.slice(activeInputEnd, active.endMessageExclusive)) * scale) : 0;
+  if (!input.savedRanges && activeWorkTokens <= recentTokenBudget && history.length > 1 && history.every(source => source.summaryOnly)) {
+    const lengths = history.map(source => estimate(input.messages.slice(source.startMessage, source.endMessageExclusive)));
+    const threshold = lengths.reduce((a, b) => a + b, 0) * 2 / 3;
+    let count = 0, size = 0;
+    while (count < history.length - 1 && (size < threshold || count < 2)) size += lengths[count++]!;
+    groupIds = history.slice(0, count).map(source => source.turnId);
+  }
+  const groupedRanges = groupIds.length ? history.filter(source => groupIds.includes(source.turnId))
+    .map(({ turnId, startMessage, endMessageExclusive }) => ({ turnId, startMessage, endMessageExclusive }))
+    .sort((a, b) => a.startMessage - b.startMessage) : undefined;
+  let ranges = input.savedRanges ?? groupedRanges ?? input.sources.filter(source => source.target !== 'not_requested' &&
     Math.min(cut, source.endMessageExclusive) > (source.turnId === input.activeTurnId ? activeInputEnd : source.startMessage))
     .map(source => {
       let end = Math.min(cut, source.endMessageExclusive);
@@ -119,6 +147,11 @@ export function selectContextCompactionScope(input: {
       return { turnId: source.turnId, startMessage: source.startMessage, endMessageExclusive: end };
     });
   ranges = structuredClone(ranges);
+  if (groupIds.length && (groupIds.length !== groupedRanges?.length || groupIds.some((id, index) => history[index]?.turnId !== id) ||
+    ranges.some(range => !groupIds.includes(range.turnId)) || ranges.length !== groupIds.length ||
+    ranges.some(range => !history.some(source => source.turnId === range.turnId && source.startMessage === range.startMessage && source.endMessageExclusive === range.endMessageExclusive)))) {
+    throw new Error('Summary consolidation must cover an exact chronological prefix of complete historical sources.');
+  }
   let previousEnd = -1;
   for (const range of ranges) {
     const source = input.sources.find(item => item.turnId === range.turnId);
@@ -135,14 +168,14 @@ export function selectContextCompactionScope(input: {
   const boundaryId = activeRange && activeIds[activeRange.endMessageExclusive - activeRange.startMessage - 1];
   if (activeRange && !boundaryId) throw new Error('The active compaction boundary has no canonical message identity.');
   const state: ContextCompactionState = { revision: input.state.revision, totalTurns: input.state.totalTurns,
-    unsummarizedTurnIds: ranges.filter(range => range.turnId !== input.activeTurnId).map(range => range.turnId),
+    unsummarizedTurnIds: groupIds.length ? [groupIds.at(-1)!] : ranges.filter(range => range.turnId !== input.activeTurnId).map(range => range.turnId),
     ...(boundaryId ? { activeTurn: { turnId: input.activeTurnId, throughMessageId: boundaryId } } : {}) };
   const slots = contextCheckpointSlots(state, input.format);
-  const sources = input.sources.flatMap(source => {
+  let sources: ContextCompactionSource[] = input.sources.flatMap(source => {
     const range = ranges.find(item => item.turnId === source.turnId);
     if (!range) return [{ ...source, target: 'not_requested' }];
     const selected = { ...source, endMessageExclusive: range.endMessageExclusive,
-      target: slots.find(slot => slot.turnId === source.turnId)!.target };
+      target: slots.find(slot => slot.turnId === (groupIds.includes(source.turnId) ? groupIds.at(-1) : source.turnId))!.target };
     // Locators must describe the selected range, not the full original Turn.
     if (range.endMessageExclusive !== source.endMessageExclusive) delete selected.last;
     if (selected.userRequest && selected.userRequest.message >= range.endMessageExclusive) delete selected.userRequest;
@@ -151,6 +184,20 @@ export function selectContextCompactionScope(input: {
       endMessageExclusive: source.endMessageExclusive,
     }] : [])];
   });
+  if (groupIds.length) {
+    const members = sources.filter(source => groupIds.includes(source.turnId));
+    const first = members[0]!, last = members.at(-1)!;
+    const earliest = members.reduce((a, b) => (b.history?.firstTurnSequence ?? Infinity) < (a.history?.firstTurnSequence ?? Infinity) ? b : a);
+    const inheritedFirst = earliest.history?.locator.match(/^conversation-history:\/\/turns\/([^/]+)\//)?.[1];
+    const representative = members.find(member => member.turnId === groupIds.at(-1))!;
+    const group: ContextCompactionSource = { turnId: representative.turnId, target: representative.target,
+      startMessage: first.startMessage, endMessageExclusive: last.endMessageExclusive,
+      memberTurnIds: [...groupIds], memberRanges: ranges, summaryOnly: true,
+      history: { kind: 'merged_history', turnCount: members.reduce((n, item) => n + (item.history?.turnCount ?? 1), 0),
+        ...(earliest.history?.firstTurnSequence === undefined ? {} : { firstTurnSequence: earliest.history.firstTurnSequence }),
+        locator: conversationHistoryLocator(inheritedFirst ? decodeURIComponent(inheritedFirst) : first.turnId, last.turnId) } };
+    sources = [group, ...sources.filter(source => !groupIds.includes(source.turnId))];
+  }
   const coveredTurnIds: string[] = [], coveredMessageIds: string[] = [];
   for (const range of ranges.filter(range => range.turnId !== input.activeTurnId)) {
     const source = input.sources.find(source => source.turnId === range.turnId)!;
@@ -168,5 +215,6 @@ export function selectContextCompactionScope(input: {
     !ranges.some(range => range.turnId === unit.source.turnId && unit.end <= range.endMessageExclusive))
     .reduce((total, unit) => total + Math.ceil(estimate(unit.messages) * scale), 0);
   return { state, sources, sourceRanges: ranges, coveredTurnIds, coveredMessageIds,
-    retainedMessageIds: retainedMessageIds as string[], targetInputTokens, recentTokenBudget, retainedInputTokens };
+    retainedMessageIds: retainedMessageIds as string[], targetInputTokens, recentTokenBudget, retainedInputTokens,
+    ...(groupIds.length ? { summaryGroupTurnIds: groupIds } : {}) };
 }

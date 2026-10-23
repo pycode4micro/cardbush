@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "checkedOn": "2026-10-23",
+  "noNewModelRequests": true,
+  "concurrency": {
+    "requestStarts": 67,
+    "requestFinishes": 67,
+    "maximumInFlight": 1
+  },
+  "localSessionRouting": "DeepSeek receives no session-derived prompt_cache_key; identical saved requests serialize identically after changing only sessionId.",
+  "preparedMissTokens": 130685,
+  "preparationMissTokens": 114299,
+  "preparationShareOfMisses": 0.8746145311244595,
+  "visibleProjectionChanges": [
+    {
+      "previousRequest": "011-p1-prepared-prepare-t01",
+      "nextRequest": "012-p1-prepared-prepare-t02",
+      "breakIndex": 7,
+      "cause": "nonpersistent_test_instruction_replaced_by_recorded_response",
+      "changedParameters": []
+    },
+    {
+      "previousRequest": "012-p1-prepared-prepare-t02",
+      "nextRequest": "013-p1-prepared-prepare-t03",
+      "breakIndex": 13,
+      "cause": "nonpersistent_test_instruction_replaced_by_recorded_response",
+      "changedParameters": []
+    },
+    {
+      "previousRequest": "013-p1-prepared-prepare-t03",
+      "nextRequest": "014-p1-prepared-boundary",
+      "breakIndex": 3,
+      "cause": "actual_pressure_projection",
+      "changedParameters": [
+        "tools"
+      ]
+    },
+    {
+      "previousRequest": "017-p2-prepared-prepare-t04",
+      "nextRequest": "018-p2-prepared-prepare-t05",
+      "breakIndex": 13,
+      "cause": "nonpersistent_test_instruction_replaced_by_recorded_response",
+      "changedParameters": []
+    },
+    {
+      "previousRequest": "018-p2-prepared-prepare-t05",
+      "nextRequest": "019-p2-prepared-prepare-t06",
+      "breakIndex": 22,
+      "cause": "nonpersistent_test_instruction_replaced_by_recorded_response",
+      "changedParameters": []
+    },
+    {
+      "previousRequest": "019-p2-prepared-prepare-t06",
+      "nextRequest": "020-p2-prepared-boundary",
+      "breakIndex": 11,
+      "cause": "actual_pressure_projection",
+      "changedParameters": [
+        "tools"
+      ]
+    },
+    {
+      "previousRequest": "045-p3-prepared-prepare-t07",
+      "nextRequest": "046-p3-prepared-prepare-t08",
+      "breakIndex": 22,
+      "cause": "nonpersistent_test_instruction_replaced_by_recorded_response",
+      "changedParameters": []
+    },
+    {
+      "previousRequest": "046-p3-prepared-prepare-t08",
+      "nextRequest": "047-p3-prepared-prepare-t09",
+      "breakIndex": 29,
+      "cause": "nonpersistent_test_instruction_replaced_by_recorded_response",
+      "changedParameters": []
+    },
+    {
+      "previousRequest": "047-p3-prepared-prepare-t09",
+      "nextRequest": "048-p3-prepared-boundary",
+      "breakIndex": 20,
+      "cause": "actual_pressure_projection",
+      "changedParameters": [
+        "tools"
+      ]
+    },
+    {
+      "previousRequest": "051-p4-prepared-prepare-t10",
+      "nextRequest": "052-p4-prepared-prepare-t11",
+      "breakIndex": 31,
+      "cause": "nonpersistent_test_instruction_replaced_by_recorded_response",
+      "changedParameters": []
+    },
+    {
+      "previousRequest": "052-p4-prepared-prepare-t11",
+      "nextRequest": "053-p4-prepared-prepare-t12",
+      "breakIndex": 37,
+      "cause": "nonpersistent_test_instruction_replaced_by_recorded_response",
+      "changedParameters": []
+    },
+    {
+      "previousRequest": "053-p4-prepared-prepare-t12",
+      "nextRequest": "054-p4-prepared-boundary",
+      "breakIndex": 29,
+      "cause": "actual_pressure_projection",
+      "changedParameters": [
+        "tools"
+      ]
+    }
+  ],
+  "parameterChanges": {
+    "count": 7,
+    "fields": [
+      "tools"
+    ],
+    "cause": "Synthetic preparation and pressure stages select different fixed test catalogs; production does not perform this switch."
+  },
+  "postProjectionAuditHitRates": [
+    {
+      "request": "015-p1-prepared-audit",
+      "inputTokens": 7475,
+      "cachedInputTokens": 6912,
+      "hitRate": 0.9246822742474916
+    },
+    {
+      "request": "021-p2-prepared-audit",
+      "inputTokens": 11682,
+      "cachedInputTokens": 11136,
+      "hitRate": 0.9532614278376991
+    },
+    {
+      "request": "049-p3-prepared-audit",
+      "inputTokens": 15979,
+      "cachedInputTokens": 15360,
+      "hitRate": 0.9612616559233995
+    },
+    {
+      "request": "055-p4-prepared-audit",
+      "inputTokens": 20525,
+      "cachedInputTokens": 19968,
+      "hitRate": 0.9728623629719854
+    }
+  ],
+  "evidenceLimits": [
+    "Visible saved projections omit hidden reasoning and providerReplay; no exact provider-wire reconstruction is claimed.",
+    "Omitted synthetic execution rounds and inserted tool results explain why this is not a steady-state production cache benchmark.",
+    "Cache warmup/eviction and server prefix-unit decisions cannot be allocated exactly from usage alone.",
+    "Sequential requests rule out concurrency between the two experimental arms; they do not reveal unrelated account traffic."
+  ]
+}

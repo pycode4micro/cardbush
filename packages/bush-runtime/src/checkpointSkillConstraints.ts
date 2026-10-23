@@ -1,4 +1,5 @@
 import type { ModelMessage } from '@cardbush/bush-protocol';
+import { checkpointReceiptEntries } from './checkpointReceipt.js';
 
 // Maintenance-only guidance: never added to the system prompt or Tool catalog.
 export const CHECKPOINT_SKILL_CONSTRAINT_GUIDANCE =
@@ -55,8 +56,8 @@ export function hasInheritedCheckpointSkillConstraints(messages: ModelMessage[])
         // An authored handoff can predate source registration. Empty mechanical
         // evidence does not erase that block or authorize dropping its meaning.
       }
-      if (result.complete === true && Array.isArray(result.summaries)) {
-        if (result.summaries.some((item: { summary?: unknown }) => typeof item?.summary === 'string' &&
+      if (result.complete === true && (Array.isArray(result.summaries) || result.summary_from_call)) {
+        if (checkpointReceiptEntries(result, message.toolCalls[0]!).some((item: { summary?: unknown }) => typeof item?.summary === 'string' &&
           hasActiveCheckpointSkillConstraints(item.summary))) return true;
       } else if (Array.isArray(result.summarized_turns)) {
         const args = JSON.parse(message.toolCalls[0]!.argumentsText);

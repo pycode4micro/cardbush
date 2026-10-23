@@ -1,5 +1,6 @@
 import type { SessionSnapshot, ConversationExtractSource, ConversationExtractUnit, SessionMessage } from '@cardbush/bush-protocol';
 import { authoredPromptContent } from '@cardbush/bush-protocol';
+import { checkpointReceiptEntries } from './checkpointReceipt.js';
 const legacyInternalNames = new Set(['runtime_context', 'tool_image_observation', 'task_plan_continuation', 'empty_stop_recovery', 'subagent_result']);
 
 function userText(item: SessionMessage): string {
@@ -29,17 +30,17 @@ export function extractSessionSource(session: SessionSnapshot, keys?: string[]):
     if (receipt?.message.role !== 'tool') continue;
     try {
       const result = JSON.parse(receipt.message.content);
+      const caller = turn.messages.find(item => item.messageId === checkpoint.exchangeMessageIds[0]);
+      if (caller?.message.role !== 'assistant') continue;
+      const call = caller.message.toolCalls.find(call => call.name === 'checkpoint_context');
+      if (!call) continue;
       // Incremental checkpoints include the accepted per-source summaries.
-      for (const entry of Array.isArray(result.summaries) ? result.summaries : []) {
+      for (const entry of checkpointReceiptEntries(result, call)) {
         if (typeof entry?.turn_id === 'string' && typeof entry.summary === 'string') {
           summaries.set(entry.turn_id, entry.summary);
           if (entry.turn_id !== turn.turnId) completeSummaries.add(entry.turn_id);
         }
       }
-      const caller = turn.messages.find(item => item.messageId === checkpoint.exchangeMessageIds[0]);
-      if (caller?.message.role !== 'assistant') continue;
-      const call = caller.message.toolCalls.find(call => call.name === 'checkpoint_context');
-      if (!call) continue;
       const args = JSON.parse(call.argumentsText);
       const ids: string[] = Array.isArray(result.summarized_turns) ? result.summarized_turns : [];
       const entries = Array.isArray(args.summaries) ? args.summaries : [];

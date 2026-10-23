@@ -76,6 +76,38 @@ event; model context then projects that Turn as one internal semantic summary,
 while history replay, audit and Fork continue to read the original message and
 Tool facts. Tool call/result adjacency is validated mechanically.
 
+Prepared tool handoffs are enabled by default in the shared desktop, server Agent
+and CLI runtime worker. `summary_for_user` prepares a bounded, turn-local
+`tool_summary`. Its native receipt checks source references; optional
+habit/prediction storage remains separate. No history changes until pressure is
+reached. A successful completed Turn can then project its verified handoff plus
+the exact final reply as one assistant message, retaining user/instruction facts
+and any checkpoint carrying earlier history. Original calls, receipts and replies
+remain in the journal; provider reasoning/replay is not attached to synthetic
+prose. Applied references use the existing `turn_context_summarized` event.
+
+Missing/stale preparation, incomplete active Turns, invalid references and
+insufficient savings use the normal checkpoint transaction below. New guidance
+or tools after preparation invalidate it. The whole rebuilt request must meet
+the existing headroom and body limits. Recovery reconciles session projection
+and runtime journals without rerunning tools. `preferPreparedToolHandoffs: false`
+selects the previous algorithm for controlled comparisons; no schema is changed
+during a Turn. Existing frozen catalogs without `tool_summary` continue through
+the checkpoint fallback. See [the comparison and cache accounting](../../docs/CONTEXT_COMPACTION_COMPARISON_2026-10-23.md).
+
+This is the default policy on `main`. The pre-adoption mainline, including the
+CLI improvements, is preserved on `codex/checkpoint-compaction` (`24caf04`).
+That branch preserves the old implementation; it is not a downgrade reader for
+new handoff journal records. The improved checkpoint and oldest-summary merge
+remain fallback paths in the new mainline.
+
+Preparing a handoff does not immediately replace history or rewrite the next
+request's prefix. Only actual context pressure applies it. Ordinary append-only
+requests before and after that boundary retain the prior message prefix and
+fixed model/Tool parameters. Prefix diagnostics describe structural changes;
+only provider usage establishes cache hits. A compaction boundary can invalidate
+part of a cached prefix even when it needs no additional model request.
+
 `checkpoint_context` is always present in the stable Tool schema and Runtime
 never narrows the Tool list for a compaction round. The model must not invoke it
 proactively. Runtime issues an explicit developer-role maintenance notice at the
@@ -84,18 +116,52 @@ for a separate checkpoint response and safety margin before the normal input cap
 The normal output reserve is also enforced on Provider dispatch; an omitted limit
 uses the same bounded default (at most 8,192 tokens).
 
-The default incremental schema accepts `updates` for any pending source numbers
-the model chooses. Valid entries survive mixed invalid entries, while accepted
+The default incremental schema accepts `updates` for pending source numbers
+supplied in the current source index. Valid entries survive mixed invalid entries, while accepted
 text cannot be overwritten. A checkpoint is applied only after every authorized
 source is complete, including any cumulative active-Turn source through its exact
-boundary. Requests that exceed the input budget, or an explicitly configured
+boundary. Fresh incremental transactions present one historical source at a time,
+with prior accepted summaries as background and the real current user input kept
+outside the historical source range. The current message index follows earlier
+receipts so frozen original positions cannot override remapped dispatch positions.
+Interrupted older transactions keep their saved input mode. Requests that exceed the input budget, or an explicitly configured
 transport budget, partition at complete message/Tool-exchange boundaries. Staged
 fragments retain global source numbers; the model consolidates them before a whole
 source is accepted. Earlier completed fragments provide background for references
 and authorization without reattaching their raw images. Real model calls, receipts
 and partition boundaries survive restart; a smaller dispatch projection never
-replaces the canonical history. Fitting requests retain the original source prefix
-while collecting incremental summaries.
+replaces the canonical history. Complete exchanges are partitioned before using
+lossy emergency previews; an indivisible oversized exchange may still need an
+archived preview or fail closed. Model, reasoning strength and output allowance
+remain those of the conversation.
+
+Inherited checkpoints are explicitly indexed as conversation memory, including
+the earlier requirements and outcomes they carry, rather than only their carrier
+Turn's pause/acknowledgment. If all historical sources are summary projections and
+the active Turn fits the recent-content allowance, Runtime selects the oldest
+approximately two thirds by serialized input volume, aligned to complete source
+boundaries, and requests one model-authored merged memory. The recent portion is
+kept verbatim. Source ranges, transitive coverage and the merge marker are durable;
+there is no local semantic ranking, keyword correctness test or silent deletion.
+Age follows the earliest inherited Turn, not the later checkpoint carrier. If
+selected sources are separated by retained recent Turns, only their exact ranges
+enter the merged source; complete-exchange partitions preserve those gaps on
+restart. A single merged summary stays in its original Tool call and the receipt
+references that field, avoiding a duplicate copy of the same memory.
+
+Merged receipts include a `conversation-history://turns/first/last` locator. The
+deferred `read_conversation_history` tool reads bounded, revision-checked NDJSON
+pages from the current Session's existing journal, including user corrections and
+final replies. It omits hidden provider reasoning/replay and image payloads,
+marks superseded records, and does not grant filesystem or cross-Session access.
+Relative Turn locators remain usable in forks. Semantic relevance and fidelity
+remain the model's responsibility; Runtime validates identities, bounds and the
+complete rebuilt request budget before committing any replacement.
+The preferred target leaves up to 20% (capped at 16k tokens) below the trigger.
+After bounded refinement, a candidate can still be accepted if it leaves at least
+half that headroom, reduces the previous input, fits the hard token cap and stays
+below the transport warning. The completion event records this admission target;
+missing an ideal target by a few tokens is not an unusable conversation.
 
 The committed checkpoint references a real model call and Tool receipt carrying
 the accepted texts. Runtime keeps the original user input and continues the same

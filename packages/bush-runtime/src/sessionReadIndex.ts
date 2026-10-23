@@ -3,12 +3,14 @@ import { open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promise
 import {
   BUSH_SESSION_SNAPSHOT_PROTOCOL, sessionEventSchema, sessionMessageExcerpt, sessionSummarySchema,
   type SessionEvent, type SessionSummary, type SessionHistoryRequest, type SessionHistoryPage,
+  turnToolHandoffSchema, type TurnToolHandoff,
 } from '@cardbush/bush-protocol';
 import { boundedJournalLines } from './boundedJournalLines.js';
 import { validateCommittedTurn, validateCheckpointCoverage, addSupersededMessages, historyCursorError } from './sessionStore.js';
 
 export type StoredHistoryPage = Omit<SessionHistoryPage, 'toolExecutions' | 'contextCompactions'>;
-type TurnLocation = { turnId: string; sequence: number; createdAt: string; start: number; end: number; contextSummary?: string };
+type TurnLocation = { turnId: string; sequence: number; createdAt: string; start: number; end: number;
+  contextSummary?: string; contextToolHandoff?: TurnToolHandoff };
 type Excerpt = { id: string; role: 'user' | 'assistant'; text: string };
 type Index = {
   version: 1; through: number; mtimeMs: number; prefix: string; summary: SessionSummary;
@@ -54,9 +56,10 @@ export class SessionReadIndex {
         }
         const event = decodeSessionRecord(bytes.toString('utf8'), input.sessionId);
         if (event.kind !== 'turn_committed' || event.payload.turnId !== location.turnId || event.payload.turnSequence !== location.sequence) throw historyCursorError();
-        const turn = event.payload;
+        const turn = { ...event.payload, ...(location.contextSummary ? { contextSummary: location.contextSummary } : {}),
+          ...(location.contextToolHandoff ? { contextToolHandoff: location.contextToolHandoff } : {}) };
         validateCommittedTurn(turn);
-        turns.push({ ...turn, ...(location.contextSummary ? { contextSummary: location.contextSummary } : {}) });
+        turns.push(turn);
       }
       // Append-only writes preserve offsets. Replacement/truncation invalidates this page.
       const current = await file.stat();
@@ -170,7 +173,9 @@ function applyEvent(index: Index, event: SessionEvent, start: number, end: numbe
   if (event.kind === 'turn_committed') {
     const turn = event.payload;
     validateCommittedTurn(turn);
-    validateCheckpointCoverage(turn, ids.turns);
+    // The bounded index has identities, not preceding Turn bodies. Full replay
+    // validates tool adjacency; this read projection still checks every ID.
+    validateCheckpointCoverage(turn, ids.turns, undefined, ids.messages);
     if (turn.supersession) supersede(turn.supersession.messageIds);
     if (turn.turnSequence !== index.turns.length + 1 || ids.turns.has(turn.turnId)) throw Error('Session turn sequence mismatch.');
     ids.turns.add(turn.turnId);
@@ -178,7 +183,9 @@ function applyEvent(index: Index, event: SessionEvent, start: number, end: numbe
       if (ids.messages.has(message.messageId)) throw Error('Duplicate session message identity.');
       ids.messages.add(message.messageId); index.messageIds.push(message.messageId);
     }
-    index.turns.push({ turnId: turn.turnId, sequence: turn.turnSequence, createdAt: turn.createdAt, start, end });
+    index.turns.push({ turnId: turn.turnId, sequence: turn.turnSequence, createdAt: turn.createdAt, start, end,
+      ...(turn.contextSummary ? { contextSummary: turn.contextSummary } : {}),
+      ...(turn.contextToolHandoff ? { contextToolHandoff: turn.contextToolHandoff } : {}) });
     index.excerpts.push(...turn.messages.flatMap(sessionMessageExcerpt));
     index.summary.turnCount = index.turns.length;
     index.summary.latestTurn = { turnId: turn.turnId, turnSequence: turn.turnSequence, status: turn.status,
@@ -189,7 +196,13 @@ function applyEvent(index: Index, event: SessionEvent, start: number, end: numbe
     for (const summary of event.payload.summaries) {
       const turn = index.turns.find(turn => turn.turnId === summary.turnId);
       if (!turn || turn.contextSummary) throw Error('Invalid session context summary.');
-      turn.contextSummary = summary.summary;
+      if ('toolHandoff' in summary) {
+        if (turn.contextToolHandoff) throw Error('Prepared handoff was applied twice.');
+        turn.contextToolHandoff = summary.toolHandoff;
+      } else {
+        turn.contextSummary = summary.summary;
+        delete turn.contextToolHandoff;
+      }
     }
   }
   index.summary.revision = event.sequence; index.summary.updatedAt = event.createdAt; index.through = end;
@@ -202,7 +215,8 @@ function validIndex(index: Index | undefined, journal: string): index is Index {
     Array.isArray(index.turns) && index.turns.length === index.summary.turnCount && index.turns.every((turn, i) =>
       typeof turn.turnId === 'string' && typeof turn.createdAt === 'string' && turn.sequence === i + 1 && Number.isSafeInteger(turn.start) && Number.isSafeInteger(turn.end) &&
       turn.start >= 0 && turn.end > turn.start && turn.end <= index.through && (i === 0 || turn.start >= index.turns[i - 1]!.end) &&
-      (turn.contextSummary === undefined || typeof turn.contextSummary === 'string')) &&
+      (turn.contextSummary === undefined || typeof turn.contextSummary === 'string') &&
+      (turn.contextToolHandoff === undefined || turnToolHandoffSchema.safeParse(turn.contextToolHandoff).success)) &&
     Array.isArray(index.superseded) && index.superseded.every(id => typeof id === 'string') &&
     Array.isArray(index.eventIds) && index.eventIds.length === index.summary.revision && index.eventIds.every(id => typeof id === 'string') &&
     Array.isArray(index.messageIds) && index.messageIds.every(id => typeof id === 'string') &&

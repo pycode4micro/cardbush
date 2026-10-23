@@ -5,6 +5,7 @@ import { validateConversation } from './sessionStore.js';
 import { completeContextUnits } from './contextCompactionScope.js';
 export { completeContextUnits } from './contextCompactionScope.js';
 import { IncrementalCheckpoint } from './incrementalCheckpoint.js';
+import type { ContextTurnSource } from './contextAssembler.js';
 import { checkpointSkillConstraintsIssue, hasActiveCheckpointSkillConstraints,
   hasInheritedCheckpointSkillConstraints } from './checkpointSkillConstraints.js';
 import { checkpointSkillContractNotice, checkpointSkillReceiptEvidence, collectCheckpointSkillExcerpts,
@@ -26,6 +27,7 @@ interface Fragment {
   startMessage: number;
   endMessageExclusive: number;
   units: ModelMessage[][];
+  unitRanges: Array<{ startMessage: number; endMessageExclusive: number }>;
 }
 
 interface Node {
@@ -49,7 +51,8 @@ export interface CompactionJob {
   messages: ModelMessage[];
   outputTokens: number;
   failures: number;
-  sourceRanges: Array<{ turnId: string; startMessage: number; endMessageExclusive: number }>;
+  sourceRanges: Array<{ turnId: string; startMessage: number; endMessageExclusive: number;
+    messageRanges?: Array<{ startMessage: number; endMessageExclusive: number }> }>;
 }
 
 /** A maintenance transaction stages real checkpoint exchanges. No intermediate
@@ -78,6 +81,9 @@ export class ContextCompactionTransaction {
   readonly incremental?: IncrementalCheckpoint;
   #skillContracts = new Map<number, CheckpointSkillContract>();
   #skillEvidence: CheckpointSkillEvidence[] = [];
+  readonly #handoffEvidence: Map<string, NonNullable<ContextTurnSource['handoffEvidence']>>;
+  readonly #isolateSources: boolean;
+  readonly #currentInput: ModelMessage[];
 
   get receiptEvidence(): Record<string, unknown> {
     return this.#skillEvidence.length ? { skill_evidence: packCheckpointSkillEvidence(this.#skillEvidence) } : {};
@@ -86,14 +92,19 @@ export class ContextCompactionTransaction {
   constructor(input: { messages: ModelMessage[]; prefixMessageCount: number;
     sources: ContextCompactionSource[]; state: ContextCompactionState; pressure: ContextPressure;
     outputTokens: number; maximumOutputTokens: number; inputFormat: ContextCheckpointFormat;
-    restoredFailures?: Map<string, RestoredCompactionFailure>; restoredAttempts?: number; continuation?: ModelMessage[] }) {
+    restoredFailures?: Map<string, RestoredCompactionFailure>; restoredAttempts?: number; continuation?: ModelMessage[];
+    handoffEvidence?: Map<string, NonNullable<ContextTurnSource['handoffEvidence']>>; isolateSources?: boolean;
+    originalSourceRanges?: CompactionJob['sourceRanges']; currentInputMessages?: ModelMessage[] }) {
     this.#messages = structuredClone(input.messages);
+    this.#isolateSources = input.isolateSources === true;
+    this.#currentInput = structuredClone(input.currentInputMessages ?? []);
+    this.#handoffEvidence = structuredClone(input.handoffEvidence ?? new Map());
     for (const message of this.#messages) {
       if (message.role === 'assistant') for (const call of message.toolCalls) this.#callIds.add(call.id);
     }
     this.#prefix = this.#messages.slice(0, input.prefixMessageCount);
     this.#sources = structuredClone(input.sources);
-    for (const source of input.sources) {
+    for (const source of input.originalSourceRanges ?? input.sources) {
       for (const message of this.#messages.slice(source.startMessage, source.endMessageExclusive)) {
         if (message.role === 'tool') this.toolResultTurnIds.set(message.toolCallId, source.turnId);
       }
@@ -105,11 +116,17 @@ export class ContextCompactionTransaction {
     this.#maximumOutput = input.maximumOutputTokens;
     this.#restoredFailures = input.restoredFailures ?? new Map();
     this.#attempts = input.restoredAttempts ?? 0;
-    const fragments = input.sources.filter(source => source.target !== 'not_requested').map(source => ({
-      turnId: source.turnId, active: source.turnId === input.state.activeTurn?.turnId,
-      startMessage: source.startMessage, endMessageExclusive: source.endMessageExclusive,
-      units: completeContextUnits(this.#messages.slice(source.startMessage, source.endMessageExclusive)),
-    }));
+    const fragments = input.sources.filter(source => source.target !== 'not_requested').map(source => {
+      const units: ModelMessage[][] = [], unitRanges: Fragment['unitRanges'] = [];
+      for (const range of source.memberRanges ?? [source]) {
+        let cursor = range.startMessage;
+        for (const unit of completeContextUnits(this.#messages.slice(range.startMessage, range.endMessageExclusive))) {
+          units.push(unit); unitRanges.push({ startMessage: cursor, endMessageExclusive: cursor + unit.length }); cursor += unit.length;
+        }
+      }
+      return { turnId: source.turnId, active: source.turnId === input.state.activeTurn?.turnId,
+        startMessage: source.startMessage, endMessageExclusive: source.endMessageExclusive, units, unitRanges };
+    });
     if (!fragments.length) throw new Error('No authorized context sources can be compacted.');
     // Each split strictly divides complete source units. Bound work by those
     // units, not by an arbitrary number of preceding Turns (formerly 64 nodes).
@@ -146,12 +163,18 @@ export class ContextCompactionTransaction {
     const job = this.#baseJob();
     this.#skillContracts = new Map();
     for (const fragment of this.#current.fragments) {
+      if (!job.sourceRanges.some(range => range.turnId === fragment.turnId)) continue;
       const source = this.#sourceNumber(fragment);
       const children = this.#current.children?.filter(child => child.fragments.some(part => part.turnId === fragment.turnId));
+      const owner = this.#sources.find(source => source.turnId === fragment.turnId);
+      const handoffs = (owner?.memberTurnIds ?? [fragment.turnId]).flatMap(id => {
+        const evidence = this.#handoffEvidence.get(id);
+        return evidence && fragment.units.flat().some(message => message.role === 'assistant' && message.content === evidence.content) ? [evidence.excerpts] : [];
+      });
       const excerpts = children?.length
         ? mergeCheckpointSkillExcerpts(children.map(child => checkpointSkillReceiptEvidence(child.result![1])
           .filter(item => item.source === source).flatMap(item => item.excerpts)))
-        : collectCheckpointSkillExcerpts(fragment.units.flat());
+        : mergeCheckpointSkillExcerpts([collectCheckpointSkillExcerpts(fragment.units.flat()), ...handoffs]);
       this.#skillContracts.set(source, { excerpts });
     }
     const notice = checkpointSkillContractNotice(this.#skillContracts);
@@ -172,7 +195,7 @@ export class ContextCompactionTransaction {
     const state = this.#nodeState(node);
     let messages: ModelMessage[];
     let sources: ContextCompactionSource[];
-    if (node === this.#root && !node.children) {
+    if (node === this.#root && !node.children && !this.#sources.some(source => source.memberRanges)) {
       messages = [...this.#messages];
       sources = this.#sources;
     } else {
@@ -185,11 +208,13 @@ export class ContextCompactionTransaction {
         stagedRanges.set(child, { start, end: messages.length });
       }
       sources = node.fragments.map((fragment, index) => {
+        const history = this.#sources.find(source => source.turnId === fragment.turnId)?.history;
         const children = node.children?.filter(child => child.fragments.some(part => part.turnId === fragment.turnId));
         if (children?.length) {
           // A grouped child exchange is appended once. Each parent slot points
           // to its exact field, preserving call identities and source ownership.
           return { turnId: fragment.turnId, target: slots[index]!.target,
+            ...(history ? { history } : {}),
             startMessage: stagedRanges.get(children[0]!)!.start,
             endMessageExclusive: stagedRanges.get(children.at(-1)!)!.end,
             checkpointSummaries: children.map(child => ({ message: stagedRanges.get(child)!.start,
@@ -198,9 +223,11 @@ export class ContextCompactionTransaction {
         const startMessage = messages.length;
         messages.push(...fragment.units.flat());
         return { turnId: fragment.turnId, target: slots[index]!.target,
+          ...(history ? { history } : {}),
           startMessage, endMessageExclusive: messages.length };
       });
     }
+    if (this.#sources.some(source => source.memberRanges) && node.fragments.every(fragment => !fragment.active)) messages.push(...this.#currentInput);
     validateConversation(messages);
     const notice = contextPressureNotice(state, this.#pressure, this.#format, sources);
     if (node !== this.#root || node.children) {
@@ -284,10 +311,9 @@ export class ContextCompactionTransaction {
       if (fragment.units.length < 2) return false;
       const lengths = fragment.units.map(unit => JSON.stringify(unit).length);
       const boundary = balancedBoundary(lengths);
-      const messageBoundary = fragment.startMessage + fragment.units.slice(0, boundary).reduce((sum, unit) => sum + unit.length, 0);
       parts = [
-        [{ ...fragment, endMessageExclusive: messageBoundary, units: fragment.units.slice(0, boundary) }],
-        [{ ...fragment, startMessage: messageBoundary, units: fragment.units.slice(boundary) }],
+        [sliceFragment(fragment, 0, boundary)],
+        [sliceFragment(fragment, boundary, fragment.units.length)],
       ];
     }
     return this.#partition(parts);
@@ -298,7 +324,7 @@ export class ContextCompactionTransaction {
     if (this.#nodes + parts.length > this.#maximumNodes) return false;
     this.#nodes += parts.length;
     if (this.incremental) this.#recordProgress({ kind: 'partition', job: node.id,
-      parts: parts.map(fragments => fragments.map(({ turnId, startMessage, endMessageExclusive }) => ({ turnId, startMessage, endMessageExclusive }))) });
+      parts: parts.map(fragments => this.#ranges({ fragments } as Node)) });
     node.children = parts.map((fragments, index) => this.#node(`${node.id}/${index}`, fragments));
     this.#current = this.#next(this.#root) ?? this.#root;
     return true;
@@ -315,11 +341,12 @@ export class ContextCompactionTransaction {
     if (this.#callIds.has(call.id)) {
       throw new ContextCheckpointInputError('tool_call_id', 'a unique identity for this checkpoint exchange', call.id);
     }
-    this.job(); // Also supports callers that submit before inspecting job().
+    const job = this.job(); // Also supports callers that submit before inspecting job().
     const requiredSkillConstraints = this.#requiredSkillConstraintSources();
     if (this.#current.loop) {
       const node = this.#current;
-      const complete = node.loop!.submit(result, requiredSkillConstraints, this.#skillContracts);
+      const complete = node.loop!.submit(result, requiredSkillConstraints, this.#skillContracts,
+        new Set(job.sourceRanges.map(range => this.#sourceNumber(range))));
       this.#callIds.add(call.id);
       if (this.isRoot) return complete;
       const pair = node.loop!.history.slice(-2) as [ModelMessage, ModelMessage];
@@ -416,6 +443,26 @@ export class ContextCompactionTransaction {
   #incrementalJob(): CompactionJob {
     const node = this.#current;
     if (node === this.#root && !node.children) {
+      const fragment = this.#isolateSources && node.fragments.find(item => !this.incremental!.hasAccepted(this.#sourceNumber(item)));
+      if (fragment) {
+        const messages = [...this.#prefix, ...fragment.units.flat()];
+        const original = this.#sources.find(source => source.turnId === fragment.turnId)!;
+        const delta = this.#prefix.length - fragment.startMessage;
+        const source = { ...original, memberRanges: undefined, startMessage: this.#prefix.length, endMessageExclusive: messages.length,
+          ...(original.userRequest ? { userRequest: { ...original.userRequest, message: original.userRequest.message + delta } } : {}) };
+        // Keep the real current user boundary after historical replay. Some
+        // thinking providers require reasoning for every assistant continuation
+        // after the last user; isolated historical final prose is not a live
+        // continuation. This is original input, never a fabricated user command.
+        if (!fragment.active) messages.push(...this.#currentInput);
+        const notice = contextPressureNotice(this.#state, this.#pressure, 'incremental', [source]);
+        notice.content += '\nOnly the indexed source is supplied in this request. Previously accepted summaries are background; submit only this source number. The next source will receive its own input after acceptance. ' +
+          'Use the message positions in THIS final notice. Earlier receipts retain positions in the original frozen conversation and must not be used to index this isolated request.';
+        if (!fragment.active && this.#currentInput.length) notice.content += '\nCurrent user input outside the source range is background only; it is not owned by the historical source.';
+        messages.push(...this.incremental!.attemptHistory.slice(1), notice);
+        return { id: node.id, state: this.originalState, messages, outputTokens: node.outputTokens,
+          failures: node.loop!.failures, sourceRanges: this.#ranges({ fragments: [fragment] } as Node) };
+      }
       return { id: node.id, state: this.originalState,
       messages: [...this.#messages, ...this.incremental!.attemptHistory], outputTokens: node.outputTokens,
       failures: node.loop!.failures, sourceRanges: this.#ranges(node) };
@@ -439,8 +486,10 @@ export class ContextCompactionTransaction {
       !this.incremental!.hasAccepted(this.#sourceNumber(fragment)))
       .map(fragment => {
         const target = `source ${this.#sourceNumber(fragment)}`;
+        const origin = this.#sources.find(source => source.turnId === fragment.turnId);
         const children = node.children?.filter(child => child.fragments.some(part => part.turnId === fragment.turnId));
         if (children?.length) return { turnId: fragment.turnId, target,
+          ...(origin?.history ? { history: origin.history } : {}),
           startMessage: stagedRanges.get(children[0]!)!.start, endMessageExclusive: stagedRanges.get(children.at(-1)!)!.end,
           // A completed staged receipt carries every accepted model-authored
           // summary, even when its last call submitted only one source.
@@ -448,18 +497,21 @@ export class ContextCompactionTransaction {
             target: `summaries[source=${this.#sourceNumber(fragment)}].summary` })) };
         const startMessage = messages.length;
         messages.push(...fragment.units.flat());
-        const original = this.#sources.find(source => source.turnId === fragment.turnId)?.userRequest;
+        const original = origin?.userRequest;
         return { turnId: fragment.turnId, target, startMessage, endMessageExclusive: messages.length,
+          ...(origin?.history ? { history: origin.history } : {}),
           ...(original && original.message >= fragment.startMessage && original.message < fragment.endMessageExclusive
             ? { userRequest: { ...original, message: startMessage + original.message - fragment.startMessage } } : {}) };
       });
     validateConversation(messages);
+    if (node.fragments.every(fragment => !fragment.active)) messages.push(...this.#currentInput);
     const notice = contextPressureNotice(this.#state, this.#pressure, 'incremental', sources);
     notice.content += '\n' + (node.children
       ? 'Consolidate the indexed staged receipts into one summary for each selected source number. Only the quoted summaries fields belong to that source. No fragment has replaced the original conversation.'
       : 'This job contains only the indexed fragments, not unseen portions of their Turns. Submit updates only for these source numbers. Preserve uncertainty and exact identifiers; Runtime will ask for consolidation before accepting a whole source.') +
       '\nOriginal source ranges (zero-based in the frozen source conversation): ' + JSON.stringify(this.#ranges(node));
-    messages.push(notice, ...this.#savedJobHistory(node.id).slice(1));
+    notice.content += '\nUse the message positions in THIS final notice; earlier receipt ranges refer to the original frozen conversation.';
+    messages.push(...this.#savedJobHistory(node.id).slice(1), notice);
     return { id: node.id, state: this.originalState, messages, outputTokens: node.outputTokens,
       failures: node.loop!.failures, sourceRanges: this.#ranges(node) };
   }
@@ -508,11 +560,12 @@ export class ContextCompactionTransaction {
         const origin = node.fragments.find(fragment => fragment.turnId === range.turnId &&
           fragment.startMessage <= range.startMessage && fragment.endMessageExclusive >= range.endMessageExclusive);
         if (!origin) throw new Error('Saved context fragment is outside its original source.');
-        const boundaries = [origin.startMessage];
-        for (const unit of origin.units) boundaries.push(boundaries.at(-1)! + unit.length);
-        const start = boundaries.indexOf(range.startMessage), end = boundaries.indexOf(range.endMessageExclusive);
+        const start = origin.unitRanges.findIndex(unit => unit.startMessage === range.startMessage);
+        const end = origin.unitRanges.findIndex(unit => unit.endMessageExclusive === range.endMessageExclusive) + 1;
         if (start < 0 || end <= start) throw new Error('Saved context fragment separates a complete Tool exchange.');
-        return { ...origin, ...range, units: origin.units.slice(start, end) };
+        const fragment = sliceFragment(origin, start, end);
+        if (range.messageRanges && JSON.stringify(range.messageRanges) !== JSON.stringify(fragment.unitRanges)) throw new Error('Saved context fragment ranges changed.');
+        return fragment;
       }));
       this.#nodes += parts.length;
       node.children = parts.map((fragments, index) => this.#node(`${node.id}/${index}`, fragments));
@@ -527,8 +580,16 @@ export class ContextCompactionTransaction {
   }
 
   #ranges(node: Node) {
-    return node.fragments.map(({ turnId, startMessage, endMessageExclusive }) => ({ turnId, startMessage, endMessageExclusive }));
+    return node.fragments.map(({ turnId, startMessage, endMessageExclusive, unitRanges }) => ({ turnId, startMessage, endMessageExclusive,
+      ...(unitRanges.some((range, index) => index > 0 && range.startMessage !== unitRanges[index - 1]!.endMessageExclusive)
+        ? { messageRanges: unitRanges } : {}) }));
   }
+}
+
+function sliceFragment(fragment: Fragment, start: number, end: number): Fragment {
+  const unitRanges = fragment.unitRanges.slice(start, end);
+  return { ...fragment, startMessage: unitRanges[0]!.startMessage, endMessageExclusive: unitRanges.at(-1)!.endMessageExclusive,
+    units: fragment.units.slice(start, end), unitRanges };
 }
 
 /** Preserve order while balancing serialized size, not the number of source Turns. */

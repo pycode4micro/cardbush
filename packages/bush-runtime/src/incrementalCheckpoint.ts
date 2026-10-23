@@ -112,7 +112,7 @@ export class IncrementalCheckpoint {
   }
 
   submit(result: CompletedModelRound, requiredSkillConstraintSources: ReadonlySet<number> = new Set(),
-    skillContracts: ReadonlyMap<number, CheckpointSkillContract> = new Map()): boolean {
+    skillContracts: ReadonlyMap<number, CheckpointSkillContract> = new Map(), suppliedSources?: ReadonlySet<number>): boolean {
     const call = result.toolCalls[0]!;
     if (call.name !== 'checkpoint_context' || this.#calls.has(call.id)) throw new Error('Checkpoint calls must have unique identities.');
     const slots = contextCheckpointSlots(this.state);
@@ -134,7 +134,7 @@ export class IncrementalCheckpoint {
             rejected.push({ entry, reason: 'Use an existing integer source number and only the source/summary fields.' }); continue;
           }
           const source = Number(item.source);
-          if (!this.#requested.has(source)) {
+          if (!this.#requested.has(source) || (suppliedSources && !suppliedSources.has(source))) {
             rejected.push({ entry, source, reason: 'This source is outside the indexed job. Summarize only the source numbers shown in the current notice.' }); continue;
           }
           if (this.#accepted.has(source)) {

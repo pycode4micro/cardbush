@@ -108,6 +108,20 @@ export const turnContextCheckpointSchema = z.union([
 
 export type TurnContextCheckpoint = z.infer<typeof turnContextCheckpointSchema>;
 
+// An applied projection references model-authored handoff/final facts in the
+// immutable Turn. Preparation alone never changes the active conversation.
+export const turnToolHandoffSchema = z.object({
+  summaryMessageId: z.string().min(1),
+  receiptMessageId: z.string().min(1),
+  finalMessageIds: z.array(z.string().min(1)).min(1),
+});
+export type TurnToolHandoff = z.infer<typeof turnToolHandoffSchema>;
+export const turnContextSummaryUpdateSchema = z.union([
+  z.object({ turnId: z.string().trim().min(1), summary: z.string().trim().min(1) }).strict(),
+  z.object({ turnId: z.string().trim().min(1), toolHandoff: turnToolHandoffSchema }).strict(),
+]);
+export type TurnContextSummaryUpdate = z.infer<typeof turnContextSummaryUpdateSchema>;
+
 export const sessionSupersessionSchema = z.object({
   messageIds: z.array(z.string().min(1)).min(1),
   reason: z.string().min(1),
@@ -128,6 +142,7 @@ export const committedTurnSchema = z.object({
   cacheChainState: cacheChainStateSchema.optional(),
   contextSummary: z.string().min(1).optional(),
   contextCheckpoint: turnContextCheckpointSchema.optional(),
+  contextToolHandoff: turnToolHandoffSchema.optional(),
   // The replacement and its supersession share one durable journal record.
   supersession: sessionSupersessionSchema.optional(),
 });
@@ -178,10 +193,7 @@ export const sessionEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("turn_context_summarized"),
     payload: z.object({
       expectedRevision: z.number().int().positive(),
-      summaries: z.array(z.object({
-        turnId: z.string().min(1),
-        summary: z.string().min(1),
-      })).min(1),
+      summaries: z.array(turnContextSummaryUpdateSchema).min(1),
     }),
   }),
   sessionEventEnvelopeSchema.extend({

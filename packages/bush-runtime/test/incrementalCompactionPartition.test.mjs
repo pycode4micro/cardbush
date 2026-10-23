@@ -43,7 +43,8 @@ test('partitioned incremental jobs retain global source numbers, reject unseen s
   }
   const consolidation = tx.job().messages;
   assert.equal(tx.accept(result('root-a', [{ source: 0, summary: 'Consolidated A.' }])), false);
-  assert.deepEqual(tx.job().messages.slice(0, consolidation.length), consolidation, 'partial consolidation keeps the dispatch prefix stable');
+  assert.deepEqual(tx.job().messages.slice(0, consolidation.length - 1), consolidation.slice(0, -1), 'staged source exchanges remain stable');
+  assert.equal(tx.job().messages.at(-1).name, 'context_pressure', 'current positions follow earlier receipts');
   assert.equal(tx.accept(result('root-b', [{ source: 1, summary: 'Consolidated B.' }])), true);
   assert.deepEqual(tx.incremental.value.summaries, ['Consolidated A.', 'Consolidated B.']);
   assert.deepEqual(tx.canonicalMessages.slice(0, input.messages.length), input.messages);
@@ -73,6 +74,20 @@ test('one oversized source splits only between complete parallel exchanges and k
   assert.equal(rows(tx.job().messages)[0].checkpointSummaries.length, 2);
   assert.equal(tx.accept(result('consolidate', [{ source: 0, summary: 'Read A and B; local preview only. Verify next.' }])), true);
   assert.deepEqual(tx.canonicalMessages.slice(0, input.messages.length), input.messages);
+});
+
+test('a merged summary keeps each original tool receipt owner for archive locators', () => {
+  const pair = id => [user('Inherited memory.'), { role: 'assistant', content: '', toolCalls: [{ id, name: 'checkpoint_context', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: id, content: '{"summaries":[]}' }];
+  const input = fixture([pair('first-cp'), pair('second-cp')]);
+  const tx = new ContextCompactionTransaction({ ...input,
+    originalSourceRanges: input.sources,
+    state: { ...input.state, unsummarizedTurnIds: ['old_1'] },
+    sources: [{ turnId: 'old_1', target: 'source 0', startMessage: 1, endMessageExclusive: input.messages.length,
+      memberTurnIds: ['old_0', 'old_1'], history: { kind: 'merged_history', locator: 'conversation-history://turns/old_0/old_1', turnCount: 2 } }],
+    isolateSources: true });
+  assert.equal(tx.toolResultTurnIds.get('first-cp'), 'old_0');
+  assert.equal(tx.toolResultTurnIds.get('second-cp'), 'old_1');
 });
 
 test('recovery restores nested partitions, accepted fragment receipts and the exact pending dispatch', () => {
@@ -167,7 +182,7 @@ for (const failure of [false, true]) test(`Runtime token pressure stages increme
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const terminal = await host.runSessionTurn(request);
   assert.equal(terminal.payload.status, failure ? 'failed' : 'completed', JSON.stringify(terminal.payload));
-  assert.equal(observed.length, failure ? 2 : 4);
+  assert.equal(observed.length, failure ? 2 : 3, 'Fitting individual sources need no extra consolidation call.');
   const session = store.snapshot('s');
   assert.deepEqual(session.turns.slice(0, 2), original);
   assert.equal(Boolean(session.turns.at(-1).contextCheckpoint), !failure);
@@ -205,7 +220,7 @@ test('Runtime restart resumes the pending staged job without redoing completed s
   t.after(() => second.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const terminal = await second.resumeModelTurn('s', 'current');
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
-  assert.equal(resumed.length, 3, 'only the pending source, consolidation and normal response');
+  assert.equal(resumed.length, 2, 'only the pending source and normal response');
   const session = restoredStore.snapshot('s');
   assert.deepEqual(session.turns.slice(0, 2), original);
   assert.equal(session.turns.at(-1).messages.filter(m => m.message.role === 'tool' && m.message.toolCallId === 'completed-stage').length, 1);

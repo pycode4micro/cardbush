@@ -2,6 +2,11 @@ import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InMemoryRuntimeHost, SessionStore, assembleContext, projectActiveTurnContext } from '../dist/index.js';
+import { extractSessionSource } from '../dist/sessionExtraction.js';
+import { checkpointReceiptEntries, referenceSingleCheckpointSummary } from '../dist/checkpointReceipt.js';
+import { hasInheritedCheckpointSkillConstraints } from '../dist/checkpointSkillConstraints.js';
+import { collectCheckpointSkillExcerpts } from '../dist/checkpointSkillEvidence.js';
+import { ToolRegistry } from '../dist/toolRegistry.js';
 
 const now = '2026-09-11T00:00:00Z';
 function turn(id, sequence, messages, contextCheckpoint) {
@@ -13,7 +18,7 @@ const call = (id, summary) => ({ role: 'assistant', content: '', reasoningConten
   toolCalls: [{ id, name: 'checkpoint_context', argumentsText: JSON.stringify({ summaries: [summary], active_summary: '' }) }] });
 const receipt = id => ({ role: 'tool', toolCallId: id, content: '{"summarized_turns":["old"]}' });
 
-test('legacy summaries are explicitly compacted, never silently dropped at the 20-turn fallback', async t => {
+for (const incremental of [false, true]) test(`all-summary history merges the oldest two thirds with a locator and keeps the recent third verbatim across repeated compaction (${incremental ? 'incremental' : 'ordered'})`, async t => {
   const events = [];
   const persistence = { load: () => structuredClone(events), append: event => events.push(structuredClone(event)) };
   const store = new SessionStore({ persistence });
@@ -33,13 +38,16 @@ test('legacy summaries are explicitly compacted, never silently dropped at the 2
       yield event(0, 'response_started', {});
       if (request.messages.some(message => message.name === 'context_pressure')) {
         compactions++;
-        // First summarize every legacy source; then summarize the retained
-        // checkpoint and final reply as one source in the following Turn.
-        const summaries = compactions === 1 ? ids.map((_, i) => `VERIFIED_FACT_${i}`) : [ids.map((_, i) => `VERIFIED_FACT_${i}`).join(' ') + '; first follow-up completed.'];
+        const sources = request.messages.findLast(m => m.name === 'context_pressure').content.split('\n')
+          .filter(line => line.startsWith('{')).map(JSON.parse).filter(row => row.target !== 'not_requested');
+        assert.equal(sources.length, 1);
+        assert.equal(sources[0].history.kind, 'merged_history');
+        const summaries = sources.map(source => [...new Set(JSON.stringify(request.messages.slice(source.startMessage, source.endMessageExclusive))
+          .match(/VERIFIED_FACT_\d+/g))].join(' '));
         shouldCompact = false;
         yield event(1, 'reasoning_delta', { delta: 'Summarize the authorized sources.' });
         yield event(2, 'tool_call_delta', { index: 0, toolCallId: `checkpoint_${compactions}`, nameDelta: 'checkpoint_context',
-          argumentsDelta: JSON.stringify({ summaries }) });
+          argumentsDelta: JSON.stringify(incremental ? { updates: summaries.map((summary, source) => ({ source, summary })) } : { summaries }) });
         yield event(3, 'response_completed', { finishReason: 'tool_calls' });
       } else {
         yield event(1, 'text_delta', { delta: 'Follow-up completed.' });
@@ -47,32 +55,59 @@ test('legacy summaries are explicitly compacted, never silently dropped at the 2
       }
     },
   };
-  const host = new InMemoryRuntimeHost({ provider, sessionStore: store, registerDefaultWorkspaceTools: false });
+  const registry = new ToolRegistry();
+  const host = new InMemoryRuntimeHost({ provider, sessionStore: store, toolRegistry: registry, registerDefaultWorkspaceTools: false });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const request = id => ({ protocol: 'bush.session_turn_request.v1', requestId: id, sessionId: 's', turnId: id,
-    model: 'fixture', tools: [orderedCheckpointTool], prefixMessages: [{ role: 'system', content: 'fixed' }], inputMessages: [{ messageId: `${id}_user`, message: { role: 'user', content: 'Follow up.' } }],
+    model: 'fixture', tools: [incremental ? registry.resolve('checkpoint_context').definition : orderedCheckpointTool], prefixMessages: [{ role: 'system', content: 'fixed' }], inputMessages: [{ messageId: `${id}_user`, message: { role: 'user', content: 'Follow up.' } }],
     maxOutputTokens: 1000, metadata: { contextWindowTokens: 4000 } });
   assert.equal((await host.runSessionTurn(request('one'))).payload.status, 'completed');
   assert.deepEqual(store.snapshot('s').turns.slice(0, 25), original);
-  assert.deepEqual(store.snapshot('s').turns[25].contextCheckpoint.coveredTurnIds, ids);
-  assert.equal(observed[0].messages.filter(message => message.name === 'turn_context_summary').length, 25);
-  assert.equal(observed[1].messages.filter(message => message.name === 'turn_context_summary').length, 0);
-  for (let i = 0; i < 25; i++) assert.equal(JSON.stringify(observed[1].messages).match(new RegExp(`VERIFIED_FACT_${i}(?=\\\\?"| )`, 'g'))?.length, 1);
+  const covered = store.snapshot('s').turns[25].contextCheckpoint.coveredTurnIds;
+  assert.deepEqual(covered, ids.slice(0, 17));
+  assert.equal(observed[0].messages.filter(message => message.name === 'turn_context_summary').length, 17);
+  assert.equal(observed[1].messages.filter(message => message.name === 'turn_context_summary').length, 8);
+  for (let i = 0; i < 25; i++) assert.equal([...JSON.stringify(observed[1].messages).matchAll(/VERIFIED_FACT_\d+/g)]
+    .filter(match => match[0] === `VERIFIED_FACT_${i}`).length, 1);
   assert.equal(events.filter(event => event.kind === 'turn_context_summarized').length, 1, 'no partial summary write precedes the checkpoint commit');
   const restored = new SessionStore({ persistence }).snapshot('s');
   const expectedPrefix = assembleContext({ session: restored, prefix: request('one').prefixMessages }).messages;
   shouldCompact = true;
   assert.equal((await host.runSessionTurn(request('two'))).payload.status, 'completed');
-  assert.deepEqual(observed[2].messages.slice(0, expectedPrefix.length), expectedPrefix);
+  for (const message of expectedPrefix.filter(m => m.name === 'turn_context_summary')) {
+    assert.ok(observed[2].messages.some(m => m.content === message.content) || observed[3].messages.some(m => m.content === message.content), 'selected or retained summaries remain verbatim');
+  }
   const snapshot = store.snapshot('s');
-  assert.deepEqual(new Set(snapshot.turns.at(-1).contextCheckpoint.coveredTurnIds), new Set(ids));
-  assert.ok(snapshot.turns.at(-1).contextCheckpoint.coveredMessageIds.includes(snapshot.turns[25].contextCheckpoint.throughMessageId));
+  assert.deepEqual(snapshot.turns.slice(0, 25), original);
   const active = observed.at(-1).messages;
   const committed = assembleContext({ session: snapshot, prefix: request('two').prefixMessages }).messages;
   assert.deepEqual(committed.slice(0, active.length), active);
-  assert.equal(committed.filter(message => message.role === 'assistant' && message.toolCalls.length).length, 1);
+  for (const id of ids.map((_, i) => `VERIFIED_FACT_${i}`)) assert.equal(
+    [...JSON.stringify(committed).matchAll(/VERIFIED_FACT_\d+/g)].filter(match => match[0] === id).length, 1,
+    'each fact is represented once, either in a retained original summary or merged memory');
+  const marker = committed.filter(m => m.role === 'tool').map(m => JSON.parse(m.content)).find(m => m.merged_history);
+  assert.match(marker.merged_history.locator, /^conversation-history:\/\/turns\//);
+  if (incremental) {
+    assert.equal(marker.summaries, undefined, 'the single merged summary is not duplicated in its receipt');
+    assert.equal(marker.summary_from_call.argument, 'updates[0].summary');
+    assert.ok(extractSessionSource(snapshot).units.some(unit => unit.summarized && unit.text.includes('VERIFIED_FACT_0')));
+  }
   assert.ok(committed.some(message => message.content === 'Follow-up completed.'), 'the recent final response remains verbatim');
   assert.equal(compactions, 2);
+});
+
+test('single-summary references preserve inherited Skill evidence and reject mismatched calls', () => {
+  const summary = 'Facts <skill_constraints>Keep the scope. Read C:/task/SKILL.md before resuming.</skill_constraints>';
+  const nativeCall = { id: 'merge', name: 'checkpoint_context', argumentsText: JSON.stringify({ updates: [{ source: 0, summary }] }) };
+  const original = { complete: true, accepted: [0], summarized_turns: ['old'], summaries: [{ source: 0, turn_id: 'old', current: false, summary }] };
+  const lean = referenceSingleCheckpointSummary(original, nativeCall);
+  assert.deepEqual(checkpointReceiptEntries(lean, nativeCall), original.summaries);
+  const messages = [{ role: 'assistant', content: '', toolCalls: [nativeCall] }, { role: 'tool', toolCallId: nativeCall.id, content: JSON.stringify(lean) }];
+  assert.equal(hasInheritedCheckpointSkillConstraints(messages), true);
+  assert.equal(collectCheckpointSkillExcerpts(messages)[0].text, summary);
+  assert.deepEqual(checkpointReceiptEntries(lean, { ...nativeCall, id: 'wrong' }), []);
+  assert.deepEqual(checkpointReceiptEntries({ ...lean, complete: false }, nativeCall), []);
+  assert.deepEqual(referenceSingleCheckpointSummary(original, { ...nativeCall, argumentsText: '{}' }), original);
 });
 
 test('checkpoint references cannot point to missing, mismatched or future facts', () => {

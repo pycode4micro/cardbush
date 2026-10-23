@@ -852,6 +852,8 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 }
 
 host = new InMemoryRuntimeHost({
+  // Desktop, server Agent and CLI share this worker and compaction policy.
+  preferPreparedToolHandoffs: true,
   commandSandbox: commandSandboxConfiguration(process.env),
   loadCommandSandbox: () => loadCommandSandboxConfiguration(process.env, process.env.CARDBUSH_SANDBOX_SETTINGS_PATH),
   remoteWorkspace: { request: (action, payload, signal) => mcpHost.request('ssh.workspace', { action, ...payload }, signal) },

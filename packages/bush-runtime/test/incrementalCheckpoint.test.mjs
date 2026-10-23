@@ -42,6 +42,9 @@ const request = () => ({ protocol: 'bush.session_turn_request.v1', requestId: 'r
 const pressureCount = async request => ({ source: 'provider', inputTokens:
   request.messages.some(m => m.role === 'tool' && m.content.includes('summarized_turns')) ? 1000 : 260000 });
 const isMaintenance = request => request.messages.some(m => m.name === 'context_pressure');
+const indexed = input => input.messages.findLast(m => m.name === 'context_pressure').content.split('\n')
+  .filter(line => line.startsWith('{')).map(JSON.parse).filter(row => row.source !== undefined);
+const indexedUpdates = input => indexed(input).map(row => ({ source: row.source, summary: summaries[row.source] }));
 
 test('an oversized summary reports its actual length while preserving accepted sources', () => {
   const loop = new IncrementalCheckpoint(state, notice);
@@ -144,12 +147,12 @@ test('host completes compaction with a stray display title and resumes the task 
     async *stream(input) {
       if (isMaintenance(input)) {
         maintenanceCalls++;
-        argumentsText = JSON.stringify({ updates: summaries.map((summary, source) => ({ source, summary })),
+        argumentsText = JSON.stringify({ updates: indexedUpdates(input),
           _display_title: { zh: '压缩上下文', en: 'Compact context' } });
-        yield event(input, 0, 'tool_call_delta', { index: 0, toolCallId: 'title-checkpoint', nameDelta: 'checkpoint_context', argumentsDelta: argumentsText });
+        yield event(input, 0, 'tool_call_delta', { index: 0, toolCallId: `title-checkpoint-${maintenanceCalls}`, nameDelta: 'checkpoint_context', argumentsDelta: argumentsText });
         yield event(input, 1, 'response_completed', { finishReason: 'tool_calls' });
       } else {
-        const call = input.messages.flatMap(m => m.role === 'assistant' ? m.toolCalls : []).find(c => c.id === 'title-checkpoint');
+        const call = input.messages.flatMap(m => m.role === 'assistant' ? m.toolCalls : []).findLast(c => c.id.startsWith('title-checkpoint-'));
         assert.equal(call.argumentsText, argumentsText);
         yield event(input, 0, 'text_delta', { delta: '已继续检查。' });
         yield event(input, 1, 'response_completed', { finishReason: 'stop' });
@@ -159,7 +162,7 @@ test('host completes compaction with a stray display title and resumes the task 
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const terminal = await host.runSessionTurn(request());
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
-  assert.equal(maintenanceCalls, 1);
+  assert.equal(maintenanceCalls, 3);
   assert.equal(host.events('s', 'current').filter(e => e.kind === 'context_compaction_completed').length, 1);
   assert.equal(host.events('s', 'current').filter(e => e.kind === 'context_compaction_failed').length, 0);
   assert.deepEqual(store.snapshot('s').turns.slice(0, original.length), original);
@@ -168,7 +171,7 @@ test('host completes compaction with a stray display title and resumes the task 
     assembleContext({ session: store.snapshot('s'), prefix: request().prefixMessages }));
 });
 
-test('same-loop partial submissions keep native input and wire prefixes stable, then persist all accepted texts in the final receipt', async t => {
+test('each source receives isolated native input and earlier accepted summaries, then all accepted texts persist in the final receipt', async t => {
   const { store, journal } = seeded();
   const original = structuredClone(store.snapshot('s').turns);
   const observed = [];
@@ -184,9 +187,7 @@ test('same-loop partial submissions keep native input and wire prefixes stable, 
       round++;
       assert.equal(input.messages.findLast(m => m.name === 'context_pressure').role, 'developer');
       assert.deepEqual(store.snapshot('s').turns, original, 'No partial history replacement.');
-      const updates = round === 1 ? [{ source: 2, summary: summaries[2] }]
-        : round === 2 ? [{ source: 0, summary: summaries[0] }, { source: 1, summary: '' }]
-          : [{ source: 1, summary: summaries[1] }];
+      const updates = indexedUpdates(input);
       yield* checkpoint(input, `checkpoint_${round}`, updates);
     },
   } });
@@ -195,11 +196,22 @@ test('same-loop partial submissions keep native input and wire prefixes stable, 
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
   assert.equal(observed.length, 4, 'No extra consolidation call.');
   for (let index = 1; index < 3; index++) {
-    assert.deepEqual(observed[index].messages.slice(0, observed[index - 1].messages.length), observed[index - 1].messages);
+    assert.deepEqual(observed[index].messages.slice(0, 1), observed[0].messages.slice(0, 1));
+    for (const [source, originals] of history.entries()) {
+      assert.equal(observed[index].messages.some(m => m.content === originals[0].content), source === index);
+    }
+    assert.ok(observed[index].messages.some(m => m.role === 'assistant' && m.toolCalls.some(c => c.argumentsText.includes(summaries[index - 1]))));
     assert.deepEqual(observed[index].tools, observed[0].tools);
+    assert.equal(observed[index].messages.at(-1).name, 'context_pressure', 'the remapped current index must follow stale receipt positions');
+    const row = indexed(observed[index])[0];
+    assert.equal(observed[index].messages[row.startMessage].content, history[index][0].content);
+    const currentUser = observed[index].messages.findIndex(m => m.role === 'user' && m.content === request().inputMessages[0].message.content);
+    assert.ok(currentUser >= row.endMessageExclusive, 'the real current user boundary follows the historical source');
+    assert.ok(observed[index].messages.slice(currentUser + 1).filter(m => m.role === 'assistant').every(m => m.reasoningContent),
+      'only actual maintenance continuations follow the current user; historical finals need no fabricated reasoning');
     const before = toResponsesCreateParams(observed[index - 1]);
     const after = toResponsesCreateParams(observed[index]);
-    assert.deepEqual(after.input.slice(0, before.input.length), before.input, 'Provider wire prefix must remain identical too.');
+    assert.deepEqual(after.input[0], before.input[0], 'Stable system prefix remains identical on the wire.');
   }
   const last = observed.at(-1).messages.findLast(m => m.role === 'tool');
   assert.deepEqual(JSON.parse(last.content).summaries.map(item => item.summary), summaries);
@@ -241,7 +253,7 @@ test('restart keeps accepted entries and the exact dispatch prefix, then only re
   const first = new InMemoryRuntimeHost({ sessionStore: store, checkpointStore: checkpoints, eventLog,
     registerDefaultWorkspaceTools: false, provider: { countInputTokens: pressureCount, async *stream(input) {
       seen.push(structuredClone(input));
-      if (seen.length === 1) yield* checkpoint(input, 'first-source', [{ source: 1, summary: summaries[1] }]);
+      if (seen.length === 1) yield* checkpoint(input, 'first-source', [{ source: 0, summary: summaries[0] }]);
       else { reached(); await new Promise(() => {}); }
     } } });
   t.after(() => first.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
@@ -250,7 +262,7 @@ test('restart keeps accepted entries and the exact dispatch prefix, then only re
   const saved = structuredClone(checkpoints.load('s', 'current'));
   const savedEvents = structuredClone(eventLog.replay('s', 'current'));
   const savedSessions = structuredClone(journal);
-  assert.deepEqual(saved.request.messages, seen[1].messages);
+  assert.ok(saved.request.messages.length > seen[1].messages.length, 'Recovery retains canonical full sources as well as accepted work.');
   assert.equal(saved.request.messages.findLast(m => m.name === 'context_pressure').role, 'developer');
   controller.abort(); await running;
   const restoredCheckpoints = new InMemoryRuntimeCheckpointStore(); restoredCheckpoints.save(saved);
@@ -261,11 +273,13 @@ test('restart keeps accepted entries and the exact dispatch prefix, then only re
     registerDefaultWorkspaceTools: false, provider: { countInputTokens: pressureCount, async *stream(input) {
       resumed++;
       if (isMaintenance(input)) {
-        assert.deepEqual(input.messages, seen[1].messages);
-        const remaining = JSON.parse(input.messages.at(-1).content).remaining;
-        assert.deepEqual(remaining.map(item => item.source), [0, 2]);
-        assert.equal(remaining[0].user_request, history[0][0].content);
-        yield* checkpoint(input, 'remaining-sources', [{ source: 2, summary: summaries[2] }, { source: 0, summary: summaries[0] }]);
+        if (resumed === 1) {
+          assert.deepEqual(input.messages, seen[1].messages);
+          const remaining = JSON.parse(input.messages.findLast(m => m.role === 'tool').content).remaining;
+          assert.deepEqual(remaining.map(item => item.source), [1, 2]);
+          assert.equal(remaining[0].user_request, history[1][0].content);
+        }
+        yield* checkpoint(input, `remaining-sources-${resumed}`, indexedUpdates(input));
       } else {
         yield event(input, 0, 'text_delta', { delta: '恢复完成。' });
         yield event(input, 1, 'response_completed', { finishReason: 'stop' });
@@ -274,10 +288,10 @@ test('restart keeps accepted entries and the exact dispatch prefix, then only re
   t.after(() => second.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const terminal = await second.resumeModelTurn('s', 'current');
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
-  assert.equal(resumed, 2);
+  assert.equal(resumed, 3);
   const current = restoredStore.snapshot('s').turns.at(-1);
   assert.equal(current.messages.filter(item => item.message.role === 'tool' && item.message.toolCallId === 'first-source').length, 1);
-  assert.deepEqual(JSON.parse(current.messages.find(item => item.message.role === 'tool' && item.message.toolCallId === 'remaining-sources').message.content).summaries.map(s => s.summary), summaries);
+  assert.deepEqual(JSON.parse(current.messages.find(item => item.message.role === 'tool' && item.message.toolCallId === 'remaining-sources-2').message.content).summaries.map(s => s.summary), summaries);
 });
 
 test('a cumulative active source and earlier sources can be selected independently without splitting native exchanges', () => {
@@ -319,7 +333,7 @@ test('restart during coordination compaction retains its separate task budget an
     sessionStore: new SessionStore({ persistence: { load: () => sessions, append: event => sessions.push(event) } }),
     eventLog: new InMemoryRuntimeEventLog({ persistence: { load: () => events, append: event => events.push(event) } }),
     registerDefaultWorkspaceTools: false, provider: { countInputTokens: pressureCount, async *stream(req) {
-      if (isMaintenance(req)) yield* checkpoint(req, 'after-restart', [{ source: 1, summary: summaries[1] }, { source: 2, summary: summaries[2] }]);
+      if (isMaintenance(req)) yield* checkpoint(req, `after-restart-${indexed(req)[0].source}`, indexedUpdates(req));
       else { taskCalls++; yield event(req, 0, 'text_delta', { delta: 'Coordination handled.' }); yield event(req, 1, 'response_completed', { finishReason: 'stop' }); }
     } } });
   t.after(() => second.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
@@ -342,7 +356,7 @@ test('user guidance queued between partial checkpoints is applied before normal 
         if (++calls === 1) yield* checkpoint(input, 'first', [{ source: 0, summary: summaries[0] }]);
         else {
           entered(); await gate;
-          yield* checkpoint(input, 'remaining', [{ source: 2, summary: summaries[2] }, { source: 1, summary: summaries[1] }]);
+          yield* checkpoint(input, `remaining-${calls}`, indexedUpdates(input));
         }
       } else {
         continued = input;

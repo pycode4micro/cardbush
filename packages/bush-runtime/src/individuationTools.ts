@@ -6,6 +6,7 @@ import type { ToolRegistry } from './toolRegistry.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import { IndividuationStore } from './individuationStore.js';
 import type { IndividuationMemory } from './individuationMemory.js';
+import { preparedToolHandoffReceipt } from './preparedToolHandoff.js';
 
 const manifest = { effect_kind: 'observation' as const, operation: 'individuation', risk: 'low' as const,
   owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
@@ -55,8 +56,9 @@ export function registerIndividuationTools(registry: ToolRegistry, path: string,
   registry.register<SummaryForUserInput>({
     directInvocation: true,
     definition: { name: 'summary_for_user',
-      description: 'Mark the next response as final for display after tool work, and optionally save separate habit and prediction records. When this turn has used other tools and the work is complete, call this once before the final reply, even when there is nothing to save ({}). For ordinary conversation without tool work, the agent may reply directly without invoking this tool. The agent chooses when the work is ready; the host neither inserts a call nor requires one to finish. Put supported, reusable user preferences or corrections in habit; put uncertain next-step needs in prediction. Each is independent, optional, and saved only when its own memory category is enabled. Include the applicable situation in concise natural language; do not mix categories or invent an entry to fill both. Do not recap tool executions, repeat known records, save secrets, or infer sensitive traits. No template or required fields. Disabled memory or nothing new to save does not prevent the final-display signal: use {}. The host deduplicates each category and maintains expiry locally; model consolidation only runs when explicitly requested; predictions are hypotheses, not authorization. The memory transaction finishes before the final-display receipt; write failure does not block the reply. Each write reports its ID and created/deduplicated/rejected/skipped status without echoing text. Retrying the same operation replays its receipt; use revise_memory to correct an existing record. Success marks the next response final for display but does not end the loop.',
+      description: 'Prepare the next final user-facing reply after tool work. Call this alone when the work is ready, with a concise tool_summary of this turn; it is a deferred context handoff, not long-term memory. Preserve verified outcomes, failed attempts, exact artifact/task IDs and versions, unresolved work, continuing constraints and when to reread sources. Keep conditions and uncertainty; never invent completion or approval. Summarize recorded facts without making new editorial or implementation decisions. Preserve the wording of timing requirements; do not turn workflow ordering into media timestamps. The host may later replace old tool exchanges with this model-authored summary plus the actual final reply. New tool work or user guidance invalidates preparation; refresh it before finishing. Optional habit and prediction are separate memory categories, saved only when enabled: habit is a supported reusable preference, prediction is an unconfirmed next user request. Do not put tool recaps in memory, repeat known records, save secrets or infer sensitive traits. All fields are optional; {} remains a valid final-display signal. Ordinary conversation without tool work may reply directly. The host does not require this call to finish, and memory write failure does not block the reply. Memory writes report IDs and created/deduplicated/rejected/skipped status without echoing text. Retrying the same operation replays its receipt; use revise_memory for corrections. Success marks the next response final for display but does not end the loop.',
       inputSchema:{type:'object',additionalProperties:false,properties:{
+        tool_summary:{type:'string',minLength:1,maxLength:12000,description:'Concise Markdown handoff for this turn, preferably 300–800 tokens. Include tool outcomes, real task/artifact IDs, pending/failed/unverified work, continuing requirements and exact versioned source/line locators with reread triggers. For Skill sources already read, include <skill_constraints> with scoped requirements/reread reasons and [section](<absolute/path?revision=HASH#Lstart-Lend>) links to observed lines on EVERY bullet, including reread reasons. Copy the observed revision exactly; do not invent hashes. If none remain, write none: plus the reason inside that block. Distinguish attempted actions from successful effects; a completed one-time step does not retire a continuing requirement. Exclude redundant progress chatter and the final reply itself. This is saved only in this conversation, even when memory is disabled.'},
         habit:{...noteSchema,description:'Supported reusable user preference. Omit when disabled or nothing new is supported.'},
         prediction:{...noteSchema,description:'Optional next user message, offered in the empty composer for the user to insert, edit and send. This is an unconfirmed suggestion, never authorization. Omit when disabled or no single next request is clear. A prediction_display omission does not block the final reply; do not retry solely to fill the composer.',
           properties:{...noteProperties,text:{...noteProperties.text,description:NEXT_STEP_PREDICTION_TEXT_DESCRIPTION}}},
@@ -66,16 +68,17 @@ export function registerIndividuationTools(registry: ToolRegistry, path: string,
       context.signal?.throwIfAborted();
       const settings=normalizeIndividuation(context.turn?.request.metadata.individuation);
       const user=[...(context.turn?.contextMessages??[])].reverse().find(m=>m.role==='user'&&m.visibility!=='internal')?.content??'';
+      const handoff = preparedToolHandoffReceipt(context.input.tool_summary, context.turn?.contextMessages);
       try {
-        const recorded=await store.summarize(context.input,settings,{...context,operationId:context.toolCall?.id},user,context.signal);
+        const recorded=await store.summarize({habit:context.input.habit,prediction:context.input.prediction},settings,{...context,operationId:context.toolCall?.id},user,context.signal);
         if(context.turn) memory?.schedule(settings);
         const displayIssue=context.input.prediction && recorded.writes.some(write=>write.category==='prediction' && ['created','deduplicated'].includes(write.status))
           ? nextStepPredictionTextIssue(context.input.prediction.text) : undefined;
-        return {status:'ok',final_response:true,...recorded,
+        return {status:'ok',final_response:true,...handoff,...recorded,
           ...(displayIssue ? {prediction_display:{status:'omitted',reason:displayIssue}} : {})};
       } catch {
         context.signal?.throwIfAborted();
-        return {status:'ok',final_response:true,saved:false,storage_status:'unavailable',writes:[]};
+        return {status:'ok',final_response:true,...handoff,saved:false,storage_status:'unavailable',writes:[]};
       }
     },
   });

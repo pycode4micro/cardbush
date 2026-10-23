@@ -49,7 +49,7 @@ function* done(input) {
 }
 const shutdown = host => host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
 
-for (const total of [63, 64, 128]) test(`${total} long sources fit through grouped partitions in a 530000-token window`, async t => {
+for (const total of [63, 64, 128]) test(`${total} long sources fit through isolated source requests in a 530000-token window`, async t => {
   // Remain larger than the input capacity after reserving the conversation output allowance.
   const { store, original } = seed(total, 5000), batches = [];
   let normal = 0;
@@ -76,8 +76,8 @@ for (const total of [63, 64, 128]) test(`${total} long sources fit through group
   const terminal = await host.runSessionTurn(input);
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
   assert.equal(normal, 1);
-  assert.ok(batches.length <= 7, 'batch by input capacity rather than one call per historical source');
-  assert.ok(batches.some(batch => batch.length > 1 && batch.length < total));
+  assert.equal(batches.length, total - 1, 'one request per selected source, with no extra consolidation');
+  assert.ok(batches.every(batch => batch.length === 1));
   assert.deepEqual(store.snapshot('s').turns.slice(0, total), original);
 });
 
@@ -113,19 +113,19 @@ for (const ordered of [false, true]) test(`a complete checkpoint is refined befo
   // Leave room for a refinement notice without invoking source partitioning.
   const { store, original } = seed(3, 400), observed = [];
   let calls = 0, host;
-  host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: { countInputTokens: count,
+  host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: { countInputTokens: async input => maintenance(input) ? { source: 'provider', inputTokens: 3000 } : count(input),
     async *stream(input) {
       observed.push(structuredClone(input));
-      assert.ok(tokens(input) <= 4000, 'never dispatch an oversized request');
+      if (!maintenance(input)) assert.ok(tokens(input) <= 4000, 'never admit an oversized candidate');
       if (maintenance(input)) {
         calls++;
         assert.equal(host.events('s', 'current').filter(e => e.kind === 'context_compaction_completed').length, 0);
         assert.deepEqual(store.snapshot('s').turns, original);
         const sources = rows(input).filter(row => row.source !== undefined || row.target.startsWith('summaries[')).map((row, i) => row.source ?? i);
         yield* checkpoint(input, `candidate-${calls}`, sources.map(source => ({ source,
-          summary: calls === 1 ? oversized(source, ordered) : short(source) })), ordered);
+          summary: calls <= (ordered ? 1 : 3) ? oversized(source, ordered) : short(source) })), ordered);
       } else {
-        assert.equal(calls, 2);
+        assert.equal(calls, ordered ? 2 : 6);
         assert.doesNotMatch(JSON.stringify(input.messages), /verified fact; verified fact;/);
         yield* done(input);
       }
@@ -133,7 +133,7 @@ for (const ordered of [false, true]) test(`a complete checkpoint is refined befo
   t.after(() => shutdown(host));
   const terminal = await host.runSessionTurn(request(ordered ? { tools: [orderedCheckpointTool] } : {}));
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
-  assert.equal(calls, 2);
+  assert.equal(calls, ordered ? 2 : 6);
   const events = host.events('s', 'current');
   assert.equal(events.filter(e => e.kind === 'context_compaction_completed').length, 1);
   assert.equal(events.filter(e => e.kind === 'context_compaction_retrying' && e.payload.reason === 'checkpoint_result_over_budget').length, 1);
@@ -143,15 +143,15 @@ for (const ordered of [false, true]) test(`a complete checkpoint is refined befo
 
 test('oversized candidates exhaust a bounded refinement budget without a false completion or source replacement', async t => {
   const { store, original } = seed(3, 400); let calls = 0;
-  const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: { countInputTokens: count,
+  const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: { countInputTokens: async input => maintenance(input) ? { source: 'provider', inputTokens: 3000 } : count(input),
     async *stream(input) {
       assert.ok(maintenance(input));
-      yield* checkpoint(input, `oversized-${++calls}`, rows(input).map(row => ({ source: row.source, summary: oversized(row.source) })));
+      yield* checkpoint(input, `oversized-${++calls}`, rows(input).map(row => ({ source: row.source, summary: oversized(row.source, true) })));
     } } });
   t.after(() => shutdown(host));
   const terminal = await host.runSessionTurn(request());
   assert.equal(terminal.payload.reason, 'context_compaction_result_limit_exceeded', JSON.stringify(terminal.payload));
-  assert.equal(calls, 3);
+  assert.equal(calls, 9, 'three candidate attempts, each with three isolated sources');
   assert.equal(store.snapshot('s').turns.at(-1).contextCheckpoint, undefined);
   assert.deepEqual(store.snapshot('s').turns.slice(0, 3), original);
   assert.equal(host.events('s', 'current').some(e => e.kind === 'context_compaction_completed'), false);
@@ -187,15 +187,16 @@ test('admission also enforces the provider request-body limit when the token cou
     async *stream(input) {
       assert.ok(Buffer.byteLength(JSON.stringify(input.messages)) <= 16000);
       if (maintenance(input)) {
-        yield* checkpoint(input, `body-${++calls}`, rows(input).map(row => ({ source: row.source,
-          summary: calls === 1 ? oversized(row.source) : short(row.source) })));
+        yield* checkpoint(input, `body-${++calls}`, rows(input).filter(row => row.target !== 'not_requested').map((row, source) => ({ source,
+          summary: calls === 1 ? `Source ${source}: ` + 'verified fact; '.repeat(380) : short(source) })), true);
       } else { normal++; yield* done(input); }
     } } });
   t.after(() => shutdown(host));
-  const terminal = await host.runSessionTurn(request());
+  const terminal = await host.runSessionTurn(request({ tools: [orderedCheckpointTool], maxOutputTokens: 6000, metadata: { contextWindowTokens: 10000 } }));
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
   assert.equal(calls, 2); assert.equal(normal, 1);
   const rejected = host.events('s', 'current').find(e => e.kind === 'context_compaction_retrying' && e.payload.reason === 'checkpoint_result_over_budget');
+  assert.ok(rejected, JSON.stringify(host.events('s', 'current').filter(e => e.kind === 'context_compaction_retrying')));
   assert.equal(rejected.payload.diagnostics.estimatedPromptTokens, 1000);
   assert.ok(rejected.payload.diagnostics.requestBody.bytes > 16000);
   assert.deepEqual(store.snapshot('s').turns.slice(0, 3), original);
@@ -212,8 +213,9 @@ test('restart during refinement preserves prior receipts and accepted new summar
   const first = new InMemoryRuntimeHost({ sessionStore: store, checkpointStore: checkpoints, eventLog: events, registerDefaultWorkspaceTools: false,
     provider: { countInputTokens: refinementCount, async *stream(input) {
       seen.push(structuredClone(input));
-      if (seen.length === 1) yield* checkpoint(input, 'large-original', [0, 1, 2].map(source => ({ source, summary: oversized(source) })));
-      else if (seen.length === 2) yield* checkpoint(input, 'small-accepted', [{ source: 1, summary: short(1) }]);
+      if (seen.length <= 3) yield* checkpoint(input, seen.length === 1 ? 'large-original' : `large-${seen.length}`,
+        rows(input).map(({ source }) => ({ source, summary: oversized(source) })));
+      else if (seen.length === 4) yield* checkpoint(input, 'small-accepted', [{ source: 0, summary: short(0) }]);
       else { reached(); await new Promise(() => {}); }
     } } });
   t.after(() => shutdown(first));
@@ -230,15 +232,17 @@ test('restart during refinement preserves prior receipts and accepted new summar
     registerDefaultWorkspaceTools: false, provider: { countInputTokens: refinementCount, async *stream(input) {
       calls++;
       if (maintenance(input)) {
-        assert.deepEqual(input.messages, seen.at(-1).messages);
-        assert.deepEqual(JSON.parse(input.messages.at(-1).content).accepted_sources, [1]);
-        yield* checkpoint(input, 'remaining-small', [0, 2].map(source => ({ source, summary: short(source) })));
+        if (calls === 1) {
+          assert.deepEqual(input.messages, seen.at(-1).messages);
+          assert.deepEqual(JSON.parse(input.messages.findLast(m => m.role === 'tool').content).accepted_sources, [0]);
+        }
+        yield* checkpoint(input, `remaining-small-${calls}`, rows(input).map(({ source }) => ({ source, summary: short(source) })));
       } else yield* done(input);
     } } });
   t.after(() => shutdown(second));
   const terminal = await second.resumeModelTurn('s', 'current');
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   const session = restoredStore.snapshot('s');
   assert.deepEqual(session.turns.slice(0, 3), original);
   assert.equal(session.turns.at(-1).messages.filter(m => m.message.role === 'tool' && m.message.toolCallId === 'large-original').length, 1);
@@ -257,13 +261,13 @@ for (const failure of ['count', 'abort']) test(`candidate admission ${failure} l
     },
     async *stream(input) {
       calls++;
-      yield* checkpoint(input, 'valid-before-admission', rows(input).map(row => ({ source: row.source, summary: short(row.source) })));
+      yield* checkpoint(input, `valid-before-admission-${calls}`, rows(input).map(row => ({ source: row.source, summary: short(row.source) })));
     } } });
   t.after(() => shutdown(host));
   const terminal = await host.runSessionTurn(request(), { signal: controller.signal });
   assert.equal(terminal.payload.status, failure === 'abort' ? 'stopped' : 'failed', JSON.stringify(terminal.payload));
   if (failure === 'count') assert.equal(terminal.payload.reason, 'provider_input_token_count_failed');
-  assert.equal(calls, 1);
+  assert.equal(calls, 3);
   assert.equal(store.snapshot('s').turns.at(-1).contextCheckpoint, undefined);
   assert.deepEqual(store.snapshot('s').turns.slice(0, 3), original);
   assert.equal(host.events('s', 'current').some(e => e.kind === 'context_compaction_completed'), false);
