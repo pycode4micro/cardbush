@@ -290,7 +290,9 @@ export class SessionStore {
       );
     }
     validateCommittedTurn(turn);
-    validateCheckpointCoverage(turn, new Set(before.turns.map(item => item.turnId)));
+    validateCheckpointCoverage(turn, new Set(before.turns.map(item => item.turnId)),
+      turn.contextCheckpoint?.projectionVersion === 'exchange_v1' && turn.contextCheckpoint.coveredMessageIds?.length
+        ? before.turns.flatMap(item => item.messages) : []);
     const knownMessageIds = new Set(
       before.turns.flatMap((item) => item.messages.map((message) => message.messageId)),
     );
@@ -464,7 +466,8 @@ export function projectSession(
     if (event.kind === "turn_committed") {
       const turn = event.payload;
       validateCommittedTurn(turn);
-      validateCheckpointCoverage(turn, turnIds);
+      validateCheckpointCoverage(turn, turnIds, turn.contextCheckpoint?.projectionVersion === 'exchange_v1' &&
+        turn.contextCheckpoint.coveredMessageIds?.length ? turns.flatMap(item => item.messages) : []);
       if (turn.supersession) {
         addSupersededMessages(messageIds, superseded, turn.supersession.messageIds);
       }
@@ -577,17 +580,33 @@ export function validateCommittedTurn(turn: CommittedTurn): void {
       if (turn.contextCheckpoint.coveredTurnIds.includes(turn.turnId)) {
         throw new Error("Turn context checkpoint cannot cover its own Turn.");
       }
+      const retained = turn.contextCheckpoint.retainedMessageIds ?? [];
+      const available = new Map(turn.messages.slice(turn.contextCheckpoint.inputMessageCount, boundaryIndex - 1)
+        .map(item => [item.messageId, item.message]));
+      if (new Set(retained).size !== retained.length || retained.some(id => !available.has(id))) {
+        throw new Error('Context checkpoint retained facts must be unique generated messages before its exchange.');
+      }
+      validateConversation(retained.map(id => available.get(id)!));
     }
   }
   validateConversation(turn.messages.map((message) => message.message));
 }
 
-export function validateCheckpointCoverage(turn: CommittedTurn, priorTurnIds: Set<string>): void {
+export function validateCheckpointCoverage(turn: CommittedTurn, priorTurnIds: Set<string>,
+  priorMessages: CommittedTurn['messages'] = []): void {
   if (turn.contextCheckpoint?.projectionVersion !== "exchange_v1") return;
   const ids = turn.contextCheckpoint.coveredTurnIds;
   if (new Set(ids).size !== ids.length || ids.some(id => !priorTurnIds.has(id))) {
     throw new Error("Context checkpoint coverage must contain unique preceding Turn identities.");
   }
+  const partial = turn.contextCheckpoint.coveredMessageIds ?? [];
+  if (!partial.length) return;
+  const known = new Set(priorMessages.map(message => message.messageId));
+  if (new Set(partial).size !== partial.length || partial.some(id => !known.has(id))) {
+    throw new Error('Context checkpoint partial coverage must contain unique preceding message identities.');
+  }
+  const covered = new Set(partial);
+  validateConversation(priorMessages.filter(message => !covered.has(message.messageId)).map(message => message.message));
 }
 
 export function validateConversation(

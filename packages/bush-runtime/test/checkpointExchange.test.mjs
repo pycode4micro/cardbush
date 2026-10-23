@@ -65,11 +65,13 @@ test('legacy summaries are explicitly compacted, never silently dropped at the 2
   assert.equal((await host.runSessionTurn(request('two'))).payload.status, 'completed');
   assert.deepEqual(observed[2].messages.slice(0, expectedPrefix.length), expectedPrefix);
   const snapshot = store.snapshot('s');
-  assert.deepEqual(new Set(snapshot.turns.at(-1).contextCheckpoint.coveredTurnIds), new Set([...ids, 'one']));
+  assert.deepEqual(new Set(snapshot.turns.at(-1).contextCheckpoint.coveredTurnIds), new Set(ids));
+  assert.ok(snapshot.turns.at(-1).contextCheckpoint.coveredMessageIds.includes(snapshot.turns[25].contextCheckpoint.throughMessageId));
   const active = observed.at(-1).messages;
   const committed = assembleContext({ session: snapshot, prefix: request('two').prefixMessages }).messages;
   assert.deepEqual(committed.slice(0, active.length), active);
   assert.equal(committed.filter(message => message.role === 'assistant' && message.toolCalls.length).length, 1);
+  assert.ok(committed.some(message => message.content === 'Follow-up completed.'), 'the recent final response remains verbatim');
   assert.equal(compactions, 2);
 });
 

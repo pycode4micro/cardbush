@@ -107,6 +107,31 @@ does not create another user summary. Active, committed and recovered contexts
 use that same projection. Legacy text-only checkpoints remain readable because
 their missing original model output cannot be reconstructed.
 
+Compaction now selects an older prefix and keeps a bounded recent suffix verbatim.
+The cut can fall inside a preceding or active Turn, but only between complete
+messages/Tool exchanges. The active user input is retained independently. The
+existing checkpoint stores partial preceding coverage (`coveredMessageIds`) and
+retained active facts (`retainedMessageIds`) as canonical IDs; it never duplicates
+their content or marks a partially summarized Turn wholly covered. Recently kept
+facts stay in their source conversation order. A later compaction can summarize
+them together with the preceding checkpoint. Source ranges are frozen in the
+existing compaction-start event, so recovery cannot renumber accepted entries or
+select a different suffix because token estimates changed. Legacy jobs without
+saved ranges finish their original full scope.
+
+For trigger T, the post-compaction input target is T - min(16,000, ceil(0.2 * T)).
+The recent-original budget is min(16,000, floor(0.2 * target),
+floor(0.2 * measured input)); these are host selection defaults, not changes to
+the model output allowance. Complete units are estimated conservatively against
+the measured request; final admission counts the entire rebuilt request. A fitting
+candidate that cannot reach the target uses the existing two refinement attempts,
+then fails with `context_compaction_no_progress`, without applying a replacement.
+An unchanged admitted request cannot start another compaction before new work is
+added. Its fingerprint and before/after token counts are retained in lifecycle
+events, including after restart. Neither protection deletes canonical history or
+replays completed side effects. Tools, fixed prompts and conversation model,
+reasoning and output settings remain unchanged.
+
 Legacy summaries can themselves be explicit compaction sources. There is no
 automatic last-N-summary pruning: an irreducible oversized context fails visibly.
 The emergency maintenance projection can shorten large tool results to durable
@@ -115,15 +140,19 @@ input changes remain observable, including changes required by schema replacemen
 
 Normal dispatch, maintenance dispatch and Tool ingress share the context budget
 calculation. For window C, configured normal output O, input limit U = C - O,
-maintenance ceiling M = min(32,768, O), and bounded safety reserve S, the proactive
+maintenance output M = O, and bounded safety reserve S, the proactive
 trigger is max(0, min(floor(0.95 * U), max(floor(0.5 * U), U - M - S))). A
-400,000-token window with 128,000 normal output therefore triggers at 237,184
-input tokens, with S = 2,048. Normal requests keep their configured output and
-reasoning settings. Maintenance starts at min(16,384, O), doubles on truncation
-up to M, and caps high/xhigh/max reasoning effort at medium. Lower or disabled
-reasoning remains unchanged. Each maintenance job retains its three generation
+400,000-token window with 128,000 output therefore triggers at 141,952
+input tokens, with S = 2,048. Maintenance inherits the conversation's configured
+output and reasoning settings, including retries and recovery; it does not lower
+reasoning effort or apply a separate output cap. Each maintenance job retains its three generation
 attempt limit for truncation/format failures. Transport failures retain the
 existing Provider retry policy; exhausted plan allowances are terminal failures.
+
+Committed context removes expired Runtime maintenance instructions after projection,
+including a cancelled second compaction after an earlier successful checkpoint in
+the same Turn. Genuine checkpoint calls, receipts, summaries and user messages
+remain; the canonical journal and an in-flight recovery retain their original facts.
 
 Normal output truncation (`length`) preserves only the leading tool calls whose
 completion is confirmed by the provider protocol. Parseable arguments alone do
@@ -155,8 +184,9 @@ source fragments and asks the model to consolidate their real checkpoint
 exchanges. Parallel Tool calls and all matching receipts remain indivisible.
 Only the final checkpoint replaces the source projection, using the existing
 atomic `exchange_v1` commit. Cancellation or any failed fragment leaves the
-original source and checkpoint pointer intact. An indivisible oversized source,
-oversized consolidation or the 64-node transaction limit fails visibly.
+original source and checkpoint pointer intact. An indivisible oversized source
+or oversized consolidation fails visibly; partition work is bounded by the
+number of complete source units, rather than a fixed number of historical Turns.
 
 Structured provider context-limit rejections, including input-count endpoint
 rejections, enter bounded context recovery even below the local estimated

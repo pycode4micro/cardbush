@@ -63,24 +63,24 @@ function harness(t, stream, options = {}) {
   return { host, store, original, observed };
 }
 
-test('400k/128k reserves a bounded checkpoint ceiling without changing normal output', () => {
+test('400k/128k inherits output allowance during maintenance and reserves a transparent trigger', () => {
   const budget = resolveContextBudget(400000, 128000);
   assert.deepEqual(budget, { contextWindowTokens: 400000, normalOutputTokens: 128000,
-    compactionOutputTokens: 32768, safetyTokens: 2048, normalInputLimit: 272000,
-    compactionInputLimit: 365184, compactionTriggerTokens: 237184 });
+    compactionOutputTokens: 128000, safetyTokens: 2048, normalInputLimit: 272000,
+    compactionInputLimit: 269952, compactionTriggerTokens: 141952 });
   const input = { model: 'fixture', tools: [], maxOutputTokens: 128000, metadata: { contextWindowTokens: 400000 } };
-  for (const [tokens, expected] of [[100000, false], [156157, false], [237183, false], [237184, true], [258400, true]]) {
+  for (const [tokens, expected] of [[100000, false], [141951, false], [141952, true], [258400, true]]) {
     const pressure = estimateContextPressure(input, [], tokens, { projectedInputTokens: tokens });
     assert.equal(requiresContextCompactionBeforeRound(pressure), expected);
   }
   const pressure = estimateContextPressure(input, [], 250000, { projectedInputTokens: 250000 });
   assert.equal(contextToolIngressTokenBudget({ pressure, actualInputTokens: 250000, actualOutputTokens: 128000 }), 0,
     'a full output can exhaust the available Tool projection space');
-  assert.equal(contextToolIngressTokenBudget({ pressure, actualInputTokens: 100000, actualOutputTokens: 128000 }), 137184,
+  assert.equal(contextToolIngressTokenBudget({ pressure, actualInputTokens: 100000, actualOutputTokens: 128000 }), 41952,
     'actual usage supersedes an obsolete preflight estimate when admitting Tool results');
 });
 
-test('a truncated checkpoint expands only its maintenance budget and restores normal settings', async t => {
+test('a truncated checkpoint retries its immutable source with unchanged conversation output and reasoning settings', async t => {
   const fixture = harness(t, function *(input, ordinal) {
     if (ordinal === 1) {
       yield event(input, 0, 'reasoning_delta', { delta: 'PARTIAL_PRIVATE_REASONING'.repeat(10000) });
@@ -92,8 +92,8 @@ test('a truncated checkpoint expands only its maintenance budget and restores no
   const selected = request({ reasoningEffort: 'max' });
   const result = await fixture.host.runSessionTurn(selected);
   assert.equal(result.payload.status, 'completed');
-  assert.deepEqual(fixture.observed.map(input => input.maxOutputTokens), [16384, 32768, 128000]);
-  assert.deepEqual(fixture.observed.map(input => input.reasoningEffort), ['medium', 'medium', 'max']);
+  assert.deepEqual(fixture.observed.map(input => input.maxOutputTokens), [128000, 128000, 128000]);
+  assert.deepEqual(fixture.observed.map(input => input.reasoningEffort), ['max', 'max', 'max']);
   assert.equal(selected.reasoningEffort, 'max'); assert.equal(selected.maxOutputTokens, 128000);
   assert.deepEqual(fixture.observed[1].messages.slice(0, -2), fixture.observed[0].messages.slice(0, -1));
   assert.doesNotMatch(JSON.stringify(fixture.observed.slice(1)), /PARTIAL_PRIVATE_REASONING|output_limit_continuation/);
@@ -106,6 +106,26 @@ test('a truncated checkpoint expands only its maintenance budget and restores no
   const active = fixture.observed.at(-1).messages;
   assert.deepEqual(assembleContext({ session: fixture.store.snapshot('budget'), prefix: request().prefixMessages }).messages.slice(0, active.length), active);
 });
+
+for (const reasoningEffort of [undefined, 'none', 'low', 'high', 'max']) {
+  test(`maintenance inherits explicit output and ${reasoningEffort ?? 'provider-default'} reasoning without changing the tool catalog`, async t => {
+    const maxOutputTokens = reasoningEffort === undefined ? 2048 : 65536;
+    const fixture = harness(t, function *(input) {
+      if (isMaintenance(input)) yield *checkpoint(input, 'complete');
+      else yield *finished(input);
+    }, { count: async input => ({ inputTokens: hasCommittedCheckpoint(input) ? 500 : maxOutputTokens * 2.5, source: 'provider' }) });
+    const selected = request({ maxOutputTokens, metadata: { contextWindowTokens: maxOutputTokens * 4 },
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }) });
+    assert.equal((await fixture.host.runSessionTurn(selected)).payload.status, 'completed');
+    assert.deepEqual(fixture.observed.map(input => isMaintenance(input)), [true, false]);
+    for (const input of fixture.observed) {
+      assert.equal(input.maxOutputTokens, maxOutputTokens);
+      assert.equal(input.reasoningEffort, reasoningEffort);
+      assert.deepEqual(input.tools, fixture.observed[0].tools);
+      assert.equal(input.messages[0].content, selected.prefixMessages[0].content);
+    }
+  });
+}
 
 test('three truncated checkpoints fail without applying partial prose, reasoning or arguments', async t => {
   const fixture = harness(t, function *(input) {
@@ -146,7 +166,7 @@ test('a structured provider context rejection starts maintenance even below the 
   }, { count: async () => ({ inputTokens: 10000, source: 'provider' }) });
   assert.equal((await fixture.host.runSessionTurn(request())).payload.status, 'completed');
   assert.deepEqual(fixture.observed.map(input => [isMaintenance(input), input.maxOutputTokens]),
-    [[false, 128000], [true, 16384], [false, 128000]]);
+    [[false, 128000], [true, 128000], [false, 128000]]);
   assert.equal(fixture.host.events('budget', 'current').find(event => event.kind === 'context_compaction_started').payload.trigger, 'provider_context_limit');
   assert.equal(fixture.host.events('budget', 'current').find(event => event.kind === 'provider_retry').payload.causeCode, 'context_length_exceeded');
 });
@@ -210,7 +230,10 @@ test('oversized history stages complete sources and atomically commits only the 
   assert.ok(fixture.observed.every(input => Math.ceil(JSON.stringify(input.messages).length / 4) + 300 + input.maxOutputTokens <= 20000));
   assert.match(JSON.stringify(fixture.observed.at(-1).messages), /FACT_A FACT_B|FACT_A.*FACT_B/);
   const current = fixture.store.snapshot('budget').turns.at(-1);
-  assert.deepEqual(current.contextCheckpoint.coveredTurnIds, ['old_0', 'old_1']);
+  assert.deepEqual(current.contextCheckpoint.coveredTurnIds, ['old_0']);
+  assert.ok(current.contextCheckpoint.coveredMessageIds.includes('old_1_0'));
+  assert.ok(fixture.observed.at(-1).messages.some(message => message.content === fixture.original[1].messages.at(-1).message.content),
+    'the latest small response remains verbatim outside the selected prefix');
   assert.equal(current.messages.filter(item => item.message.role === 'assistant' && item.message.toolCalls.length).length, 1);
   assert.deepEqual(fixture.store.snapshot('budget').turns.slice(0, -1), fixture.original);
   assert.equal(fixture.host.events('budget', 'current').filter(event => event.kind === 'context_compaction_completed').length, 1);
@@ -381,7 +404,7 @@ test('an oversized active source partitions without separating parallel tool rec
   assert.deepEqual(fixture.store.snapshot('budget').turns.slice(0, -1), fixture.original);
 });
 
-test('restart retains the maintenance retry limit without restoring partial output into the conversation', async t => {
+for (const savedOutputTokens of [undefined, 32768]) test(`restart retains the retry limit and conversation settings (saved allowance: ${savedOutputTokens ?? 'current'})`, async t => {
   const sessionJournal = [];
   const sessionStore = new SessionStore({ persistence: { load: () => structuredClone(sessionJournal), append: event => sessionJournal.push(structuredClone(event)) } });
   seed(sessionStore, 'old_0', 1, preceding());
@@ -404,6 +427,10 @@ test('restart retains the maintenance retry limit without restoring partial outp
   await secondAttempt;
   const saved = JSON.parse(JSON.stringify(checkpoints.load('budget', 'current')));
   const savedEvents = JSON.parse(JSON.stringify(eventLog.replay('budget', 'current')));
+  if (savedOutputTokens !== undefined) {
+    const retry = savedEvents.findLast(event => event.kind === 'context_compaction_retrying');
+    retry.payload.diagnostics.outputTokens = savedOutputTokens;
+  }
   const savedSessions = JSON.parse(JSON.stringify(sessionJournal));
   assert.doesNotMatch(JSON.stringify(saved.request.messages), /FAILED_DRAFT|context_pressure/);
   assert.equal(saved.sessionCommit.outputLimitContinuations, 0);
@@ -421,7 +448,7 @@ test('restart retains the maintenance retry limit without restoring partial outp
   t.after(() => second.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const result = await second.sendCommand({ kind: 'runtime.resume_model_turn', payload: { sessionId: 'budget', turnId: 'current' } });
   assert.equal(result.payload.reason, 'context_compaction_output_limit');
-  assert.deepEqual(observed.map(input => input.maxOutputTokens), [32768, 32768]);
+  assert.deepEqual(observed.map(input => input.maxOutputTokens), [128000, 128000]);
   assert.ok(observed.every(input => !JSON.stringify(input.messages).includes('FAILED_DRAFT')));
   assert.equal(restoredSessions.snapshot('budget').turns.at(-1).contextCheckpoint, undefined);
 });

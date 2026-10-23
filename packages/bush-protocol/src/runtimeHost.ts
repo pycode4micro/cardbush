@@ -384,6 +384,11 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       precedingTurnCount: z.number().int().nonnegative(),
       activeTurnIncluded: z.boolean(),
       activeThroughMessageId: z.string().min(1).optional(),
+      sourceRanges: z.array(z.object({ turnId: z.string().min(1),
+        startMessage: z.number().int().nonnegative(), endMessageExclusive: z.number().int().nonnegative() })).optional(),
+      targetInputTokens: z.number().int().nonnegative().optional(),
+      recentTokenBudget: z.number().int().nonnegative().optional(),
+      retainedInputTokens: z.number().int().nonnegative().optional(),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({
@@ -400,6 +405,11 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       summarizedTurnCount: z.number().int().nonnegative(),
       activeTurnCheckpointed: z.boolean(),
       activeThroughMessageId: z.string().min(1).optional(),
+      inputTokensBefore: z.number().int().nonnegative().optional(),
+      inputTokensAfter: z.number().int().nonnegative().optional(),
+      targetInputTokens: z.number().int().nonnegative().optional(),
+      retainedMessageCount: z.number().int().nonnegative().optional(),
+      inputDigest: z.string().min(1).optional(),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({

@@ -19,11 +19,13 @@ export interface AssembleContextInput {
   maxChars?: number;
   maxSummaryTurns?: number;
   coveredTurnIds?: string[];
+  coveredMessageIds?: string[];
 }
 
 export interface ContextTurnSource {
   turnId: string;
   messages: ModelMessage[];
+  messageIds?: Array<string | undefined>;
 }
 
 export const ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME = "active_turn_checkpoint" as const;
@@ -70,7 +72,14 @@ export function projectActiveTurnContext(input: {
       receipt.message.toolCallId !== assistant.toolCalls[0]!.id) {
       throw new Error("Context checkpoint must reference its complete canonical assistant/tool exchange.");
     }
-    return [...inputs, assistant, receipt.message,
+    const retainedIds = input.checkpoint.retainedMessageIds ?? [];
+    const beforeCheckpoint = new Map(input.generatedMessages.slice(0, assistantIndex).map(item => [item.messageId, item.message]));
+    if (new Set(retainedIds).size !== retainedIds.length || retainedIds.some(id => !beforeCheckpoint.has(id))) {
+      throw new Error('Context checkpoint retained facts must be unique generated messages before its exchange.');
+    }
+    const retained = retainedIds.map(id => beforeCheckpoint.get(id)!);
+    validateConversation(retained);
+    return [...inputs, assistant, receipt.message, ...retained,
       ...input.generatedMessages.slice(boundaryIndex + 1).map(item => item.message)];
   }
   const projected: ModelMessage[] = [
@@ -133,10 +142,12 @@ export function assembleContextProjection(input: AssembleContextInput): {
       source: turn.messages.filter((message) => !superseded.has(message.messageId)),
     }));
   const covered = new Set(input.coveredTurnIds ?? []);
+  const coveredMessages = new Set(input.coveredMessageIds ?? []);
   for (const { turn, source } of eligibleTurns) {
     if (source.length === turn.messages.length &&
       turn.contextCheckpoint?.projectionVersion === "exchange_v1") {
       for (const id of turn.contextCheckpoint.coveredTurnIds) covered.add(id);
+      for (const id of turn.contextCheckpoint.coveredMessageIds ?? []) coveredMessages.add(id);
     }
   }
   const summarized = eligibleTurns.filter(({ turn, source }) =>
@@ -177,21 +188,26 @@ export function assembleContextProjection(input: AssembleContextInput): {
         }),
       }];
     }
-    return [{ turnId: turn.turnId, source, messages: source.filter(item => {
-      // A stopped incremental checkpoint retains its actual calls/receipts,
-      // but its expired maintenance authorization must not direct a new Turn.
-      const message = item.message;
-      return !(item.metadata?.contextCompactionId && isContextMaintenanceNotice(message));
-    }).map((message) => message.message) }];
-  }).map(({ turnId, source, messages }) => ({
-    turnId,
-    source,
-    // Retired automatic LEM prompts stay in the journal for audit, but must not
-    // keep directing new Turns. Match only the old Runtime message identity.
-    messages: messages.filter((message) =>
-      !(message.role === "developer" && message.name === "lem_consult_reminder")
-    ),
-  }));
+    return [{ turnId: turn.turnId, source, messages: source.map((item) => item.message) }];
+  }).map(({ turnId, source, messages }) => {
+    // Projected messages retain the source message objects. Expire only notices
+    // with Runtime provenance, including a stopped later compaction after an
+    // earlier successful checkpoint. Keep actual calls/receipts and the journal.
+    const expiredNotices = new Set(source.filter(item =>
+      item.metadata?.contextCompactionId && isContextMaintenanceNotice(item.message)
+    ).map(item => item.message));
+    const ids = new Map(source.map(item => [item.message, item.messageId]));
+    const visibleMessages = messages.filter(message => !coveredMessages.has(ids.get(message) ?? '') &&
+      !expiredNotices.has(message) && !(message.role === 'developer' && message.name === 'lem_consult_reminder'));
+    return {
+      turnId,
+      source,
+      // Retired automatic LEM prompts stay in the journal for audit, but must not
+      // keep directing new Turns. Match only the old Runtime message identity.
+      messages: visibleMessages,
+      messageIds: visibleMessages.map(message => ids.get(message)),
+    };
+  });
   const fixedChars = messageChars([...prefix, ...current]);
   const budget = Math.max(0, (input.maxChars ?? Number.MAX_SAFE_INTEGER) - fixedChars);
   const selectedTurns: typeof committedTurns = [];
@@ -222,7 +238,8 @@ export function assembleContextProjection(input: AssembleContextInput): {
     truncated:
       omittedSummaryCount > 0 || selectedTurns.length < committedTurns.length,
   });
-  return { context, turns: selectedTurns.map(({ turnId, messages }) => ({ turnId, messages })) };
+  return { context, turns: selectedTurns.filter(turn => turn.messages.length > 0)
+    .map(({ turnId, messages, messageIds }) => ({ turnId, messages, messageIds })) };
 }
 
 function escapeAttribute(value: string): string {

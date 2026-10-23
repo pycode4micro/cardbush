@@ -2,6 +2,8 @@ import type { ModelMessage } from '@cardbush/bush-protocol';
 import type { CompletedModelRound } from './modelRound.js';
 export { isContextLengthFailure } from './modelFailurePolicy.js';
 import { validateConversation } from './sessionStore.js';
+import { completeContextUnits } from './contextCompactionScope.js';
+export { completeContextUnits } from './contextCompactionScope.js';
 import { IncrementalCheckpoint } from './incrementalCheckpoint.js';
 import { checkpointSkillConstraintsIssue, hasActiveCheckpointSkillConstraints,
   hasInheritedCheckpointSkillConstraints } from './checkpointSkillConstraints.js';
@@ -394,7 +396,9 @@ export class ContextCompactionTransaction {
   #node(id: string, fragments: Fragment[]): Node {
     const restored = this.#restoredFailures.get(id);
     const node: Node = { id, fragments, corrections: [], failures: restored?.failures ?? 0,
-      outputTokens: Math.min(this.#maximumOutput, restored?.outputTokens ?? this.#initialOutput) };
+      // Retry facts survive upgrades, but an old maintenance-only cap must not
+      // lower today's conversation allowance when resuming an interrupted job.
+      outputTokens: Math.min(this.#maximumOutput, Math.max(this.#initialOutput, restored?.outputTokens ?? this.#initialOutput)) };
     if (this.incremental) {
       node.loop = id === 'root' ? this.incremental : new IncrementalCheckpoint(this.#state,
         { role: 'developer', name: 'context_pressure', content: 'Staged context checkpoint.' },
@@ -537,21 +541,4 @@ function balancedBoundary(lengths: number[]): number {
     if (next < distance) { distance = next; boundary = index + 1; }
   }
   return boundary;
-}
-
-/** Preserve assistant reasoning, all parallel calls and all their receipts as
- * one unit. No prose, arguments, or provider-owned replay data is byte-sliced.
- */
-export function completeContextUnits(messages: ModelMessage[]): ModelMessage[][] {
-  validateConversation(messages);
-  const units: ModelMessage[][] = [];
-  for (let index = 0; index < messages.length; index++) {
-    const message = messages[index]!;
-    const unit = [message];
-    if (message.role === 'assistant' && message.toolCalls.length) {
-      for (let count = 0; count < message.toolCalls.length; count++) unit.push(messages[++index]!);
-    }
-    units.push(unit);
-  }
-  return units;
 }

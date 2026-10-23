@@ -167,7 +167,10 @@ test('three active-Turn compactions and a restarted follow-up retain constraints
     async countInputTokens(request) {
       if (request.messages.some(m => m.name === 'context_pressure')) return { source: 'provider', inputTokens: 2900 };
       const last = request.messages.findLast(m => m.role === 'tool');
-      return { source: 'provider', inputTokens: forceCompaction || last?.toolCallId.startsWith('work-') ? 2860 : 100 };
+      // A retained work receipt remains visible after compaction. Only newly
+      // produced work increases this fixture's input count, not that receipt's position.
+      return { source: 'provider', inputTokens: forceCompaction ||
+        (normalRounds > compactions && last?.toolCallId.startsWith('work-')) ? 2860 : 100 };
     },
     async *stream(request) {
       observed.push(structuredClone(request)); validateConversation(request.messages);
@@ -197,13 +200,15 @@ test('three active-Turn compactions and a restarted follow-up retain constraints
           checkpointSummaries[compactions++] = summary;
         }
         forceCompaction = false;
+        const sources = notice.content.split('\n').filter(line => line.startsWith('{')).map(JSON.parse)
+          .filter(source => Number.isInteger(source.source));
         yield emit(request, 0, 'tool_call_delta', { index: 0, toolCallId: `cp-${attempts}`, nameDelta: 'checkpoint_context',
-          argumentsDelta: JSON.stringify({ updates: [{ source: 0, summary }] }) });
+          argumentsDelta: JSON.stringify({ updates: sources.map(({ source }) => ({ source, summary })) }) });
         yield emit(request, 1, 'response_completed', { finishReason: 'tool_calls' });
         return;
       }
       if (compactions) {
-        const receipt = JSON.parse(request.messages.findLast(m => m.role === 'tool').content);
+        const receipt = JSON.parse(request.messages.findLast(m => m.role === 'tool' && m.content.includes('summarized_turns')).content);
         assert.equal(receipt.summaries[0].summary, checkpointSummaries[compactions - 1]);
         if (compactions <= 3) {
           assert.ok(JSON.stringify(receipt.skill_evidence).includes('C:/skills/local-preview/SKILL.md'));
@@ -243,7 +248,8 @@ test('three active-Turn compactions and a restarted follow-up retain constraints
   const explained = await run('explain', 'Stop using that workflow; only explain the existing result.');
   assert.equal(explained.payload.status, 'completed', JSON.stringify(explained.payload));
   forceCompaction = true;
-  assert.equal((await run('explain-again', 'Continue the explanation.')).payload.status, 'completed');
+  const explainedAgain = await run('explain-again', 'Continue the explanation.');
+  assert.equal(explainedAgain.payload.status, 'completed', JSON.stringify(explainedAgain.payload));
   assert.equal(compactions, 5);
   assert.equal(reads, 1, 'no blanket Skill reread after compaction');
   for (const request of observed) {

@@ -33,11 +33,11 @@ test("uses one enforced output limit for pressure and Provider dispatch", () => 
 
 test('the displayed conversation window is the actual automatic compaction boundary', () => {
   const budget = resolveContextBudget(400_000, 128_000);
-  assert.equal(budget.compactionTriggerTokens, 237_184);
-  for (const input of [156_157, 237_183, 237_184]) {
+  assert.equal(budget.compactionTriggerTokens, 141_952);
+  for (const input of [141_951, 141_952, 145_045]) {
     assert.equal(requiresContextCompactionBeforeRound(pressure({ estimatedPromptTokens: input,
       reservedOutputTokens: budget.normalOutputTokens, usableInputTokens: budget.normalInputLimit,
-      ratio: input / budget.normalInputLimit })), input >= 237_184);
+      ratio: input / budget.normalInputLimit })), input >= 141_952);
   }
 });
 

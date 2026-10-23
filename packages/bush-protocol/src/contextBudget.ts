@@ -3,8 +3,6 @@ import { DEFAULT_MAX_OUTPUT_TOKENS } from './modelLimits.js';
 export const CONTEXT_COMPACTION_HARD_PRESSURE = 0.95;
 const CONTEXT_MAINTENANCE_RESERVE_MAX_TOKENS = 2_048;
 const CONTEXT_MAINTENANCE_RESERVE_MIN_TOKENS = 128;
-export const CONTEXT_COMPACTION_INITIAL_OUTPUT_TOKENS = 16_384;
-const CONTEXT_COMPACTION_MAX_OUTPUT_TOKENS = 32_768;
 
 export interface ContextBudget {
   contextWindowTokens: number;
@@ -18,13 +16,12 @@ export interface ContextBudget {
 
 /** Shared by dispatch and presentation. The conversation window is the
  * compaction trigger, not the model's total window or its hard input limit.
- * Maintenance has its own bounded allowance, including reasoning. Reserve its
- * retry ceiling so one normal response cannot crowd out the next checkpoint.
+ * Maintenance inherits the conversation's output allowance, including reasoning.
  */
 export function resolveContextBudget(contextWindowTokens: number, configuredOutputTokens?: number): ContextBudget {
   const normalOutputTokens = resolveContextOutputTokens(contextWindowTokens, configuredOutputTokens);
   const normalInputLimit = contextWindowTokens - normalOutputTokens;
-  const compactionOutputTokens = Math.min(normalOutputTokens, CONTEXT_COMPACTION_MAX_OUTPUT_TOKENS);
+  const compactionOutputTokens = normalOutputTokens;
   const safetyTokens = contextMaintenanceInputReserveTokens(normalInputLimit);
   return { contextWindowTokens, normalOutputTokens, compactionOutputTokens, safetyTokens,
     normalInputLimit,

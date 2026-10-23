@@ -45,14 +45,14 @@ test('real SDK HTTP rejection and incomplete terminal events recover without par
       }
       let output, status = 'completed';
       if (ordinal === 2) {
-        assert.equal(body.max_output_tokens, 16384);
-        assert.equal(body.reasoning.effort, 'medium');
+        assert.equal(body.max_output_tokens, 128000);
+        assert.equal(body.reasoning.effort, 'high');
         status = 'incomplete';
         output = [{ type: 'reasoning', id: 'rs_partial', summary: [], content: [{ type: 'reasoning_text', text: 'PARTIAL_MAINTENANCE_REASONING' }] },
           { type: 'function_call', id: 'fc_partial', call_id: 'cp_partial', name: 'checkpoint_context', arguments: '{"summaries":[' }];
       } else if (ordinal === 3) {
-        assert.equal(body.max_output_tokens, 32768);
-        assert.equal(body.reasoning.effort, 'medium');
+        assert.equal(body.max_output_tokens, 128000);
+        assert.equal(body.reasoning.effort, 'high');
         assert.deepEqual(body.input.slice(0, requests[1].input.length), requests[1].input);
         assert.doesNotMatch(JSON.stringify(body.input), /PARTIAL_MAINTENANCE_REASONING|cp_partial/);
         output = [{ type: 'reasoning', id: 'rs_valid', summary: [], content: [{ type: 'reasoning_text', text: 'Verified checkpoint reasoning.' }] },

@@ -99,6 +99,10 @@ export const turnContextCheckpointSchema = z.union([
     // References into the canonical Turn journal, never a second message copy.
     exchangeMessageIds: z.tuple([z.string().min(1), z.string().min(1)]),
     coveredTurnIds: z.array(z.string().min(1)),
+    // Partial preceding-source coverage and recent current-Turn facts refer to
+    // the immutable journal. These are host facts, not model tool parameters.
+    coveredMessageIds: z.array(z.string().min(1)).optional(),
+    retainedMessageIds: z.array(z.string().min(1)).optional(),
   }),
 ]);
 

@@ -15,7 +15,7 @@ test('GUI model activity follows stream facts, keeps compaction visible and clea
   const { publishModelActivity: publish, modelActivityLabel: label, subscribeModelActivity: subscribe } = module.exports;
   let changes = 0; const unsubscribe = subscribe(() => changes++);
   const emit = (kind, payload = {}, turnId = 'one') => publish({ kind, payload, turnId });
-  emit('turn_started'); assert.equal(label('one', 'en'), 'Waiting for model');
+  emit('turn_started'); assert.equal(label('one', 'en'), 'Preparing to chat');
   const diagnostic = { stage: 'idle', activeBlockType: 'thinking', thinkingChars: 0, textChars: 0 };
   emit('provider_stream_diagnostic', diagnostic); assert.equal(label('one', 'zh'), '等待模型思考结果');
   const count = changes; emit('provider_stream_diagnostic', diagnostic); assert.equal(changes, count);
@@ -28,7 +28,7 @@ test('GUI model activity follows stream facts, keeps compaction visible and clea
   emit('turn_terminal'); emit('turn_terminal', {}, 'two'); assert.equal(label('two', 'en'), '');
   const badListener = subscribe(() => { throw new Error('fixture observer failure'); });
   assert.doesNotThrow(() => emit('turn_started'));
-  assert.equal(label('one', 'en'), 'Waiting for model'); assert.equal(warnings, 1);
+  assert.equal(label('one', 'en'), 'Preparing to chat'); assert.equal(warnings, 1);
   badListener(); emit('turn_terminal');
   unsubscribe();
 });

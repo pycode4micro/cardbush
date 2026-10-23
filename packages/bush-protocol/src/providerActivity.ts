@@ -15,7 +15,7 @@ export function providerStreamActivity(event: ProviderStreamDiagnostic): Provide
 
 export function providerActivityLabel(activity: ProviderActivity, language: 'zh' | 'en' = 'en'): string {
   const labels = {
-    waiting: ['等待模型响应', 'Waiting for model'],
+    waiting: ['准备开始聊天', 'Preparing to chat'],
     thinking: ['模型思考中', 'Thinking'],
     private_thinking: ['等待模型思考结果', 'Thinking (no public output)'],
     responding: ['正在生成回复', 'Responding'],

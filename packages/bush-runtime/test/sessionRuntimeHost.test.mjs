@@ -408,7 +408,7 @@ test('summary preparation and validation retries preserve the prefix until the c
   let attempts = 0;
   const host = new InMemoryRuntimeHost({ provider: {
     async countInputTokens(request) {
-      return { inputTokens: request.messages.some(message => message.name === 'turn_context_summary') ? 100
+      return { inputTokens: request.messages.some(message => message.name === 'turn_context_summary' || isCheckpoint(message)) ? 100
         : request.turnId === 'third' ? 8600 : 1000, source: 'provider' };
     },
     async *stream(request) {

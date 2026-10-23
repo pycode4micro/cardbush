@@ -6,7 +6,7 @@ import { contextPressureNotice, locateContextCompactionSources } from '../dist/c
 import { ContextCompactionTransaction } from '../dist/contextCompactionTransaction.js';
 import { IncrementalCheckpoint } from '../dist/incrementalCheckpoint.js';
 import { isContextMaintenanceNotice } from '../dist/contextMaintenanceMessages.js';
-import { InMemoryRuntimeHost, SessionStore, assembleContext } from '../dist/index.js';
+import { InMemoryRuntimeHost, SessionStore, assembleContext, projectActiveTurnContext } from '../dist/index.js';
 
 const now = '2026-09-18T08:00:00Z';
 const state = { revision: 1, totalTurns: 1, unsummarizedTurnIds: ['past'], activeTurn: { turnId: 'current', throughMessageId: 'tool-result' } };
@@ -130,5 +130,41 @@ for (const role of ['user', 'developer']) {
       messages: messages.map((message, index) => ({ messageId: String(index), turnId: 'stopped', turnSequence: 1, messageIndex: index,
         createdAt: now, message, ...(index ? { metadata: { contextCompactionId: 'expired' } } : {}) })) });
     assert.deepEqual(assembleContext({ session: store.snapshot('roles') }).messages, [messages[0]]);
+  });
+}
+
+for (const role of ['user', 'developer']) for (const projectionVersion of ['stable_v1', 'exchange_v1']) {
+  test(`a stopped second compaction expires its ${role} instructions after a ${projectionVersion} checkpoint`, () => {
+    const events = [];
+    const persistence = { load: () => structuredClone(events), append: event => events.push(structuredClone(event)) };
+    const store = new SessionStore({ persistence });
+    const first = result('first', [{ source: 0, summary: 'Draft prepared; do not publish. Verify audio next.' }]).toolCalls;
+    const staged = result('staged', [{ source: 0, summary: 'Audio verification is still pending.' }]).toolCalls;
+    const notice = name => ({ role, name, ...(role === 'user' ? { visibility: 'internal' } : {}), content: `EXPIRED_${name}` });
+    const messages = [user('Prepare a draft; do not publish.'), { role: 'assistant', content: '', toolCalls: first },
+      { role: 'tool', toolCallId: 'first', content: 'Draft prepared; audio verification is pending.' },
+      assistant('Checking audio.'), notice('context_pressure'), { role: 'assistant', content: '', toolCalls: staged },
+      { role: 'tool', toolCallId: 'staged', content: '{"accepted":[0],"complete":false}' },
+      notice('context_compaction_correction'), notice('context_compaction_progress'),
+      user('Explain the quoted text: EXPIRED_context_pressure.'), { role: 'developer', name: 'plugin_hook_feedback', content: 'Preserve the draft.' }];
+    const facts = messages.map((message, index) => ({ messageId: `m${index}`, turnId: 'stopped', turnSequence: 1,
+      messageIndex: index, createdAt: now, message, ...([4, 5, 6, 7, 8].includes(index)
+        ? { metadata: { runtimeMaintenance: 'context_compaction', contextCompactionId: 'second' } } : {}) }));
+    const checkpoint = { projectionVersion, inputMessageCount: 1, throughMessageId: 'm2',
+      ...(projectionVersion === 'exchange_v1' ? { exchangeMessageIds: ['m1', 'm2'], coveredTurnIds: [] }
+        : { summary: 'Draft prepared; do not publish. Verify audio next.' }) };
+    store.commitTurn('roles', { turnId: 'stopped', turnSequence: 1, createdAt: now, completedAt: now, status: 'stopped',
+      reason: 'fixture', usage: {}, messages: facts, contextCheckpoint: checkpoint });
+    const active = projectActiveTurnContext({ turnId: 'stopped', inputMessages: facts.slice(0, 1),
+      generatedMessages: facts.slice(1), checkpoint });
+    assert.equal(active.filter(message => isContextMaintenanceNotice(message)).length, 3,
+      'in-flight recovery must retain its still-current maintenance instructions');
+    const restored = new SessionStore({ persistence }).snapshot('roles');
+    const committed = assembleContext({ session: restored }).messages;
+    assert.equal(committed.some(message => isContextMaintenanceNotice(message)), false,
+      'expired instructions must not direct a new turn even when an earlier checkpoint exists');
+    assert.deepEqual(committed, active.filter(message => !isContextMaintenanceNotice(message)));
+    assert.equal(committed.filter(message => message.role === 'tool' && message.toolCallId === 'staged').length, 1);
+    assert.deepEqual(restored.turns[0].messages, facts, 'canonical history and actual checkpoint exchanges remain unchanged');
   });
 }

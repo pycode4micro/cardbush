@@ -140,8 +140,8 @@ export class RuntimeSessionCoordinator {
     };
   }
 
-  contextSourceTurns(sessionId: string, coveredTurnIds?: string[]) {
-    return assembleContextProjection({ session: this.#contextSession(sessionId), coveredTurnIds }).turns;
+  contextSourceTurns(sessionId: string, coveredTurnIds?: string[], coveredMessageIds?: string[]) {
+    return assembleContextProjection({ session: this.#contextSession(sessionId), coveredTurnIds, coveredMessageIds }).turns;
   }
 
   summarizeContext(input: {
@@ -173,6 +173,7 @@ export class RuntimeSessionCoordinator {
     prefix: ModelMessage[];
     current: ModelMessage[];
     coveredTurnIds?: string[];
+    coveredMessageIds?: string[];
     supersession?: SessionSupersession;
   }): ContextSnapshot {
     return assembleContext({
@@ -180,6 +181,7 @@ export class RuntimeSessionCoordinator {
       prefix: input.prefix,
       current: input.current,
       coveredTurnIds: input.coveredTurnIds,
+      coveredMessageIds: input.coveredMessageIds,
     });
   }
 

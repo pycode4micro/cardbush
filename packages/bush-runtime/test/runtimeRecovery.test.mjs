@@ -247,6 +247,11 @@ for (const legacyProjection of [false, true]) test(`recovers a compacted active 
   const first = new InMemoryRuntimeHost({
     provider: {
       async countInputTokens(modelRequest) {
+        // The accepted compacted input is genuinely smaller; a checkpoint that
+        // still reports the original pressure must now fail admission.
+        if (modelRequest.messages.some(message => message.role === 'tool' && message.content.includes('summarized_turns'))) {
+          return { inputTokens: 100, source: 'provider' };
+        }
         if (modelRequest.messages.some((message) => message.name === "context_pressure")) {
           return { inputTokens: 2_900, source: "provider" };
         }

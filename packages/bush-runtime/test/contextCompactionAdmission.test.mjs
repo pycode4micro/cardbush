@@ -50,7 +50,7 @@ function* done(input) {
 const shutdown = host => host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
 
 for (const total of [63, 64, 128]) test(`${total} long sources fit through grouped partitions in a 530000-token window`, async t => {
-  // Remain larger than the maintenance input capacity with its smaller output allowance.
+  // Remain larger than the input capacity after reserving the conversation output allowance.
   const { store, original } = seed(total, 5000), batches = [];
   let normal = 0;
   const input = request({ maxOutputTokens: 128000, metadata: { contextWindowTokens: 530000 } });
@@ -66,7 +66,9 @@ for (const total of [63, 64, 128]) test(`${total} long sources fit through group
       } else {
         normal++;
         const receipt = JSON.parse(next.messages.findLast(m => m.role === 'tool').content);
-        assert.deepEqual(receipt.summaries.map(item => item.source), Array.from({ length: total }, (_, i) => i));
+        assert.deepEqual(receipt.summaries.map(item => item.source), Array.from({ length: total - 1 }, (_, i) => i));
+        assert.ok(next.messages.some(message => message.content === original.at(-1).messages.at(-1).message.content),
+          'the newest complete Turn stays verbatim instead of being summarized again');
         yield* done(next);
       }
     } } });
@@ -108,7 +110,8 @@ test('partition work is bounded by complete source units, not a 64-node ceiling;
 });
 
 for (const ordered of [false, true]) test(`a complete checkpoint is refined before admission when its next input is too large (ordered=${ordered})`, async t => {
-  const { store, original } = seed(), observed = [];
+  // Leave room for a refinement notice without invoking source partitioning.
+  const { store, original } = seed(3, 400), observed = [];
   let calls = 0, host;
   host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: { countInputTokens: count,
     async *stream(input) {
@@ -139,7 +142,7 @@ for (const ordered of [false, true]) test(`a complete checkpoint is refined befo
 });
 
 test('oversized candidates exhaust a bounded refinement budget without a false completion or source replacement', async t => {
-  const { store, original } = seed(); let calls = 0;
+  const { store, original } = seed(3, 400); let calls = 0;
   const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: { countInputTokens: count,
     async *stream(input) {
       assert.ok(maintenance(input));
@@ -174,7 +177,7 @@ test('refinement preserves call identities and its retry limit across recovery',
 });
 
 test('admission also enforces the provider request-body limit when the token count fits', async t => {
-  const { store, original } = seed(); let calls = 0, normal = 0;
+  const { store, original } = seed(3, 400); let calls = 0, normal = 0;
   const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: {
     countInputTokens: async (input, options) => {
       const bytes = Buffer.byteLength(JSON.stringify(input.messages));
