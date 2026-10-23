@@ -8,10 +8,12 @@ import { ChatPasteDecoder, ChatPastes } from './agentChatInput.mjs';
 import { applyChatSuggestion, choiceSuggestions, commandSuggestions, type ChatInputOptions, type ChatSuggestions, type ChatSuggestionSource } from './agentChatCompletion.mjs';
 import { ChatLiveViewport, chatInputViewport, type ChatFooter } from './agentChatViewport.mjs';
 import { terminalSupportsHyperlinks, type ChatReferenceRenderer } from './agentChatLinks.mjs';
+import { runChatShell } from './agentChatShell.mjs';
 
 type Input = NodeJS.ReadStream;
 type Output = NodeJS.WriteStream;
-type Options = { input?: Input; output?: Output; status?: Output; env?: NodeJS.ProcessEnv };
+type Options = { input?: Input; output?: Output; status?: Output; env?: NodeJS.ProcessEnv; shell?: typeof runChatShell };
+type ActiveSuggestions = { line: string; cursor: number; value: ChatSuggestions; selected: number };
 
 /** Readline owns editing/history/wrapping. Only transient status and suggestion
  * rows are rewritten; completed text stays in native terminal scrollback. */
@@ -32,7 +34,7 @@ export class NativeChatTerminal implements ChatTerminal {
   #chatPrompt = false;
   #inputOptions: ChatInputOptions = {};
   #suggestionSource?: ChatSuggestionSource;
-  #suggestions?: { line: string; cursor: number; value: ChatSuggestions; selected: number };
+  #suggestions?: ActiveSuggestions;
   #hintPosition?: { below: number; cols: number };
   #hintTimer?: ReturnType<typeof setTimeout>;
   #hintAbort?: AbortController;
@@ -70,10 +72,13 @@ export class NativeChatTerminal implements ChatTerminal {
   #queued = 0;
   #guidance = new Set<string>();
   #references?: ChatReferenceRenderer;
+  #external = false;
+  readonly #shell: typeof runChatShell;
   constructor(readonly interrupt: () => void, options: Options = {}) {
     this.#input = options.input ?? process.stdin;
     this.#output = options.output ?? process.stdout;
     this.#status = options.status ?? process.stderr;
+    this.#shell = options.shell ?? runChatShell;
     const env = options.env ?? process.env;
     this.interactive = Boolean(this.#input.isTTY && this.#status.isTTY);
     this.#controls = this.interactive && env.TERM !== 'dumb';
@@ -107,7 +112,7 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#reader = createInterface({ input: this.#keys, output: this.#promptOutput, terminal: true,
       historySize: 100, removeHistoryDuplicates: true,
       // Tab only fills the selected suggestion. Readline still owns editing,
-      // wrapping and history; hints never execute a command or submit a choice.
+      // wrapping and history; displaying hints never executes a command.
       completer: () => [[], ''],
     });
     this.#reader.on('history', history => {
@@ -137,27 +142,9 @@ export class NativeChatTerminal implements ChatTerminal {
       else this.#scheduleHints();
     });
     this.#decoder = new ChatPasteDecoder(text => {
-      if (this.#live && this.#turn && (text === '\x03' || text === '\x1b')) {
-        if (text === '\x1b' && /^\s*\/(?:artifact|source)\s/.test(this.#reader!.line)) {
-          this.#clearDraft(); this.#invalidateHints(); this.#live.schedule(); return;
-        }
-        interrupt(); return;
-      }
-      if (this.#editing()) {
-        // The paste decoder has already distinguished a standalone Escape from
-        // an arrow sequence. Do not make readline wait a second ambiguity timer,
-        // which could consume the next slash as Alt+/ instead of cancelling.
-        if (text === '\x1b') { this.#hideHints(); this.#clearDraft(); this.#invalidateHints(); this.#live?.schedule(); return; }
-        if (text === '\t') { void this.#completeInput(); return; }
-        if (this.#suggestions?.value.items.length && ['\x1b[A', '\x1b[B', '\x1b[Z'].includes(text)) {
-          const choice = this.#suggestions, direction = text === '\x1b[B' ? 1 : -1;
-          choice.selected = (choice.selected + direction + choice.value.items.length) % choice.value.items.length;
-          this.#drawHints(); return;
-        }
-        this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); clearTimeout(this.#hintTimer);
-        this.#suggestions = undefined; this.#keys!.write(text);
-      }
-      else if (text.includes('\x03') || text === '\x1b') interrupt();
+      // Input packets may contain typed text and Enter (or arrows and Enter).
+      // Handle these keys in order, after the decoder has isolated pasted text.
+      for (const key of text.split(/(\x1b\[[ABZ]|\r\n|[\r\n\t])/).filter(Boolean)) this.#handleInput(key);
     }, text => {
       try { if (this.#editing()) {
         this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); this.#suggestions = undefined;
@@ -170,7 +157,36 @@ export class NativeChatTerminal implements ChatTerminal {
     if (this.#controls) this.#status.write('\x1b[?2004h');
     this.#input.resume();
   }
+  #handleInput(text: string) {
+    if (this.#live && this.#turn && (text === '\x03' || text === '\x1b')) {
+      if (text === '\x1b' && /^\s*\/(?:artifact|source)\s/.test(this.#reader!.line)) {
+        this.#clearDraft(); this.#invalidateHints(); this.#live.schedule(); return;
+      }
+      this.interrupt(); return;
+    }
+    if (this.#editing()) {
+      // The paste decoder has already distinguished a standalone Escape from
+      // an arrow sequence. Do not make readline wait a second ambiguity timer,
+      // which could consume the next slash as Alt+/ instead of cancelling.
+      if (text === '\x1b') { this.#hideHints(); this.#clearDraft(); this.#invalidateHints(); this.#live?.schedule(); return; }
+      if (text === '\t') { void this.#completeInput(); return; }
+      if (this.#suggestions?.value.items.length && ['\x1b[A', '\x1b[B', '\x1b[Z'].includes(text)) {
+        const choice = this.#suggestions, direction = text === '\x1b[B' ? 1 : -1;
+        choice.selected = (choice.selected + direction + choice.value.items.length) % choice.value.items.length;
+        this.#drawHints(); return;
+      }
+      if (/^[\r\n]+$/.test(text) && this.#confirmSuggestion()) return;
+      this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); clearTimeout(this.#hintTimer);
+      this.#suggestions = undefined; this.#keys!.write(text);
+      if (this.#editing() && this.#reader?.line) {
+        const value = this.#localHints();
+        if (value) this.#suggestions = { line: this.#reader.line, cursor: this.#reader.cursor, value, selected: 0 };
+      }
+    }
+    else if (text.includes('\x03') || text === '\x1b') this.interrupt();
+  }
   #onData = (data: Buffer | string) => {
+    if (this.#external) return;
     this.#decoder!.feed(typeof data === 'string' ? data : this.#utf8.write(data));
     // Readline may emit several writes for one key/paste. Paint once after it
     // finishes editing, instead of leaving the caret a frame behind the input.
@@ -180,6 +196,7 @@ export class NativeChatTerminal implements ChatTerminal {
   };
   #onEnd = () => { this.#decoder?.close(); this.#keys?.end(); };
   #resize = () => {
+    if (this.#external) return;
     if (this.#live) { this.#live.paint(); return; }
     if (this.#waiting) {
       // Readline redraws its own input and clears below it after a reflow. Do not
@@ -194,7 +211,32 @@ export class NativeChatTerminal implements ChatTerminal {
     if (this.#live && output.isTTY) this.#live.write(text, output);
     else output.write(text);
   }
-  #editing() { return Boolean(this.#waiting || this.#live && !this.#suspended); }
+  #editing() { return !this.#external && Boolean(this.#waiting || this.#live && !this.#suspended); }
+  get runningShell() { return this.#external; }
+  async runShell(command: string, cwd: string, signal: AbortSignal) {
+    if (!this.interactive || !this.#reader) throw new Error('Native shell commands require an interactive terminal.');
+    if (this.#turn || this.#external || this.#waiting) throw new Error('Finish the current task or prompt before opening a shell.');
+    signal.throwIfAborted();
+    const resume = this.suspendInput(), live = Boolean(this.#live), raw = this.#input.isRaw ?? true;
+    this.#hideHints(); this.#invalidateHints(); this.#markdown.flush(); this.#clearStatus();
+    this.#decoder?.invalidate(); this.#decoder?.close(); clearTimeout(this.#escapeTimer);
+    this.#live?.close(); this.#live = undefined;
+    this.#external = true;
+    this.#input.off('data', this.#onData); this.#reader.pause(); this.#input.pause();
+    this.#input.setRawMode?.(false);
+    if (this.#controls) this.#status.write('\x1b[0m\x1b[?25h\x1b[?2004l');
+    try { return await this.#shell(command, cwd, signal); }
+    finally {
+      this.#external = false;
+      if (!this.#closed) {
+        this.#input.setRawMode?.(raw);
+        if (this.#controls) this.#status.write('\x1b[0m\x1b[?25h\x1b[?2004h\r\n');
+        if (live) this.#live = new ChatLiveViewport(this.#status, () => this.#footer());
+        this.#input.on('data', this.#onData); this.#reader.resume(); this.#input.resume();
+        resume(); this.#live?.paint();
+      }
+    }
+  }
   #invalidateHints() {
     this.#inputRevision++; this.#hintAbort?.abort(); clearTimeout(this.#hintTimer); this.#suggestions = undefined;
   }
@@ -269,8 +311,8 @@ export class NativeChatTerminal implements ChatTerminal {
       lines.push(...suggestions.value.items.slice(start, start + capacity).map((item, index) => this.#style(
         terminalClip(`  ${index + start === suggestions.selected ? '›' : ' '} ${item.label ?? item.value.trim()}${item.description ? '  ' + item.description : ''}`, width), index + start === suggestions.selected ? 'blue' : 'dim')));
       lines.push(this.#style(terminalClip(suggestions.value.notice ?? (suggestions.value.items.length
-        ? `  Tab complete · ↑/↓ select · ${suggestions.selected + 1}/${suggestions.value.items.length}` : '  No matches; keep typing to filter'), width), 'dim'));
-    } else if (this.#chatPrompt) lines.push(this.#style(terminalClip(this.#turn
+        ? this.#hintHelp(suggestions) : '  No matches; keep typing to filter'), width), 'dim'));
+    } else if (this.#chatPrompt && !this.#reader.line) lines.push(this.#style(terminalClip(this.#turn
       ? '  Enter queue · /steer guide · Esc / Ctrl+C stop'
       : '  Enter send · / commands · @ files · Tab complete', width), 'dim'));
     return { lines, cursor };
@@ -295,7 +337,7 @@ export class NativeChatTerminal implements ChatTerminal {
     if (capacity < 1) return;
     const start = Math.max(0, selected - capacity + 1), lines = value.items.slice(start, start + capacity).map((item, index) =>
       this.#style(terminalClip(`  ${start + index === selected ? '›' : ' '} ${item.label ?? item.value.trim()}${item.description ? '  ' + item.description : ''}`, columns - 1), start + index === selected ? 'blue' : 'dim'));
-    lines.push(this.#style(terminalClip(value.notice ?? (value.items.length ? `  Tab complete · ↑/↓ select · ${selected + 1}/${value.items.length} · Enter submit input` : '  No matches; keep typing to filter'), columns - 1), 'dim'));
+    lines.push(this.#style(terminalClip(value.notice ?? (value.items.length ? this.#hintHelp(this.#suggestions) : '  No matches; keep typing to filter'), columns - 1), 'dim'));
     const below = Math.max(1, end.rows - position.rows + 1);
     // Newlines reserve actual rows even at the bottom of the viewport. Only
     // this small prompt-owned footer is removed, never transcript history.
@@ -306,14 +348,24 @@ export class NativeChatTerminal implements ChatTerminal {
     clearTimeout(this.#hintTimer);
     if (this.#editing()) this.#hintTimer = setTimeout(() => { void this.#loadHints(); }, 60).unref();
   }
+  #hintHelp(suggestion: ActiveSuggestions) {
+    const enter = !this.#chatPrompt && !suggestion.line.trim() ? 'default' : suggestion.value.submitOnEnter ? 'confirm' : 'complete';
+    return `  Enter ${enter} · Tab complete · ↑/↓ select · ${suggestion.selected + 1}/${suggestion.value.items.length}`;
+  }
+  #localHints() {
+    const { line, cursor } = this.#reader!;
+    return this.#chatPrompt ? commandSuggestions(line, cursor, this.#models.map(id => ({ id, modelName: id })))
+      : choiceSuggestions(line, cursor, this.#inputOptions.choices ?? []);
+  }
   async #loadHints() {
     if (!this.#editing() || !this.#reader || this.#closed) return;
     const line = this.#reader.line, cursor = this.#reader.cursor, revision = this.#inputRevision;
     this.#hintAbort?.abort(); const controller = this.#hintAbort = new AbortController();
     const valid = () => !controller.signal.aborted && this.#editing() && !this.#closed && revision === this.#inputRevision && this.#reader?.line === line && this.#reader.cursor === cursor;
-    const local = this.#chatPrompt ? commandSuggestions(line, cursor, this.#models.map(id => ({ id, modelName: id })))
-      : choiceSuggestions(line, cursor, this.#inputOptions.choices ?? []);
-    if (local && valid()) { this.#suggestions = { line, cursor, value: local, selected: 0 }; this.#drawHints(); }
+    const local = this.#localHints();
+    if (local && valid() && (this.#suggestions?.line !== line || this.#suggestions.cursor !== cursor)) {
+      this.#suggestions = { line, cursor, value: local, selected: 0 }; this.#drawHints();
+    }
     try {
       const value = this.#chatPrompt && this.#suggestionSource ? await this.#suggestionSource(line, cursor, controller.signal) : local;
       if (!valid()) return;
@@ -336,13 +388,30 @@ export class NativeChatTerminal implements ChatTerminal {
       ? (suggestion.selected + 1) % suggestion.value.items.length : suggestion.selected;
     const applied = applyChatSuggestion(this.#reader.line, suggestion.value, selected);
     if (!applied) return;
-    this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); this.#suggestions = undefined;
+    this.#applySuggestion(applied);
+    this.#scheduleHints();
+  }
+  #confirmSuggestion() {
+    if (!this.#controls || !this.#reader || !this.#reader.line.trim()) return false;
+    const { line, cursor } = this.#reader;
+    const current = this.#suggestions;
+    const suggestion = current?.line === line && current.cursor === cursor ? current : undefined;
+    // Built-in commands work even before the hint debounce or a remote catalog
+    // request finishes. Enter never waits for a remote result to change input.
+    const value = suggestion?.value ?? (!this.#chatPrompt || /^\s*\/\S*$/.test(line) ? this.#localHints() : undefined);
+    if (!value) return false;
+    const applied = applyChatSuggestion(line, value, suggestion?.selected ?? 0);
+    if (!applied || applied.line === line && applied.cursor === cursor) return false;
+    this.#applySuggestion(applied);
+    if (value.submitOnEnter) return false;
+    // A file/path is inserted into the draft; a second Enter sends the message.
+    this.#scheduleHints(); return true;
+  }
+  #applySuggestion(applied: { line: string; cursor: number }) {
+    this.#hideHints(); this.#invalidateHints();
     // Use public readline editing operations, not its private refresh methods or
     // mutable internals. The suffix after the caret is restored as authored.
-    this.#reader.write(null, { ctrl: true, name: 'u' }); this.#reader.write(null, { ctrl: true, name: 'k' });
-    this.#reader.write(applied.line);
-    for (const _char of applied.line.slice(applied.cursor)) this.#reader.write(null, { name: 'left' });
-    this.#scheduleHints();
+    this.#replaceDraft(applied.line, applied.cursor);
   }
   #clearDraft() {
     if (!this.#reader?.line) return;

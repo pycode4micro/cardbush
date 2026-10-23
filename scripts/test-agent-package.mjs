@@ -10,7 +10,7 @@ async function fixture(t) {
   const root = await mkdtemp(join(base, 'case-')), source = join(root, 'source');
   t.after(async () => { assert.ok(resolve(root).startsWith(base + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
   for (const path of ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentService.mjs',
-    'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs',
+    'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
     'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',
     'dist-electron/agentChatTerminal.mjs', 'dist-electron/agentChatPresentation.mjs', 'dist-electron/agentChatInput.mjs', 'dist-electron/agentChatCompletion.mjs', 'dist-electron/agentChatViewport.mjs', 'packages/bush-protocol/package.json', 'packages/bush-protocol/dist/transcriptPresentation.js',
     'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
@@ -40,6 +40,7 @@ test('Linux Agent packaging retains runtime and CommonJS dependencies without re
   await access(join(f.output, 'packages/cardbush-platform/dist-cjs/index.js'));
   await access(join(f.output, 'dist-electron/agentChatCli.mjs'));
   await access(join(f.output, 'dist-electron/agentChatCompletion.mjs'));
+  await access(join(f.output, 'dist-electron/agentChatShell.mjs'));
   await access(join(f.output, 'bin/cardbush.mjs'));
   assert.match(await readFile(join(f.output, 'DEPLOY.txt'), 'utf8'), /cardbush --resume <session-id>/);
   await assert.rejects(packageAgent(f.source, f.output, 'linux'), { code: 'EEXIST' });

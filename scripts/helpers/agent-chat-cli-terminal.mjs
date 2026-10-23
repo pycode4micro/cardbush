@@ -22,5 +22,11 @@ if (process.env.CARDBUSH_TEST_HANDOFF_GATE) {
 const openArtifact = process.env.CARDBUSH_TEST_OPEN_ARTIFACT_LOG ? async (path, kind) => {
   await appendFile(process.env.CARDBUSH_TEST_OPEN_ARTIFACT_LOG, JSON.stringify({ path, kind, content: kind === 'file' ? await readFile(path, 'utf8') : null }) + '\n');
 } : undefined;
-try { process.exitCode = await main(process.argv.slice(2), { openArtifact }); }
+const shell = process.env.CARDBUSH_TEST_SHELL_LOG ? async (command, cwd) => {
+  await appendFile(process.env.CARDBUSH_TEST_SHELL_LOG, JSON.stringify({ command, cwd }) + '\n');
+  // Native Ctrl+C belongs to the child while the CLI releases the terminal.
+  process.emit('SIGINT');
+  return 0;
+} : undefined;
+try { process.exitCode = await main(process.argv.slice(2), { openArtifact, shell }); }
 catch (error) { console.error(error.message); process.exitCode = error.exitCode ?? 1; }

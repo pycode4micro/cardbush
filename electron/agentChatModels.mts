@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import type { ChatTerminal } from './agentChatCli.mjs';
 import type { ChatClient } from './agentLocalChat.mjs';
 import { chatExitCommands, isChatExitCommand } from './agentChatCompletion.mjs';
+import { chatShellCommand, executeChatShell } from './agentChatShell.mjs';
 
 export type ChatModels = { defaultModelId: string; models: Array<{ id: string; modelName: string }> };
 
@@ -30,7 +31,23 @@ async function createIfMissing(path: string, content: string) {
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
 }
 
-/** No credentials or requests leave the machine while waiting for configuration. */
+/** Configuration input is a local command prompt, never a model message. */
+export async function waitForChatConfiguration(io: ChatTerminal, signal: AbortSignal, exits: readonly string[] = chatExitCommands) {
+  io.status('Run an editor here, e.g. vim "path/to/models.json". Exit the editor, then press Enter to reload.\n');
+  while (!signal.aborted) {
+    const answer = await io.ask(`Save, then press Enter to reload (${exits.join(', ')} to return): `, signal,
+      { choices: exits.map(value => ({ value, description: 'Return' })) });
+    if (answer === null || !answer.trim() || exits.includes(answer.trim())) return answer;
+    const command = chatShellCommand(answer);
+    if (command === undefined && answer.trim().startsWith('/')) {
+      io.status('Use /shell COMMAND or enter an editor command; press Enter alone to reload.\n'); continue;
+    }
+    await executeChatShell(io, command ?? answer, process.cwd(), signal);
+  }
+  return null;
+}
+
+/** Loading configuration never makes a model request. */
 export async function readChatModels(client: ChatClient, io: ChatTerminal, signal: AbortSignal): Promise<ChatModels | undefined> {
   const path = client.modelConfigurationPath;
   let explained = false;
@@ -51,8 +68,7 @@ export async function readChatModels(client: ChatClient, io: ChatTerminal, signa
     if (invalid) io.status('Invalid model configuration. Check JSON syntax, required fields and the API protocol.\n');
     else if (config) io.status('No model configured.\n');
     if (!io.interactive) throw Object.assign(new Error(`Configure a model and try again: ${path}`), { exitCode: 2 });
-    const answer = await io.ask('Save, then press Enter to reload (/quit, /q or /exit to quit): ', signal,
-      { choices: chatExitCommands.map(value => ({ value, description: 'Exit' })) });
+    const answer = await waitForChatConfiguration(io, signal);
     if (answer === null || isChatExitCommand(answer)) return;
   }
 }

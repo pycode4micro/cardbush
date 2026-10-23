@@ -5,14 +5,14 @@ import type { WorkspaceDirectoryPage } from './workspaceFiles.js';
 export type ChatChoice = { value: string; description?: string; label?: string };
 export type ChatInputOptions = { chat?: boolean; choices?: ChatChoice[] };
 export type ChatSuggestion = ChatChoice & { cursor?: number };
-export type ChatSuggestions = { start: number; end: number; items: ChatSuggestion[]; notice?: string };
+export type ChatSuggestions = { start: number; end: number; items: ChatSuggestion[]; notice?: string; submitOnEnter?: boolean };
 export type ChatSuggestionSource = (line: string, cursor: number, signal: AbortSignal) => Promise<ChatSuggestions | undefined>;
 type Model = { id: string; modelName: string };
 type Skill = { name: string; path: string; description?: string; invocationMode?: string };
 type Command = { id: string; path?: string; name?: string; description?: string; argumentHint?: string };
 type Catalog = { skills: Skill[]; pluginCommands: Command[] };
 type Context = { sessionId: string; workspace?: string; platform: string; models: Model[] };
-export const chatExitCommands = ['/exit', '/quit', '/q'] as const;
+export const chatExitCommands = ['/exit', '/quit'] as const;
 export const isChatExitCommand = (text: string) => chatExitCommands.some(command => command === text.trim());
 const commands: ChatChoice[] = [
   { value: '/model ', label: '/model', description: 'Switch the session model' },
@@ -24,12 +24,22 @@ const commands: ChatChoice[] = [
   { value: '/help', description: 'Show command help' },
   { value: '/new', description: 'Start a new session' },
   { value: '/steer ', label: '/steer', description: 'Guide the running task' },
+  { value: '/shell ', label: '/shell', description: 'Run a local command or open a native shell' },
   ...chatExitCommands.map(value => ({ value, description: 'Exit and show the resume command' })),
 ];
 const safe = (value: string) => !/[\x00-\x1f\x7f-\x9f]/.test(value);
 const commandId = (value: string) => /^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_-]+)?$/.test(value);
 const skillLink = (skill: Skill) => `[${skill.name.replace(/([\\[\]])/g, '\\$1')}](<${skill.path.replaceAll('\\', '/').replaceAll('<', '%3C').replaceAll('>', '%3E')}>)`;
 const matches = (item: ChatChoice, query: string) => `${item.value} ${item.label ?? ''}`.toLowerCase().includes(query.toLowerCase());
+const matchesInOrder = (value: string, query: string) => {
+  let next = 0;
+  for (const character of query) {
+    const index = value.indexOf(character, next);
+    if (index < 0) return false;
+    next = index + character.length;
+  }
+  return true;
+};
 
 /** A replacement range, rather than an appended suffix, also works when editing
  * the middle of a draft. Completion never submits or performs the command. */
@@ -48,25 +58,27 @@ export function choiceSuggestions(line: string, cursor: number, choices: ChatCho
   const query = line.slice(start, cursor);
   // A displayed numeric choice must win over a digit occurring in a model UUID.
   const exact = choices.filter(choice => choice.value === query || /^\d+$/.test(query) && choice.label?.startsWith(query + '.'));
-  return { start, end: line.length, items: exact.length ? exact : choices.filter(choice => matches(choice, query)) };
+  return { start, end: line.length, submitOnEnter: true, items: exact.length ? exact : choices.filter(choice => matches(choice, query)) };
 }
 
 export function commandSuggestions(line: string, cursor: number, models: Model[], extra: ChatChoice[] = []): ChatSuggestions | undefined {
   const before = line.slice(0, cursor);
   const model = /^(\s*\/model\s+)([^\s]*)$/.exec(before);
-  if (model) return { start: model[1].length, end: cursor + (/^\S*/.exec(line.slice(cursor))?.[0].length ?? 0),
+  if (model) return { start: model[1].length, end: cursor + (/^\S*/.exec(line.slice(cursor))?.[0].length ?? 0), submitOnEnter: true,
     items: models.map(item => ({ value: item.id, label: item.modelName, description: item.id })).filter(item => matches(item, model[2])) };
   const slash = /^(\s*)\/([^\s/]*)$/.exec(before);
   if (!slash) return;
   const unique = new Map(commands.map(item => [item.value.trim(), item]));
   for (const item of extra) if (!unique.has(item.value.trim())) unique.set(item.value.trim(), item);
   const prefix = `/${slash[2]}`.toLowerCase();
-  // Match the command from its first character, not a substring of its name or
-  // label. Keep an exact command ahead of longer names sharing that prefix.
-  const items = [...unique.values()].filter(item => item.value.toLowerCase().startsWith(prefix));
+  // Exact names and consecutive prefixes win. Only fall back to ordered fuzzy
+  // matching when no prefix exists; descriptions never affect command matching.
+  const candidates = [...unique.values()];
+  const prefixes = candidates.filter(item => item.value.toLowerCase().startsWith(prefix));
+  const items = prefixes.length ? prefixes : candidates.filter(item => matchesInOrder(item.value.trim().toLowerCase(), prefix));
   items.sort((a, b) => Number(b.value.trim().toLowerCase() === prefix) - Number(a.value.trim().toLowerCase() === prefix));
   return { start: slash[1].length, end: cursor + (/^\S*/.exec(line.slice(cursor))?.[0].length ?? 0),
-    items };
+    items, submitOnEnter: true };
 }
 
 type PathToken = { start: number; end: number; path: string; mention: boolean; quote: string };

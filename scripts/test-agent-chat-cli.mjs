@@ -13,6 +13,8 @@ import { AgentHttpClient, AgentNetworkError } from '../dist-electron/agentHttpCl
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
 import { localDesktopProfile } from '../dist-electron/agentLocalChat.mjs';
+import { chatShellCommand, chatShellInvocation, runChatShell } from '../dist-electron/agentChatShell.mjs';
+import { waitForChatConfiguration } from '../dist-electron/agentChatModels.mjs';
 
 const entry = resolve('dist-electron/agentChatCli.mjs');
 const tempRoot = resolve('tmp/agent-chat-cli-tests');
@@ -259,7 +261,7 @@ test('CLI help and argument errors do not need a server or credentials', async t
   const help = await cli(t, ['--help']).result;
   assert.equal(help.code, 0); assert.match(help.stdout, /cardbush --resume/); assert.match(help.stdout, /--full-access/);
   assert.match(help.stdout, /Usage: cardbush/); assert.doesNotMatch(help.stdout, /\p{Script=Han}/u);
-  assert.match(help.stdout, /\/quit \(or \/q, \/exit\) exits/);
+  assert.match(help.stdout, /\/quit \(or \/exit\) exits/);
   const invalid = await cli(t, ['--permission', 'invalid']).result;
   assert.equal(invalid.code, 1); assert.match(invalid.stderr, /Invalid --permission/);
   const missing = await cli(t, ['--url', 'http://127.0.0.1:1', '--prompt', 'test']).result;
@@ -274,6 +276,37 @@ test('desktop profile discovery uses the current account, independent of cwd', (
   assert.equal(localDesktopProfile({ APPDATA: 'C:/Users/me/AppData/Roaming' }, 'C:/Users/me', 'win32').replaceAll('\\', '/'), 'C:/Users/me/AppData/Roaming/cardbush');
   assert.equal(localDesktopProfile({}, '/Users/me', 'darwin').replaceAll('\\', '/'), '/Users/me/Library/Application Support/cardbush');
   assert.equal(localDesktopProfile({ XDG_CONFIG_HOME: '/settings' }, '/home/me', 'linux').replaceAll('\\', '/'), '/settings/cardbush');
+});
+
+test('native shell parsing is explicit and reuses platform discovery without noninteractive flags', () => {
+  assert.equal(chatShellCommand('vim file.txt'), undefined, 'ordinary chat is not guessed to be a command');
+  assert.equal(chatShellCommand('/shellish'), undefined);
+  assert.equal(chatShellCommand(' /shell vim "file name.txt" '), 'vim "file name.txt"');
+  assert.equal(chatShellCommand('!vim file.txt'), 'vim file.txt');
+  assert.equal(chatShellCommand('/shell'), '');
+  for (const platform of ['linux', 'win32']) {
+    const context = { platform, arch: 'x64', env: { PATH: platform === 'win32' ? 'C:\\tools' : '/bin', PATHEXT: '.EXE' }, isExecutable: () => true };
+    const invocation = chatShellInvocation('vim "file name.txt"', '/work', context);
+    assert.ok(invocation.args.some(argument => argument.includes('vim "file name.txt"')));
+    assert.ok(!invocation.args.includes('-NonInteractive'));
+    const interactive = chatShellInvocation('', '/work', context);
+    assert.ok(!interactive.args.includes('-Command') && !interactive.args.includes('-lc'));
+  }
+});
+
+test('native child exit status returns without a model or extra window', async () => {
+  assert.equal(await runChatShell('exit 7', process.cwd(), new AbortController().signal), 7);
+  await assert.rejects(runChatShell('exit 0', process.cwd(), AbortSignal.abort()), { name: 'AbortError' });
+});
+
+test('configuration prompt runs bare editor commands and waits for a separate reload', async () => {
+  const answers = ['vim "path with spaces/models.json"', '!echo done', '/shell', ''];
+  const commands = [], io = terminal();
+  io.ask = async () => answers.shift();
+  io.runShell = async (command, cwd) => { commands.push({ command, cwd }); return 0; };
+  assert.equal(await waitForChatConfiguration(io, new AbortController().signal, ['/cancel']), '');
+  assert.deepEqual(commands.map(item => item.command), ['vim "path with spaces/models.json"', 'echo done', '']);
+  assert.ok(commands.every(item => item.cwd === process.cwd()));
 });
 
 async function fixture(t) {
@@ -332,12 +365,12 @@ async function sharedCliEnv(f) {
   return { CARDBUSH_CLI_DATA_DIR: f.service.root, CARDBUSH_CLI_PROFILE_DIR: profile };
 }
 
-test('quit aliases exit locally with a resume hint and do not submit a model turn', async t => {
+test('quit commands and completed prefixes exit locally with a resume hint without a model turn', async t => {
   const f = await fixture(t); let sessionId;
-  for (const command of ['/q', '/quit', '/exit']) {
+  for (const command of ['/q', '/qt', '/quit', '/exit']) {
     const process = cli(t, sessionId ? ['--resume', sessionId] : [], { env: f.env, cwd: f.cwd, interactive: true });
     await until(() => process.stderr, text => text.includes('❯ '));
-    process.child.stdin.write(`  ${command}  \r`);
+    process.child.stdin.write(command.length <= 3 ? command + '\r' : `  ${command}  \r`);
     const result = await process.result;
     assert.equal(result.code, 0, result.stderr);
     const sessions = await f.service.call('sessions.list', { projection: 'summary' });
@@ -350,6 +383,24 @@ test('quit aliases exit locally with a resume hint and do not submit a model tur
   const literal = await cli(t, ['--resume', sessionId, '--prompt', '/quit'], { env: f.env }).result;
   assert.equal(literal.code, 0, literal.stderr); assert.equal(literal.stdout, 'fixture-answer-1\n');
   assert.equal(f.calls.length, 1, 'explicit --prompt text is not interpreted as an interactive command');
+});
+
+test('CLI native commands stay local, return to chat and ignore child Ctrl+C without submitting model work', async t => {
+  const f = await fixture(t), log = join(f.root, 'shell.jsonl');
+  const process = cli(t, [], { env: { ...f.env, CARDBUSH_TEST_SHELL_LOG: log }, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  for (const [index, command] of ['/shell vim "a file.txt"', '!echo done', '/shell'].entries()) {
+    process.child.stdin.write(command + '\r');
+    await until(() => readFile(log, 'utf8').catch(() => ''), text => text.trim().split('\n').length === index + 1);
+    await delay(80);
+  }
+  process.child.stdin.write('/q\r'); const result = await process.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line)), [
+    { command: 'vim "a file.txt"', cwd: f.cwd }, { command: 'echo done', cwd: f.cwd }, { command: '', cwd: f.cwd },
+  ]);
+  assert.equal(f.calls.length, 0);
+  assert.match(result.stderr, /Resume this session/);
 });
 
 test('queued CLI prompts appear once in turn order after the preceding completion', async t => {

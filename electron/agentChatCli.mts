@@ -10,11 +10,12 @@ import { AgentHttpClient, AgentNetworkError, agentBaseUrl } from './agentHttpCli
 import { writePrivateJson } from './atomicJsonFile.mjs';
 import type { AgentJob, AgentProject, AgentSendInput } from './agentTypes.js';
 import type { ChatClient } from './agentLocalChat.mjs';
-import { readChatModels, selectChatModel } from './agentChatModels.mjs';
+import { readChatModels, selectChatModel, waitForChatConfiguration } from './agentChatModels.mjs';
 import { NativeChatTerminal } from './agentChatTerminal.mjs';
 import { terminalText } from './agentChatPresentation.mjs';
 import { AgentChatCompletion, isChatExitCommand, type ChatInputOptions } from './agentChatCompletion.mjs';
 import { AgentChatReferences, openChatArtifact } from './agentChatReferences.mjs';
+import { chatShellCommand, executeChatShell, type runChatShell } from './agentChatShell.mjs';
 export { terminalText } from './agentChatPresentation.mjs';
 
 type Client = Pick<AgentHttpClient, 'call' | 'events'>;
@@ -30,6 +31,7 @@ export interface ChatTerminal {
   event?(event: RuntimeEvent): void;
   plan?(plan: TaskPlan | null, detailed?: boolean): void;
   suspendInput?(): () => void;
+  runShell?(command: string, cwd: string, signal: AbortSignal): Promise<number>;
 }
 
 // Only this CLI-owned decoration may emit ANSI; server/model text is sanitized.
@@ -251,7 +253,8 @@ Successful connections are remembered.
 Commands: /model [ID] selects a model; /settings shows config paths and reloads settings.
           /new starts a session; /plan shows the plan; /logs shows the log path;
           /artifact [number] opens this turn's files; /source [number] shows evidence;
-          /quit (or /q, /exit) exits; /help shows help. Other input is sent to the Agent.
+          /quit (or /exit) exits; /help shows help. Other input is sent to the Agent.
+          /shell [COMMAND] or !COMMAND runs in this local terminal; exit returns to chat.
 Use /artifact, then Tab to choose a file and Enter to open it. Esc clears the selection.
 Web and local file links are clickable in supported terminals. Remote files are
 downloaded only when explicitly opened; source details come from the Agent's records.
@@ -260,9 +263,13 @@ The live input keeps drafts while responses stream. Approval prompts temporarily
 take over input and restore the draft afterwards. Esc / Ctrl+C stops the current task.
 Type / for command and Skill suggestions. Use @ for workspace files and folders;
 quote paths with spaces, e.g. @"folder/file name.txt".
-Slash commands match from the start of the name; exact matches appear first.
-Tab fills a suggestion; Up/Down selects one, or browses history without suggestions.
+Slash commands prefer exact names and prefixes, then ordered fuzzy matches.
+Enter confirms the selected command (e.g. /q selects /quit); Tab only fills it.
+Up/Down selects a suggestion, or browses history without suggestions.
 Arguments, paths, model choices and confirmation prompts support Tab. It never submits.
+Enter on a file suggestion inserts it into the draft before sending.
+In /settings or model setup, type vim FILE (or another command) to edit in place.
+Shell commands run locally as the CLI user, even when connected to a remote Agent.
 Long or multiline pastes are folded; Enter submits the complete text.
 Esc stops the running task or clears a draft. Ctrl+C stops the task or exits when idle.
 Approvals apply once. Piped mode stops with exit code 2 if confirmation is required.
@@ -279,7 +286,7 @@ function validatePrompt(text: string) {
   if (Buffer.byteLength(JSON.stringify(text)) > 2 * 1024 * 1024 - 16 * 1024) throw new Error('Prompt too large. Reference a file on the Agent instead.');
 }
 
-export async function main(args = process.argv.slice(2), options: { openArtifact?: typeof openChatArtifact } = {}): Promise<number> {
+export async function main(args = process.argv.slice(2), options: { openArtifact?: typeof openChatArtifact; shell?: typeof runChatShell } = {}): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     help: { type: 'boolean' }, url: { type: 'string' }, 'token-file': { type: 'string' }, session: { type: 'string' }, resume: { type: 'string' },
     project: { type: 'string' }, model: { type: 'string' }, prompt: { type: 'string' }, permission: { type: 'string' },
@@ -317,6 +324,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
   const stopCurrent = (job: Job) => stopAgentTurn(client, job, io, new Set([...queued, ...[...uncertain.values()].map(entry => entry.input.requestId)]));
   let session: ChatSession | undefined;
   const interrupt = () => {
+    if (io.runningShell) return; // The foreground native application owns Ctrl+C.
     if (active && (turn || queued.size)) {
       // Keep ownership during the observer handoff: the service can already
       // be running our next queued task while the CLI fetches its state.
@@ -327,7 +335,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
     } else { lifetime.abort(); if (!process.stdin.isTTY) process.stdin.destroy(); }
   };
   const terminate = () => { lifetime.abort(); interrupt(); };
-  const io = new NativeChatTerminal(interrupt);
+  const io = new NativeChatTerminal(interrupt, { shell: options.shell });
   let completion: AgentChatCompletion | undefined;
   let diagnosticWarningShown = false;
   const reportDiagnosticError = () => {
@@ -424,7 +432,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         if (command === '/help') { io.commitInput(text); io.status(help); return; }
         if (command === '/logs') { io.commitInput(text); showLogs(); return; }
         if (command === '/plan') { io.commitInput(text); await readPlan(); return; }
-        if (/^\/(?:model|settings|new)(?:\s|$)/.test(command)) {
+        if (/^\/(?:model|settings|new)(?:\s|$)/.test(command) || chatShellCommand(text) !== undefined) {
           io.commitInput(text);
           io.status('[Not sent] Use this command after the current task finishes, or stop it with Esc.\n'); return;
         }
@@ -527,6 +535,12 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       if (text === null) break;
       if (prompt === undefined && await referenceCommand(text)) continue;
       if (prompt === undefined && isChatExitCommand(text)) { io.commitInput(text); break; }
+      const shellCommand = prompt === undefined ? chatShellCommand(text) : undefined;
+      if (shellCommand !== undefined) {
+        io.commitInput(text);
+        const cwd = local ? session.metadata?.runtimeWorkspace?.workspaceDir ?? session.metadata?.projectDir ?? process.cwd() : process.cwd();
+        await executeChatShell(io, shellCommand, cwd, lifetime.signal); continue;
+      }
       if (prompt === undefined && uncertain.has(text)) { queueRunningInput(text); await inputWork; continue; }
       if (prompt === undefined && text.trim() === '/help') { io.commitInput(text); io.status(help); continue; }
       if (prompt === undefined && /^\/steer(?:\s|$)/.test(text.trim())) {
@@ -550,7 +564,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         io.status(`\nJSON settings shared with CardBush App:\n${[
           ['Models', 'models.json'], ['Plugins', 'apps.json'], ['MCP', 'mcp-servers.json'], ['Network', 'network.json'], ['Sandbox', 'sandbox.json'],
         ].map(([label, name]) => `${label}: ${join(client.settingsDirectory!, name)}`).join('\n')}\nEdit these files directly or use App settings.\n`);
-        const answer = await io.ask('Save, then press Enter to reload (/cancel to return): ', lifetime.signal, { choices: [{ value: '/cancel', description: 'Return to chat' }] });
+        const answer = await waitForChatConfiguration(io, lifetime.signal, ['/cancel']);
         if (answer === null) break;
         if (answer.trim() === '/cancel') continue;
         const fresh = await readChatModels(client, io, lifetime.signal);

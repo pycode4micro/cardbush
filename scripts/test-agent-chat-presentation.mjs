@@ -4,7 +4,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stripVTControlCharacters } from 'node:util';
 import { chatHeader, ChatMarkdown, terminalWidth, terminalClip } from '../dist-electron/agentChatPresentation.mjs';
-import { AgentChatCompletion, applyChatSuggestion, commandSuggestions, choiceSuggestions } from '../dist-electron/agentChatCompletion.mjs';
+import { AgentChatCompletion, applyChatSuggestion, commandSuggestions, choiceSuggestions, isChatExitCommand } from '../dist-electron/agentChatCompletion.mjs';
 import { ChatPasteDecoder, ChatPastes } from '../dist-electron/agentChatInput.mjs';
 import { NativeChatTerminal } from '../dist-electron/agentChatTerminal.mjs';
 import { ChatLiveViewport, chatInputViewport } from '../dist-electron/agentChatViewport.mjs';
@@ -17,12 +17,12 @@ process.env.TERM = 'xterm';
 const identity = { name: 'CardBush CLI', model: 'fixture-model', permission: 'Approval mode', local: true,
   workspace: 'D:\\中文项目\\衣服 👩🏽‍💻', sessionId: 'session-offline-presentation' };
 const event = (kind, payload = {}, createdAt = '2026-10-22T03:00:00.000Z') => ({ kind, payload, createdAt, sequence: 1, turnId: 'turn', sessionId: 'session' });
-function tty(t, { columns = 80, stdout = true, env = { NO_COLOR: '' } } = {}) {
+function tty(t, { columns = 80, stdout = true, env = { NO_COLOR: '' }, shell } = {}) {
   const input = Object.assign(new PassThrough(), { isTTY: true, raw: false, setRawMode(raw) { this.raw = raw; return this; } });
   let outputText = '', statusText = '', combined = '', interrupts = 0;
   const output = Object.assign(new Writable({ write(data, _encoding, done) { outputText += data.toString(); combined += data.toString(); done(); } }), { isTTY: stdout, columns });
   const status = Object.assign(new Writable({ write(data, _encoding, done) { statusText += data.toString(); combined += data.toString(); done(); } }), { isTTY: true, columns });
-  const terminal = new NativeChatTerminal(() => { interrupts++; }, { input, output, status, env });
+  const terminal = new NativeChatTerminal(() => { interrupts++; }, { input, output, status, env, shell });
   t.after(() => terminal.close());
   return { terminal, input, output, status, get stdout() { return outputText; }, get stderr() { return statusText; }, get combined() { return combined; }, get interrupts() { return interrupts; } };
 }
@@ -310,14 +310,15 @@ test('artifact selection cycles with Tab, survives streaming/approval and opens 
   f.terminal.enableLiveInput(text => inputs.push(text)); f.terminal.beginTurn();
   f.terminal.restoreDraft('/artifact '); await delay(100);
   for (const number of [1, 2, 3, 1]) {
-    f.input.write('\t'); await delay(100);
+    f.input.write('\t');
+    await waitForPaint(() => new RegExp(`❯ /artifact ${number}\\n`).test(terminalScreen(f.combined, 80).text) && terminalScreen(f.combined, 80).text.includes('Enter open'));
     assert.match(terminalScreen(f.combined, 80).text, new RegExp(`❯ /artifact ${number}\\n`));
     f.terminal.write('The reply keeps streaming.\n');
     assert.deepEqual(opened, []); assert.deepEqual(inputs, []);
   }
   const answer = f.terminal.ask('Allow? [y/N]: ', new AbortController().signal);
   f.input.write('n\r'); assert.equal(await answer, 'n');
-  await delay(100); assert.match(terminalScreen(f.combined, 80).text, /❯ \/artifact 1\n/);
+  await waitForPaint(() => /❯ \/artifact 1\n/.test(terminalScreen(f.combined, 80).text) && terminalScreen(f.combined, 80).text.includes('Enter open'));
   f.input.write('\r'); assert.deepEqual(inputs, ['/artifact 1']);
   await references.handle('artifact', '1', new AbortController().signal);
   assert.deepEqual(opened, ['C:\\work\\one.md']);
@@ -642,7 +643,7 @@ test('command, model and confirmation completion each use their actual input cho
   assert.deepEqual(choiceSuggestions('2', 1, [{ value: 'id-2-first', label: '1. First' }, { value: 'second', label: '2. Second' }]).items.map(item => item.value), ['second']);
 });
 
-test('slash completion matches consecutive characters from the command start and prioritizes exact names', () => {
+test('slash completion prioritizes exact names and prefixes before ordered fuzzy matching', () => {
   const extra = [{ value: '/video:edit ', label: '/edit', description: 'Edit' }, { value: '/editor ' }, { value: '/edit ' }];
   const values = text => commandSuggestions(text, text.length, [], extra).items.map(item => item.value);
   assert.deepEqual(values('/e'), ['/exit', '/editor ', '/edit ']);
@@ -650,11 +651,14 @@ test('slash completion matches consecutive characters from the command start and
   assert.deepEqual(values('/edit'), ['/edit ', '/editor ']);
   assert.deepEqual(values('/vi'), ['/video:edit ']);
   assert.deepEqual(values('/video:e'), ['/video:edit ']);
-  assert.deepEqual(values('/vd'), [], 'skipping characters is not a prefix match');
-  assert.deepEqual(values('/od'), [], 'middle-of-name matches are excluded');
-  assert.deepEqual(values('/q'), ['/q', '/quit']);
+  assert.deepEqual(values('/vd'), ['/video:edit '], 'ordered fuzzy matches are a fallback');
+  assert.deepEqual(values('/od'), ['/model ', '/video:edit '], 'a partial name may match in order when no prefix exists');
+  assert.deepEqual(values('/q'), ['/quit']);
+  assert.deepEqual(values('/qt'), ['/quit']);
+  assert.deepEqual(values('/tq'), [], 'fuzzy matching cannot reorder characters');
   assert.deepEqual(values('/quit'), ['/quit']);
   assert.deepEqual(values('/quit-now'), []);
+  assert.equal(isChatExitCommand('/q'), false, '/q is a completion prefix, not a command alias');
   const draft = '  /e later text', hints = commandSuggestions(draft, 4, []);
   assert.deepEqual(applyChatSuggestion(draft, hints), { line: '  /exit later text', cursor: 7 });
 });
@@ -692,7 +696,7 @@ test('slash hints include the actual Agent catalog and preserve plugin invocatio
   assert.ok(choices.items.some(item => item.value === '/notes '));
   assert.ok(!choices.items.some(item => item.value.includes('hidden')));
   assert.deepEqual((await f.suggest('/e')).items.map(item => item.value), ['/exit'], 'remote catalog uses the same prefix filter as local hints');
-  assert.deepEqual((await f.suggest('/q')).items.map(item => item.value), ['/q', '/quit']);
+  assert.deepEqual((await f.suggest('/q')).items.map(item => item.value), ['/quit']);
   assert.deepEqual((await f.suggest('/model Second')).items.map(item => item.value), ['id-second']);
   assert.equal((await f.engine.prepare('/video:edit 按原要求处理', new AbortController().signal)).text, '/video:edit 按原要求处理');
   const prepared = await f.engine.prepare('/notes 记录内容', new AbortController().signal);
@@ -737,7 +741,7 @@ test('hints appear while typing; arrows choose and Tab fills without submitting 
   assert.doesNotMatch(f.stderr, /\x1b\[\?1049|\x1b\[2J/);
 });
 
-test('typing /e offers only the exit prefix and Tab keeps an exact /q intact', async t => {
+test('typing /e offers only the exit prefix and Tab expands /q to /quit', async t => {
   const f = tty(t);
   let answer = f.terminal.ask('❯ ', new AbortController().signal, true);
   f.input.write('/e'); await delay(90);
@@ -745,7 +749,72 @@ test('typing /e offers only the exit prefix and Tab keeps an exact /q intact', a
   assert.doesNotMatch(stripVTControlCharacters(f.stderr), /\/model|\/settings|\/help/);
   f.input.write('\t'); await tick(); f.input.write('\r'); assert.equal(await answer, '/exit');
   answer = f.terminal.ask('❯ ', new AbortController().signal, true);
-  f.input.write('/q'); f.input.write('\t'); await tick(); f.input.write('\r'); assert.equal(await answer, '/q');
+  f.input.write('/q'); f.input.write('\t'); await tick(); f.input.write('\r'); assert.equal(await answer, '/quit');
+});
+
+test('Enter confirms the first or arrow-selected command, including fast input packets and fuzzy matches', async t => {
+  for (const live of [false, true]) {
+    const f = tty(t); if (live) f.terminal.enableLiveInput(() => assert.fail('No task is running'));
+    for (const [input, expected] of [['/q', '/quit'], ['/qt', '/quit'], ['/mo', '/model '], ['/unknown-zz', '/unknown-zz']]) {
+      const answer = f.terminal.ask('❯ ', new AbortController().signal, true);
+      f.input.write(input + '\r'); assert.equal(await answer, expected);
+    }
+    let answer = f.terminal.ask('❯ ', new AbortController().signal, true);
+    f.input.write('/'); await delay(90);
+    assert.match(stripVTControlCharacters(f.stderr), /Enter confirm/);
+    f.input.write('\x1b[B\r'); assert.equal(await answer, '/settings');
+    answer = f.terminal.ask('❯ ', new AbortController().signal, true);
+    f.input.write('/'); await delay(90); f.input.write('\r'); assert.equal(await answer, '/model ');
+  }
+});
+
+test('typing filters hints without flashing generic help or resetting an arrow selection', async t => {
+  const f = tty(t); f.terminal.enableLiveInput(() => {});
+  const start = f.stderr.length;
+  f.input.write('/'); f.input.write('s'); f.input.write('\x1b[B');
+  await delay(100);
+  const visible = terminalScreen(f.combined, 80).text;
+  assert.match(visible, /› \/source/);
+  assert.doesNotMatch(f.stderr.slice(start), /Enter send/);
+  f.input.write('unlikely'); await delay(100);
+  assert.doesNotMatch(f.stderr.slice(start), /Enter send/);
+  f.input.write('\x1b'); await delay(90); f.input.write('plain text');
+  const typed = f.stderr.length; await delay(100);
+  assert.doesNotMatch(f.stderr.slice(typed), /Enter send|No matches/);
+});
+
+test('Enter uses the visible remote candidate and file confirmation keeps the draft editable', async t => {
+  const f = tty(t), c = completionFixture(t); f.terminal.setSuggestionSource(c.engine.suggest);
+  let answer = f.terminal.ask('❯ ', new AbortController().signal, true);
+  f.input.write('/vi'); await delay(90); f.input.write('\r'); assert.equal(await answer, '/video:edit ');
+  let submitted = false;
+  answer = f.terminal.ask('❯ ', new AbortController().signal, true).then(value => { submitted = true; return value; });
+  f.input.write('inspect @Re'); await delay(90); f.input.write('\r'); await tick();
+  assert.equal(submitted, false); f.input.write('please\r');
+  assert.equal(await answer, 'inspect @"Read Me.md" please');
+});
+
+test('native shell temporarily owns stdin and restores the live draft, caret and raw mode after success or failure', async t => {
+  for (const failure of [false, true]) {
+    let release;
+    const calls = [];
+    const f = tty(t, { shell: async (...args) => { calls.push(args); await new Promise(resolve => { release = resolve; }); if (failure) throw new Error('editor unavailable'); return 0; } });
+    f.terminal.enableLiveInput(() => assert.fail('Shell input is never a model message'));
+    f.input.write('keepdraft'); f.input.write('\x1b[D'.repeat(5));
+    const running = f.terminal.runShell('vim "file name.txt"', process.cwd(), new AbortController().signal);
+    assert.equal(f.terminal.runningShell, true); assert.equal(f.input.raw, false);
+    assert.equal(f.input.listenerCount('data'), 0, 'CLI cannot consume editor keystrokes');
+    const during = f.stderr; f.status.emit('resize'); await delay(100);
+    assert.equal(f.stderr, during, 'no CLI repaint while the editor owns the terminal');
+    release();
+    if (failure) await assert.rejects(running, /editor unavailable/); else assert.equal(await running, 0);
+    assert.equal(f.terminal.runningShell, false); assert.equal(f.input.raw, true);
+    assert.equal(f.input.listenerCount('data'), 1);
+    assert.equal(calls[0][0], 'vim "file name.txt"');
+    const answer = f.terminal.ask('❯ ', new AbortController().signal, true);
+    f.input.write('X\r'); assert.equal(await answer, 'keepXdraft');
+    f.terminal.beginTurn(); await assert.rejects(f.terminal.runShell('vim x', process.cwd(), new AbortController().signal), /current task/);
+  }
 });
 
 test('Tab fills model and approval choices globally, but Enter submits only the actual input', async t => {

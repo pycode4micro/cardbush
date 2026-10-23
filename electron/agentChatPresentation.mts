@@ -82,8 +82,9 @@ export function chatHeader(value: ChatIdentity, columns: number, color: boolean)
     row(terminalClip(value.workspace ?? '', inside)),
     row(''),
     row('/model switch model   /settings shared App settings'),
-    row('/help commands        /quit exit (/q, /exit also work)'),
+    row('/help commands        /quit exit (/exit also works)'),
     row('/artifact turn files  /source supporting evidence'),
+    row('/shell native shell   !command run a local command'),
     row('/ commands & skills   @ workspace files   Tab complete'),
   ].join('\n') + '\n' + border('╰' + '─'.repeat(width - 2) + '╯') + '\n' +
     (value.workspace && terminalWidth(value.workspace) > inside ? terminalStyle(`  Workspace: ${terminalText(value.workspace)}\n`, 'dim', color) : '') +

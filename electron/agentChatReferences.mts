@@ -74,7 +74,7 @@ export class AgentChatReferences implements ChatReferenceRenderer {
     // Keep the complete numbered list after Tab fills a selection, so another
     // Tab can cycle it without inventing a second input/approval controller.
     const exact = all.some(item => item.value === query);
-    return { start: match[1].length, end: line.length, items: exact ? all : all.filter(item => `${item.value} ${item.label} ${item.description}`.toLowerCase().includes(query)),
+    return { start: match[1].length, end: line.length, submitOnEnter: true, items: exact ? all : all.filter(item => `${item.value} ${item.label} ${item.description}`.toLowerCase().includes(query)),
       notice: all.length ? 'Tab choose · ↑/↓ select · Enter open · Esc cancel' : 'No items loaded; press Enter to refresh this turn' };
   }
   async #command(kind: string, payload: Record<string, unknown>, signal: AbortSignal) {
