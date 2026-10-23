@@ -43,6 +43,18 @@ const pressureCount = async request => ({ source: 'provider', inputTokens:
   request.messages.some(m => m.role === 'tool' && m.content.includes('summarized_turns')) ? 1000 : 260000 });
 const isMaintenance = request => request.messages.some(m => m.name === 'context_pressure');
 
+test('an oversized summary reports its actual length while preserving accepted sources', () => {
+  const loop = new IncrementalCheckpoint(state, notice);
+  loop.submit(result('length-one', { updates: [{ source: 0, summary: 'Keep this accepted fact.' }, { source: 1, summary: 'x'.repeat(6010) }] }));
+  assert.deepEqual(receipt(loop).accepted, [0]);
+  assert.equal(receipt(loop).rejected[0].receivedCharacters, 6010);
+  assert.equal(receipt(loop).rejected[0].maximumCharacters, 6000);
+  assert.match(receipt(loop).rejected[0].reason, /4000 characters/);
+  loop.submit(result('length-two', { updates: [{ source: 1, summary: 'Shortened source one.' }, { source: 2, summary: 'Pending work and next action.' }] }));
+  assert.equal(loop.complete, true);
+  assert.equal(loop.value.summaries[0], 'Keep this accepted fact.');
+});
+
 test('the model chooses order and batch size; valid entries survive mixed invalid entries without semantic rewriting', () => {
   const loop = new IncrementalCheckpoint(state, notice);
   assert.equal(loop.submit(result('one', { updates: [{ source: 2, summary: 'Current Tool returned error; retry unresolved.' }] })), false);

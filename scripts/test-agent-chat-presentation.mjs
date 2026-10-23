@@ -9,6 +9,7 @@ import { ChatPasteDecoder, ChatPastes } from '../dist-electron/agentChatInput.mj
 import { NativeChatTerminal } from '../dist-electron/agentChatTerminal.mjs';
 import { ChatLiveViewport, chatInputViewport } from '../dist-electron/agentChatViewport.mjs';
 import { runtimeToolLifecycle } from '../packages/bush-protocol/dist/index.js';
+import { AgentChatReferences } from '../dist-electron/agentChatReferences.mjs';
 
 // Readline also consults process.env.TERM internally. Match the emulated TTY.
 process.env.TERM = 'xterm';
@@ -26,10 +27,34 @@ function tty(t, { columns = 80, stdout = true, env = { NO_COLOR: '' } } = {}) {
   return { terminal, input, output, status, get stdout() { return outputText; }, get stderr() { return statusText; }, get combined() { return combined; }, get interrupts() { return interrupts; } };
 }
 const tick = () => delay(5);
+async function waitForPaint(predicate) {
+  const deadline = Date.now() + 2000;
+  while (!predicate() && Date.now() < deadline) await delay(10);
+  assert.ok(predicate(), 'the scheduled terminal repaint must settle');
+}
+
+test('opaque model phases update the status without entering the reply or disturbing a draft', async t => {
+  const f = tty(t, { columns: 100 });
+  f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn();
+  f.input.write('draft'); await tick();
+  const diagnostic = { format: 'anthropic.messages.v1', stage: 'idle', elapsedMs: 360000, idleMs: 359000,
+    eventCount: 2, thinkingChars: 0, textChars: 0, toolArgumentChars: 0, activeBlockType: 'thinking', messageStopReceived: false, aborted: false };
+  f.terminal.event(event('provider_stream_diagnostic', diagnostic));
+  await waitForPaint(() => f.stderr.includes('Thinking (no public output)'));
+  assert.match(f.stderr, /Thinking \(no public output\)/);
+  assert.equal(f.stdout, '');
+  assert.match(terminalScreen(f.combined, 100).text, /draft/);
+  f.terminal.event(event('context_compaction_started', {}));
+  f.terminal.event(event('provider_stream_diagnostic', diagnostic));
+  await waitForPaint(() => terminalScreen(f.combined, 100).text.includes('Compacting context'));
+  assert.match(terminalScreen(f.combined, 100).text, /Compacting context/);
+  f.terminal.finishTurn('stopped');
+});
 
 // Interpret cursor operations as a terminal would. Raw output counts alone
 // cannot detect an input repaint that erases previously committed responses.
 function terminalScreen(raw, columns) {
+  raw = raw.replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
   const lines = [[]]; let row = 0, column = 0;
   for (const part of raw.matchAll(/\x1b\[([0-?]*)([ -/]*[@-~])|([^\x1b]+)/g)) {
     if (part[3] !== undefined) {
@@ -75,6 +100,141 @@ test('live editor keeps a draft and its caret through streamed output, tools, co
   assert.doesNotMatch(f.combined, /\x1b\[\?1049|\x1b\[2J/);
 });
 
+test('queued questions join the transcript only before their own replies, without splitting a streamed answer', async t => {
+  for (const env of [{ NO_COLOR: '' }, {}]) {
+    const f = tty(t, { columns: 80, env }), queued = [];
+    f.terminal.enableLiveInput(text => queued.push(text));
+    const first = f.terminal.ask('❯ ', new AbortController().signal, true);
+    f.input.write('为什么不是 CardBush\r');
+    f.terminal.beginTurn(await first);
+    f.terminal.write('First **reply');
+    for (const question of ['你有什么依据', '再检查一下']) {
+      for (const character of question) f.input.write(character);
+      f.input.write('\r'); f.terminal.setQueued(queued.length);
+    }
+    await delay(45);
+    const waiting = terminalScreen(f.combined, 80).text;
+    assert.match(waiting, /2 queued/);
+    assert.doesNotMatch(waiting, /你有什么依据|再检查一下/, 'submitted drafts are not yet conversation messages');
+    f.terminal.write(' continues**.\n'); f.terminal.finishTurn('completed');
+    for (const [index, question] of queued.entries()) {
+      f.terminal.setQueued(queued.length - index - 1); f.terminal.beginTurn(question);
+      f.terminal.write(`Reply ${index + 2}.\n`); f.terminal.finishTurn('completed');
+    }
+    await delay(45);
+    const visible = terminalScreen(f.combined, 80).text;
+    const transcript = visible.split('\n').map(line => line.trim()).filter(Boolean).join('\n');
+    assert.match(transcript, /❯ 为什么不是 CardBush\nFirst reply continues\.\n✓ Completed[^\n]*\n❯ 你有什么依据\nReply 2\.\n✓ Completed[^\n]*\n❯ 再检查一下\nReply 3\.\n✓ Completed/);
+    for (const question of ['为什么不是 CardBush', ...queued]) assert.equal(visible.split(question).length, 2, visible);
+    assert.equal(visible.split('❯ ').length, 5, 'three committed questions and one live editor');
+  }
+});
+
+test('input submitted between turns is deferred too, and folded paste display survives until execution', async t => {
+  const f = tty(t); f.terminal.enableLiveInput(() => assert.fail('no turn is active'));
+  f.input.write('first message\r');
+  f.input.write('check '); f.input.write('\x1b[200~first line\nsecond line\x1b[201~'); f.input.write('\r');
+  await delay(45);
+  assert.doesNotMatch(terminalScreen(f.combined, 80).text, /first message|Paste 1/);
+  const first = await f.terminal.ask('❯ ', new AbortController().signal, true);
+  f.terminal.beginTurn(first); f.terminal.write('First answer.\n'); f.terminal.finishTurn('completed');
+  const second = await f.terminal.ask('❯ ', new AbortController().signal, true);
+  assert.equal(second, 'check first line\nsecond line');
+  f.terminal.beginTurn(second); f.terminal.write('Second answer.\n'); f.terminal.finishTurn('completed');
+  await delay(45);
+  const visible = terminalScreen(f.combined, 80).text;
+  assert.match(visible, /First answer\.[\s\S]*✓ Completed[^\n]*\n\n❯ check \[Paste 1 · 2 lines · 22 chars\]\n\n\s*Second answer\./);
+  assert.equal(visible.split('[Paste 1').length, 2, visible);
+  assert.doesNotMatch(visible, /second line/, 'folded input stays compact in scrollback');
+});
+
+test('continuous typing paints the current caret immediately without redrawing the surrounding footer', async t => {
+  for (const env of [{ NO_COLOR: '' }, {}]) {
+    const f = tty(t, { columns: 48, env }); f.terminal.enableLiveInput(() => {});
+    let draft = '';
+    for (const text of ['a', 'b', '中', '文', 'e\u0301', '👩🏽‍💻']) {
+      const before = f.combined.length;
+      f.input.write(text); draft += text;
+      const screen = terminalScreen(f.combined, 48);
+      assert.match(screen.text, new RegExp('❯ ' + draft));
+      assert.equal(screen.column, terminalWidth('❯ ' + draft), 'the caret follows this input chunk, not a later timer');
+      assert.equal(screen.row, 1);
+      const update = f.combined.slice(before);
+      assert.doesNotMatch(update, /\x1b\[0J|─{3}|Enter send/, 'typing cannot erase or rewrite unrelated footer rows');
+    }
+    const settled = f.combined;
+    await delay(110);
+    assert.equal(f.combined, settled, 'an empty suggestion result cannot repaint an unchanged input');
+  }
+});
+
+test('streamed output keeps the displayed editor intact until a complete frame is ready', async t => {
+  const f = tty(t, { columns: 48 }); f.terminal.enableLiveInput(() => {});
+  f.input.write('alphaomega'); f.input.write('\x1b[D'.repeat(5)); await delay(110);
+  const before = f.combined, caret = terminalScreen(before, 48);
+  for (const text of ['A response', ' continues', '.\n']) {
+    f.terminal.write(text);
+    assert.equal(f.combined, before, 'pending output must not erase the prompt and leave its caret at the transcript');
+  }
+  await delay(45);
+  const screen = terminalScreen(f.combined, 48);
+  assert.match(screen.text, /A response continues\./);
+  assert.match(screen.text, /❯ alphaomega/);
+  assert.equal(screen.column, caret.column);
+  f.input.write('中');
+  assert.match(terminalScreen(f.combined, 48).text, /❯ alpha中omega/);
+  assert.equal(terminalScreen(f.combined, 48).column, caret.column + 2);
+});
+
+test('rapid typing across wrapped lines preserves middle edits and the visible caret', async t => {
+  const f = tty(t, { columns: 24 }); f.terminal.enableLiveInput(() => {});
+  const draft = 'abcdefghijklmnopqrstuvwxyz'.repeat(3);
+  for (let index = 0; index < draft.length; index++) {
+    f.input.write(draft[index]);
+    const screen = terminalScreen(f.combined, 24), offset = index + 3;
+    assert.equal(screen.row, 1 + Math.floor(offset / 23));
+    assert.equal(screen.column, offset % 23);
+  }
+  f.input.write('\x1b[D'.repeat(30)); f.input.write('中');
+  const caret = terminalScreen(f.combined, 24);
+  assert.equal(caret.row, 3); assert.equal(caret.column, 6);
+  const answer = f.terminal.ask('❯ ', new AbortController().signal, true);
+  f.input.write('\r');
+  assert.equal(await answer, draft.slice(0, -30) + '中' + draft.slice(-30));
+});
+
+test('shrinking and reopening completion hints keep the input on the same screen row', () => {
+  let raw = '', footer = { lines: ['─'.repeat(30), '❯ /h', '  help', '  history', '  Tab complete'], cursor: { row: 1, column: 4 } };
+  const output = Object.assign(new Writable({ write(chunk, _encoding, done) { raw += chunk.toString(); done(); } }), { columns: 40 });
+  const view = new ChatLiveViewport(output, () => footer);
+  try {
+    view.paint(); raw = '';
+    footer = { lines: ['─'.repeat(30), '❯ /he', '  Enter send'], cursor: { row: 1, column: 5 } };
+    view.paint();
+    assert.doesNotMatch(raw, /\x1b\[0J|\n/, 'shrinking hints must retain their reserved rows without scrolling');
+    raw = '';
+    footer = { lines: ['─'.repeat(30), '❯ /hel', '  help', '  hello', '  Tab complete'], cursor: { row: 1, column: 6 } };
+    view.paint();
+    assert.doesNotMatch(raw, /\x1b\[0J|\n/, 'reopening hints reuses the same reserved rows');
+  } finally { view.close(); }
+});
+
+test('closing a viewport flushes pending stdout and status once and restores cursor visibility', () => {
+  let raw = '', stdout = '', stderr = '';
+  const output = Object.assign(new Writable({ write(chunk, _encoding, done) { stderr += chunk; raw += chunk; done(); } }), { columns: 40 });
+  const reply = new Writable({ write(chunk, _encoding, done) { stdout += chunk; raw += chunk; done(); } });
+  const view = new ChatLiveViewport(output, () => ({ lines: ['❯ draft'], cursor: { row: 0, column: 7 } }));
+  view.paint();
+  view.write('answer\nunfinished', reply); view.write('done\n', output);
+  assert.equal(stdout, '', 'response rows are pending until the next frame');
+  view.close(); const closed = raw; view.close();
+  assert.equal(raw, closed);
+  assert.equal(stripVTControlCharacters(stdout), 'answer\nunfinished\n');
+  assert.match(terminalScreen(raw, 40).text, /answer\nunfinished\ndone/);
+  assert.doesNotMatch(terminalScreen(raw, 40).text, /draft/);
+  assert.ok(stderr.endsWith('\x1b[?25h'));
+});
+
 test('live input viewport follows the caret within four rows without losing Unicode or long input', () => {
   for (const width of [12, 24, 80]) {
     const line = '中文 👩🏽‍💻 é tail '.repeat(40);
@@ -94,7 +254,7 @@ test('live viewport accounts for wide characters after resize and physical tab s
   const view = new ChatLiveViewport(output, () => footer);
   try {
     view.paint(); raw = ''; output.columns = 17; footer = undefined;
-    view.paint(); assert.ok(raw.startsWith('\x1b[0m\r\x1b[4A\x1b[0J'), '33 wide glyphs reflow across five rows at 17 columns');
+    view.paint(); assert.ok(raw.includes('\x1b[0m\r\x1b[4A\x1b[0J'), '33 wide glyphs reflow across five rows at 17 columns');
     raw = ''; output.columns = 12;
     view.write('a\tb\tc', output); view.paint(); view.close();
     assert.doesNotMatch(raw, /\t/);
@@ -123,6 +283,7 @@ test('live hints stay below input while partial output grows and Tab never submi
   f.input.write('/ste'); await delay(90); f.terminal.write('Streaming text'); await delay(110);
   f.input.write('\t'); await delay(40); assert.deepEqual(queued, []);
   f.input.write('use the existing file\r'); assert.deepEqual(queued, ['/steer use the existing file']);
+  f.terminal.commitInput(queued[0]); // The controller accepts this as guidance, not a new turn.
   f.terminal.write(' continues here.\n'); await delay(40);
   const visible = terminalScreen(f.combined, 64).text;
   assert.match(visible, /Streaming text/); assert.match(visible, /continues here/);
@@ -138,6 +299,51 @@ test('live stdout redirection stays raw and Esc stops without consuming the draf
   const next = f.terminal.ask('❯ ', new AbortController().signal, true);
   f.input.write('\r'); assert.equal(await next, 'keep this draft');
   assert.equal(f.stdout, '**raw**\n| A | B |\n');
+});
+
+test('artifact selection cycles with Tab, survives streaming/approval and opens only on Enter', async t => {
+  const f = tty(t), inputs = [], opened = [];
+  const references = new AgentChatReferences({ call: async () => assert.fail('Tab must not read or open a file') }, f.terminal, async path => opened.push(path));
+  references.setScope({ sessionId: 's', turnId: 't', workspace: 'C:/work', platform: 'win32', local: true, hyperlinks: false });
+  for (const name of ['one.md', 'two.csv', 'three.pptx']) references.link(name, name);
+  f.terminal.setSuggestionSource(async (line, cursor) => references.suggest(line, cursor));
+  f.terminal.enableLiveInput(text => inputs.push(text)); f.terminal.beginTurn();
+  f.terminal.restoreDraft('/artifact '); await delay(100);
+  for (const number of [1, 2, 3, 1]) {
+    f.input.write('\t'); await delay(100);
+    assert.match(terminalScreen(f.combined, 80).text, new RegExp(`❯ /artifact ${number}\\n`));
+    f.terminal.write('The reply keeps streaming.\n');
+    assert.deepEqual(opened, []); assert.deepEqual(inputs, []);
+  }
+  const answer = f.terminal.ask('Allow? [y/N]: ', new AbortController().signal);
+  f.input.write('n\r'); assert.equal(await answer, 'n');
+  await delay(100); assert.match(terminalScreen(f.combined, 80).text, /❯ \/artifact 1\n/);
+  f.input.write('\r'); assert.deepEqual(inputs, ['/artifact 1']);
+  await references.handle('artifact', '1', new AbortController().signal);
+  assert.deepEqual(opened, ['C:\\work\\one.md']);
+  f.terminal.restoreDraft('/artifact ');
+  await waitForPaint(() => terminalScreen(f.combined, 80).text.includes('❯ /artifact \n'));
+  f.input.write('\x1b');
+  await waitForPaint(() => !terminalScreen(f.combined, 80).text.includes('❯ /artifact \n'));
+  assert.equal(f.interrupts, 0, 'Esc cancels a file selection without stopping the Agent');
+  assert.doesNotMatch(terminalScreen(f.combined, 80).text, /❯ \/artifact \n/);
+  f.input.write('\x03'); assert.equal(f.interrupts, 1, 'Ctrl+C still stops the actual task');
+});
+
+test('live hyperlinks survive narrow wrapping without leaking URI bytes into the footer or shifting its caret', async t => {
+  const f = tty(t, { columns: 28, env: { WT_SESSION: 'fixture' } });
+  const references = new AgentChatReferences({ call: async () => assert.fail('rendering links does not call the host') }, f.terminal);
+  references.setScope({ sessionId: 's', turnId: 't', workspace: 'C:/work', platform: 'win32', local: true, hyperlinks: f.terminal.hyperlinks });
+  f.terminal.setReferenceRenderer(references); f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn();
+  f.input.write('keep draft');
+  f.terminal.write('[A rather long clickable file label](<C:/work/中文 file.md>)\n');
+  f.terminal.finishTurn('completed'); await delay(45);
+  const screen = terminalScreen(f.combined, 28);
+  assert.match(screen.text, /clickable\s+file/); assert.match(screen.text, /❯ keep draft/);
+  assert.doesNotMatch(screen.text, /file:\/\/|%E4|\]8;;/);
+  assert.equal(screen.column, terminalWidth('❯ keep draft'));
+  assert.match(f.combined, /\x1b\]8;;file:/);
+  assert.equal((f.combined.match(/\x1b\]8;;file:/g) ?? []).length, (f.combined.match(/\x1b\]8;;\x1b\\/g) ?? []).length);
 });
 
 function terminalBackgrounds(text) {

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { commandSandboxPlan } from '../dist/commandSandboxAdmission.js';
 import { commandSandboxConfiguration, commandSandboxPolicy, registerWorkspaceTools, ToolRegistry } from '../dist/index.js';
 
 const configuration = () => commandSandboxConfiguration({ CARDBUSH_EXECUTION_SANDBOX: 'required' });
@@ -55,4 +59,26 @@ test('required command isolation rejects unverified SSH execution before contact
   call.input = terminal.decodeInput({ command: 'irrelevant', cwd: '/project', yield_time_ms: 1, shell: 'posix' });
   for (const entry of ['authorize', 'execute']) await assert.rejects(terminal[entry](call), { code: 'sandbox_remote_unavailable' });
   assert.equal(contacted, false);
+});
+
+test('a narrower cwd recovers an implicit workspace that contains supervisor state', async t => {
+  const temporary = await realpath(tmpdir());
+  const work = await realpath(await mkdtemp(join(temporary, 'cardbush-admission-')));
+  t.after(async () => { assert.equal(dirname(work), temporary); await rm(work, { recursive: true, force: true }); });
+  const config = commandSandboxConfiguration({ CARDBUSH_EXECUTION_SANDBOX: 'auto' });
+  const call = context(temporary); call.turn.request.permissionMode = 'task_free';
+  call.input = { command: 'echo fixture', shell: process.platform === 'win32' ? 'cmd' : 'posix' };
+  await assert.rejects(commandSandboxPlan(config, call, temporary), { code: 'sandbox_policy_invalid' });
+  const plan = await commandSandboxPlan(config, call, work);
+  assert.equal(plan.admission.kind, 'allow');
+  assert.deepEqual(plan.policy.writableRoots, [work]);
+  assert.equal(plan.policy.requireCanonicalRoots, true);
+  assert.equal(plan.policy.network, 'disabled');
+  assert.equal(call.turn.request.metadata.workspaceDir, temporary, 'no session relocation');
+  for (const roots of [{ writableRoots: [temporary] }, { readableRoots: [temporary] }]) {
+    await assert.rejects(commandSandboxPlan({ ...config, ...roots }, call, work), { code: 'sandbox_policy_invalid' },
+      'explicit host grants cannot be silently discarded');
+  }
+  await assert.rejects(commandSandboxPlan(config, { ...call, input: { ...call.input,
+    additionalPermissions: { readRoots: [temporary], writeRoots: [], network: false } } }, work), { code: 'sandbox_policy_invalid' });
 });

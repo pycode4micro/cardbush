@@ -40,6 +40,20 @@ test("default backoff grows to 30s and honors a bounded server retry delay", () 
   for (const value of [undefined, -500, NaN, Infinity]) assert.equal(delay(2, value), 1000);
 });
 
+test('plan exhaustion terminates even with unlimited transient retries and a stale retryable hint', async t => {
+  let calls = 0;
+  const host = new InMemoryRuntimeHost({ maxAttempts: null, registerDefaultWorkspaceTools: false,
+    wait: async () => { assert.fail('quota exhaustion must not schedule backoff'); },
+    provider: { async *stream() { calls++; yield failed({ code: 'GoUsageLimitError', status: 429,
+      message: 'Synthetic monthly allowance exhausted.', retryable: true, retryAfterMs: 300000 }); } },
+  });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const terminal = await host.runModelTurn({ ...request, tools: [] });
+  assert.equal(terminal.payload.status, 'failed');
+  assert.equal(calls, 1);
+  assert.equal(host.events(request.sessionId, request.turnId).some(e => e.kind === 'provider_retry'), false);
+});
+
 test("retries past five attempts without replaying tools or changing the frozen request", async () => {
   let executions = 0;
   const registry = new ToolRegistry().register({

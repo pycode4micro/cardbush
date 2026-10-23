@@ -213,11 +213,14 @@ for (const overflow of ['http', 'stream']) {
         : sse(events('model_context_window_exceeded', [{ type: 'text', text: 'PARTIAL_OVERFLOW' }]));
       assert.equal(body.system, requests[0].system);
       if (requests.length === 2) {
-        assert.equal(body.max_tokens, 128000);
+        assert.equal(body.max_tokens, 16384);
+        assert.equal(body.output_config.effort, 'medium');
         assert.match(JSON.stringify(body.messages.at(-1)), /context_pressure/);
         return sse(events('tool_use', [{ type: 'tool_use', id: 'cp_valid', name: 'checkpoint_context', input: { summaries: ['The work completed; verification remains.'] } }]));
       }
       assert.match(JSON.stringify(body.messages), /cp_valid/);
+      assert.equal(body.max_tokens, 128000);
+      assert.equal(body.output_config.effort, 'high');
       assert.doesNotMatch(JSON.stringify(body.messages), /PARTIAL_OVERFLOW/);
       return sse(events('end_turn', [{ type: 'text', text: 'Verification complete.' }]));
     } });

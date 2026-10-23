@@ -753,7 +753,7 @@ const providerCapabilityStore = runtimeStateRoot
   ? new FileProviderCapabilityStore(join(runtimeStateRoot, 'provider-capabilities.json'))
   : new InMemoryProviderCapabilityStore();
 providers = new ModelProviderRegistry({
-  ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && !process.env.CARDBUSH_SERVICE_ID ? {
+  ...((process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && !process.env.CARDBUSH_SERVICE_ID) || process.env.CARDBUSH_LOCAL_ACCOUNT_ACCESS === '1' ? {
     chatGptAccess: (accountId: string, input: { rejectedToken?: string; signal?: AbortSignal }) =>
       mcpHost.request<string>('siwc.access-token', { accountId, rejectedToken: input.rejectedToken }, input.signal),
   } : {}),

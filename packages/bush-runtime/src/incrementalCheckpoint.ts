@@ -117,7 +117,7 @@ export class IncrementalCheckpoint {
     if (call.name !== 'checkpoint_context' || this.#calls.has(call.id)) throw new Error('Checkpoint calls must have unique identities.');
     const slots = contextCheckpointSlots(this.state);
     const accepted: number[] = [];
-    const rejected: Array<{ entry?: number; source?: number; reason: string }> = [];
+    const rejected: Array<{ entry?: number; source?: number; reason: string; receivedCharacters?: number; maximumCharacters?: number }> = [];
     let input: unknown;
     try { input = withoutToolDisplayTitle(JSON.parse(call.argumentsText)); }
     catch { rejected.push({ reason: 'Invalid JSON. Submit a complete updates object.' }); }
@@ -141,7 +141,8 @@ export class IncrementalCheckpoint {
             rejected.push({ entry, source, reason: 'Already accepted. Choose a remaining source; accepted text is unchanged.' }); continue;
           }
           if (typeof item.summary !== 'string' || !item.summary.trim() || item.summary.trim().length > 6000) {
-            rejected.push({ entry, source, reason: 'Summary must be nonempty text of at most 6000 characters.' }); continue;
+            rejected.push({ entry, source, reason: 'Summary must be nonempty text of at most 6000 characters. Shorten to at most 4000 characters before resubmitting; preserve findings, constraints and exact locators rather than copying source text.',
+              ...(typeof item.summary === 'string' ? { receivedCharacters: item.summary.trim().length, maximumCharacters: 6000 } : {}) }); continue;
           }
           const constraintIssue = checkpointSkillConstraintsIssue(item.summary, requiredSkillConstraintSources.has(source));
           if (constraintIssue) { rejected.push({ entry, source, reason: constraintIssue }); continue; }

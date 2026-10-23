@@ -114,14 +114,16 @@ receipts, but preserves assistant reasoning and opaque provider replay. All such
 input changes remain observable, including changes required by schema replacement.
 
 Normal dispatch, maintenance dispatch and Tool ingress share the context budget
-calculation. For window C, configured normal output O, maintenance output
-M = min(16,384, O), and bounded safety reserve S, the proactive input trigger is
-min(floor(0.95 * (C - O)), C - O - M - S). A 400,000-token window with 128,000
-normal output therefore triggers at 253,568 input tokens, with S = 2,048. Normal
-requests keep the configured output limit. Maintenance starts with M and may
-double it on truncation, bounded by O and three generation attempts per
-maintenance job for truncation/format failures. Transport failures retain the
-existing Provider retry policy.
+calculation. For window C, configured normal output O, input limit U = C - O,
+maintenance ceiling M = min(32,768, O), and bounded safety reserve S, the proactive
+trigger is max(0, min(floor(0.95 * U), max(floor(0.5 * U), U - M - S))). A
+400,000-token window with 128,000 normal output therefore triggers at 237,184
+input tokens, with S = 2,048. Normal requests keep their configured output and
+reasoning settings. Maintenance starts at min(16,384, O), doubles on truncation
+up to M, and caps high/xhigh/max reasoning effort at medium. Lower or disabled
+reasoning remains unchanged. Each maintenance job retains its three generation
+attempt limit for truncation/format failures. Transport failures retain the
+existing Provider retry policy; exhausted plan allowances are terminal failures.
 
 Normal output truncation (`length`) preserves only the leading tool calls whose
 completion is confirmed by the provider protocol. Parseable arguments alone do

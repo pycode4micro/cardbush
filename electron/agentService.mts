@@ -38,6 +38,7 @@ import { agentFileRead, agentFileUpload } from './agentFiles.mjs';
 import { PastedTextAttachments } from './pastedTextAttachments.mjs';
 import { readWorkspaceDirectory } from './workspaceFiles.js';
 import type { AgentEventRequest, AgentInfo, AgentJob, AgentOperation, AgentProject } from './agentTypes.js';
+import type { LocalModelAccess } from './localModelAccess.mjs';
 
 const id = z.string().min(1).max(160);
 const sendSchema = z.object({
@@ -58,7 +59,7 @@ type AgentState = { version: 1; id: string; name: string; revision: number; proj
 
 type AgentServiceOptions = { dataRoot: string; name?: string; env?: NodeJS.ProcessEnv; bundledRoot?: string; desktop?: boolean; toolsEnabled?: boolean; webRestricted?: boolean;
   /** Local CLI only: share this user's settings/extensions, never their Runtime state. */
-  localProfileRoot?: string; local?: boolean; runtimeDiagnostic?: AgentRuntimeDiagnosticSink };
+  localProfileRoot?: string; local?: boolean; runtimeDiagnostic?: AgentRuntimeDiagnosticSink; localModelAccess?: LocalModelAccess };
 
 /** Owns all business state. Transport sessions and UI lifetimes never own a turn. */
 export class AgentService {
@@ -95,6 +96,7 @@ export class AgentService {
   #releaseLock: () => Promise<void>;
   #pastedTextStores = new Map<string, PastedTextAttachments>();
   readonly #modelImages: ModelImageStore;
+  readonly #disposeModelAccess?: () => void;
 
   private constructor(root: string, state: AgentState, release: () => Promise<void>, options: AgentServiceOptions, sandbox: SandboxSetup, desktop?: AgentDesktop) {
     this.#toolsEnabled = options.toolsEnabled !== false;
@@ -137,6 +139,10 @@ export class AgentService {
     });
     delete env.CARDBUSH_AGENT_DESKTOP;
     delete env.CARDBUSH_WEB_REMOTE_AGENTS;
+    // Capability comes only from the explicit in-process local host. A service
+    // must not acquire desktop account access from inherited/deployment env.
+    delete env.CARDBUSH_LOCAL_ACCOUNT_ACCESS;
+    if (options.local && options.localProfileRoot && options.localModelAccess) env.CARDBUSH_LOCAL_ACCOUNT_ACCESS = '1';
     if (this.#webRestricted) env.CARDBUSH_WEB_REMOTE_AGENTS = '1';
     if (desktop) env.CARDBUSH_AGENT_DESKTOP = '1';
     // Probe the same Agent-owned bridge that its MCP worker actually uses.
@@ -154,6 +160,8 @@ export class AgentService {
         return data.model === true ? model : this.#network.configuration();
       }
       if (operation === 'network.route') return this.#network.endpoint(payload);
+      if (operation === 'siwc.access-token' && options.local && options.localProfileRoot && options.localModelAccess)
+        return options.localModelAccess.access(payload, signal);
       if (operation === 'subagent.models') return this.product.subagentModels();
       if (operation === 'subagent.prepare-model') return this.product.resolveSubagentModel(String(data.modelId));
       if (operation === 'automation.prepare-model') return this.product.resolveAutomationModel(String(data.modelId));
@@ -161,6 +169,9 @@ export class AgentService {
       // No desktop fallback: unsupported integrations cannot act on the client machine.
       throw new Error(`This Agent does not provide ${operation}.`);
     }, options.runtimeDiagnostic);
+    this.#disposeModelAccess = options.localModelAccess?.onInvalidated(accountId => {
+      void this.runtime.transport.sendCommand({ kind: 'runtime.siwc_account_changed', payload: { accountId } }).catch(() => {});
+    });
     this.product = new ElectronProductHostController({
       sandbox,
       dataRoot: configurationRoot, runtimeStateRoot: runtimeRoot, runtimeBridge: this.runtime,
@@ -182,6 +193,7 @@ export class AgentService {
   }
 
   static async open(options: AgentServiceOptions) {
+    if (options.localModelAccess && (!options.local || !options.localProfileRoot)) throw new Error('Desktop model access requires a local CLI profile.');
     if (options.localProfileRoot && (!options.local || !isAbsolute(options.localProfileRoot))) throw new Error('A local profile requires local mode and an absolute profile path.');
     if (options.local && (options.webRestricted || options.desktop)) throw new Error('Local CLI mode cannot adopt a remote desktop or web policy.');
     if (options.webRestricted && (options.desktop || options.toolsEnabled === false)) throw new Error('Restricted web mode requires tools and forbids desktop.');
@@ -249,7 +261,7 @@ export class AgentService {
       }
       service.#pump();
       return service;
-    } catch (error) { if (service) { await service.#embodied?.close(); service.#embodied?.voice.closeAll(); await service.product.stopMaintenance(); await service.runtime.close(); await service.#browserConnector?.close(); await service.#network.close(); } await desktop?.close(); await release(); throw error; }
+    } catch (error) { if (service) { service.#disposeModelAccess?.(); await service.#embodied?.close(); service.#embodied?.voice.closeAll(); await service.product.stopMaintenance(); await service.runtime.close(); await service.#browserConnector?.close(); await service.#network.close(); } await desktop?.close(); await release(); throw error; }
   }
 
   async inspectDesktop() {
@@ -531,6 +543,15 @@ export class AgentService {
         const job = this.#state.jobs.find(item => item.id === value.id);
         if (!job) throw new Error('Unknown queued message.');
         if (value.action === 'guide' && (job.guidance?.applied || job.manualRelease)) return { accepted: true };
+        // The previous turn can finish between chat.send and guide. The pump
+        // claims its successor before the running status is persisted. At that
+        // boundary this exact message already owns the next turn; acknowledging
+        // it must not restore a failed draft or deliver it a second time.
+        if (value.action === 'guide' && job.status === 'queued' && !job.guidance &&
+            this.#assigned.get(job.sessionId) === job.id && !this.#waitingForHost.has(job.id) &&
+            value.turnId && value.turnId !== job.turnId && this.#state.jobs.some(previous =>
+              previous.sessionId === job.sessionId && previous.turnId === value.turnId &&
+              ['completed', 'failed', 'stopped'].includes(previous.status))) return { accepted: true };
         if (job.status !== 'queued' || this.#assigned.get(job.sessionId) === job.id && (value.action === 'reorder' || !this.#waitingForHost.has(job.id))) throw new Error('This message has already started. Refresh before changing it.');
         if (job.guidance && value.action !== 'guide') throw new Error('Guidance delivery is pending. Retry delivery before changing this message.');
         if (value.action === 'remove') {
@@ -843,6 +864,7 @@ export class AgentService {
   }
   async close() {
     if (this.#closing) return; this.#closing = true;
+    this.#disposeModelAccess?.();
     await this.#mutations;
     await this.#embodied?.close();
     this.#embodied?.voice.closeAll();

@@ -14,12 +14,14 @@ import { readChatModels, selectChatModel } from './agentChatModels.mjs';
 import { NativeChatTerminal } from './agentChatTerminal.mjs';
 import { terminalText } from './agentChatPresentation.mjs';
 import { AgentChatCompletion, isChatExitCommand, type ChatInputOptions } from './agentChatCompletion.mjs';
+import { AgentChatReferences, openChatArtifact } from './agentChatReferences.mjs';
 export { terminalText } from './agentChatPresentation.mjs';
 
 type Client = Pick<AgentHttpClient, 'call' | 'events'>;
 type Job = Pick<AgentJob, 'id' | 'sessionId' | 'turnId'>;
 type ChatSession = { sessionId: string; metadata?: { projectDir?: string | null; runtimeWorkspace?: { workspaceDir?: string } } };
 type Interaction = Extract<RuntimeEvent, { kind: 'permission_requested' | 'solution_selection_requested' }>;
+const pendingJob = (job: AgentJob) => job.status === 'running' || job.status === 'queued';
 export interface ChatTerminal {
   write(text: string): void;
   status(text: string): void;
@@ -34,6 +36,47 @@ export interface ChatTerminal {
 export function resumeHint(sessionId: string, color: boolean, local = false) {
   const id = terminalText(sessionId);
   return `\nResume this session: cardbush --resume ${color ? `\x1b[34m${id}\x1b[0m` : id}${local ? ' --local' : ''}\n`;
+}
+
+async function waitForAgentJob(client: Client, job: Job, signal?: AbortSignal): Promise<AgentJob | undefined> {
+  const deadline = Date.now() + 15_000;
+  for (let attempt = 0; ; attempt++) {
+    const jobs = await client.call('chat.jobs', { sessionId: job.sessionId }, signal) as AgentJob[];
+    const result = jobs.find(item => item.id === job.id && item.sessionId === job.sessionId);
+    if (!result || !pendingJob(result) || Date.now() >= deadline) return result;
+    await delay(Math.min(100 * 2 ** attempt, 1000), undefined, { signal });
+  }
+}
+
+/** A service can start the next queued job before this observer finishes the
+ * preceding one. Resolve the stop against durable state and this CLI's own
+ * submissions, then wait for settlement without cancelling the confirmation. */
+export async function stopAgentTurn(client: Client, job: Job, io: Pick<ChatTerminal, 'status'>,
+  submitted: ReadonlySet<string> = new Set()): Promise<AgentJob | undefined> {
+  const signal = AbortSignal.timeout(15_000);
+  try {
+    const jobs = (await client.call('chat.jobs', { sessionId: job.sessionId }, signal) as AgentJob[])
+      .filter(item => item.sessionId === job.sessionId);
+    const observed = jobs.find(item => item.id === job.id);
+    const target = observed && pendingJob(observed) ? observed
+      : jobs.find(item => submitted.has(item.id) && item.status === 'running')
+        ?? jobs.find(item => submitted.has(item.id) && item.status === 'queued' && !item.guidance);
+    if (!target) {
+      if (!observed) throw new Error('The task was not found on the Agent.');
+      return observed;
+    }
+    const receipt = await client.call('chat.stop', { id: target.id }, signal) as { accepted?: boolean };
+    if (!receipt?.accepted) throw new Error('The Agent did not accept the stop request.');
+    io.status('\n[Stop requested for the current task]\n');
+    const settled = await waitForAgentJob(client, target, signal);
+    if (!settled || pendingJob(settled)) throw new Error('The task has not reached a terminal state.');
+    // Finish the observed task truthfully; a newly stopped queued task is still
+    // observed by the normal loop so its partial response is not discarded.
+    return target.id === job.id ? settled : observed;
+  } catch (error) {
+    throw new Error(`Stop could not be confirmed. Resume session ${job.sessionId} to check the task. ${
+      signal.aborted ? 'Confirmation timed out.' : error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 type SavedConnection = { url: string; tokenFile: string; agentId: string };
@@ -166,14 +209,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
     }
     // Runtime's terminal event may precede the service's durable job update.
     // Wait for that existing commit instead of treating a brief 'running' as failure.
-    let result: AgentJob | undefined;
-    const deadline = Date.now() + 15_000;
-    for (let attempt = 0; ; attempt++) {
-      const jobs = await client.call('chat.jobs', { sessionId: job.sessionId }, signal) as AgentJob[];
-      result = jobs.find(item => item.id === job.id);
-      if (!result || !['running', 'queued'].includes(result.status) || Date.now() >= deadline) break;
-      await delay(Math.min(100 * 2 ** attempt, 1000), undefined, { signal });
-    }
+    const result = await waitForAgentJob(client, job, signal);
     if (result?.status === 'completed') return 0;
     if (result?.status === 'stopped') return 130;
     throw new Error(result?.error ?? `Task did not complete: ${result?.status ?? 'unknown'}`);
@@ -191,6 +227,8 @@ New sessions trust and use the current directory. Approval mode is the default;
 use --full-access to start with full access.
 Local mode needs no token and shares the App's model, plugin, MCP, network and
 sandbox JSON settings. Sessions are stored in ~/.cardbush/cli-agent.
+ChatGPT account models reuse App sign-in; keep the App running. API-key models
+can run independently.
 If no model is configured, the CLI shows the config path and an annotated example.
 Edit and save the file, then press Enter to continue.
 First remote connection: cardbush --url <url> --token-file <path>.
@@ -212,7 +250,11 @@ Successful connections are remembered.
 
 Commands: /model [ID] selects a model; /settings shows config paths and reloads settings.
           /new starts a session; /plan shows the plan; /logs shows the log path;
+          /artifact [number] opens this turn's files; /source [number] shows evidence;
           /quit (or /q, /exit) exits; /help shows help. Other input is sent to the Agent.
+Use /artifact, then Tab to choose a file and Enter to open it. Esc clears the selection.
+Web and local file links are clickable in supported terminals. Remote files are
+downloaded only when explicitly opened; source details come from the Agent's records.
 While running, Enter queues the next turn; /steer TEXT guides the current task.
 The live input keeps drafts while responses stream. Approval prompts temporarily
 take over input and restore the draft afterwards. Esc / Ctrl+C stops the current task.
@@ -237,7 +279,7 @@ function validatePrompt(text: string) {
   if (Buffer.byteLength(JSON.stringify(text)) > 2 * 1024 * 1024 - 16 * 1024) throw new Error('Prompt too large. Reference a file on the Agent instead.');
 }
 
-export async function main(args = process.argv.slice(2)): Promise<number> {
+export async function main(args = process.argv.slice(2), options: { openArtifact?: typeof openChatArtifact } = {}): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     help: { type: 'boolean' }, url: { type: 'string' }, 'token-file': { type: 'string' }, session: { type: 'string' }, resume: { type: 'string' },
     project: { type: 'string' }, model: { type: 'string' }, prompt: { type: 'string' }, permission: { type: 'string' },
@@ -269,12 +311,19 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   if (!local && !token) throw new Error('Remote connections require --token-file <Agent-data-dir>/access-token or CARDBUSH_AGENT_TOKEN. Use cardbush --local to run locally.');
   const client: ChatClient = local ? await (await import('./agentLocalChat.mjs')).openLocalChatClient()
     : new AgentHttpClient(url!, token, !values['token-file'] && tokenFile ? savedForUrl?.agentId : undefined);
-  const lifetime = new AbortController(); let turn: AbortController | undefined, active: Job | undefined, stopping: Promise<unknown> | undefined;
+  const lifetime = new AbortController(); let turn: AbortController | undefined, active: Job | undefined, stopping: Promise<AgentJob | undefined> | undefined;
+  const queued = new Set<string>();
+  const uncertain = new Map<string, { input: AgentSendInput; turnId?: string }>();
+  const stopCurrent = (job: Job) => stopAgentTurn(client, job, io, new Set([...queued, ...[...uncertain.values()].map(entry => entry.input.requestId)]));
   let session: ChatSession | undefined;
   const interrupt = () => {
-    if (turn && active) {
-      turn.abort();
-      stopping ??= client.call('chat.stop', { id: active.id }).catch(() => undefined);
+    if (active && (turn || queued.size)) {
+      // Keep ownership during the observer handoff: the service can already
+      // be running our next queued task while the CLI fetches its state.
+      turn?.abort();
+      stopping ??= stopCurrent(active);
+      // The observer consumes this rejection after its event iterator closes.
+      void stopping.catch(() => undefined);
     } else { lifetime.abort(); if (!process.stdin.isTTY) process.stdin.destroy(); }
   };
   const terminate = () => { lifetime.abort(); interrupt(); };
@@ -331,25 +380,39 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     // Read summaries rather than downloading a potentially enormous transcript.
     session = resumeId ? (await client.call('sessions.list', { projection: 'summary' }, lifetime.signal) as ChatSession[]).find(item => item.sessionId === resumeId) : await createSession();
     if (!session) throw new Error('Session not found.');
+    const references = new AgentChatReferences(client, io, options.openArtifact);
+    io.setReferenceRenderer(references);
+    let referenceTurn: string | undefined;
+    const referenceScope = () => references.setScope({ sessionId: session!.sessionId, turnId: referenceTurn,
+      workspace: session!.metadata?.runtimeWorkspace?.workspaceDir ?? session!.metadata?.projectDir ?? undefined,
+      platform: info.platform, local, hyperlinks: io.hyperlinks });
     const identify = () => {
       const modelName = config.models.find(model => model.id === modelId)?.modelName ?? modelId;
       const workspace = session!.metadata?.runtimeWorkspace?.workspaceDir ?? session!.metadata?.projectDir;
       const context = { sessionId: session!.sessionId, workspace: workspace ?? undefined, platform: info.platform, models: config.models };
       if (completion) completion.update(context);
-      else { completion = new AgentChatCompletion(client, context); io.setSuggestionSource(completion.suggest); }
+      else { completion = new AgentChatCompletion(client, context); io.setSuggestionSource(async (line, cursor, signal) => references.suggest(line, cursor) ?? completion!.suggest(line, cursor, signal)); }
+      referenceScope();
       io.identify({ name: info.name, model: modelName, permission: permissionMode === 'all_free' ? 'Full access' : 'Approval mode', workspace: workspace ?? undefined, sessionId: session!.sessionId, local }, config.models.map(model => model.id));
     };
     identify();
     let inputWork: Promise<void> = Promise.resolve(), exitRequested = false, waitingSubmissions = 0;
-    const observed = new Set<string>(), queued = new Set<string>();
-    const uncertain = new Map<string, { input: AgentSendInput; turnId?: string }>();
+    const observed = new Set<string>();
     const readPlan = async () => {
       const parsed = taskPlanSchema.safeParse(await client.call('runtime.command', { kind: 'runtime.get_plan', payload: { sessionId: session!.sessionId } }, lifetime.signal));
       io.plan(parsed.success ? parsed.data : null, true);
     };
     const showLogs = () => io.status(client.diagnostics ? `Diagnostic log: ${client.diagnostics.path}\n` : 'Connected to a remote Agent; diagnostic logs are on the server.\n');
+    const referenceCommand = async (text: string) => {
+      const match = /^\s*\/(artifact|source)(?:\s+(.*))?\s*$/s.exec(text);
+      if (!match) return false;
+      io.commitInput(text);
+      try { await references.handle(match[1] as 'artifact' | 'source', match[2] ?? '', lifetime.signal); }
+      catch (error) { io.status(`[Unavailable] ${error instanceof Error ? error.message : 'Cannot open this reference'}\n`); }
+      return true;
+    };
     const queueRunningInput = (text: string) => {
-      if (isChatExitCommand(text)) { exitRequested = true; interrupt(); return; }
+      if (isChatExitCommand(text)) { io.commitInput(text); exitRequested = true; interrupt(); return; }
       const retry = uncertain.get(text);
       const target = active ?? (retry ? { id: retry.input.requestId, sessionId: retry.input.sessionId, turnId: retry.turnId ?? retry.input.turnId! } : undefined);
       if (!target || !text.trim()) return;
@@ -357,14 +420,16 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       waitingSubmissions++;
       inputWork = inputWork.then(async () => {
         const command = text.trim();
-        if (command === '/help') { io.status(help); return; }
-        if (command === '/logs') { showLogs(); return; }
-        if (command === '/plan') { await readPlan(); return; }
+        if (await referenceCommand(text)) return;
+        if (command === '/help') { io.commitInput(text); io.status(help); return; }
+        if (command === '/logs') { io.commitInput(text); showLogs(); return; }
+        if (command === '/plan') { io.commitInput(text); await readPlan(); return; }
         if (/^\/(?:model|settings|new)(?:\s|$)/.test(command)) {
+          io.commitInput(text);
           io.status('[Not sent] Use this command after the current task finishes, or stop it with Esc.\n'); return;
         }
         const steer = /^\/steer(?:\s|$)/.test(command), content = steer ? command.slice('/steer'.length).trim() : text;
-        if (!content) { io.status('Usage: /steer TEXT\n'); io.restoreDraft('/steer '); return; }
+        if (!content) { io.commitInput(text); io.status('Usage: /steer TEXT\n'); io.restoreDraft('/steer '); return; }
         validatePrompt(content);
         let entry = uncertain.get(text);
         if (!entry) {
@@ -386,6 +451,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
         }
         queued.add(submitted.id);
         if (entry.turnId) {
+          io.commitInput(text);
           const messageId = `queued-guidance-${submitted.id}`;
           io.trackGuidance(messageId);
           try { await client.call('chat.queue', { action: 'guide', id: submitted.id, turnId: entry.turnId, mode: 'interrupt_and_continue' }, lifetime.signal); }
@@ -400,7 +466,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
           const current = jobs.find(item => item.id === submitted.id);
           if (current?.guidance?.applied) { queued.delete(submitted.id); io.guidanceQueued(messageId); }
           else { io.forgetGuidance(messageId); io.status('[Queued] The previous task ended; this message will run as the next turn.\n'); }
-        } else io.status('[Queued] Message saved for the next turn.\n');
+        }
         uncertain.delete(text); io.setQueued(queued.size);
       }).catch(error => {
         io.status(`[Failed] ${error instanceof Error ? error.message : 'Message submission failed'}. Re-enter the same message to retry its original request.\n`);
@@ -408,37 +474,37 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       }).finally(() => { waitingSubmissions--; });
     };
     if (prompt === undefined) io.enableLiveInput(queueRunningInput);
-    const run = async (job: Job, submit?: AgentSendInput) => {
+    const run = async (job: Job & { text?: string }, submit?: AgentSendInput) => {
+      await stopping;
       observed.add(job.id); queued.delete(job.id); io.setQueued(queued.size);
       active = job; turn = new AbortController(); stopping = undefined;
       const signal = AbortSignal.any([turn.signal, lifetime.signal]);
       let outcome: 'completed' | 'stopped' | 'failed' = 'failed';
-      io.beginTurn();
+      referenceTurn = job.turnId; referenceScope();
+      io.beginTurn(job.text);
       try {
         if (submit) await client.call('chat.send', submit, signal);
         const result = await followAgentTurn(client, job, io, signal);
         outcome = result === 0 ? 'completed' : 'stopped'; return result;
       } catch (error) {
         if (signal.aborted) {
-          outcome = 'stopped';
-          await stopping;
-          // A cancelled submission may not have reached the server. Query the
-          // durable job before reporting it stopped; never submit it again.
-          const jobs = await client.call('chat.jobs', { sessionId: job.sessionId }) as AgentJob[];
-          if (jobs.some(item => item.id === job.id)) {
-            await client.call('chat.stop', { id: job.id }); io.status('\n[Stop requested for the current task]\n');
-          } else io.status(`\n[Local wait cancelled; task ${job.id} was not found on the Agent. Run cardbush --resume ${job.sessionId} to check its status]\n`);
-          return 130;
+          const settled = await (stopping ??= stopCurrent(job));
+          if (settled?.status === 'completed') { outcome = 'completed'; return 0; }
+          if (settled?.status === 'stopped') { outcome = 'stopped'; return 130; }
+          throw new Error(settled?.error ?? 'The task has not reached a terminal state.');
         }
         io.status(`\nTask ${job.id}; resuming observes this task without resubmitting it.\n`); throw error;
       } finally {
-        await stopping;
-        let pending: Promise<void>;
-        do { pending = inputWork; await pending; } while (pending !== inputWork);
-        io.finishTurn(outcome); active = undefined; turn = undefined;
+        try {
+          let pending: Promise<void>;
+          do { pending = inputWork; await pending; } while (pending !== inputWork);
+          await stopping;
+        } finally { io.finishTurn(outcome); turn = undefined; }
       }
     };
-    const existing = (await client.call('chat.jobs', { sessionId: session.sessionId }, lifetime.signal) as AgentJob[]).filter(job => ['running', 'queued'].includes(job.status));
+    const previousJobs = await client.call('chat.jobs', { sessionId: session.sessionId }, lifetime.signal) as AgentJob[];
+    const existing = previousJobs.filter(job => ['running', 'queued'].includes(job.status));
+    if (!existing.length && previousJobs.length) { referenceTurn = previousJobs.at(-1)!.turnId; referenceScope(); }
     if (existing.length && prompt !== undefined) throw new Error('This session has an active task. Run cardbush --resume interactively first; no new prompt was submitted.');
     existing.forEach(job => queued.add(job.id));
     while (!lifetime.signal.aborted && !exitRequested) {
@@ -459,13 +525,16 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       }
       const text = prompt ?? await io.ask('❯ ', lifetime.signal, true);
       if (text === null) break;
-      if (prompt === undefined && isChatExitCommand(text)) break;
+      if (prompt === undefined && await referenceCommand(text)) continue;
+      if (prompt === undefined && isChatExitCommand(text)) { io.commitInput(text); break; }
       if (prompt === undefined && uncertain.has(text)) { queueRunningInput(text); await inputWork; continue; }
-      if (prompt === undefined && text.trim() === '/help') { io.status(help); continue; }
+      if (prompt === undefined && text.trim() === '/help') { io.commitInput(text); io.status(help); continue; }
       if (prompt === undefined && /^\/steer(?:\s|$)/.test(text.trim())) {
+        io.commitInput(text);
         io.status('No task is running. Send a normal message to start a turn.\n'); continue;
       }
       if (prompt === undefined && /^\/model(?:\s|$)/.test(text.trim())) {
+        io.commitInput(text);
         const fresh = await readChatModels(client, io, lifetime.signal);
         if (!fresh) break;
         config = fresh;
@@ -476,6 +545,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
         selectedModel = true; continue;
       }
       if (prompt === undefined && text.trim() === '/settings') {
+        io.commitInput(text);
         if (!client.settingsDirectory) { io.status('Connected to a remote Agent. Change model and plugin settings on that Agent.\n'); continue; }
         io.status(`\nJSON settings shared with CardBush App:\n${[
           ['Models', 'models.json'], ['Plugins', 'apps.json'], ['MCP', 'mcp-servers.json'], ['Network', 'network.json'], ['Sandbox', 'sandbox.json'],
@@ -492,16 +562,17 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
         identify(); continue;
       }
       if (prompt === undefined && text.trim() === '/logs') {
+        io.commitInput(text);
         showLogs();
         continue;
       }
       if (prompt === undefined && text.trim() === '/plan') {
-        await readPlan(); continue;
+        io.commitInput(text); await readPlan(); continue;
       }
-      if (prompt === undefined && text.trim() === '/new') { session = await createSession(); identify(); continue; }
+      if (prompt === undefined && text.trim() === '/new') { io.commitInput(text); session = await createSession(); referenceTurn = undefined; identify(); continue; }
       if (!text.trim()) continue;
       validatePrompt(text);
-      const job = { id: randomUUID(), sessionId: session.sessionId, turnId: `turn-${randomUUID()}` };
+      const job = { id: randomUUID(), sessionId: session.sessionId, turnId: `turn-${randomUUID()}`, text };
       try {
         const prepared = await completion!.prepare(text, lifetime.signal);
         const result = await run(job, { requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, ...prepared, modelId,

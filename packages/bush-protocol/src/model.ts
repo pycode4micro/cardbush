@@ -215,6 +215,8 @@ export const providerStreamDiagnosticSchema = z.object({
   idleMs: z.number().int().nonnegative(),
   eventCount: z.number().int().nonnegative(),
   lastEventType: z.enum(['message_start', 'content_block_start', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop']).optional(),
+  activeBlockType: z.enum(['thinking', 'redacted_thinking', 'text', 'tool_use', 'other']).optional(),
+  opaqueThinkingChars: z.number().int().nonnegative().optional(),
   maxOutputTokens: z.number().int().positive().optional(),
   thinkingMode: z.enum(['adaptive', 'enabled', 'disabled', 'between_tools']).optional(),
   effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),

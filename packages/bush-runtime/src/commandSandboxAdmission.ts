@@ -7,7 +7,7 @@ import type { ToolAdmissionContext, ToolAdmissionDecision } from './toolRegistry
 import { commandSandboxPolicy, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
 import { canonicalSandboxRoots, sandboxError, type ExecutionSandboxPolicy } from './executionSandbox.js';
 import { commandPermission } from './commandPermission.js';
-import { allowedRoots, isWithin, permissionBoundaryMode, resolveToolPath } from './workspaceAccessPolicy.js';
+import { allowedRoots, isWithin, normalizeIdentity, permissionBoundaryMode, resolveToolPath, workspaceRoot } from './workspaceAccessPolicy.js';
 
 export interface AdditionalCommandPermissions {
   readRoots: string[];
@@ -53,9 +53,28 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
     .filter((value): value is string => Boolean(value && isAbsolute(value)));
   const interpreterRoots = configuration.mode === 'auto' && process.platform === 'win32' && isAbsolute(executable) && !systemRoots.some(root => isWithin(root, executable))
     ? [dirname(executable)] : [];
-  const [writableRoots, readableRoots] = await Promise.all([
+  const [baseWritableRoots, readableRoots, configuredWriteRoots, cwdRoots] = await Promise.all([
     canonicalSandboxRoots(base.writableRoots), canonicalSandboxRoots([...(base.readableRoots ?? []), ...interpreterRoots]),
+    canonicalSandboxRoots(configuration.writableRoots), canonicalSandboxRoots([cwd]),
   ]);
+  const privateArea = await resolveToolPath(context, tmpdir());
+  const workspace = workspaceRoot(context);
+  const [workspacePath] = workspace ? await canonicalSandboxRoots([workspace]) : [];
+  const commandDirectory = cwdRoots[0]!;
+  cwd = commandDirectory;
+  // A broad implicit workspace (notably a Windows home directory) can contain
+  // the supervisor's TEMP directory. A narrower cwd must actually narrow this
+  // grant. Explicit host roots and requested extensions are never dropped.
+  let narrowed = false;
+  const writableRoots = baseWritableRoots.map(root => {
+    if (workspacePath && normalizeIdentity(root) === normalizeIdentity(workspacePath) &&
+        !configuredWriteRoots.some(configured => normalizeIdentity(configured) === normalizeIdentity(root)) && isWithin(root, privateArea) &&
+        isWithin(root, commandDirectory) && !isWithin(commandDirectory, privateArea)) {
+      narrowed = true;
+      return commandDirectory;
+    }
+    return root;
+  });
   const requested = context.input.additionalPermissions;
   const [read, write] = await Promise.all([
     canonicalSandboxRoots(requested?.readRoots ?? []), canonicalSandboxRoots(requested?.writeRoots ?? []),
@@ -70,11 +89,10 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
     message: 'The requested directory or network access exceeds the host-enforced sandbox. A user approval cannot override this deployment policy.' } };
   const policy: ExecutionSandboxPolicy = { ...base, network: network ? 'enabled' : base.network,
     readableRoots: [...new Set([...readableRoots, ...extraRead])].sort(), writableRoots: [...new Set([...writableRoots, ...extraWrite])].sort(),
-    ...(expanded ? { requireCanonicalRoots: true } : {}) };
+    ...(expanded || narrowed ? { requireCanonicalRoots: true } : {}) };
   if (policy.writableRoots.length + policy.readableRoots!.length > 64) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox roots.');
-  const privateArea = await resolveToolPath(context, tmpdir());
   if ([...policy.writableRoots, ...policy.readableRoots!].some(root => isWithin(root, privateArea))) {
-    throw sandboxError('sandbox_policy_invalid', 'Select a narrower directory that does not expose sandbox supervisor state.');
+    throw sandboxError('sandbox_policy_invalid', 'The selected workspace or access roots contain the sandbox supervisor directory. Use a dedicated workspace subdirectory as cwd (not the home or TEMP directory); the implicit workspace grant will be narrowed to that directory. Broad host-configured or additional roots must also be narrowed. No command was started.');
   }
   if (!expanded) return { admission: { kind: 'allow' }, policy };
   const invocation = JSON.stringify([context.input.shell, cwd, context.input.command, policy]);

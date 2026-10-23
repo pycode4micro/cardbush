@@ -1,12 +1,13 @@
 import { createInterface, type Interface } from 'node:readline';
 import { PassThrough, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { runtimeToolLifecycle, summarizeTaskPlanWaiting, type RuntimeEvent, type TaskPlan } from '@cardbush/bush-protocol';
+import { providerStreamActivity, providerActivityLabel, runtimeToolLifecycle, summarizeTaskPlanWaiting, type RuntimeEvent, type TaskPlan } from '@cardbush/bush-protocol';
 import type { ChatTerminal } from './agentChatCli.mjs';
 import { ChatMarkdown, chatHeader, chatInputChunk, terminalClip, terminalCursor, terminalRows, terminalStyle, terminalText, type ChatIdentity } from './agentChatPresentation.mjs';
 import { ChatPasteDecoder, ChatPastes } from './agentChatInput.mjs';
 import { applyChatSuggestion, choiceSuggestions, commandSuggestions, type ChatInputOptions, type ChatSuggestions, type ChatSuggestionSource } from './agentChatCompletion.mjs';
 import { ChatLiveViewport, chatInputViewport, type ChatFooter } from './agentChatViewport.mjs';
+import { terminalSupportsHyperlinks, type ChatReferenceRenderer } from './agentChatLinks.mjs';
 
 type Input = NodeJS.ReadStream;
 type Output = NodeJS.WriteStream;
@@ -17,6 +18,7 @@ type Options = { input?: Input; output?: Output; status?: Output; env?: NodeJS.P
 export class NativeChatTerminal implements ChatTerminal {
   readonly interactive: boolean;
   readonly color: boolean;
+  readonly hyperlinks: boolean;
   readonly #input: Input;
   readonly #output: Output;
   readonly #status: Output;
@@ -51,6 +53,7 @@ export class NativeChatTerminal implements ChatTerminal {
   #statusVisible = false;
   #statusLabel = '';
   #activity = 'Working';
+  #compacting = false;
   #frame = 0;
   #tools = new Map<string, string>();
   #toolCount = 0;
@@ -66,6 +69,7 @@ export class NativeChatTerminal implements ChatTerminal {
   #savedDraft?: { line: string; cursor: number };
   #queued = 0;
   #guidance = new Set<string>();
+  #references?: ChatReferenceRenderer;
   constructor(readonly interrupt: () => void, options: Options = {}) {
     this.#input = options.input ?? process.stdin;
     this.#output = options.output ?? process.stdout;
@@ -74,9 +78,11 @@ export class NativeChatTerminal implements ChatTerminal {
     this.interactive = Boolean(this.#input.isTTY && this.#status.isTTY);
     this.#controls = this.interactive && env.TERM !== 'dumb';
     this.color = this.#controls && env.NO_COLOR === undefined;
+    this.hyperlinks = this.#controls && terminalSupportsHyperlinks(env);
     this.#styledAnswers = this.interactive && Boolean(this.#output.isTTY) && env.TERM !== 'dumb';
     this.#markdown = new ChatMarkdown(text => { this.#clearStatus(); this.#emit(text, this.#output); }, this.color,
-      () => this.#output.columns || this.#status.columns || 80);
+      () => this.#output.columns || this.#status.columns || 80,
+      { link: (label, target) => this.#references?.link(label, target), source: number => this.#references?.source?.(number) });
     if (!this.interactive) return;
     const source = this.#input;
     this.#keys = Object.assign(new PassThrough(), { isTTY: true, setRawMode: (raw: boolean) => { source.setRawMode?.(raw); return this.#keys; } });
@@ -109,10 +115,10 @@ export class NativeChatTerminal implements ChatTerminal {
       else history.splice(0, history.length, ...this.#history);
     });
     this.#reader.on('line', line => {
-      if (this.#live && this.#editing()) {
-        const prompt = this.#chatPrompt ? '❯ ' : this.#reader!.getPrompt();
+      if (this.#live && this.#editing() && !this.#chatPrompt) {
+        const prompt = this.#reader!.getPrompt();
         this.#markdown.flush();
-        this.#emit('\n' + (this.#chatPrompt && this.color ? chatInputChunk(prompt + line) : prompt + line) + '\n', this.#status);
+        this.#emit('\n' + prompt + terminalText(line) + '\n', this.#status);
       }
       const expanded = this.#pastes.expand(line);
       if (this.#waiting) this.#waiting(expanded);
@@ -131,8 +137,17 @@ export class NativeChatTerminal implements ChatTerminal {
       else this.#scheduleHints();
     });
     this.#decoder = new ChatPasteDecoder(text => {
-      if (this.#live && this.#turn && (text === '\x03' || text === '\x1b')) { interrupt(); return; }
+      if (this.#live && this.#turn && (text === '\x03' || text === '\x1b')) {
+        if (text === '\x1b' && /^\s*\/(?:artifact|source)\s/.test(this.#reader!.line)) {
+          this.#clearDraft(); this.#invalidateHints(); this.#live.schedule(); return;
+        }
+        interrupt(); return;
+      }
       if (this.#editing()) {
+        // The paste decoder has already distinguished a standalone Escape from
+        // an arrow sequence. Do not make readline wait a second ambiguity timer,
+        // which could consume the next slash as Alt+/ instead of cancelling.
+        if (text === '\x1b') { this.#hideHints(); this.#clearDraft(); this.#invalidateHints(); this.#live?.schedule(); return; }
         if (text === '\t') { void this.#completeInput(); return; }
         if (this.#suggestions?.value.items.length && ['\x1b[A', '\x1b[B', '\x1b[Z'].includes(text)) {
           const choice = this.#suggestions, direction = text === '\x1b[B' ? 1 : -1;
@@ -157,6 +172,9 @@ export class NativeChatTerminal implements ChatTerminal {
   }
   #onData = (data: Buffer | string) => {
     this.#decoder!.feed(typeof data === 'string' ? data : this.#utf8.write(data));
+    // Readline may emit several writes for one key/paste. Paint once after it
+    // finishes editing, instead of leaving the caret a frame behind the input.
+    this.#live?.paint();
     clearTimeout(this.#escapeTimer);
     this.#escapeTimer = setTimeout(() => this.#decoder?.flushEscape(), 60).unref();
   };
@@ -190,6 +208,18 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#reader.setPrompt('❯ '); this.#live.paint();
   }
   setQueued(count: number) { this.#queued = count; this.#live?.schedule(); }
+  /** The controller commits chat input when its turn starts (or a local command
+   * runs). Enter only submits it; queued input must not split the current reply. */
+  commitInput(text: string) {
+    if (!this.#live || !text.trim()) return;
+    // Reuse the submitted display, including folded paste markers. Resumed jobs
+    // may have no local input history, so keep their prompt preview bounded.
+    const line = this.#history.find(line => this.#pastes.expand(line) === text)
+      ?? terminalClip(terminalText(text).replaceAll('\n', ' '), 1000);
+    this.#markdown.flush();
+    const prompt = '❯ ' + terminalText(line);
+    this.#emit('\n' + (this.color ? chatInputChunk(prompt) : prompt) + '\n', this.#status);
+  }
   trackGuidance(messageId: string) { this.#guidance.add(messageId); }
   guidanceQueued(messageId: string) { if (this.#guidance.has(messageId)) this.status('[Queued] Guidance sent to the current task.\n'); }
   forgetGuidance(messageId: string) { this.#guidance.delete(messageId); }
@@ -246,6 +276,7 @@ export class NativeChatTerminal implements ChatTerminal {
     return { lines, cursor };
   }
   setSuggestionSource(source: ChatSuggestionSource) { this.#suggestionSource = source; }
+  setReferenceRenderer(references: ChatReferenceRenderer) { this.#references = references; }
   #hideHints() {
     const position = this.#hintPosition;
     if (!position) return;
@@ -286,7 +317,8 @@ export class NativeChatTerminal implements ChatTerminal {
     try {
       const value = this.#chatPrompt && this.#suggestionSource ? await this.#suggestionSource(line, cursor, controller.signal) : local;
       if (!valid()) return;
-      const selectedValue = this.#suggestions?.value.items[this.#suggestions.selected]?.value;
+      const selectedValue = this.#suggestions?.value.items[this.#suggestions.selected]?.value
+        ?? /^\s*\/(?:artifact|source)\s+([1-9]\d*)\s*$/.exec(line)?.[1];
       const selected = Math.max(0, value?.items.findIndex(item => item.value === selectedValue) ?? 0);
       this.#suggestions = value ? { line, cursor, value, selected } : undefined; this.#drawHints();
       return this.#suggestions;
@@ -299,7 +331,10 @@ export class NativeChatTerminal implements ChatTerminal {
     const suggestion = this.#suggestions ?? await this.#loadHints();
     if (!this.#editing() || revision !== this.#inputRevision || !suggestion ||
       suggestion.line !== this.#reader.line || suggestion.cursor !== this.#reader.cursor) return;
-    const applied = applyChatSuggestion(this.#reader.line, suggestion.value, suggestion.selected);
+    const choice = /^\s*\/(?:artifact|source)\s+([1-9]\d*)\s*$/.exec(this.#reader.line);
+    const selected = choice && suggestion.value.items[suggestion.selected]?.value === choice[1]
+      ? (suggestion.selected + 1) % suggestion.value.items.length : suggestion.selected;
+    const applied = applyChatSuggestion(this.#reader.line, suggestion.value, selected);
     if (!applied) return;
     this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); this.#suggestions = undefined;
     // Use public readline editing operations, not its private refresh methods or
@@ -344,8 +379,10 @@ export class NativeChatTerminal implements ChatTerminal {
   #elapsed() {
     return Math.max(0, this.#runtimeStarted === undefined ? performance.now() - this.#started : (this.#runtimeCompleted ?? Date.now()) - this.#runtimeStarted);
   }
-  beginTurn() {
+  beginTurn(input?: string) {
+    if (input !== undefined) this.commitInput(input);
     this.#turn = true; this.#started = performance.now(); this.#runtimeStarted = undefined; this.#runtimeCompleted = undefined;
+    this.#compacting = false;
     this.#tools.clear(); this.#seenTools.clear(); this.#finishedTools.clear(); this.#toolCount = 0; this.#failedCount = 0; this.#activity = 'Waiting to start'; this.#planSummary = '';
     if (this.interactive) {
       this.#emit('\n');
@@ -399,8 +436,16 @@ export class NativeChatTerminal implements ChatTerminal {
         if (tool.error) { this.#failedCount++; this.status(`[Tool failed] ${name}: ${tool.error.message}\n`); }
         else if (this.interactive) this.#emit(this.#style(`  ${tool.state === 'cancelled' ? '· Cancelled' : '✓'} ${terminalClip(name, this.#width() - 12)}`, 'dim') + '\n');
       }
-    } else if (event.kind === 'context_compaction_started') this.#activity = 'Compacting context';
-    else if (event.kind === 'context_compaction_completed') this.#activity = 'Working';
+    } else if (event.kind === 'context_compaction_started') { this.#compacting = true; this.#activity = 'Compacting context'; }
+    else if (['context_compaction_completed', 'context_compaction_failed', 'context_compaction_cancelled'].includes(event.kind)) {
+      this.#compacting = false; this.#activity = 'Working';
+    } else if (event.kind === 'provider_stream_diagnostic') {
+      const activity = providerStreamActivity(event.payload);
+      this.#activity = this.#compacting ? 'Compacting context' : activity ? providerActivityLabel(activity) : 'Working';
+    } else if (event.kind === 'provider_retry') {
+      this.#activity = this.#compacting ? 'Compacting context · waiting to retry' : 'Waiting to retry';
+      this.status(`[Provider] ${terminalText(event.payload.code)}; retry in ${Math.ceil(event.payload.nextRetryMs / 1000)}s.\n`);
+    }
     else return;
     if (this.#turn) this.#drawStatus();
   }

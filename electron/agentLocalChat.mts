@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import type { AgentHttpClient } from './agentHttpClient.mjs';
 import type { AgentEventFrame, AgentEventRequest, AgentOperation } from './agentTypes.js';
 import { AgentChatDiagnostics } from './agentChatDiagnostics.mjs';
+import { LocalModelAccessClient } from './localModelAccess.mjs';
 
 export type ChatClient = Pick<AgentHttpClient, 'info' | 'call' | 'events'> & {
   readonly modelConfigurationPath?: string;
@@ -34,8 +35,9 @@ export async function openLocalChatClient(options: { dataRoot?: string; profileR
   const bundledRoot = await verifyAgentBundledAssets(options.bundledRoot);
   await verifyAgentBundledMcp(resolve(bundledRoot, '..'));
   const diagnostics = new AgentChatDiagnostics(join(dataRoot, 'logs', 'runtime.log'));
-  const service = await AgentService.open({ dataRoot, localProfileRoot, bundledRoot, local: true, name: 'CardBush CLI', runtimeDiagnostic: diagnostics.write })
-    .catch(error => { diagnostics.close(); throw error; });
+  const modelAccess = new LocalModelAccessClient(localProfileRoot);
+  const service = await AgentService.open({ dataRoot, localProfileRoot, bundledRoot, local: true, name: 'CardBush CLI', runtimeDiagnostic: diagnostics.write, localModelAccess: modelAccess })
+    .catch(error => { modelAccess.close(); diagnostics.close(); throw error; });
   const closed = new AbortController();
   return {
     diagnostics,
@@ -52,6 +54,6 @@ export async function openLocalChatClient(options: { dataRoot?: string; profileR
       for await (const event of service.eventStream(input, AbortSignal.any([closed.signal, signal]))) { cursor = event.sequence; yield { type: 'event', event }; }
       yield { type: 'end', afterSequence: cursor };
     },
-    async close() { closed.abort(); try { await service.close(); } finally { diagnostics.close(); } },
+    async close() { closed.abort(); try { await service.close(); } finally { modelAccess.close(); diagnostics.close(); } },
   };
 }

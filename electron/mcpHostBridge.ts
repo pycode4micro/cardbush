@@ -37,7 +37,7 @@ export async function handleMcpHostRequest(message: Request, signal: AbortSignal
   handle: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>): Promise<Response> {
   try { return { protocol, type: 'response', id: message.id, result: await handle(message.operation, message.payload, signal) }; }
   catch (error) { return { protocol, type: 'response', id: message.id, error: error instanceof Error ? error.message : String(error),
-    ...((error as { code?: string })?.code === 'mcp_auth_required' || ['siwc_auth_required', 'siwc_unavailable'].includes(String((error as { code?: string })?.code)) || String((error as { code?: string })?.code).startsWith('resource_')
+    ...((error as { code?: string })?.code === 'mcp_auth_required' || ['siwc_auth_required', 'siwc_unavailable', 'siwc_desktop_unavailable'].includes(String((error as { code?: string })?.code)) || String((error as { code?: string })?.code).startsWith('resource_')
       ? { errorCode: (error as { code: string }).code } : {}),
     ...(String((error as { code?: string })?.code).startsWith('resource_')
       ? { errorDetails: (error as { details?: Record<string, unknown> }).details } : {}) }; }

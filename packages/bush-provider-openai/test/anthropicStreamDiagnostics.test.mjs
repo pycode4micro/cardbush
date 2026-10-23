@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { modelRequestSchema, providerStreamDiagnosticSchema } from '@cardbush/bush-protocol';
+import { modelRequestSchema, providerStreamDiagnosticSchema, providerStreamActivity } from '@cardbush/bush-protocol';
 import { InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
 import { AnthropicMessagesProvider } from '../dist/index.js';
 import { AnthropicStreamDiagnostics } from '../dist/anthropicStreamDiagnostics.js';
@@ -21,6 +21,26 @@ const finish = (reason = 'end_turn') => [
 ];
 const sse = events => new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
   { headers: { 'content-type': 'text/event-stream' } });
+
+test('opaque thinking remains observable without text, signatures or a false timeout', t => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  const logs = [], monitor = new AnthropicStreamDiagnostics(value => logs.push(providerStreamDiagnosticSchema.parse(value)));
+  monitor.dispatch({ max_tokens: 128000 });
+  assert.equal(providerStreamActivity(logs.at(-1)), 'waiting');
+  monitor.observe(thinking[0]); monitor.observe(thinking[1]);
+  t.mock.timers.tick(360_000);
+  assert.equal(logs.at(-1).stage, 'idle');
+  assert.equal(logs.at(-1).thinkingChars, 0);
+  assert.equal(providerStreamActivity(logs.at(-1)), 'private_thinking');
+  monitor.observe(thinking[3]); monitor.observe(thinking[4]);
+  assert.equal(logs.at(-1).opaqueThinkingChars, 'private signature'.length);
+  monitor.observe({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'private-id', name: 'private-tool', input: {} } });
+  assert.equal(providerStreamActivity(logs.at(-1)), 'preparing_tool');
+  for (const e of finish()) monitor.observe(e);
+  monitor.close();
+  assert.equal(providerStreamActivity(logs.at(-1)), undefined);
+  assert.doesNotMatch(JSON.stringify(logs), /private signature|private-tool|private-id|private thought/);
+});
 
 test('idle observations retain stop reason and usage without logging content or changing control flow', t => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'] });

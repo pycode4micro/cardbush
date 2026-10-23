@@ -2866,12 +2866,13 @@ function openAiDesktop() {
   }));
 }
 let siwcAccountsPromise: Promise<import('./siwcAccounts.mjs', { with: { 'resolution-mode': 'import' } }).SiwcAccounts> | undefined;
+let localModelAccessBroker: import('./localModelAccess.mjs', { with: { 'resolution-mode': 'import' } }).LocalModelAccessBroker | undefined;
 function siwcDesktop() {
   return siwcAccountsPromise ??= import('./siwcAccounts.mjs').then(({ SiwcAccounts, SIWC_CREDENTIAL_KEY }) => new SiwcAccounts({
     read: () => mcpDesktop().handle('credentials.read', { key: SIWC_CREDENTIAL_KEY }, new AbortController().signal),
     write: value => mcpDesktop().handle('credentials.write', { key: SIWC_CREDENTIAL_KEY, value }, new AbortController().signal),
     fetch: modelFetch, openUrl: url => shell.openExternal(url), changed: notifyAccountsChanged,
-    invalidated: accountId => { void runtimeHostController?.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+    invalidated: accountId => { localModelAccessBroker?.invalidate(accountId); void runtimeHostController?.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
       command: { kind: 'runtime.siwc_account_changed', payload: { accountId } } }).catch(() => {}); },
   }));
 }
@@ -3853,6 +3854,13 @@ app.whenReady().then(async () => {
   // Electron's hidden default menu also removes browser-style reload
   // accelerators that can otherwise blank the integrated renderer mid-Turn.
   Menu.setApplicationMenu(null);
+  // This broker shares the same account object as GUI inference, including
+  // serialized refresh and logout. No second vault reader or token store.
+  try {
+    const { LocalModelAccessBroker } = await import('./localModelAccess.mjs');
+    localModelAccessBroker = new LocalModelAccessBroker(async (payload, signal) => (await siwcDesktop()).accessPayload(payload, signal));
+    await localModelAccessBroker.start(app.getPath('userData'), chromeConnectorNativeHostPath());
+  } catch { console.warn('[local-model-access] Desktop account bridge could not start.'); }
   if (process.platform === 'win32') {
     app.setAppUserModelId(cardbushAppUserModelId);
     Notification.handleActivation((details) => {
@@ -4866,6 +4874,7 @@ app.on('before-quit', (event) => {
     // continue through their own orderly shutdown below.
     const processesClosed = closeHostProcesses();
     hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(async () => {
+      await localModelAccessBroker?.close().catch(() => {}); localModelAccessBroker = undefined;
       await (await openAiAccountPromise)?.close();
       await (await siwcAccountsPromise)?.close();
       await (await pluginNetworkPromise)?.close();

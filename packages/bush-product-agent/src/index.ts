@@ -222,8 +222,9 @@ function createBaseProductAgentTurnRequest(
         sessionTitle: input.sessionTitle?.trim() || initialTitle(input.userText),
       },
       teamId: input.teamId,
-      ...(input.allowedSkills !== undefined || input.disabledSkills === undefined
-        ? { allowedSkills: input.allowedSkills ?? [] } : {}),
+      // Omitted filters use the installed catalog. An explicit empty allowlist
+      // still disables Skills for restricted callers.
+      ...(input.allowedSkills !== undefined ? { allowedSkills: input.allowedSkills } : {}),
       ...(input.disabledSkills !== undefined ? { disabledSkills: input.disabledSkills } : {}),
       planEnabled: input.planEnabled,
       contextWindowTokens: input.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS,

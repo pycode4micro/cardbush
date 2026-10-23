@@ -3,5 +3,24 @@
 process.stdin.isTTY = process.stdout.isTTY = process.stderr.isTTY = true;
 process.env.TERM = 'xterm';
 const { main } = await import('../../dist-electron/agentChatCli.mjs');
-try { process.exitCode = await main(process.argv.slice(2)); }
+const { appendFile, readFile } = await import('node:fs/promises');
+if (process.env.CARDBUSH_TEST_HANDOFF_GATE) {
+  const { NativeChatTerminal } = await import('../../dist-electron/agentChatTerminal.mjs');
+  const { AgentHttpClient } = await import('../../dist-electron/agentHttpClient.mjs');
+  const { setTimeout: delay } = await import('node:timers/promises');
+  const finish = NativeChatTerminal.prototype.finishTurn, call = AgentHttpClient.prototype.call;
+  let ended = false, paused = false;
+  NativeChatTerminal.prototype.finishTurn = function (...args) { finish.apply(this, args); ended = true; };
+  AgentHttpClient.prototype.call = async function (...args) {
+    if (ended && !paused && args[0] === 'chat.jobs') {
+      paused = true; process.stderr.write('[Test: observer handoff]\n');
+      while (!await readFile(process.env.CARDBUSH_TEST_HANDOFF_GATE, 'utf8').catch(() => '')) await delay(10);
+    }
+    return call.apply(this, args);
+  };
+}
+const openArtifact = process.env.CARDBUSH_TEST_OPEN_ARTIFACT_LOG ? async (path, kind) => {
+  await appendFile(process.env.CARDBUSH_TEST_OPEN_ARTIFACT_LOG, JSON.stringify({ path, kind, content: kind === 'file' ? await readFile(path, 'utf8') : null }) + '\n');
+} : undefined;
+try { process.exitCode = await main(process.argv.slice(2), { openArtifact }); }
 catch (error) { console.error(error.message); process.exitCode = error.exitCode ?? 1; }

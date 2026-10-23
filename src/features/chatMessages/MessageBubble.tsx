@@ -1,4 +1,5 @@
 import { useConversationFileSource } from '../conversationFileSource';
+import { modelActivityLabel, subscribeModelActivity } from '../../runtime-client/modelActivity';
 import { AutomationReminderCard } from '../automations/AutomationReminderCard';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { WorkspaceRevertAvailability } from '../tools/workspaceRevertAvailability';
@@ -40,6 +41,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import type { Components, Options as MarkdownOptions } from 'react-markdown';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
@@ -1946,6 +1948,7 @@ const AssistantRunHeader = memo(function AssistantRunHeader({
   language: AppLanguage;
 }) {
   const [now, setNow] = useState(() => Date.now());
+  const activity = useSyncExternalStore(subscribeModelActivity, () => isActive ? modelActivityLabel(message.turnId, language) : '', () => '');
 
   useEffect(() => {
     if (!isActive) {
@@ -1962,6 +1965,7 @@ const AssistantRunHeader = memo(function AssistantRunHeader({
     message,
     now,
     language,
+    activity,
   });
   return (
     <div className={`assistant-run-header ${isActive ? 'running' : ''}`}>
@@ -1995,12 +1999,14 @@ function AssistantCompletedDisclosure({
   const blockRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLButtonElement>(null);
+  const activity = useSyncExternalStore(subscribeModelActivity, () => active ? modelActivityLabel(message.turnId, language) : '', () => '');
   const label = assistantProgressLabel({
     message,
     executions,
     isActive: active,
     now: Date.now(),
     language,
+    activity,
   });
 
   useEffect(() => {
@@ -2081,15 +2087,18 @@ function assistantProgressLabel({
   message,
   now,
   language,
+  activity,
 }: {
   executions: ChatToolExecution[];
   isActive: boolean;
   message: ChatMessage;
   now: number;
   language: AppLanguage;
+  activity?: string;
 }) {
   const elapsedMs = assistantTurnElapsedMs(message, executions, isActive, now);
   const duration = formatCompactDuration(elapsedMs);
+  if (isActive && activity) return duration ? `${activity} ${duration}` : activity;
   if (language === 'zh') {
     if (isActive) {
       return duration ? `处理中 ${duration}` : '处理中';

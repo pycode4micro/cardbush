@@ -1,4 +1,4 @@
-import { ASSISTANT_CONVERSATION_COMMAND, assistantConversationRequestSchema } from '@cardbush/bush-protocol';
+import { ASSISTANT_CONVERSATION_COMMAND, assistantConversationRequestSchema, CONTEXT_COMPACTION_INITIAL_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt } from '@cardbush/bush-protocol';
 import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks } from './registeredAgents.js';
 import { TeamWorkflowManager } from './teamWorkflow.js';
@@ -2535,8 +2535,8 @@ export class InMemoryRuntimeHost {
                   checkpoint: activeContextCheckpoint, includeResumeInstruction: true }),
                 state, inputFormat: checkpointFormat,
               }), state, pressure, inputFormat: checkpointFormat,
-              outputTokens: contextBudgetForPressure(pressure).compactionOutputTokens,
-              maximumOutputTokens: pressure.reservedOutputTokens, restoredFailures,
+              outputTokens: Math.min(CONTEXT_COMPACTION_INITIAL_OUTPUT_TOKENS, contextBudgetForPressure(pressure).compactionOutputTokens),
+              maximumOutputTokens: contextBudgetForPressure(pressure).compactionOutputTokens, restoredFailures,
               restoredAttempts: maintenanceEvents.filter(event => event.kind === 'cache_chain_observed' && event.sequence > startedAt).length,
             });
             forceContextCompaction = false;
@@ -2584,6 +2584,7 @@ export class InMemoryRuntimeHost {
         let dispatchMessages = messages;
         let dispatchProviderState = providerState;
         let dispatchOutputTokens = request.maxOutputTokens;
+        let dispatchReasoningEffort = request.reasoningEffort;
         if (compactionTransaction && compactionJob) {
           saveIncrementalMessages();
           if (compactionJob.failures >= 3) return await finalize({ status: 'failed', reason: 'context_compaction_failed',
@@ -2591,11 +2592,15 @@ export class InMemoryRuntimeHost {
           this.#contextCompactionAuthorizations.set(turnKey, { state: compactionJob.state, format: checkpointFormat });
           dispatchMessages = compactionJob.messages;
           dispatchOutputTokens = compactionJob.outputTokens;
+          // Checkpoint maintenance is a bounded handoff, not another maximum-
+          // effort task. Preserve lower/disabled settings and the user's normal
+          // model configuration; only this maintenance request uses the cap.
+          if (dispatchReasoningEffort && ['high', 'xhigh', 'max'].includes(dispatchReasoningEffort)) dispatchReasoningEffort = 'medium';
           // Maintenance never continues an unfinished provider response. Each
           // job retains complete source exchanges, one notice and bounded corrections.
           dispatchProviderState = freshResponseChain();
           let maintenancePressure = await this.#measureContextPressure(
-            { ...request, maxOutputTokens: dispatchOutputTokens },
+            { ...request, maxOutputTokens: dispatchOutputTokens, reasoningEffort: dispatchReasoningEffort },
             dispatchMessages,
             dispatchProviderState,
             input.signal,
@@ -2619,7 +2624,7 @@ export class InMemoryRuntimeHost {
             dispatchMessages = projection.messages;
             dispatchProviderState = freshResponseChain();
             maintenancePressure = await this.#measureContextPressure(
-              { ...request, maxOutputTokens: dispatchOutputTokens },
+              { ...request, maxOutputTokens: dispatchOutputTokens, reasoningEffort: dispatchReasoningEffort },
               dispatchMessages,
               dispatchProviderState,
               input.signal,
@@ -2712,6 +2717,7 @@ export class InMemoryRuntimeHost {
             tools: this.#modelToolDefinitions(request),
             messages: dispatchMessages,
             maxOutputTokens: dispatchOutputTokens,
+            reasoningEffort: dispatchReasoningEffort,
             providerState: dispatchProviderState,
           });
           const roundToolNameScope = createToolNameScope(roundRequest);

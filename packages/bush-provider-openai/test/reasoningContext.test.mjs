@@ -101,7 +101,10 @@ test('thinking endpoint resumes repeated compaction and durable history without 
   const wireObservations = first.events('s', 'first').filter(event => event.kind === 'provider_input_observed');
   assert.equal(wireObservations.length, 5);
   assert.deepEqual(wireObservations.map(event => event.payload.frozenPrefixBreak), [false, false, true, false, true]);
-  assert.ok(wireObservations.every(event => event.payload.changedParameters.length === 0));
+  assert.deepEqual(wireObservations.map(event => event.payload.changedParameters),
+    [[], ['reasoning'], ['reasoning'], ['reasoning'], ['reasoning']],
+    'maintenance effort changes are parameter changes, not additional prefix breaks');
+  assert.deepEqual(requests.map(body => body.reasoning.effort), ['high', 'medium', 'high', 'medium', 'high']);
   const continued = requests.at(-1);
   assert.equal(continued.previous_response_id, undefined);
   assert.equal(continued.reasoning.effort, 'high');

@@ -88,6 +88,8 @@ test('HTTP and SDK stream errors honor typed quota, status and auth facts, never
   for (const SDK of [OpenAI, Anthropic]) {
     for (const [status, body, retryable, expectedStatus] of [
       [429, { type: 'insufficient_quota' }, false, 429],
+      [429, { type: 'GoUsageLimitError', metadata: { limitName: 'monthly' } }, false, 429],
+      [undefined, { type: 'GoUsageLimitError' }, false, undefined],
       [429, { type: 'rate_limit_error' }, true, 429],
       [503, { type: 'overloaded_error' }, true, 503],
       [401, { code: 'server_error', status: 503 }, false, 401],

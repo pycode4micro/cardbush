@@ -10,6 +10,7 @@ import test from 'node:test';
 import { ProcessResourceGovernor, runResourceManagedCommand, sandboxEnvironment, spawnResourceManagedProcess } from '../dist/processes.js';
 import { TerminalSessionManager } from '../dist/index.js';
 import { commandInvocation } from '@cardbush/platform';
+import { commandSandboxPlan } from '../dist/commandSandboxAdmission.js';
 
 test('command sandbox removes host secrets and execution injection variables from the environment', () => {
   const environment = sandboxEnvironment({ Path: 'tools', SystemRoot: 'system', LANG: 'en_US.UTF-8',
@@ -45,9 +46,15 @@ test('Windows AppContainer enforces file, child process, network and environment
   const reachable = createConnection({ host: '127.0.0.1', port: server.address().port });
   await once(reachable, 'close');
   server.on('connection', () => { sandboxConnections++; });
+  const admitted = await commandSandboxPlan({ mode: 'auto', network: 'disabled', readableRoots: [tools, reference], writableRoots: [] },
+    { sessionId: 'sandbox-recovery', input: { command: 'fixture probe', shell: 'cmd' }, turn: { request: {
+      permissionMode: 'task_free', metadata: { workspaceDir: tmpdir() },
+    } } }, work);
+  assert.equal(admitted.admission.kind, 'allow', 'a dedicated cwd recovers a broad implicit workspace');
+  assert.deepEqual(admitted.policy.writableRoots, [work], 'the sandbox must not grant access to its supervisor parent');
   const result = await runResourceManagedCommand({ executable, args: ['probe', work, outside, reference, String(server.address().port)], cwd: work,
     env: { ...process.env, CARDBUSH_TEST_SECRET: 'secret', NODE_OPTIONS: '--require forbidden.js' },
-    sandbox: { readableRoots: [tools, reference], writableRoots: [work], network: 'disabled' }, timeoutMs: 30_000,
+    sandbox: admitted.policy, timeoutMs: 30_000,
   });
   assert.equal(result.exitCode, 0, result.stderr);
   const facts = Object.fromEntries(result.stdout.trim().split(/\r?\n/).map(line => line.split('=')));

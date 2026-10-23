@@ -6,7 +6,10 @@ const NON_RETRYABLE_CODES = new Set([
   'invalid_api_key', 'authentication_error', 'permission_error', 'invalid_request_error', 'invalid_prompt',
 ]);
 const STOP_CODES = new Set(['request_aborted', 'chatgpt_account_changed',
-  'insufficient_quota', 'billing_hard_limit_reached', 'billing_not_active']);
+  'insufficient_quota', 'billing_hard_limit_reached', 'billing_not_active',
+  // OpenCode reports exhausted plan allowances as 429 too. Unlike a transient
+  // rate limit, retrying this typed refusal cannot advance the current task.
+  'GoUsageLimitError']);
 const TRANSIENT_CODES = new Set([
   'server_error', 'internal_server_error', 'api_error', 'overloaded_error', 'service_unavailable',
   'rate_limit_exceeded', 'rate_limit_error', 'request_timeout', 'timeout',

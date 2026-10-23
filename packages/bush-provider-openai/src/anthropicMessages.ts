@@ -239,9 +239,20 @@ export class AnthropicMessagesProvider implements ModelProvider {
                 arguments: block.json || JSON.stringify(block.value.input) });
             }
           }
-          if (!truncated && ((calls.size > 0) !== (finishReason === 'tool_use'))) throw new Error('Anthropic tool completion does not match its content.');
           // Validate wire identities only. Argument/schema failures belong to the Runtime.
           const toolEvents = toolCallEvents(calls, request);
+          // OpenCode can finish complete client tool blocks with end_turn. Repair
+          // only that observed gateway mismatch after every block has closed and
+          // every call has a complete object. Refusals, truncation, other endpoints
+          // and inconsistent/missing tools must never be promoted into execution.
+          if (calls.size && finishReason === 'end_turn' && modelApiGateway(this.#baseURL) === 'opencode' &&
+              [...calls.values()].every(call => objectArguments(call.arguments) !== undefined)) {
+            finishReason = 'tool_use';
+            options.onCompatibilityDiagnostic?.({ model: request.model, source: 'generation', action: 'recovered',
+              ...attempts.snapshot(), error: { code: 'anthropic_tool_stop_reason_normalized',
+                message: 'OpenCode returned complete tool calls with end_turn; continuing with the original calls.' } });
+          }
+          if (!truncated && ((calls.size > 0) !== (finishReason === 'tool_use'))) throw new Error('Anthropic tool completion does not match its content.');
           let replayable = !truncated;
           for (const [index, call] of calls) {
             const input = objectArguments(call.arguments);

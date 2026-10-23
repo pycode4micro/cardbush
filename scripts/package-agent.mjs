@@ -8,6 +8,7 @@ import { verifyAgentBundledAssets, verifyAgentBundledMcp } from '../dist-electro
 const sourceRoot = resolve(import.meta.dirname, '..');
 const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist-electron/agentServiceCli.mjs',
   'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs',
+  'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',
   'dist-electron/agentChatTerminal.mjs', 'dist-electron/agentChatPresentation.mjs', 'dist-electron/agentChatInput.mjs', 'dist-electron/agentChatCompletion.mjs', 'dist-electron/agentChatViewport.mjs', 'packages/bush-protocol/dist/transcriptPresentation.js',
   'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
   'dist-electron/agentService.mjs', 'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs',
@@ -79,6 +80,7 @@ export async function packageAgent(root, output, platform = process.platform) {
     + 'Start: node dist-electron/agentServiceCli.mjs --data-dir <separate-data-directory>\n'
     + 'Register the terminal command once: npm link --ignore-scripts\n'
     + 'Local chat: enter a working directory and run cardbush (approval) or cardbush --full-access; no service token needed.\n'
+    + 'ChatGPT account models reuse the local App sign-in and require the App running. API-key models run independently.\n'
     + 'If no model is configured, edit the displayed models.json using its annotated example, then press Enter to reload.\n'
     + 'Optional service connection: cardbush --url <Agent URL> --token-file <access-token file>\n'
     + 'Resume: cardbush --resume <session-id> (keeps its workspace); options: cardbush --help\n'

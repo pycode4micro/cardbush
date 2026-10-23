@@ -1,6 +1,6 @@
 ---
 name: cardbush-docs
-description: CardBush 使用、配置、开发与部署文档。用于插件打包、安装后的环境与依赖配置、MCP、主题、日历、Agent 服务部署、创作文档与 Team 协作，以及 assistant 通话和实时语音接入。CardBush docs, plugin packaging and setup, agent deployment, Create and Team. 不用于其他宿主或无关应用的配置与部署。
+description: CardBush 使用、配置、开发与部署文档。用于插件打包、安装后的环境与依赖配置、MCP、主题、日历导入与万年历/中国农历转换、Agent 服务部署、创作文档与 Team 协作，以及 assistant 通话和实时语音接入。CardBush docs, plugin packaging and setup, agent deployment, Create and Team. 不用于其他宿主或无关应用的配置与部署。
 license: Apache-2.0
 ---
 

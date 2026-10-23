@@ -28,13 +28,19 @@ export class AnthropicStreamDiagnostics {
     this.#state.eventCount++;
     this.#state.lastEventType = event.type;
     if (event.type === 'content_block_start') {
+      this.#state.activeBlockType = ['thinking', 'redacted_thinking', 'text', 'tool_use'].includes(event.content_block.type)
+        ? event.content_block.type as ProviderStreamDiagnostic['activeBlockType'] : 'other';
+      if (event.content_block.type === 'thinking') this.#state.opaqueThinkingChars = (this.#state.opaqueThinkingChars ?? 0) + (event.content_block.signature?.length ?? 0);
+      if (event.content_block.type === 'redacted_thinking') this.#state.opaqueThinkingChars = (this.#state.opaqueThinkingChars ?? 0) + (event.content_block.data?.length ?? 0);
       if (event.content_block.type === 'thinking') this.#state.thinkingChars += event.content_block.thinking.length;
       if (event.content_block.type === 'text') this.#state.textChars += event.content_block.text.length;
     } else if (event.type === 'content_block_delta') {
       if (event.delta.type === 'thinking_delta') this.#state.thinkingChars += event.delta.thinking.length;
       if (event.delta.type === 'text_delta') this.#state.textChars += event.delta.text.length;
       if (event.delta.type === 'input_json_delta') this.#state.toolArgumentChars += event.delta.partial_json.length;
-    } else if (event.type === 'message_stop') this.#state.messageStopReceived = true;
+      if (event.delta.type === 'signature_delta') this.#state.opaqueThinkingChars = (this.#state.opaqueThinkingChars ?? 0) + event.delta.signature.length;
+    } else if (event.type === 'content_block_stop') delete this.#state.activeBlockType;
+    else if (event.type === 'message_stop') { this.#state.messageStopReceived = true; delete this.#state.activeBlockType; }
     if (event.type === 'message_start' || event.type === 'message_delta') {
       const usage = event.type === 'message_start' ? event.message.usage : event.usage;
       if (typeof usage.input_tokens === 'number') this.#state.inputTokens = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);

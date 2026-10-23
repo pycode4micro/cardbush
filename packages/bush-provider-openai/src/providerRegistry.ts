@@ -77,7 +77,7 @@ export class ModelProviderRegistry implements ModelProvider {
   upsert(input: unknown): RuntimeProviderBindingResult {
     const config = runtimeProviderBindingConfigSchema.parse(input);
     const accountId = config.authentication?.kind === 'chatgpt' ? config.authentication.accountId : undefined;
-    if (accountId && !this.#chatGptAccess) throw new Error('ChatGPT account access is available on the local desktop. Configure an API key for this remote Agent.');
+    if (accountId && !this.#chatGptAccess) throw new Error('This host does not provide ChatGPT account authorization. Use the local desktop or local CLI with desktop authorization, or configure an API-key model on this host.');
     if (accountId && !this.#accountLifetimes.has(accountId)) this.#accountLifetimes.set(accountId, new AbortController());
     const revision = this.#createRevision(config);
     const key = bindingKey(config.bindingId, revision);

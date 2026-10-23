@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { registerSkillTools, ToolRegistry } from '@cardbush/bush-runtime';
 
 import {
   createProductAgentTurnRequest,
@@ -24,6 +28,27 @@ test('dynamic Skill selection keeps exclusions without freezing the installed ca
   assert.deepEqual(dynamic.metadata.disabledSkills, ['disabled-skill']);
   const restricted = createProductAgentTurnRequest({ ...input, allowedSkills: ['one-skill'] });
   assert.deepEqual(restricted.metadata.allowedSkills, ['one-skill']);
+  const omitted = createProductAgentTurnRequest({ ...input, disabledSkills: undefined });
+  assert.equal('allowedSkills' in omitted.metadata, false, 'CLI callers must discover installed Skills by default');
+  assert.deepEqual(createProductAgentTurnRequest({ ...input, allowedSkills: [] }).metadata.allowedSkills, [],
+    'an explicit deployment restriction remains closed');
+});
+
+test('CLI-style requests discover installed Skills while explicit restrictions stay enforced', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-default-skills-'));
+  t.after(async () => { assert.equal(dirname(root).toLowerCase(), resolve(tmpdir()).toLowerCase()); await rm(root, { recursive: true, force: true }); });
+  await mkdir(join(root, 'visualize'));
+  await writeFile(join(root, 'visualize', 'SKILL.md'), '---\nname: visualize\ndescription: HTML animation\n---\nCreate a useful animation.');
+  const registry = new ToolRegistry(); registerSkillTools(registry, [root]);
+  const tool = registry.resolve('search_skills');
+  const base = { requestId: 'cli-skills', sessionId: 'cli-skills', turnId: 'cli-skills', messageId: 'cli-skills',
+    createdAt: '2026-10-23T00:00:00Z',
+    userText: 'Make an animation', model: 'fixture', tools: registry.definitions(), permissionMode: 'task_free', planEnabled: true };
+  for (const [filters, count] of [[{}, 1], [{ disabledSkills: [] }, 1], [{ disabledSkills: ['visualize'] }, 0], [{ allowedSkills: [] }, 0]]) {
+    const request = createProductAgentTurnRequest({ ...base, ...filters });
+    const result = await tool.execute({ sessionId: base.sessionId, input: tool.decodeInput({ query: '*' }), turn: { request } });
+    assert.equal(result.total, count, JSON.stringify(filters));
+  }
 });
 
 test("builds one stable explicit product Turn for desktop and transport callers", () => {

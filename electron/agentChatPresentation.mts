@@ -1,4 +1,5 @@
 import { stripVTControlCharacters } from 'node:util';
+import { markdownLinkAt, maxInlineMarkup, terminalHyperlink, type ChatReferenceRenderer } from './agentChatLinks.mjs';
 
 // Adapted from bushserver/cli/native_terminal.py: terminal width, Markdown-lite
 // and append-only presentation. Runtime, settings and permissions stay in TS.
@@ -82,6 +83,7 @@ export function chatHeader(value: ChatIdentity, columns: number, color: boolean)
     row(''),
     row('/model switch model   /settings shared App settings'),
     row('/help commands        /quit exit (/q, /exit also work)'),
+    row('/artifact turn files  /source supporting evidence'),
     row('/ commands & skills   @ workspace files   Tab complete'),
   ].join('\n') + '\n' + border('╰' + '─'.repeat(width - 2) + '╯') + '\n' +
     (value.workspace && terminalWidth(value.workspace) > inside ? terminalStyle(`  Workspace: ${terminalText(value.workspace)}\n`, 'dim', color) : '') +
@@ -89,20 +91,32 @@ export function chatHeader(value: ChatIdentity, columns: number, color: boolean)
 }
 
 type TextStyle = Parameters<typeof terminalStyle>[1];
-type TextRun = { text: string; style?: TextStyle };
-const maxInlineMarkup = 2048;
-function inlineMarkdown(text: string): TextRun[] {
-  // A single pass keeps code contents literal and never interprets terminal URLs.
+type TextRun = { text: string; style?: TextStyle; href?: string };
+function inlineMarkdown(text: string, references?: ChatReferenceRenderer): TextRun[] {
   const runs: TextRun[] = []; let offset = 0;
-  for (const match of text.matchAll(/(`+)([^`\n]+)\1|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\(([^\s)]+)\)/g)) {
-    // Apply the same literal fallback to a complete line and a partial stream.
-    if (match[0].length > maxInlineMarkup) continue;
-    runs.push({ text: text.slice(offset, match.index) });
-    const [, , code, bold, label, url] = match;
-    if (code !== undefined) runs.push({ text: code, style: 'code' });
-    else if (bold !== undefined) runs.push({ text: bold, style: 'bold' });
-    else runs.push({ text: label, style: 'blue' }, { text: ` (${url})` });
-    offset = match.index! + match[0].length;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\\') { i++; continue; }
+    if (!'`*[!<'.includes(text[i])) continue;
+    const tail = text.slice(i, i + maxInlineMarkup + 1);
+    const code = text[i] === '`' ? /^(`+)([^`\n]+)\1/.exec(tail) : undefined;
+    const bold = text.startsWith('**', i) ? /^\*\*([^*\n]+)\*\*/.exec(tail) : undefined;
+    const link = markdownLinkAt(text, i);
+    const auto = text[i] === '<' ? /^<((?:https?|file):\/\/[^<>\n]+)>/.exec(tail) : undefined;
+    const source = text[i] === '[' && !/[\\!A-Za-z0-9_\[]/.test(text[i - 1] ?? '')
+      ? /^\[([1-9]\d{0,8})\](?![A-Za-z0-9_\](])/.exec(tail) : undefined;
+    if (!code && !bold && !link && !auto && !source) continue;
+    runs.push({ text: text.slice(offset, i) });
+    let length: number;
+    if (code) { length = code[0].length; runs.push({ text: code[2], style: 'code' }); }
+    else if (bold) { length = bold[0].length; runs.push(...inlineMarkdown(bold[1], references).map(run => ({ ...run, style: run.style ?? 'bold' as const }))); }
+    else if (link || auto) {
+      const label = link?.label ?? auto![1], target = link?.target ?? auto![1];
+      length = link ? link.end - i : auto![0].length;
+      const rendered = references?.link(label, target);
+      if (rendered) runs.push({ ...rendered, style: 'blue' });
+      else runs.push({ text: label, style: 'blue' }, { text: ` (${target})` });
+    } else { length = source![0].length; references?.source?.(Number(source![1])); runs.push({ text: source![0], style: references ? 'blue' : undefined }); }
+    i += length - 1; offset = i + 1;
   }
   runs.push({ text: text.slice(offset) }); return runs;
 }
@@ -111,8 +125,16 @@ function stablePrefix(text: string) {
   // so a malformed model response cannot suppress all subsequent visible output.
   let open = '', start = 0;
   for (let i = 0; i < text.length; i++) {
-    const token = text[i] === '`' ? '`' : text.slice(i, i + 2) === '**' ? '**' : text[i] === '[' ? '[' : '';
-    if (open === '[') { if (text[i] === ')') open = ''; continue; }
+    if (text[i] === '\\') { i++; continue; }
+    if (!open && (text[i] === '[' || text[i] === '!')) {
+      const link = markdownLinkAt(text, i);
+      if (link) { i = link.end - 1; continue; }
+      const source = /^\[[1-9]\d{0,8}\](?!\()/.exec(text.slice(i));
+      if (source && i + source[0].length < text.length) { i += source[0].length - 1; continue; }
+      if ((text[i] === '[' || text[i + 1] === '[') && text.length - i <= maxInlineMarkup) return i;
+    }
+    const token = text[i] === '`' ? '`' : text.slice(i, i + 2) === '**' ? '**' : text[i] === '<' ? '<' : '';
+    if (open === '<') { if (text[i] === '>') open = ''; continue; }
     if (!token) continue;
     if (!open) { open = token; start = i; } else if (token === open) open = '';
     if (token === '**') i++;
@@ -139,16 +161,16 @@ class ChatTextFlow {
     this.#prefix = prefix; this.#continuation = continuation;
     this.#column = 0; this.#content = false; this.#space = false;
   }
-  #append(text: string, style?: TextStyle) {
+  #append(text: string, style?: TextStyle, href?: string) {
     const last = this.#word.at(-1);
-    if (last && last.style === style) last.text += text;
-    else this.#word.push({ text, style });
+    if (last && last.style === style && last.href === href) last.text += text;
+    else this.#word.push({ text, style, href });
   }
-  write(text: string, style?: TextStyle) {
+  write(text: string, style?: TextStyle, href?: string) {
     if (style === 'code') {
       // Inline commands/paths are literal too: keep their internal spaces and
       // place the entire span together whenever it fits on a row.
-      this.flush(); this.#append(text, style); this.#kind = 'code'; return;
+      this.flush(); this.#append(text, style, href); this.#kind = 'code'; return;
     }
     for (const { segment } of segmenter.segment(text)) {
       if (/^\s+$/u.test(segment)) { this.flush(); this.#space = true; continue; }
@@ -157,14 +179,14 @@ class ChatTextFlow {
       // skin tones and flag pairs). Nothing already committed is repainted.
       if (/^[\p{Mark}\p{Cf}\p{Emoji_Modifier}]+$/u.test(segment) || last.endsWith('\u200d') ||
         /^\p{Regional_Indicator}$/u.test(last) && /^\p{Regional_Indicator}$/u.test(segment)) {
-        this.#append(segment, style); continue;
+        this.#append(segment, style, href); continue;
       }
       const word = /^[\p{Letter}\p{Number}_$@./\\:?#%&=+~\-]+$/u.test(segment) && cells(segment) <= 1;
       if (/^[,;!，。；：！？、）\]】》」』”’]+$/u.test(segment)) {
-        this.#append(segment, style); this.#kind = 'punctuation'; continue;
+        this.#append(segment, style, href); this.#kind = 'punctuation'; continue;
       }
       if (!(word && this.#kind === 'word') && this.#kind !== 'opening') this.flush();
-      this.#append(segment, style);
+      this.#append(segment, style, href);
       this.#kind = /^[（(\[【《「『“‘]+$/u.test(segment) ? 'opening' : word ? 'word' : 'symbol';
       // Malformed/huge identifiers still stream with bounded memory.
       if (this.#word.reduce((length, run) => length + run.text.length, 0) >= 2048) this.flush();
@@ -188,7 +210,7 @@ class ChatTextFlow {
     this.#space = false;
     for (const run of this.#word) {
       let part = '';
-      const emit = () => { if (part) this.output(run.style ? terminalStyle(part, run.style, this.color) : part); part = ''; };
+      const emit = () => { if (part) this.output(terminalHyperlink(run.style ? terminalStyle(part, run.style, this.color) : part, run.href)); part = ''; };
       for (const { segment } of segmenter.segment(run.text)) {
         const size = cells(segment);
         if (this.#column + size > this.limit() && this.#content) { emit(); this.#wrap(); }
@@ -238,12 +260,12 @@ function tableAlignments(line: string, count: number): TableAlignment[] | undefi
   if (parts?.length !== count || parts.some(cell => !/^:?-+:?$/.test(cell))) return;
   return parts.map(cell => cell.endsWith(':') ? cell.startsWith(':') ? 'center' : 'right' : 'left');
 }
-function tableCellLines(cell: string, width: number, color: boolean, header = false) {
+function tableCellLines(cell: string, width: number, color: boolean, header = false, references?: ChatReferenceRenderer) {
   let output = '';
   const flow = new ChatTextFlow(text => { output += text; }, color, () => width + 2);
   for (const part of cell.split(/<br\s*\/?\s*>/i)) {
     flow.start('');
-    for (const run of inlineMarkdown(part)) flow.write(run.text, run.style ?? (header ? 'bold' : undefined));
+    for (const run of inlineMarkdown(part, references)) flow.write(run.text, run.style ?? (header ? 'bold' : undefined), run.href);
     flow.newline();
   }
   return output.slice(0, -1).split('\n');
@@ -264,7 +286,7 @@ export class ChatMarkdown {
   #table?: MarkdownTable;
   #flow: ChatTextFlow;
   #timer?: ReturnType<typeof setTimeout>;
-  constructor(readonly output: (text: string) => void, readonly color: boolean, columns: () => number = () => 80) {
+  constructor(readonly output: (text: string) => void, readonly color: boolean, columns: () => number = () => 80, readonly references?: ChatReferenceRenderer) {
     this.#flow = new ChatTextFlow(output, color, columns);
   }
   write(text: string) {
@@ -292,7 +314,7 @@ export class ChatMarkdown {
   }
   #tableRow(table: MarkdownTable, values: string[], header = false) {
     const widths = table.layout!.widths;
-    const cells = widths.map((width, index) => tableCellLines(values[index] ?? '', width, this.color, header));
+    const cells = widths.map((width, index) => tableCellLines(values[index] ?? '', width, this.color, header, this.references));
     for (let row = 0; row < Math.max(...cells.map(cell => cell.length)); row++) {
       this.output('  ' + terminalStyle('│', 'dim', this.color));
       for (const [index, width] of widths.entries()) {
@@ -343,12 +365,12 @@ export class ChatMarkdown {
       if (table.rows && sameLayout) this.output('\n');
       for (const [index, header] of table.headers.entries()) {
         this.#flow.start('  ', '    ');
-        for (const run of inlineMarkdown(header)) this.#flow.write(run.text, run.style ?? 'bold');
+        for (const run of inlineMarkdown(header, this.references)) this.#flow.write(run.text, run.style ?? 'bold', run.href);
         this.#flow.write(': ');
         const parts = values[index].split(/<br\s*\/?\s*>/i);
         for (const [line, part] of parts.entries()) {
           if (line) { this.#flow.newline(); this.#flow.start('    '); }
-          for (const run of inlineMarkdown(part)) this.#flow.write(run.text, run.style);
+          for (const run of inlineMarkdown(part, this.references)) this.#flow.write(run.text, run.style, run.href);
         }
         this.#flow.newline();
       }
@@ -398,7 +420,7 @@ export class ChatMarkdown {
         if (!body.trim()) { if (newline) this.#blank = true; return; }
         const heading = /^\s{0,3}#{1,6}\s+/.exec(body);
         const list = /^( *)([-*+]|\d{1,9}[.)])\s+/.exec(body);
-        const quote = /^\s{0,3}>\s?/.exec(body);
+        const quote = /^(?: {0,3}> ?)+/.exec(body);
         this.#heading = Boolean(heading);
         if (heading) { body = body.slice(heading[0].length); this.#block({ kind: 'heading' }); }
         else if (list) {
@@ -406,7 +428,7 @@ export class ChatMarkdown {
           const prefix = ' '.repeat(2 + indent) + marker + ' ', hanging = list[0].length;
           this.#block({ kind: 'list', indent, hanging }, prefix, ' '.repeat(terminalWidth(prefix)), true);
           body = body.slice(list[0].length);
-        } else if (quote) { body = body.slice(quote[0].length); this.#block({ kind: 'quote' }, '  │ '); }
+        } else if (quote) { body = body.slice(quote[0].length); this.#block({ kind: 'quote' }, '  ' + '│ '.repeat(Math.min(8, quote[0].split('>').length - 1))); }
         else if (this.#previous?.kind === 'list' && (!this.#blank || body.startsWith(' '.repeat(this.#previous.hanging!)))) {
           const previous = this.#previous;
           this.#block(previous, ' '.repeat(2 + previous.hanging!)); body = body.trimStart();
@@ -415,7 +437,7 @@ export class ChatMarkdown {
     }
     if (this.#fence) this.output((!this.#continued && body ? '  ' : '') + body + (newline ? '\n' : ''));
     else {
-      for (const run of inlineMarkdown(body)) this.#flow.write(run.text, run.style ?? (this.#heading ? 'bold' : undefined));
+      for (const run of inlineMarkdown(body, this.references)) this.#flow.write(run.text, run.style ?? (this.#heading ? 'bold' : undefined), run.href);
       if (newline) this.#flow.newline();
     }
     this.#continued = !newline;

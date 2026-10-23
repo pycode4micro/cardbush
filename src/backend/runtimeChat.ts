@@ -56,6 +56,7 @@ import { toolArtifactsFromPayload } from './toolArtifacts';
 import { projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
 import { contextWindowMetrics } from './contextWindowUsage';
 import { runtimeThinkingEvent } from './runtimeThinking';
+import { publishModelActivity } from '../runtime-client/modelActivity';
 import { streamChunk, assistantStreamChunk, toolLifecycle, terminalSnapshot, guidanceAppliedUpdate } from './runtimeTranscriptEvents';
 import { contextCompactionPresentationExecution } from './contextCompactionPresentation';
 import { selectRuntimeToolDefinitions } from './runtimeToolCatalog';
@@ -487,6 +488,7 @@ async function consumeRuntimeEvents(
     },
   })) {
     publishFileEditEvent(event);
+    publishModelActivity(event);
     request.onEventCursor?.({
       eventName: event.kind,
       eventId: event.eventId,

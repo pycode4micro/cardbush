@@ -18,6 +18,8 @@ const commands: ChatChoice[] = [
   { value: '/model ', label: '/model', description: 'Switch the session model' },
   { value: '/settings', description: 'View and reload shared App settings' },
   { value: '/plan', description: 'Show the current task plan' },
+  { value: '/artifact ', label: '/artifact', description: 'Browse and open files from this turn' },
+  { value: '/source ', label: '/source', description: 'Inspect source explanations and evidence' },
   { value: '/logs', description: 'Show the diagnostic log path' },
   { value: '/help', description: 'Show command help' },
   { value: '/new', description: 'Start a new session' },

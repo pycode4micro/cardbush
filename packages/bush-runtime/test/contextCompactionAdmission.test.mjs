@@ -50,13 +50,14 @@ function* done(input) {
 const shutdown = host => host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
 
 for (const total of [63, 64, 128]) test(`${total} long sources fit through grouped partitions in a 530000-token window`, async t => {
-  const { store, original } = seed(total, 4000), batches = [];
+  // Remain larger than the maintenance input capacity with its smaller output allowance.
+  const { store, original } = seed(total, 5000), batches = [];
   let normal = 0;
   const input = request({ maxOutputTokens: 128000, metadata: { contextWindowTokens: 530000 } });
   const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: { countInputTokens: count,
     async *stream(next) {
       validateConversation(next.messages);
-      assert.ok(tokens(next) <= 402000, 'every real dispatch fits, including consolidation');
+      assert.ok(tokens(next) + next.maxOutputTokens <= 530000, 'every real dispatch fits its input and output allowances, including consolidation');
       if (maintenance(next)) {
         assert.deepEqual(store.snapshot('s').turns, original);
         const sources = rows(next).filter(row => row.source !== undefined);

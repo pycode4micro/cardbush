@@ -4,9 +4,11 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { followAgentTurn, resumeHint, terminalText } from '../dist-electron/agentChatCli.mjs';
+import { stripVTControlCharacters } from 'node:util';
+import { followAgentTurn, stopAgentTurn, resumeHint, terminalText } from '../dist-electron/agentChatCli.mjs';
 import { AgentHttpClient, AgentNetworkError } from '../dist-electron/agentHttpClient.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
@@ -52,6 +54,61 @@ test('terminal output is plain data, not terminal escape commands', () => {
   assert.equal(terminalText('\x1b[2Jhello\r\n\x1b]52;c;YWJj\x07world\x00\b\t!'), 'hello\nworld\t!');
   assert.equal(resumeHint('session-123', true), '\nResume this session: cardbush --resume \x1b[34msession-123\x1b[0m\n');
   assert.equal(resumeHint('\x1b[2Jsession-123', false), '\nResume this session: cardbush --resume session-123\n');
+});
+
+test('Ctrl+C follows this CLI\'s running successor and waits for durable stop without cancelling the remaining queue', async () => {
+  const observed = { ...job, status: 'completed' };
+  const next = { ...job, id: 'next', turnId: 'next-turn', status: 'running' };
+  const queued = { ...job, id: 'later', turnId: 'later-turn', status: 'queued' };
+  const foreign = { ...next, id: 'foreign', sessionId: 'another-session' };
+  const calls = []; let reads = 0, resolved = false;
+  const client = { async call(operation, input) {
+    calls.push({ operation, input });
+    if (operation === 'chat.jobs') { reads++; return [foreign, observed, next, queued]; }
+    assert.equal(operation, 'chat.stop'); assert.equal(input.id, next.id);
+    return { accepted: true };
+  } };
+  const stop = stopAgentTurn(client, job, terminal(), new Set(['next', 'later', 'foreign'])).then(result => { resolved = true; return result; });
+  await until(() => reads, count => count >= 2);
+  assert.equal(resolved, false, 'accepting a stop request is not a stopped task');
+  next.status = 'stopped'; queued.status = 'running';
+  assert.equal((await stop).status, 'completed', 'the preceding completed turn keeps its actual outcome');
+  assert.deepEqual(calls.filter(call => call.operation === 'chat.stop'), [{ operation: 'chat.stop', input: { id: 'next' } }]);
+});
+
+for (const status of ['queued', 'running']) test(`Ctrl+C stops and confirms its ${status} task once`, async () => {
+  const state = { ...job, status }, requests = [];
+  const client = { async call(operation, input) {
+    if (operation === 'chat.jobs') return [state];
+    requests.push(input.id); state.status = 'stopped'; return { accepted: true };
+  } };
+  assert.equal((await stopAgentTurn(client, job, terminal())).status, 'stopped');
+  assert.deepEqual(requests, [job.id]);
+});
+
+for (const status of ['completed', 'failed', 'stopped']) test(`Ctrl+C preserves an already ${status} task and leaves another client's job alone`, async () => {
+  const client = { async call(operation) {
+    assert.equal(operation, 'chat.jobs');
+    return [{ ...job, status }, { ...job, id: 'another-client', status: 'running' }];
+  } };
+  assert.equal((await stopAgentTurn(client, job, terminal())).status, status);
+});
+
+for (const failure of ['rejected', 'disconnected', 'missing', 'timeout']) test(`Ctrl+C reports an unconfirmed stop after ${failure}`, async t => {
+  const abort = new AbortController();
+  if (failure === 'timeout') t.mock.method(AbortSignal, 'timeout', () => abort.signal);
+  let requested = false;
+  const client = { async call(operation) {
+    if (operation === 'chat.jobs') {
+      if (requested && failure === 'missing') return [];
+      if (requested && failure === 'timeout') abort.abort(new DOMException('Timed out', 'TimeoutError'));
+      return [{ ...job, status: 'running' }];
+    }
+    assert.equal(operation, 'chat.stop'); requested = true;
+    if (failure === 'disconnected') throw new AgentNetworkError('disconnected');
+    return { accepted: failure !== 'rejected' };
+  } };
+  await assert.rejects(stopAgentTurn(client, job, terminal()), /Stop could not be confirmed.*Resume session session/);
 });
 
 test('stream reconnect uses the cursor, preserves partial text and never resubmits', async () => {
@@ -221,7 +278,7 @@ test('desktop profile discovery uses the current account, independent of cwd', (
 
 async function fixture(t) {
   await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, 'case-'));
-  let nextTool, nextFailure, blocked = false; const calls = [], pending = new Set();
+  let nextTool, nextFailure, nextText, blocked = false; const calls = [], pending = new Set();
   const release = () => { blocked = false; for (const finish of pending) finish(); pending.clear(); };
   const model = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -230,7 +287,7 @@ async function fixture(t) {
     calls.push(body); const index = calls.length;
     if (nextFailure) { const message = nextFailure; nextFailure = undefined; res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message, type: 'invalid_request_error' } })); return; }
     const selected = nextTool; nextTool = undefined;
-    const text = `fixture-answer-${index}`;
+    const text = nextText ?? `fixture-answer-${index}`; nextText = undefined;
     const item = selected ? { id: `function-${index}`, call_id: `call-${index}`, type: 'function_call', name: selected.name,
       arguments: JSON.stringify(selected.arguments), status: 'completed' }
       : { id: `message-${index}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] };
@@ -264,7 +321,7 @@ async function fixture(t) {
   http = await serveAgentHttp(service, { host: '127.0.0.1', port: 0, token });
   const env = { CARDBUSH_AGENT_URL: `http://127.0.0.1:${http.port}`, CARDBUSH_AGENT_TOKEN: token, CARDBUSH_CLI_CONFIG: join(root, 'cli.json') };
   const cwd = join(root, '当前工作区 with spaces'); await mkdir(cwd);
-  return { root, cwd, service, calls, env, tokenFile, release, setTool: tool => { nextTool = tool; }, block: value => { blocked = value; }, failNext: message => { nextFailure = message; },
+  return { root, cwd, service, calls, env, tokenFile, release, setText: text => { nextText = text; }, setTool: tool => { nextTool = tool; }, block: value => { blocked = value; }, failNext: message => { nextFailure = message; },
     stopService: async () => { await http.close(); http = undefined; await service.close(); } };
 }
 
@@ -295,6 +352,81 @@ test('quit aliases exit locally with a resume hint and do not submit a model tur
   assert.equal(f.calls.length, 1, 'explicit --prompt text is not interpreted as an interactive command');
 });
 
+test('queued CLI prompts appear once in turn order after the preceding completion', async t => {
+  const f = await fixture(t); f.block(true);
+  const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('first ordering question\r');
+  await until(() => f.calls.length, count => count === 1);
+  for (const [index, question] of ['second ordering question', 'third ordering question'].entries()) {
+    process.child.stdin.write(question + '\r');
+    await until(() => f.service.call('chat.jobs', {}), jobs => jobs.length === index + 2);
+  }
+  await until(() => process.stderr, text => text.includes('2 queued'));
+  assert.doesNotMatch(process.stderr, /❯ (?:second|third) ordering question/, 'queue submission must not commit prompts into the active reply');
+  f.release();
+  await until(() => process.stderr, text => text.split('✓ Completed').length === 4);
+  process.child.stdin.write('/q\r'); const result = await process.result;
+  assert.equal(result.code, 0, result.stderr);
+  const visible = stripVTControlCharacters(result.stderr);
+  assert.match(visible, /❯ first ordering question[\s\S]*✓ Completed[\s\S]*❯ second ordering question[\s\S]*✓ Completed[\s\S]*❯ third ordering question[\s\S]*✓ Completed/);
+  for (const prefix of ['first', 'second', 'third']) assert.equal(visible.split(`❯ ${prefix} ordering question`).length, 2, 'each prompt is committed exactly once');
+  assert.equal(f.calls.length, 3);
+  assert.deepEqual(stripVTControlCharacters(result.stdout).trim().split(/\s+/), ['fixture-answer-1', 'fixture-answer-2', 'fixture-answer-3']);
+});
+
+test('real CLI /artifact lists turn files, Tab selects and Enter downloads/opens once without another model request', async t => {
+  let process, resumed, finished = false, stage = 'setup';
+  t.after(() => {
+    if (!finished) t.diagnostic(stage + '\n' + stripVTControlCharacters((resumed ?? process)?.stderr ?? '').slice(-7000));
+    for (const item of [process, resumed]) if (item?.child.exitCode === null) item.child.kill();
+  });
+  const f = await fixture(t), log = join(f.root, 'opened.jsonl');
+  const first = join(f.cwd, '中文 note.md'), second = join(f.cwd, 'result.csv');
+  await writeFile(first, 'first file'); await writeFile(second, 'value\nsecond file');
+  f.setText(`[Note](<${first}>) and [Table](<${second}>)`);
+  let downloads = 0;
+  const original = f.service.call.bind(f.service);
+  f.service.call = async (operation, input, ...rest) => { if (operation === 'files.read') downloads++; return original(operation, input, ...rest); };
+  process = cli(t, [], { env: { ...f.env, CARDBUSH_TEST_OPEN_ARTIFACT_LOG: log }, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('make two files\r');
+  await until(() => process.stderr, text => text.includes('✓ Completed'));
+  stage = 'list artifacts';
+  process.child.stdin.write('/artifact\r');
+  await until(() => process.stderr, text => text.includes('Files from this turn'));
+  await delay(120); process.child.stdin.write('\t');
+  stage = 'select first';
+  await until(() => process.stderr, text => text.includes('/artifact 1'));
+  await delay(100); process.child.stdin.write('\t');
+  stage = 'select second';
+  await until(() => process.stderr, text => text.includes('/artifact 2'));
+  assert.equal(downloads, 0, 'listing and Tab never transfer or open files');
+  assert.equal(await readFile(log, 'utf8').catch(() => ''), '');
+  process.child.stdin.write('\r');
+  stage = 'open';
+  const opened = await until(() => readFile(log, 'utf8').catch(() => ''), text => text.trim().length > 0);
+  const entries = opened.trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(entries.length, 1); assert.equal(entries[0].content, 'value\nsecond file'); assert.equal(entries[0].kind, 'file');
+  assert.equal(downloads, 1); assert.equal(f.calls.length, 1);
+  await until(() => process.stderr, text => text.includes('Opened downloaded copy: Table'));
+  stage = 'quit';
+  process.child.stdin.write('/q\r'); assert.equal((await process.result).code, 0);
+  const directory = resolve(dirname(entries[0].path)); assert.ok(directory.startsWith(resolve(tmpdir()) + sep + 'cardbush-artifact-'));
+  await rm(directory, { recursive: true, force: true });
+  const sessions = await original('sessions.list', { projection: 'summary' });
+  stage = 'resume';
+  resumed = cli(t, ['--resume', sessions[0].sessionId], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => resumed.stderr, text => text.includes('❯ '));
+  resumed.child.stdin.write('/artifact\r');
+  await until(() => resumed.stderr, text => text.includes('Files from this turn'));
+  assert.match(resumed.stderr, /1\. Note/); assert.match(resumed.stderr, /2\. Table/);
+  stage = 'cancel selection and quit resumed session';
+  resumed.child.stdin.write('\x1b'); await delay(100); resumed.child.stdin.write('/q\r');
+  assert.equal((await resumed.result).code, 0); assert.equal(f.calls.length, 1);
+  finished = true;
+});
+
 test('live queue and guidance reuse Agent jobs, recover a lost receipt and retain a draft across turns', async t => {
   const f = await fixture(t); f.block(true);
   const original = f.service.call.bind(f.service); let lost = false;
@@ -309,7 +441,7 @@ test('live queue and guidance reuse Agent jobs, recover a lost receipt and retai
   await until(() => f.calls.length, count => count === 1);
   process.child.stdin.write('queued next task\r');
   await until(() => original('chat.jobs', {}), jobs => jobs.length === 2 && jobs[1].status === 'queued');
-  await until(() => process.stderr, text => text.includes('[Queued] Message saved'));
+  await until(() => process.stderr, text => text.includes('1 queued'));
   assert.equal(f.calls.length, 1, 'ordinary Enter does not interrupt the running turn');
   f.block(false); process.child.stdin.write('/steer use the existing files\r');
   await until(() => original('chat.jobs', {}), jobs => jobs.length === 3 && jobs[2].guidance?.applied);
@@ -328,6 +460,7 @@ test('live queue and guidance reuse Agent jobs, recover a lost receipt and retai
   const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
   assert.equal(state.jobs[3].input.text, 'preserved draft completed');
   assert.equal(state.jobs.filter(job => job.input.text === 'queued next task').length, 1);
+  assert.equal(stripVTControlCharacters(result.stderr).split('❯ queued next task').length, 2, 'recovering a send receipt cannot duplicate its displayed prompt');
 });
 
 test('live guidance racing task completion runs the same queued job once as a new turn', async t => {
@@ -347,9 +480,12 @@ test('live guidance racing task completion runs the same queued job once as a ne
   const jobs = await until(() => original('chat.jobs', {}), jobs => jobs.length === 2 && jobs.every(job => job.status === 'completed'));
   await until(() => process.stderr, text => text.split('✓ Completed').length === 3);
   assert.equal(jobs.filter(job => job.guidance).length, 0); assert.equal(f.calls.length, 2);
-  assert.match(process.stderr, /previous task ended/); assert.doesNotMatch(process.stderr, /\[Applied\]/);
+  assert.match(process.stderr, /previous task ended/); assert.doesNotMatch(process.stderr, /\[Applied\]|\[Failed\]/);
   process.child.stdin.write('/q\r'); const result = await process.result;
   assert.equal(result.code, 0, result.stderr);
+  const visible = stripVTControlCharacters(result.stderr);
+  assert.match(visible, /✓ Completed[\s\S]*❯ new instruction[\s\S]*✓ Completed/);
+  assert.equal(visible.split('❯ new instruction').length, 2, 'guidance that becomes a new turn owns a single prompt before its reply');
 });
 
 test('real Agent HTTP: one-shot, piped multiline, continuation, project and model reuse', async t => {
@@ -408,6 +544,11 @@ test('real Agent file hints attach a completed reference only on Enter and --res
 
 test('real Agent and native readline: approval, question, multiple turns and Ctrl+C stop', async t => {
   const f = await fixture(t), outside = join(f.root, 'outside.txt'); await writeFile(outside, 'APPROVED_FILE');
+  const stopRequests = [], call = f.service.call.bind(f.service);
+  f.service.call = (operation, input, ...rest) => {
+    if (operation === 'chat.stop') stopRequests.push(input.id);
+    return call(operation, input, ...rest);
+  };
   const process = cli(t, [], { env: { ...f.env, NO_COLOR: '', TERM: 'xterm' }, cwd: f.cwd, interactive: true });
   await until(() => process.stderr, text => text.includes('❯ '));
   f.setTool({ name: 'read_file', arguments: { path: outside } }); process.child.stdin.write('read file\n');
@@ -423,8 +564,10 @@ test('real Agent and native readline: approval, question, multiple turns and Ctr
   assert.match(JSON.stringify(f.calls.at(-1)), /Second/);
   f.block(true); const previous = f.calls.length; process.child.stdin.write('long task\n');
   await until(() => f.calls.length, count => count > previous);
+  const running = (await f.service.call('chat.jobs')).at(-1);
   process.child.stdin.write('\x03');
   await until(() => process.stderr, text => text.includes('Stop requested'));
+  assert.deepEqual(stopRequests, [running.id], 'Ctrl+C must stop the running task once, not the preceding completed task');
   await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'stopped');
   f.block(false); process.child.stdin.write('/exit\n');
   const result = await process.result; assert.equal(result.code, 0, result.stderr);
@@ -432,6 +575,30 @@ test('real Agent and native readline: approval, question, multiple turns and Ctr
   assert.ok(result.stderr.endsWith(`Resume this session: cardbush --resume ${session.sessionId}\n`), 'NO_COLOR and normal exit preserve a copyable resume command');
   assert.doesNotMatch(result.stdout + result.stderr, /\x1b\[\?1049[hl]/, 'never enters an alternate terminal screen');
   assert.equal(f.calls.length, previous + 1, 'Ctrl+C must not resubmit the task');
+});
+
+test('Ctrl+C between observers stops the already-running queued successor without exiting the CLI', async t => {
+  let process;
+  t.after(() => { if (process?.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), gate = join(f.root, 'handoff-gate'), stops = [], call = f.service.call.bind(f.service);
+  f.service.call = (operation, input, ...rest) => { if (operation === 'chat.stop') stops.push(input.id); return call(operation, input, ...rest); };
+  f.block(true);
+  process = cli(t, [], { env: { ...f.env, CARDBUSH_TEST_HANDOFF_GATE: gate }, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('first task\r'); await until(() => f.calls.length, count => count === 1);
+  process.child.stdin.write('queued task\r'); await until(() => process.stderr, text => text.includes('1 queued'));
+  f.release(); f.block(true);
+  await until(() => process.stderr, text => text.includes('[Test: observer handoff]'));
+  await until(() => f.calls.length, count => count === 2);
+  const successor = (await call('chat.jobs', {})).at(-1); assert.equal(successor.status, 'running');
+  process.child.stdin.write('\x03');
+  await until(() => process.stderr, text => text.includes('Stop requested'));
+  await until(() => call('chat.jobs', {}), jobs => jobs.at(-1)?.status === 'stopped');
+  assert.equal(process.child.exitCode, null); assert.deepEqual(stops, [successor.id]);
+  await writeFile(gate, 'continue');
+  await until(() => process.stderr, text => text.includes('Stopped ·'));
+  process.child.stdin.write('/exit\r'); const result = await process.result;
+  assert.equal(result.code, 0, result.stderr); assert.equal(f.calls.length, 2);
 });
 
 test('real Agent and native readline submit all question answers to the offline provider together', async t => {

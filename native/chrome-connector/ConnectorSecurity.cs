@@ -79,12 +79,13 @@ internal static class ConnectorSecurity
         bool directory = operation == "--secure-directory";
         if (directory)
         {
-            if (!Path.IsPathRooted(target) || Path.GetFileName(target) != "browser-connector" ||
+            if (!Path.IsPathRooted(target) || (Path.GetFileName(target) != "browser-connector" && Path.GetFileName(target) != "model-access") ||
                 (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("Invalid connector directory.");
+                throw new InvalidDataException("Invalid private IPC directory.");
         }
-        else if (!target.StartsWith(@"\\.\pipe\cardbush-browser-connector-", StringComparison.Ordinal))
-            throw new InvalidDataException("Invalid connector pipe.");
+        else if (!target.StartsWith(@"\\.\pipe\cardbush-browser-connector-", StringComparison.Ordinal) &&
+                 !target.StartsWith(@"\\.\pipe\cardbush-model-access-", StringComparison.Ordinal))
+            throw new InvalidDataException("Invalid private IPC pipe.");
         string inheritance = directory ? "OICI" : "";
         string sddl = "D:P(A;" + inheritance + ";FA;;;" + sid + ")(A;" + inheritance + ";FA;;;SY)";
         IntPtr descriptor, dacl; uint size; bool present, defaulted;

@@ -48,6 +48,9 @@ export function siwcFetch(accountId: string, access: ChatGptAccess, transport: t
   };
 }
 function authFailure(error?: unknown) {
+  if ((error as { code?: string } | undefined)?.code === 'siwc_desktop_unavailable') return Response.json({ error: {
+    code: 'chatgpt_desktop_unavailable', message: 'Open CardBush App on this computer to use its signed-in ChatGPT account, then retry.',
+  } }, { status: 401 });
   if ((error as { code?: string } | undefined)?.code === 'siwc_unavailable') return Response.json({ error: {
     code: 'chatgpt_auth_unavailable', message: 'ChatGPT authorization is temporarily unavailable. Check the network and secure storage, then retry.',
   } }, { status: 503 });
