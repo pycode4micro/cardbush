@@ -10,6 +10,7 @@ import { NativeChatTerminal } from '../dist-electron/agentChatTerminal.mjs';
 import { ChatLiveViewport, chatInputViewport } from '../dist-electron/agentChatViewport.mjs';
 import { runtimeToolLifecycle } from '../packages/bush-protocol/dist/index.js';
 import { AgentChatReferences } from '../dist-electron/agentChatReferences.mjs';
+import { selectChatModel } from '../dist-electron/agentChatModels.mjs';
 
 // Readline also consults process.env.TERM internally. Match the emulated TTY.
 process.env.TERM = 'xterm';
@@ -732,13 +733,75 @@ test('hints appear while typing; arrows choose and Tab fills without submitting 
   let submitted = false;
   const answer = f.terminal.ask('❯ ', new AbortController().signal, true).then(value => { submitted = true; return value; });
   f.input.write('/'); await delay(90);
-  assert.match(stripVTControlCharacters(f.stderr), /Switch the session model/);
+  assert.match(stripVTControlCharacters(f.stderr), /Select model and reasoning effort/);
   assert.match(stripVTControlCharacters(f.stderr), /Tab complete/);
   f.input.write('\x1b[B'); f.input.write('\t'); await tick();
   assert.equal(submitted, false);
   f.input.write('\r'); assert.equal(await answer, '/settings');
   assert.ok(terminalBackgrounds(f.stderr).erase.filter(item => item.command === 'J').every(item => item.background === null));
   assert.doesNotMatch(f.stderr, /\x1b\[\?1049|\x1b\[2J/);
+});
+
+test('model and effort pickers highlight the current value immediately; arrows, Enter and Tab work in the native footer', async t => {
+  for (const live of [false, true]) {
+    const f = tty(t, { columns: 100, env: {} });
+    if (live) f.terminal.enableLiveInput(() => assert.fail('A picker must not submit chat'));
+    f.terminal.write('Existing conversation stays visible.\n');
+    const config = { models: [
+      { id: 'first', modelName: 'First', apiProtocol: 'openai_responses' },
+      { id: 'second', modelName: 'Second', apiProtocol: 'openai_chat_completions' },
+    ] };
+    let completed = false;
+    const selection = selectChatModel(config, { modelId: 'second', reasoningEffort: 'high' }, '', f.terminal, new AbortController().signal)
+      .then(value => { completed = true; return value; });
+    // No hint debounce is needed before confirming the current model.
+    f.input.write('\r');
+    await waitForPaint(() => f.stderr.includes('Select Reasoning Level for Second'));
+    f.input.write('\x1b[A\t'); await tick();
+    assert.equal(completed, false, 'Tab fills Medium without committing the model selection');
+    f.input.write('\r');
+    assert.deepEqual(await selection, { modelId: 'second', reasoningEffort: 'medium' });
+    const chat = f.terminal.ask('❯ ', new AbortController().signal, true);
+    f.input.write('next message\r'); assert.equal(await chat, 'next message');
+    const visible = terminalScreen(f.combined, 100).text;
+    assert.equal(visible.split('Existing conversation stays visible.').length, 2, visible);
+    assert.doesNotMatch(visible, /Select Reasoning Level|Select Model and Effort|↑\/↓ select/, 'finished menus leave no stale footer');
+    assert.match(f.stderr, /\x1b\[48;5;24;97m/, 'the selected menu row is highlighted');
+    assert.doesNotMatch(f.combined, /\x1b\[\?1049|\x1b\[2J/, 'selection keeps native terminal scrollback');
+  }
+});
+
+test('Escape goes back from effort to models and cancels without changing selection or polluting history', async t => {
+  const f = tty(t, { columns: 44 }); f.terminal.enableLiveInput(() => assert.fail('No chat submission'));
+  const config = { models: [{ id: 'one', modelName: 'One' }, { id: 'two', modelName: 'Two' }] };
+  const current = { modelId: 'one', reasoningEffort: 'high' };
+  const selection = selectChatModel(config, current, '', f.terminal, new AbortController().signal);
+  f.input.write('\x1b[B\r');
+  await waitForPaint(() => terminalScreen(f.combined, 44).text.includes('Select Reasoning Level for Two'));
+  f.input.write('unfinished filter\x1b');
+  await waitForPaint(() => terminalScreen(f.combined, 44).text.includes('Select Model and Effort'));
+  assert.doesNotMatch(terminalScreen(f.combined, 44).text, /unfinished filter/);
+  f.input.write('\x1b'); assert.equal(await selection, current);
+  const chat = f.terminal.ask('❯ ', new AbortController().signal, true);
+  f.input.write('\x1b[A\r'); assert.equal(await chat, '', 'picker choices never enter chat history');
+});
+
+test('a blank Enter still uses the approval default rather than confirming a suggestion', async t => {
+  const f = tty(t);
+  const answer = f.terminal.ask('Allow? [y/N]: ', new AbortController().signal, { choices: [{ value: 'y' }, { value: 'n' }] });
+  f.input.write('\r'); assert.equal(await answer, '');
+});
+
+test('picker navigation commands support Tab and numeric effort choices before hints repaint', async t => {
+  const f = tty(t); f.terminal.enableLiveInput(() => assert.fail('No chat submission'));
+  const choices = [{ value: 'low', label: '1. Low' }, { value: 'high', label: '2. High' }];
+  const options = { choices, picker: { title: 'Effort', selected: 'low', cancelValue: '/back' } };
+  let answer = f.terminal.ask('Choose: ', new AbortController().signal, options);
+  f.input.write('/ba\t'); await tick(); f.input.write('\r'); assert.equal(await answer, '/back');
+  answer = f.terminal.ask('Choose: ', new AbortController().signal, options);
+  f.input.write('2\r'); assert.equal(await answer, 'high');
+  answer = f.terminal.ask('Choose: ', new AbortController().signal, options);
+  f.input.write('/ca\r'); assert.equal(await answer, '/cancel');
 });
 
 test('typing /e offers only the exit prefix and Tab expands /q to /quit', async t => {

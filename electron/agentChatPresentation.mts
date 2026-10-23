@@ -69,7 +69,7 @@ export function chatInputChunk(text: string) {
   });
   return printed ? `\x1b[37m${decorated}\x1b[39;49m` : text;
 }
-export type ChatIdentity = { name: string; model: string; permission: string; workspace?: string; sessionId: string; local: boolean };
+export type ChatIdentity = { name: string; model: string; effort?: string; permission: string; workspace?: string; sessionId: string; local: boolean };
 export function chatHeader(value: ChatIdentity, columns: number, color: boolean) {
   const width = Math.max(10, Math.min(columns - 1, 92)), inside = width - 4;
   const title = terminalClip(' CardBush ', width - 4);
@@ -78,10 +78,10 @@ export function chatHeader(value: ChatIdentity, columns: number, color: boolean)
     .map(line => border('│ ') + terminalStyle(line, style, color) + ' '.repeat(Math.max(0, inside - terminalWidth(line))) + border(' │')).join('\n');
   return '\n' + border('╭─') + terminalStyle(title, 'blue', color) + border('─'.repeat(Math.max(0, width - terminalWidth(title) - 3)) + '╮') + '\n' + [
     row(value.local ? 'Working in the current directory' : `Connected to ${value.name}`, 'bold'),
-    row(`${value.model} · ${value.permission}`, 'blue'),
+    row(`${value.model} · ${value.permission}${value.effort ? ` · Effort: ${value.effort}` : ''}`, 'blue'),
     row(terminalClip(value.workspace ?? '', inside)),
     row(''),
-    row('/model switch model   /settings shared App settings'),
+    row('/model model & effort /settings shared App settings'),
     row('/help commands        /quit exit (/exit also works)'),
     row('/artifact turn files  /source supporting evidence'),
     row('/shell native shell   !command run a local command'),

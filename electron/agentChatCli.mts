@@ -10,7 +10,7 @@ import { AgentHttpClient, AgentNetworkError, agentBaseUrl } from './agentHttpCli
 import { writePrivateJson } from './atomicJsonFile.mjs';
 import type { AgentJob, AgentProject, AgentSendInput } from './agentTypes.js';
 import type { ChatClient } from './agentLocalChat.mjs';
-import { readChatModels, selectChatModel, waitForChatConfiguration } from './agentChatModels.mjs';
+import { chatEffortLabel, readChatModels, selectChatModel, waitForChatConfiguration, type ChatModelSelection } from './agentChatModels.mjs';
 import { NativeChatTerminal } from './agentChatTerminal.mjs';
 import { terminalText } from './agentChatPresentation.mjs';
 import { AgentChatCompletion, isChatExitCommand, type ChatInputOptions } from './agentChatCompletion.mjs';
@@ -28,6 +28,7 @@ export interface ChatTerminal {
   status(text: string): void;
   ask(prompt: string, signal: AbortSignal, options?: boolean | ChatInputOptions): Promise<string | null>;
   interactive: boolean;
+  readonly selectionMenus?: boolean;
   event?(event: RuntimeEvent): void;
   plan?(plan: TaskPlan | null, detailed?: boolean): void;
   suspendInput?(): () => void;
@@ -250,7 +251,8 @@ Successful connections are remembered.
   --sessions        List sessions
   --help            Show help
 
-Commands: /model [ID] selects a model; /settings shows config paths and reloads settings.
+Commands: /model [ID] selects a model and reasoning effort; /settings shows config paths and reloads settings.
+          Model selection: Up/Down selects, Enter confirms, Esc goes back. App defaults stay unchanged.
           /new starts a session; /plan shows the plan; /logs shows the log path;
           /artifact [number] opens this turn's files; /source [number] shows evidence;
           /quit (or /exit) exits; /help shows help. Other input is sent to the Agent.
@@ -359,6 +361,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
     let config = initialConfig;
     if (values.models) { config.models.forEach(model => io.write(`${model.id}\t${model.modelName}${model.id === config.defaultModelId ? ' (default)' : ''}\n`)); return 0; }
     let modelId = values.model ?? config.defaultModelId, selectedModel = Boolean(values.model);
+    let reasoningEffort: ChatModelSelection['reasoningEffort'];
     if (!config.models.some(model => model.id === modelId)) throw new Error(local
       ? `Selected model not found. Run cardbush --models or edit: ${client.modelConfigurationPath}`
       : 'Selected model is not configured. Use --models to list Agent models, then pass --model ID.');
@@ -388,6 +391,11 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
     // Read summaries rather than downloading a potentially enormous transcript.
     session = resumeId ? (await client.call('sessions.list', { projection: 'summary' }, lifetime.signal) as ChatSession[]).find(item => item.sessionId === resumeId) : await createSession();
     if (!session) throw new Error('Session not found.');
+    const previousJobs = await client.call('chat.jobs', { sessionId: session.sessionId }, lifetime.signal) as Array<Omit<AgentJob, 'input'> & Pick<AgentSendInput, 'modelId' | 'reasoningEffort'>>;
+    const previousModel = previousJobs.at(-1);
+    if (resumeId && !values.model && previousModel && config.models.some(model => model.id === previousModel.modelId)) {
+      modelId = previousModel.modelId; reasoningEffort = previousModel.reasoningEffort; selectedModel = true;
+    }
     const references = new AgentChatReferences(client, io, options.openArtifact);
     io.setReferenceRenderer(references);
     let referenceTurn: string | undefined;
@@ -401,7 +409,8 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       if (completion) completion.update(context);
       else { completion = new AgentChatCompletion(client, context); io.setSuggestionSource(async (line, cursor, signal) => references.suggest(line, cursor) ?? completion!.suggest(line, cursor, signal)); }
       referenceScope();
-      io.identify({ name: info.name, model: modelName, permission: permissionMode === 'all_free' ? 'Full access' : 'Approval mode', workspace: workspace ?? undefined, sessionId: session!.sessionId, local }, config.models.map(model => model.id));
+      io.identify({ name: info.name, model: modelName, effort: chatEffortLabel(config.models.find(model => model.id === modelId), reasoningEffort),
+        permission: permissionMode === 'all_free' ? 'Full access' : 'Approval mode', workspace: workspace ?? undefined, sessionId: session!.sessionId, local }, config.models.map(model => model.id));
     };
     identify();
     let inputWork: Promise<void> = Promise.resolve(), exitRequested = false, waitingSubmissions = 0;
@@ -443,7 +452,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         if (!entry) {
           const prepared = await completion!.prepare(content, lifetime.signal);
           entry = { input: { requestId: randomUUID(), turnId: `turn-${randomUUID()}`, sessionId: target.sessionId,
-            ...prepared, modelId, permissionMode: permissionMode as AgentSendInput['permissionMode'], language: 'en',
+            ...prepared, modelId, reasoningEffort, permissionMode: permissionMode as AgentSendInput['permissionMode'], language: 'en',
             ...(steer ? { queueOnly: true } : {}) }, ...(steer ? { turnId: target.turnId } : {}) };
           uncertain.set(text, entry);
         }
@@ -510,7 +519,6 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         } finally { io.finishTurn(outcome); turn = undefined; }
       }
     };
-    const previousJobs = await client.call('chat.jobs', { sessionId: session.sessionId }, lifetime.signal) as AgentJob[];
     const existing = previousJobs.filter(job => ['running', 'queued'].includes(job.status));
     if (!existing.length && previousJobs.length) { referenceTurn = previousJobs.at(-1)!.turnId; referenceScope(); }
     if (existing.length && prompt !== undefined) throw new Error('This session has an active task. Run cardbush --resume interactively first; no new prompt was submitted.');
@@ -552,11 +560,15 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         const fresh = await readChatModels(client, io, lifetime.signal);
         if (!fresh) break;
         config = fresh;
-        if (!config.models.some(model => model.id === modelId)) modelId = config.defaultModelId;
-        modelId = await selectChatModel(config, modelId, text.trim().slice('/model'.length), io, lifetime.signal);
-        io.updateModel(config.models.find(model => model.id === modelId)?.modelName ?? modelId, config.models.map(model => model.id));
+        if (!config.models.some(model => model.id === modelId)) { modelId = config.defaultModelId; reasoningEffort = undefined; }
+        const current = { modelId, reasoningEffort };
+        const selection = await selectChatModel(config, current, text.trim().slice('/model'.length), io, lifetime.signal);
+        ({ modelId, reasoningEffort } = selection);
+        io.updateModel(config.models.find(model => model.id === modelId)?.modelName ?? modelId, config.models.map(model => model.id),
+          chatEffortLabel(config.models.find(model => model.id === modelId), reasoningEffort));
         completion!.update({ sessionId: session.sessionId, workspace: session.metadata?.runtimeWorkspace?.workspaceDir ?? session.metadata?.projectDir ?? undefined, platform: info.platform, models: config.models });
-        selectedModel = true; continue;
+        if (selection !== current) selectedModel = true;
+        continue;
       }
       if (prompt === undefined && text.trim() === '/settings') {
         io.commitInput(text);
@@ -570,7 +582,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         const fresh = await readChatModels(client, io, lifetime.signal);
         if (!fresh) break;
         config = fresh;
-        if (!selectedModel || !config.models.some(model => model.id === modelId)) modelId = config.defaultModelId;
+        if (!selectedModel || !config.models.some(model => model.id === modelId)) { modelId = config.defaultModelId; reasoningEffort = undefined; }
         try { await client.reloadSettings?.(); io.status('Settings reloaded.\n'); }
         catch { io.status('Model settings loaded, but tool settings could not refresh. Check the JSON configuration or /logs.\n'); }
         identify(); continue;
@@ -589,7 +601,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       const job = { id: randomUUID(), sessionId: session.sessionId, turnId: `turn-${randomUUID()}`, text };
       try {
         const prepared = await completion!.prepare(text, lifetime.signal);
-        const result = await run(job, { requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, ...prepared, modelId,
+        const result = await run(job, { requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, ...prepared, modelId, reasoningEffort,
           // UI language is only a fallback; the Agent follows the user's language.
           permissionMode: permissionMode as AgentSendInput['permissionMode'], language: 'en' });
         if (prompt !== undefined) return result;

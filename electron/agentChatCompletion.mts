@@ -3,7 +3,8 @@ import type { AgentHttpClient } from './agentHttpClient.mjs';
 import type { WorkspaceDirectoryPage } from './workspaceFiles.js';
 
 export type ChatChoice = { value: string; description?: string; label?: string };
-export type ChatInputOptions = { chat?: boolean; choices?: ChatChoice[] };
+export type ChatInputOptions = { chat?: boolean; choices?: ChatChoice[];
+  picker?: { title: string; selected?: string; cancelValue: string } };
 export type ChatSuggestion = ChatChoice & { cursor?: number };
 export type ChatSuggestions = { start: number; end: number; items: ChatSuggestion[]; notice?: string; submitOnEnter?: boolean };
 export type ChatSuggestionSource = (line: string, cursor: number, signal: AbortSignal) => Promise<ChatSuggestions | undefined>;
@@ -15,7 +16,7 @@ type Context = { sessionId: string; workspace?: string; platform: string; models
 export const chatExitCommands = ['/exit', '/quit'] as const;
 export const isChatExitCommand = (text: string) => chatExitCommands.some(command => command === text.trim());
 const commands: ChatChoice[] = [
-  { value: '/model ', label: '/model', description: 'Switch the session model' },
+  { value: '/model ', label: '/model', description: 'Select model and reasoning effort' },
   { value: '/settings', description: 'View and reload shared App settings' },
   { value: '/plan', description: 'Show the current task plan' },
   { value: '/artifact ', label: '/artifact', description: 'Browse and open files from this turn' },

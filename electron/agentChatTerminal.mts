@@ -3,7 +3,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { providerStreamActivity, providerActivityLabel, runtimeToolLifecycle, summarizeTaskPlanWaiting, type RuntimeEvent, type TaskPlan } from '@cardbush/bush-protocol';
 import type { ChatTerminal } from './agentChatCli.mjs';
-import { ChatMarkdown, chatHeader, chatInputChunk, terminalClip, terminalCursor, terminalRows, terminalStyle, terminalText, type ChatIdentity } from './agentChatPresentation.mjs';
+import { ChatMarkdown, chatHeader, chatInputChunk, terminalClip, terminalCursor, terminalRows, terminalStyle, terminalText, terminalWidth, type ChatIdentity } from './agentChatPresentation.mjs';
 import { ChatPasteDecoder, ChatPastes } from './agentChatInput.mjs';
 import { applyChatSuggestion, choiceSuggestions, commandSuggestions, type ChatInputOptions, type ChatSuggestions, type ChatSuggestionSource } from './agentChatCompletion.mjs';
 import { ChatLiveViewport, chatInputViewport, type ChatFooter } from './agentChatViewport.mjs';
@@ -21,6 +21,7 @@ export class NativeChatTerminal implements ChatTerminal {
   readonly interactive: boolean;
   readonly color: boolean;
   readonly hyperlinks: boolean;
+  get selectionMenus() { return this.#controls; }
   readonly #input: Input;
   readonly #output: Output;
   readonly #status: Output;
@@ -168,7 +169,12 @@ export class NativeChatTerminal implements ChatTerminal {
       // The paste decoder has already distinguished a standalone Escape from
       // an arrow sequence. Do not make readline wait a second ambiguity timer,
       // which could consume the next slash as Alt+/ instead of cancelling.
-      if (text === '\x1b') { this.#hideHints(); this.#clearDraft(); this.#invalidateHints(); this.#live?.schedule(); return; }
+      if (text === '\x1b') {
+        const cancel = this.#inputOptions.picker?.cancelValue;
+        this.#hideHints(); this.#clearDraft(); this.#invalidateHints();
+        if (cancel !== undefined) this.#waiting?.(cancel);
+        this.#live?.schedule(); return;
+      }
       if (text === '\t') { void this.#completeInput(); return; }
       if (this.#suggestions?.value.items.length && ['\x1b[A', '\x1b[B', '\x1b[Z'].includes(text)) {
         const choice = this.#suggestions, direction = text === '\x1b[B' ? 1 : -1;
@@ -180,7 +186,7 @@ export class NativeChatTerminal implements ChatTerminal {
       this.#suggestions = undefined; this.#keys!.write(text);
       if (this.#editing() && this.#reader?.line) {
         const value = this.#localHints();
-        if (value) this.#suggestions = { line: this.#reader.line, cursor: this.#reader.cursor, value, selected: 0 };
+        if (value) this.#suggestions = { line: this.#reader.line, cursor: this.#reader.cursor, value, selected: this.#initialSelection(value) };
       }
     }
     else if (text.includes('\x03') || text === '\x1b') this.interrupt();
@@ -301,15 +307,15 @@ export class NativeChatTerminal implements ChatTerminal {
     if (this.#turn) lines.push(this.#style(terminalClip(this.#activityLabel() + (this.#queued ? ` · ${this.#queued} queued` : ''), width), 'dim'));
     if (!this.#editing()) return lines.length ? { lines, cursor: { row: lines.length - 1, column: 0 } } : undefined;
     if (rows >= 8) lines.push(this.#style('─'.repeat(Math.min(width, 104)), 'dim'));
+    if (this.#inputOptions.picker) lines.push(this.#style(terminalClip(this.#inputOptions.picker.title, width), 'bold'));
     const input = chatInputViewport(this.#chatPrompt ? '❯ ' : this.#reader.getPrompt(), this.#reader.line, this.#reader.cursor,
       width, Math.max(1, Math.min(4, rows - lines.length - 5)));
     const cursor = { row: lines.length + input.cursor.row, column: input.cursor.column };
     lines.push(...input.lines.map(line => this.#chatPrompt && this.color ? chatInputChunk(line) + '\x1b[48;5;236m\x1b[K\x1b[49m' : line));
     const suggestions = this.#suggestions;
     if (suggestions && suggestions.line === this.#reader.line && suggestions.cursor === this.#reader.cursor) {
-      const capacity = Math.max(0, Math.min(3, rows - lines.length - 3)), start = Math.max(0, suggestions.selected - capacity + 1);
-      lines.push(...suggestions.value.items.slice(start, start + capacity).map((item, index) => this.#style(
-        terminalClip(`  ${index + start === suggestions.selected ? '›' : ' '} ${item.label ?? item.value.trim()}${item.description ? '  ' + item.description : ''}`, width), index + start === suggestions.selected ? 'blue' : 'dim')));
+      const capacity = Math.max(0, Math.min(this.#inputOptions.picker ? 9 : 3, rows - lines.length - 3));
+      lines.push(...this.#suggestionRows(suggestions, capacity, width));
       lines.push(this.#style(terminalClip(suggestions.value.notice ?? (suggestions.value.items.length
         ? this.#hintHelp(suggestions) : '  No matches; keep typing to filter'), width), 'dim'));
     } else if (this.#chatPrompt && !this.#reader.line) lines.push(this.#style(terminalClip(this.#turn
@@ -319,6 +325,23 @@ export class NativeChatTerminal implements ChatTerminal {
   }
   setSuggestionSource(source: ChatSuggestionSource) { this.#suggestionSource = source; }
   setReferenceRenderer(references: ChatReferenceRenderer) { this.#references = references; }
+  #initialSelection(value: ChatSuggestions) {
+    return this.#reader?.line.trim() ? 0 : Math.max(0, value.items.findIndex(item => item.value === this.#inputOptions.picker?.selected));
+  }
+  #suggestionRows(suggestions: ActiveSuggestions, capacity: number, width: number) {
+    const { value, selected } = suggestions;
+    const start = Math.max(0, Math.min(selected - capacity + 1, value.items.length - capacity));
+    const picker = Boolean(this.#inputOptions.picker);
+    const labelWidth = Math.min(42, Math.floor(width * 0.5));
+    return value.items.slice(start, start + capacity).map((item, index) => {
+      const active = index + start === selected, label = item.label ?? item.value.trim();
+      const clipped = terminalClip(label, labelWidth);
+      const name = picker && width >= 60 ? clipped + ' '.repeat(Math.max(0, labelWidth - terminalWidth(clipped))) : label;
+      const text = terminalClip(`  ${active ? '›' : ' '} ${name}${item.description && (!picker || width >= 60) ? '  ' + item.description : ''}`, width);
+      return picker && active && this.color ? `\x1b[48;5;24;97m${text}${' '.repeat(Math.max(0, width - terminalWidth(text)))}\x1b[0m`
+        : this.#style(text, active ? 'blue' : 'dim');
+    });
+  }
   #hideHints() {
     const position = this.#hintPosition;
     if (!position) return;
@@ -329,14 +352,15 @@ export class NativeChatTerminal implements ChatTerminal {
     if (this.#live) { this.#live.schedule(); return; }
     this.#hideHints();
     if (!this.#controls || !this.#waiting || !this.#reader || !this.#suggestions) return;
-    const { line, cursor, value, selected } = this.#suggestions;
+    const { line, cursor, value } = this.#suggestions;
     if (line !== this.#reader.line || cursor !== this.#reader.cursor) return;
     const position = this.#reader.getCursorPos(), columns = this.#status.columns || 80;
     const end = terminalCursor(this.#reader.getPrompt() + line, columns);
-    const capacity = Math.min(3, (this.#status.rows || 24) - end.rows - 3);
+    const picker = this.#inputOptions.picker;
+    const capacity = Math.min(picker ? 9 : 3, (this.#status.rows || 24) - end.rows - (picker ? 4 : 3));
     if (capacity < 1) return;
-    const start = Math.max(0, selected - capacity + 1), lines = value.items.slice(start, start + capacity).map((item, index) =>
-      this.#style(terminalClip(`  ${start + index === selected ? '›' : ' '} ${item.label ?? item.value.trim()}${item.description ? '  ' + item.description : ''}`, columns - 1), start + index === selected ? 'blue' : 'dim'));
+    const lines = [...(picker ? [this.#style(terminalClip(picker.title, columns - 1), 'bold')] : []),
+      ...this.#suggestionRows(this.#suggestions, capacity, columns - 1)];
     lines.push(this.#style(terminalClip(value.notice ?? (value.items.length ? this.#hintHelp(this.#suggestions) : '  No matches; keep typing to filter'), columns - 1), 'dim'));
     const below = Math.max(1, end.rows - position.rows + 1);
     // Newlines reserve actual rows even at the bottom of the viewport. Only
@@ -349,11 +373,18 @@ export class NativeChatTerminal implements ChatTerminal {
     if (this.#editing()) this.#hintTimer = setTimeout(() => { void this.#loadHints(); }, 60).unref();
   }
   #hintHelp(suggestion: ActiveSuggestions) {
+    if (this.#inputOptions.picker) return `  ↑/↓ select · Enter confirm · Esc back · Tab complete · ${suggestion.selected + 1}/${suggestion.value.items.length}`;
     const enter = !this.#chatPrompt && !suggestion.line.trim() ? 'default' : suggestion.value.submitOnEnter ? 'confirm' : 'complete';
     return `  Enter ${enter} · Tab complete · ↑/↓ select · ${suggestion.selected + 1}/${suggestion.value.items.length}`;
   }
   #localHints() {
     const { line, cursor } = this.#reader!;
+    if (this.#inputOptions.picker && line.trimStart().startsWith('/')) {
+      return choiceSuggestions(line, cursor, [
+        { value: '/cancel', description: 'Return to chat without changes' },
+        ...(this.#inputOptions.picker.cancelValue === '/cancel' ? [] : [{ value: this.#inputOptions.picker.cancelValue, description: 'Back' }]),
+      ]);
+    }
     return this.#chatPrompt ? commandSuggestions(line, cursor, this.#models.map(id => ({ id, modelName: id })))
       : choiceSuggestions(line, cursor, this.#inputOptions.choices ?? []);
   }
@@ -364,7 +395,7 @@ export class NativeChatTerminal implements ChatTerminal {
     const valid = () => !controller.signal.aborted && this.#editing() && !this.#closed && revision === this.#inputRevision && this.#reader?.line === line && this.#reader.cursor === cursor;
     const local = this.#localHints();
     if (local && valid() && (this.#suggestions?.line !== line || this.#suggestions.cursor !== cursor)) {
-      this.#suggestions = { line, cursor, value: local, selected: 0 }; this.#drawHints();
+      this.#suggestions = { line, cursor, value: local, selected: this.#initialSelection(local) }; this.#drawHints();
     }
     try {
       const value = this.#chatPrompt && this.#suggestionSource ? await this.#suggestionSource(line, cursor, controller.signal) : local;
@@ -392,7 +423,7 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#scheduleHints();
   }
   #confirmSuggestion() {
-    if (!this.#controls || !this.#reader || !this.#reader.line.trim()) return false;
+    if (!this.#controls || !this.#reader || !this.#reader.line.trim() && !this.#inputOptions.picker) return false;
     const { line, cursor } = this.#reader;
     const current = this.#suggestions;
     const suggestion = current?.line === line && current.cursor === cursor ? current : undefined;
@@ -400,7 +431,7 @@ export class NativeChatTerminal implements ChatTerminal {
     // request finishes. Enter never waits for a remote result to change input.
     const value = suggestion?.value ?? (!this.#chatPrompt || /^\s*\/\S*$/.test(line) ? this.#localHints() : undefined);
     if (!value) return false;
-    const applied = applyChatSuggestion(line, value, suggestion?.selected ?? 0);
+    const applied = applyChatSuggestion(line, value, suggestion?.selected ?? this.#initialSelection(value));
     if (!applied || applied.line === line && applied.cursor === cursor) return false;
     this.#applySuggestion(applied);
     if (value.submitOnEnter) return false;
@@ -442,9 +473,9 @@ export class NativeChatTerminal implements ChatTerminal {
   identify(identity: ChatIdentity, models: string[]) {
     this.#identity = identity; this.#models = models;
     if (this.interactive) this.#emit(chatHeader(identity, this.#status.columns || 80, this.color));
-    else this.status(`\n${identity.name} · ${identity.model} · ${identity.permission}\n${identity.workspace ? `Workspace: ${identity.workspace}\n` : ''}Session: ${identity.sessionId}\n`);
+    else this.status(`\n${identity.name} · ${identity.model} · ${identity.permission}${identity.effort ? ` · Effort: ${identity.effort}` : ''}\n${identity.workspace ? `Workspace: ${identity.workspace}\n` : ''}Session: ${identity.sessionId}\n`);
   }
-  updateModel(model: string, models: string[]) { if (this.#identity) this.#identity.model = model; this.#models = models; }
+  updateModel(model: string, models: string[], effort?: string) { if (this.#identity) { this.#identity.model = model; this.#identity.effort = effort; } this.#models = models; }
   #elapsed() {
     return Math.max(0, this.#runtimeStarted === undefined ? performance.now() - this.#started : (this.#runtimeCompleted ?? Date.now()) - this.#runtimeStarted);
   }
@@ -546,11 +577,16 @@ export class NativeChatTerminal implements ChatTerminal {
         this.#waiting = undefined; signal.removeEventListener('abort', abort); this.#reader?.setPrompt('');
         this.#decoder?.invalidate(); this.#chatPrompt = Boolean(this.#live && !this.#suspended);
         if (this.#chatPrompt) this.#reader?.setPrompt('❯ ');
-        resume(); this.#live?.schedule(); resolve(value);
+        resume(); this.#inputOptions = this.#chatPrompt ? { chat: true } : {}; this.#live?.schedule(); resolve(value);
       };
       const abort = () => finish(null);
       this.#waiting = finish; signal.addEventListener('abort', abort, { once: true });
       this.#reader!.setPrompt(chat ? this.#style('❯ ', 'blue') : terminalText(prompt)); this.#reader!.prompt(Boolean(this.#live));
+      if (input.picker) {
+        const value = this.#localHints();
+        if (value) this.#suggestions = { line: this.#reader!.line, cursor: this.#reader!.cursor, value, selected: this.#initialSelection(value) };
+        this.#drawHints();
+      }
       this.#scheduleHints();
     });
   }

@@ -14,12 +14,67 @@ import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
 import { localDesktopProfile } from '../dist-electron/agentLocalChat.mjs';
 import { chatShellCommand, chatShellInvocation, runChatShell } from '../dist-electron/agentChatShell.mjs';
-import { waitForChatConfiguration } from '../dist-electron/agentChatModels.mjs';
+import { waitForChatConfiguration, selectChatModel, chatEffortLabel } from '../dist-electron/agentChatModels.mjs';
 
 const entry = resolve('dist-electron/agentChatCli.mjs');
 const tempRoot = resolve('tmp/agent-chat-cli-tests');
 const job = { id: 'job', sessionId: 'session', turnId: 'turn' };
 const segment = { messageId: 'message', segmentId: 'segment', ordinal: 0 };
+
+const pickerConfig = { defaultModelId: 'responses', models: [
+  { id: 'responses', modelName: 'Response Model', apiProtocol: 'openai_responses', reasoningEffort: 'high' },
+  { id: 'chat', modelName: 'Chat Model', apiProtocol: 'openai_chat_completions', reasoningEffort: 'max' },
+  { id: 'anthropic', modelName: 'Messages Model', apiProtocol: 'anthropic_messages', reasoningEffort: null },
+] };
+async function pickModel(answers, current = { modelId: 'responses' }, argument = '') {
+  const prompts = [], output = [];
+  const result = await selectChatModel(pickerConfig, current, argument, {
+    interactive: true, status(text) { output.push(text); },
+    async ask(prompt, signal, options) {
+      assert.ok(answers.length, `Unexpected extra prompt: ${prompt}`);
+      prompts.push({ prompt, options }); signal.throwIfAborted(); return answers.shift();
+    },
+  }, new AbortController().signal);
+  assert.equal(answers.length, 0);
+  return { result, prompts, output: output.join('') };
+}
+
+test('model picker selects effort using the shared App protocol rules and preserves defaults', async () => {
+  const picked = await pickModel(['3', 'max']);
+  assert.deepEqual(picked.result, { modelId: 'anthropic', reasoningEffort: 'max' });
+  assert.deepEqual(picked.prompts[1].options.choices.map(item => item.value), ['configured', 'default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.match(picked.output, /Effort: Max/);
+  const limited = await pickModel(['2', 'max', 'high']);
+  assert.deepEqual(limited.result, { modelId: 'chat', reasoningEffort: 'high' });
+  assert.deepEqual(limited.prompts[1].options.choices.map(item => item.value), ['configured', 'default', 'low', 'medium', 'high']);
+  assert.match(limited.output, /Choose an effort from the list/);
+  assert.match(limited.prompts[1].options.choices[0].description, /High/);
+  assert.equal(chatEffortLabel(pickerConfig.models[1]), 'High');
+  assert.deepEqual(pickerConfig.models.map(model => model.reasoningEffort), ['high', 'max', null], 'selection never mutates shared configuration');
+});
+
+test('provider default clears effort while model setting inherits it; empty Enter keeps the highlighted value', async () => {
+  assert.deepEqual((await pickModel(['', ''])).result, { modelId: 'responses' });
+  assert.deepEqual((await pickModel(['default'], { modelId: 'responses', reasoningEffort: 'low' }, 'responses')).result,
+    { modelId: 'responses', reasoningEffort: null });
+  const picked = await pickModel([''], { modelId: 'chat', reasoningEffort: 'max' }, 'chat');
+  assert.equal(picked.prompts[0].options.picker.selected, 'high', 'stored efforts use the App protocol mapping');
+  assert.deepEqual(picked.result, { modelId: 'chat', reasoningEffort: 'high' });
+  assert.equal(chatEffortLabel(pickerConfig.models[0], null), 'Provider default');
+  assert.equal(chatEffortLabel(pickerConfig.models[0]), 'High');
+});
+
+test('back or cancellation never commits a partially chosen model or effort', async () => {
+  const current = { modelId: 'responses', reasoningEffort: 'low' };
+  for (const answers of [['/cancel'], ['2', '/cancel'], ['2', null], ['2', '/back', '/cancel']]) {
+    assert.equal((await pickModel(answers, current)).result, current);
+  }
+  const back = await pickModel(['2', '/back', '3', 'configured'], current);
+  assert.equal(back.prompts[2].options.picker.selected, 'chat');
+  assert.equal(back.prompts[1].options.picker.cancelValue, '/back');
+  assert.deepEqual(back.result, { modelId: 'anthropic' });
+  assert.equal((await pickModel([], current, 'missing-model')).result, current);
+});
 const permission = { permissionId: 'permission', reason: 'Read outside workspace', actions: ['file.read'],
   targets: [{ kind: 'filesystem_path', value: '/outside.txt' }], requestedCapabilityIds: ['file.read.outside'] };
 const question = { selectionId: 'selection', sessionId: job.sessionId, turnId: job.turnId, toolCallId: 'tool',
@@ -407,6 +462,10 @@ test('queued CLI prompts appear once in turn order after the preceding completio
   const f = await fixture(t); f.block(true);
   const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
   await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('/model fixture\r');
+  await until(() => process.stderr, text => text.includes('Select Reasoning Level for fixture-model'));
+  process.child.stdin.write('high\r');
+  await until(() => process.stderr, text => text.includes('Switched to: fixture-model'));
   process.child.stdin.write('first ordering question\r');
   await until(() => f.calls.length, count => count === 1);
   for (const [index, question] of ['second ordering question', 'third ordering question'].entries()) {
@@ -419,11 +478,18 @@ test('queued CLI prompts appear once in turn order after the preceding completio
   await until(() => process.stderr, text => text.split('✓ Completed').length === 4);
   process.child.stdin.write('/q\r'); const result = await process.result;
   assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(f.calls.map(call => call.reasoning?.effort), ['high', 'high', 'high'], 'queued turns keep the selected effort');
   const visible = stripVTControlCharacters(result.stderr);
   assert.match(visible, /❯ first ordering question[\s\S]*✓ Completed[\s\S]*❯ second ordering question[\s\S]*✓ Completed[\s\S]*❯ third ordering question[\s\S]*✓ Completed/);
   for (const prefix of ['first', 'second', 'third']) assert.equal(visible.split(`❯ ${prefix} ordering question`).length, 2, 'each prompt is committed exactly once');
   assert.equal(f.calls.length, 3);
   assert.deepEqual(stripVTControlCharacters(result.stdout).trim().split(/\s+/), ['fixture-answer-1', 'fixture-answer-2', 'fixture-answer-3']);
+  const lastJob = (await f.service.call('chat.jobs', {})).at(-1);
+  assert.equal(lastJob.reasoningEffort, 'high');
+  assert.equal(lastJob.input, undefined, 'resuming uses public selection fields, not private job inputs');
+  const resumed = await cli(t, ['--resume', lastJob.sessionId, '--prompt', 'resume chosen high effort'], { env: f.env, cwd: f.cwd }).result;
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(f.calls.at(-1).reasoning?.effort, 'high', 'resume keeps explicit effort');
 });
 
 test('real CLI /artifact lists turn files, Tab selects and Enter downloads/opens once without another model request', async t => {
@@ -838,11 +904,15 @@ test('native model/settings commands share App JSON, preserve secrets, and recov
   local.child.stdin.write('/model\n');
   await until(() => local.stderr, text => text.includes('Select a number or model ID'));
   local.child.stdin.write('1\n');
+  await until(() => local.stderr, text => text.includes('Select Reasoning Level for fixture-model'));
+  local.child.stdin.write('high\n');
   await until(() => local.stderr, text => text.includes('Switched to: fixture-model'));
   f.failNext('OFFLINE_PROVIDER_REJECTED'); local.child.stdin.write('failing turn\n');
   await until(() => local.stderr, text => text.includes('[Error]') && text.includes('! Task failed ·'));
   assert.equal(local.child.exitCode, null, 'a provider error returns to the prompt');
   local.child.stdin.write('/model second\n');
+  await until(() => local.stderr, text => text.includes('Select Reasoning Level for second-model'));
+  local.child.stdin.write('default\n');
   await until(() => local.stderr, text => text.includes('Switched to: second-model'));
   local.child.stdin.write('successful turn\n');
   await until(() => local.stdout, text => text.includes('fixture-answer-2'));
@@ -850,11 +920,17 @@ test('native model/settings commands share App JSON, preserve secrets, and recov
   local.child.stdin.write('/exit\n');
   const result = await local.result; assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(f.calls.map(call => call.model), ['fixture-model', 'second-model']);
+  assert.deepEqual(f.calls.map(call => call.reasoning?.effort), ['high', undefined], 'provider default clears any shared setting');
   assert.equal(await readFile(configPath, 'utf8'), sharedText, 'model switching does not rewrite App defaults or credentials');
   assert.doesNotMatch(result.stdout + result.stderr, /fixture-model-secret|\x1b\[\?1049[hl]/);
   const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
   assert.deepEqual(state.jobs.map(job => job.input.text), ['failing turn', 'successful turn']);
   assert.deepEqual(state.jobs.map(job => job.status), ['failed', 'completed']);
+  assert.deepEqual(state.jobs.map(job => job.input.reasoningEffort), ['high', null]);
+  const resumed = await cli(t, ['--resume', state.jobs.at(-1).sessionId, '--prompt', 'resume with chosen effort'], { env, cwd: f.cwd }).result;
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(f.calls.at(-1).model, 'second-model'); assert.equal(f.calls.at(-1).reasoning?.effort, undefined);
+  assert.equal(await readFile(configPath, 'utf8'), sharedText, 'resume does not change shared settings');
 });
 
 test('unconfigured local CLI waits for file editing, reloads in place and never submits setup input', async t => {

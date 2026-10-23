@@ -883,6 +883,7 @@ export class AgentService {
 function publicJob({ input, ...job }: AgentJob) {
   const prompt = readUserPrompt(input.text, input.userMessageMetadata);
   return { ...job, text: prompt.text, modelId: input.modelId,
+    ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
     ...(prompt.context ? { userMessageMetadata: promptContextMetadata(prompt) } : {}),
     ...(Array.isArray(input.userMessageMetadata?.attachments) ? { attachments: input.userMessageMetadata.attachments.slice(0, 8) } : {}) };
 }
