@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { summarizeSession, type SessionSummary, type SessionHistoryRequest } from '@cardbush/bush-protocol';
 import { turnContextSummaryUpdateSchema, type TurnContextSummaryUpdate } from '@cardbush/bush-protocol';
 import type { StoredHistoryPage } from './sessionReadIndex.js';
-import { validatePreparedToolHandoff, preparedToolHandoffReceipt } from './preparedToolHandoff.js';
+import { preparedToolHandoffReceipt } from './preparedToolHandoff.js';
+import { validateToolHandoff, isRecordedToolHandoff, findRecordedToolHandoff } from './recordedToolHandoff.js';
 
 import {
   BUSH_SESSION_EVENT_PROTOCOL,
@@ -94,8 +95,13 @@ export class SessionStore {
   }
 
   modelContract(sessionId: string): SessionModelContract | undefined {
-    const event = this.#load(sessionId).find(event => event.kind === 'model_contract_bound');
-    return event?.kind === 'model_contract_bound' ? structuredClone(event.payload) : undefined;
+    const events = this.#load(sessionId);
+    for (let index = events.length - 1; index >= 0; index--) {
+      const event = events[index]!;
+      if (event.kind === 'model_contract_updated') return structuredClone(event.payload.contract);
+      if (event.kind === 'model_contract_bound') return structuredClone(event.payload);
+    }
+    return undefined;
   }
 
   bindModelContract(sessionId: string, contract: SessionModelContract): SessionModelContract {
@@ -105,6 +111,15 @@ export class SessionStore {
     const payload = sessionModelContractSchema.parse(contract);
     this.#append(sessionId, { kind: 'model_contract_bound', payload });
     return structuredClone(payload);
+  }
+
+  upgradeModelContract(sessionId: string, expectedVersion: string, candidate: SessionModelContract): SessionModelContract {
+    const existing = this.modelContract(sessionId), contract = sessionModelContractSchema.parse(candidate);
+    if (!existing || existing.version !== expectedVersion || contract.policyId !== existing.policyId || contract.version === expectedVersion) {
+      throw new Error('Model policy migration does not match the current bound version.');
+    }
+    this.#append(sessionId, { kind: 'model_contract_updated', payload: { expectedVersion, contract } });
+    return structuredClone(contract);
   }
 
   hasSession(sessionId: string): boolean {
@@ -250,6 +265,12 @@ export class SessionStore {
             }
           }
         }
+        if (turn.contextToolHandoff && isRecordedToolHandoff(turn.contextToolHandoff)) {
+          // Archive locators were rebased above; bind to the fork's new facts.
+          const handoff = findRecordedToolHandoff(turn);
+          if (!handoff) throw new Error('Cannot rebase recorded tool handoff.');
+          turn.contextToolHandoff = handoff;
+        }
         this.#append(sessionId, { kind: 'turn_committed', payload: turn });
       }
       if (standaloneSuperseded.size) this.#append(sessionId, { kind: 'messages_superseded',
@@ -393,7 +414,7 @@ export class SessionStore {
         if (turn.contextToolHandoff || turn.messages.some(fact => before.supersededMessageIds.includes(fact.messageId))) {
           throw new Error('Prepared handoff source is already projected or was superseded.');
         }
-        validatePreparedToolHandoff(turn, item.toolHandoff);
+        validateToolHandoff(turn, item.toolHandoff);
       }
     }
     this.#append(sessionId, {
@@ -463,7 +484,7 @@ export function projectSession(
   const messageIds = new Set<string>();
   const superseded = new Set<string>();
   let metadata: Record<string, unknown> | undefined;
-  let modelContractBound = false;
+  let modelContractBound: SessionModelContract | undefined;
   for (const [index, event] of events.entries()) {
     if (event.sessionId !== sessionId) throw new Error("Session event identity mismatch.");
     if (event.sequence !== index + 1) throw new Error("Session event sequence is not contiguous.");
@@ -482,7 +503,15 @@ export function projectSession(
     }
     if (event.kind === 'model_contract_bound') {
       if (modelContractBound) throw new Error('Session model contract may only be bound once.');
-      modelContractBound = true;
+      modelContractBound = event.payload;
+    }
+    if (event.kind === 'model_contract_updated') {
+      const { expectedVersion, contract } = event.payload;
+      if (!modelContractBound || modelContractBound.version !== expectedVersion ||
+        modelContractBound.policyId !== contract.policyId || contract.version === expectedVersion) {
+        throw new Error('Model policy migration does not match the bound contract.');
+      }
+      modelContractBound = contract;
     }
     if (event.kind === "turn_committed") {
       const turn = event.payload;
@@ -527,7 +556,7 @@ export function projectSession(
           if (turn.contextToolHandoff || turn.messages.some(fact => superseded.has(fact.messageId))) {
             throw new Error('Prepared handoff source is already projected or was superseded.');
           }
-          validatePreparedToolHandoff(turn, item.toolHandoff);
+          validateToolHandoff(turn, item.toolHandoff);
           turn.contextToolHandoff = item.toolHandoff;
         } else {
           turn.contextSummary = item.summary;
@@ -576,7 +605,7 @@ export function addSupersededMessages(known: Set<string>, superseded: Set<string
 }
 
 export function validateCommittedTurn(turn: CommittedTurn): void {
-  if (turn.contextToolHandoff) validatePreparedToolHandoff(turn, turn.contextToolHandoff);
+  if (turn.contextToolHandoff) validateToolHandoff(turn, turn.contextToolHandoff);
   const messageIds = new Set<string>();
   for (const [index, message] of turn.messages.entries()) {
     if (message.turnId !== turn.turnId) throw new Error("Message Turn identity mismatch.");

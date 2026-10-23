@@ -1,0 +1,1268 @@
+{
+  "recordedAt": "2026-10-23T11:07:10.549Z",
+  "config": {
+    "model": "deepseek-flash",
+    "adapter": "openai_responses",
+    "reasoningEffort": "provider default",
+    "maxOutputTokens": 127998,
+    "configuredContextWindow": 530000,
+    "simulatedContextWindow": 167998
+  },
+  "methodology": {
+    "syntheticFacts": true,
+    "fixedFinalRepliesIdenticalInAllArms": true,
+    "rubricHiddenFromModel": true,
+    "sameModelSettingsAndTools": true,
+    "pressureCounter": "Controlled JSON characters / 4, including tool definitions; not provider tokenization.",
+    "actualTokenMetrics": "Provider usage on each real call; raw control and compacted continuation use identical questions and tools.",
+    "arms": [
+      "raw: same history without pressure",
+      "checkpoint: production on-demand model compaction",
+      "recorded: default deterministic tool record projection"
+    ],
+    "preparationCalls": 0,
+    "businessToolsExecuted": 0,
+    "userSessionsModified": false,
+    "repetitions": 1
+  },
+  "runs": [
+    {
+      "case": "video",
+      "variant": "raw",
+      "stale": false,
+      "opaque": false,
+      "stage": "video-raw",
+      "elapsedMs": 3777,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "compactions": [],
+      "pressureWaitMs": 0,
+      "answer": "```json\n{\n  \"asset_ids\": [\"A-17\", \"A-18\"],\n  \"failed_job\": \"R-11\",\n  \"pending_job\": \"R-12\",\n  \"may_resubmit\": false,\n  \"version\": \"V-12\",\n  \"min_shot_seconds\": 3.2,\n  \"sfx_gain_db\": -18,\n  \"sfx_start_seconds\": 7.4,\n  \"typography_id\": \"T-12\",\n  \"listening_passed\": false,\n  \"reference_images_viewed\": false,\n  \"may_publish\": false,\n  \"opening_full_body_seconds\": 3.6\n}\n```",
+      "checks": [
+        {
+          "key": "asset_ids",
+          "passed": true,
+          "expected": [
+            "A-17",
+            "A-18"
+          ],
+          "actual": [
+            "A-17",
+            "A-18"
+          ]
+        },
+        {
+          "key": "failed_job",
+          "passed": true,
+          "expected": "R-11",
+          "actual": "R-11"
+        },
+        {
+          "key": "pending_job",
+          "passed": true,
+          "expected": "R-12",
+          "actual": "R-12"
+        },
+        {
+          "key": "may_resubmit",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "version",
+          "passed": true,
+          "expected": "V-12",
+          "actual": "V-12"
+        },
+        {
+          "key": "min_shot_seconds",
+          "passed": true,
+          "expected": 3.2,
+          "actual": 3.2
+        },
+        {
+          "key": "sfx_gain_db",
+          "passed": true,
+          "expected": -18,
+          "actual": -18
+        },
+        {
+          "key": "sfx_start_seconds",
+          "passed": true,
+          "expected": 7.4,
+          "actual": 7.4
+        },
+        {
+          "key": "typography_id",
+          "passed": true,
+          "expected": "T-12",
+          "actual": "T-12"
+        },
+        {
+          "key": "listening_passed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "reference_images_viewed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "may_publish",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "opening_full_body_seconds",
+          "passed": true,
+          "expected": 3.6,
+          "actual": 3.6
+        }
+      ],
+      "passed": 13,
+      "total": 13,
+      "modelCalls": 1,
+      "maintenanceRequests": 0,
+      "totalInputTokens": 25893,
+      "totalOutputTokens": 311,
+      "continuationInputTokens": 25893,
+      "appliedHandoffs": []
+    },
+    {
+      "case": "video",
+      "variant": "checkpoint",
+      "stale": false,
+      "opaque": false,
+      "stage": "video-checkpoint",
+      "elapsedMs": 17434,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "compactions": [
+        {
+          "kind": "context_compaction_started",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "thresholdRatio": 0.5,
+            "triggerRatio": 0.7685,
+            "estimatedInputTokens": 30740,
+            "usableInputTokens": 40000,
+            "measurement": "provider",
+            "compactionTriggerTokens": 20000,
+            "compactionOutputTokens": 127998,
+            "normalOutputTokens": 127998,
+            "safetyTokens": 400,
+            "trigger": "budget",
+            "precedingTurnCount": 2,
+            "activeTurnIncluded": false,
+            "sourceRanges": [
+              {
+                "turnId": "materials",
+                "startMessage": 2,
+                "endMessageExclusive": 8
+              },
+              {
+                "turnId": "revision",
+                "startMessage": 8,
+                "endMessageExclusive": 11
+              }
+            ],
+            "targetInputTokens": 16000,
+            "recentTokenBudget": 3200,
+            "retainedInputTokens": 19,
+            "isolateSources": true,
+            "method": "checkpoint"
+          }
+        },
+        {
+          "kind": "context_compaction_completed",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 2,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "summarizedTurnCount": 2,
+            "activeTurnCheckpointed": false,
+            "inputTokensBefore": 30740,
+            "inputTokensAfter": 7546,
+            "targetInputTokens": 16000,
+            "retainedMessageCount": 0,
+            "inputDigest": "37d168e5b740adf582a9d28af58bbb35d86f94ffe8fd659a343789ec2874e78c",
+            "method": "checkpoint"
+          }
+        }
+      ],
+      "pressureWaitMs": 15912,
+      "answer": "```json\n{\n  \"asset_ids\": [\"A-17\", \"A-18\"],\n  \"failed_job\": \"R-11\",\n  \"pending_job\": \"R-12\",\n  \"may_resubmit\": false,\n  \"version\": null,\n  \"min_shot_seconds\": 3.2,\n  \"sfx_gain_db\": -18,\n  \"sfx_start_seconds\": 7.4,\n  \"typography_id\": \"T-12\",\n  \"listening_passed\": false,\n  \"reference_images_viewed\": false,\n  \"may_publish\": false,\n  \"opening_full_body_seconds\": 3.6\n}\n```",
+      "checks": [
+        {
+          "key": "asset_ids",
+          "passed": true,
+          "expected": [
+            "A-17",
+            "A-18"
+          ],
+          "actual": [
+            "A-17",
+            "A-18"
+          ]
+        },
+        {
+          "key": "failed_job",
+          "passed": true,
+          "expected": "R-11",
+          "actual": "R-11"
+        },
+        {
+          "key": "pending_job",
+          "passed": true,
+          "expected": "R-12",
+          "actual": "R-12"
+        },
+        {
+          "key": "may_resubmit",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "version",
+          "passed": false,
+          "expected": "V-12",
+          "actual": null
+        },
+        {
+          "key": "min_shot_seconds",
+          "passed": true,
+          "expected": 3.2,
+          "actual": 3.2
+        },
+        {
+          "key": "sfx_gain_db",
+          "passed": true,
+          "expected": -18,
+          "actual": -18
+        },
+        {
+          "key": "sfx_start_seconds",
+          "passed": true,
+          "expected": 7.4,
+          "actual": 7.4
+        },
+        {
+          "key": "typography_id",
+          "passed": true,
+          "expected": "T-12",
+          "actual": "T-12"
+        },
+        {
+          "key": "listening_passed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "reference_images_viewed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "may_publish",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "opening_full_body_seconds",
+          "passed": true,
+          "expected": 3.6,
+          "actual": 3.6
+        }
+      ],
+      "passed": 12,
+      "total": 13,
+      "modelCalls": 3,
+      "maintenanceRequests": 2,
+      "totalInputTokens": 40020,
+      "totalOutputTokens": 2961,
+      "continuationInputTokens": 7018,
+      "appliedHandoffs": []
+    },
+    {
+      "case": "video",
+      "variant": "recorded",
+      "stale": false,
+      "opaque": false,
+      "stage": "video-recorded",
+      "elapsedMs": 2844,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "compactions": [
+        {
+          "kind": "context_compaction_started",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "thresholdRatio": 0.5,
+            "triggerRatio": 0.7685,
+            "estimatedInputTokens": 30740,
+            "usableInputTokens": 40000,
+            "measurement": "provider",
+            "compactionTriggerTokens": 20000,
+            "compactionOutputTokens": 127998,
+            "normalOutputTokens": 127998,
+            "safetyTokens": 400,
+            "trigger": "budget",
+            "precedingTurnCount": 2,
+            "activeTurnIncluded": false,
+            "method": "recorded_tool_handoff",
+            "preparedTurnIds": [
+              "materials",
+              "revision"
+            ]
+          }
+        },
+        {
+          "kind": "context_compaction_completed",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "summarizedTurnCount": 2,
+            "activeTurnCheckpointed": false,
+            "inputTokensBefore": 30740,
+            "inputTokensAfter": 5270,
+            "targetInputTokens": 16000,
+            "inputDigest": "e2bd8c12a0d2a3fdd4d0d3f222dc9cb1f413d69c3cd9df157f6a13b1d4bc5682",
+            "method": "recorded_tool_handoff"
+          }
+        }
+      ],
+      "pressureWaitMs": 6,
+      "answer": "{\"asset_ids\":[\"A-17\",\"A-18\"],\"failed_job\":\"R-11\",\"pending_job\":\"R-12\",\"may_resubmit\":false,\"version\":\"V-12\",\"min_shot_seconds\":3.2,\"sfx_gain_db\":-18,\"sfx_start_seconds\":7.4,\"typography_id\":\"T-12\",\"listening_passed\":false,\"reference_images_viewed\":false,\"may_publish\":false,\"opening_full_body_seconds\":3.6}",
+      "checks": [
+        {
+          "key": "asset_ids",
+          "passed": true,
+          "expected": [
+            "A-17",
+            "A-18"
+          ],
+          "actual": [
+            "A-17",
+            "A-18"
+          ]
+        },
+        {
+          "key": "failed_job",
+          "passed": true,
+          "expected": "R-11",
+          "actual": "R-11"
+        },
+        {
+          "key": "pending_job",
+          "passed": true,
+          "expected": "R-12",
+          "actual": "R-12"
+        },
+        {
+          "key": "may_resubmit",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "version",
+          "passed": true,
+          "expected": "V-12",
+          "actual": "V-12"
+        },
+        {
+          "key": "min_shot_seconds",
+          "passed": true,
+          "expected": 3.2,
+          "actual": 3.2
+        },
+        {
+          "key": "sfx_gain_db",
+          "passed": true,
+          "expected": -18,
+          "actual": -18
+        },
+        {
+          "key": "sfx_start_seconds",
+          "passed": true,
+          "expected": 7.4,
+          "actual": 7.4
+        },
+        {
+          "key": "typography_id",
+          "passed": true,
+          "expected": "T-12",
+          "actual": "T-12"
+        },
+        {
+          "key": "listening_passed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "reference_images_viewed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "may_publish",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "opening_full_body_seconds",
+          "passed": true,
+          "expected": 3.6,
+          "actual": 3.6
+        }
+      ],
+      "passed": 13,
+      "total": 13,
+      "modelCalls": 1,
+      "maintenanceRequests": 0,
+      "totalInputTokens": 4605,
+      "totalOutputTokens": 331,
+      "continuationInputTokens": 4605,
+      "appliedHandoffs": [
+        "materials",
+        "revision"
+      ]
+    },
+    {
+      "case": "video",
+      "variant": "recorded",
+      "stale": true,
+      "opaque": false,
+      "stage": "video-stale-recorded",
+      "elapsedMs": 5981,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "compactions": [
+        {
+          "kind": "context_compaction_started",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "thresholdRatio": 0.5,
+            "triggerRatio": 0.7694,
+            "estimatedInputTokens": 30776,
+            "usableInputTokens": 40000,
+            "measurement": "provider",
+            "compactionTriggerTokens": 20000,
+            "compactionOutputTokens": 127998,
+            "normalOutputTokens": 127998,
+            "safetyTokens": 400,
+            "trigger": "budget",
+            "precedingTurnCount": 2,
+            "activeTurnIncluded": false,
+            "method": "recorded_tool_handoff",
+            "preparedTurnIds": [
+              "materials",
+              "revision"
+            ]
+          }
+        },
+        {
+          "kind": "context_compaction_completed",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "summarizedTurnCount": 2,
+            "activeTurnCheckpointed": false,
+            "inputTokensBefore": 30776,
+            "inputTokensAfter": 5289,
+            "targetInputTokens": 16000,
+            "inputDigest": "33b214833eea9b63af7ff787660f4a4dcf8e6d100c2a7d4390b26b8069a099a5",
+            "method": "recorded_tool_handoff"
+          }
+        }
+      ],
+      "pressureWaitMs": 2,
+      "answer": "```json\n{\n  \"asset_ids\": [\"A-17\", \"A-18\"],\n  \"failed_job\": \"R-11\",\n  \"pending_job\": null,\n  \"may_resubmit\": false,\n  \"version\": \"V-13\",\n  \"min_shot_seconds\": 3.2,\n  \"sfx_gain_db\": null,\n  \"sfx_start_seconds\": null,\n  \"typography_id\": null,\n  \"listening_passed\": false,\n  \"reference_images_viewed\": false,\n  \"may_publish\": false,\n  \"opening_full_body_seconds\": null\n}\n```",
+      "checks": [
+        {
+          "key": "pending_job",
+          "passed": true,
+          "expected": null,
+          "actual": null
+        },
+        {
+          "key": "may_resubmit",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "version",
+          "passed": true,
+          "expected": "V-13",
+          "actual": "V-13"
+        }
+      ],
+      "passed": 3,
+      "total": 3,
+      "modelCalls": 1,
+      "maintenanceRequests": 0,
+      "totalInputTokens": 4640,
+      "totalOutputTokens": 959,
+      "continuationInputTokens": 4640,
+      "appliedHandoffs": [
+        "materials",
+        "revision"
+      ]
+    },
+    {
+      "case": "deployment",
+      "variant": "recorded",
+      "stale": false,
+      "opaque": false,
+      "stage": "deployment-recorded",
+      "elapsedMs": 2204,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "compactions": [
+        {
+          "kind": "context_compaction_started",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "thresholdRatio": 0.5,
+            "triggerRatio": 0.7717,
+            "estimatedInputTokens": 30868,
+            "usableInputTokens": 40000,
+            "measurement": "provider",
+            "compactionTriggerTokens": 20000,
+            "compactionOutputTokens": 127998,
+            "normalOutputTokens": 127998,
+            "safetyTokens": 400,
+            "trigger": "budget",
+            "precedingTurnCount": 2,
+            "activeTurnIncluded": false,
+            "method": "recorded_tool_handoff",
+            "preparedTurnIds": [
+              "install",
+              "config"
+            ]
+          }
+        },
+        {
+          "kind": "context_compaction_completed",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "summarizedTurnCount": 2,
+            "activeTurnCheckpointed": false,
+            "inputTokensBefore": 30868,
+            "inputTokensAfter": 5396,
+            "targetInputTokens": 16000,
+            "inputDigest": "f8273ab15d5cb17a7651da2d6d1d7fad02e7bb316ee82322b9b835e7f0cba8b8",
+            "method": "recorded_tool_handoff"
+          }
+        }
+      ],
+      "pressureWaitMs": 2,
+      "answer": "```json\n{\n  \"account\": \"cardbush-agent\",\n  \"service\": \"AgentB\",\n  \"port\": 4781,\n  \"bind\": \"127.0.0.1\",\n  \"install_job\": \"I-301\",\n  \"config_transaction\": \"CFG-44\",\n  \"config_status\": \"pending\",\n  \"busy_job\": \"JOB-77\",\n  \"workspace\": \"D:/jobs/111\",\n  \"shell\": \"PowerShell 7.4\",\n  \"current_version\": \"C-19\",\n  \"pending_version\": \"C-20\",\n  \"backup\": \"C:/synthetic/backups/config-19.json\",\n  \"restart_approved\": false,\n  \"config_applied\": false,\n  \"desktop_state\": \"unknown\"\n}\n```",
+      "checks": [
+        {
+          "key": "account",
+          "passed": true,
+          "expected": "cardbush-agent",
+          "actual": "cardbush-agent"
+        },
+        {
+          "key": "service",
+          "passed": true,
+          "expected": "AgentB",
+          "actual": "AgentB"
+        },
+        {
+          "key": "port",
+          "passed": true,
+          "expected": 4781,
+          "actual": 4781
+        },
+        {
+          "key": "bind",
+          "passed": true,
+          "expected": "127.0.0.1",
+          "actual": "127.0.0.1"
+        },
+        {
+          "key": "install_job",
+          "passed": true,
+          "expected": "I-301",
+          "actual": "I-301"
+        },
+        {
+          "key": "config_transaction",
+          "passed": true,
+          "expected": "CFG-44",
+          "actual": "CFG-44"
+        },
+        {
+          "key": "config_status",
+          "passed": true,
+          "expected": "pending",
+          "actual": "pending"
+        },
+        {
+          "key": "busy_job",
+          "passed": true,
+          "expected": "JOB-77",
+          "actual": "JOB-77"
+        },
+        {
+          "key": "workspace",
+          "passed": true,
+          "expected": "D:/jobs/111",
+          "actual": "D:/jobs/111"
+        },
+        {
+          "key": "shell",
+          "passed": true,
+          "expected": "PowerShell 7.4",
+          "actual": "PowerShell 7.4"
+        },
+        {
+          "key": "current_version",
+          "passed": true,
+          "expected": "C-19",
+          "actual": "C-19"
+        },
+        {
+          "key": "pending_version",
+          "passed": true,
+          "expected": "C-20",
+          "actual": "C-20"
+        },
+        {
+          "key": "backup",
+          "passed": true,
+          "expected": "C:/synthetic/backups/config-19.json",
+          "actual": "C:/synthetic/backups/config-19.json"
+        },
+        {
+          "key": "restart_approved",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "config_applied",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "desktop_state",
+          "passed": true,
+          "expected": "unknown",
+          "actual": "unknown"
+        }
+      ],
+      "passed": 16,
+      "total": 16,
+      "modelCalls": 1,
+      "maintenanceRequests": 0,
+      "totalInputTokens": 4729,
+      "totalOutputTokens": 351,
+      "continuationInputTokens": 4729,
+      "appliedHandoffs": [
+        "install",
+        "config"
+      ]
+    },
+    {
+      "case": "deployment",
+      "variant": "checkpoint",
+      "stale": false,
+      "opaque": false,
+      "stage": "deployment-checkpoint",
+      "elapsedMs": 21077,
+      "status": "failed",
+      "reason": "context_compaction_failed",
+      "compactions": [
+        {
+          "kind": "context_compaction_started",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "thresholdRatio": 0.5,
+            "triggerRatio": 0.7717,
+            "estimatedInputTokens": 30868,
+            "usableInputTokens": 40000,
+            "measurement": "provider",
+            "compactionTriggerTokens": 20000,
+            "compactionOutputTokens": 127998,
+            "normalOutputTokens": 127998,
+            "safetyTokens": 400,
+            "trigger": "budget",
+            "precedingTurnCount": 2,
+            "activeTurnIncluded": false,
+            "sourceRanges": [
+              {
+                "turnId": "install",
+                "startMessage": 2,
+                "endMessageExclusive": 8
+              },
+              {
+                "turnId": "config",
+                "startMessage": 8,
+                "endMessageExclusive": 13
+              }
+            ],
+            "targetInputTokens": 16000,
+            "recentTokenBudget": 3200,
+            "retainedInputTokens": 17,
+            "isolateSources": true,
+            "method": "checkpoint"
+          }
+        },
+        {
+          "kind": "context_compaction_failed",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 4,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "reason": "context_compaction_failed",
+            "message": "The checkpoint retry budget was exhausted before recovery."
+          }
+        }
+      ],
+      "pressureWaitMs": 0,
+      "answer": "",
+      "parseFailure": true,
+      "modelCalls": 3,
+      "maintenanceRequests": 3,
+      "totalInputTokens": 51586,
+      "totalOutputTokens": 3655,
+      "appliedHandoffs": []
+    },
+    {
+      "case": "deployment",
+      "variant": "raw",
+      "stale": false,
+      "opaque": false,
+      "stage": "deployment-raw",
+      "elapsedMs": 3341,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "compactions": [],
+      "pressureWaitMs": 0,
+      "answer": "```json\n{\n  \"account\": \"cardbush-agent\",\n  \"service\": \"AgentB\",\n  \"port\": 4781,\n  \"bind\": \"127.0.0.1\",\n  \"install_job\": \"I-301\",\n  \"config_transaction\": \"CFG-44\",\n  \"config_status\": \"pending\",\n  \"busy_job\": \"JOB-77\",\n  \"workspace\": \"D:/jobs/111\",\n  \"shell\": \"PowerShell 7.4\",\n  \"current_version\": \"C-19\",\n  \"pending_version\": \"C-20\",\n  \"backup\": \"C:/synthetic/backups/config-19.json\",\n  \"restart_approved\": false,\n  \"config_applied\": false,\n  \"desktop_state\": \"unknown\"\n}\n```",
+      "checks": [
+        {
+          "key": "account",
+          "passed": true,
+          "expected": "cardbush-agent",
+          "actual": "cardbush-agent"
+        },
+        {
+          "key": "service",
+          "passed": true,
+          "expected": "AgentB",
+          "actual": "AgentB"
+        },
+        {
+          "key": "port",
+          "passed": true,
+          "expected": 4781,
+          "actual": 4781
+        },
+        {
+          "key": "bind",
+          "passed": true,
+          "expected": "127.0.0.1",
+          "actual": "127.0.0.1"
+        },
+        {
+          "key": "install_job",
+          "passed": true,
+          "expected": "I-301",
+          "actual": "I-301"
+        },
+        {
+          "key": "config_transaction",
+          "passed": true,
+          "expected": "CFG-44",
+          "actual": "CFG-44"
+        },
+        {
+          "key": "config_status",
+          "passed": true,
+          "expected": "pending",
+          "actual": "pending"
+        },
+        {
+          "key": "busy_job",
+          "passed": true,
+          "expected": "JOB-77",
+          "actual": "JOB-77"
+        },
+        {
+          "key": "workspace",
+          "passed": true,
+          "expected": "D:/jobs/111",
+          "actual": "D:/jobs/111"
+        },
+        {
+          "key": "shell",
+          "passed": true,
+          "expected": "PowerShell 7.4",
+          "actual": "PowerShell 7.4"
+        },
+        {
+          "key": "current_version",
+          "passed": true,
+          "expected": "C-19",
+          "actual": "C-19"
+        },
+        {
+          "key": "pending_version",
+          "passed": true,
+          "expected": "C-20",
+          "actual": "C-20"
+        },
+        {
+          "key": "backup",
+          "passed": true,
+          "expected": "C:/synthetic/backups/config-19.json",
+          "actual": "C:/synthetic/backups/config-19.json"
+        },
+        {
+          "key": "restart_approved",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "config_applied",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "desktop_state",
+          "passed": true,
+          "expected": "unknown",
+          "actual": "unknown"
+        }
+      ],
+      "passed": 16,
+      "total": 16,
+      "modelCalls": 1,
+      "maintenanceRequests": 0,
+      "totalInputTokens": 26017,
+      "totalOutputTokens": 410,
+      "continuationInputTokens": 26017,
+      "appliedHandoffs": []
+    },
+    {
+      "case": "video",
+      "variant": "recorded",
+      "stale": false,
+      "opaque": true,
+      "stage": "video-fallback-recorded",
+      "elapsedMs": 19144,
+      "status": "completed",
+      "reason": "model_response_completed",
+      "compactions": [
+        {
+          "kind": "context_compaction_started",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "thresholdRatio": 0.5,
+            "triggerRatio": 0.769075,
+            "estimatedInputTokens": 30763,
+            "usableInputTokens": 40000,
+            "measurement": "provider",
+            "compactionTriggerTokens": 20000,
+            "compactionOutputTokens": 127998,
+            "normalOutputTokens": 127998,
+            "safetyTokens": 400,
+            "trigger": "budget",
+            "precedingTurnCount": 2,
+            "activeTurnIncluded": false,
+            "sourceRanges": [
+              {
+                "turnId": "materials",
+                "startMessage": 2,
+                "endMessageExclusive": 8
+              },
+              {
+                "turnId": "revision",
+                "startMessage": 8,
+                "endMessageExclusive": 11
+              }
+            ],
+            "targetInputTokens": 16000,
+            "recentTokenBudget": 3200,
+            "retainedInputTokens": 19,
+            "isolateSources": true,
+            "method": "checkpoint"
+          }
+        },
+        {
+          "kind": "context_compaction_completed",
+          "payload": {
+            "compactionId": "context_compaction:audit:1",
+            "round": 2,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "summarizedTurnCount": 2,
+            "activeTurnCheckpointed": false,
+            "inputTokensBefore": 30763,
+            "inputTokensAfter": 7554,
+            "targetInputTokens": 16000,
+            "retainedMessageCount": 0,
+            "inputDigest": "d98260423350155e7deaa86a90cb10a51929844398a576e578b3518d533b9e3b",
+            "method": "checkpoint"
+          }
+        }
+      ],
+      "pressureWaitMs": 17101,
+      "answer": "```json\n{\n  \"asset_ids\": [\"A-17\", \"A-18\"],\n  \"failed_job\": \"R-11\",\n  \"pending_job\": \"R-12\",\n  \"may_resubmit\": false,\n  \"version\": \"V-12\",\n  \"min_shot_seconds\": 3.2,\n  \"sfx_gain_db\": -18,\n  \"sfx_start_seconds\": 7.4,\n  \"typography_id\": \"T-12\",\n  \"listening_passed\": false,\n  \"reference_images_viewed\": false,\n  \"may_publish\": false,\n  \"opening_full_body_seconds\": 3.6\n}\n```",
+      "checks": [
+        {
+          "key": "asset_ids",
+          "passed": true,
+          "expected": [
+            "A-17",
+            "A-18"
+          ],
+          "actual": [
+            "A-17",
+            "A-18"
+          ]
+        },
+        {
+          "key": "failed_job",
+          "passed": true,
+          "expected": "R-11",
+          "actual": "R-11"
+        },
+        {
+          "key": "pending_job",
+          "passed": true,
+          "expected": "R-12",
+          "actual": "R-12"
+        },
+        {
+          "key": "may_resubmit",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "version",
+          "passed": true,
+          "expected": "V-12",
+          "actual": "V-12"
+        },
+        {
+          "key": "min_shot_seconds",
+          "passed": true,
+          "expected": 3.2,
+          "actual": 3.2
+        },
+        {
+          "key": "sfx_gain_db",
+          "passed": true,
+          "expected": -18,
+          "actual": -18
+        },
+        {
+          "key": "sfx_start_seconds",
+          "passed": true,
+          "expected": 7.4,
+          "actual": 7.4
+        },
+        {
+          "key": "typography_id",
+          "passed": true,
+          "expected": "T-12",
+          "actual": "T-12"
+        },
+        {
+          "key": "listening_passed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "reference_images_viewed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "may_publish",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "opening_full_body_seconds",
+          "passed": true,
+          "expected": 3.6,
+          "actual": 3.6
+        }
+      ],
+      "passed": 13,
+      "total": 13,
+      "modelCalls": 3,
+      "maintenanceRequests": 2,
+      "totalInputTokens": 40804,
+      "totalOutputTokens": 3553,
+      "continuationInputTokens": 7563,
+      "appliedHandoffs": []
+    }
+  ],
+  "requests": [
+    {
+      "id": "01-video-raw",
+      "stage": "video-raw",
+      "maintenance": false,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 118073,
+      "reasoningChars": 465,
+      "textChars": 371,
+      "usage": {
+        "inputTokens": 25893,
+        "outputTokens": 311,
+        "cachedInputTokens": 768
+      },
+      "elapsedMs": 3735
+    },
+    {
+      "id": "02-video-checkpoint",
+      "stage": "video-checkpoint",
+      "maintenance": true,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 71121,
+      "reasoningChars": 953,
+      "textChars": 0,
+      "usage": {
+        "inputTokens": 15994,
+        "outputTokens": 1215,
+        "cachedInputTokens": 14336
+      },
+      "elapsedMs": 6341
+    },
+    {
+      "id": "03-video-checkpoint",
+      "stage": "video-checkpoint",
+      "maintenance": true,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 77216,
+      "reasoningChars": 2854,
+      "textChars": 0,
+      "usage": {
+        "inputTokens": 17008,
+        "outputTokens": 1599,
+        "cachedInputTokens": 2944
+      },
+      "elapsedMs": 9534
+    },
+    {
+      "id": "04-video-checkpoint",
+      "stage": "video-checkpoint",
+      "maintenance": false,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 25298,
+      "reasoningChars": 0,
+      "textChars": 369,
+      "usage": {
+        "inputTokens": 7018,
+        "outputTokens": 147,
+        "cachedInputTokens": 2944
+      },
+      "elapsedMs": 1498
+    },
+    {
+      "id": "05-video-recorded",
+      "stage": "video-recorded",
+      "maintenance": false,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 16194,
+      "reasoningChars": 730,
+      "textChars": 305,
+      "usage": {
+        "inputTokens": 4605,
+        "outputTokens": 331,
+        "cachedInputTokens": 3200
+      },
+      "elapsedMs": 2806
+    },
+    {
+      "id": "06-video-stale-recorded",
+      "stage": "video-stale-recorded",
+      "maintenance": false,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 16269,
+      "reasoningChars": 2894,
+      "textChars": 370,
+      "usage": {
+        "inputTokens": 4640,
+        "outputTokens": 959,
+        "cachedInputTokens": 4480
+      },
+      "elapsedMs": 5963
+    },
+    {
+      "id": "07-deployment-recorded",
+      "stage": "deployment-recorded",
+      "maintenance": false,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 16697,
+      "reasoningChars": 538,
+      "textChars": 475,
+      "usage": {
+        "inputTokens": 4729,
+        "outputTokens": 351,
+        "cachedInputTokens": 2944
+      },
+      "elapsedMs": 2181
+    },
+    {
+      "id": "08-deployment-checkpoint",
+      "stage": "deployment-checkpoint",
+      "maintenance": true,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 71114,
+      "reasoningChars": 0,
+      "textChars": 0,
+      "usage": {
+        "inputTokens": 15935,
+        "outputTokens": 916,
+        "cachedInputTokens": 3200
+      },
+      "elapsedMs": 5800
+    },
+    {
+      "id": "09-deployment-checkpoint",
+      "stage": "deployment-checkpoint",
+      "maintenance": true,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 76065,
+      "reasoningChars": 482,
+      "textChars": 0,
+      "usage": {
+        "inputTokens": 17028,
+        "outputTokens": 1418,
+        "cachedInputTokens": 14336
+      },
+      "elapsedMs": 8745
+    },
+    {
+      "id": "10-deployment-checkpoint",
+      "stage": "deployment-checkpoint",
+      "maintenance": true,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 83565,
+      "reasoningChars": 0,
+      "textChars": 0,
+      "usage": {
+        "inputTokens": 18623,
+        "outputTokens": 1321,
+        "cachedInputTokens": 15488
+      },
+      "elapsedMs": 6477
+    },
+    {
+      "id": "11-deployment-raw",
+      "stage": "deployment-raw",
+      "maintenance": false,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 118588,
+      "reasoningChars": 792,
+      "textChars": 475,
+      "usage": {
+        "inputTokens": 26017,
+        "outputTokens": 410,
+        "cachedInputTokens": 14336
+      },
+      "elapsedMs": 3323
+    },
+    {
+      "id": "12-video-fallback-recorded",
+      "stage": "video-fallback-recorded",
+      "maintenance": true,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 71167,
+      "reasoningChars": 1668,
+      "textChars": 0,
+      "usage": {
+        "inputTokens": 16001,
+        "outputTokens": 1440,
+        "cachedInputTokens": 3200
+      },
+      "elapsedMs": 7897
+    },
+    {
+      "id": "13-video-fallback-recorded",
+      "stage": "video-fallback-recorded",
+      "maintenance": true,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 78092,
+      "reasoningChars": 2193,
+      "textChars": 0,
+      "usage": {
+        "inputTokens": 17240,
+        "outputTokens": 1785,
+        "cachedInputTokens": 3072
+      },
+      "elapsedMs": 9179
+    },
+    {
+      "id": "14-video-fallback-recorded",
+      "stage": "video-fallback-recorded",
+      "maintenance": false,
+      "toolHash": "49992e87b6fea115fcea2cb131d86d7994487860067db9680117b37e7e62835b",
+      "inputChars": 25331,
+      "reasoningChars": 573,
+      "textChars": 371,
+      "usage": {
+        "inputTokens": 7563,
+        "outputTokens": 328,
+        "cachedInputTokens": 3072
+      },
+      "elapsedMs": 2027
+    }
+  ]
+}

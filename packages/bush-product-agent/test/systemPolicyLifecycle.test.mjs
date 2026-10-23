@@ -68,7 +68,7 @@ test('continuation, restart and fork retain the bound system and top-level defin
     assert.deepEqual(dispatched.messages[0], original.messages[0]);
     assert.deepEqual(dispatched.tools, original.tools);
     assert.equal(tracker.observe(dispatched).frozenPrefixBreak, false);
-    assert.deepEqual(dispatched.metadata.systemPolicy, { id: 'cardbush.product', version: '2' });
+    assert.deepEqual(dispatched.metadata.systemPolicy, { id: 'cardbush.product', version: '3' });
     assert.equal(dispatched.metadata.subagentChildPrefixMessages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
   }
   assert.equal(f.facts.filter(f => f.sessionId === 'policy' && f.kind === 'model_contract_bound').length, 1);
@@ -81,8 +81,8 @@ test('continuation, restart and fork retain the bound system and top-level defin
   assert.deepEqual(f.observed.at(-1).tools, original.tools);
   assert.equal((await host.runSessionTurn(request('new', { sessionId: 'new' }))).payload.status, 'completed');
   assert.equal(f.observed.at(-1).messages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
-  assert.deepEqual(f.observed.at(-1).tools, original.tools, 'this prompt cleanup does not edit any tool definition');
-  assert.equal(store.modelContract('new').version, '2');
+  assert.deepEqual(f.observed.at(-1).tools, original.tools, 'a new conversation binds the same current definitions');
+  assert.equal(store.modelContract('new').version, '3');
 });
 
 test('the saved presentation survives changed client definitions, but never grants removed tools', async t => {
@@ -96,7 +96,7 @@ test('the saved presentation survives changed client definitions, but never gran
   await host.runSessionTurn(changed);
   assert.deepEqual(f.observed.at(-1).messages[0], original.messages[0]);
   assert.deepEqual(f.observed.at(-1).tools, original.tools);
-  assert.equal(store.modelContract('policy').version, '2');
+  assert.equal(store.modelContract('policy').version, '3');
 
   f.plannedCalls.set('policy/removed', ['read_fixture']);
   await host.runSessionTurn(request('removed', { tools: [] }));
@@ -150,4 +150,36 @@ test('explicit history cleanup releases the old contract and a fresh conversatio
   assert.equal(f.observed.at(-1).messages[0].content, fresh.prefixMessages[0].content);
   assert.equal(store.modelContract('policy').system.content, fresh.prefixMessages[0].content);
   assert.equal(store.snapshot('policy').turns.length, 1);
+});
+
+test('recorded compaction policy upgrades old summary requirements once at the next Turn boundary', async t => {
+  const f = fixture(t);
+  let { host, store, request } = f.open();
+  const legacy = request('legacy');
+  legacy.metadata.systemPolicy = { id: 'cardbush.product', version: '2' };
+  legacy.prefixMessages[0].content = 'Legacy policy: call summary_for_user with tool_summary after Tool work.';
+  const oldSummary = legacy.tools.find(tool => tool.name === 'summary_for_user');
+  oldSummary.description = 'Write tool_summary before finishing.';
+  oldSummary.inputSchema.properties.tool_summary = { type: 'string' };
+  await host.runSessionTurn(legacy);
+  const oldTurn = structuredClone(store.snapshot('policy').turns[0]);
+  f.plannedCalls.set('policy/upgrade', ['read_fixture']);
+  assert.equal((await host.runSessionTurn(request('upgrade'))).payload.status, 'completed');
+  assert.equal(store.modelContract('policy').version, '3');
+  assert.deepEqual(store.snapshot('policy').turns[0], oldTurn, 'migration never rewrites conversation facts');
+  for (const observed of f.observed.filter(r => r.turnId === 'upgrade')) {
+    assert.equal(observed.messages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
+    assert.equal(observed.tools.find(tool => tool.name === 'summary_for_user').inputSchema.properties.tool_summary, undefined);
+    assert.deepEqual(observed.tools.filter(tool => tool.name !== 'summary_for_user'), f.observed[0].tools.filter(tool => tool.name !== 'summary_for_user'));
+    assert.equal(observed.metadata.subagentChildPrefixMessages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
+  }
+  assert.equal(f.facts.filter(f => f.kind === 'model_contract_updated').length, 1);
+  await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+  ({ host, store, request } = f.open());
+  await host.runSessionTurn(request('after_upgrade_restart'));
+  assert.equal(f.facts.filter(f => f.kind === 'model_contract_updated').length, 1);
+  assert.equal(store.modelContract('policy').version, '3');
+  const cache = host.events('policy', 'after_upgrade_restart').filter(e => e.kind === 'cache_chain_observed');
+  assert.ok(cache.every(e => !e.payload.frozenPrefixBreak && !e.payload.parametersChanged));
+  assert.throws(() => store.upgradeModelContract('policy', '2', store.modelContract('policy')), /current bound version/);
 });

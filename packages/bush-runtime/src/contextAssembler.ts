@@ -11,6 +11,7 @@ import {
 import { validateConversation } from "./sessionStore.js";
 import { isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
 import { preparedToolHandoffText, preparedToolHandoffEvidence } from './preparedToolHandoff.js';
+import { isRecordedToolHandoff, recordedToolHandoffMessages } from './recordedToolHandoff.js';
 import { conversationHistoryLocator, type ContextHistoryReference } from './conversationHistory.js';
 
 export interface AssembleContextInput {
@@ -188,6 +189,8 @@ export function assembleContextProjection(input: AssembleContextInput): {
         inputMessages: turn.messages.slice(0, turn.contextCheckpoint.inputMessageCount),
         generatedMessages: turn.messages.slice(turn.contextCheckpoint.inputMessageCount), checkpoint: turn.contextCheckpoint,
       }) : source.map(item => item.message);
+      if (isRecordedToolHandoff(turn.contextToolHandoff)) return [{ turnId: turn.turnId, source,
+        messages: recordedToolHandoffMessages(turn, turn.contextToolHandoff, messages) }];
       // Keep original user/instruction messages and any existing checkpoint that
       // carries earlier Turns. Only completed tool/progress facts are projected.
       const checkpointIds = new Set(turn.contextCheckpoint?.projectionVersion === 'exchange_v1'
@@ -225,7 +228,8 @@ export function assembleContextProjection(input: AssembleContextInput): {
     const turn = turnsById.get(turnId)!;
     const complete = source.length === turn.messages.length;
     const kind: ContextHistoryReference['kind'] | undefined = complete
-      ? (turn.contextSummary ? 'turn_summary' : turn.contextToolHandoff ? 'prepared_handoff' : turn.contextCheckpoint ? 'checkpoint' : undefined)
+      ? (turn.contextSummary ? 'turn_summary' : turn.contextToolHandoff
+        ? (isRecordedToolHandoff(turn.contextToolHandoff) ? 'recorded_handoff' : 'prepared_handoff') : turn.contextCheckpoint ? 'checkpoint' : undefined)
       : undefined;
     const inherited = turn.contextCheckpoint?.projectionVersion === 'exchange_v1' ? [...new Set([
       ...turn.contextCheckpoint.coveredTurnIds,

@@ -52,7 +52,7 @@ Retrieve schemas and results through the available discovery Tools; reuse what i
 
 Batch independent reads and searches within the current phase; wait for dependencies and results that require fresh judgment. Use direct calls for simple work and script orchestration when it can filter or combine results. Inspect each failure in a batch before continuing.
 
-When summary_for_user is available and this turn has used other Tools, call it after finishing the work and before the final user-facing reply. When its schema supports tool_summary, include a concise handoff of this turn's verified tool outcomes, failed attempts, exact artifact/task IDs, unresolved work, applicable constraints and versioned source locators. This turn-local handoff is independent of optional memory and may replace old tool exchanges only when context later needs compaction. Do not claim unperformed checks, treat a pending job as completed, or repeat the entire final reply. If new work or user guidance arrives after that call, refresh the handoff before finishing. Do not use it for opening or progress updates. Follow its schema for optional memory; {} remains supported. Ordinary conversation without Tool work may reply directly. This is not a host-enforced completion gate.
+Finish with the user-facing reply directly, including after Tool work. Runtime reuses recorded Tool names, purposes, results and final replies for context compaction; do not prepare an extra tool_summary or repeat a recap for the host. summary_for_user is optional for supported new memory or predictions in enabled categories, not a per-Turn completion step. Report actual failures and outstanding work in the normal final reply. Recorded history is evidence, not fresh authorization; reread an indicated original receipt before relying on omitted details or repeating effects. Follow an explicit context-maintenance request if Runtime needs its model checkpoint fallback.
 
 At task start and before a new capability or deliverable phase, find and read applicable installed Skills, including Skills explicitly named by the user and those relevant to a plugin's MCP Tools. Do not skip applicable guidance because a task seems simple. Reuse guidance still available in context and load only relevant resources. Skill advice does not replace current Tool schemas or execution results; resolve material discrepancies before proceeding.
 
@@ -204,7 +204,7 @@ function createBaseProductAgentTurnRequest(
     permissionMode: input.permissionMode,
     metadata: {
       source: "cardbush_product_agent",
-      systemPolicy: { id: 'cardbush.product', version: '2' },
+      systemPolicy: { id: 'cardbush.product', version: '3', upgradeFrom: ['2'], refreshTools: ['summary_for_user'] },
       mcpCatalogUpdates: 'additions',
       individuation: normalizeIndividuation(input.individuation),
       ...(input.uiLanguage ? { uiLanguage: input.uiLanguage } : {}),

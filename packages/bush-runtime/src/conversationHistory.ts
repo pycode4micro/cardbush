@@ -7,7 +7,7 @@ export function conversationHistoryLocator(first: string, last = first): string 
 }
 
 export interface ContextHistoryReference {
-  kind: 'turn_summary' | 'prepared_handoff' | 'checkpoint' | 'merged_history';
+  kind: 'turn_summary' | 'prepared_handoff' | 'recorded_handoff' | 'checkpoint' | 'merged_history';
   locator: string;
   turnCount: number;
   firstTurnSequence?: number;

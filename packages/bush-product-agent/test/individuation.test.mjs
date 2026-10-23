@@ -33,8 +33,8 @@ test('individuation changes append user context without altering system/tools or
     const preference = input.messages.filter(m => m.name === 'individuation_preference').at(-1);
     assert.equal(preference.role, 'user'); assert.equal(preference.visibility, 'internal');
     assert.match(preference.content, new RegExp(`habits ${individuation?.habits ? 'enabled' : 'disabled'}`));
-    assert.match(preference.content, /When summary_for_user is available, call it before the final reply after other Tool work/);
-    assert.match(preference.content, /Ordinary conversation without Tool work may reply directly without calling it/);
+    assert.match(preference.content, /summary_for_user is optional/);
+    assert.match(preference.content, /Reply directly when there is nothing to record/);
     assert.match(preference.content, individuation?.habits || individuation?.predictions
       ? /optional habit field.*optional prediction field.*Each field follows its own enabled category/
       : /Memory storage is disabled: omit habit and prediction/);
@@ -42,16 +42,15 @@ test('individuation changes append user context without altering system/tools or
     assert.ok(host.events('prefs', request.turnId).filter(e => e.kind === 'cache_chain_observed').every(e => !e.payload.frozenPrefixBreak));
   }
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /Before every final user-facing answer, call summary_for_user/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /When summary_for_user is available and this turn has used other Tools, call it after finishing/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Ordinary conversation without Tool work may reply directly/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Finish with the user-facing reply directly, including after Tool work/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /do not prepare an extra tool_summary/);
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /optional habit field.*optional prediction field/, 'the tool contract owns its optional fields');
   const summaryDescription = seen[0].tools.find(tool => tool.name === 'summary_for_user').description;
-  assert.match(summaryDescription, /The host does not require this call to finish/);
-  assert.match(summaryDescription, /Call this alone when the work is ready/);
-  assert.match(summaryDescription, /Ordinary conversation without tool work may reply directly/);
-  assert.match(summaryDescription, /All fields are optional; \{\} remains a valid final-display signal/);
-  assert.match(summaryDescription, /habit is a supported reusable preference, prediction is an unconfirmed next user request/);
-  assert.match(summaryDescription, /Optional habit and prediction are separate memory categories, saved only when enabled/);
+  assert.match(summaryDescription, /otherwise reply directly, including after tool work/);
+  assert.match(summaryDescription, /do not write a tool recap/);
+  assert.match(summaryDescription, /All fields are optional; \{\} remains a valid legacy final-display signal/);
+  assert.match(summaryDescription, /habit is a supported reusable preference; prediction is an unconfirmed next user request/);
+  assert.equal(seen[0].tools.find(tool => tool.name === 'summary_for_user').inputSchema.properties.tool_summary, undefined);
   assert.equal(seen[0].tools.filter(t => ['summary_for_user', 'check_habit'].includes(t.name)).length, 2);
   const saved = { ...requests[2], metadata: { ...requests[2].metadata, agentRole: 'child' } };
   const continued = continueChildConversation(requests[3], saved);

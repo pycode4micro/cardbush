@@ -76,32 +76,36 @@ event; model context then projects that Turn as one internal semantic summary,
 while history replay, audit and Fork continue to read the original message and
 Tool facts. Tool call/result adjacency is validated mechanically.
 
-Prepared tool handoffs are enabled by default in the shared desktop, server Agent
-and CLI runtime worker. `summary_for_user` prepares a bounded, turn-local
-`tool_summary`. Its native receipt checks source references; optional
-habit/prediction storage remains separate. No history changes until pressure is
-reached. A successful completed Turn can then project its verified handoff plus
-the exact final reply as one assistant message, retaining user/instruction facts
-and any checkpoint carrying earlier history. Original calls, receipts and replies
-remain in the journal; provider reasoning/replay is not attached to synthetic
-prose. Applied references use the existing `turn_context_summarized` event.
+Recorded tool handoffs are the default in the shared desktop, server Agent and
+CLI runtime. No per-Turn summary call or extra model-authored field is required.
+At pressure the host derives a projection from completed Turns: tool names,
+existing reason/display titles, arguments, observed results and exact final
+replies. User instructions and corrections keep their original order. A returned
+tool is never labeled as business success. Failed and pending results, nested
+batch statuses, IDs, permissions and unknown metadata are retained. Large known
+text payloads may become explicit head/tail excerpts with original-history
+locators; unknown plain text and failure diagnostics stay whole. Skill source
+exchanges, instruction files, image exchanges and existing checkpoints stay intact.
 
-Missing/stale preparation, incomplete active Turns, invalid references and
-insufficient savings use the normal checkpoint transaction below. New guidance
-or tools after preparation invalidate it. The whole rebuilt request must meet
-the existing headroom and body limits. Recovery reconciles session projection
-and runtime journals without rerunning tools. `preferPreparedToolHandoffs: false`
-selects the previous algorithm for controlled comparisons; no schema is changed
-during a Turn. Existing frozen catalogs without `tool_summary` continue through
-the checkpoint fallback. See [the comparison and cache accounting](../../docs/CONTEXT_COMPACTION_COMPARISON_2026-10-23.md).
+The whole rebuilt request must shrink and meet the existing token headroom and
+body limits before applying. Otherwise the ordinary model checkpoint below is
+used, including for unfinished active Turns. An immutable `recorded_v1` reference
+and source digest are saved through `turn_context_summarized`; original messages
+remain available for history, audit and fork. Restart reconciles applied references
+without replaying business tools. `preferRecordedToolHandoffs: false` disables the
+new path for comparisons. The historical `preferPreparedToolHandoffs` option is
+opt-in; applied model-authored handoffs and old frozen calls remain readable.
+The default `summary_for_user` schema now contains only optional habit/prediction
+fields. Legacy `tool_summary` input is accepted for compatibility, not requested.
 
-This is the default policy on `main`. The pre-adoption mainline, including the
-CLI improvements, is preserved on `codex/checkpoint-compaction` (`24caf04`).
-That branch preserves the old implementation; it is not a downgrade reader for
-new handoff journal records. The improved checkpoint and oldest-summary merge
-remain fallback paths in the new mainline.
+Product policy v3 migrates bound v2 conversations once at the next Turn boundary,
+refreshing the system policy and `summary_for_user` presentation only. The change
+is recorded as `model_contract_updated`; other tools and original conversation
+facts remain unchanged. Running loops retain their snapshot. This one-time
+policy/schema change can invalidate a cached prefix; it is not a per-Turn change.
+See [the recorded-compaction implementation and live evaluation](../../docs/RECORDED_TOOL_COMPACTION_2026-10-23.md).
 
-Preparing a handoff does not immediately replace history or rewrite the next
+Finishing a Turn does not immediately replace history or rewrite the next
 request's prefix. Only actual context pressure applies it. Ordinary append-only
 requests before and after that boundary retain the prior message prefix and
 fixed model/Tool parameters. Prefix diagnostics describe structural changes;
