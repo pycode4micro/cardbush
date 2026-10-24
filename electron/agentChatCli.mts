@@ -16,11 +16,12 @@ import { terminalText } from './agentChatPresentation.mjs';
 import { AgentChatCompletion, isChatExitCommand, type ChatInputOptions } from './agentChatCompletion.mjs';
 import { AgentChatReferences, openChatArtifact } from './agentChatReferences.mjs';
 import { chatShellCommand, executeChatShell, type runChatShell } from './agentChatShell.mjs';
+import { inspectChatTools, isChatToolEvent } from './agentChatTools.mjs';
+import { chatSessionWorkspace, optionalResumeArgs, readChatHistory, selectChatSession, type ChatSession } from './agentChatSessions.mjs';
 export { terminalText } from './agentChatPresentation.mjs';
 
 type Client = Pick<AgentHttpClient, 'call' | 'events'>;
 type Job = Pick<AgentJob, 'id' | 'sessionId' | 'turnId'>;
-type ChatSession = { sessionId: string; metadata?: { projectDir?: string | null; runtimeWorkspace?: { workspaceDir?: string } } };
 type Interaction = Extract<RuntimeEvent, { kind: 'permission_requested' | 'solution_selection_requested' }>;
 const pendingJob = (job: AgentJob) => job.status === 'running' || job.status === 'queued';
 export interface ChatTerminal {
@@ -174,7 +175,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
             segments.set(key, event.kind === 'assistant_segment_completed' ? event.payload.content : previous + text);
             if (text) { io.write(text); outputOpen = true; }
             if (event.kind === 'assistant_segment_completed') { lineBreak(); io.event?.(event); }
-          } else if (event.kind === 'tool_running' || event.kind === 'tool_returned' || event.kind === 'tool_failed' || event.kind === 'tool_cancelled') {
+          } else if (isChatToolEvent(event)) {
             lineBreak();
             if (io.event) io.event(event);
             else if (event.kind === 'tool_running') io.status(`[Tool] ${event.payload.display?.title ?? event.payload.toolName}\n`);
@@ -223,7 +224,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
 
 const help = `CardBush CLI (runs locally by default, or connects to an existing Agent)
 Usage: cardbush [options]
-       cardbush --resume <session-id> [options]
+       cardbush --resume [session-id] [options]
 
 New sessions trust and use the current directory. Approval mode is the default;
 use --full-access to start with full access.
@@ -239,7 +240,7 @@ Successful connections are remembered.
   --local           Use the local runtime; ignore saved and environment connections
   --url URL         Agent URL; reuse the last connection (default: http://127.0.0.1:4780)
   --token-file PATH Access token file; or set CARDBUSH_AGENT_TOKEN / CARDBUSH_AGENT_URL
-  --resume ID       Resume an existing session; otherwise create a new one
+  --resume [ID]     Resume a session; omit ID to choose from saved sessions
   --project ID      Use an existing server project instead of the current directory
   --model ID        Use a configured model; otherwise use the Agent's default
   --full-access     Full access; host restrictions and process protection still apply
@@ -252,10 +253,14 @@ Successful connections are remembered.
 
 Commands: /model [ID] selects a model; /settings shows config paths and reloads settings.
           /new starts a session; /plan shows the plan; /logs shows the log path;
+          /session [ID] switches sessions; omit ID to choose from saved sessions;
+          /tools [number] [--turn N] inspects tools, arguments and results;
           /artifact [number] opens this turn's files; /source [number] shows evidence;
           /quit (or /exit) exits; /help shows help. Other input is sent to the Agent.
           /shell [COMMAND] or !COMMAND runs in this local terminal; exit returns to chat.
 Use /artifact, then Tab to choose a file and Enter to open it. Esc clears the selection.
+Resuming shows past user messages and final replies. Use /tools --turn N to inspect
+an earlier turn. One-shot and piped prompts keep stdout limited to the new reply.
 Web and local file links are clickable in supported terminals. Remote files are
 downloaded only when explicitly opened; source details come from the Agent's records.
 While running, Enter queues the next turn; /steer TEXT guides the current task.
@@ -287,7 +292,8 @@ function validatePrompt(text: string) {
 }
 
 export async function main(args = process.argv.slice(2), options: { openArtifact?: typeof openChatArtifact; shell?: typeof runChatShell } = {}): Promise<number> {
-  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
+  const normalized = optionalResumeArgs(args);
+  const { values, positionals, tokens } = parseArgs({ args: normalized.args, allowPositionals: true, tokens: true, options: {
     help: { type: 'boolean' }, url: { type: 'string' }, 'token-file': { type: 'string' }, session: { type: 'string' }, resume: { type: 'string' },
     project: { type: 'string' }, model: { type: 'string' }, prompt: { type: 'string' }, permission: { type: 'string' },
     'full-access': { type: 'boolean' }, local: { type: 'boolean' },
@@ -295,17 +301,19 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
   } });
   if (values.help) { process.stdout.write(help); return 0; }
   if (positionals.length && (positionals.length !== 2 || positionals[0] !== 'resume' || !positionals[1].trim())) {
-    throw new Error('Usage: cardbush or cardbush --resume <session-id>');
+    throw new Error('Usage: cardbush or cardbush --resume [session-id]');
   }
   // Keep saved scripts compatible, while all documented/generated commands use
   // the normal option spelling. Conflicting forms must never pick a session silently.
-  if ([positionals[1], values.session, values.resume].filter(value => value !== undefined).length > 1) throw new Error('Use only one of --resume, --session, or the legacy resume command.');
+  if (tokens.filter(token => token.kind === 'option' && ['session', 'resume'].includes(token.name)).length + Number(Boolean(positionals[1])) > 1) throw new Error('Use only one of --resume, --session, or the legacy resume command.');
   const resumeId = values.resume ?? positionals[1] ?? values.session;
-  if (resumeId !== undefined && !resumeId.trim()) throw new Error('--resume requires a session ID.');
+  const pickSession = normalized.picker && resumeId === '';
+  if (resumeId !== undefined && !resumeId.trim() && !pickSession) throw new Error('--resume requires a nonempty session ID, or omit the ID to choose a session.');
+  if (pickSession && !(process.stdin.isTTY && process.stderr.isTTY)) throw new Error('Choosing a session requires an interactive terminal. Use --sessions to list IDs, then --resume ID.');
   const permissionMode = values['full-access'] ? 'all_free' : values.permission ?? 'task_free';
   if (values['full-access'] && values.permission && values.permission !== 'all_free') throw new Error('--full-access conflicts with --permission.');
   if (!['task_free', 'user_free', 'all_free'].includes(permissionMode)) throw new Error('Invalid --permission. Use task_free, user_free or all_free.');
-  if (resumeId && values.project) throw new Error('--project applies only to new sessions; resumed sessions keep their workspace.');
+  if (resumeId !== undefined && values.project) throw new Error('--project applies only to new sessions; resumed sessions keep their workspace.');
   if (values.local && (values.url || values['token-file'])) throw new Error('--local cannot be combined with --url or --token-file.');
   const connectionFile = resolve(process.env.CARDBUSH_CLI_CONFIG || join(homedir(), '.cardbush', 'cli.json'));
   const saved = values.local ? undefined : await readConnection(connectionFile);
@@ -386,17 +394,19 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       return client.call('sessions.create', { projectId }, lifetime.signal) as Promise<ChatSession>;
     };
     // Read summaries rather than downloading a potentially enormous transcript.
-    session = resumeId ? (await client.call('sessions.list', { projection: 'summary' }, lifetime.signal) as ChatSession[]).find(item => item.sessionId === resumeId) : await createSession();
+    session = pickSession ? await selectChatSession(client, io, lifetime.signal)
+      : resumeId ? (await client.call('sessions.list', { projection: 'summary' }, lifetime.signal) as ChatSession[]).find(item => item.sessionId === resumeId) : await createSession();
+    if (!session && pickSession) return 0;
     if (!session) throw new Error('Session not found.');
     const references = new AgentChatReferences(client, io, options.openArtifact);
     io.setReferenceRenderer(references);
     let referenceTurn: string | undefined;
     const referenceScope = () => references.setScope({ sessionId: session!.sessionId, turnId: referenceTurn,
-      workspace: session!.metadata?.runtimeWorkspace?.workspaceDir ?? session!.metadata?.projectDir ?? undefined,
+      workspace: chatSessionWorkspace(session!),
       platform: info.platform, local, hyperlinks: io.hyperlinks });
     const identify = () => {
       const modelName = config.models.find(model => model.id === modelId)?.modelName ?? modelId;
-      const workspace = session!.metadata?.runtimeWorkspace?.workspaceDir ?? session!.metadata?.projectDir;
+      const workspace = chatSessionWorkspace(session!);
       const context = { sessionId: session!.sessionId, workspace: workspace ?? undefined, platform: info.platform, models: config.models };
       if (completion) completion.update(context);
       else { completion = new AgentChatCompletion(client, context); io.setSuggestionSource(async (line, cursor, signal) => references.suggest(line, cursor) ?? completion!.suggest(line, cursor, signal)); }
@@ -411,6 +421,14 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       io.plan(parsed.success ? parsed.data : null, true);
     };
     const showLogs = () => io.status(client.diagnostics ? `Diagnostic log: ${client.diagnostics.path}\n` : 'Connected to a remote Agent; diagnostic logs are on the server.\n');
+    const toolCommand = async (text: string) => {
+      const match = /^\s*\/tools(?:\s+(.*))?\s*$/s.exec(text);
+      if (!match) return false;
+      io.commitInput(text);
+      try { await inspectChatTools(client, io, { sessionId: session!.sessionId, turnId: referenceTurn }, match[1] ?? '', lifetime.signal); }
+      catch (error) { io.status(`[Unavailable] ${error instanceof Error ? error.message : 'Cannot read tool activity'}\n`); }
+      return true;
+    };
     const referenceCommand = async (text: string) => {
       const match = /^\s*\/(artifact|source)(?:\s+(.*))?\s*$/s.exec(text);
       if (!match) return false;
@@ -429,10 +447,11 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       inputWork = inputWork.then(async () => {
         const command = text.trim();
         if (await referenceCommand(text)) return;
+        if (await toolCommand(text)) return;
         if (command === '/help') { io.commitInput(text); io.status(help); return; }
         if (command === '/logs') { io.commitInput(text); showLogs(); return; }
         if (command === '/plan') { io.commitInput(text); await readPlan(); return; }
-        if (/^\/(?:model|settings|new)(?:\s|$)/.test(command) || chatShellCommand(text) !== undefined) {
+        if (/^\/(?:model|settings|new|session)(?:\s|$)/.test(command) || chatShellCommand(text) !== undefined) {
           io.commitInput(text);
           io.status('[Not sent] Use this command after the current task finishes, or stop it with Esc.\n'); return;
         }
@@ -510,11 +529,30 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         } finally { io.finishTurn(outcome); turn = undefined; }
       }
     };
-    const previousJobs = await client.call('chat.jobs', { sessionId: session.sessionId }, lifetime.signal) as AgentJob[];
-    const existing = previousJobs.filter(job => ['running', 'queued'].includes(job.status));
-    if (!existing.length && previousJobs.length) { referenceTurn = previousJobs.at(-1)!.turnId; referenceScope(); }
-    if (existing.length && prompt !== undefined) throw new Error('This session has an active task. Run cardbush --resume interactively first; no new prompt was submitted.');
-    existing.forEach(job => queued.add(job.id));
+    const restoreSession = async (history: boolean) => {
+      const previousJobs = await client.call('chat.jobs', { sessionId: session!.sessionId }, lifetime.signal) as AgentJob[];
+      const existing = previousJobs.filter(job => pendingJob(job));
+      if (existing.length && prompt !== undefined) throw new Error('This session has an active task. Run cardbush --resume interactively first; no new prompt was submitted.');
+      if (history && prompt === undefined) {
+        try {
+          const turns = await readChatHistory(client, session!.sessionId, lifetime.signal);
+          const running = new Set(existing.map(job => job.turnId));
+          for (const saved of turns) {
+            if (running.has(saved.turnId)) continue; // The live observer owns this turn.
+            referenceTurn = saved.turnId; referenceScope();
+            io.historyTurn(saved);
+          }
+          if (!turns.length) io.status('No completed conversation history yet.\n');
+        } catch (error) {
+          lifetime.signal.throwIfAborted();
+          io.status(`[History unavailable] ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+      }
+      if (previousJobs.length) referenceTurn = previousJobs.at(-1)!.turnId;
+      referenceScope();
+      existing.forEach(job => queued.add(job.id)); io.setQueued(queued.size);
+    };
+    await restoreSession(resumeId !== undefined);
     while (!lifetime.signal.aborted && !exitRequested) {
       reportDiagnosticError();
       if (prompt === undefined) {
@@ -534,11 +572,23 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       const text = prompt ?? await io.ask('❯ ', lifetime.signal, true);
       if (text === null) break;
       if (prompt === undefined && await referenceCommand(text)) continue;
+      if (prompt === undefined && await toolCommand(text)) continue;
       if (prompt === undefined && isChatExitCommand(text)) { io.commitInput(text); break; }
+      if (prompt === undefined && /^\s*\/session(?:\s|$)/.test(text)) {
+        io.commitInput(text);
+        try {
+          const selected = await selectChatSession(client, io, lifetime.signal, text.trim().slice('/session'.length), session.sessionId);
+          if (!selected || selected.sessionId === session.sessionId) continue;
+          session = selected; active = undefined; stopping = undefined;
+          queued.clear(); observed.clear(); uncertain.clear(); referenceTurn = undefined;
+          io.resetSession(); identify(); await restoreSession(true);
+        } catch (error) { lifetime.signal.throwIfAborted(); io.status(`[Session unavailable] ${error instanceof Error ? error.message : String(error)}\n`); }
+        continue;
+      }
       const shellCommand = prompt === undefined ? chatShellCommand(text) : undefined;
       if (shellCommand !== undefined) {
         io.commitInput(text);
-        const cwd = local ? session.metadata?.runtimeWorkspace?.workspaceDir ?? session.metadata?.projectDir ?? process.cwd() : process.cwd();
+        const cwd = local ? chatSessionWorkspace(session) ?? process.cwd() : process.cwd();
         await executeChatShell(io, shellCommand, cwd, lifetime.signal); continue;
       }
       if (prompt === undefined && uncertain.has(text)) { queueRunningInput(text); await inputWork; continue; }
@@ -555,7 +605,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         if (!config.models.some(model => model.id === modelId)) modelId = config.defaultModelId;
         modelId = await selectChatModel(config, modelId, text.trim().slice('/model'.length), io, lifetime.signal);
         io.updateModel(config.models.find(model => model.id === modelId)?.modelName ?? modelId, config.models.map(model => model.id));
-        completion!.update({ sessionId: session.sessionId, workspace: session.metadata?.runtimeWorkspace?.workspaceDir ?? session.metadata?.projectDir ?? undefined, platform: info.platform, models: config.models });
+        completion!.update({ sessionId: session.sessionId, workspace: chatSessionWorkspace(session), platform: info.platform, models: config.models });
         selectedModel = true; continue;
       }
       if (prompt === undefined && text.trim() === '/settings') {
@@ -583,7 +633,11 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       if (prompt === undefined && text.trim() === '/plan') {
         io.commitInput(text); await readPlan(); continue;
       }
-      if (prompt === undefined && text.trim() === '/new') { io.commitInput(text); session = await createSession(); referenceTurn = undefined; identify(); continue; }
+      if (prompt === undefined && text.trim() === '/new') {
+        io.commitInput(text); session = await createSession(); referenceTurn = undefined;
+        active = undefined; stopping = undefined; queued.clear(); observed.clear(); uncertain.clear();
+        io.resetSession(); identify(); continue;
+      }
       if (!text.trim()) continue;
       validatePrompt(text);
       const job = { id: randomUUID(), sessionId: session.sessionId, turnId: `turn-${randomUUID()}`, text };

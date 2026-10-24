@@ -15,6 +15,8 @@ import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
 import { localDesktopProfile } from '../dist-electron/agentLocalChat.mjs';
 import { chatShellCommand, chatShellInvocation, runChatShell } from '../dist-electron/agentChatShell.mjs';
 import { waitForChatConfiguration } from '../dist-electron/agentChatModels.mjs';
+import { inspectChatTools } from '../dist-electron/agentChatTools.mjs';
+import { optionalResumeArgs, readChatHistory, selectChatSession } from '../dist-electron/agentChatSessions.mjs';
 
 const entry = resolve('dist-electron/agentChatCli.mjs');
 const tempRoot = resolve('tmp/agent-chat-cli-tests');
@@ -32,6 +34,40 @@ function terminal(answer = 'y', interactive = true) {
   return { interactive, output: '', progress: '', questions: [], write(text) { this.output += text; },
     status(text) { this.progress += text; }, async ask(prompt) { this.questions.push(prompt); return answer; } };
 }
+
+test('tool inspection rereads the selected turn without running tools or exposing diagnostics by default', async () => {
+  const tool = { toolCallId: 'read', toolName: 'read_file', ordinal: 0, display: { title: 'Read design guidance' } };
+  const frames = [
+    event('tool_queued', 1, tool), event('tool_running', 2, tool),
+    event('tool_returned', 3, { ...tool, resultError: { kind: 'tool', code: 'file_missing',
+      message: 'Full diagnostic: selected guidance file does not exist.', details: { path: '/fixture/guidance.md' } } }),
+    event('tool_running', 4, { toolCallId: 'check', toolName: 'terminal_exec', ordinal: 1, display: { title: 'Check existing files' } }),
+    event('tool_cancelled', 5, { toolCallId: 'cancelled', toolName: 'terminal_exec', ordinal: 2, reason: 'Stopped by user', display: { title: 'Run validation' } }),
+  ].map(frame => frame.event);
+  const calls = [], client = { async call(method, input) {
+    calls.push({ method, input });
+    if (input.kind === 'runtime.get_tool_execution') return { sessionId: job.sessionId, turnId: job.turnId,
+      toolCall: { id: input.payload.toolCallId, argumentsText: '{"path":"/fixture/guidance.md"}' }, result: 'execution receipt' };
+    return [...frames, { ...frames[0], turnId: 'another-turn', payload: { ...tool, toolCallId: 'foreign', display: { title: 'Unrelated work' } } }];
+  } }, io = terminal(), signal = new AbortController().signal;
+  await inspectChatTools(client, io, job, '', signal);
+  assert.match(io.progress, /1\. Read design guidance · Failed/);
+  assert.match(io.progress, /2\. Check existing files · Running/);
+  assert.match(io.progress, /3\. Run validation · Cancelled/);
+  assert.doesNotMatch(io.progress, /Full diagnostic|Unrelated work|\/fixture/);
+  io.progress = '';
+  await inspectChatTools(client, io, job, '1', signal);
+  assert.match(io.progress, /file_missing: Full diagnostic: selected guidance file does not exist\./);
+  assert.match(io.progress, /\/fixture\/guidance\.md/);
+  assert.match(io.progress, /Arguments:[\s\S]*Result:\nexecution receipt/);
+  io.progress = ''; await inspectChatTools(client, io, job, '3', signal);
+  assert.match(io.progress, /Cancellation: Stopped by user/);
+  assert.ok(calls.every(call => call.method === 'runtime.command' && ['runtime.list_turn_events', 'runtime.get_tool_execution'].includes(call.input.kind)));
+  assert.equal(io.output, '');
+  const before = calls.length;
+  io.progress = ''; await inspectChatTools(client, io, job, 'invalid', signal);
+  assert.match(io.progress, /Usage: \/tools/); assert.equal(calls.length, before);
+});
 function clientFixture(frames, { pending = true, status = 'completed' } = {}) {
   return { calls: [], cursors: [], open: false,
     async *events(input) {
@@ -56,6 +92,28 @@ test('terminal output is plain data, not terminal escape commands', () => {
   assert.equal(terminalText('\x1b[2Jhello\r\n\x1b]52;c;YWJj\x07world\x00\b\t!'), 'hello\nworld\t!');
   assert.equal(resumeHint('session-123', true), '\nResume this session: cardbush --resume \x1b[34msession-123\x1b[0m\n');
   assert.equal(resumeHint('\x1b[2Jsession-123', false), '\nResume this session: cardbush --resume session-123\n');
+});
+
+test('optional resume parsing leaves prompt data and other option values intact', () => {
+  assert.deepEqual(optionalResumeArgs(['--resume', '--local']), { args: ['--resume=', '--local'], picker: true });
+  assert.deepEqual(optionalResumeArgs(['--resume', 's']), { args: ['--resume', 's'], picker: false });
+  assert.deepEqual(optionalResumeArgs(['--prompt', '--resume']), { args: ['--prompt', '--resume'], picker: false });
+  assert.equal(optionalResumeArgs(['--prompt=--resume']).picker, false);
+  assert.equal(optionalResumeArgs(['--', '--resume']).picker, false);
+  assert.equal(optionalResumeArgs(['--resume', '']).picker, false);
+});
+
+test('session selection reads summaries only, sanitizes labels and cancels without creating a session', async () => {
+  const calls = [], sessions = [{ sessionId: 'older', updatedAt: '2025', metadata: { title: 'Older' } },
+    { sessionId: 'newer', updatedAt: '2026', metadata: { title: '\x1b[2JNewer' } }];
+  const client = { async call(...args) { calls.push(args); return sessions; } }, signal = new AbortController().signal;
+  const io = terminal('1');
+  assert.equal((await selectChatSession(client, io, signal)).sessionId, 'newer');
+  assert.doesNotMatch(io.progress, /\x1b/);
+  assert.equal((await selectChatSession(client, io, signal, 'older')).sessionId, 'older');
+  assert.equal(await selectChatSession(client, terminal('/cancel'), signal), undefined);
+  assert.equal(await selectChatSession(client, io, signal, 'missing'), undefined);
+  assert.ok(calls.every(([method, input]) => method === 'sessions.list' && input.projection === 'summary'));
 });
 
 test('Ctrl+C follows this CLI\'s running successor and waits for durable stop without cancelling the remaining queue', async () => {
@@ -383,6 +441,124 @@ test('quit commands and completed prefixes exit locally with a resume hint witho
   const literal = await cli(t, ['--resume', sessionId, '--prompt', '/quit'], { env: f.env }).result;
   assert.equal(literal.code, 0, literal.stderr); assert.equal(literal.stdout, 'fixture-answer-1\n');
   assert.equal(f.calls.length, 1, 'explicit --prompt text is not interpreted as an interactive command');
+});
+
+test('bare --resume picks a session, replays only final replies and inspects earlier tool receipts on demand', async t => {
+  const f = await fixture(t), file = join(f.cwd, 'history-tool.txt');
+  await writeFile(file, 'HISTORICAL_TOOL_RECEIPT');
+  f.setTool({ name: 'read_file', arguments: { path: file } });
+  const first = await cli(t, ['--prompt', 'First saved question'], { env: f.env, cwd: f.cwd }).result;
+  assert.equal(first.code, 0, first.stderr);
+  const session = (await f.service.call('sessions.list', { projection: 'summary' }))[0];
+  const second = await cli(t, ['--resume', session.sessionId, '--prompt', 'Second saved question'], { env: f.env, cwd: f.root }).result;
+  assert.equal(second.code, 0, second.stderr);
+  assert.equal(second.stdout, 'fixture-answer-3\n', 'pipe output must not include historical replies');
+  const before = f.calls.length, child = cli(t, ['--resume'], { env: f.env, cwd: f.root, interactive: true });
+  await until(() => child.stderr, text => text.includes('Select a session:'));
+  child.child.stdin.write('\t'); await delay(120); child.child.stdin.write('\r');
+  await until(() => child.stdout, text => text.includes('fixture-answer-3'));
+  assert.match(child.stdout, /fixture-answer-2[\s\S]*fixture-answer-3/);
+  assert.equal(child.stdout.split('fixture-answer-2').length, 2);
+  assert.match(child.stderr, /First saved question[\s\S]*Second saved question/);
+  assert.match(child.stderr, /Turn 1 · completed · \/tools --turn 1/);
+  assert.doesNotMatch(child.stdout + child.stderr, /HISTORICAL_TOOL_RECEIPT|history-tool\.txt|Arguments:/);
+  child.child.stdin.write('/tools --turn 1\r');
+  await until(() => child.stderr, text => text.includes('Tools from turn 1'));
+  assert.doesNotMatch(child.stderr, /HISTORICAL_TOOL_RECEIPT/);
+  child.child.stdin.write('/tools 1 --turn 1\r');
+  await until(() => child.stderr, text => text.includes('HISTORICAL_TOOL_RECEIPT'));
+  assert.match(child.stderr, /Arguments:[\s\S]*history-tool\.txt[\s\S]*Result:/);
+  child.child.stdin.write('/tools\r');
+  await until(() => child.stderr, text => text.includes('No tools in this turn yet.'));
+  child.child.stdin.write('/quit\r'); const result = await child.result;
+  assert.equal(result.code, 0, result.stderr); assert.equal(f.calls.length, before, 'history and tool inspection never call the model');
+  assert.equal((await f.service.call('sessions.list', { projection: 'summary' })).length, 1);
+});
+
+test('/session switches workspace and reference scope without replaying jobs or inheriting the old submission queue', async t => {
+  const f = await fixture(t), other = join(f.root, 'other-workspace'); await mkdir(other);
+  for (const cwd of [f.cwd, other]) {
+    await writeFile(join(cwd, 'Read Me.md'), cwd === other ? 'SECOND_WORKSPACE' : 'FIRST_WORKSPACE');
+    assert.equal((await cli(t, ['--prompt', 'Saved question'], { env: f.env, cwd }).result).code, 0);
+  }
+  const sessions = await f.service.call('sessions.list', { projection: 'summary' });
+  const first = sessions.find(item => item.metadata.projectDir === f.cwd), second = sessions.find(item => item.metadata.projectDir === other);
+  const child = cli(t, ['--resume', first.sessionId], { env: f.env, cwd: f.root, interactive: true });
+  await until(() => child.stdout, text => text.includes('fixture-answer-1'));
+  child.child.stdin.write('/session\r');
+  await until(() => child.stderr, text => text.includes('Select a session:'));
+  child.child.stdin.write(second.sessionId + '\r');
+  await until(() => child.stdout, text => text.includes('fixture-answer-2'));
+  child.child.stdin.write('Read @"Read Me.md"\r');
+  await until(() => child.stdout, text => text.includes('fixture-answer-3'));
+  await until(() => child.stderr, text => text.includes('✓ Completed'));
+  const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
+  assert.equal(state.jobs.at(-1).sessionId, second.sessionId);
+  assert.deepEqual(state.jobs.at(-1).input.files, [join(other, 'Read Me.md')]);
+  child.child.stdin.write('/session missing-session\r');
+  await until(() => child.stderr, text => text.includes('Session not found.'));
+  const beforePicker = child.stderr.length;
+  child.child.stdin.write('/session\r');
+  await until(() => child.stderr.slice(beforePicker), text => text.includes('Select a session:'));
+  child.child.stdin.write('/cancel\r'); await delay(80);
+  child.child.stdin.write('/quit\r'); const result = await child.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(result.stderr.endsWith(`Resume this session: cardbush --resume ${second.sessionId}\n`));
+  assert.equal(f.calls.length, 3);
+});
+
+test('resume picker cancel creates no session and switching while a task runs is never sent to the model', async t => {
+  const f = await fixture(t);
+  assert.equal((await cli(t, ['--prompt', 'Saved question'], { env: f.env, cwd: f.cwd }).result).code, 0);
+  const cancel = cli(t, ['--resume'], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => cancel.stderr, text => text.includes('Select a session:'));
+  cancel.child.stdin.write('/cancel\r'); assert.equal((await cancel.result).code, 0);
+  assert.equal((await f.service.call('sessions.list', { projection: 'summary' })).length, 1);
+  const child = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => child.stderr, text => text.includes('❯ '));
+  f.block(true); child.child.stdin.write('Running question\r');
+  await until(() => f.calls.length, value => value === 2);
+  child.child.stdin.write('/session\r');
+  await until(() => child.stderr, text => text.includes('Use this command after the current task finishes'));
+  assert.equal((await f.service.call('chat.jobs', {})).length, 2);
+  f.release(); await until(() => child.stderr, text => text.includes('✓ Completed'));
+  child.child.stdin.write('/quit\r'); assert.equal((await child.result).code, 0);
+  assert.equal(f.calls.length, 2);
+});
+
+test('CLI history pages preserve chronological order across more than 100 turns without downloading tool records', async t => {
+  const { SessionStore, InMemoryRuntimeHost } = await import('../packages/bush-runtime/dist/index.js');
+  const sessions = new SessionStore();
+  for (let n = 1; n <= 105; n++) sessions.commitTurn('paged', { turnId: `turn-${n}`, turnSequence: n,
+    createdAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:00:01Z', status: 'completed', reason: 'done', usage: {},
+    messages: [{ messageId: `m-${n}`, turnId: `turn-${n}`, turnSequence: n, messageIndex: 0, createdAt: '2026-01-01T00:00:00Z',
+      message: { role: 'assistant', content: `Final ${n}`, toolCalls: [] } }] });
+  const host = new InMemoryRuntimeHost({ sessionStore: sessions }); t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const calls = [], client = { async call(method, input) { calls.push(input); return host.sendCommand(input); } };
+  const history = await readChatHistory(client, 'paged', new AbortController().signal);
+  assert.deepEqual(history.map(turn => turn.turnSequence), Array.from({ length: 105 }, (_, i) => i + 1));
+  assert.equal(calls.length, 2); assert.ok(calls.every(input => input.kind === 'runtime.get_session_history' && input.payload.messageProjection === 'final_replies'));
+});
+
+test('resuming an active session replays committed replies and follows the existing job exactly once', async t => {
+  const f = await fixture(t);
+  assert.equal((await cli(t, ['--prompt', 'Saved question'], { env: f.env, cwd: f.cwd }).result).code, 0);
+  const session = (await f.service.call('sessions.list', { projection: 'summary' }))[0];
+  f.block(true);
+  const active = await f.service.call('chat.send', { requestId: 'resume-existing-job', sessionId: session.sessionId,
+    turnId: 'resume-existing-turn', text: 'Already running', modelId: 'fixture', permissionMode: 'task_free' });
+  await until(() => f.calls.length, value => value === 2);
+  const child = cli(t, ['--resume', session.sessionId], { env: f.env, cwd: f.root, interactive: true });
+  await until(() => child.stdout, text => text.includes('fixture-answer-1'));
+  await until(() => child.stderr, text => text.includes('Working'));
+  assert.equal(f.calls.length, 2); f.release();
+  await until(() => child.stderr, text => text.includes('✓ Completed'));
+  child.child.stdin.write('/quit\r'); const result = await child.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout.split('fixture-answer-1').length, 2);
+  assert.equal(result.stdout.split('fixture-answer-2').length, 2);
+  const jobs = await f.service.call('chat.jobs', { sessionId: session.sessionId });
+  assert.equal(jobs.length, 2); assert.equal(jobs.at(-1).id, active.id); assert.equal(f.calls.length, 2);
 });
 
 test('CLI native commands stay local, return to chat and ignore child Ctrl+C without submitting model work', async t => {
@@ -806,8 +982,16 @@ test('late noisy MCP diagnostics never overwrite a local draft, hide tool failur
   assert.doesNotMatch(local.stderr + local.stdout, /runtime_browser_connection|runtime_mcp_|fixture startup|late-fixture-log|server\/discover/);
   f.setTool({ name: 'read_file', arguments: { path: join(f.cwd, 'missing-file.txt') } });
   local.child.stdin.write(' completed\n');
-  await until(() => local.stderr, text => text.includes('[Tool failed]') && text.includes('✓ Completed'));
-  assert.match(local.stderr, /\[Tool failed\]/, 'structured task failures remain visible');
+  await until(() => local.stderr, text => text.includes('1 failed') && text.includes('✓ Completed'));
+  assert.match(local.stderr, /1 failed · \/tools/, 'structured task failures remain visible in the compact group');
+  assert.doesNotMatch(local.stderr, /\[Tool failed\]/, 'errors no longer dump into the interactive transcript');
+  const modelCalls = f.calls.length;
+  local.child.stdin.write('/tools\n');
+  await until(() => local.stderr, text => text.includes('Tools from this turn'));
+  assert.match(local.stderr, /1\. read_file · Failed/);
+  local.child.stdin.write('/tools 1\n');
+  await until(() => local.stderr, text => text.includes('missing-file.txt'));
+  assert.equal(f.calls.length, modelCalls, 'inspection must not submit another task');
   local.child.stdin.write('/logs\n');
   await until(() => local.stderr, text => text.includes(logPath));
   local.child.stdin.write('/exit\n');

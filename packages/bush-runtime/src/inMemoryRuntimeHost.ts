@@ -28,7 +28,7 @@ import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { EXTRACT_RUNTIME_SESSION_COMMAND, FORK_RUNTIME_SESSION_COMMAND, sessionExtractionRequestSchema, forkRuntimeSessionRequestSchema } from '@cardbush/bush-protocol';
 import { extractSessionSource } from './sessionExtraction.js';
 import { registerDesignTool } from './designTool.js';
-import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COMMAND, sessionHistoryRequestSchema } from '@cardbush/bush-protocol';
+import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COMMAND, sessionHistoryRequestSchema, finalReplySessionSnapshot } from '@cardbush/bush-protocol';
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND,
@@ -1187,6 +1187,8 @@ export class InMemoryRuntimeHost {
         const tail = page.summary.metadata?.agentRole === 'child' && input.cursor
           ? await this.#sessions.historyPage({ sessionId: input.sessionId, limit: 1 }, signal) : page;
         const metadata = await this.#sessionPresentationMetadata(input.sessionId, page.summary.metadata, tail?.snapshot.turns.at(-1));
+        if (input.messageProjection === 'final_replies') return { ...page, summary: { ...page.summary, metadata },
+          snapshot: finalReplySessionSnapshot({ ...page.snapshot, metadata }), toolExecutions: [], contextCompactions: [] };
         return { ...page, summary: { ...page.summary, metadata }, snapshot: conversationSessionSnapshot({ ...page.snapshot, metadata }),
           toolExecutions: this.#toolExecutions.listTurnsSummaries(input.sessionId, ids)
             .filter(record => record.actionManifest?.operation !== 'terminal.completion'),

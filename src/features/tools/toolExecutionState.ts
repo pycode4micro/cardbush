@@ -1,5 +1,5 @@
 import type { AppLanguage, ChatToolExecution } from '../../types';
-import { normalizeToolDisplay, terminalToolOutcome, terminalCommandOutcomeSchema } from '@cardbush/bush-protocol';
+import { normalizeToolDisplay, selectToolActivity, terminalToolOutcome, terminalCommandOutcomeSchema } from '@cardbush/bush-protocol';
 
 export function decodeToolExecutionState(value: unknown): ChatToolExecution['state'] {
   if (
@@ -69,14 +69,7 @@ function compactActionTitle(value: string) {
 }
 
 export function selectToolActivityExecution(executions: ChatToolExecution[], preferredId?: string) {
-  const preferred = executions.find(item => item.id === preferredId);
-  // Keep the current parallel operation until it settles. In particular,
-  // completion events must not reorder the title back to a previous operation.
-  return executions.find(item => item.state === 'awaiting_permission' || item.state === 'awaiting_solution')
-    ?? (preferred && isToolRunning(preferred) ? preferred : undefined)
-    ?? executions.find(item => item.state === 'running')
-    ?? executions.find(item => item.state === 'queued')
-    ?? preferred ?? executions[executions.length - 1];
+  return selectToolActivity(executions, preferredId);
 }
 
 export function toolActivityStatus(execution: ChatToolExecution, language: AppLanguage, active: boolean): string {

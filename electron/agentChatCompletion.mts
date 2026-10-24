@@ -17,7 +17,9 @@ export const isChatExitCommand = (text: string) => chatExitCommands.some(command
 const commands: ChatChoice[] = [
   { value: '/model ', label: '/model', description: 'Switch the session model' },
   { value: '/settings', description: 'View and reload shared App settings' },
+  { value: '/session ', label: '/session', description: 'Choose or switch a saved session' },
   { value: '/plan', description: 'Show the current task plan' },
+  { value: '/tools ', label: '/tools', description: 'Inspect tools and results; --turn N for an earlier turn' },
   { value: '/artifact ', label: '/artifact', description: 'Browse and open files from this turn' },
   { value: '/source ', label: '/source', description: 'Inspect source explanations and evidence' },
   { value: '/logs', description: 'Show the diagnostic log path' },
