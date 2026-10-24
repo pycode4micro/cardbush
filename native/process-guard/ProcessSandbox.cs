@@ -21,6 +21,7 @@ internal static partial class CardBushProcessHost
         public string[] readableRoots { get; set; }
         public string[] writableRoots { get; set; }
         public string network { get; set; }
+        public SandboxScopeReference scope { get; set; }
     }
 
     private static SandboxPolicy ReadSandboxPolicy(string file, bool cleanup = false)
@@ -55,6 +56,11 @@ internal static partial class CardBushProcessHost
         private readonly SandboxPolicy policy;
         private IntPtr sid;
         private bool profileCreated;
+        private SecurityIdentifier directoryCapability;
+        private Microsoft.Win32.RegistryKey generationState;
+        private long directoryGeneration;
+        public IntPtr ScopeProcess { get; private set; }
+        public bool ScopeWasStale { get; private set; }
 
         public SandboxSession(string file)
         {
@@ -66,14 +72,62 @@ internal static partial class CardBushProcessHost
                 if (hr != 0) Marshal.ThrowExceptionForHR(hr);
                 profileCreated = true;
                 var identity = new SecurityIdentifier(sid);
-                foreach (string path in policy.readableRoots) GrantSandboxDirectory(path, identity, FileSystemRights.ReadAndExecute);
-                foreach (string path in policy.writableRoots) GrantSandboxDirectory(path, identity, FileSystemRights.Modify);
+                generationState = OpenScopeGeneration();
+                if (policy.scope == null)
+                {
+                    SelectScopeGeneration(generationState, policy.readableRoots, policy.writableRoots);
+                    foreach (string path in policy.readableRoots) GrantSandboxDirectory(path, identity, FileSystemRights.ReadAndExecute);
+                    foreach (string path in policy.writableRoots) GrantSandboxDirectory(path, identity, FileSystemRights.Modify);
+                }
+                else
+                {
+                    var scope = ReadSandboxScope(policy.scope.policyPath, false);
+                    if (!SameScope(scope.readableRoots, policy.readableRoots) || !SameScope(scope.writableRoots, policy.writableRoots))
+                        throw new ArgumentException("Sandbox authorization does not match the admitted directories.");
+                    ScopeProcess = OpenProcess(0x00100000, false, (uint)policy.scope.processId);
+                    Check(ScopeProcess != IntPtr.Zero, "Pin directory authorization supervisor");
+                    DateTime deadline = DateTime.UtcNow.AddMinutes(2);
+                    while (true)
+                    {
+                        if (WaitForSingleObject(ScopeProcess, 0) != 258) throw new Exception("Directory authorization supervisor exited.");
+                        try {
+                            string[] ready = File.ReadAllText(policy.scope.policyPath + ".ready").Split('\n');
+                            if (ready.Length == 2 && ready[0] == policy.scope.processId.ToString() && Int64.TryParse(ready[1], out directoryGeneration) && directoryGeneration > 0) break;
+                        }
+                        catch (IOException) { }
+                        if (DateTime.UtcNow >= deadline) throw new TimeoutException("Directory authorization setup timed out.");
+                        Thread.Sleep(20);
+                    }
+                    directoryCapability = ScopeCapability(scope.capability);
+                }
                 GrantSandboxDirectory(policy.privateRoot, identity, FileSystemRights.Modify);
             }
             catch { Dispose(); throw; }
         }
 
         public void CreateSuspended(StringBuilder command, ref STARTUPINFO startup, out PROCESS_INFORMATION process)
+        {
+            // Hold the same cross-host lock through token creation. Once created,
+            // a command owns its admitted scope; a later switch invalidates reuse.
+            STARTUPINFO localStartup = startup;
+            PROCESS_INFORMATION localProcess = new PROCESS_INFORMATION();
+            WithSandboxAclLock(delegate {
+                if (directoryCapability != null && ReadScopeGeneration(generationState) != directoryGeneration)
+                {
+                    ScopeWasStale = true;
+                    directoryCapability = null;
+                    SelectScopeGeneration(generationState, policy.readableRoots, policy.writableRoots);
+                    var identity = new SecurityIdentifier(sid);
+                    foreach (string path in policy.readableRoots) GrantSandboxDirectory(path, identity, FileSystemRights.ReadAndExecute);
+                    foreach (string path in policy.writableRoots) GrantSandboxDirectory(path, identity, FileSystemRights.Modify);
+                }
+                CreateSuspendedCore(command, ref localStartup, out localProcess);
+            });
+            startup = localStartup;
+            process = localProcess;
+        }
+
+        private void CreateSuspendedCore(StringBuilder command, ref STARTUPINFO startup, out PROCESS_INFORMATION process)
         {
             var allocations = new List<IntPtr>();
             IntPtr attributes = IntPtr.Zero;
@@ -87,17 +141,23 @@ internal static partial class CardBushProcessHost
                 Check(InitializeProcThreadAttributeList(attributes, 2, 0, ref size), "Initialize sandbox attributes");
                 initialized = true;
                 var capabilities = new SECURITY_CAPABILITIES { AppContainerSid = sid };
+                var names = new List<SecurityIdentifier>();
+                if (directoryCapability != null) names.Add(directoryCapability);
                 if (policy.network == "enabled")
                 {
                     // Internet and private-network capability. Windows still excludes
                     // loopback by default; no machine-wide exemption is installed.
-                    capabilities.CapabilityCount = 2;
+                    names.Add(new SecurityIdentifier("S-1-15-3-1"));
+                    names.Add(new SecurityIdentifier("S-1-15-3-3"));
+                }
+                if (names.Count > 0)
+                {
+                    capabilities.CapabilityCount = (uint)names.Count;
                     int stride = Marshal.SizeOf(typeof(SID_AND_ATTRIBUTES));
-                    capabilities.Capabilities = Allocate(stride * 2, allocations);
-                    string[] names = new string[] { "S-1-15-3-1", "S-1-15-3-3" };
-                    for (int i = 0; i < names.Length; i++)
+                    capabilities.Capabilities = Allocate(stride * names.Count, allocations);
+                    for (int i = 0; i < names.Count; i++)
                     {
-                        var identity = new SecurityIdentifier(names[i]);
+                        var identity = names[i];
                         var binary = new byte[identity.BinaryLength]; identity.GetBinaryForm(binary, 0);
                         IntPtr memory = Allocate(binary.Length, allocations); Marshal.Copy(binary, 0, memory, binary.Length);
                         Marshal.StructureToPtr(new SID_AND_ATTRIBUTES { Sid = memory, Attributes = 4 }, IntPtr.Add(capabilities.Capabilities, stride * i), false);
@@ -142,6 +202,8 @@ internal static partial class CardBushProcessHost
                 profileCreated = false;
             }
             if (sid != IntPtr.Zero) { FreeSid(sid); sid = IntPtr.Zero; }
+            if (ScopeProcess != IntPtr.Zero) { CloseHandle(ScopeProcess); ScopeProcess = IntPtr.Zero; }
+            if (generationState != null) { generationState.Dispose(); generationState = null; }
             if (failure != null) throw failure;
         }
     }

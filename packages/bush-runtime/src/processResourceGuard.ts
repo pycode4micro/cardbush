@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { ProcessResourceObserver, type ResourceSample } from './processResourceObserver.js';
 import { windowsProcessFailure } from './windowsProcessFailure.js';
 import { prepareExecutionSandbox, type ExecutionSandboxPolicy, type ExecutionSandboxStatus, type PreparedExecutionSandbox } from './executionSandbox.js';
+import type { WindowsSandboxScopePool } from './windowsSandboxScope.js';
 
 const MiB = 1024 ** 2;
 const GiB = 1024 ** 3;
@@ -197,9 +198,11 @@ export interface ProcessResourceReport {
   nativeErrorCode?: number;
   blockedExecutable?: string;
   sandboxCleaned?: boolean;
+  sandboxScopeStale?: boolean;
 }
 
 export interface GuardedProcess {
+  phase?: () => 'preparing_sandbox' | 'executing' | 'cleaning_up';
   resourceId: string;
   child: ChildProcessWithoutNullStreams;
   protected: boolean;
@@ -209,6 +212,7 @@ export interface GuardedProcess {
 }
 
 export interface ManagedProcessOptions {
+  sandboxScopePool?: WindowsSandboxScopePool;
   executable: string;
   args: string[];
   cwd: string;
@@ -313,7 +317,7 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
     }
     const hostPath = process.platform === 'win32' ? input.hostPath ?? resolveProcessResourceHost() : undefined;
     if (input.sandbox) {
-      sandbox = await prepareExecutionSandbox({ ...input, policy: input.sandbox, windowsHostPath: hostPath });
+      sandbox = await prepareExecutionSandbox({ ...input, policy: input.sandbox, windowsHostPath: hostPath, scopePool: input.sandboxScopePool });
       input = { ...input, executable: sandbox.executable, args: sandbox.args, cwd: sandbox.cwd, env: sandbox.env };
     }
     if (process.platform !== "win32") {
@@ -352,7 +356,7 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
       try {
         const report = JSON.parse(await readFile(reportPath, "utf8")) as ProcessResourceReport;
         if (report.phase !== "finished") throw new Error("Resource host did not finish.");
-        const cleanupFailure = await cleanupSandbox(sandbox, lease, report.sandboxCleaned === true);
+        const cleanupFailure = await cleanupSandbox(sandbox, lease, report.sandboxCleaned === true, report.sandboxScopeStale === true);
         const policyFailure = report.code === 'resource_spawn_failed'
           ? windowsProcessFailure(report.nativeErrorCode, input.executable) : undefined;
         const result = policyFailure ? { ...report, ...policyFailure } : report;
@@ -375,7 +379,15 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
       }
     })();
     void complete();
-    return { child, resourceId: lease.id, protected: true, sandbox: sandbox?.status, stop: lifecycle.stop, complete };
+    let observedPhase: 'preparing_sandbox' | 'executing' | 'cleaning_up' = sandbox ? 'preparing_sandbox' : 'executing';
+    const phase = () => {
+      try {
+        const value = readFileSync(reportPath + '.phase', 'utf8');
+        if (value === 'preparing_sandbox' || value === 'executing' || value === 'cleaning_up') observedPhase = value;
+      } catch { /* Supervisor has not published a phase, or already finished. */ }
+      return observedPhase;
+    };
+    return { child, resourceId: lease.id, protected: true, sandbox: sandbox?.status, stop: lifecycle.stop, complete, phase };
   } catch (error) {
     lease.release();
     await sandbox?.dispose(!nativeStarted);
@@ -384,8 +396,8 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
   }
 }
 
-async function cleanupSandbox(sandbox: PreparedExecutionSandbox | undefined, lease: ProcessResourceLease, nativeCleanupConfirmed = false): Promise<ProcessResourceReport | undefined> {
-  try { await sandbox?.dispose(nativeCleanupConfirmed); return undefined; }
+async function cleanupSandbox(sandbox: PreparedExecutionSandbox | undefined, lease: ProcessResourceLease, nativeCleanupConfirmed = false, scopeStale = false): Promise<ProcessResourceReport | undefined> {
+  try { await sandbox?.dispose(nativeCleanupConfirmed, scopeStale); return undefined; }
   catch (error) {
     return { phase: 'finished', code: 'sandbox_cleanup_failed', message: error instanceof Error ? error.message : String(error),
       peakMemoryBytes: 0, taskMemoryBytes: lease.taskMemoryBytes, totalMemoryBytes: lease.totalMemoryBytes };

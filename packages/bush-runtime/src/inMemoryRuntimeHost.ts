@@ -1565,6 +1565,7 @@ export class InMemoryRuntimeHost {
         this.#cacheCleanupTimer = undefined;
         this.#pluginBackground.stop();
         for (const controller of this.#activeTurnControllers.values()) controller.abort();
+        await this.#workspaceTerminals.close();
         for (const id of this.#extensions.keys()) this.removeExtension(id);
         await Promise.allSettled([...this.#pluginStartedSessions].filter(sessionId => ![...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId)).map(sessionId => this.#pluginHooks.closeSession(sessionId)));
         return { accepted: true, activeTurns: this.#activeTurns.size };
