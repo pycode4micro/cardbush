@@ -153,8 +153,8 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       if (resolved.platform !== 'windows' && /^[a-z]:/i.test(value)) throw Error('This SSH host requires POSIX paths. For local files use environment="local".');
       const access = name === 'read_file' || name === 'search_file_content' ? 'read' : name === 'terminal_exec' ? 'execute' : 'write';
       if (name === 'terminal_exec') {
-        const extra = input.additionalPermissions as { readRoots: string[]; writeRoots: string[]; network: boolean } | undefined;
-        if (extra && (extra.readRoots.length || extra.writeRoots.length || extra.network)) throw sandboxError('sandbox_remote_unavailable', 'Direct SSH cannot enforce sandbox extensions. Connect to a CardBush Agent with its own execution policy. No remote command was sent.');
+        const extra = input.additionalPermissions as { readRoots: string[]; writeRoots: string[]; readFiles?: string[]; writeFiles?: string[]; network: boolean } | undefined;
+        if (extra && (extra.readRoots.length || extra.writeRoots.length || extra.readFiles?.length || extra.writeFiles?.length || extra.network)) throw sandboxError('sandbox_remote_unavailable', 'Direct SSH cannot enforce sandbox extensions. Connect to a CardBush Agent with its own execution policy. No remote command was sent.');
         const windows = resolved.platform === 'windows';
         const shell = input.shellSpecified ? String(input.shell) : windows ? 'powershell' : 'posix';
         if (!(windows ? ['cmd', 'powershell'] : ['posix']).includes(shell)) throw Error(`SSH host is ${windows ? 'Windows; use shell="powershell" or shell="cmd"' : 'POSIX; use shell="posix"'}. No user command was sent.`);

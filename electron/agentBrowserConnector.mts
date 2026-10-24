@@ -11,7 +11,7 @@ export class AgentBrowserConnector {
   #closed = false;
   #enabled = false;
   #error = '';
-  constructor(readonly root: string, readonly bundledRoot: string) {}
+  constructor(readonly root: string, readonly bundledRoot: string, readonly configurationRoot = root) {}
 
   #serialize<T>(run: () => Promise<T>): Promise<T> {
     const next = this.#queue.catch(() => {}).then(run);
@@ -22,7 +22,7 @@ export class AgentBrowserConnector {
   async #sync() {
     if (this.#closed) return this.status();
     try {
-      const apps = await readFile(join(this.root, 'config', 'apps.json'), 'utf8').then(text => JSON.parse(text),
+      const apps = await readFile(join(this.configurationRoot, 'config', 'apps.json'), 'utf8').then(text => JSON.parse(text),
         (error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return {}; throw error; });
       const plugin = apps.plugins?.find((value: { id?: string }) => value.id === 'chrome');
       this.#enabled = apps.serviceEnabled === true && plugin?.installed === true && plugin.enabled === true && plugin.config?.connectionMode !== 'remote_debugging';
@@ -44,6 +44,7 @@ export class AgentBrowserConnector {
   }
   status() {
     return { state: this.#error ? 'unavailable' : this.#broker ? 'running' : 'disabled', enabled: this.#enabled,
+      extensionPath: join(this.bundledRoot, 'plugins', 'chrome', 'extension'),
       ...(this.#error ? { error: this.#error } : {}), ...(this.#broker ? { connector: this.#broker.status() } : {}) };
   }
   call(input: Record<string, unknown>) {
@@ -53,8 +54,8 @@ export class AgentBrowserConnector {
       await this.#sync();
       if (action === 'status') return this.status();
       if (!this.#broker) throw Error(this.#error || 'Enable the Browser Use plugin before connecting a browser.');
-      if (action === 'pair') return this.#broker.createPairing({ browser: z.enum(['chrome', 'edge']).parse(input.browser),
-        label: z.string().trim().min(1).max(80).optional().parse(input.label) });
+      if (action === 'pair') return { ...this.#broker.createPairing({ browser: z.enum(['chrome', 'edge']).parse(input.browser),
+        label: z.string().trim().min(1).max(80).optional().parse(input.label) }), extensionPath: this.status().extensionPath };
       const id = z.string().regex(/^[a-f0-9]{32}$/).parse(input.id);
       if (action === 'select-default') this.#broker.setDefaultConnection(id);
       else this.#broker.revokeConnection(id);

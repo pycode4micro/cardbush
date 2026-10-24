@@ -63,6 +63,10 @@ export class TerminalSessionManager {
     this.#resourceGovernor = options.resourceGovernor;
   }
 
+  hasActiveProcesses(): boolean {
+    return this.#starting.size > 0 || [...this.#sessions.values()].some(terminal => !terminal.closed);
+  }
+
   hasRunningWithin(root: string): boolean {
     return [...this.#sessions.values()].some(terminal => terminal.state === "running" && isWithin(root, terminal.cwd));
   }

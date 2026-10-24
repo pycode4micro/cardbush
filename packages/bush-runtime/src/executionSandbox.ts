@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, realpath, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -8,8 +9,25 @@ import { createPlatformContext, findExecutable } from '@cardbush/platform';
 import { sandboxPowerShellArgs, type WindowsSandboxScopePool } from './windowsSandboxScope.js';
 
 const execFileAsync = promisify(execFile);
-const windowsCapabilities = new Map<string, Promise<boolean>>();
+const windowsCapabilities = new Map<string, Promise<{ scopes: boolean; files: boolean }>>();
 const linuxCapabilities = new Map<string, Promise<void>>();
+
+// Runs inside bubblewrap before the requested executable. Mounts pin objects
+// after setup; checking there closes the pathname-to-mount race on older bwrap.
+const linuxSandboxVerifier = `
+const fs = require('node:fs');
+try {
+  for (const grant of JSON.parse(process.argv[1])) {
+    const info = fs.lstatSync(grant.path, { bigint: true });
+    if (info.isSymbolicLink() || info.isDirectory() !== grant.directory ||
+        String(info.dev) + ':' + String(info.ino) !== grant.identity ||
+        grant.write && info.isFile() && info.nlink !== 1n) throw Error('identity mismatch');
+  }
+} catch { process.stderr.write('sandbox_approval_changed: a mounted object differs from the authorized object\\n'); process.exit(78); }
+const child = require('node:child_process').spawn(process.argv[2], process.argv.slice(3), { stdio: 'inherit' });
+child.once('error', error => { process.stderr.write('sandbox_spawn_failed: ' + error.message + '\\n'); process.exitCode = 79; });
+child.once('exit', (code, signal) => { process.exitCode = code ?? 128 + (require('node:os').constants.signals[signal] ?? 1); });
+`;
 
 /** Resolve only host configuration/PATH, never a command's environment or cwd. */
 export async function resolveLinuxSandboxExecutable(configured?: string, hostPath = process.env.PATH ?? ''): Promise<string> {
@@ -59,7 +77,7 @@ function linuxNamespaceArgs(network: ExecutionSandboxPolicy['network']): string[
     '--cap-drop', 'ALL', ...(network === 'disabled' ? ['--unshare-net'] : [])];
 }
 
-async function requireWindowsSandbox(host: string): Promise<boolean> {
+async function requireWindowsSandbox(host: string) {
   let pending = windowsCapabilities.get(host);
   if (!pending) {
     pending = (async () => {
@@ -67,7 +85,9 @@ async function requireWindowsSandbox(host: string): Promise<boolean> {
         const result = await execFileAsync(host, ['--capabilities'], { windowsHide: true, timeout: 10_000, maxBuffer: 4096 });
         const capabilities = JSON.parse(result.stdout);
         if (capabilities.protocol !== 'cardbush.process-host.v1' || capabilities.sandboxVersion !== 1) throw Error('Unsupported sandbox host.');
-        return capabilities.sandboxScopeVersion === 2;
+        if (capabilities.sandboxFileVersion !== 2) throw Error('Sandbox object guards require the current native host.');
+        if (capabilities.sandboxScopeVersion !== 3) throw Error('Concurrent sandbox object guards require the current native host.');
+        return { scopes: true, files: true };
       } catch {
         throw sandboxError('sandbox_unavailable', 'The Windows command sandbox is missing, incompatible, or blocked by application control. No command was started.');
       }
@@ -78,10 +98,29 @@ async function requireWindowsSandbox(host: string): Promise<boolean> {
   return await pending;
 }
 
+/** Validate the shared backend before a file tool performs namespace changes. */
+export async function verifyFileSandboxBackend(windowsHostPath?: string, linuxExecutable?: string) {
+  if (process.platform === 'win32' && windowsHostPath) {
+    if (!(await requireWindowsSandbox(windowsHostPath)).files)
+      throw sandboxError('sandbox_unavailable', 'The installed sandbox host lacks exact-file support. Rebuild or reinstall it.');
+  } else if (process.platform === 'linux') {
+    const executable = await resolveLinuxSandboxExecutable(linuxExecutable);
+    await requireLinuxSandbox(executable, 'disabled', sandboxEnvironment(process.env, tmpdir()));
+  } else throw sandboxError('sandbox_unavailable', 'This platform has no supported file sandbox backend.');
+}
+
 /** Host-owned policy. Never decoded from a model's tool arguments. */
 export interface ExecutionSandboxPolicy {
   writableRoots: readonly string[];
   readableRoots?: readonly string[];
+  /** Exact existing objects, never their parent directories. */
+  readableFiles?: readonly string[];
+  writableFiles?: readonly string[];
+  /** Internal checked deletion only; ordinary write_files never grants DELETE. */
+  deletableFiles?: readonly string[];
+  /** Internal helpers need no access to the caller's working directory. */
+  privateWorkingDirectory?: boolean;
+  expectedIdentities?: Readonly<Record<string, string>>;
   network: 'disabled' | 'enabled';
   linuxExecutable?: string;
   /** Granted scopes were already canonicalized; never silently retarget them. */
@@ -93,6 +132,19 @@ export interface ExecutionSandboxStatus {
   network: 'disabled' | 'enabled';
   readableRoots?: readonly string[];
   writableRoots?: readonly string[];
+  readableFiles?: readonly string[];
+  writableFiles?: readonly string[];
+}
+
+export async function canonicalSandboxFiles(values: readonly string[]): Promise<string[]> {
+  if (!Array.isArray(values) || values.length > 256) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox files.');
+  return [...new Set(await Promise.all(values.map(async value => {
+    if (typeof value !== 'string' || !isAbsolute(value) || value.includes('\0') || value.startsWith('\\\\'))
+      throw sandboxError('sandbox_policy_invalid', 'Sandbox files must be absolute local paths.');
+    const path = await realpath(value);
+    if (!(await stat(path)).isFile()) throw sandboxError('sandbox_policy_invalid', 'Sandbox file grants require an existing regular file.');
+    return path;
+  })))];
 }
 
 export interface PreparedExecutionSandbox {
@@ -146,12 +198,20 @@ export async function prepareExecutionSandbox(input: {
   // Snapshot every field before asynchronous setup; callers cannot broaden a live policy.
   const writableInput = [...input.policy.writableRoots];
   const readableInput = [...(input.policy.readableRoots ?? [])];
+  const readableFileInput = [...(input.policy.readableFiles ?? [])];
+  const writableFileInput = [...(input.policy.writableFiles ?? [])];
+  const privateWorkingDirectory = input.policy.privateWorkingDirectory === true;
+  const expectedIdentities = { ...input.policy.expectedIdentities };
   const linuxExecutable = input.policy.linuxExecutable;
   const requireCanonicalRoots = input.policy.requireCanonicalRoots === true;
   const [writableRoots, readableRoots, cwd] = await Promise.all([canonicalSandboxRoots(writableInput), canonicalSandboxRoots(readableInput), realpath(input.cwd)]);
+  const [readableFiles, writableFiles] = await Promise.all([canonicalSandboxFiles(readableFileInput), canonicalSandboxFiles(writableFileInput)]);
+  const deletableFiles = [...(input.policy.deletableFiles ?? [])];
+  if (deletableFiles.some(path => !writableFiles.includes(path))) throw sandboxError('sandbox_policy_invalid', 'Deletion requires an exact writable file grant.');
+  if (readableFiles.length + writableFiles.length > 256) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox files.');
   if (requireCanonicalRoots) {
     const identity = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
-    for (const [requested, actual] of [[writableInput, writableRoots], [readableInput, readableRoots]]) {
+    for (const [requested, actual] of [[writableInput, writableRoots], [readableInput, readableRoots], [readableFileInput, readableFiles], [writableFileInput, writableFiles]]) {
       const expected = new Set(requested.map(identity));
       if (actual.some(path => !expected.has(identity(path))) || actual.length !== expected.size) {
         throw sandboxError('sandbox_approval_changed', 'An approved directory changed before sandbox setup. No command was started.');
@@ -161,19 +221,22 @@ export async function prepareExecutionSandbox(input: {
   if (writableRoots.length + readableRoots.length > 64) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox roots.');
   if (!(await stat(cwd)).isDirectory()) throw sandboxError('sandbox_policy_invalid', 'The command working directory does not exist.');
   if (process.platform === 'win32' && !input.windowsHostPath) throw sandboxError('sandbox_unavailable', 'The Windows sandbox host is unavailable.');
-  const supportsScopes = process.platform === 'win32' && await requireWindowsSandbox(input.windowsHostPath!);
+  const capabilities = process.platform === 'win32' ? await requireWindowsSandbox(input.windowsHostPath!) : undefined;
+  if (capabilities && (readableFiles.length || writableFiles.length) && !capabilities.files)
+    throw sandboxError('sandbox_unavailable', 'The sandbox host does not support exact file grants. Rebuild or reinstall it; no command was started.');
   // Windows TEMP may use an 8.3 alias (for example RUNNER~1). The native
   // supervisor requires canonical roots, including its own private directory.
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'cardbush-sandbox-')));
   const privateRoot = join(directory, 'private');
   const windowsPolicyPath = process.platform === 'win32' ? join(directory, 'policy.json') : undefined;
   let prepared = false;
+  const boundHandles: FileHandle[] = [];
   let scope: Awaited<ReturnType<WindowsSandboxScopePool['acquire']>> | undefined;
   try {
     if ([...writableRoots, ...readableRoots].some(root => within(root, directory))) {
       throw sandboxError('sandbox_policy_invalid', 'The writable scope would expose the sandbox supervisor state. Select a narrower project directory.');
     }
-    if (![...readableRoots, ...writableRoots].some(root => within(root, cwd))) {
+    if (!privateWorkingDirectory && ![...readableRoots, ...writableRoots].some(root => within(root, cwd))) {
       throw sandboxError('sandbox_policy_invalid', 'The working directory is outside the authorized sandbox roots.');
     }
     await mkdir(privateRoot);
@@ -182,10 +245,10 @@ export async function prepareExecutionSandbox(input: {
     let executable = input.executable, args = [...input.args];
     if (windowsPolicyPath) {
       args = sandboxPowerShellArgs(executable, args);
-      if (supportsScopes && input.scopePool) scope = await input.scopePool.acquire(input.windowsHostPath!, readableRoots, writableRoots);
+      if (capabilities?.scopes && input.scopePool) scope = await input.scopePool.acquire(input.windowsHostPath!, readableRoots, writableRoots, expectedIdentities);
       await writeFile(windowsPolicyPath, JSON.stringify({ version: 1,
         identity: `CardBush.Task.${randomUUID().replaceAll('-', '')}`, privateRoot,
-        readableRoots, writableRoots, network, ...(scope ? { scope: scope.reference } : {}),
+        readableRoots, writableRoots, readableFiles, writableFiles, deletableFiles, expectedIdentities, network, ...(scope ? { scope: scope.reference } : {}),
       }), { mode: 0o600, flag: 'wx' });
     } else {
       executable = await resolveLinuxSandboxExecutable(linuxExecutable);
@@ -198,16 +261,40 @@ export async function prepareExecutionSandbox(input: {
         ...(network === 'enabled' ? ['/etc/resolv.conf', '/etc/hosts'] : [])]) {
         try { await stat(path); args.push('--ro-bind', path, path); } catch { /* Distribution-specific optional path. */ }
       }
-      for (const path of readableRoots) args.push('--ro-bind', path, path);
-      for (const path of writableRoots) args.push('--bind', path, path);
-      args.push('--bind', privateRoot, privateRoot, '--chdir', cwd, '--', input.executable, ...input.args);
+      const verifyObjects = readableFiles.length > 0 || writableFiles.length > 0 || Object.keys(expectedIdentities).length > 0;
+      const verifier = verifyObjects ? await realpath(process.execPath) : undefined;
+      if (verifier && (writableRoots.some(root => within(root, verifier)) || writableFiles.includes(verifier)))
+        throw sandboxError('sandbox_policy_invalid', 'A writable grant cannot include the trusted sandbox runtime.');
+      if (verifier && !readableFiles.includes(verifier)) readableFiles.push(verifier);
+      const mounts: Array<{ path: string; identity: string; directory: boolean; write: boolean }> = [];
+      // Retain metadata descriptors to prevent inode reuse. On older bubblewrap
+      // versions, a trusted in-sandbox bootstrap verifies the mounted objects
+      // before any requested program runs; it never accesses their content.
+      for (const [paths, writable] of [[readableRoots, false], [writableRoots, true], [readableFiles, false], [writableFiles, true]] as const) {
+        for (const path of paths) {
+          if (verifyObjects) {
+            const handle = await open(path, 0x200000 /* O_PATH */ | constants.O_NOFOLLOW);
+            boundHandles.push(handle);
+            const metadata = await handle.stat({ bigint: true });
+            if (metadata.isSymbolicLink() || expectedIdentities[path] && expectedIdentities[path] !== `${metadata.dev}:${metadata.ino}` ||
+                writable && metadata.isFile() && metadata.nlink !== 1n)
+              throw sandboxError('sandbox_approval_changed', 'An authorized filesystem object changed before sandbox setup.');
+            mounts.push({ path, identity: `${metadata.dev}:${metadata.ino}`, directory: metadata.isDirectory(), write: writable });
+          }
+          args.push(writable ? '--bind' : '--ro-bind', path, path);
+        }
+      }
+      args.push('--bind', privateRoot, privateRoot, '--chdir', privateWorkingDirectory ? privateRoot : cwd, '--');
+      if (verifier) args.push(verifier, '--input-type=commonjs', '-e', linuxSandboxVerifier, JSON.stringify(mounts), input.executable, ...input.args);
+      else args.push(input.executable, ...input.args);
     }
     input.signal?.throwIfAborted();
     prepared = true;
     let disposal: Promise<void> | undefined;
     return {
-      executable, args, cwd, env, windowsPolicyPath,
-      status: { backend: windowsPolicyPath ? 'windows-appcontainer' : 'linux-bubblewrap', network, readableRoots, writableRoots },
+      executable, args, cwd: privateWorkingDirectory ? privateRoot : cwd, env, windowsPolicyPath,
+      status: { backend: windowsPolicyPath ? 'windows-appcontainer' : 'linux-bubblewrap', network, readableRoots, writableRoots,
+        ...(readableFiles.length ? { readableFiles } : {}), ...(writableFiles.length ? { writableFiles } : {}) },
       dispose: (nativeCleanupConfirmed = false, scopeStale = false) => disposal ??= (async () => {
         if (scopeStale) scope?.invalidate();
         try {
@@ -218,11 +305,11 @@ export async function prepareExecutionSandbox(input: {
             catch { throw sandboxError('sandbox_cleanup_failed', `Sandbox cleanup could not finish. Recovery journal retained at ${windowsPolicyPath}.`); }
           }
           await removeSandboxDirectory(directory);
-        } finally { scope?.release(); }
+        } finally { scope?.release(); await Promise.all(boundHandles.map(handle => handle.close())); }
       })(),
     };
   } finally {
-    if (!prepared) { scope?.release(); await removeSandboxDirectory(directory); }
+    if (!prepared) { scope?.release(); await Promise.all(boundHandles.map(handle => handle.close())); await removeSandboxDirectory(directory); }
   }
 }
 

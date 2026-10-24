@@ -1,14 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { BigIntStats } from 'node:fs';
 import { canonicalStoragePath } from "@cardbush/platform";
 import { parseSshWorkspace } from '@cardbush/bush-protocol';
-import { chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readlink, realpath, rename, rm, rmdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceChange, WorkspaceCheckpoint, WorkspaceDescriptor, WorkspaceReview } from "@cardbush/bush-protocol";
 import { WORKSPACE_REVIEW_TURN_LIMIT } from "@cardbush/bush-protocol";
 import { GitWorkspaceStore, decodeGitPaths, mapFiles, type GitFileEntry, type GitFileTree } from "./gitWorkspaceStore.js";
 import { MAX_IN_PROCESS_FILE_BYTES, readFileBounded } from "./workspaceFileRead.js";
+import { trustedGit } from './trustedGit.js';
+import { withWorkspaceFileAccess, openWorkspaceFile, recordWorkspaceRead, writeWorkspaceFile, unlinkWorkspaceFile, createWorkspaceParent } from './workspaceFileAccess.js';
+import { WorkspacePathGuard } from './workspacePathGuard.js';
 
 const exec = promisify(execFile);
 type Entry = GitFileEntry;
@@ -130,7 +134,7 @@ export class TaskWorkspaceManager {
       let top: string;
       try { top = (await this.#git(sourceDir, ["rev-parse", "--show-toplevel"])).toString("utf8").trim(); }
       catch (error) {
-        if (mode !== "worktree" && ((error as NodeJS.ErrnoException).code === "ENOENT" || String((error as Error).message).includes("not a git repository"))) return local(false);
+        if (mode !== "worktree" && (['ENOENT', 'git_unavailable'].includes((error as NodeJS.ErrnoException).code ?? '') || String((error as Error).message).includes("not a git repository"))) return local(false, (error as NodeJS.ErrnoException).code === 'git_unavailable' ? (error as Error).message : undefined);
         throw error;
       }
       if (await realpath(top) !== sourceDir) {
@@ -159,6 +163,7 @@ export class TaskWorkspaceManager {
         sourceHead, baselineId: "", latestId: "", appliedId: "", checkpoints: [],
       };
       const baseline = intent ? await this.#snapshot(state, state.baselineId) : await this.#capture(state, sourceDir, {});
+      this.#assertRestorableEntries(Object.values(baseline));
       if (!intent) state.baselineId = state.latestId = state.appliedId = await this.#saveSnapshot(state, baseline);
       let exists = false;
       try { await lstat(workspaceDir); exists = true; }
@@ -327,16 +332,29 @@ export class TaskWorkspaceManager {
       const state = await this.#required(sessionId);
       await this.#recover(state);
       this.#ready(state);
-      let current = await this.#capture(state, state.workspaceDir, await this.#snapshot(state, state.latestId));
-      const initial = current;
-      const ids: string[] = [];
-      const selected: Checkpoint[] = [];
+      // Undo owns only the selected paths. Read their live revisions through
+      // the file backend; do not invoke a host Git scan of the working tree.
+      // Unrelated edits stay untouched and enter the next normal checkpoint.
+      const initial: Snapshot = Object.assign(Object.create(null), await this.#snapshot(state, state.latestId));
+      const snapshots = new Map<string, { checkpoint: Checkpoint; before: Snapshot; after: Snapshot }>();
+      const targets = new Set<string>();
       for (const turnId of [...new Set(turnIds)]) {
         const checkpoint = state.checkpoints.find(item => item.turnId === turnId);
-        if (!checkpoint) throw problem("workspace_checkpoint_expired", "Only the current and previous Turn can be reverted or restored.");
-        if (checkpoint.status === (reverted ? "reverted" : "complete")) continue;
-        if (checkpoint.status !== (reverted ? "complete" : "reverted") || !checkpoint.after) throw problem("workspace_checkpoint_pending", "An incomplete checkpoint cannot be reverted or restored.");
+        if (!checkpoint) throw problem('workspace_checkpoint_expired', 'Only the current and previous Turn can be reverted or restored.');
+        if (checkpoint.status === (reverted ? 'reverted' : 'complete')) continue;
+        if (checkpoint.status !== (reverted ? 'complete' : 'reverted') || !checkpoint.after) throw problem('workspace_checkpoint_pending', 'An incomplete checkpoint cannot be reverted or restored.');
         const before = await this.#snapshot(state, checkpoint.before), after = await this.#snapshot(state, checkpoint.after);
+        snapshots.set(turnId, { checkpoint, before, after });
+        for (const path of changed(before, after)) targets.add(path);
+      }
+      for (const path of targets) {
+        const actual = await this.#readEntry(state, state.workspaceDir, path);
+        if (actual) initial[path] = actual; else delete initial[path];
+      }
+      let current = initial;
+      const ids: string[] = [];
+      const selected: Checkpoint[] = [];
+      for (const [turnId, { checkpoint, before, after }] of snapshots) {
         const expected = reverted ? after : before, target = reverted ? before : after;
         current = Object.assign(Object.create(null), current);
         for (const path of changed(before, after)) {
@@ -425,6 +443,7 @@ export class TaskWorkspaceManager {
     const paths = changed(before, after).sort((a, b) =>
       Number(Boolean(after[a])) - Number(Boolean(after[b])) ||
       (after[a] ? a.split('/').length - b.split('/').length : b.split('/').length - a.split('/').length));
+    this.#assertRestorableEntries(paths.flatMap(path => [before[path], after[path]]));
     for (const path of paths) if (!equal(await this.#readEntry(state, root, path), before[path])) {
       throw problem("workspace_revision_conflict", `${path} has changed in the destination. No files were applied.`);
     }
@@ -434,7 +453,7 @@ export class TaskWorkspaceManager {
     try {
       for (const path of paths) {
         if (!equal(await this.#readEntry(state, root, path), before[path])) throw problem("workspace_revision_conflict", `${path} changed while preparing the restore.`);
-        await this.#writeEntry(state, root, path, after[path], after[path] ? versions.get(after[path].hash) : undefined);
+        await this.#writeEntry(state, root, path, after[path], after[path] ? versions.get(after[path].hash) : undefined, before[path]);
       }
     } catch (error) {
       await this.#recover(state);
@@ -443,6 +462,11 @@ export class TaskWorkspaceManager {
   }
 
   async #commitTransaction(state: State) { delete state.pending; await this.#save(state); }
+
+  #assertRestorableEntries(entries: Array<Entry | undefined>) {
+    if (entries.some(entry => entry?.kind === 'symlink')) throw problem('workspace_link_restore_unsupported',
+      'Restoring symbolic links requires a checked link backend. No workspace files were changed and no host fallback was used.');
+  }
 
   async #recover(state: State) {
     if (state.disposal) {
@@ -465,6 +489,7 @@ export class TaskWorkspaceManager {
     if (transaction.root !== state.workspaceDir && transaction.root !== state.sourceDir) throw problem("workspace_journal_corrupt", "Invalid workspace transaction destination.");
     await this.#assertDestination(transaction.root);
     const before = await this.#snapshot(state, transaction.before), after = await this.#snapshot(state, transaction.after);
+    this.#assertRestorableEntries(transaction.paths.flatMap(path => [before[path], after[path]]));
     const versions = await this.#store(state).blobs(transaction.paths.flatMap(path => before[path] ? [before[path].hash] : []));
     // A crash before the state commit rolls back only bytes we still own.
     for (const path of transaction.paths) {
@@ -477,7 +502,7 @@ export class TaskWorkspaceManager {
       const current = await this.#readEntry(state, transaction.root, path);
       if (equal(current, before[path])) continue;
       if (!equal(current, after[path])) throw problem("workspace_recovery_conflict", `${path} changed during recovery.`);
-      await this.#writeEntry(state, transaction.root, path, before[path], before[path] ? versions.get(before[path].hash) : undefined);
+      await this.#writeEntry(state, transaction.root, path, before[path], before[path] ? versions.get(before[path].hash) : undefined, after[path]);
     }
     delete state.pending;
     await this.#save(state);
@@ -549,9 +574,20 @@ export class TaskWorkspaceManager {
     if (stat.isDirectory()) return undefined;
     if (!stat.isFile() && !stat.isSymbolicLink()) throw problem("workspace_file_type_unsupported", `Cannot checkpoint non-file entry ${path}.`);
     const store = this.#store(state);
-    const id = stat.isFile() && stat.size > MAX_IN_PROCESS_FILE_BYTES
-      ? (await store.hashFiles(root, [path]))[0]!
-      : await store.blobId(stat.isSymbolicLink() ? await readlink(absolute, { encoding: "buffer" }) : await readFileBounded(absolute));
+    const id = stat.isSymbolicLink() ? await store.blobId(await readlink(absolute, { encoding: 'buffer' }))
+      : await withWorkspaceFileAccess([absolute], false, async () => {
+        const file = await openWorkspaceFile(absolute);
+        try {
+          const before = await file.stat({ bigint: true }) as BigIntStats;
+          const git = createHash(await store.format()).update(`blob ${before.size}\0`), revision = createHash('sha256');
+          let size = 0n;
+          for await (const chunk of file.createReadStream({ autoClose: false })) { size += BigInt(chunk.length); git.update(chunk); revision.update(chunk); }
+          const after = await file.stat({ bigint: true }) as BigIntStats;
+          if (size !== before.size || after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) throw problem('workspace_revision_conflict', 'File changed while reading its version.');
+          recordWorkspaceRead(absolute, revision.digest('hex'));
+          return git.digest('hex');
+        } finally { await file.close(); }
+      });
     return { hash: id, mode: process.platform === "win32" ? 0o666 : stat.isSymbolicLink() ? 0o777 : stat.mode & 0o111 ? 0o755 : 0o644,
       kind: stat.isSymbolicLink() ? "symlink" : "file" };
   }
@@ -572,37 +608,34 @@ export class TaskWorkspaceManager {
     return absolute;
   }
 
-  async #writeEntry(state: State, root: string, path: string, entry?: Entry, savedContent?: Buffer) {
+  async #writeEntry(state: State, root: string, path: string, entry?: Entry, savedContent?: Buffer, expected?: Entry) {
     const absolute = await this.#filePath(root, path);
+    // Restore only regular content through the common checked handle protocol.
+    // Link metadata needs a dedicated atomic broker; never follow it or fall
+    // back to host content writes while that backend is unavailable.
+    if (entry?.kind === 'symlink' || expected?.kind === 'symlink') throw problem('workspace_link_restore_unsupported', 'Restoring symbolic links is unavailable in the checked file backend. No host fallback was used.');
+    await withWorkspaceFileAccess([absolute], true, async () => {
+      const current = await this.#readEntry(state, root, path);
+      if (!equal(current, expected)) throw problem('workspace_revision_conflict', `${path} changed before the restore commit.`);
+      if (!entry) { if (current) await unlinkWorkspaceFile(absolute); return; }
+      const content = savedContent ?? await this.#readBlob(state, entry.hash);
+      await createWorkspaceParent(absolute);
+      await writeWorkspaceFile(absolute, content, { ...(current ? {} : { flag: 'wx' }), mode: entry.mode });
+    });
     if (!entry) {
-      await rm(absolute, { force: true });
       // Git records files, not empty directories. Prune only empty ancestors
       // so a reverted directory can become a file again.
       let parent = dirname(absolute);
       while (parent !== resolve(root)) {
-        try { await rmdir(parent); }
+        const guard = new WorkspacePathGuard();
+        try { await guard.pin(dirname(parent)); await rmdir(guard.file(parent)); }
         catch (error) {
           if (["ENOTEMPTY", "EEXIST", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) break;
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
+        } finally { await guard.close(); }
         parent = dirname(parent);
       }
       return;
-    }
-    const content = savedContent ?? await this.#readBlob(state, entry.hash);
-    await mkdir(dirname(absolute), { recursive: true });
-    try { if ((await lstat(absolute)).isDirectory()) await rmdir(absolute); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    if (entry.kind === "symlink") {
-      await rm(absolute, { force: true });
-      await symlink(content, absolute);
-    } else {
-      const temp = `${absolute}.cardbush-${randomUUID()}.tmp`;
-      try {
-        await writeFile(temp, content, { flag: "wx", mode: entry.mode });
-        if (process.platform !== "win32") await chmod(temp, entry.mode);
-        await rename(temp, absolute);
-      } finally { await rm(temp, { force: true }); }
     }
   }
 
@@ -812,7 +845,7 @@ export class TaskWorkspaceManager {
     const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
     for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"]) delete env[key];
     // check-ignore consumes literal filenames and rejects Git's pathspec-magic flag.
-    const result = await exec("git", [...(args[0] === "check-ignore" ? [] : ["--literal-pathspecs"]),
+    const result = await exec(await trustedGit([root]), [...(args[0] === "check-ignore" ? [] : ["--literal-pathspecs"]),
       // Private snapshot refs can exceed MAX_PATH inside deep project directories.
       "-c", "core.longpaths=true", "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${hooks}`, "-C", root, ...args], {
       encoding: "buffer", windowsHide: true, maxBuffer: 32 * 1024 * 1024, timeout: 30_000, env,

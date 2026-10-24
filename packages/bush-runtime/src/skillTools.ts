@@ -1,11 +1,12 @@
-import { readdir } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { searchLimitParameter, searchResultLimitSchema } from '@cardbush/bush-protocol';
 import { readPluginSkill, skillPluginIdentity } from './pluginSkills.js';
 import { resolveSearchResultLimit, type SearchResultLimitProvider } from './searchResultLimit.js';
 import { catalogPage, catalogPageProperties, discoveryDescription, projectCatalogPage } from './catalogPage.js';
 
-import type { ToolRegistration, ToolRegistry } from "./toolRegistry.js";
+import type { ToolAdmissionContext, ToolRegistration, ToolRegistry } from "./toolRegistry.js";
+import { isWithin, normalizeIdentity } from './workspaceAccessPolicy.js';
 
 interface SkillCard {
   name: string;
@@ -18,6 +19,30 @@ interface SkillCard {
 }
 
 export type SkillRootProvider = () => string[] | Promise<string[]>;
+const resourceProviders = new WeakMap<ToolRegistry, SkillRootProvider>();
+
+function visibleSkills(skills: SkillCard[], context: Pick<ToolAdmissionContext, 'turn'>) {
+  const metadata = context.turn?.request.metadata;
+  const allowed = Array.isArray(metadata?.allowedSkills) ? new Set(metadata.allowedSkills) : undefined;
+  const disabled = new Set(Array.isArray(metadata?.disabledSkills) ? metadata.disabledSkills : []);
+  return skills.filter(skill => (allowed === undefined || allowed.has(skill.name) || allowed.has(skill.unqualifiedName!))
+    && !disabled.has(skill.name) && !disabled.has(skill.unqualifiedName!));
+}
+
+/** Only registered, currently visible instructions and references are resources.
+ * This never grants scripts, sibling files, writes, or terminal directory access. */
+export async function isSkillReadResource(registry: ToolRegistry, context: ToolAdmissionContext, path: string) {
+  const provider = resourceProviders.get(registry);
+  if (!provider) return false;
+  for (const skill of visibleSkills(await loadCards(await provider()), context)) {
+    try {
+      const root = await realpath(skill.packageDir), main = await realpath(skill.mainResource);
+      if (!isWithin(root, main)) continue;
+      if (normalizeIdentity(path) === normalizeIdentity(main) || isWithin(join(root, 'references'), path)) return true;
+    } catch { /* Missing or replaced resources retain normal path admission. */ }
+  }
+  return false;
+}
 
 export function registerSkillTools(
   registry: ToolRegistry,
@@ -27,6 +52,7 @@ export function registerSkillTools(
   const provider = typeof roots === "function"
     ? async () => normalizeRoots(await roots())
     : async () => normalizeRoots(roots);
+  resourceProviders.set(registry, provider);
   registry.register(searchRegistration(provider, loadSearchResultLimit));
 }
 
@@ -66,15 +92,7 @@ function searchRegistration(
       const activeRoots = await roots();
       const listAll = normalize(context.input.query).trim() === '*';
       const terms = tokens(context.input.query);
-      const configured = context.turn?.request.metadata.allowedSkills;
-      const allowed = Array.isArray(configured)
-        ? new Set(configured.filter((item): item is string => typeof item === "string"))
-        : undefined;
-      const disabled = new Set(Array.isArray(context.turn?.request.metadata.disabledSkills)
-        ? context.turn.request.metadata.disabledSkills : []);
-      const skills = (await loadCards(activeRoots)).filter((skill) =>
-        (allowed === undefined || allowed.has(skill.name) || allowed.has(skill.unqualifiedName!)) && !disabled.has(skill.name) && !disabled.has(skill.unqualifiedName!),
-      );
+      const skills = visibleSkills(await loadCards(activeRoots), context);
       const matches = skills
         .map((skill) => ({ ...skill, score: listAll ? 1 : score(skill, terms) }))
         .filter((skill) => skill.score > 0)

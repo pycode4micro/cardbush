@@ -181,7 +181,9 @@ test('an enforced sandbox allows workspace commands without weakening the host p
   const f = fixture({ required: true, decision: 'deny' });
   assert.equal((await f.run('terminal_exec', exec())).kind, 'returned');
   assert.equal(f.prompts.length, 0);
-  assert.deepEqual(f.starts[0].sandbox, { network: 'disabled', readableRoots: [], writableRoots: [root] });
+  const { expectedIdentities, ...policy } = f.starts[0].sandbox;
+  assert.deepEqual(policy, { network: 'disabled', readableRoots: [], writableRoots: [root], requireCanonicalRoots: true });
+  assert.match(expectedIdentities[root], /^\d+:\d+$/);
   assert.equal((await f.run('terminal_exec', exec(), { mode: 'all_free' })).kind, 'returned');
   assert.deepEqual(f.starts[1].sandbox, f.starts[0].sandbox);
 });

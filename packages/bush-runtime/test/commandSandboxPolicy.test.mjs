@@ -44,8 +44,12 @@ test('registered terminals snapshot host policy and do not derive grants from th
   mutable.mode = 'off'; mutable.writableRoots.push(resolve('unexpected'));
   const terminal = registry.resolve('terminal_exec');
   const call = context(process.cwd()); call.input = terminal.decodeInput({ command: 'irrelevant', cwd: process.cwd(), yield_time_ms: 1, shell: process.platform === 'win32' ? 'cmd' : 'posix', sandbox: false });
+  assert.equal((await terminal.authorize(call)).kind, 'allow');
   await terminal.execute(call);
-  assert.deepEqual(start.sandbox, { network: 'disabled', readableRoots: [], writableRoots: [process.cwd()] });
+  assert.equal(start.sandbox.network, 'disabled');
+  assert.deepEqual(start.sandbox.readableRoots, []);
+  assert.deepEqual(start.sandbox.writableRoots, [process.cwd()]);
+  assert.equal(start.sandbox.requireCanonicalRoots, true);
 });
 
 test('required command isolation rejects unverified SSH execution before contacting the remote bridge', async () => {

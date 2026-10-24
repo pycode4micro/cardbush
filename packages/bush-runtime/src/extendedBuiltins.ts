@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import { resolveToolReferenceName } from './toolReferenceNames.js';
 import { omitToolImageData, omitToolImageDataFromText, snapshotMcpImages } from './toolImageContent.js';
 import { isAbsolute, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { authorizePath } from './workspaceAccessPolicy.js';
+import { bindWorkspaceFileAuthorization } from './workspaceFileAccess.js';
 
-import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
+import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 import { ModelImageStore } from "./modelImageStore.js";
 import { renderTextFields } from "./toolResultText.js";
 import type { AutomationScheduler } from './automationScheduler.js';
@@ -123,13 +124,13 @@ function registerArchivedToolResult(
 }
 
 function registerImageInput(registry: ToolRegistry, images: ModelImageStore) {
-  registry.register<Record<string, unknown>>({
+  registry.register(bindWorkspaceFileAuthorization<Record<string, unknown>>({
     definition: { name: "inject_image_input", description: "Queue a validated local image path, http(s) URL, or base64 data image for the next model round. Local and data images become immutable observations (up to 4 megapixels, 4096px edge and 1 MB). Images within these limits are kept unchanged; graphics try lossless encoding before lossy compression. Original files and UI previews are preserved. For small text, charts or precise visual inspection, use detail: high and crop the relevant area from the original source, or set original: true to retain full-resolution pixels (9 MB limit). Reopening a saved model observation cannot recover discarded pixels. Remote URLs are passed to the provider. detail controls model vision detail, not file compression.", inputSchema: objectSchema(["url"], { url: { type: "string" }, label: { type: "string" }, caption: { type: "string" }, detail: { enum: ["auto", "low", "high"] }, original: { type: "boolean", default: false } }) },
     manifest: manifest("image.inject", false, "session"), parallelSafe: false,
     decodeInput: object,
     authorize: async (context) => {
       const url = requiredText(context.input.url, "url");
-      return isAbsolute(url) ? pathAdmission(context, url, "read") : { kind: "allow" };
+      return isAbsolute(url) ? authorizePath('read')({ ...context, input: { path: url } }) : { kind: "allow" };
     },
     execute: async (context) => {
       const url = requiredText(context.input.url, "url");
@@ -137,7 +138,10 @@ function registerImageInput(registry: ToolRegistry, images: ModelImageStore) {
       const modelInputUrl = await images.snapshot(url, context.signal, { original: context.input.original === true });
       return success(context, { queued: true }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, model_input_url: modelInputUrl, detail: text(context.input.detail) || "auto" } }]);
     },
-  });
+  }, undefined, {
+    paths: input => typeof input.url === 'string' && isAbsolute(input.url) ? [input.url] : [],
+    resolve: (input, canonical) => typeof input.url === 'string' && isAbsolute(input.url) ? { ...input, url: canonical(input.url) } : input,
+  }));
 }
 
 function registerSchedule(registry: ToolRegistry, scheduler?: AutomationScheduler) {
@@ -292,10 +296,8 @@ function success(_context: ToolHandlerContext<unknown>, output: unknown, _paths:
     : { value: output };
   return { ...value, artifacts };
 }
-async function pathAdmission(context: ToolAdmissionContext<Record<string, unknown>>, candidate: string, access: "read" | "write") { const path = resolve(candidate); const mode: "task_free" | "user_free" = context.turn?.request.permissionMode === "user_free" ? "user_free" : "task_free"; const metadata = context.turn?.request.metadata ?? {}; const configuredUserRoots = stringList(metadata.userRoots); const userRoots = mode === "user_free" ? (configuredUserRoots.length > 0 ? configuredUserRoots : [homedir()]) : []; const roots = [metadata.workspaceDir, metadata.projectDir, ...userRoots, ...stringList(metadata.taskRoots)].filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => resolve(item)); if (roots.some((root) => path === root || path.startsWith(`${root}\\`) || path.startsWith(`${root}/`))) return { kind: "allow" as const }; return { kind: "ask" as const, request: { reason: `${access} requires access outside configured roots.`, actions: [access], targets: [{ kind: "filesystem_path" as const, value: path }], capabilityIds: [`${access}:${path}`], scope: { mode, roots } } }; }
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Tool arguments must be an object."); return value as Record<string, unknown>; }
 function objectSchema(required: string[], properties: Record<string, unknown>) { return { type: "object", additionalProperties: false, required, properties }; }
 function text(value: unknown): string { return String(value ?? "").trim(); }
 function requiredText(value: unknown, name: string): string { const result = text(value); if (!result) throw new Error(`${name} is required.`); return result; }
-function stringList(value: unknown): string[] { return (Array.isArray(value) ? value : typeof value === "string" ? value.split(/[,;\n]/) : []).map(text).filter(Boolean); }
 function clamp(value: unknown, min: number, max: number, fallback: number): number { const result = Number(value); return Number.isFinite(result) ? Math.max(min, Math.min(max, Math.trunc(result))) : fallback; }

@@ -1,9 +1,11 @@
 import { blobCacheEntries, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, open, realpath, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import sharp from "sharp";
 import { compressModelImage, MAX_MODEL_IMAGE_SOURCE_BYTES, MODEL_IMAGE_DECODER_OPTIONS } from "./modelImageCompression.js";
+import { openWorkspaceFile, withWorkspaceFileAccess } from './workspaceFileAccess.js';
+import type { BigIntStats } from 'node:fs';
 
 export { MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_PIXELS, MODEL_IMAGE_TARGET_BYTES, MAX_MODEL_IMAGE_SOURCE_BYTES } from "./modelImageCompression.js";
 
@@ -27,12 +29,27 @@ export async function readLocalModelImage(path: string, signal?: AbortSignal, ma
   mime: string;
 }> {
   signal?.throwIfAborted();
+  if (!isAbsolute(path)) throw new ModelImageInputError('image_input_invalid', 'Model image path must be absolute.');
+  try {
+    return await withWorkspaceFileAccess([path], false, async () => {
+      if (!(await stat(path)).isFile()) throw new ModelImageInputError('image_input_invalid', `Model image is not a file: ${path}`);
+      return readImageFile(path, signal, maxBytes, openWorkspaceFile);
+    }, { signal });
+  } catch (error) {
+    if (error instanceof ModelImageInputError || signal?.aborted) throw error;
+    throw new ModelImageInputError('image_input_unavailable', `Cannot read model image: ${path}. ${String((error as Error).message)}`, { cause: error });
+  }
+}
+
+async function readImageFile(path: string, signal: AbortSignal | undefined, maxBytes: number,
+  openFile: typeof openWorkspaceFile): Promise<{ content: Buffer; mime: string }> {
+  signal?.throwIfAborted();
   if (!isAbsolute(path)) throw new ModelImageInputError("image_input_invalid", "Model image path must be absolute.");
   try {
-    const file = await open(path, "r");
+    const file = await openFile(path);
     let content: Buffer;
     try {
-      const before = await file.stat({ bigint: true });
+      const before = await file.stat({ bigint: true }) as BigIntStats;
       if (!before.isFile()) throw new ModelImageInputError("image_input_invalid", `Model image is not a file: ${path}`);
       if (before.size > BigInt(maxBytes)) {
         throw new ModelImageInputError("image_input_too_large", `Model image exceeds ${maxBytes} bytes: ${path}`);
@@ -46,7 +63,7 @@ export async function readLocalModelImage(path: string, signal?: AbortSignal, ma
         if (!bytesRead) break;
         length += bytesRead;
       }
-      const after = await file.stat({ bigint: true });
+      const after = await file.stat({ bigint: true }) as BigIntStats;
       signal?.throwIfAborted();
       // ctime can change when a completed snapshot's temporary hard link is removed.
       if (BigInt(length) !== before.size || after.size !== before.size ||
@@ -92,7 +109,8 @@ export class ModelImageStore {
     if (identity(canonical) !== identity(join(root, basename(path)))) {
       throw new ModelImageInputError('image_snapshot_invalid', 'Image snapshot must not redirect to another file.');
     }
-    const image = await readLocalModelImage(canonical, signal);
+    // Owned, checksum-verified cache objects are not user-selected source paths.
+    const image = await readImageFile(canonical, signal, MAX_MODEL_IMAGE_BYTES, path => open(path, 'r'));
     const name = `${createHash('sha256').update(image.content).digest('hex')}.${image.mime.slice(6)}`;
     if (identity(basename(path)) !== name) {
       throw new ModelImageInputError('image_snapshot_corrupt', 'Stored model image failed its content integrity check.');
@@ -108,7 +126,7 @@ export class ModelImageStore {
     const managed = isAbsolute(value) && dirname(resolve(value)) === this.#root;
     const maxBytes = options.original || managed ? MAX_MODEL_IMAGE_BYTES : MAX_MODEL_IMAGE_SOURCE_BYTES;
     let { content, mime } = /^data:image\//i.test(value)
-      ? await readDataImage(value, maxBytes, signal) : await readLocalModelImage(value, signal, maxBytes);
+      ? await readDataImage(value, maxBytes, signal) : managed ? await this.readSnapshot(value, signal) : await readLocalModelImage(value, signal, maxBytes);
     if (managed) {
       const expected = join(this.#root, `${createHash("sha256").update(content).digest("hex")}.${mime.slice(6)}`);
       if (resolve(value) !== expected) throw new ModelImageInputError("image_snapshot_corrupt", "Stored model image failed its content integrity check.");
@@ -136,7 +154,7 @@ export class ModelImageStore {
         await link(temporary, target);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const existing = await readLocalModelImage(target, signal);
+        const existing = await this.readSnapshot(target, signal);
         if (!existing.content.equals(content)) {
           throw new ModelImageInputError("image_snapshot_corrupt", "Stored model image failed its content integrity check. The existing observation was not overwritten.");
         }

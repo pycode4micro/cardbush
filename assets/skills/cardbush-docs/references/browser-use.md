@@ -4,6 +4,8 @@ Browser Use 的打开、导航、选中和列表结果会返回可直接用于 M
 
 设置入口：应用中心 → 设置 → 浏览器 → Browser Use。
 
+CLI 的 Chrome/Edge 连接由共享本地 Runtime 管理，不依赖桌面 App。输入 `/browser` 查看连接，输入 `/browser pair chrome` 或 `/browser pair edge` 在终端生成配对码并显示扩展目录；保持 CLI 开启，将码粘贴到对应浏览器扩展。配对码不进入模型会话。CLI 与桌面 App 的配对分别管理；已有配对重启后可重连，临时离线不需要重新配对。Agent 用 `list_browsers` 找到对应配置 ID 后再 `select_browser`，不能将 `chrome`/`edge` 名称当作 ID。`/browser default ID` 设置默认连接，`/browser revoke ID` 撤销单条配对。
+
 本机 Browser Use 同时支持 CardBush 内置浏览器与外部 Chrome / Edge。在输入框通过 `@ → CardBush 浏览器` 选择标签页，会把当前会话绑定到那个真实的内置页面；相同网址的 Chrome / Edge 标签不是同一目标。内置页面无需扩展、配对或开启外部连接器。Agent 可通过 `list_browsers` 选择 `connectionId: cardbush`，再使用 `new_page` 创建内置标签。快照、点击、输入、导航和截图使用同一组 Browser Use 工具。
 
 首次发送和跨会话明确引用时，未锁定的原标签会归入引用它的会话，保留同一个网页实例；锁定标签仍由原会话持有并共享显示。工具的 `selected` 是 Agent 的目标，`active` 是界面选中状态，`visible` 是实际网页可见状态。后台任务不切换当前会话；隐藏网页截图会直接返回 `cardbush_page_not_visible`，应显示所属会话并选择原标签后再截图。

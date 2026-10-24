@@ -8,6 +8,7 @@ import { verifyAgentBundledAssets, verifyAgentBundledMcp } from '../dist-electro
 const sourceRoot = resolve(import.meta.dirname, '..');
 const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist-electron/agentServiceCli.mjs',
   'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
+  'dist-electron/agentLocalRuntime.mjs', 'dist-electron/agentLocalRuntimeHost.mjs', 'dist-electron/agentServer.mjs',
   'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',
   'dist-electron/agentChatTerminal.mjs', 'dist-electron/agentChatPresentation.mjs', 'dist-electron/agentChatInput.mjs', 'dist-electron/agentChatCompletion.mjs', 'dist-electron/agentChatViewport.mjs', 'packages/bush-protocol/dist/transcriptPresentation.js',
   'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
@@ -29,7 +30,7 @@ export async function verifyAgentPackage(root, platform = process.platform) {
   if (!(await stat(join(root, 'dist-native/chrome-connector/CardBushBrowserHost.exe'))).isFile()) throw Error('Agent browser connector component is missing.');
   const directory = join(root, 'dist-native', 'process-guard');
   const manifest = JSON.parse(await readFile(join(directory, 'current.json'), 'utf8'));
-  if (manifest.sandboxVersion !== 1 || !/^CardBushProcessHost-[a-f0-9]{16}\.exe$/.test(manifest.fileName)) {
+  if (manifest.sandboxVersion !== 1 || manifest.sandboxScopeVersion !== 3 || !/^CardBushProcessHost-[a-f0-9]{16}\.exe$/.test(manifest.fileName)) {
     throw Error('Invalid Agent process host manifest.');
   }
   if (!(await stat(join(directory, manifest.fileName))).isFile()) throw Error('Agent process host executable is missing.');

@@ -27,6 +27,7 @@ export interface RuntimePermissionBrokerOptions {
 }
 
 interface PendingPermission {
+  answering?: boolean;
   requestKey: string;
   primaryToolCallId: string;
   capabilityIds: string[];
@@ -120,7 +121,13 @@ export class RuntimePermissionBroker implements PermissionResolver {
         waiter.removeAbortListener();
         if (current.waiters.size === 0) {
           this.#deletePending(permissionId, current);
-          this.#onCancelled?.({ permissionId, toolCallId, reason: "turn_cancelled" });
+          try { this.#onCancelled?.({ permissionId, toolCallId, reason: "turn_cancelled" }); }
+          catch (error) {
+            // Abort listeners must settle the invocation, not throw into the
+            // process and leave the tool waiting forever.
+            waiter.reject(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
         }
         waiter.reject(abortError());
       };
@@ -138,8 +145,8 @@ export class RuntimePermissionBroker implements PermissionResolver {
   answer(candidate: unknown): RuntimePermissionAnswer {
     const answer = runtimePermissionAnswerSchema.parse(candidate);
     const pending = this.#pending.get(answer.permissionId);
-    if (!pending) {
-      throw new Error(`Permission ${answer.permissionId} is not pending.`);
+    if (!pending || pending.answering) {
+      throw Object.assign(new Error(`Permission ${answer.permissionId} is not pending.`), { code: 'permission_not_pending' });
     }
     if (
       (answer.decision === "allow_once" || answer.decision === "allow_session") &&
@@ -149,13 +156,17 @@ export class RuntimePermissionBroker implements PermissionResolver {
         `Permission ${answer.permissionId} must grant exactly the requested capabilities.`,
       );
     }
+    // The durable approval is the commit point. A failed journal write must
+    // leave the request available for retry without releasing any tool.
+    pending.answering = true;
+    try { this.#onAnswered?.({ ...answer, toolCallId: pending.primaryToolCallId }); }
+    finally { pending.answering = false; }
     this.#deletePending(answer.permissionId, pending);
     for (const waiter of pending.waiters.values()) {
       waiter.removeAbortListener();
       waiter.resolve(answer);
     }
     pending.waiters.clear();
-    this.#onAnswered?.({ ...answer, toolCallId: pending.primaryToolCallId });
     return answer;
   }
 
@@ -164,6 +175,7 @@ export class RuntimePermissionBroker implements PermissionResolver {
   }
 
   #deletePending(permissionId: string, pending: PendingPermission): void {
+    if (this.#pending.get(permissionId) !== pending) return;
     this.#pending.delete(permissionId);
     if (this.#pendingByRequest.get(pending.requestKey) === permissionId) {
       this.#pendingByRequest.delete(pending.requestKey);

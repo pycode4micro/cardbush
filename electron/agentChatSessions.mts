@@ -1,10 +1,18 @@
-import { finalReplySessionSnapshot, sessionHistoryPageSchema, type CommittedTurn, type SessionHistoryCursor, type SessionSummary } from '@cardbush/bush-protocol';
+import { finalReplySessionSnapshot, normalizeIndividuation, sessionHistoryPageSchema, type CommittedTurn, type SessionHistoryCursor, type SessionSummary } from '@cardbush/bush-protocol';
 import type { AgentHttpClient } from './agentHttpClient.mjs';
 import type { ChatTerminal } from './agentChatCli.mjs';
 import { terminalText } from './agentChatPresentation.mjs';
 
 export type ChatSession = Pick<SessionSummary, 'sessionId'> & Partial<Omit<SessionSummary, 'sessionId'>>;
 type Client = Pick<AgentHttpClient, 'call'>;
+// Read current server preferences so two windows attached to one session do not
+// silently submit stale switches. Each submitted job retains its own snapshot.
+export async function readChatIndividuation(client: Client, sessionId: string, signal: AbortSignal) {
+  const sessions = await client.call('sessions.list', { projection: 'summary' }, signal) as ChatSession[];
+  const session = sessions.find(item => item.sessionId === sessionId);
+  if (!session) throw new Error('Session not found.');
+  return normalizeIndividuation(session.metadata?.individuation);
+}
 const clean = (text: string) => terminalText(text).replace(/\s+/g, ' ').trim();
 export const chatSessionTitle = (session: ChatSession) => clean(typeof session.metadata?.title === 'string'
   ? session.metadata.title : session.firstUserText || session.sessionId);
@@ -42,12 +50,13 @@ export async function selectChatSession(client: Client, io: ChatTerminal, signal
     io.status('\nSessions · most recent first\n' + ordered.map((item, index) =>
       `  ${index + 1}. ${chatSessionTitle(item)}${item.sessionId === current ? ' · current' : ''}\n` +
       `     ${clean(item.sessionId)} · ${clean(item.updatedAt ?? '')}${chatSessionWorkspace(item) ? ' · ' + clean(chatSessionWorkspace(item)!) : ''}`).join('\n') +
-      '\nTab choose · ↑/↓ select · Enter open · /cancel return\n');
+      '\n↑/↓ select · Enter open · Esc return · /cancel return\n');
     selection = (await io.ask('Select a session: ', signal, { choices: [
       ...ordered.map((item, index) => ({ value: item.sessionId, label: `${index + 1}. ${chatSessionTitle(item)}`,
         description: `${clean(item.sessionId)} · ${clean(chatSessionWorkspace(item) ?? '')}` })),
       { value: '/cancel', description: 'Return without switching' },
-    ] }))?.trim() ?? '';
+    ], picker: { title: 'Sessions · most recent first', selected: current ?? ordered[0]!.sessionId,
+      cancelValue: '/cancel', cancelLabel: 'cancel' } }))?.trim() ?? '';
   }
   signal.throwIfAborted();
   if (!selection || selection === '/cancel') return;

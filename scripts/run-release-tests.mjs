@@ -22,10 +22,15 @@ if (process.platform === 'win32') {
   run(['scripts/test-chrome-native-host.mjs']);
   run(['scripts/test-chrome-native-host-production.mjs']);
 }
-run(['--test', '--test-concurrency=3', '--test-timeout=300000', ...tests]);
+// Scope reuse assertions inspect an account-wide epoch; concurrent native
+// sandbox suites correctly invalidate it. Run those assertions in isolation.
+const scopeTests = tests.filter(file => file.endsWith('/windowsSandboxScope.test.mjs'));
+run(['--test', '--test-concurrency=3', '--test-timeout=300000', ...tests.filter(file => !scopeTests.includes(file))]);
+run(['--test', '--test-concurrency=1', '--test-timeout=300000', ...scopeTests]);
 run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs']);
 run(['--test', 'scripts/test-release-privacy.mjs', 'scripts/test-repository-privacy.mjs']);
 run(['--test', 'scripts/test-process-host-build.mjs']);
+run(['--test', 'scripts/test-resource-coordination.mjs']);
 run(['--test', 'scripts/test-notification-sound.mjs', 'scripts/test-session-attention-delivery.mjs']);
 run(['--test', 'scripts/test-next-step-prediction.mjs']);
 run(['--test', 'scripts/test-tool-result-presentation.mjs']);

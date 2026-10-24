@@ -42,8 +42,9 @@ test('optional free text tools keep compact receipts and do not open a database 
   assert.deepEqual(Object.keys(f.registry.definitions().find(t=>t.name==='check_habit').inputSchema.properties),['mode','kind','cursor','topics','ids','count_only']);
   assert.deepEqual(result(await f.run('summary_for_user',{habit:'用户关注 A 股走势。',prediction:'用户可能还需要 XLSX 报表。'})),{status:'ok',final_response:true,saved:false,writes:[{category:'habit',status:'skipped',reason:'category_disabled'},{category:'prediction',status:'skipped',reason:'category_disabled'}]});
   assert.equal(result(await f.run('check_habit',{})).status,'disabled');
-  assert.deepEqual(result(await f.run('summary_for_user',{},on)),{status:'ok',final_response:true,saved:false,writes:[]},
-    'enabled memory with nothing new to save still supports the final-display signal');
+  for (const settings of [off, habits, predictions, on])
+    assert.deepEqual(result(await f.run('summary_for_user',{},settings)),{status:'ok',final_response:true,saved:false,writes:[]},
+      'empty final-display signals work independently of both memory switches without writing storage');
   await assert.rejects(access(f.path),{code:'ENOENT'});
 });
 

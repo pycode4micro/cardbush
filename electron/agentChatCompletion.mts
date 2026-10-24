@@ -5,7 +5,7 @@ import { chatShellCommand } from './agentChatShell.mjs';
 
 export type ChatChoice = { value: string; description?: string; label?: string };
 export type ChatInputOptions = { chat?: boolean; choices?: ChatChoice[];
-  picker?: { title: string; selected?: string; cancelValue: string } };
+  picker?: { title: string; selected?: string; cancelValue: string; cancelLabel?: 'back' | 'cancel' | 'deny' | 'exit' } };
 export type ChatSuggestion = ChatChoice & { cursor?: number };
 export type ChatSuggestions = { start: number; end: number; items: ChatSuggestion[]; notice?: string; submitOnEnter?: boolean };
 export type ChatSuggestionSource = (line: string, cursor: number, signal: AbortSignal) => Promise<ChatSuggestions | undefined>;
@@ -19,6 +19,9 @@ export const isChatExitCommand = (text: string) => chatExitCommands.some(command
 const commands: ChatChoice[] = [
   { value: '/model ', label: '/model', description: 'Select model and reasoning effort' },
   { value: '/settings', description: 'View and reload shared App settings' },
+  { value: '/browser ', label: '/browser', description: 'Connect Chrome / Edge and show a pairing code in this terminal' },
+  { value: '/habit ', label: '/habit', description: 'Show or set user habit memory: on / off / status' },
+  { value: '/prediction ', label: '/prediction', description: 'Show or set next-step predictions: on / off / status' },
   { value: '/session ', label: '/session', description: 'Choose or switch a saved session' },
   { value: '/plan', description: 'Show the current task plan' },
   { value: '/tools ', label: '/tools', description: 'Inspect tools and results; --turn N for an earlier turn' },
@@ -67,6 +70,17 @@ export function choiceSuggestions(line: string, cursor: number, choices: ChatCho
 
 export function commandSuggestions(line: string, cursor: number, models: Model[], extra: ChatChoice[] = []): ChatSuggestions | undefined {
   const before = line.slice(0, cursor);
+  const browser = /^(\s*\/browser\s+)(.*)$/.exec(before);
+  if (browser) return { start: browser[1].length, end: line.length, submitOnEnter: true,
+    items: [{ value: 'status', description: 'List this Runtime’s browser connections' },
+      { value: 'pair chrome', description: 'Create a Chrome pairing code' },
+      { value: 'pair edge', description: 'Create an Edge pairing code' },
+      { value: 'default ', description: 'Set the default paired connection ID' },
+      { value: 'revoke ', description: 'Remove one paired connection ID' }].filter(item => item.value.startsWith(browser[2])) };
+  const memory = /^(\s*\/(?:habit|prediction)\s+)([^\s]*)$/.exec(before);
+  if (memory) return { start: memory[1].length, end: cursor + (/^\S*/.exec(line.slice(cursor))?.[0].length ?? 0), submitOnEnter: true,
+    items: [{ value: 'status', description: 'Show the current session setting' }, { value: 'on', description: 'Enable for this session' },
+      { value: 'off', description: 'Disable for this session' }].filter(item => item.value.startsWith(memory[2])) };
   const model = /^(\s*\/model\s+)([^\s]*)$/.exec(before);
   if (model) return { start: model[1].length, end: cursor + (/^\S*/.exec(line.slice(cursor))?.[0].length ?? 0), submitOnEnter: true,
     items: models.map(item => ({ value: item.id, label: item.modelName, description: item.id })).filter(item => matches(item, model[2])) };
@@ -154,7 +168,7 @@ export class AgentChatCompletion {
     signal.throwIfAborted();
     const command = commandSuggestions(line, cursor, this.#context.models);
     if (command) {
-      if (/^\s*\/model\s+/.test(line.slice(0, cursor))) return command;
+      if (/^\s*\/(?:model|habit|prediction)\s+/.test(line.slice(0, cursor))) return command;
       try { const catalog = await this.#catalog(); signal.throwIfAborted(); return commandSuggestions(line, cursor, this.#context.models, this.#extra(catalog)); }
       catch { signal.throwIfAborted(); return { ...command, notice: 'Skill catalog unavailable; built-in commands still work' }; }
     }

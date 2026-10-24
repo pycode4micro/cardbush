@@ -31,10 +31,23 @@ internal static partial class CardBushProcessHost
     {
         if (args.Length == 1 && args[0] == "--capabilities")
         {
-            Console.WriteLine("{\"protocol\":\"cardbush.process-host.v1\",\"sandboxVersion\":1,\"sandboxScopeVersion\":2}");
+            Console.WriteLine("{\"protocol\":\"cardbush.process-host.v1\",\"sandboxVersion\":1,\"sandboxScopeVersion\":3,\"sandboxFileVersion\":2}");
             return 0;
         }
         if (args.Length == 2 && args[0] == "--observe") return Observe(args[1]);
+        if (args.Length == 2 && args[0] == "--workspace-path-guard") return RunWorkspacePathGuard(args[1]);
+        if (args.Length == 1 && args[0] == "--workspace-file-worker") return RunWorkspaceFileWorker();
+        if (args.Length == 1 && args[0] == "--user-directories")
+        {
+            // Trusted control-plane metadata only: no content access or ACL grants.
+            Console.OutputEncoding = new UTF8Encoding(false);
+            var directories = new Dictionary<string, string>();
+            directories["home"] = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            directories["desktop"] = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            directories["documents"] = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            Console.WriteLine(new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(directories));
+            return 0;
+        }
         if (args.Length == 2 && args[0] == "--sandbox-cleanup") return CleanupSandbox(args[1]);
         if (args.Length == 2 && args[0] == "--sandbox-scope") return RunSandboxScope(args[1]);
         if (args.Length == 2 && args[0] == "--sandbox-scope-cleanup") return CleanupSandboxScope(args[1]);

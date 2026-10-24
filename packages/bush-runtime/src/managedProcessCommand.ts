@@ -1,5 +1,6 @@
 import { spawnResourceManagedProcess, type ManagedProcessOptions, type ManagedProcessScope } from './processResourceGuard.js';
 import { decodeCommandOutput } from '@cardbush/platform';
+import { processExecutionDeadline } from './processExecutionDeadline.js';
 
 /** A shared byte budget for both streams. Eviction happens before retaining a chunk. */
 export class BoundedProcessOutput {
@@ -46,9 +47,7 @@ export async function runResourceManagedCommand(input: ManagedCommandOptions) {
   return new Promise<{ stdout: string; stderr: string; exitCode: number | null; outputTruncated: boolean }>((resolve, reject) => {
     let failure: Error | undefined;
     const fail = (error: Error) => { failure ??= error; managed.stop(); };
-    const timer = input.timeoutMs === undefined ? undefined : setTimeout(() => {
-      fail(Object.assign(new Error(`Command timed out after ${input.timeoutMs} ms.`), { code: 'process_timeout' }));
-    }, input.timeoutMs);
+    const cancelDeadline = input.timeoutMs === undefined ? undefined : processExecutionDeadline(managed, input.timeoutMs, fail);
     for (const channel of ['stdout', 'stderr'] as const) managed.child[channel].on('data', (chunk: Buffer) => {
       if (failure) return;
       output.append(channel, chunk);
@@ -62,7 +61,7 @@ export async function runResourceManagedCommand(input: ManagedCommandOptions) {
       if ((error as NodeJS.ErrnoException).code !== 'EPIPE') fail(error);
     });
     managed.child.once('close', async exitCode => {
-      clearTimeout(timer);
+      cancelDeadline?.();
       const report = await managed.complete();
       if (input.signal?.aborted) { reject(input.signal.reason); return; }
       if (!failure && report?.code) failure = Object.assign(new Error(report.message), { code: report.code });

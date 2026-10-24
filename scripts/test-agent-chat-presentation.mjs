@@ -28,6 +28,20 @@ function tty(t, { columns = 80, stdout = true, env = { NO_COLOR: '' }, shell } =
   return { terminal, input, output, status, get stdout() { return outputText; }, get stderr() { return statusText; }, get combined() { return combined; }, get interrupts() { return interrupts; } };
 }
 const tick = () => delay(5);
+
+test('an interrupted observation is displayed separately from a failed task', t => {
+  const f = tty(t);
+  f.terminal.beginTurn(); f.terminal.finishTurn('detached');
+  assert.match(stripVTControlCharacters(f.stderr), /Observation paused/);
+  assert.doesNotMatch(stripVTControlCharacters(f.stderr), /Task failed|Completed|Stopped/);
+});
+
+test('a durably interrupted task is not displayed as a task failure', t => {
+  const f = tty(t);
+  f.terminal.beginTurn(); f.terminal.finishTurn('interrupted');
+  assert.match(stripVTControlCharacters(f.stderr), /Interrupted/);
+  assert.doesNotMatch(stripVTControlCharacters(f.stderr), /Task failed|Completed|Stopped/);
+});
 async function waitForPaint(predicate) {
   const deadline = Date.now() + 2000;
   while (!predicate() && Date.now() < deadline) await delay(10);
@@ -270,7 +284,8 @@ test('live approval temporarily owns input and restores the draft, paste referen
   f.input.write('\x1b[D'.repeat(4)); f.input.write('\x1b[200~y');
   const resume = f.terminal.suspendInput();
   let answered = false;
-  const answer = f.terminal.ask('Allow? [y/N]: ', new AbortController().signal, { choices: [{ value: 'n' }, { value: 'y' }] }).then(value => { answered = true; return value; });
+  const answer = f.terminal.ask('Allow once? ', new AbortController().signal, { choices: [{ value: 'n' }, { value: 'y' }],
+    picker: { title: 'Approval', selected: 'n', cancelValue: 'n', cancelLabel: 'deny' } }).then(value => { answered = true; return value; });
   f.input.write('\x1b[201~'); await delay(40); assert.equal(answered, false);
   f.input.write('n\r'); assert.equal(await answer, 'n'); resume();
   f.input.write('!\r'); assert.deepEqual(queued, ['keep first\nsecond! end']);
@@ -664,6 +679,20 @@ test('slash completion prioritizes exact names and prefixes before ordered fuzzy
   assert.deepEqual(applyChatSuggestion(draft, hints), { line: '  /exit later text', cursor: 7 });
 });
 
+test('memory switches complete local commands and arguments without reading the Agent catalog', async t => {
+  const f = completionFixture(t);
+  assert.deepEqual(commandSuggestions('/hab', 4, []).items.map(item => item.value), ['/habit ']);
+  assert.deepEqual(commandSuggestions('/pred', 5, []).items.map(item => item.value), ['/prediction ']);
+  for (const name of ['habit', 'prediction']) {
+    assert.deepEqual((await f.suggest(`/${name} `)).items.map(item => item.value), ['status', 'on', 'off']);
+    const line = `/${name} of`, hints = await f.suggest(line);
+    assert.equal(applyChatSuggestion(line, hints).line, `/${name} off`);
+    assert.deepEqual((await f.suggest(`/${name} unknown`)).items, []);
+    assert.equal((await f.engine.prepare(`/${name} on`, new AbortController().signal)).text, `/${name} on`);
+  }
+  assert.equal(f.calls.length, 0);
+});
+
 function completionFixture(t, platform = 'linux') {
   const root = platform === 'win32' ? 'C:\\work' : '/work', separator = platform === 'win32' ? '\\' : '/';
   const path = name => root + separator + name.replaceAll('/', separator);
@@ -802,6 +831,43 @@ test('a blank Enter still uses the approval default rather than confirming a sug
   const f = tty(t);
   const answer = f.terminal.ask('Allow? [y/N]: ', new AbortController().signal, { choices: [{ value: 'y' }, { value: 'n' }] });
   f.input.write('\r'); assert.equal(await answer, '');
+});
+
+test('explicit arrow selection in a completion prompt submits on Enter while blank input keeps its default', async t => {
+  for (const live of [false, true]) for (const settle of [false, true]) {
+    const f = tty(t); if (live) f.terminal.enableLiveInput(() => assert.fail('No chat submission'));
+    const options = { choices: [{ value: '/exit' }, { value: '/quit' }] };
+    let answer = f.terminal.ask('Enter to reload: ', new AbortController().signal, options);
+    f.input.write('\x1b[B\x1b[B');
+    if (settle) {
+      await delay(100);
+      const visible = terminalScreen(f.combined, 80).text;
+      assert.match(visible, /› \/quit/); assert.match(visible, /Enter confirm/);
+    }
+    f.input.write('\r'); assert.equal(await answer, '/quit');
+    answer = f.terminal.ask('Enter to reload: ', new AbortController().signal, options);
+    if (settle) await delay(100);
+    f.input.write('\r'); assert.equal(await answer, '', 'a fresh prompt retains its empty-input default');
+    answer = f.terminal.ask('Enter to reload: ', new AbortController().signal, options);
+    f.input.write('\x1b[B\r'); assert.equal(await answer, '/exit', 'Down selects the first candidate when no item was highlighted');
+    f.terminal.close();
+  }
+});
+
+test('approval highlights and help match Enter, Tab and Escape without requiring a typed answer', async t => {
+  const f = tty(t, { columns: 100 }); f.terminal.enableLiveInput(() => assert.fail('No chat submission')); f.terminal.beginTurn();
+  let submitted = false;
+  const answer = f.terminal.ask('Allow once? ', new AbortController().signal, {
+    choices: [{ value: 'n', label: 'Deny' }, { value: 'y', label: 'Allow once' }],
+    picker: { title: 'Choose an approval', selected: 'n', cancelValue: 'n', cancelLabel: 'deny' },
+  }).then(value => { submitted = true; return value; });
+  await waitForPaint(() => /› Deny/.test(terminalScreen(f.combined, 100).text));
+  f.input.write('\x1b[B');
+  await waitForPaint(() => /› Allow once/.test(terminalScreen(f.combined, 100).text));
+  const visible = terminalScreen(f.combined, 100).text;
+  assert.match(visible, /Enter confirm/); assert.match(visible, /Esc deny/);
+  f.input.write('\t'); await tick(); assert.equal(submitted, false, 'Tab never answers an approval');
+  f.input.write('\r'); assert.equal(await answer, 'y');
 });
 
 test('picker navigation commands support Tab and numeric effort choices before hints repaint', async t => {

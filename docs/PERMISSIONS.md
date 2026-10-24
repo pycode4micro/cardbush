@@ -63,9 +63,13 @@ readable by existing Agent services. Saved UI `user_free` choices normalize to
 protocol value is still accepted for old API clients and child configurations.
 Historical session messages and tool definitions are not rewritten.
 
-Changing approval mode does not add or remove `request_permission` from the
-model catalog. Whether interactive tools are enabled remains a separate
-capability. Decisions happen during execution and tool feedback is appended.
+Permissions are requested by the concrete invocation after validating its
+arguments and canonical scope. The legacy `request_permission` pre-approval
+tool is no longer offered in new model catalogs. Frozen sessions can still call
+its compatibility handler, which returns `granted: false` without prompting or
+granting access, and directs the model to the actual operation. Its former
+`allow_once` applied only to the pre-approval itself and could not authorize a
+later write or command. Decisions still happen during actual execution.
 
 The new command-approval behavior is implemented in the shared Runtime. A
 connected Agent must be updated to this version to enforce it; updating only

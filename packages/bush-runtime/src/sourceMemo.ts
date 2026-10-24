@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { isAbsolute } from 'node:path';
+import { bindWorkspaceFileAuthorization } from './workspaceFileAccess.js';
 import { projectCatalogPage } from './catalogPage.js';
 import { sourceMemoInputSchema, sourceMemoSchema, parseSourceMemoIdentity, parseSourceMemoReference,
   type SourceEvidence, type SourceMemo, type SourceMemoResolution, type SourceReferencesRequest, type SourceReferences } from '@cardbush/bush-protocol';
@@ -124,7 +126,7 @@ export async function resolveSourceMemo(store: ToolExecutionStore, reference: st
 export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecutionStore, remote?: RemoteWorkspaceBridge): void {
   const manifest = { effect_kind: 'observation' as const, operation: 'source_memo', risk: 'low' as const,
     owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
-  registry.register({
+  registry.register(bindWorkspaceFileAuthorization<ReturnType<typeof sourceMemoInputSchema.parse>>({
     definition: { name: 'remember_source', description: 'Prewrite a supplemental rationale for a worthwhile final-answer claim, change or review finding. Attach up to 8 actual supporting absolute local file paths, ssh://saved-connection-id/absolute/file paths for remote evidence, or HTTP(S) links; omit sources for your own design judgment (displayed as Agent explanation). These are your notes, not independently verified conclusions. Optional locator: line/endLine, page, object or normalized image region. The host captures file version and a small text excerpt for line locators; links are not fetched or verified. Use the returned short marker such as [1] beside the relevant prose; the host binds it to the saved note. Do not construct cardbush-source URLs; keep the final answer self-contained without copying the note into its summary. Do not replace ordinary file, image, download or web links, annotate every sentence, invent evidence, or store secrets. Each note is immutable; create a new one for a new conclusion. Use read_source_memos to retrieve previous markers. Source off means do not create or add these annotations for that turn.',
       inputSchema: { type: 'object', additionalProperties: false, required: ['explanation'], properties: {
         explanation: { type: 'string', minLength: 1, maxLength: 600,
@@ -165,7 +167,10 @@ export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecu
       return sourceMemoSchema.parse({ protocol: 'bush.source_memo.v1', reference, markdown: `[${number}](${reference})`,
         explanation: context.input.explanation, sources, createdAt: new Date().toISOString() });
     },
-  });
+  }, undefined, {
+    paths: input => input.sources.filter(source => isAbsolute(source.target)).map(source => source.target),
+    resolve: (input, canonical) => ({ ...input, sources: input.sources.map(source => isAbsolute(source.target) ? { ...source, target: canonical(source.target) } : source) }),
+  }));
   registry.register<{ offset: number }>({
     definition: { name: 'read_source_memos', description: 'Retrieve this conversation’s immutable Source notes and short markers such as [1], 10 per page. Reading a page binds those markers to this turn; do not construct cardbush-source URLs. Use offset for more. File delivery memos remain available through read_file_memos.',
       inputSchema: { type: 'object', additionalProperties: false, properties: { offset: { type: 'integer', minimum: 0 } } } },

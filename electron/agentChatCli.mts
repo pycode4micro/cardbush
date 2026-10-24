@@ -16,15 +16,29 @@ import { terminalText } from './agentChatPresentation.mjs';
 import { AgentChatCompletion, isChatExitCommand, type ChatInputOptions } from './agentChatCompletion.mjs';
 import { AgentChatReferences, openChatArtifact } from './agentChatReferences.mjs';
 import { chatShellCommand, executeChatShell, type runChatShell } from './agentChatShell.mjs';
+import { chatBrowserCommand } from './agentChatBrowser.mjs';
 import { inspectChatTools, isChatToolEvent } from './agentChatTools.mjs';
-import { chatSessionWorkspace, optionalResumeArgs, readChatHistory, selectChatSession, type ChatSession } from './agentChatSessions.mjs';
+import { chatSessionWorkspace, optionalResumeArgs, readChatHistory, readChatIndividuation, selectChatSession, type ChatSession } from './agentChatSessions.mjs';
 export { terminalText } from './agentChatPresentation.mjs';
 
-type Client = Pick<AgentHttpClient, 'call' | 'events'>;
+type Client = Pick<AgentHttpClient, 'call' | 'events'> & Pick<ChatClient, 'reconnect'>;
 type Job = Pick<AgentJob, 'id' | 'sessionId' | 'turnId'>;
 type SavedChatJob = Omit<AgentJob, 'input'> & Pick<AgentSendInput, 'modelId' | 'reasoningEffort'>;
 type Interaction = Extract<RuntimeEvent, { kind: 'permission_requested' | 'solution_selection_requested' }>;
 const pendingJob = (job: Pick<AgentJob, 'status'>) => job.status === 'running' || job.status === 'queued';
+type SettledJobStatus = Exclude<AgentJob['status'], 'running' | 'queued'>;
+
+async function submitAgentMessage(client: Client, input: AgentSendInput, signal: AbortSignal): Promise<AgentJob> {
+  try { return await client.call('chat.send', input, signal) as AgentJob; }
+  catch (error) {
+    // Reconcile a lost acknowledgement by the original idempotency key. Never
+    // manufacture a second turn when the first send may already be committed.
+    const jobs = await client.call('chat.jobs', { sessionId: input.sessionId }, signal).catch(() => []) as AgentJob[];
+    const committed = jobs.find(job => job.id === input.requestId && job.sessionId === input.sessionId);
+    if (!committed) throw error;
+    return committed;
+  }
+}
 export interface ChatTerminal {
   write(text: string): void;
   status(text: string): void;
@@ -84,6 +98,20 @@ export async function stopAgentTurn(client: Client, job: Job, io: Pick<ChatTermi
   }
 }
 
+async function stopCliJobs(client: Client, sessionId: string, submitted: ReadonlySet<string>, io: Pick<ChatTerminal, 'status'>, observed?: Job) {
+  const jobs = await client.call('chat.jobs', { sessionId }, AbortSignal.timeout(15_000)) as AgentJob[];
+  const targets = jobs.filter(job => job.sessionId === sessionId && pendingJob(job) && (submitted.has(job.id) || job.id === observed?.id))
+    .sort((left, right) => Number(left.status !== 'queued') - Number(right.status !== 'queued'));
+  let result = jobs.find(job => job.id === observed?.id);
+  // Remove this window's queued work before stopping the active turn; otherwise
+  // the service could start a queued successor as the observer closes.
+  for (const target of targets) {
+    const settled = await stopAgentTurn(client, target, io);
+    if (target.id === observed?.id) result = settled;
+  }
+  return result;
+}
+
 type SavedConnection = { url: string; tokenFile: string; agentId: string };
 async function readConnection(file: string): Promise<SavedConnection | undefined> {
   let text: string;
@@ -96,28 +124,73 @@ async function readConnection(file: string): Promise<SavedConnection | undefined
   return value;
 }
 
-async function answerInteraction(client: Client, event: Interaction, io: ChatTerminal, signal: AbortSignal) {
-  // Replaying a running task must not ask again for a decision already answered
-  // in the desktop or another terminal. The host remains the authority on races.
+async function interactionPending(client: Client, event: Interaction, signal: AbortSignal, cursor: { sequence: number }) {
   if (event.kind === 'permission_requested') {
     const later = await client.call('runtime.command', { kind: 'runtime.list_turn_events', payload: {
-      sessionId: event.sessionId, turnId: event.turnId, afterSequence: event.sequence,
+      sessionId: event.sessionId, turnId: event.turnId, afterSequence: cursor.sequence,
     } }, signal) as RuntimeEvent[];
-    if (later.some(item => ['permission_answered', 'permission_rejected', 'permission_expired', 'permission_cancelled'].includes(item.kind)
-      && 'permissionId' in item.payload && item.payload.permissionId === event.payload.permissionId)) return;
+    for (const item of later) {
+      if (item.sessionId !== event.sessionId || item.turnId !== event.turnId) continue;
+      cursor.sequence = Math.max(cursor.sequence, item.sequence);
+      if (item.kind === 'turn_terminal' || ['permission_answered', 'permission_rejected', 'permission_expired', 'permission_cancelled'].includes(item.kind)
+        && 'permissionId' in item.payload && item.payload.permissionId === event.payload.permissionId) return false;
+    }
   } else {
     const pending = await client.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId: event.sessionId } }, signal) as Array<{ selectionId: string }>;
-    if (!pending.some(item => item.selectionId === event.payload.selectionId)) return;
+    if (!pending.some(item => item.selectionId === event.payload.selectionId)) return false;
   }
+  // A service failure/restart can settle a job without a Runtime terminal event.
+  const jobs = await client.call('chat.jobs', { sessionId: event.sessionId }, signal) as AgentJob[];
+  return jobs.some(item => item.sessionId === event.sessionId && item.turnId === event.turnId && pendingJob(item));
+}
+
+async function answerInteraction(client: Client, event: Interaction, io: ChatTerminal, signal: AbortSignal) {
+  const cursor = { sequence: event.sequence };
+  if (!await interactionPending(client, event, signal, cursor)) return;
+  const closed = new AbortController(), stale = new Error('Interaction already settled.');
+  const promptSignal = AbortSignal.any([signal, closed.signal]);
+  // Keep the event stream closed while reading input, but observe withdrawals
+  // and other clients' answers. Cancelling this prompt never stops the task.
+  const monitor = (async () => {
+    while (!promptSignal.aborted) {
+      await delay(1000, undefined, { signal: promptSignal });
+      if (!await interactionPending(client, event, promptSignal, cursor)) { closed.abort(stale); return; }
+    }
+  })().catch(error => { if (!promptSignal.aborted) closed.abort(error); });
+  try {
+    await submitInteraction(client, event, io, promptSignal, async () => {
+      if (!await interactionPending(client, event, promptSignal, cursor)) throw stale;
+    });
+  } catch (error) {
+    signal.throwIfAborted();
+    const id = event.kind === 'permission_requested' ? event.payload.permissionId : event.payload.selectionId;
+    const code = (error as { code?: string })?.code;
+    const settled = error === stale || closed.signal.reason === stale
+      || code === (event.kind === 'permission_requested' ? 'permission_not_pending' : 'solution_not_pending')
+      // Compatibility with older services which omitted the structured code.
+      || error instanceof Error && error.message === (event.kind === 'permission_requested'
+        ? `Permission ${id} is not pending.` : 'Solution selection is not pending.');
+    if (settled) { io.status('[This request has ended; continuing the existing task]\n'); return; }
+    // A lost HTTP acknowledgement is not permission to submit the decision twice.
+    if (error instanceof AgentNetworkError && !await interactionPending(client, event, signal, cursor).catch(() => true)) {
+      io.status('[Request settled on the Agent; continuing the existing task]\n'); return;
+    }
+    throw closed.signal.aborted ? closed.signal.reason : error;
+  } finally { closed.abort(); await monitor; }
+}
+
+async function submitInteraction(client: Client, event: Interaction, io: ChatTerminal, signal: AbortSignal, verifyPending: () => Promise<void>) {
   if (!io.interactive) throw Object.assign(new Error('This task needs interactive confirmation and has been stopped. Run cardbush --resume in a terminal to continue.'), { exitCode: 2 });
   if (event.kind === 'permission_requested') {
     const request = event.payload;
     io.status(`\nApproval required: ${request.reason}\n${request.actions.join(', ')}\n${request.targets.map(target => `${target.kind}: ${target.value}`).join('\n')}\n`);
-    const answer = await io.ask('Allow once? Type y to allow, anything else to deny [y/N]: ', signal,
-      { choices: [{ value: 'n', description: 'Deny' }, { value: 'y', description: 'Allow once' }] });
+    const answer = await io.ask(io.selectionMenus ? 'Allow once? ' : 'Allow once? [y/N]: ', signal,
+      { choices: [{ value: 'n', label: 'Deny' }, { value: 'y', label: 'Allow once' }],
+        picker: { title: 'Choose an approval', selected: 'n', cancelValue: 'n', cancelLabel: 'deny' } });
     signal.throwIfAborted();
     if (answer === null) throw Object.assign(new Error('Input closed; task stopped.'), { exitCode: 2 });
     const allow = answer.trim().toLowerCase() === 'y';
+    await verifyPending();
     await client.call('runtime.command', { kind: 'runtime.answer_permission', payload: {
       protocol: 'bush.runtime_permission_answer.v1', permissionId: request.permissionId, answerId: randomUUID(),
       decision: allow ? 'allow_once' : 'deny', grantedCapabilityIds: allow ? request.requestedCapabilityIds : [],
@@ -130,8 +203,9 @@ async function answerInteraction(client: Client, event: Interaction, io: ChatTer
       io.status(`\n${questions.length > 1 ? `[${position + 1}/${questions.length}] ` : ''}${question.prompt}\n${question.options.map((option, index) => `${index + 1}. ${option}`).join('\n')}\n`);
       let answer: string | null;
       do {
-        answer = await io.ask('Enter a number or your own answer (/cancel to cancel all): ', signal,
-          { choices: [...question.options.map((option, index) => ({ value: String(index + 1), label: `${index + 1}. ${option}` })), { value: '/cancel', description: 'Cancel all' }] });
+        answer = await io.ask(io.selectionMenus ? 'Answer (or type your own): ' : 'Enter a number or your own answer (/cancel to cancel all): ', signal,
+          { choices: [...question.options.map((option, index) => ({ value: String(index + 1), label: `${index + 1}. ${option}` })), { value: '/cancel', description: 'Cancel all' }],
+            picker: { title: 'Choose an answer', selected: '1', cancelValue: '/cancel', cancelLabel: 'cancel' } });
         if (answer !== null && answer.trim().length > 8000) io.status('Answer too long. Use at most 8,000 characters.\n');
       } while (answer !== null && (!answer.trim() || answer.trim().length > 8000) && !signal.aborted);
       signal.throwIfAborted();
@@ -142,6 +216,7 @@ async function answerInteraction(client: Client, event: Interaction, io: ChatTer
         ? { questionId: question.id, kind: 'option', optionIndex: index } : { questionId: question.id, kind: 'text', text: value });
     }
     const { questionId: _, ...single } = answers[0] ?? {};
+    await verifyPending();
     await client.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: {
       selectionId: request.selectionId, sessionId: request.sessionId, turnId: request.turnId,
       ...(cancelled ? { kind: 'cancel' } : request.questions ? { kind: 'answers', answers } : single),
@@ -150,22 +225,54 @@ async function answerInteraction(client: Client, event: Interaction, io: ChatTer
 }
 
 /** Observe a durable Agent job. Reconnect by event cursor; never resubmit work. */
-export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal, signal: AbortSignal): Promise<number> {
-  let cursor: number | undefined, retries = 0, ended = false, outputOpen = false;
-  const segments = new Map<string, string>();
+export interface AgentTurnObservation { cursor?: number; ended?: boolean; segments?: Map<string, string>; interaction?: Interaction }
+
+async function chooseAgentReconnect(client: Client, io: ChatTerminal, signal: AbortSignal, task = true) {
+  const answer = await io.ask(task ? 'Reconnect to this task? ' : 'Reconnect to the Agent? ', signal, {
+    choices: [{ value: 'reconnect', label: task ? 'Reconnect to the existing task' : 'Reconnect and check existing submissions' },
+      { value: '/exit', label: 'Exit CLI; leave tasks on Agent' }],
+    picker: { title: 'Task connection', selected: 'reconnect', cancelValue: '/exit', cancelLabel: 'exit' },
+  });
+  signal.throwIfAborted();
+  if (answer === null || answer.trim() === '/exit') return 'exit';
+  try { await client.reconnect?.(); }
+  catch (error) {
+    signal.throwIfAborted();
+    io.status(`[Reconnect unavailable] ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+  signal.throwIfAborted();
+  return 'retry';
+}
+
+/** An observer error does not establish the task's outcome. Keep the terminal
+ * open with the existing job selected; reconnecting never submits new work. */
+export async function recoverAgentObservation(client: Client, job: Job, io: ChatTerminal, error: unknown, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const jobs = await client.call('chat.jobs', { sessionId: job.sessionId }, signal).catch(() => []) as AgentJob[];
+  signal.throwIfAborted();
+  const current = jobs.find(item => item.id === job.id && item.sessionId === job.sessionId);
+  if (current && !pendingJob(current)) return current.status;
+  io.status(`[Observation paused] ${error instanceof Error ? error.message : String(error)}\n`
+    + `Task ${job.id}: ${current ? 'still active on the Agent' : 'current status could not be confirmed'}. Reconnecting observes the same task.\n`);
+  return chooseAgentReconnect(client, io, signal);
+}
+
+export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal, signal: AbortSignal, observation: AgentTurnObservation = {}): Promise<number> {
+  let cursor = observation.cursor, retries = 0, ended = observation.ended ?? false, outputOpen = false;
+  const segments = observation.segments ??= new Map<string, string>();
   const lineBreak = () => { if (outputOpen) { io.write('\n'); outputOpen = false; } };
   try {
     while (!ended) {
       signal.throwIfAborted();
-      let interaction: Interaction | undefined;
+      let interaction = observation.interaction;
       try {
-        for await (const frame of client.events({ sessionId: job.sessionId, turnId: job.turnId, afterSequence: cursor }, signal)) {
-          if (frame.type === 'end') { ended = true; break; }
+        if (!interaction) for await (const frame of client.events({ sessionId: job.sessionId, turnId: job.turnId, afterSequence: cursor }, signal)) {
+          if (frame.type === 'end') { ended = observation.ended = true; break; }
           if (frame.type !== 'event') continue;
           const event = decodeRuntimeEvent(frame.event);
           if (event.sessionId !== job.sessionId || event.turnId !== job.turnId) continue;
           if (cursor !== undefined && event.sequence <= cursor) continue;
-          cursor = event.sequence; retries = 0;
+          cursor = observation.cursor = event.sequence; retries = 0;
           if (event.kind === 'assistant_segment_delta' || event.kind === 'assistant_segment_completed') {
             const key = `${event.payload.messageId}\0${event.payload.segmentId}`;
             const previous = segments.get(key) ?? '';
@@ -193,7 +300,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
           } else if (event.kind === 'replay_reset') {
             lineBreak(); segments.clear(); io.status('[Execution history revised; continuing below]\n');
           } else if (event.kind === 'permission_requested' || event.kind === 'solution_selection_requested') {
-            interaction = event; lineBreak(); break;
+            interaction = observation.interaction = event; lineBreak(); break;
           } else io.event?.(event);
         }
       } catch (error) {
@@ -208,7 +315,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
       // deadlines must not limit how long the user can read an approval prompt.
       if (interaction) {
         const resume = io.suspendInput?.();
-        try { await answerInteraction(client, interaction, io, signal); }
+        try { await answerInteraction(client, interaction, io, signal); delete observation.interaction; }
         finally { resume?.(); }
       }
     }
@@ -257,12 +364,19 @@ Commands: /model [ID] selects a model and reasoning effort; /settings shows conf
           Model selection: Up/Down selects, Tab fills, Enter confirms, Esc goes back; /cancel discards changes.
           Effort: Model setting follows App config; Provider default lets the provider choose.
           Available reasoning levels follow the model's API protocol. App defaults stay unchanged.
+          /habit [on|off|status] controls user habit memory; /prediction [on|off|status] controls next-step predictions.
+          Omit the argument to show the current setting. Saved per session; new sessions default to off.
+          Resume keeps these settings; a fork inherits them and can change them independently.
           /new starts a session; /plan shows the plan; /logs shows the log path;
           /session [ID] switches sessions and restores their last submitted model and effort;
           omit ID to choose from saved sessions;
           /tools [number] [--turn N] inspects tools, arguments and results;
           /artifact [number] opens this turn's files; /source [number] shows evidence;
           /quit (or /exit) exits; /help shows help. Other input is sent to the Agent.
+          /browser checks connections; /browser pair chrome or /browser pair edge shows a pairing code in this terminal;
+          pairings belong to this Runtime and work without the desktop App. Keep this CLI open while pairing.
+          During a task, /exit stops the observed task and this window's queued messages;
+          other windows' queued work is preserved. Connection recovery can explicitly leave tasks on the Agent.
           /shell [COMMAND] or !COMMAND runs in this local terminal; exit returns to chat.
 Use /artifact, then Tab to choose a file and Enter to open it. Esc clears the selection.
 Resuming shows past user messages and final replies. Use /tools --turn N to inspect
@@ -279,20 +393,25 @@ quote paths with spaces, e.g. @"folder/file name.txt".
 Slash commands prefer exact names and prefixes, then ordered fuzzy matches.
 Enter confirms the selected command (e.g. /q selects /quit); Tab only fills it.
 Up/Down selects a suggestion, or browses history without suggestions.
-Workspace paths, model/effort choices and confirmation prompts support Tab. It never submits.
+Menus use Up/Down to select and Enter to confirm; Esc cancels the current prompt.
+Approvals start on Deny; select Allow once and press Enter to allow.
+Workspace paths and menu choices support Tab completion without submitting.
 Enter on a file suggestion inserts it into the draft before sending.
 In /settings or model setup, type vim FILE (or another command) to edit in place.
 Shell commands run locally as the CLI user, even when connected to a remote Agent.
 Use /shell to enter the native shell for command and path completion; exit returns to chat.
-Finish or stop the current task before /model, /settings, /session, /new or shell commands.
+Finish or stop the current task before /model, /settings, /habit, /prediction, /session, /new or shell commands.
 Long or multiline pastes are folded; Enter submits the complete text.
-Esc stops the running task or clears a draft. Ctrl+C stops the task or exits when idle.
+Outside menus, Esc stops the running task or clears a draft. Ctrl+C stops the task or exits when idle.
 Approvals apply once. Piped mode stops with exit code 2 if confirmation is required.
 Responses go to stdout; progress and prompts go to stderr. Native scrollback, selection,
 copy and redirection remain available. Model responses follow the user's language.
 Local diagnostic logs rotate in logs/runtime.log under the CLI data directory.
+Local CLI windows share one background Runtime. Each new window gets its own session;
+--resume ID attaches to that session, whose turns remain queued in order.
+Closing a window leaves other windows and their tasks running. The host exits when idle.
 For remote Agents, use HTTPS or an existing SSH tunnel. Local mode needs no HTTP
-service and does not copy model credentials.
+service setup and does not copy model credentials.
 `;
 
 function validatePrompt(text: string) {
@@ -338,8 +457,9 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
     : new AgentHttpClient(url!, token, !values['token-file'] && tokenFile ? savedForUrl?.agentId : undefined);
   const lifetime = new AbortController(); let turn: AbortController | undefined, active: Job | undefined, stopping: Promise<AgentJob | undefined> | undefined;
   const queued = new Set<string>();
+  const submitted = new Set<string>();
   const uncertain = new Map<string, { input: AgentSendInput; turnId?: string }>();
-  const stopCurrent = (job: Job) => stopAgentTurn(client, job, io, new Set([...queued, ...[...uncertain.values()].map(entry => entry.input.requestId)]));
+  const stopCurrent = (job: Job) => stopAgentTurn(client, job, io, submitted);
   let session: ChatSession | undefined;
   const interrupt = () => {
     if (io.runningShell) return; // The foreground native application owns Ctrl+C.
@@ -449,7 +569,20 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       return true;
     };
     const queueRunningInput = (text: string) => {
-      if (isChatExitCommand(text)) { io.commitInput(text); exitRequested = true; interrupt(); return; }
+      if (exitRequested) return;
+      if (isChatExitCommand(text)) {
+        io.commitInput(text); exitRequested = true;
+        const observed = active;
+        // Accepted input may still be waiting for its submission receipt. Drain
+        // that work before resolving the exact owned jobs to stop.
+        const priorStop = stopping;
+        stopping = (async () => {
+          await inputWork; await priorStop?.catch(() => undefined);
+          return stopCliJobs(client, session!.sessionId, submitted, io, observed);
+        })();
+        void stopping.catch(() => undefined);
+        turn?.abort(); return;
+      }
       const retry = uncertain.get(text);
       const target = active ?? (retry ? { id: retry.input.requestId, sessionId: retry.input.sessionId, turnId: retry.turnId ?? retry.input.turnId! } : undefined);
       if (!target || !text.trim()) return;
@@ -462,7 +595,8 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         if (command === '/help') { io.commitInput(text); io.status(help); return; }
         if (command === '/logs') { io.commitInput(text); showLogs(); return; }
         if (command === '/plan') { io.commitInput(text); await readPlan(); return; }
-        if (/^\/(?:model|settings|new|session)(?:\s|$)/.test(command) || chatShellCommand(text) !== undefined) {
+        if (await chatBrowserCommand(text, client, io, lifetime.signal)) return;
+        if (/^\/(?:model|settings|habit|prediction|new|session)(?:\s|$)/.test(command) || chatShellCommand(text) !== undefined) {
           io.commitInput(text);
           io.status('[Not sent] Use this command after the current task finishes, or stop it with Esc.\n'); return;
         }
@@ -473,36 +607,29 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         if (!entry) {
           const prepared = await completion!.prepare(content, lifetime.signal);
           entry = { input: { requestId: randomUUID(), turnId: `turn-${randomUUID()}`, sessionId: target.sessionId,
-            ...prepared, modelId, reasoningEffort, permissionMode: permissionMode as AgentSendInput['permissionMode'], language: 'en',
+            ...prepared, modelId, reasoningEffort, individuation: await readChatIndividuation(client, target.sessionId, lifetime.signal),
+            permissionMode: permissionMode as AgentSendInput['permissionMode'], language: 'en',
             ...(steer ? { queueOnly: true } : {}) }, ...(steer ? { turnId: target.turnId } : {}) };
           uncertain.set(text, entry);
         }
-        let submitted: AgentJob;
-        try { submitted = await client.call('chat.send', entry.input, lifetime.signal) as AgentJob; }
-        catch (error) {
-          // A lost receipt may still represent a committed job. Keep its exact
-          // request ID and parameters for a deliberate retry; never resubmit new work.
-          const jobs = await client.call('chat.jobs', { sessionId: target.sessionId }, lifetime.signal).catch(() => []) as AgentJob[];
-          const existing = jobs.find(item => item.id === entry!.input.requestId);
-          if (!existing) throw error;
-          submitted = existing;
-        }
-        queued.add(submitted.id);
+        submitted.add(entry.input.requestId);
+        const receipt = await submitAgentMessage(client, entry.input, lifetime.signal);
+        queued.add(receipt.id);
         if (entry.turnId) {
           io.commitInput(text);
-          const messageId = `queued-guidance-${submitted.id}`;
+          const messageId = `queued-guidance-${receipt.id}`;
           io.trackGuidance(messageId);
-          try { await client.call('chat.queue', { action: 'guide', id: submitted.id, turnId: entry.turnId, mode: 'interrupt_and_continue' }, lifetime.signal); }
+          try { await client.call('chat.queue', { action: 'guide', id: receipt.id, turnId: entry.turnId, mode: 'interrupt_and_continue' }, lifetime.signal); }
           catch (error) {
             const jobs = await client.call('chat.jobs', { sessionId: target.sessionId }, lifetime.signal) as AgentJob[];
-            const current = jobs.find(item => item.id === submitted.id);
+            const current = jobs.find(item => item.id === receipt.id);
             // If the old turn ended before delivery, the SAME queued job may
             // already have started. Observe it instead of creating a second one.
             if (!current || current.status === 'queued' && !current.guidance?.applied) throw error;
           }
           const jobs = await client.call('chat.jobs', { sessionId: target.sessionId }, lifetime.signal) as AgentJob[];
-          const current = jobs.find(item => item.id === submitted.id);
-          if (current?.guidance?.applied) { queued.delete(submitted.id); io.guidanceQueued(messageId); }
+          const current = jobs.find(item => item.id === receipt.id);
+          if (current?.guidance?.applied) { queued.delete(receipt.id); io.guidanceQueued(messageId); }
           else { io.forgetGuidance(messageId); io.status('[Queued] The previous task ended; this message will run as the next turn.\n'); }
         }
         uncertain.delete(text); io.setQueued(queued.size);
@@ -511,23 +638,41 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         io.restoreDraft(text);
       }).finally(() => { waitingSubmissions--; });
     };
-    const run = async (job: Job & { text?: string }, submit?: AgentSendInput) => {
+    const run = async (job: Job & { text?: string }) => {
       await stopping;
       observed.add(job.id); queued.delete(job.id); io.setQueued(queued.size);
       active = job; turn = new AbortController(); stopping = undefined;
       const signal = AbortSignal.any([turn.signal, lifetime.signal]);
-      let outcome: 'completed' | 'stopped' | 'failed' = 'failed';
+      let outcome: SettledJobStatus | 'detached' = 'detached';
+      const observation: AgentTurnObservation = {};
       referenceTurn = job.turnId; referenceScope();
       io.beginTurn(job.text);
+      io.flushPendingInput();
       try {
-        if (submit) await client.call('chat.send', submit, signal);
-        const result = await followAgentTurn(client, job, io, signal);
-        outcome = result === 0 ? 'completed' : 'stopped'; return result;
+        for (;;) {
+          try {
+            const result = await followAgentTurn(client, job, io, signal, observation);
+            outcome = result === 0 ? 'completed' : 'stopped'; return result;
+          } catch (error) {
+            if (signal.aborted) throw error;
+            if (prompt !== undefined) {
+              const current = (await client.call('chat.jobs', { sessionId: job.sessionId }, signal).catch(() => []) as AgentJob[]).find(item => item.id === job.id);
+              if (current && !pendingJob(current)) outcome = current.status as SettledJobStatus;
+              throw error;
+            }
+            const recovery = await recoverAgentObservation(client, job, io, error, signal);
+            if (recovery === 'retry') continue;
+            if (recovery === 'exit') { exitRequested = true; return 1; }
+            outcome = recovery as SettledJobStatus;
+            throw error;
+          }
+        }
       } catch (error) {
         if (signal.aborted) {
           const settled = await (stopping ??= stopCurrent(job));
           if (settled?.status === 'completed') { outcome = 'completed'; return 0; }
           if (settled?.status === 'stopped') { outcome = 'stopped'; return 130; }
+          if (settled && !pendingJob(settled)) outcome = settled.status as SettledJobStatus;
           throw new Error(settled?.error ?? 'The task has not reached a terminal state.');
         }
         io.status(`\nTask ${job.id}; resuming observes this task without resubmitting it.\n`); throw error;
@@ -558,6 +703,9 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         io.enableLiveInput(queueRunningInput); liveInputEnabled = true;
       }
       if (history && prompt === undefined) {
+        for (const job of previousJobs.filter(job => job.status === 'interrupted').slice(-5)) {
+          io.status(`[Interrupted] Task ${job.id}: ${job.error ?? 'Inspect history before resending.'}\n`);
+        }
         try {
           const turns = await readChatHistory(client, session!.sessionId, lifetime.signal);
           const running = new Set(existing.map(job => job.turnId));
@@ -580,14 +728,36 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
     while (!lifetime.signal.aborted && !exitRequested) {
       reportDiagnosticError();
       if (prompt === undefined) {
-        const jobs = await client.call('chat.jobs', { sessionId: session.sessionId }, lifetime.signal) as AgentJob[];
+        let jobs: AgentJob[];
+        try { jobs = await client.call('chat.jobs', { sessionId: session.sessionId }, lifetime.signal) as AgentJob[]; }
+        catch (error) {
+          lifetime.signal.throwIfAborted();
+          io.status(`[Connection paused] ${error instanceof Error ? error.message : String(error)}. Submitted requests retain their original IDs.\n`);
+          if (await chooseAgentReconnect(client, io, lifetime.signal, false) === 'exit') break;
+          continue;
+        }
+        for (const [text, entry] of uncertain) {
+          const receipt = jobs.find(job => job.id === entry.input.requestId && job.sessionId === entry.input.sessionId);
+          if (!receipt || entry.turnId && receipt.status === 'queued' && !receipt.guidance?.applied) continue;
+          if (!receipt.guidance && !observed.has(receipt.id)) queued.add(receipt.id);
+          uncertain.delete(text); io.clearDraftIf(text);
+        }
+        io.setQueued(queued.size);
         const next = jobs.find(job => !observed.has(job.id) && !job.guidance &&
           (queued.has(job.id) || job.status === 'running' || job.status === 'queued'));
         if (next) {
           try { await run(next); }
           catch (error) {
-            const latest = (await client.call('chat.jobs', { sessionId: next.sessionId }) as AgentJob[]).find(job => job.id === next.id);
-            if (!latest || ['running', 'queued'].includes(latest.status)) throw error;
+            lifetime.signal.throwIfAborted();
+            exitRequested = false;
+            const latest = (await client.call('chat.jobs', { sessionId: next.sessionId }, lifetime.signal).catch(() => []) as AgentJob[]).find(job => job.id === next.id);
+            if (!latest || pendingJob(latest)) {
+              observed.delete(next.id);
+              if (await recoverAgentObservation(client, next, io, error, lifetime.signal) === 'exit') exitRequested = true;
+            }
+            // A rejected stop receipt has already been reported. Reconnecting
+            // observes the job; it must not inherit the rejected stop promise.
+            stopping = undefined;
             io.status(`[Error] ${error instanceof Error ? error.message : 'Task did not complete'}\n`);
           }
           continue;
@@ -597,14 +767,19 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       if (text === null) break;
       if (prompt === undefined && await referenceCommand(text)) continue;
       if (prompt === undefined && await toolCommand(text)) continue;
-      if (prompt === undefined && isChatExitCommand(text)) { io.commitInput(text); break; }
+      if (prompt === undefined && isChatExitCommand(text)) {
+        io.commitInput(text);
+        try { if (submitted.size) await stopCliJobs(client, session.sessionId, submitted, io); }
+        catch (error) { io.status(`[Exit paused] ${error instanceof Error ? error.message : String(error)}\n`); continue; }
+        break;
+      }
       if (prompt === undefined && /^\s*\/session(?:\s|$)/.test(text)) {
         io.commitInput(text);
         try {
           const selected = await selectChatSession(client, io, lifetime.signal, text.trim().slice('/session'.length), session.sessionId);
           if (!selected || selected.sessionId === session.sessionId) continue;
           session = selected; active = undefined; stopping = undefined;
-          queued.clear(); observed.clear(); uncertain.clear(); referenceTurn = undefined;
+          queued.clear(); submitted.clear(); observed.clear(); uncertain.clear(); referenceTurn = undefined;
           io.resetSession(); await restoreSession(true, true);
         } catch (error) { lifetime.signal.throwIfAborted(); io.status(`[Session unavailable] ${error instanceof Error ? error.message : String(error)}\n`); }
         continue;
@@ -617,6 +792,24 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       }
       if (prompt === undefined && uncertain.has(text)) { queueRunningInput(text); await inputWork; continue; }
       if (prompt === undefined && text.trim() === '/help') { io.commitInput(text); io.status(help); continue; }
+      if (prompt === undefined && await chatBrowserCommand(text, client, io, lifetime.signal)) continue;
+      const memoryCommand = prompt === undefined ? /^\s*\/(habit|prediction)(?:\s+(.*))?\s*$/s.exec(text) : null;
+      if (memoryCommand) {
+        io.commitInput(text);
+        const name = memoryCommand[1], action = memoryCommand[2]?.trim() || 'status';
+        if (!['on', 'off', 'status'].includes(action)) { io.status(`Usage: /${name} [on|off|status]\n`); continue; }
+        try {
+          if (action !== 'status') await client.call('sessions.update', { sessionId: session.sessionId,
+            individuation: { [name === 'habit' ? 'habits' : 'predictions']: action === 'on' } }, lifetime.signal);
+          const current = await readChatIndividuation(client, session.sessionId, lifetime.signal);
+          const enabled = name === 'habit' ? current.habits : current.predictions;
+          io.status(`/${name}: ${enabled ? 'on' : 'off'} (this session; applies to future submissions).\n`);
+        } catch (error) {
+          lifetime.signal.throwIfAborted();
+          io.status(`[Memory setting unavailable] ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+        continue;
+      }
       if (prompt === undefined && /^\/steer(?:\s|$)/.test(text.trim())) {
         io.commitInput(text);
         io.status('No task is running. Send a normal message to start a turn.\n'); continue;
@@ -663,7 +856,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       }
       if (prompt === undefined && text.trim() === '/new') {
         io.commitInput(text); session = await createSession(); referenceTurn = undefined;
-        active = undefined; stopping = undefined; queued.clear(); observed.clear(); uncertain.clear();
+        active = undefined; stopping = undefined; queued.clear(); submitted.clear(); observed.clear(); uncertain.clear();
         io.resetSession(); identify(); continue;
       }
       if (!text.trim()) continue;
@@ -671,18 +864,21 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       const job = { id: randomUUID(), sessionId: session.sessionId, turnId: `turn-${randomUUID()}`, text };
       try {
         const prepared = await completion!.prepare(text, lifetime.signal);
-        const result = await run(job, { requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, ...prepared, modelId, reasoningEffort,
+        const input: AgentSendInput = { requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, ...prepared, modelId, reasoningEffort,
+          individuation: await readChatIndividuation(client, job.sessionId, lifetime.signal),
           // UI language is only a fallback; the Agent follows the user's language.
-          permissionMode: permissionMode as AgentSendInput['permissionMode'], language: 'en' });
-        if (prompt !== undefined) return result;
+          permissionMode: permissionMode as AgentSendInput['permissionMode'], language: 'en' };
+        uncertain.set(text, { input }); submitted.add(job.id);
+        const receipt = await submitAgentMessage(client, input, lifetime.signal);
+        uncertain.delete(text); queued.add(receipt.id); io.setQueued(queued.size);
+        if (prompt !== undefined) return await run(receipt);
+        // Another CLI may have started a turn while this window was at its
+        // prompt. Observe the session's active turn (including its approvals)
+        // before following our queued submission.
       } catch (error) {
         if (prompt !== undefined || lifetime.signal.aborted) throw error;
-        // Only a durably finished task may return to a fresh input prompt.
-        // A lost connection can leave work running; preserve resume semantics.
-        const jobs = await client.call('chat.jobs', { sessionId: job.sessionId }, lifetime.signal).catch(() => []) as AgentJob[];
-        const finished = jobs.find(item => item.id === job.id);
-        if (!finished || !['failed', 'completed', 'stopped'].includes(finished.status)) throw error;
-        io.status(`[Error] ${error instanceof Error ? error.message : 'Task did not complete'}\n`);
+        io.status(`[Submission not confirmed] ${error instanceof Error ? error.message : 'Message submission failed'}. ${uncertain.has(text) ? 'Re-enter the same message to retry its original request.' : 'The message was not submitted.'}\n`);
+        io.restoreDraft(text);
       }
     }
     return lifetime.signal.aborted ? 130 : 0;

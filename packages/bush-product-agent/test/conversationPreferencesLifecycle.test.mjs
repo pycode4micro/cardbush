@@ -21,7 +21,7 @@ const request = (id, options = {}) => createProductAgentTurnRequest({
   conversationStyle: { mode: 'natural', customTone: '' }, ...options,
 });
 
-function fixture(t) {
+function fixture(t, substantialHistory = false) {
   const facts = [], observed = [];
   // Serialize the journal across host restarts: deduplication cannot depend on
   // an in-memory "already sent" flag or on summaries mentioning the style.
@@ -42,7 +42,9 @@ function fixture(t) {
             : { summaries: ['Previous task completed.'] }) });
         yield event(input, 1, 'response_completed', { finishReason: 'tool_calls' });
       } else {
-        yield event(input, 0, 'text_delta', { delta: `${input.turnId} done.` });
+        // Pressure tests need reducible history: a one-line answer may fit
+        // entirely in the retained suffix as the fixed system prompt changes.
+        yield event(input, 0, 'text_delta', { delta: `${input.turnId} done.${substantialHistory ? ' Prior verified outcome.'.repeat(300) : ''}` });
         yield event(input, 1, 'response_completed', { finishReason: 'stop' });
       }
     },
@@ -134,7 +136,7 @@ test('resuming across midnight appends a clock snapshot while preserving legacy 
 });
 
 for (const format of ['ordered', 'incremental']) for (const changed of [false, true]) test(`${format} compaction restores the current preference only when absent (${changed ? 'changed' : 'unchanged'} style), with stable restart replay`, async t => {
-  const { open, observed, compact } = fixture(t);
+  const { open, observed, compact } = fixture(t, true);
   let { host, store } = open();
   assert.equal((await host.runSessionTurn(request('first', format === 'incremental' ? { tools: [] } : {}))).payload.status, 'completed');
   const original = structuredClone(store.snapshot('preferences').turns[0]);
@@ -142,7 +144,8 @@ for (const format of ['ordered', 'incremental']) for (const changed of [false, t
     ...(format === 'incremental' ? { tools: [] } : {}) };
   for (const id of ['second', 'third']) {
     compact();
-    assert.equal((await host.runSessionTurn(request(id, settings))).payload.status, 'completed');
+    const result = await host.runSessionTurn(request(id, settings));
+    assert.equal(result.payload.status, 'completed', JSON.stringify(result));
     const visible = preferences(observed.at(-1).messages);
     assert.equal(visible.length, 1);
     assert.equal(visible[0].role, 'user');
@@ -188,11 +191,13 @@ test('Source toggles append user facts without changing frozen prefixes, tools o
 });
 
 for (const format of ['ordered', 'incremental']) test(`Source off survives ${format} compaction and restart`, async t => {
-  const { open, compact, observed } = fixture(t);
+  const { open, compact, observed } = fixture(t, true);
   let { host } = open();
   await host.runSessionTurn(request('source_initial'));
   compact();
-  await host.runSessionTurn(request('source_compact', { sourceEnabled: false, ...(format === 'incremental' ? { tools: [] } : {}) }));
+  const result = await host.runSessionTurn(request('source_compact', { sourceEnabled: false, ...(format === 'incremental' ? { tools: [] } : {}) }));
+  assert.equal(result.payload.status, 'completed', JSON.stringify(result));
+  assert.ok(host.events('preferences', 'source_compact').some(event => event.kind === 'context_compaction_completed'));
   assert.match(observed.at(-1).messages.filter(message => message.name === 'source_preference').at(-1).content, /Source is disabled/);
   await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
   ({ host } = open());
@@ -201,12 +206,14 @@ for (const format of ['ordered', 'incremental']) test(`Source off survives ${for
 });
 
 for (const format of ['ordered', 'incremental']) test(`individuation gates survive ${format} compaction and restart`, async t => {
-  const { open, compact, observed } = fixture(t);
+  const { open, compact, observed } = fixture(t, true);
   let { host } = open();
   await host.runSessionTurn(request('individuation_initial', { individuation: { habits: true, predictions: true } }));
   compact();
   const settings = { individuation: { habits: false, predictions: true, eventTokenThreshold: 7000, habitTokenThreshold: 10000, recallMode: 'context' }, ...(format === 'incremental' ? { tools: [] } : {}) };
-  await host.runSessionTurn(request('individuation_compact', settings));
+  const result = await host.runSessionTurn(request('individuation_compact', settings));
+  assert.equal(result.payload.status, 'completed', JSON.stringify(result));
+  assert.ok(host.events('preferences', 'individuation_compact').some(event => event.kind === 'context_compaction_completed'));
   const latest = () => observed.at(-1).messages.filter(message => message.name === 'individuation_preference').at(-1);
   assert.match(latest().content, /habits disabled; next-step prediction enabled/);
   assert.deepEqual(observed.at(-1).metadata.individuation, settings.individuation);

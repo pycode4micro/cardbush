@@ -1,8 +1,14 @@
 import { decodeCommandOutput } from '@cardbush/platform';
-import { lstat, opendir } from 'node:fs/promises';
-import { basename, relative, resolve } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnResourceManagedProcess } from './processResourceGuard.js';
-import { readFileBounded } from './workspaceFileRead.js';
+import { WorkspacePathGuard, pathChanged } from './workspacePathGuard.js';
+import type { ExecutionSandboxPolicy, ExecutionSandboxStatus } from './executionSandbox.js';
+import { workspaceAuthorizedIdentity, workspaceLinuxSandboxExecutable } from './workspaceFileAccess.js';
+import { isWithin } from './workspaceAccessPolicy.js';
+import { hostEnvironmentValue } from './hostEnvironment.js';
+import { processExecutionDeadline } from './processExecutionDeadline.js';
 
 export interface WorkspaceSearchInput {
   path: string;
@@ -20,9 +26,6 @@ export interface WorkspaceSearchInput {
 
 type Limit = 'max_results' | 'max_output_bytes' | 'timeout' | 'max_files';
 const excludedDirectories = ['.git', '.venv', 'venv', 'node_modules', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'];
-const unavailable = (error: unknown) => ['EACCES', 'EINVAL', 'ENOENT', 'ENOEXEC'].includes(String((error as NodeJS.ErrnoException)?.code));
-const inaccessible = (error: unknown) => ['EACCES', 'ENOENT', 'EPERM', 'EBUSY', 'file_resource_limit'].includes(String((error as NodeJS.ErrnoException)?.code));
-
 /** Shared execution/output budget for native search and its portable fallback. */
 export class WorkspaceSearchBudget {
   chunks: Buffer[] = [];
@@ -81,23 +84,53 @@ export class WorkspaceSearchBudget {
 }
 
 export async function searchWorkspaceContent(root: string, input: WorkspaceSearchInput, cwd: string, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const guard = new WorkspacePathGuard();
   const budget = new WorkspaceSearchBudget(input, signal);
-  const timer = setTimeout(() => budget.stop('timeout'), input.timeoutMs);
   try {
-    const args = workspaceSearchArguments(root, input);
-    for (const executable of new Set([process.env.CARDBUSH_RG_PATH?.trim(), 'rg'].filter((value): value is string => Boolean(value)))) {
-      if (!budget.check()) return budget.result(2);
-      try { return budget.result(await runRipgrep(executable, args, cwd, budget)); }
-      catch (error) { if (!unavailable(error)) throw error; }
-    }
-    return await searchWithNode(root, budget);
-  } finally { clearTimeout(timer); }
+    root = await realpath(root);
+    const info = await stat(root, { bigint: true });
+    await guard.pin(info.isDirectory() ? root : dirname(root));
+    const identity = `${info.dev}:${info.ino}`;
+    const admitted = workspaceAuthorizedIdentity(root);
+    if (admitted && admitted !== identity) throw pathChanged();
+    const executable = await trustedSearchExecutable(root, cwd);
+    if (!executable) throw Object.assign(Error('No trusted ripgrep executable is available. Configure CARDBUSH_RG_PATH to an absolute host-installed executable. Search was not run.'), { code: 'workspace_search_unavailable' });
+    const sandbox: ExecutionSandboxPolicy = { readableRoots: info.isDirectory() ? [root] : [], writableRoots: [],
+      readableFiles: [executable, ...(!info.isDirectory() ? [root] : [])], network: 'disabled',
+      privateWorkingDirectory: !info.isDirectory(), requireCanonicalRoots: true, expectedIdentities: { [root]: identity }, linuxExecutable: workspaceLinuxSandboxExecutable() };
+    const result = await runRipgrep(executable, workspaceSearchArguments(root, input), info.isDirectory() ? root : dirname(root), budget, sandbox);
+    return { ...budget.result(result.code), sandbox: result.sandbox };
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (budget.limit) return budget.result(2);
+    throw error;
+  } finally { await guard.close(); }
+}
+
+/** Resolve host-owned candidates ourselves; never hand a bare name to Windows. */
+export async function trustedSearchExecutable(root: string, cwd: string, configured = hostEnvironmentValue('CARDBUSH_RG_PATH')?.trim()) {
+  const name = process.platform === 'win32' ? 'rg.exe' : 'rg';
+  const candidates = configured !== undefined ? [configured] : [
+    fileURLToPath(new URL(`../../../assets/runtime-tools/ripgrep/${process.platform}-${process.arch}/${name}`, import.meta.url)),
+    ...(hostEnvironmentValue('PATH') ?? '').split(delimiter).filter(isAbsolute).map(directory => join(directory, name)),
+  ];
+  const [searchRoot, workspace] = await Promise.all([realpath(root), realpath(cwd)]);
+  for (const candidate of candidates) {
+    if (!isAbsolute(candidate) || process.platform === 'win32' && !/^[a-z]:[\\\\/]/i.test(candidate)) continue;
+    try {
+      const executable = await realpath(candidate);
+      if (isWithin(searchRoot, executable) || isWithin(workspace, executable) || !(await stat(executable)).isFile()) continue;
+      if (process.platform === 'win32' && !executable.toLowerCase().endsWith('.exe')) continue;
+      return executable;
+    } catch { /* Try only the next explicit absolute host candidate. */ }
+  }
 }
 
 /** The SSH host uses the same pruning and output contract, with its own process transport. */
 export function workspaceSearchArguments(root: string, input: WorkspaceSearchInput) {
   const args = input.outputMode === 'files' ? ['--files-with-matches'] : ['--line-number', '--column', '--no-heading', '--no-context-separator'];
-  args.push('--color', 'never');
+  args.push('--no-config', '--no-ignore-parent', '--no-ignore-global', '--color', 'never');
   if (input.contextBefore && input.outputMode === 'lines') args.push('--before-context', String(input.contextBefore));
   if (input.contextAfter && input.outputMode === 'lines') args.push('--after-context', String(input.contextAfter));
   if (!input.regex) args.push('--fixed-strings');
@@ -109,13 +142,17 @@ export function workspaceSearchArguments(root: string, input: WorkspaceSearchInp
   return args;
 }
 
-async function runRipgrep(executable: string, args: string[], cwd: string, budget: WorkspaceSearchBudget): Promise<number | null> {
+async function runRipgrep(executable: string, args: string[], cwd: string, budget: WorkspaceSearchBudget, sandbox: ExecutionSandboxPolicy): Promise<{ code: number | null; sandbox?: ExecutionSandboxStatus }> {
   budget.userSignal?.throwIfAborted();
-  const guarded = await spawnResourceManagedProcess({ executable, args, cwd });
+  const guarded = await spawnResourceManagedProcess({ executable, args, cwd, sandbox, signal: budget.signal, lifetime: 'io' });
   const signal = budget.signal;
   return new Promise((resolveResult, reject) => {
     const child = guarded.child;
     let error: Error | undefined;
+    const cancelDeadline = processExecutionDeadline(guarded, budget.input.timeoutMs, failure => {
+      if (failure.code === 'process_timeout') budget.stop('timeout');
+      else { error = failure; guarded.stop(); }
+    });
     const stderr: Buffer[] = []; let stderrBytes = 0;
     const stop = () => guarded.stop();
     signal.addEventListener('abort', stop, { once: true });
@@ -126,6 +163,7 @@ async function runRipgrep(executable: string, args: string[], cwd: string, budge
     });
     child.on('error', value => { error = value; });
     child.on('close', async code => {
+      cancelDeadline();
       signal.removeEventListener('abort', stop);
       try {
         const report = await guarded.complete();
@@ -136,86 +174,11 @@ async function runRipgrep(executable: string, args: string[], cwd: string, budge
           if (mapped) throw Object.assign(new Error(report.message), { code: mapped });
         }
         const diagnostic = decodeCommandOutput(Buffer.concat(stderr));
+        if (code === 78 || code === 79) throw Object.assign(Error(diagnostic || 'Sandbox startup failed.'), { code: code === 78 ? 'sandbox_approval_changed' : 'sandbox_spawn_failed' });
         if (diagnostic) budget.warn(diagnostic);
-        if (report?.code && !budget.limit) budget.warn(report.message);
-        resolveResult(report?.code && !budget.limit ? 2 : code);
+        if (report?.code && !budget.limit) throw Object.assign(Error(report.message), { code: report.code });
+        resolveResult({ code, sandbox: guarded.sandbox });
       } catch (value) { reject(value); }
     });
   });
-}
-
-async function searchWithNode(root: string, budget: WorkspaceSearchBudget) {
-  const { input } = budget;
-  const signal = budget.signal;
-  const positive = input.globs.filter(glob => !glob.startsWith('!')).map(globToRegExp);
-  const negative = input.globs.filter(glob => glob.startsWith('!')).map(glob => globToRegExp(glob.slice(1)));
-  const expression = input.regex ? new RegExp(input.query) : undefined;
-  let scanned = 0;
-  const allowed = (path: string, directory: boolean) => {
-    const rel = (relative(root, path) || (directory ? '' : basename(path))).replaceAll('\\', '/');
-    if (!rel) return true; // Explicit roots are always eligible, even a dependency directory.
-    if (!input.includeDependencies && directory && excludedDirectories.includes(basename(path))) return false;
-    if (!input.includeDependencies && !positive.length && basename(path).startsWith('.')) return false;
-    if (negative.some(glob => glob.test(rel) || directory && glob.test(`${rel}/`))) return false;
-    return directory || !positive.length || positive.some(glob => glob.test(rel));
-  };
-  const search = async (file: string) => {
-    if (++scanned > 25_000) { budget.stop('max_files'); return; }
-    const bytes = await readFileBounded(file, signal);
-    const utf16 = bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : undefined;
-    if (!utf16 && bytes.subarray(0, 8192).includes(0)) return;
-    let text;
-    try { text = utf16 ? new TextDecoder(utf16, { fatal: true }).decode(bytes) : bytes.toString('utf8').replace(/^\ufeff/, ''); }
-    catch { return; }
-    if (text.includes('\0')) return;
-    const lines = text ? text.split(/\r\n|\r|\n/) : [];
-    if (/[\r\n]$/.test(text)) lines.pop();
-    const column = (line: string) => expression ? expression.exec(line)?.index ?? -1 : line.indexOf(input.query);
-    let emittedUntil = -1;
-    let contextUntil = -1;
-    for (let index = 0; index < lines.length && budget.check(); index++) {
-      const position = column(lines[index]!);
-      if (position >= 0) {
-        if (input.outputMode === 'files') { budget.append(Buffer.from(`${file}\n`)); return; }
-        contextUntil = Math.min(lines.length - 1, index + input.contextAfter);
-        for (let before = Math.max(emittedUntil + 1, index - input.contextBefore); before < index && budget.check(); before++) {
-          budget.append(Buffer.from(`${file}-${before + 1}-${lines[before]}\n`)); emittedUntil = before;
-        }
-      }
-      if (position >= 0 || index <= contextUntil) {
-        budget.append(Buffer.from(position >= 0 ? `${file}:${index + 1}:${position + 1}:${lines[index]}\n` : `${file}-${index + 1}-${lines[index]}\n`));
-        emittedUntil = index;
-      }
-    }
-  };
-  const visit = async (path: string, kind?: 'file' | 'directory') => {
-    if (!budget.check()) return;
-    if (!kind) { const info = await lstat(path); if (info.isSymbolicLink()) return; kind = info.isFile() ? 'file' : info.isDirectory() ? 'directory' : undefined; }
-    if (!kind || !allowed(path, kind === 'directory')) return;
-    try {
-      if (kind === 'file') { await search(path); return; }
-      const directory = await opendir(path);
-      for await (const entry of directory) {
-        if (!budget.check()) break;
-        if (entry.isFile() || entry.isDirectory()) await visit(resolve(path, entry.name), entry.isDirectory() ? 'directory' : 'file');
-      }
-    } catch (error) { if (inaccessible(error)) budget.warn(error); else throw error; }
-  };
-  try { await visit(root); }
-  catch (error) { budget.userSignal?.throwIfAborted(); if (!budget.limit) throw error; }
-  return budget.result(budget.bytes ? 0 : 1, scanned);
-}
-
-function globToRegExp(value: string): RegExp {
-  const normalized = value.replaceAll('\\', '/');
-  let source = normalized.includes('/') ? '^' : '^(?:.*/)?';
-  for (let index = 0; index < normalized.length; index++) {
-    const character = normalized[index]!;
-    if (character === '*' && normalized[index + 1] === '*') {
-      const slash = normalized[index + 2] === '/'; source += slash ? '(?:.*/)?' : '.*'; index += slash ? 2 : 1;
-    } else if (character === '*') source += '[^/]*';
-    else if (character === '?') source += '[^/]';
-    else source += character.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
-  }
-  return new RegExp(`${source}$`);
 }

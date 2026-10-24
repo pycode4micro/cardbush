@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import childProcess, { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, renameSync, statSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -38,6 +40,25 @@ async function fixture(t) {
   };
   return { root, work, tools, outside, reference, pool, pools, tasks, leases, executable, acl };
 }
+
+test('native authorization rejects a directory replaced after JavaScript preparation without changing its ACL', { skip: !windows }, async t => {
+  const f = await fixture(t), info = statSync(f.work, { bigint: true });
+  const before = f.acl(f.work), old = join(f.root, 'old-work');
+  const original = childProcess.spawn; let swapped = false;
+  t.mock.method(childProcess, 'spawn', (executable, args, options) => {
+    if (args.includes('--sandbox')) { renameSync(f.work, old); mkdirSync(f.work); swapped = true; }
+    return original(executable, args, options);
+  }); syncBuiltinESMExports();
+  try {
+    await assert.rejects(runResourceManagedCommand({ executable: f.executable, args: ['wait-write', join(f.work, 'unexpected')], cwd: f.work,
+      sandbox: { readableRoots: [f.tools], writableRoots: [f.work], network: 'disabled', requireCanonicalRoots: true,
+        expectedIdentities: { [f.work]: `${info.dev}:${info.ino}` } }, timeoutMs: 5000 }),
+      error => error.code === 'resource_protection_failed' && /object changed before startup/.test(error.message));
+    assert.equal(swapped, true);
+    assert.equal(f.acl(f.work), before); assert.equal(f.acl(old), before);
+    await assert.rejects(readFile(join(f.work, 'unexpected')), { code: 'ENOENT' });
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
 
 test('Windows PowerShell uses the admitted cwd for relative IO and native child commands without parent grants', { skip: !windows, timeout: 30_000 }, async t => {
   const { work, root } = await fixture(t);
@@ -130,6 +151,62 @@ test('idle authorization pins directory identities and revokes after expiry', { 
   for (let i = 0; i < 100 && f.acl(f.work) !== original; i++) await new Promise(r => setTimeout(r, 50));
   assert.equal(f.acl(f.work), original);
   await rename(f.work, join(f.root, 'moved'));
+});
+
+test('a broader live writer cannot smuggle a cached capability onto a moved file', { skip: !windows, timeout: 30_000 }, async t => {
+  const f = await fixture(t), source = join(f.work, 'moving.txt'), target = join(f.outside, 'moved.txt');
+  await writeFile(source, 'private');
+  const baseline = { readableRoots: [f.tools], writableRoots: [f.work], network: 'disabled' };
+  const writer = await spawnResourceManagedProcess({ executable: f.executable, args: ['wait-move', source, target], cwd: f.work,
+    sandbox: { ...baseline, writableRoots: [f.work, f.outside] } });
+  f.tasks.push(writer);
+  await once(writer.child.stdout, 'data', { signal: AbortSignal.timeout(10_000) });
+  const read = path => runResourceManagedCommand({ executable: f.executable, args: ['read-private', path], cwd: f.work,
+    sandbox: baseline, sandboxScopePool: f.pool });
+  // Create the narrower cache while the broader writer is already alive.
+  assert.match((await read(source)).stdout, /peerPrivateRead=allowed/);
+  const moved = once(writer.child.stdout, 'data', { signal: AbortSignal.timeout(10_000) });
+  writer.child.stdin.write('\n'); await moved;
+  assert.match((await read(target)).stdout, /peerPrivateRead=UnauthorizedAccessException/);
+  writer.child.stdin.end('\n'); await writer.complete();
+  assert.match((await read(target)).stdout, /peerPrivateRead=UnauthorizedAccessException/);
+});
+
+test('exact file reads do not invalidate a reusable directory scope', { skip: !windows, timeout: 20_000 }, async t => {
+  const f = await fixture(t), file = join(f.outside, 'readable.txt'); await writeFile(file, 'data');
+  const baseline = { readableRoots: [f.tools], writableRoots: [f.work], network: 'disabled' };
+  await runResourceManagedCommand({ executable: f.executable, args: ['read-private', file], cwd: f.work, sandbox: baseline, sandboxScopePool: f.pool });
+  await runResourceManagedCommand({ executable: f.executable, args: ['read-private', file], cwd: f.tools,
+    sandbox: { readableRoots: [f.tools], readableFiles: [file], writableRoots: [], network: 'disabled' } });
+  const task = await spawnResourceManagedProcess({ executable: f.executable, args: ['read-private', file], cwd: f.work, sandbox: baseline, sandboxScopePool: f.pool });
+  f.tasks.push(task); task.child.stdout.resume(); task.child.stderr.resume();
+  assert.equal((await task.complete()).sandboxScopeStale, false);
+});
+
+test('a crashed broader writer invalidates scopes created during its lifetime and permits fresh reuse', { skip: !windows, timeout: 30_000 }, async t => {
+  const f = await fixture(t), source = join(f.work, 'moving.txt'), target = join(f.outside, 'moved.txt');
+  await writeFile(source, 'data');
+  const baseline = { readableRoots: [f.tools], writableRoots: [f.work], network: 'disabled' };
+  const writer = await spawnResourceManagedProcess({ executable: f.executable, args: ['wait-move', source, target], cwd: f.work,
+    sandbox: { ...baseline, writableRoots: [f.work, f.outside] } });
+  f.tasks.push(writer); await once(writer.child.stdout, 'data', { signal: AbortSignal.timeout(10_000) });
+  // Keep an idle capability alive without issuing it to a command yet.
+  const lease = await f.pool.acquire(resolveProcessResourceHost(), [f.tools], [f.work]); f.leases.push(lease);
+  let ready = false;
+  for (let i = 0; i < 250; i++) {
+    try { await readFile(lease.reference.policyPath + '.ready'); ready = true; break; } catch { await new Promise(resolve => setTimeout(resolve, 20)); }
+  }
+  assert.equal(ready, true);
+  const moved = once(writer.child.stdout, 'data', { signal: AbortSignal.timeout(10_000) }); writer.child.stdin.write('\n'); await moved;
+  process.kill(writer.child.pid); await writer.complete(); // Skip the native writer's finally block.
+  const probe = async () => {
+    const task = await spawnResourceManagedProcess({ executable: f.executable, args: ['read-private', target], cwd: f.work, sandbox: baseline, sandboxScopePool: f.pool });
+    f.tasks.push(task); let output = ''; task.child.stdout.on('data', chunk => { output += chunk; }); task.child.stderr.resume();
+    const report = await task.complete(); assert.match(output, /peerPrivateRead=UnauthorizedAccessException/); return report;
+  };
+  assert.equal((await probe()).sandboxScopeStale, true);
+  lease.release();
+  assert.equal((await probe()).sandboxScopeStale, false, 'dead writer records must not permanently disable caching');
 });
 
 test('losing a directory supervisor stops its command and repairs interrupted ACL cleanup', { skip: !windows, timeout: 30_000 }, async t => {

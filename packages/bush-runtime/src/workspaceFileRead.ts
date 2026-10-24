@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
+import { openWorkspaceFile, recordWorkspaceRead } from './workspaceFileAccess.js';
 import { StringDecoder } from "node:string_decoder";
+import type { BigIntStats } from 'node:fs';
 
 export const MAX_IN_PROCESS_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_RANGE_TEXT_CHARS = 2 * 1024 * 1024;
@@ -14,7 +15,7 @@ export function assertInProcessFileSize(bytes: number): void {
 
 /** Bound reads even if another process grows the file after the initial stat. */
 export async function readFileBounded(path: string, signal?: AbortSignal): Promise<Buffer> {
-  const handle = await open(path, "r");
+  const handle = await openWorkspaceFile(path);
   try {
     assertInProcessFileSize((await handle.stat()).size);
     const chunks: Buffer[] = [];
@@ -24,7 +25,9 @@ export async function readFileBounded(path: string, signal?: AbortSignal): Promi
       assertInProcessFileSize(bytes);
       chunks.push(chunk);
     }
-    return Buffer.concat(chunks, bytes);
+    const result = Buffer.concat(chunks, bytes);
+    recordWorkspaceRead(path, result);
+    return result;
   } finally { await handle.close(); }
 }
 
@@ -40,9 +43,9 @@ export async function readFileLineRange(
   range: FileLineRange,
   signal?: AbortSignal,
 ) {
-  const handle = await open(path, "r");
+  const handle = await openWorkspaceFile(path);
   try {
-    const before = await handle.stat({ bigint: true });
+    const before = await handle.stat({ bigint: true }) as BigIntStats;
     const hash = createHash("sha256");
     const decoder = new StringDecoder(encoding);
     const selected: string[] = [];
@@ -93,7 +96,7 @@ export async function readFileLineRange(
       consume(decoder.write(chunk));
     }
     consume(decoder.end());
-    const after = await handle.stat({ bigint: true });
+    const after = await handle.stat({ bigint: true }) as BigIntStats;
     if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
       throw Object.assign(new Error("The file changed during the ranged read; read it again."), {
         code: "file_changed_during_read",
@@ -101,8 +104,10 @@ export async function readFileLineRange(
     }
     const totalLines = currentLine - 1 + Number(hasTail);
     const endLine = totalLines >= range.startLine ? Math.min(lastLine, totalLines) : null;
+    const sha256 = hash.digest('hex');
+    recordWorkspaceRead(path, sha256);
     return {
-      sha256: hash.digest("hex"),
+      sha256,
       content: selected.join(""),
       start_line: range.startLine,
       end_line: endLine,

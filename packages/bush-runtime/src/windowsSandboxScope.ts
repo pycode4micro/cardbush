@@ -26,16 +26,17 @@ export class WindowsSandboxScopePool {
   #closed = false;
   constructor(readonly idleMs = 60_000, readonly maxIdleScopes = 8) {}
 
-  async acquire(host: string, readableRoots: string[], writableRoots: string[]) {
+  async acquire(host: string, readableRoots: string[], writableRoots: string[], expected: Readonly<Record<string, string>> = {}) {
     if (this.#closed) throw Error('Sandbox scope pool is closed.');
     const read = [...readableRoots].sort(), write = [...writableRoots].sort();
-    const key = JSON.stringify([host, read, write]);
+    const identities = Object.fromEntries([...new Set([...read, ...write])].sort().filter(path => expected[path]).map(path => [path, expected[path]]));
+    const key = JSON.stringify([host, read, write, identities]);
     let entry = this.#entries.get(key);
     if (!entry || entry.dead || entry.closing || !entry.reusable) {
       entry = { key, roots: [...read, ...write], users: 0, dead: false, closing: false, reusable: true, lastUsed: Date.now(), ready: undefined! };
       this.#entries.set(key, entry);
       this.#live.add(entry);
-      entry.ready = this.#start(host, read, write, entry);
+      entry.ready = this.#start(host, read, write, entry, identities);
     }
     const current = entry;
     current.users++;
@@ -97,7 +98,7 @@ export class WindowsSandboxScopePool {
     this.#retiring.add(pending);
   }
 
-  async #start(host: string, readableRoots: string[], writableRoots: string[], entry: Entry) {
+  async #start(host: string, readableRoots: string[], writableRoots: string[], entry: Entry, expectedIdentities: Record<string, string>) {
     const temporary = await realpath(tmpdir());
     const directory = await realpath(await mkdtemp(join(temporary, 'cardbush-scope-')));
     const policyPath = join(directory, 'policy.json');
@@ -105,7 +106,7 @@ export class WindowsSandboxScopePool {
     try {
       if ([...readableRoots, ...writableRoots].some(root => within(root, directory))) throw Error('Sandbox authorization state is inside a granted directory.');
       await writeFile(policyPath, JSON.stringify({ version: 1, ownerPid: process.pid,
-        capability: `CardBush.Scope.${randomUUID().replaceAll('-', '')}`, readableRoots, writableRoots }), { flag: 'wx', mode: 0o600 });
+        capability: `CardBush.Scope.${randomUUID().replaceAll('-', '')}`, readableRoots, writableRoots, expectedIdentities }), { flag: 'wx', mode: 0o600 });
       // Native setup happens asynchronously. The command supervisor waits for its
       // ready receipt while terminal_exec can already return a tracked handle.
       // libuv puts ordinary Windows children in its kill-on-parent-exit job.

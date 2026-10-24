@@ -33,22 +33,29 @@ test('individuation changes append user context without altering system/tools or
     const preference = input.messages.filter(m => m.name === 'individuation_preference').at(-1);
     assert.equal(preference.role, 'user'); assert.equal(preference.visibility, 'internal');
     assert.match(preference.content, new RegExp(`habits ${individuation?.habits ? 'enabled' : 'disabled'}`));
-    assert.match(preference.content, /summary_for_user is optional/);
-    assert.match(preference.content, /Reply directly when there is nothing to record/);
+    assert.match(preference.content, /call it alone after finishing other Tool work and before the final reply.*independently of memory settings/);
+    assert.match(preference.content, /nothing new to record, use \{\}/);
+    assert.match(preference.content, /Ordinary conversation without Tool work may reply directly without calling it/);
     assert.match(preference.content, individuation?.habits || individuation?.predictions
       ? /optional habit field.*optional prediction field.*Each field follows its own enabled category/
-      : /Memory storage is disabled: omit habit and prediction/);
+      : /Memory storage is disabled: use \{\}.*omit habit and prediction/);
     if (index) assert.deepEqual(input.messages.slice(0, seen[index - 1].messages.length), seen[index - 1].messages);
     assert.ok(host.events('prefs', request.turnId).filter(e => e.kind === 'cache_chain_observed').every(e => !e.payload.frozenPrefixBreak));
   }
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /Before every final user-facing answer, call summary_for_user/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Finish with the user-facing reply directly, including after Tool work/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /After this turn's other Tool work, call summary_for_user alone.*before the final reply to signal final display/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Use \{\} when memory is disabled or nothing new needs recording/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Without Tool work, reply directly/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /after further work or user guidance, signal again before finishing/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /do not prepare an extra tool_summary/);
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /optional habit field.*optional prediction field/, 'the tool contract owns its optional fields');
   const summaryDescription = seen[0].tools.find(tool => tool.name === 'summary_for_user').description;
-  assert.match(summaryDescription, /otherwise reply directly, including after tool work/);
+  assert.match(summaryDescription, /this turn has used other tools, call this alone after finishing the tool work and before the final reply/);
+  assert.match(summaryDescription, /final-display signal is independent of memory settings/);
+  assert.match(summaryDescription, /Ordinary conversation without tool work may reply directly without calling this/);
   assert.match(summaryDescription, /do not write a tool recap/);
-  assert.match(summaryDescription, /All fields are optional; \{\} remains a valid legacy final-display signal/);
+  assert.match(summaryDescription, /All fields are optional; use \{\} when memory is disabled or there is nothing new to record/);
+  assert.doesNotMatch(summaryDescription, /Use only when there is a supported new habit|legacy final-display signal/);
   assert.match(summaryDescription, /habit is a supported reusable preference; prediction is an unconfirmed next user request/);
   assert.equal(seen[0].tools.find(tool => tool.name === 'summary_for_user').inputSchema.properties.tool_summary, undefined);
   assert.equal(seen[0].tools.filter(t => ['summary_for_user', 'check_habit'].includes(t.name)).length, 2);
@@ -57,7 +64,7 @@ test('individuation changes append user context without altering system/tools or
   assert.deepEqual(continued.metadata.individuation, normalizeIndividuation(), 'child follow-up cannot retain stale enabled flags');
 });
 
-test('tool work completes without summary even when both personalization features are enabled', async t => {
+test('missing the instructed final-display signal does not create a host-enforced completion gate', async t => {
   const registry = new ToolRegistry();
   let executions = 0, rounds = 0;
   registry.register({ definition: { name: 'read_fixture', description: 'Read a test value', inputSchema: { type: 'object' } },

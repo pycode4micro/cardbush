@@ -62,8 +62,11 @@ hides the pointer while waiting. The pointer denotes an observed action target,
 not the user's system cursor; physical-input operations still share system input.
 No desktop-wide theme or mouse cursor replacement is performed.
 
-Physical user input pauses desktop actions (`user_takeover`). Resume only after a
-fresh observation and an idle user; do not repeatedly retry or sleep-poll a pause.
+Physical user input pauses desktop actions (`user_takeover`). After 1 second
+without physical input, a fresh target observation can resume control. Continued
+input restarts this quiet period; `retry_after_ms` reports the remaining time at
+that observation. `state_ttl_ms: 30000` is the observation's validity, not a
+30-second protection delay. Do not repeatedly retry or sleep-poll a pause.
 If the user is still active, return control or use the conversation's user-input
 mechanism; terminal sleeps and repeated observation are not a resume signal.
 The border and badge remain attached during takeover, waiting and recoverable

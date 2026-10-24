@@ -52,6 +52,14 @@ type BrowserScope = {
 const viewportSchema = z.object({ width: z.number().int().min(64).max(4096), height: z.number().int().min(64).max(4096),
   deviceScaleFactor: z.number().min(0.5).max(3).optional() });
 
+const bridgeSetupGuidance = 'Browser Use supports CardBush, Chrome and Edge. In the CLI, use /browser status, then /browser pair chrome or /browser pair edge; paste the displayed code into that browser’s CardBush Browser Use extension and keep the CLI open while pairing. The CLI owns its connector and does not require the desktop App for Chrome/Edge. In the desktop App, enable and pair through Settings > Browser > Browser Use. Only integrated CardBush tabs require the desktop App. Call list_browsers again and select_browser with the returned connectionId. Keep the requested browser identity; do not launch a replacement browser or retry a mutation automatically.';
+function bridgeAvailability(code: string): string | undefined {
+  if (['bridge_config_missing', 'bridge_config_unavailable'].includes(code)) return 'needs_setup';
+  if (code === 'bridge_config_invalid') return 'misconfigured';
+  if (code === 'cardbush_bridge_unavailable') return 'disconnected';
+  return undefined;
+}
+
 /** HTTP MCP uses per-request server instances; browser selections and snapshot cursors belong to the host. */
 export function createBrowserUseState(artifactsDirectory?: string) {
   return {
@@ -67,7 +75,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     version: '0.1.0',
   }, {
     instructions: [
-      "Browser Use controls CardBush's integrated browser and the user's paired Chrome or Edge on Windows 11. CardBush tabs do not need an extension or pairing.",
+      "Browser Use supports CardBush's integrated browser and the user's paired Chrome or Edge on Windows 11. Tool discovery does not establish a live browser connection. Call list_browsers first; follow its setup guidance if the bridge is unavailable. Integrated tabs require a running CardBush desktop bridge, but no extension or pairing.",
       'An @ CardBush browser reference identifies an exact integrated tab, not an interchangeable URL. The desktop binds that conversation to CardBush. Use list_pages, then a fresh snapshot; never substitute a Chrome/Edge page with the same URL. If the referenced tab is unavailable, report it and ask the user to select it again.',
       'Use list_browsers and select_browser when the user names a browser or profile. Otherwise use the conversation binding, including integrated pages returned by local child agents; if no binding exists, the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
       'For Chrome/Edge, each session is isolated in a visibly named tab group. For the integrated browser, controllable tabs are those explicitly referenced by the user, created in this conversation, or newly created by its verified local descendant tasks. Selecting a browser does not grant unrelated tabs. Use select_browser with connectionId cardbush to create integrated tabs.',
@@ -104,9 +112,14 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       scopeTitle: scope.title,
     }, {
       signal: context.mcpReq.signal,
+      ...(options.browserConfigPath ? { configPath: options.browserConfigPath } : {}),
       ...(timeoutMs ? { timeoutMs } : {}),
       ...(onDiagnostics ? { onDiagnostics } : {}),
     }).catch(error => {
+      if (error instanceof ChromeConnectorError && bridgeAvailability(error.code)) {
+        throw new ChromeConnectorError(error.code, bridgeSetupGuidance, { ...error.details, availability: bridgeAvailability(error.code),
+          ...(error.code.startsWith('bridge_config_') ? { execution: 'not_dispatched' } : {}) });
+      }
       if (method.startsWith('downloads.') && error instanceof ChromeConnectorError && error.code === 'unsupported_method') {
         throw new ChromeConnectorError('extension_update_required',
           'Reload CardBush Browser Use 1.2.0 or later in chrome://extensions or edge://extensions to enable tracked downloads. Do not fall back to repeated download clicks. Screenshots and export_image do not require browser downloads.');
@@ -180,15 +193,27 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('list_browsers', toolDefinition(
     'List Browser Use connections',
-    'Discover browsers available for web search, internet research and reading websites. List the CardBush integrated browser and paired Chrome/Edge connections, online state, default and this conversation’s selection. No personal tabs or credentials are returned. CardBush needs no pairing.',
+    'List CardBush, Chrome and Edge connections with online state, default and this conversation’s selection. Then use select_browser with the returned connectionId; Chrome/Edge IDs are profile IDs, not the words chrome/edge. In the CLI, /browser pair chrome or /browser pair edge provides the user a pairing code without the desktop App. Installed tools alone do not imply a live connection. No personal tabs or credentials are returned.',
     z.object({}), true,
   ), async (_input, context) => withToolResult(async () => {
-    const result = record(await request('browser.list', {}, context));
-    return { text: JSON.stringify(result), structured: result };
+    try {
+      const result = record(await request('browser.list', {}, context));
+      if (!Array.isArray(result.connections) || !result.connections.some(connection => record(connection).connected === true)) {
+        result.availability = 'needs_connection';
+        result.nextStep = Array.isArray(result.connections) && result.connections.length
+          ? 'Open the already paired Chrome/Edge profile and reconnect its CardBush Browser Use extension, then call list_browsers again. Existing pairings and the session selection are preserved; do not generate a new pairing code for a temporary disconnect.'
+          : bridgeSetupGuidance;
+      }
+      return { text: JSON.stringify(result), structured: result };
+    } catch (error) {
+      if (!(error instanceof ChromeConnectorError) || !bridgeAvailability(error.code)) throw error;
+      const result = { connections: [], availability: bridgeAvailability(error.code), reason: error.code, nextStep: bridgeSetupGuidance };
+      return { text: JSON.stringify(result), structured: result };
+    }
   }));
   server.registerTool('select_browser', toolDefinition(
     'Select Browser Use connection',
-    'Explicitly bind this session to a connected browser/profile id from list_browsers. Switching releases the old session group first; a failed release leaves the binding unchanged. Take a fresh snapshot after switching; old tab and element ids must not be reused.',
+    'Select CardBush, Chrome or Edge explicitly: connectionId="cardbush" for the integrated browser, or the exact Chrome/Edge profile ID returned by list_browsers. Chrome/Edge work in the CLI after /browser pair chrome or /browser pair edge; integrated tabs require the desktop App. Switching releases the old session group first; a failed release leaves the binding unchanged. Take a fresh snapshot after switching; old tab and element ids must not be reused.',
     z.object({ connectionId: z.union([z.literal('cardbush'), z.string().regex(/^[a-f0-9]{32}$/)]) }), false,
   ), async (input, context) => withToolResult(async () => {
     const result = record(await request('browser.select', input, context));

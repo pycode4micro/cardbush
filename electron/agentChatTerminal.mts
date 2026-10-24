@@ -14,7 +14,7 @@ import { ChatToolActivity, isChatToolEvent } from './agentChatTools.mjs';
 type Input = NodeJS.ReadStream;
 type Output = NodeJS.WriteStream;
 type Options = { input?: Input; output?: Output; status?: Output; env?: NodeJS.ProcessEnv; shell?: typeof runChatShell };
-type ActiveSuggestions = { line: string; cursor: number; value: ChatSuggestions; selected: number };
+type ActiveSuggestions = { line: string; cursor: number; value: ChatSuggestions; selected: number; navigated?: boolean };
 
 /** Readline owns editing/history/wrapping. Only transient status and suggestion
  * rows are rewritten; completed text stays in native terminal scrollback. */
@@ -156,7 +156,7 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#input.resume();
   }
   #handleInput(text: string) {
-    if (this.#live && this.#turn && (text === '\x03' || text === '\x1b')) {
+    if (this.#live && this.#turn && (text === '\x03' || text === '\x1b' && !(this.#waiting && this.#inputOptions.picker))) {
       if (text === '\x1b' && /^\s*\/(?:artifact|source)\s/.test(this.#reader!.line)) {
         this.#clearDraft(); this.#invalidateHints(); this.#live.schedule(); return;
       }
@@ -175,13 +175,16 @@ export class NativeChatTerminal implements ChatTerminal {
       if (text === '\t') { void this.#completeInput(); return; }
       if (this.#suggestions?.value.items.length && ['\x1b[A', '\x1b[B', '\x1b[Z'].includes(text)) {
         const choice = this.#suggestions, direction = text === '\x1b[B' ? 1 : -1;
-        choice.selected = (choice.selected + direction + choice.value.items.length) % choice.value.items.length;
+        if (!choice.navigated && !this.#inputOptions.picker && !this.#chatPrompt && !choice.line.trim()) {
+          choice.selected = direction > 0 ? 0 : choice.value.items.length - 1;
+        } else choice.selected = (choice.selected + direction + choice.value.items.length) % choice.value.items.length;
+        choice.navigated = true;
         this.#drawHints(); return;
       }
       if (/^[\r\n]+$/.test(text) && this.#confirmSuggestion()) return;
       this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); clearTimeout(this.#hintTimer);
       this.#suggestions = undefined; this.#keys!.write(text);
-      if (this.#editing() && this.#reader?.line) {
+      if (this.#editing() && this.#reader && (this.#reader.line || this.#inputOptions.choices?.length)) {
         const value = this.#localHints();
         if (value) this.#suggestions = { line: this.#reader.line, cursor: this.#reader.cursor, value, selected: this.#initialSelection(value) };
       }
@@ -253,6 +256,14 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#reader.setPrompt('❯ '); this.#live.paint();
   }
   setQueued(count: number) { this.#queued = count; this.#live?.schedule(); }
+  clearDraftIf(text: string) {
+    if (this.#reader && this.#pastes.expand(this.#reader.line) === text) this.#clearDraft();
+  }
+  flushPendingInput() {
+    // Only the controller can hand buffered input to an active job. Starting
+    // the turn's renderer alone must leave deferred messages available to ask().
+    if (this.#turn && this.#live && !this.#suspended) for (const text of this.#pendingInput.splice(0)) this.#runningInput?.(text);
+  }
   /** The controller commits chat input when its turn starts (or a local command
    * runs). Enter only submits it; queued input must not split the current reply. */
   commitInput(text: string) {
@@ -331,7 +342,8 @@ export class NativeChatTerminal implements ChatTerminal {
     const picker = Boolean(this.#inputOptions.picker);
     const labelWidth = Math.min(42, Math.floor(width * 0.5));
     return value.items.slice(start, start + capacity).map((item, index) => {
-      const active = index + start === selected, label = item.label ?? item.value.trim();
+      const active = index + start === selected && Boolean(picker || this.#chatPrompt || suggestions.line.trim() || suggestions.navigated);
+      const label = item.label ?? item.value.trim();
       const clipped = terminalClip(label, labelWidth);
       const name = picker && width >= 60 ? clipped + ' '.repeat(Math.max(0, labelWidth - terminalWidth(clipped))) : label;
       const text = terminalClip(`  ${active ? '›' : ' '} ${name}${item.description && (!picker || width >= 60) ? '  ' + item.description : ''}`, width);
@@ -370,8 +382,8 @@ export class NativeChatTerminal implements ChatTerminal {
     if (this.#editing()) this.#hintTimer = setTimeout(() => { void this.#loadHints(); }, 60).unref();
   }
   #hintHelp(suggestion: ActiveSuggestions) {
-    if (this.#inputOptions.picker) return `  ↑/↓ select · Enter confirm · Esc back · Tab complete · ${suggestion.selected + 1}/${suggestion.value.items.length}`;
-    const enter = !this.#chatPrompt && !suggestion.line.trim() ? 'default' : suggestion.value.submitOnEnter ? 'confirm' : 'complete';
+    if (this.#inputOptions.picker) return `  ↑/↓ select · Enter confirm · Esc ${this.#inputOptions.picker.cancelLabel ?? 'back'} · Tab complete · ${suggestion.selected + 1}/${suggestion.value.items.length}`;
+    const enter = !this.#chatPrompt && !suggestion.line.trim() && !suggestion.navigated ? 'default' : suggestion.value.submitOnEnter ? 'confirm' : 'complete';
     return `  Enter ${enter} · Tab complete · ↑/↓ select · ${suggestion.selected + 1}/${suggestion.value.items.length}`;
   }
   #localHints() {
@@ -397,10 +409,11 @@ export class NativeChatTerminal implements ChatTerminal {
     try {
       const value = this.#chatPrompt && this.#suggestionSource ? await this.#suggestionSource(line, cursor, controller.signal) : local;
       if (!valid()) return;
-      const selectedValue = this.#suggestions?.value.items[this.#suggestions.selected]?.value
+      const current = this.#suggestions;
+      const selectedValue = current?.value.items[current.selected]?.value
         ?? /^\s*\/(?:artifact|source)\s+([1-9]\d*)\s*$/.exec(line)?.[1];
       const selected = Math.max(0, value?.items.findIndex(item => item.value === selectedValue) ?? 0);
-      this.#suggestions = value ? { line, cursor, value, selected } : undefined; this.#drawHints();
+      this.#suggestions = value ? { line, cursor, value, selected, navigated: current?.navigated } : undefined; this.#drawHints();
       return this.#suggestions;
     } catch { if (valid()) { this.#suggestions = undefined; this.#hideHints(); } }
   }
@@ -420,10 +433,13 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#scheduleHints();
   }
   #confirmSuggestion() {
-    if (!this.#controls || !this.#reader || !this.#reader.line.trim() && !this.#inputOptions.picker) return false;
+    if (!this.#controls || !this.#reader) return false;
     const { line, cursor } = this.#reader;
     const current = this.#suggestions;
     const suggestion = current?.line === line && current.cursor === cursor ? current : undefined;
+    // Empty input keeps a text prompt's default. Arrow navigation is an explicit
+    // choice and must submit the highlighted item, just like a dedicated picker.
+    if (!line.trim() && !this.#inputOptions.picker && !suggestion?.navigated) return false;
     // Built-in commands work even before the hint debounce or a remote catalog
     // request finishes. Enter never waits for a remote result to change input.
     const value = suggestion?.value ?? (!this.#chatPrompt || /^\s*\/\S*$/.test(line) ? this.#localHints() : undefined);
@@ -517,12 +533,12 @@ export class NativeChatTerminal implements ChatTerminal {
       else { this.#drawStatus(); this.#ticker = setInterval(() => this.#drawStatus(), 120).unref(); }
     }
   }
-  finishTurn(outcome: 'completed' | 'stopped' | 'failed') {
+  finishTurn(outcome: 'completed' | 'stopped' | 'failed' | 'detached' | 'interrupted') {
     this.#markdown.end(); this.#answerOpen = false; this.#flushToolGroup();
     this.#clearStatus(); clearInterval(this.#ticker); this.#ticker = undefined; this.#turn = false;
     if (this.interactive) {
       const duration = (this.#elapsed() / 1000).toFixed(1);
-      const summary = `${outcome === 'completed' ? '✓ Completed' : outcome === 'stopped' ? '· Stopped' : '! Task failed'} · ${duration}s` +
+      const summary = `${outcome === 'completed' ? '✓ Completed' : outcome === 'stopped' ? '· Stopped' : outcome === 'detached' ? '· Observation paused' : outcome === 'interrupted' ? '· Interrupted' : '! Task failed'} · ${duration}s` +
         (this.#tools.count ? ` · ${this.#tools.count} tool call${this.#tools.count === 1 ? '' : 's'}` : '') + (this.#tools.failures ? ` · ${this.#tools.failures} failure${this.#tools.failures === 1 ? '' : 's'}` : '');
       this.#emit(this.#style(summary, outcome === 'completed' ? 'blue' : outcome === 'failed' ? 'error' : 'dim') + '\n');
     }
@@ -609,7 +625,7 @@ export class NativeChatTerminal implements ChatTerminal {
       const abort = () => finish(null);
       this.#waiting = finish; signal.addEventListener('abort', abort, { once: true });
       this.#reader!.setPrompt(chat ? this.#style('❯ ', 'blue') : terminalText(prompt)); this.#reader!.prompt(Boolean(this.#live));
-      if (input.picker) {
+      if (input.picker || input.choices?.length) {
         const value = this.#localHints();
         if (value) this.#suggestions = { line: this.#reader!.line, cursor: this.#reader!.cursor, value, selected: this.#initialSelection(value) };
         this.#drawHints();

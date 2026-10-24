@@ -1,4 +1,4 @@
-import { open, realpath } from 'node:fs/promises';
+import { openWorkspaceFile, withWorkspaceFileAccess } from './workspaceFileAccess.js';
 import { basename, isAbsolute, posix } from 'node:path';
 import { parseSshWorkspace, sshWorkspace } from '@cardbush/bush-protocol';
 import type { ToolAdmissionContext } from './toolRegistry.js';
@@ -21,7 +21,8 @@ export async function readMemoFile(target: string, maxBytes = 0, remote?: Remote
   }
   if (!isAbsolute(target)) throw Error('Use an absolute local file path or ssh://saved-connection-id/absolute/file.');
   signal?.throwIfAborted();
-  const path = await realpath(target), handle = await open(path, 'r');
+  return withWorkspaceFileAccess([target], false, async () => {
+  const path = target, handle = await openWorkspaceFile(path);
   try {
     const before = await handle.stat();
     if (!before.isFile()) throw Error('File references must target a file.');
@@ -40,6 +41,7 @@ export async function readMemoFile(target: string, maxBytes = 0, remote?: Remote
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw Error('File changed while recording reference; retry after the edit finishes.');
     return { path, name: basename(path), size: after.size, mtimeMs: after.mtimeMs, ...(content ? { content } : {}) };
   } finally { await handle.close(); }
+  }, { signal });
 }
 
 export async function authorizeMemoFile(context: ToolAdmissionContext<{ path: string }>, remote?: RemoteWorkspaceBridge) {

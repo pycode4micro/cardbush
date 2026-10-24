@@ -39,7 +39,7 @@
     "build": "node ../../scripts/build-process-resource-host.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run build && npm run test:unit",
-    "test:unit": "node --test test/*.test.mjs"
+    "test:unit": "node --test --test-concurrency=1 test/*.test.mjs"
   },
   "dependencies": {
     "@cardbush/bush-protocol": "^0.1.0",

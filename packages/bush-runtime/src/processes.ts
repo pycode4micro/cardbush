@@ -2,3 +2,5 @@
 export * from './processResourceGuard.js';
 export * from './managedProcessCommand.js';
 export * from './executionSandbox.js';
+export { trustedGit, trustedGitSync } from './trustedGit.js';
+export { normalizeHostEnvironment } from './hostEnvironment.js';

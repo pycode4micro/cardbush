@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { modelToolDefinitions } from '../dist/mcpToolDiscovery.js';
 import {
   InMemoryRuntimeCapabilityStore, ToolExecutionCoordinator, ToolRegistry,
   registerInteractionTools, registerWorkspaceTools,
@@ -17,6 +18,18 @@ const answer = (request, decision) => ({
   decision, grantedCapabilityIds: decision === "deny" ? [] : request.capabilityIds,
 });
 
+test('new catalogs omit generic pre-approval while old declarations retain a harmless compatibility handler', async () => {
+  const registry = new ToolRegistry(); registerInteractionTools(registry);
+  const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: {} };
+  assert.ok(request.tools.some(tool => tool.name === 'request_permission'));
+  assert.ok(!modelToolDefinitions(registry, request).some(tool => tool.name === 'request_permission'));
+  let prompts = 0;
+  const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { prompts++; throw new Error('Unexpected prompt'); } } });
+  const result = await coordinator.execute(call('old-preapproval', 'request_permission', { path: 'C:/fixture/report.txt', access_kind: 'write', reason: 'Legacy request' }), identity);
+  assert.equal(result.kind, 'returned'); assert.equal(result.result.granted, false); assert.equal(prompts, 0);
+  assert.deepEqual(result.result.capability_ids, []);
+});
+
 test("a model-supplied capability cannot authorize a different displayed file", async () => {
   const registry = new ToolRegistry();
   registerInteractionTools(registry);
@@ -29,7 +42,7 @@ test("a model-supplied capability cannot authorize a different displayed file", 
     registry, capabilities: new InMemoryRuntimeCapabilityStore(),
     permissions: { request: async (request) => {
       prompts.push(request);
-      return answer(request, prompts.length === 1 ? "allow_session" : "deny");
+      return answer(request, "deny");
     } },
   });
   const grant = await coordinator.execute(call("grant", "request_permission", {
@@ -37,9 +50,12 @@ test("a model-supplied capability cannot authorize a different displayed file", 
     capability_ids: [capability],
   }), identity);
   assert.equal(grant.kind, "returned");
+  assert.equal(grant.result.granted, false);
+  assert.deepEqual(grant.result.capability_ids, []);
+  assert.equal(prompts.length, 0, 'the legacy pre-approval never opens a meaningless prompt');
   const read = await coordinator.execute(call("read", "read_file", { path: actual }), identity);
-  assert.equal(prompts.length, 2);
-  assert.equal(prompts[1].targets[0].value, actual);
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].targets[0].value, actual);
   assert.equal(read.kind, "failed");
   assert.equal(read.error.code, "permission_rejected");
 });

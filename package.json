@@ -29,7 +29,7 @@
     "test:agent-deployment": "npm run build:agent && node --test scripts/test-agent-package.mjs scripts/test-agent-bundled-mcp.mjs scripts/test-agent-browser-connector.mjs scripts/test-agent-desktop-bridge.mjs scripts/test-agent-process-host.mjs packages/bush-runtime/test/toolAdmissionFacts.test.mjs scripts/test-agent-shared-configuration.mjs scripts/test-agent-desktop-probe.mjs",
     "agent:serve": "node dist-electron/agentServiceCli.mjs",
     "agent:chat": "node dist-electron/agentChatCli.mjs",
-    "test:agent-chat": "npm run build:agent && node --test --test-timeout=45000 scripts/test-agent-chat-cli.mjs scripts/test-agent-chat-presentation.mjs scripts/test-agent-chat-references.mjs scripts/test-agent-chat-diagnostics.mjs scripts/test-agent-package.mjs scripts/test-local-model-access.mjs scripts/test-model-activity.mjs",
+    "test:agent-chat": "npm run build:agent && node --test --test-timeout=45000 scripts/test-agent-chat-cli.mjs scripts/test-agent-chat-presentation.mjs scripts/test-agent-chat-browser.mjs scripts/test-agent-chat-references.mjs scripts/test-agent-chat-diagnostics.mjs scripts/test-agent-package.mjs scripts/test-local-model-access.mjs scripts/test-model-activity.mjs",
     "build:web:ui": "tsc --noEmit -p tsconfig.web.json && vite build --config vite.web.config.mts",
     "web:serve": "node dist-electron/webServer.mjs",
     "test:web": "npm run build:agent && npm run build:web:ui && node --test --test-timeout=60000 scripts/test-web.mjs",

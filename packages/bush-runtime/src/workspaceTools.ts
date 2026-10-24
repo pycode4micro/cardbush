@@ -8,11 +8,7 @@ import { TerminalSessionManager, type TerminalShell } from './terminalSessionMan
 export { authorizePath } from './workspaceAccessPolicy.js';
 export { TerminalSessionManager } from './terminalSessionManager.js';
 import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdir,
-  writeFile,
-  unlink,
-} from "node:fs/promises";
+import { bindWorkspaceFileAuthorization, createWorkspaceParent, writeWorkspaceFile as writeFile, unlinkWorkspaceFile as unlink } from './workspaceFileAccess.js';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { projectFileSourceResult } from './fileSourceReceipt.js';
 import { dirname } from "node:path";
@@ -33,6 +29,8 @@ import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileL
 import { renderTerminalResult, projectTerminalResult, renderTextFields } from "./toolResultText.js";
 import { workspaceEditRecoveryError } from './workspaceEditRecovery.js';
 import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
+import { isSkillReadResource } from './skillTools.js';
+import { userDirectories } from './userDirectories.js';
 
 interface PathInput { path: string }
 interface ReadFileInput extends PathInput { encoding: BufferEncoding; range?: FileLineRange }
@@ -167,6 +165,7 @@ export function registerWorkspaceTools(
   const terminals = options.terminals ?? new TerminalSessionManager();
   const searches = new Map<string, Promise<Awaited<ReturnType<typeof searchWorkspaceContent>>>>();
   const commandSandbox = snapshotCommandSandbox(options.commandSandbox);
+  const admittedCommands = new WeakMap<TerminalInput, Awaited<ReturnType<typeof commandSandboxPlan>>>();
   // One immutable policy per decoded invocation, including time spent awaiting approval.
   const sandboxInvocations = new WeakMap<TerminalInput, Promise<CommandSandboxConfiguration>>();
   const sandboxFor = (input: TerminalInput) => {
@@ -179,7 +178,17 @@ export function registerWorkspaceTools(
   };
   function registerIfMissing<T>(targetRegistry: ToolRegistry, registration: ToolRegistration<T>) {
     if (targetRegistry.resolve(registration.definition.name)) return;
-    const routed = routeWorkspaceTool(registration, terminals, options.remote, commandSandbox.mode === 'required');
+    if (['read_file', 'search_file_content'].includes(registration.definition.name)) {
+      const authorize = registration.authorize!;
+      registration = { ...registration, authorize: async context => {
+        const decision = await authorize(context);
+        return decision.kind === 'ask' && await isSkillReadResource(targetRegistry, context, (context.input as PathInput).path)
+          ? { kind: 'allow' as const } : decision;
+      } };
+    }
+    const guarded = ['read_file', 'write_file', 'edit_file', 'search_file_content'].includes(registration.definition.name)
+      ? bindWorkspaceFileAuthorization(registration, commandSandbox.linuxExecutable) : registration;
+    const routed = routeWorkspaceTool(guarded, terminals, options.remote, commandSandbox.mode === 'required');
     if (['read_file', 'write_file', 'edit_file'].includes(registration.definition.name)) {
       routed.parallelSafe = true;
       routed.resources = context => workspaceFileResources(context, registration.manifest.mutating);
@@ -203,7 +212,7 @@ export function registerWorkspaceTools(
     targetRegistry.register(routed);
   }
 
-  if (!registry.resolve('apply_patch')) registry.register<{ files: FilePatch[] }>({
+  if (!registry.resolve('apply_patch')) registry.register<{ files: FilePatch[] }>(bindWorkspaceFileAuthorization({
     definition: { name: 'apply_patch', description: 'Apply related UTF-8 file changes as one preflighted local-workspace batch. Use *** Begin Patch, *** Add/Update/Delete File: path, optional *** Move to: path, @@ hunks with space/context, -/removed and +/added lines, then *** End Patch. Existing files must first be read at their current revision; contexts must match uniquely. Every path is authorized and every change keeps review/undo evidence. Validation failure writes nothing; I/O failure attempts rollback and reports any surviving changes. SSH workspaces use their existing read_file/write_file/edit_file tools.', inputSchema: objectSchema({ patch: { type: 'string', minLength: 1, maxLength: 2097152 } }, ['patch']) },
     manifest: manifest('filesystem.patch', 'filesystem_change', true), parallelSafe: true,
     decodeInput: value => {
@@ -236,7 +245,7 @@ export function registerWorkspaceTools(
       const same = (a?: Buffer, b?: Buffer) => a === undefined ? b === undefined : b !== undefined && a.equals(b);
       const write = async (path: string, bytes?: Buffer, create = false) => {
         if (bytes === undefined) await unlink(path);
-        else { await mkdir(dirname(path), { recursive: true }); await writeFile(path, bytes, create ? { flag: 'wx' } : undefined); }
+        else { await createWorkspaceParent(path); await writeFile(path, bytes, create ? { flag: 'wx' } : undefined); }
       };
       const receipt = (change: typeof changes[number]) => {
         if (change.after) observations.record(context.sessionId, change.path, digest(change.after), workspaceRoot(context));
@@ -283,6 +292,15 @@ export function registerWorkspaceTools(
         throw applied.length ? failure : withToolFailureFacts(failure, { effects: 'none', result: 'known' });
       } finally { releases.reverse().forEach(release => release()); }
     },
+  }, commandSandbox.linuxExecutable));
+
+  if (!registry.resolve('get_user_directories')) registry.register({
+    definition: { name: 'get_user_directories', description: 'Resolve the current Runtime host account home, desktop and documents paths using OS metadata, including redirected Windows folders. Use before moving a file to the user desktop; sandbox HOME/USERPROFILE identifies a private task profile. This local metadata lookup grants no file access. Unavailable paths are reported explicitly.', inputSchema: objectSchema({}, []) },
+    manifest: manifest('filesystem.read', 'observation', false),
+    parallelSafe: true,
+    decodeInput: () => ({}),
+    authorize: () => ({ kind: 'allow' }),
+    execute: context => userDirectories(context.signal),
   });
 
   registerIfMissing(registry, {
@@ -376,7 +394,7 @@ export function registerWorkspaceTools(
         const before = await optionalBytes(path);
         assertObservedIfExisting(context, observations, path, before);
         const versioned = await options.ownsFileVersion?.(context.sessionId, path) ?? false;
-        await mkdir(dirname(path), { recursive: true });
+        await createWorkspaceParent(path);
         await writeFile(path, context.input.content, { encoding: context.input.encoding });
         const after = await readFileBounded(path, context.signal);
         const afterHash = digest(after);
@@ -510,6 +528,8 @@ export function registerWorkspaceTools(
           properties: {
             read_roots: { type: 'array', maxItems: 32, items: { type: 'string' }, description: 'Existing absolute directories to read.' },
             write_roots: { type: 'array', maxItems: 32, items: { type: 'string' }, description: 'Existing absolute directories to read and write.' },
+            read_files: { type: 'array', maxItems: 32, items: { type: 'string' }, description: 'Existing absolute files to read, without access to siblings.' },
+            write_files: { type: 'array', maxItems: 32, items: { type: 'string' }, description: 'Existing absolute files to read and update, without parent-directory create/delete rights.' },
             network: { type: 'boolean', description: 'Request network access; currently all destinations, not a domain allowlist.' },
           },
         },
@@ -543,11 +563,17 @@ export function registerWorkspaceTools(
           },
         };
       }
-      return (await commandSandboxPlan(await sandboxFor(context.input), context, cwd)).admission;
+      const plan = await commandSandboxPlan(await sandboxFor(context.input), context, cwd);
+      admittedCommands.set(context.input, plan);
+      return plan.admission;
     },
     execute: async (context: ToolHandlerContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
       const plan = await commandSandboxPlan(await sandboxFor(context.input), context, cwd);
+      const admitted = admittedCommands.get(context.input);
+      if (plan.policy && (!admitted?.policy || JSON.stringify(admitted.policy) !== JSON.stringify(plan.policy))) {
+        throw Object.assign(Error('An authorized command directory or file changed before execution. No command was started.'), { code: 'sandbox_approval_changed' });
+      }
       return terminals.start({
         ownerSessionId: context.sessionId,
         command: context.input.command,
@@ -626,6 +652,7 @@ export function registerWorkspaceTools(
     projectModelResult: projectTerminalResult,
     authorize: (context: ToolAdmissionContext<TerminalSessionInput>) => {
       const terminal = terminals.describe(context.sessionId, context.input.sessionId);
+      if (terminal.state !== 'running') return { kind: 'allow' as const };
       return {
         kind: "ask" as const,
         request: {

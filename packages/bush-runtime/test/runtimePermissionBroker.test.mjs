@@ -3,6 +3,73 @@ import test from "node:test";
 
 import { RuntimePermissionBroker } from "../dist/index.js";
 
+test('approval journal failure keeps the permission pending and never releases execution', async () => {
+  let fail = true, released = 0, recorded = 0;
+  const broker = new RuntimePermissionBroker({ createPermissionId: () => 'durable', onAnswered: () => {
+    if (fail) throw new Error('Fixture journal is full');
+    recorded++;
+  } });
+  const waiting = broker.request({ reason: 'Fixture', toolCallId: 'tool', actions: ['write'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:write'] });
+  void waiting.then(() => released++);
+  const answer = { protocol: 'bush.runtime_permission_answer.v1', permissionId: 'durable', answerId: 'answer', decision: 'allow_once', grantedCapabilityIds: ['fixture:write'] };
+  assert.throws(() => broker.answer(answer), /journal is full/);
+  await Promise.resolve();
+  assert.equal(released, 0, 'a failed durable decision must not grant access');
+  assert.deepEqual(broker.pendingIds(), ['durable']);
+  fail = false; broker.answer(answer); await waiting;
+  assert.equal(recorded, 1); assert.equal(released, 1);
+  assert.throws(() => broker.answer(answer), { code: 'permission_not_pending' });
+});
+
+test('cancellation journal failure rejects the waiter without escaping the abort listener', async () => {
+  let abort;
+  const signal = { aborted: false, addEventListener: (_, callback) => { abort = callback; }, removeEventListener() {} };
+  const broker = new RuntimePermissionBroker({ createPermissionId: () => 'cancel', onCancelled: () => { throw new Error('Fixture cancellation journal is full'); } });
+  const waiting = broker.request({ reason: 'Fixture', toolCallId: 'tool', actions: ['write'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:write'] }, signal);
+  const rejected = assert.rejects(waiting, /cancellation journal is full/);
+  assert.doesNotThrow(() => abort());
+  await rejected;
+  assert.deepEqual(broker.pendingIds(), []);
+});
+
+test('aborting one coalesced waiter after a journal failure never grants it on another client retry', async () => {
+  const controller = new AbortController(); let fail = true, cancelled = 0;
+  const broker = new RuntimePermissionBroker({ createPermissionId: () => 'coalesced', onAnswered: () => { if (fail) throw new Error('offline journal'); }, onCancelled: () => cancelled++ });
+  const common = { reason: 'Fixture', actions: ['write'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:write'] };
+  const first = broker.request({ ...common, toolCallId: 'first' }, controller.signal), second = broker.request({ ...common, toolCallId: 'second' });
+  const answer = { protocol: 'bush.runtime_permission_answer.v1', permissionId: 'coalesced', answerId: 'answer', decision: 'allow_session', grantedCapabilityIds: common.capabilityIds };
+  assert.throws(() => broker.answer(answer), /offline journal/);
+  controller.abort(); await assert.rejects(first, { name: 'AbortError' });
+  fail = false; broker.answer(answer); assert.equal((await second).answerId, 'answer');
+  assert.equal(cancelled, 0); assert.deepEqual(broker.pendingIds(), []);
+});
+
+test('an approval callback cannot reenter the same decision or resurrect a cancelled waiter', async () => {
+  const controller = new AbortController(); let recorded = 0;
+  const answer = { protocol: 'bush.runtime_permission_answer.v1', permissionId: 'reentrant', answerId: 'answer', decision: 'allow_once', grantedCapabilityIds: ['fixture:write'] };
+  const broker = new RuntimePermissionBroker({ createPermissionId: () => 'reentrant', onAnswered: () => {
+    recorded++; assert.throws(() => broker.answer(answer), { code: 'permission_not_pending' }); controller.abort();
+  } });
+  const waiting = broker.request({ reason: 'Fixture', toolCallId: 'tool', actions: ['write'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:write'] }, controller.signal);
+  broker.answer(answer); await assert.rejects(waiting, { name: 'AbortError' });
+  assert.equal(recorded, 1); assert.deepEqual(broker.pendingIds(), []);
+});
+
+test('cancelled and already answered permissions reject late answers without dispatching or adding grants', async () => {
+  for (const cancel of [true, false]) {
+    let answered = 0, cancelled = 0;
+    const broker = new RuntimePermissionBroker({ createPermissionId: () => 'race', onAnswered: () => answered++, onCancelled: () => cancelled++ });
+    const controller = new AbortController();
+    const waiting = broker.request({ reason: 'Fixture', toolCallId: 'tool', actions: ['write'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:write'] }, controller.signal);
+    const answer = { protocol: 'bush.runtime_permission_answer.v1', permissionId: 'race', answerId: 'answer', decision: 'allow_once', grantedCapabilityIds: ['fixture:write'] };
+    if (cancel) { controller.abort(); await assert.rejects(waiting, { name: 'AbortError' }); }
+    else { broker.answer(answer); await waiting; }
+    assert.throws(() => broker.answer(answer), { code: 'permission_not_pending' });
+    assert.equal(answered, cancel ? 0 : 1); assert.equal(cancelled, cancel ? 1 : 0);
+    assert.deepEqual(broker.pendingIds(), []);
+  }
+});
+
 test("coalesces simultaneous identical capability requests into one user decision", async () => {
   const requested = [];
   let permissionIndex = 0;

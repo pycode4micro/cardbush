@@ -4,10 +4,13 @@ Branch: `codex/recorded-tool-compaction`, based on `dee6c665`.
 
 ## Behavior
 
-Completed tool work can finish with its ordinary final reply. Neither the system
-policy, personalization context nor the current `summary_for_user` schema asks
-for a per-Turn recap. That tool remains optional for habits/predictions, and old
-calls/receipts continue to decode.
+Neither the system policy, personalization context nor the current
+`summary_for_user` schema asks for a per-Turn recap. The original v3 policy made
+the tool optional for habits/predictions. Policy v4 (2026-10-24) restores its
+independent final-display role: after other tool work, call it alone before the
+final reply, using `{}` when memory is disabled or there is nothing new to record.
+Conversation without tool work needs no call. This does not restore `tool_summary`
+or change recorded compaction; old calls/receipts continue to decode.
 
 When context pressure is reached, Runtime first tries a deterministic projection:
 
@@ -33,7 +36,7 @@ Original journals remain available. Restart, fork, supersession and source chang
 are covered by regression tests. Hidden reasoning/replay is not copied to synthesized
 messages. No business tools are rerun to rebuild history.
 
-Policy v3 migrates old bound v2 conversations once at the next Turn boundary,
+Policy v4 migrates old bound v2/v3 conversations once at the next Turn boundary,
 updating the system policy and `summary_for_user` presentation atomically through
 `model_contract_updated`. Other tool definitions remain frozen. Ordinary subsequent
 Turns retain append-only prefixes; this explicit migration and actual compression

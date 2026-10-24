@@ -1,0 +1,116 @@
+import { createHash, randomBytes } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { chmod, readFile, rm } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { createServer } from 'node:net';
+import { promisify } from 'node:util';
+import { AgentService } from './agentService.mjs';
+import { serveAgentHttp } from './agentServer.mjs';
+import { AgentChatDiagnostics } from './agentChatDiagnostics.mjs';
+import { LocalModelAccessClient } from './localModelAccess.mjs';
+import { localRuntimeDirectory, localRuntimeEndpoint, localRuntimeProtocol } from './agentLocalRuntime.mjs';
+import { assertConnectorFile } from './chromeConnectorFiles.js';
+import { writePrivateJson } from './atomicJsonFile.mjs';
+
+async function run() {
+  const [dataRoot, profileRoot, bundledRoot] = process.argv.slice(2);
+  if (!dataRoot || !profileRoot || !bundledRoot) throw new Error('Local Runtime requires data, profile and installation directories.');
+  // Windows pipes and Linux abstract sockets are released by the OS on crash.
+  // Elect before stale PID-file recovery so simultaneous restarters cannot both
+  // remove a crashed owner's lock. Other hosts retain AgentService's file lock.
+  const identity = createHash('sha256').update(process.platform === 'win32' ? dataRoot.toLowerCase() : dataRoot).digest('hex').slice(0, 32);
+  const electionPath = process.platform === 'win32' ? `\\\\.\\pipe\\cardbush-cli-owner-${identity}`
+    : process.platform === 'linux' ? `\0cardbush-cli-owner-${identity}` : undefined;
+  const election = electionPath ? createServer(socket => socket.destroy()) : undefined;
+  if (election) await new Promise<void>((done, fail) => {
+    election.once('error', () => fail(new Error('Another local Runtime already owns this data directory.')));
+    election.listen(electionPath!, done);
+  });
+  const diagnostics = new AgentChatDiagnostics(join(dataRoot, 'logs', 'runtime.log'));
+  const access = new LocalModelAccessClient(profileRoot);
+  let service: AgentService;
+  try {
+    service = await AgentService.open({ dataRoot, localProfileRoot: profileRoot, bundledRoot, local: true,
+      name: 'CardBush CLI', runtimeDiagnostic: diagnostics.write, localModelAccess: access });
+  } catch (error) { election?.close(); access.close(); diagnostics.close(); throw error; }
+  const token = randomBytes(32).toString('hex'), endpoint = localRuntimeEndpoint(randomBytes(16).toString('hex'));
+  let clients = 0, closing = false, checking = false, timer: ReturnType<typeof setTimeout> | undefined;
+  let http: Awaited<ReturnType<typeof serveAgentHttp>> | undefined;
+  let descriptor = '';
+  const stop = async () => {
+    if (closing) return; closing = true; clearTimeout(timer);
+    try {
+      if (descriptor) {
+        const data = await readFile(descriptor, 'utf8').then(JSON.parse).catch(() => null);
+        if (data?.token === token) await rm(descriptor, { force: true }).catch(error => {
+          // A Windows reader may briefly hold the descriptor. Closing the host
+          // must still finish; the next owner replaces this stale private file.
+          diagnostics.write('stderr', `Local Runtime descriptor cleanup failed: ${String(error)}\n`);
+        });
+      }
+      try { await http?.close(); } finally { await service.close(); }
+    } finally {
+      election?.close(); access.close(); diagnostics.close();
+      if (process.platform !== 'win32') await rm(endpoint, { force: true });
+    }
+  };
+  const schedule = (ms = 1000) => {
+    clearTimeout(timer);
+    if (!closing && !clients) timer = setTimeout(() => { void idle().catch(error => {
+      diagnostics.write('stderr', `Local Runtime idle check failed: ${String(error)}\n`); schedule(5000);
+    }); }, ms);
+  };
+  const idle = async () => {
+    if (closing || clients || checking) return;
+    checking = true;
+    try {
+      const jobs = await service.call('chat.jobs', {}) as Array<{ status: string }>;
+      const activity = await service.runtime.transport.sendCommand({ kind: 'runtime.local_activity', payload: {} }) as { active: boolean };
+      if (clients || http?.activeRequests() || activity.active || jobs.some(job => ['queued', 'running'].includes(job.status))) { schedule(); return; }
+      await stop();
+    } finally { checking = false; }
+  };
+  try {
+    const directory = await localRuntimeDirectory(dataRoot);
+    const nativeHost = resolve(bundledRoot, '..', 'dist-native', 'chrome-connector', 'CardBushBrowserHost.exe');
+    // Named-pipe ACL inspection opens the pipe. Keep the event loop accepting
+    // connections while the native helper sets and verifies its private DACL.
+    const secure = (kind: 'directory' | 'pipe', target: string) => promisify(execFile)(nativeHost,
+      [`--secure-${kind}`, target], { windowsHide: true, timeout: 10_000 });
+    if (process.platform === 'win32') await secure('directory', directory);
+    else await chmod(directory, 0o700);
+    http = await serveAgentHttp(service, { socketPath: endpoint, token,
+      localRequest: async (path, request, response, signal) => {
+        if (closing) { response.writeHead(503).end(); return; }
+        if (path === 'reload' && request.method === 'POST') {
+          await service.product.refreshMcp(); response.writeHead(200).end('{}'); return;
+        }
+        if (path !== 'lease' || request.method !== 'GET') { response.writeHead(404).end(); return; }
+        clients++; clearTimeout(timer);
+        response.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-CardBush-Local-Runtime': localRuntimeProtocol });
+        const status = () => { if (!signal.aborted && !response.writableNeedDrain) response.write(JSON.stringify({ diagnosticsError: diagnostics.error }) + '\n'); };
+        status(); const heartbeat = setInterval(status, 5000);
+        try { await new Promise<void>(done => { if (signal.aborted) done(); else signal.addEventListener('abort', () => done(), { once: true }); }); }
+        finally { clearInterval(heartbeat); clients--; schedule(); }
+      },
+    });
+    if (process.platform === 'win32') await secure('pipe', endpoint);
+    else await chmod(endpoint, 0o600);
+    descriptor = join(directory, 'host.json');
+    assertConnectorFile(descriptor);
+    await writePrivateJson(descriptor, { protocol: localRuntimeProtocol, pid: process.pid, agentId: service.info().id,
+      profileRoot, bundledRoot, endpoint, token });
+    // Startup is detached from the launching window. A lost parent never owns shutdown.
+    process.send?.({ ready: true }, () => { if (process.connected) process.disconnect(); });
+    schedule(15_000);
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void stop(); });
+  } catch (error) { await stop(); throw error; }
+}
+
+run().catch(error => {
+  const message = error instanceof Error ? error.message : String(error);
+  const busy = /already owns|Agent lock is invalid/.test(message) || process.platform === 'win32' &&
+    ['EPERM', 'EBUSY'].includes(error?.code) && error?.path === join(process.argv[2], 'agent.lock');
+  process.exitCode = 1;
+  if (process.connected) process.send?.({ error: message, busy }, () => process.disconnect());
+});

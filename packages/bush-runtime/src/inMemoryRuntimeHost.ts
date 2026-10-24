@@ -21,8 +21,9 @@ import { IndividuationMemory } from './individuationMemory.js';
 import { PERSONALIZATION_COMMAND, normalizeIndividuation, individuationSettingsSchema, assistantFeedbackInputSchema, modelRequestSchema as memoryModelSchema } from '@cardbush/bush-protocol';
 import { RESOLVE_SOURCE_MEMO_COMMAND, RESOLVE_SOURCE_REFERENCES_COMMAND, sourceReferencesRequestSchema } from "@cardbush/bush-protocol";
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
-import { canonicalStoragePath } from '@cardbush/platform';
 import { WorkspaceRedoStore } from './workspaceRedoStore.js';
+import { withWorkspaceFileAccess, createWorkspaceParent, writeWorkspaceFile, unlinkWorkspaceFile } from './workspaceFileAccess.js';
+import { readFileBounded } from './workspaceFileRead.js';
 import { isDeepStrictEqual } from 'node:util';
 import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { EXTRACT_RUNTIME_SESSION_COMMAND, FORK_RUNTIME_SESSION_COMMAND, sessionExtractionRequestSchema, forkRuntimeSessionRequestSchema } from '@cardbush/bush-protocol';
@@ -123,8 +124,8 @@ import {
   type WorkspaceChange,
 } from "@cardbush/bush-protocol";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, stat, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { executeModelRound, isToolCallValidationFailure } from "./modelRound.js";
 import { abortError, settleAtAbort } from "./abortSettlement.js";
@@ -1020,6 +1021,11 @@ export class InMemoryRuntimeHost {
 
   hasActiveTurns(): boolean {
     return this.#activeTurns.size > 0 || this.#teams.hasActiveRuns();
+  }
+  /** A disconnected local client must not terminate accepted or background work. */
+  hasActiveWork(): boolean {
+    return Boolean(this.hasActiveTurns() || this.#turnAdmissions || this.#workspaceActions || this.#activeAppCommands ||
+      this.#mcpApps.busy || this.#pluginBackground.busy || this.#activeExtensionCommands.size || this.#workspaceTerminals.hasActiveProcesses());
   }
   async preparePluginUninstall(pluginId: string, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
@@ -4202,7 +4208,7 @@ export class InMemoryRuntimeHost {
       );
     }
     if (matches.length === 1) return matches[0].answerPermission(answer);
-    throw new Error(`Permission ${answer.permissionId} is not pending.`);
+    throw Object.assign(new Error(`Permission ${answer.permissionId} is not pending.`), { code: 'permission_not_pending' });
   }
 
   async #readArchivedToolResultText(locator: string, signal?: AbortSignal, readerSessionId?: string): Promise<string> {
@@ -4580,6 +4586,7 @@ export class InMemoryRuntimeHost {
     const releases: Array<() => void> = [];
     try {
       for (const path of paths) releases.push(this.#workspaceObservations.acquireMutation(path));
+      return await withWorkspaceFileAccess(paths, true, async () => {
       const initial = new Map<string, WorkspaceFileSnapshot>();
       for (const path of paths) initial.set(path, await readWorkspaceFile(path));
       const virtual = new Map(initial);
@@ -4654,6 +4661,7 @@ export class InMemoryRuntimeHost {
         }
         throw error;
       }
+      });
     } finally {
       for (const release of releases.reverse()) release();
     }
@@ -4712,7 +4720,7 @@ interface ProjectPathAlias {
 
 function projectPathAliasesMetadata(value: unknown, currentRootValue: unknown): ProjectPathAlias[] {
   const currentRoot = typeof currentRootValue === "string" && isAbsolute(currentRootValue)
-    ? canonicalStoragePath(currentRootValue)
+    ? resolve(currentRootValue)
     : "";
   if (!Array.isArray(value) || !currentRoot) return [];
   const parsed = value.flatMap((candidate) => {
@@ -4721,7 +4729,7 @@ function projectPathAliasesMetadata(value: unknown, currentRootValue: unknown): 
     const from = typeof record.from === "string" ? record.from.trim() : "";
     const to = typeof record.to === "string" ? record.to.trim() : "";
     if (!from || !to || !isAbsolute(from) || !isAbsolute(to)) return [];
-    return [{ from: canonicalStoragePath(from), to: canonicalStoragePath(to) }];
+    return [{ from: resolve(from), to: resolve(to) }];
   });
   return parsed
     .filter((alias) => aliasReachesCurrentRoot(alias, parsed, currentRoot))
@@ -4748,7 +4756,9 @@ function aliasReachesCurrentRoot(
 }
 
 function resolveProjectPathAlias(value: string, aliases: ProjectPathAlias[]): string {
-  let current = canonicalStoragePath(value);
+  // Map recorded names lexically. Resolving links here would silently authorize
+  // their new destinations before the shared file guard can reject them.
+  let current = resolve(value);
   const visited = new Set<string>();
   for (let step = 0; step <= aliases.length; step += 1) {
     const identity = filesystemPathIdentity(current);
@@ -4777,7 +4787,7 @@ function isPathInside(root: string, candidate: string): boolean {
 
 async function readWorkspaceFile(path: string): Promise<WorkspaceFileSnapshot> {
   try {
-    const content = await readFile(path);
+    const content = await readFileBounded(path);
     return {
       exists: true,
       content,
@@ -4837,12 +4847,12 @@ function assertSnapshotMatches(
 
 async function restoreWorkspaceFile(path: string, snapshot: WorkspaceFileSnapshot): Promise<void> {
   if (!snapshot.exists) {
-    await rm(path, { force: true });
+    await unlinkWorkspaceFile(path);
     return;
   }
   if (!snapshot.content) throw new Error(`Cannot restore ${path}; snapshot content is missing.`);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, snapshot.content);
+  await createWorkspaceParent(path);
+  await writeWorkspaceFile(path, snapshot.content);
 }
 
 function agentGuidanceFailure(

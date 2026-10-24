@@ -448,7 +448,8 @@ test("writes new files, treats search no-match as a successful fact, and reports
   assert.equal(terminal.result.exitCode, 0);
   assert.equal(terminal.result.stdout, "ok");
   assert.equal(typeof terminal.result.shellExecutable, "string");
-  for (const echoedInput of ["command", "cwd", "shell", "yieldTimeMs"]) {
+  assert.equal(terminal.result.cwd, root, 'diagnostics retain the actual working directory');
+  for (const echoedInput of ["command", "shell", "yieldTimeMs"]) {
     assert.equal(echoedInput in terminal.result, false);
   }
 
@@ -484,8 +485,10 @@ test("PowerShell reports the last command status inside its scope, including tra
     if (expectedExitCode !== 0) assert.match(modelText, /command failed/);
     if (command.includes('recovered')) {
       assert.match(result.result.stderr, /does-not-exist/);
-      assert.match(modelText, /non-terminating errors even with exitCode 0/);
-      assert.match(modelText, /verify the requested output/);
+      assert.equal(result.result.shellDiagnostic.source, 'powershell');
+      assert.equal(result.result.shellDiagnostic.category, 'ObjectNotFound');
+      assert.match(modelText, /even with exitCode 0/);
+      assert.match(modelText, /verify the requested effects/);
     }
     assert.deepEqual(result.result, native, 'presentation must preserve native exit status and output');
   }
@@ -503,7 +506,7 @@ test("large search results are bounded and explicitly incomplete", async (t) => 
   assert.match(outcome.result.warnings, /incomplete|truncated/i);
 });
 
-test("searches with the Node fallback when ripgrep is unavailable in a packaged environment", async (t) => {
+test("sandboxed bundled ripgrep searches BOM encodings with an empty host PATH", async (t) => {
   const root = temporaryRoot(t);
   writeFileSync(join(root, "first.txt"), "alpha\nneedle here\n");
   writeFileSync(join(root, "ignored.log"), "needle ignored\n");
@@ -526,7 +529,8 @@ test("searches with the Node fallback when ripgrep is unavailable in a packaged 
     assert.equal(outcome.result.matched, true);
     assert.match(outcome.result.output, /first\.txt:2:1:needle here/);
     assert.match(outcome.result.output, /utf16le\.txt:2:1:needle 中文😀/);
-    assert.match(outcome.result.output, /utf16be\.txt:2:1:needle 中文😀/);
+    // ripgrep uses LF/CRLF line boundaries; a bare CR remains within the line.
+    assert.match(outcome.result.output, /utf16be\.txt:1:8:首行\rneedle 中文😀/);
     assert.match(outcome.result.output, /utf8bom\.txt:1:1:needle UTF-8/);
     assert.doesNotMatch(outcome.result.output, /binary\.txt/);
     assert.doesNotMatch(outcome.result.output, /ignored\.log/);
@@ -538,7 +542,7 @@ test("searches with the Node fallback when ripgrep is unavailable in a packaged 
   }
 });
 
-test("prefers the bundled ripgrep executable when the system PATH has no rg", async (t) => {
+test("guarded search remains available with bundled tooling configured and an empty PATH", async (t) => {
   if (process.platform !== "win32" || process.arch !== "x64") return;
   const root = temporaryRoot(t);
   writeFileSync(join(root, "visible.txt"), "bundled needle\n");
@@ -668,7 +672,8 @@ test("returns a session handle at the bounded yield point and later reports exit
   assert.equal(completed.kind, "returned");
   assert.equal(completed.result.state, "exited");
   assert.equal(completed.result.exitCode, 0);
-  for (const echoedInvocation of ["command", "cwd", "shell", "yieldTimeMs"]) {
+  assert.equal(completed.result.cwd, root);
+  for (const echoedInvocation of ["command", "shell", "yieldTimeMs"]) {
     assert.equal(echoedInvocation in completed.result, false);
   }
 });

@@ -7,10 +7,10 @@ import { callWebRemoteAgent } from './agentWebRemoteAgents.mjs';
 import { AgentWebPolicy } from './agentWebPolicy.mjs';
 import { AgentWebFiles } from './agentWebFiles.mjs';
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
-import { individuationSettingsSchema } from '@cardbush/bush-protocol';
+import { individuationSettingsSchema, normalizeIndividuation, type IndividuationSettings } from '@cardbush/bush-protocol';
 import { AgentSharedConfiguration, recoverSharedConfiguration } from './agentSharedConfiguration.mjs';
 import { AgentBusyError } from './agentErrors.mjs';
-import { verifyProcessResourceHost } from '@cardbush/bush-runtime/processes';
+import { normalizeHostEnvironment, verifyProcessResourceHost } from '@cardbush/bush-runtime/processes';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
@@ -54,7 +54,7 @@ const sendSchema = z.object({
   language: z.enum(['zh', 'en']).default('zh'),
   reasoningEffort: reasoningEffortSchema.nullish(), planEnabled: z.boolean().optional(), disabledSkills: z.array(z.string()).optional(), subagentPermissionRouting: z.enum(['user', 'parent']).optional(),
 }).strict();
-type SessionPresentation = { title?: string; pinned?: boolean; archived?: boolean; readAt?: string; forcedUnread?: boolean; queueLocked?: boolean };
+type SessionPresentation = { title?: string; pinned?: boolean; archived?: boolean; readAt?: string; forcedUnread?: boolean; queueLocked?: boolean; individuation?: IndividuationSettings };
 type AgentState = { version: 1; id: string; name: string; revision: number; projects: AgentProject[]; defaultProjectId: string | null; jobs: AgentJob[]; sessions?: Record<string, SessionPresentation> };
 
 type AgentServiceOptions = { dataRoot: string; name?: string; env?: NodeJS.ProcessEnv; bundledRoot?: string; desktop?: boolean; toolsEnabled?: boolean; webRestricted?: boolean;
@@ -111,19 +111,21 @@ export class AgentService {
     this.#modelImages = new ModelImageStore(runtimeRoot);
     const bundled = options.bundledRoot ?? join(root, 'bundled');
     this.bundledRoot = bundled;
-    // A local CLI reuses the desktop profile's authenticated browser connection;
-    // it must not register a second native host or stop the desktop's broker.
-    if (this.#toolsEnabled && !this.#webRestricted && !options.localProfileRoot) this.#browserConnector = new AgentBrowserConnector(root, bundled);
+    // Settings may be shared with the App; connection leases and pairings belong
+    // to this Runtime. The loopback broker does not register a native host or
+    // depend on a running desktop App, and closing it cannot stop the App broker.
+    if (this.#toolsEnabled && !this.#webRestricted) this.#browserConnector = new AgentBrowserConnector(root, bundled, configurationRoot);
     this.instructions = new GlobalInstructionsStore(join(extensionRoot, 'AGENTS.md'));
-    const sourceEnv = { ...process.env, ...options.env };
+    const explicitEnv = Object.fromEntries(Object.entries(options.env ?? {}).map(([key, value]) => [process.platform === 'win32' ? key.toUpperCase() : key, value]));
+    const sourceEnv = normalizeHostEnvironment({ ...process.env, ...explicitEnv });
     const env = { ...sourceEnv };
     // Never inherit the desktop's private endpoints, credentials or data directories.
-    for (const key of Object.keys(env)) if (key.startsWith('CARDBUSH_')) delete env[key];
+    for (const key of Object.keys(env)) if (key.toUpperCase().startsWith('CARDBUSH_')) delete env[key];
     // These are deployment policies, not desktop credentials or transport state.
-    for (const key of ['CARDBUSH_EXECUTION_SANDBOX', 'CARDBUSH_SANDBOX_NETWORK', 'CARDBUSH_SANDBOX_READ_ROOTS', 'CARDBUSH_SANDBOX_WRITE_ROOTS', 'CARDBUSH_BWRAP_PATH']) {
+    for (const key of ['CARDBUSH_EXECUTION_SANDBOX', 'CARDBUSH_SANDBOX_NETWORK', 'CARDBUSH_SANDBOX_READ_ROOTS', 'CARDBUSH_SANDBOX_WRITE_ROOTS', 'CARDBUSH_BWRAP_PATH', 'CARDBUSH_GIT_PATH', 'CARDBUSH_RG_PATH']) {
       if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key];
     }
-    Object.assign(env, options.env, {
+    Object.assign(env, explicitEnv, {
       CARDBUSH_SERVICE_ID: state.id, CARDBUSH_RUNTIME_STATE_ROOT: runtimeRoot,
       CARDBUSH_SANDBOX_SETTINGS_PATH: join(configurationRoot, 'config', 'sandbox.json'),
       CARDBUSH_SUBAGENT_CONFIG_PATH: join(configurationRoot, 'config', 'subagents.json'),
@@ -134,7 +136,6 @@ export class AgentService {
     for (const key of ['CARDBUSH_APPS_MCP_ENTRY', 'CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY', 'CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY', 'CARDBUSH_MCP_DESKTOP_BRIDGE', 'CARDBUSH_AGENT_DESKTOP_BRIDGE', 'CARDBUSH_RESOURCE_COORDINATION']) delete env[key];
     if (this.#toolsEnabled && !this.#webRestricted) Object.assign(env, agentBundledMcpEnvironment(root, bundled));
     if (options.localProfileRoot) Object.assign(env, {
-      CARDBUSH_CHROME_CONNECTOR_CONFIG: join(options.localProfileRoot, 'browser-connector', 'bridge.json'),
       CARDBUSH_BROWSER_CONFIG_PATH: join(configurationRoot, 'config', 'browser.json'),
     });
     delete env.CARDBUSH_AGENT_DESKTOP;
@@ -207,8 +208,6 @@ export class AgentService {
     const root = await realpath(options.dataRoot);
     // Refuse to adopt a desktop profile or another application's data silently.
     const file = join(root, 'agent.json');
-    const existing = await readFile(file, 'utf8').catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
-    if (!existing && await stat(join(root, 'runtime-state')).then(() => true, () => false)) throw new Error('Use a separate data directory for this Agent; this directory already contains Runtime data.');
     const lockPath = join(root, 'agent.lock');
     const acquire = () => open(lockPath, 'wx', 0o600);
     let lock;
@@ -226,6 +225,10 @@ export class AgentService {
     let service: AgentService | undefined;
     let desktop: AgentDesktop | undefined;
     try {
+      // Read only after acquiring ownership: the previous host may have been
+      // committing its final job while this process was waiting to start.
+      const existing = await readFile(file, 'utf8').catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
+      if (!existing && await stat(join(root, 'runtime-state')).then(() => true, () => false)) throw new Error('Use a separate data directory for this Agent; this directory already contains Runtime data.');
       const state: AgentState = existing ? JSON.parse(existing) : { version: 1, id: `agent-${randomUUID()}`, name: options.name?.trim() || 'CardBush Agent', revision: 0, projects: [], defaultProjectId: null, jobs: [] };
       if (state.version !== 1 || !state.id || !Array.isArray(state.jobs) || !Array.isArray(state.projects)) throw new Error('Unsupported or corrupt Agent data.');
       const configurationRoot = options.localProfileRoot ? join(options.localProfileRoot, 'product-host') : root;
@@ -235,11 +238,45 @@ export class AgentService {
       if (options.desktop) desktop = await AgentDesktop.open(root, { ...process.env, ...options.env });
       service = new AgentService(root, state, release, options, sandbox, desktop);
       await service.runtime.ready;
+      const terminals = new Map<string, Extract<RuntimeEvent, { kind: 'turn_terminal' }>>();
+      for (const job of state.jobs) if (job.status === 'running') {
+        const events = await service.#command('runtime.list_turn_events', { sessionId: job.sessionId, turnId: job.turnId }) as RuntimeEvent[];
+        const terminal = events.filter(event => event.sessionId === job.sessionId && event.turnId === job.turnId && event.kind === 'turn_terminal').at(-1);
+        if (terminal?.kind === 'turn_terminal') terminals.set(job.id, terminal);
+      }
+      const guidanceReceipts = new Map<string, RuntimeEvent>();
+      for (const job of state.jobs) if (job.status === 'queued' && job.guidance) {
+        const events = await service.#command('runtime.list_turn_events', { sessionId: job.sessionId, turnId: job.guidance.turnId }) as RuntimeEvent[];
+        const receipt = events.find(event => event.sessionId === job.sessionId && event.turnId === job.guidance!.turnId
+          && event.kind === 'guidance_applied' && event.payload.messageId === job.guidance!.messageId);
+        if (receipt) guidanceReceipts.set(job.id, receipt);
+      }
       await service.#write(next => {
         if (options.name?.trim()) next.name = options.name.trim();
         // A crash is not permission to repeat side effects. Queued work can resume;
         // interrupted turns remain inspectable through the Runtime recovery API.
-        for (const job of next.jobs) if (job.status === 'running') { job.status = 'interrupted'; job.error = 'Service restarted during this turn. Inspect history before retrying.'; }
+        for (const job of next.jobs) if (job.status === 'running') {
+          const terminal = terminals.get(job.id);
+          if (terminal && terminal.payload.reason !== 'runtime_restart_interrupted') {
+            job.status = terminal.payload.status === 'completed' ? 'completed' : terminal.payload.status === 'stopped' ? 'stopped' : 'failed';
+            job.completedAt = terminal.createdAt;
+            if (job.status === 'failed') job.error = terminal.payload.reason;
+            else delete job.error;
+          } else {
+            job.status = 'interrupted'; job.error = 'Service restarted during this turn. Inspect history before retrying.';
+            if (terminal) job.completedAt = terminal.createdAt;
+          }
+        }
+        // A reserved guidance message must never become a second user turn.
+        // Reconcile its application from Runtime, or expose the uncertain
+        // delivery as interrupted instead of leaving an unstartable queue item.
+        for (const job of next.jobs) if (job.status === 'queued' && job.guidance) {
+          const receipt = guidanceReceipts.get(job.id);
+          job.status = receipt ? 'stopped' : 'interrupted';
+          job.completedAt = receipt?.createdAt ?? new Date().toISOString();
+          if (receipt) { job.guidance.applied = true; delete job.error; }
+          else { delete job.guidance.applied; job.error = 'Service restarted before guidance delivery could be confirmed. Inspect history before resending.'; }
+        }
       });
       if (service.#toolsEnabled) {
         await service.product.refreshMcp();
@@ -418,6 +455,10 @@ export class AgentService {
         if (!isAbsolute(path)) throw new Error('Project path must be absolute on the Agent host.');
         const canonical = await realpath(path);
         if (!(await stat(canonical)).isDirectory()) throw new Error('Project path is not a directory.');
+        // Concurrent CLI windows can discover the same new cwd before either saves it.
+        const pathKey = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+        const saved = !data.id && this.#state.projects.find(item => pathKey(item.path) === pathKey(canonical));
+        if (saved) return saved;
         const project = { id: data.id ? id.parse(data.id) : randomUUID(), name: z.string().trim().min(1).max(100).parse(data.name), path: canonical };
         await this.#write(state => {
           if (state.projects.some(item => item.id === project.id && item.path !== project.path)) throw new Error('Add a new project to use a different directory.');
@@ -457,10 +498,17 @@ export class AgentService {
         return this.#present(snapshot);
       }
       case 'sessions.update': {
-        const value = z.object({ sessionId: id, pinned: z.boolean().optional(), archived: z.boolean().optional(), readAt: z.string().datetime().optional(), forcedUnread: z.boolean().optional() }).strict().parse(data);
+        const value = z.object({ sessionId: id, pinned: z.boolean().optional(), archived: z.boolean().optional(), readAt: z.string().datetime().optional(), forcedUnread: z.boolean().optional(),
+          individuation: z.object({ habits: z.boolean().optional(), predictions: z.boolean().optional() }).strict().optional() }).strict().parse(data);
         const snapshot = decodeSessionSnapshot(await this.#command('runtime.get_session', { sessionId: value.sessionId }));
-        const { sessionId: key, ...patch } = value;
-        await this.#write(state => { state.sessions ??= {}; state.sessions[key] = { ...state.sessions[key], ...patch }; });
+        const { sessionId: key, individuation, ...patch } = value;
+        await this.#write(state => {
+          state.sessions ??= {};
+          const previous = state.sessions[key];
+          state.sessions[key] = { ...previous, ...patch, ...(individuation ? {
+            individuation: normalizeIndividuation({ ...previous?.individuation, ...individuation }),
+          } : {}) };
+        });
         return this.#present(snapshot);
       }
       case 'sessions.fork': {
@@ -471,7 +519,12 @@ export class AgentService {
         const path = project?.path ?? join(this.root, 'workspaces', randomUUID());
         await mkdir(path, { recursive: true });
         await this.#command('runtime.create_session', { sessionId: target, metadata: { title: `${source.metadata?.title || 'Conversation'} · Fork`, agentId: this.#state.id, projectId: project?.id ?? null, projectDir: project?.path ?? null }, workspace: { mode: 'direct', sourceDir: path } });
-        try { return await this.#command('runtime.fork_session', { sourceSessionId: sourceId, sessionId: target }); }
+        try {
+          const fork = decodeSessionSnapshot(await this.#command('runtime.fork_session', { sourceSessionId: sourceId, sessionId: target }));
+          const individuation = this.#state.sessions?.[sourceId]?.individuation;
+          if (individuation) await this.#write(state => { state.sessions ??= {}; state.sessions[target] = { individuation: { ...individuation } }; });
+          return this.#present(fork);
+        }
         catch (error) { await this.#command('runtime.delete_session', { sessionId: target }).catch(() => undefined); throw error; }
       }
       case 'sessions.delete': { this.#idle(sessionId()); const result = await this.#command('runtime.delete_session', { sessionId: sessionId() }); await this.#write(state => { if (state.sessions) delete state.sessions[sessionId()]; }); return result; }

@@ -1,15 +1,16 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { mkdir, realpath } from 'node:fs/promises';
 import type { AgentHttpClient } from './agentHttpClient.mjs';
-import type { AgentEventFrame, AgentEventRequest, AgentOperation } from './agentTypes.js';
 import { AgentChatDiagnostics } from './agentChatDiagnostics.mjs';
-import { LocalModelAccessClient } from './localModelAccess.mjs';
+import { connectLocalRuntime } from './agentLocalRuntime.mjs';
 
 export type ChatClient = Pick<AgentHttpClient, 'info' | 'call' | 'events'> & {
   readonly modelConfigurationPath?: string;
   readonly settingsDirectory?: string;
   readonly diagnostics?: Pick<AgentChatDiagnostics, 'path' | 'error'>;
   reloadSettings?(): Promise<unknown>;
+  reconnect?(): Promise<void>;
   close(): void | Promise<void>;
 };
 
@@ -24,36 +25,43 @@ export function localDesktopProfile(env = process.env, home = homedir(), platfor
 }
 
 export async function openLocalChatClient(options: { dataRoot?: string; profileRoot?: string; bundledRoot?: string } = {}): Promise<ChatClient> {
-  const dataRoot = resolve(options.dataRoot ?? process.env.CARDBUSH_CLI_DATA_DIR ?? join(homedir(), '.cardbush', 'cli-agent'));
+  const path = resolve(options.dataRoot ?? process.env.CARDBUSH_CLI_DATA_DIR ?? join(homedir(), '.cardbush', 'cli-agent'));
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  const dataRoot = await realpath(path);
   // One settings source, even before the App has been installed or configured.
   // dataRoot owns CLI conversations/logs, never a competing models.json.
-  const localProfileRoot = resolve(options.profileRoot ?? localDesktopProfile());
+  const profile = resolve(options.profileRoot ?? localDesktopProfile());
+  await mkdir(profile, { recursive: true, mode: 0o700 });
+  const localProfileRoot = await realpath(profile);
   const settingsDirectory = join(localProfileRoot, 'product-host', 'config');
-  const [{ AgentService }, { verifyAgentBundledAssets, verifyAgentBundledMcp }] = await Promise.all([
-    import('./agentService.mjs'), import('./agentBundledAssets.mjs'),
-  ]);
-  const bundledRoot = await verifyAgentBundledAssets(options.bundledRoot);
+  const { verifyAgentBundledAssets, verifyAgentBundledMcp } = await import('./agentBundledAssets.mjs');
+  const bundledRoot = await realpath(await verifyAgentBundledAssets(options.bundledRoot));
   await verifyAgentBundledMcp(resolve(bundledRoot, '..'));
-  const diagnostics = new AgentChatDiagnostics(join(dataRoot, 'logs', 'runtime.log'));
-  const modelAccess = new LocalModelAccessClient(localProfileRoot);
-  const service = await AgentService.open({ dataRoot, localProfileRoot, bundledRoot, local: true, name: 'CardBush CLI', runtimeDiagnostic: diagnostics.write, localModelAccess: modelAccess })
-    .catch(error => { modelAccess.close(); diagnostics.close(); throw error; });
-  const closed = new AbortController();
+  let shared = await connectLocalRuntime(dataRoot, localProfileRoot, bundledRoot);
+  let closed = false, reconnecting: Promise<void> | undefined;
+  const reconnect = (): Promise<void> => {
+    if (closed) return Promise.reject(new Error('This local CLI connection is closed.'));
+    if (reconnecting) return reconnecting;
+    reconnecting = (async () => {
+      // Release only this window's old lease. The host still owns all jobs;
+      // reconnecting may replace a crashed host but never resubmits a turn.
+      await shared.close();
+      if (closed) return;
+      const next = await connectLocalRuntime(dataRoot, localProfileRoot, bundledRoot);
+      if (closed) { await next.close(); return; }
+      shared = next;
+    })().finally(() => { reconnecting = undefined; });
+    return reconnecting;
+  };
   return {
-    diagnostics,
+    diagnostics: { path: join(dataRoot, 'logs', 'runtime.log'), get error() { return shared.diagnostics.error; } },
     settingsDirectory,
     modelConfigurationPath: join(settingsDirectory, 'models.json'),
-    reloadSettings: () => service.product.refreshMcp(),
-    async info(signal?: AbortSignal) { signal?.throwIfAborted(); return service.info(); },
-    async call(operation: AgentOperation, input: Record<string, unknown>, signal?: AbortSignal) {
-      signal?.throwIfAborted(); closed.signal.throwIfAborted();
-      return service.call(operation, input, signal ? AbortSignal.any([closed.signal, signal]) : closed.signal);
-    },
-    async *events(input: AgentEventRequest, signal: AbortSignal): AsyncIterable<AgentEventFrame> {
-      let cursor = input.afterSequence ?? null;
-      for await (const event of service.eventStream(input, AbortSignal.any([closed.signal, signal]))) { cursor = event.sequence; yield { type: 'event', event }; }
-      yield { type: 'end', afterSequence: cursor };
-    },
-    async close() { closed.abort(); try { await service.close(); } finally { modelAccess.close(); diagnostics.close(); } },
+    reloadSettings: async () => { const response = await shared.client.localRequest('reload'); return response.json(); },
+    info: signal => shared.client.info(signal),
+    call: (operation, input, signal) => shared.client.call(operation, input, signal),
+    events: (input, signal) => shared.client.events(input, signal),
+    reconnect,
+    close: async () => { closed = true; await shared.close(); await reconnecting?.catch(() => undefined); },
   };
 }

@@ -1,3 +1,5 @@
+import { computerUseTakeoverRecovery } from './computerUseTakeover.js';
+
 const maxErrorCharacters = 1600;
 
 export type ComputerUseExecution = 'not_dispatched' | 'dispatched' | 'unknown';
@@ -14,7 +16,7 @@ export interface ComputerUseFailureInfo {
 }
 
 const recovery: Record<ComputerUseErrorCode, string> = {
-  user_takeover: 'Let the user finish, then observe once. Do not repeatedly retry or sleep-poll for control.',
+  user_takeover: computerUseTakeoverRecovery,
   user_stopped: 'Desktop control ended for this turn. Return to the user; do not bypass the stop.',
   window_changed: 'Inspect the returned observation or observe the exact target. A foreground change alone is not user input. Do not replay an action whose execution is unknown.',
   window_unavailable: 'Discover windows and select the intended target again. Do not assume a same-process window is the same task.',

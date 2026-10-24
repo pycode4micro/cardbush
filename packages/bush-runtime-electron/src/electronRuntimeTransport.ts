@@ -38,6 +38,10 @@ export interface ElectronRuntimeTransportOptions {
 export class RuntimeRemoteError extends Error {
   readonly fact: RuntimeProtocolError;
 
+  // Service callers and HTTP adapters use the normal Error.code contract.
+  // Keep the structured Runtime fact available without losing its discriminator.
+  get code(): string { return this.fact.code; }
+
   constructor(fact: RuntimeProtocolError) {
     super(fact.message);
     this.name = "RuntimeRemoteError";

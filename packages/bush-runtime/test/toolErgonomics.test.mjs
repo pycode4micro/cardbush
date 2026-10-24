@@ -72,7 +72,7 @@ test('failed exact edits guide a version-checked line retry without changing ind
   }
 });
 
-test('search context includes adjacent lines once, through ripgrep and Node fallback', async t => {
+test('sandboxed search context includes adjacent lines once with configured or bundled ripgrep', async t => {
   const root = temporary(t), path = join(root, 'context.txt'), { registry, run } = fixture(root);
   writeFileSync(path, 'before\nneedle one\nbetween\nneedle two\nafter\nunrelated');
   for (const fallback of [false, true]) {

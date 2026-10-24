@@ -16,6 +16,26 @@ import { runRemoteSubagent } from '../dist-electron/remoteSubagent.mjs';
 import { createProductAgentTurnRequest, createTurnTimeContext } from '../packages/bush-product-agent/dist/index.js';
 
 const tempRoot = resolve('tmp/agent-service-tests');
+
+test('expired approval errors retain their code through Worker and HTTP without dispatching work', async t => {
+  const f = await openService(t, 'stale-approval');
+  const token = 'offline-stale-approval-'.repeat(3);
+  const server = await serveAgentHttp(f.service, { token, port: 0 });
+  const client = new AgentHttpClient('http://127.0.0.1:' + server.port, token);
+  try {
+    await client.info();
+    await assert.rejects(client.call('runtime.command', { kind: 'runtime.answer_permission', payload: {
+      protocol: 'bush.runtime_permission_answer.v1', permissionId: 'expired-permission', answerId: 'late-answer',
+      decision: 'allow_once', grantedCapabilityIds: ['fixture:write'],
+    } }), error => error instanceof AgentHttpError && error.status === 409 && error.code === 'permission_not_pending');
+    await assert.rejects(client.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: {
+      selectionId: 'expired-question', sessionId: 'fixture-session', turnId: 'fixture-turn', kind: 'cancel',
+    } }), error => error instanceof AgentHttpError && error.status === 409 && error.code === 'solution_not_pending');
+    assert.deepEqual(await f.service.call('chat.jobs'), []);
+    assert.equal(f.model.calls.length, 0);
+  } finally { client.close(); await server.close(); await f.service.close(); }
+});
+
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(read, predicate, timeout = 12000) {
   const start = Date.now(); let value;
@@ -238,6 +258,23 @@ test('sandbox settings on the Agent enable installed isolation and persist an ex
   } finally { await service.close(); }
 });
 
+test('Agent preserves an explicit host search executable through its Worker without falling back', async t => {
+  const root = await directory(t), missing = join(root, 'not-installed-rg.exe');
+  const model = await modelFixture(t, 20, { name: 'search_file_content', arguments: { path: root, query: 'needle' } });
+  const previous = process.env.CARDBUSH_RG_PATH; process.env.CARDBUSH_RG_PATH = missing;
+  let service;
+  try { service = await AgentService.open({ dataRoot: root, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } }); }
+  finally { if (previous === undefined) delete process.env.CARDBUSH_RG_PATH; else process.env.CARDBUSH_RG_PATH = previous; }
+  try {
+    await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture-secret', baseURL: model.url }] } });
+    await service.call('sessions.create', { sessionId: 'search-environment' });
+    const job = await service.call('chat.send', { ...input('search-environment', 'search-env-turn'), permissionMode: 'all_free' });
+    await until(() => service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
+    const records = await service.call('runtime.command', { kind: 'runtime.list_turn_tool_executions', payload: { sessionId: 'search-environment', turnId: job.turnId } });
+    assert.equal(records[0].error?.code, 'workspace_search_unavailable', JSON.stringify(records));
+  } finally { await service.close(); }
+});
+
 test('cloud Runtime retains the deployment sandbox policy even for a full-control turn', async t => {
   const root = await directory(t);
   const marker = join(root, 'must-not-exist.txt');
@@ -350,6 +387,11 @@ test('conversation presentation survives restart and stays independent of active
     const raw = await service.call('runtime.command', { kind: 'runtime.get_session', payload: { sessionId: 'presentation' } });
     await service.call('sessions.rename', { sessionId: 'presentation', title: '自定义标题' });
     await service.call('sessions.update', { sessionId: 'presentation', pinned: true, archived: true, forcedUnread: true, readAt: '2026-09-01T00:00:00.000Z' });
+    await Promise.all([
+      service.call('sessions.update', { sessionId: 'presentation', individuation: { habits: true } }),
+      service.call('sessions.update', { sessionId: 'presentation', individuation: { predictions: true } }),
+    ]);
+    await assert.rejects(service.call('sessions.update', { sessionId: 'presentation', individuation: { habits: 'on' } }));
     const after = await service.call('runtime.command', { kind: 'runtime.get_session', payload: { sessionId: 'presentation' } });
     assert.deepEqual(after.metadata, raw.metadata, 'presentation does not mutate active model metadata');
     assert.equal(after.revision, raw.revision);
@@ -360,6 +402,8 @@ test('conversation presentation survives restart and stays independent of active
     await service.close(); service = await AgentService.open({ dataRoot: f.root });
     const restored = await service.call('sessions.get', { sessionId: 'presentation' });
     assert.equal(restored.metadata.title, '自定义标题'); assert.equal(restored.metadata.pinned, true); assert.equal(restored.metadata.archived, true); assert.equal(restored.metadata.forcedUnread, true);
+    assert.equal(restored.metadata.individuation.habits, true); assert.equal(restored.metadata.individuation.predictions, true);
+    assert.equal(restored.metadata.individuation.eventTokenThreshold, 10000);
     const page = await service.call('runtime.command', { kind: 'runtime.get_session_history', payload: { sessionId: 'presentation', limit: 1 } });
     assert.equal(page.summary.metadata.title, '自定义标题'); assert.equal(page.snapshot.metadata.pinned, true);
     assert.equal(page.snapshot.turns.length, 1); assert.equal(page.summary.turnCount, 1);
@@ -368,6 +412,10 @@ test('conversation presentation survives restart and stays independent of active
     assert.equal(fork.turns.length, 1); assert.equal(fork.metadata.forkSourceSessionId, 'presentation');
     assert.equal(fork.turns[0].cacheChainState, undefined, 'a server-side conversation fork has its own cache chain');
     assert.notEqual(fork.metadata.runtimeWorkspace.workspaceDir, restored.metadata.runtimeWorkspace.workspaceDir);
+    assert.deepEqual(fork.metadata.individuation, restored.metadata.individuation);
+    await service.call('sessions.update', { sessionId: fork.sessionId, individuation: { habits: false } });
+    assert.equal((await service.call('sessions.get', { sessionId: 'presentation' })).metadata.individuation.habits, true);
+    assert.equal((await service.call('sessions.get', { sessionId: fork.sessionId })).metadata.individuation.predictions, true);
     assert.equal((await service.call('sessions.get', { sessionId: 'presentation' })).metadata.archived, false);
     await service.call('sessions.create', { sessionId: 'legacy-title', title: 'New conversation' });
     await service.call('chat.send', input('legacy-title', 'legacy-job', '恢复已有会话的标题'));
@@ -824,6 +872,24 @@ test('optional plugin installation, activation and removal reuse the Product Hos
   } finally { await service.close(); }
 });
 
+test('restart reconciles a durable terminal event when the Agent job receipt was not committed', async t => {
+  const f = await openService(t, 'terminal-recovery'); let reopened;
+  try {
+    await f.service.call('sessions.create', { sessionId: 'terminal-recovery' });
+    await f.service.call('chat.send', input('terminal-recovery', 'completed-before-crash'));
+    await until(() => f.service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
+    await f.service.close();
+    const path = join(f.root, 'agent.json'), state = JSON.parse(await readFile(path, 'utf8'));
+    state.jobs[0].status = 'running'; delete state.jobs[0].completedAt;
+    await writeFile(path, JSON.stringify(state));
+    reopened = await AgentService.open({ dataRoot: f.root });
+    const recovered = (await reopened.call('chat.jobs'))[0];
+    assert.equal(recovered.status, 'completed');
+    assert.equal(recovered.error, undefined);
+    assert.equal(f.model.calls.length, 1, 'terminal reconciliation must never execute the turn again');
+  } finally { await reopened?.close(); await f.service.close(); }
+});
+
 test('queued work resumes after restart without replaying the stopped active task', async t => {
   const f = await openService(t, 'resume-queue', 600);
   let reopened;
@@ -838,6 +904,33 @@ test('queued work resumes after restart without replaying the stopped active tas
     assert.equal(jobs[0].status, 'stopped'); assert.equal(jobs[1].status, 'completed');
     assert.equal(f.model.calls.length, 2);
   } finally { await reopened?.close(); await f.service.close(); }
+});
+
+for (const delivered of [false, true]) test(`restart settles a reserved guidance delivery without replaying it (delivered=${delivered})`, async t => {
+  const gate = Promise.withResolvers(); let requests = 0;
+  const f = await openService(t, 'guidance-recovery', () => ++requests === 1 ? gate.promise : Promise.resolve()); let reopened;
+  try {
+    await f.service.call('sessions.create', { sessionId: 'guidance-recovery' });
+    const parent = await f.service.call('chat.send', input('guidance-recovery', 'parent'));
+    await until(() => f.model.calls.length, count => count === 1);
+    await f.service.call('chat.send', { ...input('guidance-recovery', 'reserved-guidance'), queueOnly: true });
+    if (delivered) {
+      await f.service.call('chat.queue', { action: 'guide', id: 'reserved-guidance', turnId: parent.turnId, mode: 'interrupt_and_continue' });
+      await until(() => f.service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
+    }
+    await f.service.close(); gate.resolve();
+    const path = join(f.root, 'agent.json'), state = JSON.parse(await readFile(path, 'utf8'));
+    const reserved = state.jobs.find(job => job.id === 'reserved-guidance');
+    reserved.status = 'queued'; reserved.guidance = { turnId: parent.turnId, messageId: 'queued-guidance-reserved-guidance', createdAt: reserved.createdAt, mode: 'interrupt_and_continue' };
+    await writeFile(path, JSON.stringify(state));
+    const calls = f.model.calls.length;
+    reopened = await AgentService.open({ dataRoot: f.root });
+    const recovered = (await reopened.call('chat.jobs')).find(job => job.id === reserved.id);
+    assert.equal(recovered.status, delivered ? 'stopped' : 'interrupted');
+    assert.equal(recovered.guidance.applied, delivered ? true : undefined);
+    if (!delivered) assert.match(recovered.error, /guidance.*confirmed/i);
+    assert.equal(f.model.calls.length, calls, 'an uncertain guidance delivery never becomes an automatic new turn');
+  } finally { gate.resolve(); await reopened?.close(); await f.service.close(); }
 });
 
 test('SSE delivers live events, reconnects by cursor, and NDJSON replays the same history', async t => {

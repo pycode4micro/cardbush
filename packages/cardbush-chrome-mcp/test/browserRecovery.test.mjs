@@ -2,8 +2,65 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCardbushChromeServer, createBrowserUseState } from '../dist/index.js';
 import { projectMcpResult } from '../../bush-mcp-client/dist/modelResult.js';
+import { ChromeConnectorError } from '../dist/bridgeClient.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'recovery' } } };
+
+test('empty connector offers CLI pairing while offline profiles retain their selection without re-pairing', async () => {
+  const id = '1'.repeat(32);
+  let connections = [];
+  const server = createCardbushChromeServer({ connector: async method => {
+    assert.equal(method, 'browser.list'); return { connections, selectedConnectionId: id };
+  } });
+  const empty = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  assert.equal(empty.availability, 'needs_connection'); assert.match(empty.nextStep, /\/browser pair edge/);
+  connections = [{ id, browser: 'edge', connected: false }];
+  const offline = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  assert.equal(offline.selectedConnectionId, id); assert.equal(offline.connections[0].id, id);
+  assert.match(offline.nextStep, /already paired/); assert.doesNotMatch(offline.nextStep, /\/browser pair/);
+  connections[0].connected = true;
+  const online = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  assert.equal(online.nextStep, undefined); assert.equal(online.selectedConnectionId, id);
+});
+
+test('session 095c replay: missing bridge is setup state, mutations stay blocked and recovery is live', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-browser-setup-')), config = join(root, 'bridge.json');
+  t.after(async () => { assert.equal(dirname(root), tmpdir()); await rm(root, { recursive: true, force: true }); });
+  const server = createCardbushChromeServer({ browserConfigPath: config });
+  const listed = await server._registeredTools.list_browsers.handler({}, context);
+  assert.equal(listed.isError, undefined); assert.equal(listed.structuredContent.availability, 'needs_setup');
+  assert.deepEqual(listed.structuredContent.connections, []);
+  assert.match(listed.structuredContent.nextStep, /\/browser pair chrome/);
+  assert.match(listed.structuredContent.nextStep, /\/browser pair edge/);
+  assert.match(listed.structuredContent.nextStep, /does not require the desktop App/);
+  const mutation = await server._registeredTools.new_page.handler({ url: 'https://example.invalid' }, context);
+  assert.equal(mutation.isError, true); assert.equal(mutation.structuredContent.error.code, 'bridge_config_unavailable');
+  assert.equal(mutation.structuredContent.error.details.execution, 'not_dispatched');
+  await writeFile(config, JSON.stringify({ token: 'must-not-be-printed', protocol: 'invalid' }));
+  const invalid = await server._registeredTools.list_browsers.handler({}, context);
+  assert.equal(invalid.structuredContent.availability, 'misconfigured'); assert.doesNotMatch(JSON.stringify(invalid), /must-not-be-printed/);
+  let connected = false; const calls = [];
+  const live = createCardbushChromeServer({ connector: async method => {
+    calls.push(method);
+    if (!connected) throw new ChromeConnectorError('cardbush_bridge_unavailable', 'offline');
+    return { connections: [{ id: 'cardbush', connected: true }] };
+  } });
+  assert.equal((await live._registeredTools.list_browsers.handler({}, context)).structuredContent.availability, 'disconnected');
+  connected = true;
+  assert.equal((await live._registeredTools.list_browsers.handler({}, context)).structuredContent.connections[0].id, 'cardbush');
+  assert.deepEqual(calls, ['browser.list', 'browser.list'], 'no hidden launch or mutation replay');
+});
+
+test('availability guidance never rewrites uncertain dispatch into a safe-to-retry mutation', async () => {
+  const server = createCardbushChromeServer({ connector: async () => {
+    throw new ChromeConnectorError('cardbush_bridge_unavailable', 'disconnected', { execution: 'unknown' });
+  } });
+  const result = await server._registeredTools.new_page.handler({ url: 'https://example.invalid' }, context);
+  assert.equal(result.isError, true); assert.equal(result.structuredContent.error.details.execution, 'unknown');
+});
 
 test('empty selection and invalid tab ids never become a phantom page zero', async () => {
   for (const listed of [{ pages: [], selectedPageId: null, selectionState: 'none' }, [{ id: null }, { id: false }, { id: '' }]]) {

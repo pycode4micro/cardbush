@@ -1,4 +1,6 @@
 import { authorizeMemoFile, readMemoFile } from './memoFileAccess.js';
+import { bindWorkspaceFileAuthorization } from './workspaceFileAccess.js';
+import { isAbsolute } from 'node:path';
 import { projectCatalogPage } from './catalogPage.js';
 import { memoMarkdownLinks } from './memoMarkdownLinks.js';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
@@ -87,7 +89,7 @@ export async function resolveFileMemo(store: ToolExecutionStore, reference: stri
 export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecutionStore, remote?: RemoteWorkspaceBridge): void {
   const manifest = { effect_kind: 'observation' as const, operation: 'file_memo', risk: 'low' as const,
     owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
-  registry.register({
+  registry.register(bindWorkspaceFileAuthorization<ReturnType<typeof fileMemoInputSchema.parse>>({
     definition: { name: FILE_MEMO_WRITE_TOOL,
       description: 'Record or update a concise file memo in this conversation: an existing absolute local file path or ssh://saved-connection-id/absolute/file for a remote file, one short purpose and at most 3 short observations. These are your notes, not host-verified conclusions. No execution logs, dialogue summaries or long tool output. Copy the returned markdown directly when delivering a file, or use its reference verbatim in an image. References use simple stable numbers such as cardbush-memo:1, issued by the host and valid across parent/child conversations. Never construct a link from the file ID or a tool-call ID. Each revision keeps its original note and reference; the file remains at its original path. Use read_file_memos to retrieve links again.',
       inputSchema: { type: 'object', additionalProperties: false, required: ['path', 'purpose'], properties: {
@@ -110,7 +112,10 @@ export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecuti
         note: { purpose: context.input.purpose, points: context.input.points },
       });
     },
-  });
+  }, undefined, {
+    paths: input => isAbsolute(input.path) ? [input.path] : [],
+    resolve: (input, canonical) => isAbsolute(input.path) ? { ...input, path: canonical(input.path) } : input,
+  }));
   registry.register<{ id?: string; offset: number }>({
     projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['memos']),
     definition: { name: 'read_file_memos', description: 'Read this conversation\'s concise file memos by file ID (file_1, file_2, etc.), or list up to 10 entries per offset page. Returns the latest note and ready-to-use markdown link for each file, not execution history. An individual read checks whether the referenced file is available or changed. Older file IDs are still accepted.',

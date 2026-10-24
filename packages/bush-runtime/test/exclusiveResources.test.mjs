@@ -42,12 +42,14 @@ test('real background terminals retain leases across yields/managers and release
   const input = { ownerSessionId: 'parent', cwd: root, shell, command: command('setInterval(()=>{},1000)'), yieldTimeMs: 1, exclusiveResources: ['build/app.exe'] };
   const first = await managers[0].start(input);
   assert.equal(first.state, 'running');
+  assert.equal(managers[0].hasActiveProcesses(), true, 'background processes keep a disconnected local host alive');
   await assert.rejects(managers[1].start({ ...input, ownerSessionId: 'child' }), { code: 'terminal_resource_busy' });
   assert.equal(managers[1].list('child').length, 0, 'conflicting command never spawns');
   const cancelled = new AbortController(); cancelled.abort();
   await assert.rejects(managers[0].poll('parent', { sessionId: first.terminalSessionId, yieldTimeMs: 10 }, cancelled.signal));
   await assert.rejects(managers[1].start(input), { code: 'terminal_resource_busy' });
   await managers[0].stop('parent', first.terminalSessionId);
+  assert.equal(managers[0].hasActiveProcesses(), false);
   const done = await managers[1].start({ ...input, command: command('process.exit(0)'), yieldTimeMs: 10000 });
   assert.equal(done.exitCode, 0);
   assert.equal(done.state, 'exited');

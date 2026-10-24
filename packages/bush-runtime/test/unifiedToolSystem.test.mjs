@@ -4,8 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { promises as fsPromises } from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
+import { SandboxFileHandle } from '../dist/workspaceSandboxFile.js';
 import { ToolRegistry, ToolExecutionCoordinator, ToolExecutionStore, InMemoryRuntimeEventLog, InMemoryRuntimeHost, registerWorkspaceTools, registerExtendedBuiltins } from '../dist/index.js';
 import { ToolResourceScheduler } from '../dist/toolResourceScheduler.js';
 import { RuntimeTaskTools } from '../dist/taskTools.js';
@@ -286,31 +285,29 @@ test('patch rejects stale revisions, duplicate aliases and ambiguous hunks witho
 
 test('an I/O failure after the first patch write restores prior bytes and retains no phantom changes', async t => {
   const f = fixture(t), path = join(f.root, 'a.md'); writeFileSync(path, 'before\n'); await f.run('read_file', { path });
-  const original = fsPromises.writeFile; let sawFirstWrite = false;
-  const mocked = t.mock.method(fsPromises, 'writeFile', async (target, ...args) => {
-    if (String(target).endsWith('b.md')) { sawFirstWrite = readFileSync(path, 'utf8') === 'after\n'; throw Object.assign(new Error('Disk rejected the second write'), { code: 'EIO' }); }
-    return original(target, ...args);
+  const original = SandboxFileHandle.open; let sawFirstWrite = false;
+  const mocked = t.mock.method(SandboxFileHandle, 'open', async (target, identity, write, ...args) => {
+    if (String(target).endsWith('b.md') && write) { sawFirstWrite = readFileSync(path, 'utf8') === 'after\n'; throw Object.assign(new Error('Disk rejected the second write'), { code: 'EIO' }); }
+    return original(target, identity, write, ...args);
   });
-  syncBuiltinESMExports();
   try {
     const result = await f.run('apply_patch', { patch: '*** Begin Patch\n*** Update File: a.md\n@@\n-before\n+after\n*** Add File: b.md\n+new\n*** End Patch' });
     assert.ok(sawFirstWrite); assert.equal(result.kind, 'failed'); assert.match(result.error.message, /rolled back/);
     assert.equal(readFileSync(path, 'utf8'), 'before\n'); assert.equal(existsSync(join(f.root, 'b.md')), false); assert.equal(result.workspaceChanges.length, 0);
     assert.deepEqual(result.execution, { dispatch: 'started', effects: 'possible', result: 'unknown', recovery: 'inspect_existing' });
-  } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+  } finally { mocked.mock.restore(); }
 });
 
 test('a patch that cannot restore a write keeps recorded effects and requires inspection', async t => {
   const f = fixture(t), path = join(f.root, 'a.md'); writeFileSync(path, 'before\n'); await f.run('read_file', { path });
-  const original = fsPromises.writeFile;
-  const mocked = t.mock.method(fsPromises, 'writeFile', async (target, ...args) => {
-    if (String(target).endsWith('b.md')) {
+  const original = SandboxFileHandle.open;
+  const mocked = t.mock.method(SandboxFileHandle, 'open', async (target, identity, write, ...args) => {
+    if (String(target).endsWith('b.md') && write) {
       writeFileSync(path, 'changed externally\n');
       throw Object.assign(new Error('Second write failed'), { code: 'EIO' });
     }
-    return original(target, ...args);
+    return original(target, identity, write, ...args);
   });
-  syncBuiltinESMExports();
   try {
     const result = await f.run('apply_patch', { patch: '*** Begin Patch\n*** Update File: a.md\n@@\n-before\n+after\n*** Add File: b.md\n+new\n*** End Patch' });
     assert.equal(result.error.code, 'patch_partial_failure');
@@ -318,7 +315,7 @@ test('a patch that cannot restore a write keeps recorded effects and requires in
     assert.equal(result.workspaceChanges.length, 1);
     assert.deepEqual(result.error.details.remaining_paths, [path]);
     assert.deepEqual(result.execution, { dispatch: 'started', effects: 'recorded', result: 'unknown', recovery: 'inspect_existing' });
-  } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+  } finally { mocked.mock.restore(); }
 });
 
 test('async question yields immediately, independent tools run, answer arrives once, and other sessions cannot inspect it', async t => {
@@ -487,6 +484,54 @@ test('stopping a script waiting for permission cancels its approval and cannot r
   assert.throws(() => permissions.answer({ protocol: 'bush.runtime_permission_answer.v1', answerId: 'late', permissionId: request.permissionId, decision: 'allow_once', grantedCapabilityIds: ['fixture:observe'] }), /not pending/);
   const final = (await f.run('tasks', { action: 'inspect', task_ids: [started.result.task_id] })).result.tasks[0];
   assert.equal(final.status, 'cancelled'); assert.equal(final.summary, undefined);
+});
+
+test('incident replay: approval waits longer than five minutes do not expire a script, including overlapping waits', { timeout: 10000 }, async t => {
+  const requests = [], asked = Promise.withResolvers(), entered = [Promise.withResolvers(), Promise.withResolvers()], finish = Promise.withResolvers();
+  const permissions = new RuntimePermissionBroker({ onRequested: request => { requests.push(request); if (requests.length === 2) asked.resolve(); } });
+  const f = fixture(t, { permissions }); f.request.permissionMode = 'task_free';
+  let now = Date.now(); t.mock.method(Date, 'now', () => now);
+  f.add('approval_target', async context => { entered[context.input.index].resolve(); return finish.promise; }, {
+    parallelSafe: true, authorize: context => ({ kind: 'ask', request: { reason: 'Replay approval wait', actions: ['observe'],
+      targets: [{ kind: 'opaque', value: String(context.input.index) }], capabilityIds: ['fixture:observe'] } }),
+  });
+  const started = await f.run('run_tools', { code: 'return await Promise.all([tools.approval_target({index:0}), tools.approval_target({index:1})]);' });
+  await asked.promise; now += 20 * 60_000;
+  const approve = request => permissions.answer({ protocol: 'bush.runtime_permission_answer.v1', answerId: `answer-${request.permissionId}`,
+    permissionId: request.permissionId, decision: 'allow_once', grantedCapabilityIds: request.capabilityIds });
+  approve(requests[0]); await entered[Number(requests[0].targets[0].value)].promise;
+  // Wake the guest after one approval, while the second is still outstanding.
+  await delay(1100);
+  const waiting = (await f.run('tasks', { action: 'inspect', task_ids: [started.result.task_id] })).result.tasks[0];
+  assert.equal(waiting.status, 'waiting_user'); assert.match(waiting.summary, /1 pending/);
+  now += 20 * 60_000;
+  approve(requests[1]); await entered[Number(requests[1].targets[0].value)].promise;
+  finish.resolve({ done: true });
+  const completed = JSON.parse((await f.deliveries.find(item => item.id === started.result.task_id).message).content);
+  assert.equal(completed.status, 'completed', JSON.stringify(completed));
+  assert.deepEqual(completed.result.value.result, [{ done: true }, { done: true }]);
+  assert.deepEqual(permissions.pendingIds(), []);
+});
+
+test('approval waits do not reset execution budget or remove the script CPU limit', { timeout: 10000 }, async t => {
+  const asked = Promise.withResolvers(), entered = Promise.withResolvers(), finish = Promise.withResolvers();
+  const permissions = new RuntimePermissionBroker({ onRequested: asked.resolve });
+  const f = fixture(t, { permissions }); f.request.permissionMode = 'task_free';
+  let now = Date.now(); t.mock.method(Date, 'now', () => now);
+  f.add('before_approval', () => { now += 250_000; return {}; });
+  f.add('approval_target', async () => { entered.resolve(); return finish.promise; }, {
+    authorize: () => ({ kind: 'ask', request: { reason: 'Replay approval wait', actions: ['observe'],
+      targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:observe'] } }),
+  });
+  const started = await f.run('run_tools', { code: 'await tools.before_approval({}); return await tools.approval_target({});' });
+  const request = await asked.promise; now += 20 * 60_000;
+  permissions.answer({ protocol: 'bush.runtime_permission_answer.v1', answerId: 'answer', permissionId: request.permissionId,
+    decision: 'allow_once', grantedCapabilityIds: request.capabilityIds });
+  await entered.promise; now += 51_000; finish.resolve({ done: true });
+  const completed = JSON.parse((await f.deliveries.find(item => item.id === started.result.task_id).message).content);
+  assert.equal(completed.status, 'failed'); assert.match(completed.result.value.error.message, /time budget exceeded/);
+  // Starting a new script resets only that new job's budget, not the CPU limit.
+  assert.equal((await f.script('for (;;) {}')).completion.status, 'failed');
 });
 
 test('script CPU and promise limits fail promptly; independent work proceeds during tool waits', async t => {

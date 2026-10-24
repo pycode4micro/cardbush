@@ -4,6 +4,15 @@ process.stdin.isTTY = process.stdout.isTTY = process.stderr.isTTY = true;
 process.env.TERM = 'xterm';
 const { main } = await import('../../dist-electron/agentChatCli.mjs');
 const { appendFile, readFile } = await import('node:fs/promises');
+if (process.env.CARDBUSH_TEST_CHAT_READY) {
+  const { NativeChatTerminal } = await import('../../dist-electron/agentChatTerminal.mjs');
+  const ask = NativeChatTerminal.prototype.ask;
+  NativeChatTerminal.prototype.ask = function (...args) {
+    const pending = ask.apply(this, args);
+    if (args[2] === true || args[2]?.chat) process.stderr.write('[Test: chat input ready]\n');
+    return pending;
+  };
+}
 if (process.env.CARDBUSH_TEST_HANDOFF_GATE) {
   const { NativeChatTerminal } = await import('../../dist-electron/agentChatTerminal.mjs');
   const { AgentHttpClient } = await import('../../dist-electron/agentHttpClient.mjs');

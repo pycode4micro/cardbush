@@ -79,12 +79,13 @@ internal static class ConnectorSecurity
         bool directory = operation == "--secure-directory";
         if (directory)
         {
-            if (!Path.IsPathRooted(target) || (Path.GetFileName(target) != "browser-connector" && Path.GetFileName(target) != "model-access") ||
+            if (!Path.IsPathRooted(target) || (Path.GetFileName(target) != "browser-connector" && Path.GetFileName(target) != "model-access" && Path.GetFileName(target) != "local-runtime") ||
                 (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Invalid private IPC directory.");
         }
         else if (!target.StartsWith(@"\\.\pipe\cardbush-browser-connector-", StringComparison.Ordinal) &&
-                 !target.StartsWith(@"\\.\pipe\cardbush-model-access-", StringComparison.Ordinal))
+                 !target.StartsWith(@"\\.\pipe\cardbush-model-access-", StringComparison.Ordinal) &&
+                 !target.StartsWith(@"\\.\pipe\cardbush-cli-", StringComparison.Ordinal))
             throw new InvalidDataException("Invalid private IPC pipe.");
         string inheritance = directory ? "OICI" : "";
         string sddl = "D:P(A;" + inheritance + ";FA;;;" + sid + ")(A;" + inheritance + ";FA;;;SY)";

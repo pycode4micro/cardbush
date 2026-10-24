@@ -3842,6 +3842,7 @@ app.on('child-process-gone', (_event, details) => {
 
 app.whenReady().then(async () => {
   if (!applicationInstance.primary) return;
+  trustedGitSync = (await import('@cardbush/bush-runtime/processes')).trustedGitSync;
   if (process.platform === 'win32' && Number(os.release().split('.')[2]) < 22000) {
     dialog.showErrorBox('CardBush', 'CardBush requires Windows 11 or later. / CardBush 需要 Windows 11 或更高版本。');
     app.quit();
@@ -5935,9 +5936,13 @@ function normalizeGitName(value: string, label: string) {
   return trimmed;
 }
 
+let trustedGitSync: (roots: readonly string[]) => string = () => {
+  throw Object.assign(Error('Git executable resolution is not ready.'), { code: 'git_unavailable' });
+};
+
 function runGit(root: string, args: string[]) {
   try {
-    return execFileSync('git', ['-C', root, ...args], {
+    return execFileSync(trustedGitSync([root]), ['-C', root, ...args], {
       encoding: 'utf8',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -5949,7 +5954,7 @@ function runGit(root: string, args: string[]) {
 
 function runGitWithInput(root: string, args: string[], input: string) {
   try {
-    return execFileSync('git', ['-C', root, ...args], {
+    return execFileSync(trustedGitSync([root]), ['-C', root, ...args], {
       encoding: 'utf8',
       input,
       windowsHide: true,

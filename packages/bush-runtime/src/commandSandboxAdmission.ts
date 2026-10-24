@@ -2,16 +2,19 @@ import { commandInvocation } from '@cardbush/platform';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
+import { stat } from 'node:fs/promises';
 import type { RuntimePermissionTarget } from '@cardbush/bush-protocol';
 import type { ToolAdmissionContext, ToolAdmissionDecision } from './toolRegistry.js';
 import { commandSandboxPolicy, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
-import { canonicalSandboxRoots, sandboxError, type ExecutionSandboxPolicy } from './executionSandbox.js';
+import { canonicalSandboxRoots, canonicalSandboxFiles, sandboxError, type ExecutionSandboxPolicy } from './executionSandbox.js';
 import { commandPermission } from './commandPermission.js';
 import { allowedRoots, isWithin, normalizeIdentity, permissionBoundaryMode, resolveToolPath, workspaceRoot } from './workspaceAccessPolicy.js';
 
 export interface AdditionalCommandPermissions {
   readRoots: string[];
   writeRoots: string[];
+  readFiles?: string[];
+  writeFiles?: string[];
   network: boolean;
 }
 interface CommandInput {
@@ -24,15 +27,16 @@ export function decodeAdditionalCommandPermissions(value: unknown): AdditionalCo
   if (value == null) return;
   if (typeof value !== 'object' || Array.isArray(value)) throw Error('additional_permissions must be an object.');
   const input = value as Record<string, unknown>;
-  if (Object.keys(input).some(key => !['read_roots', 'write_roots', 'network'].includes(key))) throw Error('Unknown additional_permissions field.');
+  if (Object.keys(input).some(key => !['read_roots', 'write_roots', 'read_files', 'write_files', 'network'].includes(key))) throw Error('Unknown additional_permissions field.');
   const paths = (key: string) => {
     const items = input[key];
     if (items == null) return [];
-    if (!Array.isArray(items) || items.length > 32 || items.some(item => typeof item !== 'string' || !item.trim())) throw Error(`${key} must contain at most 32 directory paths.`);
+    if (!Array.isArray(items) || items.length > 32 || items.some(item => typeof item !== 'string' || !item.trim())) throw Error(`${key} must contain at most 32 paths.`);
     return [...new Set(items as string[])];
   };
   if (input.network != null && typeof input.network !== 'boolean') throw Error('additional_permissions.network must be a boolean.');
-  return { readRoots: paths('read_roots'), writeRoots: paths('write_roots'), network: input.network === true };
+  return { readRoots: paths('read_roots'), writeRoots: paths('write_roots'), network: input.network === true,
+    ...(input.read_files ? { readFiles: paths('read_files') } : {}), ...(input.write_files ? { writeFiles: paths('write_files') } : {}) };
 }
 
 /** Requested extensions never become execution policy without an exact grant. */
@@ -65,12 +69,10 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
   // A broad implicit workspace (notably a Windows home directory) can contain
   // the supervisor's TEMP directory. A narrower cwd must actually narrow this
   // grant. Explicit host roots and requested extensions are never dropped.
-  let narrowed = false;
   const writableRoots = baseWritableRoots.map(root => {
     if (workspacePath && normalizeIdentity(root) === normalizeIdentity(workspacePath) &&
         !configuredWriteRoots.some(configured => normalizeIdentity(configured) === normalizeIdentity(root)) && isWithin(root, privateArea) &&
         isWithin(root, commandDirectory) && !isWithin(commandDirectory, privateArea)) {
-      narrowed = true;
       return commandDirectory;
     }
     return root;
@@ -83,13 +85,21 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
   const extraWrite = write.filter(path => !covered(path, writableRoots));
   if (!covered(cwd, [...writableRoots, ...readableRoots, ...read, ...write])) extraWrite.push(cwd);
   const extraRead = read.filter(path => !covered(path, [...writableRoots, ...readableRoots, ...extraWrite]));
+  const [readFiles, writeFiles] = await Promise.all([canonicalSandboxFiles(requested?.readFiles ?? []), canonicalSandboxFiles(requested?.writeFiles ?? [])]);
+  const extraWriteFiles = writeFiles.filter(path => !covered(path, [...writableRoots, ...extraWrite]));
+  const extraReadFiles = readFiles.filter(path => !covered(path, [...writableRoots, ...readableRoots, ...extraRead, ...extraWrite]) && !extraWriteFiles.includes(path));
   const network = requested?.network === true && base.network !== 'enabled';
-  const expanded = extraRead.length > 0 || extraWrite.length > 0 || network;
+  const expanded = extraRead.length > 0 || extraWrite.length > 0 || extraReadFiles.length > 0 || extraWriteFiles.length > 0 || network;
   if (expanded && configuration.mode === 'required') return { admission: { kind: 'deny', code: 'sandbox_host_limit',
-    message: 'The requested directory or network access exceeds the host-enforced sandbox. A user approval cannot override this deployment policy.' } };
+    message: 'The requested file, directory or network access exceeds the host-enforced sandbox. A user approval cannot override this deployment policy.' } };
+  const expectedIdentities = Object.fromEntries(await Promise.all([...new Set([...writableRoots, ...readableRoots, ...extraRead, ...extraWrite, ...extraReadFiles, ...extraWriteFiles])].sort().map(async path => {
+    const info = await stat(path, { bigint: true }); return [path, `${info.dev}:${info.ino}`];
+  })));
   const policy: ExecutionSandboxPolicy = { ...base, network: network ? 'enabled' : base.network,
     readableRoots: [...new Set([...readableRoots, ...extraRead])].sort(), writableRoots: [...new Set([...writableRoots, ...extraWrite])].sort(),
-    ...(expanded || narrowed ? { requireCanonicalRoots: true } : {}) };
+    ...(extraReadFiles.length ? { readableFiles: extraReadFiles.sort() } : {}), ...(extraWriteFiles.length ? { writableFiles: extraWriteFiles.sort() } : {}),
+    ...(Object.keys(expectedIdentities).length ? { expectedIdentities } : {}),
+    requireCanonicalRoots: true };
   if (policy.writableRoots.length + policy.readableRoots!.length > 64) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox roots.');
   if ([...policy.writableRoots, ...policy.readableRoots!].some(root => isWithin(root, privateArea))) {
     throw sandboxError('sandbox_policy_invalid', 'The selected workspace or access roots contain the sandbox supervisor directory. Use a dedicated workspace subdirectory as cwd (not the home or TEMP directory); the implicit workspace grant will be narrowed to that directory. Broad host-configured or additional roots must also be narrowed. No command was started.');
@@ -102,11 +112,13 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
     { kind: 'filesystem_path', value: cwd, label: `cwd: ${cwd}` },
     ...extraRead.map(value => ({ kind: 'filesystem_path' as const, value, label: `Read: ${value}` })),
     ...extraWrite.map(value => ({ kind: 'filesystem_path' as const, value, label: `Write: ${value}` })),
+    ...extraReadFiles.map(value => ({ kind: 'filesystem_path' as const, value, label: `Read file: ${value}` })),
+    ...extraWriteFiles.map(value => ({ kind: 'filesystem_path' as const, value, label: `Write file: ${value}` })),
     ...(network ? [{ kind: 'opaque' as const, value: 'sandbox:network:enabled', label: 'Network access (all destinations)' }] : []),
   ];
   return { policy, requiredGrant, admission: { kind: 'ask', request: {
     reason: `Additional sandbox access for this command and its child processes only. Isolation remains enabled.${context.input.justification ? ` Reason: ${context.input.justification}` : ''}`,
-    actions: ['execute', ...extraRead.map(() => 'read'), ...extraWrite.map(() => 'write'), ...(network ? ['network'] : [])],
+    actions: ['execute', ...[...extraRead, ...extraReadFiles].map(() => 'read'), ...[...extraWrite, ...extraWriteFiles].map(() => 'write'), ...(network ? ['network'] : [])],
     targets, capabilityIds: [requiredGrant], scope: { mode: 'task_free', roots: writableRoots },
   } } };
 }

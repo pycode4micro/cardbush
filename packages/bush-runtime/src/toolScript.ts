@@ -26,10 +26,23 @@ export async function executeToolScript(code: string, context: ToolHandlerContex
   const runtime = engine.newRuntime(); runtime.setMemoryLimit(32 * 1024 * 1024); runtime.setMaxStackSize(512 * 1024);
   const vm = runtime.newContext(), scheduler = new ToolResourceScheduler();
   const pending = new Set<Promise<void>>(), deferred = new Set<QuickJSDeferredPromise>();
-  const deadline = Date.now() + 300_000;
+  // Human approval is not execution time. Track the union of permission waits,
+  // including delegated/parallel calls, without relaxing CPU or tool deadlines.
+  let deadline = Date.now() + 300_000, approvalStarted: number | undefined;
+  const approvalWaits = new Set<string>();
+  const permissionWait: ToolPermissionWaitObserver = (callId, waiting) => {
+    if (waiting) {
+      if (!approvalWaits.size) approvalStarted = Date.now();
+      approvalWaits.add(callId);
+    } else if (approvalWaits.delete(callId) && !approvalWaits.size) {
+      deadline += Math.max(0, Date.now() - approvalStarted!); approvalStarted = undefined;
+    }
+    onPermissionWait?.(callId, waiting);
+  };
+  const remaining = () => deadline - (approvalStarted ?? Date.now());
   let alive = true, calls = 0, failures = 0, cpu = 0, sliceDeadline = 0;
   const controller = new AbortController(), scopedSignal = AbortSignal.any([signal, controller.signal]);
-  runtime.setInterruptHandler(() => scopedSignal.aborted || performance.now() >= sliceDeadline || cpu > 1000 || Date.now() > deadline);
+  runtime.setInterruptHandler(() => scopedSignal.aborted || performance.now() >= sliceDeadline || cpu > 1000 || remaining() <= 0);
   const runGuest = <T>(action: () => T): T => {
     const start = performance.now(); sliceDeadline = start + Math.min(250, Math.max(0, 1000 - cpu));
     try { return action(); } finally { cpu += performance.now() - start; }
@@ -50,7 +63,7 @@ export async function executeToolScript(code: string, context: ToolHandlerContex
     const operation = (async () => {
       let envelope: unknown;
       try {
-        const result = await context.invokeTool(name, input, { signal: scopedSignal, record: true, onHooks, onPermissionWait,
+        const result = await context.invokeTool(name, input, { signal: scopedSignal, record: true, onHooks, onPermissionWait: permissionWait,
           scheduling: { scheduler, resources } });
         const error = returnedToolError(name, result);
         if (error) throw Object.assign(new Error(error.message), { code: error.code, details: error.details });
@@ -77,7 +90,7 @@ export async function executeToolScript(code: string, context: ToolHandlerContex
     })()`)));
     for (;;) {
       scopedSignal.throwIfAborted();
-      if (Date.now() > deadline) throw new Error('Tool script time budget exceeded. Inspect completed actions before retrying.');
+      if (remaining() <= 0) throw new Error('Tool script time budget exceeded. Inspect completed actions before retrying.');
       const jobs = runGuest(() => runtime.executePendingJobs(64));
       if (jobs.error) { const error = jobs.error.context.dump(jobs.error); jobs.error.dispose(); throw new Error(JSON.stringify(error)); }
       const state = runGuest(() => vm.getPromiseState(script!));
@@ -93,7 +106,7 @@ export async function executeToolScript(code: string, context: ToolHandlerContex
       await new Promise<void>((resolve, reject) => {
         const abort = () => { clearTimeout(timer); reject(scopedSignal.reason); };
         const finish = () => { clearTimeout(timer); scopedSignal.removeEventListener('abort', abort); resolve(); };
-        const timer = setTimeout(finish, Math.min(1000, deadline - Date.now()));
+        const timer = setTimeout(finish, approvalWaits.size ? 1000 : Math.min(1000, remaining()));
         scopedSignal.addEventListener('abort', abort, { once: true });
         void Promise.race(pending).then(finish, finish);
         if (scopedSignal.aborted) abort();

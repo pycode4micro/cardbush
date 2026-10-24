@@ -24,7 +24,9 @@ test('creates an independent MCP server with standard MCP annotations', () => {
   assert.deepEqual(Object.keys(server._registeredTools), ['computer_use']);
   const tool = server._registeredTools.computer_use;
   assert.match(tool.description, /Observe and interact with the user's current desktop/);
-  assert.doesNotMatch(tool.description, /last-resort|prefer|primary route|fallback/i);
+  assert.doesNotMatch(tool.description, /last-resort|primary route|fallback/i);
+  assert.match(tool.description, /browser system file dialogs/, 'native browser UI remains directly usable');
+  assert.match(tool.description, /upload_file for ordinary local file selection/, 'a specific upload capability is distinct from making all desktop control a fallback');
   assert.equal(tool.annotations.title, 'Computer Use');
   assert.equal(tool.annotations.destructiveHint, true);
 });

@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { normalizeHostEnvironment } from '@cardbush/bush-runtime/processes';
 import { randomUUID } from 'node:crypto';
 import { BUSH_RUNTIME_IPC_PROTOCOL, decodeRuntimeIpcOutboundMessage, type RuntimeIpcOutboundMessage } from '@cardbush/bush-protocol';
 import { ElectronRuntimeTransport, type ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
@@ -19,7 +20,7 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
 
   constructor(env: NodeJS.ProcessEnv, handle: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>,
     diagnostic: AgentRuntimeDiagnosticSink = (_stream, text) => { process.stderr.write(text); }) {
-    this.#worker = new Worker(new URL('./runtimeHostWorker.mjs', import.meta.url), { env, stdout: true, stderr: true });
+    this.#worker = new Worker(new URL('./runtimeHostWorker.mjs', import.meta.url), { env: normalizeHostEnvironment(env), stdout: true, stderr: true });
     // Worker replies/events use IPC. Its output is diagnostic, never chat text.
     // A local CLI provides a file sink so late MCP logs cannot overwrite readline.
     this.#worker.stdout.setEncoding('utf8').on('data', text => diagnostic('stdout', text));

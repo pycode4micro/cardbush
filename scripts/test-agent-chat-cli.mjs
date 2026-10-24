@@ -2,26 +2,44 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
+import { PassThrough, Writable } from 'node:stream';
 import { stripVTControlCharacters } from 'node:util';
-import { followAgentTurn, stopAgentTurn, resumeHint, terminalText } from '../dist-electron/agentChatCli.mjs';
-import { AgentHttpClient, AgentNetworkError } from '../dist-electron/agentHttpClient.mjs';
+import { followAgentTurn, recoverAgentObservation, stopAgentTurn, resumeHint, terminalText } from '../dist-electron/agentChatCli.mjs';
+import { NativeChatTerminal } from '../dist-electron/agentChatTerminal.mjs';
+import { AgentHttpClient, AgentHttpError, AgentNetworkError } from '../dist-electron/agentHttpClient.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
-import { localDesktopProfile } from '../dist-electron/agentLocalChat.mjs';
+import { localDesktopProfile, openLocalChatClient } from '../dist-electron/agentLocalChat.mjs';
 import { chatShellCommand, chatShellInvocation, runChatShell } from '../dist-electron/agentChatShell.mjs';
 import { waitForChatConfiguration, selectChatModel, chatEffortLabel } from '../dist-electron/agentChatModels.mjs';
 import { inspectChatTools } from '../dist-electron/agentChatTools.mjs';
 import { optionalResumeArgs, readChatHistory, selectChatSession } from '../dist-electron/agentChatSessions.mjs';
 
+// Native readline reads TERM from process.env as well as the emulated TTY.
+process.env.TERM = 'xterm';
+
 const entry = resolve('dist-electron/agentChatCli.mjs');
 const tempRoot = resolve('tmp/agent-chat-cli-tests');
 const job = { id: 'job', sessionId: 'session', turnId: 'turn' };
 const segment = { messageId: 'message', segmentId: 'segment', ordinal: 0 };
+const localChildren = new Map();
+const localClients = new Map();
+async function localClient(env) {
+  const client = await openLocalChatClient({ dataRoot: env.CARDBUSH_CLI_DATA_DIR, profileRoot: env.CARDBUSH_CLI_PROFILE_DIR });
+  localClients.set(client, env.CARDBUSH_CLI_DATA_DIR); return client;
+}
+async function localStopped(dataRoot) {
+  await until(() => readFile(join(dataRoot, 'agent.lock'), 'utf8').catch(error => {
+    if (error.code === 'ENOENT') return null;
+    if (process.platform === 'win32' && ['EPERM', 'EBUSY'].includes(error.code)) return 'closing';
+    throw error;
+  }), value => value === null);
+}
 
 const pickerConfig = { defaultModelId: 'responses', models: [
   { id: 'responses', modelName: 'Response Model', apiProtocol: 'openai_responses', reasoningEffort: 'high' },
@@ -90,6 +108,17 @@ function terminal(answer = 'y', interactive = true) {
     status(text) { this.progress += text; }, async ask(prompt) { this.questions.push(prompt); return answer; } };
 }
 
+function nativeTerminal(t, live = false) {
+  const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode() { return this; } });
+  let progress = '', interrupts = 0;
+  const output = Object.assign(new Writable({ write(data, _encoding, done) { progress += data.toString(); done(); } }),
+    { isTTY: true, columns: 120, rows: 30 });
+  const io = new NativeChatTerminal(() => { interrupts++; }, { input, output, status: output, env: { TERM: 'xterm', NO_COLOR: '' } });
+  t.after(() => io.close());
+  if (live) { io.enableLiveInput(() => assert.fail('An interaction must not submit chat')); io.beginTurn(); }
+  return { io, input, get progress() { return stripVTControlCharacters(progress); }, get interrupts() { return interrupts; } };
+}
+
 test('tool inspection rereads the selected turn without running tools or exposing diagnostics by default', async () => {
   const tool = { toolCallId: 'read', toolName: 'read_file', ordinal: 0, display: { title: 'Read design guidance' } };
   const frames = [
@@ -133,7 +162,7 @@ function clientFixture(frames, { pending = true, status = 'completed' } = {}) {
     },
     async call(operation, input) {
       this.calls.push({ operation, input });
-      if (operation === 'chat.jobs') return [{ ...job, status, error: status === 'failed' ? 'Fixture task failed' : undefined }];
+      if (operation === 'chat.jobs') return [{ ...job, status: pending && status === 'completed' && frames.some(frame => ['permission_requested', 'solution_selection_requested'].includes(frame.event.kind)) ? 'running' : status, error: status === 'failed' ? 'Fixture task failed' : undefined }];
       if (operation === 'chat.stop') return { accepted: true };
       if (input.kind === 'runtime.list_turn_events') return frames.map(frame => frame.event).filter(item => item.sequence > input.payload.afterSequence);
       if (input.kind === 'runtime.list_solution_selections') return pending ? [question] : [];
@@ -169,6 +198,22 @@ test('session selection reads summaries only, sanitizes labels and cancels witho
   assert.equal(await selectChatSession(client, terminal('/cancel'), signal), undefined);
   assert.equal(await selectChatSession(client, io, signal, 'missing'), undefined);
   assert.ok(calls.every(([method, input]) => method === 'sessions.list' && input.projection === 'summary'));
+});
+
+test('native session picker opens the highlighted session with Enter and cancels with Escape', async t => {
+  const sessions = [{ sessionId: 'older', updatedAt: '2025', metadata: { title: 'Older' } },
+    { sessionId: 'newer', updatedAt: '2026', metadata: { title: 'Newer' } }];
+  const client = { async call() { return sessions; } };
+  for (const [current, keys, expected] of [[undefined, '\r', 'newer'], [undefined, '\x1b[B\r', 'older'],
+    ['older', '\r', 'older'], ['older', '\x1b[A\r', 'newer'], ['older', '\x1b', undefined]]) {
+    const f = nativeTerminal(t);
+    const selection = selectChatSession(client, f.io, AbortSignal.timeout(2000), '', current);
+    await until(() => f.progress, text => text.includes('Select a session:'));
+    f.input.write(keys);
+    assert.equal((await selection)?.sessionId, expected);
+    assert.equal(f.interrupts, 0);
+    f.io.close();
+  }
 });
 
 test('Ctrl+C follows this CLI\'s running successor and waits for durable stop without cancelling the remaining queue', async () => {
@@ -280,6 +325,46 @@ for (const answer of ['y', 'no']) test(`approval ${answer}: stream closes before
   assert.deepEqual(reply.grantedCapabilityIds, answer === 'y' ? permission.requestedCapabilityIds : []);
 });
 
+test('native approval sends the selected decision to Runtime on Enter, including during a live turn', async t => {
+  for (const live of [false, true]) for (const [keys, decision] of [
+    ['\x1b[B\r', 'allow_once'], ['\r', 'deny'], ['\x1b[A\r', 'allow_once'],
+    ['\x1b[B\x1b[A\r', 'deny'], ['y\r', 'allow_once'], ['n\r', 'deny'], ['\x1b[B\x1b', 'deny'],
+    ['n\x7f\x1b[B\r', 'allow_once'],
+  ]) {
+    const f = nativeTerminal(t, live), client = clientFixture([event('permission_requested', 1, permission)]);
+    const follow = followAgentTurn(client, job, f.io, AbortSignal.timeout(2000));
+    await until(() => f.progress, text => text.includes('Allow once?'));
+    assert.equal(client.open, false, 'stream releases input before asking');
+    f.input.write(keys);
+    assert.equal(await follow, 0);
+    const replies = client.calls.filter(call => call.input.kind === 'runtime.answer_permission');
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].input.payload.permissionId, permission.permissionId);
+    assert.equal(replies[0].input.payload.decision, decision, `live=${live}, keys=${JSON.stringify(keys)}`);
+    assert.deepEqual(replies[0].input.payload.grantedCapabilityIds, decision === 'allow_once' ? permission.requestedCapabilityIds : []);
+    assert.equal(f.interrupts, 0, 'Escape answers the approval without stopping the turn');
+    assert.doesNotMatch(f.progress, /Type y to allow|anything else to deny/);
+    f.io.close();
+  }
+});
+
+test('native question picker submits the visible option or free text and Escape cancels', async t => {
+  for (const [keys, expected] of [['\r', { kind: 'option', optionIndex: 0 }],
+    ['\x1b[B\r', { kind: 'option', optionIndex: 1 }], ['Custom answer\r', { kind: 'text', text: 'Custom answer' }],
+    ['\x1b', { kind: 'cancel' }]]) {
+    const f = nativeTerminal(t, true), client = clientFixture([event('solution_selection_requested', 1, question)]);
+    const follow = followAgentTurn(client, job, f.io, AbortSignal.timeout(2000));
+    await until(() => f.progress, text => /Answer \(or type your own\):|Enter a number/.test(text));
+    f.input.write(keys);
+    assert.equal(await follow, 0);
+    const replies = client.calls.filter(call => call.input.kind === 'runtime.answer_solution_selection');
+    assert.deepEqual(replies.map(call => call.input.payload), [{ sessionId: job.sessionId, turnId: job.turnId,
+      selectionId: question.selectionId, ...expected }]);
+    assert.equal(f.interrupts, 0);
+    f.io.close();
+  }
+});
+
 test('answered approvals and resolved questions are skipped on replay', async () => {
   const client = clientFixture([
     event('permission_requested', 1, permission),
@@ -288,6 +373,119 @@ test('answered approvals and resolved questions are skipped on replay', async ()
   ], { pending: false }), io = terminal();
   await followAgentTurn(client, job, io, new AbortController().signal);
   assert.deepEqual(io.questions, []); assert.ok(client.calls.every(call => !call.input.kind?.startsWith('runtime.answer')));
+});
+
+for (const kind of ['permission_requested', 'solution_selection_requested']) test(`withdrawn ${kind} closes a native prompt without input or stopping the task`, { timeout: 6000 }, async t => {
+  const payload = kind === 'permission_requested' ? permission : question;
+  const frames = [event(kind, 1, payload)], client = clientFixture(frames), f = nativeTerminal(t, true);
+  const original = client.call.bind(client); let withdrawn = false;
+  client.call = async (operation, input) => {
+    if (operation === 'chat.jobs' && withdrawn) return [{ ...job, status: 'completed' }];
+    if (input.kind === 'runtime.list_solution_selections' && withdrawn) return [];
+    return original(operation, input);
+  };
+  const follow = followAgentTurn(client, job, f.io, AbortSignal.timeout(5000));
+  await until(() => f.progress, text => /Allow once\?|Answer \(or type your own\)/.test(text));
+  withdrawn = true;
+  frames.push(event(kind === 'permission_requested' ? 'permission_cancelled' : 'solution_selection_cancelled', 2,
+    kind === 'permission_requested' ? { permissionId: permission.permissionId, reason: 'cancelled' }
+      : { selectionId: question.selectionId, reason: 'cancelled' }));
+  assert.equal(await follow, 0);
+  await until(() => f.progress, text => text.includes('request has ended'));
+  assert.equal(f.interrupts, 0);
+  assert.ok(client.calls.every(call => call.operation !== 'chat.stop' && !call.input.kind?.startsWith('runtime.answer')));
+});
+
+for (const legacy of [false, true]) test(`an approval lost to another client after validation continues the original task (legacy=${legacy})`, async () => {
+  const client = clientFixture([event('permission_requested', 1, permission)]), original = client.call.bind(client), io = terminal();
+  client.call = async (operation, input) => {
+    const result = await original(operation, input);
+    if (input.kind === 'runtime.answer_permission') throw new AgentHttpError(`Permission ${permission.permissionId} is not pending.`, 409, legacy ? 'operation_failed' : 'permission_not_pending');
+    return result;
+  };
+  assert.equal(await followAgentTurn(client, job, io, new AbortController().signal), 0);
+  assert.match(io.progress, /request has ended/);
+  assert.equal(client.calls.filter(call => call.input.kind === 'runtime.answer_permission').length, 1);
+  assert.ok(client.calls.every(call => !['chat.send', 'chat.stop'].includes(call.operation)));
+});
+
+test('lost approval acknowledgement reconciles the recorded decision without submitting it twice', async () => {
+  const frames = [event('permission_requested', 1, permission)], client = clientFixture(frames), original = client.call.bind(client);
+  client.call = async (operation, input) => {
+    const result = await original(operation, input);
+    if (input.kind === 'runtime.answer_permission') {
+      frames.push(event('permission_answered', 2, { permissionId: permission.permissionId, answerId: 'committed', grantedCapabilityIds: permission.requestedCapabilityIds }));
+      throw new AgentNetworkError('acknowledgement lost');
+    }
+    return result;
+  };
+  assert.equal(await followAgentTurn(client, job, terminal(), new AbortController().signal), 0);
+  assert.equal(client.calls.filter(call => call.input.kind === 'runtime.answer_permission').length, 1);
+});
+
+test('replay skips approvals of a durably failed task even without a permission cancellation event', async () => {
+  const client = clientFixture([event('permission_requested', 1, permission)], { status: 'failed' }), io = terminal();
+  await assert.rejects(followAgentTurn(client, job, io, new AbortController().signal), /Fixture task failed/);
+  assert.deepEqual(io.questions, []);
+  assert.ok(client.calls.every(call => !call.input.kind?.startsWith('runtime.answer')));
+});
+
+test('incident replay: skip the expired script approval and answer the newer pending request without resubmitting', async () => {
+  // Sanitized ordering from session-0e9d7ef4: a new request arrived while the
+  // CLI was still displaying the script request, then the script was cancelled.
+  const newer = { ...permission, permissionId: 'newer-permission' };
+  const client = clientFixture([
+    event('permission_requested', 13249, permission),
+    event('permission_requested', 13997, newer),
+    event('permission_cancelled', 13998, { permissionId: permission.permissionId, reason: 'turn_cancelled' }),
+  ]), io = terminal();
+  assert.equal(await followAgentTurn(client, job, io, new AbortController().signal), 0);
+  assert.equal(io.questions.length, 1);
+  assert.deepEqual(client.calls.filter(call => call.input.kind === 'runtime.answer_permission').map(call => call.input.payload.permissionId), ['newer-permission']);
+  assert.ok(client.calls.every(call => !['chat.send', 'chat.stop'].includes(call.operation)));
+});
+
+test('unrelated approval errors stay visible and reconnect retains the unresolved interaction', async () => {
+  const client = clientFixture([event('permission_requested', 1, permission)]), original = client.call.bind(client), observation = {};
+  let fail = true;
+  client.call = async (operation, input) => {
+    if (fail && input.kind === 'runtime.answer_permission') throw new AgentHttpError('Capability mismatch', 409, 'operation_failed');
+    return original(operation, input);
+  };
+  await assert.rejects(followAgentTurn(client, job, terminal(), new AbortController().signal, observation), /Capability mismatch/);
+  assert.equal(observation.interaction.payload.permissionId, permission.permissionId);
+  fail = false;
+  assert.equal(await followAgentTurn(client, job, terminal(), new AbortController().signal, observation), 0);
+  assert.equal(observation.interaction, undefined);
+});
+
+test('an observation failure keeps the native terminal open until the user chooses reconnect or exit', { timeout: 5000 }, async t => {
+  for (const keys of ['\r', '\x1b[B\r']) {
+    const client = clientFixture([], { status: 'running' }), f = nativeTerminal(t, true);
+    let settled = false;
+    const recovery = recoverAgentObservation(client, job, f.io, new AgentNetworkError('connection lost'), AbortSignal.timeout(4000)).then(value => { settled = true; return value; });
+    await until(() => f.progress, text => text.includes('Reconnect to this task?'));
+    await delay(40);
+    assert.equal(settled, false, 'no automatic process exit or inferred user choice');
+    assert.match(f.progress, /still active/); assert.doesNotMatch(f.progress, /Task failed/);
+    f.input.write(keys);
+    assert.equal(await recovery, keys === '\r' ? 'retry' : 'exit');
+    assert.ok(client.calls.every(call => !['chat.send', 'chat.stop'].includes(call.operation)));
+    f.io.close();
+  }
+});
+
+test('reconnecting an observer retains its cursor and does not repeat earlier output', async () => {
+  const client = clientFixture([]), observation = {}, io = terminal(); let fail = true;
+  client.events = async function* (input) {
+    this.cursors.push(input.afterSequence);
+    if (fail) { yield event('assistant_segment_delta', 1, { ...segment, delta: 'first' }); throw new Error('observer fault'); }
+    yield event('assistant_segment_completed', 2, { ...segment, content: 'first second' }); yield { type: 'end' };
+  };
+  await assert.rejects(followAgentTurn(client, job, io, new AbortController().signal, observation), /observer fault/);
+  fail = false;
+  assert.equal(await followAgentTurn(client, job, io, new AbortController().signal, observation), 0);
+  assert.deepEqual(client.cursors, [undefined, 1]); assert.equal(io.output, 'first\n second\n');
 });
 
 for (const [answer, expected] of [['2', { kind: 'option', optionIndex: 1 }], ['Custom answer', { kind: 'text', text: 'Custom answer' }], ['/cancel', { kind: 'cancel' }]]) {
@@ -361,6 +559,7 @@ function cli(t, args, { env = {}, input = '', interactive = false, cwd = resolve
   const child = spawn(process.execPath, [interactive ? resolve('scripts/helpers/agent-chat-cli-terminal.mjs') : executable, ...args],
     { cwd, env: { ...process.env, CARDBUSH_AGENT_TOKEN: '', CARDBUSH_AGENT_URL: '', CARDBUSH_CLI_CONFIG: join(tempRoot, 'unconfigured.json'), ...env }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const state = { child, stdout: '', stderr: '', result: undefined };
+  if (env.CARDBUSH_CLI_DATA_DIR) localChildren.set(child, env.CARDBUSH_CLI_DATA_DIR);
   child.stdout.setEncoding('utf8').on('data', text => { state.stdout += text; });
   child.stderr.setEncoding('utf8').on('data', text => { state.stderr += text; });
   child.stdin.on('error', () => {});
@@ -378,6 +577,8 @@ test('CLI help and argument errors do not need a server or credentials', async t
   assert.match(help.stdout, /Model setting follows App config; Provider default lets the provider choose/);
   assert.match(help.stdout, /--model ID overrides this at launch/);
   assert.match(help.stdout, /native shell for command and path completion/);
+  assert.match(help.stdout, /\/habit \[on\|off\|status\]/);
+  assert.match(help.stdout, /\/prediction \[on\|off\|status\]/);
   const invalid = await cli(t, ['--permission', 'invalid']).result;
   assert.equal(invalid.code, 1); assert.match(invalid.stderr, /Invalid --permission/);
   const missing = await cli(t, ['--url', 'http://127.0.0.1:1', '--prompt', 'test']).result;
@@ -427,7 +628,7 @@ test('configuration prompt runs bare editor commands and waits for a separate re
 
 async function fixture(t) {
   await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, 'case-'));
-  let nextTool, nextFailure, nextText, blocked = false; const calls = [], pending = new Set();
+  let nextTool, nextFailure, nextText, blocked = false; const calls = [], pending = new Set(), toolQueue = [];
   const release = () => { blocked = false; for (const finish of pending) finish(); pending.clear(); };
   const model = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -435,7 +636,7 @@ async function fixture(t) {
     if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 100 })); return; }
     calls.push(body); const index = calls.length;
     if (nextFailure) { const message = nextFailure; nextFailure = undefined; res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message, type: 'invalid_request_error' } })); return; }
-    const selected = nextTool; nextTool = undefined;
+    const selected = nextTool ?? toolQueue.shift(); nextTool = undefined;
     const text = nextText ?? `fixture-answer-${index}`; nextText = undefined;
     const item = selected ? { id: `function-${index}`, call_id: `call-${index}`, type: 'function_call', name: selected.name,
       arguments: JSON.stringify(selected.arguments), status: 'completed' }
@@ -459,6 +660,16 @@ async function fixture(t) {
   let service, http;
   t.after(async () => {
     release();
+    const roots = new Set();
+    for (const [client, dataRoot] of localClients) if (resolve(dataRoot).startsWith(root + sep)) {
+      await client.close(); roots.add(dataRoot); localClients.delete(client);
+    }
+    for (const [child, dataRoot] of localChildren) if (resolve(dataRoot).startsWith(root + sep)) {
+      roots.add(dataRoot);
+      if (child.exitCode === null && child.signalCode === null) { child.kill(); await once(child, 'exit'); }
+      localChildren.delete(child);
+    }
+    for (const dataRoot of roots) await localStopped(dataRoot);
     await http?.close(); await service?.close(); model.closeAllConnections(); await new Promise(resolve => model.close(resolve));
     assert.ok(resolve(root).startsWith(tempRoot + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
@@ -470,7 +681,7 @@ async function fixture(t) {
   http = await serveAgentHttp(service, { host: '127.0.0.1', port: 0, token });
   const env = { CARDBUSH_AGENT_URL: `http://127.0.0.1:${http.port}`, CARDBUSH_AGENT_TOKEN: token, CARDBUSH_CLI_CONFIG: join(root, 'cli.json') };
   const cwd = join(root, '当前工作区 with spaces'); await mkdir(cwd);
-  return { root, cwd, service, calls, env, tokenFile, release, setText: text => { nextText = text; }, setTool: tool => { nextTool = tool; }, block: value => { blocked = value; }, failNext: message => { nextFailure = message; },
+  return { root, cwd, service, calls, env, tokenFile, release, setText: text => { nextText = text; }, setTool: tool => { nextTool = tool; }, tools: (...tools) => toolQueue.push(...tools), block: value => { blocked = value; }, failNext: message => { nextFailure = message; },
     stopService: async () => { await http.close(); http = undefined; await service.close(); } };
 }
 
@@ -684,6 +895,83 @@ test('CLI native commands stay local, return to chat and ignore child Ctrl+C wit
   assert.match(result.stderr, /Resume this session/);
 });
 
+test('CLI memory commands save independent session switches and restore them before any model turn', async t => {
+  const f = await fixture(t);
+  const first = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => first.stderr, text => text.includes('❯ '));
+  const [session] = await f.service.call('sessions.list', { projection: 'summary' });
+  const command = async (process, text, expected) => {
+    const start = process.stderr.length;
+    process.child.stdin.write(text + '\r');
+    await until(() => stripVTControlCharacters(process.stderr.slice(start)), output => output.includes(expected));
+  };
+  await command(first, '/habit', '/habit: off (this session');
+  await command(first, '/prediction', '/prediction: off (this session');
+  await command(first, '/habit on', '/habit: on (this session');
+  await command(first, '/prediction on', '/prediction: on (this session');
+  await command(first, '/habit off', '/habit: off (this session');
+  await command(first, '/prediction invalid', 'Usage: /prediction [on|off|status]');
+  assert.equal(f.calls.length, 0, 'settings commands do not start model turns');
+  first.child.stdin.write('/quit\r'); assert.equal((await first.result).code, 0);
+
+  const resumed = cli(t, ['--resume', session.sessionId], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => resumed.stderr, text => text.includes('❯ '));
+  await command(resumed, '/prediction status', '/prediction: on (this session');
+  await command(resumed, '/habit status', '/habit: off (this session');
+  // Another attached client changes one category; the next send must read the
+  // server's current settings instead of reusing this window's old snapshot.
+  await f.service.call('sessions.update', { sessionId: session.sessionId, individuation: { habits: true } });
+  f.block(true); resumed.child.stdin.write('remember these preferences\r');
+  await until(() => f.calls.length, count => count === 1);
+  assert.match(JSON.stringify(f.calls[0]), /habits enabled; next-step prediction enabled/);
+  await command(resumed, '/habit off', 'Use this command after the current task finishes');
+  resumed.child.stdin.write('queued preferences\r');
+  await until(() => f.service.call('chat.jobs', { sessionId: session.sessionId }), jobs => jobs.length === 2);
+  f.release();
+  await until(() => stripVTControlCharacters(resumed.stderr), text => text.split('✓ Completed').length === 3);
+  const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
+  assert.ok(state.jobs.every(job => job.input.individuation.habits && job.input.individuation.predictions));
+  await command(resumed, '/prediction off', '/prediction: off (this session');
+  await command(resumed, '/new', 'Session:');
+  await command(resumed, '/habit status', '/habit: off (this session');
+  await command(resumed, '/prediction status', '/prediction: off (this session');
+  await command(resumed, `/session ${session.sessionId}`, session.sessionId);
+  await command(resumed, '/habit status', '/habit: on (this session');
+  await command(resumed, '/prediction status', '/prediction: off (this session');
+  resumed.child.stdin.write('/quit\r'); assert.equal((await resumed.result).code, 0);
+  const single = await cli(t, ['--resume', session.sessionId, '--prompt', 'resumed memory settings'], { env: f.env, cwd: f.cwd }).result;
+  assert.equal(single.code, 0, single.stderr);
+  const saved = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8')).jobs.at(-1).input.individuation;
+  assert.equal(saved.habits, true); assert.equal(saved.predictions, false);
+  assert.equal(f.calls.length, 3);
+});
+
+test('browser pairing works from an idle or running CLI without sending codes or commands to the model', async t => {
+  const f = await fixture(t), originalCall = f.service.call.bind(f.service), browserCalls = [];
+  f.service.call = async (operation, input) => {
+    if (operation !== 'browser.connector') return originalCall(operation, input);
+    browserCalls.push(input);
+    return { code: 'CB2.fixture.TERMINAL_ONLY_PAIRING_SECRET', expiresAt: '2026-10-24T12:00:00Z', browser: input.browser,
+      extensionPath: join(f.root, 'extension') };
+  };
+  const terminal = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => terminal.stderr, text => text.includes('❯ '));
+  terminal.child.stdin.write('/browser pair chrome\r');
+  await until(() => terminal.stderr, text => text.includes('chrome pairing code'));
+  assert.equal(f.calls.length, 0);
+  f.block(true); terminal.child.stdin.write('one real task\r');
+  await until(() => f.calls.length, n => n === 1);
+  terminal.child.stdin.write('/browser pair edge Work\r');
+  await until(() => terminal.stderr, text => text.includes('edge pairing code'));
+  assert.deepEqual(browserCalls, [{ action: 'pair', browser: 'chrome' }, { action: 'pair', browser: 'edge', label: 'Work' }]);
+  assert.equal((await f.service.call('chat.jobs', {})).length, 1, 'setup while running is not a queued model prompt');
+  f.release(); await until(() => stripVTControlCharacters(terminal.stderr), text => text.includes('✓ Completed'));
+  terminal.child.stdin.write('/exit\r'); const result = await terminal.result;
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /TERMINAL_ONLY_PAIRING_SECRET/);
+  assert.doesNotMatch(JSON.stringify(f.calls) + await readFile(join(f.service.root, 'agent.json'), 'utf8'), /TERMINAL_ONLY_PAIRING_SECRET|\/browser pair/);
+});
+
 test('queued CLI prompts appear once in turn order after the preceding completion', async t => {
   const f = await fixture(t); f.block(true);
   const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
@@ -895,14 +1183,14 @@ test('real Agent and native readline: approval, question, multiple turns and Ctr
   const process = cli(t, [], { env: { ...f.env, NO_COLOR: '', TERM: 'xterm' }, cwd: f.cwd, interactive: true });
   await until(() => process.stderr, text => text.includes('❯ '));
   f.setTool({ name: 'read_file', arguments: { path: outside } }); process.child.stdin.write('read file\n');
-  await until(() => process.stderr, text => text.includes('[y/N]'));
-  assert.equal(f.calls.length, 1); process.child.stdin.write('y\n');
+  await until(() => process.stderr, text => text.includes('Choose an approval'));
+  assert.equal(f.calls.length, 1); process.child.stdin.write('\x1b[B\r');
   await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'completed');
   assert.match(JSON.stringify(f.calls[1]), /APPROVED_FILE/);
   f.setTool({ name: 'solution_selection', arguments: { prompt: 'Pick a scope', options: ['First', 'Second'] } });
   process.child.stdin.write('choose scope\n');
   await until(() => process.stderr, text => text.includes('/cancel'));
-  process.child.stdin.write('2\n');
+  process.child.stdin.write('\x1b[B\r');
   await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'completed');
   assert.match(JSON.stringify(f.calls.at(-1)), /Second/);
   f.block(true); const previous = f.calls.length; process.child.stdin.write('long task\n');
@@ -918,6 +1206,279 @@ test('real Agent and native readline: approval, question, multiple turns and Ctr
   assert.ok(result.stderr.endsWith(`Resume this session: cardbush --resume ${session.sessionId}\n`), 'NO_COLOR and normal exit preserve a copyable resume command');
   assert.doesNotMatch(result.stdout + result.stderr, /\x1b\[\?1049[hl]/, 'never enters an alternate terminal screen');
   assert.equal(f.calls.length, previous + 1, 'Ctrl+C must not resubmit the task');
+});
+
+test('initial submission with a lost receipt follows the committed job without exiting or resubmitting', async t => {
+  let process; t.after(() => { if (process?.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), call = f.service.call.bind(f.service); let sends = 0;
+  f.service.call = async (operation, input, ...rest) => {
+    const result = await call(operation, input, ...rest);
+    if (operation === 'chat.send' && ++sends === 1) throw new Error('Fixture first receipt lost');
+    return result;
+  };
+  f.block(true);
+  process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('original submission\r');
+  await until(() => f.calls.length, count => count === 1);
+  f.release();
+  await until(() => process.stderr, text => text.includes('✓ Completed ·'));
+  assert.equal(process.child.exitCode, null); assert.equal(sends, 1);
+  assert.equal((await call('chat.jobs', {})).length, 1); assert.equal(f.calls.length, 1);
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+});
+
+test('input entered while the first submission awaits its receipt reaches the queue once', async t => {
+  let process; const receipt = Promise.withResolvers();
+  t.after(() => { receipt.resolve(); if (process?.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), call = f.service.call.bind(f.service); let sends = 0;
+  f.service.call = async (operation, input, ...rest) => {
+    const result = await call(operation, input, ...rest);
+    if (operation === 'chat.send' && ++sends === 1) await receipt.promise;
+    return result;
+  };
+  f.block(true);
+  process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('first awaiting receipt\r');
+  await until(() => f.calls.length, count => count === 1);
+  process.child.stdin.write('buffered during receipt\r'); await delay(50);
+  assert.equal((await call('chat.jobs', {})).length, 1);
+  receipt.resolve();
+  await until(() => call('chat.jobs', {}), jobs => jobs.length === 2);
+  f.release();
+  await until(() => process.stderr, text => (text.match(/✓ Completed ·/g) ?? []).length === 2);
+  assert.equal(sends, 2); assert.equal(f.calls.length, 2);
+  assert.equal(stripVTControlCharacters(process.stderr).split('❯ buffered during receipt').length, 2);
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+});
+
+test('resumed observer never stops another CLI queued successor during the handoff', async t => {
+  let process; t.after(() => { if (process?.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), gate = join(f.root, 'foreign-handoff-gate'), stops = [], call = f.service.call.bind(f.service);
+  f.service.call = (operation, input, ...rest) => { if (operation === 'chat.stop') stops.push(input.id); return call(operation, input, ...rest); };
+  const session = await call('sessions.create', {});
+  const send = id => call('chat.send', { requestId: id, sessionId: session.sessionId, text: id, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  f.block(true); await send('peer-first'); await until(() => f.calls.length, count => count === 1); await send('peer-next');
+  process = cli(t, ['--resume', session.sessionId], { env: { ...f.env, CARDBUSH_TEST_HANDOFF_GATE: gate }, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('Working'));
+  f.release(); f.block(true);
+  await until(() => process.stderr, text => text.includes('[Test: observer handoff]'));
+  await until(() => f.calls.length, count => count === 2);
+  process.child.stdin.write('\x03'); await delay(150);
+  assert.deepEqual(stops, [], 'restoring queued jobs must not claim ownership of a peer submission');
+  assert.equal((await call('chat.jobs', {})).at(-1).status, 'running');
+  await writeFile(gate, 'continue'); f.release();
+  await until(() => process.stderr, text => (text.match(/✓ Completed ·/g) ?? []).length === 2);
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+});
+
+test('lost submission and status receipts keep the CLI open and reconcile a completed job on Enter', async t => {
+  let process; t.after(() => { if (process?.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), call = f.service.call.bind(f.service); let unavailable = false, sends = 0;
+  f.service.call = async (operation, input, ...rest) => {
+    if (unavailable && operation === 'chat.jobs') throw new Error('Fixture status unavailable');
+    const result = await call(operation, input, ...rest);
+    if (operation === 'chat.send') { sends++; unavailable = true; throw new Error('Fixture receipt lost'); }
+    return result;
+  };
+  f.block(true);
+  process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('uncertain original\r');
+  await until(() => process.stderr, text => text.includes('Reconnect to the Agent?'));
+  assert.equal(process.child.exitCode, null); assert.doesNotMatch(process.stderr, /Task failed/);
+  f.release(); await until(() => call('chat.jobs', {}), jobs => jobs[0]?.status === 'completed');
+  unavailable = false; process.child.stdin.write('\r');
+  await until(() => process.stderr, text => text.includes('✓ Completed ·'));
+  assert.equal(sends, 1); assert.equal(f.calls.length, 1);
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+  assert.equal((await call('chat.jobs', {})).length, 1);
+});
+
+test('two CLI approval pickers racing on Enter produce one decision and one tool execution', async t => {
+  const processes = [], barrier = Promise.withResolvers(); t.after(() => { barrier.resolve(); for (const process of processes) if (process.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), outside = join(f.root, 'shared-approval.txt'); await writeFile(outside, 'EXECUTED_ONCE');
+  const session = await f.service.call('sessions.create', {}), call = f.service.call.bind(f.service);
+  let arrivals = 0, conflicts = 0;
+  f.service.call = async (operation, input, ...rest) => {
+    if (operation !== 'runtime.command' || input.kind !== 'runtime.answer_permission') return call(operation, input, ...rest);
+    if (++arrivals === 2) barrier.resolve();
+    await barrier.promise;
+    try { return await call(operation, input, ...rest); }
+    catch (error) { if (error.code === 'permission_not_pending') conflicts++; throw error; }
+  };
+  f.setTool({ name: 'read_file', arguments: { path: outside } });
+  const job = await call('chat.send', { requestId: 'shared-approval', sessionId: session.sessionId, text: 'read fixture', modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  for (let index = 0; index < 2; index++) processes.push(cli(t, ['--resume', session.sessionId], { env: f.env, cwd: f.cwd, interactive: true }));
+  await Promise.all(processes.map(process => until(() => process.stderr, text => text.includes('Choose an approval'))));
+  for (const process of processes) process.child.stdin.write('\x1b[B\r');
+  await Promise.all(processes.map(process => until(() => process.stderr, text => text.includes('✓ Completed ·'))));
+  assert.equal(arrivals, 2); assert.equal(conflicts, 1); assert.equal(f.calls.length, 2);
+  const events = await call('runtime.command', { kind: 'runtime.list_turn_events', payload: { sessionId: session.sessionId, turnId: job.turnId } });
+  assert.equal(events.filter(event => event.kind === 'permission_answered').length, 1);
+  assert.equal(events.filter(event => event.kind === 'tool_returned' && event.payload.toolName === 'read_file').length, 1);
+  for (const process of processes) { assert.equal(process.child.exitCode, null); process.child.stdin.write('/exit\r'); }
+  for (const process of processes) assert.equal((await process.result).code, 0);
+});
+
+test('a failed stop confirmation can reconnect to the original job without repeating the stop', async t => {
+  let process; t.after(() => { if (process?.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), call = f.service.call.bind(f.service); let stops = 0;
+  f.service.call = (operation, input, ...rest) => {
+    if (operation === 'chat.stop') { stops++; throw new Error('Fixture stop unavailable'); }
+    return call(operation, input, ...rest);
+  };
+  f.block(true);
+  process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('observe after failed stop\r');
+  await until(() => f.calls.length, count => count === 1);
+  await until(() => process.stderr, text => text.includes('Working'));
+  process.child.stdin.write('\x03');
+  await until(() => process.stderr, text => text.includes('Reconnect to this task?'));
+  assert.equal(process.child.exitCode, null);
+  process.child.stdin.write('\r');
+  // A successful observation opens another event stream; do not release the
+  // provider until the reconnect choice has been processed.
+  await delay(150); f.release();
+  await until(() => process.stderr, text => text.includes('✓ Completed ·'));
+  assert.equal(stops, 1); assert.equal(f.calls.length, 1); assert.equal((await call('chat.jobs', {})).length, 1);
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+});
+
+test('a second CLI submission observes the earlier pending approval before its own queued turn', async t => {
+  let process; t.after(() => { if (process?.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), outside = join(f.root, 'peer-approval.txt'); await writeFile(outside, 'PEER_APPROVED');
+  const session = await f.service.call('sessions.create', {});
+  process = cli(t, ['--resume', session.sessionId], { env: { ...f.env, CARDBUSH_TEST_CHAT_READY: '1' }, cwd: f.cwd, interactive: true });
+  // The live footer is drawn before history restoration and the first jobs
+  // snapshot finish. Start the peer only after this CLI is actually reading
+  // chat input, otherwise the fixture can put its message into an approval.
+  await until(() => process.stderr, text => text.includes('[Test: chat input ready]'));
+  f.setTool({ name: 'read_file', arguments: { path: outside } });
+  const first = await f.service.call('chat.send', { requestId: 'peer-approval', sessionId: session.sessionId, text: 'read fixture', modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  await until(() => f.service.call('runtime.command', { kind: 'runtime.list_turn_events', payload: { sessionId: session.sessionId, turnId: first.turnId } }), events => events.some(event => event.kind === 'permission_requested'));
+  process.child.stdin.write('second CLI message\r');
+  await until(() => process.stderr, text => text.includes('Choose an approval'));
+  process.child.stdin.write('\x1b[B\r');
+  await until(() => f.service.call('chat.jobs', {}), jobs => jobs.length === 2 && jobs.every(job => job.status === 'completed'));
+  await until(() => process.stderr, text => (text.match(/✓ Completed ·/g) ?? []).length === 2);
+  assert.equal(f.calls.length, 3, 'two turns with one approved tool, without replay');
+  assert.match(JSON.stringify(f.calls[1]), /PEER_APPROVED/);
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+});
+
+test('real CLI stays open after a late approval conflict and completes the original job', async t => {
+  const f = await fixture(t), outside = join(f.root, 'outside-race.txt'); await writeFile(outside, 'APPROVED_ONCE');
+  const call = f.service.call.bind(f.service); let answers = 0;
+  f.service.call = async (operation, input, ...rest) => {
+    const value = await call(operation, input, ...rest);
+    if (operation === 'runtime.command' && input.kind === 'runtime.answer_permission') {
+      answers++;
+      // The decision won elsewhere just before this client's acknowledgement.
+      throw Object.assign(new Error(`Permission ${input.payload.permissionId} is not pending.`), { code: 'permission_not_pending' });
+    }
+    return value;
+  };
+  const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  f.setTool({ name: 'read_file', arguments: { path: outside } }); process.child.stdin.write('read fixture\r');
+  await until(() => process.stderr, text => text.includes('Choose an approval'));
+  process.child.stdin.write('\x1b[B\r');
+  await until(() => process.stderr, text => text.includes('✓ Completed ·'));
+  assert.equal(process.child.exitCode, null, 'an expired permission must not exit the process');
+  assert.equal(answers, 1);
+  assert.equal((await call('chat.jobs', {})).length, 1);
+  assert.match(JSON.stringify(f.calls[1]), /APPROVED_ONCE/);
+  assert.doesNotMatch(process.stderr, /Task failed|Reconnect to this task/);
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+});
+
+test('real CLI keeps an active job open after observation fails and Enter reconnects without resubmission', async t => {
+  const f = await fixture(t), stream = f.service.eventStream.bind(f.service); let fail = true;
+  f.service.eventStream = (input, signal) => {
+    if (!fail) return stream(input, signal);
+    fail = false; return (async function* () { throw new Error('Fixture observation interrupted'); })();
+  };
+  f.block(true);
+  const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('continue original job\r');
+  await until(() => process.stderr, text => text.includes('Reconnect to this task?'));
+  await delay(50);
+  assert.equal(process.child.exitCode, null); assert.doesNotMatch(process.stderr, /Task failed/);
+  assert.equal((await f.service.call('chat.jobs')).length, 1);
+  f.release(); process.child.stdin.write('\r');
+  await until(() => process.stderr, text => text.includes('✓ Completed ·'));
+  assert.equal(process.child.exitCode, null); assert.equal(f.calls.length, 1);
+  assert.equal((await f.service.call('chat.jobs')).length, 1);
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+});
+
+test('explicit CLI exit stops its queued messages before the active turn and preserves peer work', async t => {
+  let process; t.after(() => { if (process?.child.exitCode === null) process.child.kill(); });
+  const f = await fixture(t), stops = [], call = f.service.call.bind(f.service);
+  f.service.call = (operation, input, ...rest) => { if (operation === 'chat.stop') stops.push(input.id); return call(operation, input, ...rest); };
+  f.block(true);
+  process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => process.stderr, text => text.includes('❯ '));
+  process.child.stdin.write('active owned task\r'); await until(() => f.calls.length, count => count === 1);
+  process.child.stdin.write('queued owned task\r');
+  const jobs = await until(() => call('chat.jobs', {}), jobs => jobs.length === 2);
+  const first = jobs[0], queued = jobs[1];
+  const peer = await call('chat.send', { requestId: 'peer-survives-exit', sessionId: first.sessionId, text: 'peer task', modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
+  const after = await call('chat.jobs', {});
+  assert.equal(after.find(job => job.id === queued.id).status, 'stopped');
+  assert.equal(after.find(job => job.id === first.id).status, 'stopped');
+  assert.deepEqual(stops, [queued.id, first.id]);
+  assert.ok(['running', 'queued'].includes(after.find(job => job.id === peer.id).status));
+  f.release(); await until(() => call('chat.jobs', {}), jobs => jobs.at(-1).status === 'completed');
+  assert.equal(f.calls.length, 2, 'the owned queued message never starts after exit');
+});
+
+test('explicit exit waits for an in-flight queue receipt before stopping owned jobs', async t => {
+  let window; const receipt = Promise.withResolvers();
+  t.after(() => { receipt.resolve(); if (window?.child.exitCode === null) window.child.kill(); });
+  const f = await fixture(t), call = f.service.call.bind(f.service); let sends = 0;
+  f.service.call = async (operation, input, ...rest) => {
+    const result = await call(operation, input, ...rest);
+    if (operation === 'chat.send' && ++sends === 2) await receipt.promise;
+    return result;
+  };
+  f.block(true);
+  window = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => window.stderr, text => text.includes('❯ '));
+  window.child.stdin.write('active before exit\r'); await until(() => f.calls.length, count => count === 1);
+  window.child.stdin.write('pending receipt before exit\r');
+  await until(() => call('chat.jobs', {}), jobs => jobs.length === 2);
+  window.child.stdin.write('/exit\r'); await delay(80);
+  assert.equal(window.child.exitCode, null, 'exit must reconcile already submitted work');
+  receipt.resolve(); assert.equal((await window.result).code, 0);
+  assert.deepEqual((await call('chat.jobs', {})).map(job => job.status), ['stopped', 'stopped']);
+  assert.equal(f.calls.length, 1);
+});
+
+test('failed exit cancellation keeps the CLI open until a later explicit exit confirms stop', async t => {
+  let window; t.after(() => { if (window?.child.exitCode === null) window.child.kill(); });
+  const f = await fixture(t), call = f.service.call.bind(f.service); let fail = true;
+  f.service.call = (operation, input, ...rest) => {
+    if (operation === 'chat.stop' && fail) throw new Error('Fixture stop temporarily unavailable');
+    return call(operation, input, ...rest);
+  };
+  f.block(true);
+  window = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => window.stderr, text => text.includes('❯ '));
+  window.child.stdin.write('active failed exit\r'); await until(() => f.calls.length, count => count === 1);
+  window.child.stdin.write('/exit\r');
+  await until(() => window.stderr, text => text.includes('Reconnect to this task?'));
+  assert.equal(window.child.exitCode, null);
+  assert.equal((await call('chat.jobs', {}))[0].status, 'running');
+  fail = false; window.child.stdin.write('\r'); await delay(100); window.child.stdin.write('/exit\r');
+  assert.equal((await window.result).code, 0);
+  assert.equal((await call('chat.jobs', {}))[0].status, 'stopped');
+  assert.equal(f.calls.length, 1);
 });
 
 test('Ctrl+C between observers stops the already-running queued successor without exiting the CLI', async t => {
@@ -1019,7 +1580,7 @@ test('local CLI starts without a service or token, owns cwd, resumes and preserv
   assert.match(first.stderr, new RegExp(`cardbush --resume ${sessionId}`));
   await assert.rejects(readFile(join(dataRoot, 'access-token')), { code: 'ENOENT' });
   await assert.rejects(readFile(env.CARDBUSH_CLI_CONFIG), { code: 'ENOENT' });
-  await assert.rejects(readFile(join(dataRoot, 'agent.lock')), { code: 'ENOENT' });
+  await localStopped(dataRoot);
   const other = join(f.root, 'other'); await mkdir(other);
   const resumed = await cli(t, ['--resume', sessionId, '--full-access', '--prompt', 'local continuation'], { env, cwd: other }).result;
   assert.equal(resumed.code, 0, resumed.stderr);
@@ -1056,6 +1617,7 @@ test('local CLI shares desktop model and Skill settings without adopting desktop
   assert.equal(await readFile(join(profile, 'runtime-state', 'sentinel'), 'utf8'), 'DESKTOP_STATE');
   await assert.rejects(readFile(join(profile, 'agent.json')), { code: 'ENOENT' });
   await assert.rejects(readFile(join(dataRoot, 'config', 'models.json')), { code: 'ENOENT' });
+  await localStopped(dataRoot);
   const service = await AgentService.open({ dataRoot, local: true, localProfileRoot: profile });
   try {
     const catalog = await service.call('conversation.catalog', {});
@@ -1063,7 +1625,7 @@ test('local CLI shares desktop model and Skill settings without adopting desktop
   } finally { await service.close(); }
 });
 
-test('local CLI keeps workspace permissions, handles Ctrl+C, and releases its ownership lock', async t => {
+test('local CLI keeps workspace permissions, shares its Runtime, and releases the final client', async t => {
   const f = await fixture(t), dataRoot = f.service.root; await f.stopService();
   const env = await sharedCliEnv(f);
   const outside = join(f.root, 'outside.txt'); await writeFile(outside, 'DO_NOT_PRINT');
@@ -1073,12 +1635,183 @@ test('local CLI keeps workspace permissions, handles Ctrl+C, and releases its ow
   const terminal = cli(t, [], { env, cwd: f.cwd, interactive: true });
   await until(() => terminal.stderr, text => text.includes('❯ '));
   const duplicate = await cli(t, ['--models'], { env, cwd: f.cwd }).result;
-  assert.equal(duplicate.code, 1); assert.match(duplicate.stderr, /already owns/);
+  assert.equal(duplicate.code, 0, duplicate.stderr); assert.match(duplicate.stdout, /fixture/);
   terminal.child.stdin.write('\x03');
   const stopped = await terminal.result; assert.equal(stopped.code, 130, stopped.stderr);
-  await assert.rejects(readFile(join(dataRoot, 'agent.lock')), { code: 'ENOENT' });
+  await localStopped(dataRoot);
   const next = await cli(t, ['--models'], { env, cwd: f.cwd }).result;
   assert.equal(next.code, 0, next.stderr);
+});
+
+test('simultaneous local windows share one host, run independent sessions, and fork with serialized turns', { timeout: 90000 }, async t => {
+  const f = await fixture(t); await f.stopService(); const env = await sharedCliEnv(f);
+  const a = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  const b = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await Promise.all([a, b].map(window => until(() => window.stderr, text => text.includes('❯ '), 30000)));
+  const client = await localClient(env);
+  const owner = await readFile(join(f.service.root, 'agent.lock'), 'utf8');
+  assert.notEqual(Number(owner), a.child.pid); assert.notEqual(Number(owner), b.child.pid);
+  assert.equal((await client.call('projects.list', {})).projects.length, 1, 'concurrent cwd registration is idempotent');
+  assert.equal((await client.call('sessions.list', { projection: 'summary' })).length, 2);
+  f.block(true);
+  a.child.stdin.write('window alpha\n'); await until(() => f.calls.length, n => n === 1);
+  b.child.stdin.write('window beta\n'); await until(() => f.calls.length, n => n === 2);
+  const jobs = await client.call('chat.jobs', {});
+  const alpha = jobs.find(job => job.text === 'window alpha'), beta = jobs.find(job => job.text === 'window beta');
+  assert.notEqual(alpha.sessionId, beta.sessionId);
+  assert.equal(alpha.status, 'running'); assert.equal(beta.status, 'running');
+  assert.match(JSON.stringify(f.calls[1].input), /workspace_agents/);
+  assert.ok(JSON.stringify(f.calls[1].input).includes(alpha.sessionId), 'peer discovery reaches another CLI window');
+  a.child.stdin.write('\x03');
+  await until(() => client.call('chat.jobs', { sessionId: alpha.sessionId }), rows => rows[0].status === 'stopped');
+  await until(() => a.stderr, text => /Stopped/.test(text));
+  a.child.stdin.write('/exit\n'); assert.equal((await a.result).code, 0);
+  assert.equal((await client.call('chat.jobs', { sessionId: beta.sessionId }))[0].status, 'running');
+  assert.equal(await readFile(join(f.service.root, 'agent.lock'), 'utf8'), owner, 'closing the launcher preserves the shared host');
+  f.release(); await until(() => b.stdout, text => text.includes('fixture-answer-2'));
+  await until(() => client.call('chat.jobs', { sessionId: beta.sessionId }), rows => rows[0].status === 'completed');
+  const forked = await client.call('sessions.fork', { sessionId: beta.sessionId });
+  assert.notEqual(forked.sessionId, beta.sessionId);
+  assert.equal(forked.metadata.forkSourceSessionId, beta.sessionId);
+  assert.equal(forked.turns.length, 1);
+  assert.equal(forked.metadata.runtimeWorkspace.workspaceDir, await realpath(f.cwd));
+  f.block(true);
+  const send = index => client.call('chat.send', { requestId: `fork-${index}`, sessionId: forked.sessionId,
+    turnId: `fork-turn-${index}`, text: `fork request ${index}`, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  await Promise.all([send(1), send(2)]);
+  await until(() => f.calls.length, n => n === 3);
+  const queued = await client.call('chat.jobs', { sessionId: forked.sessionId });
+  assert.deepEqual(queued.map(job => job.status).sort(), ['queued', 'running']);
+  f.release();
+  await until(() => client.call('chat.jobs', { sessionId: forked.sessionId }), rows => rows.every(job => job.status === 'completed'));
+  assert.equal(f.calls.length, 4, 'the queued turn executes once after its predecessor');
+  b.child.stdin.write('/exit\n'); assert.equal((await b.result).code, 0);
+  await client.close(); await localStopped(f.service.root);
+});
+
+test('local host survives an abruptly lost client, rejects a different profile, and resumes after idle shutdown', { timeout: 90000 }, async t => {
+  const f = await fixture(t); await f.stopService(); const env = await sharedCliEnv(f);
+  const a = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await until(() => a.stderr, text => text.includes('❯ '), 30000);
+  const client = await localClient(env);
+  const pid = await readFile(join(f.service.root, 'agent.lock'), 'utf8');
+  await assert.rejects(openLocalChatClient({ dataRoot: f.service.root, profileRoot: join(f.root, 'different-profile') }), /different profile/);
+  f.block(true); a.child.stdin.write('finish after disconnect\n'); await until(() => f.calls.length, n => n === 1);
+  const sessionId = (await client.call('chat.jobs', {}))[0].sessionId;
+  a.child.kill(); await a.result; await client.close();
+  await delay(1500);
+  assert.equal(await readFile(join(f.service.root, 'agent.lock'), 'utf8'), pid, 'active work keeps the last disconnected host alive');
+  f.release(); await localStopped(f.service.root);
+  const resumed = await cli(t, ['--resume', sessionId, '--prompt', 'continue saved history'], { env, cwd: f.cwd }).result;
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(f.calls.length, 2, 'reconnection never replays the prior submitted task');
+  assert.match(JSON.stringify(f.calls[1].input), /finish after disconnect/);
+});
+
+test('private local IPC rejects unauthenticated clients and recovers saved sessions after a host crash', { timeout: 90000 }, async t => {
+  const f = await fixture(t); await f.stopService(); const env = await sharedCliEnv(f);
+  const client = await localClient(env);
+  const project = await client.call('projects.save', { name: 'crash recovery', path: f.cwd });
+  const session = await client.call('sessions.create', { projectId: project.id });
+  const descriptor = JSON.parse(await readFile(join(f.service.root, 'local-runtime', 'host.json'), 'utf8'));
+  const status = headers => new Promise((resolve, reject) => {
+    const request = httpRequest({ socketPath: descriptor.endpoint, path: '/api/agent/v1/local/lease', headers }, response => {
+      response.resume(); response.once('end', () => resolve(response.statusCode));
+    });
+    request.once('error', reject); request.end();
+  });
+  assert.equal(await status({}), 401);
+  assert.equal(await status({ Authorization: `Bearer ${descriptor.token}`, Origin: 'http://untrusted.example' }), 401);
+  // Kill only the dedicated host this fixture created. The CLI must recover
+  // its stale PID lock without deleting saved sessions or replaying tasks.
+  process.kill(descriptor.pid, 'SIGKILL');
+  await client.close();
+  await until(() => { try { process.kill(descriptor.pid, 0); return true; } catch (error) { if (error.code !== 'ESRCH') throw error; return false; } }, value => !value);
+  const [recovered, peer] = await Promise.all([localClient(env), localClient(env)]);
+  const next = JSON.parse(await readFile(join(f.service.root, 'local-runtime', 'host.json'), 'utf8'));
+  assert.notEqual(next.pid, descriptor.pid); assert.notEqual(next.token, descriptor.token);
+  assert.equal((await recovered.info()).id, (await recovered.call('info', {})).id);
+  assert.equal((await recovered.call('sessions.get', { sessionId: session.sessionId })).sessionId, session.sessionId);
+  assert.equal((await peer.call('sessions.get', { sessionId: session.sessionId })).sessionId, session.sessionId);
+  assert.deepEqual(await recovered.call('chat.jobs', {}), []);
+  await recovered.close(); await peer.close();
+});
+
+test('the same local CLI reconnects after a Runtime crash without replaying its interrupted task', { timeout: 90000 }, async t => {
+  let window, env, finished = false;
+  t.after(async () => {
+    if (window?.child.exitCode === null) window.child.kill();
+    if (!finished && env) { const client = await localClient(env); await client.close(); }
+  });
+  const f = await fixture(t); await f.stopService(); env = await sharedCliEnv(f);
+  f.block(true);
+  window = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await until(() => window.stderr, text => text.includes('❯ '), 30000);
+  window.child.stdin.write('interrupted original task\r'); await until(() => f.calls.length, count => count === 1);
+  const original = JSON.parse(await readFile(join(f.service.root, 'local-runtime', 'host.json'), 'utf8'));
+  process.kill(original.pid, 'SIGKILL');
+  await until(() => window.stderr, text => text.includes('Reconnect to this task?'));
+  assert.equal(window.child.exitCode, null); window.child.stdin.write('\r');
+  await until(() => window.stderr, text => text.includes('· Interrupted ·'), 30000);
+  const next = JSON.parse(await readFile(join(f.service.root, 'local-runtime', 'host.json'), 'utf8'));
+  assert.notEqual(next.pid, original.pid); assert.equal(next.agentId, original.agentId);
+  assert.equal(f.calls.length, 1, 'reconnect never resubmits the interrupted request');
+  f.release(); window.child.stdin.write('new task after reconnect\r');
+  await until(() => window.stderr, text => text.includes('✓ Completed ·'));
+  const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
+  assert.deepEqual(state.jobs.map(job => job.status), ['interrupted', 'completed']);
+  assert.equal(f.calls.length, 2);
+  window.child.stdin.write('/exit\r'); assert.equal((await window.result).code, 0);
+  await localStopped(f.service.root);
+  finished = true;
+});
+
+test('concurrent local reconnects share one lease and closing cannot revive a connection', { timeout: 90000 }, async t => {
+  const f = await fixture(t); await f.stopService(); const env = await sharedCliEnv(f), client = await localClient(env);
+  const identity = (await client.info()).id;
+  const first = client.reconnect(), second = client.reconnect();
+  assert.equal(first, second); await Promise.all([first, second]);
+  assert.equal((await client.info()).id, identity); assert.deepEqual(await client.call('chat.jobs', {}), []);
+  const reconnecting = client.reconnect(); await client.close(); await reconnecting;
+  await assert.rejects(client.reconnect(), /closed/);
+  await localStopped(f.service.root);
+  assert.equal(f.calls.length, 0);
+});
+
+test('shared local sessions exchange room messages and retain stale-file protection', { timeout: 90000 }, async t => {
+  const f = await fixture(t); await f.stopService(); const env = await sharedCliEnv(f);
+  const client = await localClient(env);
+  const run = async (text, sessionId) => {
+    const result = await cli(t, [...(sessionId ? ['--resume', sessionId] : []), '--prompt', text], { env, cwd: f.cwd }).result;
+    assert.equal(result.code, 0, result.stderr);
+    return (await client.call('chat.jobs', {})).find(job => job.text === text);
+  };
+  f.tools({ name: 'get_tool_schema', arguments: { name: 'agentchatroom' } },
+    { name: 'call_tool', arguments: { name: 'agentchatroom', arguments: { action: 'join' } } });
+  const a = await run('alpha joins room');
+  f.tools({ name: 'get_tool_schema', arguments: { name: 'agentchatroom' } },
+    { name: 'call_tool', arguments: { name: 'agentchatroom', arguments: { action: 'join' } } });
+  const b = await run('beta joins room');
+  const executions = await client.call('runtime.command', { kind: 'runtime.list_turn_tool_executions', payload: { sessionId: a.sessionId, turnId: a.turnId } });
+  assert.match(JSON.stringify(executions), /call_tool/);
+  // Use the actual returned room identity from the provider's tool receipts.
+  const receipts = f.calls.flatMap(call => call.input ?? []).filter(item => item.type === 'function_call_output').map(item => item.output).join('\n');
+  const roomId = /"room_id"\s*:\s*"([^"\\]+)"/.exec(receipts)?.[1];
+  assert.ok(roomId, receipts);
+  f.tools({ name: 'call_tool', arguments: { name: 'agentchatroom', arguments: { action: 'send', room_id: roomId,
+    text: 'Alpha edits the shared file; beta handles tests.', client_message_id: 'cli-test-message' } } });
+  await run('alpha sends assignment', a.sessionId);
+  f.tools({ name: 'call_tool', arguments: { name: 'agentchatroom', arguments: { action: 'read', room_id: roomId } } });
+  await run('beta reads assignment', b.sessionId);
+  assert.match(JSON.stringify(f.calls.at(-1).input), /Alpha edits the shared file; beta handles tests/);
+  const file = join(f.cwd, 'shared.txt'); await writeFile(file, 'original');
+  f.setTool({ name: 'read_file', arguments: { path: file } }); await run('alpha observes file', a.sessionId);
+  await writeFile(file, 'changed by another editor');
+  f.setTool({ name: 'write_file', arguments: { path: file, content: 'stale overwrite' } });
+  await run('alpha attempts stale write', a.sessionId);
+  assert.equal(await readFile(file, 'utf8'), 'changed by another editor');
+  assert.match(JSON.stringify(f.calls.at(-1).input), /workspace_revision_not_observed/);
+  await client.close();
 });
 
 test('late noisy MCP diagnostics never overwrite a local draft, hide tool failures or pollute pipe output', async t => {
@@ -1224,7 +1957,7 @@ test('empty or malformed local configuration preserves edits, exits pipes prompt
     assert.doesNotMatch(local.stderr, /PRIVATE_CONFIG/);
     local.child.stdin.write(command);
     assert.equal((await local.result).code, command === '\x03' ? 130 : 0);
-    await assert.rejects(readFile(join(dataRoot, 'agent.lock')), { code: 'ENOENT' });
+    await localStopped(dataRoot);
     assert.match(await readFile(configPath, 'utf8'), /PRIVATE_CONFIG/);
     assert.equal(JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8')).jobs.length, 0);
   }

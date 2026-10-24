@@ -52,32 +52,34 @@ export async function setHostApplicationMemoryProvider(provider: () => number, r
 
 /** Private ownership of Runtime admissions, using the SAME governor as main-process helpers. */
 export class HostProcessResourceOwner {
-  readonly #claims = new Map<string, { lease?: ProcessResourceLease }>();
+  readonly #claims = new Map<string, { lease?: ProcessResourceLease; controller: AbortController }>();
   #closed = false;
 
   async handle(operation: 'resources.acquire' | 'resources.release', payload: unknown, signal: AbortSignal): Promise<unknown> {
     const input = payload as { id?: string; lifetime?: string; replace?: string };
     if (!input || typeof input.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(input.id)) throw new Error('Invalid resource admission identity.');
     if (operation === 'resources.release') {
+      this.#claims.get(input.id)?.controller.abort();
       this.#claims.get(input.id)?.lease?.release();
       this.#claims.delete(input.id);
       return;
     }
     signal.throwIfAborted();
     if (this.#closed || this.#claims.has(input.id) || this.#claims.size >= 256) throw new Error('Resource owner is closed or its admission is invalid.');
-    if (input.lifetime !== 'task' && input.lifetime !== 'service') throw new Error('Invalid resource lifetime.');
-    const claim: { lease?: ProcessResourceLease } = {};
+    if (input.lifetime !== 'task' && input.lifetime !== 'service' && input.lifetime !== 'io') throw new Error('Invalid resource lifetime.');
+    const claim: { lease?: ProcessResourceLease; controller: AbortController } = { controller: new AbortController() };
     this.#claims.set(input.id, claim);
     try {
       const { module } = await processes();
       signal.throwIfAborted();
       if (this.#closed || this.#claims.get(input.id) !== claim) throw new DOMException('Resource admission cancelled.', 'AbortError');
       const replace = [...this.#claims.values()].some(value => value.lease?.id === input.replace) ? input.replace : undefined;
-      const lease = module.getProcessResourceGovernor().acquire(input.lifetime, replace);
+      const lease = await module.getProcessResourceGovernor().acquireQueued(input.lifetime, AbortSignal.any([signal, claim.controller.signal]), replace);
+      if (this.#closed || this.#claims.get(input.id) !== claim || signal.aborted) { lease.release(); throw new DOMException('Resource admission cancelled.', 'AbortError'); }
       claim.lease = lease;
       const { release: _release, ...grant } = lease;
       return grant;
-    } catch (error) { this.#claims.delete(input.id); throw error; }
+    } catch (error) { if (this.#claims.get(input.id) === claim) this.#claims.delete(input.id); throw error; }
   }
 
   close(): void {
@@ -85,6 +87,7 @@ export class HostProcessResourceOwner {
     // The native guard observes the pinned Runtime handle and terminates its
     // tree within two seconds. Keep reservations until that cleanup has run.
     const claims = [...this.#claims.values()]; this.#claims.clear();
+    for (const claim of claims) claim.controller.abort();
     const timer = setTimeout(() => claims.forEach(claim => claim.lease?.release()), 3_000);
     timer.unref();
   }

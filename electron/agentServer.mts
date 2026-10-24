@@ -38,7 +38,8 @@ async function writeFrame(response: ServerResponse, frame: AgentEventFrame, sse:
 }
 
 /** Direct, versioned HTTP API. Plugin MCP connections remain inside AgentService. */
-export async function serveAgentHttp(service: AgentService, options: { host?: string; port?: number; token: string }) {
+export async function serveAgentHttp(service: AgentService, options: { host?: string; port?: number; socketPath?: string; token: string;
+  localRequest?: (path: string, request: IncomingMessage, response: ServerResponse, signal: AbortSignal) => Promise<void> }) {
   if (options.token.length < 32) throw new Error('Use an Agent access token of at least 32 characters.');
   const authorization = Buffer.from(`Bearer ${options.token}`);
   const requests = new Set<AbortController>();
@@ -58,6 +59,9 @@ export async function serveAgentHttp(service: AgentService, options: { host?: st
       response.setHeader('X-CardBush-Agent-ID', info.id);
       if (request.headers['x-cardbush-agent-id'] && request.headers['x-cardbush-agent-id'] !== info.id) throw new HttpError(409, 'agent_identity_changed', 'Agent identity changed. Add a new connection after verifying the server.');
       const url = new URL(request.url ?? '/', 'http://agent.internal');
+      if (options.localRequest && url.pathname.startsWith(`${agentApiPath}/local/`)) {
+        await options.localRequest(url.pathname.slice(`${agentApiPath}/local/`.length), request, response, abort.signal); return;
+      }
       const method = url.pathname === `${agentApiPath}/call` ? 'POST'
         : ['/health', `${agentApiPath}/info`, `${agentApiPath}/events`].includes(url.pathname) ? 'GET' : null;
       if (!method) throw new HttpError(404, 'not_found', 'Unknown Agent HTTP endpoint.');
@@ -100,17 +104,25 @@ export async function serveAgentHttp(service: AgentService, options: { host?: st
     })().catch(error => {
       if (!response.headersSent && !response.destroyed) {
         const status = error instanceof HttpError ? error.status : error instanceof z.ZodError ? 400 : 409;
-        json(response, status, { error: { code: error instanceof HttpError || error instanceof AgentBusyError ? error.code : status === 400 ? 'invalid_request' : 'operation_failed', message: error instanceof Error ? error.message : 'Agent request failed.' } });
+          const code = (error as { code?: string })?.code;
+          json(response, status, { error: { code: error instanceof HttpError || error instanceof AgentBusyError ? error.code
+            : code === 'permission_not_pending' || code === 'solution_not_pending' ? code
+            : status === 400 ? 'invalid_request' : 'operation_failed', message: error instanceof Error ? error.message : 'Agent request failed.' } });
       } else if (!response.writableEnded) response.destroy();
       request.resume();
     });
     pending.add(task); void task.finally(() => pending.delete(task));
   });
   server.requestTimeout = 30_000; server.headersTimeout = 10_000;
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? 4780, options.host ?? '127.0.0.1', () => { server.removeListener('error', reject); resolve(); }); });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    const ready = () => { server.removeListener('error', reject); resolve(); };
+    if (options.socketPath) server.listen(options.socketPath, ready);
+    else server.listen(options.port ?? 4780, options.host ?? '127.0.0.1', ready);
+  });
   const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Agent HTTP listener did not bind.');
-  return { port: address.port, close: async () => {
+  if (!address) throw new Error('Agent HTTP listener did not bind.');
+  return { port: typeof address === 'string' ? 0 : address.port, activeRequests: () => requests.size, close: async () => {
     for (const abort of requests) abort.abort();
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));

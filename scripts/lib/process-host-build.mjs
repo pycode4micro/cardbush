@@ -84,7 +84,7 @@ export function buildProcessResourceHost({
   let capabilities;
   try { capabilities = JSON.parse(probe.stdout ?? ''); } catch { /* Reject invalid hosts below. */ }
   if (probe.error || probe.status !== 0 || capabilities?.protocol !== 'cardbush.process-host.v1'
-    || capabilities?.sandboxVersion !== 1) {
+    || capabilities?.sandboxVersion !== 1 || capabilities?.sandboxFileVersion !== 2 || capabilities?.sandboxScopeVersion !== 3) {
     const reason = probe.error?.message || probe.stderr?.trim() || `exit=${probe.status}; invalid host capabilities`;
     const detail = `The Windows process host could not pass its startup check: ${files.output}\n${reason}\n`
       + 'The current host manifest was not changed. If Windows Application Control blocked this file, '
@@ -99,7 +99,7 @@ export function buildProcessResourceHost({
     throw new Error(detail);
   }
 
-  writeJson(files.manifest, { fileName: files.fileName, sandboxVersion: 1 });
+  writeJson(files.manifest, { fileName: files.fileName, sandboxVersion: 1, sandboxFileVersion: 2, sandboxScopeVersion: 3 });
   fs.rmSync(files.unavailable, { force: true });
   log('Built and verified CardBush process resource host.');
   return { available: true };

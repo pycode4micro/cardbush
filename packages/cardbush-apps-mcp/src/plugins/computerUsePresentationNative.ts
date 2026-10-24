@@ -2,6 +2,7 @@
 // compiled JS, so packaging does not depend on Electron or extra host assets.
 import { controlLayerCapture, controlLayerEnabled, controlLayerMarker } from './computerUseCaptureLayers.js';
 import { computerUseAppearance as appearance } from '@cardbush/bush-protocol';
+import { computerUseUserIdleMs } from './computerUseTakeover.js';
 
 export const computerUsePresentationNative = String.raw`
 using System;
@@ -85,6 +86,9 @@ public static class CardBushPresentation {
     ReleaseInput();
     timer.Interval = 30;
   }
+  static int RemainingUserIdleMs() {
+    return paused ? (int)Math.Max(0, Math.Min(${computerUseUserIdleMs}, ${computerUseUserIdleMs}-(DateTime.UtcNow-lastHuman).TotalMilliseconds)) : 0;
+  }
   static void Human(bool escape, string source="physical_input") {
     lastHuman = DateTime.UtcNow;
     if (!active) return;
@@ -92,7 +96,7 @@ public static class CardBushPresentation {
     if (!paused) {
       paused=true; acting=false; pointer=false;
       ReleaseInput();
-      Emit(new { kind="paused", scope=scope, reason=source });
+      Emit(new { kind="paused", scope=scope, reason=source, user_idle_ms=${computerUseUserIdleMs}, retry_after_ms=RemainingUserIdleMs() });
       Redraw();
     }
   }
@@ -172,7 +176,7 @@ public static class CardBushPresentation {
         scope=requestScope; active=true; acting=false; closing=false; suspended=false; pointer=false; windowAction=false; contextChanged=false;
         Bind(new IntPtr(Number(v,"hwnd")));
         EnableLayers(true);
-        if (paused && (DateTime.UtcNow-lastHuman).TotalMilliseconds>=1200) paused=false;
+        if (paused && RemainingUserIdleMs()==0) paused=false;
         touched=DateTime.UtcNow; timer.Interval=250; SyncWindow();
       } else if(op=="action") {
         if(!active || scope!=requestScope || target.ToInt64()!=Number(v,"hwnd")) throw new Exception("Observe the exact target window before control.");
@@ -188,9 +192,11 @@ public static class CardBushPresentation {
         click=Text(v,"action")=="click" || Text(v,"action")=="invoke";
         acting=true; touched=DateTime.UtcNow; suspended=false; Redraw(); SyncWindow();
       } else if(op=="idle") { if(scope==requestScope) { ReleaseInput(); acting=false; pointer=false; windowAction=false; touched=DateTime.UtcNow; Redraw(); } }
-      else if(op=="pause") { if(scope==requestScope) Human(false,"input_activity"); }
+      // An error report can arrive after the physical hook already paused us.
+      // It must not extend the quiet period as if the user just touched input.
+      else if(op=="pause") { if(scope==requestScope && !paused) Human(false,"input_activity"); }
       else if(op=="hold") { if(active && scope==requestScope) { ReleaseInput(); acting=false; pointer=false; windowAction=false; contextChanged=true; touched=DateTime.UtcNow; SyncWindow(); } }
-      Emit(new { kind="ack", id=id, paused=paused });
+      Emit(new { kind="ack", id=id, paused=paused, user_idle_ms=${computerUseUserIdleMs}, retry_after_ms=RemainingUserIdleMs() });
     } catch(Exception ex) { Emit(new { kind="ack", id=id, error=ex.Message }); }
   }
   public static void Run() {

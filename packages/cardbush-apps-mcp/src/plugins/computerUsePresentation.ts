@@ -3,18 +3,21 @@ import { createInterface } from 'node:readline';
 import { computerUsePresentationNative } from './computerUsePresentationNative.js';
 import { ComputerUseFailure, computerUseFailure } from './computerUseErrors.js';
 import { prepareComputerUseNativeCode } from './computerUseNativeCode.js';
+import { computerUseUserIdleMs } from './computerUseTakeover.js';
 
 export function prepareComputerUsePresentation(directory?: string): Promise<string> {
   return prepareComputerUseNativeCode("$ErrorActionPreference='Stop'\nAdd-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing,System.Web.Extensions -TypeDefinition @'\n"
     + computerUsePresentationNative + "\n'@\n[CardBushPresentation]::Run()", directory);
 }
 
-export type ComputerUseNotice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean; target_hwnd?: number; foreground_hwnd?: number };
+export type ComputerUseNotice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean; target_hwnd?: number; foreground_hwnd?: number; retry_after_ms?: number; user_idle_ms?: number };
 type Notice = ComputerUseNotice;
 
 export function computerUseNoticeFailure(notice: Notice): ComputerUseFailure {
   const details = { source: notice.reason ?? notice.kind, ...(notice.target_hwnd ? { target_hwnd: notice.target_hwnd } : {}), ...(notice.foreground_hwnd ? { foreground_hwnd: notice.foreground_hwnd } : {}) };
-  if (notice.kind === 'paused') return new ComputerUseFailure('user_takeover', 'Computer Use yielded to user input. Observe again after the user finishes.', 'not_dispatched', details);
+  if (notice.kind === 'paused') return new ComputerUseFailure('user_takeover', 'Computer Use yielded to user input. Observe again after 1 second without user input.', 'not_dispatched', {
+    ...details, user_idle_ms: computerUseUserIdleMs, retry_after_ms: Math.max(0, Math.min(computerUseUserIdleMs, notice.retry_after_ms ?? computerUseUserIdleMs)),
+  });
   if (notice.kind === 'context_changed') return new ComputerUseFailure('window_changed', 'The foreground window changed. Remaining input stopped; inspect the new observation before continuing.', 'not_dispatched', details);
   if (notice.reason === 'escape' || notice.reason === 'button') return new ComputerUseFailure('user_stopped', 'Desktop control was stopped for this turn. Do not retry; return to the user.', 'not_dispatched', details);
   if (notice.reason === 'window_closed') return new ComputerUseFailure('window_unavailable', 'The target window no longer exists. Discover or observe the intended related window.', 'not_dispatched', details);
@@ -48,7 +51,10 @@ export class ComputerUsePresentation {
     try {
       const result = await this.#send({ op: 'observe', scope, hwnd });
       this.assertAvailable(scope);
-      if (result.paused) this.#paused.add(scope); else this.#paused.delete(scope);
+      if (result.paused) {
+        this.#paused.add(scope);
+        this.#interruptions.set(scope, computerUseNoticeFailure({ ...result, kind: 'paused', reason: 'physical_input' }));
+      } else this.#paused.delete(scope);
       if (!result.paused) this.#interruptions.delete(scope);
     } catch (error) { if (this.#owner === scope) this.#owner = previous; throw error; }
   }
@@ -90,7 +96,11 @@ export class ComputerUsePresentation {
   async restore(): Promise<void> { if (this.#child) await this.#send({ op: 'restore' }); }
   async pause(scope: string): Promise<void> {
     this.#paused.add(scope);
-    if (this.#child) await this.#send({ op: 'pause', scope });
+    if (this.#child) {
+      const result = await this.#send({ op: 'pause', scope });
+      if (result.paused && !this.#stopped.has(scope)) this.#interruptions.set(scope,
+        computerUseNoticeFailure({ ...result, kind: 'paused', reason: this.#interruptions.get(scope)?.info.details?.source as string ?? 'physical_input' }));
+    }
   }
   async hold(scope: string): Promise<void> {
     if (this.#owner !== scope || !this.#child) return;

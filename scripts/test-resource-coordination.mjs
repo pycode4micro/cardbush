@@ -57,3 +57,27 @@ test('cancellation or owner shutdown during the async module load cannot leave a
   owner.close();
   await assert.rejects(owner.handle('resources.acquire', { id: randomUUID(), lifetime: 'task' }, new AbortController().signal), /closed/);
 });
+
+test('queued I/O cancellation, reused identities and owner shutdown cannot orphan or steal a lease', async t => {
+  const governor = getProcessResourceGovernor(), previous = { ...governor.limits };
+  Object.assign(governor.limits, { maxConcurrentIo: 1, ioStartupMemoryBytes: 1024 ** 2 });
+  t.after(() => Object.assign(governor.limits, previous));
+  const first = await governor.acquireQueued('io'), owner = new HostProcessResourceOwner(), signal = new AbortController().signal;
+  t.after(() => { first.release(); owner.close(); });
+  const id = randomUUID();
+  const pending = owner.handle('resources.acquire', { id, lifetime: 'io' }, signal);
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  await new Promise(resolve => setImmediate(resolve));
+  const released = owner.handle('resources.release', { id }, signal);
+  const replacement = owner.handle('resources.acquire', { id, lifetime: 'io' }, signal);
+  await released;
+  await rejected; first.release();
+  await replacement;
+  assert.throws(() => governor.acquire('io'), { code: 'resource_io_capacity_busy' });
+  await owner.handle('resources.release', { id }, signal);
+  const blocker = await governor.acquireQueued('io');
+  const closing = owner.handle('resources.acquire', { id: randomUUID(), lifetime: 'io' }, signal);
+  const closed = assert.rejects(closing, { name: 'AbortError' });
+  await new Promise(resolve => setImmediate(resolve)); owner.close(); await closed;
+  blocker.release(); (await governor.acquireQueued('io')).release();
+});

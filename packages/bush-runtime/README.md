@@ -97,8 +97,13 @@ new path for comparisons. The historical `preferPreparedToolHandoffs` option is
 opt-in; applied model-authored handoffs and old frozen calls remain readable.
 The default `summary_for_user` schema now contains only optional habit/prediction
 fields. Legacy `tool_summary` input is accepted for compatibility, not requested.
+After other tool work is finished, product prompts ask for a standalone call
+before the final reply so it can stream with final-display intent. Use `{}` when
+memory is disabled or there is nothing new to record. Conversation without tool
+work needs no call. This signal neither ends the loop nor prepares compaction;
+the host does not insert a missing call or block completion without it.
 
-Product policy v3 migrates bound v2 conversations once at the next Turn boundary,
+Product policy v4 migrates bound v2/v3 conversations once at the next Turn boundary,
 refreshing the system policy and `summary_for_user` presentation only. The change
 is recorded as `model_contract_updated`; other tools and original conversation
 facts remain unchanged. Running loops retain their snapshot. This one-time

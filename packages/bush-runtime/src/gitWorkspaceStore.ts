@@ -5,6 +5,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { trustedGit } from './trustedGit.js';
 
 const exec = promisify(execFile);
 export type GitFileEntry = { hash: string; mode: number; kind: "file" | "symlink" };
@@ -31,7 +32,7 @@ export class GitWorkspaceStore {
     const environment: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
     for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"]) delete environment[key];
     Object.assign(environment, env);
-    const pending = exec("git", ["--literal-pathspecs", "-c", "core.longpaths=true", "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${hooks}`, "-C", cwd, ...args], {
+    const pending = exec(await trustedGit([this.root, cwd]), ["--literal-pathspecs", "-c", "core.longpaths=true", "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${hooks}`, "-C", cwd, ...args], {
       encoding: "buffer", windowsHide: true, maxBuffer, timeout: 120_000, env: environment,
     });
     const writing = pipeline(Readable.from(input === undefined ? [] : Buffer.isBuffer(input) ? [input] : input), pending.child.stdin!)

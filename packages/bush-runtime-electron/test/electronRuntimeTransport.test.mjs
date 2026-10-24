@@ -29,6 +29,17 @@ test("delivers typed command responses", async () => {
   );
 });
 
+test('preserves Runtime error codes for service-level race handling', async () => {
+  for (const code of ['permission_not_pending', 'solution_not_pending', 'runtime_session_busy']) {
+    const bridge = fakeBridge();
+    bridge.command = async request => ({ protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command_response', operationId: request.operationId,
+      ok: false, error: { protocol: 'bush.runtime_error.v1', kind: 'runtime', code, message: 'Fixture', retryable: false, details: {} } });
+    const transport = new ElectronRuntimeTransport(bridge);
+    await assert.rejects(transport.sendCommand({ kind: 'runtime.test', payload: {} }), error =>
+      error instanceof RuntimeRemoteError && error.code === code && error.fact.code === code);
+  }
+});
+
 test("streams events and closes only on an explicit end frame", async () => {
   const bridge = fakeBridge();
   const event = runtimeEvent();

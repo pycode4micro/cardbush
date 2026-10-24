@@ -14,6 +14,7 @@ import type { WindowsSandboxScopePool } from './windowsSandboxScope.js';
 
 const MiB = 1024 ** 2;
 const GiB = 1024 ** 3;
+export type ProcessResourceKind = 'task' | 'service' | 'io';
 
 export interface ProcessResourceLimits {
   taskMemoryBytes: number;
@@ -28,6 +29,8 @@ export interface ProcessResourceLimits {
   maxConcurrentServices?: number;
   startupMemoryBytes?: number;
   serviceStartupMemoryBytes?: number;
+  maxConcurrentIo?: number;
+  ioStartupMemoryBytes?: number;
 }
 
 export function defaultProcessResourceLimits(physicalMemoryBytes = totalmem()): ProcessResourceLimits {
@@ -44,6 +47,8 @@ export function defaultProcessResourceLimits(physicalMemoryBytes = totalmem()): 
     maxConcurrentServices: 32,
     startupMemoryBytes: 256 * MiB,
     serviceStartupMemoryBytes: 128 * MiB,
+    maxConcurrentIo: 2,
+    ioStartupMemoryBytes: 64 * MiB,
   };
 }
 
@@ -51,7 +56,8 @@ export class ProcessResourceGovernor {
   readonly groupName = `Local\\CardBush-Tasks-${process.pid}-${randomUUID()}`;
   readonly limits: ProcessResourceLimits;
   readonly #availableMemory: () => number;
-  readonly #leases = new Map<string, { lifetime: 'task' | 'service'; reservation: number; replaces?: string }>();
+  readonly #leases = new Map<string, { lifetime: ProcessResourceKind; reservation: number; replaces?: string }>();
+  readonly #ioQueue: Array<() => void> = [];
   readonly #observer?: ProcessResourceObserver;
   #sample?: ResourceSample;
   #sampleAt = 0;
@@ -96,7 +102,31 @@ export class ProcessResourceGovernor {
     this.#applicationMemory = provider; this.#applicationRelief = relieve;
   }
 
-  acquire(lifetime: 'task' | 'service' = 'task', replace?: string): ProcessResourceLease {
+  acquireQueued(lifetime: ProcessResourceKind = 'task', signal?: AbortSignal, replace?: string): Promise<ProcessResourceLease> {
+    signal?.throwIfAborted();
+    if (lifetime !== 'io') return Promise.resolve(this.acquire(lifetime, replace));
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        const index = this.#ioQueue.indexOf(grant); if (index >= 0) this.#ioQueue.splice(index, 1);
+        reject(signal!.reason);
+      };
+      const grant = () => {
+        signal?.removeEventListener('abort', abort);
+        try { signal?.throwIfAborted(); resolve(this.acquire('io')); } catch (error) { reject(error); }
+      };
+      if (this.#ioQueue.length >= 256) { reject(resourceError('resource_io_capacity_busy', 'The bounded file I/O queue is full. Wait before requesting more file operations.')); return; }
+      this.#ioQueue.push(grant); signal?.addEventListener('abort', abort, { once: true });
+      this.#drainIo();
+    });
+  }
+
+  #drainIo() {
+    while (this.#ioQueue.length && [...this.#leases.values()].filter(lease => lease.lifetime === 'io').length < (this.limits.maxConcurrentIo ?? 2)) {
+      this.#ioQueue.shift()!();
+    }
+  }
+
+  acquire(lifetime: ProcessResourceKind = 'task', replace?: string): ProcessResourceLease {
     const records = [...this.#leases.values()];
     const services = records.filter(lease => lease.lifetime === 'service').length;
     const transitions = records.filter(lease => lease.replaces && this.#leases.has(lease.replaces)).length;
@@ -105,15 +135,19 @@ export class ProcessResourceGovernor {
     if (lifetime === 'service' && services - transitions >= (this.limits.maxConcurrentServices ?? 32) && !replaces) {
       throw resourceError('resource_service_capacity_busy', "The host's managed service budget is full. Disable an unneeded plugin service before starting another.");
     }
-    if (lifetime === 'task' && this.#leases.size - services >= this.limits.maxConcurrentTasks) {
+    if (lifetime === 'task' && records.filter(lease => lease.lifetime === 'task').length >= this.limits.maxConcurrentTasks) {
       throw resourceError("resource_capacity_busy", "The host's concurrent task budget is full. Wait for an existing terminal task to finish, or stop an unneeded task before starting another.");
+    }
+    if (lifetime === 'io' && records.filter(lease => lease.lifetime === 'io').length >= (this.limits.maxConcurrentIo ?? 2)) {
+      throw resourceError('resource_io_capacity_busy', 'The bounded file I/O budget is full. Wait for an existing file operation to finish.');
     }
     const sample = Date.now() - this.#sampleAt < 5_000 ? this.#sample : undefined;
     if (this.#observer && this.#leases.size > 0 && !sample && Date.now() - this.#startedAt > 5_000) {
       throw resourceError('resource_monitor_pending', 'Resource measurements are recovering. No command was started.');
     }
     const reservation = Math.min(this.limits.taskMemoryBytes, lifetime === 'service'
-      ? this.limits.serviceStartupMemoryBytes ?? 128 * MiB : this.limits.startupMemoryBytes ?? 256 * MiB);
+      ? this.limits.serviceStartupMemoryBytes ?? 128 * MiB : lifetime === 'io'
+        ? this.limits.ioStartupMemoryBytes ?? 64 * MiB : this.limits.startupMemoryBytes ?? 256 * MiB);
     let pendingMemory = 0;
     for (const [id, lease] of this.#leases) {
       pendingMemory += Math.max(0, lease.reservation - (sample?.jobs.find(job => job.id === id)?.memoryBytes ?? 0));
@@ -156,6 +190,7 @@ export class ProcessResourceGovernor {
         this.#leases.delete(id);
         this.#observer?.track([...this.#leases.keys()]);
         if (!this.#leases.size) { this.#sample = undefined; this.#sampleAt = 0; }
+        this.#drainIo();
       },
     };
   }
@@ -171,7 +206,7 @@ export interface ProcessResourceLease {
 }
 export type ProcessResourceGrant = Omit<ProcessResourceLease, 'release'>;
 export interface ProcessResourceClient {
-  acquire(lifetime: 'task' | 'service', signal?: AbortSignal, replace?: string): Promise<ProcessResourceLease>;
+  acquire(lifetime: ProcessResourceKind, signal?: AbortSignal, replace?: string): Promise<ProcessResourceLease>;
 }
 // The desktop Runtime installs a private RPC client to the main process's
 // governor. Standalone/CLI runtimes use their own single governor.
@@ -179,12 +214,12 @@ const sharedGovernor = new ProcessResourceGovernor();
 let resourceClient: ProcessResourceClient | undefined;
 export function configureProcessResourceClient(client?: ProcessResourceClient): void { resourceClient = client; }
 export function getProcessResourceGovernor(): ProcessResourceGovernor { return sharedGovernor; }
-export function reserveProcessResources(lifetime: 'task' | 'service' = 'task', signal?: AbortSignal, replace?: string): Promise<ProcessResourceLease> {
+export function reserveProcessResources(lifetime: ProcessResourceKind = 'task', signal?: AbortSignal, replace?: string): Promise<ProcessResourceLease> {
   signal?.throwIfAborted();
-  return resourceClient ? resourceClient.acquire(lifetime, signal, replace) : Promise.resolve(sharedGovernor.acquire(lifetime, replace));
+  return resourceClient ? resourceClient.acquire(lifetime, signal, replace) : sharedGovernor.acquireQueued(lifetime, signal, replace);
 }
 export function isResourceAdmissionError(error: unknown): boolean {
-  return ['resource_memory_pressure', 'resource_capacity_busy', 'resource_service_capacity_busy', 'resource_monitor_pending']
+  return ['resource_memory_pressure', 'resource_capacity_busy', 'resource_service_capacity_busy', 'resource_io_capacity_busy', 'resource_monitor_pending']
     .includes(String((error as { code?: unknown })?.code));
 }
 
@@ -223,7 +258,7 @@ export interface ManagedProcessOptions {
   governor?: ProcessResourceGovernor;
   hostPath?: string;
   /** Host-owned persistent services have separate slots, but share the RAM/CPU/process budget. */
-  lifetime?: 'task' | 'service';
+  lifetime?: ProcessResourceKind;
   /** An admission acquired before replacing a service; consumed by this spawn. */
   resourceLease?: ProcessResourceLease;
   /** Host-owned preview/helper ceiling. It can only narrow the granted limit. */
@@ -285,7 +320,7 @@ export async function verifyProcessResourceHost(env: NodeJS.ProcessEnv = process
       env, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: 'utf8',
     });
     const capabilities = JSON.parse(stdout);
-    if (capabilities.protocol !== 'cardbush.process-host.v1' || capabilities.sandboxVersion !== 1) {
+    if (capabilities.protocol !== 'cardbush.process-host.v1' || capabilities.sandboxVersion !== 1 || capabilities.sandboxFileVersion !== 2 || capabilities.sandboxScopeVersion !== 3) {
       throw Error('Incompatible process host capabilities.');
     }
     return hostPath;
@@ -307,7 +342,7 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
   if (input.signal?.aborted) input.resourceLease?.release();
   input.signal?.throwIfAborted();
   const lease = input.resourceLease ?? (input.governor
-    ? input.governor.acquire(input.lifetime) : await reserveProcessResources(input.lifetime, input.signal));
+    ? await input.governor.acquireQueued(input.lifetime, input.signal) : await reserveProcessResources(input.lifetime, input.signal));
   let reportDirectory: string | undefined;
   let sandbox: PreparedExecutionSandbox | undefined;
   let nativeStarted = false;

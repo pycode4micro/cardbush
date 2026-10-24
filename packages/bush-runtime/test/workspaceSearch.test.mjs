@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { searchWorkspaceContent } from '../dist/workspaceSearch.js';
+import { searchWorkspaceContent, trustedSearchExecutable, workspaceSearchArguments } from '../dist/workspaceSearch.js';
 import { ToolExecutionCoordinator, ToolRegistry, registerWorkspaceTools } from '../dist/index.js';
 
 function temporary(t) {
@@ -17,7 +17,7 @@ const options = (root, extra = {}) => ({ path: root, query: 'needle', regex: fal
 async function engine(kind, run) {
   const oldPath = process.env.PATH, oldRg = process.env.CARDBUSH_RG_PATH;
   try {
-    if (kind === 'node') { process.env.PATH = ''; delete process.env.CARDBUSH_RG_PATH; }
+    if (kind === 'bundled') { process.env.PATH = ''; delete process.env.CARDBUSH_RG_PATH; }
     else {
       const bundled = fileURLToPath(new URL('../../../assets/runtime-tools/ripgrep/win32-x64/rg.exe', import.meta.url));
       if (process.platform === 'win32' && existsSync(bundled)) process.env.CARDBUSH_RG_PATH = bundled;
@@ -29,7 +29,7 @@ async function engine(kind, run) {
   }
 }
 
-for (const kind of ['native', 'node']) {
+for (const kind of ['native', 'bundled']) {
   test(`${kind}: prunes dependencies and excluded directories, then locates files with minimal output`, async t => engine(kind, async () => {
     const root = temporary(t);
     for (const folder of ['src', 'skip', 'node_modules/pkg', '.venv/lib', '__pycache__']) {
@@ -40,7 +40,7 @@ for (const kind of ['native', 'node']) {
     assert.equal(result.complete, true, JSON.stringify(result));
     assert.deepEqual(result.output.trim().split('\n').map(path => path.replaceAll('\\', '/')), [join(root, 'src/code.ts').replaceAll('\\', '/')]);
     assert.equal(result.returnedResults, 1);
-    if (kind === 'node') assert.equal(result.scannedFiles, 1);
+    assert.equal(result.sandbox.network, 'disabled'); assert.deepEqual(result.sandbox.writableRoots, []);
     const dependencies = await searchWorkspaceContent(root, { ...input, includeDependencies: true }, root);
     assert.equal(dependencies.returnedResults, 4);
     // Selecting a dependency directory explicitly is also supported.
@@ -85,4 +85,41 @@ test('concurrent identical search calls share execution, but a subsequent call r
 test('a cancelled search cannot be reported as a complete no-match', async t => {
   const root = temporary(t), controller = new AbortController(); controller.abort();
   await assert.rejects(searchWorkspaceContent(root, options(root), root, controller.signal), { name: 'AbortError' });
+});
+
+test('unconfigured search never executes a workspace rg or searches relative PATH entries', async t => {
+  const root = temporary(t), oldPath = process.env.PATH, oldRg = process.env.CARDBUSH_RG_PATH;
+  writeFileSync(join(root, 'fixture.txt'), 'needle from the real file');
+  if (process.platform === 'win32') copyFileSync(join(process.env.SystemRoot, 'System32', 'whoami.exe'), join(root, 'rg.exe'));
+  else { writeFileSync(join(root, 'rg'), '#!/bin/sh\nprintf "UNTRUSTED_HELPER\\n"\n'); chmodSync(join(root, 'rg'), 0o755); }
+  try {
+    process.env.PATH = `.${process.platform === 'win32' ? ';' : ':'}${root}`;
+    for (const configured of [undefined, 'rg', './rg', join(root, process.platform === 'win32' ? 'rg.exe' : 'rg'), join(root, 'missing-rg')]) {
+      if (configured === undefined) delete process.env.CARDBUSH_RG_PATH; else process.env.CARDBUSH_RG_PATH = configured;
+      if (configured !== undefined) {
+        await assert.rejects(searchWorkspaceContent(root, options(root, { globs: ['*.txt'] }), root), { code: 'workspace_search_unavailable' });
+      } else {
+        const result = await searchWorkspaceContent(root, options(root, { globs: ['*.txt'] }), root);
+        assert.equal(result.complete, true, JSON.stringify(result));
+        assert.match(result.output, /needle from the real file/); assert.ok(result.sandbox);
+        assert.doesNotMatch(result.output, /UNTRUSTED_HELPER/);
+      }
+    }
+  } finally {
+    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+    if (oldRg === undefined) delete process.env.CARDBUSH_RG_PATH; else process.env.CARDBUSH_RG_PATH = oldRg;
+  }
+});
+
+test('configured search paths must resolve outside the workspace and cannot enable ripgrep config commands', async t => {
+  const root = temporary(t), work = join(root, 'work'), host = join(root, 'host');
+  mkdirSync(work); mkdirSync(host);
+  const name = process.platform === 'win32' ? 'rg.exe' : 'rg';
+  const executable = join(host, name); writeFileSync(executable, 'host-owned fixture');
+  assert.equal(await trustedSearchExecutable(work, work, executable), executable);
+  assert.equal(await trustedSearchExecutable(work, work, './rg'), undefined);
+  const local = join(work, name); writeFileSync(local, 'workspace fixture');
+  const alias = join(host, 'redirect'); symlinkSync(work, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(await trustedSearchExecutable(work, work, join(alias, name)), undefined);
+  assert.ok(workspaceSearchArguments(work, options(work)).includes('--no-config'));
 });

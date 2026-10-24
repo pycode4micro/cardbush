@@ -54,7 +54,7 @@ export function registerInteractionTools(
     }>({
       definition: {
         name: REQUEST_PERMISSION_TOOL,
-        description: "Ask the user to grant exact action/resource capabilities. A grant does not execute the blocked operation; retry it afterward.",
+        description: "Legacy compatibility only. This tool cannot grant permission to another invocation. Call the concrete file, terminal or external tool with its exact arguments; Runtime requests approval when needed. Never use this tool to pre-approve or repeat a pending permission request.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -71,6 +71,7 @@ export function registerInteractionTools(
         },
       },
       manifest: interactionManifest("permission.request"),
+      projectModelDefinition: () => null,
       visibleToChild: true,
       decodeInput: (value) => {
         const item = record(value);
@@ -104,21 +105,16 @@ export function registerInteractionTools(
           capabilityIds: normalizedCapabilities,
         };
       },
-      authorize: (context) => ({
-        kind: "ask",
-        request: {
-          reason: context.input.reason,
-          actions: context.input.actions,
-          targets: context.input.targets,
-          capabilityIds: context.input.capabilityIds,
-        },
-      }),
+      // Approval must bind the actual invocation and its canonical scope. An
+      // allow_once on this generic tool used to be consumed here, while claiming
+      // that a later operation had been authorized. Old frozen catalogs can
+      // still call this handler, but it never opens a prompt or grants access.
       execute: (context) => ({
-        granted: true,
+        granted: false,
         actions: context.input.actions,
         resources: context.input.resources,
-        capability_ids: context.capabilityIds,
-        message: "Permission granted. Retry the blocked operation.",
+        capability_ids: [],
+        message: "No permission was granted. Invoke the concrete operation with its exact arguments; Runtime will request approval if needed. If that operation is already waiting for approval, wait for its result instead of starting another request. A rejected action must not be retried indirectly.",
       }),
     });
   }

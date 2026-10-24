@@ -6,6 +6,7 @@ import { executeComputerUse, type ComputerUseResult } from './computerUseRuntime
 import type { ComputerUsePluginConfig } from '../config.js';
 import { computerUseFailure, formatComputerUseError } from './computerUseErrors.js';
 import { failedComputerUseTimings } from './computerUseTimings.js';
+import { computerUseTakeoverRecovery } from './computerUseTakeover.js';
 
 const inputSchema = z.object({
   action: z.enum([
@@ -224,6 +225,7 @@ export function registerComputerUsePlugin(
       'Input and window actions default to observe_after=true: a bounded settle, then observation containing the new state_id, exact hwnd and screenshot. Use that observation for the next action; do not call observe again unless it is missing, stale or still transitional.',
       'A foreground change is window_changed, not evidence of user activity. Post-action observation follows only a verified owned popup or its observed owner in the same process; inspect target_relation and the new hwnd. An unrelated foreground never receives automatic input.',
       'execution=dispatched acknowledges input, not application success. execution=unknown may mean partial input; inspect the returned observation before deciding what to do. Never replay a send/upload/click merely to recover a missing screenshot. user_takeover requires letting the user finish; user_stopped ends control for this turn.',
+      computerUseTakeoverRecovery,
       'observation_required needs a fresh target observation. progress_unverified allows one explicit same-target review and one different corrective action. policy_blocked is terminal for this turn; observing, changing APIs or calling finish does not reset it.',
       'Call finish when desktop work is complete or abandoned to release the window border and stop control. Keep the control session during temporary user takeover, reasoning and recoverable errors; do not finish between actions. Paused input keeps the border visible. A user stop ends desktop control for this turn.',
     ].join(' '),

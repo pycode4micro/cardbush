@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { ComputerUsePluginConfig } from '../config.js';
 import { computerUsePresentation } from './computerUsePresentation.js';
+import { computerUseTakeoverRecovery } from './computerUseTakeover.js';
 import { computerUseCaptureLayersScript } from './computerUseCaptureLayers.js';
 import { computerUseAccessibilityScript } from './computerUseAccessibility.js';
 import { ComputerUseFailure, computerUseFailure, type ComputerUseFailureInfo } from './computerUseErrors.js';
@@ -988,7 +989,8 @@ async function observeWindow(
       ...capture.output,
       actionable: Boolean(stateId) && capture.output.actionable && !paused,
       window_action_available: Boolean(stateId) && !paused,
-      ...(paused ? { control_state: 'user_takeover', next_step: 'Let the user finish, then observe once before further input.' } : {}),
+      ...(paused ? { control_state: 'user_takeover', ...computerUsePresentation.interruption(scopeId)?.info.details,
+        next_step: computerUseTakeoverRecovery } : {}),
       ...(interrupted?.info.code === 'user_stopped' ? { control_state: 'user_stopped', error: interrupted.info } : {}),
     },
     paths: includeScreenshot ? [capture.path] : [],

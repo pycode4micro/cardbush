@@ -9,15 +9,26 @@ internal static class SandboxWorker
 {
     private static int Main(string[] args)
     {
-        if (args[0] == "acl")
+        if (args[0] == "acl" || args[0] == "file-acl")
         {
-            var security = Directory.GetAccessControl(args[1]);
+            FileSystemSecurity security = args[0] == "acl" ? (FileSystemSecurity)Directory.GetAccessControl(args[1]) : File.GetAccessControl(args[1]);
             var descriptor = new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0);
             // Windows may upgrade a legacy DACL to automatic inheritance on its first edit.
             // Compare every ACE and the remaining flags (including inheritance protection),
             // rather than the OS-maintained marker recording that conversion.
             descriptor.SetFlags(descriptor.ControlFlags & ~ControlFlags.DiscretionaryAclAutoInherited);
             Console.Write(descriptor.GetSddlForm(AccessControlSections.Access)); return 0;
+        }
+        if (args[0] == "exact-file")
+        {
+            Probe("targetRead", delegate { File.ReadAllText(args[1]); });
+            Probe("targetWrite", delegate { File.WriteAllText(args[1], "updated"); });
+            Probe("siblingRead", delegate { File.ReadAllText(args[2]); });
+            Probe("siblingWrite", delegate { File.WriteAllText(args[2], "unauthorized"); });
+            Probe("siblingCreate", delegate { File.WriteAllText(args[3], "unauthorized"); });
+            Probe("parentList", delegate { Directory.GetFiles(Path.GetDirectoryName(args[1])); });
+            Probe("targetDelete", delegate { File.Delete(args[1]); });
+            return 0;
         }
         if (args[0] == "wait-write")
         {
@@ -32,6 +43,11 @@ internal static class SandboxWorker
         }
         if (args[0] == "read-private") { Probe("peerPrivateRead", delegate { File.ReadAllText(args[1]); }); return 0; }
         if (args[0] == "move") { File.Move(args[1], args[2]); return 0; }
+        if (args[0] == "wait-move")
+        {
+            Console.WriteLine("ready"); Console.Out.Flush(); Console.ReadLine();
+            File.Move(args[1], args[2]); Console.WriteLine("moved"); Console.Out.Flush(); Console.ReadLine(); return 0;
+        }
         if (args[0] == "host-scope-state")
         {
             Probe("hostScopeStateWrite", delegate {

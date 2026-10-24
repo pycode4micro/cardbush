@@ -294,6 +294,7 @@ async function executeRuntimeCommand(
       messages: [], tools: [], metadata: { contextWindowTokens: selected.maxContextTokens },
     } } }, signal);
   }
+  if (command.kind === 'runtime.local_activity') return { active: host.hasActiveWork() };
   if ([GET_RUNTIME_CAPABILITIES_COMMAND, GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
     ].some(kind => kind === command.kind) || !host.capabilities().supportedCommands.includes(command.kind) || host.isExtensionCommand(command.kind) || command.kind.startsWith('plugin.')) {
     await optionalRuntimePlugins.refresh();
@@ -549,7 +550,8 @@ function withBundledAppsServer(input: unknown): unknown {
       type: 'runtime_browser_connection',
       requestedMode: appsConfig.chromeConnectionMode,
       effectiveMode: appsConfig.chromeConnectionMode,
-      reason: remoteDebugging ? 'advanced_remote_debugging' : integrated ? 'desktop_browser_router' : 'paired_loopback_websocket',
+      reason: remoteDebugging ? 'advanced_remote_debugging' : integrated ? 'desktop_browser_router' : 'configured_loopback_websocket',
+      connectionStatus: 'unverified',
     }));
   }
   return {
