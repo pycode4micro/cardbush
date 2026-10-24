@@ -64,7 +64,7 @@ test('completed handoffs project only at pressure, preserve originals and replay
   const journal = [], persistence = { load: () => structuredClone(journal), append: item => journal.push(structuredClone(item)) };
   const store = new SessionStore({ persistence }), old = seed(store), original = structuredClone(old.messages);
   assert.ok(assembleContext({ session: store.snapshot(sessionId) }).messages.some(m => m.role === 'tool' && m.toolCallId === 'download'));
-  const seen = [], host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false,
+  const seen = [], host = new InMemoryRuntimeHost({ preferPreparedToolHandoffs: true, sessionStore: store, registerDefaultWorkspaceTools: false,
     provider: { countInputTokens: count, async *stream(input) { seen.push(structuredClone(input)); yield* done(input); } } });
   t.after(() => shutdown(host));
   const result = await host.runSessionTurn(request());
@@ -91,7 +91,7 @@ test('actual final-display tool prepares with memory off and does not compact a 
   registry.register({ definition: { name: 'fixture_download', description: 'Offline fixture only.', inputSchema: { type: 'object' } },
     manifest: { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
     decodeInput: x => x, execute: () => { executed++; return { asset: 'A-17', log: 'trace '.repeat(11000) }; } });
-  const store = new SessionStore(), host = new InMemoryRuntimeHost({ sessionStore: store, toolRegistry: registry, dataRoot: root,
+  const store = new SessionStore(), host = new InMemoryRuntimeHost({ preferPreparedToolHandoffs: true, sessionStore: store, toolRegistry: registry, dataRoot: root,
     durableRecovery: false, durableSessions: false, durableCoordination: false, durableSubagentTasks: false,
     registerDefaultWorkspaceTools: false, provider: { countInputTokens: input => input.turnId === 'second' && !input.messages.some(m => m.content.includes('<tool_summary'))
       ? { source: 'provider', inputTokens: 13000 } : count(input), async *stream(input) {
@@ -112,13 +112,13 @@ test('actual final-display tool prepares with memory off and does not compact a 
   assert.equal(executed, 1); assert.ok(store.snapshot(sessionId).turns[0].contextToolHandoff);
 });
 
-test('default handoff path preserves append-only cache prefixes except at the actual compaction boundary', async t => {
+test('legacy handoff path preserves append-only cache prefixes except at the actual compaction boundary', async t => {
   const root = temp(t), registry = new ToolRegistry(), store = new SessionStore();
   let businessCalls = 0, initialRounds = 0;
   registry.register({ definition: { name: 'fixture_download', description: 'Offline fixture only.', inputSchema: { type: 'object' } },
     manifest: { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
     decodeInput: x => x, execute: () => { businessCalls++; return { asset: 'A-17', log: 'trace '.repeat(11000) }; } });
-  const seen = [], host = new InMemoryRuntimeHost({ sessionStore: store, toolRegistry: registry, dataRoot: root,
+  const seen = [], host = new InMemoryRuntimeHost({ preferPreparedToolHandoffs: true, sessionStore: store, toolRegistry: registry, dataRoot: root,
     durableRecovery: false, durableSessions: false, durableCoordination: false, durableSubagentTasks: false,
     registerDefaultWorkspaceTools: false,
     provider: {
@@ -191,7 +191,7 @@ for (const preferPreparedToolHandoffs of [false, true]) test(`fallback still com
 
 test('no-progress handoff is not persisted and falls back to ordinary bounded compression', async t => {
   const store = new SessionStore(); seed(store); let calls = 0;
-  const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false,
+  const host = new InMemoryRuntimeHost({ preferPreparedToolHandoffs: true, sessionStore: store, registerDefaultWorkspaceTools: false,
     provider: { countInputTokens: async () => ({ source: 'provider', inputTokens: 13000 }), async *stream(input) {
       assert.ok(maintenance(input)); yield* compact(input, `cp-${++calls}`);
     } } });
@@ -246,7 +246,7 @@ test('recovery between session projection commit and completion receipt does not
     }
     return append(identity, value);
   };
-  const first = new InMemoryRuntimeHost({ sessionStore: store, checkpointStore: checkpoints, eventLog: events,
+  const first = new InMemoryRuntimeHost({ preferPreparedToolHandoffs: true, sessionStore: store, checkpointStore: checkpoints, eventLog: events,
     registerDefaultWorkspaceTools: false, provider: { countInputTokens: count, async *stream() { throw Error('Must not dispatch before crash.'); } } });
   t.after(() => shutdown(first)); await first.runSessionTurn(request()).catch(() => {});
   assert.ok(saved?.checkpoint);
@@ -254,7 +254,7 @@ test('recovery between session projection commit and completion receipt does not
   const restoredStore = new SessionStore({ persistence: { load: () => saved.journal, append: e => saved.journal.push(e) } });
   const restoredEvents = new InMemoryRuntimeEventLog({ persistence: { load: () => saved.events, append: e => saved.events.push(e) } });
   let calls = 0;
-  const host = new InMemoryRuntimeHost({ sessionStore: restoredStore, checkpointStore: recovered, eventLog: restoredEvents,
+  const host = new InMemoryRuntimeHost({ preferPreparedToolHandoffs: true, sessionStore: restoredStore, checkpointStore: recovered, eventLog: restoredEvents,
     registerDefaultWorkspaceTools: false, provider: { countInputTokens: count, async *stream(input) {
       calls++; assert.equal(maintenance(input), false); assert.equal(input.messages.some(m => m.role === 'tool'), false); yield* done(input);
     } } });
@@ -369,7 +369,7 @@ const recordedLong = JSON.parse(readFileSync(new URL('./fixtures/prepared-compac
 for (const layout of ['normal', 'overflow']) test(`recorded long ${layout} handoffs survive four pressure cycles and retain every original correction`, async t => {
   const scenario = longScenarioForLayout(layout), store = new SessionStore(), seen = [];
   store.ensureSession(sessionId);
-  const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false,
+  const host = new InMemoryRuntimeHost({ preferPreparedToolHandoffs: true, sessionStore: store, registerDefaultWorkspaceTools: false,
     provider: { countInputTokens: count, async *stream(input) {
       assert.equal(maintenance(input), false, 'Reusable recorded handoffs do not need another model compaction.');
       seen.push(structuredClone(input)); yield* done(input, 'Records received. Awaiting the next instruction.');

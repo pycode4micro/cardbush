@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, readdir, writeFile, appendFile, readFile } from 'no
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { FileSessionEventPersistence, SessionStore, InMemoryRuntimeHost, ToolExecutionStore } from '../dist/index.js';
-import { sessionSummarySchema, sessionHistoryPageSchema, summarizeSession } from '@cardbush/bush-protocol';
+import { sessionSummarySchema, sessionHistoryPageSchema, summarizeSession, finalReplySessionSnapshot } from '@cardbush/bush-protocol';
 
 const turn = (i, content = `question ${i}`) => ({ turnId: `turn-${i}`, turnSequence: i,
   createdAt: new Date(1700000000000 + i * 1000).toISOString(), completedAt: new Date(1700000000500 + i * 1000).toISOString(),
@@ -116,4 +116,32 @@ test('history command batches only selected tool summaries and omits model-only 
   assert.equal(page.snapshot.turns.length, 1); assert.equal(page.snapshot.turns[0].turnId, 'turn-3');
   assert.equal(page.toolExecutions.length, 1); assert.equal(page.toolExecutions[0].turnId, 'turn-3');
   assert.equal(JSON.stringify(page).includes('private reasoning'), false);
+  const replies = sessionHistoryPageSchema.parse(await host.sendCommand({ kind: 'runtime.get_session_history', payload: {
+    sessionId: 's', limit: 1, messageProjection: 'final_replies' } }));
+  assert.deepEqual(replies.toolExecutions, []); assert.deepEqual(replies.contextCompactions, []);
+  assert.equal(replies.nextCursor.beforeTurnSequence, 3);
+  assert.deepEqual(replies.snapshot.turns[0].messages.map(entry => entry.message.content), ['question 3', 'answer 3']);
+});
+
+test('final reply projection preserves failed and stopped turns without leaking tool work or hidden inputs', () => {
+  const base = turn(1), messages = [
+    { message: { role: 'user', content: 'User question' } },
+    { message: { role: 'user', visibility: 'internal', content: 'INTERNAL_CONTEXT' } },
+    { message: { role: 'assistant', content: 'PROGRESS_TEXT', toolCalls: [{ id: 'c', name: 'read_file', argumentsText: 'TOOL_ARGUMENTS' }] } },
+    { message: { role: 'tool', toolCallId: 'c', content: 'TOOL_RESULT' } },
+    { message: { role: 'assistant', content: 'Final answer', toolCalls: [], reasoningContent: 'PRIVATE_REASONING', providerReplay: { data: 'PRIVATE_REPLAY' } } },
+    { metadata: { runtimeMaintenance: 'context_compaction' }, message: { role: 'assistant', content: 'COMPACTION_TEXT', toolCalls: [] } },
+  ].map((entry, i) => ({ ...base.messages[0], ...entry, messageId: 'm' + i, messageIndex: i }));
+  const snapshot = { protocol: 'bush.session_snapshot.v1', sessionId: 's', revision: 1,
+    createdAt: base.createdAt, updatedAt: base.completedAt, supersededMessageIds: [], turns: [{ ...base, messages, contextSummary: 'SUMMARY_TEXT' }] };
+  const projected = finalReplySessionSnapshot(snapshot);
+  assert.deepEqual(projected.turns[0].messages.map(entry => entry.message.content), ['User question', 'Final answer']);
+  assert.doesNotMatch(JSON.stringify(projected), /INTERNAL_|PROGRESS_|TOOL_|PRIVATE_|COMPACTION_|SUMMARY_/);
+  assert.equal(snapshot.turns[0].messages.length, 6, 'the append-only source stays intact');
+  for (const status of ['failed', 'stopped', 'awaiting_user_action']) {
+    const incomplete = finalReplySessionSnapshot({ ...snapshot, turns: [{ ...base, status, messages: messages.slice(0, 4) }] });
+    assert.equal(incomplete.turns[0].status, status);
+    assert.deepEqual(incomplete.turns[0].messages.map(entry => entry.message.content), ['User question']);
+  }
+  assert.deepEqual(finalReplySessionSnapshot({ ...snapshot, supersededMessageIds: ['m4'] }).turns[0].messages.map(entry => entry.message.content), ['User question']);
 });

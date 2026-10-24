@@ -53,11 +53,14 @@ export interface ToolAdmissionContext<TInput = unknown> {
   };
 }
 
+/** Reports actual permission waits, including calls delegated through another tool. */
+export type ToolPermissionWaitObserver = (executionToolCallId: string, waiting: boolean) => void;
+
 export interface ToolHandlerContext<TInput = unknown>
   extends ToolAdmissionContext<TInput> {
   capabilityIds: string[];
   /** Internal calls share the caller's lifecycle unless record is true (independent background receipt). */
-  invokeTool: (name: string, input: unknown, options?: { signal?: AbortSignal; record?: boolean; onHooks?: (messages: string[], stop?: string) => void; scheduling?: ToolSchedulingAdmission }) => Promise<unknown>;
+  invokeTool: (name: string, input: unknown, options?: { signal?: AbortSignal; record?: boolean; onHooks?: (messages: string[], stop?: string) => void; onPermissionWait?: ToolPermissionWaitObserver; scheduling?: ToolSchedulingAdmission }) => Promise<unknown>;
   recordWorkspaceChange: (change: WorkspaceChange) => void;
 }
 

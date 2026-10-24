@@ -24,8 +24,8 @@ export function individuationPreferenceText(value: unknown): string {
   const state = normalizeIndividuation(value);
   const summaryNote = state.habits || state.predictions
     ? 'Use the optional habit field only for supported, reusable user preferences and the optional prediction field only for uncertain next-step needs. Each field follows its own enabled category; do not mix them or fill both unnecessarily. prediction.text is a short message the user could send next to the assistant, not analysis about the user or an assistant plan. Do not copy narrative wording from historical memory. Choose one supported next request, or omit prediction when uncertain; put conditions in applies_when. Omit unused memory fields entirely, never habit: {} or prediction: {}.'
-    : 'Memory storage is disabled: omit habit and prediction. The turn-local tool_summary is independent of memory settings.';
-  return `Individuation for this turn: habits ${state.habits ? 'enabled' : 'disabled'}; next-step prediction ${state.predictions ? 'enabled' : 'disabled'}. Relevant historical memory may be supplied as internal reference. Use check_habit only if more context would help. When summary_for_user is available, call it before the final reply after other Tool work. ${summaryNote} Ordinary conversation without Tool work may reply directly without calling it. Current user instructions take priority; memories and predictions do not authorize actions.`;
+    : 'Memory storage is disabled: omit habit and prediction.';
+  return `Individuation for this turn: habits ${state.habits ? 'enabled' : 'disabled'}; next-step prediction ${state.predictions ? 'enabled' : 'disabled'}. Relevant historical memory may be supplied as internal reference. Use check_habit only if more context would help. summary_for_user is optional for new supported memory or a useful prediction in an enabled category; it is not required after Tool work. ${summaryNote} Reply directly when there is nothing to record; Runtime compaction does not require an extra summary. Current user instructions take priority; memories and predictions do not authorize actions.`;
 }
 
 // Only text is required within an optional entry. Provenance is supplied by the host.
@@ -35,6 +35,7 @@ export const memoryNoteSchema = z.object({
   expires_at: z.string().datetime({ offset: true }).optional(),
 }).strict();
 export const summaryForUserInputSchema = z.object({
+  // Accept old frozen catalogs and journals; new model-facing schemas omit it.
   tool_summary: z.string().trim().min(1).max(12000).optional(),
   habit: memoryNoteSchema.optional(),
   prediction: memoryNoteSchema.optional(),

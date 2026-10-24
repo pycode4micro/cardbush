@@ -4,6 +4,17 @@ export type RuntimeToolLifecycleEvent = Extract<RuntimeEvent, {
   kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled';
 }>;
 
+/** Share the stable activity choice across App and CLI. Settling a parallel
+ * batch must not make the title jump back through already finished work. */
+export function selectToolActivity<T extends { id: string; state: string }>(executions: readonly T[], preferredId?: string): T | undefined {
+  const preferred = executions.find(item => item.id === preferredId);
+  return executions.find(item => item.state === 'awaiting_permission' || item.state === 'awaiting_solution')
+    ?? (preferred && ['running', 'queued'].includes(preferred.state) ? preferred : undefined)
+    ?? executions.find(item => item.state === 'running')
+    ?? executions.find(item => item.state === 'queued')
+    ?? preferred ?? executions[executions.length - 1];
+}
+
 /** Presentation facts shared by App and CLI. A successful transport return can
  * still contain a declared tool failure; prose never determines success. */
 export function runtimeToolLifecycle(event: RuntimeToolLifecycleEvent) {

@@ -1,7 +1,7 @@
 import { createInterface, type Interface } from 'node:readline';
 import { PassThrough, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { providerStreamActivity, providerActivityLabel, runtimeToolLifecycle, summarizeTaskPlanWaiting, type RuntimeEvent, type TaskPlan } from '@cardbush/bush-protocol';
+import { providerStreamActivity, providerActivityLabel, summarizeTaskPlanWaiting, type RuntimeEvent, type TaskPlan, type CommittedTurn } from '@cardbush/bush-protocol';
 import type { ChatTerminal } from './agentChatCli.mjs';
 import { ChatMarkdown, chatHeader, chatInputChunk, terminalClip, terminalCursor, terminalRows, terminalStyle, terminalText, terminalWidth, type ChatIdentity } from './agentChatPresentation.mjs';
 import { ChatPasteDecoder, ChatPastes } from './agentChatInput.mjs';
@@ -9,6 +9,7 @@ import { applyChatSuggestion, choiceSuggestions, commandSuggestions, type ChatIn
 import { ChatLiveViewport, chatInputViewport, type ChatFooter } from './agentChatViewport.mjs';
 import { terminalSupportsHyperlinks, type ChatReferenceRenderer } from './agentChatLinks.mjs';
 import { runChatShell } from './agentChatShell.mjs';
+import { ChatToolActivity, isChatToolEvent } from './agentChatTools.mjs';
 
 type Input = NodeJS.ReadStream;
 type Output = NodeJS.WriteStream;
@@ -58,11 +59,7 @@ export class NativeChatTerminal implements ChatTerminal {
   #activity = 'Working';
   #compacting = false;
   #frame = 0;
-  #tools = new Map<string, string>();
-  #toolCount = 0;
-  #failedCount = 0;
-  #seenTools = new Set<string>();
-  #finishedTools = new Set<string>();
+  #tools = new ChatToolActivity();
   #planSummary = '';
   #utf8 = new StringDecoder('utf8');
   #live?: ChatLiveViewport;
@@ -264,7 +261,7 @@ export class NativeChatTerminal implements ChatTerminal {
     // may have no local input history, so keep their prompt preview bounded.
     const line = this.#history.find(line => this.#pastes.expand(line) === text)
       ?? terminalClip(terminalText(text).replaceAll('\n', ' '), 1000);
-    this.#markdown.flush();
+    this.#markdown.flush(); this.#flushToolGroup();
     const prompt = '❯ ' + terminalText(line);
     this.#emit('\n' + (this.color ? chatInputChunk(prompt) : prompt) + '\n', this.#status);
   }
@@ -465,10 +462,23 @@ export class NativeChatTerminal implements ChatTerminal {
   #activityLabel() {
     const elapsed = this.#elapsed() / 1000;
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    const activity = this.#tools.size ? [...this.#tools.values()].at(-1)! + (this.#tools.size > 1 ? ` · ${this.#tools.size} tools` : '') : this.#activity;
+    const group = this.#tools.current();
+    const activity = group && !this.#compacting ? this.#toolGroupLabel(group, this.#width() - 14) : this.#activity;
     // Keep a margin at the right edge; resize compensation only clears this
     // owned status row. Completed transcript rows are never repainted.
     return `${frames[this.#frame++ % frames.length]} ${activity}${this.#runtimeStarted !== undefined ? ` · ${elapsed.toFixed(1)}s` : ''}`;
+  }
+  #toolGroupLabel(group: NonNullable<ReturnType<ChatToolActivity['current']>>, width: number) {
+    const suffix = ` · ${group.count} tool${group.count === 1 ? '' : 's'}` +
+      (group.failed ? ` · ${group.failed} failed` : '') + (group.cancelled ? ` · ${group.cancelled} cancelled` : '') + ' · /tools';
+    return terminalClip(group.selected.title, Math.max(8, width - terminalWidth(suffix))) + suffix;
+  }
+  #flushToolGroup() {
+    const group = this.#tools.takeGroup();
+    if (!group || !this.#controls) return;
+    this.#clearStatus();
+    const pending = group.pending ? ` · ${group.pending} pending` : '';
+    this.#emit(this.#style(terminalClip(`  ${group.failed ? '!' : '·'} ${this.#toolGroupLabel(group, this.#width() - 4 - pending.length)}${pending}`, this.#width()), 'dim') + '\n');
   }
   identify(identity: ChatIdentity, models: string[]) {
     this.#identity = identity; this.#models = models;
@@ -476,6 +486,23 @@ export class NativeChatTerminal implements ChatTerminal {
     else this.status(`\n${identity.name} · ${identity.model} · ${identity.permission}${identity.effort ? ` · Effort: ${identity.effort}` : ''}\n${identity.workspace ? `Workspace: ${identity.workspace}\n` : ''}Session: ${identity.sessionId}\n`);
   }
   updateModel(model: string, models: string[], effort?: string) { if (this.#identity) { this.#identity.model = model; this.#identity.effort = effort; } this.#models = models; }
+  resetSession() {
+    this.#markdown.end(); this.#tools.reset(); this.#planSummary = ''; this.#guidance.clear();
+    this.#queued = 0; this.#pendingInput = []; this.#savedDraft = undefined; this.#answerOpen = false;
+    this.#clearDraft(); this.#invalidateHints(); this.#live?.schedule();
+  }
+  /** Replay final prose without starting a timer or manufacturing live events. */
+  historyTurn(turn: CommittedTurn) {
+    this.status(`\nTurn ${turn.turnSequence} · ${turn.status} · /tools --turn ${turn.turnSequence}\n`);
+    for (const entry of turn.messages) {
+      if (entry.message.role === 'user') this.commitInput(entry.message.content);
+      else if (entry.message.role === 'assistant') {
+        if (this.#styledAnswers) { this.#markdown.write(entry.message.content); this.#markdown.end(); }
+        else this.#emit(terminalText(entry.message.content) + '\n', this.#output);
+      }
+    }
+    if (!turn.messages.some(entry => entry.message.role === 'assistant')) this.status('[No final reply in this turn]\n');
+  }
   #elapsed() {
     return Math.max(0, this.#runtimeStarted === undefined ? performance.now() - this.#started : (this.#runtimeCompleted ?? Date.now()) - this.#runtimeStarted);
   }
@@ -483,7 +510,7 @@ export class NativeChatTerminal implements ChatTerminal {
     if (input !== undefined) this.commitInput(input);
     this.#turn = true; this.#started = performance.now(); this.#runtimeStarted = undefined; this.#runtimeCompleted = undefined;
     this.#compacting = false;
-    this.#tools.clear(); this.#seenTools.clear(); this.#finishedTools.clear(); this.#toolCount = 0; this.#failedCount = 0; this.#activity = 'Waiting to start'; this.#planSummary = '';
+    this.#tools.reset(); this.#activity = 'Waiting to start'; this.#planSummary = '';
     if (this.interactive) {
       this.#emit('\n');
       if (!this.#controls) this.status('[Working]\n');
@@ -491,23 +518,24 @@ export class NativeChatTerminal implements ChatTerminal {
     }
   }
   finishTurn(outcome: 'completed' | 'stopped' | 'failed') {
-    this.#markdown.end(); this.#answerOpen = false;
+    this.#markdown.end(); this.#answerOpen = false; this.#flushToolGroup();
     this.#clearStatus(); clearInterval(this.#ticker); this.#ticker = undefined; this.#turn = false;
     if (this.interactive) {
       const duration = (this.#elapsed() / 1000).toFixed(1);
       const summary = `${outcome === 'completed' ? '✓ Completed' : outcome === 'stopped' ? '· Stopped' : '! Task failed'} · ${duration}s` +
-        (this.#toolCount ? ` · ${this.#toolCount} tool call${this.#toolCount === 1 ? '' : 's'}` : '') + (this.#failedCount ? ` · ${this.#failedCount} failure${this.#failedCount === 1 ? '' : 's'}` : '');
+        (this.#tools.count ? ` · ${this.#tools.count} tool call${this.#tools.count === 1 ? '' : 's'}` : '') + (this.#tools.failures ? ` · ${this.#tools.failures} failure${this.#tools.failures === 1 ? '' : 's'}` : '');
       this.#emit(this.#style(summary, outcome === 'completed' ? 'blue' : outcome === 'failed' ? 'error' : 'dim') + '\n');
     }
   }
   write(text: string) {
+    if (text.trim()) this.#flushToolGroup();
     this.#clearStatus();
     if (this.#turn && this.#styledAnswers) this.#markdown.write(text);
     else this.#emit(terminalText(text), this.#output);
     this.#answerOpen = !text.endsWith('\n');
   }
   status(text: string) {
-    this.#hideHints(); this.#markdown.flush(); this.#clearStatus();
+    this.#hideHints(); this.#markdown.flush(); this.#flushToolGroup(); this.#clearStatus();
     this.#emit(terminalText(text));
   }
   event(event: RuntimeEvent) {
@@ -523,18 +551,17 @@ export class NativeChatTerminal implements ChatTerminal {
       this.#markdown.end(); this.#answerOpen = false; this.#activity = 'Working';
     } else if (event.kind === 'reasoning_segment_started') this.#activity = 'Thinking';
     else if (event.kind === 'reasoning_segment_completed') this.#activity = 'Working';
-    else if (event.kind === 'tool_running' || event.kind === 'tool_returned' || event.kind === 'tool_failed' || event.kind === 'tool_cancelled') {
+    else if (isChatToolEvent(event)) {
+      if (!this.#tools.update(event)) return;
       this.#markdown.flush(); this.#clearStatus();
-      const tool = runtimeToolLifecycle(event), name = terminalText(tool.title);
-      if (this.#finishedTools.has(tool.id)) return;
-      if (!this.#seenTools.has(tool.id)) { this.#seenTools.add(tool.id); this.#toolCount++; }
-      if (tool.state === 'running') {
-        this.#tools.set(tool.id, name);
-        if (!this.#controls) this.status(`[Tool] ${name}\n`);
-      } else {
-        this.#tools.delete(tool.id); this.#finishedTools.add(tool.id);
-        if (tool.error) { this.#failedCount++; this.status(`[Tool failed] ${name}: ${tool.error.message}\n`); }
-        else if (this.interactive) this.#emit(this.#style(`  ${tool.state === 'cancelled' ? '· Cancelled' : '✓'} ${terminalClip(name, this.#width() - 12)}`, 'dim') + '\n');
+      // Redirected/dumb terminals remain append-only diagnostics. Interactive
+      // terminals keep the changing group inside their existing owned footer.
+      if (!this.#controls) {
+        const tool = this.#tools.tools.find(item => item.id === event.payload.toolCallId)!;
+        const name = terminalText(tool.title);
+        if (event.kind === 'tool_running') this.status(`[Tool] ${name}\n`);
+        else if (tool.error) this.status(`[Tool failed] ${name}: ${tool.error.message}\n`);
+        else if (tool.state === 'cancelled') this.status(`[Tool cancelled] ${name}\n`);
       }
     } else if (event.kind === 'context_compaction_started') { this.#compacting = true; this.#activity = 'Compacting context'; }
     else if (['context_compaction_completed', 'context_compaction_failed', 'context_compaction_cancelled'].includes(event.kind)) {
@@ -556,7 +583,7 @@ export class NativeChatTerminal implements ChatTerminal {
     const waiting = summarizeTaskPlanWaiting(plan);
     const summary = `Plan ${completed}/${plan.nodes.length}${current ? ` · ${current.step}` : waiting ? ` · Waiting: ${waiting.reason}` : ''}`;
     if (!detailed && (summary === this.#planSummary || !this.interactive)) return;
-    this.#planSummary = summary; this.#clearStatus();
+    this.#planSummary = summary; this.#flushToolGroup(); this.#clearStatus();
     this.#emit(this.#style('  ' + terminalClip(summary, this.#width() - 2), 'blue') + '\n');
     if (detailed) {
       for (const [index, node] of plan.nodes.entries()) this.status(`  ${node.status === 'completed' ? '✓' : node.status === 'in_progress' ? '›' : '○'} ${index + 1}. ${node.step}${node.waitingFor ? ` (${node.waitingFor})` : ''}\n`);
@@ -592,7 +619,7 @@ export class NativeChatTerminal implements ChatTerminal {
   }
   close() {
     this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); clearTimeout(this.#hintTimer); this.#suggestions = undefined;
-    this.#closed = true; clearInterval(this.#ticker); clearTimeout(this.#escapeTimer); this.#markdown.end(); this.#clearStatus();
+    this.#closed = true; clearInterval(this.#ticker); clearTimeout(this.#escapeTimer); this.#markdown.end(); this.#flushToolGroup(); this.#clearStatus();
     this.#input.off('data', this.#onData); this.#input.off('end', this.#onEnd); this.#status.off('resize', this.#resize);
     this.#decoder?.close(); this.#reader?.removeAllListeners('close'); this.#waiting?.(null); this.#reader?.close(); this.#keys?.destroy(); this.#promptOutput?.destroy();
     this.#live?.close();

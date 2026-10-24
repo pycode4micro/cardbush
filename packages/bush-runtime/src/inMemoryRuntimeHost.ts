@@ -5,7 +5,7 @@ import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
 import { ConversationJournal } from './conversationJournal.js';
-import { restoreSessionModelPolicy, systemPolicyIdentity } from './sessionModelPolicy.js';
+import { restoreSessionModelPolicy, systemPolicyIdentity, requestedSessionModelPolicyUpgrade } from './sessionModelPolicy.js';
 import { REALTIME_AGENT_TOOL_COMMAND, realtimeAgentToolRequestSchema } from '@cardbush/bush-protocol';
 import { REALTIME_CONTEXT_COMPACTION_COMMAND, realtimeContextRequestSchema } from '@cardbush/bush-protocol';
 import { compactRealtimeContext } from './realtimeContextCompaction.js';
@@ -28,7 +28,7 @@ import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { EXTRACT_RUNTIME_SESSION_COMMAND, FORK_RUNTIME_SESSION_COMMAND, sessionExtractionRequestSchema, forkRuntimeSessionRequestSchema } from '@cardbush/bush-protocol';
 import { extractSessionSource } from './sessionExtraction.js';
 import { registerDesignTool } from './designTool.js';
-import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COMMAND, sessionHistoryRequestSchema } from '@cardbush/bush-protocol';
+import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COMMAND, sessionHistoryRequestSchema, finalReplySessionSnapshot } from '@cardbush/bush-protocol';
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND,
@@ -255,7 +255,9 @@ import type { RuntimeInternalTaskOptions, RuntimeInternalTaskRunner } from './ru
 export { defaultRuntimeRetryDelayMs, type RuntimeRetryContext } from './runtimeRetry.js';
 
 export interface InMemoryRuntimeHostOptions {
-  /** Enabled by default. False retains on-demand-only behavior for controlled comparisons; no Tool schema changes. */
+  /** Default path: derive handoffs from recorded tools, without model preparation. */
+  preferRecordedToolHandoffs?: boolean;
+  /** Legacy model-authored path, opt-in for controlled comparisons. */
   preferPreparedToolHandoffs?: boolean;
   commandSandbox?: import('./commandSandboxPolicy.js').CommandSandboxConfiguration;
   loadCommandSandbox?: () => Promise<import('./commandSandboxPolicy.js').CommandSandboxConfiguration>;
@@ -358,6 +360,7 @@ export class InMemoryRuntimeHost {
   readonly #recovery: RuntimeRecoveryCoordinator;
   readonly #sessions: RuntimeSessionCoordinator;
   readonly #preferPreparedToolHandoffs: boolean;
+  readonly #preferRecordedToolHandoffs: boolean;
   readonly #sessionNow: () => string;
   readonly #toolExecutions: ToolExecutionStore;
   readonly #taskWorkspaces?: TaskWorkspaceManager;
@@ -431,7 +434,9 @@ export class InMemoryRuntimeHost {
     this.#remoteAgents = options.remoteAgents;
     this.#workspaceRedo = new WorkspaceRedoStore(options.dataRoot ? join(options.dataRoot, 'workspace-redo') : undefined);
     this.#provider = options.provider;
-    this.#preferPreparedToolHandoffs = options.preferPreparedToolHandoffs !== false;
+    this.#preferPreparedToolHandoffs = options.preferPreparedToolHandoffs === true;
+    // Honor explicit legacy comparison switches; otherwise use recorded facts.
+    this.#preferRecordedToolHandoffs = options.preferRecordedToolHandoffs ?? options.preferPreparedToolHandoffs === undefined;
     this.#requestBackgroundPermission = options.requestBackgroundPermission;
     this.#eventLog =
       options.eventLog ?? new InMemoryRuntimeEventLog(options.eventLogOptions);
@@ -1182,6 +1187,8 @@ export class InMemoryRuntimeHost {
         const tail = page.summary.metadata?.agentRole === 'child' && input.cursor
           ? await this.#sessions.historyPage({ sessionId: input.sessionId, limit: 1 }, signal) : page;
         const metadata = await this.#sessionPresentationMetadata(input.sessionId, page.summary.metadata, tail?.snapshot.turns.at(-1));
+        if (input.messageProjection === 'final_replies') return { ...page, summary: { ...page.summary, metadata },
+          snapshot: finalReplySessionSnapshot({ ...page.snapshot, metadata }), toolExecutions: [], contextCompactions: [] };
         return { ...page, summary: { ...page.summary, metadata }, snapshot: conversationSessionSnapshot({ ...page.snapshot, metadata }),
           toolExecutions: this.#toolExecutions.listTurnsSummaries(input.sessionId, ids)
             .filter(record => record.actionManifest?.operation !== 'terminal.completion'),
@@ -1560,6 +1567,7 @@ export class InMemoryRuntimeHost {
         this.#cacheCleanupTimer = undefined;
         this.#pluginBackground.stop();
         for (const controller of this.#activeTurnControllers.values()) controller.abort();
+        await this.#workspaceTerminals.close();
         for (const id of this.#extensions.keys()) this.removeExtension(id);
         await Promise.allSettled([...this.#pluginStartedSessions].filter(sessionId => ![...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId)).map(sessionId => this.#pluginHooks.closeSession(sessionId)));
         return { accepted: true, activeTurns: this.#activeTurns.size };
@@ -1727,7 +1735,10 @@ export class InMemoryRuntimeHost {
     options: { signal?: AbortSignal },
   ): Promise<RuntimeEvent> {
     const candidate = runtimeSessionTurnRequestSchema.parse(input);
-    restoreSessionModelPolicy(candidate, this.#sessions.modelContract(candidate.sessionId));
+    let savedPolicy = this.#sessions.modelContract(candidate.sessionId);
+    const upgradedPolicy = requestedSessionModelPolicyUpgrade(candidate, savedPolicy);
+    if (upgradedPolicy && savedPolicy) savedPolicy = this.#sessions.upgradeModelContract(candidate.sessionId, savedPolicy.version, upgradedPolicy);
+    restoreSessionModelPolicy(candidate, savedPolicy);
     if (candidate.metadata.agentRole !== 'child') {
       const children = new Map(this.#subagentTasks.list(candidate.sessionId).map(task => [task.childSessionId, task]));
       const updates = [...children.values()].flatMap(task => {
@@ -2167,6 +2178,7 @@ export class InMemoryRuntimeHost {
       state: ContextCompactionState,
       pressure: ContextPressure,
       preparedTurnIds?: string[],
+      method: 'checkpoint' | 'prepared_tool_handoff' | 'recorded_tool_handoff' = 'checkpoint',
     ) => {
       if (activeContextCompaction) return;
       const hooks = await runHook('PreCompact', { signal: input.signal, trigger: 'auto' });
@@ -2197,7 +2209,7 @@ export class InMemoryRuntimeHost {
           ...(pressure.countFailure ? { countFailure: pressure.countFailure } : {}),
           precedingTurnCount: state.unsummarizedTurnIds.length,
           activeTurnIncluded: state.activeTurn !== undefined,
-          method: preparedTurnIds ? 'prepared_tool_handoff' : 'checkpoint',
+          method,
           ...(preparedTurnIds ? { preparedTurnIds } : {}),
           ...(state.activeTurn
             ? { activeThroughMessageId: state.activeTurn.throughMessageId }
@@ -2261,7 +2273,7 @@ export class InMemoryRuntimeHost {
     const completeContextCompaction = (
       checkpoint: { summaries: Array<{ turnId: string }>; activeTurn?: ContextCheckpointInput['activeTurn'] },
       pressure?: ContextPressure,
-      method: 'checkpoint' | 'prepared_tool_handoff' = 'checkpoint',
+      method: 'checkpoint' | 'prepared_tool_handoff' | 'recorded_tool_handoff' = 'checkpoint',
       admissionTargetInputTokens?: number,
     ) => {
       if (!activeContextCompaction) return;
@@ -2520,7 +2532,8 @@ export class InMemoryRuntimeHost {
         // never from stale recovery-request bytes or a second model summary.
         if (!preparedProjectionChecked && input.sessionCommit && !compactionTransaction) {
           const started = priorContextCompactionEvents.find(event => event.kind === 'context_compaction_started' &&
-            event.payload.compactionId === activeContextCompaction?.compactionId && event.payload.method === 'prepared_tool_handoff');
+            event.payload.compactionId === activeContextCompaction?.compactionId &&
+            (event.payload.method === 'prepared_tool_handoff' || event.payload.method === 'recorded_tool_handoff'));
           if (!activeContextCompaction || started?.kind === 'context_compaction_started') {
             preparedProjectionChecked = true;
             const session = this.#sessions.snapshot(request.sessionId)!;
@@ -2534,7 +2547,7 @@ export class InMemoryRuntimeHost {
               if (ids.length && ids.every(id => session.turns.find(turn => turn.turnId === id)?.contextToolHandoff)) {
                 compactionInputTokensBefore = started.payload.estimatedInputTokens;
                 const measured = await this.#measureContextPressure(request, messages, providerState, input.signal);
-                completeContextCompaction({ summaries: ids.map(turnId => ({ turnId })) }, measured, 'prepared_tool_handoff');
+                completeContextCompaction({ summaries: ids.map(turnId => ({ turnId })) }, measured, started.payload.method);
                 forceContextCompaction = false;
                 const stopped = await resumeAfterCompaction();
                 if (stopped !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: stopped } });
@@ -2594,8 +2607,10 @@ export class InMemoryRuntimeHost {
                 details: { message: 'The unchanged compacted request reached the context limit again before new work was added. Another identical compaction was not started; original history is preserved.',
                   estimatedPromptTokens: pressure.estimatedPromptTokens } });
             }
-            if (this.#preferPreparedToolHandoffs && !activeContextCompaction) {
+            if ((this.#preferRecordedToolHandoffs || this.#preferPreparedToolHandoffs) && !activeContextCompaction) {
+              const method = this.#preferRecordedToolHandoffs ? 'recorded_tool_handoff' : 'prepared_tool_handoff';
               const prepared = this.#sessions.prepareToolHandoffContext({ sessionId: request.sessionId,
+                method,
                 prefix: input.sessionCommit.prefixMessages,
                 current: projectActiveTurnContext({ turnId: request.turnId, inputMessages: input.sessionCommit.inputMessages,
                   generatedMessages: sourceGenerated, checkpoint: activeContextCheckpoint }),
@@ -2608,7 +2623,7 @@ export class InMemoryRuntimeHost {
                   measured.estimatedPromptTokens <= contextCompactionTarget(pressure) &&
                   (!measured.requestBody || measured.requestBody.bytes < measured.requestBody.maxBytes * 0.875)) {
                   const ids = prepared.summaries.map(item => item.turnId);
-                  const stopped = await beginContextCompaction({ ...state, unsummarizedTurnIds: ids, activeTurn: undefined }, pressure, ids);
+                  const stopped = await beginContextCompaction({ ...state, unsummarizedTurnIds: ids, activeTurn: undefined }, pressure, ids, method);
                   if (stopped !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: stopped } });
                   // Persist the started lifecycle before the other journal is
                   // changed, so recovery does not supersede its pending receipt.
@@ -2619,7 +2634,7 @@ export class InMemoryRuntimeHost {
                     expectedRevision: prepared.expectedRevision, summaries: prepared.summaries });
                   messages = prepared.context.messages;
                   compactionInputTokensBefore = pressure.estimatedPromptTokens;
-                  completeContextCompaction({ summaries: prepared.summaries }, measured, 'prepared_tool_handoff');
+                  completeContextCompaction({ summaries: prepared.summaries }, measured, method);
                   forceContextCompaction = false;
                   const hookStop = await resumeAfterCompaction();
                   if (hookStop !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: hookStop } });

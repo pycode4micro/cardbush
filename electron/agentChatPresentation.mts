@@ -84,6 +84,7 @@ export function chatHeader(value: ChatIdentity, columns: number, color: boolean)
     row('/model model & effort /settings shared App settings'),
     row('/help commands        /quit exit (/exit also works)'),
     row('/artifact turn files  /source supporting evidence'),
+    row('/session switch chat  /tools execution details'),
     row('/shell native shell   !command run a local command'),
     row('/ commands & skills   @ workspace files   Tab complete'),
   ].join('\n') + '\n' + border('╰' + '─'.repeat(width - 2) + '╯') + '\n' +

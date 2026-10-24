@@ -27,6 +27,7 @@ export type SessionHistoryCursor = z.infer<typeof sessionHistoryCursorSchema>;
 export const sessionHistoryRequestSchema = z.object({
   sessionId: z.string().min(1), limit: z.number().int().min(1).max(100).default(SESSION_HISTORY_PAGE_SIZE),
   cursor: sessionHistoryCursorSchema.optional(),
+  messageProjection: z.enum(['conversation', 'final_replies']).optional(),
 });
 export type SessionHistoryRequest = z.infer<typeof sessionHistoryRequestSchema>;
 export const sessionHistoryPageSchema = z.object({
@@ -51,6 +52,29 @@ export function sessionMessageExcerpt(entry: SessionMessage) {
   if (entry.message.role !== 'user' && entry.message.role !== 'assistant') return [];
   return [{ id: entry.messageId, role: entry.message.role, text: (entry.message.role === 'user'
     ? authoredPromptContent(entry.message.content, entry.metadata) : entry.message.content).slice(0, entry.message.role === 'user' ? 4000 : 512) }];
+}
+
+/** A compact transcript, not model context. Never promote tool commentary to a
+ * final reply when a turn failed or stopped during execution. */
+export function finalReplySessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
+  const superseded = new Set(snapshot.supersededMessageIds);
+  return { ...snapshot, turns: snapshot.turns.flatMap(turn => {
+    const visible = turn.messages.filter(entry => !superseded.has(entry.messageId) &&
+      !isInternalSessionMessage(entry) && entry.metadata?.runtimeMaintenance !== 'context_compaction');
+    const last = [...visible].reverse().find(entry => entry.message.role === 'assistant');
+    const finalId = last?.message.role === 'assistant' && !last.message.toolCalls.length && last.message.content.trim()
+      ? last.messageId : undefined;
+    const messages = visible.flatMap(entry => {
+      const message = entry.message;
+      if (message.role !== 'user' && entry.messageId !== finalId) return [];
+      // Do not transport hidden context, replay payloads, tool arguments or images.
+      return [{ ...entry, metadata: undefined, message: message.role === 'user'
+        ? { role: 'user' as const, content: authoredPromptContent(message.content, entry.metadata) }
+        : { role: 'assistant' as const, content: message.content, toolCalls: [] } }];
+    });
+    return messages.length ? [{ turnId: turn.turnId, turnSequence: turn.turnSequence, createdAt: turn.createdAt,
+      completedAt: turn.completedAt, status: turn.status, reason: turn.reason, messages, usage: {} }] : [];
+  }) };
 }
 
 export function summarizeSession(snapshot: SessionSnapshot): SessionSummary {

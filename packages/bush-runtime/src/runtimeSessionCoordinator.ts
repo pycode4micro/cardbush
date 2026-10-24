@@ -28,6 +28,7 @@ import {
 import { SessionStore, projectSessionSupersession, validateConversation } from "./sessionStore.js";
 import { isConversationPreference, latestConversationPreference } from "./conversationPreferences.js";
 import { findPreparedToolHandoff } from './preparedToolHandoff.js';
+import { findRecordedToolHandoff } from './recordedToolHandoff.js';
 
 export interface GeneratedMessageFact {
   messageId: string;
@@ -74,6 +75,10 @@ export class RuntimeSessionCoordinator {
 
   modelContract(sessionId: string) { return this.#store.modelContract(sessionId); }
   bindModelContract(sessionId: string, contract: SessionModelContract) { return this.#store.bindModelContract(sessionId, contract); }
+  upgradeModelContract(sessionId: string, expectedVersion: string, contract: SessionModelContract) {
+    if (this.#activeSessions.has(sessionId)) throw new Error('Model policies cannot migrate during an active Turn.');
+    return this.#store.upgradeModelContract(sessionId, expectedVersion, contract);
+  }
 
   hasSession(sessionId: string): boolean {
     return this.#store.hasSession(sessionId);
@@ -146,14 +151,14 @@ export class RuntimeSessionCoordinator {
   }
 
   prepareToolHandoffContext(input: { sessionId: string; prefix: ModelMessage[]; current: ModelMessage[];
-    coveredTurnIds?: string[]; coveredMessageIds?: string[] }) {
+    coveredTurnIds?: string[]; coveredMessageIds?: string[]; method?: 'recorded_tool_handoff' | 'prepared_tool_handoff' }) {
     const session = this.#contextSession(input.sessionId);
     const visible = new Set(assembleContextProjection({ ...input, session }).turns.map(turn => turn.turnId));
     const omitted = new Set([...session.supersededMessageIds, ...(input.coveredMessageIds ?? [])]);
     const summaries = session.turns.flatMap(turn => {
       if (!visible.has(turn.turnId) || turn.contextSummary || turn.contextToolHandoff ||
         turn.messages.some(item => omitted.has(item.messageId))) return [];
-      const toolHandoff = findPreparedToolHandoff(turn);
+      const toolHandoff = input.method === 'prepared_tool_handoff' ? findPreparedToolHandoff(turn) : findRecordedToolHandoff(turn);
       return toolHandoff ? [{ turnId: turn.turnId, toolHandoff }] : [];
     });
     if (!summaries.length) return;

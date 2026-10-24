@@ -46,7 +46,7 @@ Windows `auto` 模式自动加入宿主选定的 shell 安装目录为只读范�
 
 ## 各环境的实际范围
 
-- **Windows**：每次命令使用一次性 AppContainer 身份。对指定目录设置该身份的临时 ACL；子进程继承隔离。无网络能力时，Windows 阻止 socket 联网。命令挂起创建，在既有 Job Objects 资源约束就绪后才运行。不需要管理员初始化或关闭智能应用控制。此实现采用 AppContainer，和 Codex 官方文档中的专用低权限用户方案不同。
+- **Windows**：每次命令使用一次性 AppContainer 身份，私有目录不会在命令间共享。终端通过独立的目录 capability 复用相同读写范围的 ACL 准备；每条命令仍只获得本次已批准范围对应的 capability，网络权限单独设置，子进程继承隔离。无网络能力时，Windows 阻止 socket 联网。命令挂起创建，在既有 Job Objects 资源约束就绪后才运行。不需要管理员初始化或关闭智能应用控制。此实现采用 AppContainer，和 Codex 官方文档中的专用低权限用户方案不同。
 - **Linux**：从可信宿主 PATH 发现 bubblewrap，也可由管理员指定路径。先以当前服务账号运行固定无副作用探针，检查用户、进程、IPC、UTS 和所需网络命名空间；失败返回后端原因，不尝试关闭 AppArmor、SELinux 或容器策略。用户命令使用系统工具及必要配置的只读挂载，工作区直接绑定原路径，不挂载宿主 `/`、真实用户 HOME 或 `/run`。非 FHS 工具目录可由宿主显式配置只读根。当前没有额外 seccomp 系统调用过滤，不能宣称与 Codex Linux 沙盒等价。
 - **普通 SSH 项目**：客户端无法限制服务器上的 shell。启用 `required` 后，在没有远端沙盒能力握手的情况下拒绝 SSH `terminal_exec` 和 `terminal_write`，保留查询、停止等管理操作。可以连接由管理员开启沙盒的独立 CardBush Agent，在服务器上执行。
 - **独立云 Agent**：HTTP/SSH 只是连接方式，隔离由服务器 Runtime 实施。桌面设置或子代理参数不能关闭服务器的 `required` 策略；远程 Agent 也不继承本机目录授权。
@@ -59,11 +59,17 @@ Windows `auto` 模式自动加入宿主选定的 shell 安装目录为只读范�
 
 终端返回和 `terminal_list` 中的 `sandbox` 字段表示该终端要求的隔离后端及网络策略；未要求隔离时为 `null`。它与资源限制分开：Windows 继续使用原来的内存、CPU、进程数和进程树预算；Linux 不能据此宣称具有 Windows Job Object 同等的内核资源配额。
 
+Windows PowerShell 启动时核对实际位置与进程 cwd。不一致时，在已授权 cwd 上建立 `CardBushWorkspace:` 文件系统盘并切换位置；不为此授予父目录访问权限。相对路径和原生子进程使用正确的目录；需要将 PowerShell 位置传给原生程序时，使用 `(Get-Location).ProviderPath` 获取磁盘路径。初始化失败在执行用户命令前终止。终端回执的 `phase` 区分 `preparing_sandbox`、`executing`、`cleaning_up` 和 `finished`，权限准备及回收不会伪装成命令正在计算。
+
 ## 生命周期与构建
 
-Windows ACL 修改按执行账号串行处理，覆盖同时使用同一项目及嵌套项目的情况。命令退出或被停止后，仅清理本次身份的权限，不恢复可能覆盖其他会话更改的旧 ACL。杀死宿主导致其 `finally` 未执行时，Runtime 会启动清理入口。清理失败保留 `cardbush-sandbox-*/policy.json` 并返回错误。
+Windows ACL 修改按执行账号串行处理，覆盖同时使用同一项目及嵌套项目的情况。终端目录授权按规范化后的精确读/写根和原生宿主版本复用，最多保留 8 份闲置授权，闲置 60 秒后回收。扩大范围的临时批准不会被后续普通命令继承。首次授权与最终回收仍需遍历继承 ACL，但连续命令不再重复付出这部分成本。原生授权进程保持目录及祖先的宿主句柄，防止授权期间路径被改名或替换；这些句柄不传给沙箱，也不增加沙箱对父目录的访问权。工作区终端关闭及 Runtime 关闭会等待回收完成。
 
-机器断电或 Runtime 与原生宿主同时被强制杀死的自动恢复尚未实现。此时的一次性身份不会被后续命令复用，但可能遗留 ACL 和配置。确认对应任务已结束后，可由维护人员使用同版本原生宿主的 `--sandbox-cleanup <policy.json>` 清理；不要在运行期间删除日志，也不要直接恢复整棵项目的 ACL。
+权限范围切换会更新当前账号的授权代号，跨 Runtime、跨 Windows 登录会话协调。代号和范围摘要保存在宿主的 `HKCU\Software\CardBush\SandboxScopeGeneration`，不授予沙箱读写此键的能力。Windows 移动文件可能保留原 ACL，因此旧代号对应的 capability 不能再发给新命令：原生宿主在创建令牌前检查，过期时改用本次一次性身份完成隔离执行，并使缓存退出复用。已运行命令保留自己的原授权；不重复执行用户命令。
+
+命令退出或被停止后，仅清理本次独立身份的权限；授权到期仅清理该 capability，不恢复可能覆盖其他会话更改的旧 ACL。杀死命令宿主导致其 `finally` 未执行时，Runtime 会启动清理入口。清理失败保留 `cardbush-sandbox-*/policy.json` 并返回错误。目录授权进程独立于 libuv 的父进程退出清理组，通过固定的 Runtime 进程句柄和 stdin EOF 监测所有者，Runtime 崩溃后仍完成撤权。授权进程意外退出会终止依赖它的命令，Runtime 等待补偿清理；对应日志是 `cardbush-scope-*/policy.json`。
+
+机器断电或 Runtime 与所有原生宿主同时被强制杀死的自动恢复尚未实现。此时的一次性身份和随机目录 capability 不会被后续 Runtime 复用，但可能遗留 ACL 和配置。确认对应任务已结束后，可由维护人员使用同版本原生宿主的 `--sandbox-cleanup <policy.json>` 清理命令日志，或 `--sandbox-scope-cleanup <policy.json>` 清理目录授权日志；不要在运行期间删除日志，也不要直接恢复整棵项目的 ACL。
 
 原生构建先编译为不可变版本文件，再运行 `--capabilities` 检查；新文件不能启动或版本不兼容时，保留原来的发布清单。签名和 Windows 应用控制仍是发布要求；一次开发机测试通过不代表文件已获得发行签名或其他机器必定允许执行。旧版宿主不能用于强制沙盒，能力检查会拒绝。
 
@@ -73,7 +79,7 @@ Windows ACL 修改按执行账号串行处理，覆盖同时使用同一项目�
 
 ```sh
 npm run build --workspace @cardbush/bush-runtime
-node --test packages/bush-runtime/test/commandSandboxPolicy.test.mjs packages/bush-runtime/test/commandPermission.test.mjs packages/bush-runtime/test/commandSandboxLive.test.mjs packages/bush-runtime/test/executionSandbox.test.mjs
+node --test packages/bush-runtime/test/commandSandboxPolicy.test.mjs packages/bush-runtime/test/commandPermission.test.mjs packages/bush-runtime/test/commandSandboxLive.test.mjs packages/bush-runtime/test/executionSandbox.test.mjs packages/bush-runtime/test/windowsSandboxScope.test.mjs
 ```
 
 Windows 原生测试覆盖实际文件读写、只读目录、junction、子进程、socket、宿主环境变量隔离、cmd/PowerShell、并发嵌套根、停止清理和 ACL 恢复。后端缺失的测试验证不执行命令且释放资源额度。Linux 测试在 Linux 主机上真实运行 bubblewrap，缺失后端不会静默跳过或算作通过；停止还覆盖脱离进程组的后代。两端都实测了获批扩权、只读授权、拒绝、下一条命令恢复边界和完全访问。
@@ -83,6 +89,8 @@ Windows 原生测试覆盖实际文件读写、只读目录、junction、子进�
 2026-09-23 开发过程中，一轮合并回归的测试程序被 Windows 应用控制拦截，Code Integrity 事件 3077 和原生错误 4551 指向未满足签名要求，该轮 11 项未完成。提交前复核的 76 项本机回归全部通过，覆盖 Windows 沙盒、资源治理、审批、终端和 SSH；从 Runtime 包目录启动沙盒测试也通过。Linux 实机项在 Windows 上跳过，仍不能记为 Linux 验收通过。整个过程未关闭系统防护或更换启动方式绕过拦截；开发测试通过也不代表发行签名问题已解决。CI 已增加 Windows/Linux 真实沙盒测试，Linux 构建安装 bubblewrap。
 
 默认启用以当前主机实际探测通过为前提，后续仍需完成：更多 Linux 环境验收、发行签名、崩溃恢复、受保护配置和项目内已有硬链接的安全策略、更多语言运行时兼容性及大型项目 ACL 更新开销测量。Windows 系统已有的 AppContainer 公共资源权限仍可能可读；项目内的敏感文件也不会被此实现自动识别或隐藏。
+
+目录授权复用回归额外覆盖临时扩权后恢复边界、移出工作区的文件不能沿用旧授权、私有目录互相不可读、并发取消、闲置回收、目录身份固定、授权进程中断、Runtime 强制退出及关闭期间的待启动命令。2026-10-24 最终构建在本机两万文件目录执行同一 `cmd /c cd`：一次性授权策略为 3.13–3.17 秒，目录授权首次准备为 1.65 秒，复用后为 0.21–0.23 秒；最终撤权另耗 1.53 秒。该结果来自隔离临时目录，不改变用户项目权限或原会话。
 
 文件工具继续使用原有路径审批，不受本次子进程沙盒直接控制。插件 hooks、stdio MCP、浏览器、Computer Use 和宿主辅助进程的接入仍需逐项处理，不能把“命令沙盒”宣传成所有工具都已隔离。
 

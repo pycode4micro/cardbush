@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { createPlatformContext, findExecutable } from '@cardbush/platform';
+import { sandboxPowerShellArgs, type WindowsSandboxScopePool } from './windowsSandboxScope.js';
 
 const execFileAsync = promisify(execFile);
-const windowsCapabilities = new Map<string, Promise<void>>();
+const windowsCapabilities = new Map<string, Promise<boolean>>();
 const linuxCapabilities = new Map<string, Promise<void>>();
 
 /** Resolve only host configuration/PATH, never a command's environment or cwd. */
@@ -58,7 +59,7 @@ function linuxNamespaceArgs(network: ExecutionSandboxPolicy['network']): string[
     '--cap-drop', 'ALL', ...(network === 'disabled' ? ['--unshare-net'] : [])];
 }
 
-async function requireWindowsSandbox(host: string): Promise<void> {
+async function requireWindowsSandbox(host: string): Promise<boolean> {
   let pending = windowsCapabilities.get(host);
   if (!pending) {
     pending = (async () => {
@@ -66,6 +67,7 @@ async function requireWindowsSandbox(host: string): Promise<void> {
         const result = await execFileAsync(host, ['--capabilities'], { windowsHide: true, timeout: 10_000, maxBuffer: 4096 });
         const capabilities = JSON.parse(result.stdout);
         if (capabilities.protocol !== 'cardbush.process-host.v1' || capabilities.sandboxVersion !== 1) throw Error('Unsupported sandbox host.');
+        return capabilities.sandboxScopeVersion === 2;
       } catch {
         throw sandboxError('sandbox_unavailable', 'The Windows command sandbox is missing, incompatible, or blocked by application control. No command was started.');
       }
@@ -73,7 +75,7 @@ async function requireWindowsSandbox(host: string): Promise<void> {
     windowsCapabilities.set(host, pending);
     void pending.catch(() => windowsCapabilities.delete(host));
   }
-  await pending;
+  return await pending;
 }
 
 /** Host-owned policy. Never decoded from a model's tool arguments. */
@@ -98,7 +100,7 @@ export interface PreparedExecutionSandbox {
   env: NodeJS.ProcessEnv;
   windowsPolicyPath?: string;
   status: ExecutionSandboxStatus;
-  dispose: (nativeCleanupConfirmed?: boolean) => Promise<void>;
+  dispose: (nativeCleanupConfirmed?: boolean, scopeStale?: boolean) => Promise<void>;
 }
 
 /** No host tokens, private RPC addresses, preload scripts or shell profiles. */
@@ -131,6 +133,7 @@ export async function canonicalSandboxRoots(values: readonly string[]): Promise<
 export async function prepareExecutionSandbox(input: {
   executable: string; args: string[]; cwd: string; env?: NodeJS.ProcessEnv;
   policy: ExecutionSandboxPolicy; windowsHostPath?: string; signal?: AbortSignal;
+  scopePool?: WindowsSandboxScopePool;
 }): Promise<PreparedExecutionSandbox> {
   input.signal?.throwIfAborted();
   if (process.platform !== 'win32' && process.platform !== 'linux') {
@@ -156,13 +159,14 @@ export async function prepareExecutionSandbox(input: {
   if (writableRoots.length + readableRoots.length > 64) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox roots.');
   if (!(await stat(cwd)).isDirectory()) throw sandboxError('sandbox_policy_invalid', 'The command working directory does not exist.');
   if (process.platform === 'win32' && !input.windowsHostPath) throw sandboxError('sandbox_unavailable', 'The Windows sandbox host is unavailable.');
-  if (process.platform === 'win32') await requireWindowsSandbox(input.windowsHostPath!);
+  const supportsScopes = process.platform === 'win32' && await requireWindowsSandbox(input.windowsHostPath!);
   // Windows TEMP may use an 8.3 alias (for example RUNNER~1). The native
   // supervisor requires canonical roots, including its own private directory.
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'cardbush-sandbox-')));
   const privateRoot = join(directory, 'private');
   const windowsPolicyPath = process.platform === 'win32' ? join(directory, 'policy.json') : undefined;
   let prepared = false;
+  let scope: Awaited<ReturnType<WindowsSandboxScopePool['acquire']>> | undefined;
   try {
     if ([...writableRoots, ...readableRoots].some(root => within(root, directory))) {
       throw sandboxError('sandbox_policy_invalid', 'The writable scope would expose the sandbox supervisor state. Select a narrower project directory.');
@@ -175,9 +179,11 @@ export async function prepareExecutionSandbox(input: {
     const env = sandboxEnvironment(input.env ?? process.env, privateRoot);
     let executable = input.executable, args = [...input.args];
     if (windowsPolicyPath) {
+      args = sandboxPowerShellArgs(executable, args);
+      if (supportsScopes && input.scopePool) scope = await input.scopePool.acquire(input.windowsHostPath!, readableRoots, writableRoots);
       await writeFile(windowsPolicyPath, JSON.stringify({ version: 1,
         identity: `CardBush.Task.${randomUUID().replaceAll('-', '')}`, privateRoot,
-        readableRoots, writableRoots, network,
+        readableRoots, writableRoots, network, ...(scope ? { scope: scope.reference } : {}),
       }), { mode: 0o600, flag: 'wx' });
     } else {
       executable = await resolveLinuxSandboxExecutable(linuxExecutable);
@@ -200,18 +206,21 @@ export async function prepareExecutionSandbox(input: {
     return {
       executable, args, cwd, env, windowsPolicyPath,
       status: { backend: windowsPolicyPath ? 'windows-appcontainer' : 'linux-bubblewrap', network },
-      dispose: (nativeCleanupConfirmed = false) => disposal ??= (async () => {
-        if (windowsPolicyPath && !nativeCleanupConfirmed) {
-          // Also runs after supervisor termination, when native finally blocks
-          // cannot execute. Keep the journal if cleanup fails; do not hide it.
-          try { await execFileAsync(input.windowsHostPath!, ['--sandbox-cleanup', windowsPolicyPath], { windowsHide: true, timeout: 30_000, maxBuffer: 16_384 }); }
-          catch { throw sandboxError('sandbox_cleanup_failed', `Sandbox cleanup could not finish. Recovery journal retained at ${windowsPolicyPath}.`); }
-        }
-        await removeSandboxDirectory(directory);
+      dispose: (nativeCleanupConfirmed = false, scopeStale = false) => disposal ??= (async () => {
+        if (scopeStale) scope?.invalidate();
+        try {
+          if (windowsPolicyPath && !nativeCleanupConfirmed) {
+            // Also runs after supervisor termination, when native finally blocks
+            // cannot execute. Keep the journal if cleanup fails; do not hide it.
+            try { await execFileAsync(input.windowsHostPath!, ['--sandbox-cleanup', windowsPolicyPath], { windowsHide: true, timeout: 30_000, maxBuffer: 16_384 }); }
+            catch { throw sandboxError('sandbox_cleanup_failed', `Sandbox cleanup could not finish. Recovery journal retained at ${windowsPolicyPath}.`); }
+          }
+          await removeSandboxDirectory(directory);
+        } finally { scope?.release(); }
       })(),
     };
   } finally {
-    if (!prepared) await removeSandboxDirectory(directory);
+    if (!prepared) { scope?.release(); await removeSandboxDirectory(directory); }
   }
 }
 

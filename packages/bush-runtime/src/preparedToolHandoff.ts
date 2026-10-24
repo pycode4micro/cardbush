@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { summaryForUserInputSchema, type CommittedTurn, type TurnToolHandoff, type ModelMessage } from '@cardbush/bush-protocol';
+import { summaryForUserInputSchema, type CommittedTurn, type PreparedTurnToolHandoff as TurnToolHandoff, type ModelMessage } from '@cardbush/bush-protocol';
 import { collectCheckpointSkillExcerpts, validateCheckpointSkillEvidence, checkpointSkillReceiptEvidence,
   mergeCheckpointSkillExcerpts, packCheckpointSkillEvidence, checkpointSkillContractNotice } from './checkpointSkillEvidence.js';
 import { checkpointSkillConstraintsIssue } from './checkpointSkillConstraints.js';

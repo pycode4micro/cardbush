@@ -8,7 +8,11 @@ import type { ToolRegistry } from './toolRegistry.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 
 export const FILE_MEMO_WRITE_TOOL = 'remember_file';
-export interface FileMemoScope { sessionId?: string; turnId?: string; fileName?: string }
+export interface FileMemoScope {
+  sessionId?: string; turnId?: string;
+  /** Optional hint for legacy call-ID typo recovery only; never part of a valid link's identity. */
+  fileName?: string;
+}
 const identityPath = (path: string) => !path.startsWith('ssh:') && process.platform === 'win32' ? path.toLowerCase() : path;
 type MemoEntry = { record: ToolExecutionRecord; memo: FileMemo; fileNumber: number };
 
@@ -72,7 +76,6 @@ export async function resolveFileMemo(store: ToolExecutionStore, reference: stri
       && recordedReference !== memo.reference) {
     return { status: 'unresolved', reason: 'reference_mismatch' };
   }
-  if (scope.fileName && scope.fileName !== entry.memo.file.name) return { status: 'unresolved', reason: 'reference_mismatch' };
   try {
     const current = await readMemoFile(memo.file.path, 0, remote);
     return { memo, ...(recovered ? { recovered } : {}),
@@ -145,12 +148,11 @@ export async function validateFileMemoLinks(store: ToolExecutionStore, content: 
   const links = memoMarkdownLinks(content, 'cardbush-memo');
   const invalid: Array<{ reference: string; reason: string }> = [];
   const seen = new Set<string>();
-  for (const { reference, label } of links) {
+  for (const { reference } of links) {
     if (seen.has(reference)) continue;
     seen.add(reference);
     // New deliveries must be exact; the conservative legacy repair is for already-saved messages.
-    const fileName = label && /^[^\\/\r\n]+\.[a-z0-9]{1,12}$/i.test(label) ? label : undefined;
-    const result = await resolveFileMemo(store, reference, { sessionId: scope.sessionId, fileName }, remote);
+    const result = await resolveFileMemo(store, reference, { sessionId: scope.sessionId }, remote);
     if (result.status === 'unresolved' || result.status === 'unavailable') invalid.push({ reference, reason: result.status === 'unresolved' ? result.reason : 'file_unavailable' });
     if (invalid.length >= 10) break;
   }

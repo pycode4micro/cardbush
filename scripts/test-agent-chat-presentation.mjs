@@ -837,7 +837,7 @@ test('typing filters hints without flashing generic help or resetting an arrow s
   f.input.write('/'); f.input.write('s'); f.input.write('\x1b[B');
   await delay(100);
   const visible = terminalScreen(f.combined, 80).text;
-  assert.match(visible, /› \/source/);
+  assert.match(visible, /› \/session/);
   assert.doesNotMatch(f.stderr.slice(start), /Enter send/);
   f.input.write('unlikely'); await delay(100);
   assert.doesNotMatch(f.stderr.slice(start), /Enter send/);
@@ -985,9 +985,76 @@ test('App and CLI share failure interpretation, and returned errors are never re
   f.terminal.beginTurn(); f.terminal.event(event('tool_running', payload));
   f.terminal.event(event('tool_returned', payload)); f.terminal.event(event('tool_returned', payload));
   f.terminal.finishTurn('completed');
-  assert.match(f.stderr, /\[Tool failed\] 读取素材: 文件不可用/);
+  assert.match(f.stderr, /读取素材 · 1 tool · 1 failed · \/tools/);
+  assert.doesNotMatch(f.stderr, /文件不可用/, 'full errors are available through explicit inspection');
   assert.doesNotMatch(f.stderr, /✓ 读取素材/);
   assert.match(f.stderr, /1 tool call · 1 failure/);
+});
+
+test('continuous tools share one gray reason row, preserve the draft, and commit at prose boundaries', async t => {
+  const f = tty(t, { columns: 110, env: {} });
+  f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn();
+  f.input.write('alphaomega'); f.input.write('\x1b[D'.repeat(5));
+  const tools = ['Find animation guidance', 'Locate desktop folder', 'Read visualization guidance'];
+  for (const [index, title] of tools.entries()) {
+    const payload = { toolCallId: String(index), toolName: 'terminal_exec', display: { title } };
+    f.terminal.event(event('tool_queued', payload)); f.terminal.event(event('tool_running', payload));
+    await waitForPaint(() => terminalScreen(f.combined, 110).text.includes(title));
+    if (index === 1) f.terminal.event(event('tool_failed', { ...payload,
+      error: { code: 'sandbox_workspace', message: 'Long internal diagnostic: ' + 'not shown '.repeat(80) } }));
+    else f.terminal.event(event('tool_returned', payload));
+    await delay(40);
+  }
+  let screen = terminalScreen(f.combined, 110);
+  assert.match(screen.text, /Read visualization guidance · 3 tools · 1 failed · \/tools/);
+  assert.doesNotMatch(screen.text, /Find animation guidance|Locate desktop folder|Long internal diagnostic/);
+  assert.equal(screen.text.split('/tools').length, 2, 'only one progress row is visible');
+  assert.match(f.stderr, /\x1b\[90m[^\n]*Read visualization guidance/);
+  f.input.write('中');
+  f.terminal.write('I will use a dedicated workspace.\n');
+  f.terminal.event(event('assistant_segment_completed'));
+  const next = { toolCallId: 'next', toolName: 'read_file', display: { title: 'Check workspace files' } };
+  f.terminal.event(event('tool_running', next)); f.terminal.event(event('tool_returned', next));
+  f.terminal.finishTurn('completed'); await delay(40);
+  screen = terminalScreen(f.combined, 110);
+  assert.match(screen.text, /Read visualization guidance · 3 tools · 1 failed · \/tools[\s\S]*I will use a dedicated workspace\.[\s\S]*Check workspace files · 1 tool · \/tools[\s\S]*✓ Completed/);
+  assert.equal(screen.text.split('/tools').length, 3, 'each group is committed once');
+  assert.match(screen.text, /alpha中omega/);
+  assert.equal(screen.column, 9, 'the caret remains after the inserted CJK character');
+  assert.doesNotMatch(f.stdout, /tool|guidance|diagnostic/, 'progress never enters redirected answers');
+  const answer = f.terminal.ask('❯ ', new AbortController().signal, true);
+  f.input.write('X\r'); assert.equal(await answer, 'alpha中Xomega');
+});
+
+test('parallel activity stays stable, duplicate receipts do not inflate counts, and stopped work stays visible', async t => {
+  const f = tty(t, { columns: 100 }); f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn();
+  const first = { toolCallId: 'first', toolName: 'read_file', display: { title: 'Read project guidance' } };
+  const second = { toolCallId: 'second', toolName: 'read_file', display: { title: 'Inspect source files' } };
+  f.terminal.event(event('tool_running', first)); f.terminal.event(event('tool_running', second));
+  f.terminal.event(event('tool_returned', second)); f.terminal.event(event('tool_returned', second));
+  await waitForPaint(() => terminalScreen(f.combined, 100).text.includes('2 tools'));
+  assert.match(terminalScreen(f.combined, 100).text, /Read project guidance/);
+  f.terminal.event(event('tool_returned', first));
+  // A late queued event must not move the title or reopen a returned tool.
+  f.terminal.event(event('tool_queued', first));
+  await delay(40); assert.match(terminalScreen(f.combined, 100).text, /Read project guidance/);
+  const third = { toolCallId: 'third', toolName: 'terminal_exec', display: { title: 'Validate changes' } };
+  f.terminal.event(event('tool_cancelled', { ...third, reason: 'User stopped the command' }));
+  f.terminal.event(event('tool_running', { toolCallId: 'pending', toolName: 'read_file', display: { title: 'Check remaining files' } }));
+  f.terminal.finishTurn('stopped'); await delay(40);
+  const visible = terminalScreen(f.combined, 100).text;
+  assert.match(visible, /4 tools · 1 cancelled · \/tools · 1 pending/);
+  assert.match(visible, /Stopped .*4 tool calls/); assert.doesNotMatch(visible, /✓.*(?:Read project|Inspect source|Check remaining)/);
+});
+
+test('plain terminals keep full failure diagnostics and never emit cursor controls for groups', t => {
+  const f = tty(t, { env: { TERM: 'dumb' } }); f.terminal.beginTurn();
+  const payload = { toolCallId: 'tool', toolName: 'read_file', display: { title: 'Read guidance' },
+    resultError: { kind: 'tool', code: 'missing_file', message: 'Full diagnostic retained' } };
+  f.terminal.event(event('tool_running', payload)); f.terminal.event(event('tool_returned', payload));
+  f.terminal.finishTurn('completed');
+  assert.match(f.stderr, /\[Tool failed\] Read guidance: Full diagnostic retained/);
+  assert.doesNotMatch(f.stderr, /\x1b/); assert.equal(f.stdout, '');
 });
 
 test('execution clock comes from Runtime start/end, excluding queue delay and reconnect time', t => {

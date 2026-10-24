@@ -1,0 +1,317 @@
+{
+  "recordedAt": "2026-10-23T11:12:11.051Z",
+  "config": {
+    "model": "deepseek-flash",
+    "adapter": "openai_responses",
+    "reasoningEffort": "provider default",
+    "maxOutputTokens": 127998,
+    "configuredContextWindow": 530000,
+    "simulatedContextWindow": 167998
+  },
+  "methodology": {
+    "syntheticFacts": true,
+    "fixedFinalRepliesIdenticalInAllArms": true,
+    "rubricHiddenFromModel": true,
+    "sameModelSettingsAndTools": true,
+    "pressureCounter": "Continuation-only controlled pressure for recorded arm; actual provider usage recorded separately.",
+    "actualTokenMetrics": "Provider usage on each real call; raw control and compacted continuation use identical questions and tools.",
+    "arms": [
+      "raw: same history without pressure",
+      "checkpoint: production on-demand model compaction",
+      "recorded: default deterministic tool record projection"
+    ],
+    "preparationCalls": 0,
+    "businessToolsExecuted": 0,
+    "userSessionsModified": false,
+    "repetitions": 1,
+    "modelAuthoredHistory": true,
+    "fixtureToolsExecuted": 3
+  },
+  "runs": [
+    {
+      "stage": "loop-initial",
+      "variant": "initial",
+      "status": "completed",
+      "reason": "model_response_completed",
+      "elapsedMs": 4469,
+      "modelCalls": 2,
+      "maintenanceRequests": 0,
+      "summaryCalls": 0,
+      "totalInputTokens": 11638,
+      "continuationInputTokens": 3532,
+      "fixtureCalls": [
+        {
+          "variant": "initial",
+          "tool": "fixture_inspect",
+          "arguments": {
+            "reason": "用户要求检查一次工作区，报告已有渲染任务与未完成的检查项。"
+          }
+        }
+      ],
+      "answer": "已检查一次工作区，情况如下：\n\n## 已有渲染任务\n- **任务 ID**：`render-602`\n- **状态**：running（运行中，尚无完成迹象）\n- **版本**：draft-17（草稿版）\n- **可发布**：否（`may_publish: false`）\n\n## 未完成的检查\n- **audio-check 未通过**：该命令退出码为 2，原因是「设备不可用」。因此**音频/听感方面不能算作已验证通过**，仍需在有可用音频设备的环境中重新执行。\n- 日志内容为重复的例行记录，没有出现任何新的完成标记，说明任务仍停留在运行状态。\n\n## 本轮处置\n按你的要求，仅做了一次检查：**未等待任务、未重新提交任何渲染任务**。下一步若要推进，需要先解决音频设备不可用的问题，并使任务从 running 转为完成状态。",
+      "compactions": []
+    },
+    {
+      "stage": "loop-raw",
+      "variant": "raw",
+      "status": "completed",
+      "reason": "model_response_completed",
+      "elapsedMs": 3992,
+      "modelCalls": 2,
+      "maintenanceRequests": 0,
+      "summaryCalls": 0,
+      "totalInputTokens": 17319,
+      "continuationInputTokens": 8503,
+      "fixtureCalls": [
+        {
+          "variant": "raw",
+          "tool": "fixture_status",
+          "arguments": {
+            "job_id": "render-602",
+            "reason": "用户要求查询此前提交的渲染任务 render-602，以获取 status、artifact 等字段，且不得新建或重复提交。"
+          }
+        }
+      ],
+      "answer": "{\n  \"job_id\": \"render-602\",\n  \"status\": \"completed\",\n  \"artifact\": \"C:/fixture/draft-17.mp4\",\n  \"failed_command\": \"audio-check\",\n  \"listening_passed\": false,\n  \"may_publish\": false\n}",
+      "compactions": [],
+      "checks": [
+        {
+          "key": "job_id",
+          "passed": true,
+          "expected": "render-602",
+          "actual": "render-602"
+        },
+        {
+          "key": "status",
+          "passed": true,
+          "expected": "completed",
+          "actual": "completed"
+        },
+        {
+          "key": "artifact",
+          "passed": true,
+          "expected": "C:/fixture/draft-17.mp4",
+          "actual": "C:/fixture/draft-17.mp4"
+        },
+        {
+          "key": "failed_command",
+          "passed": true,
+          "expected": "audio-check",
+          "actual": "audio-check"
+        },
+        {
+          "key": "listening_passed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "may_publish",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        }
+      ],
+      "passed": 6,
+      "total": 6
+    },
+    {
+      "stage": "loop-recorded",
+      "variant": "recorded",
+      "status": "completed",
+      "reason": "model_response_completed",
+      "elapsedMs": 3909,
+      "modelCalls": 2,
+      "maintenanceRequests": 0,
+      "summaryCalls": 0,
+      "totalInputTokens": 9253,
+      "continuationInputTokens": 4407,
+      "fixtureCalls": [
+        {
+          "variant": "recorded",
+          "tool": "fixture_status",
+          "arguments": {
+            "job_id": "render-602",
+            "reason": "用户要求查询已提交的渲染任务 render-602 的当前状态与产出，不新建、不重复提交。"
+          }
+        }
+      ],
+      "answer": "{\"job_id\":\"render-602\",\"status\":\"completed\",\"artifact\":\"C:/fixture/draft-17.mp4\",\"failed_command\":\"audio-check\",\"listening_passed\":false,\"may_publish\":false}",
+      "compactions": [
+        {
+          "kind": "context_compaction_started",
+          "payload": {
+            "compactionId": "context_compaction:continue:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "thresholdRatio": 0.5,
+            "triggerRatio": 0.95,
+            "estimatedInputTokens": 38000,
+            "usableInputTokens": 40000,
+            "measurement": "provider",
+            "compactionTriggerTokens": 20000,
+            "compactionOutputTokens": 127998,
+            "normalOutputTokens": 127998,
+            "safetyTokens": 400,
+            "trigger": "budget",
+            "precedingTurnCount": 1,
+            "activeTurnIncluded": false,
+            "method": "recorded_tool_handoff",
+            "preparedTurnIds": [
+              "inspect"
+            ]
+          }
+        },
+        {
+          "kind": "context_compaction_completed",
+          "payload": {
+            "compactionId": "context_compaction:continue:1",
+            "round": 1,
+            "attempt": 1,
+            "assistantContentOffset": 0,
+            "summarizedTurnCount": 1,
+            "activeTurnCheckpointed": false,
+            "inputTokensBefore": 38000,
+            "inputTokensAfter": 4873,
+            "targetInputTokens": 16000,
+            "inputDigest": "45fbbf56167f86e4baaa5bcffa4c92d54aac086579a35d7599da07c46e07c8e9",
+            "method": "recorded_tool_handoff"
+          }
+        }
+      ],
+      "checks": [
+        {
+          "key": "job_id",
+          "passed": true,
+          "expected": "render-602",
+          "actual": "render-602"
+        },
+        {
+          "key": "status",
+          "passed": true,
+          "expected": "completed",
+          "actual": "completed"
+        },
+        {
+          "key": "artifact",
+          "passed": true,
+          "expected": "C:/fixture/draft-17.mp4",
+          "actual": "C:/fixture/draft-17.mp4"
+        },
+        {
+          "key": "failed_command",
+          "passed": true,
+          "expected": "audio-check",
+          "actual": "audio-check"
+        },
+        {
+          "key": "listening_passed",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        },
+        {
+          "key": "may_publish",
+          "passed": true,
+          "expected": false,
+          "actual": false
+        }
+      ],
+      "passed": 6,
+      "total": 6
+    }
+  ],
+  "requests": [
+    {
+      "id": "01-loop-initial",
+      "stage": "loop-initial",
+      "maintenance": false,
+      "toolHash": "69fa4f52df4fd110cec2a3f82c0f16d068db82519780b7a3a2deb6f6a7dee8aa",
+      "inputChars": 10402,
+      "reasoningChars": 0,
+      "textChars": 28,
+      "usage": {
+        "inputTokens": 3532,
+        "outputTokens": 103,
+        "cachedInputTokens": 1792
+      },
+      "elapsedMs": 1624
+    },
+    {
+      "id": "02-loop-initial",
+      "stage": "loop-initial",
+      "maintenance": false,
+      "toolHash": "69fa4f52df4fd110cec2a3f82c0f16d068db82519780b7a3a2deb6f6a7dee8aa",
+      "inputChars": 28415,
+      "reasoningChars": 575,
+      "textChars": 366,
+      "usage": {
+        "inputTokens": 8106,
+        "outputTokens": 345,
+        "cachedInputTokens": 3584
+      },
+      "elapsedMs": 2800
+    },
+    {
+      "id": "03-loop-raw",
+      "stage": "loop-raw",
+      "maintenance": false,
+      "toolHash": "69fa4f52df4fd110cec2a3f82c0f16d068db82519780b7a3a2deb6f6a7dee8aa",
+      "inputChars": 31158,
+      "reasoningChars": 448,
+      "textChars": 39,
+      "usage": {
+        "inputTokens": 8503,
+        "outputTokens": 232,
+        "cachedInputTokens": 8320
+      },
+      "elapsedMs": 2386
+    },
+    {
+      "id": "04-loop-raw",
+      "stage": "loop-raw",
+      "maintenance": false,
+      "toolHash": "69fa4f52df4fd110cec2a3f82c0f16d068db82519780b7a3a2deb6f6a7dee8aa",
+      "inputChars": 33815,
+      "reasoningChars": 370,
+      "textChars": 182,
+      "usage": {
+        "inputTokens": 8816,
+        "outputTokens": 150,
+        "cachedInputTokens": 8576
+      },
+      "elapsedMs": 1573
+    },
+    {
+      "id": "05-loop-recorded",
+      "stage": "loop-recorded",
+      "maintenance": false,
+      "toolHash": "69fa4f52df4fd110cec2a3f82c0f16d068db82519780b7a3a2deb6f6a7dee8aa",
+      "inputChars": 13325,
+      "reasoningChars": 1169,
+      "textChars": 0,
+      "usage": {
+        "inputTokens": 4407,
+        "outputTokens": 358,
+        "cachedInputTokens": 3456
+      },
+      "elapsedMs": 2791
+    },
+    {
+      "id": "06-loop-recorded",
+      "stage": "loop-recorded",
+      "maintenance": false,
+      "toolHash": "69fa4f52df4fd110cec2a3f82c0f16d068db82519780b7a3a2deb6f6a7dee8aa",
+      "inputChars": 17132,
+      "reasoningChars": 0,
+      "textChars": 157,
+      "usage": {
+        "inputTokens": 4846,
+        "outputTokens": 45,
+        "cachedInputTokens": 4608
+      },
+      "elapsedMs": 1089
+    }
+  ]
+}

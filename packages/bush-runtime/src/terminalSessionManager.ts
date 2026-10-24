@@ -5,6 +5,7 @@ import { withToolFailureFacts } from './toolFailureFacts.js';
 import { isWithin, normalizeIdentity } from './workspaceAccessPolicy.js';
 import type { ExecutionSandboxPolicy } from './executionSandbox.js';
 import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
+import { WindowsSandboxScopePool } from './windowsSandboxScope.js';
 
 export type TerminalShell = 'cmd' | 'powershell' | 'posix';
 interface TerminalPollInput { sessionId: string; yieldTimeMs: number }
@@ -49,6 +50,9 @@ export class TerminalSessionManager {
   // Reserve before the async spawn: simultaneous identical calls must not race.
   readonly #runningCommands = new Map<string, string>();
   readonly #resourceGovernor?: ProcessResourceGovernor;
+  readonly #sandboxScopes = new WindowsSandboxScopePool();
+  readonly #starting = new Set<Promise<void>>();
+  #closing = false;
 
   constructor(options: { resourceGovernor?: ProcessResourceGovernor } = {}) {
     this.#resourceGovernor = options.resourceGovernor;
@@ -64,6 +68,16 @@ export class TerminalSessionManager {
         await this.stop(terminal.ownerSessionId, terminal.sessionId);
       }
     }
+    await this.#sandboxScopes.releaseWithin(root);
+  }
+
+  async close(): Promise<void> {
+    this.#closing = true;
+    await Promise.all([...this.#starting]);
+    for (const terminal of [...this.#sessions.values()]) {
+      if (terminal.state === 'running') await this.stop(terminal.ownerSessionId, terminal.sessionId);
+    }
+    await this.#sandboxScopes.close();
   }
 
   async start(input: {
@@ -76,6 +90,16 @@ export class TerminalSessionManager {
     sandbox?: ExecutionSandboxPolicy;
     exclusiveResources?: string[];
   }): Promise<Record<string, unknown>> {
+    if (this.#closing) throw codedError('terminal_manager_closed', 'The terminal host is shutting down.');
+    let started!: () => void;
+    const pending = new Promise<void>(resolve => { started = resolve; });
+    this.#starting.add(pending);
+    const ready = () => { started(); this.#starting.delete(pending); };
+    try { return await this.#start(input, ready); }
+    finally { ready(); }
+  }
+
+  async #start(input: Parameters<TerminalSessionManager['start']>[0], ready: () => void): Promise<Record<string, unknown>> {
     if (input.signal?.aborted) throw abortReason(input.signal);
     const invocation = commandInvocation(input.shell, input.command);
     const sessionId = `terminal_${randomUUID()}`;
@@ -104,6 +128,7 @@ export class TerminalSessionManager {
         cwd: input.cwd,
         resourceLease,
         sandbox: input.sandbox,
+        sandboxScopePool: this.#sandboxScopes,
       });
     } catch (error) {
       this.#runningCommands.delete(commandKey); releaseResources();
@@ -189,6 +214,7 @@ export class TerminalSessionManager {
       if (terminal.state !== "running") this.#notify(terminal);
     });
 
+    ready();
     await this.#waitForExit(terminal, input.yieldTimeMs, input.signal);
     const result = this.#consume(terminal);
     if (terminal.state !== "running") this.#sessions.delete(terminal.sessionId);
@@ -431,7 +457,8 @@ function appendTerminalOutput(
 
 function terminalTiming(terminal: ManagedTerminalSession) {
   const observedAt = terminal.endedAt ?? Date.now();
-  return { startedAt: new Date(terminal.startedAt).toISOString(), durationMs: observedAt - terminal.startedAt,
+  return { phase: terminal.state === 'running' ? terminal.guarded.phase?.() ?? 'executing' : 'finished',
+    startedAt: new Date(terminal.startedAt).toISOString(), durationMs: observedAt - terminal.startedAt,
     lastOutputAt: terminal.lastOutputAt ? new Date(terminal.lastOutputAt).toISOString() : null,
     outputIdleMs: observedAt - (terminal.lastOutputAt ?? terminal.startedAt) };
 }

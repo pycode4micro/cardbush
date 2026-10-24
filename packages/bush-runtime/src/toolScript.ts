@@ -1,7 +1,7 @@
 import { getQuickJS, type QuickJSDeferredPromise, type QuickJSHandle } from 'quickjs-emscripten';
 import { returnedToolError } from '@cardbush/bush-protocol';
 import { z } from 'zod';
-import type { ToolRegistry, ToolHandlerContext } from './toolRegistry.js';
+import type { ToolRegistry, ToolHandlerContext, ToolPermissionWaitObserver } from './toolRegistry.js';
 import type { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
 import { ToolResourceScheduler } from './toolResourceScheduler.js';
 import { resolveToolReferenceName, unknownToolReferenceError } from './toolReferenceNames.js';
@@ -15,13 +15,13 @@ export function registerToolScript(registry: ToolRegistry, jobs: RuntimeAsyncJob
     delegatesToolExecution: true, nestedCallable: false,
     decodeInput: value => schema.parse(value),
     execute: async context => {
-      return jobs.start(context, 'script', (signal, onHooks) => executeToolScript(context.input.code, context, registry, signal, onHooks));
+      return jobs.start(context, 'script', (signal, onHooks, onPermissionWait) => executeToolScript(context.input.code, context, registry, signal, onHooks, onPermissionWait));
     },
   });
 }
 
 /** QuickJS/WASM owns the guest heap. Never evaluate tool scripts in Node's realm. */
-export async function executeToolScript(code: string, context: ToolHandlerContext<unknown>, registry: ToolRegistry, signal: AbortSignal, onHooks?: (messages: string[], stop?: string) => void) {
+export async function executeToolScript(code: string, context: ToolHandlerContext<unknown>, registry: ToolRegistry, signal: AbortSignal, onHooks?: (messages: string[], stop?: string) => void, onPermissionWait?: ToolPermissionWaitObserver) {
   const engine = await getQuickJS(); signal.throwIfAborted();
   const runtime = engine.newRuntime(); runtime.setMemoryLimit(32 * 1024 * 1024); runtime.setMaxStackSize(512 * 1024);
   const vm = runtime.newContext(), scheduler = new ToolResourceScheduler();
@@ -50,7 +50,7 @@ export async function executeToolScript(code: string, context: ToolHandlerContex
     const operation = (async () => {
       let envelope: unknown;
       try {
-        const result = await context.invokeTool(name, input, { signal: scopedSignal, record: true, onHooks,
+        const result = await context.invokeTool(name, input, { signal: scopedSignal, record: true, onHooks, onPermissionWait,
           scheduling: { scheduler, resources } });
         const error = returnedToolError(name, result);
         if (error) throw Object.assign(new Error(error.message), { code: error.code, details: error.details });

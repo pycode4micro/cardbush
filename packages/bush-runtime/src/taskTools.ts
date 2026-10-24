@@ -115,7 +115,7 @@ export class RuntimeTaskTools {
               controls: { stop: !!stop, cancel_observation: !!cancelObservation } };
           })),
           after: Object.fromEntries(selected.map(task => [task.task_id, task.revision])),
-          ...(selected.some(taskPending) ? { next_step: 'Continue independent work. Pending tasks are still running; waiting does not restart or stop them.' } : {}),
+          ...(selected.some(taskPending) ? { next_step: 'Continue independent work. Pending tasks have not completed; they may be running or waiting for user input. Waiting does not restart or stop them.' } : {}),
         };
       },
     });

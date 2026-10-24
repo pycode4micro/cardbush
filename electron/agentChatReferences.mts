@@ -151,7 +151,11 @@ export class AgentChatReferences implements ChatReferenceRenderer {
     if (!item) { this.io.status('File selection not found. Use /artifact to refresh.\n'); return; }
     let target = item.target;
     if (item.kind === 'memo') {
-      const result = fileMemoResolutionSchema.parse(await this.#command(RESOLVE_FILE_MEMO_COMMAND, { sessionId: scope.sessionId, turnId: scope.turnId, reference: item.target, fileName: item.label }, request));
+      const identity = parseFileMemoReference(item.target);
+      const result = fileMemoResolutionSchema.parse(await this.#command(RESOLVE_FILE_MEMO_COMMAND, {
+        sessionId: scope.sessionId, turnId: scope.turnId, reference: item.target,
+        ...(identity && !('number' in identity) ? { fileName: item.label } : {}),
+      }, request));
       if (result.status === 'unresolved' || result.status === 'unavailable') throw new Error('File reference is unavailable. Ask the Agent to refresh it.');
       target = result.memo.file.path;
       if (result.status === 'changed') this.io.status('File changed since the reference was recorded; opening its current version.\n');

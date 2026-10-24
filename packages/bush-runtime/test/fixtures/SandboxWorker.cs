@@ -25,6 +25,26 @@ internal static class SandboxWorker
             File.WriteAllText(args[1], "after peer exit"); Console.WriteLine("written"); return 0;
         }
         if (args[0] == "child") { Probe("childOutsideWrite", delegate { File.WriteAllText(args[1], "unexpected"); }); return 0; }
+        if (args[0] == "private-wait")
+        {
+            string file = Path.Combine(Environment.GetEnvironmentVariable("USERPROFILE"), "secret.txt");
+            File.WriteAllText(file, "private"); Console.WriteLine(file); Console.Out.Flush(); Console.ReadLine(); return 0;
+        }
+        if (args[0] == "read-private") { Probe("peerPrivateRead", delegate { File.ReadAllText(args[1]); }); return 0; }
+        if (args[0] == "move") { File.Move(args[1], args[2]); return 0; }
+        if (args[0] == "host-scope-state")
+        {
+            Probe("hostScopeStateWrite", delegate {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\CardBush\SandboxScopeGeneration", true))
+                    if (key == null) throw new UnauthorizedAccessException();
+            });
+            return 0;
+        }
+        if (args[0] == "wait-orphan")
+        {
+            Console.WriteLine("ready"); Console.Out.Flush(); System.Threading.Thread.Sleep(2000);
+            File.WriteAllText(args[1], "unexpected orphan"); return 0;
+        }
         string root = args[1], outside = args[2], readOnly = args[3];
         Probe("insideWrite", delegate { File.WriteAllText(Path.Combine(root, "inside.txt"), "allowed"); });
         Probe("outsideWrite", delegate { File.WriteAllText(Path.Combine(outside, "outside.txt"), "unexpected"); });

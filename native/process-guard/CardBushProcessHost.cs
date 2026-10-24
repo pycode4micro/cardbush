@@ -31,11 +31,13 @@ internal static partial class CardBushProcessHost
     {
         if (args.Length == 1 && args[0] == "--capabilities")
         {
-            Console.WriteLine("{\"protocol\":\"cardbush.process-host.v1\",\"sandboxVersion\":1}");
+            Console.WriteLine("{\"protocol\":\"cardbush.process-host.v1\",\"sandboxVersion\":1,\"sandboxScopeVersion\":2}");
             return 0;
         }
         if (args.Length == 2 && args[0] == "--observe") return Observe(args[1]);
         if (args.Length == 2 && args[0] == "--sandbox-cleanup") return CleanupSandbox(args[1]);
+        if (args.Length == 2 && args[0] == "--sandbox-scope") return RunSandboxScope(args[1]);
+        if (args.Length == 2 && args[0] == "--sandbox-scope-cleanup") return CleanupSandboxScope(args[1]);
         string reportPath = args.Length > 9 ? args[9] : null;
         IntPtr globalJob = IntPtr.Zero, completionPort = IntPtr.Zero, parent = IntPtr.Zero;
         EventWaitHandle pressureStop = null;
@@ -57,6 +59,7 @@ internal static partial class CardBushProcessHost
             if (args.Length > commandStart && args[commandStart] == "--sandbox")
             {
                 if (args.Length <= commandStart + 2) throw new ArgumentException("Missing sandbox policy or command.");
+                WriteProcessPhase(reportPath, "preparing_sandbox");
                 sandbox = new SandboxSession(args[commandStart + 1]);
                 commandStart += 2;
             }
@@ -138,6 +141,7 @@ internal static partial class CardBushProcessHost
             // task starts on. This is a pressure backstop, not a filesystem quota.
             string[] diskPaths = new string[] { Environment.CurrentDirectory, Path.GetTempPath() };
             ulong[] initialFree = new ulong[] { DiskFree(diskPaths[0]), DiskFree(diskPaths[1]) };
+            WriteProcessPhase(reportPath, "executing");
             Check(ResumeThread(process.hThread) != UInt32.MaxValue, "Resume protected command");
             resumed = true;
             CloseHandle(process.hThread);
@@ -145,13 +149,16 @@ internal static partial class CardBushProcessHost
 
             // Normal commands wake on process exit immediately. The two-second
             // watchdog runs only for live jobs; it never delays short commands.
-            IntPtr[] waits = pressureStop == null ? new IntPtr[] { process.hProcess, parent }
-                : new IntPtr[] { process.hProcess, parent, pressureStop.SafeWaitHandle.DangerousGetHandle() };
+            var waitHandles = new List<IntPtr> { process.hProcess, parent };
+            int pressureIndex = -1, scopeIndex = -1;
+            if (pressureStop != null) { pressureIndex = waitHandles.Count; waitHandles.Add(pressureStop.SafeWaitHandle.DangerousGetHandle()); }
+            if (sandbox != null && sandbox.ScopeProcess != IntPtr.Zero) { scopeIndex = waitHandles.Count; waitHandles.Add(sandbox.ScopeProcess); }
+            IntPtr[] waits = waitHandles.ToArray();
             while (true)
             {
                 uint wait = WaitForMultipleObjects((uint)waits.Length, waits, false, 2000);
                 if (wait == 0) break;
-                if (wait == 2)
+                if ((int)wait == pressureIndex)
                 {
                     Fail("resource_memory_pressure", "System memory became critically low. This task was stopped to keep the host responsive. Reduce the workload before retrying.");
                     break;
@@ -159,6 +166,11 @@ internal static partial class CardBushProcessHost
                 if (wait == 1)
                 {
                     Fail("resource_parent_exited", "The Runtime exited; its task processes were stopped.");
+                    break;
+                }
+                if ((int)wait == scopeIndex)
+                {
+                    Fail("sandbox_authorization_lost", "Directory authorization stopped; the command was terminated.");
                     break;
                 }
                 if (wait != 258) throw new Win32Exception(Marshal.GetLastWin32Error(), "Wait for protected command");
@@ -196,6 +208,7 @@ internal static partial class CardBushProcessHost
         }
         finally
         {
+            WriteProcessPhase(reportPath, "cleaning_up");
             UpdatePeakMemory();
             // Closing the only non-inheritable task job handle also kills detached
             // descendants. It works even if this supervisor is forcibly terminated.
@@ -229,13 +242,20 @@ internal static partial class CardBushProcessHost
                     string report = "{\"phase\":\"finished\",\"code\":" + JsonString(failureCode)
                         + ",\"message\":" + JsonString(failureMessage) + ",\"peakMemoryBytes\":" + peakMemory
                         + ",\"taskMemoryBytes\":" + taskMemory + ",\"totalMemoryBytes\":" + totalMemory
-                        + ",\"nativeErrorCode\":" + nativeErrorCode + ",\"sandboxCleaned\":" + (sandboxCleaned ? "true" : "false") + "}";
+                        + ",\"nativeErrorCode\":" + nativeErrorCode + ",\"sandboxCleaned\":" + (sandboxCleaned ? "true" : "false")
+                        + ",\"sandboxScopeStale\":" + (sandbox != null && sandbox.ScopeWasStale ? "true" : "false") + "}";
                     File.WriteAllText(reportPath, report, new UTF8Encoding(false));
                 }
                 catch { exitCode = FAILURE_EXIT; }
             }
         }
         return unchecked((int)(failureCode.Length > 0 ? FAILURE_EXIT : exitCode));
+    }
+
+    private static void WriteProcessPhase(string reportPath, string phase)
+    {
+        if (reportPath == null) return;
+        try { File.WriteAllText(reportPath + ".phase", phase); } catch { /* Diagnostics never bypass protection. */ }
     }
 
     // An ephemeral shared watchdog clock prevents a monitor failure from either

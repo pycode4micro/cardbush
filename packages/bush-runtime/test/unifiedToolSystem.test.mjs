@@ -10,6 +10,7 @@ import { ToolRegistry, ToolExecutionCoordinator, ToolExecutionStore, InMemoryRun
 import { ToolResourceScheduler } from '../dist/toolResourceScheduler.js';
 import { RuntimeTaskTools } from '../dist/taskTools.js';
 import { RuntimeAsyncJobs } from '../dist/runtimeAsyncJobs.js';
+import { RuntimePermissionBroker } from '../dist/runtimePermissionBroker.js';
 import { registerAsyncInteraction } from '../dist/interactionTools.js';
 import { RuntimeSolutionBroker } from '../dist/runtimeSolutionBroker.js';
 import { registerToolScript } from '../dist/toolScript.js';
@@ -23,7 +24,7 @@ import { summarizeExecution } from '../dist/executionHistory.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture', owner: 'runtime', risk: 'low', dispatch_scope: 'session', mutating: false };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-function fixture(t) {
+function fixture(t, coordinatorOptions = {}) {
   const root = mkdtempSync(join(tmpdir(), 'cardbush-tools-unified-'));
   t.after(() => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-tools-unified-')); rmSync(root, { recursive: true, force: true }); });
   const registry = new ToolRegistry(), store = new ToolExecutionStore(), deliveries = [], controller = new AbortController();
@@ -36,7 +37,7 @@ function fixture(t) {
   registerWorkspaceTools(registry); registerExtendedBuiltins(registry, { dataRoot: root });
   registerToolScript(registry, jobs); registerAsyncInteraction(registry, broker, jobs); registerBuiltinToolDisclosure(registry);
   const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', tools: [], messages: [], metadata: { workspaceDir: root }, permissionMode: 'all_free', requestCapabilities: { interactiveRequests: true } };
-  const coordinator = new ToolExecutionCoordinator({ registry, observer: { completed: (call, identity, outcome) => store.record(call, identity, outcome) } });
+  const coordinator = new ToolExecutionCoordinator({ ...coordinatorOptions, registry, observer: { completed: (call, identity, outcome) => store.record(call, identity, outcome) } });
   let ordinal = 0;
   const run = async (name, input, signal, sessionId = 's') => {
     const call = { protocol: 'bush.tool_call.v1', id: 'call-' + (++ordinal), name, argumentsText: JSON.stringify(input) };
@@ -416,6 +417,76 @@ test('script requests do not bypass exposure, permissions or non-nestable tools'
   const denied = await f.script('return await tools.denied({});'); assert.equal(denied.completion.status, 'failed'); assert.equal(writes, 0);
   const nested = await f.script('return await tools.run_tools({code:"return 1"});'); assert.equal(nested.completion.status, 'failed');
   const scope = await f.script('return await tools.does_not_exist({});'); assert.equal(scope.completion.status, 'failed');
+});
+
+test('scripts aggregate parallel delegated permission waits and resume only after all approvals settle', { timeout: 10000 }, async t => {
+  const requests = [], asked = Promise.withResolvers(), entered = [Promise.withResolvers(), Promise.withResolvers()], finish = Promise.withResolvers();
+  const permissions = new RuntimePermissionBroker({ onRequested: request => { requests.push(request); if (requests.length === 2) asked.resolve(); } });
+  const f = fixture(t, { permissions }); f.request.permissionMode = 'task_free';
+  t.after(() => finish.resolve({ done: true }));
+  f.add('approval_target', async context => { entered[context.input.index].resolve(); return finish.promise; }, { parallelSafe: true,
+    authorize: context => ({ kind: 'ask', request: { reason: 'Fixture approval', actions: ['observe'], targets: [{ kind: 'opaque', value: String(context.input.index) }], capabilityIds: ['fixture:observe'] } }) });
+  f.add('approval_delegate', context => context.invokeTool('approval_target', context.input), { parallelSafe: true, delegatesToolExecution: true });
+  const started = await f.run('run_tools', { code: 'return await Promise.all([tools.approval_delegate({index:0}), tools.approval_delegate({index:1})]);' });
+  assert.equal(started.kind, 'returned');
+  const id = started.result.task_id;
+  const snapshot = async () => (await f.run('tasks', { action: 'wait', task_ids: [id], yield_time_ms: 0 })).result.tasks[0];
+  await asked.promise;
+  const waiting = await snapshot(); assert.equal(waiting.status, 'waiting_user'); assert.match(waiting.summary, /2 pending/);
+  const approve = request => permissions.answer({ protocol: 'bush.runtime_permission_answer.v1', answerId: `answer-${request.permissionId}`, permissionId: request.permissionId, decision: 'allow_once', grantedCapabilityIds: request.capabilityIds });
+  approve(requests[0]); await entered[Number(requests[0].targets[0].value)].promise;
+  const partial = await snapshot(); assert.equal(partial.status, 'waiting_user'); assert.match(partial.summary, /1 pending/);
+  assert.ok(Number(partial.revision) > Number(waiting.revision));
+  approve(requests[1]); await entered[Number(requests[1].targets[0].value)].promise;
+  const running = await snapshot(); assert.equal(running.status, 'running'); assert.equal(running.summary, undefined);
+  assert.ok(Number(running.revision) > Number(partial.revision));
+  finish.resolve({ done: true }); await f.deliveries.find(item => item.id === id).message;
+  const completed = await snapshot(); assert.equal(completed.status, 'completed'); assert.ok(Number(completed.revision) > Number(running.revision));
+  assert.deepEqual(permissions.pendingIds(), []);
+});
+
+for (const route of ['authorization', 'forwarded', 'hook']) test(`script ${route} waits retain prior effects and never dispatch a rejected action`, { timeout: 10000 }, async t => {
+  const asked = Promise.withResolvers(); let executions = 0;
+  const permissions = new RuntimePermissionBroker({ onRequested: asked.resolve });
+  const f = fixture(t, { permissions: route === 'hook' ? { request: (request, signal) => permissions.request({ ...request,
+    targets: [{ kind: 'opaque', value: 'fixture-hook' }], capabilityIds: ['fixture:hook'] }, signal) } : permissions, ...(route === 'hook' ? { hooks: {
+    before: async ({ toolCall }) => ({ messages: [], ...(toolCall.name === 'approval_target' ? { ask: 'Confirm action' } : {}) }),
+    after: async () => ({ messages: [] }),
+  } } : {}) }); f.request.permissionMode = 'task_free';
+  f.add('approval_target', () => { executions++; return {}; }, { ...(route !== 'hook' ? {
+    authorize: () => ({ kind: 'ask', request: { reason: 'Confirm action', actions: ['observe'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:observe'] } }),
+  } : {}) });
+  f.add('approval_forward', () => { throw Error('Forwarder must not execute'); }, { delegatesToolExecution: true, forwardToolCall: ({ input }) => ({ name: 'approval_target', input }) });
+  const started = await f.run('run_tools', { code: `await tools.write_file({path:"before-approval.txt",content:"kept"}); return await tools.${route === 'forwarded' ? 'approval_forward' : 'approval_target'}({});` });
+  const request = await asked.promise;
+  const observed = (await f.run('tasks', { action: 'inspect', task_ids: [started.result.task_id] })).result.tasks[0];
+  assert.equal(observed.status, 'waiting_user');
+  permissions.answer({ protocol: 'bush.runtime_permission_answer.v1', answerId: 'deny', permissionId: request.permissionId, decision: 'deny', grantedCapabilityIds: [] });
+  const completed = JSON.parse((await f.deliveries.find(item => item.id === started.result.task_id).message).content);
+  assert.equal(completed.status, 'failed'); assert.equal(executions, 0);
+  assert.equal(readFileSync(join(f.root, 'before-approval.txt'), 'utf8'), 'kept');
+  assert.equal(completed.result.value.recovery, 'inspect_existing');
+  assert.equal(completed.result.value.error.details.cause.execution.recovery, 'do_not_retry');
+  const final = (await f.run('tasks', { action: 'inspect', task_ids: [started.result.task_id] })).result.tasks[0];
+  assert.equal(final.summary, undefined); assert.ok(Number(final.revision) > Number(observed.revision));
+});
+
+test('stopping a script waiting for permission cancels its approval and cannot revive the task', { timeout: 10000 }, async t => {
+  const asked = Promise.withResolvers(); let executions = 0;
+  const permissions = new RuntimePermissionBroker({ onRequested: asked.resolve });
+  const f = fixture(t, { permissions }); f.request.permissionMode = 'task_free';
+  f.add('approval_target', () => { executions++; return {}; }, {
+    authorize: () => ({ kind: 'ask', request: { reason: 'Confirm action', actions: ['observe'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:observe'] } }),
+  });
+  const started = await f.run('run_tools', { code: 'return await tools.approval_target({});' });
+  const request = await asked.promise;
+  await f.run('tasks', { action: 'stop', task_ids: [started.result.task_id] });
+  const completed = JSON.parse((await f.deliveries.find(item => item.id === started.result.task_id).message).content);
+  assert.equal(completed.status, 'cancelled'); assert.equal(executions, 0);
+  assert.deepEqual(permissions.pendingIds(), []);
+  assert.throws(() => permissions.answer({ protocol: 'bush.runtime_permission_answer.v1', answerId: 'late', permissionId: request.permissionId, decision: 'allow_once', grantedCapabilityIds: ['fixture:observe'] }), /not pending/);
+  const final = (await f.run('tasks', { action: 'inspect', task_ids: [started.result.task_id] })).result.tasks[0];
+  assert.equal(final.status, 'cancelled'); assert.equal(final.summary, undefined);
 });
 
 test('script CPU and promise limits fail promptly; independent work proceeds during tool waits', async t => {

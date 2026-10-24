@@ -108,13 +108,21 @@ export const turnContextCheckpointSchema = z.union([
 
 export type TurnContextCheckpoint = z.infer<typeof turnContextCheckpointSchema>;
 
-// An applied projection references model-authored handoff/final facts in the
-// immutable Turn. Preparation alone never changes the active conversation.
-export const turnToolHandoffSchema = z.object({
+// Applied projections reference immutable facts. Merely finishing a Turn never
+// changes the active context. Keep the model-authored format for old journals.
+const preparedTurnToolHandoffSchema = z.object({
   summaryMessageId: z.string().min(1),
   receiptMessageId: z.string().min(1),
   finalMessageIds: z.array(z.string().min(1)).min(1),
 });
+export const recordedTurnToolHandoffSchema = z.object({
+  projectionVersion: z.literal('recorded_v1'),
+  sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  finalMessageIds: z.array(z.string().min(1)).min(1),
+}).strict();
+export const turnToolHandoffSchema = z.union([recordedTurnToolHandoffSchema, preparedTurnToolHandoffSchema]);
+export type PreparedTurnToolHandoff = z.infer<typeof preparedTurnToolHandoffSchema>;
+export type RecordedTurnToolHandoff = z.infer<typeof recordedTurnToolHandoffSchema>;
 export type TurnToolHandoff = z.infer<typeof turnToolHandoffSchema>;
 export const turnContextSummaryUpdateSchema = z.union([
   z.object({ turnId: z.string().trim().min(1), summary: z.string().trim().min(1) }).strict(),
@@ -180,6 +188,10 @@ export const sessionEventSchema = z.discriminatedUnion("kind", [
   sessionEventEnvelopeSchema.extend({
     kind: z.literal('model_contract_bound'),
     payload: sessionModelContractSchema,
+  }),
+  sessionEventEnvelopeSchema.extend({
+    kind: z.literal('model_contract_updated'),
+    payload: z.object({ expectedVersion: z.string().min(1), contract: sessionModelContractSchema }),
   }),
   sessionEventEnvelopeSchema.extend({
     kind: z.literal("messages_superseded"),

@@ -85,9 +85,9 @@ test('Windows AppContainer enforces file, child process, network and environment
     for (const [path, original] of originals) assert.equal(acl(path), original, `concurrent ACL restored: ${path}`);
   });
 
-  await t.test('the shared terminal manager runs cmd and PowerShell with isolation receipts', async () => {
+  await t.test('the shared terminal manager runs cmd and PowerShell with isolation receipts', async t => {
     const terminals = new TerminalSessionManager();
-    t.after(() => terminals.stopWithin(work));
+    t.after(() => terminals.close());
     for (const [shell, command] of [['cmd', 'echo sandbox-cmd'], ['powershell', "Write-Output 'sandbox-powershell'"]]) {
       const result = await terminals.start({ ownerSessionId: 'test', cwd: work, command, shell, yieldTimeMs: 20_000,
         sandbox: { writableRoots: [work], readableRoots: shell === 'powershell' ? [dirname(commandInvocation(shell, command).executable)] : [], network: 'disabled' } });
