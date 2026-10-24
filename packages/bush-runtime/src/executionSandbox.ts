@@ -91,6 +91,8 @@ export interface ExecutionSandboxPolicy {
 export interface ExecutionSandboxStatus {
   backend: 'windows-appcontainer' | 'linux-bubblewrap';
   network: 'disabled' | 'enabled';
+  readableRoots?: readonly string[];
+  writableRoots?: readonly string[];
 }
 
 export interface PreparedExecutionSandbox {
@@ -205,7 +207,7 @@ export async function prepareExecutionSandbox(input: {
     let disposal: Promise<void> | undefined;
     return {
       executable, args, cwd, env, windowsPolicyPath,
-      status: { backend: windowsPolicyPath ? 'windows-appcontainer' : 'linux-bubblewrap', network },
+      status: { backend: windowsPolicyPath ? 'windows-appcontainer' : 'linux-bubblewrap', network, readableRoots, writableRoots },
       dispose: (nativeCleanupConfirmed = false, scopeStale = false) => disposal ??= (async () => {
         if (scopeStale) scope?.invalidate();
         try {

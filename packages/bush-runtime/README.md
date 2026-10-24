@@ -290,6 +290,25 @@ declared yield window; otherwise it returns `state=running` with a stable
 terminal session handle. `terminal_poll`, `terminal_write`, `terminal_list`, and
 `terminal_stop` manage that handle without blocking the Agent
 Loop. Cancelling a wait does not implicitly stop the spawned terminal session.
-Consequently this workspace permission protocol controls declared paths and the
-terminal working directory; it is not an operating-system sandbox and does not
-claim to constrain paths that a command itself may access.
+This workspace permission protocol controls declared paths and the terminal
+working directory. When command isolation is enabled, AppContainer/bubblewrap
+separately enforce the OS access boundary; the workspace permission protocol
+alone does not constrain paths a command may access.
+
+Terminal receipts retain the requested cwd, active sandbox scopes, native error
+codes and the supervisor's `commandStarted` fact. A pre-start refusal has no
+command exit code; its supervisor status is recorded separately. PowerShell
+initializes its provider location from the process cwd and fails instead of
+silently continuing from another directory. Its typed ErrorRecords provide
+bounded, explicitly interpreter-reported diagnostics even when ordinary stderr
+was suppressed. Such records do not prove that no partial effects occurred.
+Exit 1 or localized error text alone never establishes a permission denial.
+The final model projection retains denial classification and sandbox status
+even when the full output must be archived.
+
+On Windows, PowerShell uses a provider drive rooted at the admitted cwd when
+normal drive initialization cannot reach it. The diagnostic wrapper preserves
+that provider location instead of re-entering the absolute path. Parent metadata
+and directory listing remain outside the admitted roots; no ancestor ACL grants
+are added for cwd initialization. Use `(Get-Location).ProviderPath` when passing
+the physical working directory to native commands.

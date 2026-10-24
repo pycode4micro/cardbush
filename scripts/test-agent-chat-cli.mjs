@@ -375,6 +375,9 @@ test('CLI help and argument errors do not need a server or credentials', async t
   assert.equal(help.code, 0); assert.match(help.stdout, /cardbush --resume/); assert.match(help.stdout, /--full-access/);
   assert.match(help.stdout, /Usage: cardbush/); assert.doesNotMatch(help.stdout, /\p{Script=Han}/u);
   assert.match(help.stdout, /\/quit \(or \/exit\) exits/);
+  assert.match(help.stdout, /Model setting follows App config; Provider default lets the provider choose/);
+  assert.match(help.stdout, /--model ID overrides this at launch/);
+  assert.match(help.stdout, /native shell for command and path completion/);
   const invalid = await cli(t, ['--permission', 'invalid']).result;
   assert.equal(invalid.code, 1); assert.match(invalid.stderr, /Invalid --permission/);
   const missing = await cli(t, ['--url', 'http://127.0.0.1:1', '--prompt', 'test']).result;
@@ -562,6 +565,53 @@ test('/session switches workspace and reference scope without replaying jobs or 
   assert.equal(f.calls.length, 3);
 });
 
+test('session switching restores model and effort, clears empty-session overrides and honors explicit launch models', async t => {
+  const f = await fixture(t);
+  const configuration = JSON.parse(await readFile(join(f.service.root, 'config', 'models.json'), 'utf8'));
+  await f.service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [
+    ...configuration.models, { ...configuration.models[0], id: 'second', model: 'second-model', reasoningEffort: 'medium' },
+  ] } });
+  const project = await f.service.call('projects.save', { name: 'Saved selections', path: f.cwd });
+  const first = await f.service.call('sessions.create', { projectId: project.id });
+  const second = await f.service.call('sessions.create', { projectId: project.id });
+  const empty = await f.service.call('sessions.create', { projectId: project.id });
+  for (const [session, modelId, reasoningEffort] of [[first, 'fixture', 'high'], [second, 'second', null]]) {
+    const saved = await f.service.call('chat.send', { requestId: `saved-${modelId}`, turnId: `turn-${modelId}`,
+      sessionId: session.sessionId, text: 'Saved question', modelId, reasoningEffort, permissionMode: 'task_free', language: 'en' });
+    await until(() => f.service.call('chat.jobs', { sessionId: session.sessionId }), jobs => jobs.some(job => job.id === saved.id && job.status === 'completed'));
+  }
+  const child = cli(t, ['--resume', first.sessionId], { env: f.env, cwd: f.cwd, interactive: true });
+  await until(() => child.stdout, text => text.includes('fixture-answer-1'));
+  assert.match(stripVTControlCharacters(child.stderr), /Effort: High/);
+  child.child.stdin.write(`/session ${second.sessionId}\r`);
+  await until(() => child.stdout, text => text.includes('fixture-answer-2'));
+  child.child.stdin.write('Continue second session\r');
+  await until(() => child.stderr, text => text.includes('✓ Completed'));
+  assert.equal(f.calls.at(-1).model, 'second-model');
+  assert.equal(f.calls.at(-1).reasoning?.effort, undefined, 'saved Provider default overrides the model setting');
+  const beforeEmpty = child.stderr.length;
+  child.child.stdin.write(`/session ${empty.sessionId}\r`);
+  await until(() => child.stderr.slice(beforeEmpty), text => text.includes('No completed conversation history yet.'));
+  child.child.stdin.write('Continue empty session\r');
+  await until(() => child.stderr, text => text.split('✓ Completed').length === 3);
+  assert.equal(f.calls.at(-1).model, 'fixture-model');
+  assert.equal(f.calls.at(-1).reasoning?.effort, undefined, 'empty sessions must not inherit the previous session selection');
+  const beforeFirst = child.stderr.length;
+  child.child.stdin.write(`/session ${first.sessionId}\r`);
+  await until(() => child.stderr.slice(beforeFirst), text => text.includes(first.sessionId));
+  child.child.stdin.write('Continue first session\r');
+  await until(() => child.stderr, text => text.split('✓ Completed').length === 4);
+  assert.equal(f.calls.at(-1).model, 'fixture-model');
+  assert.equal(f.calls.at(-1).reasoning?.effort, 'high');
+  child.child.stdin.write('/quit\r');
+  const result = await child.result; assert.equal(result.code, 0, result.stderr);
+  const override = await cli(t, ['--resume', first.sessionId, '--model', 'second', '--prompt', 'Explicit model override'], { env: f.env, cwd: f.cwd }).result;
+  assert.equal(override.code, 0, override.stderr);
+  assert.equal(f.calls.at(-1).model, 'second-model');
+  assert.equal(f.calls.at(-1).reasoning?.effort, 'medium', 'explicit launch model uses its own configured effort');
+  assert.equal(f.calls.length, 6, 'selection and history never submit a model request');
+});
+
 test('resume picker cancel creates no session and switching while a task runs is never sent to the model', async t => {
   const f = await fixture(t);
   assert.equal((await cli(t, ['--prompt', 'Saved question'], { env: f.env, cwd: f.cwd }).result).code, 0);
@@ -620,7 +670,7 @@ test('CLI native commands stay local, return to chat and ignore child Ctrl+C wit
   const f = await fixture(t), log = join(f.root, 'shell.jsonl');
   const process = cli(t, [], { env: { ...f.env, CARDBUSH_TEST_SHELL_LOG: log }, cwd: f.cwd, interactive: true });
   await until(() => process.stderr, text => text.includes('❯ '));
-  for (const [index, command] of ['/shell vim "a file.txt"', '!echo done', '/shell'].entries()) {
+  for (const [index, command] of ['/shell vim "a file.txt"', '!echo done', '/sh'].entries()) {
     process.child.stdin.write(command + '\r');
     await until(() => readFile(log, 'utf8').catch(() => ''), text => text.trim().split('\n').length === index + 1);
     await delay(80);

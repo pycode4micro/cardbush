@@ -49,6 +49,8 @@ internal static class SandboxWorker
         Probe("insideWrite", delegate { File.WriteAllText(Path.Combine(root, "inside.txt"), "allowed"); });
         Probe("outsideWrite", delegate { File.WriteAllText(Path.Combine(outside, "outside.txt"), "unexpected"); });
         Probe("outsideRead", delegate { File.ReadAllText(Path.Combine(outside, "secret.txt")); });
+        Probe("parentList", delegate { Directory.GetFileSystemEntries(Directory.GetParent(root).FullName); });
+        Probe("parentMetadata", delegate { File.GetAttributes(Directory.GetParent(root).FullName); });
         Probe("readOnlyRead", delegate { File.ReadAllText(Path.Combine(readOnly, "reference.txt")); });
         Probe("readOnlyWrite", delegate { File.WriteAllText(Path.Combine(readOnly, "changed.txt"), "unexpected"); });
         Probe("linkedWrite", delegate { File.WriteAllText(Path.Combine(root, "escape", "linked.txt"), "unexpected"); });

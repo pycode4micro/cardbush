@@ -91,3 +91,9 @@ test('native shell preserves Unicode, stderr, exact exit status, and trailing co
   const result=spawnSync(invocation.executable,invocation.args,{encoding:'utf8',windowsHide:true,timeout:10000});
   assert.equal(result.error,undefined); assert.equal(result.status,7); assert.equal(result.stdout,'中文'); assert.equal(result.stderr,'problem');
 });
+
+test('PowerShell terminating errors cannot escape a scriptblock as exit zero', { skip: process.platform !== 'win32' }, () => {
+  const invocation = commandInvocation('powershell', "throw [UnauthorizedAccessException]::new('fixture denial')");
+  const result = spawnSync(invocation.executable, invocation.args, { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  assert.equal(result.status, 1); assert.match(result.stderr, /fixture denial/);
+});

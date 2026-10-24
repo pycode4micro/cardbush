@@ -1,4 +1,17 @@
-import { terminalCommandOutcome } from '@cardbush/bush-protocol';
+import { returnedToolError } from '@cardbush/bush-protocol';
+
+function terminalNotice(value: Record<string, unknown>): string | undefined {
+  const failure = returnedToolError('terminal_exec', value);
+  if (failure && value.commandStarted === false) return 'The protected command was not started. Inspect errorCode/nativeErrorCode and sandbox scope; do not treat the supervisor exit code as a command exit.';
+  if (failure?.kind === 'permission') return 'The shell reported a permission denial. Check sandbox scope and OS permissions; inspect partial effects before requesting additional_permissions. Changing shells does not grant access.';
+  if (failure?.code === 'terminal_working_directory_failed') return failure.message;
+  if (failure) return value.sandbox
+    ? 'The command failed inside an active sandbox. Its cause is not established by the exit code or empty output. Inspect diagnostics, cwd and access scope; verify partial effects before retrying.'
+    : 'The terminal tool returned, but the command failed. Inspect exitCode, error and output; verify partial effects before retrying.';
+  if (value.shellDiagnostic) return 'PowerShell recorded errors which may have been caught or suppressed. Check shellDiagnostic and verify the requested effects even with exitCode 0; do not repeat completed side effects.';
+  if (typeof value.stderr === 'string' && value.stderr.trim())
+    return 'stderr contains diagnostic output, which may include warnings or non-terminating errors even with exitCode 0. Inspect it and verify the requested output before claiming success; do not repeat completed side effects.';
+}
 
 /** Tool-owned text presentation. Metadata is structured; text is never JSON-quoted. */
 export function renderTextFields(result: unknown, fields: readonly string[]): string | undefined {
@@ -17,13 +30,7 @@ export function renderTextFields(result: unknown, fields: readonly string[]): st
 export function renderTerminalResult(result: unknown): string | undefined {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return undefined;
   const value = result as Record<string, unknown>;
-  const failed = terminalCommandOutcome(value) === 'failed';
-  const diagnostics = typeof value.stderr === 'string' && value.stderr.trim().length > 0;
-  const notice = failed
-    ? 'The terminal tool returned, but the command failed. Inspect exitCode, error and output; verify partial effects before retrying.'
-    : diagnostics
-      ? 'stderr contains diagnostic output, which may include warnings or non-terminating errors even with exitCode 0. Inspect it and verify the requested output before claiming success; do not repeat completed side effects.'
-      : undefined;
+  const notice = terminalNotice(value);
   return renderTextFields(notice ? { ...value, runtime_notice: notice } : value, ['stdout', 'stderr']);
 }
 
@@ -33,18 +40,24 @@ export function projectTerminalResult(result: unknown, maxChars: number): string
   const full = renderTerminalResult(result);
   if (full === undefined || full.length <= maxChars) return full;
   const value = result as Record<string, unknown>;
-  const essentials = Object.fromEntries(['terminalSessionId', 'state', 'exitCode', 'signal'].flatMap(key => {
+  const essentials: Record<string, unknown> = Object.fromEntries(['terminalSessionId', 'state', 'exitCode', 'signal', 'errorCode', 'nativeErrorCode', 'commandStarted', 'supervisorExitCode', 'cwd'].flatMap(key => {
     const item = value[key];
-    return item === null || typeof item === 'number' || typeof item === 'string'
+    return item === null || typeof item === 'number' || typeof item === 'string' || typeof item === 'boolean'
       ? [[key, typeof item === 'string' ? item.slice(0, 160) : item]] : [];
   }));
-  const failed = terminalCommandOutcome(value) === 'failed';
-  const minimum = JSON.stringify({ ...essentials, ...(failed ? { runtime_notice: 'The command failed; inspect diagnostics before retrying.' } : {}) });
+  const diagnostic = value.shellDiagnostic as Record<string, unknown> | undefined;
+  if (diagnostic?.source === 'powershell') essentials.shellDiagnostic = {
+    source: 'powershell', phase: diagnostic.phase === 'working_directory' ? 'working_directory' : 'command', permissionDenied: diagnostic.permissionDenied === true,
+  };
+  const sandbox = value.sandbox as Record<string, unknown> | undefined;
+  if (sandbox && ['windows-appcontainer', 'linux-bubblewrap'].includes(String(sandbox.backend))) essentials.sandbox = { backend: sandbox.backend, network: sandbox.network };
+  const notice = terminalNotice(value);
+  const minimum = JSON.stringify({ ...essentials, ...(notice ? { runtime_notice: notice } : {}) });
   if (maxChars <= minimum.length) return minimum;
   const fields = ['error', 'stderr', 'stdout'].filter(key => typeof value[key] === 'string' && (value[key] as string).length > 0);
   const fullMetadata = JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key]) => !fields.includes(key))));
   const metadata = fullMetadata.length <= Math.floor(maxChars / 3)
-    ? JSON.stringify({ ...JSON.parse(fullMetadata), ...(failed ? { runtime_notice: 'The command failed; inspect diagnostics before retrying.' } : {}) })
+    ? JSON.stringify({ ...JSON.parse(fullMetadata), ...(notice ? { runtime_notice: notice } : {}) })
     : minimum;
   let available = Math.max(0, maxChars - metadata.length - fields.reduce((sum, key) => sum + key.length + 5, 0));
   const sections: string[] = [];

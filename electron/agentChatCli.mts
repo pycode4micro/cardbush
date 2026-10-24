@@ -22,8 +22,9 @@ export { terminalText } from './agentChatPresentation.mjs';
 
 type Client = Pick<AgentHttpClient, 'call' | 'events'>;
 type Job = Pick<AgentJob, 'id' | 'sessionId' | 'turnId'>;
+type SavedChatJob = Omit<AgentJob, 'input'> & Pick<AgentSendInput, 'modelId' | 'reasoningEffort'>;
 type Interaction = Extract<RuntimeEvent, { kind: 'permission_requested' | 'solution_selection_requested' }>;
-const pendingJob = (job: AgentJob) => job.status === 'running' || job.status === 'queued';
+const pendingJob = (job: Pick<AgentJob, 'status'>) => job.status === 'running' || job.status === 'queued';
 export interface ChatTerminal {
   write(text: string): void;
   status(text: string): void;
@@ -253,9 +254,12 @@ Successful connections are remembered.
   --help            Show help
 
 Commands: /model [ID] selects a model and reasoning effort; /settings shows config paths and reloads settings.
-          Model selection: Up/Down selects, Enter confirms, Esc goes back. App defaults stay unchanged.
+          Model selection: Up/Down selects, Tab fills, Enter confirms, Esc goes back; /cancel discards changes.
+          Effort: Model setting follows App config; Provider default lets the provider choose.
+          Available reasoning levels follow the model's API protocol. App defaults stay unchanged.
           /new starts a session; /plan shows the plan; /logs shows the log path;
-          /session [ID] switches sessions; omit ID to choose from saved sessions;
+          /session [ID] switches sessions and restores their last submitted model and effort;
+          omit ID to choose from saved sessions;
           /tools [number] [--turn N] inspects tools, arguments and results;
           /artifact [number] opens this turn's files; /source [number] shows evidence;
           /quit (or /exit) exits; /help shows help. Other input is sent to the Agent.
@@ -263,6 +267,8 @@ Commands: /model [ID] selects a model and reasoning effort; /settings shows conf
 Use /artifact, then Tab to choose a file and Enter to open it. Esc clears the selection.
 Resuming shows past user messages and final replies. Use /tools --turn N to inspect
 an earlier turn. One-shot and piped prompts keep stdout limited to the new reply.
+--resume restores the last submitted model and effort; --model ID overrides this at launch.
+Sessions without an available saved model use the current default model and its setting.
 Web and local file links are clickable in supported terminals. Remote files are
 downloaded only when explicitly opened; source details come from the Agent's records.
 While running, Enter queues the next turn; /steer TEXT guides the current task.
@@ -273,10 +279,12 @@ quote paths with spaces, e.g. @"folder/file name.txt".
 Slash commands prefer exact names and prefixes, then ordered fuzzy matches.
 Enter confirms the selected command (e.g. /q selects /quit); Tab only fills it.
 Up/Down selects a suggestion, or browses history without suggestions.
-Arguments, paths, model choices and confirmation prompts support Tab. It never submits.
+Workspace paths, model/effort choices and confirmation prompts support Tab. It never submits.
 Enter on a file suggestion inserts it into the draft before sending.
 In /settings or model setup, type vim FILE (or another command) to edit in place.
 Shell commands run locally as the CLI user, even when connected to a remote Agent.
+Use /shell to enter the native shell for command and path completion; exit returns to chat.
+Finish or stop the current task before /model, /settings, /session, /new or shell commands.
 Long or multiline pastes are folded; Enter submits the complete text.
 Esc stops the running task or clears a draft. Ctrl+C stops the task or exits when idle.
 Approvals apply once. Piped mode stops with exit code 2 if confirmation is required.
@@ -401,11 +409,6 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       : resumeId ? (await client.call('sessions.list', { projection: 'summary' }, lifetime.signal) as ChatSession[]).find(item => item.sessionId === resumeId) : await createSession();
     if (!session && pickSession) return 0;
     if (!session) throw new Error('Session not found.');
-    const previousJobs = await client.call('chat.jobs', { sessionId: session.sessionId }, lifetime.signal) as Array<Omit<AgentJob, 'input'> & Pick<AgentSendInput, 'modelId' | 'reasoningEffort'>>;
-    const previousModel = previousJobs.at(-1);
-    if ((resumeId || pickSession) && !values.model && previousModel && config.models.some(model => model.id === previousModel.modelId)) {
-      modelId = previousModel.modelId; reasoningEffort = previousModel.reasoningEffort; selectedModel = true;
-    }
     const references = new AgentChatReferences(client, io, options.openArtifact);
     io.setReferenceRenderer(references);
     let referenceTurn: string | undefined;
@@ -422,7 +425,6 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       io.identify({ name: info.name, model: modelName, effort: chatEffortLabel(config.models.find(model => model.id === modelId), reasoningEffort),
         permission: permissionMode === 'all_free' ? 'Full access' : 'Approval mode', workspace: workspace ?? undefined, sessionId: session!.sessionId, local }, config.models.map(model => model.id));
     };
-    identify();
     let inputWork: Promise<void> = Promise.resolve(), exitRequested = false, waitingSubmissions = 0;
     const observed = new Set<string>();
     const readPlan = async () => {
@@ -509,7 +511,6 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         io.restoreDraft(text);
       }).finally(() => { waitingSubmissions--; });
     };
-    if (prompt === undefined) io.enableLiveInput(queueRunningInput);
     const run = async (job: Job & { text?: string }, submit?: AgentSendInput) => {
       await stopping;
       observed.add(job.id); queued.delete(job.id); io.setQueued(queued.size);
@@ -538,10 +539,24 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         } finally { io.finishTurn(outcome); turn = undefined; }
       }
     };
-    const restoreSession = async (history: boolean) => {
-      const previousJobs = await client.call('chat.jobs', { sessionId: session!.sessionId }, lifetime.signal) as AgentJob[];
+    let liveInputEnabled = false;
+    const restoreSession = async (history: boolean, restoreModel: boolean) => {
+      const previousJobs = await client.call('chat.jobs', { sessionId: session!.sessionId }, lifetime.signal) as SavedChatJob[];
       const existing = previousJobs.filter(job => pendingJob(job));
       if (existing.length && prompt !== undefined) throw new Error('This session has an active task. Run cardbush --resume interactively first; no new prompt was submitted.');
+      if (restoreModel) {
+        const previous = previousJobs.at(-1);
+        const saved = previous && config.models.some(model => model.id === previous.modelId) ? previous : undefined;
+        modelId = saved?.modelId ?? config.defaultModelId;
+        reasoningEffort = saved?.reasoningEffort;
+        selectedModel = Boolean(saved);
+      }
+      identify();
+      // Render identity before the first prompt; replay needs the live renderer
+      // so restored user messages remain visible alongside assistant replies.
+      if (prompt === undefined && !liveInputEnabled) {
+        io.enableLiveInput(queueRunningInput); liveInputEnabled = true;
+      }
       if (history && prompt === undefined) {
         try {
           const turns = await readChatHistory(client, session!.sessionId, lifetime.signal);
@@ -561,7 +576,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       referenceScope();
       existing.forEach(job => queued.add(job.id)); io.setQueued(queued.size);
     };
-    await restoreSession(resumeId !== undefined);
+    await restoreSession(resumeId !== undefined, resumeId !== undefined && !values.model);
     while (!lifetime.signal.aborted && !exitRequested) {
       reportDiagnosticError();
       if (prompt === undefined) {
@@ -590,7 +605,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
           if (!selected || selected.sessionId === session.sessionId) continue;
           session = selected; active = undefined; stopping = undefined;
           queued.clear(); observed.clear(); uncertain.clear(); referenceTurn = undefined;
-          io.resetSession(); identify(); await restoreSession(true);
+          io.resetSession(); await restoreSession(true, true);
         } catch (error) { lifetime.signal.throwIfAborted(); io.status(`[Session unavailable] ${error instanceof Error ? error.message : String(error)}\n`); }
         continue;
       }

@@ -32,6 +32,22 @@ test('terminal failures are distinct from running, stopped and business JSON', (
   assert.equal(returnedToolError('mcp__demo__read', { structuredContent: { state: 'exited', exitCode: 2 } }), undefined);
 });
 
+test('terminal permission and launch facts remain structured without guessing from text or exit codes', () => {
+  const denied = { state: 'exited', exitCode: 1, stdout: '', stderr: '', commandStarted: true,
+    shellDiagnostic: { source: 'powershell', phase: 'command', permissionDenied: true } };
+  const error = returnedToolError('terminal_exec', denied);
+  assert.equal(error.kind, 'permission'); assert.equal(error.code, 'terminal_permission_denied');
+  assert.equal(error.details.commandStarted, true);
+  const launch = returnedToolError('terminal_exec', { state: 'failed', exitCode: 3388997633,
+    errorCode: 'process_access_denied', nativeErrorCode: 5, commandStarted: false, error: 'Native startup denied' });
+  assert.equal(launch.code, 'process_access_denied'); assert.equal(launch.message, 'Native startup denied');
+  assert.equal(launch.details.commandStarted, false); assert.equal(launch.details.nativeErrorCode, 5);
+  for (const stderr of ['', 'Access denied', '拒绝访问']) {
+    assert.equal(returnedToolError('terminal_exec', { state: 'exited', exitCode: 1, stderr }).kind, 'tool');
+  }
+  assert.equal(returnedToolError('terminal_exec', { ...denied, exitCode: 0 }), undefined, 'caught errors are not failed commands');
+});
+
 test('unstructured declared errors stay bounded and explicit persisted classification survives summaries', () => {
   const resultError = returnedToolError('mcp__demo__read', { isError: true, content: [{ type: 'image', data: 'large' }, { type: 'text', text: 'x'.repeat(50_000) }] });
   assert.equal(resultError.message.length, 2048);

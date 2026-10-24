@@ -1,5 +1,10 @@
-/** Translate explicit Windows launch-policy errors only; access denied/UNKNOWN have other causes. */
+/** Preserve explicit native launch failures without guessing which policy denied access. */
 export function windowsProcessFailure(nativeErrorCode: number | undefined, executable: string) {
+  if (nativeErrorCode === 5) return {
+    code: 'process_access_denied',
+    message: `Windows denied access while preparing or starting ${executable} (error 5). The protected command was not started. Check the account's filesystem permissions and the active sandbox scope; the error alone does not identify which boundary denied access.`,
+    blockedExecutable: executable,
+  };
   if (![4551, 1260, 577].includes(nativeErrorCode ?? 0)) return undefined;
   const signature = nativeErrorCode === 577;
   return {

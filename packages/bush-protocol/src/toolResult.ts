@@ -27,10 +27,19 @@ export function returnedToolError(name: string, result: unknown, registeredMcp =
   }
   if (terminalToolOutcome(name, result) === 'failed') {
     const exitCode = native?.exitCode, signal = native?.signal;
-    return { kind: 'tool', code: 'terminal_command_failed',
-      message: typeof exitCode === 'number' ? `Command exited with code ${exitCode}.`
-        : text(signal, 128) ? `Command ended with signal ${text(signal, 128)}.` : `Command ${text(native?.state, 128) || 'failed'}.`,
-      details: { source: 'terminal', ...(typeof exitCode === 'number' ? { exitCode } : {}), ...(typeof signal === 'string' ? { signal: text(signal, 128) } : {}) } };
+    const diagnostic = object(native?.shellDiagnostic);
+    const permission = native?.errorCode === 'process_access_denied' || diagnostic?.source === 'powershell' && diagnostic.permissionDenied === true;
+    const cwd = diagnostic?.source === 'powershell' && diagnostic.phase === 'working_directory';
+    const code = text(native?.errorCode, 128) || (permission ? 'terminal_permission_denied' : cwd ? 'terminal_working_directory_failed' : 'terminal_command_failed');
+    return { kind: permission ? 'permission' : 'tool', code,
+      message: text(native?.error, 2048) || (permission ? `The shell reported an access denial${cwd ? ' while initializing the working directory' : ''}. Inspect partial effects and the active sandbox scope before requesting additional access.`
+        : cwd ? 'The shell could not initialize the requested working directory; it did not silently run the script from another directory.'
+        : typeof exitCode === 'number' ? `Command exited with code ${exitCode}.`
+        : text(signal, 128) ? `Command ended with signal ${text(signal, 128)}.` : `Command ${text(native?.state, 128) || 'failed'}.`),
+      details: { source: 'terminal', ...(typeof exitCode === 'number' ? { exitCode } : {}), ...(typeof signal === 'string' ? { signal: text(signal, 128) } : {}),
+        ...(typeof native?.commandStarted === 'boolean' ? { commandStarted: native.commandStarted } : {}),
+        ...(typeof native?.nativeErrorCode === 'number' ? { nativeErrorCode: native.nativeErrorCode } : {}),
+        ...(permission ? { permissionDenied: true } : {}) } };
   }
   return undefined;
 }

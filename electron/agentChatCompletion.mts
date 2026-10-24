@@ -1,6 +1,7 @@
 import { posix, win32 } from 'node:path';
 import type { AgentHttpClient } from './agentHttpClient.mjs';
 import type { WorkspaceDirectoryPage } from './workspaceFiles.js';
+import { chatShellCommand } from './agentChatShell.mjs';
 
 export type ChatChoice = { value: string; description?: string; label?: string };
 export type ChatInputOptions = { chat?: boolean; choices?: ChatChoice[];
@@ -27,7 +28,7 @@ const commands: ChatChoice[] = [
   { value: '/help', description: 'Show command help' },
   { value: '/new', description: 'Start a new session' },
   { value: '/steer ', label: '/steer', description: 'Guide the running task' },
-  { value: '/shell ', label: '/shell', description: 'Run a local command or open a native shell' },
+  { value: '/shell ', label: '/shell', description: 'Open a local shell, or run /shell COMMAND / !COMMAND' },
   ...chatExitCommands.map(value => ({ value, description: 'Exit and show the resume command' })),
 ];
 const safe = (value: string) => !/[\x00-\x1f\x7f-\x9f]/.test(value);
@@ -157,6 +158,9 @@ export class AgentChatCompletion {
       try { const catalog = await this.#catalog(); signal.throwIfAborted(); return commandSuggestions(line, cursor, this.#context.models, this.#extra(catalog)); }
       catch { signal.throwIfAborted(); return { ...command, notice: 'Skill catalog unavailable; built-in commands still work' }; }
     }
+    // Shell input belongs to this computer, even when the Agent is remote.
+    // Native shell completion must never substitute Agent workspace paths.
+    if (chatShellCommand(line) !== undefined) return;
     const token = pathToken(line, cursor);
     if (!token) return;
     const empty = { start: token.start, end: token.end, items: [] };

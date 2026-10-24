@@ -73,6 +73,33 @@ test('long native error text and stdout-only failures remain inspectable', async
   }
 });
 
+test('sandbox and permission facts survive final ingress projection with empty or large output', async () => {
+  for (const stdout of ['', 'progress\n'.repeat(20000)]) {
+    const result = { state: 'exited', exitCode: 1, stdout, stderr: '', commandStarted: true,
+      sandbox: { backend: 'windows-appcontainer', network: 'disabled', writableRoots: ['C:\\work'] },
+      shellDiagnostic: { source: 'powershell', phase: 'command', permissionDenied: true, category: 'PermissionDenied' } };
+    for (const budget of [0, 3000]) {
+      const { response, store } = await projected(result, budget);
+      const text = response.messages[0].content;
+      assert.match(text, /permissionDenied.*true/); assert.match(text, /windows-appcontainer/);
+      assert.match(text, /commandStarted.*true/);
+      assert.equal(store.get('s', 't', 'call-0').resultError.kind, 'permission');
+      assert.deepEqual(store.get('s', 't', 'call-0').result, result);
+    }
+  }
+  const { registry } = await projected({ state: 'exited', exitCode: 1, stdout: '', stderr: '',
+    sandbox: { backend: 'linux-bubblewrap', network: 'disabled' } }, 3000);
+  assert.match(registry.renderModelResult('terminal_exec', { state: 'exited', exitCode: 1, stdout: '', stderr: '',
+    sandbox: { backend: 'linux-bubblewrap', network: 'disabled' } }), /cause is not established/);
+  const startup = { state: 'failed', exitCode: null, supervisorExitCode: 3388997633, commandStarted: false,
+    nativeErrorCode: 5, errorCode: 'process_access_denied', error: 'OS startup denial', stdout: '', stderr: '' };
+  const { response } = await projected(startup, 0);
+  assert.match(response.messages[0].content, /"commandStarted":false/);
+  assert.match(response.messages[0].content, /"exitCode":null/);
+  assert.match(response.messages[0].content, /"nativeErrorCode":5/);
+  assert.match(response.messages[0].content, /process_access_denied/);
+});
+
 test('background completion uses the same diagnostic projection and archives full output', async () => {
   const result = { terminalSessionId: 'fixture', state: 'exited', exitCode: 1,
     stdout: 'progress\n'.repeat(20000), stderr: 'background failure details' };

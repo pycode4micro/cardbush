@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import { randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { promisify } from 'node:util';
-import { withToolFailureFacts } from './toolFailureFacts.js';
+import { withToolFailureFacts, toolFailureFacts } from './toolFailureFacts.js';
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { freemem, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -196,6 +196,8 @@ export interface ProcessResourceReport {
   taskMemoryBytes: number;
   totalMemoryBytes: number;
   nativeErrorCode?: number;
+  /** Native supervisor fact: the protected shell/command was resumed. */
+  commandStarted?: boolean;
   blockedExecutable?: string;
   sandboxCleaned?: boolean;
   sandboxScopeStale?: boolean;
@@ -357,10 +359,11 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
         const report = JSON.parse(await readFile(reportPath, "utf8")) as ProcessResourceReport;
         if (report.phase !== "finished") throw new Error("Resource host did not finish.");
         const cleanupFailure = await cleanupSandbox(sandbox, lease, report.sandboxCleaned === true, report.sandboxScopeStale === true);
-        const policyFailure = report.code === 'resource_spawn_failed'
+        const policyFailure = report.code === 'resource_spawn_failed' || report.commandStarted === false
           ? windowsProcessFailure(report.nativeErrorCode, input.executable) : undefined;
-        const result = policyFailure ? { ...report, ...policyFailure } : report;
-        return cleanupFailure ? { ...cleanupFailure, message: [result.message, cleanupFailure.message].filter(Boolean).join(' ') } : result;
+        const result = policyFailure ? { ...report, ...policyFailure,
+          message: [policyFailure.message, report.message].filter(Boolean).join(' ') } : report;
+        return cleanupFailure ? { ...result, ...cleanupFailure, message: [result.message, cleanupFailure.message].filter(Boolean).join(' ') } : result;
       } catch {
         const cleanupFailure = await cleanupSandbox(sandbox, lease, !child.pid);
         if (cleanupFailure) return cleanupFailure;
@@ -392,7 +395,8 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
     lease.release();
     await sandbox?.dispose(!nativeStarted);
     if (reportDirectory) await removeReceiptDirectory(reportDirectory);
-    throw error;
+    throw !nativeStarted && error instanceof Error && !toolFailureFacts(error) ? withToolFailureFacts(error,
+      { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input' }) : error;
   }
 }
 

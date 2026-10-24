@@ -6,6 +6,7 @@ import { isWithin, normalizeIdentity } from './workspaceAccessPolicy.js';
 import type { ExecutionSandboxPolicy } from './executionSandbox.js';
 import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
 import { WindowsSandboxScopePool } from './windowsSandboxScope.js';
+import { TerminalDiagnosticStream, type TerminalShellDiagnostic } from './terminalDiagnostics.js';
 
 export type TerminalShell = 'cmd' | 'powershell' | 'posix';
 interface TerminalPollInput { sessionId: string; yieldTimeMs: number }
@@ -29,6 +30,10 @@ interface ManagedTerminalSession {
   signal: NodeJS.Signals | null;
   error: string;
   errorCode?: string;
+  commandStarted?: boolean;
+  nativeErrorCode?: number;
+  supervisorExitCode?: number;
+  shellDiagnostic?: TerminalShellDiagnostic;
   startedAt: number;
   endedAt?: number;
   lastOutputAt?: number;
@@ -101,7 +106,8 @@ export class TerminalSessionManager {
 
   async #start(input: Parameters<TerminalSessionManager['start']>[0], ready: () => void): Promise<Record<string, unknown>> {
     if (input.signal?.aborted) throw abortReason(input.signal);
-    const invocation = commandInvocation(input.shell, input.command);
+    const diagnosticToken = input.shell === 'powershell' ? randomUUID().replaceAll('-', '') : undefined;
+    const invocation = commandInvocation(input.shell, input.command, undefined, diagnosticToken);
     const sessionId = `terminal_${randomUUID()}`;
     const exclusiveResources = decodeExclusiveResources(input.exclusiveResources);
     const releaseResources = runtimeExclusiveResources.acquire(sessionId, input.cwd, exclusiveResources);
@@ -171,10 +177,13 @@ export class TerminalSessionManager {
       appendTerminalOutput(terminal, "stdout", chunk);
       this.#notify(terminal);
     });
-    child.stderr?.on("data", (chunk: Buffer) => {
+    const appendError = (chunk: Buffer) => {
       appendTerminalOutput(terminal, "stderr", chunk);
       this.#notify(terminal);
-    });
+    };
+    const diagnostics = diagnosticToken ? new TerminalDiagnosticStream(diagnosticToken, appendError,
+      value => { terminal.shellDiagnostic = value; }) : undefined;
+    child.stderr?.on("data", (chunk: Buffer) => diagnostics ? diagnostics.write(chunk) : appendError(chunk));
     let finishing = false;
     const finish = async (exitCode: number | null, signal: NodeJS.Signals | null) => {
       if (finishing) return;
@@ -190,8 +199,11 @@ export class TerminalSessionManager {
         terminal.error = report.message;
         terminal.errorCode = report.code;
       }
+      terminal.commandStarted = report?.commandStarted;
+      terminal.nativeErrorCode = report?.nativeErrorCode || undefined;
       terminal.state = terminal.stopRequested ? "stopped" : terminal.error || terminal.errorCode ? "failed" : "exited";
-      terminal.exitCode = exitCode;
+      terminal.exitCode = report?.commandStarted === false ? null : exitCode;
+      if (report?.commandStarted === false && exitCode !== null) terminal.supervisorExitCode = exitCode;
       terminal.signal = signal;
       terminal.endedAt = Date.now();
       this.#notify(terminal);
@@ -203,15 +215,12 @@ export class TerminalSessionManager {
     };
     child.on("error", error => {
       terminal.error = error.message;
-      // Failed spawns may never emit exit. Settle cleanup before publishing failure.
-      void finish(null, null);
+      // Node emits close after a failed spawn as well; drain diagnostics first.
     });
-    child.on("exit", (exitCode, signal) => { void finish(exitCode, signal); });
-    child.on("close", () => {
+    child.on("close", (exitCode, signal) => {
+      diagnostics?.flush();
       terminal.closed = true;
-      // The exit receipt may still be loading. Do not wake a poll with an empty
-      // "running" result between native close and the final terminal state.
-      if (terminal.state !== "running") this.#notify(terminal);
+      void finish(exitCode, signal);
     });
 
     ready();
@@ -291,6 +300,7 @@ export class TerminalSessionManager {
       command: terminal.command,
       pid: terminal.pid,
       state: terminal.state,
+      cwd: terminal.cwd,
       sandbox: terminal.guarded.sandbox ?? null,
       exclusiveResources: terminal.exclusiveResources,
     };
@@ -342,6 +352,7 @@ export class TerminalSessionManager {
       terminalSessionId: terminal.sessionId,
       pid: terminal.pid,
       state: terminal.state,
+      cwd: terminal.cwd,
       shellExecutable: terminal.shellExecutable,
       ...(terminal.exclusiveResources.length ? { exclusiveResources: terminal.exclusiveResources } : {}),
       sandbox: terminal.guarded.sandbox ?? null,
@@ -354,6 +365,10 @@ export class TerminalSessionManager {
       stderrTruncated,
       ...(terminal.error ? { error: terminal.error } : {}),
       ...(terminal.errorCode ? { errorCode: terminal.errorCode } : {}),
+      ...(terminal.commandStarted === undefined ? {} : { commandStarted: terminal.commandStarted }),
+      ...(terminal.nativeErrorCode === undefined ? {} : { nativeErrorCode: terminal.nativeErrorCode }),
+      ...(terminal.supervisorExitCode === undefined ? {} : { supervisorExitCode: terminal.supervisorExitCode }),
+      ...(terminal.shellDiagnostic ? { shellDiagnostic: terminal.shellDiagnostic } : {}),
     };
   }
 

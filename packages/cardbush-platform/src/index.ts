@@ -103,19 +103,43 @@ export function terminalInvocation(runtime?: TerminalRuntime, cwd?: string, comm
   if (!executable) throw new Error('Git Bash is unavailable. Install Git for Windows or select PowerShell.');
   return {command:executable,args:command === undefined ? (context.platform === 'win32' ? ['--login','-i'] : []) : ['-lc',command]};
 }
-export function powerShellCommand(command: string) {
+export function powerShellCommand(command: string, diagnosticToken?: string) {
+  if (diagnosticToken && !/^[a-f0-9]{32}$/.test(diagnosticToken)) throw new Error('Invalid terminal diagnostic token.');
   // Inspect status in the user's scope, including trailing comments and cmdlet errors.
   return ['[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)',
     '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)', '$OutputEncoding = [Console]::OutputEncoding',
-    '& {',command,'$cardbushCommandSucceeded = $?','$cardbushNativeExitCode = $LASTEXITCODE',
+    '$cardbushPhase = "working_directory"', '$Error.Clear()',
+    'try {',
+    // The sandbox may already use a provider drive rooted at the admitted cwd.
+    // Re-entering the absolute path would probe parents it cannot access.
+    '$cardbushPathComparison = if ([IO.Path]::DirectorySeparatorChar -eq [char]92) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }',
+    'if (-not [string]::Equals((Get-Location).ProviderPath.TrimEnd([IO.Path]::DirectorySeparatorChar), ([Environment]::CurrentDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar), $cardbushPathComparison)) { Set-Location -LiteralPath ([Environment]::CurrentDirectory) -ErrorAction Stop }',
+    '$cardbushPhase = "command"', '& {',command,'$cardbushCommandSucceeded = $?','$cardbushNativeExitCode = $LASTEXITCODE',
     'if ($null -ne $cardbushNativeExitCode -and $cardbushNativeExitCode -ne 0) { exit $cardbushNativeExitCode }',
-    'if (-not $cardbushCommandSucceeded) { exit 1 }','}'].join('\n');
+    'if (-not $cardbushCommandSucceeded) { exit 1 }','}',
+    '} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }',
+    ...(diagnosticToken ? ['finally {',
+      // ErrorRecord types survive -ErrorAction SilentlyContinue and localization.
+      // This is interpreter telemetry, not proof that no side effects occurred.
+      '$cardbushDiagnostic = $null',
+      'foreach ($cardbushError in @($Error)) {',
+      '$cardbushException = $cardbushError.Exception; $cardbushPermission = $false',
+      'while ($null -ne $cardbushException) {',
+      'if ($cardbushException -is [UnauthorizedAccessException] -or $cardbushException.HResult -eq -2147024891 -or ($cardbushException -is [ComponentModel.Win32Exception] -and $cardbushException.NativeErrorCode -eq 5)) { $cardbushPermission = $true; break }',
+      '$cardbushException = $cardbushException.InnerException', '}',
+      '$cardbushPermission = $cardbushPermission -or $cardbushError.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::PermissionDenied',
+      'if ($null -eq $cardbushDiagnostic -or $cardbushPermission) {',
+      '$cardbushDiagnostic = @{source="powershell"; phase=$cardbushPhase; permissionDenied=$cardbushPermission; category=[string]$cardbushError.CategoryInfo.Category; exceptionType=$cardbushError.Exception.GetType().FullName}',
+      '}', 'if ($cardbushPermission) { break }', '}',
+      `if ($null -ne $cardbushDiagnostic) { [Console]::Error.Write(([char]30 + '${diagnosticToken}:' + (ConvertTo-Json -InputObject $cardbushDiagnostic -Compress) + [char]31)) }`,
+      '}'] : []),
+  ].join('\n');
 }
-export function commandInvocation(shell: CommandShell, command: string, context = createPlatformContext()): {executable:string;args:string[]} {
+export function commandInvocation(shell: CommandShell, command: string, context = createPlatformContext(), diagnosticToken?: string): {executable:string;args:string[]} {
   if (shell === 'powershell') {
     const executable = powershell(context);
     if (!executable) throw new Error('PowerShell is unavailable on this host.');
-    return {executable,args:['-NoLogo','-NoProfile','-NonInteractive','-Command',powerShellCommand(command)]};
+    return {executable,args:['-NoLogo','-NoProfile','-NonInteractive','-Command',powerShellCommand(command, diagnosticToken)]};
   }
   if (shell === 'cmd') {
     if (context.platform !== 'win32') throw new Error('cmd is unavailable on this host.');

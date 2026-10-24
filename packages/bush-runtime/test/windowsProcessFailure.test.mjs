@@ -14,6 +14,9 @@ test('explicit policy failures identify the executable without advising policy b
   assert.equal(windowsProcessFailure(577, 'plugin.dll').code, 'process_signature_rejected');
 });
 
-test('ordinary access and resource errors are not misclassified as application control', () => {
-  for (const code of [undefined, 0, 2, 5, 8, 87, 193, 216]) assert.equal(windowsProcessFailure(code, 'worker.exe'), undefined);
+test('native access denial is explicit without inventing application control or a sandbox cause', () => {
+  const denied = windowsProcessFailure(5, 'worker.exe');
+  assert.equal(denied.code, 'process_access_denied');
+  assert.match(denied.message, /does not identify which boundary/);
+  for (const code of [undefined, 0, 2, 8, 87, 193, 216]) assert.equal(windowsProcessFailure(code, 'worker.exe'), undefined);
 });

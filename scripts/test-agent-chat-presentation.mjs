@@ -728,6 +728,18 @@ test('at mentions and paths complete inside sentences, with quoted names and the
   }
 });
 
+test('local shell arguments never query or substitute the Agent workspace', async t => {
+  const f = completionFixture(t);
+  for (const line of ['/shell cat ./src/', '!cat @src/', '/shell vim "./Read', '!ls /work/']) {
+    assert.equal(await f.suggest(line), undefined);
+  }
+  assert.deepEqual(f.calls, [], 'shell hints must not read the remote catalog or filesystem');
+  const command = await f.suggest('/sh');
+  assert.deepEqual(command.items.map(item => item.value), ['/shell ']);
+  assert.match(command.items[0].description, /!COMMAND/);
+  assert.ok((await f.suggest('@src/')).items.length, 'ordinary Agent file completion remains available');
+});
+
 test('hints appear while typing; arrows choose and Tab fills without submitting the command', async t => {
   const f = tty(t, { env: {} });
   let submitted = false;

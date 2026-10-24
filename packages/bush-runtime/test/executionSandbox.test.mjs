@@ -11,6 +11,7 @@ import { ProcessResourceGovernor, runResourceManagedCommand, sandboxEnvironment,
 import { TerminalSessionManager } from '../dist/index.js';
 import { commandInvocation } from '@cardbush/platform';
 import { commandSandboxPlan } from '../dist/commandSandboxAdmission.js';
+import { toolFailureFacts } from '../dist/toolFailureFacts.js';
 
 test('command sandbox removes host secrets and execution injection variables from the environment', () => {
   const environment = sandboxEnvironment({ Path: 'tools', SystemRoot: 'system', LANG: 'en_US.UTF-8',
@@ -39,7 +40,8 @@ test('Windows AppContainer enforces file, child process, network and environment
     assert.equal(result.status, 0, result.stderr || result.error?.message);
     return result.stdout;
   };
-  const before = new Map([work, reference, tools].map(path => [path, acl(path)]));
+  const ancestors = []; for (let path = dirname(work); ; path = dirname(path)) { ancestors.push(path); if (path === dirname(path)) break; }
+  const before = new Map([work, reference, tools, ...ancestors].map(path => [path, acl(path)]));
   const server = createServer(socket => socket.end()); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => new Promise(resolve => server.close(resolve)));
   let sandboxConnections = 0;
@@ -59,6 +61,8 @@ test('Windows AppContainer enforces file, child process, network and environment
   assert.equal(result.exitCode, 0, result.stderr);
   const facts = Object.fromEntries(result.stdout.trim().split(/\r?\n/).map(line => line.split('=')));
   assert.equal(facts.insideWrite, 'allowed'); assert.equal(facts.readOnlyRead, 'allowed');
+  assert.equal(facts.parentMetadata, 'UnauthorizedAccessException', 'cwd initialization never grants parent metadata access');
+  assert.equal(facts.parentList, 'UnauthorizedAccessException', 'parent directory listing remains outside the admitted roots');
   for (const key of ['outsideWrite', 'outsideRead', 'readOnlyWrite', 'linkedWrite', 'childOutsideWrite']) assert.equal(facts[key], 'UnauthorizedAccessException', JSON.stringify(facts));
   assert.ok(['SocketException', 'TimeoutException'].includes(facts.network), JSON.stringify(facts));
   assert.equal(sandboxConnections, 0, 'a reachable host service receives no sandbox connection');
@@ -107,9 +111,25 @@ test('an unavailable required backend never runs a command and releases admissio
   for (let i = 0; i < 10; i++) {
     await assert.rejects(runResourceManagedCommand({ executable: 'cmd.exe', args: ['/d', '/c', 'echo unexpected>escaped.txt'], cwd: root,
       governor, hostPath: join(root, 'missing.exe'), sandbox: { writableRoots: [root], network: 'disabled' },
-    }), { code: 'sandbox_unavailable' });
+    }), error => {
+      assert.equal(error.code, 'sandbox_unavailable');
+      assert.deepEqual(toolFailureFacts(error), { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input' });
+      return true;
+    });
   }
   await assert.rejects(readFile(join(root, 'escaped.txt')), { code: 'ENOENT' });
+});
+
+test('native launch refusal records OS access denial and no resumed command', { skip: process.platform !== 'win32' }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-sandbox-launch-'));
+  t.after(async () => { assert.equal(dirname(root).toLowerCase(), resolve(tmpdir()).toLowerCase()); await rm(root, { recursive: true, force: true }); });
+  // Windows refuses executing a directory. No fixture code can run.
+  const managed = await spawnResourceManagedProcess({ executable: root, args: [], cwd: root });
+  managed.child.stdout.resume(); managed.child.stderr.resume();
+  const report = await managed.complete();
+  assert.equal(report.commandStarted, false);
+  assert.equal(report.nativeErrorCode, 5);
+  assert.equal(report.code, 'process_access_denied');
 });
 
 test('Linux bubblewrap enforces filesystem, descendant and network boundaries', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {

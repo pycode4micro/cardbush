@@ -199,7 +199,7 @@ internal static partial class CardBushProcessHost
         catch (Exception error)
         {
             var nativeError = error as Win32Exception;
-            nativeErrorCode = nativeError == null ? 0 : nativeError.NativeErrorCode;
+            nativeErrorCode = nativeError == null ? (error is UnauthorizedAccessException ? 5 : 0) : nativeError.NativeErrorCode;
             Fail(startingCommand ? "resource_spawn_failed" : "resource_protection_failed",
                 "Process protection could not be established or maintained: " + error.Message);
             // A command can fail before assignment to its task job. It is still
@@ -242,7 +242,8 @@ internal static partial class CardBushProcessHost
                     string report = "{\"phase\":\"finished\",\"code\":" + JsonString(failureCode)
                         + ",\"message\":" + JsonString(failureMessage) + ",\"peakMemoryBytes\":" + peakMemory
                         + ",\"taskMemoryBytes\":" + taskMemory + ",\"totalMemoryBytes\":" + totalMemory
-                        + ",\"nativeErrorCode\":" + nativeErrorCode + ",\"sandboxCleaned\":" + (sandboxCleaned ? "true" : "false")
+                        + ",\"nativeErrorCode\":" + nativeErrorCode + ",\"commandStarted\":" + (resumed ? "true" : "false")
+                        + ",\"sandboxCleaned\":" + (sandboxCleaned ? "true" : "false")
                         + ",\"sandboxScopeStale\":" + (sandbox != null && sandbox.ScopeWasStale ? "true" : "false") + "}";
                     File.WriteAllText(reportPath, report, new UTF8Encoding(false));
                 }

@@ -37,6 +37,14 @@ test('real sandbox execution and exact approvals preserve file boundaries and fu
   assert.equal(inside.result.exitCode, 0, JSON.stringify(inside.result));
   assert.equal(inside.result.sandbox.network, 'disabled'); assert.equal(prompts.length, 0);
   assert.equal((await readFile(join(work, 'normal.txt'), 'utf8')).trim(), 'inside');
+  if (windows) {
+    const located = await run("(Get-Location).ProviderPath; Get-Content -LiteralPath './normal.txt'");
+    assert.equal(located.result.exitCode, 0, JSON.stringify(located.result));
+    assert.match(located.result.stdout, /inside/);
+    assert.ok(located.result.stdout.includes(work), 'provider cwd must match the requested process cwd');
+    assert.equal(located.result.commandStarted, true);
+    assert.equal(located.result.cwd, work);
+  }
   if (windows) assert.equal((await run('echo automatic-cmd', undefined, 'task_free', 'cmd')).result.exitCode, 0);
 
   const target = join(outside, 'target.txt');
@@ -44,6 +52,21 @@ test('real sandbox execution and exact approvals preserve file boundaries and fu
   assert.notEqual(blocked.result.exitCode, 0);
   await assert.rejects(readFile(target), { code: 'ENOENT' });
   assert.equal(prompts.length, 0, 'no automatic retry outside isolation');
+  if (windows) {
+    const hiddenPath = join(outside, 'hidden.txt'); await writeFile(hiddenPath, 'outside fixture');
+    const hidden = await run(`Get-Content -LiteralPath ${quote(hiddenPath)} -ErrorAction SilentlyContinue`);
+    assert.equal(hidden.result.exitCode, 1);
+    assert.equal(hidden.result.stdout, ''); assert.equal(hidden.result.stderr, '');
+    assert.equal(hidden.result.shellDiagnostic.permissionDenied, true);
+    assert.equal(hidden.resultError.kind, 'permission');
+    assert.equal(hidden.resultError.code, 'terminal_permission_denied');
+    assert.equal(hidden.execution.effects, 'possible', 'shell error telemetry never proves no effects');
+    assert.equal(hidden.execution.recovery, 'do_not_retry');
+    assert.deepEqual(hidden.result.sandbox.writableRoots, [work]);
+    const ordinary = await run('exit 1');
+    assert.equal(ordinary.resultError.code, 'terminal_command_failed');
+    assert.equal(ordinary.result.shellDiagnostic, undefined, 'empty stderr alone is not a permission signal');
+  }
 
   const granted = await run(write(target, 'approved'), { write_roots: [outside] });
   assert.equal(granted.result.exitCode, 0, JSON.stringify(granted.result));
