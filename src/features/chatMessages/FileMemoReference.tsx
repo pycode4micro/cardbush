@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState, type ReactNode } from 'react';
-import type { FileMemoResolution } from '@cardbush/bush-protocol';
+import { parseFileMemoReference, type FileMemoResolution } from '@cardbush/bush-protocol';
 import { fetchFileMemo } from '../../backend/fileMemo';
 import { fileUrl, isImagePath, isVideoPath, isAudioPath, resourceTargetKind } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
@@ -20,7 +20,8 @@ export function FileMemoReference({ reference, children, inline = false, languag
   const presentedMedia = useContext(PresentedMediaContext);
   const host = useContext(ConversationHostContext);
   const { sessionId, turnId } = useContext(FileMemoScopeContext);
-  const fileName = typeof children === 'string' && /^[^\\/\r\n]+\.[a-z0-9]{1,12}$/i.test(children.trim()) ? children.trim() : undefined;
+  const identity = parseFileMemoReference(reference);
+  const fileName = identity && !('number' in identity) && typeof children === 'string' && /^[^\\/\r\n]+\.[a-z0-9]{1,12}$/i.test(children.trim()) ? children.trim() : undefined;
   const [attempt, setAttempt] = useState(0);
   const key = JSON.stringify([host?.id, reference, sessionId, turnId, fileName, attempt]);
   const [state, setState] = useState<{ key: string; result?: FileMemoResolution; failed?: boolean }>();

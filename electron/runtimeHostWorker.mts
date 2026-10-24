@@ -856,7 +856,11 @@ host = new InMemoryRuntimeHost({
   preferPreparedToolHandoffs: true,
   commandSandbox: commandSandboxConfiguration(process.env),
   loadCommandSandbox: () => loadCommandSandboxConfiguration(process.env, process.env.CARDBUSH_SANDBOX_SETTINGS_PATH),
-  remoteWorkspace: { request: (action, payload, signal) => mcpHost.request('ssh.workspace', { action, ...payload }, signal) },
+  // Only the desktop host implements ssh.workspace. A service's local tasks
+  // must not acquire an unavailable SSH source from this shared worker.
+  ...(!process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? {
+    remoteWorkspace: { request: (action, payload, signal) => mcpHost.request('ssh.workspace', { action, ...payload }, signal) },
+  } : {}),
   loadSearchResultLimit,
   ...(hostNetworkAvailable ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),
   automation,

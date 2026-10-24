@@ -34,7 +34,7 @@
     "web:serve": "node dist-electron/webServer.mjs",
     "test:web": "npm run build:agent && npm run build:web:ui && node --test --test-timeout=60000 scripts/test-web.mjs",
     "test:agent-desktop": "npm run build:agent && node --test scripts/test-agent-desktop.mjs scripts/test-agent-desktop-probe.mjs",
-    "test:agents": "npm run build:agent && node --test --test-timeout=45000 scripts/test-agent-service.mjs scripts/test-agent-shared-configuration.mjs scripts/test-agent-configuration-deferral.mjs scripts/test-agent-tunnels.mjs scripts/test-agent-marketplaces.mjs scripts/test-model-protocols-host.mjs",
+    "test:agents": "npm run build:agent && node --test --test-timeout=45000 scripts/test-agent-service.mjs scripts/test-agent-shared-configuration.mjs scripts/test-agent-configuration-deferral.mjs scripts/test-agent-tunnels.mjs scripts/test-agent-marketplaces.mjs scripts/test-model-protocols-host.mjs scripts/test-runtime-ssh-capability.mjs",
     "test:agents-ui": "node --test scripts/test-agent-transcript.mjs && node scripts/run-agents-ui-test.mjs",
     "test:agent-previews": "npm run build:agent && node --test scripts/test-agent-file-preview.mjs scripts/test-agent-capture-preview.mjs && node scripts/run-app-views-test.mjs agent-file-preview",
     "test:archives": "node --test scripts/test-conversation-archives.mjs && node scripts/run-settings-context-ui-test.mjs archives",

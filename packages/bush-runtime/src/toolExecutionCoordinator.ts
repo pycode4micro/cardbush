@@ -17,7 +17,7 @@ import {
 } from "@cardbush/bush-protocol";
 
 import type { PermissionResolver, ToolPermissionRequest, ToolRegistry } from "./toolRegistry.js";
-import type { ToolHandlerContext } from "./toolRegistry.js";
+import type { ToolHandlerContext, ToolPermissionWaitObserver } from "./toolRegistry.js";
 import { BUSH_TOOL_CALL_PROTOCOL } from "@cardbush/bush-protocol";
 import { settleAtAbort } from "./abortSettlement.js";
 import type { PluginHookResult } from './pluginExtensions.js';
@@ -111,9 +111,10 @@ export class ToolExecutionCoordinator {
     toolCall: ToolCall, identity: ToolExecutionIdentity, signal?: AbortSignal,
     turn?: ToolHandlerContext['turn'], parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
     dispatchStop?: () => string | undefined,
+    onPermissionWait?: ToolPermissionWaitObserver,
   ): Promise<ToolExecutionOutcome> {
     const trace: ExecutionTrace = { dispatched: false, nestedDispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false };
-    const outcome = await this.executeAttempt(toolCall, identity, signal, turn, parentLifecycle, trace, dispatchStop);
+    const outcome = await this.executeAttempt(toolCall, identity, signal, turn, parentLifecycle, trace, dispatchStop, onPermissionWait);
     const error = outcome.kind === 'returned' ? outcome.resultError : outcome.error;
     const mutating = outcome.actionManifest?.mutating ?? this.#registry.resolve(toolCall.name)?.manifest.mutating ?? true;
     const effects = outcome.workspaceChanges.length ? 'recorded' : trace.nestedEffects !== 'none' ? trace.nestedEffects
@@ -146,8 +147,15 @@ export class ToolExecutionCoordinator {
     parentLifecycle?: { toolCall: ToolCall; identity: ToolExecutionIdentity },
     trace: ExecutionTrace = { dispatched: false, nestedDispatched: false, nestedEffects: 'none', nestedUncertain: false, denied: false },
     dispatchStop?: () => string | undefined,
+    onPermissionWait?: ToolPermissionWaitObserver,
   ): Promise<ToolExecutionOutcome> {
     if (signal?.aborted) return cancelledResult('turn_cancelled');
+    const requestPermission = async (request: ToolPermissionRequest) => {
+      onPermissionWait?.(toolCall.id, true);
+      try {
+        return await this.#permissions.request({ ...request, toolCallId: parentLifecycle?.toolCall.id ?? toolCall.id, executionToolCallId: toolCall.id }, signal);
+      } finally { onPermissionWait?.(toolCall.id, false); }
+    };
     const initialStop = dispatchStop?.();
     if (initialStop) return failedResult('plugin_hook_stopped', initialStop, undefined, {}, 'permission');
     if (turn?.request.metadata.toolExecutionPolicy === 'none') {
@@ -221,7 +229,7 @@ export class ToolExecutionCoordinator {
         // Preserve the wire call/result pair and permission anchor, but run every
         // native gate and journal the target with the same call identity.
         return this.executeAttempt({ ...toolCall, name: target.name, argumentsText: JSON.stringify(target.input) }, identity,
-          signal, turn, parentLifecycle ?? { toolCall, identity }, trace, dispatchStop);
+          signal, turn, parentLifecycle ?? { toolCall, identity }, trace, dispatchStop, onPermissionWait);
       }
       if (hooks) {
         hookResult = await hooks.before({ toolCall, input: parsedArguments, turn, signal });
@@ -254,8 +262,8 @@ export class ToolExecutionCoordinator {
     let capabilityIds: string[] = [];
     if (hookResult.ask) {
       try {
-        const answer = await this.#permissions.request({ toolCallId: parentLifecycle?.toolCall.id ?? toolCall.id, executionToolCallId: toolCall.id, reason: hookResult.ask,
-          actions: ['plugin_hook.confirm_tool'], targets: [], capabilityIds: [] }, signal);
+        const answer = await requestPermission({ reason: hookResult.ask,
+          actions: ['plugin_hook.confirm_tool'], targets: [], capabilityIds: [] });
         if (answer.decision === 'cancel') return cancelledResult('plugin_hook_permission_cancelled', actionManifest);
         if (answer.decision === 'deny') return failedResult('plugin_hook_permission_rejected', hookResult.ask, actionManifest, {}, 'permission');
       } catch (error) {
@@ -326,7 +334,7 @@ export class ToolExecutionCoordinator {
             if (hookPermission?.permissionDecision === 'deny') return failedResult('plugin_hook_permission_rejected', hookPermission.blocked ?? 'Permission denied by a trusted hook.', actionManifest, {}, 'permission');
             answer = hookPermission?.permissionDecision === 'allow'
               ? { decision: 'allow_once', grantedCapabilityIds: [...admission.request.capabilityIds] }
-              : await this.#permissions.request({ ...admission.request, toolCallId: parentLifecycle?.toolCall.id ?? toolCall.id, executionToolCallId: toolCall.id }, signal);
+              : await requestPermission(admission.request);
           } catch (error) {
             if (isAbortError(error)) {
               return cancelledResult(
@@ -441,7 +449,8 @@ export class ToolExecutionCoordinator {
                 if (queuedFailure.kind !== 'returned') queuedFailure.error.details = { ...queuedFailure.error.details, execution };
               }
               const nested = queuedFailure ?? await this.execute(nestedCall, nestedIdentity, nestedSignal, turn,
-                nestedOptions?.record ? undefined : lifecycle, () => nestedHookStopTurn ?? dispatchStop?.());
+                nestedOptions?.record ? undefined : lifecycle, () => nestedHookStopTurn ?? dispatchStop?.(),
+                nestedOptions?.onPermissionWait ?? onPermissionWait);
               trace.nestedDispatched ||= nested.execution?.dispatch !== 'not_started';
               if (nested.execution?.effects === 'recorded' || trace.nestedEffects === 'none' && nested.execution?.effects === 'possible') trace.nestedEffects = nested.execution.effects;
               trace.nestedUncertain ||= nested.execution?.result === 'unknown';

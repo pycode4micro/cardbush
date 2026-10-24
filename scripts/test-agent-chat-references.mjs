@@ -134,6 +134,20 @@ test('file memo identities stay scoped to the original turn and never open unava
   assert.deepEqual(f.opened, []);
 });
 
+test('/artifact resolves short memo destinations without turning captions into file identities', async () => {
+  for (const label of ['打开或下载 pelican-bicycle.html', '打开动画', 'other.html']) {
+    const f = fixture({ 'runtime.resolve_file_memo': payload => {
+      assert.equal(payload.reference, 'cardbush-memo:1');
+      assert.equal(payload.fileName, undefined);
+      return { status: 'available', memo: { protocol: 'bush.file_memo.v1', id: 'file_1', reference: payload.reference,
+        file: { path: 'C:\\work\\pelican-bicycle.html', name: 'pelican-bicycle.html', size: 10, mtimeMs: 1 }, note: { purpose: 'Animation', points: [] } } };
+    } });
+    f.references.link(label, 'cardbush-memo:1');
+    await f.references.handle('artifact', '1', signal());
+    assert.deepEqual(f.opened, [{ target: 'C:\\work\\pelican-bicycle.html', kind: 'file' }]);
+  }
+});
+
 test('remote file links never point at the client filesystem; transfers use the scoped file API', async () => {
   const f = fixture(); f.references.setScope({ ...scope, local: false, platform: 'linux', workspace: '/remote' });
   assert.deepEqual(f.references.link('remote.md', './remote.md'), { text: 'remote.md [file 1]' });

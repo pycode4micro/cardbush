@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { RuntimeToolError } from '@cardbush/bush-protocol';
-import type { ToolHandlerContext } from './toolRegistry.js';
+import type { ToolHandlerContext, ToolPermissionWaitObserver } from './toolRegistry.js';
 import type { RuntimeTaskHandle, TaskSource } from './taskTools.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import type { JoinedSubagentResult } from './subagentTool.js';
@@ -13,7 +13,7 @@ export class RuntimeAsyncJobs {
     private readonly deliver: (session: string, turn: string, id: string, result: Promise<JoinedSubagentResult['message']>) => void) {}
   readonly source: TaskSource = context => [...this.jobs.values()].filter(job => job.session === context.sessionId && job.turn === context.turnId);
   stopReason(session: string, turn: string) { return [...this.jobs.values()].find(job => job.session === session && job.turn === turn && job.hookStop)?.hookStop; }
-  start(context: ToolHandlerContext<unknown>, kind: 'question' | 'script', run: (signal: AbortSignal, onHooks: (messages: string[], stop?: string) => void) => Promise<unknown>) {
+  start(context: ToolHandlerContext<unknown>, kind: 'question' | 'script', run: (signal: AbortSignal, onHooks: (messages: string[], stop?: string) => void, onPermissionWait: ToolPermissionWaitObserver) => Promise<unknown>) {
     if (!context.turn) throw new Error('An active turn is required.');
     if ([...this.jobs.values()].filter(job => job.session === context.sessionId && job.turn === context.turnId).length >= 128) throw new Error('Turn background task capacity reached.');
     if ([...this.jobs.values()].filter(job => job.session === context.sessionId && ['running', 'waiting_user'].includes(job.status)).length >= 8) throw new Error('At most eight question/script tasks can be pending in a conversation. Reuse existing task handles.');
@@ -26,11 +26,22 @@ export class RuntimeAsyncJobs {
       stop: async () => { controller.abort(); return { stop_requested: true, effects: kind === 'script' ? 'Inspect nested tool records before retrying; completed changes remain.' : 'No answer or approval inferred.' }; },
       wait: () => job.completion };
     this.jobs.set(id, job);
+    const permissionWaits = new Set<string>();
+    const revise = () => { job.revision = String(Number(job.revision) + 1); };
+    const onPermissionWait: ToolPermissionWaitObserver = (callId, waiting) => {
+      if (kind !== 'script' || controller.signal.aborted || !['running', 'waiting_user'].includes(job.status)) return;
+      const before = permissionWaits.size;
+      if (waiting) permissionWaits.add(callId); else permissionWaits.delete(callId);
+      if (before === permissionWaits.size) return;
+      job.status = permissionWaits.size ? 'waiting_user' : 'running';
+      job.summary = permissionWaits.size ? `Waiting for user approval (${permissionWaits.size} pending). Other independent calls may still be running.` : undefined;
+      revise();
+    };
     const message = (async (): Promise<JoinedSubagentResult['message']> => {
       let result: unknown;
       let failure: RuntimeToolError | undefined;
       const hookMessages: string[] = [];
-      try { controller.signal.throwIfAborted(); result = await run(controller.signal, (messages, stop) => { hookMessages.push(...messages); job.hookStop ??= stop; }); job.status = 'completed'; }
+      try { controller.signal.throwIfAborted(); result = await run(controller.signal, (messages, stop) => { hookMessages.push(...messages); job.hookStop ??= stop; }, onPermissionWait); job.status = 'completed'; }
       catch (error) {
         job.status = controller.signal.aborted ? 'cancelled' : 'failed';
         const code = (error as { code?: unknown })?.code;
@@ -40,8 +51,8 @@ export class RuntimeAsyncJobs {
           message: error instanceof Error ? error.message : String(error),
           details: { source: `${kind}_completion`, recovery, cause: (error as { details?: unknown })?.details } };
         result = { error: failure, recovery };
-      } finally { outer?.removeEventListener('abort', cancel); }
-      job.revision = '2';
+      } finally { outer?.removeEventListener('abort', cancel); permissionWaits.clear(); job.summary = undefined; }
+      revise();
       const rendered = JSON.stringify(result) ?? 'null';
       result = JSON.parse(rendered);
       if (failure) failure = (result as { error: RuntimeToolError }).error;
@@ -57,7 +68,7 @@ export class RuntimeAsyncJobs {
     })().catch((error): JoinedSubagentResult['message'] => {
       // A serialization/journal failure is an observation failure, not evidence
       // that nested actions never ran. Always settle the completion subscription.
-      job.status = 'failed'; job.revision = '2';
+      job.status = 'failed'; revise();
       job.result = { error: error instanceof Error ? error.message : String(error), recovery: 'inspect_existing',
         note: 'The completion record could not be saved. Inspect existing tool records and outputs before retrying.' };
       return { role: 'user', name: 'background_tool_result', content: JSON.stringify({ task_id: id, kind, status: job.status, result: job.result }) };

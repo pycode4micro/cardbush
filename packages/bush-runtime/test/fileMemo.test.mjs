@@ -163,16 +163,39 @@ test('legacy transcription errors recover only with matching session, turn, file
   assert.equal((await resolveFileMemo(f.store, bad, scope)).reason, 'ambiguous_reference');
 });
 
-test('delivery validation checks links, images and filename mismatches, leaving code examples alone', async t => {
+test('delivery validation checks destinations independently of captions, leaving code examples alone', async t => {
   const f = await memoFixture(t); const a = await f.remember('A [2].md'); await f.remember('other.md');
   const scope = { sessionId: 'session', turnId: 'turn' };
   const examples = '```markdown\n[example](cardbush-memo:999)\n```\n`[example](cardbush-memo:888)`';
   assert.deepEqual((await validateFileMemoLinks(f.store, examples + '\n' + a.markdown, scope)).invalid, []);
   const bad = await validateFileMemoLinks(f.store, '[other.md](cardbush-memo:1)\n![missing](cardbush-memo:99)\n[x]: cardbush-memo:98\n[x]', scope);
-  assert.deepEqual(bad.invalid.map(item => item.reason), ['reference_mismatch', 'reference_not_found', 'reference_not_found']);
+  assert.deepEqual(bad.invalid.map(item => item.reason), ['reference_not_found', 'reference_not_found']);
   assert.ok(bad.links.includes(a.markdown));
+  for (const label of ['打开或下载 A.md', '打开动画', 'other.md']) {
+    assert.deepEqual((await validateFileMemoLinks(f.store, `[${label}](${a.reference})`, scope)).invalid, []);
+    const resolved = await resolveFileMemo(f.store, a.reference, { ...scope, fileName: label });
+    assert.equal(resolved.status, 'available');
+    assert.equal(resolved.memo.file.path, a.file.path, 'a caption never retargets a valid reference');
+  }
+  assert.equal((await resolveFileMemo(f.store, 'cardbush-memo:99', { ...scope, fileName: a.file.name })).status, 'unresolved', 'short links are never repaired by label');
   await rm(a.file.path);
   assert.equal((await validateFileMemoLinks(f.store, a.markdown, scope)).invalid[0].reason, 'file_unavailable');
+});
+
+test('a descriptive file delivery finishes without an extra model correction request', async t => {
+  const f = await memoFixture(t), saved = await f.remember('pelican-bicycle.html');
+  let calls = 0;
+  const provider = { async *stream(request) {
+    assert.equal(++calls, 1, 'valid destinations must not trigger reference_correction');
+    yield { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString(), sequence: 0, kind: 'text_delta', delta: `[打开或下载 pelican-bicycle.html](${saved.reference})` };
+    yield { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString(), sequence: 1, kind: 'response_completed', finishReason: 'stop' };
+  } };
+  const host = new InMemoryRuntimeHost({ dataRoot: join(f.root, 'runtime'), toolExecutionStore: f.store, provider });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const result = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'delivery-request', sessionId: 'session', turnId: 'delivery-turn',
+    model: 'offline-fixture', messages: [{ role: 'user', content: '交付文件' }], tools: [] });
+  assert.equal(result.payload.status, 'completed');
+  assert.equal(calls, 1);
 });
 
 test('final delivery gets one bounded correction without replaying successful file operations or rewriting prior messages', async t => {
