@@ -894,7 +894,7 @@ type WorkerDispatchRecommendation = {
   parentAutoDispatchExpected?: boolean;
   parentAutoDispatchPolicy: string;
   whyNotParentDirect: string;
-  whyNotParallelTools: string;
+  whyNotRunTools: string;
   whyNotSubagent: string;
   writeScopeConfidence: string;
   dispatchGroupId: string;
@@ -1057,7 +1057,7 @@ function WorkerDispatchRecommendationCard({
     ],
     [
       language === 'zh' ? '非工具并发' : 'Not tools',
-      dispatch.whyNotParallelTools,
+      dispatch.whyNotRunTools,
     ],
     [
       language === 'zh' ? '非子 Agent' : 'Not subagent',
@@ -1514,8 +1514,8 @@ function normalizeWorkerDispatchRecord(
   const whyNotParentDirect = nonEmptyString(
     value.why_not_parent_direct ?? value.whyNotParentDirect,
   ) ?? '';
-  const whyNotParallelTools = nonEmptyString(
-    value.why_not_parallel_tools ?? value.whyNotParallelTools,
+  const whyNotRunTools = nonEmptyString(
+    value.why_not_run_tools ?? value.whyNotRunTools,
   ) ?? '';
   const whyNotSubagent = nonEmptyString(
     value.why_not_subagent ?? value.whyNotSubagent,
@@ -1579,7 +1579,7 @@ function normalizeWorkerDispatchRecord(
     parentAutoDispatchExpected,
     parentAutoDispatchPolicy,
     whyNotParentDirect,
-    whyNotParallelTools,
+    whyNotRunTools,
     whyNotSubagent,
     writeScopeConfidence,
     dispatchGroupId,

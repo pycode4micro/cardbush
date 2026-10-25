@@ -60,6 +60,7 @@ test("HTTP retry policy respects Retry-After and stops for auth, input and exhau
   for (const status of [400, 401, 403, 404, 413, 422, 501, 505]) {
     assert.equal(httpFailure(status, "fixture").retryable, false, status);
     assert.equal(httpFailure(status, "ECONNRESET").retryable, false, "HTTP status takes precedence");
+    assert.equal(httpFailure(status, "resource_memory_pressure").retryable, false, 'provider codes cannot impersonate local admission');
   }
   assert.equal(httpFailure(429, "insufficient_quota").retryable, false);
   assert.equal(httpFailure(503, "fixture", { "retry-after": "12.5" }).retryAfterMs, 12500);

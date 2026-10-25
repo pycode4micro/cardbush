@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { AgentHttpClient } from '../dist-electron/agentHttpClient.mjs';
@@ -46,15 +46,22 @@ test('admin registry encrypts tokens, retains them on edit, restores on restart 
   await assert.rejects(save(registry, agentInput({ url: 'https://other.test' })), /地址不可替换/);
 });
 
-test('remote instances cannot move between people, including aliases and delete/re-register', async () => {
+test('admin grants multiple people atomically, deduplicates and revokes without duplicating instances', async () => {
   const { registry } = await fixture(); await save(registry);
-  await assert.rejects(save(registry, agentInput({ userIds: ['bob'] })), /绑定人员/);
-  await assert.rejects(save(registry, agentInput({ userIds: ['alice', 'bob'] })));
+  await save(registry, agentInput({ userIds: ['alice', 'bob', 'bob'], token: '' }));
+  assert.deepEqual(registry.view().agents[0].userIds, ['alice', 'bob']);
+  assert.equal((await registry.list('bob')).length, 1);
+  const revision = registry.view().revision;
+  await assert.rejects(save(registry, agentInput({ userIds: ['alice', 'missing'] })), /授权人员/);
+  assert.equal(registry.view().revision, revision);
+  await save(registry, agentInput({ userIds: ['bob'], token: '' }));
+  await assert.rejects(registry.authorized('alice', 'remote-test'), /授权/);
+  assert.equal((await registry.list('bob')).length, 1);
   await assert.rejects(save(registry, agentInput({ id: 'alias', url: 'https://alias.test' })), /已经注册/);
   await registry.update({ action: 'delete', revision: registry.view().revision, id: 'remote-test' }, users);
   assert.deepEqual(registry.view().agents, []);
   await assert.rejects(registry.authorized('alice', 'remote-test'), /授权/);
-  await assert.rejects(save(registry, agentInput({ id: 'replacement', userIds: ['bob'] })), /曾绑定/);
+  await assert.rejects(save(registry, agentInput()), /已删除/);
   await save(registry, agentInput({ id: 'replacement' }));
   assert.equal((await registry.list('alice')).length, 1);
 });
@@ -88,6 +95,10 @@ test('the immutable web policy denies local forks, auto-assembly, extra paramete
   assert.equal(await webToolDenial(request, 'subagent', { prompt: 'x', target_agent: 'remote-test' }), undefined);
   assert.ok(await webToolDenial(request, 'team', {}));
   assert.ok(await webToolDenial(request, 'list_subagent_options', { section: 'settings' }));
+  const title = { zh: '查看授权目标', en: 'List authorized agents' };
+  assert.equal(await webToolDenial(request, 'list_subagent_options', { _display_title: title }), undefined);
+  assert.equal(await webToolDenial(request, 'subagent', { prompt: 'x', target_agent: 'remote-test', _display_title: title }), undefined);
+  assert.ok(await webToolDenial(request, 'subagent', { prompt: 'x', target_agent: 'remote-test', mode: 'fork', _display_title: title }));
   const narrowed = webToolDefinition({ name: 'subagent', inputSchema: {} });
   assert.deepEqual(Object.keys(narrowed.inputSchema.properties), ['prompt', 'target_agent', 'task_id']);
 });
@@ -107,8 +118,8 @@ test('native runtime discovers only remote targets and preserves async await/fol
   const request = { protocol: 'bush.model_request.v1', requestId: 'req', sessionId: 'parent', turnId: 'turn', model: 'private-model', permissionMode: 'task_free', messages: [], tools: registry.definitions(), metadata: { toolExecutionPolicy: 'web_restricted', uiLanguage: 'zh' } };
   let calls = 0;
   const invoke = (name, input, parent = request) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'call' + ++calls, name, argumentsText: JSON.stringify(input) }, { requestId: 'req', sessionId: parent.sessionId, turnId: 'turn', round: 1, ordinal: 0 }, undefined, { request: parent, contextMessages: [{ role: 'system', content: 'PRIVATE HISTORY' }] });
-  assert.deepEqual((await invoke('list_subagent_options', {})).result.remote_agents.map(item => item.id), ['remote-test']);
-  const result = await invoke('subagent', { prompt: 'Review', target_agent: 'remote-test' });
+  assert.deepEqual((await invoke('list_subagent_options', { _display_title: { zh: '查看远程目标', en: 'List remote agents' } })).result.remote_agents.map(item => item.id), ['remote-test']);
+  const result = await invoke('subagent', { prompt: 'Review', target_agent: 'remote-test', _display_title: { zh: '委派远程任务', en: 'Delegate remote task' } });
   assert.equal(result.kind, 'returned'); assert.equal(result.result.status, 'running');
   assert.doesNotMatch(JSON.stringify(pending[0].input), /PRIVATE HISTORY|private-model/);
   pending[0].resolve({ status: 'completed', finalResponse: 'Remote done', errorMessage: '', usage: {} });
@@ -170,7 +181,7 @@ test('gateway scopes remote identifiers, returns async results, isolates reads a
   const result = await callWebRemoteAgent(f.configuration, 'agents.delegate', input);
   assert.equal(result.finalResponse, 'Remote result');
   assert.notEqual(submitted[0].parentSessionId, input.parentSessionId); assert.notEqual(submitted[0].sessionId, input.sessionId);
-  assert.equal(submitted[0].permissionMode, 'task_free'); assert.equal(submitted[0].turnId, 'turn-' + submitted[0].taskId);
+  assert.equal(submitted[0].permissionMode, 'all_free'); assert.equal(submitted[0].turnId, 'turn-' + submitted[0].taskId);
   const read = { connectionId: input.connectionId, agentId: input.agentId, parentSessionId: input.parentSessionId, sessionId: input.sessionId };
   assert.ok(!JSON.stringify(await callWebRemoteAgent(f.configuration, 'agents.read-child', read)).includes('SECRET'));
   await assert.rejects(callWebRemoteAgent(f.configuration, 'agents.read-child', { ...read, sessionId: 'delegated-foreign' }));
@@ -178,9 +189,18 @@ test('gateway scopes remote identifiers, returns async results, isolates reads a
   const bob = { gateway: f.base + '/internal/remote-agents/bob', credential: remoteAgentToken(secret, 'bob') };
   assert.deepEqual(await callWebRemoteAgent(bob, 'agents.list', {}), []);
   await assert.rejects(callWebRemoteAgent(bob, 'agents.delegate', { ...input, parentSessionId: 'parent-bob' }));
+  await save(f.registry, agentInput({ userIds: ['alice', 'bob'] }));
+  assert.equal((await callWebRemoteAgent(bob, 'agents.list', {})).length, 1);
+  await assert.rejects(callWebRemoteAgent(bob, 'agents.read-child', { ...read, parentSessionId: 'parent-bob' }));
+  assert.equal((await callWebRemoteAgent(bob, 'agents.delegate', { ...input, parentSessionId: 'parent-bob' })).finalResponse, 'Remote result');
+  assert.notEqual(submitted[0].sessionId, submitted[1].sessionId);
+  assert.notEqual(submitted[0].taskId, submitted[1].taskId);
+  assert.notEqual(submitted[0].parentSessionId, submitted[1].parentSessionId);
   await assert.rejects(callWebRemoteAgent({ ...f.configuration, credential: remoteAgentToken(secret, 'bob') }, 'agents.list', {}));
   await assert.rejects(callWebRemoteAgent(f.configuration, 'configuration.sync', {}));
   assert.ok(!operations.includes('configuration.sync'));
+  await callWebRemoteAgent(f.configuration, 'agents.delegate', { ...input, taskId: 'task-full-access', turnId: 'turn-task-full-access', sessionId: 'delegated-full-access', permissionMode: 'task_free' });
+  assert.equal(submitted.at(-1).permissionMode, 'all_free', 'The trusted gateway policy also applies to restricted parents');
 });
 
 test('real restricted tenant uses the private gateway and native HTTP delegation without spawning local children', { timeout: 60000 }, async t => {
@@ -213,16 +233,25 @@ test('real restricted tenant uses the private gateway and native HTTP delegation
     const schema = body.tools.find(item => (item.name ?? item.function?.name) === 'subagent');
     assert.ok(!JSON.stringify(schema).includes('"mode"'));
     let item;
-    if (parentRound === 1) item = { type: 'function_call', name: 'subagent', arguments: JSON.stringify({ prompt: 'Return REMOTE_OK', target_agent: 'remote-test' }), call_id: 'dispatch', id: 'dispatch' };
+    if (parentRound === 1) item = { type: 'function_call', name: 'search_skills', arguments: JSON.stringify({ query: 'auto-video-slicing' }), call_id: 'search', id: 'search' };
     else if (parentRound === 2) {
+      const search = body.input.find(item => item.type === 'function_call_output' && item.call_id === 'search');
+      assert.ok(search, 'A real skill search observation is required');
+      assert.equal(JSON.parse(search.output).matches[0]?.name, 'auto-video-slicing');
+      item = { type: 'function_call', name: 'read_file', arguments: JSON.stringify({ path: resolve('assets/skills/auto-video-slicing/SKILL.md') }), call_id: 'skill', id: 'skill' };
+    } else if (parentRound === 3) {
+      assert.match(JSON.stringify(body), /login_mobile/); assert.match(JSON.stringify(body), /补齐前不委派/);
+      item = { type: 'function_call', name: 'subagent', arguments: JSON.stringify({ prompt: 'Return REMOTE_OK', target_agent: 'remote-test' }), call_id: 'dispatch', id: 'dispatch' };
+    } else if (parentRound === 4) {
       const match = JSON.stringify(body).replaceAll('\\"', '"').match(/"taskId"\s*:\s*"([^"]+)"/);
       assert.ok(match, 'A native asynchronous task receipt must be returned');
       item = { type: 'function_call', name: 'await_subagents', arguments: JSON.stringify({ task_ids: [match[1]], mode: 'all' }), call_id: 'wait', id: 'wait' };
     } else {
       assert.match(JSON.stringify(body), /REMOTE_OK/);
-      assert.ok(parentRound < 6);
+      assert.ok(parentRound < 8);
       item = { type: 'message', role: 'assistant', id: 'final-' + parentRound, content: [{ type: 'output_text', text: 'Remote work finished.', annotations: [] }] };
     }
+    if (item.type === 'function_call') item.arguments = JSON.stringify({ ...JSON.parse(item.arguments), _display_title: { zh: '验证远程能力', en: 'Verify remote capability' } });
     item.status = 'completed';
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const emit = value => res.write('data: ' + JSON.stringify(value) + '\n\n');
@@ -237,6 +266,7 @@ test('real restricted tenant uses the private gateway and native HTTP delegation
   model.listen(0, '127.0.0.1'); await once(model, 'listening');
   t.after(async () => { await service?.close(); remote.closeAllConnections(); remote.close(); model.closeAllConnections(); model.close(); await rm(root, { recursive: true, force: true }); });
   service = await AgentService.open({ dataRoot: root, webRestricted: true, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
+  assert.equal(service.bundledRoot, resolve('assets'), 'Production entrypoints omitting bundledRoot must still load release-owned web skills');
   assert.equal(service.info().capabilities.webRemoteAgents, true);
   await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'private-parent-model', baseURL: `http://127.0.0.1:${model.address().port}/v1` }] } });
   await service.call('web.configure', { imageEnabled: false, gateway: f.base + '/internal/image/alice/images/generations', credential: 'i'.repeat(64), remoteAgents: f.configuration });
@@ -249,7 +279,7 @@ test('real restricted tenant uses the private gateway and native HTTP delegation
     await new Promise(resolve => setTimeout(resolve, 60));
   }
   assert.equal(jobs[0].status, 'completed', JSON.stringify(jobs));
-  assert.ok(parentRound >= 3);
+  assert.ok(parentRound >= 5);
   assert.equal(requests.filter(operation => operation === 'delegation.submit').length, 1);
   assert.doesNotMatch(JSON.stringify(submitted), /private-parent-model|Delegate to remote tester/);
   const sessions = await service.call('sessions.list', {});

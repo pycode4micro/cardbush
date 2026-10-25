@@ -124,7 +124,10 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
             <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.copyChromeConnectorDiagnostics} onClick={() => void run('diagnostics', async () => { await connector?.copyChromeConnectorDiagnostics(); setDiagnosticsCopied(true); })}>{diagnosticsCopied ? (language === 'zh' ? '已复制诊断信息' : 'Diagnostics copied') : (language === 'zh' ? '复制诊断信息' : 'Copy diagnostics')}</button>
           </div>
           {status?.connectorEnabled && <>
-            <details><summary>{language === 'zh' ? '手动配对 / 连接其他 Agent' : 'Manual pairing / another Agent'}</summary>
+            <details><summary>{language === 'zh' ? '手动配对' : 'Manual pairing'}</summary>
+            <p className="browser-setting-note">{language === 'zh'
+              ? '本机首次连接只需在系统弹窗和扩展中确认，之后自动重连，无需配对码。此处生成本机手动配对码；远程 Agent 配对请在连接目标 Agent 的 CLI 中运行 /browser pair chrome 或 /browser pair edge。'
+              : 'Local first use needs approval in the system dialog and extension, then reconnects automatically without a pairing code. This generates a manual local code; for remote Agent pairing, run /browser pair chrome or /browser pair edge in the CLI connected to that Agent.'}</p>
             <div className="browser-pairing-controls">
               <SettingsDropdown label={language === 'zh' ? '要配对的浏览器' : 'Browser to pair'} value={browser}
                 options={[{ value: 'chrome', label: 'Google Chrome' }, { value: 'edge', label: 'Microsoft Edge' }]}
@@ -177,7 +180,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
           <p className="browser-setting-note">{language === 'zh'
             ? '连接器不直接读取浏览器的密码或 Cookie 数据库。授权页面的文字、截图和操作结果可能发送给你配置的模型服务。'
             : 'The connector does not read browser password or cookie databases directly. Authorized page text, screenshots and action results may be sent to your configured model provider.'}</p>
-          {!status?.storeUrl && <p className="browser-setting-note">{language === 'zh' ? `扩展已随 CardBush 提供。打开扩展目录后，在 ${browser === 'edge' ? 'edge://extensions' : 'chrome://extensions'} 开启开发者模式，选择“加载解压缩的扩展”，选中该目录。Chrome 和 Edge 使用同一份扩展，分别配对。` : `The extension ships with CardBush. Enable developer mode at ${browser === 'edge' ? 'edge://extensions' : 'chrome://extensions'} and choose “Load unpacked”. Chrome and Edge use the same extension, paired separately.`}</p>}
+          {!status?.storeUrl && <p className="browser-setting-note">{language === 'zh' ? `扩展已随 CardBush 提供。打开扩展目录后，在 ${browser === 'edge' ? 'edge://extensions' : 'chrome://extensions'} 开启开发者模式，选择“加载解压缩的扩展”，选中该目录。Chrome 和 Edge 使用同一份扩展，首次分别确认连接，之后自动重连。` : `The extension ships with CardBush. Enable developer mode at ${browser === 'edge' ? 'edge://extensions' : 'chrome://extensions'} and choose “Load unpacked”. Chrome and Edge use the same extension; approve each profile on first use, then it reconnects automatically.`}</p>}
           {status?.setupMessage && <p className="browser-setting-note">{status.setupMessage}</p>}
           {status?.registrationConflict && <p className="settings-form-error">{status.registrationConflict}</p>}
           {status?.lastError && <p className="settings-form-error">{status.lastError}</p>}

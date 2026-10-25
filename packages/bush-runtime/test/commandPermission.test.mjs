@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import {
   InMemoryRuntimeCapabilityStore, ToolExecutionCoordinator, ToolRegistry,
-  registerInteractionTools, registerWorkspaceTools,
+  registerWorkspaceTools,
 } from '../dist/index.js';
 
 const root = realpathSync(process.cwd());
@@ -16,7 +16,6 @@ const exec = (command = 'echo first', overrides = {}) => ({ command, cwd: root, 
 function fixture({ required = false, sandboxMode, decision = 'allow_session', remote, onApproval, loadCommandSandbox } = {}) {
   const prompts = [], starts = [], writes = [], sessions = new Map();
   const registry = new ToolRegistry();
-  registerInteractionTools(registry);
   registerWorkspaceTools(registry, undefined, {
     ...(required || sandboxMode ? { commandSandbox: { mode: sandboxMode ?? 'required', network: 'disabled', readableRoots: [], writableRoots: [] } } : {}),
     remote,

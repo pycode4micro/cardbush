@@ -28,7 +28,7 @@ test('accepts only 1–3 distinct brief plain text solutions, without recommenda
   assert.equal(solutionSelectionInputSchema.safeParse({ prompt: '🧩'.repeat(15), options: ['保留'] }).success, true);
   assert.equal(solutionSelectionInputSchema.safeParse({ prompt: '🧩'.repeat(500), options: ['字'.repeat(120)] }).success, true);
   assert.equal(runtimeSolutionAnswerSchema.safeParse({ selectionId: 'id', sessionId: 'a', turnId: 'a', kind: 'text', text: '  ' }).success, false);
-  assert.ok(DEFAULT_CHILD_AGENT_DISABLED_TOOLS.includes('solution_selection'));
+  assert.ok(DEFAULT_CHILD_AGENT_DISABLED_TOOLS.includes('request_user_input_async'));
 });
 
 test('binds selection to exact session and turn, does not auto-pick, and accepts free text', async () => {
@@ -126,20 +126,20 @@ for (const mode of ['parent', 'batch', 'child', 'noninteractive', 'stop']) test(
   const event = (requestId, sequence, kind, rest = {}) => ({ protocol: BUSH_MODEL_EVENT_PROTOCOL,
     requestId, sequence, kind, createdAt: new Date().toISOString(), ...rest });
   const host = new InMemoryRuntimeHost({ dataRoot, eventLog: log, provider: { async *stream(request) {
-    assert.ok(request.tools.some(tool => tool.name === 'solution_selection'), 'child tool declaration remains unchanged');
+    assert.ok(request.tools.some(tool => tool.name === 'request_user_input_async'), 'child tool declaration remains unchanged');
     if (++round === 1) {
-      yield event(request.requestId, 0, 'tool_call_delta', { index: 0, toolCallId: 'choose', nameDelta: 'solution_selection', argumentsDelta: JSON.stringify(mode === 'batch' ? batch : input) });
+      yield event(request.requestId, 0, 'tool_call_delta', { index: 0, toolCallId: 'choose', nameDelta: 'request_user_input_async', argumentsDelta: JSON.stringify(mode === 'batch' ? batch : { questions: [{ id: 'scope', ...input }] }) });
       yield event(request.requestId, 1, 'response_completed', { finishReason: 'tool_calls' });
     } else {
-      modelReply = request.messages.filter(message => message.role === 'tool').at(-1);
+      modelReply = request.messages.findLast(message => message.name === 'background_tool_result') ?? request.messages.filter(message => message.role === 'tool').at(-1);
       yield event(request.requestId, 0, 'text_delta', { delta: '已按方案继续。' });
       yield event(request.requestId, 1, 'response_completed', { finishReason: 'stop' });
     }
   } } });
   try {
     const catalog = await host.sendCommand({ kind: GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND, payload: {} });
-    const tool = catalog.find(entry => entry.definition.name === 'solution_selection');
-    assert.ok(tool); assert.equal(tool.manifest.operation, 'solution.select');
+    const tool = catalog.find(entry => entry.definition.name === 'request_user_input_async');
+    assert.ok(tool); assert.equal(tool.manifest.operation, 'solution.request_async');
     assert.equal(tool.definition.inputSchema.type, 'object');
     for (const keyword of ['oneOf', 'anyOf', 'allOf']) assert.equal(tool.definition.inputSchema[keyword], undefined);
     assert.equal(tool.definition.inputSchema.properties.questions.maxItems, 3);
@@ -157,11 +157,11 @@ for (const mode of ['parent', 'batch', 'child', 'noninteractive', 'stop']) test(
         assert.ok(Date.now() < deadline, 'selection request arrived');
         if (!pending.length) await new Promise(resolve => setTimeout(resolve, 5));
       }
-      assert.equal(round, 1, 'model waits for explicit reply even with full permissions');
+      assert.equal(pending[0].blocking, false, 'questions yield while their dependencies remain pending');
       if (mode === 'stop') controller.abort();
       else await host.sendCommand({ kind: ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND, payload: answerFor(pending[0], mode === 'batch'
         ? { kind: 'answers', answers: [{ questionId: 'scope', kind: 'option', optionIndex: 1 }, { questionId: 'period', kind: 'text', text: '上个月' }] }
-        : { kind: 'option', optionIndex: 1 }) });
+        : { kind: 'answers', answers: [{ questionId: 'scope', kind: 'option', optionIndex: 1 }] }) });
     }
     const terminal = await running;
     if (mode === 'stop') {
@@ -171,8 +171,9 @@ for (const mode of ['parent', 'batch', 'child', 'noninteractive', 'stop']) test(
     }
     assert.equal(terminal.payload.status, 'completed');
     assert.ok(modelReply);
-    const result = JSON.parse(modelReply.content);
-    if (mode === 'parent') assert.deepEqual(result, { status: 'selected', source: 'option', text: '使用新数据' });
+    const receipt = JSON.parse(modelReply.content);
+    const result = receipt.result?.value ?? receipt;
+    if (mode === 'parent') assert.equal(result.answers[0].text, '使用新数据');
     else if (mode === 'batch') assert.deepEqual(result.answers.map(answer => [answer.questionId, answer.text]), [['scope', '使用新数据'], ['period', '上个月']]);
     else {
       assert.ok(result.runtimeError);

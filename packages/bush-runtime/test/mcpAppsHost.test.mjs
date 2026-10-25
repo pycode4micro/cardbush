@@ -18,7 +18,7 @@ async function fixture(t, configure = () => {}) {
   register('mcp__demo__save', 'demo'); register('mcp__hidden__save', 'hidden');
   const req = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'm', permissionMode: 'task_free', tools: [registry.resolve('mcp__demo__save').definition], messages: [], metadata: { providerSecret: 'must not persist' } };
   configure({ registry, req, register });
-  executions.record({ protocol: 'bush.tool_call.v1', id: 'original', name: 'mcp_call', argumentsText: JSON.stringify({ name: 'mcp__demo__save', arguments: { query: 'original' } }) }, { ...req, round: 1, ordinal: 0 }, { kind: 'returned', workspaceChanges: [], result: { mcp: { name: 'mcp__demo__save' }, result: { content: [], _meta: { uiOnly: true } } } });
+  executions.record({ protocol: 'bush.tool_call.v1', id: 'original', name: 'mcp__demo__save', argumentsText: JSON.stringify({ query: 'original' }) }, { ...req, round: 1, ordinal: 0 }, { kind: 'returned', workspaceChanges: [], result: { content: [], _meta: { uiOnly: true } } });
   const host = new McpAppsHost(root, registry, executions, undefined, () => ({ before: async () => { before++; return { messages: [] }; }, after: async () => ({ messages: [] }) }));
   await host.remember(req);
   const view = await host.command({ action: 'open', sessionId: 's', turnId: 't', toolCallId: 'original' });
@@ -392,13 +392,14 @@ test('resource loads accept same-connection publication but reject an actual rep
 
 test('UI declarations expose the server isError fact and original text without interpreting the result', async t => {
   const { host, executions, req, counts } = await fixture(t);
-  const record = (id, result, wrapped = false) => executions.record({ protocol: 'bush.tool_call.v1', id, name: wrapped ? 'mcp_call' : 'mcp__demo__save', argumentsText: '{}' }, { ...req, round: 2, ordinal: 0 }, { kind: 'returned', workspaceChanges: [], result: wrapped ? { mcp: { name: 'mcp__demo__save' }, result } : result });
+  const record = (id, result, wrapped = false) => executions.record({ protocol: 'bush.tool_call.v1', id, name: wrapped ? 'call_tool' : 'mcp__demo__save', argumentsText: '{}' }, { ...req, round: 2, ordinal: 0 }, { kind: 'returned', workspaceChanges: [], result: wrapped ? { mcp: { name: 'mcp__demo__save' }, result } : result });
   const native = { isError: true, content: [{ type: 'text', text: 'Invalid arguments: unsupported design_type' }], _meta: { privateData: 'UI only' } };
   record('rejected', native); record('wrapped-rejected', native, true);
   record('empty', { isError: false, content: [], structuredContent: { items: [] } });
   record('unflagged', { content: [{ type: 'text', text: 'error: a literal word in a normal response' }] });
   const declarations = await host.describe('s', 't');
-  for (const id of ['rejected', 'wrapped-rejected']) assert.deepEqual(declarations.find(view => view.toolCallId === id).resultError, { text: 'Invalid arguments: unsupported design_type', truncated: false });
+  assert.equal(declarations.some(view => view.toolCallId === 'wrapped-rejected'), false, 'retired envelopes are not App executions');
+  for (const id of ['rejected']) assert.deepEqual(declarations.find(view => view.toolCallId === id).resultError, { text: 'Invalid arguments: unsupported design_type', truncated: false });
   for (const id of ['empty', 'unflagged']) assert.equal(declarations.find(view => view.toolCallId === id).resultError, undefined);
   assert.equal(JSON.stringify(declarations).includes('privateData'), false);
   assert.equal(counts().reads, 1, 'describing an error does not load a widget');

@@ -15,11 +15,14 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
   readonly #hostRequests = new Map<string, AbortController>();
   readonly #worker: Worker;
   readonly ready: Promise<RuntimeIpcOutboundMessage>;
+  readonly failure: Promise<Error>;
+  #resolveFailure!: (error: Error) => void;
   #failure?: Error;
-  #closing = false;
+  #closePromise?: Promise<void>;
 
   constructor(env: NodeJS.ProcessEnv, handle: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>,
     diagnostic: AgentRuntimeDiagnosticSink = (_stream, text) => { process.stderr.write(text); }) {
+    this.failure = new Promise(resolve => { this.#resolveFailure = resolve; });
     this.#worker = new Worker(new URL('./runtimeHostWorker.mjs', import.meta.url), { env: normalizeHostEnvironment(env), stdout: true, stderr: true });
     // Worker replies/events use IPC. Its output is diagnostic, never chat text.
     // A local CLI provides a file sink so late MCP logs cannot overwrite readline.
@@ -60,7 +63,9 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
   }
 
   #fail(error: Error) {
+    if (this.#failure) return;
     this.#failure = error;
+    this.#resolveFailure(error);
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
     for (const request of this.#hostRequests.values()) request.abort();
@@ -96,15 +101,16 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
   async stopStream(message: unknown) { if (!this.#failure) this.#worker.postMessage(message); }
   async cancelOperation(message: unknown) { if (!this.#failure) this.#worker.postMessage(message); }
   onStreamFrame(listener: (message: unknown) => void) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
-  async close() {
-    if (this.#closing) return;
-    this.#closing = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      this.command({ protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command', operationId: randomUUID(), command: { kind: 'runtime.shutdown', payload: {} } }),
-      new Promise(resolve => { timer = setTimeout(resolve, 7_000); }),
-    ]).catch(() => undefined);
-    clearTimeout(timer);
-    await this.#worker.terminate();
+  close(): Promise<void> {
+    if (this.#closePromise) return this.#closePromise;
+    return this.#closePromise = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        this.command({ protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command', operationId: randomUUID(), command: { kind: 'runtime.shutdown', payload: {} } }),
+        new Promise(resolve => { timer = setTimeout(resolve, 7_000); }),
+      ]).catch(() => undefined);
+      clearTimeout(timer);
+      await this.#worker.terminate();
+    })();
   }
 }

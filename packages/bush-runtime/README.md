@@ -264,7 +264,7 @@ runs in the background while the parent continues independent model and Tool
 rounds. Completed child output enters the parent only at a round boundary. If the
 parent attempts to finish with active children, Runtime joins them, injects their
 terminal results, and requires one reconciliation round before committing the
-parent terminal fact. The parent may call `await_subagents` once when no useful
+parent terminal fact. The parent may call `tasks action=wait` once when no useful
 independent work remains; this is an explicit join rather than status polling.
 Tool registrations explicitly declare child visibility and parallel safety;
 Runtime does not derive either property. Subagent lifecycle facts are stored in a

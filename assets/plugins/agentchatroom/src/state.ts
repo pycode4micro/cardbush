@@ -3,7 +3,8 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { RoomStore } from './vendor/store.js';
 
-export type Membership = { token: string; participant: string; cursor: string; after: number; project: string; active: boolean };
+export type Membership = { token: string; participant: string; cursor: string; after: number; project: string; active: boolean;
+  childAuthorized?: boolean };
 export type Room = { id: string; code: string; projects: string[]; members: Record<string, Membership>;
   invitations: Record<string, { from: string; project: string; reason: string }> };
 type Data = { version: 1; rooms: Room[] };

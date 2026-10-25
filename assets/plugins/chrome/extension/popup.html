@@ -14,9 +14,10 @@
         <p id="extension-update-message" class="hint" role="status"></p>
         <button id="reload-extension">重新加载扩展</button>
       </div>
-      <details id="pairing-details"><summary>手动配对 / 连接其他 Agent</summary>
-      <label class="scope-picker"><span>与 CardBush 配对</span>
-        <input id="pairing-code" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 CardBush 设置中的配对码" />
+      <details id="pairing-details"><summary>手动连接 / 远程 Agent 配对</summary>
+      <p class="hint">仅用于手动连接或远程 Agent 配对。从目标 Agent 的 CLI 运行 /browser pair chrome 或 /browser pair edge，或在 CardBush 设置中生成本机手动配对码；直接粘贴在此处，不发送给模型。</p>
+      <label class="scope-picker"><span>目标 Agent 的配对码</span>
+        <input id="pairing-code" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴目标 Agent 提供的配对码" />
       </label>
       <button data-action="pair">配对并连接</button>
       </details>
@@ -41,7 +42,7 @@
         <button class="quiet" data-action="revoke">撤销授权</button>
         <button class="quiet" data-action="disconnect">停止控制</button>
       </footer>
-      <p class="hint">首次在系统弹窗和扩展中确认连接，无需复制配对码。之后本机 App 和 CLI 共用连接并自动重连。个人标签仍需明确复制进会话隔离组；拒绝或移除连接后不会自动重新授权。</p>
+      <p class="hint">本机首次在系统弹窗和扩展中确认连接，无需复制配对码。之后本机 App 和 CLI 共用连接，断线或重启后自动重连；临时离线无需重新配对。远程 Agent 独立管理连接。个人标签仍需明确复制进会话隔离组；拒绝或移除连接后不会自动重新授权。</p>
     </main>
     <script src="build-info.js"></script>
     <script src="popup.js"></script>

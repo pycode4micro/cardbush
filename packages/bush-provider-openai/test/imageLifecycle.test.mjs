@@ -8,6 +8,7 @@ import {
 } from "@cardbush/bush-runtime";
 import { OpenAIResponsesProvider, resolveLocalImageInputs } from "../dist/index.js";
 import { imageFixture, png } from "../../bush-runtime/test/helpers/modelImages.mjs";
+import { WorkspacePathGuard } from '../../bush-runtime/dist/workspacePathGuard.js';
 
 const NOW = "2026-09-05T08:00:00.000Z";
 
@@ -41,8 +42,12 @@ for (const mcp of [false, true]) for (const compressed of [false, true]) test(`r
     registerDefaultWorkspaceTools: false,
     sessionStore: new SessionStore({ persistence: firstJournal }),
     provider: {
-      async *stream(request) {
-        projected.push(await resolveLocalImageInputs(request));
+      async estimateInputTokens(request, options) {
+        await resolveOwnedImages(context, request, options);
+        return 100;
+      },
+      async *stream(request, options) {
+        projected.push(await resolveOwnedImages(context, request, options));
         yield event(request, 0, "response_started");
         if (projected.length <= 2) {
           yield event(request, 1, "tool_call_delta", {
@@ -87,8 +92,12 @@ for (const mcp of [false, true]) for (const compressed of [false, true]) test(`r
       dataRoot: root, registerDefaultWorkspaceTools: false,
       sessionStore: new SessionStore({ persistence: secondJournal }),
       provider: {
-        async *stream(request) {
-          replayed.push(await resolveLocalImageInputs(request));
+        async countInputTokens(request, options) {
+          await resolveOwnedImages(context, request, options);
+          return { inputTokens: 100, source: 'provider' };
+        },
+        async *stream(request, options) {
+          replayed.push(await resolveOwnedImages(context, request, options));
           yield event(request, 0, "response_started");
           yield event(request, 1, "text_delta", { delta: "replay succeeded" });
           yield event(request, 2, "response_completed", { finishReason: "stop" });
@@ -114,8 +123,8 @@ for (const compressed of [true, false]) test(`new user ${compressed ? 'large PNG
   await writeFile(source, original);
   const inputs = [];
   const host = new InMemoryRuntimeHost({ dataRoot: root, registerDefaultWorkspaceTools: false,
-    provider: { async *stream(request) {
-      inputs.push(await resolveLocalImageInputs(request));
+    provider: { async *stream(request, options) {
+      inputs.push(await resolveOwnedImages(context, request, options));
       yield event(request, 0, 'text_delta', { delta: 'Image inspected.' });
       yield event(request, 1, 'response_completed', { finishReason: 'stop' });
     } } });
@@ -164,6 +173,16 @@ function imageMessage(messages) {
   return found;
 }
 
+async function resolveOwnedImages(context, request, options) {
+  // Reproduce the failing post-tool phase without exhausting the test machine:
+  // imported observations must work even when no new sandbox process can start.
+  const refusal = context.mock.method(WorkspacePathGuard.prototype, 'pin', async () => {
+    throw Object.assign(new Error('No process headroom during model preparation.'), { code: 'resource_memory_pressure' });
+  });
+  try { return await resolveLocalImageInputs(request, options); }
+  finally { refusal.mock.restore(); }
+}
+
 function sessionRequest(root, index, registry) {
   return {
     protocol: "bush.session_turn_request.v1", requestId: "request_" + index,
@@ -172,7 +191,8 @@ function sessionRequest(root, index, registry) {
     inputMessages: [{ messageId: "user_" + index, createdAt: NOW, message: { role: "user", content: "continue" } }],
     tools: registry ? registry.catalog().filter((entry) => ["inject_image_input", "delete_source", "mcp_capture"].includes(entry.definition.name)).map((entry) => entry.definition) : [],
     requestCapabilities: { vision: true },
-    metadata: { workspaceDir: root },
+    maxOutputTokens: 512,
+    metadata: { workspaceDir: root, contextWindowTokens: 32768 },
   };
 }
 

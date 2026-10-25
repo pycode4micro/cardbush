@@ -199,6 +199,69 @@ test('keeps an earlier checkpoint and never reintroduces covered tool exchanges'
   assert.equal(context.some(m => m.content === 'Old final'), false); validateConversation(context);
 });
 
+for (const kind of ['checkpoint', 'instructions', 'image', 'ordinary']) {
+  test(`partial coverage survives recorded projection and restart without resurrecting ${kind} work`, () => {
+    const journal = [], persistence = { load: () => structuredClone(journal), append: item => journal.push(structuredClone(item)) };
+    const store = new SessionStore({ persistence });
+    const name = kind === 'checkpoint' ? 'checkpoint_context' : kind === 'instructions' ? 'read_file' : kind === 'image' ? 'view_image' : 'inspect';
+    const oldCall = call('covered-work', name, { path: 'C:/fixture/AGENTS.md', reason: 'Old intent' });
+    // Reverse parallel receipt order: matching must use IDs, not array position.
+    if (kind === 'instructions') oldCall.toolCalls.push(...call('covered-parallel', 'inspect').toolCalls);
+    const oldReceipt = receipt('covered-work', { content: 'Superseded requirement: use the remote renderer.' });
+    if (kind === 'image') oldReceipt.images = [{ url: 'data:image/png;base64,AA==' }];
+    const messages = [user('Old request'),
+      ...(kind === 'checkpoint' ? [call('earlier-work', 'inspect'), receipt('earlier-work', 'Inspected before checkpoint.')] : []), oldCall,
+      ...(kind === 'instructions' ? [receipt('covered-parallel', { status: 'failed', error: 'Remote unavailable' })] : []),
+      oldReceipt, assistant('Original final remains available.')];
+    const boundary = messages.length - 2;
+    const old = seed(store, turn('old', messages, 1, kind === 'checkpoint' ? {
+      projectionVersion: 'exchange_v1', inputMessageCount: 1, throughMessageId: `old-${boundary}`,
+      exchangeMessageIds: [`old-${boundary - 1}`, `old-${boundary}`], coveredTurnIds: [],
+    } : undefined));
+    const correction = 'User now requires local rendering only; remote access is not authorized. Verification is still pending.';
+    seed(store, turn('later', [user('Use the local renderer.'), call('new-checkpoint', 'checkpoint_context'),
+      receipt('new-checkpoint', correction), assistant('Continue verification.')], 2, {
+      projectionVersion: 'exchange_v1', inputMessageCount: 1, throughMessageId: 'later-2',
+      exchangeMessageIds: ['later-1', 'later-2'], coveredTurnIds: [],
+      coveredMessageIds: old.messages.slice(0, boundary + 1).map(item => item.messageId),
+    }));
+    const before = assembleContext({ session: store.snapshot(sessionId) }).messages;
+    apply(store, old);
+    const after = assembleContext({ session: store.snapshot(sessionId) }).messages;
+    validateConversation(after);
+    assert.deepEqual(after, before, 'covered calls, receipts and synthesized records must all remain absent');
+    assert.equal(after.some(m => m.content.includes('Superseded requirement')), false);
+    assert.equal(after.filter(m => m.content === correction).length, 1);
+    const replay = new SessionStore({ persistence });
+    assert.deepEqual(assembleContext({ session: replay.snapshot(sessionId) }).messages, after);
+    assert.deepEqual(replay.snapshot(sessionId).turns[0].messages, old.messages, 'canonical history is untouched');
+  });
+}
+
+test('recorded projection retains canonical IDs and provider replay for native messages', () => {
+  const store = new SessionStore();
+  const native = { ...call('rules', 'read_file', { path: 'C:/fixture/AGENTS.md' }),
+    providerReplay: { format: 'opaque', model: 'fixture', messageHash: 'a'.repeat(64), data: { signed: 'UNCHANGED' } } };
+  const value = seed(store, turn('native', [user('Keep local.'), native, receipt('rules', 'Local only.'), assistant(final)]));
+  apply(store, value);
+  const context = assembleContextProjection({ session: store.snapshot(sessionId) });
+  assert.deepEqual(context.turns[0].messageIds, value.messages.map(item => item.messageId));
+  assert.deepEqual(context.context.messages[1], native, 'a retained native call must keep its provider-required replay');
+  assert.deepEqual(assembleContext({ session: store.snapshot(sessionId),
+    coveredMessageIds: value.messages.map(item => item.messageId) }).messages, []);
+});
+
+test('recorded projection cannot conceal incomplete parallel coverage behind a synthetic receipt', () => {
+  const store = new SessionStore();
+  const parallel = { ...call('a', 'inspect'), toolCalls: [...call('a', 'inspect').toolCalls, ...call('b', 'inspect').toolCalls] };
+  const value = seed(store, turn('parallel', [user('Inspect'), parallel, receipt('b', 'B'), receipt('a', 'A'), assistant(final)]));
+  apply(store, value);
+  for (const coveredMessageIds of [['parallel-1'], ['parallel-2'], ['parallel-1', 'parallel-2']]) {
+    assert.throws(() => assembleContext({ session: store.snapshot(sessionId), coveredMessageIds }),
+      /pending|Tool result/, 'invalid coverage must fail before calls are condensed');
+  }
+});
+
 test('fork rebases archive references and digest; durable replay and supersession retain original history', async t => {
   const root = temp(t), store = new SessionStore({ persistence: new FileSessionEventPersistence({ root }) });
   const value = seed(store, turn('old', [user('Inspect'), call('x', 'inspect'),

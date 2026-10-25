@@ -135,11 +135,11 @@ test('queued submissions and background replays use execution start on local and
 test('local and remote carry the same action title through live events and receipt hydration', async () => {
   const store = new ToolExecutionStore({ now: () => now });
   const display = { title: 'Submit video generation', titles: { zh: '提交视频生成', en: 'Submit video generation' } };
-  const receipt = store.record({ protocol: 'bush.tool_call.v1', id: 'action', name: 'mcp_call', argumentsText: '{}' },
+  const receipt = store.record({ protocol: 'bush.tool_call.v1', id: 'action', name: 'call_tool', argumentsText: '{}' },
     { requestId: 'request', sessionId, turnId, round: 1, ordinal: 0, display },
     { kind: 'returned', result: { state: 'queued', taskId: 'job-1' }, workspaceChanges: [] });
   const events = [text(1, 'm1', 'Prepare'), ...['tool_queued', 'tool_running', 'tool_returned'].map((kind, index) =>
-    event(index + 2, kind, { assistantMessageId: 'm1', toolCallId: 'action', toolName: 'mcp_call', ordinal: 0, display }))];
+    event(index + 2, kind, { assistantMessageId: 'm1', toolCallId: 'action', toolName: 'call_tool', ordinal: 0, display }))];
   const local = await project(events, 'local', { records: [receipt] });
   const remote = await project(events, 'remote', { records: [receipt] });
   assert.deepEqual(remote, local);

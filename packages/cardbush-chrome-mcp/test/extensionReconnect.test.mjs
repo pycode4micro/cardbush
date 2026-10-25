@@ -238,6 +238,9 @@ test('explicit removal forgets pairing but only revoke clears persistent site pe
   assert.equal(f.local[pairingKey], '');
   assert.equal(f.local.cardbushConnectorEnabled, false);
   assert.equal(f.local.allowAllSites, true);
+  assert.match(f.state().lastError, /恢复本机连接.*点击「连接 CardBush」重新申请/);
+  assert.match(f.state().lastError, /手动连接或远程 Agent 配对/);
+  assert.doesNotMatch(f.state().lastError, /请在 CardBush 中重新配对/);
   await f.retry(); await f.manual();
   assert.equal(f.ports.length, 1);
   assert.equal(f.state().pairingRequired, false, 'explicit Connect requests a new automatic identity and waits for the native host');

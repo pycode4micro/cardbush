@@ -24,10 +24,3 @@ export function presentTool(definition: ToolDefinition, options: {
     ...(Array.isArray(schema.required) ? { required: schema.required.filter(name => Object.hasOwn(properties, String(name))) } : {}),
   } };
 }
-
-/** Keep legacy handlers in the execution scope for internal and recalled calls. */
-export const replacedToolPresentation = (replacement: string): ToolDefinitionProjector => (definition, scope) =>
-  scope.canRecall && scope.hasTool(replacement) ? null : definition;
-
-export const taskObserverPresentation = (legacy: string): ToolDefinitionProjector => (definition, scope) =>
-  scope.hasTool('tasks') ? { ...definition, description: definition.description?.replaceAll(legacy, 'tasks') } : definition;

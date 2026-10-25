@@ -23,7 +23,7 @@ async function setup(t) {
     const client = new Client({ name: 'resource-test', version: '1' }); clients.push(client); return client;
   } });
   const receipts = join(dir, 'starts.jsonl');
-  const server = { id: 'fixture', required: true, startupTimeoutMs: 750, restartBackoffMs: 1,
+  const server = { id: 'fixture', required: true, startupTimeoutMs: 5_000, restartBackoffMs: 1,
     transport: { kind: 'stdio', command: process.execPath, args: [fileURLToPath(new URL('./fixtures/managedServer.mjs', import.meta.url))], env: { FIXTURE_RECEIPTS: receipts } } };
   const records = async () => (await readFile(receipts, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(JSON.parse);
   t.after(async () => {
@@ -39,7 +39,7 @@ async function until(check) {
   assert.ok(await check());
 }
 
-test('memory wait preserves the old connection and recovers once outside handshake timeout', { timeout: 20_000 }, async t => {
+test('memory wait preserves the old connection and recovers once outside handshake timeout', { timeout: 30_000 }, async t => {
   const f = await setup(t);
   assert.equal((await f.manager.apply(snapshot([f.server]))).servers[0].health, 'ready');
   const [old] = await f.records();
@@ -50,7 +50,10 @@ test('memory wait preserves the old connection and recovers once outside handsha
   assert.equal(pending.servers[0].updateState, 'waiting_for_resources');
   assert.equal(pending.servers[0].health, 'ready');
   assert.equal(pending.servers[0].lastError, undefined);
-  await delay(1_100); // Longer than handshake timeout, but no handshake has started.
+  // Real stdio startup needs headroom when the package runs in parallel. Keep
+  // admission waiting longer than that same budget so this still detects a
+  // handshake timer incorrectly started while no process has been admitted.
+  await delay(f.server.startupTimeoutMs + 350);
   assert.equal((await f.records()).length, 1);
   const result = await f.clients[0].callTool({ name: 'echo', arguments: { value: 'old connection still usable' } });
   assert.match(result.content[0].text, /old connection still usable/);

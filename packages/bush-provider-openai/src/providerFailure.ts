@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import Anthropic from '@anthropic-ai/sdk';
 import { BUSH_MODEL_EVENT_PROTOCOL, type ModelEvent } from "@cardbush/bush-protocol";
-import { ModelImageInputError, modelFailureAction } from "@cardbush/bush-runtime";
+import { ModelImageInputError, isResourceAdmissionError, modelFailureAction } from "@cardbush/bush-runtime";
 import { RequestBodyBudgetError } from "./requestBodyBudget.js";
 
 type FailureEvent = Extract<ModelEvent, { kind: "response_failed" }>;
@@ -131,6 +131,10 @@ export function providerFailureEvent(
       retryAfterMs: retryAfterMs(error.headers),
       diagnostics,
     };
+  }
+  if (isResourceAdmissionError(error)) {
+    const failure = error as Error & { code: string };
+    return { ...base, code: failure.code, message: failure.message, retryable: true };
   }
   const permanentCode = diagnostics.causeCodes.find((code) => PERMANENT_CODES.has(code));
   const transientCode = diagnostics.causeCodes.find((code) => TRANSIENT_CODES.has(code));

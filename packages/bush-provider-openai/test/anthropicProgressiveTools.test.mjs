@@ -32,7 +32,7 @@ test('Claude signed multi-round Team and employee configuration keeps the exact 
     ['call_tool', { name: 'team', arguments: { action: 'save', definition: workflow, expected_revision: 0 } }],
     ['get_tool_schema', { name: 'subagent' }],
     ['call_tool', { name: 'subagent', arguments: { action: 'save', expected_revision: 0,
-      agent: { id: 'reviewer', name: 'Reviewer', system_prompt: 'Review the draft', allowed_tools: [], memory: 'user' } } }],
+      agent: { id: 'reviewer', name: 'Reviewer', system_prompt: 'Review the draft', allowed_tools: [] } } }],
     ['team', { action: 'get', team_id: workflow.id }]];
   const provider = new AnthropicMessagesProvider({ apiKey: 'fixture', fetch: async (_url, init) => {
     const body = JSON.parse(init.body), previous = bodies.at(-1);
@@ -64,7 +64,7 @@ test('Claude signed multi-round Team and employee configuration keeps the exact 
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
   await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'save', expected_revision: 0,
-    definition: { id: 'writer', name: 'Writer', system_prompt: 'Write from evidence', allowed_tools: [], memory: 'user' } } });
+    definition: { id: 'writer', name: 'Writer', system_prompt: 'Write from evidence', allowed_tools: [] } } });
   for (const turnId of ['first', 'second']) {
     const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: turnId, sessionId: 's', turnId,
       model: 'fixture', reasoningEffort: 'high', tools: registry.definitions(), permissionMode: 'all_free',

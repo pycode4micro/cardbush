@@ -105,11 +105,11 @@ export class McpAppsHost {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
     return this.executions.listTurn(sessionId, turnId).flatMap(record => {
       if (record.outcome !== 'returned' || toolCallIds && !toolCallIds.includes(record.toolCall.id)) return [];
-      const source = record.toolCall.name === 'mcp_call' ? object(object(record.result).mcp).name : record.toolCall.name;
+      const source = record.toolCall.name;
       const registration = this.registry.resolve(String(source));
       if (!scope.names.includes(source) || !registration?.mcpApp || !registration.mcpHook || registration.sessionScope && registration.sessionScope !== sessionId) return [];
       const active = [...this.instances.values()].filter(instance => instance.sessionId === sessionId && instance.turnId === turnId && instance.toolCallId === record.toolCall.id && sameConnection(instance, registration) && Date.now() - instance.touched <= 30 * 60_000);
-      const resultError = declaredResultError(record.toolCall.name === 'mcp_call' ? object(record.result).result : record.result);
+      const resultError = declaredResultError(record.result);
       return [{ sessionId, turnId, toolCallId: record.toolCall.id, source, resourceUri: registration.mcpApp.resourceUri,
         ...(registration.mcpApp.title === undefined ? {} : { title: registration.mcpApp.title }),
         ...(registration.mcpApp.serverTitle === undefined ? {} : { serverTitle: registration.mcpApp.serverTitle }),
@@ -171,8 +171,7 @@ export class McpAppsHost {
     if (![input.sessionId, input.turnId, input.toolCallId].every(value => typeof value === 'string' && value.length > 0)) throw new Error('Missing execution identity.');
     const record = this.executions.get(input.sessionId, input.turnId, input.toolCallId);
     if (!record || record.outcome !== 'returned') throw new Error('Only a completed tool execution can open an interface.');
-    const wrapped = record.toolCall.name === 'mcp_call';
-    const source = wrapped ? object(object(record.result).mcp).name : record.toolCall.name;
+    const source = record.toolCall.name;
     const registration = this.registry.resolve(String(source));
     if (!registration?.mcpApp || !registration.mcpHook) return null;
     const binding = { registration, connectionIdentity: registration.mcpApp.connectionIdentity };
@@ -198,9 +197,9 @@ export class McpAppsHost {
       const htmlBytes = Buffer.byteLength(html);
       if (htmlBytes > maxInterfaceHtmlBytes) throw interfaceError('mcp_app_html_too_large', `MCP interface HTML is ${htmlBytes} bytes; the limit is ${maxInterfaceHtmlBytes} bytes (8 MiB).`);
       const token = randomUUID();
-      const result = wrapped ? object(record.result).result : record.result;
+      const result = record.result;
       const argumentsObject = JSON.parse(record.toolCall.argumentsText);
-      const args = wrapped ? argumentsObject.arguments : argumentsObject;
+      const args = argumentsObject;
       await this.observe(identity, 'resource_loaded'); loadSignal.throwIfAborted();
       if (!sameConnection(binding, this.registry.resolve(source))) throw interfaceError('mcp_app_connection_changed', 'The plugin connection changed while loading its interface.');
       this.instances.set(token, { ...identity, ...binding, server: registration.mcpHook.server, scope, input: args, result, controller: new AbortController(), busy: false, actions: Promise.resolve(), touched: Date.now() });

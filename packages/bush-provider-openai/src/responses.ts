@@ -237,7 +237,7 @@ export function toResponsesCreateParams(
       `Provider continuation offset ${inputMessageOffset} exceeds ${request.messages.length} messages.`,
     );
   }
-  const projectDiscovery = discoveryInputProjection(request);
+  const projectDiscovery = discoveryInputProjection(request, toolSearchMode);
   const projectImages = compatibilityMode ? compatibleToolImageProjection() : (items: ResponseInputItem[]) => items;
   const projected = uniqueToolDeclarations(request.messages.map((message, messageIndex) => ({
     messageIndex,
@@ -384,7 +384,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
 
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
     options.signal?.throwIfAborted();
-    const projection = await this.#project(request);
+    const projection = await this.#project(request, options);
     options.signal?.throwIfAborted();
     const full = toResponsesCreateParams(projection.request, { disableProviderState: true, chatGpt: Boolean(this.#config.chatGpt), baseURL: this.#client.baseURL,
       toolSearchMode: projection.toolSearchMode, compatibilityMode: projection.compatibilityMode });
@@ -403,7 +403,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
     if (this.#config.chatGpt || this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
       return undefined;
     }
-    const projection = await this.#project(request);
+    const projection = await this.#project(request, options);
     const budget = requestBodyBudget(projection.params, this.#maxRequestBodyBytes);
     options.onRequestBodyBudget?.(budget);
     // Do not send an oversized body to the counting endpoint either. Runtime
@@ -448,7 +448,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
     try {
       let projection = await this.#project(attempts.hasRecovery('restart_continuation')
         ? { ...request, providerState: { strategy: 'response_chain' } } : request,
-        attempts.hasRecovery('negotiate_capability'));
+        options, attempts.hasRecovery('negotiate_capability'));
       // The shared round budget bounds replays even across outer transport retries.
       // Buffer only response_started: a header/created event is not usable output.
       for (;;) {
@@ -533,7 +533,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
             // Replay the already resolved local transcript, including completed
             // tool results. Only the stale anchor is discarded: keep schemas,
             // cache routing and storage so the new response can anchor the next round.
-            projection = await this.#project({ ...resolvedRequest, providerState: { strategy: "response_chain" } });
+            projection = await this.#project({ ...resolvedRequest, providerState: { strategy: "response_chain" } }, options);
             continue;
           }
           if (isToolCallValidationFailure(failure)) {
@@ -553,7 +553,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
           this.#compatibilityDiagnostic(request, options, "generation",
             retry ? "retry" : projection.compatibilityMode ? "failed" : "next_request", failure);
           if (!retry) { yield failure; return; }
-          projection = await this.#project(request, true);
+          projection = await this.#project(request, options, true);
         }
       }
     } catch (error) {
@@ -586,8 +586,8 @@ export class OpenAIResponsesProvider implements ModelProvider {
       sessionId: request.sessionId, turnId: request.turnId, requestId: request.requestId, ...diagnostic }));
   }
 
-  async #project(request: ModelRequest, forceCompatibility = false): Promise<ResponsesProjection> {
-    const resolvedRequest = await resolveLocalImageInputs(request);
+  async #project(request: ModelRequest, options: ModelStreamOptions, forceCompatibility = false): Promise<ResponsesProjection> {
+    const resolvedRequest = await resolveLocalImageInputs(request, options);
     const compatibilityMode = forceCompatibility || this.#compatibilityMode(resolvedRequest);
     const continuation = this.#readCapability(
       resolvedRequest.model,

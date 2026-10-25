@@ -3,7 +3,7 @@ import test from 'node:test';
 import { ToolRegistry, ToolExecutionCoordinator } from '../dist/index.js';
 import { registerBuiltinToolDisclosure, nativeToolInvocation } from '../dist/builtinToolDisclosure.js';
 import { modelToolDefinitions } from '../dist/mcpToolDiscovery.js';
-import { presentTool, replacedToolPresentation } from '../dist/toolPresentation.js';
+import { presentTool } from '../dist/toolPresentation.js';
 import { resolvePluginForkRole, pluginAgentTools } from '../dist/pluginExtensions.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false };
@@ -15,19 +15,19 @@ const request = registry => ({ protocol: 'bush.model_request.v1', requestId: 'r'
 
 test('presentation and direct routes belong to registrations, not tool names', async () => {
   const registry = new ToolRegistry();
-  for (const name of ['team', 'tasks', 'manage_plugin_agents']) registry.register({ definition: definition(name), manifest,
+  for (const name of ['team', 'tasks', 'terminal_poll']) registry.register({ definition: definition(name), manifest,
     decodeInput: x => x, execute: () => ({}) });
   let projected = 0;
   registry.register({ definition: definition('custom_reader'), manifest, directInvocation: true,
     projectModelDefinition: (tool, scope) => { projected++; return scope.canRecall ? presentTool(tool, { actions: ['read'], fields: ['action'] }) : tool; },
     decodeInput: x => x, execute: () => ({}) });
-  registry.register({ definition: definition('old_reader'), manifest,
-    projectModelDefinition: replacedToolPresentation('custom_reader'), decodeInput: x => x, execute: () => ({}) });
+  registry.register({ definition: definition('unavailable_reader'), manifest,
+    modelAvailable: () => false, decodeInput: x => x, execute: () => ({}) });
   registerBuiltinToolDisclosure(registry);
   const req = request(registry), before = structuredClone(req.tools), frozen = modelToolDefinitions(registry, req);
   assert.deepEqual(frozen.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['read', 'write']);
-  assert.ok(frozen.some(tool => tool.name === 'manage_plugin_agents'), 'a familiar name alone cannot hide an extension');
-  assert.ok(!frozen.some(tool => tool.name === 'old_reader'));
+  assert.ok(frozen.some(tool => tool.name === 'terminal_poll'), 'a familiar name alone cannot hide an extension');
+  assert.ok(!frozen.some(tool => tool.name === 'unavailable_reader'));
   assert.equal(frozen.find(tool => tool.name === 'custom_reader').inputSchema.properties.content, undefined);
   assert.equal(nativeToolInvocation(registry, 'custom_reader').tool, 'custom_reader');
   assert.equal(nativeToolInvocation(registry, 'team').tool, 'call_tool');

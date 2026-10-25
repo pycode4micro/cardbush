@@ -75,10 +75,6 @@ export class RuntimeSessionCoordinator {
 
   modelContract(sessionId: string) { return this.#store.modelContract(sessionId); }
   bindModelContract(sessionId: string, contract: SessionModelContract) { return this.#store.bindModelContract(sessionId, contract); }
-  upgradeModelContract(sessionId: string, expectedVersion: string, contract: SessionModelContract) {
-    if (this.#activeSessions.has(sessionId)) throw new Error('Model policies cannot migrate during an active Turn.');
-    return this.#store.upgradeModelContract(sessionId, expectedVersion, contract);
-  }
 
   hasSession(sessionId: string): boolean {
     return this.#store.hasSession(sessionId);

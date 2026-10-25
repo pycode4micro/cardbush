@@ -19,6 +19,7 @@ export interface RestoredCompactionFailure {
   failures: number;
   outputTokens: number;
   correctionPartition?: boolean;
+  corrections?: string[];
 }
 
 interface Fragment {
@@ -51,6 +52,7 @@ export interface CompactionJob {
   messages: ModelMessage[];
   outputTokens: number;
   failures: number;
+  corrections?: string[];
   sourceRanges: Array<{ turnId: string; startMessage: number; endMessageExclusive: number;
     messageRanges?: Array<{ startMessage: number; endMessageExclusive: number }> }>;
 }
@@ -239,7 +241,8 @@ export class ContextCompactionTransaction {
     messages.push(notice);
     for (const correction of node.corrections) messages.push(contextCompactionCorrectionMessage(correction));
     return { id: node.id, state, messages, outputTokens: node.outputTokens,
-      failures: node.failures, sourceRanges: this.#ranges(node) };
+      failures: node.failures, sourceRanges: this.#ranges(node),
+      ...(node.corrections.length ? { corrections: [...node.corrections] } : {}) };
   }
 
   /** At most two short corrections append after the fixed notice, retaining
@@ -422,7 +425,7 @@ export class ContextCompactionTransaction {
 
   #node(id: string, fragments: Fragment[]): Node {
     const restored = this.#restoredFailures.get(id);
-    const node: Node = { id, fragments, corrections: [], failures: restored?.failures ?? 0,
+    const node: Node = { id, fragments, corrections: [...(restored?.corrections ?? [])], failures: restored?.failures ?? 0,
       // Retry facts survive upgrades, but an old maintenance-only cap must not
       // lower today's conversation allowance when resuming an interrupted job.
       outputTokens: Math.min(this.#maximumOutput, Math.max(this.#initialOutput, restored?.outputTokens ?? this.#initialOutput)) };

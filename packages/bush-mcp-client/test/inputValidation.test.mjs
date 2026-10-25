@@ -26,7 +26,7 @@ test('MCP inputs are validated before approval and dispatch, with actionable str
     assert.equal(outcome.error.code, 'tool_arguments_schema_invalid');
     assert.equal(outcome.error.details.inputDispatched, false);
     assert.deepEqual(outcome.error.details.requiredFields, ['uid']);
-    assert.equal(outcome.error.details.recovery.load.arguments.query, name);
+    assert.equal(outcome.error.details.recovery.load.arguments.name, name);
     assert.match(outcome.error.message, /No tool was executed/);
   }
   assert.equal(approved, 0); assert.equal(dispatched, 0);
@@ -40,7 +40,7 @@ test('MCP inputs are validated before approval and dispatch, with actionable str
 
 test('optional schemas cannot silently consume a dispatcher envelope or a misspelled filter', () => {
   const decode = mcpInputDecoder('mcp__browser__snapshot', { type: 'object', properties: { query: { type: 'string' } }, additionalProperties: false });
-  assert.throws(() => decode({ name: 'mcp__browser__snapshot', arguments: { query: 'AI' } }), /mcp_call envelope/);
+  assert.throws(() => decode({ name: 'mcp__browser__snapshot', arguments: { query: 'AI' } }), /call_tool envelope/);
   assert.throws(() => decode({ qurey: 'AI' }), /additional properties/);
   assert.deepEqual(decode({}), {});
   assert.deepEqual(decode({ query: 'AI' }), { query: 'AI' });

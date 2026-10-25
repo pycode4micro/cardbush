@@ -13,8 +13,7 @@ export function selectRuntimeToolDefinitions(
   return catalog.filter(entry =>
     (!options.allowedTools || options.allowedTools.includes(entry.definition.name)) &&
     (!disabled.has(entry.definition.name) || entry.definition.name === 'checkpoint_context') &&
-    (entry.definition.name !== 'request_permission' || options.interactiveRequests) &&
-    (entry.definition.name !== 'solution_selection' || options.interactiveRequests) &&
+    (entry.definition.name !== 'request_user_input_async' || options.interactiveRequests) &&
     (entry.definition.name !== 'inject_image_input' || options.vision) &&
     (entry.definition.name !== 'update_goal' || options.goalAvailable) &&
     (options.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&

@@ -154,14 +154,11 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
   });
   const names = catalog.map((definition) => definition.name);
   for (const required of [
-    "request_permission",
     "read_archived_tool_result",
     "inject_image_input",
-    "parallel_tools",
     "update_task_plan",
     "read_file",
     "subagent",
-    "await_subagents",
   ]) assert.ok(names.includes(required), required);
   for (const excluded of [
     "consult_logic",

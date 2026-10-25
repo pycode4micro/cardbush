@@ -50,6 +50,8 @@ async function directory(t) {
 async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
   const calls = [];
   const server = createServer(async (req, res) => {
+    // Request chunks can split a UTF-8 code point in large tool catalogs.
+    req.setEncoding('utf8');
     let raw = '';
     try { for await (const chunk of req) raw += chunk; }
     catch (error) {
@@ -190,6 +192,37 @@ test('an Agent can delete an idle conversation while another task keeps running'
     release();
     await until(() => service.call('chat.jobs'), jobs => jobs.find(item => item.id === job.id)?.status === 'completed');
   } finally { release(); await service.close(); }
+});
+
+test('explicit history deletion clears service jobs and presentation, survives restart and preserves settings', async t => {
+  const f = await openService(t, 'history-cleanup', 0);
+  const root = f.root;
+  try {
+    for (const sessionId of ['delete-ui', 'delete-runtime', 'keep-until-clear']) {
+      await f.service.call('sessions.create', { sessionId });
+      await f.service.call('sessions.rename', { sessionId, title: `Saved ${sessionId}` });
+      const job = await f.service.call('chat.send', input(sessionId, `job-${sessionId}`));
+      await until(() => f.service.call('chat.jobs'), jobs => jobs.find(item => item.id === job.id)?.status === 'completed');
+    }
+    const settings = await readFile(join(root, 'config/models.json'), 'utf8');
+    await f.service.call('sessions.delete', { sessionId: 'delete-ui' });
+    await f.service.call('runtime.command', { kind: 'runtime.delete_session', payload: { sessionId: 'delete-runtime' } });
+    assert.deepEqual((await f.service.call('chat.jobs')).map(job => job.sessionId), ['keep-until-clear']);
+    let saved = JSON.parse(await readFile(join(root, 'agent.json'), 'utf8'));
+    assert.deepEqual(Object.keys(saved.sessions), ['keep-until-clear']);
+    const result = await f.service.call('runtime.command', { kind: 'runtime.clear_sessions', payload: {} });
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(await f.service.call('chat.jobs'), []);
+    saved = JSON.parse(await readFile(join(root, 'agent.json'), 'utf8'));
+    assert.deepEqual(saved.sessions, {}); assert.deepEqual(saved.jobs, []);
+    assert.equal(await readFile(join(root, 'config/models.json'), 'utf8'), settings);
+    await f.service.close();
+    const reopened = await AgentService.open({ dataRoot: root, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
+    try {
+      assert.deepEqual(await reopened.call('chat.jobs'), []);
+      assert.deepEqual(await reopened.call('sessions.list', { projection: 'summary' }), []);
+    } finally { await reopened.close(); }
+  } finally { await f.service.close(); }
 });
 
 test('busy automatic configuration sync preserves the active runtime and queued turns, then applies after both finish', async t => {

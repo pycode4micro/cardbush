@@ -65,8 +65,7 @@ test('human continuation keeps child ownership, original role and policy; parent
   assert.equal(page.messages.filter(item => item.role === 'assistant').length, 2);
   await assert.rejects(read(task.taskId, 'unrelated'), /not available/);
   assert.ok(!registry.definitions().some(tool => tool.name === 'read_subagent_conversation'));
-  const legacy = await registry.resolve('read_subagent_conversation').execute({ sessionId: 'parent', input: { taskId: task.taskId }, turn: { request: { metadata: {} } } });
-  assert.deepEqual(legacy, page, 'legacy and current entry points use one reader and ownership policy');
+  assert.equal(registry.resolve('read_subagent_conversation'), undefined);
   await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'parent-follow-r', sessionId: 'parent', turnId: 'parent-follow', model: 'fixture',
     prefixMessages: [], inputMessages: [{ messageId: 'parent-follow-msg', message: { role: 'user', content: '继续主任务' } }], tools: registry.definitions(), metadata: {} });
   assert.ok(seen.find(item => item.turnId === 'parent-follow').messages.some(item => item.name === 'subagent_conversation_updates' && item.content.includes('human-message')));

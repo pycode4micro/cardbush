@@ -9,8 +9,7 @@ const text = (value: unknown, limit: number) => typeof value === 'string' ? valu
  * A declared failure still has a native result; it does not authorize a retry. */
 export function returnedToolError(name: string, result: unknown, registeredMcp = false): RuntimeToolError | undefined {
   const native = object(result);
-  const mcp = name === 'mcp_call' ? object(native?.result)
-    : registeredMcp || name.startsWith('mcp__') ? native : undefined;
+  const mcp = registeredMcp || name.startsWith('mcp__') ? native : undefined;
   if (mcp?.isError === true) {
     const declared = object(object(mcp.structuredContent)?.error);
     const content = Array.isArray(mcp.content) ? mcp.content : [];

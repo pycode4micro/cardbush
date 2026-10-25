@@ -1,6 +1,7 @@
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -8,7 +9,6 @@ import { promisify } from 'node:util';
 import { ToolRegistry, ToolExecutionCoordinator, SubagentTaskStore, InMemoryRuntimeHost } from '../dist/index.js';
 import { registerMcpDiscovery, modelToolDefinitions, synchronizeMcpDiscovery } from '../dist/mcpToolDiscovery.js';
 import { PluginHookScopes } from '../dist/pluginHookScopes.js';
-import { PluginAgentMemory } from '../dist/pluginAgentMemory.js';
 import { PluginAgentEnvironment } from '../dist/pluginAgentEnvironment.js';
 import { PluginBackgroundTasks } from '../dist/pluginBackgroundTasks.js';
 import { pluginAgentTools } from '../dist/pluginExtensions.js';
@@ -19,27 +19,28 @@ const agent = { id: 'demo:reviewer', pluginId: 'demo', root: '.', name: 'reviewe
 const request = (registry, overrides = {}) => ({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'task_free', tools: registry.definitions(), messages: [], metadata: {}, requestCapabilities: { vision: false, interactiveRequests: false }, ...overrides });
 const coordinator = (registry, ask = async () => { throw Error('Unexpected permission'); }) => new ToolExecutionCoordinator({ registry, permissions: { request: ask } });
 let serial = 0;
-const call = (coordinator, req, name, input) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `call-${++serial}`, name, argumentsText: JSON.stringify(input) }, { ...req, round: 1, ordinal: serial }, undefined, { request: req, contextMessages: [] });
+const call = (coordinator, req, name, input) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `call-${++serial}`, name, argumentsText: JSON.stringify(input) }, { ...req, round: 1, ordinal: serial }, undefined, { request: req, contextMessages: req.messages });
 async function temp(t) { const root = await mkdtemp(join(tmpdir(), 'cardbush-plugin-cap-')); t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-plugin-cap-')); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }); return root; }
 const mcp = (name, server, execute = () => ({})) => ({ definition: { name, description: `${server} document lookup`, inputSchema: { type: 'object', properties: {} } }, manifest, decodeInput: x => x, execute, mcpHook: { server, tool: 'lookup', call: async () => ({}) } });
 
 test('MCP discovery hides large catalogs, retains permission checks and cannot cross task scopes', async () => {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry); let executions = 0, asks = 0;
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry); let executions = 0, asks = 0;
   for (let i = 0; i < 1000; i++) registry.register({ ...mcp(`mcp__service${i}__lookup`, `service${i}`, () => { executions++; return { found: true }; }), authorize: () => ({ kind: 'ask', request: { reason: 'External tool', actions: ['read'], targets: [], capabilityIds: ['mcp'] } }) });
   const req = request(registry, { metadata: { mcpToolDiscovery: true } });
-  assert.deepEqual(modelToolDefinitions(registry, req).map(tool => tool.name), ['mcp_search', 'mcp_call']);
+  assert.deepEqual(modelToolDefinitions(registry, req).map(tool => tool.name), ['mcp_search', 'get_tool_schema', 'call_tool']);
   const runner = coordinator(registry, async permission => { asks++; return { decision: 'deny', grantedCapabilityIds: [] }; });
   assert.equal((await call(runner, req, 'mcp__service42__lookup', {})).error.code, 'mcp_discovery_required');
-  const searched = await call(runner, req, 'mcp_search', { action: 'load', query: 'mcp__service42__lookup' });
+  const searched = await call(runner, req, 'get_tool_schema', { name: 'mcp__service42__lookup' });
   assert.equal(searched.result.matches.length, 1); assert.ok(searched.result.matches[0].inputSchema);
-  synchronizeMcpDiscovery(registry, req, [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'search', content: JSON.stringify(searched.result) }]);
-  const denied = await call(runner, req, 'mcp_call', { name: searched.result.matches[0].name, arguments: {} });
+  req.messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'get_tool_schema', argumentsText: '{"name":"mcp__service42__lookup"}' }] }, { role: 'tool', toolCallId: 'search', content: JSON.stringify(searched.result) }];
+  synchronizeMcpDiscovery(registry, req, req.messages);
+  const denied = await call(runner, req, 'call_tool', { name: searched.result.matches[0].name, arguments: {} });
   assert.equal(denied.kind, 'failed'); assert.equal(asks, 1); assert.equal(executions, 0);
   const other = request(registry, { sessionId: 'other', metadata: { mcpToolDiscovery: true }, tools: req.tools.filter(tool => !tool.name.includes('service42')) });
   assert.equal((await call(runner, other, 'mcp_search', { query: '*', server: 'service42' })).result.total, 0);
-  assert.equal((await call(runner, other, 'mcp_call', { name: 'mcp__service42__lookup', arguments: {} })).kind, 'failed');
-  const recovered = request(registry, { metadata: structuredClone(req.metadata) });
-  assert.equal((await call(runner, recovered, 'mcp_call', { name: 'mcp__service42__lookup', arguments: {} })).error.code, 'permission_rejected');
+  assert.equal((await call(runner, other, 'call_tool', { name: 'mcp__service42__lookup', arguments: {} })).kind, 'failed');
+  const recovered = request(registry, { metadata: structuredClone(req.metadata), messages: structuredClone(req.messages) });
+  assert.equal((await call(runner, recovered, 'call_tool', { name: 'mcp__service42__lookup', arguments: {} })).error.code, 'permission_rejected');
 });
 
 test('Scoped Hooks persist Skill activation across turns but only load current trusted definitions', async t => {
@@ -55,42 +56,24 @@ test('Scoped Hooks persist Skill activation across turns but only load current t
 });
 
 test('MCP dispatch applies Hooks once to the real tool and remains usable in a read-only role', async t => {
-  const root = await temp(t), registry = new ToolRegistry(); registerMcpDiscovery(registry); registry.register(mcp('mcp__docs__lookup', 'docs', () => ({ value: 42 })));
-  const environment = new PluginAgentEnvironment(root, registry);
+  const root = await temp(t), registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry); registry.register(mcp('mcp__docs__lookup', 'docs', () => ({ value: 42 })));
+  const environment = new PluginAgentEnvironment(registry);
   const req = request(registry, { metadata: { mcpToolDiscovery: true } }); const lease = await environment.acquire(req, { ...agent, permissionMode: 'plan', tools: ['mcp__docs__*'] }); t.after(() => lease.release());
-  assert.ok(req.tools.some(tool => tool.name === 'mcp_call'));
+  assert.ok(req.tools.some(tool => tool.name === 'call_tool'));
   const events = [];
   const runner = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('Unexpected approval'); } }, hooks: { before: async context => { events.push(['before', context.toolCall.name]); return { messages: [] }; }, after: async context => { events.push(['after', context.toolCall.name]); return { messages: [], ...(context.toolCall.name === 'mcp__docs__lookup' ? { toolFeedback: 'Scoped feedback' } : {}) }; } } });
-  const searched = await call(runner, req, 'mcp_search', { action: 'load', query: 'mcp__docs__lookup' });
-  synchronizeMcpDiscovery(registry, req, [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'search', content: JSON.stringify(searched.result) }]);
+  const searched = await call(runner, req, 'get_tool_schema', { name: 'mcp__docs__lookup' });
+  req.messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'get_tool_schema', argumentsText: '{"name":"mcp__docs__lookup"}' }] }, { role: 'tool', toolCallId: 'search', content: JSON.stringify(searched.result) }];
+  synchronizeMcpDiscovery(registry, req, req.messages);
   events.length = 0;
-  const result = await call(runner, req, 'mcp_call', { name: 'mcp__docs__lookup', arguments: {} });
+  const result = await call(runner, req, 'call_tool', { name: 'mcp__docs__lookup', arguments: {} });
   assert.deepEqual(events, [['before', 'mcp__docs__lookup'], ['after', 'mcp__docs__lookup']]); assert.equal(result.hookFeedback, 'Scoped feedback');
 });
 
-test('Agent memory is persistent, revision protected and confined including symlinks', async t => {
-  const root = await temp(t), project = join(root, 'project'), copy = join(root, 'copy'); await mkdir(project); await mkdir(copy);
-  const registry = new ToolRegistry(), memory = new PluginAgentMemory(join(root, 'memory'), registry), runner = coordinator(registry);
-  const req = request(registry, { prefixMessages: [], metadata: { projectDir: copy, pluginAgentSourceDir: project } });
-  await memory.prepare({ ...agent, memory: 'project' }, req, registry);
-  const read = await call(runner, req, 'agent_memory_read', {}); assert.equal(read.result.revision, null);
-  const write = await call(runner, req, 'agent_memory_write', { content: 'Stable notes', expected_revision: null }); assert.equal(write.kind, 'returned'); assert.ok(write.result.path.startsWith(await realpath(project)));
-  assert.equal((await call(runner, req, 'agent_memory_write', { content: 'Lost update', expected_revision: null })).kind, 'failed');
-  assert.equal((await call(runner, req, 'agent_memory_read', { path: '../escape' })).kind, 'failed');
-  memory.release('s'); assert.equal((await call(runner, req, 'agent_memory_read', {})).kind, 'failed');
-  const next = request(registry, { sessionId: 'next', prefixMessages: [], metadata: { projectDir: project }, tools: [] });
-  await memory.prepare({ ...agent, memory: 'project', permissionMode: 'plan' }, next, registry);
-  assert.ok(next.prefixMessages.every(message => !message.content.includes('Stable notes')));
-  assert.match(next.inputMessages.at(-1).message.content, /Stable notes/); assert.deepEqual(next.tools.map(tool => tool.name), ['agent_memory_read']);
-  const outside = join(root, 'outside'); await mkdir(outside);
-  const unsafe = join(root, 'unsafe'); await mkdir(unsafe); await symlink(outside, join(unsafe, '.cardbush'), process.platform === 'win32' ? 'junction' : 'dir');
-  await assert.rejects(memory.prepare({ ...agent, memory: 'project' }, request(registry, { metadata: { projectDir: unsafe } }), registry), /escapes/);
-});
-
 test('Agent local MCP is scoped, supports exact Claude tool names, and releases once', async t => {
-  const root = await temp(t), registry = new ToolRegistry(); registerMcpDiscovery(registry); let opens = 0, closes = 0;
+  const root = await temp(t), registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry); let opens = 0, closes = 0;
   const name = 'mcp__plugin_demo_docs__scope_0123456789abcdef__lookup';
-  const environment = new PluginAgentEnvironment(root, registry, undefined, async () => { opens++; return { registrations: [mcp(name, 'plugin_demo_docs__scope_0123456789abcdef')], close: async () => { closes++; } }; });
+  const environment = new PluginAgentEnvironment(registry, undefined, async () => { opens++; return { registrations: [mcp(name, 'plugin_demo_docs__scope_0123456789abcdef')], close: async () => { closes++; } }; });
   const profile = { ...agent, trusted: true, mcpServers: [{ docs: { command: 'fixture' } }], tools: ['mcp__docs__lookup'] };
   const req = request(registry);
   await assert.rejects(environment.acquire(req, { ...profile, trusted: false }), /trust/); assert.equal(opens, 0);
@@ -109,7 +92,7 @@ test('Worktree Agent edits stay isolated and modified copies are kept for review
   const git = (...args) => promisify(execFile)('git', ['-C', project, ...args], { windowsHide: true });
   await git('init'); await git('add', 'note.txt'); await git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=NUL', 'commit', '-m', 'Fixture');
   const registry = new ToolRegistry(), workspaces = new TaskWorkspaceManager(join(root, 'workspaces'));
-  const environment = new PluginAgentEnvironment(join(root, 'memory'), registry, workspaces);
+  const environment = new PluginAgentEnvironment(registry, workspaces);
   const req = request(registry, { metadata: { projectDir: project }, sessionMetadata: {} });
   const lease = await environment.acquire(req, { ...agent, isolation: 'worktree' });
   assert.notEqual(req.metadata.workspaceDir, project);
@@ -140,9 +123,9 @@ test('Real host projects MCP schemas only through discovery to the provider', as
     assert.ok(!req.tools.some(tool => tool.name.startsWith('mcp__')));
     const base = { protocol: 'bush.model_event.v1', requestId: req.requestId, createdAt: new Date().toISOString() };
     yield { ...base, sequence: 0, kind: 'response_started' };
-    const name = ++round === 1 ? 'mcp_search' : 'mcp_call';
+    const name = ++round === 1 ? 'get_tool_schema' : 'call_tool';
     if (round <= 2) {
-      yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: `tool-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(round === 1 ? { action: 'load', query: 'mcp__docs__lookup' } : { name: 'mcp__docs__lookup', arguments: {} }) };
+      yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: `tool-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(round === 1 ? { name: 'mcp__docs__lookup' } : { name: 'mcp__docs__lookup', arguments: {} }) };
     } else yield { ...base, sequence: 1, kind: 'text_delta', delta: 'done' };
     yield { ...base, sequence: 4, kind: 'response_completed', finishReason: round <= 2 ? 'tool_calls' : 'stop' };
   } } });

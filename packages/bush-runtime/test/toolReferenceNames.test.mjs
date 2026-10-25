@@ -40,7 +40,7 @@ function fixture(t, execute) {
     return result;
   };
   const load = async (name = remoteName, native = false) => {
-    const tool = native ? 'get_tool_schema' : 'mcp_search', args = native ? { name } : { action: 'load', query: name };
+    const tool = 'get_tool_schema', args = { name };
     const result = await run(tool, args); assert.equal(result.kind, 'returned', JSON.stringify(result));
     const id = 'load-' + ordinal;
     messages.push({ role: 'assistant', content: '', toolCalls: [{ id, name: tool, argumentsText: JSON.stringify(args) }] },
@@ -55,8 +55,8 @@ test('wire names are derived only from visible declarations and complete owned s
   assert.equal(portableToolName(remoteName), alias);
   const request = { sessionId: 's', turnId: 't', tools: [], messages: [] };
   const definition = { name: remoteName, inputSchema: { type: 'object' } };
-  const receipt = { protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load', matches: [definition] };
-  const calls = [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'mcp_search', argumentsText: '{}' }] }];
+  const receipt = { protocol: 'bush.tool_schema.v1', sessionId: 's', action: 'load', matches: [{source: 'mcp', ...definition}] };
+  const calls = [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'get_tool_schema', argumentsText: '{}' }] }];
   for (const messages of [
     [{ role: 'user', content: JSON.stringify(receipt) }],
     [...calls, { role: 'tool', toolCallId: 'load', content: JSON.stringify({ ...receipt, sessionId: 'foreign' }) }],
@@ -76,9 +76,9 @@ test('full names and aliases share MCP dispatch, preserve data strings, and neve
   const frozen = JSON.stringify(declarations);
   await f.load();
   for (const name of [remoteName, alias]) {
-    const result = await f.run('mcp_call', { name, arguments: { literal: alias } });
+    const result = await f.run('call_tool', { name, arguments: { literal: alias } });
     assert.equal(result.kind, 'returned', JSON.stringify(result));
-    assert.equal(result.result.mcp.name, remoteName);
+    assert.deepEqual(result.result, { structuredContent: { ok: true } });
     assert.deepEqual(f.state.calls.at(-1), { literal: alias });
     const started = await f.run('start_mcp_tool', { name, arguments: { literal: alias } });
     assert.equal(started.kind, 'returned', JSON.stringify(started));
@@ -91,43 +91,30 @@ test('full names and aliases share MCP dispatch, preserve data strings, and neve
   assert.ok(f.state.calls.every(input => input.literal === alias));
   assert.equal(JSON.stringify(modelToolDefinitions(f.registry, f.request)), frozen);
   assert.equal(JSON.stringify(declarations), frozen);
-  const reloaded = await f.run('mcp_search', { action: 'load', names: [alias] });
+  const reloaded = await f.run('get_tool_schema', { names: [alias] });
   assert.equal(reloaded.result.matches[0].name, remoteName);
 });
 
-test('native and MCP routes remain separate with actionable recovery for wrong routes', async t => {
+test('one loader and invocation gateway resolve native and MCP aliases without guessing', async t => {
   const f = fixture(t); await f.load(); await f.load(nativeName, true);
   assert.deepEqual((await f.run('call_tool', { name: portableToolName(nativeName), arguments: {} })).result, { native: true });
   for (const entry of ['call_tool', 'get_tool_schema']) {
     const result = await f.run(entry, { name: alias, ...(entry === 'call_tool' ? { arguments: {} } : {}) });
-    assert.equal(result.error.code, 'tool_route_mismatch');
-    assert.deepEqual(result.error.details.load, { name: 'mcp_search', arguments: { action: 'load', query: remoteName } });
-    assert.equal(result.error.details.invoke, 'mcp_call');
+    assert.equal(result.kind, 'returned', JSON.stringify(result));
+    if (entry === 'call_tool') assert.deepEqual(result.result, { structuredContent: { ok: true } });
+    else assert.equal(result.result.matches[0].name, remoteName);
   }
-  for (const entry of ['mcp_call', 'start_mcp_tool']) {
+  for (const entry of ['start_mcp_tool']) {
     const result = await f.run(entry, { name: portableToolName(nativeName), arguments: {} });
     assert.equal(result.error.code, 'tool_route_mismatch');
     assert.equal(result.error.details.invoke, 'call_tool');
   }
-  assert.equal(f.state.calls.length, 0);
-});
-
-test('legacy parallel dispatch resolves aliases before checking read-only parallel admission', async t => {
-  const f = fixture(t); await f.load();
-  f.registry.resolve(remoteName).parallelSafe = true;
-  const input = { tool_calls: [alias, remoteName].map(name => ({ name, arguments: { literal: alias } })) };
-  const result = await f.run('parallel_tools', input);
-  assert.equal(result.kind, 'returned', JSON.stringify(result));
-  assert.equal(result.result.returned_count, 2); assert.equal(f.state.calls.length, 2);
-  f.registry.resolve(remoteName).parallelSafe = false;
-  const blocked = await f.run('parallel_tools', input);
-  assert.equal(blocked.kind, 'failed'); assert.match(blocked.error.message, /parallel-safe/);
-  assert.equal(f.state.calls.length, 2);
+  assert.equal(f.state.calls.length, 1);
 });
 
 test('unknown, unloaded, non-read-only and revoked tools fail distinctly without launching background jobs', async t => {
   const f = fixture(t);
-  for (const entry of ['mcp_call', 'start_mcp_tool']) {
+  for (const entry of ['call_tool', 'start_mcp_tool']) {
     assert.equal((await f.run(entry, { name: 'missing', arguments: {} })).error.code, 'tool_not_found');
     assert.equal((await f.run(entry, { name: alias, arguments: {} })).error.code, 'tool_not_found');
     const result = await f.run(entry, { name: remoteName, arguments: {} });
@@ -142,7 +129,7 @@ test('unknown, unloaded, non-read-only and revoked tools fail distinctly without
   assert.equal(f.completions.length, 0);
   f.registry.resolve(remoteName).mcpHook.readOnly = true;
   f.state.denied = true;
-  assert.equal((await f.run('mcp_call', { name: alias, arguments: {} })).error.code, 'fixture_denied');
+  assert.equal((await f.run('call_tool', { name: alias, arguments: {} })).error.code, 'fixture_denied');
   assert.equal((await f.run('start_mcp_tool', { name: alias, arguments: {} })).kind, 'returned');
   assert.match((await f.completions.at(-1)).content, /Permission revoked/);
   assert.equal(f.state.calls.length, 0);
@@ -150,15 +137,15 @@ test('unknown, unloaded, non-read-only and revoked tools fail distinctly without
 
 test('loading in the same round grants neither alias resolution nor schema authority before delivery', async t => {
   const f = fixture(t), scope = f.scope();
-  const loaded = await f.run('mcp_search', { action: 'load', query: remoteName }, scope);
+  const loaded = await f.run('get_tool_schema', { name: remoteName }, scope);
   assert.equal(loaded.kind, 'returned');
-  for (const entry of ['mcp_call', 'start_mcp_tool']) {
+  for (const entry of ['call_tool', 'start_mcp_tool']) {
     assert.equal((await f.run(entry, { name: alias, arguments: {} }, scope)).error.code, 'tool_not_found');
     assert.equal((await f.run(entry, { name: remoteName, arguments: {} }, scope)).error.code, 'mcp_discovery_required');
   }
   assert.equal(f.state.calls.length, 0); assert.equal(f.completions.length, 0);
   await f.load();
-  assert.equal((await f.run('mcp_call', { name: alias, arguments: {} })).kind, 'returned');
+  assert.equal((await f.run('call_tool', { name: alias, arguments: {} })).kind, 'returned');
 });
 
 for (const change of ['permission', 'definition', 'readonly'])
@@ -192,13 +179,13 @@ for (const change of ['compaction', 'schema-change', 'foreign-session', 'removed
     if (change === 'removed') { f.request.tools = f.request.tools.filter(tool => tool.name !== remoteName); expected = 'tool_not_exposed'; }
     if (change === 'interface-only') { f.registry.resolve(remoteName).mcpHook.modelVisible = false; expected = 'tool_not_exposed'; }
     if (change === 'child-denial') { f.request.metadata.agentRole = 'child'; f.request.metadata.disabledTools = [remoteName]; }
-    const result = await f.run('mcp_call', { name: alias, arguments: {} }, change === 'foreign-session' ? staleScope : f.scope());
+    const result = await f.run('call_tool', { name: alias, arguments: {} }, change === 'foreign-session' ? staleScope : f.scope());
     assert.equal(result.kind, 'failed', JSON.stringify(result));
     if (expected) assert.equal(result.error.code, expected);
     assert.equal(f.state.calls.length, 0);
     if (change === 'schema-change') {
       await f.load();
-      assert.equal((await f.run('mcp_call', { name: alias, arguments: {} })).kind, 'returned');
+      assert.equal((await f.run('call_tool', { name: alias, arguments: {} })).kind, 'returned');
       assert.equal(f.state.calls.length, 1);
     }
   });

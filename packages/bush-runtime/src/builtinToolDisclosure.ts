@@ -1,20 +1,16 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { ModelMessage, ModelRequest, ToolDefinition } from '@cardbush/bush-protocol';
+import { toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
-import { toolSchemaReceipts } from './toolSchemaReceipts.js';
+import { toolSchemaReceipts, TOOL_SCHEMA_PROTOCOL } from './toolSchemaReceipts.js';
 import { withToolDisplayTitle } from './toolDisplay.js';
-import { resolveToolReferenceName, unknownToolReferenceError, wrongToolRouteError } from './toolReferenceNames.js';
+import { resolveToolReferenceName, unknownToolReferenceError } from './toolReferenceNames.js';
+import { loadMcpToolSchema, mcpInvocationTarget, synchronizeMcpDiscovery } from './mcpToolDiscovery.js';
 
-const protocol = 'bush.builtin_schema.v1';
+const protocol = TOOL_SCHEMA_PROTOCOL;
 const revision = (definition: ToolDefinition) => createHash('sha256').update(JSON.stringify(definition)).digest('hex');
 function available(registry: ToolRegistry, request: ModelRequest, name: string) {
   return registry.resolve(name)?.modelAvailable?.(request) !== false;
-}
-
-/** Return guidance for the caller's actual catalog, including restricted/legacy hosts. */
-export function taskManagementTool(request: ModelRequest | undefined, fallback: string) {
-  return request?.tools.some(tool => tool.name === 'tasks') ? 'tasks' : fallback;
 }
 
 /** Bind presentation from each registration once; never refresh a frozen catalog. */
@@ -34,10 +30,12 @@ export function synchronizeBuiltinSchemas(registry: ToolRegistry, request: Model
   const loaded: Record<string, string> = {};
   for (const { output } of toolSchemaReceipts(messages, request.sessionId, 'get_tool_schema', protocol)) {
     for (const candidate of output.matches) {
-      const receipt = candidate as { name?: string; revision?: string; definition?: ToolDefinition };
+      const receipt = candidate as { name?: string; revision?: string; source?: string };
+      if (receipt.source !== 'native') continue;
+      const parsed = toolDefinitionSchema.safeParse(receipt);
       const definition = registry.resolve(receipt.name ?? '')?.definition;
       if (definition && request.tools.some(tool => tool.name === definition.name) && receipt.revision === revision(definition) &&
-        JSON.stringify(receipt.definition) === JSON.stringify(definition)) loaded[definition.name] = receipt.revision;
+        parsed.success && JSON.stringify(parsed.data) === JSON.stringify(definition)) loaded[definition.name] = receipt.revision;
     }
   }
   request.metadata.builtinToolSchemas = loaded;
@@ -65,8 +63,8 @@ export function nativeToolSchemaIsCurrent(registry: ToolRegistry, request: Model
 /** Discovery may describe direct entry points; invocation must not wrap them. */
 export function nativeToolInvocation(registry: ToolRegistry, name: string, request?: ModelRequest) {
   return registry.resolve(name)?.forwardToolCall || registry.resolve(name)?.directInvocation || request && !request.tools.some(tool => tool.name === 'call_tool')
-    ? { tool: name, arguments: 'Use definition.inputSchema fields directly. Do not wrap this call in call_tool.' }
-    : { tool: 'call_tool', arguments: { name, arguments: 'Use definition.inputSchema fields here.' } };
+    ? { tool: name, arguments: 'Use the loaded inputSchema fields directly. Do not wrap this call in call_tool.' }
+    : { tool: 'call_tool', arguments: { name, arguments: 'Use the loaded inputSchema fields here.' } };
 }
 
 function callableDefinition(registry: ToolRegistry, request: ModelRequest | undefined, name: string, discovery = false) {
@@ -74,9 +72,8 @@ function callableDefinition(registry: ToolRegistry, request: ModelRequest | unde
   if (!registration) throw unknownToolReferenceError(name, 'native');
   if (!request || !request.tools.some(tool => tool.name === name) || registration.mcpHook?.modelVisible === false ||
     !available(registry, request, name) || registration.sessionScope && registration.sessionScope !== request.sessionId) {
-    throw Object.assign(new Error('This native tool is not available to this turn. Loading a schema grants no access.'), { code: 'tool_not_exposed' });
+    throw Object.assign(new Error('This tool is not available to this turn. Loading a schema grants no access.'), { code: 'tool_not_exposed' });
   }
-  if (registration.mcpHook) throw wrongToolRouteError(name, 'mcp');
   if (!discovery && (registration.forwardToolCall || registry.resolve(name)?.directInvocation)) {
     throw Object.assign(new Error(`Call ${name} directly using its declared schema. Do not put it inside call_tool.`), {
       code: 'tool_requires_direct_call', details: { invocation: nativeToolInvocation(registry, name), definition: registration.definition },
@@ -86,21 +83,38 @@ function callableDefinition(registry: ToolRegistry, request: ModelRequest | unde
 }
 
 export function registerBuiltinToolDisclosure(registry: ToolRegistry) {
-  const schema = z.object({ name: z.string().min(1).max(200) }).strict();
+  const schema = z.object({
+    name: z.string().min(1).optional(),
+    names: z.array(z.string().min(1)).min(1).max(16).optional(),
+  }).strict().refine(value => (value.name !== undefined) !== (value.names !== undefined), 'Provide name or names, not both.');
   registry.register({
     directInvocation: true,
-    definition: { name: 'get_tool_schema', description: 'Load the complete definition and invocation route of a native tool, including direct entry points such as mcp_call. Follow the returned invocation: some tools must be called directly, others through call_tool. Top-level tools stay unchanged. Common subagent/Team calls remain directly callable. This grants no permissions. For MCP target schemas use mcp_search.', inputSchema: z.toJSONSchema(schema) },
+    definition: { name: 'get_tool_schema', description: 'Load complete current tool definitions: name for one exact native/MCP name, or names for up to 16. Read the returned schemas before calling call_tool({name, arguments}); direct controls use their returned invocation. Use mcp_search only to discover names. Batch errors are per name; deferred definitions still need loading, and oversized schemas require a complete archive read. Loading executes no target and grants no permissions.', inputSchema: z.toJSONSchema(schema, { io: 'input' }) },
     manifest: { effect_kind: 'observation', operation: 'tools.schema', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false },
     parallelSafe: true, decodeInput: value => schema.parse(value),
     execute: context => {
-      const definition = callableDefinition(registry, context.turn?.request, resolveToolReferenceName(context.input.name, context.turn), true);
-      return { protocol, sessionId: context.sessionId, action: 'load', matches: [{ name: definition.name, revision: revision(definition), definition }],
-        invocation: { ...nativeToolInvocation(registry, definition.name, context.turn?.request), name: definition.name } };
+      const matches = [], errors = [];
+      let hostCapabilities;
+      for (const reference of new Set(context.input.names ?? [context.input.name!])) {
+        try {
+          const definition = callableDefinition(registry, context.turn?.request, resolveToolReferenceName(reference, context.turn), true);
+          const loaded = registry.resolve(definition.name)?.mcpHook ? loadMcpToolSchema(registry, context.turn!.request, definition.name) : undefined;
+          if (loaded?.hostCapabilities) hostCapabilities = loaded.hostCapabilities;
+          matches.push(loaded ? { ...loaded.matches[0]!, invocation: loaded.invocation } : {
+            ...definition, source: 'native', revision: revision(definition), invocation: nativeToolInvocation(registry, definition.name, context.turn?.request),
+          });
+        } catch (error) {
+          if (!context.input.names) throw error;
+          errors.push({ name: reference, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return { protocol, sessionId: context.sessionId, action: 'load', matches,
+        ...(matches.length === 1 ? { invocation: matches[0]!.invocation } : {}), ...(errors.length ? { errors } : {}), ...(hostCapabilities ? { hostCapabilities } : {}) };
     },
   });
   const callSchema = z.object({ name: z.string().min(1).max(200), arguments: z.record(z.string(), z.unknown()) }).strict();
   registry.register({
-    definition: { name: 'call_tool', description: 'Call a native tool using the full schema returned by get_tool_schema. Pass its exact name and fields inside arguments. Reuse a loaded definition while it remains in context; reload after a definition change or compaction. Uses the selected tool\'s ordinary execution, permissions, hooks, cancellation and result handling. For MCP tools use mcp_call.', inputSchema: z.toJSONSchema(callSchema) },
+    definition: { name: 'call_tool', description: 'Invoke a native or MCP business tool. Use the exact target name and put its fields inside arguments. First read its full current schema from get_tool_schema; reuse it while it remains in context. The target keeps its permissions, hooks, resource locks, cancellation and result handling. Never wrap call_tool, discovery or context-maintenance entry points.', inputSchema: z.toJSONSchema(callSchema) },
     manifest: { effect_kind: 'observation', operation: 'tools.invoke', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false },
     delegatesToolExecution: true, nestedCallable: false,
     decodeInput: value => callSchema.parse(value),
@@ -110,17 +124,16 @@ export function registerBuiltinToolDisclosure(registry: ToolRegistry) {
       try { definition = callableDefinition(registry, context.turn?.request, name); }
       catch (error) {
         if (error && typeof error === 'object' && 'code' in error &&
-          ['tool_requires_direct_call', 'tool_route_mismatch'].includes(String(error.code))) {
+          error.code === 'tool_requires_direct_call') {
           const failure = error as Error & { code: string; details: Record<string, unknown> };
-          failure.details = { ...failure.details, corrected_call: failure.code === 'tool_requires_direct_call'
-            ? { name, arguments: context.input.arguments }
-            : { name: 'mcp_call', arguments: { name, arguments: context.input.arguments } },
+          failure.details = { ...failure.details, corrected_call: { name, arguments: context.input.arguments },
             note: 'This is a suggested call only. No target was executed; schema loading, scope, permissions and Hooks still apply.' };
         }
         throw error;
       }
-      synchronizeBuiltinSchemas(registry, context.turn!.request, context.turn!.contextMessages);
-      if ((context.turn!.request.metadata.builtinToolSchemas as Record<string, string>)[definition.name] !== revision(definition)) throw builtinSchemaRequiredError(definition.name);
+      synchronizeMcpDiscovery(registry, context.turn!.request, context.turn!.contextMessages);
+      if (registry.resolve(name)?.mcpHook) mcpInvocationTarget(registry, context.turn, name);
+      else if ((context.turn!.request.metadata.builtinToolSchemas as Record<string, string>)[definition.name] !== revision(definition)) throw builtinSchemaRequiredError(definition.name);
       return { name: definition.name, input: context.input.arguments };
     },
     execute: () => { throw new Error('call_tool must use the shared Tool execution coordinator.'); },

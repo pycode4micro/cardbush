@@ -69,20 +69,20 @@ test('inherited child input extends the exact cached prefix with frozen definiti
 test('child restrictions reject calls before hooks or execution, including full-control and empty disabledTools', async () => {
   const registry = new ToolRegistry();
   let executions = 0, hookCalls = 0;
-  for (const name of ['subagent', 'team_delegate', 'await_subagents', 'update_goal', 'request_permission', 'schedule_task', 'restricted', 'root_only', 'ordinary']) {
+  for (const name of ['subagent', 'team_delegate', 'update_goal', 'request_user_input_async', 'schedule_task', 'restricted', 'root_only', 'ordinary']) {
     registry.register(registration(name, { visibleToChild: name !== 'root_only', execute: () => { executions++; return {}; } }));
   }
   registry.register(registration('indirect', { execute: context => context.invokeTool('subagent', { prompt: 'nested' }) }));
   const runner = coordinator(registry, { before: async () => { hookCalls++; return { messages: [] }; }, after: async () => ({ messages: [] }) });
   const child = request(registry, { metadata: { agentRole: 'child', disabledTools: [] } });
-  for (const name of ['subagent', 'team_delegate', 'await_subagents']) {
+  for (const name of ['subagent', 'team_delegate']) {
     const outcome = await invoke(runner, child, name);
     assert.equal(outcome.kind, 'failed');
     assert.equal(outcome.error.code, 'child_agent_dispatch_unavailable');
     assert.match(outcome.error.message, /currently a child Agent/);
   }
   assert.equal((await invoke(runner, child, 'root_only')).error.code, 'child_agent_tool_unavailable');
-  for (const name of ['update_goal', 'request_permission', 'schedule_task']) {
+  for (const name of ['update_goal', 'request_user_input_async', 'schedule_task']) {
     assert.equal((await invoke(runner, { ...child, metadata: { agentRole: 'child' } }, name)).error.code, 'child_agent_tool_unavailable');
   }
   assert.equal((await invoke(runner, { ...child, metadata: { agentRole: 'child', disabledTools: ['restricted'] } }, 'restricted')).error.code, 'child_agent_tool_unavailable');
@@ -104,7 +104,7 @@ test('direct dispatch and child construction reject nested work without allocati
   });
   const req = request(registry, { metadata: { agentRole: 'child', disabledTools: [] } });
   const context = { sessionId: req.sessionId, turnId: req.turnId, turn: { request: req, contextMessages: [] }, input: { prompt: 'nested', inheritContext: true } };
-  for (const name of ['subagent', 'await_subagents']) await assert.rejects(registry.resolve(name).execute(context), { code: 'child_agent_dispatch_unavailable' });
+  for (const name of ['subagent']) await assert.rejects(registry.resolve(name).execute(context), { code: 'child_agent_dispatch_unavailable' });
   assert.throws(() => buildChildTurnRequest({ context, registry, ids, prompt: 'nested', inherited: [], metadata: {} }), { code: 'child_agent_dispatch_unavailable' });
   assert.equal(allocated, 0);
   assert.equal(tasks.list(req.sessionId).length, 0);

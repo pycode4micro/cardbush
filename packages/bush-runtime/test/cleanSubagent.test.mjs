@@ -173,15 +173,15 @@ test('clean tool restrictions and child identity still hold if a later catalog e
   assert.equal(f.requests.length, 0);
 });
 
-test('plugin initialization cannot add MCP or memory tools outside an explicit clean selection', async t => {
+test('plugin initialization cannot add MCP tools outside an explicit clean selection', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-clean-agent-'));
   t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-clean-agent-')); await rm(root, { recursive: true, force: true }); });
   const f = fixture(); let closes = 0;
-  const environment = new PluginAgentEnvironment(root, f.registry, undefined, async () => ({ registrations: [registration('agent_local_mcp')], close: async () => { closes++; } }));
+  const environment = new PluginAgentEnvironment(f.registry, undefined, async () => ({ registrations: [registration('agent_local_mcp')], close: async () => { closes++; } }));
   const child = build(f, { toolAllowlist: ['read_file'] });
-  const lease = await environment.acquire(child, { id: 'fixture:review', name: 'review', pluginId: 'fixture', root, description: 'Review', prompt: 'Review', trusted: true, memory: 'user', mcpServers: [{ local: { command: 'fixture' } }] });
+  const lease = await environment.acquire(child, { id: 'fixture:review', name: 'review', pluginId: 'fixture', root, description: 'Review', prompt: 'Review', trusted: true, mcpServers: [{ local: { command: 'fixture' } }] });
   assert.deepEqual(child.tools.map(tool => tool.name), ['read_file']);
-  assert.equal((await invoke(f.registry, { ...child, messages: [], tools: f.registry.definitions() }, 'agent_memory_write', {})).error.code, 'child_agent_tool_unavailable');
+  assert.equal((await invoke(f.registry, { ...child, messages: [], tools: [...f.registry.definitions(), f.registry.resolve('agent_local_mcp').definition] }, 'agent_local_mcp', {})).error.code, 'child_agent_tool_unavailable');
   await lease.release();
   assert.equal(closes, 1);
   assert.equal(f.registry.resolve('agent_local_mcp'), undefined);

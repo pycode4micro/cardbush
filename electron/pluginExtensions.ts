@@ -83,7 +83,7 @@ export async function readPluginExtensions(root: string, manifest: Json, options
       const { metadata, body } = parsePluginMarkdown(await readFile(file, 'utf8'));
       const name = typeof metadata.name === 'string' && metadata.name.trim() ? metadata.name.trim() : basename(file, extname(file));
       if (!/^[a-zA-Z0-9_-]+$/.test(name) || !body.trim()) { addIssue(`agents.${name}: invalid name or empty prompt`); continue; }
-      if (metadata.memory !== undefined && !['user', 'project', 'local'].includes(String(metadata.memory))) { addIssue(`agents.${name}: invalid memory scope`); continue; }
+      if (Object.hasOwn(metadata, 'memory')) { addIssue(`agents.${name}: unsupported field memory`); continue; }
       if (metadata.isolation !== undefined && metadata.isolation !== 'worktree') { addIssue(`agents.${name}: invalid isolation`); continue; }
       if (metadata.background !== undefined && typeof metadata.background !== 'boolean') { addIssue(`agents.${name}: background must be boolean`); continue; }
       if (metadata.permissionMode !== undefined && !['default', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'plan'].includes(String(metadata.permissionMode))) { addIssue(`agents.${name}: invalid permissionMode`); continue; }
@@ -102,7 +102,7 @@ export async function readPluginExtensions(root: string, manifest: Json, options
       }
       const definitionHash = createHash('sha256').update(JSON.stringify(stableJson({ root: resolve(root), agent: name, metadata, body }))).digest('hex');
       agents.push({ id: `${pluginId}:${name}`, pluginId, root, name, description: String(metadata.description ?? ''), prompt: body, tools, disallowedTools, maxTurns,
-        definitionHash, memory: metadata.memory as PluginAgent['memory'], isolation: metadata.isolation as PluginAgent['isolation'], background: metadata.background as boolean | undefined,
+        definitionHash, isolation: metadata.isolation as PluginAgent['isolation'], background: metadata.background as boolean | undefined,
         permissionMode: metadata.permissionMode as PluginAgent['permissionMode'], mcpServers: metadata.mcpServers as PluginAgent['mcpServers'],
         ...(metadata.skills !== undefined ? { skills: strings(metadata.skills).map(name => ({ name, path: '', prompt: '' })) } : {}) });
     }

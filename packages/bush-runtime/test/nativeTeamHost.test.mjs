@@ -42,10 +42,10 @@ test('development desk Team updates through real child tools after the parent fi
   } };
   host = new InMemoryRuntimeHost({ dataRoot: root, provider });
   await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
-    id: 'desk-worker', name: 'Desk worker', system_prompt: 'Update only assigned regions using verified evidence.', memory: 'none', allowed_tools: ['design', 'read_file', 'edit_file'],
+    id: 'desk-worker', name: 'Desk worker', system_prompt: 'Update only assigned regions using verified evidence.', allowed_tools: ['design', 'read_file', 'edit_file'],
   } } });
   await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
-    id: 'desk-reviewer', name: 'Desk reviewer', system_prompt: 'Read the current canvas and verify the result.', memory: 'none', allowed_tools: ['read_file'], guards: ['read_only'],
+    id: 'desk-reviewer', name: 'Desk reviewer', system_prompt: 'Read the current canvas and verify the result.', allowed_tools: ['read_file'], guards: ['read_only'],
   } } });
   await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
     id: 'desk', name: 'Desk maintenance', nodes: [
@@ -60,14 +60,14 @@ test('development desk Team updates through real child tools after the parent fi
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal)); parent.abort(); release();
   let run;
   for (let i = 0; i < 500; i++) { run = (await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'list' } })).runs[0]; if (run?.status !== 'running') break; await new Promise(done => setTimeout(done, 10)); }
-  assert.equal(run?.status, 'completed', JSON.stringify(run)); assert.equal(inspections.length, 2);
+  assert.equal(run?.status, 'completed', JSON.stringify(run ?? [...host.events('desk-parent', 'desk-turn')].filter(event => event.kind === 'tool_failed'))); assert.equal(inspections.length, 2);
   const saved = JSON.parse(await readFile(path, 'utf8'));
   assert.match(saved.items[0].markdown, /Updated through/);
   assert.deepEqual(saved.items.map(item => item.frame), document.items.map(item => item.frame));
   assert.deepEqual(saved.items[3], document.items[3]);
 });
 
-test('native Team uses real session execution and employee memory without holding its parent turn open', async t => {
+test('native Team passes dependency results between independent sessions without holding its parent turn open', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-native-team-host-'));
   let release, host;
   const gate = new Promise(done => { release = done; });
@@ -83,30 +83,21 @@ test('native Team uses real session execution and employee memory without holdin
     const tool = (name, args) => ({ ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `${request.turnId}-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(args) });
     if (request.metadata.registeredAgentId) {
       childRequests.push(structuredClone(request)); await gate;
-      if (request.metadata.teamMemberId === 'remember' && round === 1) {
-        yield tool('agent_memory_read', {});
-        yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
-      }
-      if (request.metadata.teamMemberId === 'remember' && round === 2) {
-        const receipt = JSON.parse(request.messages.filter(message => message.role === 'tool').at(-1).content);
-        yield tool('agent_memory_write', { content: 'Warehouse dispatch requires a verified order number.', expected_revision: receipt.revision });
-        yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
-      }
     } else if (round === 1) {
       yield tool('team', { action: 'run', team_id: 'warehouse', input: 'Order 42' });
       yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
     }
-    yield { ...base, sequence: 0, kind: 'text_delta', delta: request.metadata.registeredAgentId ? 'Order checked.' : 'The team is running independently.' };
+    yield { ...base, sequence: 0, kind: 'text_delta', delta: request.metadata.teamMemberId === 'prepare' ? 'Warehouse dispatch requires a verified order number.' : request.metadata.registeredAgentId ? 'Order checked.' : 'The team is running independently.' };
     yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'stop' };
   } };
   host = new InMemoryRuntimeHost({ dataRoot: root, provider });
   await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
-    id: 'clerk', name: 'Warehouse clerk', system_prompt: 'Use verified inventory records.', allowed_tools: [], memory: 'user',
+    id: 'clerk', name: 'Warehouse clerk', system_prompt: 'Use verified inventory records.', allowed_tools: [],
   } } });
   await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
     id: 'warehouse', name: 'Warehouse', nodes: [
-      { id: 'remember', agent_id: 'clerk', prompt: 'Remember the warehouse rule.' },
-      { id: 'verify', agent_id: 'clerk', prompt: 'Check the order.', depends_on: ['remember'] },
+      { id: 'prepare', agent_id: 'clerk', prompt: 'Check the warehouse rule.' },
+      { id: 'verify', agent_id: 'clerk', prompt: 'Check the order.', depends_on: ['prepare'] },
     ],
   } } });
   const tools = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
@@ -183,18 +174,18 @@ for (const finishBeforeWait of [false, true]) test(`Team reads a real file and d
       if (round === 2) {
         if (finishBeforeWait) {
           for (let attempt = 0; attempt < 400; attempt++) {
-            const run = await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'status', run_id: receipt.run_id } });
+            const run = await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'status', run_id: receipt.task_id } });
             if (run.status === 'completed') break;
             await new Promise(done => setTimeout(done, 10));
             assert.ok(attempt < 399, 'Team completion timed out');
           }
         }
-        yield call('team', { action: 'wait', run_id: receipt.run_id });
+        yield call('tasks', { action: 'wait', task_ids: [receipt.task_id], yield_time_ms: 10000 });
         yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
       }
-      assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
-      assert.equal(receipt.nodes[0].output, undefined);
-      assert.match(receipt.nodes[1].output, /FINAL_DELIVERABLE/);
+      assert.equal(receipt.tasks[0].status, 'completed', JSON.stringify(receipt));
+      assert.equal(receipt.tasks[0].result.nodes[0].output, undefined);
+      assert.match(receipt.tasks[0].result.nodes[1].output, /FINAL_DELIVERABLE/);
       assert.equal(request.messages.filter(message => message.content.includes('FINAL_DELIVERABLE')).length, 1);
       assert.doesNotMatch(JSON.stringify(request.messages), /INVENTORY_EVIDENCE/);
       assert.equal(request.messages.filter(message => message.name === 'subagent_result').length, 0,
@@ -207,7 +198,7 @@ for (const finishBeforeWait of [false, true]) test(`Team reads a real file and d
   host = new InMemoryRuntimeHost({ dataRoot: root, provider });
   for (const [id, allowed_tools] of [['clerk', ['read_file']], ['reviewer', []]]) {
     await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'save', expected_revision: 0,
-      definition: { id, name: id, system_prompt: 'Use verified records and the requested output format.', allowed_tools, memory: 'none', guards: ['read_only'] } } });
+      definition: { id, name: id, system_prompt: 'Use verified records and the requested output format.', allowed_tools, guards: ['read_only'] } } });
   }
   await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'save', expected_revision: 0, definition: {
     id: 'inventory', name: 'Inventory', nodes: [
@@ -220,7 +211,7 @@ for (const finishBeforeWait of [false, true]) test(`Team reads a real file and d
     model: 'fixture', prefixMessages: [{ role: 'system', content: 'PRIVATE PARENT CONTEXT' }],
     inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Check inventory with the team.' } }], tools,
     permissionMode: 'all_free', metadata: { workspaceDir: root, individuation: { habits: false, predictions: false } } });
-  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify({ terminal, lastChildResults: children.at(-1)?.messages.filter(message => message.role === 'tool') }));
   assert.equal(parents.length, 3, 'run, wait, final reply; no redundant model round');
   assert.equal(children.length, 3, 'stock calls read_file, then final receives its evidence');
   assert.doesNotMatch(JSON.stringify(children), /PRIVATE PARENT CONTEXT/);

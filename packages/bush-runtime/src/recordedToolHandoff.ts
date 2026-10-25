@@ -68,7 +68,7 @@ function compactReceipt(content: string): unknown {
   })) };
 }
 
-/** Do not include hidden reasoning or provider replay in either projection or digest. */
+/** Hidden reasoning and provider replay are not evidence for the digest. */
 function visible(message: ModelMessage): ModelMessage {
   if (message.role !== 'assistant') return message;
   const { reasoningContent: _reasoning, providerReplay: _replay, ...rest } = message;
@@ -144,7 +144,7 @@ export function recordedToolHandoffMessages(turn: CommittedTurn, handoff: Record
     const message = messages[index]!;
     if (message.role !== 'assistant') { projected.push(message); continue; }
     if (!message.toolCalls.length) {
-      if (finals.has(ids.get(message) ?? '')) projected.push(visible(message));
+      if (finals.has(ids.get(message) ?? '')) projected.push(message);
       continue;
     }
     const receipts = messages.slice(index + 1, index + 1 + message.toolCalls.length);
@@ -152,7 +152,10 @@ export function recordedToolHandoffMessages(turn: CommittedTurn, handoff: Record
     // guessing which Skill conditions are still applicable or fabricating them.
     if (message.toolCalls.some(call => call.name === 'checkpoint_context' || skills.has(call.id) || instructionRead(call)) ||
       receipts.some(receipt => receipt.role === 'tool' && receipt.images?.length)) {
-      projected.push(visible(message), ...receipts); index += receipts.length; continue;
+      // Native exchanges keep their canonical identity and provider replay.
+      // Cloning only the call loses its coverage ID while the receipt retains
+      // its ID, splitting the exchange on the next compaction or restart.
+      projected.push(message, ...receipts); index += receipts.length; continue;
     }
     const entries = message.toolCalls.map(call => {
       const receipt = receipts.find(item => item.role === 'tool' && item.toolCallId === call.id)!;

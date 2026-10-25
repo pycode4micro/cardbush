@@ -22,6 +22,13 @@ export function chatSessionWorkspace(session: ChatSession): string | undefined {
     : typeof session.metadata?.projectDir === 'string' ? session.metadata.projectDir : undefined;
 }
 
+function sessionTime(value?: string): string {
+  const date = new Date(value ?? '');
+  if (!Number.isFinite(date.getTime())) return 'Unknown time';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${String(date.getFullYear()).padStart(4, '0')}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /** parseArgs has no optional option values. Normalize only actual --resume
  * switches, never prompt text or another string option's value. */
 export function optionalResumeArgs(args: string[]) {
@@ -47,15 +54,16 @@ export async function selectChatSession(client: Client, io: ChatTerminal, signal
   if (!ordered.length) { io.status('No saved sessions. Run cardbush to start one.\n'); return; }
   let selection = argument.trim();
   if (!selection) {
-    io.status('\nSessions · most recent first\n' + ordered.map((item, index) =>
-      `  ${index + 1}. ${chatSessionTitle(item)}${item.sessionId === current ? ' · current' : ''}\n` +
-      `     ${clean(item.sessionId)} · ${clean(item.updatedAt ?? '')}${chatSessionWorkspace(item) ? ' · ' + clean(chatSessionWorkspace(item)!) : ''}`).join('\n') +
-      '\n↑/↓ select · Enter open · Esc return · /cancel return\n');
+    const title = 'Sessions · most recent first · local time';
+    const choices = ordered.map((item, index) => ({ value: item.sessionId,
+      label: `${index + 1}. ${chatSessionTitle(item)}${item.sessionId === current ? ' · current' : ''}`,
+      description: [sessionTime(item.updatedAt), clean(chatSessionWorkspace(item) ?? ''), clean(item.sessionId)].filter(Boolean).join(' · ') }));
+    // Terminals without cursor controls still need a readable numbered list.
+    if (!io.selectionMenus) io.status(`\n${title}\n${choices.map(item => `  ${item.label}\n     ${item.description}`).join('\n')}\nEnter a number or session ID; /cancel returns.\n`);
     selection = (await io.ask('Select a session: ', signal, { choices: [
-      ...ordered.map((item, index) => ({ value: item.sessionId, label: `${index + 1}. ${chatSessionTitle(item)}`,
-        description: `${clean(item.sessionId)} · ${clean(chatSessionWorkspace(item) ?? '')}` })),
+      ...choices,
       { value: '/cancel', description: 'Return without switching' },
-    ], picker: { title: 'Sessions · most recent first', selected: current ?? ordered[0]!.sessionId,
+    ], picker: { title, selected: current ?? ordered[0]!.sessionId,
       cancelValue: '/cancel', cancelLabel: 'cancel' } }))?.trim() ?? '';
   }
   signal.throwIfAborted();

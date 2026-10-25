@@ -6,11 +6,8 @@ const object = (value: unknown): Record<string, unknown> =>
 
 /** Host-issued link metadata is appended to the new result, never to old context. */
 export function modelMcpAppReference(registry: ToolRegistry, name: string, result: unknown, identity: McpAppReferenceIdentity): string | undefined {
-  const wrapped = name === 'mcp_call';
-  const source = wrapped ? object(object(result).mcp).name : name;
-  if (typeof source !== 'string') return undefined;
-  const registration = registry.resolve(source);
-  const native = wrapped ? object(result).result : result;
+  const registration = registry.resolve(name);
+  const native = result;
   if (!registration?.mcpHook || !registration.mcpApp || object(native).isError === true ||
     registration.sessionScope && registration.sessionScope !== identity.sessionId) return undefined;
   const reference = mcpAppReference(identity);

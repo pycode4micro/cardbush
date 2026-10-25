@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { toolDefinitionSchema, type ModelRequest } from '@cardbush/bush-protocol';
-import { toolSchemaReceipts } from './toolSchemaReceipts.js';
+import { toolSchemaReceipts, TOOL_SCHEMA_PROTOCOL } from './toolSchemaReceipts.js';
 import { withToolFailureFacts } from './toolFailureFacts.js';
 
 /** Wire encoding only. Registry identities and recorded arguments stay unchanged. */
@@ -18,11 +18,10 @@ export function visibleToolAliases(request: ModelRequest): Map<string, string> {
     aliases.set(alias, name);
   };
   for (const tool of request.tools) remember(tool.name);
-  for (const [tool, protocol] of [['mcp_search', 'bush.mcp_discovery.v1'], ['get_tool_schema', 'bush.builtin_schema.v1']] as const) {
+  for (const [tool, protocol] of [['get_tool_schema', TOOL_SCHEMA_PROTOCOL]] as const) {
     for (const { output } of toolSchemaReceipts(request.messages, request.sessionId, tool, protocol)) {
       for (const match of output.matches) {
-        const definition = toolDefinitionSchema.safeParse(tool === 'get_tool_schema'
-          ? (match as { definition?: unknown } | null)?.definition : match);
+        const definition = toolDefinitionSchema.safeParse(match);
         if (definition.success) remember(definition.data.name);
       }
     }
@@ -49,16 +48,15 @@ export function resolveToolReferenceName(name: string, turn?: { request: ModelRe
 
 export function unknownToolReferenceError(name: string, domain: 'native' | 'mcp') {
   return withToolFailureFacts(Object.assign(new Error(`Unknown or no-longer-loaded tool name/alias: ${name}. ${domain === 'mcp'
-    ? 'Use mcp_search to find and load the current schema, then use its exact name with mcp_call.'
-    : 'Use an exact native tool name from the current catalog with get_tool_schema. For MCP tools use mcp_search and mcp_call.'} No tool was executed.`), {
+    ? 'Use mcp_search to find the exact name, then load the schema with get_tool_schema and invoke through call_tool.'
+    : 'Use get_tool_schema with an exact tool name from the current catalog. Use mcp_search to find MCP tools, then invoke the loaded target with call_tool.'} No tool was executed.`), {
     code: 'tool_not_found', details: { toolName: name },
   }), { effects: 'none', result: 'known' });
 }
 
 export function wrongToolRouteError(name: string, domain: 'native' | 'mcp') {
-  const load = domain === 'mcp' ? { name: 'mcp_search', arguments: { action: 'load', query: name } }
-    : { name: 'get_tool_schema', arguments: { name } };
-  const invoke = domain === 'mcp' ? 'mcp_call' : 'call_tool';
+  const load = { name: 'get_tool_schema', arguments: { name } };
+  const invoke = 'call_tool';
   return withToolFailureFacts(Object.assign(new Error(`This is ${domain === 'mcp' ? 'an MCP' : 'a native'} tool. Use ${load.name} to load its schema, wait for the result, then use ${invoke} with the exact name and arguments. No tool was executed.`), {
     code: 'tool_route_mismatch', details: { toolName: name, load, invoke },
   }), { dispatch: 'not_started', effects: 'none', result: 'known' });

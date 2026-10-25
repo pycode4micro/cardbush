@@ -233,6 +233,20 @@ test('stopping the supervisor kills its task even without cooperative cancellati
   await assertGone(pid);
 });
 
+test('stopping during process creation closes every stream without terminating a sibling task', native, async t => {
+  const sibling = await start(t, ['hold']);
+  await ready(sibling);
+  for (const delay of [0, 1, 3, 5, 10, 20, 40, 80]) {
+    const task = await start(t, ['hold']);
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    task.stop();
+    const result = await task.done;
+    for (const match of result.stdout.matchAll(/ready=(\d+)/g)) await assertGone(Number(match[1]));
+    assert.equal(sibling.child.exitCode, null, `stopping after ${delay}ms must preserve sibling ownership`);
+  }
+  sibling.stop(); await sibling.done;
+});
+
 test('exiting a Runtime parent cleans up its managed work automatically', native, async t => {
   const intermediary = join(fixtureRoot, 'parent.mjs');
   const moduleUrl = pathToFileURL(join(root, 'packages/bush-runtime/dist/processResourceGuard.js')).href;

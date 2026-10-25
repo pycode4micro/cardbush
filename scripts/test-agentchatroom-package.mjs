@@ -43,10 +43,10 @@ test('portable packaged bundle loads through the actual Runtime plugin loader an
   });
   await state.refresh();
   assert.equal(host.capabilities().features.includes('workspace_agent_coordination'), true);
-  assert.equal(registry.resolve('agentchatroom_join').visibleToChild, false);
-  assert.equal(registry.resolve('agentchatroom_join').deferredSchema, true);
+  assert.equal(registry.resolve('agentchatroom').visibleToChild, true);
+  assert.equal(registry.resolve('agentchatroom').deferredSchema, true);
   await state.refresh(); assert.deepEqual(registry.definitions().filter(tool => tool.name.startsWith('agentchatroom')).map(tool => tool.name), ['agentchatroom']);
   await writeFile(config, JSON.stringify({ plugins: [{ id: 'agentchatroom', installed: true, enabled: false }] }));
-  await state.refresh(); assert.equal(registry.resolve('agentchatroom_join'), undefined);
+  await state.refresh(); assert.equal(registry.resolve('agentchatroom'), undefined);
   assert.deepEqual(errors, []);
 });

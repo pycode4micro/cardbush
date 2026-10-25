@@ -35,6 +35,7 @@ export class NativeChatTerminal implements ChatTerminal {
   #closed = false;
   #chatPrompt = false;
   #inputOptions: ChatInputOptions = {};
+  #detailOffset = 0;
   #suggestionSource?: ChatSuggestionSource;
   #suggestions?: ActiveSuggestions;
   #hintPosition?: { below: number; cols: number };
@@ -58,8 +59,9 @@ export class NativeChatTerminal implements ChatTerminal {
   #statusLabel = '';
   #activity = 'Working';
   #compacting = false;
-  #frame = 0;
   #tools = new ChatToolActivity();
+  #summaries = new ChatToolActivity();
+  #replyPhase: 'execution' | 'pending' | 'final' = 'execution';
   #planSummary = '';
   #utf8 = new StringDecoder('utf8');
   #live?: ChatLiveViewport;
@@ -85,7 +87,8 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#styledAnswers = this.interactive && Boolean(this.#output.isTTY) && env.TERM !== 'dumb';
     this.#markdown = new ChatMarkdown(text => { this.#clearStatus(); this.#emit(text, this.#output); }, this.color,
       () => this.#output.columns || this.#status.columns || 80,
-      { link: (label, target) => this.#references?.link(label, target), source: number => this.#references?.source?.(number) });
+      { link: (label, target) => this.#references?.link(label, target), path: value => this.#references?.path?.(value),
+        source: number => this.#references?.source?.(number) });
     if (!this.interactive) return;
     const source = this.#input;
     this.#keys = Object.assign(new PassThrough(), { isTTY: true, setRawMode: (raw: boolean) => { source.setRawMode?.(raw); return this.#keys; } });
@@ -118,7 +121,7 @@ export class NativeChatTerminal implements ChatTerminal {
       else history.splice(0, history.length, ...this.#history);
     });
     this.#reader.on('line', line => {
-      if (this.#live && this.#editing() && !this.#chatPrompt) {
+      if (this.#live && this.#editing() && !this.#chatPrompt && !this.#inputOptions.transient) {
         const prompt = this.#reader!.getPrompt();
         this.#markdown.flush();
         this.#emit('\n' + prompt + terminalText(line) + '\n', this.#status);
@@ -163,6 +166,10 @@ export class NativeChatTerminal implements ChatTerminal {
       this.interrupt(); return;
     }
     if (this.#editing()) {
+      if (this.#inputOptions.details?.length && ['\x1b[5~', '\x1b[6~'].includes(text)) {
+        this.#detailOffset = Math.max(0, this.#detailOffset + (text === '\x1b[6~' ? 5 : -5));
+        this.#drawHints(); return;
+      }
       // The paste decoder has already distinguished a standalone Escape from
       // an arrow sequence. Do not make readline wait a second ambiguity timer,
       // which could consume the next slash as Alt+/ instead of cancelling.
@@ -316,6 +323,7 @@ export class NativeChatTerminal implements ChatTerminal {
     if (!this.#editing()) return lines.length ? { lines, cursor: { row: lines.length - 1, column: 0 } } : undefined;
     if (rows >= 8) lines.push(this.#style('─'.repeat(Math.min(width, 104)), 'dim'));
     if (this.#inputOptions.picker) lines.push(this.#style(terminalClip(this.#inputOptions.picker.title, width), 'bold'));
+    lines.push(...this.#promptDetails(width, Math.max(2, rows - lines.length - 8)));
     const input = chatInputViewport(this.#chatPrompt ? '❯ ' : this.#reader.getPrompt(), this.#reader.line, this.#reader.cursor,
       width, Math.max(1, Math.min(4, rows - lines.length - 5)));
     const cursor = { row: lines.length + input.cursor.row, column: input.cursor.column };
@@ -333,6 +341,16 @@ export class NativeChatTerminal implements ChatTerminal {
   }
   setSuggestionSource(source: ChatSuggestionSource) { this.#suggestionSource = source; }
   setReferenceRenderer(references: ChatReferenceRenderer) { this.#references = references; }
+  #promptDetails(width: number, capacity: number) {
+    const details = this.#inputOptions.details;
+    if (!details?.length) return [];
+    const lines = chatInputViewport('', details.map(terminalText).join('\n'), 0, width, Number.MAX_SAFE_INTEGER).lines;
+    if (lines.length <= capacity) { this.#detailOffset = 0; return lines; }
+    const visible = Math.max(1, capacity - 1);
+    this.#detailOffset = Math.min(this.#detailOffset, lines.length - visible);
+    return [...lines.slice(this.#detailOffset, this.#detailOffset + visible),
+      this.#style(terminalClip(`Details ${this.#detailOffset + 1}–${this.#detailOffset + visible}/${lines.length} · PgUp/PgDn scroll`, width), 'dim')];
+  }
   #initialSelection(value: ChatSuggestions) {
     return this.#reader?.line.trim() ? 0 : Math.max(0, value.items.findIndex(item => item.value === this.#inputOptions.picker?.selected));
   }
@@ -366,9 +384,11 @@ export class NativeChatTerminal implements ChatTerminal {
     const position = this.#reader.getCursorPos(), columns = this.#status.columns || 80;
     const end = terminalCursor(this.#reader.getPrompt() + line, columns);
     const picker = this.#inputOptions.picker;
-    const capacity = Math.min(picker ? 9 : 3, (this.#status.rows || 24) - end.rows - (picker ? 4 : 3));
+    const details = this.#promptDetails(columns - 1, Math.max(2, (this.#status.rows || 24) - end.rows - 8));
+    const capacity = Math.min(picker ? 9 : 3, (this.#status.rows || 24) - end.rows - (picker ? 4 : 3) - details.length);
     if (capacity < 1) return;
     const lines = [...(picker ? [this.#style(terminalClip(picker.title, columns - 1), 'bold')] : []),
+      ...details,
       ...this.#suggestionRows(this.#suggestions, capacity, columns - 1)];
     lines.push(this.#style(terminalClip(value.notice ?? (value.items.length ? this.#hintHelp(this.#suggestions) : '  No matches; keep typing to filter'), columns - 1), 'dim'));
     const below = Math.max(1, end.rows - position.rows + 1);
@@ -476,13 +496,15 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#status.write('\r\x1b[2K' + this.#style(label, 'dim')); this.#statusVisible = true; this.#statusLabel = label;
   }
   #activityLabel() {
-    const elapsed = this.#elapsed() / 1000;
+    const elapsedMs = this.#elapsed(), elapsed = elapsedMs / 1000;
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     const group = this.#tools.current();
     const activity = group && !this.#compacting ? this.#toolGroupLabel(group, this.#width() - 14) : this.#activity;
     // Keep a margin at the right edge; resize compensation only clears this
     // owned status row. Completed transcript rows are never repainted.
-    return `${frames[this.#frame++ % frames.length]} ${activity}${this.#runtimeStarted !== undefined ? ` · ${elapsed.toFixed(1)}s` : ''}`;
+    // Streaming chunks and keystrokes may repaint faster than the ticker; they
+    // must not advance the spinner or dirty an otherwise unchanged status row.
+    return `${frames[Math.floor(elapsedMs / 120) % frames.length]} ${activity}${this.#runtimeStarted !== undefined ? ` · ${elapsed.toFixed(1)}s` : ''}`;
   }
   #toolGroupLabel(group: NonNullable<ReturnType<ChatToolActivity['current']>>, width: number) {
     const suffix = ` · ${group.count} tool${group.count === 1 ? '' : 's'}` +
@@ -496,6 +518,12 @@ export class NativeChatTerminal implements ChatTerminal {
     const pending = group.pending ? ` · ${group.pending} pending` : '';
     this.#emit(this.#style(terminalClip(`  ${group.failed ? '!' : '·'} ${this.#toolGroupLabel(group, this.#width() - 4 - pending.length)}${pending}`, this.#width()), 'dim') + '\n');
   }
+  #section(title: string) {
+    this.#markdown.end(); this.#answerOpen = false; this.#clearStatus();
+    if (!this.#controls || !this.#output.isTTY) return;
+    const label = `── ${title} `, width = Math.min(this.#width() - 2, 100);
+    this.#emit('\n' + this.#style('  ' + terminalClip(label + '─'.repeat(Math.max(0, width - terminalWidth(label))), width), 'blue') + '\n\n');
+  }
   identify(identity: ChatIdentity, models: string[]) {
     this.#identity = identity; this.#models = models;
     if (this.interactive) this.#emit(chatHeader(identity, this.#status.columns || 80, this.color));
@@ -503,7 +531,7 @@ export class NativeChatTerminal implements ChatTerminal {
   }
   updateModel(model: string, models: string[], effort?: string) { if (this.#identity) { this.#identity.model = model; this.#identity.effort = effort; } this.#models = models; }
   resetSession() {
-    this.#markdown.end(); this.#tools.reset(); this.#planSummary = ''; this.#guidance.clear();
+    this.#markdown.end(); this.#tools.reset(); this.#summaries.reset(); this.#replyPhase = 'execution'; this.#planSummary = ''; this.#guidance.clear();
     this.#queued = 0; this.#pendingInput = []; this.#savedDraft = undefined; this.#answerOpen = false;
     this.#clearDraft(); this.#invalidateHints(); this.#live?.schedule();
   }
@@ -526,7 +554,7 @@ export class NativeChatTerminal implements ChatTerminal {
     if (input !== undefined) this.commitInput(input);
     this.#turn = true; this.#started = performance.now(); this.#runtimeStarted = undefined; this.#runtimeCompleted = undefined;
     this.#compacting = false;
-    this.#tools.reset(); this.#activity = 'Waiting to start'; this.#planSummary = '';
+    this.#tools.reset(); this.#summaries.reset(); this.#replyPhase = 'execution'; this.#activity = 'Waiting to start'; this.#planSummary = '';
     if (this.interactive) {
       this.#emit('\n');
       if (!this.#controls) this.status('[Working]\n');
@@ -544,6 +572,7 @@ export class NativeChatTerminal implements ChatTerminal {
     }
   }
   write(text: string) {
+    if (text.trim() && this.#replyPhase === 'pending') { this.#replyPhase = 'final'; this.#section('Final reply'); }
     if (text.trim()) this.#flushToolGroup();
     this.#clearStatus();
     if (this.#turn && this.#styledAnswers) this.#markdown.write(text);
@@ -555,6 +584,7 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#emit(terminalText(text));
   }
   event(event: RuntimeEvent) {
+    if (event.kind === 'guidance_applied' && this.#replyPhase === 'pending') this.#replyPhase = 'execution';
     if (event.kind === 'guidance_applied' && this.#guidance.delete(event.payload.messageId)) {
       this.status('[Applied] Guidance received by the current task.\n'); return;
     }
@@ -568,7 +598,20 @@ export class NativeChatTerminal implements ChatTerminal {
     } else if (event.kind === 'reasoning_segment_started') this.#activity = 'Thinking';
     else if (event.kind === 'reasoning_segment_completed') this.#activity = 'Working';
     else if (isChatToolEvent(event)) {
+      if (event.payload.toolName === 'summary_for_user') {
+        if (!this.#summaries.update(event)) return;
+        if (['tool_queued', 'tool_running'].includes(event.kind) || event.kind === 'tool_returned' && !event.payload.resultError) {
+          if (event.kind === 'tool_returned' && !this.#tools.tools.some(tool => tool.state === 'queued' || tool.state === 'running')) {
+            this.#flushToolGroup(); this.#replyPhase = 'pending';
+          }
+          this.#activity = 'Preparing final reply';
+          if (this.#turn) this.#drawStatus();
+          return;
+        }
+      }
       if (!this.#tools.update(event)) return;
+      if (this.#replyPhase === 'final') this.#section('Tool activity');
+      this.#replyPhase = 'execution';
       this.#markdown.flush(); this.#clearStatus();
       // Redirected/dumb terminals remain append-only diagnostics. Interactive
       // terminals keep the changing group inside their existing owned footer.
@@ -612,12 +655,15 @@ export class NativeChatTerminal implements ChatTerminal {
     const resume = !chat ? this.suspendInput() : () => {};
     this.#hideHints(); this.#markdown.flush(); this.#clearStatus();
     if (!this.#live || !chat) this.#clearDraft();
-    this.#chatPrompt = chat; this.#inputOptions = input;
+    this.#chatPrompt = chat; this.#inputOptions = input; this.#detailOffset = 0;
+    const temporaryViewport = Boolean(input.transient && this.#controls && !this.#live);
+    if (temporaryViewport) this.#live = new ChatLiveViewport(this.#status, () => this.#footer());
     if (chat && this.interactive && !this.#live) this.#status.write('\n');
     return new Promise(resolve => {
       const finish = (value: string | null) => {
         this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); clearTimeout(this.#hintTimer); this.#suggestions = undefined;
         this.#waiting = undefined; signal.removeEventListener('abort', abort); this.#reader?.setPrompt('');
+        if (temporaryViewport) { this.#live?.close(); this.#live = undefined; }
         this.#decoder?.invalidate(); this.#chatPrompt = Boolean(this.#live && !this.#suspended);
         if (this.#chatPrompt) this.#reader?.setPrompt('❯ ');
         resume(); this.#inputOptions = this.#chatPrompt ? { chat: true } : {}; this.#live?.schedule(); resolve(value);

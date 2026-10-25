@@ -1,5 +1,6 @@
 import { ChromeConnectorError } from './bridgeClient.js';
 import type { PageCommand } from './pageCapture.js';
+import { callElement, inspectElement, obstructionReason } from './pageInspection.js';
 
 type Point = { x: number; y: number };
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -25,8 +26,36 @@ const chooseTarget = `function(click) {
     target = Array.from(source.labels || []).find(label => label.control === source && usable(label) && hasArea(label));
     if (!target) throw new Error('The requested element has no clickable area or visible associated label.');
   }
-  target.scrollIntoView({block:'center', inline:'center', behavior:'instant'});
   return target;
+}`;
+
+const scrollTarget = `function() {
+  const positions = [], windows = [];
+  let view=window, element=this, complete=true;
+  while (view) {
+    windows.push([view,view.scrollX,view.scrollY]);
+    for (let node=element;node;node=node.parentElement || node.getRootNode()?.host) positions.push([node,node.scrollLeft,node.scrollTop]);
+    if (view===view.top) break;
+    try { element=view.frameElement;if(!element){complete=false;break}view=view.parent; }
+    catch {complete=false;break}
+  }
+  this.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+  return {complete,autoScrolled:windows.some(([view,x,y])=>view.scrollX!==x || view.scrollY!==y) || positions.some(([node,left,top])=>node.scrollLeft!==left || node.scrollTop!==top)};
+}`;
+
+const stableTarget = `function() {
+  return new Promise(resolve=>{
+    let previous, frames=0, raf;
+    const finish = result=>{clearTimeout(timer);cancelAnimationFrame(raf);resolve({...result,frames,method:'animation_frames'})};
+    const timer = setTimeout(()=>finish({stable:false,reason:frames<2?'frames_unavailable':'moving'}),500);
+    const sample=()=>{
+      if (!this.isConnected) {finish({stable:false,reason:'detached'});return}
+      const r=this.getBoundingClientRect(), current=[r.x,r.y,r.width,r.height];frames++;
+      if (previous && current.every((v,i)=>Math.abs(v-previous[i])<=0.25)) {finish({stable:true});return}
+      previous=current;raf=requestAnimationFrame(sample);
+    };
+    raf=requestAnimationFrame(sample);
+  });
 }`;
 
 const checkTarget = `function(source, hit, click) {
@@ -81,7 +110,9 @@ function pointsInViewport(quads: unknown, width: number, height: number): Point[
 
 export async function dispatchPointer(command: PageCommand, uid: string, action: 'click' | 'hover', doubleClick = false) {
   const handles = new Set<string>();
-  let attemptedPresses = 0, completedClicks = 0, mouseMoved = false;
+  let attemptedPresses = 0, completedClicks = 0, mouseMoved = false, mouseMoveAttempted = false;
+  let sourceId: string | undefined, targetId: string | undefined, lastHitUid: string | undefined;
+  let autoScrolled: boolean | 'unknown' = false, stability: Record<string, unknown> | undefined;
   let hitTest: { viewport: Point; document: Point; scroll: Point } | undefined;
   const resolve = async (backendNodeId: number) => {
     const result = object(await command('DOM.resolveNode', { backendNodeId }));
@@ -90,7 +121,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     handles.add(id); return id;
   };
   const call = async (objectId: string, functionDeclaration: string, args: Record<string, unknown>[], returnByValue = true) => {
-    const result = object(await command('Runtime.callFunctionOn', { objectId, functionDeclaration, arguments: args, returnByValue }));
+    const result = object(await command('Runtime.callFunctionOn', { objectId, functionDeclaration, arguments: args, returnByValue, awaitPromise: true }));
     if (result.exceptionDetails) {
       const exception = object(object(result.exceptionDetails).exception);
       throw new ChromeConnectorError('element_not_actionable', String(exception.description ?? 'The element is no longer actionable.').split('\n')[0].slice(0, 400));
@@ -98,11 +129,26 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     return object(result.result);
   };
   try {
-    const sourceId = await resolve(Number(uid.slice(3)));
+    sourceId = await resolve(Number(uid.slice(3)));
     const chosen = await call(sourceId, chooseTarget, [{ value: action === 'click' }], false);
-    const targetId = chosen.objectId;
-    if (typeof targetId !== 'string') throw new ChromeConnectorError('element_not_actionable', `${uid} has no visible pointer target.`);
+    if (typeof chosen.objectId !== 'string') throw new ChromeConnectorError('element_not_actionable', `${uid} has no visible pointer target.`);
+    targetId = chosen.objectId;
     handles.add(targetId);
+    const beforeScroll = object(object(await command('Page.getLayoutMetrics')).cssVisualViewport);
+    autoScrolled = 'unknown';
+    const scrollObservation = await callElement(command, targetId, scrollTarget);
+    const localScroll = scrollObservation.autoScrolled === true;
+    if (localScroll) autoScrolled = true;
+    const afterScroll = object(object(await command('Page.getLayoutMetrics')).cssVisualViewport);
+    if ([beforeScroll.pageX, beforeScroll.pageY, afterScroll.pageX, afterScroll.pageY].every(value => typeof value === 'number' && Number.isFinite(value))) {
+      const changed = localScroll || beforeScroll.pageX !== afterScroll.pageX || beforeScroll.pageY !== afterScroll.pageY;
+      autoScrolled = changed ? true : scrollObservation.complete === true ? false : 'unknown';
+    }
+    const ensureStable = async () => {
+      stability = await callElement(command, targetId!, stableTarget);
+      if (stability.stable !== true) throw new ChromeConnectorError('element_unstable', `${uid} did not provide two stable animation frames. Inspect the current page before retrying.`, { reason: stability.reason === 'detached' ? 'detached' : 'unstable', stability });
+    };
+    await ensureStable();
     const described = object(await command('DOM.describeNode', { objectId: targetId }));
     const targetBackendId = Number(object(described.node).backendNodeId);
     const targetUid = `cb_${targetBackendId}`;
@@ -140,7 +186,6 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
       }
       return true;
     };
-    let lastHitUid: string | undefined;
     let targetKind = 'element';
     const hitsTarget = async (point: Point) => {
       // Quads and mouse input use viewport coordinates; DOM hit testing uses
@@ -166,9 +211,9 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
       const backendId = Number(hit.backendNodeId);
       lastHitUid = Number.isSafeInteger(backendId) ? `cb_${backendId}` : undefined;
       if (!lastHitUid) return false;
-      const hitId = backendId === targetBackendId ? targetId : await resolve(backendId);
+      const hitId = backendId === targetBackendId ? targetId! : await resolve(backendId);
       try {
-        const checked = object((await call(targetId, checkTarget, [{ objectId: sourceId }, { objectId: hitId }, { value: action === 'click' }])).value);
+        const checked = object((await call(targetId!, checkTarget, [{ objectId: sourceId }, { objectId: hitId }, { value: action === 'click' }])).value);
         if (checked.target !== 'element' && checked.target !== 'associated_label') return false;
         if (!await framesVisible(hit.frameId)) return false;
         targetKind = checked.target;
@@ -185,12 +230,14 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     let point: Point | undefined;
     for (const candidate of candidates) if (await hitsTarget(candidate)) { point = candidate; break; }
     if (!point) throw new ChromeConnectorError('element_obscured', `${uid} is covered, clipped, or does not receive pointer events. Inspect the page before retrying.`, { uid, hitUid: lastHitUid });
+    mouseMoveAttempted = true;
     await command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
     mouseMoved = true;
     if (action === 'click') {
       const clicks = doubleClick ? 2 : 1;
       for (let clickCount = 1; clickCount <= clicks; clickCount++) {
         // Hover handlers and the first click of a double-click may change layout.
+        await ensureStable();
         if (!await hitsTarget(point)) throw new ChromeConnectorError('element_changed', `${uid} changed or became covered before the click. Take a fresh snapshot.`, { uid, hitUid: lastHitUid });
         attemptedPresses++;
         await command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount });
@@ -198,13 +245,34 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
         completedClicks++;
       }
     }
-    return { uid, targetUid, target: targetKind, ...point,
+    const postState = await callElement(command, sourceId, `function(){return {url:location.href,observedAt:new Date().toISOString(),target:(${inspectElement}).call(this)}}`)
+      .catch(() => ({ status: 'unavailable' }));
+    return { uid, targetUid, target: targetKind, ...point, autoScrolled, mouseMoved, stability, postState,
       clicks: completedClicks, status: 'input_dispatched', inputDispatched: true, hitTargetVerified: true, outcomeVerified: false };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
     const normalized = error instanceof ChromeConnectorError ? error : new ChromeConnectorError('pointer_action_failed', error instanceof Error ? error.message : String(error));
+    const facts = targetId || sourceId ? await callElement(command, (targetId || sourceId)!).catch(() => ({})) : {};
+    const sourceFacts = sourceId && sourceId !== targetId ? await callElement(command, sourceId).catch(() => ({})) : facts;
+    let occluder: Record<string, unknown> | undefined, covered = false;
+    if (lastHitUid && targetId) {
+      try {
+        const hitId = await resolve(Number(lastHitUid.slice(3)));
+        occluder = { uid: lastHitUid, ...await callElement(command, hitId) };
+        covered = (await call(targetId, `function(hit){
+          const parent=node=>node.parentElement || node.getRootNode()?.host;
+          for(let n=hit;n;n=parent(n)) if(n===this)return false;
+          for(let n=this;n;n=parent(n)) if(n===hit)return false;
+          return true;
+        }`, [{ objectId: hitId }])).value === true;
+      } catch { /* Cross-frame or detached hits remain unknown, not guessed. */ }
+    }
+    const sourceReason = obstructionReason(sourceFacts);
+    const reason = normalized.details?.reason ?? (sourceReason && ['detached','disabled','inert'].includes(sourceReason) ? sourceReason : undefined)
+      ?? obstructionReason(facts) ?? (covered ? 'covered' : 'unknown');
     throw new ChromeConnectorError(normalized.code, `${normalized.message}${attemptedPresses ? ' A click may have taken effect; observe before retrying.' : ' No click was sent.'}`, {
-      ...normalized.details, uid, mouseMoved, attemptedPresses, completedClicks, ...(hitTest ? { hitTest } : {}),
+      ...normalized.details, uid, reason, targetState: facts, ...(sourceFacts !== facts ? { sourceState: sourceFacts } : {}), ...(occluder ? { hitElement: occluder } : {}),
+      autoScrolled, mouseMoved, mouseMoveAttempted, stability, attemptedPresses, completedClicks, ...(hitTest ? { hitTest } : {}),
       inputDispatched: attemptedPresses ? 'possibly' : false, outcomeVerified: false,
       recovery: attemptedPresses
         ? 'Observe the page before retrying: input may already have taken effect.'

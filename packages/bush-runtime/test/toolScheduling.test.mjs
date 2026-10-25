@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -36,7 +37,7 @@ function fixture(t) {
     request.tools = registry.definitions();
     return name;
   };
-  registerMcpDiscovery(registry);
+  registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   add('compose_fixture', c => executeToolScript(c.input.code, c, registry, c.signal), { delegatesToolExecution: true });
   const run = async (name, args = {}, signal = controller.signal, executor = coordinator) => {
     const id = 'call-' + ++ordinal, call = { protocol: 'bush.tool_call.v1', id, name, argumentsText: JSON.stringify(args) };
@@ -46,10 +47,10 @@ function fixture(t) {
     return outcome;
   };
   const load = async names => {
-    const args = { action: 'load', names }, outcome = await run('mcp_search', args);
+    const args = { names }, outcome = await run('get_tool_schema', args);
     assert.equal(outcome.kind, 'returned', JSON.stringify(outcome));
     const id = 'load-' + ordinal;
-    messages.push({ role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: JSON.stringify(args) }] },
+    messages.push({ role: 'assistant', content: '', toolCalls: [{ id, name: 'get_tool_schema', argumentsText: JSON.stringify(args) }] },
       { role: 'tool', toolCallId: id, content: JSON.stringify(outcome.result) });
     synchronizeMcpDiscovery(registry, request, messages);
   };
@@ -157,11 +158,11 @@ for (const route of ['script', 'round']) test(`${route}: Hook stops also reach c
   await until(() => started === 1);
   let pending;
   if (route === 'script') {
-    pending = f.script(`return await Promise.allSettled([tools.mcp_call({name:${JSON.stringify(name)}, arguments:{}}), tools.stop_now({})]);`);
+    pending = f.script(`return await Promise.allSettled([tools.call(${JSON.stringify(name)}, {}), tools.stop_now({})]);`);
   } else {
     const loop = new RuntimeToolLoop({ registry: f.registry, eventLog: new InMemoryRuntimeEventLog(), executionStore: f.store, hooks: f.hooks,
       identity: { requestId: 'r', sessionId: 's', turnId: 't' } });
-    const calls = [['mcp_call', { name, arguments: {} }], ['stop_now', {}]].map(([name, args], i) => ({
+    const calls = [['call_tool', { name, arguments: {} }], ['stop_now', {}]].map(([name, args], i) => ({
       protocol: 'bush.tool_call.v1', id: `round-${i}`, name, argumentsText: JSON.stringify(args),
     }));
     pending = loop.execute(calls, { round: 3, assistantMessageId: 'a-3', request: f.request,
@@ -203,10 +204,10 @@ for (const route of ['round', 'script']) test(`${route}: MCP wrappers and visibl
   const frozen = JSON.stringify(modelToolDefinitions(f.registry, f.request));
   const args = [first, second].map(name => ({ name: portableToolName(name), arguments: {} }));
   if (route === 'script') {
-    const output = result(await f.script(`return await Promise.all(${JSON.stringify(args)}.map(args => tools.mcp_call(args)));`));
-    assert.deepEqual(output.result.map(r => r.result.server), ['a', 'b']);
+    const output = result(await f.script(`return await Promise.all(${JSON.stringify(args)}.map(args => tools.call(args.name, args.arguments)));`));
+    assert.deepEqual(output.result.map(r => r.server), ['a', 'b']);
   } else {
-    const calls = args.map((input, i) => ({ protocol: 'bush.tool_call.v1', id: `round-${i}`, name: 'mcp_call', argumentsText: JSON.stringify(input) }));
+    const calls = args.map((input, i) => ({ protocol: 'bush.tool_call.v1', id: `round-${i}`, name: 'call_tool', argumentsText: JSON.stringify(input) }));
     const loop = new RuntimeToolLoop({ registry: f.registry, eventLog: new InMemoryRuntimeEventLog(), executionStore: f.store,
       identity: { requestId: 'r', sessionId: 's', turnId: 't' } });
     const output = await loop.execute(calls, { round: 3, assistantMessageId: 'a-3', request: f.request,
@@ -229,7 +230,7 @@ test('MCP aliases retain desktop suppression while a parallel tool asks permissi
   const loop = new RuntimeToolLoop({ registry: f.registry, eventLog: new InMemoryRuntimeEventLog(), executionStore: f.store,
     identity: { requestId: 'r', sessionId: 's', turnId: 't' },
     externalPermissions: { request: async () => { approvals++; return { decision: 'allow_once', grantedCapabilityIds: ['fixture:allow'] }; } } });
-  const calls = [['needs_permission', {}], ['mcp_call', { name: portableToolName(desktop), arguments: {} }]]
+  const calls = [['needs_permission', {}], ['call_tool', { name: portableToolName(desktop), arguments: {} }]]
     .map(([name, args], i) => ({ protocol: 'bush.tool_call.v1', id: `desktop-${i}`, name, argumentsText: JSON.stringify(args) }));
   await loop.execute(calls, { round: 3, assistantMessageId: 'a-3', request: f.request,
     contextMessages: f.messages, toolNameScope: f.scope(), signal: f.controller.signal });
@@ -245,7 +246,7 @@ test('two scripts and a direct call share the MCP server concurrency budget', { 
     try { await gate.promise; return {}; } finally { active--; }
   }, { parallelSafe: true });
   await f.load([name]);
-  const code = `return await Promise.all(Array.from({length:8}, () => tools.mcp_call({name:${JSON.stringify(name)},arguments:{}})));`;
+  const code = `return await Promise.all(Array.from({length:8}, () => tools.call(${JSON.stringify(name)}, {})));`;
   const one = f.script(code), two = f.script(code);
   await until(() => started === 8);
   const direct = f.run(name, {}, f.controller.signal, f.newCoordinator());
@@ -294,7 +295,7 @@ test('readOnlyHint alone does not opt a server into parallel execution', { timeo
   let started = 0;
   const name = f.mcp('shared', 'mcp__shared__read', async () => { started++; await gate.promise; return {}; });
   await f.load([name]);
-  const one = f.run('mcp_call', { name, arguments: {} });
+  const one = f.run('call_tool', { name, arguments: {} });
   await until(() => started === 1);
   const two = f.script(`return await tools.call(${JSON.stringify(name)}, {});`);
   await flush(); assert.equal(started, 1);
@@ -311,7 +312,7 @@ test('a cancelled MCP observer retains its server lease until the actual executo
   await until(() => started === 1); cancel.abort();
   const cancelled = await one;
   assert.equal(cancelled.kind, 'cancelled'); assert.equal(cancelled.execution.effects, 'possible');
-  const two = f.run('mcp_call', { name, arguments: {} }, f.controller.signal, f.newCoordinator());
+  const two = f.run('call_tool', { name, arguments: {} }, f.controller.signal, f.newCoordinator());
   await flush(); assert.equal(started, 1);
   gate.resolve(); result(await two); assert.equal(started, 2);
 });

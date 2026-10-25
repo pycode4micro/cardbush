@@ -173,7 +173,7 @@ test('saved default immediately affects both searches, overrides and pagination,
     await assert.rejects(() => runtime.search(name));
     assert.equal((await runtime.search(name, { limit: 2 })).matches.length, 2);
   }
-  const loaded = await runtime.search('mcp_search', { action: 'load', query: first.matches[0].name });
+  const loaded = await runtime.search('get_tool_schema', { name: first.matches[0].name });
   assert.equal(loaded.matches.length, 1); assert.deepEqual(loaded.matches[0].inputSchema, { type: 'object' });
 });
 

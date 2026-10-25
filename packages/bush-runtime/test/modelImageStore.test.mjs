@@ -6,8 +6,58 @@ import test from "node:test";
 import { crc32 } from "node:zlib";
 import sharp from "sharp";
 
-import { MAX_MODEL_IMAGE_SOURCE_BYTES, ModelImageStore, readLocalModelImage } from "../dist/index.js";
+import { configureProcessResourceClient, MAX_MODEL_IMAGE_SOURCE_BYTES, ModelImageStore, readLocalModelImage } from "../dist/index.js";
 import { gif, imageFixture, incompletePng, png } from "./helpers/modelImages.mjs";
+import { WorkspacePathGuard } from '../dist/workspacePathGuard.js';
+import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+
+test('resource admission refusals retain their code, details and identity for model input preparation', async t => {
+  const { root, source } = await imageFixture(t);
+  const refused = Object.assign(new Error('Process admission blocked by system_memory; no process was started.'),
+    { code: 'resource_memory_pressure', details: { headroomBytes: 0, startupMemoryBytes: 64 * 1024 ** 2 } });
+  configureProcessResourceClient({ acquire: async () => { throw refused; } });
+  t.after(() => configureProcessResourceClient());
+  await assert.rejects(readLocalModelImage(source), error => error === refused);
+  await assert.rejects(new ModelImageStore(root).snapshot(source), error => error === refused);
+});
+
+test('request-scoped readers grant only listed images and never turn a store path or metadata into authority', async t => {
+  const { root, source } = await imageFixture(t), store = new ModelImageStore(root);
+  const snapshot = await store.snapshot(`data:image/png;base64,${png.toString('base64')}`);
+  const other = await store.snapshot(`data:image/gif;base64,${gif.toString('base64')}`);
+  const sources = [snapshot, source], read = store.readerFor(sources);
+  sources.push(other);
+  const refused = Object.assign(new Error('sandbox unavailable'), { code: 'workspace_path_guard_unavailable' });
+  let externalReads = 0;
+  t.mock.method(WorkspacePathGuard.prototype, 'pin', async () => { externalReads++; throw refused; });
+  assert.deepEqual((await read(snapshot)).content, png);
+  await assert.rejects(read(other), { code: 'image_input_not_authorized' });
+  await assert.rejects(store.readerFor([])(snapshot), { code: 'image_input_not_authorized' });
+  await assert.rejects(read(source), error => error.code === 'image_input_unavailable' && error.cause === refused);
+  assert.equal(externalReads, 1);
+  await writeFile(snapshot, gif);
+  await assert.rejects(read(snapshot), { code: 'image_snapshot_corrupt' });
+  assert.equal(externalReads, 1, 'corrupt owned snapshots must not fall back to source reads');
+  await rm(snapshot);
+  await assert.rejects(read(snapshot), error => error.code === 'image_input_unavailable' && error.cause.code === 'ENOENT');
+});
+
+test('missing images and rejected sandbox preflight have distinct actionable errors and retain their cause', async t => {
+  const { root, source } = await imageFixture(t);
+  await assert.rejects(readLocalModelImage(join(root, 'missing.png')), error => {
+    assert.equal(error.code, 'image_input_unavailable'); assert.equal(error.cause.code, 'ENOENT');
+    assert.match(error.message, /Ensure the file exists/); return true;
+  });
+  const refused = Object.assign(new Error('sandbox path guard unavailable'), { code: 'workspace_path_guard_unavailable' });
+  t.mock.method(WorkspacePathGuard.prototype, 'pin', async () => { throw refused; });
+  await assert.rejects(new ModelImageStore(root).snapshot(source), error => {
+    assert.equal(error.code, 'image_input_unavailable'); assert.equal(error.cause, refused);
+    assert.match(error.message, /authorization and sandbox availability/);
+    assert.doesNotMatch(error.message, /Ensure the file exists/); return true;
+  });
+  await assert.rejects(readdir(join(root, 'model-images')), { code: 'ENOENT' });
+});
 
 test("pins exact bytes across source overwrite, deletion, and store restart", async (context) => {
   const { root, source } = await imageFixture(context);
@@ -61,6 +111,48 @@ test("never silently overwrites a corrupt existing snapshot", async (context) =>
   await assert.rejects(store.snapshot(source), { code: "image_snapshot_corrupt" });
   assert.deepEqual(await readFile(saved), gif);
   assert.equal((await readdir(join(root, "model-images"))).length, 1);
+});
+
+test('snapshot publication can reuse a pinned existing blob, but still rejects corruption', { skip: process.platform !== 'win32' }, async t => {
+  const { root, source } = await imageFixture(t);
+  const store = new ModelImageStore(root), saved = await store.snapshot(source);
+  const inline = `data:image/png;base64,${png.toString('base64')}`;
+  for (const corrupt of [false, true]) {
+    if (corrupt) await writeFile(saved, gif);
+    const guard = new WorkspacePathGuard();
+    try {
+      await guard.pin(join(root, 'model-images'));
+      if (corrupt) await assert.rejects(store.snapshot(inline), { code: 'image_snapshot_corrupt' });
+      else assert.equal(await store.snapshot(inline), saved);
+      assert.deepEqual(await readFile(saved), corrupt ? gif : png);
+      assert.equal((await readdir(join(root, 'model-images'))).length, 1);
+    } finally { await guard.close(); }
+  }
+});
+
+for (const cancelled of [false, true]) test(`a busy unpublished snapshot retries only publication and respects cancellation (${cancelled})`, async t => {
+  const { root } = await imageFixture(t);
+  const store = new ModelImageStore(root), controller = new AbortController();
+  const inline = `data:image/png;base64,${png.toString('base64')}`;
+  const original = fs.link;
+  let attempts = 0;
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  t.mock.method(fs, 'link', async (from, to) => {
+    if (++attempts === 1) {
+      if (cancelled) controller.abort();
+      throw Object.assign(new Error('snapshot reader is holding the directory'), { code: 'EBUSY' });
+    }
+    return original(from, to);
+  }); syncBuiltinESMExports();
+  if (cancelled) {
+    await assert.rejects(store.snapshot(inline, controller.signal), { name: 'AbortError' });
+    assert.equal(attempts, 1);
+    assert.deepEqual(await readdir(join(root, 'model-images')), []);
+  } else {
+    const saved = await store.snapshot(inline);
+    assert.equal(attempts, 2); assert.deepEqual(await readFile(saved), png);
+    assert.equal((await readdir(join(root, 'model-images'))).length, 1);
+  }
 });
 
 test("rejects missing, incomplete, non-image, directory and oversized inputs before publishing a snapshot", async (context) => {

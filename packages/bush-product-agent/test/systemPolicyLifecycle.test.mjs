@@ -47,7 +47,7 @@ function fixture(t) {
       tools: registry.definitions().filter(tool => ['read_fixture', 'summary_for_user', 'checkpoint_context'].includes(tool.name)),
       maxOutputTokens: 1000, maxContextTokens: 100000, ...options,
     });
-    return { host, store, request };
+    return { host, store, request, registry };
   };
   return { open, facts, observed, plannedCalls, executions: () => executions };
 }
@@ -68,7 +68,7 @@ test('continuation, restart and fork retain the bound system and top-level defin
     assert.deepEqual(dispatched.messages[0], original.messages[0]);
     assert.deepEqual(dispatched.tools, original.tools);
     assert.equal(tracker.observe(dispatched).frozenPrefixBreak, false);
-    assert.deepEqual(dispatched.metadata.systemPolicy, { id: 'cardbush.product', version: '6' });
+    assert.deepEqual(dispatched.metadata.systemPolicy, { id: 'cardbush.product', version: '9' });
     assert.equal(dispatched.metadata.subagentChildPrefixMessages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
   }
   assert.equal(f.facts.filter(f => f.sessionId === 'policy' && f.kind === 'model_contract_bound').length, 1);
@@ -82,7 +82,7 @@ test('continuation, restart and fork retain the bound system and top-level defin
   assert.equal((await host.runSessionTurn(request('new', { sessionId: 'new' }))).payload.status, 'completed');
   assert.equal(f.observed.at(-1).messages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
   assert.deepEqual(f.observed.at(-1).tools, original.tools, 'a new conversation binds the same current definitions');
-  assert.equal(store.modelContract('new').version, '6');
+  assert.equal(store.modelContract('new').version, '9');
 });
 
 test('the saved presentation survives changed client definitions, but never grants removed tools', async t => {
@@ -91,12 +91,11 @@ test('the saved presentation survives changed client definitions, but never gran
   const original = structuredClone(f.observed.at(-1));
   const changed = request('changed');
   changed.prefixMessages[0].content = 'A different system policy from a newer client.';
-  changed.metadata.systemPolicy.version = 'future';
   changed.tools.forEach(tool => { tool.description += ' A newer description.'; });
   await host.runSessionTurn(changed);
   assert.deepEqual(f.observed.at(-1).messages[0], original.messages[0]);
   assert.deepEqual(f.observed.at(-1).tools, original.tools);
-  assert.equal(store.modelContract('policy').version, '6');
+  assert.equal(store.modelContract('policy').version, '9');
 
   f.plannedCalls.set('policy/removed', ['read_fixture']);
   await host.runSessionTurn(request('removed', { tools: [] }));
@@ -156,44 +155,22 @@ test('explicit history cleanup releases the old contract and a fresh conversatio
   assert.equal(store.snapshot('policy').turns.length, 1);
 });
 
-for (const legacyVersion of ['2', '3', '4', '5'])
-test(`product policy upgrades v${legacyVersion} once at the next Turn boundary without restoring tool_summary`, async t => {
-  const f = fixture(t);
-  let { host, store, request } = f.open();
-  const legacy = request('legacy');
-  legacy.metadata.systemPolicy = { id: 'cardbush.product', version: legacyVersion };
-  legacy.prefixMessages[0].content = legacyVersion === '2'
-    ? 'Legacy policy: call summary_for_user with tool_summary after Tool work.'
-    : legacyVersion === '3' ? 'Legacy policy: use summary_for_user only for enabled memory; otherwise reply directly after Tool work.'
-      : legacyVersion === '4' ? 'Legacy policy: request a typed confirmation and assume the browser is connected.'
-        : 'Legacy policy: use permission controls without describing invocation binding.';
-  const oldSummary = legacy.tools.find(tool => tool.name === 'summary_for_user');
-  if (['2', '3'].includes(legacyVersion)) oldSummary.description = legacyVersion === '2' ? 'Write tool_summary before finishing.' : 'Use only when there is new memory.';
-  if (legacyVersion === '2') oldSummary.inputSchema.properties.tool_summary = { type: 'string' };
-  await host.runSessionTurn(legacy);
-  const oldTurn = structuredClone(store.snapshot('policy').turns[0]);
-  f.plannedCalls.set('policy/upgrade', ['read_fixture', 'summary_for_user']);
-  assert.equal((await host.runSessionTurn(request('upgrade'))).payload.status, 'completed');
-  assert.equal(store.modelContract('policy').version, '6');
-  assert.deepEqual(store.snapshot('policy').turns[0], oldTurn, 'migration never rewrites conversation facts');
-  for (const observed of f.observed.filter(r => r.turnId === 'upgrade')) {
-    assert.equal(observed.messages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
-    assert.match(observed.messages[0].content, /do not require a typed confirmation phrase/);
-    assert.match(observed.messages[0].content, /Do not pre-approve it with request_permission/);
-    assert.match(observed.messages[0].content, /use list_browsers/);
-    assert.match(observed.messages[0].content, /get_user_directories/);
-    assert.equal(observed.tools.find(tool => tool.name === 'summary_for_user').inputSchema.properties.tool_summary, undefined);
-    assert.match(observed.tools.find(tool => tool.name === 'summary_for_user').description, /final-display signal is independent of memory settings/);
-    assert.deepEqual(observed.tools.filter(tool => tool.name !== 'summary_for_user'), f.observed[0].tools.filter(tool => tool.name !== 'summary_for_user'));
-    assert.equal(observed.metadata.subagentChildPrefixMessages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
+for (const version of ['2', '7', '8']) test(`obsolete policy ${version} is rejected without migration or replay`, async t => {
+  const f = fixture(t), { host, store, request } = f.open();
+  const old = request('old'); old.metadata.systemPolicy = { id: 'cardbush.product', version };
+  await host.runSessionTurn(old);
+  const original = structuredClone(store.snapshot('policy')), contract = structuredClone(store.modelContract('policy'));
+  const count = f.observed.length;
+  for (const sessionId of ['policy', 'fork']) {
+    if (sessionId === 'fork') { store.ensureSession(sessionId); store.fork('policy', sessionId); }
+    await assert.rejects(() => host.runSessionTurn(request('new-' + sessionId, { sessionId })), { code: 'session_tool_contract_incompatible' });
+    assert.deepEqual(store.modelContract(sessionId), contract);
   }
-  assert.equal(f.facts.filter(f => f.kind === 'model_contract_updated').length, 1);
-  await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
-  ({ host, store, request } = f.open());
-  await host.runSessionTurn(request('after_upgrade_restart'));
-  assert.equal(f.facts.filter(f => f.kind === 'model_contract_updated').length, 1);
-  assert.equal(store.modelContract('policy').version, '6');
-  const cache = host.events('policy', 'after_upgrade_restart').filter(e => e.kind === 'cache_chain_observed');
-  assert.ok(cache.every(e => !e.payload.frozenPrefixBreak && !e.payload.parametersChanged));
-  assert.throws(() => store.upgradeModelContract('policy', legacyVersion, store.modelContract('policy')), /current bound version/);
+  assert.deepEqual(store.snapshot('policy'), original);
+  assert.equal(f.observed.length, count); assert.equal(f.executions(), 0);
+  assert.ok(!f.facts.some(fact => fact.kind === 'model_contract_updated'));
+  const cleared = await host.sendCommand({ kind: 'runtime.clear_sessions', payload: {} });
+  assert.deepEqual(cleared.errors, []);
+  assert.equal((await host.runSessionTurn(request('fresh'))).payload.status, 'completed');
+  assert.equal(store.modelContract('policy').version, '9');
 });

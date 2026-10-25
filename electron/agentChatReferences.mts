@@ -3,6 +3,7 @@ import { mkdtemp, open, rm, rmdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, posix, win32 } from 'node:path';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import {
   GET_RUNTIME_TOOL_EXECUTION_COMMAND, LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
   RESOLVE_FILE_MEMO_COMMAND, RESOLVE_SOURCE_MEMO_COMMAND, RESOLVE_SOURCE_REFERENCES_COMMAND,
@@ -60,8 +61,21 @@ export class AgentChatReferences implements ChatReferenceRenderer {
     if (!parsed) return /^cardbush-|^(?:javascript|data|command|vscode):/i.test(target) ? { text: `${label} (reference unavailable)` } : undefined;
     if (parsed.kind === 'url') return scope.hyperlinks ? { text: label, href: parsed.href } : undefined;
     const item = this.#add(label, parsed.target, 'file', parsed);
-    return { text: `${label}${parsed.line && !label.includes(':' + parsed.line) ? `:${parsed.line}` : ''}${scope.local && scope.hyperlinks ? '' : item ? ` [file ${item.id}]` : ''}`,
-      ...(scope.local && scope.hyperlinks ? { href: parsed.href } : {}) };
+    // Script/application references use the explicit viewer, never shell association.
+    const direct = scope.local && scope.hyperlinks && !/\.(?:exe|com|msi|msix|appx|lnk|url|vbs|vbe|wsf|scr|pif|jar|app|desktop|appimage|js|mjs|cjs|py|ps1|sh|bat|cmd)$/i.test(parsed.target);
+    return { text: `${label}${parsed.line && !label.includes(':' + parsed.line) ? `:${parsed.line}` : ''}${direct ? '' : item ? ` [file ${item.id}]` : ''}`,
+      ...(direct ? { href: parsed.href } : {}) };
+  };
+  path = (value: string) => {
+    // Inline code is not generally a file. Only explicit paths or an unambiguous
+    // filename already referenced in this turn may become clickable.
+    if (/^(?:[a-z]:[\\/]|\/(?!\/)|\.\.?[\\/]|file:\/\/)/i.test(value)) {
+      return this.link(value, /^file:\/\//i.test(value) ? value : value.replaceAll('%', '%25'));
+    }
+    const paths = this.#scope?.platform === 'win32' ? win32 : posix;
+    const key = (text: string) => this.#scope?.platform === 'win32' ? text.toLowerCase() : text;
+    const matches = this.#artifacts.filter(item => item.kind === 'file' && key(paths.basename(item.target)) === key(value));
+    if (matches.length === 1) return this.link(value, pathToFileURL(matches[0].target, { windows: this.#scope?.platform === 'win32' }).href);
   };
   choices(kind: 'artifact' | 'source'): ChatChoice[] {
     return kind === 'artifact' ? this.#artifacts.map(item => ({ value: String(item.id), label: `${item.id}. ${item.label}`, description: item.kind === 'memo' ? 'File reference' : clean(item.target) }))
@@ -160,7 +174,12 @@ export class AgentChatReferences implements ChatReferenceRenderer {
       target = result.memo.file.path;
       if (result.status === 'changed') this.io.status('File changed since the reference was recorded; opening its current version.\n');
     }
-    const parsed = chatLinkTarget(target, scope.workspace, scope.platform);
+    // Stored artifacts and resolved memos already contain native file paths.
+    // Re-parsing them as Markdown would decode percent signs or strip #L12 twice.
+    const paths = scope.platform === 'win32' ? win32 : posix;
+    const destination = item.kind === 'url' ? target : paths.isAbsolute(target) || scope.workspace
+      ? pathToFileURL(paths.resolve(scope.workspace ?? '', target), { windows: scope.platform === 'win32' }).href : '';
+    const parsed = chatLinkTarget(destination, scope.workspace, scope.platform);
     if (!parsed) throw new Error('This reference is not a file or web URL.');
     const path = parsed.kind === 'file' && !scope.local ? await downloadChatArtifact(this.client, scope.sessionId, parsed.target, request) : parsed.target;
     try { await this.opener(path, parsed.kind); }

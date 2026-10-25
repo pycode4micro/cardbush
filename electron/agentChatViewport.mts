@@ -66,14 +66,20 @@ export class ChatLiveViewport {
   }
   #frame(chunks: OutputChunk[]) {
     const writes: OutputChunk[] = [];
-    for (const chunk of [{ text: '\x1b[?25l', output: this.output }, ...chunks, { text: '\x1b[?25h', output: this.output }]) {
+    // DECSET 2026 keeps intermediate erase/repaint states off screen, including
+    // when a terminal parses one Node write in several rendering batches.
+    for (const chunk of [{ text: '\x1b[?2026h\x1b[?25l', output: this.output }, ...chunks, { text: '\x1b[?25h\x1b[?2026l', output: this.output }]) {
       if (!chunk.text) continue;
+      // This viewport owns one console cursor. Its stdout/stderr TTY handles
+      // must share one write queue; separate Windows pipe writes can interleave.
+      // Redirected output keeps its own stream and never joins terminal frames.
+      const output = this.output.isTTY && (chunk.output as NodeJS.WriteStream).isTTY ? this.output : chunk.output;
       const last = writes.at(-1);
-      if (last?.output === chunk.output) last.text += chunk.text;
-      else writes.push({ ...chunk });
+      if (last?.output === output) last.text += chunk.text;
+      else writes.push({ text: chunk.text, output });
     }
     // Never yield with the input erased or the cursor sitting on a status row.
-    // Ordinary edits are a single write; transcript output retains its stream.
+    // Interactive transcript and footer updates are one synchronized write.
     for (const { text, output } of writes) output.write(text);
   }
   #wrapTail() {

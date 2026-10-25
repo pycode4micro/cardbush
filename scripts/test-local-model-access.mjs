@@ -168,10 +168,13 @@ for (const mode of ['siwc', 'anthropic']) test(`real local CLI: ${mode} authoriz
   const configText = JSON.stringify({ version: 1, defaultModelId: 'fixture', models: [model] });
   await writeFile(join(config, 'models.json'), configText);
   await writeFile(join(config, 'network.json'), JSON.stringify({ mode: 'none' }));
-  const child = spawn(process.execPath, ['--import', pathToFileURL(resolve('scripts/helpers/local-model-access-provider.mjs')).href,
-    resolve('dist-electron/agentChatCli.mjs'), '--local', '--prompt', 'Read fixture.txt and report the verified result.'], {
+  const providerFixture = pathToFileURL(resolve('scripts/helpers/local-model-access-provider.mjs')).href;
+  const child = spawn(process.execPath, [resolve('dist-electron/agentChatCli.mjs'), '--local', '--prompt', 'Read fixture.txt and report the verified result.'], {
     cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, CARDBUSH_CLI_DATA_DIR: dataRoot,
       CARDBUSH_CLI_PROFILE_DIR: f.profile, CARDBUSH_CLI_CONFIG: join(f.root, 'cli.json'), CARDBUSH_AGENT_TOKEN: '', CARDBUSH_AGENT_URL: '',
+      // The shared Runtime starts with a clean execArgv. Keep this isolated
+      // network fixture in its inherited environment so it cannot call a real provider.
+      NODE_OPTIONS: `--import=${providerFixture}`,
       CB_TEST_MODEL_PROTOCOL: mode, CB_TEST_MODEL_FILE: file, CB_TEST_MODEL_LOG: log },
   });
   const done = new Promise((resolve, reject) => { child.once('error', reject); child.once('close', code => resolve(code)); });

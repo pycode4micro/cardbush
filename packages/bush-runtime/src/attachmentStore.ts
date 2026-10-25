@@ -6,6 +6,18 @@ import { collectTurnAttachments, formatTurnAttachmentContext, turnAttachmentCont
   type ConversationEntry, type RuntimeAttachment, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 import { MAX_MODEL_IMAGE_SOURCE_BYTES, ModelImageStore, readDataImage, readLocalModelImage } from './modelImageStore.js';
 
+// A retained original has one publisher across store instances in this Runtime.
+// In particular, a sibling validation must not pin its directory during publish.
+const publications = new Map<string, Promise<void>>();
+async function publishOriginal<T>(target: string, signal: AbortSignal | undefined, operation: () => Promise<T>): Promise<T> {
+  const key = process.platform === 'win32' ? target.toLowerCase() : target;
+  const result = (publications.get(key) ?? Promise.resolve()).then(() => { signal?.throwIfAborted(); return operation(); });
+  const settled = result.then(() => {}, () => {});
+  publications.set(key, settled);
+  try { return await result; }
+  finally { if (publications.get(key) === settled) publications.delete(key); }
+}
+
 /** Originals belong to the workspace, not to the disposable model-image cache. */
 export class AttachmentStore {
   constructor(private readonly dataRoot: string) {}
@@ -101,39 +113,46 @@ export class AttachmentStore {
     const decoded = inline ? await readDataImage(source, MAX_MODEL_IMAGE_SOURCE_BYTES, signal) : undefined;
     const fileName = safeName(inline ? `${attachment.name.replace(/\.[^.]+$/, '')}.${decoded!.mime.slice(6)}` : basename(source));
     const target = join(directory, fileName);
-    const existing = await existingFile(target);
-    if (existing) return { path: target, size: existing.size };
-    const temporary = join(directory, `${randomUUID()}.tmp`);
-    try {
-      if (decoded) {
-        await writeFile(temporary, decoded.content, { flag: 'wx', mode: 0o600, flush: true, signal });
-      } else {
-        const before = await stat(source);
-        if (!before.isFile()) throw new Error(`Attachment is not a regular file: ${source}`);
-        await copyFile(source, temporary, constants.COPYFILE_EXCL);
-        const after = await stat(source);
-        const copied = await stat(temporary);
-        if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
-          before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || copied.size !== before.size) {
-          throw new Error(`Attachment changed while being saved: ${source}. Wait for its writer to finish and resend.`);
+    return publishOriginal(target, signal, async () => {
+      if (!inside(canonicalRoot, await realpath(directory))) throw new Error('Attachment storage resolves outside the workspace.');
+      const existing = await existingFile(target);
+      if (existing) return { path: target, size: existing.size };
+      const temporary = join(directory, `${randomUUID()}.tmp`);
+      try {
+        if (decoded) {
+          await writeFile(temporary, decoded.content, { flag: 'wx', mode: 0o600, flush: true, signal });
+        } else {
+          const before = await stat(source);
+          if (!before.isFile()) throw new Error(`Attachment is not a regular file: ${source}`);
+          await copyFile(source, temporary, constants.COPYFILE_EXCL);
+          const after = await stat(source);
+          const copied = await stat(temporary);
+          if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
+            before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || copied.size !== before.size) {
+            throw new Error(`Attachment changed while being saved: ${source}. Wait for its writer to finish and resend.`);
+          }
+          // copyFile carries the source mode, including read-only flags. This owned
+          // copy must be flushable without changing permissions on the user's file.
+          await chmod(temporary, 0o600);
+          const file = await open(temporary, 'r+');
+          try { await file.sync(); } finally { await file.close(); }
+          if (attachment.imageIndex !== undefined) await readLocalModelImage(temporary, signal, MAX_MODEL_IMAGE_SOURCE_BYTES);
         }
-        // copyFile carries the source mode, including read-only flags. This owned
-        // copy must be flushable without changing permissions on the user's file.
-        await chmod(temporary, 0o600);
-        const file = await open(temporary, 'r+');
-        try { await file.sync(); } finally { await file.close(); }
-        if (attachment.imageIndex !== undefined) await readLocalModelImage(temporary, signal, MAX_MODEL_IMAGE_SOURCE_BYTES);
-      }
-      signal?.throwIfAborted();
-      try { await link(temporary, target); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-      const saved = await existingFile(target);
-      if (!saved) throw new Error('Attachment original was not saved.');
-      return { path: target, size: saved.size };
-    } catch (error) {
-      signal?.throwIfAborted();
-      throw new Error(`Cannot retain attachment ${JSON.stringify(attachment.name)} from ${inline ? 'inline image' : source}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    } finally { await rm(temporary, { force: true }); }
+        signal?.throwIfAborted();
+        try { await link(temporary, target); }
+        catch (error) {
+          // Windows may report a sharing violation instead of EEXIST when another
+          // reader pins the already-published original. Never replace that file.
+          if (!['EEXIST', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '') || !await existingFile(target)) throw error;
+        }
+        const saved = await existingFile(target);
+        if (!saved) throw new Error('Attachment original was not saved.');
+        return { path: target, size: saved.size };
+      } catch (error) {
+        signal?.throwIfAborted();
+        throw new Error(`Cannot retain attachment ${JSON.stringify(attachment.name)} from ${inline ? 'inline image' : source}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      } finally { await rm(temporary, { force: true }); }
+    });
   }
 }
 

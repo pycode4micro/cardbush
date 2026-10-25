@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -153,26 +154,26 @@ test('plan wait kinds survive replace and append, change with the dependency, an
 });
 
 test('MCP batch loads keep complete schemas, partial errors and current-scope admission', async () => {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   for (const name of ['one', 'two', 'large', 'large2']) registry.register({ definition: { name: `mcp__test__${name}`, description: name.startsWith('large') ? 'x'.repeat(60000) : name,
     inputSchema: { type: 'object', properties: { required: { type: 'string' } } } }, manifest, decodeInput: v => v, execute: () => ({}), mcpHook: { server: 'test', tool: name, call: async () => ({}) } });
   const request = { sessionId: 's', turnId: 't', metadata: { mcpToolDiscovery: true }, tools: registry.definitions() };
-  const tool = registry.resolve('mcp_search');
-  const run = args => tool.execute({ input: tool.decodeInput(args), turn: { request, contextMessages: [] } });
-  const args = { action: 'load', names: ['mcp__test__one', 'mcp__test__two', 'missing', 'mcp__test__one'] };
+  const tool = registry.resolve('get_tool_schema');
+  const run = args => tool.execute({ sessionId: 's', input: tool.decodeInput(args), turn: { request, contextMessages: [] } });
+  const args = { names: ['mcp__test__one', 'mcp__test__two', 'missing', 'mcp__test__one'] };
   const result = await run(args), text = projectMcpDiscoveryResult(JSON.stringify(result));
   assert.equal(result.matches.length, 2); assert.equal(result.errors.length, 1);
   assert.equal(result.hostCapabilities, undefined);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__test__one'), false);
-  const messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'mcp_search', argumentsText: JSON.stringify(args) }] }, { role: 'tool', toolCallId: 'load', content: text }];
+  const messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'get_tool_schema', argumentsText: JSON.stringify(args) }] }, { role: 'tool', toolCallId: 'load', content: text }];
   synchronizeMcpDiscovery(registry, request, messages);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__test__one'), true);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__test__two'), true);
   registry.resolve('mcp__test__one').mcpApp = { resourceUri: 'ui://test/view.html' };
-  const appBatch = await run({ action: 'load', names: ['mcp__test__one', 'mcp__test__two'] });
+  const appBatch = await run({ names: ['mcp__test__one', 'mcp__test__two'] });
   assert.ok(appBatch.hostCapabilities);
   assert.equal(appBatch.matches[0].interface.resourceUri, 'ui://test/view.html');
-  const large = await run({ action: 'load', names: ['mcp__test__large', 'mcp__test__large2', 'mcp__test__two'] });
+  const large = await run({ names: ['mcp__test__large', 'mcp__test__large2', 'mcp__test__two'] });
   assert.equal(large.matches.length, 3, 'native evidence retains every complete schema');
   assert.equal(large.matches[0].description.length, 60000);
   const delivered = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(large)));
@@ -180,8 +181,8 @@ test('MCP batch loads keep complete schemas, partial errors and current-scope ad
   assert.deepEqual(delivered.matches.map(tool => tool.name), ['mcp__test__two']);
   registry.resolve('mcp__test__two').sessionScope = 'other';
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__test__two'), false);
-  assert.equal((await run({ action: 'load', names: ['mcp__test__two'] })).errors.length, 1);
+  assert.equal((await run({ names: ['mcp__test__two'] })).errors.length, 1);
   synchronizeMcpDiscovery(registry, request, []);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__test__one'), false);
-  for (const args of [{ names: ['one'] }, { action: 'load', names: [] }, { action: 'load', names: ['one'], query: 'two' }, { action: 'load', names: Array(17).fill('one') }]) assert.throws(() => tool.decodeInput(args));
+  for (const args of [{ name: 'one', names: ['one'] }, { names: [] }, { names: ['one'], query: 'two' }, { names: Array(17).fill('one') }]) assert.throws(() => tool.decodeInput(args));
 });

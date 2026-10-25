@@ -4,6 +4,7 @@ import { posix, win32 } from 'node:path';
 export type ChatInlineReference = { text: string; href?: string };
 export type ChatReferenceRenderer = {
   link(label: string, target: string): ChatInlineReference | undefined;
+  path?(value: string): ChatInlineReference | undefined;
   source?(number: number): void;
 };
 export const maxInlineMarkup = 2048;

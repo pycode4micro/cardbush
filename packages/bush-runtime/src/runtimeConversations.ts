@@ -7,6 +7,8 @@ export interface RuntimeConversation {
   turnId: string;
   projectDir?: string;
   workspaceDir?: string;
+  /** Delegated sessions may opt into rooms, but their parent owns execution. */
+  delegated?: boolean;
   status: 'running' | 'idle' | 'stopped';
 }
 export interface ConversationNotice {
@@ -40,12 +42,14 @@ export class RuntimeConversations {
     return !!entry && (!turnId || entry.fact.turnId === turnId) && entry.notices.size > 0;
   }
   begin(request: RuntimeSessionTurnRequest, executionTemplate = request): RuntimeConversation | undefined {
-    if (this.closed || request.metadata.agentRole === 'child' || request.sessionMetadata.agentRole === 'child' ||
-      request.metadata.parentSessionId || request.sessionMetadata.delegationOwner || request.metadata.automationRunId ||
+    if (this.closed || request.metadata.automationRunId ||
       request.metadata.pluginHookEvaluation || request.metadata.shadowMode) { this.forget(request.sessionId); return; }
     const previous = this.entries.get(request.sessionId);
     const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    const delegated = request.metadata.agentRole === 'child' || request.sessionMetadata.agentRole === 'child' ||
+      !!request.metadata.parentSessionId || !!request.sessionMetadata.delegationOwner;
     const fact: RuntimeConversation = { agentId: request.sessionId, turnId: request.turnId, status: 'running',
+      ...(delegated ? { delegated: true } : {}),
       projectDir: text(request.metadata.projectDir), workspaceDir: text(request.metadata.workspaceDir) };
     // Re-enter the ordinary admission path with the original input. Reusing the
     // prepared request would append workspace/subagent context a second time.
@@ -86,7 +90,7 @@ export class RuntimeConversations {
     return result;
   }
   private schedule(entry: Entry) {
-    if (this.closed || entry.scheduled || entry.fact.status !== 'idle' || entry.wakes >= 3 ||
+    if (this.closed || entry.scheduled || entry.fact.delegated || entry.fact.status !== 'idle' || entry.wakes >= 3 ||
       ![...entry.notices.values()].some(notice => notice.wake)) return;
     entry.scheduled = true;
     // Let finalization, admission release and a pending human turn finish first.

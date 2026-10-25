@@ -37,9 +37,14 @@ async function run() {
   let clients = 0, closing = false, checking = false, timer: ReturnType<typeof setTimeout> | undefined;
   let http: Awaited<ReturnType<typeof serveAgentHttp>> | undefined;
   let descriptor = '';
-  const stop = async () => {
-    if (closing) return; closing = true; clearTimeout(timer);
+  let startup: Promise<void> | undefined;
+  let stopping: Promise<void> | undefined;
+  const stop = (): Promise<void> => stopping ??= (async () => {
+    closing = true; clearTimeout(timer);
     try {
+      // Startup owns publication. Wait for it to settle before removing its
+      // resources, otherwise it can publish a descriptor after shutdown.
+      await startup?.catch(() => undefined);
       if (descriptor) {
         const data = await readFile(descriptor, 'utf8').then(JSON.parse).catch(() => null);
         if (data?.token === token) await rm(descriptor, { force: true }).catch(error => {
@@ -49,11 +54,23 @@ async function run() {
         });
       }
       try { await http?.close(); } finally { await service.close(); }
+    } catch (error) {
+      diagnostics.write('stderr', `Local Runtime shutdown failed: ${String(error)}\n`);
+      throw error;
     } finally {
       election?.close(); access.close(); diagnostics.close();
       if (process.platform !== 'win32') await rm(endpoint, { force: true });
     }
-  };
+  })();
+  const shutdownFailure = () => { process.exitCode = 1; };
+  // A dead worker cannot answer the idle query. Retire its owner even while a
+  // client is attached, so reopening/reconnecting can elect a healthy host.
+  void service.runtime.failure.then(async error => {
+    if (closing) return;
+    process.exitCode = 1;
+    diagnostics.write('stderr', `Local Runtime worker failed; shutting down: ${error.message}\n`);
+    await stop();
+  }).catch(shutdownFailure);
   const schedule = (ms = 1000) => {
     clearTimeout(timer);
     if (!closing && !clients) timer = setTimeout(() => { void idle().catch(error => {
@@ -70,7 +87,8 @@ async function run() {
       await stop();
     } finally { checking = false; }
   };
-  try {
+  const start = async () => {
+    const assertStarting = () => { if (closing) throw new Error('Local Runtime stopped during startup.'); };
     const directory = await localRuntimeDirectory(dataRoot);
     const nativeHost = resolve(bundledRoot, '..', 'dist-native', 'chrome-connector', 'CardBushBrowserHost.exe');
     // Named-pipe ACL inspection opens the pipe. Keep the event loop accepting
@@ -79,6 +97,7 @@ async function run() {
       [`--secure-${kind}`, target], { windowsHide: true, timeout: 10_000 });
     if (process.platform === 'win32') await secure('directory', directory);
     else await chmod(directory, 0o700);
+    assertStarting();
     http = await serveAgentHttp(service, { socketPath: endpoint, token,
       localRequest: async (path, request, response, signal) => {
         if (closing) { response.writeHead(503).end(); return; }
@@ -96,14 +115,20 @@ async function run() {
     });
     if (process.platform === 'win32') await secure('pipe', endpoint);
     else await chmod(endpoint, 0o600);
+    assertStarting();
     descriptor = join(directory, 'host.json');
     assertConnectorFile(descriptor);
     await writePrivateJson(descriptor, { protocol: localRuntimeProtocol, pid: process.pid, agentId: service.info().id,
       profileRoot, bundledRoot, endpoint, token });
+    assertStarting();
     // Startup is detached from the launching window. A lost parent never owns shutdown.
     process.send?.({ ready: true }, () => { if (process.connected) process.disconnect(); });
     schedule(15_000);
-    for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void stop(); });
+  };
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void stop().catch(shutdownFailure); });
+  try {
+    startup = start();
+    await startup;
   } catch (error) { await stop(); throw error; }
 }
 

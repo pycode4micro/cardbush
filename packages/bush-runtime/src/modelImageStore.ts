@@ -6,10 +6,14 @@ import sharp from "sharp";
 import { compressModelImage, MAX_MODEL_IMAGE_SOURCE_BYTES, MODEL_IMAGE_DECODER_OPTIONS } from "./modelImageCompression.js";
 import { openWorkspaceFile, withWorkspaceFileAccess } from './workspaceFileAccess.js';
 import type { BigIntStats } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { isResourceAdmissionError } from './processResourceGuard.js';
 
 export { MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_PIXELS, MODEL_IMAGE_TARGET_BYTES, MAX_MODEL_IMAGE_SOURCE_BYTES } from "./modelImageCompression.js";
 
 export const MAX_MODEL_IMAGE_BYTES = 9_000_000;
+
+export type ModelImageReader = (path: string, signal?: AbortSignal) => Promise<{ content: Buffer; mime: string }>;
 
 // Cache only successful content digests, never source paths or image buffers.
 // Immutable history can be replayed each round without repeating pixel decoding.
@@ -36,8 +40,8 @@ export async function readLocalModelImage(path: string, signal?: AbortSignal, ma
       return readImageFile(path, signal, maxBytes, openWorkspaceFile);
     }, { signal });
   } catch (error) {
-    if (error instanceof ModelImageInputError || signal?.aborted) throw error;
-    throw new ModelImageInputError('image_input_unavailable', `Cannot read model image: ${path}. ${String((error as Error).message)}`, { cause: error });
+    if (error instanceof ModelImageInputError || isResourceAdmissionError(error) || signal?.aborted) throw error;
+    throw unavailableImage(path, error);
   }
 }
 
@@ -76,13 +80,20 @@ async function readImageFile(path: string, signal: AbortSignal | undefined, maxB
     }
     return { content, mime: await imageMime(content, signal) };
   } catch (error) {
-    if (error instanceof ModelImageInputError || signal?.aborted) throw error;
-    throw new ModelImageInputError(
-      "image_input_unavailable",
-      `Cannot read model image: ${path}. Ensure the file exists and its writer has finished, then inject it again.`,
-      { cause: error },
-    );
+    if (error instanceof ModelImageInputError || isResourceAdmissionError(error) || signal?.aborted) throw error;
+    throw unavailableImage(path, error);
   }
+}
+
+function unavailableImage(path: string, error: unknown): ModelImageInputError {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  const hint = code === 'ENOENT'
+    ? 'Ensure the file exists and its writer has finished, then inject it again.'
+    : code === 'EBUSY'
+      ? 'Wait for the image writer to release the file, then inject it again.'
+      : 'Check the file authorization and sandbox availability before injecting it again.';
+  return new ModelImageInputError('image_input_unavailable',
+    `Cannot read model image: ${path}. ${hint} ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 }
 
 /** Runtime-owned content-addressed blobs. Persisted messages reference these, never mutable source files. */
@@ -95,6 +106,26 @@ export class ModelImageStore {
 
   constructor(dataRoot = join(process.cwd(), ".cardbush-runtime")) {
     this.#root = resolve(dataRoot, "model-images");
+  }
+
+  /** The host supplies image references from its assembled conversation, after
+   * attachment/tool admission. This capability is never serialized into a model
+   * request, inferred from model text, or expanded to other images in the store. */
+  readerFor(sources: Iterable<string>): ModelImageReader {
+    const allowed = new Set([...sources].map(source => source.trim()));
+    const identity = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+    return async (path, signal) => {
+      signal?.throwIfAborted();
+      if (!allowed.has(path)) throw new ModelImageInputError('image_input_not_authorized', 'Image is not part of the current model input.');
+      if (!isAbsolute(path) || identity(dirname(resolve(path))) !== identity(this.#root)) {
+        return readLocalModelImage(path, signal);
+      }
+      try { return await this.readSnapshot(path, signal); }
+      catch (error) {
+        if (error instanceof ModelImageInputError || isResourceAdmissionError(error) || signal?.aborted) throw error;
+        throw unavailableImage(path, error);
+      }
+    };
   }
 
   /** Read only an owned immutable snapshot. Callers must first establish a
@@ -149,14 +180,30 @@ export class ModelImageStore {
     try {
       await writeFile(temporary, content, { flag: "wx", mode: 0o600, flush: true, signal });
       signal?.throwIfAborted();
-      try {
-        // An atomic, no-replace publish: concurrent injections share a complete blob.
-        await link(temporary, target);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const existing = await this.readSnapshot(target, signal);
-        if (!existing.content.equals(content)) {
-          throw new ModelImageInputError("image_snapshot_corrupt", "Stored model image failed its content integrity check. The existing observation was not overwritten.");
+      for (let attempt = 0; ; attempt++) {
+        signal?.throwIfAborted();
+        try {
+          // An atomic, no-replace publish: concurrent injections share a complete blob.
+          await link(temporary, target);
+          break;
+        } catch (error) {
+          // A concurrent sandbox reader can pin the snapshot directory. Windows
+          // then reports EBUSY before EEXIST; reuse only a verified owned blob.
+          const busy = (error as NodeJS.ErrnoException).code === 'EBUSY';
+          if (!busy && (error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+          const existing = await this.readSnapshot(target, signal).catch(failure => {
+            if (busy && (failure as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+            throw failure;
+          });
+          if (existing) {
+            if (!existing.content.equals(content)) {
+              throw new ModelImageInputError("image_snapshot_corrupt", "Stored model image failed its content integrity check. The existing observation was not overwritten.");
+            }
+            break;
+          }
+          if (attempt >= 50) throw error;
+          // Retry only the owned blob publication, not source ingestion or tools.
+          await delay(100, undefined, { signal });
         }
       }
     } finally {

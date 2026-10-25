@@ -73,7 +73,7 @@ test('unsupported memory fails before dispatch and a corrected named clean call 
   const args = { name: '视觉设计', prompt: 'Design the palette', mode: 'clean', system_prompt: '你是视觉设计师。只做设计。', allowed_tools: [] };
   const rejected = await f.invoke({ ...args, memory: 'none' });
   assert.equal(rejected.kind, 'failed');
-  assert.match(rejected.error.message, /unsupported subagent arguments: memory.*omit memory/);
+  assert.match(rejected.error.message, /unsupported subagent arguments: memory/);
   assert.equal(rejected.error.details.execution.dispatch, 'not_started');
   assert.equal(f.requests.length, 0);
   assert.equal(f.tasks.list('parent').length, 0);

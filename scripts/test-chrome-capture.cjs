@@ -92,13 +92,13 @@ app.on('window-all-closed', () => {});
     assert.ok(svg.structuredContent.width >= 880);
     assert.ok(!automatic.content[0].text.includes('base64'), 'no Base64 text enters model context');
     const registry = new ToolRegistry();
-    registry.register({ definition: { name: 'mcp_call', description: 'capture fixture', inputSchema: { type: 'object' } },
+    registry.register({ definition: { name: 'mcp__fixture__capture', description: 'capture fixture', inputSchema: { type: 'object' } },
       manifest: { effect_kind: 'observation', operation: 'mcp.call', risk: 'low', owner: 'test', dispatch_scope: 'process', mutating: false },
       decodeInput: value => value, execute: () => ({ mcp: { name: 'mcp__chrome_devtools__evaluate_script' }, result: automatic }),
       renderModelResult: value => JSON.stringify(value) });
     const loop = new RuntimeToolLoop({ eventLog: new InMemoryRuntimeEventLog(), identity: { requestId: 'r', sessionId: 's', turnId: 't' },
       registry, executionStore: new ToolExecutionStore(), modelImages: new ModelImageStore(path.join(root, 'model')) });
-    const { messages } = await loop.execute([{ protocol: 'bush.tool_call.v1', id: 'capture', name: 'mcp_call', argumentsText: '{}' }],
+    const { messages } = await loop.execute([{ protocol: 'bush.tool_call.v1', id: 'capture', name: 'mcp__fixture__capture', argumentsText: '{}' }],
       { round: 1, assistantMessageId: 'a', request: { requestCapabilities: { vision: true } } });
     assert.equal(messages.at(-1).images.length, 1);
     assert.match(messages.at(-1).content, /"status":"attached"/);
@@ -108,7 +108,7 @@ app.on('window-all-closed', () => {});
     assert.ok(commands.includes('Page.getLayoutMetrics'));
     await fs.mkdir(path.resolve('tmp'), { recursive: true });
     await fs.copyFile(chart.structuredContent.path, path.resolve('tmp/chrome-capture-chart.png'));
-    console.log('Real CDP: fractional zoom and DPR, resize readback, viewport recovery, full-page bounds, chart crop, canvas export and mcp_call vision delivery passed.');
+    console.log('Real CDP: fractional zoom and DPR, resize readback, viewport recovery, full-page bounds, chart crop, canvas export and mcp__fixture__capture vision delivery passed.');
   } catch (error) { console.error('Capture fixture failed:', error); throw error; }
   finally {
     window?.destroy();

@@ -136,7 +136,7 @@ internal static partial class CardBushProcessHost
             catch { Dispose(); throw; }
         }
 
-        public void CreateSuspended(StringBuilder command, ref STARTUPINFO startup, out PROCESS_INFORMATION process)
+        public void CreateSuspended(StringBuilder command, ref STARTUPINFO startup, IntPtr globalJob, out PROCESS_INFORMATION process)
         {
             // Hold the same cross-host lock through token creation. Once created,
             // a command owns its admitted scope; a later switch invalidates reuse.
@@ -158,13 +158,13 @@ internal static partial class CardBushProcessHost
                     scopeWriter = true;
                     BeginScopeWriter(generationState, policy.readableRoots, policy.writableRoots);
                 }
-                CreateSuspendedCore(command, ref localStartup, out localProcess);
+                CreateSuspendedCore(command, ref localStartup, globalJob, out localProcess);
             });
             startup = localStartup;
             process = localProcess;
         }
 
-        private void CreateSuspendedCore(StringBuilder command, ref STARTUPINFO startup, out PROCESS_INFORMATION process)
+        private void CreateSuspendedCore(StringBuilder command, ref STARTUPINFO startup, IntPtr globalJob, out PROCESS_INFORMATION process)
         {
             var allocations = new List<IntPtr>();
             IntPtr attributes = IntPtr.Zero;
@@ -172,11 +172,12 @@ internal static partial class CardBushProcessHost
             try
             {
                 IntPtr size = IntPtr.Zero;
-                InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref size);
+                InitializeProcThreadAttributeList(IntPtr.Zero, 3, 0, ref size);
                 if (size == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Measure sandbox attributes");
                 attributes = Marshal.AllocHGlobal(size);
-                Check(InitializeProcThreadAttributeList(attributes, 2, 0, ref size), "Initialize sandbox attributes");
+                Check(InitializeProcThreadAttributeList(attributes, 3, 0, ref size), "Initialize sandbox attributes");
                 initialized = true;
+                SetCreationJobs(attributes, globalJob, allocations);
                 var capabilities = new SECURITY_CAPABILITIES { AppContainerSid = sid };
                 var names = new List<SecurityIdentifier>();
                 if (directoryCapability != null) names.Add(directoryCapability);
@@ -264,6 +265,42 @@ internal static partial class CardBushProcessHost
             pinnedFileParents.Clear();
             CloseSandboxAclHandles();
             if (failure != null) throw failure;
+        }
+    }
+
+    private static void SetCreationJobs(IntPtr attributes, IntPtr globalJob, List<IntPtr> allocations)
+    {
+        IntPtr jobs = Allocate(IntPtr.Size * 2, allocations);
+        Marshal.WriteIntPtr(jobs, 0, globalJob);
+        Marshal.WriteIntPtr(jobs, IntPtr.Size, taskJob);
+        Check(UpdateProcThreadAttribute(attributes, 0, new IntPtr(0x2000D), jobs,
+            new IntPtr(IntPtr.Size * 2), IntPtr.Zero, IntPtr.Zero), "Bind resource jobs at process creation");
+    }
+
+    private static void CreateSuspendedCommand(StringBuilder command, ref STARTUPINFO startup, IntPtr globalJob, out PROCESS_INFORMATION process)
+    {
+        var allocations = new List<IntPtr>();
+        IntPtr attributes = IntPtr.Zero;
+        bool initialized = false;
+        try
+        {
+            IntPtr size = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+            if (size == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Measure process attributes");
+            attributes = Marshal.AllocHGlobal(size);
+            Check(InitializeProcThreadAttributeList(attributes, 1, 0, ref size), "Initialize process attributes");
+            initialized = true;
+            SetCreationJobs(attributes, globalJob, allocations);
+            var extended = new STARTUPINFOEX { StartupInfo = startup, AttributeList = attributes };
+            extended.StartupInfo.cb = (uint)Marshal.SizeOf(typeof(STARTUPINFOEX));
+            Check(CreateSandboxProcess(null, command, IntPtr.Zero, IntPtr.Zero, true,
+                0x4 | 0x08000000 | 0x80000, IntPtr.Zero, Environment.CurrentDirectory, ref extended, out process), "Create suspended protected command");
+        }
+        finally
+        {
+            if (initialized) DeleteProcThreadAttributeList(attributes);
+            if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
+            foreach (IntPtr allocation in allocations) Marshal.FreeHGlobal(allocation);
         }
     }
 

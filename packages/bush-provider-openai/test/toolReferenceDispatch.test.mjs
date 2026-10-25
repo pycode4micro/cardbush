@@ -10,14 +10,16 @@ import { AnthropicMessagesProvider, OpenAIChatCompletionsProvider, OpenAIRespons
 const mcpName = `mcp__${'long_plugin_'.repeat(6)}__status`, mcpAlias = portableToolName(mcpName);
 const nativeName = `native_${'extension_'.repeat(8)}`, nativeAlias = portableToolName(nativeName);
 const operations = [
-  ['mcp_search', { action: 'load', query: mcpName }],
-  ['mcp_call', { name: mcpAlias, arguments: { literal: mcpAlias } }],
+  ['get_tool_schema', { name: mcpName }],
+  ['call_tool', { name: mcpAlias, arguments: { literal: mcpAlias } }],
   ['start_mcp_tool', { name: mcpAlias, arguments: { literal: mcpAlias } }],
   [mcpAlias, { literal: mcpAlias }],
   ['run_tools', { code: `return await tools.call(${JSON.stringify(mcpAlias)}, {literal:${JSON.stringify(mcpAlias)}});` }],
   ['get_tool_schema', { name: nativeName }],
   ['call_tool', { name: nativeAlias, arguments: { literal: nativeAlias } }],
-  ['mcp_search', { action: 'load', names: [mcpAlias] }],
+  ['get_tool_schema', { names: [mcpAlias] }],
+  ['get_tool_schema', { name: mcpAlias }],
+  ['call_tool', { name: mcpAlias, arguments: { literal: mcpAlias } }],
   ['update_task_plan', { nodes: [{ step: 'Verified', status: 'completed' }] }],
 ];
 const sse = events => new Response(events.map(event => `${event.type ? `event: ${event.type}\n` : ''}data: ${JSON.stringify(event)}\n\n`).join(''),
@@ -81,6 +83,13 @@ for (const mode of ['messages', 'chat', 'responses-stream', 'responses-terminal'
     const config = { apiKey: 'fixture', capabilityStore, capabilityScope: 'fixture', fetch: async (url, init) => {
       if (String(url).endsWith('/input_tokens')) return Response.json({ object: 'response.input_tokens', input_tokens: 100 });
       const body = JSON.parse(init.body), previous = bodies.at(-1), history = body.messages ?? body.input;
+      const toolNames = body.tools.map(tool => tool.function?.name ?? tool.name);
+      assert.ok(toolNames.includes('call_tool'));
+      assert.ok(toolNames.includes('get_tool_schema'));
+      assert.equal(toolNames.includes('mcp_call'), false, 'new model catalogs advertise one gateway');
+      if (mode.startsWith('responses') && mode !== 'responses-portable') {
+        assert.ok(body.tools.some(tool => tool.type === 'tool_search'), 'native search remains enabled without a visible mcp_call');
+      }
       if (previous) {
         assert.deepEqual(body.tools, previous.tools, 'recall never replaces top-level schemas');
         assert.equal(body.system, previous.system);
@@ -116,16 +125,16 @@ for (const mode of ['messages', 'chat', 'responses-stream', 'responses-terminal'
       model: 'fixture', reasoningEffort: 'high', tools: registry.definitions(), permissionMode: 'all_free', metadata: { mcpToolDiscovery: true },
       prefixMessages: [{ role: 'system', content: 'Stable rules' }], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Inspect fixture tools' } }] });
     assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
-    assert.deepEqual(calls, Array.from({ length: 4 }, () => ({ literal: mcpAlias })), 'data strings stay untouched and each call executes once');
+    assert.deepEqual(calls, Array.from({ length: 5 }, () => ({ literal: mcpAlias })), 'data strings stay untouched and each call executes once');
     assert.deepEqual(nativeCalls, [{ literal: nativeAlias }]);
     for (const [index, operation] of operations.entries()) {
       const record = journal.get('s', 't', `call-${index}`);
       assert.ok(record, operation[0]);
       assert.equal(record.outcome, 'returned', JSON.stringify(record));
-      // call_tool forwards the native call into its own normal journal lifecycle.
+      // call_tool records the actual native/MCP target under the wire call ID.
       if (operation[0] !== 'call_tool') assert.deepEqual(JSON.parse(record.toolCall.argumentsText), operation[1]);
     }
-    assert.equal(journal.get('s', 't', 'call-8').result.plan.active, false);
+    assert.equal(journal.get('s', 't', `call-${operations.length - 1}`).result.plan.active, false);
     assert.ok(host.events('s', 't').filter(event => ['cache_chain_observed', 'provider_input_observed'].includes(event.kind))
       .every(event => !event.payload.frozenPrefixBreak));
   });

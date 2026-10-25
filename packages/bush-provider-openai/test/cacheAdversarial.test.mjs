@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { modelRequestSchema } from '@cardbush/bush-protocol';
@@ -59,12 +60,12 @@ test('image base64 length does not masquerade as millions of text tokens', () =>
   assert.equal(estimateResponsesInputTokens({ input: input(100), tools: [] }), estimateResponsesInputTokens({ input: input(1000000), tools: [] }));
 });
 
-const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const definition = { name: 'mcp__docs__read', description: 'Read docs', inputSchema: { type: 'object' } };
 const search = (id, description = definition.description) => [
-  { role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: '{"query":"docs"}' }] },
-  { role: 'tool', toolCallId: id, content: JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load',
-    matches: [{ ...definition, description, server: 'docs', tool: 'read', revision: description }], total: 1, more: false }) },
+  { role: 'assistant', content: '', toolCalls: [{ id, name: 'get_tool_schema', argumentsText: '{"name":"mcp__docs__read"}' }] },
+  { role: 'tool', toolCallId: id, content: JSON.stringify({ protocol: 'bush.tool_schema.v1', sessionId: 's', action: 'load',
+    matches: [{ source: 'mcp', ...definition, description, server: 'docs', tool: 'read', revision: description }], total: 1, more: false }) },
 ];
 function request(messages) { return { ...base, tools: registry.definitions(), metadata: { ...base.metadata, mcpToolDiscovery: true }, messages }; }
 function observe(tracker, req, mode = 'native') {
@@ -89,9 +90,9 @@ test('schema replacement is an observable historical wire rewrite, even when Run
   const result = observe(tracker, request([...base.messages, ...search('one'), ...search('two', 'Updated schema contract')]));
   assert.equal(result.logical.frozenPrefixBreak, false);
   assert.equal(result.wire.frozenPrefixBreak, true, 'never whitelist this as a harmless tool-search append');
-  assert.equal(result.wire.breakIndex, 2);
+  assert.equal(result.wire.breakIndex, 3);
   assert.deepEqual(result.wire.changedParameters, []);
-  assert.deepEqual(result.params.input.filter(item => item.type === 'tool_search_output').map(item => item.tools.length), [0, 1]);
+  assert.deepEqual(result.params.input.filter(item => item.type === 'additional_tools').map(item => item.tools.length), [1]);
 });
 
 test('capability projection and generation-parameter changes report their first boundary without raw facts', () => {

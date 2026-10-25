@@ -76,7 +76,7 @@ test('changing a search cannot silently reuse an old page offset or cursor', asy
   const first = await search({ query: '*', limit: 1 });
   for (const input of [{ query: 'web', offset: 1 }, { query: 'web', cursor: first.next_cursor },
     { server: 'browser_use', cursor: first.next_cursor }, { action: 'load', query: 'new_page', cursor: first.next_cursor }]) {
-    assert.throws(() => search(input), /cursor|offset/);
+    assert.throws(() => search(input), /cursor|offset|Unknown MCP search fields: action/);
   }
   assert.equal((await search({ query: 'web', limit: 1 })).matches[0].tool, 'new_page');
   for (const cursor of ['', 'garbage', 'mcp-search:1:!invalid', 'mcp-search:1:e30', 'a'.repeat(16_385)]) {

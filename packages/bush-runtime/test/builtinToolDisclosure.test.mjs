@@ -41,75 +41,46 @@ function fixture(names) {
   return { registry, request, messages, run, load, definitions: () => modelToolDefinitions(registry, request) };
 }
 
-test('default entry points converge without removing native handlers, plans or small low-frequency tools', async () => {
-  const f = fixture(['tasks', 'manage_plugin_agents', 'manage_tool_calls', 'await_subagents', 'run_tools', 'parallel_tools',
-    'request_user_input_async', 'solution_selection', 'update_task_plan', 'terminal_list', 'read_file_memos', 'mcp_app_status']);
-  const original = structuredClone(f.request.tools);
-  const legacy = ['manage_plugin_agents', 'manage_tool_calls', 'await_subagents', 'parallel_tools', 'solution_selection'];
-  const names = f.definitions().map(tool => tool.name);
-  for (const name of legacy) assert.ok(!names.includes(name), name);
-  for (const name of ['update_task_plan', 'terminal_list', 'read_file_memos', 'mcp_app_status']) assert.ok(names.includes(name), name);
-  assert.deepEqual(f.request.tools, original); assert.deepEqual(f.registry.definitions(), original);
-  assert.equal((await f.run('manage_plugin_agents')).result.inspected, 'manage_plugin_agents', 'saved/internal calls retain their native executor');
-  f.registry.resolve('manage_plugin_agents').authorize = () => ({ kind: 'deny', code: 'fixture_denied', message: 'Denied' });
-  assert.equal((await f.run('manage_plugin_agents')).error.code, 'fixture_denied', 'hiding never skips admission');
-  await f.load('manage_plugin_agents');
-  assert.deepEqual(f.definitions().map(tool => tool.name), names, 'loading never adds a top-level schema');
-  assert.equal((await f.run('call_tool', { name: 'manage_plugin_agents', arguments: {} })).error.code, 'fixture_denied');
-  delete f.registry.resolve('manage_plugin_agents').authorize;
-  assert.equal((await f.run('call_tool', { name: 'manage_plugin_agents', arguments: {} })).result.inspected, 'manage_plugin_agents');
-  f.messages.length = 0;
-  synchronizeBuiltinSchemas(f.registry, f.request, []);
-  assert.deepEqual(f.definitions().map(tool => tool.name), names, 'compaction does not change declarations');
-  assert.equal((await f.run('call_tool', { name: 'manage_plugin_agents', arguments: {} })).error.code, 'builtin_schema_required');
+test('retired handlers are absent from the actual registry and cannot be recalled', async () => {
+  for (const name of ['mcp_call', 'parallel_tools', 'manage_tool_calls', 'manage_plugin_agents', 'await_subagents', 'read_subagent_conversation', 'solution_selection', 'request_permission']) {
+    assert.equal(nativeRegistry.resolve(name), undefined, name);
+    const f = fixture(['tasks']);
+    assert.equal((await f.run('get_tool_schema', { name })).kind, 'failed');
+    assert.equal((await f.run(name)).kind, 'failed');
+  }
+  for (const name of ['tasks', 'run_tools', 'request_user_input_async', 'update_task_plan', 'terminal_list', 'read_file_memos', 'mcp_app_status']) assert.ok(nativeRegistry.resolve(name), name);
 });
 
-test('scoped catalogs keep compatibility tools when a replacement or the schema loader is unavailable', async () => {
-  const f = fixture(['manage_plugin_agents']);
-  assert.ok(f.definitions().some(tool => tool.name === 'manage_plugin_agents'));
-  const restricted = fixture(['tasks', 'manage_plugin_agents']);
-  restricted.request.metadata = { agentRole: 'child', disabledTools: [], childToolAllowlist: ['manage_plugin_agents', 'get_tool_schema'] };
-  restricted.request.tools = restricted.request.tools.filter(tool => restricted.request.metadata.childToolAllowlist.includes(tool.name));
-  assert.ok(restricted.definitions().some(tool => tool.name === 'manage_plugin_agents'), 'a scoped-out tasks tool cannot replace an allowed legacy tool');
-  assert.equal((await restricted.run('tasks')).error.code, 'tool_not_exposed');
-  assert.equal((await restricted.run('manage_plugin_agents')).kind, 'returned');
-  const noLoader = fixture(['tasks', 'manage_plugin_agents']);
-  noLoader.request.tools = noLoader.request.tools.filter(tool => tool.name !== 'get_tool_schema');
-  assert.ok(noLoader.definitions().some(tool => tool.name === 'manage_plugin_agents'));
-  const unavailable = fixture(['tasks']);
-  assert.equal((await unavailable.run('get_tool_schema', { name: 'manage_plugin_agents' })).kind, 'failed');
+test('schema loading preserves the frozen presentation and execution admission', async () => {
+  const f = fixture(['tasks', 'native_fixture']), original = structuredClone(f.definitions());
+  const receipt = await f.load('native_fixture');
+  assert.equal(receipt.matches[0].name, 'native_fixture'); assert.equal(receipt.matches[0].source, 'native');
+  f.registry.resolve('native_fixture').authorize = () => ({ kind: 'deny', code: 'fixture_denied', message: 'Denied' });
+  assert.equal((await f.run('call_tool', { name: 'native_fixture', arguments: {} })).error.code, 'fixture_denied');
+  delete f.registry.resolve('native_fixture').authorize;
+  assert.equal((await f.run('call_tool', { name: 'native_fixture', arguments: {} })).kind, 'returned');
+  assert.deepEqual(f.definitions(), original);
+  f.messages.length = 0; synchronizeBuiltinSchemas(f.registry, f.request, []);
+  assert.equal((await f.run('call_tool', { name: 'native_fixture', arguments: {} })).error.code, 'builtin_schema_required');
 });
 
-test('common Team calls use tasks, selected node outputs stay loadable, and plugin roles need no advanced load', async () => {
+test('Team definition editing stays discoverable; execution observations only use tasks', async () => {
   const f = fixture(['tasks', 'team', 'subagent']);
-  const team = f.registry.resolve('team').definition, subagent = f.registry.resolve('subagent').definition;
-  team.inputSchema.properties = Object.fromEntries(['action', 'team_id', 'run_id', 'input', 'yield_time_ms', 'node_ids', 'definition'].map(name => [name, { type: 'string' }]));
-  subagent.inputSchema.properties = Object.fromEntries(['action', 'name', 'prompt', 'agent_id', 'agent_type', 'system_prompt', 'settings'].map(name => [name, { type: 'string' }]));
-  f.request.tools = f.registry.definitions();
-  let definitions = f.definitions();
-  assert.deepEqual(definitions.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
-  assert.ok(!definitions.find(tool => tool.name === 'team').inputSchema.properties.node_ids);
-  assert.ok(definitions.find(tool => tool.name === 'subagent').inputSchema.properties.agent_type);
-  assert.ok(definitions.find(tool => tool.name === 'subagent').inputSchema.properties.name);
-  const receipt = await f.load('team');
-  assert.ok(receipt.matches[0].definition.inputSchema.properties.node_ids);
-  assert.ok(receipt.matches[0].definition.inputSchema.properties.definition);
-  assert.equal(receipt.invocation.tool, 'call_tool');
-  assert.deepEqual(f.definitions(), definitions, 'advanced arguments are delivered only in the result');
-  f.request = { ...f.request, turnId: 'restricted', metadata: {}, tools: f.request.tools.filter(tool => tool.name !== 'tasks') };
-  definitions = modelToolDefinitions(f.registry, f.request);
-  assert.ok(definitions.find(tool => tool.name === 'team').inputSchema.properties.action.enum.includes('wait'));
-  assert.ok(definitions.find(tool => tool.name === 'team').inputSchema.properties.node_ids);
+  const initial = structuredClone(f.definitions());
+  assert.deepEqual(initial.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
+  const receipt = await f.load('team'), full = receipt.matches[0].inputSchema;
+  for (const action of ['status', 'wait', 'stop']) assert.ok(!full.properties.action.enum.includes(action));
+  assert.ok(full.properties.definition); assert.ok(full.properties.expected_revision);
+  assert.equal(receipt.invocation.tool, 'call_tool'); assert.deepEqual(f.definitions(), initial);
+  const scoped = { ...f.request, turnId: 'restricted', metadata: {}, tools: f.request.tools.filter(tool => tool.name !== 'tasks') };
+  assert.deepEqual(modelToolDefinitions(f.registry, scoped).find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
 });
 
-test('task guidance matches the exposed interface without altering parameter or native schema names', () => {
-  const f = fixture(['tasks', 'terminal_exec', 'terminal_poll', 'start_mcp_tool']);
-  for (const name of ['terminal_exec', 'terminal_poll', 'start_mcp_tool']) f.registry.resolve(name).definition.description = 'Wait with manage_tool_calls.';
-  f.request.tools = f.registry.definitions();
-  for (const definition of f.definitions().filter(tool => ['terminal_exec', 'terminal_poll', 'start_mcp_tool'].includes(tool.name))) assert.match(definition.description, /Wait with tasks/);
-  assert.match(f.registry.resolve('terminal_exec').definition.description, /manage_tool_calls/);
-  const scoped = { ...f.request, turnId: 'no-tasks', metadata: {}, tools: f.request.tools.filter(tool => tool.name !== 'tasks') };
-  assert.match(modelToolDefinitions(f.registry, scoped).find(tool => tool.name === 'terminal_exec').description, /manage_tool_calls/);
+test('task guidance has no alternate legacy observer even in restricted scopes', () => {
+  for (const name of ['terminal_exec', 'terminal_poll', 'start_mcp_tool']) {
+    assert.match(nativeRegistry.resolve(name).definition.description, /tasks/);
+    assert.doesNotMatch(nativeRegistry.resolve(name).definition.description, /manage_tool_calls|await_subagents/);
+  }
 });
 
 test('only confirmed empty plugin command catalogs hide command tools; Skills and native scope remain intact', async () => {
@@ -168,7 +139,7 @@ test('real model rounds follow plugin capability changes and persist actual tool
   assert.ok(requests.every(request => request.tools.some(tool => tool.name === 'run_skill')));
   assert.ok(requests.every(request => !request.tools.some(tool => tool.name === 'manage_plugin_agents')));
   assert.ok(requests.every(request => request.tools.some(tool => tool.name === 'update_task_plan')));
-  assert.ok(registry.resolve('run_plugin_command') && registry.resolve('manage_plugin_agents'));
+  assert.ok(registry.resolve('run_plugin_command') && !registry.resolve('manage_plugin_agents'));
   const observations = host.events('s', 't').filter(event => event.kind === 'cache_chain_observed');
   assert.equal(observations.length, 3);
   assert.ok(observations.every(event => !event.payload.frozenPrefixBreak));

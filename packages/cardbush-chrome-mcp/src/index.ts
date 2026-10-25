@@ -10,6 +10,7 @@ import { prepareCapture, captureClip, setViewport, evaluate, canvasExportExpress
 import { dispatchPointer } from './pagePointer.js';
 import { uploadFiles } from './pageUpload.js';
 import { PageSnapshots, snapshotSchema } from './pageSnapshot.js';
+import { waitForPage, waitSchema } from './pageWait.js';
 
 import {
   ChromeConnectorError,
@@ -52,7 +53,9 @@ type BrowserScope = {
 const viewportSchema = z.object({ width: z.number().int().min(64).max(4096), height: z.number().int().min(64).max(4096),
   deviceScaleFactor: z.number().min(0.5).max(3).optional() });
 
-const bridgeSetupGuidance = 'Browser Use supports CardBush, Chrome and Edge. Enable the Browser Use plugin and install or reload its Chrome/Edge extension. The user confirms the first local connection in a system dialog and the extension; do not approve it on their behalf. The local App and CLI share an authenticated connection and reconnect automatically. The CLI can use Chrome/Edge without the App running; /browser status shows connection health. Remote Agents keep separate connections; use /browser pair chrome or /browser pair edge as a manual fallback and paste the code into the intended extension. Only integrated CardBush tabs require the App. Call list_browsers again and select_browser with the returned connectionId. Keep the requested browser identity; do not launch a replacement browser or retry a mutation automatically.';
+const browserConnectionGuidance = 'For local Chrome/Edge, the user approves the first connection in the system dialog and extension; no pairing code is needed. The local App and CLI share authenticated connections and reconnect automatically after disconnects or restarts. The CLI can use Chrome/Edge without the App running. Use /browser pair chrome or /browser pair edge only for manual connection or remote Agent pairing; remote Agents keep connections separate from the local App/CLI. Do not generate a new pairing code for a temporary disconnect. Integrated CardBush tabs require the desktop App, but no extension or pairing.';
+const bridgeSetupGuidance = 'Browser Use supports CardBush, Chrome and Edge. For Chrome/Edge, enable the Browser Use plugin and install or reload its extension. ' + browserConnectionGuidance
+  + ' Use /browser status to check connection health. The user must confirm connection consent; do not approve it on their behalf. For manual pairing, the user pastes the code directly into the intended extension, never into the model conversation. Call list_browsers again and select_browser with the returned connectionId. Keep the requested browser identity; do not launch a replacement browser or retry a mutation automatically.';
 function bridgeAvailability(code: string): string | undefined {
   if (['bridge_config_missing', 'bridge_config_unavailable'].includes(code)) return 'needs_setup';
   if (code === 'bridge_config_invalid') return 'misconfigured';
@@ -75,7 +78,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     version: '0.1.0',
   }, {
     instructions: [
-      "Browser Use supports CardBush's integrated browser and the user's paired Chrome or Edge on Windows 11. Tool discovery does not establish a live browser connection. Call list_browsers first; follow its setup guidance if the bridge is unavailable. Integrated tabs require a running CardBush desktop bridge, but no extension or pairing.",
+      "Browser Use supports CardBush's integrated browser and the user's authorized Chrome or Edge on Windows 11. Tool discovery does not establish a live browser connection. Call list_browsers first; follow its setup guidance if the bridge is unavailable.",
+      browserConnectionGuidance,
       'An @ CardBush browser reference identifies an exact integrated tab, not an interchangeable URL. The desktop binds that conversation to CardBush. Use list_pages, then a fresh snapshot; never substitute a Chrome/Edge page with the same URL. If the referenced tab is unavailable, report it and ask the user to select it again.',
       'Use list_browsers and select_browser when the user names a browser or profile. Otherwise use the conversation binding, including integrated pages returned by local child agents; if no binding exists, the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
       'For Chrome/Edge, each session is isolated in a visibly named tab group. For the integrated browser, controllable tabs are those explicitly referenced by the user, created in this conversation, or newly created by its verified local descendant tasks. Selecting a browser does not grant unrelated tabs. Use select_browser with connectionId cardbush to create integrated tabs.',
@@ -135,8 +139,8 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     return result;
   };
 
-  const commandFor = (target: number, context: ToolContext) => (command: string, commandParams: Record<string, unknown> = {}) =>
-    request('debugger.command', { tabId: target, command, commandParams }, context);
+  const commandFor = (target: number, context: ToolContext, deadline?: number) => (command: string, commandParams: Record<string, unknown> = {}) =>
+    request('debugger.command', { tabId: target, command, commandParams }, context, deadline === undefined ? undefined : Math.max(1, deadline - Date.now()));
   const imageResult = async (context: ToolContext, image: { data: string; mimeType: string }, details: Record<string, unknown> = {}) => {
     const saved = await artifacts.image(scopeFromContext(context).id, image, context.mcpReq.signal);
     return { text: `Image attached and saved (${saved.width} × ${saved.height}). No browser download is needed.`, image: saved.image,
@@ -193,7 +197,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('list_browsers', toolDefinition(
     'List Browser Use connections',
-    'List CardBush, Chrome and Edge connections with online state, default and this conversation’s selection. Then use select_browser with the returned connectionId; Chrome/Edge IDs are profile IDs, not the words chrome/edge. In the CLI, /browser pair chrome or /browser pair edge provides the user a pairing code without the desktop App. Installed tools alone do not imply a live connection. No personal tabs or credentials are returned.',
+    'List CardBush, Chrome and Edge connections with online state, default and this conversation’s selection. Then use select_browser with the returned connectionId; Chrome/Edge IDs are profile IDs, not the words chrome/edge. ' + browserConnectionGuidance + ' Installed tools alone do not imply a live connection. No personal tabs or credentials are returned.',
     z.object({}), true,
   ), async (_input, context) => withToolResult(async () => {
     try {
@@ -201,7 +205,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       if (!Array.isArray(result.connections) || !result.connections.some(connection => record(connection).connected === true)) {
         result.availability = 'needs_connection';
         result.nextStep = Array.isArray(result.connections) && result.connections.length
-          ? 'Open the already paired Chrome/Edge profile and reconnect its CardBush Browser Use extension, then call list_browsers again. Existing pairings and the session selection are preserved; do not generate a new pairing code for a temporary disconnect.'
+          ? 'Open the already paired Chrome/Edge profile and let its CardBush Browser Use extension reconnect automatically; if the user explicitly disabled the extension connection, they must click Connect to resume. Then call list_browsers again. Existing pairings and the session selection are preserved; do not generate a new pairing code for a temporary disconnect.'
           : bridgeSetupGuidance;
       }
       return { text: JSON.stringify(result), structured: result };
@@ -213,7 +217,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
   }));
   server.registerTool('select_browser', toolDefinition(
     'Select Browser Use connection',
-    'Select CardBush, Chrome or Edge explicitly: connectionId="cardbush" for the integrated browser, or the exact Chrome/Edge profile ID returned by list_browsers. Chrome/Edge work in the CLI after /browser pair chrome or /browser pair edge; integrated tabs require the desktop App. Switching releases the old session group first; a failed release leaves the binding unchanged. Take a fresh snapshot after switching; old tab and element ids must not be reused.',
+    'Select CardBush, Chrome or Edge explicitly: connectionId="cardbush" for the integrated browser, or the exact Chrome/Edge profile ID returned by list_browsers. ' + browserConnectionGuidance + ' Switching releases the old session group first; a failed release leaves the binding unchanged. Take a fresh snapshot after switching; old tab and element ids must not be reused.',
     z.object({ connectionId: z.union([z.literal('cardbush'), z.string().regex(/^[a-f0-9]{32}$/)]) }), false,
   ), async (input, context) => withToolResult(async () => {
     const result = record(await request('browser.select', input, context));
@@ -309,7 +313,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('take_snapshot', toolDefinition(
     'Take page snapshot',
-    'Read webpage text, links and web search results as a bounded accessibility snapshot (default 60 rows, about 7000 escaped characters). Use returned uids with click/fill/hover. Narrow with rootUid, query, or roles. Continue with cursor and optional limit; a cursor reads the same captured snapshot for up to 3 minutes, not live updates. Navigation or a fresh snapshot invalidates it. Long fields are marked previews; use rootUid with fullText:true to read their text in chunks with offsets, then continue the cursor. Page text appears only in content; structuredContent contains pagination metadata.',
+    'Read webpage text, links and web search results as a bounded accessibility snapshot (default 60 rows, about 7000 escaped characters). Use returned uids with click/fill/hover. Narrow with rootUid, query, roles or interactiveOnly:true (interactive candidates, including disabled controls). AX states preserve false, mixed, popup types and relationships. Optional inspectLimit:1..20 checks geometry/style facts for that many first-page candidates; unmarked rows are unchecked and no snapshot guarantees clickability. Continue with cursor and optional limit; a cursor reads the same captured snapshot for up to 3 minutes, not live updates. Navigation or a fresh snapshot invalidates it. Long fields are marked previews; use rootUid with fullText:true to read their text in chunks with offsets, then continue the cursor. Counts describe the loaded AX tree, not a virtual list total. Page text appears only in content; structuredContent contains pagination metadata.',
     snapshotSchema,
     true,
   ), async (input, context) => withToolResult(async () => {
@@ -319,7 +323,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('click', toolDefinition(
     'Click page element',
-    'Send a real mouse click to a uid from take_snapshot after checking visible area, enabled state, and actual hit target, including after hover. A hidden or zero-area enabled control may use its explicitly associated visible label. Covered, disabled or stale targets return an error; no JavaScript click or Enter fallback is used. input_dispatched does not prove submission/navigation/task completion: observe the resulting page state before continuing or retrying.',
+    'Send a real mouse click to a uid from take_snapshot. Scroll into view, require two stable animation frames, and check the actual hit target after hover and before every press. A hidden or zero-area enabled control may use its explicitly associated visible label. Failures report observed reason (or unknown), target/hit facts, scrolling, hover and possibly dispatched presses; no automatic overlay dismissal, ancestor hover, JavaScript click or Enter fallback. No press does not imply no side effects: scrolling/hover may have happened. postState is immediate evidence, not proof of business success. Use wait_for with explicit result conditions or a fresh snapshot before continuing or retrying; possibly dispatched input must never be blindly repeated.',
     z.object({ uid: z.string().regex(/^cb_\d+$/), doubleClick: z.boolean().optional() }),
     false,
   ), async (input, context) => withToolResult(async () => {
@@ -583,28 +587,15 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     record(await request('downloads.cancel', { taskId: input.taskId }, context)))));
 
   server.registerTool('wait_for', toolDefinition(
-    'Wait for page text',
-    'Wait until text appears in the selected browser tab.',
-    z.object({ text: z.string().min(1), timeout: z.number().int().min(100).max(30_000).default(10_000) }),
+    'Wait for page conditions',
+    'Observe explicit results without repeating actions. Pass text for page text appearance, or conditions (all checked in one polling pass): text presence/absence, exact uid value, visible, enabled, state (busy/expanded/checked/selected), or URL equality/includes. visible means connected with visible style and area, not unobscured or in the viewport. Missing ARIA states are unknown, not false. Uids come from take_snapshot; navigation invalidates targeted waits. Timeout includes last observations. This does not infer business success from DOM changes or network idle.',
+    waitSchema,
     true,
   ), async (input, context) => withToolResult(async () => {
     const target = await pageId(context);
-    const expression = `(async () => {
-      const expected = ${JSON.stringify(input.text)};
-      const deadline = Date.now() + ${input.timeout};
-      while (Date.now() < deadline) {
-        if ((document.body?.innerText || '').includes(expected)) return true;
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      throw new Error('Timed out waiting for text: ' + expected);
-    })()`;
-    const result = record(await request('debugger.command', {
-      tabId: target,
-      command: 'Runtime.evaluate',
-      commandParams: { expression, awaitPromise: true, returnByValue: true },
-    }, context, input.timeout + 5_000));
-    if (result.exceptionDetails) throw new ChromeConnectorError('wait_for_timeout', `Timed out waiting for: ${input.text}`);
-    return { text: `Found text: ${input.text}`, structured: { pageId: target, found: true, text: input.text } };
+    const parsed = waitSchema.parse(input);
+    const result = await waitForPage(commandFor(target, context, Date.now() + parsed.timeout), parsed, context.mcpReq.signal);
+    return { text: 'Requested page conditions observed. No action was repeated.', structured: { pageId: target, ...result } };
   }));
 
   server.registerTool('release_browser', toolDefinition(

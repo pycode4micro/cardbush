@@ -2,16 +2,19 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { ChromeConnectorError } from './bridgeClient.js';
 import type { PageCommand } from './pageCapture.js';
+import { readElement } from './pageInspection.js';
 
 export const snapshotSchema = z.object({
   rootUid: z.string().regex(/^cb_\d+$/).optional(),
   query: z.string().trim().min(1).max(200).optional(),
   roles: z.array(z.string().trim().min(1).max(60)).min(1).max(10).optional(),
   fullText: z.boolean().optional(),
+  interactiveOnly: z.boolean().optional(),
+  inspectLimit: z.number().int().min(0).max(20).optional(),
   limit: z.number().int().min(1).max(100).optional(),
   cursor: z.string().max(200).optional(),
 }).strict().superRefine((input, ctx) => {
-  if (input.cursor && (input.rootUid || input.query || input.roles || input.fullText !== undefined)) ctx.addIssue({ code: 'custom', message: 'A cursor continues its original query. Pass only cursor and optional limit.' });
+  if (input.cursor && (input.rootUid || input.query || input.roles || input.fullText !== undefined || input.interactiveOnly !== undefined || input.inspectLimit !== undefined)) ctx.addIssue({ code: 'custom', message: 'A cursor continues its original query. Pass only cursor and optional limit.' });
   if (input.fullText && !input.rootUid) ctx.addIssue({ code: 'custom', message: 'fullText requires rootUid to read long fields in a focused subtree.' });
 });
 
@@ -20,7 +23,8 @@ type Row = { text: string; preview: boolean };
 type Capture = {
   id: string; scope: string; pageId: number; document: string; capturedAt: string; expiresAt: number;
   rows: Row[]; bytes: number; nodeCount: number; matchedNodes: number; omittedNodes: number; previewNodes: number;
-  filter: { rootUid?: string; query?: string; roles?: string[]; fullText?: boolean };
+  filter: { rootUid?: string; query?: string; roles?: string[]; fullText?: boolean; interactiveOnly?: boolean };
+  inspection: { requestedLimit: number; checkedNodes: number; unavailableNodes: number };
 };
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 const string = (value: unknown) => typeof value === 'string' ? value : '';
@@ -69,6 +73,7 @@ export class PageSnapshots {
       let bytes = 0, matchedNodes = 0, omittedNodes = 0, previewNodes = 0;
       for (const node of nodes) {
         if (selected && !selected.has(string(node.nodeId))) continue;
+        if (input.interactiveOnly && !interactiveCandidate(node)) continue;
         const preview = snapshotRows(node);
         if (!preview.length || roles && !roles.includes(field(node.role).toLowerCase())
           || query && ![field(node.name), field(node.value), field(node.description), field(node.role)].some(text => text.toLocaleLowerCase().includes(query))) continue;
@@ -85,7 +90,34 @@ export class PageSnapshots {
       }
       capture = { id: randomBytes(12).toString('hex'), scope, pageId, document, capturedAt: new Date().toISOString(), expiresAt: Date.now() + TTL,
         rows, bytes, nodeCount: nodes.length, matchedNodes, omittedNodes, previewNodes,
-        filter: { ...(input.rootUid ? { rootUid: input.rootUid } : {}), ...(input.query ? { query: input.query } : {}), ...(input.roles ? { roles: input.roles } : {}), ...(input.fullText ? { fullText: true } : {}) } };
+        filter: { ...(input.rootUid ? { rootUid: input.rootUid } : {}), ...(input.query ? { query: input.query } : {}), ...(input.roles ? { roles: input.roles } : {}), ...(input.fullText ? { fullText: true } : {}), ...(input.interactiveOnly ? { interactiveOnly: true } : {}) },
+        inspection: { requestedLimit: input.inspectLimit ?? 0, checkedNodes: 0, unavailableNodes: 0 } };
+      // Only inspect candidates that fit this first page, never all AX nodes.
+      // Cache the observations with the capture; cursor reads never refresh them.
+      let pageCost = 0;
+      const inspected = new Set<string>();
+      for (const row of rows.slice(0, input.limit ?? 60)) {
+        pageCost += JSON.stringify(row.text).length + 2;
+        if (pageCost + 900 > PAGE_CHARACTERS || capture.bytes + 900 > CAPTURE_BYTES || inspected.size >= capture.inspection.requestedLimit) break;
+        const uid = /^uid=(cb_\d+)\b/.exec(row.text)?.[1];
+        if (!uid || inspected.has(uid)) continue;
+        inspected.add(uid);
+        let observation: Record<string, unknown>;
+        try {
+          const facts = await readElement(command, uid);
+          observation = { connected: facts.connected, hidden: facts.hidden, disabled: facts.disabled, inert: facts.inert,
+            hasArea: facts.hasArea, inViewport: facts.inViewport, fullyClipped: facts.fullyClipped, pointerEvents: facts.pointerEvents,
+            hitTest: 'not_checked' };
+          capture.inspection.checkedNodes++;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') throw error;
+          observation = { status: 'unavailable', hitTest: 'not_checked' }; capture.inspection.unavailableNodes++;
+        }
+        const extra = ` observation=${JSON.stringify(observation)}`;
+        row.text = row.text.includes(' field=') ? row.text.replace(' field=', `${extra} field=`) : row.text + extra;
+        capture.bytes += Buffer.byteLength(extra, 'utf8'); pageCost += JSON.stringify(extra).length;
+      }
+      if (document !== await documentIdentity(command)) throw new ChromeConnectorError('snapshot_document_changed', 'The page navigated while inspecting candidates. Take a fresh snapshot.');
       this.clear(scope, pageId);
       this.captures.set(capture.id, capture);
       this.prune();
@@ -105,10 +137,12 @@ export class PageSnapshots {
     const metadata = { pageId, capturedAt: capture.capturedAt, nodeCount: capture.nodeCount, matchedNodes: capture.matchedNodes,
       returned: lines.length, hasMore, ...(nextCursor ? { nextCursor } : {}), ...(emptyReason ? { emptyReason } : {}),
       ...(capture.previewNodes ? { previewNodes: capture.previewNodes } : {}),
-      ...(capture.omittedNodes ? { omittedNodes: capture.omittedNodes, captureTruncated: true } : {}), filter: capture.filter };
+      ...(capture.omittedNodes ? { omittedNodes: capture.omittedNodes, captureTruncated: true } : {}), filter: capture.filter,
+      inspection: capture.inspection, virtualizedTotal: 'unknown' };
     const footer = [hasMore ? `More: take_snapshot({"cursor":"${nextCursor}"}).` : 'End of this snapshot.',
       capture.previewNodes ? 'Long fields are previews. Read a focused subtree with rootUid and fullText:true, then continue its cursor.' : '',
       capture.omittedNodes ? `${capture.omittedNodes} nodes were omitted or incomplete at the capture budget. Narrow with rootUid/query/roles; for very long text use a targeted evaluate_script read with explicit offsets.` : '',
+      'Rows without observation were not inspected. Snapshot facts are historical; hit targets are checked by click. Counts cover this AX tree, not unloaded virtual items.',
     ].filter(Boolean).join(' ');
     // Keep page text in exactly one MCP field. structuredContent carries only pagination metadata.
     return { text: [lines.join('\n') || `No snapshot rows (${emptyReason}).`, footer].join('\n'), structured: metadata };
@@ -157,17 +191,45 @@ function subtree(nodes: Record<string, unknown>[], uid?: string) {
   return selected;
 }
 
+const interactiveRoles = new Set(['button','link','textbox','searchbox','combobox','checkbox','radio','switch','slider','spinbutton','tab','treeitem','menuitem','menuitemcheckbox','menuitemradio','option','listbox','scrollbar']);
+function interactiveCandidate(node: Record<string, unknown>) {
+  const role = field(node.role).toLowerCase();
+  if (['rootwebarea','webarea','statictext','inlinetextbox'].includes(role)) return false;
+  return interactiveRoles.has(role) || (Array.isArray(node.properties) ? node.properties : []).some(value => {
+    const property = object(value), state = object(property.value).value;
+    return ['focusable','haspopup'].includes(string(property.name).toLowerCase()) && state !== false && state !== 'false' && state !== undefined;
+  });
+}
+function stateFields(node: Record<string, unknown>) {
+  const parts: string[] = []; let size = 0;
+  for (const raw of Array.isArray(node.properties) ? node.properties : []) {
+    const property = object(raw), name = string(property.name).toLowerCase(), value = object(property.value);
+    if (!/^[a-z][a-z0-9_-]{0,39}$/i.test(name)) continue;
+    let part: string | undefined;
+    if (Array.isArray(value.relatedNodes)) {
+      const ids = value.relatedNodes.map(item => Number(object(item).backendDOMNodeId)).filter(id => Number.isSafeInteger(id) && id > 0);
+      if (ids.length) part = `${name}:[${ids.slice(0,4).map(id => `cb_${id}`).join(',')}${ids.length > 4 ? ',…' : ''}]`;
+    } else if (value.value === true) part = name;
+    else if (typeof value.value === 'boolean' || typeof value.value === 'number' || typeof value.value === 'string') {
+      const original = value.value;
+      part = `${name}:${JSON.stringify(typeof original === 'string' ? original.slice(0,100) : original)}${typeof original === 'string' && original.length > 100 ? '…' : ''}`;
+    }
+    if (!part) continue;
+    if (size + JSON.stringify(part).length > 900) { parts.push('states_truncated'); break; }
+    parts.push(part); size += JSON.stringify(part).length;
+  }
+  return parts;
+}
+
 function snapshotRows(node: Record<string, unknown>): Row[] {
   if (node.ignored === true) return [];
   const role = field(node.role) || 'generic';
   if (role === 'InlineTextBox') return []; // Duplicates its StaticText parent.
   const name = field(node.name), description = field(node.description), value = field(node.value);
-  const states = (Array.isArray(node.properties) ? node.properties : []).flatMap(value => {
-    const property = object(value); return object(property.value).value === true ? [string(property.name)] : [];
-  }).filter(Boolean);
+  const states = stateFields(node);
   if ((role === 'generic' || role === 'none') && !name && !value && !description && !states.length) return [];
   const backendId = Number(node.backendDOMNodeId), uid = Number.isSafeInteger(backendId) && backendId > 0 ? `cb_${backendId}` : undefined;
-  const header = [uid ? `uid=${uid}` : '', `role=${role.slice(0, 80)}`, states.length ? `state=${states.join(',').slice(0, 160)}` : ''].filter(Boolean).join(' ');
+  const header = [uid ? `uid=${uid}` : '', `role=${role.slice(0, 80)}`, states.length ? `state=${states.join(',')}` : ''].filter(Boolean).join(' ');
   const fields = Object.entries({ name, value, description: description === name ? '' : description }).filter(([, text]) => text);
   let preview = false;
   const parts = fields.map(([key, text]) => {
@@ -180,7 +242,8 @@ function snapshotRows(node: Record<string, unknown>): Row[] {
 
 function* fullTextRows(node: Record<string, unknown>): Generator<Row> {
   const uid = Number(node.backendDOMNodeId), role = field(node.role).slice(0, 80);
-  const header = `${Number.isSafeInteger(uid) && uid > 0 ? `uid=cb_${uid} ` : ''}role=${role}`;
+  const states = stateFields(node);
+  const header = `${Number.isSafeInteger(uid) && uid > 0 ? `uid=cb_${uid} ` : ''}role=${role}${states.length ? ` state=${states.join(',')}` : ''}`;
   let emitted = false;
   // Generate lazily so a giant field does not allocate all chunks before the
   // capture budget can stop it. Offsets preserve the original AX field exactly.

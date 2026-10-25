@@ -51,9 +51,9 @@ test('assistant accepts provider display metadata on all four tools, including a
   const title = { zh: '核对后台任务', en: 'Check background tasks' };
   const batches = [
     [{ name: 'subagent', args: { prompt: 'Read only: inspect the plugin' } }],
-    [{ name: 'await_subagents', args: {} }, { name: 'page_write', args: { content: '已派出任务。' } }],
+    [{ name: 'tasks', args: {} }, { name: 'page_write', args: { content: '已派出任务。' } }],
     [{ name: 'subagent', args: { task_id: 'child', prompt: 'Include the supported parameters' } },
-      { name: 'read_subagent_conversation', args: { task_id: 'child' } }],
+      { name: 'tasks', args: { action: 'conversation', task_ids: ['child'] } }],
   ];
   let round = 0;
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => tasks, checkpoint: () => ({}),
@@ -82,14 +82,14 @@ test('assistant accepts provider display metadata on all four tools, including a
 test('assistant distinguishes malformed arguments, foreign tasks and disabled delegation', async () => {
   const journal = new ConversationJournal(temporary()), results = new Map(), delegated = [];
   const calls = [
-    { id: 'all', name: 'await_subagents', args: {} },
-    { id: 'wrong-type', name: 'await_subagents', args: { task_ids: 'child' } },
-    { id: 'bad-id', name: 'await_subagents', args: { task_ids: [123] } },
-    { id: 'foreign', name: 'await_subagents', args: { task_ids: ['foreign'] } },
+    { id: 'all', name: 'tasks', args: {} },
+    { id: 'wrong-type', name: 'tasks', args: { task_ids: 'child' } },
+    { id: 'bad-id', name: 'tasks', args: { task_ids: [123] } },
+    { id: 'foreign', name: 'tasks', args: { task_ids: ['foreign'] } },
     { id: 'unknown-field', name: 'subagent', args: { prompt: 'Inspect', approved: true } },
     { id: 'missing-prompt', name: 'subagent', args: {} },
     { id: 'missing-task', name: 'subagent', args: { prompt: 'Continue', task_id: '' } },
-    { id: 'invalid-cursor', name: 'read_subagent_conversation', args: { task_id: 'child', cursor: 'broken' } },
+    { id: 'invalid-cursor', name: 'tasks', args: { action: 'conversation', task_ids: ['child'], cursor: 'broken' } },
     { id: 'disabled', name: 'subagent', args: { prompt: 'Inspect' } },
   ];
   let round = 0;
@@ -149,7 +149,7 @@ for (const [foregroundWait, followUp] of [[false, false], [true, false], [true, 
   const sessions = new SessionStore(), registry = new ToolRegistry(), childGate = gate(), children = [], receipts = [];
   sessions.ensureSession(id);
   const batches = [
-    { name: 'subagent', args: { action: 'save', expected_revision: 0, agent: { id: 'clerk', name: 'Clerk', system_prompt: 'Check verified inventory only.', memory: 'none' } } },
+    { name: 'subagent', args: { action: 'save', expected_revision: 0, agent: { id: 'clerk', name: 'Clerk', system_prompt: 'Check verified inventory only.' } } },
     { name: 'team', args: { action: 'save', expected_revision: 0, definition: { id: 'inventory', name: 'Inventory', nodes: [{ id: 'check', agent_id: 'clerk', prompt: 'Check inventory' }] } } },
     { name: 'team', args: { action: 'run', team_id: 'inventory', input: 'Order 42' } },
   ];
@@ -174,10 +174,10 @@ for (const [foregroundWait, followUp] of [[false, false], [true, false], [true, 
       yield* response(request, { text: '团队正在后台执行。' }); return;
     }
     const notices = request.messages.filter(message => message.name === 'background_task_result').map(message => JSON.parse(message.content));
-    const result = receipts.find(receipt => receipt.output_node_ids) ?? notices.find(notice => notice.type === 'team_result');
+    const result = receipts.flatMap(receipt => (receipt.tasks ?? []).map(task => task.result)).find(result => result?.output_node_ids) ?? notices.find(notice => notice.type === 'team_result');
     if (!result) {
       const run = receipts.find(receipt => receipt.run_id);
-      yield* response(request, { calls: [{ id: 'read-team-result', name: 'team', args: { action: 'wait', run_id: run.run_id } }] }); return;
+      yield* response(request, { calls: [{ id: 'read-team-result', name: 'tasks', args: { action: 'wait', task_ids: [run.run_id] } }] }); return;
     }
     assert.equal(result.nodes[0].output, 'Inventory verified for order 42.');
     assert.equal(request.messages.filter(message => message.content.includes('Inventory verified for order 42.')).length, 1);
@@ -271,7 +271,7 @@ test('assistant dispatch/await stay nonblocking; only Markdown and final replies
     }, provider: { async *stream(request) {
       seen.push(request); const index = round++;
       if (index === 0) { await modelGate.promise; yield* response(request, { text: '我会检查文件。', calls: [{ id: 'dispatch', name: 'subagent', args: { prompt: 'Read only: inspect files' } }] }); }
-      else if (index === 1) yield* response(request, { calls: [{ id: 'watch', name: 'await_subagents', args: { task_ids: ['child-task'] } }] });
+      else if (index === 1) yield* response(request, { calls: [{ id: 'watch', name: 'tasks', args: { task_ids: ['child-task'] } }] });
       else if (index === 2) yield* response(request, { text: '已经交给后台处理，我们可以继续聊。' });
       else if (index === 3) yield* response(request, { calls: [{ id: 'page', name: 'page_write', args: { content: '**已核对**：文件正常。' } }] });
       else yield* response(request);
@@ -283,7 +283,7 @@ test('assistant dispatch/await stay nonblocking; only Markdown and final replies
     modelGate.resolve(); await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
     assert.equal(tasks[0].status, 'running', 'main response finishes while child still executes');
     assert.equal(round, 3); assistant.command(command); await new Promise(r => setTimeout(r, 20)); assert.equal(round, 3, 'retry does not re-execute');
-    assert.deepEqual(seen[0].tools.map(tool => tool.name).sort(), ['await_subagents', 'page_write', 'read_subagent_conversation', 'subagent']);
+    assert.deepEqual(seen[0].tools.map(tool => tool.name).sort(), ['page_write', 'subagent', 'tasks']);
     assert.ok(!journal.read(id).some(item => item.content === '我会检查文件。'), 'loop commentary is not a page message');
     tasks[0].status = 'completed'; tasks[0].finalResponse = '文件正常';
     await until(() => journal.read(id).some(item => item.source === 'page'));

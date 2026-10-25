@@ -165,9 +165,9 @@ export class ElectronProductHostController {
   /** Trusted desktop host only; never expose this snapshot through renderer IPC. */
   async exportSharedConfiguration() {
     await this.#ensureLegacyModelCredentials();
-    const [models, apps, mcp, subagents] = await Promise.all([this.#models.read(), this.#apps.read(), this.#mcp.read(), this.#subagents.read()]);
+    const [models, subagents] = await Promise.all([this.#models.read(), this.#subagents.read()]);
     const sandbox = await readFile(join(this.#dataRoot, 'config', 'sandbox.json'), 'utf8').then(text => JSON.parse(text), (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return undefined; });
-    return { models, apps, mcp, subagents, sandbox };
+    return { models, subagents, sandbox };
   }
 
   async resolveAutomationModel(modelId: string) {

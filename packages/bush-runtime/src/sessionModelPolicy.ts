@@ -11,29 +11,7 @@ export function systemPolicyIdentity(value: unknown): { id: string; version: str
     ? { id: policy.id, version: policy.version } : undefined;
 }
 
-/** Only a product-declared version migration may replace a frozen contract.
- * Refresh named presentations, keeping every other Tool and its order stable.
- * Execution authorization is still checked against the live request/catalog. */
-export function requestedSessionModelPolicyUpgrade(request: RuntimeSessionTurnRequest,
-  saved: SessionModelContract | undefined): SessionModelContract | undefined {
-  if (!saved) return;
-  const policy = systemPolicyIdentity(request.metadata.systemPolicy);
-  const migration = request.metadata.systemPolicy as { upgradeFrom?: unknown; refreshTools?: unknown } | undefined;
-  if (!policy || policy.id !== saved.policyId || policy.version === saved.version ||
-    !Array.isArray(migration?.upgradeFrom) || !migration.upgradeFrom.includes(saved.version)) return;
-  const system = request.prefixMessages[0];
-  if (system?.role !== 'system') throw new Error('A policy migration requires a leading system message.');
-  const refresh = new Set(Array.isArray(migration.refreshTools) ? migration.refreshTools.filter(name => typeof name === 'string') : []);
-  const current = new Map(request.tools.map(tool => [tool.name, tool]));
-  // A restricted client without the replacement definition cannot complete an
-  // atomic policy/schema migration. Keep the previous contract until it can.
-  if (saved.tools.some(tool => refresh.has(tool.name) && !current.has(tool.name))) return;
-  return { policyId: policy.id, version: policy.version, system,
-    tools: saved.tools.map(tool => refresh.has(tool.name) ? current.get(tool.name)! : tool) };
-}
-
-/** Restore the durable presentation before history assembly. Version migrations
- * are separately committed at a Turn boundary, never during a running loop. */
+/** Restore only a matching durable contract; obsolete tool catalogs are not migrated. */
 export function restoreSessionModelPolicy(
   request: RuntimeSessionTurnRequest,
   saved: SessionModelContract | undefined,
@@ -48,6 +26,10 @@ export function restoreSessionModelPolicy(
     }
   };
   if (saved) {
+    const policy = systemPolicyIdentity(request.metadata.systemPolicy);
+    if (policy && (policy.id !== saved.policyId || policy.version !== saved.version)) {
+      throw Object.assign(new Error('This session uses an incompatible tool contract. Start a new session; old calls will not be translated or replayed.'), { code: 'session_tool_contract_incompatible' });
+    }
     restore(saved.system);
     request.metadata.systemPolicy = { id: saved.policyId, version: saved.version };
     return;

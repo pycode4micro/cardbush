@@ -6,7 +6,7 @@ const CONNECTOR_DISCOVERY_PORTS = Object.freeze(Array.from({ length: 32 }, (_, i
 function parseConnectorPairing(code) {
   const match = /^CB2\.(\d{4,5})\.([a-f0-9]{32})\.([a-f0-9]{64})$/.exec(String(code || '').trim());
   if (!match || Number(match[1]) < 1024 || Number(match[1]) > 65535) {
-    throw new Error('请从 CardBush 浏览器设置中复制有效的配对码。');
+    throw new Error('连接凭据格式无效。手动连接或远程 Agent 配对时，请检查是否完整复制了目标 Agent 提供的配对码。');
   }
   return { port: Number(match[1]), id: match[2], secret: match[3] };
 }
@@ -206,7 +206,7 @@ function createConnectorPort(pairing, { attemptTimeoutMs = 1000 } = {}) {
     await Promise.all(Array.from({ length: 4 }, async () => {
       while (!closed && !ready && next < candidates.length) await tryEndpoint(candidates[next++], browser);
     }));
-    if (!closed && !ready) fail('connector_unavailable', '暂时无法连接 CardBush，请确认应用和本机连接器已开启。已保存的配对与网站授权保持不变。');
+    if (!closed && !ready) fail('connector_unavailable', '暂时无法连接 CardBush，请确认目标 Agent 或本机 App/CLI 正在运行，并已启用 Browser Use。已保存的连接与网站授权保持不变，临时离线无需生成新配对码。');
   })().catch(() => fail('connector_unavailable', '暂时无法建立 CardBush 本地连接，等待自动重连。'));
   return port;
 }

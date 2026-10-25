@@ -32,7 +32,7 @@ test('UI observations append once at round boundaries without changing earlier c
   } } });
   const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',
     messages: [{ role: 'system', content: 'Stable prefix' }, { role: 'user', content: 'Open the fixture' }],
-    tools: registry.definitions().filter(tool => !['mcp_search', 'mcp_call'].includes(tool.name)) });
+    tools: registry.definitions().filter(tool => !['mcp_search', 'call_tool'].includes(tool.name)) });
   assert.equal(terminal.payload.status, 'completed'); assert.equal(requests.length, 4); assert.equal(calls, 1); assert.equal(reads, 1);
   const statusMessage = requests[2].messages.find(message => message.role === 'tool' && message.toolCallId === 'c1');
   assert.equal(JSON.parse(statusMessage.content).interfaces.length, 1, 'status must be a successful JSON result, not an undefined-field execution error');

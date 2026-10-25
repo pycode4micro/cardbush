@@ -8,7 +8,7 @@ import { modelToolDefinitions } from '../dist/mcpToolDiscovery.js';
 // In-memory stores and a deterministic child runner; no provider or plugin calls.
 async function fixture(t) {
   const registry = new ToolRegistry(), store = new SubagentTaskStore(), agents = new RegisteredAgentStore();
-  await agents.put({ id: 'employee-review', name: 'Reviewer', system_prompt: 'Review fixture evidence.', memory: 'none' }, 0);
+  await agents.put({ id: 'employee-review', name: 'Reviewer', system_prompt: 'Review fixture evidence.' }, 0);
   const saved = new Map(), executions = [], guidance = [];
   let taskSequence = 0;
   const children = registerSubagentTool(registry, store, async request => {
@@ -74,7 +74,7 @@ test('subagent distinguishes employee, child task and session IDs without starti
 
 test('team definition, run and node IDs stay separate across direct and recalled calls', async t => {
   const f = await fixture(t);
-  await f.call('get_tool_schema', { name: 'team' });
+  await f.call('get_tool_schema', { names: ['team', 'tasks'] });
   await f.call('call_tool', { name: 'team', arguments: { action: 'save', definition: workflow, expected_revision: 0 } });
   const started = await f.call('team', { action: 'run', team_id: workflow.id, input: 'Check fixture.' });
   const finished = await f.call('tasks', { action: 'wait', task_ids: [started.task_id] });
@@ -83,8 +83,9 @@ test('team definition, run and node IDs stay separate across direct and recalled
   const node = f.store.list('parent').find(task => task.origin === 'team');
   const before = await f.teams.listRuns('parent');
   for (const run_id of [workflow.id, 'employee-review', 'review-node', node.taskId, node.childSessionId]) {
-    for (const action of ['status', 'wait', 'stop', 'resume']) {
-      await f.reject('call_tool', { name: 'team', arguments: { action, run_id } }, /run_id.*section=runs/);
+    await f.reject('call_tool', { name: 'team', arguments: { action: 'resume', run_id } }, /run_id.*section=runs/);
+    for (const action of ['inspect', 'wait', 'stop']) {
+      await f.reject('call_tool', { name: 'tasks', arguments: { action, task_ids: [run_id] } }, /tasks list.*task_id/);
     }
   }
   for (const team_id of [started.run_id, node.taskId, node.childSessionId, 'employee-review']) {
@@ -94,8 +95,9 @@ test('team definition, run and node IDs stay separate across direct and recalled
   await f.reject('team', { action: 'run', run_id: started.run_id, input: 'Check fixture.' }, /Accepted fields: team_id/);
   await f.reject('team', { action: 'resume', team_id: workflow.id }, /Accepted fields: run_id/);
   await f.reject('team', { action: 'resume', run_id: started.run_id, team_id: workflow.id }, /Accepted fields: run_id/);
-  for (const action of ['status', 'wait', 'stop', 'resume']) {
-    await f.reject('team', { action, run_id: started.run_id }, /unavailable in this conversation/, 'other-parent');
+  await f.reject('team', { action: 'resume', run_id: started.run_id }, /unavailable in this conversation/, 'other-parent');
+  for (const action of ['inspect', 'wait', 'stop']) {
+    await f.reject('tasks', { action, task_ids: [started.task_id] }, /not available in this conversation/, 'other-parent');
   }
   await f.reject('subagent', { task_id: node.taskId, prompt: 'Bypass the workflow.' }, /Team workflow node.*run_id/);
   assert.equal(f.executions.length, 1); assert.deepEqual(f.guidance, []);
@@ -163,7 +165,7 @@ test('routing descriptions and ID guidance are available without changing frozen
   const prefix = JSON.stringify(frozen), system = JSON.stringify(f.request.messages);
   for (const name of ['subagent', 'team', 'tasks']) {
     const loaded = await f.call('get_tool_schema', { name });
-    assert.equal(loaded.matches[0].definition.description, native.find(tool => tool.name === name).description);
+    assert.equal(loaded.matches[0].description, native.find(tool => tool.name === name).description);
     assert.equal(JSON.stringify(modelToolDefinitions(f.registry, f.request)), prefix);
   }
   const child = await f.call('call_tool', { name: 'subagent', arguments: { prompt: 'Check the fixture.' } });

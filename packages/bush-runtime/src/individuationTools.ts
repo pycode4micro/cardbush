@@ -15,20 +15,23 @@ const noteProperties={text:{type:'string',maxLength:1600,description:'One concis
   expires_at:{type:'string',format:'date-time',description:'Optional ISO expiry. Predictions default to 7 days; habits do not expire by default.'}};
 const noteSchema={type:'object',additionalProperties:false,required:['text'],properties:noteProperties};
 
+function memoryTarget(argumentsText: string) {
+  try { return JSON.parse(argumentsText).name === 'check_habit'; } catch { return false; }
+}
+
 /** Do not repeat references already present in the assembled context. Compaction may remove them. */
 export function deliveredMemoryIds(messages:ModelMessage[]):string[] {
   const ids=new Set<string>();
-  const calls=new Set(messages.flatMap(message=>message.role==='assistant'?message.toolCalls.filter(call=>['check_habit','parallel_tools'].includes(call.name)).map(call=>call.id):[]));
+  const calls=new Set(messages.flatMap(message=>message.role==='assistant'?message.toolCalls.filter(call=>call.name === 'check_habit' || call.name === 'call_tool' && memoryTarget(call.argumentsText)).map(call=>call.id):[]));
   for(const message of messages) {
     if(!(message.role==='user'&&message.name==='habit_reference') && !(message.role==='tool' && calls.has(message.toolCallId))) continue;
     try {
       const value=JSON.parse(message.content);
       const collect=(result:unknown)=>{
         if(!result||typeof result!=='object')return;
-        const record=result as {memories?:unknown;results?:Array<{name?:string;result?:unknown}>};
+        const record=result as {memories?:unknown};
         const records=Array.isArray(result)?result:record.memories;
         if(Array.isArray(records))for(const item of records)if(typeof item?.id==='string')ids.add(item.id);
-        for(const nested of record.results??[])if(nested.name==='check_habit')collect(nested.result);
       };collect(value);
     } catch { /* Not a memory reference. */ }
   }
@@ -36,14 +39,13 @@ export function deliveredMemoryIds(messages:ModelMessage[]):string[] {
 }
 export function deliveredMemoryVersions(messages:ModelMessage[]):Map<string,number> {
   const versions=new Map<string,number>();
-  const calls=new Set(messages.flatMap(message=>message.role==='assistant'?message.toolCalls.filter(call=>['check_habit','parallel_tools'].includes(call.name)).map(call=>call.id):[]));
+  const calls=new Set(messages.flatMap(message=>message.role==='assistant'?message.toolCalls.filter(call=>call.name === 'check_habit' || call.name === 'call_tool' && memoryTarget(call.argumentsText)).map(call=>call.id):[]));
   const collect=(value:unknown)=>{
     if(!value||typeof value!=='object')return;
     type Reference={id?:string;revision?:number;state?:string};
-    const result=value as {memories?:Reference[];changes?:Reference[];results?:Array<{name?:string;result?:unknown}>};
+    const result=value as {memories?:Reference[];changes?:Reference[]};
     const records:Reference[]=Array.isArray(value)?value:result.memories??result.changes??[];
     for(const record of records)if(record.id)versions.set(record.id,record.state==='expired'?-Math.abs(record.revision??0):record.revision??0);
-    for(const nested of result.results??[])if(nested.name==='check_habit')collect(nested.result);
   };
   for(const message of messages)if(message.role==='user'&&['habit_reference','memory_state_updates'].includes(message.name??'')||message.role==='tool'&&calls.has(message.toolCallId)) {
     try{collect(JSON.parse(message.content));}catch{}

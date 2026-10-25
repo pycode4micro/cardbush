@@ -132,17 +132,14 @@ internal static partial class CardBushProcessHost
                 if (i > commandStart) commandLine.Append(' ');
                 commandLine.Append(QuoteArgument(args[i]));
             }
-            // No user code executes until BOTH jobs are assigned. Never fall back
-            // to running unprotected when a Windows API or budget setup fails.
+            // Bind BOTH jobs during creation. Killing this supervisor between
+            // CreateProcess and a later assignment must never strand a suspended child.
             startingCommand = true;
             if (sandbox == null)
-                Check(CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true,
-                    0x4 | 0x08000000, IntPtr.Zero, Environment.CurrentDirectory, ref startup, out process), "Create suspended command");
+                CreateSuspendedCommand(commandLine, ref startup, globalJob, out process);
             else
-                sandbox.CreateSuspended(commandLine, ref startup, out process);
+                sandbox.CreateSuspended(commandLine, ref startup, globalJob, out process);
             startingCommand = false;
-            Check(AssignProcessToJobObject(globalJob, process.hProcess), "Assign shared budget");
-            Check(AssignProcessToJobObject(taskJob, process.hProcess), "Assign task budget");
             foreach (IntPtr handle in inheritedHandles) CloseHandle(handle);
             inheritedHandles.Clear();
 
@@ -501,7 +498,6 @@ internal static partial class CardBushProcessHost
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr OpenJobObject(uint access, bool inherit, string name);
     [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)] private static extern bool QueryMemoryInformation(IntPtr job, int kind, out MEMORY_USAGE information, uint length, IntPtr returnLength);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", EntryPoint = "SetInformationJobObject", SetLastError = true)] private static extern bool SetExtendedInformation(IntPtr job, int kind, ref EXTENDED_LIMIT information, uint length);
     [DllImport("kernel32.dll", EntryPoint = "SetInformationJobObject", SetLastError = true)] private static extern bool SetCpuInformation(IntPtr job, int kind, ref CPU_LIMIT information, uint length);
     [DllImport("kernel32.dll", EntryPoint = "SetInformationJobObject", SetLastError = true)] private static extern bool SetCompletionInformation(IntPtr job, int kind, ref COMPLETION_PORT information, uint length);
@@ -509,7 +505,6 @@ internal static partial class CardBushProcessHost
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr CreateIoCompletionPort(IntPtr file, IntPtr existing, UIntPtr key, uint threads);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetQueuedCompletionStatus(IntPtr port, out uint bytes, out UIntPtr key, out IntPtr overlapped, uint milliseconds);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcess(string applicationName, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string currentDirectory, ref STARTUPINFO startup, out PROCESS_INFORMATION process);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(IntPtr process, uint exitCode);

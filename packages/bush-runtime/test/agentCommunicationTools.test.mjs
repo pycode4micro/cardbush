@@ -10,36 +10,6 @@ const definition = name => ({ name, inputSchema: { type: 'object', properties: {
 const request = registry => ({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 'parent', turnId: 't', model: 'fixture',
   tools: registry.definitions(), messages: [], permissionMode: 'all_free', metadata: { mcpToolDiscovery: true, mcpCatalogUpdates: 'additions' } });
 
-test('replacement catalogs retain legacy handlers and restore their entry when a replacement is disabled', () => {
-  const registry = new ToolRegistry();
-  registry.register({ definition: definition('old'), manifest, registrationOwner: 'extension:legacy', supersededBy: 'current', decodeInput: x => x, execute: () => 'legacy' });
-  assert.deepEqual(registry.definitions().map(t => t.name), ['old']);
-  registry.register({ definition: definition('current'), manifest, registrationOwner: 'extension:fixture', decodeInput: x => x, execute: () => 'current' });
-  assert.deepEqual(registry.definitions().map(t => t.name), ['current']);
-  assert.equal(registry.resolve('old').execute({}), 'legacy');
-  const active = request(registry); synchronizeMcpCatalog(registry, active);
-  registry.setOwnerEnabled('extension:fixture', false);
-  assert.deepEqual(registry.definitions().map(t => t.name), ['old']);
-  assert.deepEqual(registry.childDefinitions().map(t => t.name), ['old']);
-  synchronizeMcpCatalog(registry, active);
-  assert.deepEqual(active.tools.map(t => t.name), ['old']);
-});
-
-test('hot catalog refresh preserves previously exposed aliases but never advertises them to new conversations', () => {
-  const registry = new ToolRegistry();
-  const register = (name, supersededBy) => registry.register({ definition: definition(name), manifest, registrationOwner: 'extension:fixture',
-    deferredSchema: true, supersededBy, decodeInput: x => x, execute: () => name });
-  register('old', 'current'); const previous = request(registry);
-  synchronizeMcpCatalog(registry, previous);
-  const frozen = structuredClone(modelToolDefinitions(registry, previous));
-  register('current');
-  synchronizeMcpCatalog(registry, previous);
-  assert.deepEqual(previous.tools.map(t => t.name), ['old', 'current']);
-  assert.deepEqual(modelToolDefinitions(registry, previous), frozen);
-  const fresh = request(registry); synchronizeMcpCatalog(registry, fresh);
-  assert.deepEqual(fresh.tools.map(t => t.name), ['current']);
-});
-
 test('a frozen tasks declaration can load the current conversation action without rewriting its provider prefix', async () => {
   const registry = new ToolRegistry();
   const tasks = new RuntimeTaskTools(async () => 'task_completed');

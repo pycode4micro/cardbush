@@ -1,0 +1,55 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+module.exports = async ({ run, until, pause, win, root }) => {
+  await run(`window.retiredSyncCalls=[];
+    cardbushDesktop.agents.syncCatalog=async()=>{retiredSyncCalls.push('catalog');throw Error('Retired sync API');};
+    cardbushDesktop.agents.syncConfiguration=async()=>{retiredSyncCalls.push('sync');throw Error('Retired sync API');};
+    window.savedAgentInputs=[];window.failSave=true;
+    cardbushDesktop.agents.save=async input=>{
+      savedAgentInputs.push(input);
+      if(failSave)throw Error('连接保存失败，请重试');
+      var value={...input,id:input.id||'install-fixture',hasToken:true};
+      connections=[...connections.filter(c=>c.id!==value.id),value];snapshots[value.id]??=[];jobs[value.id]??=[];return connections;
+    };
+    cardbushDesktop.sshConnections={list:async()=>[{id:'ssh-install',name:'Windows host',username:'fixture',host:'fixture.invalid',port:22}]};
+    document.querySelector('.agents-add').click();undefined;`);
+  await until("document.querySelector('.agents-form select[required]')?.value==='ssh-install'", 'the saved SSH connection is selected');
+  const checkForm = async () => {
+    assert.equal(await run("document.querySelectorAll('.agents-form button[type=submit]').length"), 1);
+    assert.equal(await run("document.querySelector('.agents-form button[type=submit]').textContent.trim()"), '保存并连接');
+    assert.equal(await run("!!document.querySelector('.agent-plugin-sync,.agent-sync-plugin-list,button[data-sync],.agents-form input[type=checkbox]')"), false);
+    assert.match(await run("document.querySelector('.agents-form').textContent"), /cardbush-docs/);
+    assert.doesNotMatch(await run("document.querySelector('.agents-form').textContent"), /同步|sync/i);
+    assert.equal(await run("document.querySelector('.agents-form').scrollWidth<=document.querySelector('.agents-form').clientWidth"), true);
+    assert.deepEqual(await run('retiredSyncCalls'), []);
+  };
+  await checkForm();
+  await run(`var nameField=document.querySelector('.agents-modal-body > label input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(nameField,'插件安装测试');nameField.dispatchEvent(new Event('input',{bubbles:true}));
+    var token=document.querySelector('input[type=password]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(token,'fixture-token');token.dispatchEvent(new Event('input',{bubbles:true}));undefined;`);
+  await pause(80);
+  await run("document.querySelector('.agents-form button[type=submit]').click()");
+  await until("document.querySelector('.agents-form .agents-error')?.textContent.includes('连接保存失败')", 'save failures retain the connection form');
+  assert.equal(await run("document.querySelector('.agents-form input').value"), '插件安装测试');
+  await checkForm();
+  await run("failSave=false;document.querySelector('.agents-form button[type=submit]').click()");
+  await until("!document.querySelector('.agents-form')&&!!document.querySelector('.agent-workspace:not([hidden]) .agent-manage')", 'retry saves and connects');
+  await run(`(async()=>{connections=connections.map(c=>c.id==='install-fixture'?{...c,autoSyncPlugins:true,excludedPluginIds:[],syncSkills:true}:c);await refreshAgentConnections();})()`);
+  await run("document.querySelector('.agent-workspace:not([hidden]) .agent-manage').click()");
+  await until("!!document.querySelector('.agents-form[aria-label=连接设置]')", 'existing connection can be edited');
+  await checkForm();
+  await pause(80);
+  fs.writeFileSync(path.join(root, 'tmp/agent-connection-settings-no-sync.png'), (await win.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.agents-form button[type=submit]').click()");
+  await until("!document.querySelector('.agents-form')", 'legacy connection saves without synchronization');
+  const inputs = await run('savedAgentInputs');
+  assert.equal(inputs.at(-1).id, 'install-fixture');
+  assert.deepEqual(inputs.at(-1).sshTunnel, { connectionId: 'ssh-install', remoteHost: '127.0.0.1', remotePort: 4780 });
+  for (const input of inputs) for (const key of ['autoSyncPlugins', 'excludedPluginIds', 'syncSkills']) assert.equal(key in input, false);
+  assert.equal(await run("connections.filter(c=>c.id==='install-fixture').length"), 1);
+  assert.deepEqual(await run('retiredSyncCalls'), []);
+  assert.equal(await run("calls.some(c=>['plugins.install','plugins.configure','configuration.sync','chat.send','chat.stop'].includes(c.operation))"), false);
+  console.log('PASS connection settings: one save action, task-based plugin guidance, legacy switches ignored, save retry and no sync calls');
+};

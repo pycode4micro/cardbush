@@ -70,10 +70,10 @@ async function fixture(t, options = {}) {
   const manager = new AgentConnectionManager(join(local, 'connections.json'), { encrypt: v => v, decrypt: v => v }, {
     ...(options.tunnel ? { ssh, reconnectDelayMs: 20, healthIntervalMs: 60_000 } : {}),
     configurationRetryMs: options.retryMs ?? 20,
-    sharedConfiguration: async settings => {
-      state.packs.push(settings); await state.beforePack?.();
+    sharedConfiguration: async (...args) => {
+      state.packs.push(args); await state.beforePack?.();
       if (state.failPack) throw new Error('fixture configuration invalid');
-      return packSharedConfiguration(payload, local, settings);
+      return packSharedConfiguration(payload, local);
     },
   });
   t.after(async () => {
@@ -81,8 +81,7 @@ async function fixture(t, options = {}) {
     assert.ok(root.startsWith(base + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 });
   });
   const [connection] = await manager.save({ name: info.name, transport: 'http', url: 'http://127.0.0.1:' + server.port, token,
-    ...(options.tunnel ? { sshTunnel: { connectionId: 'offline-tunnel', remoteHost: '127.0.0.1', remotePort: server.port } } : {}),
-    autoSyncPlugins: options.autoSyncPlugins ?? false, excludedPluginIds: ['excluded'], syncSkills: false });
+    ...(options.tunnel ? { sshTunnel: { connectionId: 'offline-tunnel', remoteHost: '127.0.0.1', remotePort: server.port } } : {}) });
   return { state, payload, manager, connection, token, remote,
     read: () => manager.call(connection.id, 'conversation.catalog'),
     error: async () => (await manager.list())[0]?.configurationError,
@@ -91,7 +90,7 @@ async function fixture(t, options = {}) {
 }
 
 test('automatic sync waits for all running and queued jobs, coalesces reads and applies the latest settings without another UI request', async t => {
-  const f = await fixture(t, { autoSyncPlugins: true }), { state, manager, connection } = f;
+  const f = await fixture(t), { state, manager, connection } = f;
   state.jobs = [{ id: 'running', sessionId: 'one', status: 'running' }, { id: 'queued', sessionId: 'two', status: 'queued' }];
   await Promise.all([f.read(), f.read(), manager.call(connection.id, 'product.command', { kind: 'models.get' })]);
   await until(() => state.reads >= 3);
@@ -104,7 +103,7 @@ test('automatic sync waits for all running and queued jobs, coalesces reads and 
   state.jobs[1].status = 'stopped';
   await until(() => state.refreshes === 1);
   assert.equal(await f.rules(), f.payload.instructions);
-  assert.deepEqual(state.packs, [{ syncPlugins: true, excludedPluginIds: ['excluded'], syncSkills: false }]);
+  assert.deepEqual(state.packs, [[]]);
   assert.equal(await f.error(), undefined);
   await pause(70); assert.equal(state.packs.length, 1, 'successful sync removes the deferred retry');
   assert.ok(state.calls.every(call => call.operation !== 'chat.stop'), 'sync never interrupts a task');
@@ -127,7 +126,7 @@ test('busy automatic sync does not reject queued messages, guidance or delegated
 for (const phase of ['begin', 'apply']) for (const legacy of [false, true]) {
   test(`a task starting at configuration ${phase} retains old files and retries after completion (${legacy ? 'legacy' : 'coded'} busy response)`, async t => {
     const f = await fixture(t), { state, manager, connection } = f;
-    await manager.syncConfiguration(connection.id);
+    await f.read();
     const original = await f.rules(); f.payload.instructions = 'Replacement'; state.legacy = legacy;
     state.beforeSync = async input => {
       if (input.action === phase) {
@@ -146,15 +145,15 @@ for (const phase of ['begin', 'apply']) for (const legacy of [false, true]) {
   });
 }
 
-test('genuine retry failures remain visible, back off and block new tasks; manual sync can recover', async t => {
+test('genuine retry failures remain visible, back off and block new tasks; reconnecting retries corrected settings', async t => {
   const f = await fixture(t), { state, manager, connection } = f;
   state.jobs = [{ status: 'running' }]; await f.read(); state.failPack = true; state.jobs = [];
   await until(async () => (await f.error())?.includes('fixture configuration invalid'));
   await pause(60); assert.equal(state.packs.length, 1);
   await assert.rejects(manager.call(connection.id, 'chat.send', { requestId: 'new', sessionId: 'one' }), /fixture configuration invalid/);
   assert.ok(state.calls.every(call => call.operation !== 'chat.send'));
-  state.failPack = false; await manager.syncConfiguration(connection.id);
-  assert.equal(await f.error(), undefined); assert.equal(state.packs.at(-1).syncPlugins, true);
+  state.failPack = false; await manager.disconnect(connection.id); await f.read();
+  assert.equal(await f.error(), undefined); assert.deepEqual(state.packs.at(-1), []);
 });
 
 for (const action of ['disconnect', 'remove', 'close']) {
@@ -186,13 +185,19 @@ test('disconnect during packaging prevents uploads and stale error publication',
   } finally { release(); await read; }
 });
 
-test('manual success supersedes the pending automatic sync and keeps manual plugin selection', async t => {
-  const f = await fixture(t, { retryMs: 100 }), { state, manager, connection } = f;
-  state.jobs = [{ status: 'running' }]; await f.read(); state.jobs = [];
-  await manager.syncConfiguration(connection.id);
-  await pause(150);
-  assert.equal(state.packs.length, 1); assert.equal(state.packs[0].syncPlugins, true);
-  assert.equal(await f.error(), undefined);
+test('parallel reads share one settings snapshot without exposing a manual plugin sync entry', async t => {
+  const f = await fixture(t), { state, manager, connection } = f;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  state.beforePack = () => gate;
+  const reads = [f.read(), f.read(), manager.call(connection.id, 'product.command', { kind: 'models.get' })];
+  try {
+    await until(() => state.packs.length === 1);
+    await pause(60); assert.equal(state.packs.length, 1);
+    assert.equal(manager.syncConfiguration, undefined); assert.equal(manager.syncCatalog, undefined);
+    release(); await Promise.all(reads);
+    assert.equal(state.refreshes, 1); assert.deepEqual(state.packs, [[]]);
+  } finally { release(); await Promise.allSettled(reads); }
 });
 
 test('a finished event stream wakes the deferred retry without waiting for the poll interval', async t => {
@@ -204,13 +209,15 @@ test('a finished event stream wakes the deferred retry without waiting for the p
   await until(() => state.refreshes === 1);
 });
 
-test('busy codes survive HTTP, manual sync retains task protection, and unrelated conflicts are not deferred', async t => {
+test('busy codes survive HTTP, shared settings retain task protection, and unrelated conflicts are not deferred', async t => {
   const f = await fixture(t), { state, manager, connection } = f;
   const client = new AgentHttpClient(connection.url, f.token); t.after(() => client.close());
   state.jobs = [{ status: 'running' }];
   await assert.rejects(client.call('configuration.sync', { action: 'begin', digest: 'a'.repeat(64), size: 1 }),
     error => error instanceof AgentHttpError && error.status === 409 && error.code === 'agent_busy' && isAgentBusyError(error));
-  await assert.rejects(manager.syncConfiguration(connection.id), isAgentBusyError);
+  await f.read();
+  assert.equal(state.packs.length, 0);
+  assert.equal(await f.error(), undefined);
   assert.equal(state.refreshes, 0);
   assert.equal(isAgentBusyError(new AgentHttpError('Agent identity changed.', 409, 'agent_identity_changed')), false);
   assert.equal(isAgentBusyError(new Error(agentBusyMessage)), false, 'local packaging errors do not masquerade as remote busy');

@@ -98,7 +98,6 @@ export class SessionStore {
     const events = this.#load(sessionId);
     for (let index = events.length - 1; index >= 0; index--) {
       const event = events[index]!;
-      if (event.kind === 'model_contract_updated') return structuredClone(event.payload.contract);
       if (event.kind === 'model_contract_bound') return structuredClone(event.payload);
     }
     return undefined;
@@ -111,15 +110,6 @@ export class SessionStore {
     const payload = sessionModelContractSchema.parse(contract);
     this.#append(sessionId, { kind: 'model_contract_bound', payload });
     return structuredClone(payload);
-  }
-
-  upgradeModelContract(sessionId: string, expectedVersion: string, candidate: SessionModelContract): SessionModelContract {
-    const existing = this.modelContract(sessionId), contract = sessionModelContractSchema.parse(candidate);
-    if (!existing || existing.version !== expectedVersion || contract.policyId !== existing.policyId || contract.version === expectedVersion) {
-      throw new Error('Model policy migration does not match the current bound version.');
-    }
-    this.#append(sessionId, { kind: 'model_contract_updated', payload: { expectedVersion, contract } });
-    return structuredClone(contract);
   }
 
   hasSession(sessionId: string): boolean {
@@ -504,14 +494,6 @@ export function projectSession(
     if (event.kind === 'model_contract_bound') {
       if (modelContractBound) throw new Error('Session model contract may only be bound once.');
       modelContractBound = event.payload;
-    }
-    if (event.kind === 'model_contract_updated') {
-      const { expectedVersion, contract } = event.payload;
-      if (!modelContractBound || modelContractBound.version !== expectedVersion ||
-        modelContractBound.policyId !== contract.policyId || contract.version === expectedVersion) {
-        throw new Error('Model policy migration does not match the bound contract.');
-      }
-      modelContractBound = contract;
     }
     if (event.kind === "turn_committed") {
       const turn = event.payload;

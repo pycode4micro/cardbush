@@ -125,8 +125,8 @@ Clean settings expose `model_id`, `reasoning_effort`, `max_context_tokens`,
 `max_output_tokens`, `temperature`, `top_p`, `max_turns`, `permission_mode`,
 `permission_routing`, `disabled_tools`, `allowed_skills` and `disabled_skills`.
 The separate `allowed_tools` is an exact allowlist; omitting it retains the parent
-catalog, while `[]` permits no tools. Plugin setup cannot re-add excluded MCP or
-memory tools, and admission enforces the same allowlist. Optional `agent_type`
+catalog, while `[]` permits no tools. Plugin setup cannot re-add excluded MCP
+tools, and admission enforces the same allowlist. Optional `agent_type`
 and `run_in_background` are advertised when the host supports them. Unspecified
 values use the displayed host defaults. Token limits cannot exceed the selected
 configuration, execution limits respect any selected role, and explicit scopes

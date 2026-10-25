@@ -29,6 +29,7 @@ app.whenReady().then(async () => {
     assert.deepEqual(await read('[reads.length,taskReads,detailReads]'), [0,0,0], 'history summary is sufficient; no configuration or task scans');
     await click('.loop-employee-registration-previews .loop-registration-preview');
     await until('document.querySelector(".agent-definition-inspector dd")?.textContent === "employee-0"');
+    assert.doesNotMatch(await read('document.querySelector(".agent-definition-inspector").innerText'), /长期记忆|Long-term memory/);
     assert.equal(await read('openedTab.kind'), 'agent-definition');
     assert.deepEqual(await read('reads[0]'), {kind:'runtime.agent_registry',payload:{action:'get',agent_id:'employee-0'}});
     assert.equal(await read('document.querySelector(".agent-definition-inspector details").open'), false);

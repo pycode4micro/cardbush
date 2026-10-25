@@ -4,7 +4,7 @@ Responses, Chat Completions and Anthropic Messages normalize HTTP exceptions and
 
 The Responses adapter shares a compatibility profile through `ProviderCapabilityStore`, scoped to the endpoint configuration, credentials and model. Only an explicit rejection of a feature actually present on the wire selects this profile. Authentication, quota exhaustion, temporary service faults and unrelated input validation never change capabilities.
 
-The compatible projection uses ordinary `mcp_search` / `mcp_call` function tools, sends full history with `store: false`, uses local input estimates, and sends tool images as attributed observations after their complete function-result batch. Progressive tool discovery, instructions, reasoning and tool results remain available. This remains a Responses API adapter; it does not switch API families or model settings.
+The compatible projection uses ordinary `mcp_search` / `get_tool_schema` / `call_tool` function tools, sends full history with `store: false`, uses local input estimates, and sends tool images as attributed observations after their complete function-result batch. Progressive tool discovery, instructions, reasoning and tool results remain available. This remains a Responses API adapter; it does not switch API families or model settings.
 
 An explicit feature rejection may retry with this projection before any text, reasoning, tool call or usage has been exposed. An early SSE rejection follows the same rule. Once output is exposed, the failure is returned and a confirmed capability observation can apply to subsequent requests. Cancellation and local validation/size failures never select the profile.
 

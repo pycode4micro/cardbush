@@ -1,0 +1,4 @@
+interface:
+  display_name: "自动切片"
+  short_description: "收集手机号、主播、商品与千川账号，交给已授权远程 Agent 切片并上传"
+  default_prompt: "使用 $auto-video-slicing 整理我的主播商品切片任务，核对四项必填信息后委派远程 Agent。"

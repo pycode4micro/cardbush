@@ -11,7 +11,7 @@ export const TOOL_SEARCH_CAPABILITY = "client_tool_search";
 export function hasMcpDiscovery(request: ModelRequest): boolean {
   return request.metadata.mcpToolDiscovery === true &&
     request.tools.some(tool => tool.name === "mcp_search") &&
-    request.tools.some(tool => tool.name === "mcp_call");
+    request.tools.some(tool => tool.name === "call_tool");
 }
 
 /** A capability observation may expire; the protocol of visible history must not. */
@@ -36,13 +36,12 @@ export function responseTools(request: ModelRequest, mode: ResponsesToolSearchMo
       type: "tool_search", execution: "client", parameters: tool.inputSchema,
       description: tool.description + ' In native search mode, loaded tools can be called directly.',
     }];
-    if (mode === "native" && tool.name === "mcp_call") return [];
     return [responseFunctionTool(tool)];
   });
 }
 
 /** A derived view of the very same discovery results used by the Runtime. */
-export function discoveryInputProjection(request: ModelRequest) {
+export function discoveryInputProjection(request: ModelRequest, mode: ResponsesToolSearchMode) {
   const results = new Map([...mcpDiscoveryResults(request.messages, request.sessionId)]
     .map(result => [result.messageIndex, result]));
   const nativeCalls = new Set<string>();
@@ -74,10 +73,11 @@ export function discoveryInputProjection(request: ModelRequest) {
         execution: "client", status: "completed", tools }];
       supplementalItems.push({ type: "message", role: "user",
         content: `[tool_search_result data]\ncall_id: ${JSON.stringify(message.toolCallId)}\n${receipt}` });
-    } else if (result && nativeCalls.has(result.searchCallId) && tools.length) {
-      // An archived search is loaded only after the exact complete result is read.
+    } else if (mode === 'native' && result && tools.length) {
+      // The single schema loader declares tools only after complete delivery.
       supplementalItems.push({ type: "additional_tools", role: "developer", tools });
-    } else if (result?.searchCallId === message.toolCallId) {
+    }
+    if (!nativeCalls.has(message.toolCallId) && result?.searchCallId === message.toolCallId) {
       // Portable function calls get the same compact receipt, with full schemas.
       // Keep archive pages and unrelated tool output byte-exact, and do not mutate
       // the stored messages used by revision/session checks or prefix replay.

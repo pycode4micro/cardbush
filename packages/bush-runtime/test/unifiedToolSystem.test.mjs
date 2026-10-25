@@ -59,6 +59,11 @@ test('retired guidance cannot be loaded through tools, host commands or script j
   const host = new InMemoryRuntimeHost({ toolRegistry: registry, dataRoot: join(f.root, 'runtime'), registerDefaultWorkspaceTools: false });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   assert.equal(registry.resolve('usage'), undefined);
+  const catalog = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
+  for (const name of ['mcp_call', 'parallel_tools', 'manage_tool_calls', 'manage_plugin_agents', 'await_subagents', 'read_subagent_conversation', 'request_permission', 'solution_selection']) {
+    assert.equal(registry.resolve(name), undefined, `${name} must have no host registration`);
+    assert.equal(catalog.some(tool => tool.name === name), false, `${name} must not be exposed`);
+  }
   for (const kind of ['runtime.get_usage', 'runtime.update_usage']) {
     assert.equal(host.capabilities().supportedCommands.includes(kind), false);
     await assert.rejects(host.sendCommand({ kind, payload: { sessionId: 's' } }), /Unsupported Runtime command/);
@@ -97,12 +102,12 @@ test('abort reports uncertain effects and retains the resource lease until an ig
   gate.resolve(); assert.equal((await second).kind, 'returned'); assert.equal(count, 2);
 });
 
-test('parallel_tools refuses state-changing and non-nestable calls before any child runs', async t => {
+test('retired parallel_tools fails without launching children', async t => {
   const f = fixture(t); let count = 0;
   f.add('mutator', () => { count++; return {}; }, { parallelSafe: true, manifest: { ...manifest, mutating: true } });
   f.add('reader', () => { count++; return {}; }, { parallelSafe: true });
   const result = await f.run('parallel_tools', { tool_calls: [{ name: 'mutator', arguments: {} }, { name: 'reader', arguments: {} }] });
-  assert.equal(result.kind, 'failed'); assert.equal(count, 0); assert.match(result.error.message, /read-only/);
+  assert.equal(result.kind, 'failed'); assert.equal(count, 0); assert.equal(result.execution.dispatch, 'not_started');
 });
 
 test('recovery facts distinguish read retries, permanent errors and uncertain nested mutations', async t => {
@@ -242,7 +247,7 @@ test('successful async scripts keep error-looking business values as ordinary re
 
 test('cancelling an unanswered async question persists cancellation without inferring an answer', async t => {
   const f = fixture(t);
-  const start = await f.run('request_user_input_async', { prompt: 'Choose a fixture version', options: ['Current', 'Previous'] });
+  const start = await f.run('request_user_input_async', { questions: [{ id: 'choice', prompt: 'Choose a fixture version', options: ['Current', 'Previous'] }] });
   await f.run('tasks', { action: 'stop', task_ids: [start.result.task_id] });
   const completion = JSON.parse((await f.deliveries.find(item => item.id === start.result.task_id).message).content);
   assert.equal(completion.status, 'cancelled');
@@ -320,17 +325,17 @@ test('a patch that cannot restore a write keeps recorded effects and requires in
 
 test('async question yields immediately, independent tools run, answer arrives once, and other sessions cannot inspect it', async t => {
   const f = fixture(t); f.add('independent', () => ({ done: true }));
-  const start = await f.run('request_user_input_async', { prompt: '请确认这份报告中应该保留哪个版本的数据？', options: ['保留当前版本', '采用已校验的新版本'] });
+  const start = await f.run('request_user_input_async', { questions: [{ id: 'choice', prompt: '请确认这份报告中应该保留哪个版本的数据？', options: ['保留当前版本', '采用已校验的新版本'] }] });
   assert.equal(start.kind, 'returned'); const id = start.result.task_id;
   assert.equal(f.broker.list('s')[0].blocking, false);
   assert.equal((await f.run('independent', {})).result.done, true);
   const waiting = await f.run('tasks', { action: 'wait', task_ids: [id], yield_time_ms: 5 });
   assert.equal(waiting.kind, 'returned', JSON.stringify(waiting)); assert.equal(waiting.result.tasks[0].status, 'waiting_user');
   assert.equal((await f.run('tasks', { action: 'inspect', task_ids: [id] }, undefined, 'other')).kind, 'failed');
-  const request = f.broker.list('s')[0]; f.broker.answer({ selectionId: request.selectionId, sessionId: 's', turnId: 't', kind: 'option', optionIndex: 1 });
+  const request = f.broker.list('s')[0]; f.broker.answer({ selectionId: request.selectionId, sessionId: 's', turnId: 't', kind: 'answers', answers: [{ questionId: 'choice', kind: 'option', optionIndex: 1 }] });
   await f.deliveries[0].message;
   const result = await f.run('tasks', { action: 'inspect', task_ids: [id] });
-  assert.equal(result.result.tasks[0].result.value.text, '采用已校验的新版本');
+  assert.equal(result.result.tasks[0].result.value.answers[0].text, '采用已校验的新版本');
   const repeat = await f.run('tasks', { action: 'inspect', task_ids: [id], after: result.result.after });
   assert.equal(repeat.result.tasks[0].unchanged, true); assert.equal('result' in repeat.result.tasks[0], false);
   assert.equal(f.deliveries.length, 1);
@@ -346,7 +351,7 @@ test('async multi-question request keeps one task pending until the full answer 
   const request = f.broker.list('s')[0];
   assert.equal(request.blocking, false);
   assert.equal((await f.run('independent', {})).result.done, true);
-  assert.equal((await f.run('request_user_input_async', { prompt: '重复提问', options: ['忽略'] })).kind, 'failed');
+  assert.equal((await f.run('request_user_input_async', { questions: [{ id: 'choice', prompt: '重复提问', options: ['忽略'] }] })).kind, 'failed');
   const identity = { selectionId: request.selectionId, sessionId: 's', turnId: 't' };
   const first = { questionId: 'version', kind: 'option', optionIndex: 1 };
   assert.throws(() => f.broker.answer({ ...identity, kind: 'answers', answers: [first] }));
@@ -577,14 +582,14 @@ for (const mode of ['question', 'script']) test(`host model loop continues indep
     const event = (sequence, kind, rest = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId, sequence, kind, createdAt: new Date().toISOString(), ...rest });
     if (round <= 2) {
       const name = round === 2 ? 'independent' : mode === 'question' ? 'request_user_input_async' : 'run_tools';
-      const input = round === 2 ? {} : mode === 'question' ? { prompt: '报告采用哪个已核实的数据版本？', options: ['最新版本', '上个版本'] } : { code: 'const r = await tools.fixture_data({}); return r.rows.sort((a,b)=>b-a).slice(0,2);' };
+      const input = round === 2 ? {} : mode === 'question' ? { questions: [{ id: 'choice', prompt: '报告采用哪个已核实的数据版本？', options: ['最新版本', '上个版本'] }] } : { code: 'const r = await tools.fixture_data({}); return r.rows.sort((a,b)=>b-a).slice(0,2);' };
       yield event(0, 'tool_call_delta', { index: 0, toolCallId: `call-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(input) });
       yield event(1, 'response_completed', { finishReason: 'tool_calls' }); return;
     }
     assert.ok(independent);
     if (mode === 'question') {
       const pending = await host.sendCommand({ kind: 'runtime.list_solution_selections', payload: { sessionId: 'host-session' } });
-      if (pending.length) await host.sendCommand({ kind: 'runtime.answer_solution_selection', payload: { selectionId: pending[0].selectionId, sessionId: 'host-session', turnId: 'host-turn', kind: 'option', optionIndex: 0 } });
+      if (pending.length) await host.sendCommand({ kind: 'runtime.answer_solution_selection', payload: { selectionId: pending[0].selectionId, sessionId: 'host-session', turnId: 'host-turn', kind: 'answers', answers: [{ questionId: 'choice', kind: 'option', optionIndex: 0 }] } });
     }
     yield event(0, 'text_delta', { delta: '完成。' }); yield event(1, 'response_completed', { finishReason: 'stop' });
   } } });

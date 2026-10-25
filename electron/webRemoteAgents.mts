@@ -7,30 +7,26 @@ import { AgentHttpClient } from './agentHttpClient.mjs';
 import type { AgentInfo } from './agentTypes.js';
 import { WebError } from './webCommon.mjs';
 import type { ModelSettingsRepository } from './webModelSettings.mjs';
+import { blockedRemoteAddress as blockedAddress, createSshRemoteClient, remoteSshSchema, remoteSshView, RemoteSshTrustRequired, type RemoteSsh, type RemoteSshView } from './webRemoteSsh.mjs';
 
 export const remoteAgentToken = (secret: string, userId: string) => createHmac('sha256', secret).update(`remote-agents:${userId}`).digest('hex');
 export const remoteIdentity = (secret: string, ...parts: string[]) => createHmac('sha256', secret).update(JSON.stringify(parts)).digest('hex');
-type Connection = { id: string; name: string; description: string; url: string; token: string; enabled: boolean; userIds: string[]; agentId: string; verifiedAt: string; boundUserId?: string; deleted?: boolean };
-export type RemoteConnectionView = Omit<Connection, 'token'> & { hasToken: boolean };
+type Connection = { id: string; name: string; description: string; url: string; token: string; transport?: 'http' | 'ssh'; ssh?: RemoteSsh; enabled: boolean; userIds: string[]; agentId: string; verifiedAt: string; boundUserId?: string; deleted?: boolean };
+export type RemoteConnectionView = Omit<Connection, 'token' | 'ssh'> & { hasToken: boolean; ssh?: RemoteSshView };
 export type RemoteClient = Pick<AgentHttpClient, 'info' | 'call' | 'events' | 'close'>;
-export type RemoteClientFactory = (connection: Pick<Connection, 'url' | 'token'> & { agentId?: string }) => Promise<RemoteClient>;
+export type RemoteClientFactory = (connection: Pick<Connection, 'url' | 'token' | 'transport' | 'ssh'> & { agentId?: string }) => Promise<RemoteClient>;
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,160}$/);
 const inputSchema = z.object({
   id: identifier, name: z.string().trim().min(1).max(120), description: z.string().trim().max(1000).default(''),
-  url: z.string().trim().url().max(2048), token: z.string().trim().max(8192).optional(),
-  enabled: z.boolean(), userIds: z.array(identifier).max(1),
+  url: z.string().trim().url().max(2048).optional(), token: z.string().trim().max(8192).optional(),
+  transport: z.enum(['http', 'ssh']).default('http'), ssh: remoteSshSchema.optional(),
+  enabled: z.boolean(), userIds: z.array(identifier).max(10000),
 }).strict();
 const commandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('save'), revision: z.number().int().positive(), agent: inputSchema }).strict(),
   z.object({ action: z.literal('delete'), revision: z.number().int().positive(), id: identifier }).strict(),
   z.object({ action: z.literal('test'), agent: inputSchema }).strict(),
 ]);
-function blockedAddress(address: string) {
-  const ip = address.toLowerCase().replace(/^\[|\]$/g, '');
-  if (ip.includes(':')) return ip === '::' || ip === '::1' || ip.startsWith('::ffff:') || /^fe[89ab]/.test(ip) || ip.startsWith('ff');
-  const [a, b] = ip.split('.').map(Number);
-  return a === 0 || a === 127 || a === 169 && b === 254 || a >= 224;
-}
 function privateAddress(address: string) {
   const [a, b] = address.split('.').map(Number);
   return a === 10 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || /^f[cd]/i.test(address);
@@ -46,6 +42,10 @@ export function remoteAgentUrl(value: string) {
 /** Resolve once and pin that address in the connector. Redirects are also disabled
  * by AgentHttpClient, so a registry entry cannot rebound into the local broker. */
 export const createRemoteClient: RemoteClientFactory = async connection => {
+  if (connection.transport === 'ssh') {
+    if (!connection.ssh) throw new WebError(400, '缺少 SSH 隧道配置。');
+    return createSshRemoteClient({ ...connection, ssh: connection.ssh });
+  }
   const url = new URL(remoteAgentUrl(connection.url));
   const addresses = await lookup(url.hostname.replace(/^\[|\]$/g, ''), { all: true });
   if (!addresses.length || addresses.some(item => blockedAddress(item.address)) ||
@@ -97,7 +97,7 @@ export class WebRemoteAgents {
     if (!Array.isArray(entries)) throw new Error('Invalid remote Agent registry.');
     this.#connections = entries; this.#revision = row.revision;
   }
-  view() { return { revision: this.#revision, agents: this.#connections.filter(item => !item.deleted).map(({ token, ...item }) => ({ ...item, hasToken: Boolean(token) })) }; }
+  view(): { revision: number; agents: RemoteConnectionView[] } { return { revision: this.#revision, agents: this.#connections.filter(item => !item.deleted).map(({ token, ssh, boundUserId: _legacyBinding, ...item }) => ({ ...item, hasToken: Boolean(token), ...(ssh ? { ssh: remoteSshView(ssh) } : {}) })) }; }
   async list(userId: string) {
     await this.refresh();
     return this.#connections.filter(item => !item.deleted && item.enabled && item.userIds.includes(userId)).map(({ id, name, description, agentId }) => ({ id, name, description, agentId }));
@@ -116,29 +116,47 @@ export class WebRemoteAgents {
     let next = this.#connections.slice();
     if (command.action === 'delete') {
       if (!next.some(item => item.id === command.id)) throw new WebError(404, '远程 Agent 不存在。');
-      // Keep only the identity binding after deletion: removing and re-registering
-      // a connection must not hand another person's remote workspace to a new user.
-      next = next.map(item => item.id === command.id ? { ...item, token: '', enabled: false, userIds: [], deleted: true } : item);
+      // Keep a tombstone so old task IDs cannot regain access through this ID.
+      next = next.map(item => item.id === command.id ? { ...item, ssh: undefined, token: '', enabled: false, userIds: [], deleted: true } : item);
     } else {
       const input = command.agent, previous = next.find(item => item.id === input.id);
       if (previous?.deleted) throw new WebError(400, '该连接已删除，请使用新的连接标识。');
-      const url = remoteAgentUrl(input.url);
+      const transport = input.transport;
+      if (previous && transport !== (previous.transport ?? 'http')) throw new WebError(400, '已有连接的连接方式不可替换，请新增远程 Agent。');
+      let ssh: RemoteSsh | undefined;
+      if (transport === 'ssh') {
+        if (!input.ssh) throw new WebError(400, '请填写 SSH 隧道配置。');
+        const current = input.ssh, saved = previous?.ssh;
+        if (saved && ['host', 'port', 'username', 'remotePort', 'fingerprint'].some(key => current[key as keyof RemoteSsh] !== saved[key as keyof RemoteSsh]))
+          throw new WebError(400, '已有连接的 SSH 目标和指纹不可替换，请新增远程 Agent。');
+        const sameAuth = current.authentication === saved?.authentication;
+        ssh = { ...current,
+          ...(current.authentication === 'password'
+            ? { password: current.password || (sameAuth ? saved?.password : undefined), privateKey: undefined, passphrase: undefined }
+            : { privateKey: current.privateKey || (sameAuth ? saved?.privateKey : undefined),
+                passphrase: current.privateKey ? current.passphrase : current.passphrase || (sameAuth ? saved?.passphrase : undefined), password: undefined }),
+        };
+        if (ssh.authentication === 'key' ? !ssh.privateKey?.trim() : !ssh.password) throw new WebError(400, '请填写 SSH 私钥或登录密码。');
+        if (command.action !== 'test' && !ssh.fingerprint) throw new WebError(400, '请先检测连接并核对 SSH 服务器指纹。');
+      } else if (input.ssh) throw new WebError(400, 'HTTP 直连不能包含 SSH 配置。');
+      if (transport === 'http' && !input.url) throw new WebError(400, '请填写远程服务地址。');
+      const url = ssh ? `http://127.0.0.1:${ssh.remotePort}/` : remoteAgentUrl(input.url!);
       if (previous && url !== previous.url) throw new WebError(400, '已有连接的服务地址不可替换，请新增远程 Agent。');
       if (input.userIds.some(id => !validUsers.has(id))) throw new WebError(400, '授权人员已删除或不存在，请刷新人员列表。');
-      if (previous?.boundUserId && input.userIds.some(id => id !== previous.boundUserId)) throw new WebError(403, '远程实例已经绑定人员。为其他人员部署独立实例和数据目录后再注册。');
       const token = input.token || previous?.token;
       if (!token) throw new WebError(400, '请填写远程 Agent 访问令牌。');
       // A disabled connection can be revoked while its remote host is offline.
-      const verify = command.action === 'test' || input.enabled || !previous || Boolean(input.token);
+      const verify = command.action === 'test' || input.enabled || !previous || Boolean(input.token) || JSON.stringify(ssh) !== JSON.stringify(previous.ssh);
       let info: AgentInfo | undefined;
       if (verify) {
         let client: RemoteClient | undefined;
         try {
-          client = await this.clientFactory({ url, token, agentId: previous?.agentId });
+          client = await this.clientFactory({ url, token, transport, ssh, agentId: previous?.agentId });
           info = await client.info();
           if (info.capabilities.delegation !== true || info.capabilities.webRestricted === true) throw new WebError(400, '目标必须是支持远程委派的独立 CardBush Agent 服务。');
           if (previous && previous.agentId !== info.id) throw new WebError(409, '远程 Agent 身份已改变，请核实后新增连接。');
         } catch (error) {
+          if (error instanceof RemoteSshTrustRequired && command.action === 'test') return { ok: false, needsTrust: true, fingerprint: error.fingerprint };
           if (error instanceof WebError) throw error;
           throw new WebError(502, '无法验证远程 Agent，请检查服务地址、访问令牌、证书及服务版本。');
         } finally { client?.close(); }
@@ -146,10 +164,8 @@ export class WebRemoteAgents {
       const agentId = info?.id ?? previous!.agentId;
       const historical = next.filter(item => item.agentId === agentId && item.id !== input.id);
       if (historical.some(item => !item.deleted)) throw new WebError(409, '此远程 Agent 实例已经注册，请编辑已有连接。');
-      const boundUserId = previous?.boundUserId ?? historical.find(item => item.boundUserId)?.boundUserId ?? input.userIds[0];
-      if (boundUserId && input.userIds.some(id => id !== boundUserId)) throw new WebError(403, '此远程实例曾绑定其他人员，不能跨账号复用其文件和会话。请部署新的独立实例。');
       if (command.action === 'test') return { ok: true, agentId: info!.id, name: info!.name, delegation: true };
-      const entry: Connection = { ...input, token, url, userIds: [...new Set(input.userIds)], agentId, boundUserId, verifiedAt: info ? new Date().toISOString() : previous!.verifiedAt };
+      const entry: Connection = { ...input, token, url, transport, ssh, userIds: [...new Set(input.userIds)], agentId, verifiedAt: info ? new Date().toISOString() : previous!.verifiedAt };
       next = next.filter(item => item.id !== entry.id).concat(entry);
       if (next.filter(item => !item.deleted).length > 50) throw new WebError(400, '最多注册 50 个远程 Agent。');
     }

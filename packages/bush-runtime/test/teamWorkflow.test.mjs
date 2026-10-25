@@ -1,3 +1,5 @@
+import { RuntimeTaskTools } from '../dist/taskTools.js';
+import { RuntimeTurnSignals } from '../dist/turnSignals.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, rm, readFile, writeFile, readdir } from 'node:fs/promises';
@@ -13,7 +15,7 @@ async function setup(t, run) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-team-workflow-'));
   t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-team-workflow-')); await rm(root, { recursive: true, force: true }); });
   const agents = new RegisteredAgentStore(join(root, 'agents'));
-  for (const id of ['stock', 'shipping', 'review']) await agents.put({ id, name: id, system_prompt: `${id} role`, memory: 'none' }, 0);
+  for (const id of ['stock', 'shipping', 'review']) await agents.put({ id, name: id, system_prompt: `${id} role` }, 0);
   const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), saved = new Map();
   const subagents = registerSubagentTool(registry, tasks, run, { agents, saveChildRequest: async request => { saved.set(request.sessionId, structuredClone(request)); }, loadChildRequest: async id => saved.get(id) });
   const manager = new TeamWorkflowManager(agents, subagents.dispatch, { directory: join(root, 'teams') });
@@ -25,8 +27,17 @@ async function setup(t, run) {
     return registration.execute({ input: registration.decodeInput(input), requestId: 'r', sessionId: 'parent', turnId: 'turn', toolCall: { id: `call-${++serial}` },
       signal, turn: { request, contextMessages: request.messages }, capabilityIds: [], invokeTool, recordWorkspaceChange: () => {} });
   };
+  const signals = new RuntimeTurnSignals();
+  const observer = new RuntimeTaskTools((context, promises, mode, signal, duration) => signals.wait(context.sessionId, context.turnId, promises, mode, signal, duration));
+  observer.addSource(context => manager.taskHandles(context.sessionId)); observer.register(registry);
+  const observe = async (input, overrides = {}, signal = parent.signal) => {
+    const tool = registry.resolve('tasks');
+    const output = await tool.execute({ input: tool.decodeInput({ ...input, yield_time_ms: input.yield_time_ms ?? 10000 }), sessionId: 'parent', turnId: 'turn', signal,
+      turn: { request: { metadata: {}, ...overrides } } });
+    return input.action === 'list' ? output.tasks[0] : output.tasks[0]?.result;
+  };
   t.after(() => manager.close());
-  return { root, manager, call, agents, parent, tasks, subagents };
+  return { root, manager, call, observe, agents, parent, tasks, subagents };
 }
 const flow = { id: 'fulfil', name: 'Fulfilment', max_parallel: 2, nodes: [
   { id: 'stock', agent_id: 'stock', prompt: 'Check inventory' },
@@ -50,7 +61,7 @@ test('Team canvas runs give clean members persistent assignments and let them in
   const inspect = async (name, input) => { assert.equal(name, 'design'); assert.deepEqual(input, { action: 'inspect', path }); reads++; return { path, revision: String(reads), document: canvas }; };
   await f.call({ action: 'save', definition: flow, expected_revision: 0 });
   const started = await f.call({ action: 'run', team_id: flow.id, input: 'Update the desk', canvas_path: path }, {}, undefined, inspect);
-  const finished = await f.call({ action: 'wait', run_id: started.run_id, yield_time_ms: 10000 });
+  const finished = await f.observe({ action: 'wait', task_ids: [started.run_id], yield_time_ms: 10000 });
   assert.equal(finished.status, 'completed'); assert.equal(reads, 1, 'background members must not reuse the finished parent tool invocation');
   const expectedCanvas = { path, assignments: { stock: ['changes'], shipping: ['release'], review: [] } };
   assert.deepEqual(finished.canvas, expectedCanvas);
@@ -78,7 +89,7 @@ test('bush-it presentation survives execution-only edits and persistence without
   t.after(() => reopened.close());
   assert.equal((await reopened.configure({ action: 'get', team_id: flow.id })).definition.presentation.markdown, markdown);
   const run = await f.call({ action: 'run', team_id: flow.id, input: 'Check order 42' });
-  const finished = await f.call({ action: 'wait', run_id: run.run_id, yield_time_ms: 10000 });
+  const finished = await f.observe({ action: 'wait', task_ids: [run.run_id], yield_time_ms: 10000 });
   assert.equal(finished.status, 'completed');
   assert.equal(requests.length, 3);
   assert.doesNotMatch(JSON.stringify(requests), /PRESENTATION_ONLY_REASON/, 'article prose is not an instruction or inherited context');
@@ -91,11 +102,11 @@ test('Team completion notices deliver final outputs and deduplicate only complet
     workflow: { nodes: [{ id: 'final', depends_on: [] }] }, nodes: [{ id: 'final', taskId: 'attempt-1', status: 'completed', error: '', output: 'PRIVATE NODE OUTPUT' }] };
   const content = JSON.stringify(teamCompletionNotice(run));
   assert.equal(JSON.parse(content).nodes[0].output, 'PRIVATE NODE OUTPUT');
-  const call = { role: 'assistant', content: '', toolCalls: [{ id: 'wait', name: 'team', argumentsText: JSON.stringify({ action: 'wait', run_id: run.id }) }] };
-  const receipt = { role: 'tool', toolCallId: 'wait', content: JSON.stringify(teamRunResult(run, ['final'])) };
+  const call = { role: 'assistant', content: '', toolCalls: [{ id: 'wait', name: 'tasks', argumentsText: JSON.stringify({ action: 'wait', task_ids: [run.id] }) }] };
+  const receipt = { role: 'tool', toolCallId: 'wait', content: JSON.stringify({ tasks: [{ task_id: run.id, kind: 'team', result: teamRunResult(run, ['final']) }] }) };
   assert.equal(teamCompletionAlreadyRead(content, [call, receipt]), true);
   const forwarded = { ...call, toolCalls: [{ ...call.toolCalls[0], name: 'call_tool',
-    argumentsText: JSON.stringify({ name: 'team', arguments: { action: 'wait', run_id: run.id } }) }] };
+    argumentsText: JSON.stringify({ name: 'tasks', arguments: { action: 'wait', task_ids: [run.id] } }) }] };
   assert.equal(teamCompletionAlreadyRead(content, [forwarded, receipt]), true, 'recalled calls consume the same native result without duplicate delivery');
   const unrelated = { ...forwarded, toolCalls: [{ ...forwarded.toolCalls[0],
     argumentsText: JSON.stringify({ name: 'other_tool', arguments: { action: 'wait', run_id: run.id } }) }] };
@@ -103,10 +114,10 @@ test('Team completion notices deliver final outputs and deduplicate only complet
   const restored = { ...run, nodes: [{ output: run.nodes[0].output, error: '', status: 'completed', id: 'final', taskId: 'attempt-1' }] };
   assert.equal(teamCompletionAlreadyRead(JSON.stringify(teamCompletionNotice(restored)), [call, receipt]), true, 'storage schema property order must not change the result version');
   assert.equal(teamCompletionAlreadyRead(content, [receipt]), false, 'arbitrary tool text does not acknowledge a Team result');
-  const status = { ...call, toolCalls: [{ ...call.toolCalls[0], argumentsText: JSON.stringify({ action: 'status', run_id: run.id }) }] };
+  const status = { ...call, toolCalls: [{ ...call.toolCalls[0], argumentsText: JSON.stringify({ action: 'list' }) }] };
   assert.equal(teamCompletionAlreadyRead(content, [status, receipt]), false, 'progress checks do not consume outputs');
   assert.equal(teamCompletionAlreadyRead(content, [call, { ...receipt, content: '{}' }]), false);
-  assert.equal(teamCompletionAlreadyRead(content, [call, { ...receipt, content: JSON.stringify({ ...teamRunResult(run, ['final']), output_node_ids: ['upstream'] }) }]), false,
+  assert.equal(teamCompletionAlreadyRead(content, [call, { ...receipt, content: JSON.stringify({ tasks: [{ task_id: run.id, kind: 'team', result: { ...teamRunResult(run, ['final']), output_node_ids: ['upstream'] } }] }) }]), false,
     'reading only intermediate evidence must not consume the final delivery');
   assert.equal(teamCompletionAlreadyRead('not JSON', [call, receipt]), false);
   const resumed = { ...run, nodes: [{ ...run.nodes[0], taskId: 'attempt-2' }] };
@@ -129,7 +140,7 @@ test('Team stops active nodes, leaves downstream work pending and respects disab
   assert.equal(executed.length, 0);
   const run = await f.call(input); await started.promise;
   assert.equal(f.manager.hasActiveRuns('parent'), true);
-  const stopped = await f.call({ action: 'stop', run_id: run.run_id });
+  const stopped = await f.observe({ action: 'stop', task_ids: [run.run_id] });
   assert.equal(stopped.status, 'stopped');
   assert.equal(f.manager.hasActiveRuns(), false);
   assert.equal(stopped.nodes[2].status, 'pending');
@@ -171,11 +182,11 @@ test('explicit resume retains completed nodes and resumes the failed employee co
   });
   await f.call({ action: 'save', definition: flow, expected_revision: 0 });
   const run = await f.call({ action: 'run', team_id: 'fulfil', input: 'Order 42' });
-  const failed = await f.call({ action: 'wait', run_id: run.run_id });
+  const failed = await f.observe({ action: 'wait', task_ids: [run.run_id] });
   assert.equal(failed.agents, undefined, 'status receipts do not duplicate employee system prompts');
   assert.equal(failed.status, 'failed'); const session = failed.nodes[2].sessionId;
   await f.call({ action: 'resume', run_id: run.run_id });
-  const finished = await f.call({ action: 'wait', run_id: run.run_id });
+  const finished = await f.observe({ action: 'wait', task_ids: [run.run_id] });
   assert.equal(finished.status, 'completed', JSON.stringify(finished));
   assert.equal(finished.nodes[2].sessionId, session);
   assert.notEqual(finished.result_version, failed.result_version, 'resumed results must not be deduplicated against the failed attempt');
@@ -186,22 +197,22 @@ test('Team wait returns final outputs by default, selected evidence on demand, a
   const f = await setup(t, async request => outcome(request, `Evidence ${request.metadata.teamMemberId}`));
   await f.call({ action: 'save', definition: flow, expected_revision: 0 });
   const run = await f.call({ action: 'run', team_id: flow.id, input: 'Order 42' });
-  const final = await f.call({ action: 'wait', run_id: run.run_id });
+  const final = await f.observe({ action: 'wait', task_ids: [run.run_id] });
   assert.deepEqual(final.result_node_ids, ['review']);
   assert.deepEqual(final.output_node_ids, ['review']);
   assert.deepEqual(final.nodes.map(node => node.output), [undefined, undefined, 'Evidence review']);
   assert.ok(final.nodes.every(node => node.has_output));
   assert.match(final.guidance, /not independent validation/);
-  const evidence = await f.call({ action: 'wait', run_id: run.run_id, node_ids: ['stock', 'shipping'] });
+  const evidence = await f.observe({ action: 'wait', task_ids: [run.run_id], node_ids: ['stock', 'shipping'] });
   assert.deepEqual(evidence.nodes.map(node => node.output), ['Evidence stock', 'Evidence shipping', undefined]);
   assert.equal(evidence.result_version, final.result_version);
   const native = await f.manager.configure({ action: 'status', run_id: run.run_id });
   assert.deepEqual(native.nodes.map(node => node.output), ['Evidence stock', 'Evidence shipping', 'Evidence review']);
   assert.deepEqual(teamCompletionNotice(native).nodes.map(node => node.output), [undefined, undefined, 'Evidence review']);
   for (const node_ids of [[], ['stock', 'stock'], 'stock', [null], ['unknown']]) {
-    await assert.rejects(f.call({ action: 'wait', run_id: run.run_id, node_ids }), /node/i);
+    await assert.rejects(f.observe({ action: 'wait', task_ids: [run.run_id], node_ids }), /node/i);
   }
-  await assert.rejects(f.call({ action: 'status', run_id: run.run_id, node_ids: ['stock'] }), /Invalid/);
+  assert.ok((await f.observe({ action: 'inspect', task_ids: [run.run_id], node_ids: ['stock'] })).nodes.find(node => node.id === 'stock').output);
 });
 
 test('Team wait includes every final branch without truncating their outputs', async t => {
@@ -209,7 +220,7 @@ test('Team wait includes every final branch without truncating their outputs', a
   const f = await setup(t, async request => outcome(request, answer + request.metadata.teamMemberId));
   await f.call({ action: 'save', definition: { ...flow, nodes: flow.nodes.slice(0, 2) }, expected_revision: 0 });
   const run = await f.call({ action: 'run', team_id: flow.id, input: 'Order 42' });
-  const final = await f.call({ action: 'wait', run_id: run.run_id });
+  const final = await f.observe({ action: 'wait', task_ids: [run.run_id] });
   assert.deepEqual(final.result_node_ids, ['stock', 'shipping']);
   assert.deepEqual(final.nodes.map(node => node.output), [answer + 'stock', answer + 'shipping']);
 });
@@ -221,12 +232,12 @@ test('cancelling a wait leaves Team running and its results readable by a later 
   await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0]] }, expected_revision: 0 });
   const run = await f.call({ action: 'run', team_id: flow.id, input: 'Order 42' });
   await started.promise;
-  const waiting = f.call({ action: 'wait', run_id: run.run_id });
+  const waiting = f.observe({ action: 'wait', task_ids: [run.run_id] });
   f.parent.abort();
-  await assert.rejects(waiting, /cancelled/);
+  await assert.rejects(waiting, { name: 'AbortError' });
   assert.equal(f.manager.hasActiveRuns(), true);
   release.resolve();
-  const final = await f.call({ action: 'wait', run_id: run.run_id }, {}, new AbortController().signal);
+  const final = await f.observe({ action: 'wait', task_ids: [run.run_id] }, {}, new AbortController().signal);
   assert.equal(final.status, 'completed');
   assert.equal(final.nodes[0].output, 'Finished after cancelled wait');
 });
@@ -235,7 +246,7 @@ test('persisted orphaned Team executions become interrupted, without replaying c
   const f = await setup(t, async request => outcome(request, 'Done'));
   await f.call({ action: 'save', definition: flow, expected_revision: 0 });
   const run = await f.call({ action: 'run', team_id: 'fulfil', input: 'Order 42' });
-  await f.call({ action: 'wait', run_id: run.run_id }); await f.manager.close();
+  await f.observe({ action: 'wait', task_ids: [run.run_id] }); await f.manager.close();
   const directory = join(f.root, 'teams', 'runs'), file = (await readdir(directory)).find(name => name.endsWith('.json'));
   const record = JSON.parse(await readFile(join(directory, file), 'utf8'));
   record.definition.status = 'running'; record.definition.nodes[2].status = 'running';
@@ -262,11 +273,11 @@ test('Team discovery and progress omit instructions and outputs; explicit reads 
   const get = await f.call({ action: 'get', team_id: definition.id });
   assert.equal(get.definition.nodes[0].prompt, definition.nodes[0].prompt);
   const run = await f.call({ action: 'run', team_id: definition.id, input: 'PRIVATE TASK INPUT' });
-  const full = await f.call({ action: 'wait', run_id: run.run_id });
+  const full = await f.observe({ action: 'wait', task_ids: [run.run_id] });
   assert.equal(full.nodes[0].output, answer);
   assert.doesNotMatch(JSON.stringify(full), /PRIVATE NODE INSTRUCTIONS|PRIVATE TASK INPUT|system_prompt/);
-  const status = await f.call({ action: 'status', run_id: run.run_id });
-  assert.equal(status.nodes[0].has_output, true);
+  const status = await f.observe({ action: 'list', task_ids: [run.run_id] });
+  assert.equal(status.status, 'completed');
   assert.equal(status.status, 'completed');
   assert.doesNotMatch(JSON.stringify(status), /VERIFIED FULL NODE RESULT|PRIVATE NODE INSTRUCTIONS|PRIVATE TASK INPUT|system_prompt/);
   const history = await f.call({ action: 'list', section: 'runs' });

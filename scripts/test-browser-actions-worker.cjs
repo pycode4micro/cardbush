@@ -157,6 +157,12 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate('frame.contentWindow.clicked'), true);
     assert.ok(await evaluate('scrollY > 0 && frame.contentWindow.scrollY > 0')); tests++;
 
+    await load('<style>body{height:4000px}</style><iframe id="frame" style="position:absolute;top:2400px;width:500px;height:250px" srcdoc="<button style=width:180px;height:50px>Outer frame scroll only</button>"></iframe>');
+    const outerScroll = await invoke('click', { uid: await uid('frame.contentDocument.querySelector("button")') });
+    await succeeds(outerScroll);
+    assert.ok(await evaluate('scrollY>0 && frame.contentWindow.scrollY===0'));
+    assert.equal(outerScroll.structuredContent.autoScrolled,true,'outer frame scrolling must be included in the receipt');tests++;
+
     await load('<button id="target" style="position:absolute;left:-30px;top:100px;transform:rotate(20deg);width:220px">Transformed and clipped</button>');
     await succeeds(await click('#target'));
     assert.equal((await evaluate('audit')).clicks, 1); tests++;
@@ -205,6 +211,87 @@ app.whenReady().then(async () => {
     await window.loadFile(path.join(directory, 'fixture.html'));
     const navigated = await invoke('take_snapshot', { cursor: first.structuredContent.nextCursor });
     assert.equal(navigated.structuredContent.error.code, 'snapshot_document_changed'); tests++;
+    // Observable state, bounded inspection and reliable result conditions.
+    await load('<button id="menu" aria-expanded="false" aria-haspopup="menu" aria-controls="options">Menu</button><div id="options" role="menu"></div><input id="mixed" type="checkbox"><input id="date" value="2026-10-17"><div id="results" aria-busy="true">Loading</div><p>Static prose</p>', 'mixed.indeterminate=true');
+    const stateSnapshot = await invoke('take_snapshot', { interactiveOnly:true, inspectLimit:2 });
+    assert.ok(!stateSnapshot.isError,JSON.stringify(stateSnapshot));
+    assert.match(stateSnapshot.content[0].text,/expanded:false/);
+    assert.match(stateSnapshot.content[0].text,/haspopup:"menu"/);
+    assert.match(stateSnapshot.content[0].text,/checked:"mixed"/);
+    assert.doesNotMatch(stateSnapshot.content[0].text,/Static prose/);
+    assert.equal(stateSnapshot.structuredContent.inspection.checkedNodes,2);
+    assert.equal(stateSnapshot.structuredContent.virtualizedTotal,'unknown'); tests++;
+    const dateUid=await selectorUid('#date'),resultsUid=await selectorUid('#results'),menuUid=await selectorUid('#menu');
+    await evaluate(`setTimeout(()=>{date.value='2026-10-18';results.setAttribute('aria-busy','false');results.textContent='Ready'},150);true`);
+    const waited=await invoke('wait_for',{conditions:[{kind:'value',uid:dateUid,value:'2026-10-18'},{kind:'state',uid:resultsUid,name:'busy',value:false},{kind:'text',text:'Loading',present:false}],timeout:2000});
+    assert.equal(waited.structuredContent.matched,true,JSON.stringify(waited));
+    assert.equal(events.length,0); tests++;
+    const timeout=await invoke('wait_for',{conditions:[{kind:'state',uid:menuUid,name:'expanded',value:true}],timeout:100});
+    assert.equal(timeout.structuredContent.error.code,'wait_for_timeout');
+    assert.equal(timeout.structuredContent.error.details.observations[0].state.expanded,false); tests++;
+    const missing=await invoke('wait_for',{conditions:[{kind:'state',uid:dateUid,name:'busy',value:false}],timeout:100});
+    assert.equal(missing.structuredContent.error.code,'wait_for_timeout','missing ARIA state is unknown'); tests++;
+    assert.equal((await invoke('wait_for',{text:'Ready',timeout:100})).structuredContent.matched,true); tests++;
+    await evaluate('menu.remove()');
+    assert.equal((await invoke('wait_for',{conditions:[{kind:'visible',uid:menuUid,value:false}],timeout:100})).structuredContent.matched,true); tests++;
+
+    // Different physical causes have different evidence; no recovery click is invented.
+    for (const [body,reason] of [
+      ['<button id="target" disabled>Disabled</button>','disabled'],
+      ['<div inert><button id="target">Inert</button></div>','inert'],
+      ['<button id="target" style="display:none">Hidden</button>','hidden'],
+      ['<button id="target" style="min-width:0;min-height:0;width:0;height:0;padding:0;border:0"></button>','zero_size'],
+      ['<button id="target" style="pointer-events:none">Transparent to pointer</button>','pointer_events_none'],
+      ['<button id="target">Covered</button><div class="cover" role="dialog" aria-label="Confirmation"></div>','covered'],
+      ['<div style="width:0;height:0;overflow:clip"><button id="target">Clipped</button></div>','clipped'],
+    ]) {
+      await load(body);
+      const result=await click('#target');
+      assert.equal(result.isError,true,JSON.stringify(result));
+      const details=result.structuredContent.error.details;
+      assert.equal(details.reason,reason,JSON.stringify(details));
+      assert.equal(details.inputDispatched,false);assert.equal(events.filter(e=>e.type==='mousePressed').length,0);
+      if(reason==='covered') {assert.equal(details.hitElement.role,'dialog');assert.equal(details.hitElement.name,'Confirmation');}
+      tests++;
+    }
+    await load('<button id="target" style="pointer-events:none"><span style="display:block;pointer-events:auto">Child receives input</span></button>');
+    await succeeds(await click('#target')); tests++;
+
+    // An overlay hit after scrolling must not claim that the page was untouched.
+    await load('<style>body{height:4000px}.cover{position:fixed}</style><button id="target" style="position:absolute;top:2600px">Offscreen covered</button><div class="cover"></div>');
+    const scrolledFailure=await click('#target');
+    assert.equal(scrolledFailure.structuredContent.error.details.autoScrolled,true);
+    assert.equal(scrolledFailure.structuredContent.error.details.inputDispatched,false);
+    assert.ok(await evaluate('scrollY>0')); tests++;
+    await load('<button id="target" aria-expanded="false">Open</button>', `target.onclick=()=>target.setAttribute('aria-expanded','true')`);
+    const post=await click('#target');await succeeds(post);
+    assert.equal(post.structuredContent.postState.target.state.expanded,true);
+    assert.equal(post.structuredContent.stability.stable,true);assert.ok(post.structuredContent.stability.frames>=2); tests++;
+
+    await load('<button id="target">Always moving</button>', `let x=0;const move=()=>{target.style.transform='translateX('+(x+=2)+'px)';requestAnimationFrame(move)};requestAnimationFrame(move)`);
+    const moving=await click('#target');
+    assert.equal(moving.structuredContent.error.code,'element_unstable',JSON.stringify(moving));
+    assert.equal(events.filter(e=>e.type==='mousePressed').length,0);tests++;
+    await load('<button id="target">Moves briefly</button>', `let count=0;const move=()=>{target.style.transform='translateX('+(++count*2)+'px)';if(count<5)requestAnimationFrame(move)};requestAnimationFrame(move)`);
+    await succeeds(await click('#target'));assert.equal((await evaluate('audit')).clicks,1);tests++;
+    await load('<button id="target">Hover starts movement</button>', `target.onmouseenter=()=>{let x=0;const move=()=>{target.style.transform='translateX('+(x+=2)+'px)';requestAnimationFrame(move)};requestAnimationFrame(move)}`);
+    const hoverMoving=await click('#target');
+    assert.equal(hoverMoving.structuredContent.error.code,'element_unstable',JSON.stringify(hoverMoving));
+    assert.equal(hoverMoving.structuredContent.error.details.mouseMoved,true);
+    assert.equal(events.filter(e=>e.type==='mousePressed').length,0);tests++;
+
+    await load('<button id="target">Rendering paused</button>', 'window.requestAnimationFrame=()=>0');
+    const paused=await click('#target');
+    assert.equal(paused.structuredContent.error.code,'element_unstable',JSON.stringify(paused));
+    assert.equal(paused.structuredContent.error.details.stability.reason,'frames_unavailable');
+    assert.equal(events.length,0);tests++;
+    await load('<div id="target">Not a value-bearing control</div>');
+    const emptyValue=await invoke('wait_for',{conditions:[{kind:'value',uid:await selectorUid('#target'),value:''}],timeout:100});
+    assert.equal(emptyValue.structuredContent.error.code,'wait_for_timeout',JSON.stringify(emptyValue));tests++;
+
+    await load('<input id="secret" type="password" value="never-echo-this-secret">');
+    const secret=await click('#secret'); await succeeds(secret);
+    assert.doesNotMatch(JSON.stringify(secret),/never-echo-this-secret/);tests++;
     await invoke('release_browser');
     console.log(`Browser native CDP regressions passed: ${tests} cases (hidden fixture only).`);
   } catch (error) { console.error(`Failed after ${tests} native cases`); throw error; }

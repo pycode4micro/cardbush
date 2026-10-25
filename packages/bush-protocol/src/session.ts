@@ -190,10 +190,6 @@ export const sessionEventSchema = z.discriminatedUnion("kind", [
     payload: sessionModelContractSchema,
   }),
   sessionEventEnvelopeSchema.extend({
-    kind: z.literal('model_contract_updated'),
-    payload: z.object({ expectedVersion: z.string().min(1), contract: sessionModelContractSchema }),
-  }),
-  sessionEventEnvelopeSchema.extend({
     kind: z.literal("messages_superseded"),
     payload: z.object({
       messageIds: z.array(z.string().min(1)).min(1),

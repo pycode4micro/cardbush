@@ -125,6 +125,57 @@ test('snapshot schema prevents ambiguous cursor queries and unrestricted full-pa
   assert.equal(snapshotSchema.safeParse({ fullText: true }).success, false);
   assert.equal(snapshotSchema.safeParse({ limit: 101 }).success, false);
   assert.equal(snapshotSchema.safeParse({ rootUid: 'cb_1', fullText: true }).success, true);
+  assert.equal(snapshotSchema.safeParse({ inspectLimit: 21 }).success, false);
+  assert.equal(snapshotSchema.safeParse({ cursor: 'abc', interactiveOnly: false }).success, false);
+  assert.equal(snapshotSchema.safeParse({ cursor: 'abc', inspectLimit: 1 }).success, false);
+});
+
+test('AX false, mixed, typed popup, numeric and related-node states survive compact and full-text views', async () => {
+  const properties = [
+    { name: 'expanded', value: { value: false } }, { name: 'checked', value: { value: 'mixed' } },
+    { name: 'haspopup', value: { value: 'menu' } }, { name: 'level', value: { value: 2 } },
+    { name: 'controls', value: { relatedNodes: [{ backendDOMNodeId: 99 }] } },
+  ];
+  const f = fixture([node(1, 'button', 'Menu', [], { properties })]);
+  for (const input of [{}, { rootUid: 'cb_1', fullText: true }]) {
+    const result = await f.read(input);
+    for (const expected of ['expanded:false', 'checked:"mixed"', 'haspopup:"menu"', 'level:2', 'controls:[cb_99]']) assert.ok(result.text.includes(expected), result.text);
+    assert.equal(result.structured.virtualizedTotal, 'unknown');
+  }
+  f.snapshots.clear('a');
+});
+
+test('interactive filtering retains disabled candidates and focusable custom elements without static prose', async () => {
+  const f = fixture([node(1,'button','Disabled',[],{properties:[{name:'disabled',value:{value:true}}]}),
+    node(2,'generic','Custom',[],{properties:[{name:'focusable',value:{value:true}}]}),
+    node(3,'StaticText','Prose'),node(4,'combobox','Choose'),node(5,'generic','Ordinary')]);
+  const result = await f.read({ interactiveOnly: true });
+  assert.equal(result.structured.matchedNodes, 3);
+  assert.match(result.text, /Disabled/); assert.match(result.text, /Custom/);
+  assert.doesNotMatch(result.text, /Prose|Ordinary/);
+  f.snapshots.clear('a');
+});
+
+test('geometry inspection is limited to first-page candidates and cached, with unchecked rows explicit', async () => {
+  const f = fixture(Array.from({length:1000},(_,i)=>node(i+1,'button',`Candidate ${i}`)));
+  let resolved = 0, released = 0;
+  const command = async (name, params) => {
+    if (name==='DOM.resolveNode') { resolved++; return {object:{objectId:`node-${params.backendNodeId}`}}; }
+    if (name==='Runtime.callFunctionOn') return {result:{value:{connected:true,hasArea:true,hidden:false,pointerEvents:'auto'}}};
+    if (name==='Runtime.releaseObject') { released++; return {}; }
+    return f.command(name);
+  };
+  const first = await f.snapshots.read(command, 'a', 1, {interactiveOnly:true,inspectLimit:20,limit:2});
+  assert.equal(resolved, 2); assert.equal(released, 2);
+  assert.equal(first.structured.inspection.checkedNodes, 2);
+  assert.match(first.text, /hitTest":"not_checked/);
+  const second = await f.snapshots.read(command,'a',1,{cursor:first.structured.nextCursor});
+  assert.doesNotMatch(second.text, /observation=/);
+  assert.match(second.text, /without observation were not inspected/);
+  assert.equal(resolved, 2);
+  assert.deepEqual(await f.snapshots.read(command,'a',1,{cursor:first.structured.nextCursor}),second);
+  assert.ok(JSON.stringify(second).length < 10000);
+  f.snapshots.clear('a');
 });
 
 test('the public MCP result delivers each page text once and releases cursors with the browser', async () => {

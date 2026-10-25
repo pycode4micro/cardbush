@@ -53,9 +53,6 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
         <label>ID<input required disabled={agent.revision > 0} value={agent.definition.id} onChange={event => changeAgent({ id: event.target.value })} /></label>
         <label>{t('职责说明', 'Description')}<textarea value={agent.definition.description} onChange={event => changeAgent({ description: event.target.value })} /></label>
         <label>{t('岗位指令', 'System prompt')}<textarea required rows={8} value={agent.definition.system_prompt} onChange={event => changeAgent({ system_prompt: event.target.value })} /></label>
-        <label>{t('记忆范围', 'Memory scope')}<select value={agent.definition.memory} onChange={event => changeAgent({ memory: event.target.value as RegisteredAgent['memory'] })}>
-          <option value="user">{t('此员工 · 当前主机', 'This agent · current host')}</option><option value="project">{t('此员工 · 项目', 'This agent · project')}</option><option value="local">{t('此员工 · 本地项目', 'This agent · local project')}</option><option value="none">{t('关闭长期记忆', 'No long-term memory')}</option>
-        </select></label>
         <label className="native-team-check"><input type="checkbox" checked={agent.definition.enabled} onChange={event => changeAgent({ enabled: event.target.checked })} />{t('启用员工', 'Enabled')}</label>
         <label className="native-team-check"><input type="checkbox" checked={agent.definition.guards.includes('read_only')} onChange={event => changeAgent({ guards: event.target.checked ? ['read_only'] : [] })} />{t('只读约束', 'Read-only guard')}</label>
         <details><summary>{t('工具与 Hooks', 'Tools and hooks')}</summary>

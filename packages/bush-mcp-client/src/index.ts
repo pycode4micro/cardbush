@@ -660,7 +660,7 @@ export class McpClientManager {
     const use = <T>(operation: () => Promise<T>): Promise<T> => {
       if (!isDeepStrictEqual(connection.tools.find(item => item.runtimeName === tool.runtimeName), tool)) {
         return Promise.reject(preflightMcpError('tool_definition_changed', 'This MCP tool changed before dispatch. Load its current definition before calling again.',
-          { serverId: connection.config.id, inputDispatched: false, recovery: { tool: 'mcp_search', action: 'load', query: tool.runtimeName } }));
+          { serverId: connection.config.id, inputDispatched: false, recovery: { tool: 'get_tool_schema', arguments: { name: tool.runtimeName } } }));
       }
       return this.#useConnection(connection, operation);
     };
@@ -1018,7 +1018,7 @@ export class McpClientManager {
   async #useConnection<T>(connection: ConnectedServer, operation: () => Promise<T>): Promise<T> {
     if (connection.draining || connection.retired) throw preflightMcpError('tool_definition_changed',
       `MCP service ${connection.config.id} is updating. This call was not dispatched; load the current tool definition before calling again.`,
-      { serverId: connection.config.id, inputDispatched: false, recovery: { tool: 'mcp_search', action: 'load' } });
+      { serverId: connection.config.id, inputDispatched: false, recovery: { tool: 'get_tool_schema', note: 'Load the exact name of the attempted tool.' } });
     connection.activeUses = (connection.activeUses ?? 0) + 1;
     try { return await operation(); }
     finally {

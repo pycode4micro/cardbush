@@ -64,7 +64,7 @@ export class RealtimeAgentDispatcher {
       undefined, { request, contextMessages: context.messages });
     if (outcome.kind !== 'returned') throw delegationError(outcome.error.code, outcome.error.message);
     if (native) return outcome.result;
-    return { ...(outcome.result as Record<string, unknown>), instructions: 'Request accepted; execution continues in the background. Continue the call. await_subagents registers a non-blocking result notification.' };
+    return { ...(outcome.result as Record<string, unknown>), instructions: 'Request accepted; execution continues in the background. Continue the call. tasks action=inspect registers a non-blocking result notification.' };
   }
 }
 

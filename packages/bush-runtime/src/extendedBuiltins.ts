@@ -1,6 +1,4 @@
-import { replacedToolPresentation } from './toolPresentation.js';
 import { randomUUID } from "node:crypto";
-import { resolveToolReferenceName } from './toolReferenceNames.js';
 import { omitToolImageData, omitToolImageDataFromText, snapshotMcpImages } from './toolImageContent.js';
 import { isAbsolute, join, resolve } from "node:path";
 import { authorizePath } from './workspaceAccessPolicy.js';
@@ -27,7 +25,6 @@ export function registerExtendedBuiltins(registry: ToolRegistry, options: Extend
   registerArchivedToolResult(registry, images, options.readToolResult, options.readToolResultText);
   registerImageInput(registry, images);
   registerSchedule(registry, options.automation);
-  registerParallel(registry);
 }
 
 function registerArchivedToolResult(
@@ -210,82 +207,6 @@ function automationReceipt(job: AutomationJob) {
     timeZone: job.timeZone, executionMode: job.executionMode, ...(job.nextRunAt ? { nextRunAt: job.nextRunAt } : {}),
     ...(last ? { last_run: { id: last.id, status: last.status, ...(last.finishedAt ? { finishedAt: last.finishedAt } : {}), ...(last.error ? { error: briefText(last.error) } : {}) } } : {}),
   };
-}
-
-function registerParallel(registry: ToolRegistry) {
-  registry.register<{ calls: Array<{ name: string; arguments: unknown; reason: string }> }>({
-    projectModelDefinition: replacedToolPresentation('run_tools'),
-    definition: {
-      name: "parallel_tools",
-      description: "Execute two or more independent, read-only, parallel-safe tools concurrently and aggregate successes and failures. This is not an Agent-delegation mechanism and does not accept subagent or team_delegate.",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["tool_calls"],
-        properties: {
-          tool_calls: {
-            type: "array",
-            minItems: 2,
-            maxItems: 32,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["name", "arguments"],
-              properties: {
-                name: { type: "string" },
-                arguments: { type: "object" },
-                reason: { type: "string" },
-              },
-            },
-          },
-        },
-      },
-    },
-    manifest: manifest("tools.parallel", false, "session"),
-    delegatesToolExecution: true,
-    nestedCallable: false,
-    parallelSafe: false,
-    decodeInput: (value) => {
-      const input = object(value);
-      if (!Array.isArray(input.tool_calls) || input.tool_calls.length < 2 || input.tool_calls.length > 32) {
-        throw new Error("tool_calls requires 2–32 calls.");
-      }
-      return {
-        calls: input.tool_calls.map((item) => {
-          const call = object(item);
-          return {
-            name: requiredText(call.name, "name"),
-            arguments: object(call.arguments),
-            reason: text(call.reason),
-          };
-        }),
-      };
-    },
-    execute: async (context) => {
-      const catalog = new Map(registry.catalog().map((item) => [item.definition.name, item]));
-      const calls = context.input.calls.map(call => ({ ...call, name: resolveToolReferenceName(call.name, context.turn) }));
-      const disallowed = calls.filter((call) => {
-        const entry = catalog.get(call.name);
-        return !entry?.parallelSafe || entry.manifest.mutating || entry.manifest.effect_kind === 'interaction' || registry.resolve(call.name)?.nestedCallable === false;
-      });
-      if (disallowed.length) {
-        throw new Error(`parallel_tools only accepts read-only parallel-safe tools: ${disallowed.map((item) => item.name).join(", ")}`);
-      }
-      const results = await Promise.all(calls.map(async (call) => {
-        try {
-          const child = await context.invokeTool(call.name, call.arguments, { record: true });
-          return { name: call.name, returned: true, result: child };
-        } catch (error) {
-          return { name: call.name, success: false, error: { code: "child_exception", message: error instanceof Error ? error.message : String(error) } };
-        }
-      }));
-      return success(context, {
-        results,
-        returned_count: results.filter((item) => item.returned === true).length,
-        failure_count: results.filter((item) => item.returned !== true).length,
-      }, [], ["tool_results"]);
-    },
-  });
 }
 
 function manifest(operation: string, mutating: boolean, scope: string) { return { effect_kind: mutating ? "local_state" : "observation", operation, risk: mutating ? "medium" : "low", owner: "runtime", dispatch_scope: scope, mutating }; }

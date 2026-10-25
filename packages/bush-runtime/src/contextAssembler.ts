@@ -185,10 +185,16 @@ export function assembleContextProjection(input: AssembleContextInput): {
       }];
     }
     if (turn.contextToolHandoff && source.length === turn.messages.length) {
-      const messages = turn.contextCheckpoint ? projectActiveTurnContext({ turnId: turn.turnId,
+      const projected = turn.contextCheckpoint ? projectActiveTurnContext({ turnId: turn.turnId,
         inputMessages: turn.messages.slice(0, turn.contextCheckpoint.inputMessageCount),
         generatedMessages: turn.messages.slice(turn.contextCheckpoint.inputMessageCount), checkpoint: turn.contextCheckpoint,
       }) : source.map(item => item.message);
+      // Coverage belongs to canonical facts. Apply it before a tool exchange
+      // becomes a synthetic record with no single canonical message ID;
+      // otherwise old evidence can reappear after a later checkpoint replaced it.
+      const ids = new Map(source.map(item => [item.message, item.messageId]));
+      const messages = projected.filter(message => !coveredMessages.has(ids.get(message) ?? ''));
+      validateConversation(messages);
       if (isRecordedToolHandoff(turn.contextToolHandoff)) return [{ turnId: turn.turnId, source,
         messages: recordedToolHandoffMessages(turn, turn.contextToolHandoff, messages) }];
       // Keep original user/instruction messages and any existing checkpoint that

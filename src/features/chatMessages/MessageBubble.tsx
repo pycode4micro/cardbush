@@ -1147,7 +1147,7 @@ function MessageBubbleView({
     !stoppedAssistantRound &&
     (isActiveAssistantTurn ||
       toolExecutions.length > 0 ||
-      assistantProgressExecutions.some(execution => execution.artifacts?.length || execution.name === 'mcp_call' || execution.name.startsWith('mcp__')) ||
+      assistantProgressExecutions.some(execution => execution.artifacts?.length || execution.name.startsWith('mcp__')) ||
       hasAssistantProgressSource(message, assistantProgressExecutions));
   const assistantCompletedAt =
     message.role === 'assistant' && !isActiveAssistantTurn

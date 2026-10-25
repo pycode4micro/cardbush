@@ -54,11 +54,11 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
     apply_patch: ['修改文件', 'Edit files'], edit_file: ['修改文件', 'Edit file'], write_file: ['写入文件', 'Write file'],
     terminal_stop: ['停止命令', 'Stop command'], terminal_list: ['查看终端任务', 'List terminal tasks'],
     search_skills: ['查找相关技能', 'Find relevant skills'], run_skill: ['使用技能', 'Use skill'],
-    mcp_search: ['查找可用工具', 'Find available tools'], mcp_call: ['调用插件', 'Call plugin'],
-    parallel_tools: ['执行任务', 'Run tasks'], start_mcp_tool: ['启动后台任务', 'Start background task'],
-    manage_tool_calls: ['查看任务进度', 'Check task progress'], await_subagents: ['等待任务结果', 'Wait for task results'],
+    mcp_search: ['查找可用工具', 'Find available tools'], call_tool: ['调用工具', 'Call tool'],
+    run_tools: ['执行任务', 'Run tasks'], start_mcp_tool: ['启动后台任务', 'Start background task'],
+    tasks: ['查看任务进度', 'Check task progress'],
     subagent: ['分配任务', 'Delegate task'], update_task_plan: ['更新计划', 'Update plan'],
-    request_permission: ['申请授权', 'Request permission'], solution_selection: ['确认方案', 'Select solution'],
+    request_user_input_async: ['询问用户', 'Ask user'],
     runtime_context_compaction: ['整理上下文', 'Organize context'],
   };
   return labels[name]?.[language === 'zh' ? 0 : 1] ?? displayToolName(execution.name);
@@ -117,7 +117,7 @@ export function displayToolName(value: string) {
     return 'Tool';
   }
   const lowered = text.toLowerCase();
-  if (lowered === 'solution_selection') return 'Solution Selection';
+  if (lowered === 'request_user_input_async') return 'Ask user';
   if (lowered === 'runtime_context_compaction') return 'Context compaction';
   if (lowered === 'workspace_checkpoint') return 'Workspace changes';
   for (const separator of [':', '.', '/']) {

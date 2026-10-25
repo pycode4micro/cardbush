@@ -45,7 +45,7 @@ test('one turn derives one media presentation from original execution facts and 
 });
 
 test('ordinary filenames and opaque plugin UI do not fabricate presented media', () => {
-  const result = present([{ id: 'call', name: 'mcp_call', state: 'completed', output: 'C:/apple.png',
+  const result = present([{ id: 'call', name: 'call_tool', state: 'completed', output: 'C:/apple.png',
     metadata: { resourceUri: 'ui://plugin-preview' } }]);
   assert.equal(result.artifacts.length, 0);
   assert.equal(result.inlineMedia.size, 0);

@@ -82,6 +82,51 @@ test('split streamed links, citations and tables retain clickable labels with bo
   assert.ok(plain.split('\n').every(line => terminalWidth(line) <= 53));
 });
 
+test('inline code file paths become real links while ordinary code and unknown filenames stay text', async () => {
+  const content = '文件：`C:\\Users\\EDY\\Desktop\\中文 hello%20world.txt`\n内容：`Hello, World!`\n' +
+    '`unknown.txt`\n[`说明.md`](<C:/work/说明.md:12>)\n```text\nC:\\work\\literal.txt\n```\n';
+  const f = fixture(); let output = '';
+  const markdown = new ChatMarkdown(text => { output += text; }, true, () => 80, f.references);
+  for (const char of content) { markdown.write(char); markdown.flush(false); }
+  markdown.end();
+  assert.match(output, /\x1b\]8;;file:\/\/\/C:\/Users\/EDY\/Desktop\/%E4%B8%AD%E6%96%87%20hello%2520world\.txt/);
+  assert.match(output, /\x1b\[4;94m/);
+  assert.doesNotMatch(output, /file:[^\x1b]*unknown|file:[^\x1b]*literal|file:[^\x1b]*Hello/);
+  assert.doesNotMatch(stripVTControlCharacters(output), /`说明\.md`/);
+  assert.equal(f.references.choices('artifact').length, 2);
+  assert.equal(f.references.path('unknown.txt'), undefined);
+  assert.ok(f.references.path('中文 hello%20world.txt').href.includes('%2520'));
+  await f.references.handle('artifact', '1', signal());
+  assert.deepEqual(f.opened, [{ target: 'C:\\Users\\EDY\\Desktop\\中文 hello%20world.txt', kind: 'file' }]);
+});
+
+test('inline file references retain explicit remote/open fallbacks and never make scripts executable hyperlinks', () => {
+  const f = fixture();
+  for (const target of ['C:/work/run.cmd', 'C:/work/run.py', 'C:/work/app.exe']) {
+    const link = f.references.path(target);
+    assert.equal(link.href, undefined); assert.match(link.text, /\[file \d+\]/);
+  }
+  f.references.link('one', 'C:/one/same.txt'); f.references.link('two', 'C:/two/same.txt');
+  assert.equal(f.references.path('same.txt'), undefined, 'an ambiguous basename must not open the wrong file');
+  f.references.setScope({ ...scope, turnId: 'remote', local: false });
+  assert.deepEqual(f.references.path('C:/work/remote.txt'), { text: 'C:/work/remote.txt [file 1]' });
+  f.references.setScope({ ...scope, turnId: 'plain', hyperlinks: false });
+  assert.deepEqual(f.references.path('C:/work/plain.txt'), { text: 'C:/work/plain.txt [file 1]' });
+  assert.deepEqual(f.calls, [], 'rendering a file must not read, download or open it');
+  assert.deepEqual(f.opened, []);
+});
+
+test('opening canonical references does not reinterpret literal percent signs or line markers', async () => {
+  const f = fixture({ 'runtime.resolve_file_memo': () => ({ status: 'available', memo: {
+    protocol: 'bush.file_memo.v1', id: 'file_1', reference: 'cardbush-memo:1',
+    file: { path: 'C:\\work\\literal%20name#L12.txt', name: 'literal%20name#L12.txt', size: 1, mtimeMs: 1 }, note: { purpose: 'File', points: [] },
+  } }) });
+  f.references.link('literal', 'file:///C:/work/literal%23L12');
+  f.references.link('memo', 'cardbush-memo:1');
+  await f.references.handle('artifact', '1', signal()); await f.references.handle('artifact', '2', signal());
+  assert.deepEqual(f.opened, [{ target: 'C:\\work\\literal#L12', kind: 'file' }, { target: 'C:\\work\\literal%20name#L12.txt', kind: 'file' }]);
+});
+
 test('/artifact only lists this turn and reuses native receipts, not arbitrary tool prose or private resources', async () => {
   const identity = { sessionId: 'session', turnId: 'turn' };
   const summary = { ...identity, toolCall: { id: 't' }, outcome: 'returned', resultAvailable: true,

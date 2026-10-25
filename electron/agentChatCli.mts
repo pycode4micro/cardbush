@@ -183,9 +183,11 @@ async function submitInteraction(client: Client, event: Interaction, io: ChatTer
   if (!io.interactive) throw Object.assign(new Error('This task needs interactive confirmation and has been stopped. Run cardbush --resume in a terminal to continue.'), { exitCode: 2 });
   if (event.kind === 'permission_requested') {
     const request = event.payload;
-    io.status(`\nApproval required: ${request.reason}\n${request.actions.join(', ')}\n${request.targets.map(target => `${target.kind}: ${target.value}`).join('\n')}\n`);
+    const details = [`Approval required: ${request.reason}`, request.actions.join(', '), ...request.targets.map(target => `${target.kind}: ${target.value}`)];
+    if (!io.selectionMenus) io.status('\n' + details.join('\n') + '\n');
     const answer = await io.ask(io.selectionMenus ? 'Allow once? ' : 'Allow once? [y/N]: ', signal,
-      { choices: [{ value: 'n', label: 'Deny' }, { value: 'y', label: 'Allow once' }],
+      { ...(io.selectionMenus ? { details, transient: true } : {}),
+        choices: [{ value: 'n', label: 'Deny' }, { value: 'y', label: 'Allow once' }],
         picker: { title: 'Choose an approval', selected: 'n', cancelValue: 'n', cancelLabel: 'deny' } });
     signal.throwIfAborted();
     if (answer === null) throw Object.assign(new Error('Input closed; task stopped.'), { exitCode: 2 });
@@ -200,11 +202,13 @@ async function submitInteraction(client: Client, event: Interaction, io: ChatTer
     const questions = solutionSelectionQuestions(request), answers: SolutionQuestionAnswer[] = [];
     let cancelled = false;
     for (const [position, question] of questions.entries()) {
-      io.status(`\n${questions.length > 1 ? `[${position + 1}/${questions.length}] ` : ''}${question.prompt}\n${question.options.map((option, index) => `${index + 1}. ${option}`).join('\n')}\n`);
+      const details = [`${questions.length > 1 ? `[${position + 1}/${questions.length}] ` : ''}${question.prompt}`];
+      if (!io.selectionMenus) io.status(`\n${details[0]}\n${question.options.map((option, index) => `${index + 1}. ${option}`).join('\n')}\n`);
       let answer: string | null;
       do {
         answer = await io.ask(io.selectionMenus ? 'Answer (or type your own): ' : 'Enter a number or your own answer (/cancel to cancel all): ', signal,
-          { choices: [...question.options.map((option, index) => ({ value: String(index + 1), label: `${index + 1}. ${option}` })), { value: '/cancel', description: 'Cancel all' }],
+          { ...(io.selectionMenus ? { details, transient: true } : {}),
+            choices: [...question.options.map((option, index) => ({ value: String(index + 1), label: `${index + 1}. ${option}` })), { value: '/cancel', description: 'Cancel all' }],
             picker: { title: 'Choose an answer', selected: '1', cancelValue: '/cancel', cancelLabel: 'cancel' } });
         if (answer !== null && answer.trim().length > 8000) io.status('Answer too long. Use at most 8,000 characters.\n');
       } while (answer !== null && (!answer.trim() || answer.trim().length > 8000) && !signal.aborted);
@@ -373,18 +377,29 @@ Commands: /model [ID] selects a model and reasoning effort; /settings shows conf
           /tools [number] [--turn N] inspects tools, arguments and results;
           /artifact [number] opens this turn's files; /source [number] shows evidence;
           /quit (or /exit) exits; /help shows help. Other input is sent to the Agent.
-          /browser checks connections; /browser pair chrome or /browser pair edge shows a pairing code in this terminal;
-          pairings belong to this Runtime and work without the desktop App. Keep this CLI open while pairing.
+          /browser checks connections. Local Chrome/Edge: approve the first connection in the system dialog and extension;
+          no pairing code is needed. The local App and CLI share connections and reconnect automatically after restarts.
+          Chrome/Edge work without the desktop App; integrated CardBush tabs require the App.
+          /browser pair chrome or /browser pair edge is for manual connection or remote Agent pairing;
+          remote Agents keep separate connections. Codes stay in this terminal; keep it open while pairing.
+          Temporary disconnects do not require a new pairing code.
           During a task, /exit stops the observed task and this window's queued messages;
           other windows' queued work is preserved. Connection recovery can explicitly leave tasks on the Agent.
           /shell [COMMAND] or !COMMAND runs in this local terminal; exit returns to chat.
 Use /artifact, then Tab to choose a file and Enter to open it. Esc clears the selection.
 Resuming shows past user messages and final replies. Use /tools --turn N to inspect
 an earlier turn. One-shot and piped prompts keep stdout limited to the new reply.
+--resume and /session list all sessions on the connected Runtime/Agent, across projects.
+The selected session keeps its workspace; the launching shell's directory is unchanged.
+Session picker dates show the last update in local time (yyyy-mm-dd HH:mm).
 --resume restores the last submitted model and effort; --model ID overrides this at launch.
 Sessions without an available saved model use the current default model and its setting.
 Web and local file links are clickable in supported terminals. Remote files are
 downloaded only when explicitly opened; source details come from the Agent's records.
+In Windows Terminal, Ctrl+click an underlined link to open it. /artifact also opens files.
+Inline code paths become links when their location is explicit; ordinary code stays text.
+After summary_for_user succeeds, the next reply is separated as Final reply.
+Approval details stay in the input area while pending; completed choices do not clutter the transcript.
 While running, Enter queues the next turn; /steer TEXT guides the current task.
 The live input keeps drafts while responses stream. Approval prompts temporarily
 take over input and restore the draft afterwards. Esc / Ctrl+C stops the current task.

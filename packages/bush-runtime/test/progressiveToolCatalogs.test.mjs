@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { AutomationScheduler, SubagentTaskStore, ToolRegistry } from '../dist/index.js';
 import { registerPluginCommandTools } from '../dist/pluginCommandTools.js';
-import { PluginBackgroundTasks } from '../dist/pluginBackgroundTasks.js';
+import { RuntimeTaskTools } from '../dist/taskTools.js';
 import { registerExtendedBuiltins } from '../dist/extendedBuiltins.js';
 
 async function temporary(t) {
@@ -50,7 +50,9 @@ test('plugin Command discovery is bounded, searchable and has an explicit full m
 
 test('background task discovery omits large answers; selected read and wait preserve results and ownership', async t => {
   const root = await temporary(t), registry = new ToolRegistry(), tasks = new SubagentTaskStore();
-  new PluginBackgroundTasks(root, tasks, registry);
+  const observer = new RuntimeTaskTools(async () => 'task_completed');
+  observer.addSource(ctx => tasks.list(ctx.sessionId).map(task => ({ task_id: task.taskId, kind: 'subagent', status: task.status, revision: task.status, readResult: async () => ({ finalResponse: task.finalResponse }) })));
+  observer.register(registry);
   const answer = 'COMPLETE TASK ANSWER '.repeat(2000);
   for (let i = 0; i < 35; i++) {
     const session = i === 34 ? 'other' : 'session', taskId = `task-${i}`;
@@ -58,24 +60,23 @@ test('background task discovery omits large answers; selected read and wait pres
       prompt: 'PRIVATE TASK PROMPT', inheritContext: false, inheritedMessageCount: 0, background: true });
     tasks.finish({ parentSessionId: session, taskId, status: 'completed', finalResponse: answer, errorMessage: '', usage: {} });
   }
-  const page = await call(registry, 'manage_plugin_agents', { action: 'list' });
+  const page = await call(registry, 'tasks', { action: 'list' });
   assert.equal(page.total, 34);
   assert.equal(page.tasks.length, 20);
   assert.equal(page.next_offset, 20);
   assert.ok(JSON.stringify(page).length < 6500);
   assert.doesNotMatch(JSON.stringify(page), /COMPLETE TASK ANSWER|PRIVATE TASK PROMPT/);
-  assert.ok(page.tasks.every(task => task.has_result));
-  const second = await call(registry, 'manage_plugin_agents', { action: 'list', offset: page.next_offset });
+  assert.ok(page.tasks.every(task => !('result' in task)));
+  const second = await call(registry, 'tasks', { action: 'list', offset: page.next_offset });
   assert.equal(second.tasks.length, 14);
   assert.equal(second.next_offset, null);
-  for (const action of ['read', 'wait']) {
-    const read = await call(registry, 'manage_plugin_agents', { action, task_ids: ['task-3'] });
-    assert.equal(read.length, 1);
-    assert.equal(read[0].finalResponse, answer);
-    await assert.rejects(call(registry, 'manage_plugin_agents', { action, task_ids: ['task-34'] }), /another conversation/);
+  for (const action of ['inspect', 'wait']) {
+    const read = await call(registry, 'tasks', { action, task_ids: ['task-3'] });
+    assert.equal(read.tasks.length, 1);
+    assert.equal(read.tasks[0].result.finalResponse, answer);
+    await assert.rejects(call(registry, 'tasks', { action, task_ids: ['task-34'] }), /not available in this conversation/);
   }
-  await assert.rejects(call(registry, 'manage_plugin_agents', { action: 'read' }), /requires task_ids/);
-  await assert.rejects(call(registry, 'manage_plugin_agents', { action: 'wait', offset: 1 }), /only to list/);
+  await assert.rejects(call(registry, 'tasks', { action: 'inspect' }), /task_ids are required/);
   assert.equal(tasks.get('session', 'task-3').finalResponse, answer, 'discovery never rewrites the saved answer');
 });
 

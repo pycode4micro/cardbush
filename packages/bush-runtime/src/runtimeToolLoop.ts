@@ -312,7 +312,7 @@ export class RuntimeToolLoop {
       const name = executedCalls[ordinal]!.name;
       const text = renderedResults[ordinal];
       const outcome = outcomes[ordinal];
-      if (name === "mcp_search" && outcome?.kind === "returned" && outcome.hookFeedback === undefined) {
+      if ((name === "mcp_search" || name === 'get_tool_schema') && outcome?.kind === "returned" && outcome.hookFeedback === undefined) {
         return { content: serializeNativeToolResult(result), format: "mcp_discovery" };
       }
       if (name === 'read_archived_tool_result' && outcome?.kind === 'returned' && outcome.hookFeedback === undefined) {

@@ -34,7 +34,8 @@ try {
   const view = await apps.command({ action: 'open', sessionId: 'one', turnId: 't', toolCallId: 'show' });
   assert.match(view.html, /Native MCP interface/); assert.equal(view.result._meta.private, 'UI only'); apps.close();
   await first.close(); assert.equal(closes, 0, 'closing an Agent cannot close shared OAuth');
-  await assert.rejects(registration.mcpApp.readResource('ui://fixture'), /no longer connected/);
+  await assert.rejects(registration.mcpApp.readResource('ui://fixture'), error =>
+    error.code === 'tool_definition_changed' && error.details?.inputDispatched === false);
   assert.ok((await other.mcpApp.readResource('ui://fixture')).contents.length, 'a sibling connection remains live');
   console.log('Agent MCP / Apps integration passed: two real stdio servers, stable identity, unique tool names, independent cleanup, approval, native resources and model metadata isolation.');
 } finally {

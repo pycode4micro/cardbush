@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { returnedToolError, toolExecutionRecordSchema, BUSH_TOOL_EXECUTION_RECORD_PROTOCOL } from '@cardbush/bush-protocol';
@@ -19,22 +20,23 @@ test('direct and dispatched MCP errors retain native data and emit one failure h
     registry.register({ definition: { name, description: 'read fixture', inputSchema: { type: 'object', properties: {} } },
       manifest, decodeInput: value => value, execute: () => { executions++; return structuredClone(native); },
       mcpHook: { server: 'fixture', tool: 'read', call: async () => native } });
-    registerMcpDiscovery(registry);
+    registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
     const events = [], hooks = new PluginTerminalHooks().forTurn('s', async (event, context) => { events.push({ event, context }); return { messages: [] }; });
     const loop = new RuntimeToolLoop({ eventLog, identity, registry, executionStore: store, hooks });
     const request = { ...identity, tools: registry.definitions(), metadata: { mcpToolDiscovery: indirect } }, contextMessages = [];
     if (indirect) {
-      const search = call('mcp_search', 'load', { action: 'load', query: name });
+      const search = call('get_tool_schema', 'load', { name: name });
       const loaded = await loop.execute([search], { round: 1, assistantMessageId: 'a1', request, contextMessages });
       contextMessages.push({ role: 'assistant', content: '', toolCalls: [search] }, ...loaded.messages);
       synchronizeMcpDiscovery(registry, request, contextMessages);
     }
     events.length = 0;
-    const invocation = indirect ? call('mcp_call', 'read', { name, arguments: {} }) : call(name, 'read');
+    const invocation = indirect ? call('call_tool', 'read', { name, arguments: {} }) : call(name, 'read');
     const output = await loop.execute([invocation], { round: 2, assistantMessageId: 'a2', request, contextMessages });
     const record = store.get('s', 't', 'read');
     assert.equal(record.outcome, 'returned', JSON.stringify(record.error));
-    assert.deepEqual(indirect ? record.result.result : record.result, native);
+    assert.deepEqual(record.result, native);
+    assert.equal(record.toolCall.name, name);
     assert.equal(record.resultError.code, 'page_missing');
     assert.equal(record.error, undefined);
     assert.match(output.messages.at(-1).content, /Selected tab is missing/);
@@ -48,10 +50,10 @@ test('direct and dispatched MCP errors retain native data and emit one failure h
   }
 });
 
-test('legacy native records gain compact failure projections without rewriting native results or archived text', () => {
+test('persisted native records retain compact failure projections without rewriting native results or archived text', () => {
   const record = toolExecutionRecordSchema.parse({ protocol: BUSH_TOOL_EXECUTION_RECORD_PROTOCOL, ...identity, round: 1, ordinal: 0,
-    recordedAt: '2026-10-13T00:00:00Z', toolCall: call('mcp_call', 'old'), outcome: 'returned',
-    result: { mcp: { name: 'mcp__fixture__read' }, result: native }, modelText: 'original\r\n\"isError\":true\n中文😀', workspaceChanges: [] });
+    recordedAt: '2026-10-13T00:00:00Z', toolCall: call('mcp__fixture__read', 'old'), outcome: 'returned',
+    result: native, modelText: 'original\r\n\"isError\":true\n中文😀', workspaceChanges: [] });
   const original = JSON.stringify(record);
   const store = new ToolExecutionStore({ persistence: { load: () => [record], append: () => assert.fail('read-only projection must not append') } });
   const summary = store.listTurnSummaries('s', 't')[0];

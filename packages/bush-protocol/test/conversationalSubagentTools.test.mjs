@@ -16,14 +16,14 @@ test('text and voice resolve the same conversational tool contracts through ESM 
       { prompt: 'Inspect the selected page.' });
     assert.deepEqual(entry.conversationalSubagentInput.parse({ prompt: 'Continue', task_id: 'child-1' }),
       { prompt: 'Continue', task_id: 'child-1' });
-    assert.deepEqual(entry.conversationalAwaitInput.parse({}), {}, 'omitted task_ids means all owned tasks');
-    assert.deepEqual(entry.conversationalAwaitInput.parse({ task_ids: ['child-1'] }), { task_ids: ['child-1'] });
-    assert.deepEqual(entry.conversationalReadInput.parse({ task_id: 'child-1', cursor: '12:34' }),
-      { task_id: 'child-1', cursor: '12:34' });
+    assert.deepEqual(entry.conversationalTaskInput.parse({}), { action: 'inspect' }, 'omitted task_ids means all owned tasks');
+    assert.deepEqual(entry.conversationalTaskInput.parse({ task_ids: ['child-1'] }), { action: 'inspect', task_ids: ['child-1'] });
+    assert.deepEqual(entry.conversationalTaskInput.parse({ action: 'conversation', task_ids: ['child-1'], cursor: '12:34' }),
+      { action: 'conversation', task_ids: ['child-1'], cursor: '12:34' });
     assert.equal(entry.conversationalSubagentInput.safeParse({ prompt: ' ' }).success, false);
-    assert.equal(entry.conversationalAwaitInput.safeParse({ task_ids: [''] }).success, false);
-    assert.equal(entry.conversationalAwaitInput.safeParse({ task_ids: Array(9).fill('child-1') }).success, false);
-    assert.equal(entry.conversationalAwaitInput.safeParse({ unexpected: true }).success, false);
-    assert.equal(entry.conversationalReadInput.safeParse({ task_id: 'child-1', cursor: 'invalid' }).success, false);
+    assert.equal(entry.conversationalTaskInput.safeParse({ task_ids: [''] }).success, false);
+    assert.equal(entry.conversationalTaskInput.safeParse({ task_ids: Array(9).fill('child-1') }).success, false);
+    assert.equal(entry.conversationalTaskInput.safeParse({ unexpected: true }).success, false);
+    assert.equal(entry.conversationalTaskInput.safeParse({ action: 'conversation', task_ids: ['child-1'], cursor: 'invalid' }).success, false);
   }
 });

@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InMemoryTransport } from '@modelcontextprotocol/client';
@@ -24,7 +25,7 @@ const execute = (coordinator, name, input) => coordinator.execute({ protocol: 'b
   { requestId: 'r', sessionId: 's', turnId: 't', round: 1, ordinal: 0 });
 
 test('service recovery publishes additions, removals and fresh schemas without replay or unrelated registration churn', async t => {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   const first = fake([remote('old'), remote('edit', { value: { type: 'string' } })]);
   const recovered = fake([remote('upload_file', { filePaths: { type: 'array', items: { type: 'string' } } }), remote('edit', { value: { type: 'integer' } }), remote('disabled')]);
   const steady = fake([remote('steady')]), clients = [first, recovered];
@@ -35,9 +36,9 @@ test('service recovery publishes additions, removals and fresh schemas without r
   await manager.apply(config);
   const unchanged = registry.resolve('mcp__steady__steady');
   const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: { mcpToolDiscovery: true, mcpCatalogUpdates: 'additions' } };
-  const search = registry.resolve('mcp_search');
-  const loaded = await search.execute({ input: search.decodeInput({ action: 'load', query: 'mcp__browser__edit' }), turn: { request, contextMessages: [] } });
-  const messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'mcp_search', argumentsText: '{}' }] },
+  const search = registry.resolve('get_tool_schema');
+  const loaded = await search.execute({ sessionId: 's', input: search.decodeInput({ name: 'mcp__browser__edit' }), turn: { request, contextMessages: [] } });
+  const messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'get_tool_schema', argumentsText: '{}'  }] },
     { role: 'tool', toolCallId: 'load', content: JSON.stringify(loaded) }];
   synchronizeMcpDiscovery(registry, request, messages);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__browser__edit'), true);

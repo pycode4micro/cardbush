@@ -6,7 +6,7 @@ import test from "node:test";
 import { modelToolDefinitions } from '../dist/mcpToolDiscovery.js';
 import {
   InMemoryRuntimeCapabilityStore, ToolExecutionCoordinator, ToolRegistry,
-  registerInteractionTools, registerWorkspaceTools,
+  registerWorkspaceTools,
 } from "../dist/index.js";
 
 const identity = { requestId: "r", sessionId: "s", turnId: "t", round: 1, ordinal: 0 };
@@ -18,21 +18,20 @@ const answer = (request, decision) => ({
   decision, grantedCapabilityIds: decision === "deny" ? [] : request.capabilityIds,
 });
 
-test('new catalogs omit generic pre-approval while old declarations retain a harmless compatibility handler', async () => {
-  const registry = new ToolRegistry(); registerInteractionTools(registry);
+test('retired pre-approval is unavailable and cannot create permission grants', async () => {
+  const registry = new ToolRegistry();
   const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: {} };
-  assert.ok(request.tools.some(tool => tool.name === 'request_permission'));
+  assert.ok(!request.tools.some(tool => tool.name === 'request_permission'));
   assert.ok(!modelToolDefinitions(registry, request).some(tool => tool.name === 'request_permission'));
   let prompts = 0;
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { prompts++; throw new Error('Unexpected prompt'); } } });
   const result = await coordinator.execute(call('old-preapproval', 'request_permission', { path: 'C:/fixture/report.txt', access_kind: 'write', reason: 'Legacy request' }), identity);
-  assert.equal(result.kind, 'returned'); assert.equal(result.result.granted, false); assert.equal(prompts, 0);
-  assert.deepEqual(result.result.capability_ids, []);
+  assert.equal(result.kind, 'failed'); assert.equal(result.execution.dispatch, 'not_started'); assert.equal(prompts, 0);
 });
 
 test("a model-supplied capability cannot authorize a different displayed file", async () => {
   const registry = new ToolRegistry();
-  registerInteractionTools(registry);
+
   registerWorkspaceTools(registry);
   const actual = realpathSync(fileURLToPath(import.meta.url));
   const capability = `capability:read:${createHash("sha256")
@@ -49,10 +48,9 @@ test("a model-supplied capability cannot authorize a different displayed file", 
     path: "C:/public/report.txt", access_kind: "read", reason: "Read public report",
     capability_ids: [capability],
   }), identity);
-  assert.equal(grant.kind, "returned");
-  assert.equal(grant.result.granted, false);
-  assert.deepEqual(grant.result.capability_ids, []);
-  assert.equal(prompts.length, 0, 'the legacy pre-approval never opens a meaningless prompt');
+  assert.equal(grant.kind, "failed");
+  assert.equal(grant.execution.dispatch, "not_started");
+  assert.equal(prompts.length, 0, 'a removed tool cannot request or grant permission');
   const read = await coordinator.execute(call("read", "read_file", { path: actual }), identity);
   assert.equal(prompts.length, 1);
   assert.equal(prompts[0].targets[0].value, actual);

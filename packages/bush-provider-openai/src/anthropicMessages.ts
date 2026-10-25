@@ -165,7 +165,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
   }
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
     options.signal?.throwIfAborted();
-    const params = this.#project(await resolveLocalImageInputs(request));
+    const params = this.#project(await resolveLocalImageInputs(request, options));
     options.signal?.throwIfAborted();
     return recordProjection(FORMAT, request, { ...params }, options, this.config.maxRequestBodyBytes);
   }
@@ -177,7 +177,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
     let started = false, finishReason: string | undefined;
     let usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
     try {
-      const resolvedRequest = await resolveLocalImageInputs(request);
+      const resolvedRequest = await resolveLocalImageInputs(request, options);
       options.signal?.throwIfAborted();
       const { stream, prefix, discardedThinking } = await this.#createStream(resolvedRequest, options, diagnostics);
       diagnostics.report('response_headers');

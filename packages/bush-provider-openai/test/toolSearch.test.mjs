@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -21,7 +22,7 @@ function assertDisplayProjection(parameters, native) {
   if (!native.required) delete restored.required;
   assert.deepEqual(restored, native);
 }
-const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const request = overrides => modelRequestSchema.parse({
   protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model,
   tools: registry.definitions(), messages: [{ role: 'user', content: 'Find project documentation.' }],
@@ -36,8 +37,8 @@ const functionItem = (id = 'read', name = 'mcp__docs__read') => ({ type: 'functi
 const assistant = round => ({ role: 'assistant', content: round.text, reasoningContent: round.reasoning,
   toolCalls: round.toolCalls, providerReplay: round.providerReplay });
 const tool = { name: 'mcp__docs__read', description: 'Read docs', inputSchema: { type: 'object', properties: {} } };
-const searchResult = matches => JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load',
-  matches: matches ?? [{ ...tool, server: 'docs', tool: 'read', revision: 'v1' }], total: 1, more: false });
+const searchResult = matches => JSON.stringify({ protocol: 'bush.tool_schema.v1', sessionId: 's', action: 'load',
+  matches: (matches ?? [{ ...tool, server: 'docs', tool: 'read', revision: 'v1' }]).map(match => ({ source: 'mcp', ...match })), total: 1, more: false });
 const unsupported = { status: 400, error: { code: 'unsupported_value', param: 'tools[0].type',
   message: "The tool type 'tool_search' is not supported." } };
 const isNative = body => body.tools?.some(tool => tool.type === 'tool_search');
@@ -66,7 +67,7 @@ function declaredNames(params) {
 
 function searchMessages(id, matches) {
   return [
-    { role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: '{"action":"load","query":"mcp__docs__read"}' }] },
+    { role: 'assistant', content: '', toolCalls: [{ id, name: 'get_tool_schema', argumentsText: '{"name":"mcp__docs__read"}' }] },
     { role: 'tool', toolCallId: id, content: searchResult(matches) },
   ];
 }
@@ -115,53 +116,40 @@ async function fixture(t, handler) {
   return { calls, store, config, provider: new OpenAIResponsesProvider(config) };
 }
 
-test('unknown services negotiate native search, preserve output and append callable schemas', async t => {
-  const f = await fixture(t, () => ({ output: [searchItem()] }));
-  const first = request();
-  const round = await executeModelRound(f.provider, first);
-  assert.equal(round.status, 'completed');
-  assert.deepEqual(round.toolCalls.map(call => [call.name, call.argumentsText]), [['mcp_search', '{"query":"docs"}']]);
-  assert.equal(f.store.read(capability).status, 'supported');
-  assert.equal(round.providerReplay.data.toolSearchMode, 'native');
-  assert.equal(f.calls[0].body.tools.some(tool => tool.name === 'mcp_call'), false);
-  const messages = [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content: searchResult() }];
-  const original = structuredClone(messages);
-  const params = toResponsesCreateParams(request({ messages }));
-  assert.deepEqual(params.input[1], searchItem());
-  assert.equal(params.input[2].type, 'tool_search_output');
-  assert.equal(params.input[2].tools[0].name, tool.name);
-  assert.equal(params.input[2].tools[0].defer_loading, true);
-  assert.equal(params.input[3].content.includes('inputSchema'), false);
-  const delta = toResponsesCreateParams(request({ messages, providerState: {
-    strategy: 'response_chain', previousResponseId: 'stored', inputMessageOffset: 2,
-  } }));
-  assert.deepEqual(delta.input, params.input.slice(2));
-  assert.deepEqual(messages, original);
-});
-
-test('native tool_search publishes complete loaded definitions without a duplicate catalog', async t => {
+test('native search discovers names and schemas arrive only through get_tool_schema', async t => {
   const f = await fixture(t, () => ({ output: [searchItem()] }));
   const first = request(), round = await executeModelRound(f.provider, first);
-  const large = { ...tool, name: 'mcp__docs__large', description: 'x'.repeat(20000), server: 'docs', tool: 'large', revision: 'v2' };
-  const native = searchResult([{ ...tool, server: 'docs', tool: 'read', revision: 'v1' }, large]);
-  const budgeted = projectMcpDiscoveryResult(native);
-  const budgetedParams = toResponsesCreateParams(request({ messages: [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content: budgeted }] }));
-  assert.deepEqual(budgetedParams.input.find(item => item.type === 'tool_search_output').tools.map(tool => tool.name), [tool.name]);
-  assert.deepEqual(JSON.parse(budgeted).deferred, [large.name], 'default delivery defers complete oversized definitions');
-  const content = projectMcpDiscoveryResult(native, 64000);
-  const messages = [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content }];
+  assert.equal(round.status, 'completed'); assert.equal(f.store.read(capability).status, 'supported');
+  assert.deepEqual(round.toolCalls.map(call => [call.name, call.argumentsText]), [['mcp_search', '{"query":"docs"}']]);
+  const messages = [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content: JSON.stringify({ action: 'search', matches: [{ name: tool.name, description: tool.description, loaded: false }] }) }];
+  const initial = toResponsesCreateParams(request({ messages }));
+  assert.deepEqual(initial.input.find(item => item.type === 'tool_search_output').tools, []);
+  assert.ok(!declaredNames(initial).includes(tool.name));
+  messages.push(...searchMessages('load'));
   const original = structuredClone(messages), params = toResponsesCreateParams(request({ messages }));
-  const output = params.input.find(item => item.type === 'tool_search_output');
+  const declaration = params.input.find(item => item.type === 'additional_tools').tools[0];
+  assert.equal(declaration.name, tool.name); assert.equal(declaration.defer_loading, true);
+  assertDisplayProjection(declaration.parameters, tool.inputSchema);
+  assert.deepEqual(params.input.slice(0, initial.input.length), initial.input); assertClosedToolBatches(params.input);
+  const delta = toResponsesCreateParams(request({ messages, providerState: { strategy: 'response_chain', previousResponseId: 'stored', inputMessageOffset: 3 } }));
+  assert.deepEqual(delta.input, params.input.slice(initial.input.length)); assert.deepEqual(messages, original);
+});
+
+test('one schema loader delivers whole definitions and defers oversized definitions in native mode', () => {
+  const large = { ...tool, name: 'mcp__docs__large', description: 'x'.repeat(20000), server: 'docs', tool: 'large', revision: 'v2' };
+  const content = searchResult([{ ...tool, server: 'docs', tool: 'read', revision: 'v1' }, large]);
+  const messages = searchMessages('load');
+  messages[1].content = projectMcpDiscoveryResult(content);
+  const budgeted = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' });
+  assert.deepEqual(declaredNames(budgeted).filter(name => name.startsWith('mcp__')), [tool.name]);
+  assert.deepEqual(JSON.parse(messages[1].content).deferred, [large.name]);
+  messages[1].content = projectMcpDiscoveryResult(content, 64000);
+  const params = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' });
+  const output = params.input.find(item => item.type === 'additional_tools');
   assert.deepEqual(output.tools.map(tool => tool.name), [tool.name, large.name]);
-  assert.equal(output.tools[1].description, large.description);
-  assertDisplayProjection(output.tools[1].parameters, large.inputSchema);
-  const receipt = params.input.find(item => item.type === 'message' && typeof item.content === 'string' && item.content.startsWith('[tool_search_result data]'));
-  assert.ok(receipt.content.includes(large.name));
-  assert.ok(!receipt.content.includes('unloaded'));
-  assert.ok(!receipt.content.includes('catalog'));
-  assert.equal(projectMcpDiscoveryResult(searchResult([large]), 16000), undefined, 'oversized complete definitions go to the archive');
+  assert.equal(output.tools[1].description, large.description); assertDisplayProjection(output.tools[1].parameters, large.inputSchema);
   assertClosedToolBatches(params.input);
-  assert.deepEqual(messages, original);
+  assert.equal(projectMcpDiscoveryResult(searchResult([large]), 16000), undefined);
 });
 
 test('mixed native search and function batches remain complete before search receipts in full and incremental requests', async t => {
@@ -191,7 +179,7 @@ test('mixed native search and function batches remain complete before search rec
       assert.deepEqual(tail, full.slice(1 + output.length));
       assert.deepEqual(tail.map(item => item.type), ['function_call_output', 'tool_search_output', 'function_call_output', 'message']);
       assert.equal(tail[2].output, messages.at(-1).content);
-      assert.equal(tail[1].tools.length, label === 'complete' ? 1 : 0);
+      assert.equal(tail[1].tools.length, 0);
       assert.ok(tail[3].content.includes('call_id: "search"'));
       assert.deepEqual(messages, original);
       const extended = toResponsesCreateParams(request({ messages: [...messages, { role: 'user', content: 'Continue' }] })).input;
@@ -343,13 +331,13 @@ test('counting validation cannot select generation compatibility; generation nee
 
 test('archived search definitions are injected only after all exact chunks, preserving earlier input', () => {
   const messages = [
-    { role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{"query":"docs"}' }] },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'get_tool_schema', argumentsText: '{"query":"docs"}' }] },
     { role: 'tool', toolCallId: 'search', content: '' },
   ];
   const text = searchResult(), midpoint = Math.floor(text.length / 2), locator = 'tool-result://s/t/search';
   messages[1].content = JSON.stringify({ archived: true, locator, originalChars: text.length, preview: text.slice(0, 40) });
   const project = () => toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' }).input;
-  const initial = project(); assert.deepEqual(initial[1].tools, []);
+  const initial = project(); assert.equal(initial.some(item => item.type === 'additional_tools'), false);
   for (const [offset, end] of [[0, midpoint], [midpoint, text.length]]) {
     messages.push({ role: 'assistant', content: '', toolCalls: [{ id: `page-${offset}`, name: 'read_archived_tool_result', argumentsText: '{}' }] },
       { role: 'tool', toolCallId: `page-${offset}`, content: JSON.stringify({ locator, offset, next_offset: end }) + '\n\n[text]\n' + text.slice(offset, end) });
@@ -365,7 +353,7 @@ test('archived search definitions are injected only after all exact chunks, pres
 test('archived definitions loaded during a mixed batch follow every function result', () => {
   const content = searchResult(), locator = 'tool-result://s/t/search';
   const messages = [
-    { role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'get_tool_schema', argumentsText: '{}' }] },
     { role: 'tool', toolCallId: 'search', content: JSON.stringify({ archived: true, locator, originalChars: content.length, preview: '' }) },
     { role: 'assistant', content: '', toolCalls: [
       { id: 'archive', name: 'read_archived_tool_result', argumentsText: '{}' },
@@ -381,12 +369,12 @@ test('archived definitions loaded during a mixed batch follow every function res
 });
 
 test('portable history and malformed discovery data never acquire invented native definitions', () => {
-  const messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] },
+  const messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'get_tool_schema', argumentsText: '{}' }] },
     { role: 'tool', toolCallId: 'search', content: searchResult() }];
   assert.equal(toResponsesCreateParams(request({ messages })).input[1].type, 'function_call_output');
   for (const content of ['not json', '{"error":"permission denied"}', searchResult([{ name: 'bad' }]), searchResult().replace('"s"', '"other-session"')]) {
     const native = toResponsesCreateParams(request({ messages: [messages[0], { ...messages[1], content }] }), { toolSearchMode: 'native' });
-    assert.deepEqual(native.input[1].tools, []);
+    assert.equal(native.input.some(item => item.type === 'additional_tools'), false);
   }
 });
 
@@ -398,8 +386,8 @@ test('native calls use the authoritative execution pipeline and survive durable 
   const f = await fixture(t, (body, path) => {
     if (path.endsWith('/input_tokens')) return {};
     round++;
-    if (round === 1) return { output: [searchItem('search', { action: 'load', query: longTool.name })] };
-    loadedName ??= body.input.find(item => item.type === 'tool_search_output')?.tools[0]?.name;
+    if (round === 1) return { output: [{ ...functionItem('search', 'get_tool_schema'), arguments: JSON.stringify({ name: longTool.name }) }] };
+    loadedName ??= body.input.find(item => item.type === 'additional_tools')?.tools[0]?.name;
     if ([2, 4, 6].includes(round)) return { output: [functionItem(`read-${round}`, loadedName)], argumentsDoneOnly: true };
     return { output: [textItem()] };
   });
@@ -435,7 +423,7 @@ test('native calls use the authoritative execution pipeline and survive durable 
     assert.deepEqual(current.tools, requests[0].tools);
     if (index) assert.deepEqual(current.input.slice(0, requests[index - 1].input.length), requests[index - 1].input);
   }
-  assert.equal(requests[1].input.filter(item => item.type === 'tool_search_output').length, 1);
+  assert.equal(requests[1].input.filter(item => item.type === 'additional_tools').length, 1);
   assert.match(requests[6].input.find(item => item.type === 'function_call_output' && item.call_id === 'read-6').output, /revoked/);
   assert.ok(next.host.events('s', 'two').filter(event => event.kind === 'cache_chain_observed').every(event => !event.payload.frozenPrefixBreak));
 });
@@ -448,11 +436,11 @@ test('overlapping parallel searches pass a strict provider and execute the disco
       error: { code: 'invalid_request_error', message: 'Tool names must be unique.' } };
     if (path.endsWith('/input_tokens')) return {};
     round++;
-    if (round === 1) return { output: [searchItem('one', { action: 'load', query: tool.name }), searchItem('two', { action: 'load', query: tool.name })] };
+    if (round === 1) return { output: [...['one', 'two'].map(id => ({ ...functionItem(id, 'get_tool_schema'), arguments: JSON.stringify({ name: tool.name }) }))] };
     if (round === 2) {
-      const results = body.input.filter(item => item.type === 'tool_search_output');
+      const results = body.input.filter(item => item.type === 'function_call_output');
       assert.deepEqual(results.map(item => item.call_id), ['one', 'two']);
-      assert.deepEqual(results.map(item => item.tools.length), [1, 0]);
+      assert.deepEqual(body.input.filter(item => item.type === 'additional_tools').map(item => item.tools.length), [1]);
       assertClosedToolBatches(body.input);
       return { output: [functionItem()] };
     }
@@ -502,18 +490,18 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
       assert.equal(receipt.matches[0].inputSchema, undefined);
       assert.equal(JSON.stringify(body).includes('schema_marker'), false, 'search does not secretly inject schemas');
       if (mode === 'native') assert.deepEqual(body.input.find(item => item.type === 'tool_search_output').tools, []);
-      return { output: [search('load', { action: 'load', query: receipt.matches[0].name })] };
+      return { output: [{ ...functionItem('load', 'get_tool_schema'), arguments: JSON.stringify({ name: receipt.matches[0].name }) }] };
     }
     if (round === 3) {
       assert.equal(executed, 0);
       if (mode === 'native') {
-        const loaded = body.input.find(item => item.type === 'tool_search_output' && item.call_id === 'load').tools[0];
+        const loaded = body.input.find(item => item.type === 'additional_tools').tools[0];
         assertDisplayProjection(loaded.parameters, inputSchema); assert.equal(loaded.description, description);
         return { output: [{ ...functionItem('use', loaded.name), arguments: JSON.stringify({ _display_title: '查阅项目文档' }) }] };
       }
       const loaded = JSON.parse(body.input.find(item => item.type === 'function_call_output' && item.call_id === 'load').output);
       assert.deepEqual(loaded.matches[0].inputSchema, inputSchema); assert.equal(loaded.matches[0].description, description);
-      return { output: [{ ...functionItem('use', 'mcp_call'), arguments: JSON.stringify({ name: fullName, arguments: {}, _display_title: '查阅项目文档' }) }] };
+      return { output: [{ ...functionItem('use', 'call_tool'), arguments: JSON.stringify({ name: fullName, arguments: {}, _display_title: '查阅项目文档' }) }] };
     }
     assert.equal(executed, 1);
     return { output: [textItem()] };
@@ -545,13 +533,11 @@ for (const mode of ['function', 'native']) test(`${mode}: load receipts omit int
   const original = structuredClone(messages);
   const options = { toolSearchMode: mode };
   const params = toResponsesCreateParams(request({ messages }), options);
-  const receipt = mode === 'function'
-    ? JSON.parse(params.input.find(item => item.type === 'function_call_output').output)
-    : JSON.parse(params.input.find(item => item.type === 'message').content.split('\n').slice(2).join('\n'));
+  const receipt = JSON.parse(params.input.find(item => item.type === 'function_call_output').output);
   for (const field of ['protocol', 'sessionId', 'next_step', 'more']) assert.equal(receipt[field], undefined, field);
   for (const field of ['action', 'errors', 'deferred', 'hostCapabilities']) assert.deepEqual(receipt[field], result[field]);
   if (mode === 'function') assert.deepEqual(receipt.matches, result.matches, 'complete schemas and revisions remain visible');
-  else assertDisplayProjection(params.input.find(item => item.type === 'tool_search_output').tools[0].parameters, tool.inputSchema);
+  else assertDisplayProjection(params.input.find(item => item.type === 'additional_tools').tools[0].parameters, tool.inputSchema);
   const next = toResponsesCreateParams(request({ messages: [...messages, { role: 'user', content: 'Continue' }] }), options);
   assert.deepEqual(next.input.slice(0, params.input.length), params.input, 'new input does not rewrite the projected prefix');
   assert.deepEqual(messages, original, 'internal session/revision receipts remain intact for recovery');
@@ -593,8 +579,8 @@ test('reloads keep the first declaration, exact call receipts and incremental ca
   const full = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' });
   assert.deepEqual(declaredNames(full).filter(name => name === tool.name), [tool.name]);
   assert.deepEqual(full.input.slice(0, initial.input.length), initial.input);
-  assert.equal(full.input.filter(item => item.type === 'tool_search_output').length, 2);
-  assert.match(full.input.at(-1).content, /reload/);
+  assert.equal(full.input.filter(item => item.type === 'function_call_output').length, 2);
+  assert.equal(full.input.at(-1).call_id, 'reload');
   assertClosedToolBatches(full.input);
   const delta = toResponsesCreateParams(request({ messages, providerState: {
     strategy: 'response_chain', previousResponseId: 'stored', inputMessageOffset: offset,
@@ -604,7 +590,7 @@ test('reloads keep the first declaration, exact call receipts and incremental ca
   assert.deepEqual(messages, original);
   // Once the first definition leaves context, the retained full reload owns it.
   const compacted = toResponsesCreateParams(request({ messages: messages.slice(offset) }), { toolSearchMode: 'native' });
-  assert.deepEqual(compacted.input.find(item => item.type === 'tool_search_output').tools.map(item => item.name), [tool.name]);
+  assert.deepEqual(compacted.input.find(item => item.type === 'additional_tools').tools.map(item => item.name), [tool.name]);
 });
 
 test('changed schemas replace stale declarations with one full replay, then resume chaining', () => {
@@ -619,9 +605,10 @@ test('changed schemas replace stale declarations with one full replay, then resu
   const params = toResponsesCreateParams(request({ messages, providerState }), { toolSearchMode: 'native' });
   assert.equal(params.previous_response_id, undefined, 'a stored old declaration cannot be replaced by an incremental input');
   assert.equal(params.store, true, 'the new root can still be used for subsequent chaining');
-  const results = params.input.filter(item => item.type === 'tool_search_output');
-  assert.deepEqual(results.map(item => item.tools.length), [0, 1]);
-  assertDisplayProjection(results[1].tools[0].parameters, updated.inputSchema);
+  const results = params.input.filter(item => item.type === 'additional_tools');
+  assert.deepEqual(results.map(item => item.tools.length), [1]);
+  assert.equal(params.input.filter(item => item.type === 'function_call_output').length, 2);
+  assertDisplayProjection(results[0].tools[0].parameters, updated.inputSchema);
   assertClosedToolBatches(params.input);
   const next = toResponsesCreateParams(request({ messages: [...messages, { role: 'user', content: 'Continue' }],
     providerState: { ...providerState, previousResponseId: 'updated-response', inputMessageOffset: messages.length },
@@ -643,8 +630,24 @@ test('direct exposure, long aliases and portable results retain their own declar
   assert.ok(native.input.filter(item => item.type === 'tool_search_output').every(item => !item.tools.length));
   const portable = toResponsesCreateParams(req, { toolSearchMode: 'function' });
   assert.equal(portable.input.filter(item => item.type === 'function_call_output').length, 2);
-  assert.deepEqual(JSON.parse(portable.input.find(item => item.type === 'function_call_output').output), { action: 'load', matches, total: 1 });
+  assert.deepEqual(JSON.parse(portable.input.find(item => item.type === 'function_call_output').output), { action: 'load', matches: matches.map(match => ({ source: 'mcp', ...match })), total: 1 });
   assert.throws(() => toResponsesCreateParams(request({ tools: [tool, { ...tool, description: 'conflict' }] })), /Conflicting tool definitions/);
+});
+
+test('mixed schema batches retain native and MCP definitions in both wire modes', () => {
+  const messages = searchMessages('mixed');
+  const receipt = JSON.parse(messages[1].content);
+  receipt.matches.unshift({ name: 'native_report', description: 'Read report', inputSchema: { type: 'object' }, source: 'native', revision: 'native-v1' });
+  messages[1].content = JSON.stringify(receipt);
+  const original = structuredClone(messages);
+  const native = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' });
+  const declared = native.input.find(item => item.type === 'additional_tools');
+  assert.deepEqual(declared.tools.map(tool => tool.name), ['native_report', tool.name]);
+  assertClosedToolBatches(native.input);
+  const portable = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'function' });
+  const result = JSON.parse(portable.input.find(item => item.type === 'function_call_output').output);
+  assert.deepEqual(result.matches.map(tool => tool.source), ['native', 'mcp']);
+  assert.deepEqual(messages, original);
 });
 
 test('archive and direct rediscovery share declarations without breaking pending batches', () => {
@@ -661,7 +664,7 @@ test('archive and direct rediscovery share declarations without breaking pending
   assertClosedToolBatches(params.input);
   // The same two sources in reverse order must not append empty additional_tools.
   const reversed = toResponsesCreateParams(request({ messages: [...searchMessages('first'), ...messages.slice(0, 4)] }), { toolSearchMode: 'native' });
-  assert.equal(reversed.input.some(item => item.type === 'additional_tools'), false);
+  assert.equal(reversed.input.filter(item => item.type === 'additional_tools').length, 1);
   assert.equal(declaredNames(reversed).filter(name => name === tool.name).length, 1);
   assertClosedToolBatches(reversed.input);
 });

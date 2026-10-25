@@ -95,13 +95,13 @@ test('loaded definitions cannot bypass scope, child restrictions, native denial 
 });
 
 test('discovery and maintenance preserve their direct call receipts', async () => {
-  for (const name of ['mcp_search', 'mcp_call', 'read_archived_tool_result', 'checkpoint_context', 'summary_for_user']) {
+  for (const name of ['mcp_search', 'read_archived_tool_result', 'checkpoint_context', 'summary_for_user']) {
     const f = fixture({ directInvocation: true, definition: { name, description: 'Direct receipt', inputSchema: { type: 'object' } } });
     const loaded = await f.run('get_tool_schema', { name });
     assert.equal(loaded.kind, 'returned');
     assert.equal(loaded.result.invocation.tool, name);
     assert.equal(typeof loaded.result.invocation.arguments, 'string');
-    assert.equal(loaded.result.matches[0].definition.name, name);
+    assert.equal(loaded.result.matches[0].name, name);
     assert.equal((await f.run('call_tool', { name, arguments: { value: 'wrong boundary' } })).error.code, 'tool_requires_direct_call');
     assert.equal(f.counts().executed, 0);
     assert.equal((await f.run(name, { value: 'direct' })).kind, 'returned');

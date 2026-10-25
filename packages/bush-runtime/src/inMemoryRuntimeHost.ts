@@ -5,7 +5,7 @@ import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
 import { ConversationJournal } from './conversationJournal.js';
-import { restoreSessionModelPolicy, systemPolicyIdentity, requestedSessionModelPolicyUpgrade } from './sessionModelPolicy.js';
+import { restoreSessionModelPolicy, systemPolicyIdentity } from './sessionModelPolicy.js';
 import { REALTIME_AGENT_TOOL_COMMAND, realtimeAgentToolRequestSchema } from '@cardbush/bush-protocol';
 import { REALTIME_CONTEXT_COMPACTION_COMMAND, realtimeContextRequestSchema } from '@cardbush/bush-protocol';
 import { compactRealtimeContext } from './realtimeContextCompaction.js';
@@ -23,6 +23,7 @@ import { RESOLVE_SOURCE_MEMO_COMMAND, RESOLVE_SOURCE_REFERENCES_COMMAND, sourceR
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
 import { WorkspaceRedoStore } from './workspaceRedoStore.js';
 import { withWorkspaceFileAccess, createWorkspaceParent, writeWorkspaceFile, unlinkWorkspaceFile } from './workspaceFileAccess.js';
+import { isResourceAdmissionError } from './processResourceGuard.js';
 import { readFileBounded } from './workspaceFileRead.js';
 import { isDeepStrictEqual } from 'node:util';
 import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
@@ -168,7 +169,7 @@ import { projectActiveTurnContext } from "./contextAssembler.js";
 
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
-import { registerInteractionTools, registerAsyncInteraction } from "./interactionTools.js";
+import { registerAsyncInteraction } from "./interactionTools.js";
 import { RuntimeTaskTools } from './taskTools.js';
 import { RuntimeAsyncJobs } from './runtimeAsyncJobs.js';
 import { registerToolScript } from './toolScript.js';
@@ -185,7 +186,7 @@ import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
 import { pluginAgentTools, resolvePluginForkRole, PLUGIN_AGENT_DEFAULT_MAX_TURNS, PLUGIN_INVOCATION_MAX_DEPTH } from './pluginExtensions.js';
 import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery, synchronizeMcpCatalog } from './mcpToolDiscovery.js';
 import { createToolNameScope, type ToolNameScope } from './toolReferenceNames.js';
-import { registerBuiltinToolDisclosure, taskManagementTool } from './builtinToolDisclosure.js';
+import { registerBuiltinToolDisclosure } from './builtinToolDisclosure.js';
 import { toolDefinitionUsage } from './toolDefinitionUsage.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import { omitToolImageDataFromText, snapshotMcpImages } from './toolImageContent.js';
@@ -458,7 +459,6 @@ export class InMemoryRuntimeHost {
     registerFileMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
     registerSourceMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
     this.#solutions = new RuntimeSolutionBroker(this.#eventLog);
-    registerInteractionTools(this.#toolRegistry, this.#solutions);
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
@@ -469,7 +469,7 @@ export class InMemoryRuntimeHost {
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
-      delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team'].includes(tool.name)),
+      delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks'].includes(tool.name)),
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
       snapshotImage: (source, signal) => this.#modelImages.snapshot(source, signal),
     });
@@ -561,7 +561,7 @@ export class InMemoryRuntimeHost {
             try { const terminal = await this.#runPluginChild(child, signal); const result = resolveChildTurn({ terminal, session: this.#sessions.snapshot(child.sessionId) }, child.turnId); this.#subagentTasks.finish({ parentSessionId: context.sessionId, taskId, ...result }); }
             catch (error) { this.#subagentTasks.finish({ parentSessionId: context.sessionId, taskId, status: signal.aborted ? 'stopped' : 'failed', finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} }); }
           });
-          return `Background task ${taskId} started. Continue independent work; use ${taskManagementTool(context.turn.request, 'manage_plugin_agents')} when its result is needed.`;
+          return `Background task ${taskId} started. Continue independent work; use tasks when its result is needed.`;
         }
         const terminal = await this.#runPluginChild(child, context.signal);
         const result = resolveChildTurn({ terminal, session: this.#sessions.snapshot(child.sessionId) }, child.turnId);
@@ -575,8 +575,7 @@ export class InMemoryRuntimeHost {
         onInvoke: async (command, context) => { if (command.context !== 'fork') await this.#pluginHookScopes.activate(context.sessionId, command.id); } });
     }
     this.#taskWorkspaces = options.dataRoot ? new TaskWorkspaceManager(join(runtimeDataRoot, "workspaces")) : undefined;
-    this.#pluginAgentEnvironment = new PluginAgentEnvironment(join(runtimeDataRoot, 'plugin-agent-memory'), this.#toolRegistry, this.#taskWorkspaces, options.openAgentMcpScope,
-      sessionId => this.#sessions.snapshot(sessionId) ? this.#sessions.assemble({ sessionId }).messages : []);
+    this.#pluginAgentEnvironment = new PluginAgentEnvironment(this.#toolRegistry, this.#taskWorkspaces, options.openAgentMcpScope);
     this.#modelImages = new ModelImageStore(runtimeDataRoot);
     this.#attachments = new AttachmentStore(runtimeDataRoot);
     registerExtendedBuiltins(this.#toolRegistry, {
@@ -627,7 +626,7 @@ export class InMemoryRuntimeHost {
       (session, turn) => this.#terminalNotifications.list(session, turn),
       undefined, this.#toolExecutions, this.#turnSignals);
     this.#backgroundTools.register();
-    this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks, this.#toolRegistry);
+    this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks);
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
       DEFAULT_SUBAGENT_PERMISSION_POLICY;
     const subagents = registerSubagentTool(
@@ -655,19 +654,6 @@ export class InMemoryRuntimeHost {
           const key = JSON.stringify([parentSessionId, parentTurnId]);
           this.#trackAgentGuidance(key, taskId, result);
         },
-        awaitAsyncResults: ({ parentSessionId, parentTurnId, taskIds, mode, yieldTimeMs }) => {
-          const key = JSON.stringify([parentSessionId, parentTurnId]);
-          const pending = (this.#pendingAgentGuidance.get(key) ?? []).filter(entry => !entry.taskId.startsWith('tool_task_'));
-          const completed: JoinedSubagentResult[] = [];
-          const selected = taskIds.length ? taskIds.filter(taskId => {
-            if (pending.some(entry => entry.taskId === taskId)) return true;
-            const task = this.#subagentTasks.get(parentSessionId, taskId);
-            if (!task || task.status === 'running') throw new Error('The selected task is not a completed or outstanding subagent of this parent turn.');
-            completed.push({ taskId, message: asyncResultMessage(task) }); return false;
-          }) : pending.map(entry => entry.taskId);
-          if (completed.length && mode !== 'all') return Promise.resolve(completed);
-          return selected.length ? this.#joinPendingAgentGuidance(key, selected, mode, yieldTimeMs).then(results => [...completed, ...results]) : Promise.resolve(completed);
-        },
         permissionPolicy: subagentPermissionPolicy,
         models: options.subagentModels,
         ...(options.loadPluginExtensions ? { loadPluginAgents: async () => (await options.loadPluginExtensions!()).agents } : {}),
@@ -677,7 +663,6 @@ export class InMemoryRuntimeHost {
       if (!subagents) throw new Error('The native subagent dispatcher is unavailable.');
       return subagents.dispatch(context, input);
     }, { directory: options.dataRoot ? join(runtimeDataRoot, 'teams') : undefined,
-      waitForWork: (context, promise, duration) => this.#turnSignals.wait(context.sessionId, context.turnId, [promise], 'all', context.signal, duration),
       onResult: (run, promise) => {
         // Do not join an independent Team at the parent's terminal barrier.
         // Publish only a settled result to a still-active parent; idle parents can
@@ -704,16 +689,10 @@ export class InMemoryRuntimeHost {
       result: { session_id: task.childSessionId, turn_id: task.childTurnId, ...(task.status !== 'running' ? { output: task.finalResponse, error: task.errorMessage } : {}) },
       ...(subagents?.readConversation ? { readConversation: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>, cursor?: string) => subagents.readConversation!(ctx, task.taskId, cursor) } : {}),
       wait: (signal: AbortSignal) => this.#subagentTasks.waitForCompletion(context.sessionId, task.taskId, signal),
-      ...(task.background ? { stop: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>) => ctx.invokeTool('manage_plugin_agents', { action: 'stop', task_ids: [task.taskId] }, { record: true }) }
+      ...(task.background ? { stop: () => this.#pluginBackground.stopTask(context.sessionId, task.taskId) }
         : !task.remote ? { stop: async () => this.sendCommand({ kind: STOP_RUNTIME_TURN_COMMAND, payload: { sessionId: task.childSessionId, turnId: task.childTurnId } }) } : {}),
     })));
-    taskTools.addSource(context => this.#backgroundTools.list(context.sessionId, context.turnId).filter(job => !job.name.startsWith('terminal:')).map(job => ({
-      task_id: job.id, kind: 'mcp' as const,
-      status: job.status, revision: `${job.status}:${job.attempts}`, summary: job.name,
-      wait: () => job.promise,
-      stop: async () => { job.controller.abort(); return { stop_requested: true }; },
-      readResult: async () => job.status === 'running' ? undefined : { message: (await job.promise).content },
-    })));
+    taskTools.addSource(context => this.#backgroundTools.taskHandles(context.sessionId, context.turnId));
     const terminalHandles = (context: import('./toolRegistry.js').ToolHandlerContext<unknown>, terminals: Array<Record<string, unknown>>, local: boolean) =>
       terminals.map(terminal => {
         const id = String(terminal.terminalSessionId);
@@ -926,7 +905,7 @@ export class InMemoryRuntimeHost {
       }
       const owner = runtimeExtensionOwner(extension.id);
       const entry = { extension, enabled: options.enabled === true, uses: 0 };
-      this.#toolRegistry.replaceOwned(owner, staged.catalog({ includeSuperseded: true }).map(item => {
+      this.#toolRegistry.replaceOwned(owner, staged.catalog().map(item => {
         const registration = staged.resolve(item.definition.name)!;
         return { ...registration,
           execute: context => this.#useExtension(entry, () => registration.execute(context)),
@@ -1741,9 +1720,7 @@ export class InMemoryRuntimeHost {
     options: { signal?: AbortSignal },
   ): Promise<RuntimeEvent> {
     const candidate = runtimeSessionTurnRequestSchema.parse(input);
-    let savedPolicy = this.#sessions.modelContract(candidate.sessionId);
-    const upgradedPolicy = requestedSessionModelPolicyUpgrade(candidate, savedPolicy);
-    if (upgradedPolicy && savedPolicy) savedPolicy = this.#sessions.upgradeModelContract(candidate.sessionId, savedPolicy.version, upgradedPolicy);
+    const savedPolicy = this.#sessions.modelContract(candidate.sessionId);
     restoreSessionModelPolicy(candidate, savedPolicy);
     if (candidate.metadata.agentRole !== 'child') {
       const children = new Map(this.#subagentTasks.list(candidate.sessionId).map(task => [task.childSessionId, task]));
@@ -1897,7 +1874,8 @@ export class InMemoryRuntimeHost {
     delete request.metadata.mcpDiscoveredToolNames;
     delete request.metadata.mcpDiscoveredToolVersions;
     delete request.metadata.mcpModelToolSnapshot;
-    request.metadata.mcpToolDiscovery = request.tools.some(tool => tool.name === 'mcp_search') && request.tools.some(tool => tool.name === 'mcp_call');
+    request.metadata.mcpToolDiscovery = request.tools.some(tool => tool.name === 'mcp_search') &&
+      request.tools.some(tool => tool.name === 'call_tool');
     const identity: RuntimeEventIdentity = {
       requestId: request.requestId,
       sessionId: request.sessionId,
@@ -2269,6 +2247,7 @@ export class InMemoryRuntimeHost {
         const correctionPartition = partitionOnRepeat && job.failures === 2 && compactionTransaction.partitionForCorrection();
         retryContextCompaction(reason, message, { ...diagnostics, jobId: job.id,
           failures: job.failures, outputTokens: job.outputTokens,
+          ...(job.corrections ? { corrections: job.corrections } : {}),
           ...(correctionPartition ? { correctionPartition: true } : {}) });
         saveIncrementalMessages();
         this.#recovery.save({ request, messages, nextRound: round + 1,
@@ -2687,10 +2666,22 @@ export class InMemoryRuntimeHost {
             const restoredFailures = new Map<string, RestoredCompactionFailure>();
             for (const event of priorContextCompactionEvents) {
               if (event.kind !== 'context_compaction_retrying' || event.payload.compactionId !== activeContextCompaction?.compactionId) continue;
-              if (event.payload.reason === 'checkpoint_result_over_budget') restoredFailures.clear();
               const detail = event.payload.diagnostics;
+              const previous = typeof detail?.jobId === 'string' ? restoredFailures.get(detail.jobId) : undefined;
+              if (event.payload.reason === 'checkpoint_result_over_budget') restoredFailures.clear();
               if (typeof detail?.jobId === 'string' && Number.isInteger(detail.failures) && Number.isInteger(detail.outputTokens)) {
+                // Ordered jobs do not journal an incremental receipt ledger.
+                // Restore their bounded correction text as well as the retry
+                // count, so restart cannot silently change the pending request.
+                // Older journals already stored each correction in the event.
+                const corrections = checkpointFormat === 'incremental' ? undefined
+                  : Array.isArray(detail.corrections) && detail.corrections.every(item => typeof item === 'string')
+                    ? detail.corrections.slice(-2) as string[]
+                    : Number(detail.failures) > (previous?.failures ?? 0) && Number(detail.failures) < 3
+                      ? [...(previous?.corrections ?? []), event.payload.message].slice(-2)
+                      : previous?.corrections;
                 restoredFailures.set(detail.jobId, { failures: Number(detail.failures), outputTokens: Number(detail.outputTokens),
+                  ...(corrections?.length ? { corrections } : {}),
                   ...(detail.correctionPartition === true ? { correctionPartition: true } : {}) });
               }
             }
@@ -2954,6 +2945,7 @@ export class InMemoryRuntimeHost {
                 roundRequest,
                 {
                   signal,
+                  readImage: this.#modelImageReader(roundRequest.messages),
                   attempts: modelAttempts,
                   onCompatibilityDiagnostic: payload => {
                     if (!current()) return;
@@ -3432,7 +3424,8 @@ export class InMemoryRuntimeHost {
               if (compactionTransaction?.refine(correction)) {
                 const job = compactionTransaction.job();
                 retryContextCompaction('checkpoint_result_over_budget', correction, { ...diagnostics,
-                  jobId: job.id, failures: job.failures, outputTokens: job.outputTokens });
+                  jobId: job.id, failures: job.failures, outputTokens: job.outputTokens,
+                  ...(job.corrections ? { corrections: job.corrections } : {}) });
                 saveIncrementalMessages();
                 this.#recovery.save({ request, messages, nextRound: round + 1,
                   cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
@@ -3768,6 +3761,10 @@ export class InMemoryRuntimeHost {
     } catch (error) {
       if (input.signal?.aborted) return await stop();
       if (!(error instanceof ProviderInputTokenCountError)) throw error;
+      if (isResourceAdmissionError(error.original)) {
+        return await finalize({ status: 'failed', reason: (error.original as { code: string }).code,
+          details: { message: error.message, retryable: true, stage: 'model_input_preparation', providerAttempts: 0 } });
+      }
       return await finalize({
         status: "failed",
         reason: "provider_input_token_count_failed",
@@ -3807,6 +3804,10 @@ export class InMemoryRuntimeHost {
     return modelToolDefinitions(this.#toolRegistry, request);
   }
 
+  #modelImageReader(messages: ModelMessage[]) {
+    return this.#modelImages.readerFor(messages.flatMap(message => 'images' in message ? message.images?.map(image => image.url) ?? [] : []));
+  }
+
   async #measureContextPressure(
     request: ModelRequest,
     messages: ModelMessage[],
@@ -3824,6 +3825,7 @@ export class InMemoryRuntimeHost {
     let inputProjection: ProviderInputProjection | undefined;
     let countFailure: ContextPressure['countFailure'];
     let requestBody: ContextPressure['requestBody'];
+    const readImage = this.#modelImageReader(messages);
     const onRequestBodyBudget = (budget: NonNullable<ContextPressure['requestBody']>) => {
       if (!Number.isSafeInteger(budget.bytes) || budget.bytes < 0 ||
           !Number.isSafeInteger(budget.maxBytes) || budget.maxBytes <= 0) {
@@ -3836,7 +3838,7 @@ export class InMemoryRuntimeHost {
       const measurement = await settleAtAbort(
         Promise.resolve(this.#provider.countInputTokens?.(
           { ...request, messages, providerState },
-          { signal, onRequestBodyBudget, onCompatibilityDiagnostic: payload => {
+          { signal, readImage, onRequestBodyBudget, onCompatibilityDiagnostic: payload => {
             this.#eventLog.append({ requestId: request.requestId, sessionId: request.sessionId, turnId: request.turnId },
               { kind: "provider_compatibility", payload });
           } },
@@ -3855,7 +3857,7 @@ export class InMemoryRuntimeHost {
       if (!measurement) {
         projectedInputTokens = await settleAtAbort(
           Promise.resolve(this.#provider.estimateInputTokens?.(
-            request, { signal, onRequestBodyBudget, onInputProjection: projection => { inputProjection = structuredClone(projection); } })),
+            request, { signal, readImage, onRequestBodyBudget, onInputProjection: projection => { inputProjection = structuredClone(projection); } })),
           signal, "Provider input projection was cancelled.",
         );
       }

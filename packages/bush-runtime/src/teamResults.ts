@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { ModelMessage, TeamRun } from '@cardbush/bush-protocol';
 import { briefText } from './catalogPage.js';
 
-export const teamResultGuidance = 'Completed means execution finished, not independent validation. Check conclusions against the task and evidence before reporting them; distinguish verified facts from employee suggestions. Read intermediate outputs with team wait and node_ids when needed.';
+export const teamResultGuidance = 'Completed means execution finished, not independent validation. Check conclusions against the task and evidence before reporting them; distinguish verified facts from employee suggestions. Read intermediate outputs with tasks inspect and node_ids when needed.';
 
 function resultVersion(run: TeamRun) {
   // A resumed run keeps its ID but has new node attempts/results. Do not suppress it
@@ -48,13 +48,16 @@ export function teamCompletionAlreadyRead(content: string, messages: ModelMessag
   for (const message of messages) {
     if (message.role === 'assistant') for (const call of message.toolCalls) {
       const input = jsonObject(call.argumentsText);
-      const args = call.name === 'team' ? input : call.name === 'call_tool' && input?.name === 'team' &&
+      const args = call.name === 'tasks' ? input : call.name === 'call_tool' && input?.name === 'tasks' &&
         input.arguments && typeof input.arguments === 'object' && !Array.isArray(input.arguments)
         ? input.arguments as Record<string, unknown> : undefined;
-      if (args && args.action === 'wait' && args.run_id === notice.run_id) waits.add(call.id);
+      if (args && ['inspect', 'wait'].includes(String(args.action)) &&
+        (!args.task_ids || Array.isArray(args.task_ids) && args.task_ids.includes(notice.run_id))) waits.add(call.id);
     }
     if (message.role !== 'tool' || !waits.has(message.toolCallId)) continue;
-    const result = jsonObject(message.content);
+    const output = jsonObject(message.content);
+    if (!Array.isArray(output?.tasks)) continue;
+    const result = output.tasks.find(task => task?.task_id === notice.run_id && task.kind === 'team')?.result;
     if (result?.run_id === notice.run_id && result.result_version === notice.result_version &&
         result.status === notice.status && Array.isArray(result.output_node_ids) && Array.isArray(notice.result_node_ids) &&
         notice.result_node_ids.every(id => (result.output_node_ids as unknown[]).includes(id))) return true;

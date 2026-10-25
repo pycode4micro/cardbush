@@ -25,7 +25,7 @@ const attach = (store, listSessions) => {
 
 test('structured task handles survive long prompts and MCP text envelopes and remain searchable', async () => {
   const store = new ToolExecutionStore({ now: () => now });
-  const record = createRecord(store, 'created', 'one', { tool: 'mcp_call',
+  const record = createRecord(store, 'created', 'one', { tool: 'call_tool',
     args: { name: 'generate_video', arguments: { prompt: 'creative directions '.repeat(2000) } },
     result: { content: [{ type: 'text', text: JSON.stringify({ task: { id: 'cgt-20261010-987cq', status: 'running',
       content: { video_url: 'https://cdn.invalid/file?token=PRIVATE' }, api_key: 'PRIVATE' }, output_path: 'C:/task/output/video.mp4' }) }] } });
@@ -103,7 +103,7 @@ test('scope includes only the same project; projectless queries stay in their ow
 
 test('plugin receipts retain nested identifying arguments and structured result facts', async () => {
   const store = new ToolExecutionStore({ now: () => now });
-  createRecord(store, 'plugin', 'one', { tool: 'mcp_call', command: '', output: '',
+  createRecord(store, 'plugin', 'one', { tool: 'call_tool', command: '', output: '',
     args: { name: 'stylize_video', arguments: { path: 'head_regions.mp4', content: 'PRIVATE_BODY'.repeat(1000) } },
     result: { structuredContent: { success: false, summary: '帽檐处还有缺口，等待抽查', frames: 'PRIVATE_FRAMES'.repeat(1000) } },
   });

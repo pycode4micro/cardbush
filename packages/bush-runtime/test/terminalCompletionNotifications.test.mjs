@@ -5,6 +5,7 @@ import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, TerminalSessionManager } from '../dist/index.js';
 import { TerminalCompletionNotifications } from '../dist/terminalCompletionNotifications.js';
+import { RuntimeTaskTools } from '../dist/taskTools.js';
 import { BackgroundToolCalls } from '../dist/backgroundToolCalls.js';
 
 const shell = process.platform === 'win32' ? 'powershell' : 'posix';
@@ -44,7 +45,7 @@ test('real terminal exit is delivered once, with no model polling and a stable m
       assert.match(receipt, /"completion_notification":true/);
       taskId = JSON.parse(receipt.split('\n\n')[0]).completion_task_id;
       yield* response(request, { name: 'independent', args: {} });
-    } else if (rounds === 3) yield* response(request, { name: 'manage_tool_calls', args: { action: 'wait', task_ids: [taskId], yield_time_ms: 30_000 } });
+    } else if (rounds === 3) yield* response(request, { name: 'tasks', args: { action: 'wait', task_ids: [taskId], yield_time_ms: 30_000 } });
     else {
       const notices = request.messages.filter(m => m.name === 'background_tool_result');
       assert.equal(notices.length, 1); assert.equal(notices[0].visibility, 'internal');
@@ -91,9 +92,12 @@ test('SSH observers renew in the host and wait(any) ignores already settled jobs
   const watcher = new TerminalCompletionNotifications(new TerminalSessionManager(), store, remote, (_s, _t, _id, promise) => deliveries.push(promise));
   const id = watcher.watch(context(controller), { terminalSessionId: 'ssh-handle', state: 'running', executionEnvironment: { kind: 'ssh', workspaceDir: 'ssh://test/tmp' } });
   const registry = new ToolRegistry(), jobs = new BackgroundToolCalls(registry, () => {}, (s, t) => watcher.list(s, t)); jobs.register();
-  const manage = registry.resolve('manage_tool_calls');
+  const tasks = new RuntimeTaskTools((ctx, promises, mode, signal, duration) => jobs.waitForWork(ctx.sessionId, ctx.turnId, promises, mode, signal, duration));
+  tasks.addSource(ctx => watcher.list(ctx.sessionId, ctx.turnId).map(job => ({ task_id: job.id, kind: 'terminal', status: job.status, revision: job.status, wait: () => job.promise })));
+  tasks.register(registry);
+  const manage = registry.resolve('tasks');
   const run = (input, sessionId = 's') => manage.execute({ sessionId, turnId: 't', input: manage.decodeInput(input) });
-  await assert.rejects(() => run({ action: 'wait', task_ids: [id] }, 'foreign'), /belong/);
+  await assert.rejects(() => run({ action: 'wait', task_ids: [id] }, 'foreign'), /not available in this conversation/);
   const waited = await run({ action: 'wait', task_ids: [id] });
   assert.equal(waited.tasks[0].status, 'completed'); assert.equal(observations, 3);
   assert.match((await deliveries[0]).content, /ssh-done/);
@@ -116,7 +120,7 @@ test('stopping while awaiting a terminal never resumes the model; persistent opt
         if (notify) {
           assert.equal(receipt.completion_notification, true);
           setTimeout(() => controller.abort(), 40);
-          yield* response(request, { name: 'manage_tool_calls', args: { action: 'wait', task_ids: [receipt.completion_task_id] } });
+          yield* response(request, { name: 'tasks', args: { action: 'wait', task_ids: [receipt.completion_task_id] } });
         } else { assert.equal(receipt.completion_notification, undefined); yield* response(request); }
       }
     } } });
@@ -126,7 +130,21 @@ test('stopping while awaiting a terminal never resumes the model; persistent opt
       assert.equal(result.payload.status, notify ? 'stopped' : 'completed');
       assert.equal(rounds, 2); assert.equal(store.listByTool('s', 'terminal_completion').length, 0);
     } finally {
-      if (handle) { const stop = registry.resolve('terminal_stop'); await stop.execute({ sessionId: 's', input: stop.decodeInput({ session_id: handle }) }); }
+      try {
+        if (handle) {
+          const stop = registry.resolve('terminal_stop');
+          try { await stop.execute({ sessionId: 's', input: stop.decodeInput({ session_id: handle }) }); }
+          catch (error) {
+            assert.equal(error.code, 'terminal_stop_unconfirmed');
+            const poll = registry.resolve('terminal_poll');
+            const deadline = Date.now() + 8000;
+            let status;
+            do { status = await poll.execute({ sessionId: 's', input: poll.decodeInput({ session_id: handle, yield_time_ms: 1000 }) }); }
+            while (status.state === 'running' && Date.now() < deadline);
+            assert.notEqual(status.state, 'running', 'test process must confirm exit before cleanup');
+          }
+        }
+      } finally { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
     }
   }
 });

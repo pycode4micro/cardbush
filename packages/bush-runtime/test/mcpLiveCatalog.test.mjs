@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InMemoryRuntimeHost, ToolRegistry, registerMcpDiscovery } from '../dist/index.js';
@@ -8,7 +9,7 @@ const tool = (name, extra = {}) => ({ definition: { name, description: name, inp
   decodeInput: x => x, execute: () => ({ ok: true }), mcpHook: { server: 'added', tool: name, call: async () => ({}) }, ...extra });
 
 test('live additions remain opt-in, scoped and unloaded; provider definitions stay stable', () => {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   const initial = registry.definitions();
   registry.replaceOwned('runtime_mcp', [tool('mcp__added__echo'), tool('private', { sessionScope: 'other' }),
     tool('ui_only', { mcpHook: { server: 'added', tool: 'ui_only', modelVisible: false, call: async () => ({}) } })]);
@@ -27,7 +28,7 @@ test('live additions remain opt-in, scoped and unloaded; provider definitions st
 });
 
 test('no-tools policy suppresses both fresh and saved provider definitions without changing the live scope', () => {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   const initial = registry.definitions();
   const request = { sessionId: 's', turnId: 't', tools: [...initial], metadata: { mcpToolDiscovery: true } };
   const before = modelToolDefinitions(registry, request);
@@ -48,7 +49,7 @@ test('no-tools policy suppresses both fresh and saved provider definitions witho
 });
 
 test('round boundaries reconcile additions, changes and removals with one bounded model notice', () => {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   registry.replaceOwned('runtime_mcp', [tool('old'), tool('edit'), tool('steady')]);
   const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: { mcpToolDiscovery: true, mcpCatalogUpdates: 'additions' } };
   assert.equal(synchronizeMcpCatalog(registry, request), undefined);
@@ -68,7 +69,7 @@ test('round boundaries reconcile additions, changes and removals with one bounde
 });
 
 test('native extension scope refreshes without rewriting provider declarations or expanding a child scope', () => {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   registry.replaceOwned('extension:fixture', [{ ...tool('native'), mcpHook: undefined }]);
   const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: { mcpToolDiscovery: true, mcpCatalogUpdates: 'additions' } };
   synchronizeMcpCatalog(registry, request);
@@ -101,8 +102,8 @@ test('a running product turn loads and calls a new plugin on its next round with
     const notices = request.messages.filter(message => message.name === 'mcp_catalog_update');
     assert.equal(notices.length, round === 0 ? 0 : 1, 'the next round sees exactly one capability update');
     if (notices.length) assert.deepEqual(JSON.parse(notices[0].content).added, ['mcp__added__echo']);
-    const operations = [ ['install_fixture', {}], ['mcp_search', { action: 'load', query: 'mcp__added__echo' }],
-      ['mcp_call', { name: 'mcp__added__echo', arguments: {} }] ];
+    const operations = [ ['install_fixture', {}], ['get_tool_schema', { name: 'mcp__added__echo' }],
+      ['call_tool', { name: 'mcp__added__echo', arguments: {} }] ];
     const operation = operations[round++];
     const event = (sequence, kind, values) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId,
       sequence, createdAt: new Date().toISOString(), kind, ...values });

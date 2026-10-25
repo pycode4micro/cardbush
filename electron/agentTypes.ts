@@ -32,16 +32,9 @@ export type AgentConnection = {
   connectionError?: string;
   configurationError?: string;
   configurationWarnings?: string[];
-  autoSyncPlugins?: boolean;
-  excludedPluginIds?: string[];
-  syncSkills?: boolean;
 };
-export type AgentSyncPlugin = { id: string; name: string; version: string; source: 'bundled' | 'user' };
-export type AgentConnectionInput = { id?: string; name: string; transport: 'http'; url?: string; token?: string; sshTunnel?: AgentSshTunnel | null;
-  autoSyncPlugins?: boolean; excludedPluginIds?: string[]; syncSkills?: boolean };
+export type AgentConnectionInput = { id?: string; name: string; transport: 'http'; url?: string; token?: string; sshTunnel?: AgentSshTunnel | null };
 export interface AgentDesktopApi {
-  syncCatalog(): Promise<AgentSyncPlugin[]>;
-  syncConfiguration(id: string): Promise<{ digest: string; warnings: string[] }>;
   list(): Promise<AgentConnection[]>;
   save(input: AgentConnectionInput): Promise<AgentConnection[]>;
   remove(id: string): Promise<AgentConnection[]>;

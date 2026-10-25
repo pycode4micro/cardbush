@@ -1,4 +1,5 @@
 import { TASK_WAIT_MAX_MS, TASK_WAIT_DEFAULT_MS, TASK_BATCH_LIMIT, TASK_PAGE_DEFAULT } from './taskLimits.js';
+import { TEAM_WORKFLOW_MAX_NODES } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import { briefText, projectCatalogPage } from './catalogPage.js';
@@ -11,7 +12,7 @@ export interface RuntimeTaskHandle {
   revision: string;
   summary?: string;
   result?: unknown;
-  readResult?: () => Promise<unknown>;
+  readResult?: (nodeIds?: string[]) => Promise<unknown>;
   readConversation?: (context: ToolHandlerContext<unknown>, cursor?: string) => Promise<unknown>;
   wait?: (signal: AbortSignal) => Promise<unknown>;
   stop?: (context: ToolHandlerContext<unknown>) => Promise<unknown>;
@@ -22,6 +23,7 @@ export const taskPending = (task: RuntimeTaskHandle) => ['running', 'pending', '
 const schema = z.object({
   action: z.enum(['list', 'inspect', 'conversation', 'wait', 'stop', 'cancel_observation']).default('list'),
   cursor: z.string().regex(/^\d+:\d+$/).optional(),
+  node_ids: z.array(z.string().trim().min(1)).min(1).max(TEAM_WORKFLOW_MAX_NODES).refine(ids => new Set(ids).size === ids.length, 'node_ids must be unique').optional().describe('Selected node outputs from one Team run; inspect or wait only. Omit for final outputs.'),
   task_ids: z.array(z.string().min(1)).min(1).max(TASK_BATCH_LIMIT).optional().describe('Existing task_id handles from tasks list or launch results (subagent taskId, team task_id/run_id). Employee IDs, workflow definition IDs, node IDs and chat session IDs are not task handles.'),
   mode: z.enum(['any', 'all']).default('any'),
   yield_time_ms: z.number().int().min(0).max(TASK_WAIT_MAX_MS).default(TASK_WAIT_DEFAULT_MS),
@@ -75,6 +77,7 @@ export class RuntimeTaskTools {
           return matches[0]!;
         }))];
         let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'wait' ? all.filter(taskPending).slice(0, TASK_BATCH_LIMIT) : all.slice(input.offset, input.offset + input.limit);
+        if (input.node_ids && (!['inspect', 'wait'].includes(input.action) || selected.length !== 1 || selected[0]!.kind !== 'team' || !input.task_ids)) throw new Error('node_ids requires inspect or wait and one explicit Team task_id.');
         if (input.action === 'conversation') {
           const task = selected[0]!;
           if (!task.readConversation) throw new Error('This task has no readable child conversation. Use inspect for its result.');
@@ -108,8 +111,8 @@ export class RuntimeTaskTools {
           ...(input.action === 'wait' && !input.task_ids && all.filter(taskPending).length > selected.length ? { selection_limited: true, pending_count: snapshot.handles.filter(taskPending).length } : {}),
           ...(input.action === 'list' && !input.task_ids ? { total: all.length, offset: input.offset, next_offset: input.offset + selected.length < all.length ? input.offset + selected.length : null } : {}),
           tasks: await Promise.all(selected.map(async ({ task_id, kind, status, revision, summary, result, readResult, stop, cancelObservation }) => {
-            const unchanged = input.after?.[task_id] === revision;
-            const value = !unchanged && input.action !== 'list' ? readResult ? await readResult() : result : undefined;
+            const unchanged = !input.node_ids && input.after?.[task_id] === revision;
+            const value = !unchanged && input.action !== 'list' ? readResult ? await readResult(input.node_ids) : result : undefined;
             return { task_id, kind, status, revision, ...(summary ? { summary: input.action === 'list' ? briefText(summary) : summary } : {}),
               ...(unchanged ? { unchanged: true } : value !== undefined ? { result: value } : {}),
               controls: { stop: !!stop, cancel_observation: !!cancelObservation } };

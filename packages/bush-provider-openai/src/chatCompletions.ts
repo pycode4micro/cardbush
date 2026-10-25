@@ -70,7 +70,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
   }
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
     options.signal?.throwIfAborted();
-    const params = toChatCompletionsParams(await resolveLocalImageInputs(request), this.config.baseURL);
+    const params = toChatCompletionsParams(await resolveLocalImageInputs(request, options), this.config.baseURL);
     options.signal?.throwIfAborted();
     return recordProjection(this.#format, request, { ...params }, options, this.config.maxRequestBodyBytes);
   }
@@ -80,7 +80,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
     const routerReasoning = new OpenRouterReasoning();
     const calls = new Map<number, PortableCall>();
     try {
-      const params = toChatCompletionsParams(await resolveLocalImageInputs(request), this.config.baseURL);
+      const params = toChatCompletionsParams(await resolveLocalImageInputs(request, options), this.config.baseURL);
       options.signal?.throwIfAborted();
       recordProjection(this.#format, request, { ...params }, options, this.config.maxRequestBodyBytes, true);
       options.attempts?.dispatch();

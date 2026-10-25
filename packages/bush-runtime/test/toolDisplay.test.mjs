@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RuntimeToolLoop, ToolRegistry, ToolExecutionStore, InMemoryRuntimeEventLog, registerMcpDiscovery, synchronizeMcpDiscovery } from '../dist/index.js';
@@ -68,18 +69,18 @@ for (const title of ['核对产品资料', { zh: '核对产品资料', en: 'Chec
 test('MCP gateway title stays on its single receipt and never reaches strict native arguments', async () => {
   const registry = new ToolRegistry(), store = new ToolExecutionStore(), eventLog = new InMemoryRuntimeEventLog();
   const name = 'mcp__fixture__read'; let calls = 0;
-  registerMcpDiscovery(registry);
+  registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   registry.register({ definition: { ...definition, name }, manifest, decodeInput: strictInput,
     mcpHook: { server: 'fixture', tool: 'read', call: async () => ({}) },
     execute: context => { strictInput(context.input); calls++; return { found: true }; },
   });
   const request = { ...identity, tools: registry.definitions(), metadata: { mcpToolDiscovery: true } }, messages = [];
-  const receipt = await registry.resolve('mcp_search').execute({ input: { action: 'load', query: name }, turn: { request, contextMessages: messages } });
+  const receipt = await registry.resolve('get_tool_schema').execute({ sessionId: identity.sessionId, input: { name }, turn: { request, contextMessages: messages } });
   assert.deepEqual(receipt.matches[0].inputSchema, definition.inputSchema, 'discovery receipts and their revisions keep the native schema');
-  messages.push({ role: 'assistant', content: '', toolCalls: [call('load', 'mcp_search', { query: name })] }, { role: 'tool', toolCallId: 'load', content: JSON.stringify(receipt) });
+  messages.push({ role: 'assistant', content: '', toolCalls: [call('load', 'get_tool_schema', { name })] }, { role: 'tool', toolCallId: 'load', content: JSON.stringify(receipt) });
   synchronizeMcpDiscovery(registry, request, messages);
   const loop = new RuntimeToolLoop({ registry, executionStore: store, eventLog, identity });
-  const toolCall = call('outer', 'mcp_call', { name, arguments: { path: '/fixture' }, _display_title: '检索部门资料' });
+  const toolCall = call('outer', 'call_tool', { name, arguments: { path: '/fixture' }, _display_title: '检索部门资料' });
   await loop.execute([toolCall], { round: 1, assistantMessageId: 'a', request, contextMessages: messages });
   const events = eventLog.replay('s', 't').filter(e => e.kind.startsWith('tool_'));
   assert.deepEqual([...new Set(events.map(e => e.payload.toolCallId))], ['outer']);

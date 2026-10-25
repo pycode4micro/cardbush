@@ -11,7 +11,7 @@ function canonical(value: unknown): unknown {
 function fingerprint(call: Pick<ToolCall, 'name' | 'argumentsText'>, code: string) {
   try {
     let name = call.name, args = JSON.parse(call.argumentsText);
-    for (let depth = 0; depth < 8 && ['call_tool', 'mcp_call'].includes(name) && typeof args?.name === 'string' && args.arguments; depth++) {
+    for (let depth = 0; depth < 8 && name === 'call_tool' && typeof args?.name === 'string' && args.arguments; depth++) {
       name = args.name; args = args.arguments;
     }
     return createHash('sha256').update(JSON.stringify([code, name, canonical(args)])).digest('hex');

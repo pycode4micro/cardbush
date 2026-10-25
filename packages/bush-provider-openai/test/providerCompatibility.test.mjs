@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
@@ -13,7 +14,7 @@ import { FileProviderCapabilityStore, InMemoryProviderCapabilityStore, OpenAIRes
 const model = 'fixture-model';
 const scope = 'fixture-endpoint';
 const profile = { scope, model, capability: 'responses_generation_compatibility' };
-const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const request = overrides => modelRequestSchema.parse({
   protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model,
   messages: [{ role: 'user', content: 'Hello' }], tools: registry.definitions(),
@@ -385,7 +386,7 @@ test('native history converts losslessly, tool images follow complete batches, a
   const first = request();
   const round = await executeModelRound(f.provider, first);
   const messages = [...first.messages, assistant(round), { role: 'tool', toolCallId: 'search', content: JSON.stringify({
-    protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load', matches: [], total: 0, more: false,
+    protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'search', matches: [], total: 0, more: false,
   }) }, { role: 'assistant', content: '', toolCalls: [
     { id: 'image', name: 'view_image', argumentsText: '{}' }, { id: 'other', name: 'inspect', argumentsText: '{}' },
   ] }, { role: 'tool', toolCallId: 'image', content: 'image receipt', images: [{ url: 'https://example.test/image.png', detail: 'high' }] },

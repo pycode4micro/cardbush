@@ -64,7 +64,7 @@ async function run() {
   };
   try {
     const binding = (await bind()).binding;
-    const tools = (await command('runtime.get_tool_catalog')).filter(tool => ['checkpoint_context', 'read_file', 'schedule_task', 'scheduled_results', 'terminal_exec', 'update_task_plan', 'mcp_search', 'mcp_call'].includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
+    const tools = (await command('runtime.get_tool_catalog')).filter(tool => ['checkpoint_context', 'read_file', 'schedule_task', 'scheduled_results', 'terminal_exec', 'update_task_plan', 'mcp_search', 'call_tool'].includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
     assert.equal(tools.length, 8);
     const generation = { temperature: 0, topP: 0.73, maxOutputTokens: 4096, reasoningEffort: 'high' };
     const result = await command('runtime.run_session_turn', { protocol: 'bush.session_turn_request.v1', requestId: 'human', sessionId: 'session', turnId: 'human', model: 'fixture', providerBinding: binding,

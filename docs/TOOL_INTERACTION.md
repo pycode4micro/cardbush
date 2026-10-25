@@ -2,23 +2,29 @@
 
 这些能力实现在共享 Runtime。本机和云 Agent 使用相同的工具协议；直接 SSH 的文件、搜索和终端路径也支持对应参数。
 
+## 统一调用
+
+内置工具和 MCP 业务工具统一使用 `call_tool({name, arguments})`。已知准确名称时，先用 `get_tool_schema({name})` 读取完整定义，等结果返回并读完后调用；定义仍在上下文中时可复用。不知道 MCP 名称时先 `mcp_search({query})`，批量加载用 `get_tool_schema({names})`。发现、归档读取和上下文维护工具按返回的 `invocation` 直接调用，不嵌套包装入口。
+
+旧 `mcp_call`、`parallel_tools`、各类独立任务管理工具、同步问询和预授权入口均已删除，不保留别名或历史结果适配。`tasks` 统一观察、等待、停止和读取子会话；`team` 负责工作流定义、启动和恢复；问询统一为 `request_user_input_async({questions})`。调用仍检查实际目标的范围、定义版本、审批、Hooks、锁和取消。加载定义不授予权限，脚本内继续使用 `tools.call(target, args)`。产品策略 v9 拒绝恢复旧工具合同，需清理旧历史后新建会话，不迁移或重放旧调用。
+
 ## MCP 发现
 
-`mcp_search` 的 `action=search` 只返回短摘要、是否已加载及分页信息。固定操作说明留在工具定义中；模型看到的搜索结果不再重复协议、会话、服务器、底层名称和 next_step。原生执行记录仍保留完整事实。
+`mcp_search` 只返回短摘要、是否已加载及分页信息。固定操作说明留在工具定义中；模型看到的搜索结果不再重复协议、会话、服务器、底层名称和 next_step。原生执行记录仍保留完整事实。
 
 搜索按完整词匹配并忽略常见英文虚词，优先准确工具名、有效查询词覆盖率及工具名／服务名匹配，避免 `web` 命中 `webp` 等无关子串。Browser Use 的工具描述明确支持通过搜索引擎网页查询新闻和当前信息。搜索只覆盖当前会话可见的工具，部分命中或没有命中不代表浏览器／相关能力不可用。
 
 首次使用 `query`（`*` 表示目录，可用 `server` 缩小范围）；后续把 `next_cursor` 原样传入 `cursor`，可调整 `limit`，不再传 `query`、`server` 或数字 `offset`。游标绑定原查询、会话和排序结果；更换查询从第一页开始，相关目录变化后要求重新搜索。重复读取同一游标得到同一页，不因搜索或阅读而隐藏已返回工具。`more` 和 `next_cursor` 保留在模型看到的结果中。
 
-`action=load` 在最终模型请求中同样省略 `protocol`、`sessionId`、`next_step` 和值为 false 的 `more`，普通函数调用与原生 tool_search 路径一致。完整 schema、修订信息、分页、批量错误和 `deferred` 保留。精简发生在 Provider 发送边界；Runtime 历史保留原身份信息用于重连、压缩和恢复校验，不改写已保存的消息。超大结果的归档正文及分段偏移保持原样，普通工具返回和 Hook 替换内容不受影响。
+`get_tool_schema` 的回执在最终模型请求中同样省略 `protocol`、`sessionId`、`next_step` 和值为 false 的 `more`，普通函数调用与原生 tool_search 路径一致。完整 schema、修订信息、分页、批量错误和 `deferred` 保留。精简发生在 Provider 发送边界；Runtime 历史保留原身份信息用于重连、压缩和恢复校验，不改写已保存的消息。超大结果的归档正文及分段偏移保持原样，普通工具返回和 Hook 替换内容不受影响。
 
 一次加载多个已知工具：
 
 ```json
-{"action":"load","names":["mcp__server__first","mcp__server__second"]}
+{"names":["mcp__server__first","mcp__server__second"]}
 ```
 
-最多 16 个名称，自动去重。成功项返回完整 schema，缺失、歧义和不可见项分别报告错误；超出批量展示预算的项放入 `deferred`，不被标记已加载。单个特别大的 schema 走现有归档机制。单项加载使用 `action=load` 和精确 `query`，不接受旧 `reload` 参数或无 action 的旧加载结果。加载不执行工具，也不授予权限。压缩后只有完整 schema 仍在实际上下文中，才视为已加载。
+最多 16 个名称，自动去重。成功项返回完整 schema，缺失、歧义和不可见项分别报告错误；超出批量展示预算的项放入 `deferred`，不被标记已加载。单个特别大的 schema 走现有归档机制。单项加载使用 `get_tool_schema({name})`，与 `names` 互斥。新回执使用 `bush.tool_schema.v1`，旧 MCP 加载回执不再恢复定义。加载不执行工具，也不授予权限。压缩后只有完整 schema 仍在实际上下文中，才视为已加载。
 
 ## 结果与执行历史
 
@@ -52,4 +58,4 @@
 
 终端完成通知见 [后台等待与续接](ASYNC_TOOL_AND_SUBAGENT_CONTINUATION.md)。新增结果只追加，已发送的消息和本轮工具快照保持稳定。
 
-验证：`npm run test:tool-ergonomics`。
+验证：统一入口、恢复和权限边界使用 `npm run test:tool-invocation`；其他交互使用 `npm run test:tool-ergonomics`。

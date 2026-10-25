@@ -91,8 +91,10 @@ export class SandboxFileHandle {
   async stat(options: { bigint: true }): Promise<BigIntStats>;
   async stat(options?: { bigint: true }): Promise<Stats | BigIntStats> {
     const value = await this.request({ op: 'stat' });
+    const mtimeNs = BigInt(value.mtimeNs);
     return { ...Object.fromEntries(Object.entries(value).map(([key, item]) => [key, options?.bigint ? BigInt(String(item)) : Number(item)])),
-      mtimeMs: options?.bigint ? BigInt(value.mtimeNs) / 1_000_000n : Number(value.mtimeNs) / 1_000_000,
+      // Epoch nanoseconds exceed Number precision; split before converting, as native Stats does.
+      mtimeMs: options?.bigint ? mtimeNs / 1_000_000n : Number(mtimeNs / 1_000_000_000n) * 1000 + Number(mtimeNs % 1_000_000_000n) / 1_000_000,
       isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false } as unknown as Stats | BigIntStats;
   }
 

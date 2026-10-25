@@ -80,7 +80,7 @@ export function bindWorkspaceFileAuthorization<T>(registration: ToolRegistration
         const result = await active.run(access, () => registration.execute({ ...context, input: boundInput(context.input, admission.targets) }));
         // Specialized tools keep their durable memo/artifact schemas unchanged.
         return !binding && access.sandboxStatus && result && typeof result === 'object' ? { ...result, sandbox: access.sandboxStatus } : result;
-      } finally { await access.guard.close(); }
+      } finally { await access.close(); }
     },
   };
 }
@@ -106,16 +106,31 @@ export async function withWorkspaceFileAccess<T>(paths: string[], writing: boole
     }
     await verifyWorkspaceFileSandbox(options.linuxExecutable);
     return await active.run(access, operation);
-  } finally { await access.guard.close(); }
+  } finally { await access.close(); }
+}
+
+/** Runtime-owned metadata only: finish workspace access before publishing state.
+ * Windows directory pins intentionally prevent rename/link in the pinned parent.
+ * This is not a content-access fallback or an extension of the authorized paths. */
+export async function persistAfterWorkspaceFileAccess(owner: object, persist: () => Promise<void>): Promise<void> {
+  const access = active.getStore();
+  if (access) access.afterClose.set(owner, persist);
+  else await persist();
 }
 
 class WorkspaceFileAccess {
   readonly guard = new WorkspacePathGuard();
+  readonly afterClose = new Map<object, () => Promise<void>>();
   sandboxStatus?: Pick<ExecutionSandboxStatus, 'backend' | 'network'>;
   readonly #versions = new Map<string, string | undefined>();
   readonly #hashes = new Map<string, string>();
   constructor(readonly targets: Target[], readonly writing: boolean, readonly signal?: AbortSignal, readonly linuxExecutable?: string) {
     for (const target of targets) this.#versions.set(normalizeIdentity(target.path), target.identity);
+  }
+  async close() {
+    await this.guard.close();
+    for (const persist of this.afterClose.values()) await persist();
+    this.afterClose.clear();
   }
   allowed(path: string, write = false) {
     if (write && !this.writing || !this.targets.some(target => samePath(path, target.path) || !write && target.directory && isWithin(target.path, path))) throw pathChanged();

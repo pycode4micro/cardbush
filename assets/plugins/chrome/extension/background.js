@@ -338,7 +338,7 @@ async function disableConnector(forgetPairing = false) {
     if (forgetPairing) {
       await chrome.storage.local.set({ [PAIRING_KEY]: '' });
       pairingRequired = true;
-      lastError = '此浏览器的配对已被移除，请在 CardBush 中重新配对。';
+      lastError = '此浏览器的连接已被移除。需要恢复本机连接时，请点击「连接 CardBush」重新申请；手动连接或远程 Agent 配对请使用目标 Agent 提供的配对码。';
     }
     await chrome.alarms.clear(RECONNECT_ALARM);
     port?.disconnect();

@@ -53,8 +53,8 @@ export function terminalCursor(value: string, columns: number) {
   }
   return { rows, cols };
 }
-export function terminalStyle(text: string, style: 'blue' | 'dim' | 'bold' | 'error' | 'warning' | 'code', color: boolean) {
-  const code = { blue: 94, dim: 90, bold: 1, error: 31, warning: 33, code: 36 }[style];
+export function terminalStyle(text: string, style: 'blue' | 'dim' | 'bold' | 'error' | 'warning' | 'code' | 'link', color: boolean) {
+  const code = { blue: 94, dim: 90, bold: 1, error: 31, warning: 33, code: 36, link: '4;94' }[style];
   return color ? `\x1b[${code}m${text}\x1b[0m` : text;
 }
 
@@ -109,13 +109,17 @@ function inlineMarkdown(text: string, references?: ChatReferenceRenderer): TextR
     if (!code && !bold && !link && !auto && !source) continue;
     runs.push({ text: text.slice(offset, i) });
     let length: number;
-    if (code) { length = code[0].length; runs.push({ text: code[2], style: 'code' }); }
+    if (code) {
+      length = code[0].length;
+      const rendered = references?.path?.(code[2]);
+      runs.push(rendered ? { ...rendered, style: rendered.href ? 'link' : 'blue' } : { text: code[2], style: 'code' });
+    }
     else if (bold) { length = bold[0].length; runs.push(...inlineMarkdown(bold[1], references).map(run => ({ ...run, style: run.style ?? 'bold' as const }))); }
     else if (link || auto) {
-      const label = link?.label ?? auto![1], target = link?.target ?? auto![1];
+      const label = (link?.label ?? auto![1]).replace(/^(`+)([^`\n]+)\1$/, '$2'), target = link?.target ?? auto![1];
       length = link ? link.end - i : auto![0].length;
       const rendered = references?.link(label, target);
-      if (rendered) runs.push({ ...rendered, style: 'blue' });
+      if (rendered) runs.push({ ...rendered, style: rendered.href ? 'link' : 'blue' });
       else runs.push({ text: label, style: 'blue' }, { text: ` (${target})` });
     } else { length = source![0].length; references?.source?.(Number(source![1])); runs.push({ text: source![0], style: references ? 'blue' : undefined }); }
     i += length - 1; offset = i + 1;

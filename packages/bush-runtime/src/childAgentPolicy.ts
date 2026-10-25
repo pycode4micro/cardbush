@@ -23,7 +23,7 @@ export function childAgentToolDenial(request: ModelRequest | undefined, registra
   if (request.metadata.registeredAgentReadOnly === true && registration.manifest.mutating !== false) {
     return { code: 'registered_agent_read_only', message: 'This registered Agent has a read_only guard. This tool can mutate resources and is unavailable.' };
   }
-  if (name === 'subagent' || name === 'team_delegate' || name === 'await_subagents') {
+  if (name === 'subagent' || name === 'team_delegate') {
     return childAgentDispatchDenial(request);
   }
   const disabled: readonly unknown[] = Array.isArray(request.metadata.disabledTools)

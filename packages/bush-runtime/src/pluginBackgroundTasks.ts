@@ -1,13 +1,8 @@
-import { TASK_BATCH_LIMIT, TASK_WAIT_DEFAULT_MS } from './taskLimits.js';
-import { replacedToolPresentation } from './toolPresentation.js';
 import { blobCacheEntries, memoryCacheEntry, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SubagentTaskStore } from './subagentTaskStore.js';
-import type { ToolRegistry } from './toolRegistry.js';
-import { settleAtAbort } from './abortSettlement.js';
-import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, projectCatalogPage, type CatalogQuery } from './catalogPage.js';
 
 export class PluginBackgroundTasks {
   get busy() { return this.active.size > 0; }
@@ -17,41 +12,15 @@ export class PluginBackgroundTasks {
   }
   private readonly active = new Map<string, { session: string; turn: string; controller: AbortController; promise: Promise<unknown> }>();
   private readonly delivered = new Map<string, Set<string>>();
-  constructor(private readonly root: string, private readonly tasks: SubagentTaskStore, registry: ToolRegistry) {
-    registry.register<CatalogQuery & { action: string; ids: string[]; yieldTimeMs: number }>({
-      projectModelDefinition: replacedToolPresentation('tasks'),
-      definition: { name: 'manage_plugin_agents', description: 'Manage background Agent tasks in this conversation. list returns paginated status summaries only; query filters task identity or status. read requires task_ids and returns their saved results. wait returns results after completion; stop cancels selected work and returns status. Background work may outlive the parent turn.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'read', 'wait', 'stop'] }, task_ids: { type: 'array', maxItems: TASK_BATCH_LIMIT, items: { type: 'string', minLength: 1 } }, ...catalogPageProperties }, required: ['action'], additionalProperties: false } },
-      manifest: { effect_kind: 'delegation', operation: 'agent.background.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },
-      projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks']),
-      decodeInput: input => {
-        const value = input as Record<string, unknown>;
-        if (!value || Array.isArray(value) || Object.keys(value).some(key => !['action', 'task_ids', 'query', 'offset', 'limit'].includes(key)) || !['list', 'read', 'wait', 'stop'].includes(String(value.action)) || (value.task_ids !== undefined && (!Array.isArray(value.task_ids) || value.task_ids.length > TASK_BATCH_LIMIT || value.task_ids.some(id => typeof id !== 'string' || !id.trim())))) throw new Error('Invalid background Agent action.');
-        const ids = value.task_ids as string[] ?? [];
-        if (value.action === 'read' && !ids.length) throw new Error('read requires task_ids from list.');
-        if (value.action !== 'list' && ['query', 'offset', 'limit'].some(key => value[key] !== undefined)) throw new Error('Pagination and query apply only to list.');
-        return { ...decodeCatalogQuery(value), action: String(value.action), ids, yieldTimeMs: TASK_WAIT_DEFAULT_MS };
-      },
-      execute: async context => {
-        await this.results(context.sessionId);
-        const tasks = this.tasks.list(context.sessionId).filter(task => task.background);
-        const ids = context.input.ids.length ? context.input.ids : tasks.map(task => task.taskId);
-        if (ids.some(id => !tasks.some(task => task.taskId === id))) throw new Error('Background Agent task belongs to another conversation or is unavailable.');
-        if (context.input.action === 'stop') ids.forEach(id => this.active.get(id)?.controller.abort());
-        if (context.input.action === 'wait') {
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          try { await settleAtAbort(Promise.race([Promise.allSettled(ids.map(id => this.active.get(id)?.promise)), new Promise(resolve => { timer = setTimeout(resolve, context.input.yieldTimeMs); })]), context.signal, 'Background Agent wait cancelled; tasks continue.'); }
-          finally { clearTimeout(timer); }
-        }
-        const selected = this.tasks.list(context.sessionId).filter(task => task.background && ids.includes(task.taskId));
-        if (context.input.action === 'list' || context.input.action === 'stop') {
-          const summaries = selected.map(({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }) => ({ taskId, childSessionId, childTurnId, status, has_result: Boolean(finalResponse), error: briefText(errorMessage ?? '') }));
-          if (context.input.action === 'stop') return { tasks: summaries, total: summaries.length };
-          const { items, ...page } = catalogPage(summaries, context.input);
-          return { tasks: items, ...page };
-        }
-        return selected.map(({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }) => ({ taskId, childSessionId, childTurnId, status, finalResponse, errorMessage }));
-      },
-    });
+  constructor(private readonly root: string, private readonly tasks: SubagentTaskStore) {}
+  async stopTask(session: string, id: string) {
+    await this.results(session);
+    const task = this.tasks.get(session, id);
+    if (!task?.background) throw new Error('Background Agent task is unavailable in this conversation.');
+    const active = this.active.get(id);
+    if (active && active.session !== session) throw new Error('Background Agent task belongs to another conversation.');
+    active?.controller.abort();
+    return { task_id: id, stop_requested: !!active };
   }
   start<T>(session: string, turn: string, id: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     if (this.active.size >= 8) {

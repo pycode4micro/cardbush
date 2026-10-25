@@ -1,21 +1,24 @@
 import type { ModelMessage } from '@cardbush/bush-protocol';
 
+export const TOOL_SCHEMA_PROTOCOL = 'bush.tool_schema.v1';
+
 /** Accept complete tool-owned schema receipts, including fully reassembled archives. */
-export function* toolSchemaReceipts(messages: ModelMessage[], sessionId: string, discoveryTool: string, protocol: string): Generator<{
+export function* toolSchemaReceipts(messages: ModelMessage[], sessionId: string, discoveryTool: string | readonly string[], protocol: string): Generator<{
   messageIndex: number;
   searchCallId: string;
   output: { protocol: string; sessionId: string; action: 'load'; matches: unknown[]; total?: number; more?: boolean };
 }> {
+  const discoveryTools = new Set(typeof discoveryTool === 'string' ? [discoveryTool] : discoveryTool);
   const calls = new Map<string, string>();
   const archives = new Map<string, { length: number; chunks: Map<number, string>; invalid?: boolean; emitted?: boolean }>();
   const archiveCalls = new Map<string, string>();
   for (const [messageIndex, message] of messages.entries()) {
     if (message.role === 'assistant') {
-      for (const call of message.toolCalls) if (call.name === discoveryTool || call.name === 'read_archived_tool_result') calls.set(call.id, call.name);
+      for (const call of message.toolCalls) if (discoveryTools.has(call.name) || call.name === 'read_archived_tool_result') calls.set(call.id, call.name);
     } else if (message.role === 'tool') {
       const name = calls.get(message.toolCallId); calls.delete(message.toolCallId);
       let output: any, searchCallId = message.toolCallId;
-      if (name === discoveryTool) {
+      if (name && discoveryTools.has(name)) {
         try { output = JSON.parse(message.content); } catch { continue; }
         if (output?.archived === true && typeof output.locator === 'string' && Number.isSafeInteger(output.originalChars) && output.originalChars > 0) {
           archives.set(output.locator, { length: output.originalChars, chunks: new Map() });

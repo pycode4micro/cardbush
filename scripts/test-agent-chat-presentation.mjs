@@ -11,6 +11,7 @@ import { ChatLiveViewport, chatInputViewport } from '../dist-electron/agentChatV
 import { runtimeToolLifecycle } from '../packages/bush-protocol/dist/index.js';
 import { AgentChatReferences } from '../dist-electron/agentChatReferences.mjs';
 import { selectChatModel } from '../dist-electron/agentChatModels.mjs';
+import { terminalScreen } from './helpers/agent-chat-terminal-screen.mjs';
 
 // Readline also consults process.env.TERM internally. Match the emulated TTY.
 process.env.TERM = 'xterm';
@@ -65,36 +66,6 @@ test('opaque model phases update the status without entering the reply or distur
   assert.match(terminalScreen(f.combined, 100).text, /Compacting context/);
   f.terminal.finishTurn('stopped');
 });
-
-// Interpret cursor operations as a terminal would. Raw output counts alone
-// cannot detect an input repaint that erases previously committed responses.
-function terminalScreen(raw, columns) {
-  raw = raw.replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
-  const lines = [[]]; let row = 0, column = 0;
-  for (const part of raw.matchAll(/\x1b\[([0-?]*)([ -/]*[@-~])|([^\x1b]+)/g)) {
-    if (part[3] !== undefined) {
-      for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(part[3])) {
-        if (segment === '\r\n' || segment === '\n') { row++; column = 0; continue; }
-        if (segment === '\r') { column = 0; continue; }
-        const width = terminalWidth(segment); if (!width) continue;
-        if (column + width > columns) { row++; column = 0; }
-        const line = lines[row] ??= []; line[column] = segment;
-        for (let i = 1; i < width; i++) line[column + i] = '';
-        column += width;
-      }
-      continue;
-    }
-    const amount = Number(part[1]) || 1;
-    if (part[2] === 'A') row = Math.max(0, row - amount);
-    if (part[2] === 'B') row += amount;
-    if (part[2] === 'G') column = amount - 1;
-    if (part[2] === 'C') column += amount;
-    if (part[2] === 'D') column = Math.max(0, column - amount);
-    if (part[2] === 'J' && (!part[1] || part[1] === '0')) { lines.length = row + 1; (lines[row] ??= []).length = column; }
-    if (part[2] === 'K') { if (part[1] === '2') lines[row] = []; else (lines[row] ??= []).length = column; }
-  }
-  return { text: lines.map(line => line?.join('') ?? '').join('\n'), row, column };
-}
 
 test('live editor keeps a draft and its caret through streamed output, tools, completion and resize', async t => {
   const f = tty(t, { columns: 48 }), queued = [];
@@ -201,6 +172,65 @@ test('streamed output keeps the displayed editor intact until a complete frame i
   assert.equal(terminalScreen(f.combined, 48).column, caret.column + 2);
 });
 
+test('live transcript and footer share one synchronized write across terminal streams', () => {
+  const writes = []; let raw = '';
+  const stream = name => Object.assign(new Writable({ write(chunk, _encoding, done) {
+    const text = chunk.toString(); writes.push({ name, text }); raw += text; done();
+  } }), { isTTY: true, columns: 48 });
+  const output = stream('status'), reply = stream('reply');
+  const view = new ChatLiveViewport(output, () => ({ lines: ['Working', '─'.repeat(30), '❯ 中间草稿', 'Enter queue'], cursor: { row: 2, column: 6 } }));
+  try {
+    view.paint(); writes.length = 0;
+    view.write('First streamed line.\nSecond streamed line.\n', reply); view.paint();
+    assert.equal(writes.length, 1, 'stdout and stderr cannot expose a blank footer between writes');
+    assert.equal(writes[0].name, 'status');
+    assert.ok(writes[0].text.startsWith('\x1b[?2026h\x1b[?25l'));
+    assert.ok(writes[0].text.endsWith('\x1b[?25h\x1b[?2026l'));
+    const screen = terminalScreen(raw, 48);
+    assert.match(screen.text, /First streamed line\.\nSecond streamed line\./);
+    assert.match(screen.text, /❯ 中间草稿/); assert.equal(screen.column, 6);
+  } finally { view.close(); }
+});
+
+test('streaming never exposes an erased footer even when the terminal paints between control sequences', () => {
+  let raw = '';
+  const output = Object.assign(new Writable({ write(chunk, _encoding, done) { raw += chunk; done(); } }), { isTTY: true, columns: 48 });
+  const view = new ChatLiveViewport(output, () => ({ lines: ['Working', '─'.repeat(30), '❯ 中间草稿', 'Enter queue'], cursor: { row: 2, column: 6 } }));
+  try {
+    view.paint(); const initial = raw.length;
+    for (const part of ['逐步输出', '继续\n', '下一段\n第三段\n', '很长的文字'.repeat(15), '\n']) {
+      view.write(part, output); view.paint();
+    }
+    let consumed = '', synchronized = false, frames = 0;
+    // Treat every command/text fragment as a possible terminal refresh, not
+    // just complete Node writes. DECSET 2026 holds the previous visible frame.
+    for (const token of raw.match(/\x1b\[[0-?]*[ -/]*[@-~]|[^\x1b]+/g)) {
+      consumed += token;
+      if (token === '\x1b[?2026h') synchronized = true;
+      else if (token === '\x1b[?2026l') synchronized = false;
+      if (synchronized || consumed.length <= initial) continue;
+      const screen = terminalScreen(consumed, 48); frames++;
+      assert.match(screen.text, /❯ 中间草稿/, 'no visible frame can erase the input');
+      assert.match(screen.text, /Enter queue/);
+      assert.equal(screen.column, 6, 'every visible frame restores the draft caret');
+    }
+    assert.ok(frames >= 5); assert.equal(synchronized, false);
+  } finally { view.close(); }
+});
+
+test('typing during a turn does not advance the spinner or repaint unchanged status rows', t => {
+  const now = Date.parse('2026-10-22T03:00:01.200Z');
+  t.mock.method(Date, 'now', () => now);
+  const f = tty(t, { columns: 60, env: {} });
+  f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn();
+  f.terminal.event(event('turn_started'));
+  f.input.write('甲'); const before = f.combined.length;
+  f.input.write('乙');
+  const update = f.combined.slice(before);
+  assert.doesNotMatch(update, /Working|─{3}|Enter queue/);
+  assert.match(terminalScreen(f.combined, 60).text, /❯ 甲乙/);
+});
+
 test('rapid typing across wrapped lines preserves middle edits and the visible caret', async t => {
   const f = tty(t, { columns: 24 }); f.terminal.enableLiveInput(() => {});
   const draft = 'abcdefghijklmnopqrstuvwxyz'.repeat(3);
@@ -247,7 +277,7 @@ test('closing a viewport flushes pending stdout and status once and restores cur
   assert.equal(stripVTControlCharacters(stdout), 'answer\nunfinished\n');
   assert.match(terminalScreen(raw, 40).text, /answer\nunfinished\ndone/);
   assert.doesNotMatch(terminalScreen(raw, 40).text, /draft/);
-  assert.ok(stderr.endsWith('\x1b[?25h'));
+  assert.ok(stderr.endsWith('\x1b[?25h\x1b[?2026l'));
 });
 
 test('live input viewport follows the caret within four rows without losing Unicode or long input', () => {
@@ -1057,7 +1087,7 @@ test('approval answers do not pollute chat history, and Tab continues through re
 });
 
 test('App and CLI share failure interpretation, and returned errors are never rendered as success', t => {
-  const f = tty(t), payload = { toolCallId: 'tool', toolName: 'mcp_call', display: { title: '读取素材' },
+  const f = tty(t), payload = { toolCallId: 'tool', toolName: 'call_tool', display: { title: '读取素材' },
     resultError: { kind: 'tool', code: 'broken', message: '文件不可用' } };
   assert.equal(runtimeToolLifecycle(event('tool_returned', payload)).state, 'failed');
   f.terminal.beginTurn(); f.terminal.event(event('tool_running', payload));
@@ -1067,6 +1097,110 @@ test('App and CLI share failure interpretation, and returned errors are never re
   assert.doesNotMatch(f.stderr, /文件不可用/, 'full errors are available through explicit inspection');
   assert.doesNotMatch(f.stderr, /✓ 读取素材/);
   assert.match(f.stderr, /1 tool call · 1 failure/);
+});
+
+test('summary_for_user separates the final reply once without appearing as an execution row', async t => {
+  const f = tty(t, { columns: 80, env: {} }); f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn();
+  f.input.write('keep draft');
+  f.terminal.write('I will create the file.\n'); f.terminal.event(event('assistant_segment_completed'));
+  const tool = { toolCallId: 'write', toolName: 'write_file', display: { title: 'Create desktop file' } };
+  f.terminal.event(event('tool_running', tool)); f.terminal.event(event('tool_returned', tool));
+  const summary = { toolCallId: 'summary', toolName: 'summary_for_user' };
+  for (const kind of ['tool_queued', 'tool_running', 'tool_returned']) f.terminal.event(event(kind, summary));
+  await delay(40);
+  assert.doesNotMatch(terminalScreen(f.combined, 80).text, /Final reply|summary_for_user/);
+  f.terminal.write('The file is ready.\n'); f.terminal.event(event('assistant_segment_completed'));
+  f.terminal.event(event('tool_returned', summary));
+  f.terminal.finishTurn('completed'); await delay(40);
+  const screen = terminalScreen(f.combined, 80).text;
+  assert.match(screen, /Create desktop file · 1 tool · \/tools[\s\S]*── Final reply ─+[\s\S]*The file is ready/);
+  assert.equal(screen.split('Final reply').length - 1, 1);
+  assert.doesNotMatch(screen, /summary_for_user|2 tool/);
+  assert.match(screen, /keep draft/);
+});
+
+test('a failed or superseded summary signal cannot label ongoing tool work as the final reply', async t => {
+  const f = tty(t); f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn();
+  const summary = id => ({ toolCallId: id, toolName: 'summary_for_user' });
+  f.terminal.event(event('tool_returned', { ...summary('failed'), resultError: { kind: 'tool', code: 'invalid', message: 'Invalid input', details: {} } }));
+  f.terminal.write('Retrying.\n'); f.terminal.event(event('assistant_segment_completed'));
+  f.terminal.event(event('tool_returned', summary('stale')));
+  const tool = { toolCallId: 'more', toolName: 'read_file', display: { title: 'Further verification' } };
+  f.terminal.event(event('tool_running', tool)); f.terminal.event(event('tool_returned', tool));
+  f.terminal.write('Still working.\n'); f.terminal.event(event('assistant_segment_completed'));
+  await delay(40); assert.doesNotMatch(terminalScreen(f.combined, 80).text, /Final reply/);
+  f.terminal.event(event('tool_returned', summary('fresh'))); f.terminal.write('Ready.\n');
+  f.terminal.event(event('assistant_segment_completed'));
+  f.terminal.event(event('tool_running', { ...tool, toolCallId: 'follow-up' }));
+  f.terminal.event(event('tool_returned', { ...tool, toolCallId: 'follow-up' }));
+  f.terminal.event(event('tool_returned', summary('last'))); f.terminal.write('Updated reply.\n');
+  f.terminal.finishTurn('completed'); await delay(40);
+  const screen = terminalScreen(f.combined, 80).text;
+  assert.match(screen, /1 failed/);
+  assert.match(screen, /Final reply[\s\S]*Ready\.[\s\S]*Tool activity[\s\S]*Further verification[\s\S]*Final reply[\s\S]*Updated reply/);
+  f.terminal.beginTurn(); f.terminal.write('Plain conversation.\n'); f.terminal.finishTurn('completed'); await delay(40);
+  assert.equal(terminalScreen(f.combined, 80).text.split('Final reply').length - 1, 2, 'a later turn must not inherit the signal');
+});
+
+test('the final reply divider never contaminates redirected stdout', t => {
+  const f = tty(t, { stdout: false }); f.terminal.beginTurn();
+  f.terminal.event(event('tool_returned', { toolCallId: 'summary', toolName: 'summary_for_user' }));
+  f.terminal.write('**exact reply**\n'); f.terminal.finishTurn('completed');
+  assert.equal(f.stdout, '**exact reply**\n');
+});
+
+test('desktop-file reply replay renders a real file link after the summary boundary', async t => {
+  const f = tty(t, { columns: 80, env: { WT_SESSION: 'fixture' } });
+  const opened = [], references = new AgentChatReferences({ call: async () => assert.fail('rendering must not fetch files') }, f.terminal,
+    async (path, kind) => { opened.push({ path, kind }); });
+  references.setScope({ sessionId: 'session', turnId: 'turn', workspace: 'D:\\proj', local: true, platform: 'win32', hyperlinks: f.terminal.hyperlinks });
+  f.terminal.setReferenceRenderer(references); f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn();
+  f.terminal.event(event('tool_returned', { toolCallId: 'write', toolName: 'write_file', display: { title: 'Create hello world file on Desktop' } }));
+  f.terminal.event(event('tool_returned', { toolCallId: 'summary', toolName: 'summary_for_user' }));
+  f.terminal.write('已创建并校验完成：\n\n- 文件路径：`C:\\Users\\fixture\\Desktop\\helloworld.txt`\n- 文件内容：`Hello, World!`（一行）\n');
+  f.terminal.event(event('assistant_segment_completed')); f.terminal.finishTurn('completed'); await delay(40);
+  assert.match(f.combined, /\x1b\]8;;file:\/\/\/C:\/Users\/fixture\/Desktop\/helloworld\.txt/);
+  assert.match(terminalScreen(f.combined, 80).text, /Create hello world[^\n]*[\s\S]*Final reply[\s\S]*已创建并校验完成/);
+  assert.equal(opened.length, 0);
+  await references.handle('artifact', '1', AbortSignal.timeout(1000));
+  assert.deepEqual(opened, [{ path: 'C:\\Users\\fixture\\Desktop\\helloworld.txt', kind: 'file' }]);
+});
+
+test('transient approval details disappear after a decision or cancellation and preserve the draft', async t => {
+  for (const live of [false, true]) for (const action of ['allow', 'escape', 'abort']) {
+    const f = tty(t, { columns: 100 });
+    if (live) { f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn(); f.input.write('draft'); }
+    const controller = new AbortController();
+    const answer = f.terminal.ask('Allow once? ', controller.signal, { transient: true,
+      details: ['Approval required: write outside workspace', 'write', 'filesystem_path: C:\\Users\\EDY\\Desktop\\hello.txt'],
+      choices: [{ value: 'n', label: 'Deny' }, { value: 'y', label: 'Allow once' }],
+      picker: { title: 'Choose an approval', selected: 'n', cancelValue: 'n', cancelLabel: 'deny' } });
+    await waitForPaint(() => terminalScreen(f.combined, 100).text.includes('filesystem_path:'));
+    const pending = terminalScreen(f.combined, 100).text;
+    assert.match(pending, /write outside workspace/); assert.match(pending, /C:\\Users\\EDY\\Desktop\\hello.txt/);
+    if (action === 'abort') controller.abort(); else f.input.write(action === 'allow' ? '\x1b[B\r' : '\x1b');
+    assert.equal(await answer, action === 'allow' ? 'y' : action === 'escape' ? 'n' : null);
+    await delay(40);
+    const after = terminalScreen(f.combined, 100).text;
+    assert.doesNotMatch(after, /Approval required|filesystem_path|Choose an approval|Allow once\?/);
+    if (live) { assert.match(after, /draft/); f.terminal.finishTurn('completed'); }
+    f.terminal.close();
+  }
+});
+
+test('long approval targets stay available by scrolling inside the transient prompt', async t => {
+  const f = tty(t, { columns: 50 }); f.status.rows = 14; f.terminal.enableLiveInput(() => {});
+  const answer = f.terminal.ask('Allow once? ', AbortSignal.timeout(3000), { transient: true,
+    details: Array.from({ length: 20 }, (_, i) => `filesystem_path: C:\\workspace\\target-${i}.txt`),
+    choices: [{ value: 'n', label: 'Deny' }, { value: 'y', label: 'Allow once' }],
+    picker: { title: 'Approval', selected: 'n', cancelValue: 'n' } });
+  await waitForPaint(() => terminalScreen(f.combined, 50).text.includes('PgUp/PgDn'));
+  assert.match(terminalScreen(f.combined, 50).text, /target-0\.txt/);
+  for (let i = 0; i < 4; i++) { f.input.write('\x1b[6~'); await delay(40); }
+  assert.match(terminalScreen(f.combined, 50).text, /target-19\.txt/);
+  f.input.write('\x1b[5~'); await delay(40);
+  assert.match(terminalScreen(f.combined, 50).text, /target-1[0-8]\.txt/);
+  f.input.write('\r'); assert.equal(await answer, 'n');
 });
 
 test('continuous tools share one gray reason row, preserve the draft, and commit at prose boundaries', async t => {

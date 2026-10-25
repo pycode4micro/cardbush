@@ -72,7 +72,7 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
         const role = (await options.loadPluginAgents?.())?.find(agent => agent.id === context.input.agentType);
         if (!role) throw new Error('Plugin Agent role is unavailable.');
         return JSON.parse(JSON.stringify({ id: role.id, description: role.description, prompt: role.prompt, model: 'inherit',
-          tools: role.tools, disallowedTools: role.disallowedTools, memory: role.memory, permissionMode: role.permissionMode,
+          tools: role.tools, disallowedTools: role.disallowedTools, permissionMode: role.permissionMode,
           maxTurns: role.maxTurns, background: role.background, isolation: role.isolation, trusted: role.trusted,
           skills: role.skills?.map(skill => skill.name), mcpServers: role.mcpServers?.flatMap(server => typeof server === 'string' ? [server] : Object.keys(server)),
         }));

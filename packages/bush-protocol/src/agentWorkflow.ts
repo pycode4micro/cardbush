@@ -11,7 +11,6 @@ export const registeredAgentSchema = z.object({
   system_prompt: z.string().trim().min(1).max(40000),
   allowed_tools: names.optional(), settings: z.record(z.string(), z.unknown()).optional(),
   hooks: names.default([]), guards: z.array(z.enum(['read_only'])).max(1).default([]),
-  memory: z.enum(['user', 'project', 'local', 'none']).default('user'),
   enabled: z.boolean().default(true),
 }).strict();
 export type RegisteredAgent = z.infer<typeof registeredAgentSchema>;

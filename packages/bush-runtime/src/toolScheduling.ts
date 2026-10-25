@@ -8,7 +8,7 @@ export const TOOL_SCRIPT_CALL_LIMIT = 32;
  * are still checked by the coordinator against the actual target. */
 export function scheduledToolName(name: string, input: unknown, turn?: ToolHandlerContext['turn']): string {
   name = resolveToolReferenceName(name, turn);
-  if (name === 'call_tool' || name === 'mcp_call') {
+  if (name === 'call_tool') {
     const target = input && typeof input === 'object' && !Array.isArray(input) ? (input as { name?: unknown }).name : undefined;
     if (typeof target === 'string') return resolveToolReferenceName(target, turn);
   }

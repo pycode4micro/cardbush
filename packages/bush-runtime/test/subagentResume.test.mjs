@@ -148,7 +148,7 @@ test('resume preserves clean configuration while intersecting current permission
   assert.equal(requests[2].metadata.subagentMode, 'clean', 'repeated continuations retain the original explicit mode');
 });
 
-test('await_subagents any returns the first result while its sibling stays running', async () => {
+test('tasks wait any returns the first result while its sibling stays running', async () => {
   let releaseB, parentRound = 0;
   const gateB = new Promise(resolve => { releaseB = resolve; });
   const registry = new ToolRegistry();
@@ -163,7 +163,7 @@ test('await_subagents any returns the first result while its sibling stays runni
     }
     parentRound++;
     if (parentRound <= 2) yield* respond(request, 'subagent', { prompt: parentRound === 1 ? 'A' : 'B' });
-    else if (parentRound === 3) yield* respond(request, 'await_subagents', { mode: 'any' });
+    else if (parentRound === 3) yield* respond(request, 'tasks', { action: 'wait', mode: 'any' });
     else if (parentRound === 4) {
       const result = request.messages.filter(m => m.role === 'tool').at(-1);
       assert.match(result.content, /result A/); assert.doesNotMatch(result.content, /result B/);

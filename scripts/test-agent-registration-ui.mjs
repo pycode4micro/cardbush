@@ -24,7 +24,7 @@ import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
 window.reads=[]; window.taskReads=0; window.detailReads=0; window.disposals=0;
 window.roles=['策划','关键词分析师','编辑'].map((name,index)=>({revision:1,updatedAt:'2026-10-09',definition:{
-  id:'employee-'+index,name,description:'独立完成'+name+'职责',system_prompt:'PRIVATE_ROLE_PROMPT',guards:['read_only'],hooks:['audit-hook'],memory:'user',enabled:true}}));
+  id:'employee-'+index,name,description:'独立完成'+name+'职责',system_prompt:'PRIVATE_ROLE_PROMPT',guards:['read_only'],hooks:['audit-hook'],enabled:true}}));
 window.team={revision:1,updatedAt:'2026-10-09',definition:{id:'launch',name:'品牌宣传团队',description:'并行策划、分析，再汇总文案',max_parallel:2,
   nodes:roles.map((role,index)=>({id:'step-'+index,agent_id:role.definition.id,prompt:'PRIVATE_NODE_PROMPT',depends_on:index===2?['step-0','step-1']:[]}))}};
 const now='2026-10-09T10:00:00Z';

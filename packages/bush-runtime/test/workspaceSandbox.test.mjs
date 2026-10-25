@@ -31,6 +31,19 @@ function fixture(t, options) {
   } };
 }
 
+test('sandbox file metadata preserves native modification-time precision for reference versions', async t => {
+  const f = fixture(t);
+  await fs.utimes(f.path, 1700000000.123459, 1700000000.123459);
+  const native = await fs.stat(f.path), precise = await fs.stat(f.path, { bigint: true });
+  const handle = await SandboxFileHandle.open(f.path, identity(f.path), false);
+  try {
+    assert.equal((await handle.stat()).mtimeMs, native.mtimeMs);
+    const actual = await handle.stat({ bigint: true });
+    assert.equal(actual.mtimeNs, precise.mtimeNs);
+    assert.equal(actual.mtimeMs, precise.mtimeMs);
+  } finally { await handle.close(); }
+});
+
 test('Windows exact-file grants allow only the selected object and clean up file ACLs', { skip: process.platform !== 'win32', timeout: 30_000 }, async t => {
   const f = fixture(t), executable = join(f.host, 'probe.exe');
   const compiled = spawnSync(join(process.env.SystemRoot, 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'),

@@ -10,37 +10,6 @@ import {
   registerExtendedBuiltins,
 } from "../dist/index.js";
 
-test("parallel_tools omits reasons already present in its Tool arguments", async (t) => {
-  const root = await temporaryRoot(t);
-  const registry = new ToolRegistry();
-  registry.register(childRegistration("first_child"));
-  registry.register(childRegistration("second_child"));
-  registerExtendedBuiltins(registry, { dataRoot: root });
-  const tool = registry.resolve("parallel_tools");
-  const input = tool.decodeInput({
-    tool_calls: [{
-      name: "first_child",
-      arguments: { value: "first" },
-      reason: "reason-only-in-request-one",
-    }, {
-      name: "second_child",
-      arguments: { value: "second" },
-      reason: "reason-only-in-request-two",
-    }],
-  });
-  const result = await tool.execute({
-    ...context(input, "parallel_tools"),
-    invokeTool: async (name, args) => {
-      const child = registry.resolve(name);
-      return child.execute(context(child.decodeInput(args), name));
-    },
-  });
-
-  assert.equal(result.returned_count, 2);
-  assert.deepEqual(result.results.map((item) => item.name), ["first_child", "second_child"]);
-  assert.equal(result.results.some((item) => "reason" in item), false);
-});
-
 test("inject_image_input keeps duplicate call metadata out of its receipt", async (t) => {
   const root = await temporaryRoot(t);
   const registry = new ToolRegistry();
@@ -52,7 +21,9 @@ test("inject_image_input keeps duplicate call metadata out of its receipt", asyn
     caption: "already in arguments too",
     detail: "low",
   });
-  const result = await tool.execute(context(input, "inject_image_input"));
+  const invocation = context(input, "inject_image_input");
+  assert.equal((await tool.authorize(invocation)).kind, 'allow');
+  const result = await tool.execute(invocation);
 
   assert.equal(result.queued, true);
   assert.equal("url" in result, false);

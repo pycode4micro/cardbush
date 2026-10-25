@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RuntimeToolLoop, ToolRegistry, ToolExecutionStore, InMemoryRuntimeEventLog, registerMcpDiscovery, synchronizeMcpDiscovery } from '../dist/index.js';
@@ -12,23 +13,23 @@ function registration(name, execute, extra = {}) {
 }
 async function fixture(execute, options = {}) {
   const registry = new ToolRegistry(), store = new ToolExecutionStore(), eventLog = new InMemoryRuntimeEventLog();
-  registerMcpDiscovery(registry);
+  registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   registry.register(registration(name, execute, { mcpHook: { server: 'fixture', tool: 'work', call: async () => ({}) }, ...options.tool }));
   const request = { protocol: 'bush.model_request.v1', ...identity, model: 'fixture', tools: registry.definitions(), metadata: { mcpToolDiscovery: true } };
   const contextMessages = [];
-  const load = registry.resolve('mcp_search');
-  const receipt = await load.execute({ input: { action: 'load', query: name }, turn: { request, contextMessages } });
-  contextMessages.push({ role: 'assistant', content: '', toolCalls: [call('load', 'mcp_search')] }, { role: 'tool', toolCallId: 'load', content: JSON.stringify(receipt) });
+  const load = registry.resolve('get_tool_schema');
+  const receipt = await load.execute({ sessionId: request.sessionId, input: { name: name }, turn: { request, contextMessages } });
+  contextMessages.push({ role: 'assistant', content: '', toolCalls: [call('load', 'get_tool_schema')] }, { role: 'tool', toolCallId: 'load', content: JSON.stringify(receipt) });
   synchronizeMcpDiscovery(registry, request, contextMessages);
   const loop = new RuntimeToolLoop({ registry, executionStore: store, eventLog, identity, ...options.loop });
   return { registry, store, eventLog, loop, request, contextMessages,
-    execute: (gateway, signal) => loop.execute([gateway ? call('root', 'mcp_call', { name, arguments: {} }) : call('root', name)],
+    execute: (gateway, signal) => loop.execute([gateway ? call('root', 'call_tool', { name, arguments: {} }) : call('root', name)],
       { round: 1, assistantMessageId: 'a', request, contextMessages, signal }),
     events: () => eventLog.replay('s', 't').filter(e => e.kind.startsWith('tool_')) };
 }
 
 for (const gateway of [false, true]) for (const outcome of ['success', 'failure', 'cancel']) {
-  test(`${gateway ? 'mcp_call' : 'native'} ${outcome} settles the visible receipt while the turn remains active`, async () => {
+  test(`${gateway ? 'call_tool' : 'native'} ${outcome} settles the visible receipt while the turn remains active`, async () => {
     const started = deferred(), finished = deferred(), controller = new AbortController();
     let calls = 0;
     const f = await fixture(async ({ signal }) => {

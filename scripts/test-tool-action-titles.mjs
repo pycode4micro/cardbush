@@ -13,9 +13,9 @@ const api = await loadChatTranscript({ source: [
   globals: { console, AbortController, DOMException, TextEncoder, TextDecoder, structuredClone, setTimeout, clearTimeout, process: { env: { NODE_ENV: 'test' } } },
 });
 const event = (sequence, kind, title) => ({ kind, sequence, turnId: 't', createdAt: '2026-09-26T00:00:00Z',
-  payload: { toolCallId: 'one', toolName: 'mcp_call', assistantMessageId: 'a', ...(title ? { display: { title } } : {}) } });
+  payload: { toolCallId: 'one', toolName: 'call_tool', assistantMessageId: 'a', ...(title ? { display: { title } } : {}) } });
 const record = { protocol: 'bush.tool_execution_summary.v1', requestId: 'r', sessionId: 's', turnId: 't', round: 1, ordinal: 0, recordedAt: '2026-09-26T00:00:00Z',
-  toolCall: { protocol: 'bush.tool_call.v1', id: 'one', name: 'mcp_call' }, outcome: 'returned', resultAvailable: true, workspaceChanges: [], display: { title: '核对产品资料' } };
+  toolCall: { protocol: 'bush.tool_call.v1', id: 'one', name: 'call_tool' }, outcome: 'returned', resultAvailable: true, workspaceChanges: [], display: { title: '核对产品资料' } };
 
 test('live lifecycle, compact history and full details have the same action title', () => {
   const live = api.toolLifecycle(event(1, 'tool_queued', '核对产品资料'));

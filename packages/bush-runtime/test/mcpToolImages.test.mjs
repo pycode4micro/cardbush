@@ -3,7 +3,8 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { InMemoryRuntimeEventLog, ModelImageStore, RuntimeToolLoop, ToolExecutionStore, ToolRegistry,
-  registerExtendedBuiltins, omitToolImageDataFromText } from '../dist/index.js';
+  registerExtendedBuiltins, registerMcpDiscovery, omitToolImageDataFromText } from '../dist/index.js';
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import { imageFixture, incompletePng, png } from './helpers/modelImages.mjs';
 
 const block = (data = png) => ({ type: 'image', mimeType: 'image/png', data: data.toString('base64') });
@@ -26,16 +27,36 @@ async function fixture(t, native, settings = {}) {
   const run = options => loop.execute([{ ...call, name: settings.name ?? call.name }], {
     round: 1, assistantMessageId: 'assistant', ...options,
   });
-  return { root, run, executionStore };
+  return { root, run, executionStore, registry, loop };
 }
 
-for (const indirect of [false, true]) test(`MCP ${indirect ? 'mcp_call' : 'direct'} delivers an image once and preserves the native journal`, async t => {
+test('the actual unified MCP gateway delivers images once under the target journal identity', async t => {
+  const image = block(), native = { content: [image, { ...image }], structuredContent: { ok: true } };
+  const { registry, loop, executionStore } = await fixture(t, native);
+  registry.resolve('capture').mcpHook = { server: 'fixture', tool: 'capture', call: async () => ({}) };
+  registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
+  const request = { requestId: 'request', sessionId: 'session', turnId: 'turn', tools: registry.definitions(), messages: [], metadata: { mcpToolDiscovery: true } };
+  const load = { protocol: 'bush.tool_call.v1', id: 'load', name: 'get_tool_schema', argumentsText: JSON.stringify({ name: 'capture' }) };
+  const loaded = await loop.execute([load], { round: 1, assistantMessageId: 'a1', request, contextMessages: [] });
+  const context = [{ role: 'assistant', content: '', toolCalls: [load] }, ...loaded.messages];
+  const invocation = { ...call, name: 'call_tool', argumentsText: JSON.stringify({ name: 'capture', arguments: {} }) };
+  const { messages } = await loop.execute([invocation], { round: 2, assistantMessageId: 'a2', request, contextMessages: context });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].toolCallId, call.id);
+  assert.equal(messages[0].images.length, 1);
+  assert.deepEqual(await readFile(messages[0].images[0].url), png);
+  assert.doesNotMatch(messages[0].content, new RegExp(image.data.slice(0, 32)));
+  assert.equal(executionStore.get('session', 'turn', call.id).toolCall.name, 'capture');
+  assert.deepEqual(executionStore.get('session', 'turn', call.id).result, native);
+});
+
+test('MCP direct delivery preserves the native journal and deduplicates images', async t => {
   const image = block();
   const result = { isError: false, content: [{ type: 'text', text: 'Captured.' }, image, { ...image }], structuredContent: { bytes: png.length } };
-  const native = indirect ? { mcp: { serverName: 'chrome' }, result } : result;
+  const native = result;
   const original = structuredClone(native);
   const { run, executionStore } = await fixture(t, native, {
-    name: indirect ? 'mcp_call' : 'capture', renderModelResult: value => JSON.stringify(value),
+    name: 'capture', renderModelResult: value => JSON.stringify(value),
   });
   const { messages } = await run();
   const observation = messages.at(-1);
@@ -151,4 +172,11 @@ test('archived MCP results expose durable image paths and never replay Base64 te
   const older = await textReader.execute({ input: textReader.decodeInput({ locator: 'tool-result://session/turn/capture' }), toolCall: call });
   assert.ok(!older.text.includes(native.content[0].data));
   assert.equal(omitToolImageDataFromText('literal source text'), 'literal source text');
+});
+
+test('retired gateway envelopes are not interpreted as new image observations', async t => {
+  const { run } = await fixture(t, { mcp: { name: 'mcp__fixture__capture' }, result: { content: [block()] } });
+  const { messages } = await run();
+  assert.ok(messages.every(message => !message.images?.length));
+  assert.doesNotMatch(messages[0].content, /runtime_image_files/);
 });

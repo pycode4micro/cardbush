@@ -90,6 +90,7 @@ export async function executeModelRound(
 
   for await (const candidate of provider.stream(request, {
     signal: options.signal, onInputProjection: options.onInputProjection,
+    readImage: options.readImage,
     attempts: options.attempts ?? new ModelRequestAttempts(),
     onRequestBodyBudget: options.onRequestBodyBudget,
     onCompatibilityDiagnostic: options.onCompatibilityDiagnostic,

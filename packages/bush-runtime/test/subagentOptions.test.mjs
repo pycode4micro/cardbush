@@ -23,7 +23,7 @@ function fixture(options = {}, count = 580) {
   return { registry, call };
 }
 const role = { id: 'fixture:review', name: 'review', description: 'Review changes for correctness.', prompt: 'PRIVATE ROLE INSTRUCTIONS',
-  tools: ['read_file'], disallowedTools: ['write_file'], memory: 'project', mcpServers: [{ inventory: { headers: { Authorization: 'PRIVATE-CREDENTIAL' } } }] };
+  tools: ['read_file'], disallowedTools: ['write_file'], mcpServers: [{ inventory: { headers: { Authorization: 'PRIVATE-CREDENTIAL' } } }] };
 
 test('580 inherited tools do not inflate default agent discovery or load unused settings', async () => {
   const f = fixture({ agents: new RegisteredAgentStore(), loadPluginAgents: async () => [role], remoteAgents: { list: async () => [] },
@@ -41,7 +41,7 @@ test('580 inherited tools do not inflate default agent discovery or load unused 
 test('employee lists are bounded and searchable without losing configuration on explicit reads', async () => {
   const agents = new RegisteredAgentStore();
   for (let i = 0; i < 45; i++) await agents.put({ id: `employee-${String(i).padStart(2, '0')}`, name: `Employee ${i}`,
-    description: 'Capability '.repeat(200) + `unique-needle-${i}`, system_prompt: 'PRIVATE SYSTEM '.repeat(2000), guards: ['read_only'], memory: 'local' }, 0);
+    description: 'Capability '.repeat(200) + `unique-needle-${i}`, system_prompt: 'PRIVATE SYSTEM '.repeat(2000), guards: ['read_only'] }, 0);
   const f = fixture({ agents }, 0), ids = [];
   let offset = 0;
   do {

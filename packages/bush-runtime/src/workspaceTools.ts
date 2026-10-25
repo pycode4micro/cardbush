@@ -1,4 +1,3 @@
-import { taskObserverPresentation } from './toolPresentation.js';
 import { createDisplayDiff } from './workspaceDiff.js';
 import { withToolFailureFacts } from './toolFailureFacts.js';
 import { applyFilePatch, parseWorkspacePatch, type FilePatch } from './workspacePatch.js';
@@ -8,8 +7,10 @@ import { TerminalSessionManager, type TerminalShell } from './terminalSessionMan
 export { authorizePath } from './workspaceAccessPolicy.js';
 export { TerminalSessionManager } from './terminalSessionManager.js';
 import { createHash, randomUUID } from "node:crypto";
-import { bindWorkspaceFileAuthorization, createWorkspaceParent, writeWorkspaceFile as writeFile, unlinkWorkspaceFile as unlink } from './workspaceFileAccess.js';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { bindWorkspaceFileAuthorization, createWorkspaceParent, persistAfterWorkspaceFileAccess, writeWorkspaceFile as writeFile, unlinkWorkspaceFile as unlink } from './workspaceFileAccess.js';
+import { readFileSync } from "node:fs";
+import { mkdir, rename, rm, writeFile as writeState } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { projectFileSourceResult } from './fileSourceReceipt.js';
 import { dirname } from "node:path";
 
@@ -69,13 +70,14 @@ export class WorkspaceObservationStore {
   readonly #observations = new Map<string, Map<string, Observation>>();
   readonly #projectObservations = new Map<string, Map<string, Observation>>();
   readonly #persistencePath?: string;
+  #persisting: Promise<void> = Promise.resolve();
 
   constructor(options: { persistencePath?: string } = {}) {
     this.#persistencePath = options.persistencePath;
     if (this.#persistencePath) this.#load();
   }
 
-  record(sessionId: string, path: string, sha256: string, projectRoot?: string): void {
+  async record(sessionId: string, path: string, sha256: string, projectRoot?: string): Promise<void> {
     const session = this.#observations.get(sessionId) ?? new Map<string, Observation>();
     session.set(normalizeIdentity(path), { sha256, observedAt: new Date().toISOString() });
     this.#observations.set(sessionId, session);
@@ -83,7 +85,7 @@ export class WorkspaceObservationStore {
       const project = this.#projectObservations.get(normalizeIdentity(projectRoot)) ?? new Map<string, Observation>();
       project.set(normalizeIdentity(path), { sha256, observedAt: new Date().toISOString() });
       this.#projectObservations.set(normalizeIdentity(projectRoot), project);
-      this.#persist();
+      if (this.#persistencePath) await persistAfterWorkspaceFileAccess(this, () => this.#persist());
     }
   }
 
@@ -131,21 +133,33 @@ export class WorkspaceObservationStore {
     }
   }
 
-  #persist(): void {
-    if (!this.#persistencePath) return;
+  #persist(): Promise<void> {
+    const next = this.#persisting.then(() => this.#write());
+    // One failed publication must not poison subsequent writes.
+    this.#persisting = next.catch(() => {});
+    return next;
+  }
+
+  async #write(): Promise<void> {
     const value = Object.fromEntries([...this.#projectObservations].map(([root, entries]) => [
       root,
       Object.fromEntries(entries),
     ]));
-    mkdirSync(dirname(this.#persistencePath), { recursive: true });
-    const temporary = `${this.#persistencePath}.tmp-${process.pid}`;
-    writeFileSync(temporary, JSON.stringify(value), "utf8");
+    const path = this.#persistencePath!;
+    await mkdir(dirname(path), { recursive: true });
+    const temporary = `${path}.tmp-${randomUUID()}`;
     try {
-      renameSync(temporary, this.#persistencePath);
-    } catch {
-      rmSync(this.#persistencePath, { force: true });
-      renameSync(temporary, this.#persistencePath);
-    }
+      await writeState(temporary, JSON.stringify(value), { encoding: 'utf8', flag: 'wx', mode: 0o600, flush: true });
+      for (let attempt = 0; ; attempt++) {
+        try { await rename(temporary, path); break; }
+        catch (error) {
+          // Another concurrent file scope can still pin this directory. Retry
+          // only state publication, never the tool or its external effects.
+          if (attempt >= 50 || !['EBUSY', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+          await delay(100);
+        }
+      }
+    } finally { await rm(temporary, { force: true }); }
   }
 }
 
@@ -247,8 +261,8 @@ export function registerWorkspaceTools(
         if (bytes === undefined) await unlink(path);
         else { await createWorkspaceParent(path); await writeFile(path, bytes, create ? { flag: 'wx' } : undefined); }
       };
-      const receipt = (change: typeof changes[number]) => {
-        if (change.after) observations.record(context.sessionId, change.path, digest(change.after), workspaceRoot(context));
+      const receipt = async (change: typeof changes[number]) => {
+        if (change.after) await observations.record(context.sessionId, change.path, digest(change.after), workspaceRoot(context));
         return changeResult(context, change.path, change.before, change.after, !change.after ? 'deleted' : change.before ? 'modified' : 'added', 'utf8', createChangeId(), change.versioned);
       };
       try {
@@ -273,7 +287,7 @@ export function registerWorkspaceTools(
           // Include the in-progress write: a failed write may have partially modified a file.
           applied.push(change); await write(change.path, change.after, change.before === undefined);
         }
-        return { applied: true, files: changes.map(receipt) };
+        return { applied: true, files: await Promise.all(changes.map(receipt)) };
       } catch (error) {
         const remaining: string[] = [];
         for (const change of applied.reverse()) {
@@ -285,7 +299,7 @@ export function registerWorkspaceTools(
           } catch { remaining.push(change.path); }
         }
         // Keep evidence for any partial write or externally changed path; never overwrite it blindly.
-        for (const path of remaining) { const change = changes.find(item => item.path === path)!; receipt({ ...change, after: await optionalBytes(path) }); }
+        for (const path of remaining) { const change = changes.find(item => item.path === path)!; await receipt({ ...change, after: await optionalBytes(path) }); }
         const failure = Object.assign(new Error(`${error instanceof Error ? error.message : String(error)}${remaining.length ? ' Some paths could not be rolled back; inspect recorded changes before retrying.' : applied.length ? ' All applied changes were rolled back.' : ' No files were changed.'}`), { code: remaining.length ? 'patch_partial_failure' : 'patch_not_applied', details: { remaining_paths: remaining, rolled_back: applied.length > 0 && !remaining.length } });
         // Only preflight proves no mutation was attempted. A rollback may leave
         // directories or other effects, so retain conservative facts after writes.
@@ -324,12 +338,12 @@ export function registerWorkspaceTools(
       const path = await resolveToolPath(context, context.input.path);
       if (context.input.range) {
         const result = await readFileLineRange(path, context.input.encoding, context.input.range, context.signal);
-        observations.record(context.sessionId, path, result.sha256, workspaceRoot(context));
+        await observations.record(context.sessionId, path, result.sha256, workspaceRoot(context));
         return { path, ...result };
       }
       const bytes = await readFileBounded(path, context.signal);
       const sha256 = digest(bytes);
-      observations.record(context.sessionId, path, sha256, workspaceRoot(context));
+      await observations.record(context.sessionId, path, sha256, workspaceRoot(context));
       return {
         path,
         sha256,
@@ -398,7 +412,7 @@ export function registerWorkspaceTools(
         await writeFile(path, context.input.content, { encoding: context.input.encoding });
         const after = await readFileBounded(path, context.signal);
         const afterHash = digest(after);
-        observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
+        await observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
         return changeResult(
           context,
           path,
@@ -476,7 +490,7 @@ export function registerWorkspaceTools(
         await writeFile(path, next, { encoding: context.input.encoding });
         const after = await readFileBounded(path, context.signal);
         const afterHash = digest(after);
-        observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
+        await observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
         return changeResult(
           context,
           path,
@@ -494,7 +508,6 @@ export function registerWorkspaceTools(
   });
 
   registerIfMissing(registry, {
-    projectModelDefinition: taskObserverPresentation('manage_tool_calls'),
     definition: {
       name: "terminal_exec",
       description: terminalToolDescription() + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. environment="local" uses this host and its native shell.' : ''),
@@ -588,11 +601,10 @@ export function registerWorkspaceTools(
   });
 
   registerIfMissing(registry, {
-    projectModelDefinition: taskObserverPresentation('manage_tool_calls'),
     definition: {
       name: "terminal_poll",
       description: [
-        "Read only new output from terminalSessionId (pass as session_id); yield_time_ms bounds the wait. Empty output is not completion. Continue independent work while state=running; never restart it. With completion_notification=true, use manage_tool_calls for completion-only waits.",
+        "Read only new output from terminalSessionId (pass as session_id); yield_time_ms bounds the wait. Empty output is not completion. Continue independent work while state=running; never restart it. With completion_notification=true, use tasks for completion-only waits.",
       ].join(" "),
       inputSchema: objectSchema({
         session_id: { type: "string", minLength: 1 },
@@ -994,7 +1006,7 @@ function terminalToolDescription(): string {
   const shells = availableTerminalShells().join(", ");
   return [
     "Run one command in cwd.",
-    `Required yield_time_ms <= ${MAX_TERMINAL_YIELD_MS} bounds waiting, not execution; use 1000 for long tasks and continue independent work. completion_notification=true delivers completion automatically. Wait via manage_tool_calls with completion_task_id only when blocked on results; terminal_poll reads new output by terminalSessionId. Never restart a running command. Prefer search_file_content for content search.`,
+    `Required yield_time_ms <= ${MAX_TERMINAL_YIELD_MS} bounds waiting, not execution; use 1000 for long tasks and continue independent work. completion_notification=true delivers completion automatically. Wait via tasks with completion_task_id only when blocked on results; terminal_poll reads new output by terminalSessionId. Never restart a running command. Prefer search_file_content for content search.`,
     process.platform === "win32"
       ? "For external waits use PowerShell Start-Sleep; reuse an existing wait session."
       : "For external waits use POSIX sleep; reuse an existing wait session.",

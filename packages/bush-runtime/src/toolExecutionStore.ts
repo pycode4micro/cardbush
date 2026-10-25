@@ -157,9 +157,8 @@ export class ToolExecutionStore {
     const key = imagePathKey(path);
     return this.#load(sessionId).some(record => {
       if (record.outcome !== 'returned' || toolExecutionError(record)) return false;
-      const native = artifactObject(record.result);
-      const result = typeof artifactObject(native.mcp).name === 'string' ? artifactObject(native.result) : native;
-      if (native.isError === true || result.isError === true) return false;
+      const result = artifactObject(record.result);
+      if (result.isError === true) return false;
       return [result.artifacts, artifactObject(result.structuredContent).artifacts].some(artifacts =>
         Array.isArray(artifacts) && artifacts.some(value => {
           const artifact = artifactObject(value);

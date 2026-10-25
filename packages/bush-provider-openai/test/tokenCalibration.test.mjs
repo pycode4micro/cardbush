@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
@@ -8,11 +9,11 @@ import { responsesInputFingerprint } from '../dist/responsesInputFingerprint.js'
 import { inputTokenBasis, calibrateInputTokens } from '../../bush-runtime/dist/inputTokenBasis.js';
 
 test('wire schema replacement and native fallback invalidate calibration even with an append-only Runtime history', () => {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   const discovery = (id, description) => [
-    { role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: '{"query":"read"}' }] },
-    { role: 'tool', toolCallId: id, content: JSON.stringify({ protocol: 'bush.mcp_discovery.v1', sessionId: 's', action: 'load',
-      matches: [{ name: 'mcp__docs__read', description, inputSchema: { type: 'object' }, server: 'docs', tool: 'read', revision: description }], total: 1, more: false }) },
+    { role: 'assistant', content: '', toolCalls: [{ id, name: 'get_tool_schema', argumentsText: '{"name":"mcp__docs__read"}' }] },
+    { role: 'tool', toolCallId: id, content: JSON.stringify({ protocol: 'bush.tool_schema.v1', sessionId: 's', action: 'load',
+      matches: [{ source: 'mcp', name: 'mcp__docs__read', description, inputSchema: { type: 'object' }, server: 'docs', tool: 'read', revision: description }], total: 1, more: false }) },
   ];
   const first = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',
     tools: registry.definitions(), metadata: { mcpToolDiscovery: true }, messages: [{ role: 'user', content: 'Read facts' }, ...discovery('one', 'Read docs')] };

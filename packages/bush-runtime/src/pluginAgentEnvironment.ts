@@ -1,7 +1,6 @@
-import type { ModelMessage, RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
+import type { RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 import type { PluginAgent } from './pluginExtensions.js';
 import { pluginAgentTools, validateAgentSkills } from './pluginExtensions.js';
-import { PluginAgentMemory } from './pluginAgentMemory.js';
 import type { TaskWorkspaceManager } from './taskWorkspace.js';
 import type { ToolRegistration, ToolRegistry } from './toolRegistry.js';
 
@@ -9,14 +8,13 @@ export type OpenAgentMcpScope = (agent: PluginAgent, request: RuntimeSessionTurn
 
 /** Acquires per-agent module capabilities and releases them exactly once after the child settles. */
 export class PluginAgentEnvironment {
-  private readonly memory: PluginAgentMemory;
-  constructor(root: string, private readonly registry: ToolRegistry, private readonly workspaces?: TaskWorkspaceManager, private readonly openMcp?: OpenAgentMcpScope, private readonly readContext?: (session: string) => ModelMessage[]) { this.memory = new PluginAgentMemory(root, registry); }
+  constructor(private readonly registry: ToolRegistry, private readonly workspaces?: TaskWorkspaceManager, private readonly openMcp?: OpenAgentMcpScope) {}
   async acquire(request: RuntimeSessionTurnRequest, agent: PluginAgent, signal?: AbortSignal) {
     const owner = `plugin-agent:${request.sessionId}`, cleanup: Array<() => Promise<void>> = [];
     let released = false;
     const release = async () => {
       if (released) return; released = true;
-      this.memory.release(request.sessionId); this.registry.removeOwned(owner);
+      this.registry.removeOwned(owner);
       const results = await Promise.allSettled(cleanup.reverse().map(operation => operation()));
       const failed = results.find(result => result.status === 'rejected'); if (failed?.status === 'rejected') throw failed.reason;
     };
@@ -28,7 +26,7 @@ export class PluginAgentEnvironment {
         if (!this.workspaces) throw new Error('Isolated Agent workspaces require runtime storage.');
         const source = String(request.metadata.workspaceDir || request.metadata.projectDir || '');
         const workspace = await this.workspaces.create(request.sessionId, source, 'worktree');
-        request.metadata = { ...request.metadata, projectDir: workspace.workspaceDir, workspaceDir: workspace.workspaceDir, taskRoots: [workspace.workspaceDir], userRoots: [], pluginAgentSourceDir: source };
+        request.metadata = { ...request.metadata, projectDir: workspace.workspaceDir, workspaceDir: workspace.workspaceDir, taskRoots: [workspace.workspaceDir], userRoots: [] };
         request.sessionMetadata = { ...request.sessionMetadata, workspace };
         cleanup.push(async () => {
           const review = await this.workspaces!.review(request.sessionId);
@@ -57,7 +55,6 @@ export class PluginAgentEnvironment {
       if (agent.permissionMode === 'dontAsk') request.metadata.pluginAgentDontAsk = true;
       // A plugin cannot raise the user's configured permission level.
       request.metadata.pluginAgentPermissionMode = agent.permissionMode ?? 'default';
-      await this.memory.prepare(agent, request, this.registry, this.readContext?.(request.sessionId));
       if (Array.isArray(request.metadata.childToolAllowlist)) {
         const selected = new Set(request.metadata.childToolAllowlist);
         request.tools = request.tools.filter(tool => selected.has(tool.name));

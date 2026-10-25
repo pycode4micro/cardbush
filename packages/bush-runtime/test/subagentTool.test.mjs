@@ -517,7 +517,7 @@ test("lets the parent execute independent work but prevents a terminal commit wi
   ));
 });
 
-test("joins outstanding children explicitly through await_subagents without polling", async () => {
+test("joins outstanding children explicitly through tasks wait without polling", async () => {
   let parentRound = 0;
   let releaseChild;
   const childGate = new Promise((resolve) => { releaseChild = resolve; });
@@ -560,8 +560,8 @@ test("joins outstanding children explicitly through await_subagents without poll
           kind: "tool_call_delta",
           index: 0,
           toolCallId: "join_children",
-          nameDelta: "await_subagents",
-          argumentsDelta: "{}",
+          nameDelta: "tasks",
+          argumentsDelta: '{"action":"wait"}',
         };
         yield { ...base, sequence: 2, kind: "response_completed", finishReason: "tool_calls" };
         return;
@@ -609,11 +609,11 @@ test('a short child join returns pending so the parent can execute independent w
     }
     rounds++;
     const call = rounds === 1 ? { name: 'subagent', args: { prompt: 'independent child' } }
-      : rounds === 2 ? { name: 'await_subagents', args: { yield_time_ms: 10 } }
+      : rounds === 2 ? { name: 'tasks', args: { action: 'wait', yield_time_ms: 10 } }
       : rounds === 3 ? { name: 'independent_step', args: {} } : undefined;
     if (rounds === 3) {
       const joined = JSON.parse(request.messages.findLast(message => message.role === 'tool').content);
-      assert.equal(joined.status, 'pending'); assert.equal(joined.pending_task_ids.length, 1);
+      assert.equal(joined.wake_reason, 'yield_timeout'); assert.equal(joined.tasks.filter(task => task.status === 'running').length, 1);
       assert.match(joined.next_step, /Continue independent work/);
     }
     if (call) yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `call-${rounds}`, nameDelta: call.name, argumentsDelta: JSON.stringify(call.args) };

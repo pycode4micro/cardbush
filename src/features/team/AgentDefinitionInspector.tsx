@@ -54,8 +54,7 @@ export function AgentDefinitionInspector({ detail, language, active = true }: { 
     {value && <>
       <p>{value.record.definition.description || t('未填写职责说明', 'No description provided')}</p>
       <dl><dt>ID</dt><dd>{value.record.definition.id}</dd><dt>{t('当前版本', 'Current revision')}</dt><dd>{value.record.revision}</dd>
-        {employee && <><dt>{t('状态', 'Status')}</dt><dd>{employee.enabled ? t('已启用', 'Enabled') : t('已停用', 'Disabled')}</dd>
-          <dt>{t('长期记忆', 'Long-term memory')}</dt><dd>{{ user: t('此员工 · 当前主机', 'Employee · current host'), project: t('此员工 · 项目', 'Employee · project'), local: t('此员工 · 本地项目', 'Employee · local project'), none: t('关闭', 'Off') }[employee.memory]}</dd></>}
+        {employee && <><dt>{t('状态', 'Status')}</dt><dd>{employee.enabled ? t('已启用', 'Enabled') : t('已停用', 'Disabled')}</dd></>}
         {team && <><dt>{t('最大并行数', 'Maximum parallel nodes')}</dt><dd>{team.max_parallel}</dd></>}
       </dl>
       {employee && <>

@@ -1,5 +1,6 @@
 import type { ModelEvent, ModelRequest, ProviderInputProjection, ProviderCompatibilityDiagnostic, ProviderStreamDiagnostic } from "@cardbush/bush-protocol";
 import type { ModelRequestAttempts } from './modelRequestAttempts.js';
+import type { ModelImageReader } from './modelImageStore.js';
 
 export interface ModelRequestBodyBudget {
   /** UTF-8 bytes of the complete serialized HTTP body, including base64. */
@@ -9,6 +10,9 @@ export interface ModelRequestBodyBudget {
 
 export interface ModelStreamOptions {
   signal?: AbortSignal;
+  /** Host-issued capability for this request's admitted image observations.
+   * Omission uses the ordinary sandbox source reader; failure must never fall back. */
+  readImage?: ModelImageReader;
   /** Shared by every dispatch/recovery of one frozen model round, not token counting. */
   attempts?: ModelRequestAttempts;
   /** Full input fingerprints at each dispatch attempt, or of the local

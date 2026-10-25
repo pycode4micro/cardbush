@@ -7,17 +7,17 @@ Team 是 Runtime 内置能力，入口位于原 Team 页面和输入框的 `/tea
 | 组件 | 责任 |
 | --- | --- |
 | `subagent` fork | 在派发时复制父会话快照和意图；后续父会话输入不会自动同步。通过 `task_id` 显式发送补充任务。 |
-| `subagent` clean | 独立岗位指令、工具范围、生成设置、可信 Hook 引用、只读 guard，以及按员工身份隔离的长期记忆。可临时配置，也可通过 `agent_id` 复用注册定义。 |
+| `subagent` clean | 独立岗位指令、工具范围、生成设置、可信 Hook 引用和只读 guard。可临时配置，也可通过 `agent_id` 复用注册定义。 |
 | `team` | 保存流程、校验依赖、按并行数调度已有员工、记录结果、停止与显式恢复。节点执行仍调用同一个 subagent dispatcher，没有第二套模型循环。 |
 
 员工注册和团队定义只在当前 Runtime 主机生效。员工可以使用主机已配置的模型；省略模型设置时新任务继承调用方当前默认模型。权限与可用工具始终受调用方和主机约束。
 
-## 员工与记忆
+## 员工与会话
 
 `list_subagent_options({})` 默认只返回员工概要、插件角色及远端 Agent，不重复输出完整工具清单或配置。员工与工具列表支持 `query` 搜索及 `next_offset` 分页。读取员工完整定义时提供 `agent_id`，插件角色使用 `agent_type`；确需检查模型、默认设置及可信 Hook 时使用 `section: "settings"`，检查工具范围使用 `section: "tools"`。参见[工具按需返回](PROGRESSIVE_TOOL_DISCOVERY.md)。
 
 ```json
-{"action":"save","expected_revision":0,"agent":{"id":"warehouse","name":"库存员","description":"核对库存与出库条件","system_prompt":"仅依据库存记录回答；缺少依据时说明缺口。","memory":"user","guards":["read_only"]}}
+{"action":"save","expected_revision":0,"agent":{"id":"warehouse","name":"库存员","description":"核对库存与出库条件","system_prompt":"仅依据库存记录回答；缺少依据时说明缺口。","guards":["read_only"]}}
 ```
 
 以上是 `subagent` 的注册参数。创建使用 `expected_revision: 0`；修改和删除必须带当前 revision，防止覆盖其他编辑者的修改。
@@ -28,15 +28,9 @@ Team 是 Runtime 内置能力，入口位于原 Team 页面和输入框的 `/tea
 
 每次新任务创建独立会话；`task_id` 续接原任务的历史。运行时复用现有 SessionStore、会话日志、上下文压缩和恢复机制。岗位定义在任务首次派发时冻结；更新注册定义影响新任务，不会悄悄改写旧会话的角色。
 
-长期记忆复用已有 Agent memory 存储与 `agent_memory_read` / `agent_memory_write`：
+续接任务读取该任务的历史、压缩摘要和执行记录。注册员工关闭主用户习惯和预测引用。只读员工不能执行修改类工具。
 
-- `user`：当前主机上此员工的独立记忆，不是主用户习惯库。
-- `project` / `local`：沿用现有项目记忆范围。
-- `none`：关闭长期记忆。
-
-新会话载入有界记忆摘要，完整内容按需读取；写入仍受 revision 冲突检查。跨任务共享的是该员工的记忆，不会把所有任务对话拼接到一起。注册员工关闭主用户习惯和预测引用。只读员工也不能写记忆。
-
-Hooks 只引用已安装且已受信任的 Hook ID；注册不能写任意可执行脚本或授予信任。主机全局 Hooks 仍然执行。当前内置 guard 为 `read_only`，在工具执行前拒绝修改类调用。禁用或删除注册后不能再启动或恢复该员工；删除注册不会删除历史会话或记忆。
+Hooks 只引用已安装且已受信任的 Hook ID；注册不能写任意可执行脚本或授予信任。主机全局 Hooks 仍然执行。当前内置 guard 为 `read_only`，在工具执行前拒绝修改类调用。禁用或删除注册后不能再启动或恢复该员工；删除注册不会删除历史会话。
 
 ## Team 工具
 
@@ -71,7 +65,7 @@ Hooks 只引用已安装且已受信任的 Hook ID；注册不能写任意可执
 - `<runtime data root>/registered-agents`：带 revision 的员工定义。
 - `<runtime data root>/teams/definitions`：团队流程。
 - `<runtime data root>/teams/runs`：节点状态、执行快照、结果和错误。
-- 现有 Agent memory 和会话目录继续负责记忆与上下文持久化。
+- 现有会话目录继续负责上下文持久化与恢复。
 
 管理界面通过 `runtime.agent_registry` 和 `runtime.team_workflow` 使用同一组存储。启动与恢复由有模型和权限上下文的 Agent 轮执行；界面负责编辑、查看和停止。旧 `team` 插件不再加载；其配置不自动兼容或迁移。
 
@@ -81,4 +75,4 @@ Hooks 只引用已安装且已受信任的 Hook ID；注册不能写任意可执
 
 ## 验证
 
-`npm run test:team` 覆盖注册与冲突、fork/clean 隔离、跨任务记忆、只读约束、DAG 串并行、父轮退出、停止恢复、重启中断、真实 Runtime 会话、文本 assistant 调度及管理界面。
+`npm run test:team` 覆盖注册与冲突、fork/clean 隔离、独立会话与任务续接、只读约束、DAG 串并行、父轮退出、停止恢复、重启中断、真实 Runtime 会话、文本 assistant 调度及管理界面。

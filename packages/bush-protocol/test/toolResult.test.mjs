@@ -6,8 +6,9 @@ test('only declared MCP errors and native terminal outcomes carry result failure
   const result = { isError: true, content: [{ type: 'text', text: 'original detail' }],
     structuredContent: { error: { code: 'page_missing', message: 'Select a tab', details: { large: 'x'.repeat(10_000) } } } };
   const before = structuredClone(result);
-  for (const name of ['mcp__browser__click', 'mcp_call']) {
-    const native = name === 'mcp_call' ? { mcp: { name: 'mcp__browser__click' }, result } : result;
+  assert.equal(returnedToolError('mcp_call', { mcp: { name: 'mcp__browser__click' }, result }), undefined, 'retired envelopes have no special handling');
+  for (const name of ['mcp__browser__click']) {
+    const native = result;
     const error = returnedToolError(name, native);
     assert.equal(error.code, 'page_missing');
     assert.equal(error.message, 'Select a tab');

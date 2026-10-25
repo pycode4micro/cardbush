@@ -14,7 +14,7 @@ export function mcpInputDecoder(name: string, schema: Tool['inputSchema']) {
       !('name' in properties) && !('arguments' in properties) && fields.length > 0;
     const details = { toolName: name, inputDispatched: false,
       expectedFields: fields.slice(0, 40), requiredFields: schema.required ?? [],
-      recovery: { action: 'correct_arguments', load: { name: 'mcp_search', arguments: { action: 'load', query: name } } } };
+      recovery: { action: 'correct_arguments', load: { name: 'get_tool_schema', arguments: { name } } } };
     const fail = (message: string): never => {
       throw Object.assign(new Error(`${message} No tool was executed. Correct the arguments before retrying.`), {
         code: 'tool_arguments_schema_invalid', details,
@@ -29,7 +29,7 @@ export function mcpInputDecoder(name: string, schema: Tool['inputSchema']) {
     }
     const result = validate(object);
     if (!result.valid) {
-      if (wrapped) return fail(`Arguments for ${name} contain an mcp_call envelope. A direct call takes the tool's fields at the top level; only mcp_call takes {name, arguments}.`);
+      if (wrapped) return fail(`Arguments for ${name} contain a call_tool envelope. A direct call takes the tool's fields at the top level; only call_tool takes {name, arguments}.`);
       return fail(`Invalid arguments for ${name}: ${result.errorMessage.slice(0, 1500)}.`);
     }
     return object;

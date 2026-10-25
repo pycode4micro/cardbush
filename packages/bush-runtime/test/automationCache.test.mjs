@@ -34,7 +34,7 @@ async function fixture(t, recoveredEvents = []) {
         if (f.handler) { yield* f.handler(request, options); return; }
         yield event(request, 'text_delta', { delta: 'Done.' }); yield event(request, 'response_completed', { finishReason: 'stop' });
       } } });
-    f.tools = registry.definitions().filter(tool => ['checkpoint_context', 'scheduled_results', 'mcp_search', 'mcp_call'].includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
+    f.tools = registry.definitions().filter(tool => ['checkpoint_context', 'scheduled_results', 'mcp_search', 'call_tool', 'get_tool_schema'].includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
   };
   f.close = async () => { await f.host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); f.persistence.close(); };
   f.run = (id, overrides = {}) => f.host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: `request-${id}`, sessionId: 'session', turnId: id, model: 'offline-fixture',

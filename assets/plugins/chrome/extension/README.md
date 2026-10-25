@@ -71,11 +71,17 @@ Rejected identities remain rejected across restarts until an explicit new reques
 one dialog is allowed at a time and a persisted cooldown limits repeated requests.
 Cancelling or disconnecting aborts the dialog. Remote Agents retain manual pairing
 and never open a dialog on the server or inherit the desktop's connection.
+For manual connection or remote Agent pairing, run `/browser pair chrome` or
+`/browser pair edge` in the CLI connected to the intended Agent, keep that CLI
+open and paste the code directly into the intended browser extension. Desktop
+settings can also generate a code for manual local pairing. Codes must not be
+sent to the model; `/browser status` checks connection health without creating one.
 The extension preserves its profile identity and automatic reconnection,
 including after a browser restart. Five minutes limits accepting a new pairing
 code, not the lifetime of an established pairing. Offline retries back off from
 short retries to a persistent 30-second alarm and continue while enabled;
 opening the popup retries immediately. No browser action is replayed.
+Temporary disconnects do not require a new pairing code or another approval.
 
 Desktop disable stops the listener and active control while retaining pairings
 and session bindings. Re-enabling the desktop connector allows automatic

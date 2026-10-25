@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -6,7 +7,7 @@ import { executeModelRound, ToolRegistry, registerMcpDiscovery } from '@cardbush
 import { OpenAIResponsesProvider, ModelProviderRegistry, toResponsesCreateParams } from '../dist/index.js';
 import { siwcFetch } from '../dist/siwc.js';
 
-const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const request = overrides => modelRequestSchema.parse({ protocol: 'bush.model_request.v1', requestId: 'request1', sessionId: 'parent',
   turnId: 'turn1', model: 'gpt-fixture-latest', tools: registry.definitions(), metadata: { mcpToolDiscovery: true },
   messages: [{ role: 'system', content: 'Stable agent instructions.' }, { role: 'user', content: 'Look up the project.' }],

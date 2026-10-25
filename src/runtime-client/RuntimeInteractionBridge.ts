@@ -34,7 +34,7 @@ export function createRuntimeInteractions() {
   function registerRuntimeSolution(request: RuntimeSolutionSelection, notify = true): PendingInteraction {
     const interaction: PendingInteraction = {
       id: request.selectionId, type: 'solution_selection', sessionId: request.sessionId, turnId: request.turnId,
-      title: 'Solution Selection', toolName: 'solution_selection',
+      title: 'Solution Selection', toolName: 'request_user_input_async',
       questions: solutionInteractionQuestions(request), raw: { ...request },
     };
     solutions.set(request.selectionId, interaction);

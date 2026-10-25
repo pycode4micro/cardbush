@@ -134,7 +134,7 @@ async function refresh(reconnect = false) {
         : '已连接 CardBush，等待控制'
       : state.nativeConnecting
         ? state.hasPairing ? '正在使用已保存的授权连接 CardBush…' : '正在申请连接，请依次在系统弹窗和扩展中确认…'
-        : `CardBush 暂时离线，将自动重连。请确认应用和连接器已开启；无需重复授权。${state.lastError ? `\n${state.lastError}` : ''}`);
+        : `CardBush 暂时离线，将自动重连。请确认目标 Agent 或本机 App/CLI 正在运行，并已启用 Browser Use；无需重复授权或生成新配对码。${state.lastError ? `\n${state.lastError}` : ''}`);
     connection.classList.toggle('offline', Boolean(actionError) || (!staleWorker && state.pairingRequired));
     connection.classList.toggle('waiting', staleWorker || (!state.nativeConnected && !state.pairingRequired && !actionError));
     siteAccess.textContent = staleWorker

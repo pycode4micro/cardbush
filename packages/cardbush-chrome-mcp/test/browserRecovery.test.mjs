@@ -9,18 +9,31 @@ import { dirname, join } from 'node:path';
 
 const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'recovery' } } };
 
-test('empty connector offers CLI pairing while offline profiles retain their selection without re-pairing', async () => {
+function assertSetupGuidance(text) {
+  assert.match(text, /user approves the first connection in the system dialog and extension; no pairing code is needed/);
+  assert.match(text, /local App and CLI share.*reconnect automatically/);
+  assert.match(text, /only for manual connection or remote Agent pairing/);
+  assert.match(text, /remote Agents keep connections separate/);
+  assert.match(text, /do not approve it on their behalf/);
+  assert.match(text, /never into the model conversation/);
+  assert.ok(text.indexOf('no pairing code is needed') < text.indexOf('/browser pair'));
+}
+
+test('empty connector explains local consent while offline profiles reconnect without re-pairing', async () => {
   const id = '1'.repeat(32);
   let connections = [];
   const server = createCardbushChromeServer({ connector: async method => {
     assert.equal(method, 'browser.list'); return { connections, selectedConnectionId: id };
   } });
   const empty = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
-  assert.equal(empty.availability, 'needs_connection'); assert.match(empty.nextStep, /\/browser pair edge/);
+  assert.equal(empty.availability, 'needs_connection'); assertSetupGuidance(empty.nextStep);
   connections = [{ id, browser: 'edge', connected: false }];
   const offline = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
   assert.equal(offline.selectedConnectionId, id); assert.equal(offline.connections[0].id, id);
   assert.match(offline.nextStep, /already paired/); assert.doesNotMatch(offline.nextStep, /\/browser pair/);
+  assert.match(offline.nextStep, /reconnect automatically/);
+  assert.match(offline.nextStep, /explicitly disabled.*click Connect/);
+  assert.match(offline.nextStep, /do not generate a new pairing code/);
   connections[0].connected = true;
   const online = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
   assert.equal(online.nextStep, undefined); assert.equal(online.selectedConnectionId, id);
@@ -33,22 +46,26 @@ test('session 095c replay: missing bridge is setup state, mutations stay blocked
   const listed = await server._registeredTools.list_browsers.handler({}, context);
   assert.equal(listed.isError, undefined); assert.equal(listed.structuredContent.availability, 'needs_setup');
   assert.deepEqual(listed.structuredContent.connections, []);
+  assertSetupGuidance(listed.structuredContent.nextStep);
   assert.match(listed.structuredContent.nextStep, /\/browser pair chrome/);
   assert.match(listed.structuredContent.nextStep, /\/browser pair edge/);
   assert.match(listed.structuredContent.nextStep, /without the App running/);
   const mutation = await server._registeredTools.new_page.handler({ url: 'https://example.invalid' }, context);
   assert.equal(mutation.isError, true); assert.equal(mutation.structuredContent.error.code, 'bridge_config_unavailable');
+  assertSetupGuidance(mutation.structuredContent.error.message);
   assert.equal(mutation.structuredContent.error.details.execution, 'not_dispatched');
   await writeFile(config, JSON.stringify({ token: 'must-not-be-printed', protocol: 'invalid' }));
   const invalid = await server._registeredTools.list_browsers.handler({}, context);
   assert.equal(invalid.structuredContent.availability, 'misconfigured'); assert.doesNotMatch(JSON.stringify(invalid), /must-not-be-printed/);
+  assertSetupGuidance(invalid.structuredContent.nextStep);
   let connected = false; const calls = [];
   const live = createCardbushChromeServer({ connector: async method => {
     calls.push(method);
     if (!connected) throw new ChromeConnectorError('cardbush_bridge_unavailable', 'offline');
     return { connections: [{ id: 'cardbush', connected: true }] };
   } });
-  assert.equal((await live._registeredTools.list_browsers.handler({}, context)).structuredContent.availability, 'disconnected');
+  const disconnected = (await live._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  assert.equal(disconnected.availability, 'disconnected'); assertSetupGuidance(disconnected.nextStep);
   connected = true;
   assert.equal((await live._registeredTools.list_browsers.handler({}, context)).structuredContent.connections[0].id, 'cardbush');
   assert.deepEqual(calls, ['browser.list', 'browser.list'], 'no hidden launch or mutation replay');

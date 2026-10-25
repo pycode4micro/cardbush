@@ -207,7 +207,7 @@ let chromeConnectorBroker: BrowserConnectorHandle | null = null;
 let chromeConnectorLifecycle: ChromeConnectorLifecycle | null = null;
 let chromeConnectorRegistrationCache: { state: string; value: ReturnType<typeof chromeConnectorRegistrationStatus> } | null = null;
 let productHostController: {
-  exportSharedConfiguration: () => Promise<{ models: Record<string, unknown>; apps: Record<string, unknown>; mcp: Record<string, unknown>; subagents: Record<string, unknown>; sandbox?: { version: 1; enabled: boolean } }>;
+  exportSharedConfiguration: () => Promise<{ models: Record<string, unknown>; subagents: Record<string, unknown>; sandbox?: { version: 1; enabled: boolean } }>;
   execute: (command: unknown) => Promise<unknown>;
   executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
   shutdown: () => Promise<void>;
@@ -2647,23 +2647,12 @@ function agentConnections() {
       return safeStorage.encryptString(value).toString('base64');
     },
     decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
-    }, { ssh: await sshConnections(), syncCatalog: async () => {
-      const snapshot = await (await ensureRuntimeServicesReady()).exportSharedConfiguration();
-      return ((snapshot.apps.plugins ?? []) as Array<Record<string, unknown>>).filter(plugin => plugin.installed).map(plugin => ({
-        id: String(plugin.id), name: String(plugin.name || plugin.id), version: String(plugin.version || ''), source: plugin.source === 'bundled' ? 'bundled' as const : 'user' as const,
-      }));
-    }, sharedConfiguration: async options => {
+    }, { ssh: await sshConnections(), sharedConfiguration: async () => {
       const controller = await ensureRuntimeServicesReady();
       const { packSharedConfiguration } = await import('./agentSharedConfiguration.mjs');
       const dataRoot = app.getPath('userData');
       return packSharedConfiguration({ ...await controller.exportSharedConfiguration(), network: sharedModelProxy, instructions: (await getGlobalInstructionsStore().read()).content,
-        roots: [
-          { source: path.join(dataRoot, 'plugins'), target: 'plugins' },
-          { source: path.join(dataRoot, 'skills'), target: 'skills' },
-          { source: path.join(app.getAppPath(), 'assets', 'plugins'), target: 'bundled/plugins' },
-          { source: bundledProductSkillRoot(), target: 'bundled/skills' },
-        ],
-      }, dataRoot, options);
+      }, dataRoot);
     } });
     await manager.restore();
     return manager;
@@ -2687,8 +2676,6 @@ ipcMain.handle('agents:command', async (event, action: string, input: unknown) =
     }
     case 'release-file-preview': return (await agentFilePreviews()).release(event.sender.id, String(input));
     case 'list': return manager.list();
-    case 'sync-catalog': return manager.syncCatalog();
-    case 'sync-configuration': return manager.syncConfiguration(String(input));
     case 'save': return manager.save(input as Parameters<typeof manager.save>[0]);
     case 'remove': return manager.remove(String(input));
     case 'connect': return manager.connect(String(input));

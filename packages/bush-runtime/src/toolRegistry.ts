@@ -118,8 +118,6 @@ export interface ToolRegistration<TInput = unknown> {
   visibleToChild?: boolean;
   /** Optional plugin tools load through get_tool_schema/call_tool, not the default provider prefix. */
   deferredSchema?: boolean;
-  /** Keep a legacy handler for frozen conversations without advertising two entry points. */
-  supersededBy?: string;
   registrationOwner?: string;
 }
 
@@ -149,10 +147,8 @@ export class ToolRegistry {
     else this.#hiddenOwners.add(owner);
   }
 
-  #catalogVisible(registration: AnyToolRegistration, includeSuperseded = false): boolean {
-    const replacement = registration.supersededBy && this.#registrations.get(registration.supersededBy);
-    return !registration.sessionScope && !this.#hiddenOwners.has(registration.registrationOwner ?? '') &&
-      (includeSuperseded || !replacement || Boolean(replacement.sessionScope) || this.#hiddenOwners.has(replacement.registrationOwner ?? ''));
+  #catalogVisible(registration: AnyToolRegistration): boolean {
+    return !registration.sessionScope && !this.#hiddenOwners.has(registration.registrationOwner ?? '');
   }
 
   register<TInput>(candidate: ToolRegistration<TInput>): this {
@@ -237,14 +233,14 @@ export class ToolRegistry {
     } catch { return undefined; }
   }
 
-  definitions(options: { includeSuperseded?: boolean } = {}): ToolDefinition[] {
-    return [...this.#registrations.values()].filter(registration => this.#catalogVisible(registration, options.includeSuperseded)).map(({ definition }) =>
+  definitions(): ToolDefinition[] {
+    return [...this.#registrations.values()].filter(registration => this.#catalogVisible(registration)).map(({ definition }) =>
       structuredClone(definition),
     );
   }
 
-  catalog(options: { includeSuperseded?: boolean } = {}): ToolCatalogEntry[] {
-    return [...this.#registrations.values()].filter(registration => this.#catalogVisible(registration, options.includeSuperseded)).map((registration) =>
+  catalog(): ToolCatalogEntry[] {
+    return [...this.#registrations.values()].filter(registration => this.#catalogVisible(registration)).map((registration) =>
       structuredClone({
         definition: registration.definition,
         manifest: registration.manifest,
@@ -294,7 +290,6 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     visibleToChild: candidate.visibleToChild ?? true,
     registrationOwner: candidate.registrationOwner?.trim() || undefined,
     deferredSchema: candidate.deferredSchema,
-    supersededBy: candidate.supersededBy,
     mcpHook: candidate.mcpHook,
     mcpApp: candidate.mcpApp,
     sessionScope: candidate.sessionScope,

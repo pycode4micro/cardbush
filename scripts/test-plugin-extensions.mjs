@@ -34,6 +34,17 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
   await writeFile(join(source, 'hooks/hooks.json'), JSON.stringify({ hooks: hookMap }));
   const adapted = await resolvePluginManifest(source);
   assert.equal(adapted.issues.length, 0, JSON.stringify(adapted.issues));
+  assert.equal(Object.hasOwn(adapted.extensions.agents[0], 'memory'), false);
+  const unsupportedAgent = join(root, 'unsupported-agent');
+  await mkdir(join(unsupportedAgent, '.claude-plugin'), { recursive: true });
+  await mkdir(join(unsupportedAgent, 'agents'));
+  await writeFile(join(unsupportedAgent, '.claude-plugin/plugin.json'), JSON.stringify({ name: 'unsupported-agent' }));
+  for (const memory of ['user', 'project', 'local', 'none', 'null']) {
+    await writeFile(join(unsupportedAgent, 'agents/reviewer.md'), `---\nname: reviewer\nmemory: ${memory}\n---\nReview evidence.`);
+    const rejected = await resolvePluginManifest(unsupportedAgent);
+    assert.equal(rejected.extensions.agents.length, 0);
+    assert.ok(rejected.issues.some(issue => /unsupported field memory/.test(issue.detail)), memory);
+  }
   assert.ok(adapted.notes.some(note => note.includes('model inherits')));
   assert.equal(await present(join(workspace, 'hook-events.jsonl')), false, 'inspection never executes hooks');
   await installProductPlugin(source, installed);

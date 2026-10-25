@@ -1,3 +1,5 @@
+import { RuntimeTaskTools } from '../dist/taskTools.js';
+import { RuntimeTurnSignals } from '../dist/turnSignals.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SubagentTaskStore, ToolRegistry, ToolExecutionCoordinator, registerSubagentTool } from '../dist/index.js';
@@ -11,11 +13,12 @@ function fixture(run) {
     createTaskId: () => `remote-${++serial}`, asyncDispatch: true,
     remoteAgents: { list: async () => [target], run: (input, signal) => { requests.push(input); return run(input, signal); } },
     onAsyncResult: item => results.set(item.taskId, item.result),
-    awaitAsyncResults: async ({ taskIds, mode }) => {
-      const promises = taskIds.map(taskId => results.get(taskId).then(message => ({ taskId, message })));
-      return mode === 'all' ? Promise.all(promises) : [await Promise.race(promises)];
-    },
   });
+  const signals = new RuntimeTurnSignals();
+  const observer = new RuntimeTaskTools((context, promises, mode, signal, duration) => signals.wait(context.sessionId, context.turnId, promises, mode, signal, duration));
+  observer.addSource(context => tasks.list(context.sessionId).map(task => ({ task_id: task.taskId, kind: 'subagent', status: task.status, revision: String(task.revision), result: task.finalResponse,
+    wait: signal => tasks.waitForCompletion(context.sessionId, task.taskId, signal) })));
+  observer.register(registry);
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('unexpected permission'); } } });
   const request = { protocol: 'bush.model_request.v1', requestId: 'parent-request', sessionId: 'parent-session', turnId: 'parent-turn', model: 'local-model', permissionMode: 'task_free',
     messages: [], tools: registry.definitions(), metadata: { uiLanguage: 'en', secret: 'never-forward' } };
@@ -39,12 +42,12 @@ test('remote subagents dispatch asynchronously, join any/all, and resume the sam
   assert.equal(invalidResume.kind, 'failed');
   const second = await f.invoke('subagent', { prompt: 'Check docs', target_agent: f.target.id });
   pending[1].resolve(completed('Docs checked'));
-  const any = await f.invoke('await_subagents', { task_ids: [first.result.taskId, second.result.taskId] });
-  assert.deepEqual(any.result.taskIds, [second.result.taskId]);
+  const any = await f.invoke('tasks', { action: 'wait', task_ids: [first.result.taskId, second.result.taskId] });
+  assert.deepEqual(any.result.tasks.filter(task => task.status === 'completed').map(task => task.task_id), [second.result.taskId]);
   assert.equal(f.tasks.get('parent-session', first.result.taskId).status, 'running');
   pending[0].resolve(completed('Build checked'));
-  const all = await f.invoke('await_subagents', { task_ids: [first.result.taskId, second.result.taskId], mode: 'all' });
-  assert.equal(all.result.count, 2);
+  const all = await f.invoke('tasks', { action: 'wait', task_ids: [first.result.taskId, second.result.taskId], mode: 'all' });
+  assert.equal(all.result.tasks.filter(task => task.status === 'completed').length, 2);
   const resumed = await f.invoke('subagent', { prompt: 'Inspect follow-up', task_id: first.result.taskId });
   assert.equal(resumed.result.childSessionId, first.result.childSessionId);
   assert.notEqual(resumed.result.childTurnId, first.result.childTurnId);

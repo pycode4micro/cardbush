@@ -4,7 +4,6 @@ const path = require('node:path');
 
 module.exports = async ({ run, until, pause, win, root }) => {
   await run(`cardbushDesktop.sshConnections={list:async()=>[{id:'ssh-dialog',name:'Windows host',username:'fixture',host:'fixture.invalid',port:22}]};
-    cardbushDesktop.agents.syncCatalog=async()=>Array.from({length:30},(_,i)=>({id:'plugin-'+i,name:'Plugin '+i,source:'user',version:'1.0.0'}));
     window.dialogWarnings=['video-face-stylizer: .gpu-cache/example.blob exceeds the file limit; previous Agent state retained'];
     connections=connections.map(c=>c.id==='a'?{...c,configurationWarnings:dialogWarnings,sshTunnel:{connectionId:'ssh-dialog',remoteHost:'127.0.0.1',remotePort:4780}}:c);
     snapshots.a=[{sessionId:'a1',revision:1,metadata:{title:'同步详情与连接设置'},turns:[{turnId:'history-a1',messages:[
@@ -49,7 +48,7 @@ module.exports = async ({ run, until, pause, win, root }) => {
   await pause(100); fs.writeFileSync(path.join(root, 'tmp/agent-sync-details-dialog.png'), (await win.webContents.capturePage()).toPNG());
   await run("document.querySelector('.agents-config-dialog button[type=submit]').click()");
   await until("!!document.querySelector('.agents-form')&&!document.querySelector('.agents-config-dialog')", 'details can open connection settings without stacking dialogs');
-  await until("document.querySelectorAll('.agent-sync-plugin-list input').length===30", 'settings plugin selection loads');
+  assert.equal(await run("!!document.querySelector('.agent-sync-plugin-list')"), false, 'connection settings have no plugin selection');
   await run("(async()=>{connections=connections.map(c=>c.id==='a'?{...c,configurationError:'新的同步提示，等待设置关闭。'}:c);await refreshAgentConnections();})()");
   await pause(80);
   assert.equal(await run("!!document.querySelector('.agents-config-dialog')"), false, 'sync updates do not cover the active connection form');
@@ -60,7 +59,7 @@ module.exports = async ({ run, until, pause, win, root }) => {
       window.settingsCloseTop=document.querySelector('.agents-form [aria-label=关闭]').getBoundingClientRect().top;
       window.settingsFooterTop=document.querySelector('.agents-form > footer').getBoundingClientRect().top;
       body.scrollTop=body.scrollHeight;undefined;`);
-    assert.ok(await run("document.querySelector('.agents-modal-body').scrollTop>0"), label+': form actually overflows');
+    if (label === 'small window') assert.ok(await run("document.querySelector('.agents-modal-body').scrollTop>0"), label+': long form scrolls in its body');
     assert.equal(await run("document.querySelector('.agents-form > header').getBoundingClientRect().top===settingsHeaderTop"), true, label+': header does not scroll');
     assert.equal(await run("document.querySelector('.agents-form [aria-label=关闭]').getBoundingClientRect().top===settingsCloseTop"), true, label+': close button does not scroll');
     assert.equal(await run("document.querySelector('.agents-form > footer').getBoundingClientRect().top===settingsFooterTop"), true, label+': actions do not scroll');

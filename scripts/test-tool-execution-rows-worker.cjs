@@ -122,15 +122,15 @@ app.whenReady().then(async () => {
       }
     }
     // Replay title-bearing lifecycle updates without replacing the disclosure DOM.
-    await run(`active=true;messageId='stable-title';executions=[{...executions[0],id:'stable',name:'mcp_call',state:'queued',
-      summary:'mcp_call',output:'',metadata:{displayTitle:'核对产品资料',nativeResultDeferred:true}}];renderFixture();`);
+    await run(`active=true;messageId='stable-title';executions=[{...executions[0],id:'stable',name:'call_tool',state:'queued',
+      summary:'call_tool',output:'',metadata:{displayTitle:'核对产品资料',nativeResultDeferred:true}}];renderFixture();`);
     await pause();
     await run(`window.titleNode=document.querySelector('.tool-execution-label');window.summaryNode=document.querySelector('.tool-execution-summary');
       window.labels=[];window.titleHeight=summaryNode.getBoundingClientRect().height;
       window.labelObserver=new MutationObserver(()=>labels.push(titleNode.textContent));
       labelObserver.observe(document.querySelector('.tool-execution-block'),{subtree:true,childList:true,characterData:true});`);
     for (const state of ['running','awaiting_permission','running','completed']) {
-      await run(`executions=executions.map(e=>({...e,state:${JSON.stringify(state)},summary:'mcp_call'}));renderFixture();`); await pause();
+      await run(`executions=executions.map(e=>({...e,state:${JSON.stringify(state)},summary:'call_tool'}));renderFixture();`); await pause();
       assert.equal(await run('document.querySelector(".tool-execution-label").textContent'),'核对产品资料');
       assert.ok(await run('titleNode===document.querySelector(".tool-execution-label") && summaryNode===document.querySelector(".tool-execution-summary")'));
       assert.equal(await run('summaryNode.getBoundingClientRect().height'),await run('titleHeight'));

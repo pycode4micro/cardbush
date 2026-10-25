@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { RuntimeToolLoop, ToolRegistry, ToolExecutionStore, InMemoryRuntimeEventLog, registerMcpDiscovery, synchronizeMcpDiscovery, InMemoryRuntimeHost, CacheChainTracker } from '../dist/index.js';
+import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import { parseMcpAppReference } from '@cardbush/bush-protocol';
 import { toResponsesCreateParams } from '../../bush-provider-openai/dist/index.js';
 import { responsesInputFingerprint } from '../../bush-provider-openai/dist/responsesInputFingerprint.js';
@@ -19,22 +20,23 @@ function setup(result = { content: [{ type: 'text', text: 'Saved revision 3' }],
 }
 const receipt = content => JSON.parse(content.split('\n\n').at(-1)).runtime_app_reference;
 
-for (const gateway of [false, true]) for (const budget of [undefined, 0]) {
-  test(`App links accompany actual ${gateway ? 'mcp_call' : 'native'} results, including budget ${budget}`, async () => {
+for (const gateway of [undefined, 'call_tool']) for (const budget of [undefined, 0]) {
+  test(`App links accompany actual ${gateway ?? 'native'} results, including budget ${budget}`, async () => {
     const fixture = setup({ content: [{ type: 'text', text: 'Saved revision 3. '.repeat(1500) }], _meta: { secret: 'ui-only-value' } });
     const { registry, store } = fixture;
-    registerMcpDiscovery(registry);
-    const request = { sessionId: 's', turnId: 't', requestId: 'r', tools: registry.definitions(), metadata: { mcpToolDiscovery: gateway } };
+    registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
+    const request = { sessionId: 's', turnId: 't', requestId: 'r', tools: registry.definitions(), metadata: { mcpToolDiscovery: !!gateway } };
     const context = [];
     if (gateway) {
-      const search = registry.resolve('mcp_search');
-      const loaded = await search.execute({ input: { action: 'load', query: 'mcp__fixture__view' }, turn: { request, contextMessages: context } });
-      context.push({ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'mcp_search', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'load', content: JSON.stringify(loaded) });
+      const loader = 'get_tool_schema';
+      const search = registry.resolve(loader);
+      const loaded = await search.execute({ sessionId: 's', input: { name: 'mcp__fixture__view' }, turn: { request, contextMessages: context } });
+      context.push({ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: loader, argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'load', content: JSON.stringify(loaded) });
       synchronizeMcpDiscovery(registry, request, context);
     }
     const definitions = structuredClone(registry.definitions());
     const loop = new RuntimeToolLoop({ registry, executionStore: store, eventLog: new InMemoryRuntimeEventLog(), identity: { sessionId: 's', turnId: 't', requestId: 'r' } });
-    const call = { protocol: 'bush.tool_call.v1', id: 'c', name: gateway ? 'mcp_call' : 'mcp__fixture__view', argumentsText: gateway ? JSON.stringify({ name: 'mcp__fixture__view', arguments: {} }) : '{}' };
+    const call = { protocol: 'bush.tool_call.v1', id: 'c', name: gateway ?? 'mcp__fixture__view', argumentsText: gateway ? JSON.stringify({ name: 'mcp__fixture__view', arguments: {} }) : '{}' };
     const output = await loop.execute([call], { round: 1, assistantMessageId: 'a', request, contextMessages: context, modelContextIngressBudgetTokens: budget });
     const link = receipt(output.messages[0].content);
     assert.deepEqual(parseMcpAppReference(link.reference), { sessionId: 's', turnId: 't', toolCallId: 'c' });
@@ -45,7 +47,7 @@ for (const gateway of [false, true]) for (const budget of [undefined, 0]) {
     assert.doesNotMatch(output.messages[0].content, /ui-only-value/);
     assert.deepEqual(fixture.counts(), { calls: 1, reads: 0 }, 'issuing a reference does not read HTML or replay the generating tool');
     const record = store.get('s', 't', 'c');
-    assert.deepEqual(gateway ? record.result.result : record.result, fixture.result, 'native records are unchanged');
+    assert.deepEqual(record.result, fixture.result, 'native records are unchanged');
     assert.equal(receipt(record.modelText).reference, link.reference, 'archived model text preserves the same reference');
     assert.deepEqual(registry.definitions(), definitions, 'no tool schema is mutated by citation delivery');
   });
@@ -58,7 +60,7 @@ test('failed tool results do not promise an App result', async () => {
   assert.doesNotMatch(output.messages[0].content, /cardbush-app:|runtime_app_reference/);
 });
 
-for (const gateway of [false, true]) test(`${gateway ? 'mcp_call' : 'native'} App links preserve append-only request prefixes across rounds`, async t => {
+for (const gateway of [undefined, 'call_tool']) test(`${gateway ?? 'native'} App links preserve append-only request prefixes across rounds`, async t => {
   const dataRoot = await mkdtemp(join(tmpdir(), 'cardbush-app-reference-'));
   t.after(async () => { assert.ok(resolve(dataRoot).startsWith(resolve(tmpdir()) + sep + 'cardbush-app-reference-')); await rm(dataRoot, { recursive: true, force: true }); });
   const { registry, counts } = setup(); const requests = [];
@@ -67,11 +69,11 @@ for (const gateway of [false, true]) test(`${gateway ? 'mcp_call' : 'native'} Ap
     const event = (sequence, kind, fields = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: '2026-09-24T00:00:00Z', sequence, kind, ...fields });
     yield event(0, 'response_started');
     if (gateway && round === 0) {
-      yield event(1, 'tool_call_delta', { index: 0, toolCallId: 'load', nameDelta: 'mcp_search', argumentsDelta: JSON.stringify({ action: 'load', query: 'mcp__fixture__view' }) });
+      yield event(1, 'tool_call_delta', { index: 0, toolCallId: 'load', nameDelta: 'get_tool_schema', argumentsDelta: JSON.stringify({ name: 'mcp__fixture__view' }) });
       yield event(2, 'response_completed', { finishReason: 'tool_calls' });
     } else if (round < (gateway ? 3 : 2)) {
       yield event(1, 'tool_call_delta', { index: 0, toolCallId: 'c' + round,
-        nameDelta: gateway ? 'mcp_call' : 'mcp__fixture__view',
+        nameDelta: gateway ?? 'mcp__fixture__view',
         argumentsDelta: gateway ? JSON.stringify({ name: 'mcp__fixture__view', arguments: {} }) : '{}' });
       yield event(2, 'response_completed', { finishReason: 'tool_calls' });
     } else {

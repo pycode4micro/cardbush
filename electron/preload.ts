@@ -154,8 +154,6 @@ const desktopApi = {
     },
   },
   agents: {
-    syncCatalog: () => ipcRenderer.invoke('agents:command', 'sync-catalog'),
-    syncConfiguration: (id: string) => ipcRenderer.invoke('agents:command', 'sync-configuration', id),
     filePreview: (id: string, sessionId: string, path: string) => ipcRenderer.invoke('agents:command', 'file-preview', { id, sessionId, path }),
     releaseFilePreview: (id: string) => ipcRenderer.invoke('agents:command', 'release-file-preview', id),
     list: () => ipcRenderer.invoke('agents:command', 'list'),

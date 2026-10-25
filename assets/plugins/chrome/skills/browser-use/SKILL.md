@@ -1,6 +1,6 @@
 ---
 name: browser-use
-description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签或已配对的 Chrome、Edge。尊重 @ 标签页的真实身份，支持网页读取、点击、表单、本地文件上传和截图；外部浏览器另支持跟踪下载，原生窗口与特殊控件可衔接 Computer Use。
+description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签或已授权的 Chrome、Edge。本机首次确认后自动重连，配对码用于手动连接或远程 Agent 配对。尊重 @ 标签页的真实身份，支持网页读取、点击、表单、本地文件上传和截图；外部浏览器另支持跟踪下载，原生窗口与特殊控件可衔接 Computer Use。
 ---
 
 # Browser Use
@@ -23,13 +23,15 @@ description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签�
 
 - 用户只需打开网页并保留观看（例如直播间）、且未指定浏览器或账号配置时，优先使用宿主 `open_external_url`，不要求先连接 Browser Use。它由主进程交给系统默认浏览器，返回仅确认打开请求已发出，不代表页面加载成功。读取、点击等自动操作仍使用本技能的连接器；离线时不以默认浏览器替代用户指定的浏览器/配置。
 - 不用 `terminal_exec` / `Start-Process` / `start` 打开需要保留的用户浏览器：终端结束会清理新启动的子进程。工具不可用时提供链接，不关闭进程保护或通过保活终端绕过清理。
-- `list_pages` 只列本会话可操作的标签。外部浏览器限定本会话标签组；内置浏览器限定已引用或新建的页面。`new_page` 在已选浏览器创建标签；未指定网址时使用宿主主页设置。
+- `list_pages` 只列本会话可操作的标签。外部浏览器限定本会话标签组；内置浏览器限定已引用或新建的页面。`new_page` 在已选浏览器创建标签；未指定网址时创建空白页。
 - 向用户展示已打开页面时，优先原样使用工具返回的 `reference` 作为 Markdown 链接地址，例如 `[AA 榜单](返回的 reference)`。它会定位原浏览器的原标签，保留当前页面状态；普通网址只表示网站，不能替代标签身份。不要自行编造标签引用。标签已关闭时界面会提示，并由用户明确选择重新打开。
 - 个人标签页必须由用户在扩展面板中选择目标 CardBush 会话、授权并复制进组。配对不等于网站授权，不绕过授权或搜索其他会话标签。
 - 优先使用 `take_snapshot` 返回的元素 ID 配合 click / fill / type_text；页面变化后重新观察。
 - `take_snapshot` 默认渐进返回，正文只在 `content` 中出现一次；`structuredContent` 给出数量和续读游标。优先用 `rootUid`、`query`、`roles` 缩小范围，需要更多时传 `cursor`，不必自动读完整页。游标沿用同一次采集，最多保留三分钟；导航、重新采集、释放连接或缓存回收后会明确报失效。它不是实时更新的页面状态。
+- 快照保留 `expanded:false`、`checked:"mixed"`、`haspopup:"menu"` 等状态及关联节点。`interactiveOnly:true` 筛选交互候选，包括禁用控件。可选 `inspectLimit:1..20` 只检查首个返回页内有限候选的区域、隐藏、禁用、裁切等事实；未带 `observation` 的行未经检查，所有快照都未经实时点击命中确认。数量仅代表已加载的 AX 树，虚拟列表未加载总量未知。
 - 长字段明确标为预览；需要原文时传 `rootUid` 和 `fullText:true`，按返回的字段、字符偏移及游标渐进读取。超出采集预算会说明遗漏数量，进一步缩小范围或用 `evaluate_script` 按指定偏移读取相关文本，避免整页输出。
-- `click` 会检查面积、可见性、禁用状态和实际命中目标，并在鼠标移入后复查。零面积控件仅可经明确关联的可见 label 点击，不绕过遮挡强行执行 JavaScript click。回执 `input_dispatched` 表示输入已发出，`outcomeVerified:false` 表示尚未确认提交、跳转等结果；按任务观察相关状态后再继续。失败若提示点击可能已生效，先观察，不能盲目重试或自动换成 Enter。
+- `click` 自动滚入视图，检查两帧稳定性、可见性、禁用状态和真实命中，在鼠标移入后及每次按下前复查。零面积控件仅可经明确关联的可见 label 点击，不自动 hover 祖先、关闭遮挡或强行执行 JavaScript click。失败回执包含原因或 `unknown`、目标与命中元素事实、滚动/悬停和按下次数；没有按下不代表页面无变化。`input_dispatched` 和即时 `postState` 都不证明业务成功，`outcomeVerified:false` 保持明确；若输入可能已生效，先观察，不能盲目重试或换成 Enter。
+- 用同一个 `wait_for` 等待明确结果：简单文字出现传 `text`；复合要求传 `conditions`，支持 `text` 的 `present:false`、`value` 的精确值、`visible`、`enabled`、`state`（busy/expanded/checked/selected）和 `url`（equals/includes）。条件逐一检查，不是原子快照。例：`{"conditions":[{"kind":"value","uid":"cb_101","value":"2026-10-18"},{"kind":"state","uid":"cb_102","name":"busy","value":false}],"timeout":10000}`，节点必须替换为实际观察所得。`visible` 不证明无遮挡，缺失 ARIA 状态不能视为 false，首次找不到节点不能证明已消失。页面或子 frame 导航后重新获取 uid；超时看最后观察，不用网络空闲或任意 DOM 变化推断成功。
 - 截图使用 `take_screenshot`，图片提取使用 `export_image`；结果自动附图并保存，无需通过下载来查看图片。
 - 文件下载使用 `download_file`，保留 taskId 后用 `download_status` 查询或 `cancel_download` 取消。pending 不代表失败，不重复提交同一下载。
 - 本地图片、视频、文档上传使用 `upload_file`：传宿主上的绝对路径数组 `filePaths`，以及文件输入框的 `uid` 或页面观察得到的唯一 `selector`（二选一）。隐藏的 `input[type=file]` 也支持；看不到 uid 时可用 `evaluate_script` 查明控件的 id/name/accept/multiple，再选择具体控件，不能盲选多个控件中的第一个。多文件需控件支持 `multiple`。无需先点击以打开系统文件窗口，也无需启动本地 HTTP 服务、传 Base64 或注入 DataTransfer。
@@ -44,9 +46,13 @@ description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签�
 
 ## 连接设置
 
-CLI 使用共享本地 Runtime 自己的连接器，不要求启动桌面 App。用户可在 CLI 输入 `/browser` 查看状态，用 `/browser pair chrome` 或 `/browser pair edge` 生成配对码；码只显示在终端，不应发给模型。保持 CLI 开启，将码粘贴到对应浏览器的扩展中。命令也显示扩展目录。然后调用 `list_browsers`，将返回的 Chrome/Edge 配置 ID 传给 `select_browser`；不要将 `chrome` 或 `edge` 当作 connectionId。桌面 App 的连接与 CLI 分开管理，内置 CardBush 标签仅在桌面端可用。已配对连接暂时离线时恢复原连接，不重复生成配对码。
+本机 Chrome/Edge 的正常流程无需输入配对码。启用 Browser Use 插件，在目标浏览器安装或重新加载扩展，由用户首次在系统弹窗和扩展中确认连接；不要代替用户确认。本机 App 和 CLI 共用连接，断线或重启后自动重连；CLI 使用 Chrome/Edge 不要求启动桌面 App。内置 CardBush 标签需要桌面 App，但无需扩展或配对。
 
-在「设置 → 浏览器 → Browser Use」开启连接器，首次使用时选择 Chrome 或 Edge，填写可选连接名称并生成配对码。将码粘贴到对应浏览器的 CardBush Browser Use 扩展。扩展随应用提供，在 `chrome://extensions` / `edge://extensions` 加载；升级后重新加载原扩展。正常重启后自动重连，打开扩展可立即重试；不要把暂时离线当成配对失效。
+用户可在 CLI 输入 `/browser status` 查看连接状态和扩展目录。Agent 调用 `list_browsers`，将返回的 Chrome/Edge 配置 ID 传给 `select_browser`；不要将 `chrome` 或 `edge` 当作 connectionId。已有连接暂时离线时打开原浏览器配置，等待扩展自动重连，或打开扩展立即重试；不要因此要求重新授权或生成新配对码，也不要换用另一个浏览器。
+
+配对码仅用于手动连接或远程 Agent 配对。用户在目标 Agent 的 CLI 输入 `/browser pair chrome` 或 `/browser pair edge`，也可在桌面设置的手动配对入口生成本机配对码，然后直接粘贴到目标浏览器的 CardBush Browser Use 扩展；使用 CLI 生成时保持该 CLI 开启。配对码不得发给模型。远程 Agent 独立管理连接，不继承本机 App/CLI 的连接。五分钟有效期仅限制新配对码的首次接受，成功连接不会在五分钟后失效。
+
+桌面设置入口为「设置 → 浏览器 → Browser Use」，CLI 可通过 `/settings` 检查插件启用状态。扩展随应用提供，在 `chrome://extensions` / `edge://extensions` 加载；Chrome、Edge 和不同用户配置首次分别确认，可同时连接。升级后重新加载原扩展，保留已有连接和网站授权。
 
 关闭连接器保留配对，再次开启后自动重连；明确关闭扩展连接则需用户点击连接恢复。移除一条连接只撤销对应配对，移除连接器配置才撤销全部配对。已保存的站点/全部网站授权重启后仍有效，可在扩展中撤销；个人标签仍需明确复制进会话组。不要自行读取凭据文件、Cookie 或密码数据库。连接器不可用时说明需要的连接或授权，避免自动启动新的浏览器配置。
 

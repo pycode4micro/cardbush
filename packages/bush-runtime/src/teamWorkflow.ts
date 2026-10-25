@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { TASK_WAIT_MAX_MS, TASK_WAIT_DEFAULT_MS } from './taskLimits.js';
 import { join } from 'node:path';
-import { creationCanvasSchema, teamWorkflowSchema, TEAM_WORKFLOW_MAX_NODES, teamRunSchema, type TeamWorkflow, type TeamRun } from '@cardbush/bush-protocol';
+import { creationCanvasSchema, teamWorkflowSchema, teamRunSchema, type TeamWorkflow, type TeamRun } from '@cardbush/bush-protocol';
 import { DefinitionStore } from './definitionStore.js';
 import type { RegisteredAgentStore } from './registeredAgents.js';
 import type { SubagentDispatcher, SubagentInput } from './subagentTool.js';
@@ -18,8 +17,7 @@ import { actionFieldSchema, validateActionFields } from './toolActionRules.js';
 const teamActions = {
   list: { required: [], optional: ['section', 'query', 'offset', 'limit'] }, get: { required: ['team_id'] },
   save: { required: ['definition', 'expected_revision'] }, delete: { required: ['team_id', 'expected_revision'] },
-  run: { required: ['team_id', 'input'], optional: ['canvas_path'] }, status: { required: ['run_id'] },
-  wait: { required: ['run_id'], optional: ['node_ids', 'yield_time_ms'] }, stop: { required: ['run_id'] }, resume: { required: ['run_id'] },
+  run: { required: ['team_id', 'input'], optional: ['canvas_path'] }, resume: { required: ['run_id'] },
 } as const;
 
 // Drop Zod's non-enumerable Standard Schema helpers before nesting this JSON data.
@@ -30,8 +28,6 @@ interface TeamInput extends CatalogQuery {
   team_id?: string; run_id?: string; definition?: unknown; expected_revision?: number; input?: string;
   canvas_path?: string;
   section?: 'teams' | 'runs';
-  node_ids?: string[];
-  yield_time_ms?: number;
 }
 type Context = ToolHandlerContext<TeamInput>;
 type Dispatch = SubagentDispatcher['dispatch'];
@@ -44,33 +40,30 @@ export class TeamWorkflowManager {
   private writes: Promise<unknown> = Promise.resolve();
   private closed = false;
   constructor(private readonly agents: RegisteredAgentStore, private readonly dispatch: Dispatch,
-    private readonly options: { directory?: string; onResult?: (run: TeamRun, result: Promise<TeamRun>) => void;
-      waitForWork?: (context: ToolHandlerContext<unknown>, promise: Promise<unknown>, duration: number) => Promise<unknown> } = {}) {
+    private readonly options: { directory?: string; onResult?: (run: TeamRun, result: Promise<TeamRun>) => void } = {}) {
     this.definitions = new DefinitionStore(value => teamWorkflowSchema.parse(value), options.directory && join(options.directory, 'definitions'));
     this.runs = new DefinitionStore(value => teamRunSchema.parse(value), options.directory && join(options.directory, 'runs'));
   }
   register(registry: ToolRegistry) {
     registry.register<TeamInput>({
-      definition: { name: 'team', description: 'Use for saved dependency workflows of registered clean Agents: the host schedules ready nodes, passes direct upstream results and resumes unfinished steps. For ad-hoc independent assignments, use subagent even with several agents. list finds definitions (section=runs finds this conversation\'s executions); get reads configuration. Save acyclic dependencies, deliverables and acceptance criteria. run starts a new execution; resume retains completed nodes. Use tasks for progress/results/stop when available; otherwise use status/wait/stop here. wait reads final outputs or selected node_ids. Completed means execution ended, not content validated. Nodes reuse subagent execution.',
+      definition: { name: 'team', description: 'Use for saved dependency workflows of registered clean Agents: the host schedules ready nodes, passes direct upstream results and resumes unfinished steps. For ad-hoc independent assignments, use subagent even with several agents. list finds definitions (section=runs finds this conversation\'s executions); get reads configuration. Save acyclic dependencies, deliverables and acceptance criteria. run starts a new execution; resume retains completed nodes. Use tasks for progress, final or selected node outputs, waiting and stopping. Completed means execution ended, not content validated. Nodes reuse subagent execution.',
         inputSchema: { type: 'object', additionalProperties: false, required: ['action'], properties: {
           action: actionFieldSchema(teamActions),
           definition: definitionSchema, expected_revision: { type: 'integer', minimum: 0 },
           team_id: { type: 'string', description: 'Workflow definition ID from team list/save; used by get, run and delete. Identifies the saved workflow, not an execution or employee.' },
-          run_id: { type: 'string', description: 'Execution ID returned by team run or list with section=runs. Used by resume/status/wait/stop. The same run is exposed as task_id with kind=team in tasks; never substitute team_id or a node ID.' },
+          run_id: { type: 'string', description: 'Execution ID returned by team run or list with section=runs. Used by resume. The same run is exposed as task_id with kind=team in tasks; never substitute team_id or a node ID.' },
           input: { type: 'string', description: 'Explicit task input for this run. Parent conversation history is not copied.' },
           canvas_path: { type: 'string', description: 'run only: optional canvas manifest. Each node receives the path and its assigned region IDs, then inspects current layout/content through design. Assign regions before running; parent integrates unassigned results.' },
-          yield_time_ms: { type: 'integer', minimum: 0, maximum: TASK_WAIT_MAX_MS, default: TASK_WAIT_DEFAULT_MS, description: 'wait only: bounded observation, never cancels the Team. Use 0 for current results; continue independent work before waiting.' },
-          node_ids: { type: 'array', minItems: 1, maxItems: TEAM_WORKFLOW_MAX_NODES, uniqueItems: true, items: { type: 'string' }, description: 'wait only. Omit for final node outputs; provide IDs from status to read selected node outputs in full.' },
           section: { type: 'string', enum: ['teams', 'runs'], default: 'teams', description: 'list only.' }, ...catalogPageProperties,
         } } },
       projectModelDefinition: (definition, scope) => {
         if (!scope.canRecall) return definition;
-        const actions = scope.hasTool('tasks') ? ['list', 'get', 'run', 'resume'] as const : ['list', 'get', 'run', 'status', 'wait', 'stop', 'resume'] as const;
+        const actions = ['list', 'get', 'run', 'resume'] as const;
         const rules = Object.fromEntries(actions.map(action => [action, teamActions[action]]));
         return presentTool(definition, {
           fields: ['action', ...new Set(Object.values(rules).flatMap(rule => [...rule.required, ...('optional' in rule ? rule.optional : [])]))],
           properties: { action: actionFieldSchema(rules) },
-          description: `Run saved dependency workflows: the host schedules nodes, passes upstream results and resumes unfinished steps. For ad-hoc independent assignments use subagent, even with several agents. list/get find definitions; run starts with team_id; resume uses the returned run_id and retains completed nodes. ${scope.hasTool('tasks') ? 'Use tasks to inspect/wait/stop the returned task_id (the same execution as run_id).' : 'Use status/wait/stop with run_id to observe or stop runs.'} Employee IDs, team_id and node IDs are not run IDs. For definitions or selected node outputs, load get_tool_schema(name="team"), then use call_tool with its full arguments.`,
+          description: `Run saved dependency workflows: the host schedules nodes, passes upstream results and resumes unfinished steps. For ad-hoc independent assignments use subagent, even with several agents. list/get find definitions; run starts with team_id; resume uses the returned run_id and retains completed nodes. Use tasks to inspect/wait/stop the returned task_id (the same execution as run_id). Employee IDs, team_id and node IDs are not run IDs. For editing definitions, load get_tool_schema(name="team"), then use call_tool with its full arguments.`,
         });
       },
       manifest: { effect_kind: 'delegation', operation: 'agent.team', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },
@@ -80,6 +73,11 @@ export class TeamWorkflowManager {
     });
   }
   async configure(input: unknown) {
+    const control = z.object({ action: z.enum(['status', 'stop']), run_id: z.string().min(1) }).strict().safeParse(input);
+    if (control.success) {
+      if (control.data.action === 'stop') { const active = this.active.get(control.data.run_id); active?.controller.abort(); if (active) await active.promise; }
+      return this.readRun(control.data.run_id);
+    }
     const value = decodeTeamInput(input);
     if (value.action === 'list') return { teams: await this.definitions.list(), runs: await this.listRuns() };
     if (value.action === 'get') {
@@ -98,8 +96,6 @@ export class TeamWorkflowManager {
       return this.definitions.put(team, value.expected_revision!);
     }
     if (value.action === 'delete') { await this.definitions.remove(value.team_id!, value.expected_revision!); return { deleted: true }; }
-    if (value.action === 'status') return this.readRun(value.run_id!);
-    if (value.action === 'stop') { this.active.get(value.run_id!)?.controller.abort(); const active = this.active.get(value.run_id!); if (active) await active.promise; return this.readRun(value.run_id!); }
     throw new Error('Starting or resuming a Team requires an Agent turn with model and permission context.');
   }
   private async resolveAgents(workflow: TeamWorkflow) {
@@ -120,10 +116,23 @@ export class TeamWorkflowManager {
   async taskHandles(parentSessionId: string): Promise<RuntimeTaskHandle[]> {
     return (await this.listRuns(parentSessionId)).map(run => ({ task_id: run.id, kind: 'team', status: run.status,
       revision: run.updatedAt + ':' + run.status, summary: run.teamId,
-      readResult: async () => { const current = await this.readRun(run.id, parentSessionId); return this.result(current, teamResultNodeIds(current)); },
+      readResult: async (nodeIds?: string[]) => {
+        const current = await this.readRun(run.id, parentSessionId);
+        if (nodeIds?.some(id => !current.nodes.some(node => node.id === id))) throw new Error('Unknown Team node ID. Use tasks inspect to read this run first.');
+        return this.result(current, nodeIds ?? teamResultNodeIds(current));
+      },
       wait: async signal => { const pending = this.active.get(run.id)?.promise; if (pending) await settleAtAbort(pending, signal, 'Stopped waiting; Team continues.'); },
-      stop: context => context.invokeTool('team', { action: 'stop', run_id: run.id }, { record: true }),
+      stop: context => this.stopRun(run.id, context),
     }));
+  }
+  private async stopRun(id: string, context: ToolHandlerContext<unknown>) {
+    assertParentAgent(context.turn?.request);
+    await this.readRun(id, context.sessionId);
+    const active = this.active.get(id); active?.controller.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { if (active) await settleAtAbort(Promise.race([active.promise, new Promise(resolve => { timer = setTimeout(resolve, 1000); })]), context.signal, 'Stop requested; stopped waiting for acknowledgement.'); }
+    finally { clearTimeout(timer); }
+    return { ...this.result(await this.readRun(id, context.sessionId)), ...(active ? { stop_requested: true } : {}) };
   }
   private async settleInterrupted(run: TeamRun) {
     if (run.status === 'running' && !this.active.has(run.id)) {
@@ -183,32 +192,9 @@ export class TeamWorkflowManager {
         ...(canvas ? { canvas: { path: canvas.path, assignments: Object.fromEntries(team.definition.nodes.map(node => [node.id, canvas.document.items.filter(item => !item.fixed && item.assignment?.teamId === team.definition.id && item.assignment.nodeId === node.id).map(item => item.id)])) } } : {}),
         nodes: team.definition.nodes.map(node => ({ id: node.id, status: 'pending', output: '', error: '' })), error: '' };
       await this.launch(run, context);
-      return { task_id: run.id, run_id: run.id, status: 'running', team_id: run.teamId, instructions: 'Continue independent work. Use tasks with this task_id when results are needed; team status/resume still accept run_id.' };
+      return { task_id: run.id, run_id: run.id, status: 'running', team_id: run.teamId, instructions: 'Continue independent work. Use tasks with this task_id when results are needed; team resume accepts run_id.' };
     }
     const run = await this.readRun(input.run_id!, context.sessionId);
-    if (input.action === 'status') return this.result(run);
-    if (input.action === 'stop') {
-      const active = this.active.get(run.id); active?.controller.abort();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try { if (active) await settleAtAbort(Promise.race([active.promise, new Promise(resolve => { timer = setTimeout(resolve, 1000); })]), context.signal, 'Stop requested; stopped waiting for acknowledgement.'); }
-      finally { clearTimeout(timer); }
-      return { ...this.result(await this.readRun(run.id, context.sessionId)), ...(active ? { stop_requested: true } : {}) };
-    }
-    if (input.action === 'wait') {
-      if (input.node_ids?.some(id => !run.nodes.some(node => node.id === id))) throw new Error('Unknown Team node ID. Use status to inspect this run\'s nodes.');
-      const pending = this.active.get(run.id)?.promise;
-      const duration = input.yield_time_ms ?? TASK_WAIT_DEFAULT_MS;
-      if (pending && duration) {
-        if (this.options.waitForWork) await this.options.waitForWork(context, pending, duration);
-        else {
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          try { await settleAtAbort(Promise.race([pending, new Promise(resolve => { timer = setTimeout(resolve, duration); })]), context.signal, 'Team wait cancelled; the Team continues independently.'); }
-          finally { clearTimeout(timer); }
-        }
-      }
-      const settled = await this.readRun(run.id, context.sessionId);
-      return this.result(settled, input.node_ids ?? teamResultNodeIds(settled));
-    }
     if (run.status === 'completed') return this.result(run);
     if (this.active.has(run.id)) return { run_id: run.id, status: 'running' };
     if (this.closed || !context.turn) throw new Error('Team execution is unavailable.');
@@ -305,13 +291,7 @@ export function decodeTeamInput(value: unknown): TeamInput {
   const rule = teamActions[action];
   for (const key of [...rule.required, ...('optional' in rule ? rule.optional : [])]) {
     if (key === 'canvas_path' && input[key] === undefined) continue;
-    if (key === 'yield_time_ms') {
-      if (input[key] !== undefined && (!Number.isInteger(input[key]) || Number(input[key]) < 0 || Number(input[key]) > TASK_WAIT_MAX_MS)) throw new Error(`yield_time_ms must be between 0 and ${TASK_WAIT_MAX_MS}.`);
-    } else if (key === 'node_ids') {
-      const ids = input[key];
-      if (ids !== undefined && (!Array.isArray(ids) || ids.length === 0 || ids.length > TEAM_WORKFLOW_MAX_NODES ||
-          ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length)) throw new Error(`node_ids must contain 1–${TEAM_WORKFLOW_MAX_NODES} unique node IDs.`);
-    } else if (key === 'expected_revision') { if (!Number.isSafeInteger(input[key]) || Number(input[key]) < 0) throw new Error('expected_revision is required.'); }
+    if (key === 'expected_revision') { if (!Number.isSafeInteger(input[key]) || Number(input[key]) < 0) throw new Error('expected_revision is required.'); }
     else if (key === 'definition') teamWorkflowSchema.parse(input[key]);
     else if (typeof input[key] !== 'string' || !String(input[key]).trim()) throw new Error(`${key} is required.`);
   }

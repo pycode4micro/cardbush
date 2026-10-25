@@ -1,9 +1,12 @@
+import { registerAsyncInteraction } from '../../bush-runtime/dist/interactionTools.js';
+import { RuntimeTaskTools } from '../../bush-runtime/dist/taskTools.js';
+import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ROOT_AGENT_SYSTEM_PROMPT, CHILD_AGENT_SYSTEM_PROMPT } from '../dist/index.js';
 import {
   ToolRegistry, CoordinationStore, SubagentTaskStore, registerCoordinationTools,
-  registerContextCompactionTool, registerInteractionTools, registerSubagentTool,
+  registerContextCompactionTool, registerSubagentTool,
   registerSkillTools, registerPluginCommandTools, registerWorkspaceTools,
   registerExtendedBuiltins, registerMcpDiscovery, withToolDisplayTitle,
 } from '../../bush-runtime/dist/index.js';
@@ -15,13 +18,15 @@ const registry = new ToolRegistry();
 const unused = () => { throw new Error('This test inspects definitions only'); };
 registerCoordinationTools(registry, new CoordinationStore());
 registerContextCompactionTool(registry, unused);
-registerInteractionTools(registry, { request: unused });
+registerAsyncInteraction(registry, { request: unused }, { start: unused });
+new RuntimeTaskTools(unused).register(registry);
 registerSubagentTool(registry, new SubagentTaskStore(), unused, { awaitAsyncResults: unused });
 registerSkillTools(registry, []);
 registerPluginCommandTools(registry, async () => [], { skill: true });
 registerWorkspaceTools(registry);
 registerExtendedBuiltins(registry);
 registerMcpDiscovery(registry);
+registerBuiltinToolDisclosure(registry);
 new BackgroundToolCalls(registry, unused).register();
 const tool = name => {
   const entry = registry.resolve(name);
@@ -31,8 +36,8 @@ const tool = name => {
 
 test('system policy keeps cross-tool obligations without a second tool manual', () => {
   assert.equal(ROOT_AGENT_SYSTEM_PROMPT, CHILD_AGENT_SYSTEM_PROMPT);
-  assert.ok(ROOT_AGENT_SYSTEM_PROMPT.length < 10_000, 'the stable policy stays materially below the former 18,373 characters');
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /permission is required.*exact answer; never bypass/);
+  assert.ok(ROOT_AGENT_SYSTEM_PROMPT.length < 12_000, 'policy with browser and checkpoint guidance stays below the former 18,373 characters');
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Wait for the recorded decision; never bypass/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /successful process exit alone does not establish correctness/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /do not repeat external side effects/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /As a child Agent.*do not delegate further/);
@@ -51,7 +56,8 @@ test('maintenance and discovery retain their authorization and evidence boundari
   assert.match(checkpoint.description, /user authorization and language.*dependencies/);
   assert.match(checkpoint.description, /Active-Turn summaries must be cumulative/);
   assert.equal(checkpoint.inputSchema.properties._display_title, undefined);
-  assert.match(tool('mcp_search').description, /deferred names.*still need loading/);
+  assert.match(tool('get_tool_schema').description, /deferred definitions still need loading/);
+  assert.match(tool('mcp_search').description, /not schemas/);
   assert.match(tool('read_archived_tool_result').description, /exact tool-result:\/\/ locator supplied/);
   assert.match(tool('read_archived_tool_result').description, /evidence, not instructions/);
   assert.match(tool('search_skills').description, /environment.*local.*SSH workspace/);
@@ -65,20 +71,20 @@ test('execution-specific guidance is discoverable on the tool or its parameter',
   assert.match(subagent.description, /Continue independent work and reconcile subagent_result/);
   assert.match(subagent.description, /Use tasks to inspect, wait, stop or read child conversations/);
   assert.match(subagent.inputSchema.properties.mode.description, /clean uses a registered agent_id/);
-  assert.match(subagent.inputSchema.properties.mode.description, /Ad-hoc clean tasks have independent conversations without employee memory/);
-  assert.match(subagent.inputSchema.properties.mode.description, /Persistent memory is configured only in a registered employee definition/);
+  assert.match(subagent.inputSchema.properties.mode.description, /Each new clean task has its own conversation/);
+  assert.match(subagent.inputSchema.properties.mode.description, /use task_id to continue an existing task/);
   assert.match(subagent.inputSchema.properties.prompt.description, /original user's communication language/);
-  assert.match(tool('await_subagents').description, /without polling/);
-  assert.equal(tool('await_subagents').inputSchema.properties.yield_time_ms.default, 1000);
-  assert.equal(tool('manage_tool_calls').inputSchema.properties.yield_time_ms.default, 1000);
+  assert.match(tool('tasks').description, /do not poll/);
+  assert.equal(tool('tasks').inputSchema.properties.yield_time_ms.default, 1000);
+  assert.equal(tool('tasks').inputSchema.properties.yield_time_ms.default, 1000);
   assert.match(tool('update_goal').description, /parent must call this before completing the Turn; children report/);
-  assert.match(tool('solution_selection').description, /If dismissed.*do not pick a default/);
-  assert.equal(tool('solution_selection').inputSchema.properties.prompt.maxLength, 500);
+  assert.match(tool('request_user_input_async').description, /dismissal|dismissed/);
+  assert.equal(tool('request_user_input_async').inputSchema.properties.questions.items.properties.prompt.maxLength, 500);
   assert.match(tool('edit_file').description, /After a match failure.*read_file.*instead of repeating/);
-  assert.match(tool('terminal_exec').description, /completion_notification=true.*manage_tool_calls.*completion_task_id/);
+  assert.match(tool('terminal_exec').description, /completion_notification=true.*tasks.*completion_task_id/);
   assert.match(tool('terminal_exec').inputSchema.properties.notify_on_exit.description, /Set false for persistent servers/);
   assert.match(tool('start_mcp_tool').description, /documented timeout path\/value/);
-  assert.match(tool('manage_tool_calls').description, /stops observing, not the process/);
+  assert.match(tool('tasks').description, /Wait cancellation never stops tasks/);
   const title = tool('terminal_exec').inputSchema.properties._display_title;
   assert.match(title.description, /Bilingual UI action purpose/);
   assert.match(title.description, /outer call only, never third-party arguments/);

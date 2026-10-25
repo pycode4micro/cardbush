@@ -602,6 +602,10 @@ export function contextPressureNotice(
     'A pause/acknowledgment does not cancel the history it carries. A merged_history source combines the indexed older Turns into ONE concise chronological handoff, not one recap per Turn. ' +
     'Keep a short topic/reread reason and its supplied conversation-history:// locator for details. Use read_conversation_history (discover its schema if needed) when later work needs original records. ' +
     'The model decides relevance and supersession; Runtime does not score semantic accuracy.';
+  const retentionReview = 'Before submitting, check that effective user requirements and corrections, verified conclusions with their evidence locators, completed side effects and exact identifiers, unresolved work, blockers and the next action remain explicit. ' +
+    'The active loop may have no final reply or summary_for_user: carry the meaning of already-read Tool results and earlier checkpoints yourself. ' +
+    'Tool names, reason and display titles describe intent, not observed results; they cannot substitute for findings. Keep pending, failed and unverified work distinct from completed work. ' +
+    'If an essential fact cannot fit, keep its exact archive locator and what must be reread before acting; do not silently mark it resolved.';
   if (format === 'incremental') return {
     role: 'developer', name: 'context_pressure', content: [
       '<context_pressure mode="required">',
@@ -623,6 +627,7 @@ export function contextPressureNotice(
       ...(sources.some(source => source.checkpointSummaries) ? ['For staged sources, checkpointSummaries points to the exact model-authored summaries in genuine Tool receipts. Match each entry by its source number; other entries belong to other sources.'] : []),
       'Summarize only the selected source’s own facts. Use surrounding conversation to understand references, authorization and corrections; explicitly distinguish later corrections from work performed in this source. Do not import another source’s actions or pending work.',
       'Preserve user intent and authorization, verified actions and Tool results, important findings and resource locators, unresolved work and next action. Keep proposals and unverified assistant claims distinct from Tool execution facts. Retain uncertainty. Do not repeat completed side effects.',
+      retentionReview,
       CHECKPOINT_SKILL_CONSTRAINT_GUIDANCE,
       ...(activeSlot ? ['The current Turn source must be cumulative: retain facts already carried by earlier checkpoints inside it, together with work through its recorded boundary.'] : []),
       'Keep archived Tool-result locators when omitted evidence may need to be read again. Omit routine logs and repetition. You judge applicability; Runtime checks source/coverage/evidence structure, not semantics.',
@@ -652,6 +657,7 @@ export function contextPressureNotice(
       `Summarize only each indexed source into its named field. Current context marked not_requested must not be attributed to any preceding Turn. Other summaries are background context, not additional source segments. Ignore context_pressure and context_compaction_correction maintenance notices within a source range.`,
       ...(format === 'ordered' ? ['Return the JSON object shown in the template, with summaries as its only field. The current Turn, when listed, is already included in that array. Runtime binds the filled slots to the existing Turn IDs, revision and message boundaries.'] : []),
       "Each natural-language summary must preserve: user intent; inspected scope; conclusions; files or resources changed; external side effects; test/build/publish results; important errors, paths, URLs, hashes or task IDs; and unresolved work.",
+      retentionReview,
       CHECKPOINT_SKILL_CONSTRAINT_GUIDANCE,
       "If a Tool result is represented by an archived compact receipt and its preview is insufficient to establish a fact, preserve its exact locator and make reading that locator an unresolved next action; never guess the omitted content.",
       "Omit ordinary Tool-call order, repeated reads/searches, raw logs, call IDs, and intermediate conclusions superseded later.",

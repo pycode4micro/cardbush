@@ -124,12 +124,13 @@ test('identical filenames stay separate, concurrent retries are idempotent, and 
   const second = await sharp(png).resize(2, 2).png().toBuffer();
   await writeFile(other, second);
   const a = request(root, 'one', { images: [source, other], attachments: [attachment(source), attachment(other)] });
-  const b = structuredClone(a);
+  const retries = Array.from({ length: 6 }, () => structuredClone(a));
   const { prepare } = setup(root);
-  await Promise.all([prepare(a), prepare(b)]);
+  const results = await Promise.allSettled([prepare(a), ...retries.map(input => setup(root).prepare(input))]);
+  assert.deepEqual(results.map(result => result.status), results.map(() => 'fulfilled'), JSON.stringify(results));
   const saved = user(a).metadata.attachments;
   assert.notEqual(saved[0].path, saved[1].path);
-  assert.deepEqual(user(a).metadata, user(b).metadata);
+  for (const retry of retries) assert.deepEqual(user(a).metadata, user(retry).metadata);
   assert.deepEqual(await readFile(saved[0].path), png);
   assert.deepEqual(await readFile(saved[1].path), second);
   const upload = join(root, 'workspace', '.cardbush-attachments', 'upload', 'uploaded.png');

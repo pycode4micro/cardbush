@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-export const SOLUTION_SELECTION_TOOL = 'solution_selection' as const;
 export const LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND = 'runtime.list_solution_selections' as const;
 export const ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND = 'runtime.answer_solution_selection' as const;
 

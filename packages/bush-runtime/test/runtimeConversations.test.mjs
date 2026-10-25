@@ -14,16 +14,38 @@ function fixture() {
   return { bus, runs, signals, errors };
 }
 
-test('presence has no prompts and excludes child, delegated, shadow and automation turns', () => {
+test('presence has no prompts, marks delegated sessions and excludes shadow and automation turns', () => {
   const f = fixture(); f.bus.begin(request());
-  for (const metadata of [{ agentRole: 'child' }, { parentSessionId: 'a' }, { shadowMode: 'fork' }, { automationRunId: 'job' }]) {
-    assert.equal(f.bus.begin(request('child', metadata)), undefined);
+  for (const metadata of [{ agentRole: 'child' }, { parentSessionId: 'a' }]) {
+    assert.equal(f.bus.begin(request('child', metadata)).delegated, true);
   }
   const delegated = request('employee'); delegated.sessionMetadata.delegationOwner = 'parent';
-  assert.equal(f.bus.begin(delegated), undefined);
-  assert.equal(f.bus.list().length, 1);
+  assert.equal(f.bus.begin(delegated).delegated, true);
+  const child = request('session-child'); child.sessionMetadata.agentRole = 'child';
+  assert.equal(f.bus.begin(child).delegated, true);
+  for (const metadata of [{ shadowMode: 'fork' }, { automationRunId: 'job' }, { pluginHookEvaluation: true }]) {
+    assert.equal(f.bus.begin(request('excluded', metadata)), undefined);
+  }
+  assert.equal(f.bus.list().length, 4);
+  assert.equal(f.bus.list().find(fact => fact.agentId === 'a').delegated, undefined);
   assert.doesNotMatch(JSON.stringify(f.bus.list()), /Own task|inputMessages|prefixMessages/);
-  f.bus.begin(request('a', { agentRole: 'child' })); assert.equal(f.bus.list().length, 0);
+  f.bus.begin(request('a', { shadowMode: 'fork' })); assert.equal(f.bus.list().length, 3);
+  f.bus.close();
+});
+
+test('delegated sessions receive active notices but only the parent can resume idle children', async () => {
+  const f = fixture(); f.bus.begin(request('child', { agentRole: 'child', parentSessionId: 'a' }));
+  f.bus.notify('child', { key: 'room', content: 'active message', wake: true });
+  assert.equal(f.signals.length, 1);
+  assert.match(f.bus.take('child', 't-child')[0].message.content, /active message/);
+  f.bus.end('child', 't-child', false);
+  f.bus.notify('child', { key: 'room', content: 'pending message', wake: true });
+  f.bus.settled(); await tick();
+  assert.equal(f.runs.length, 0);
+  assert.equal(f.bus.hasPending('child'), true);
+  f.bus.begin({ ...request('child', { parentSessionId: 'a' }), turnId: 'parent-followup' });
+  assert.match(f.bus.take('child', 'parent-followup')[0].message.content, /pending message/);
+  assert.deepEqual(f.errors, []); f.bus.close();
 });
 
 test('room notices coalesce, wake active waits, and remain internal user data', () => {

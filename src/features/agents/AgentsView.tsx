@@ -83,7 +83,7 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
   return <div className="agents-view" hidden={!active} style={!active ? { display: 'none' } : undefined}>
     {(!selected || !info) && <TopBar title={selected?.name || 'Agents'} language={language} inspectorOpen={false}
       workspaceControl={<button className="agents-add" onClick={() => setAdding(true)}><Plus size={16}/>{zh ? '添加 Agent' : 'Add Agent'}</button>}/>}
-    {!selected && <div className="agents-overview"><h2>{zh ? '让每个 Agent 专注自己的工作' : 'A workspace for every Agent'}</h2><p>{zh ? '连接后直接对话。本机与云端共用配置，使用云端时自动同步。项目和历史记录保存在执行任务的 Agent 上。' : 'Chat directly after connecting. Settings are shared and synchronized before cloud use. Projects and history stay on the Agent running the work.'}</p>
+    {!selected && <div className="agents-overview"><h2>{zh ? '让每个 Agent 专注自己的工作' : 'A workspace for every Agent'}</h2><p>{zh ? '连接后直接对话。本机与云端共用模型、全局指令等运行设置。插件按需安装，项目和历史记录保存在执行任务的 Agent 上。' : 'Chat directly after connecting. Model settings, global instructions and other runtime settings are shared. Install plugins as needed; projects and history stay on the Agent running the work.'}</p>
       <div className="agents-cards">{connections.map(item => <button key={item.id} className="agents-card" onClick={() => onSelect(item.id)}><Server size={24}/><strong>{item.name}</strong><span>{item.migrationIssue || (item.sshTunnel ? `${zh ? 'SSH 直连 · 服务器端口' : 'SSH direct · Server port'} ${item.sshTunnel.remotePort}` : item.url)}</span></button>)}
       <button className="agents-card" onClick={() => setAdding(true)}><Plus size={24}/><strong>{zh ? '添加连接' : 'Add connection'}</strong><span>SSH / HTTP / HTTPS</span></button></div></div>}
     {connecting && !info && selected?.connectionState !== 'reconnecting' && <div className="agents-empty"><LoaderCircle className="spin"/>{zh ? '正在连接 Agent…' : 'Connecting…'}</div>}
@@ -98,12 +98,11 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
       setAdding(false); setEditing(undefined); if (agents.views[selectedId] === 'settings') onSelect(selectedId);
     }} onRemove={connectionToEdit ? async () => {
       await api().remove(connectionToEdit.id); if (selectedId === connectionToEdit.id) onSelect(''); setEditing(undefined); await onRefresh();
-    } : undefined} onSave={async (input, sync) => {
+    } : undefined} onSave={async input => {
       const next = await api().save(input), id = input.id || next.at(-1)!.id;
       // Keep the saved identity on failures so retrying a new connection cannot create duplicates.
       setAdding(false); setEditing(next.find(item => item.id === id));
-      try { if (sync) await api().syncConfiguration(id); }
-      finally { await onRefresh(); }
+      await onRefresh();
       setEditing(undefined); onSelect(id); setReconnect(value => value + 1);
     }}/>}
   </div>;

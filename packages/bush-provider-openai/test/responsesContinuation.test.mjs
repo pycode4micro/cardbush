@@ -1,3 +1,4 @@
+import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { modelRequestSchema } from '@cardbush/bush-protocol';
@@ -35,7 +36,7 @@ function fixture(handler) {
   return { provider, calls, store };
 }
 
-const registry = new ToolRegistry(); registerMcpDiscovery(registry);
+const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const priorAssistant = { role: 'assistant', content: 'Inspecting', reasoningContent: 'Preserved reasoning',
   toolCalls: [{ id: 'inspected', name: 'inspect', argumentsText: '{}' }] };
 priorAssistant.providerReplay = { format: 'openai.responses.output.v1', model, messageHash: modelReplayMessageHash(priorAssistant),

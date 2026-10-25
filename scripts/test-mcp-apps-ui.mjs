@@ -56,7 +56,7 @@ if(input.action==='answer'){const p=awaiting;awaiting=null;if(input.decision==='
 if(input.action==='context'){window.context=input.context;return{}};
 if(input.action==='close'){if(awaiting?.token===input.token){awaiting.reject(Error('Closed'));awaiting=null;}return{}};throw Error(input.action)};
 const no=async()=>{};
-const execution={id:'tool',name:'mcp_call',state:'completed',turnId:'t',summary:'Fixture',output:'Native result',createdAt:'2026-09-10T00:00:00Z',metadata:{}};
+const execution={id:'tool',name:'call_tool',state:'completed',turnId:'t',summary:'Fixture',output:'Native result',createdAt:'2026-09-10T00:00:00Z',metadata:{}};
 const image={id:'image',name:'result.png',path:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=',type:'image',display:'inline'};
 window.imageReads=[];window.cardbushDesktop.readImageDataUrl=async path=>{imageReads.push(path);return image.path};
 window.cardbushDesktop.inspectPath=async path=>({path,name:'apple.png',kind:'file'});

@@ -21,7 +21,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       teamCalls.push(command); const input=command.payload;
       if(input.action==='list') return decode(command.kind==='runtime.agent_registry'?[]:{teams:teamRecords,runs:[]});
       if(input.action==='get' && input.team_id) return decode(teamRecords.find(item=>item.definition.id===input.team_id));
-      if(input.action==='get' && input.agent_id) return decode({revision:1,updatedAt:'2026-10-09',definition:{id:input.agent_id,name:'研究员',description:'负责研究',system_prompt:'EMPLOYEE_PROMPT',memory:'user',hooks:[],guards:[],enabled:true}});
+      if(input.action==='get' && input.agent_id) return decode({revision:1,updatedAt:'2026-10-09',definition:{id:input.agent_id,name:'研究员',description:'负责研究',system_prompt:'EMPLOYEE_PROMPT',hooks:[],guards:[],enabled:true}});
       throw Error('Unexpected Team fixture command '+JSON.stringify(command));
     }};
     const detail=document.createElement('aside');detail.id='team-detail';detail.className='app theme-dark';document.body.append(detail);

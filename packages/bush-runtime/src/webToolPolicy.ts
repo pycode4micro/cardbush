@@ -10,10 +10,10 @@ export async function normalizeWebImage(bytes: Buffer) {
   return decoder.rotate().png().toBuffer();
 }
 
-export const WEB_BASE_TOOLS = ['read_file', 'inject_image_input', 'solution_selection', 'checkpoint_context', 'search_skills', 'run_skill'] as const;
+export const WEB_BASE_TOOLS = ['read_file', 'inject_image_input', 'request_user_input_async', 'checkpoint_context', 'search_skills', 'run_skill'] as const;
 export const WEB_IMAGE_TOOLS = ['seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks', 'image_convert', 'image_stitch'] as const;
 export const WEB_IMAGE_PREFIX = 'mcp__plugin_volcengine_images_images__';
-export const WEB_REMOTE_TOOLS = ['list_subagent_options', 'subagent', 'await_subagents', 'read_subagent_conversation'] as const;
+export const WEB_REMOTE_TOOLS = ['list_subagent_options', 'subagent', 'tasks'] as const;
 export function webToolAllowed(name: string) {
   return (WEB_BASE_TOOLS as readonly string[]).includes(name) || (WEB_REMOTE_TOOLS as readonly string[]).includes(name) || WEB_IMAGE_TOOLS.some(tool => name === WEB_IMAGE_PREFIX + tool);
 }
@@ -21,7 +21,7 @@ export function webToolDefinition<T extends ModelRequest['tools'][number]>(tool:
   if (tool.name === 'list_subagent_options') return { ...tool, description: 'List only administrator-registered remote Agents authorized for this account. Use an exact returned id as subagent.target_agent. No local Agents, roles, auto-assembly, model or plugin synchronization is available.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false } };
   if (tool.name !== 'subagent') return tool;
-  return { ...tool, description: 'Asynchronously delegate to an authorized remote Agent. For new work provide prompt and target_agent from list_subagent_options. Follow up with prompt and task_id from a previous dispatch in this conversation. Never create local Agents or inherit/copy parent history, credentials, files or configuration. Continue independent work, then await_subagents for results. The remote service uses its own model, instructions and tools.',
+  return { ...tool, description: 'Asynchronously delegate to an authorized remote Agent. For new work provide prompt and target_agent from list_subagent_options. Follow up with prompt and task_id from a previous dispatch in this conversation. Never create local Agents or inherit/copy parent history, credentials, files or configuration. Continue independent work, then tasks to inspect results. The remote service uses its own model, instructions and tools.',
     inputSchema: { type: 'object', additionalProperties: false, required: ['prompt'], properties: {
       prompt: { type: 'string', minLength: 1, maxLength: 100000, description: 'Self-contained assignment, necessary facts and expected output. No credentials or personal file paths.' },
       target_agent: { type: 'string', minLength: 1, description: 'Authorized remote Agent id; required for new work.' },
@@ -35,7 +35,9 @@ const inside = (root: string, path: string) => { const rel = relative(root, path
 export async function webToolDenial(request: ModelRequest | undefined, name: string, value: unknown): Promise<string | undefined> {
   if (request?.metadata.toolExecutionPolicy !== 'web_restricted') return;
   if (!webToolAllowed(name)) return 'This tool is not available in this deployment.';
-  const input = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  // The provider adds this host-owned presentation field to every tool call.
+  // Check business arguments at both gates, before hooks and after rewriting.
+  const { _display_title: _displayTitle, ...input } = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   if (name === 'list_subagent_options' && Object.keys(input).length) return 'Only the authorized remote Agent list is available.';
   if (name === 'subagent') {
     if (Object.keys(input).some(key => !['prompt', 'target_agent', 'task_id'].includes(key)) ||

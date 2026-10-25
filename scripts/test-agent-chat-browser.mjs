@@ -40,3 +40,58 @@ test('browser management validates IDs, reports failure and preserves cancellati
   const controller = new AbortController(); controller.abort();
   await assert.rejects(chatBrowserCommand('/browser', client, io, controller.signal), { name: 'AbortError' });
 });
+
+test('local CLI status directs first-use consent without creating a pairing code', async () => {
+  for (const state of ['running', 'disabled']) {
+    const calls = [], output = [];
+    const client = { async call(operation, input) { calls.push({ operation, input });
+      return { shared: true, state, connector: { connections: [], defaultConnectionId: '' } }; } };
+    await chatBrowserCommand('/browser status', client, { commitInput() {}, status: text => output.push(text) }, new AbortController().signal);
+    const text = output.join('');
+    assert.deepEqual(calls, [{ operation: 'browser.connector', input: { action: 'status' } }]);
+    assert.match(text, /first local connection in the CardBush system dialog and extension; no pairing code is needed/);
+    assert.match(text, /local App and CLI share this connection and reconnect automatically.*restarts/);
+    assert.match(text, /Chrome\/Edge work without the desktop App; integrated CardBush tabs require the App/);
+    assert.match(text, /For manual connection only: \/browser pair/);
+    assert.doesNotMatch(text, /No paired browsers|Pairing belongs to this Agent server/);
+    if (state === 'disabled') assert.match(text, /Enable the Browser Use plugin in \/settings/);
+  }
+});
+
+test('standalone and remote CLI status offers pairing with that Agent instead of local consent', async () => {
+  const calls = [], output = [];
+  const client = { async call(operation, input) { calls.push(input);
+    return { shared: false, state: 'running', connector: { connections: [], defaultConnectionId: '' } }; } };
+  await chatBrowserCommand('/browser', client, { commitInput() {}, status: text => output.push(text) }, new AbortController().signal);
+  const text = output.join('');
+  assert.deepEqual(calls, [{ action: 'status' }]);
+  assert.match(text, /manual connection or remote Agent pairing, use \/browser pair chrome or \/browser pair edge/);
+  assert.match(text, /Agent server keeps separate connections from the local App\/CLI/);
+  assert.doesNotMatch(text, /system dialog|no pairing code is needed|local App and CLI share/);
+});
+
+test('offline CLI profiles preserve identity and use saved connections instead of new pairing', async () => {
+  for (const shared of [true, false]) {
+    const calls = [], output = [], id = '1'.repeat(32);
+    const client = { async call(operation, input) { calls.push(input);
+      return { shared, state: 'running', connector: { defaultConnectionId: id,
+        connections: [{ id, browser: 'edge', label: 'Work', connected: false }] } }; } };
+    await chatBrowserCommand('/browser', client, { commitInput() {}, status: text => output.push(text) }, new AbortController().signal);
+    const text = output.join('');
+    assert.deepEqual(calls, [{ action: 'status' }]);
+    assert.ok(text.includes(id)); assert.match(text, /edge\s+Work\s+offline/);
+    assert.match(text, /original browser profile.*reconnect automatically/);
+    assert.match(text, /explicitly disabled.*click Connect/);
+    assert.match(text, /temporary disconnect does not require a new pairing code/);
+    assert.doesNotMatch(text, /approve the first local connection|No paired browsers/);
+  }
+});
+
+test('browser completion describes automatic local connections and labels both pairing commands as manual or remote', () => {
+  const top = commandSuggestions('/brow', 5, []).items.find(item => item.value === '/browser ');
+  assert.match(top.description, /local connections reconnect automatically/);
+  assert.doesNotMatch(top.description, /pairing code/);
+  const choices = commandSuggestions('/browser pair ', 14, []).items;
+  assert.deepEqual(choices.map(item => item.value), ['pair chrome', 'pair edge']);
+  for (const choice of choices) assert.match(choice.description, /manual connection or remote Agent pairing/);
+});

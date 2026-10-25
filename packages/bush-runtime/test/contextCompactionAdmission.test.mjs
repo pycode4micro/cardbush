@@ -177,7 +177,9 @@ test('refinement preserves call identities and its retry limit across recovery',
 });
 
 test('admission also enforces the provider request-body limit when the token count fits', async t => {
-  const { store, original } = seed(3, 400); let calls = 0, normal = 0;
+  // Leave room for the maintenance/correction instructions. This case isolates
+  // candidate admission; source partitioning has separate large-input tests.
+  const { store, original } = seed(3, 250); let calls = 0, normal = 0;
   const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: {
     countInputTokens: async (input, options) => {
       const bytes = Buffer.byteLength(JSON.stringify(input.messages));

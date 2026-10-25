@@ -15,8 +15,10 @@ module.exports = async ({ read, until, frame, click, action, fill, key, pointerC
   assert.equal(await read('document.querySelector(".team-flow-workspace .inspector-cover-capsule").textContent.trim()'), '输入');
   await read('document.querySelector(".team-sidebar-manage").open=true'); await frame();
   await click('员工管理'); await click('注册员工'); await fill('名称', '库存员'); await fill('ID', 'warehouse');
+  assert.equal(await read('[...document.querySelectorAll(".native-team-editor label")].some(label => /记忆范围|Memory scope/.test(label.textContent))'), false);
   await fill('岗位指令', '核对库存记录，返回数量和依据。');
   await click('保存员工'); await until('records.agents.length===1 && teamState.agents.length===1');
+  assert.equal(await read('Object.hasOwn(records.agents[0].definition,"memory")'), false);
   await click('全部流程'); await until('!!document.querySelector(".team-library")');
   assert.ok(await read('document.querySelector(".team-library").textContent.includes("还没有流程")'));
   await pointerClick('.team-library header button'); await until('!!window.creationInspector && !document.querySelector(".team-graph-tab").hidden');

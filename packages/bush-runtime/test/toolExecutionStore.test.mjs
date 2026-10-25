@@ -49,7 +49,7 @@ test('image lookup uses explicit native receipts without granting paths from tex
   const variants = [
     [{ artifacts: [image] }, true],
     [{ structuredContent: { artifacts: [image] } }, true],
-    [{ mcp: { name: 'mcp__fixture__capture' }, result: { structuredContent: { artifacts: [image] } } }, true],
+    [{ mcp: { name: 'mcp__fixture__capture' }, result: { structuredContent: { artifacts: [image] } } }, false],
     [{ content: [{ type: 'text', text: JSON.stringify({ artifacts: [image] }) }] }, false],
     [{ path: image.path }, false],
     [{ result: { artifacts: [image] }, calls: 1 }, false],

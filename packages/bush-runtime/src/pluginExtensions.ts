@@ -36,7 +36,6 @@ export interface PluginHook {
   once?: boolean;
 }
 export interface PluginAgent {
-  memory?: 'user' | 'project' | 'local';
   background?: boolean;
   isolation?: 'worktree';
   permissionMode?: 'default' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions' | 'plan';
@@ -112,7 +111,7 @@ export const CLAUDE_TOOL_NAMES: Record<string, string[]> = {
   Read: ['read_file'], Write: ['write_file'], Edit: ['edit_file'], Glob: ['search_file_content'], Grep: ['search_file_content'],
   Bash: ['terminal_exec', 'terminal_poll', 'terminal_write', 'terminal_stop', 'terminal_list'],
   PowerShell: ['terminal_exec', 'terminal_poll', 'terminal_write', 'terminal_stop', 'terminal_list'],
-  Agent: ['subagent', 'await_subagents'], Task: ['subagent', 'await_subagents'], Skill: ['search_skills', 'run_skill', 'read_file'],
+  Agent: ['subagent', 'tasks'], Task: ['subagent', 'tasks'], Skill: ['search_skills', 'run_skill', 'read_file'],
   WebFetch: ['web_fetch'], WebSearch: ['web_search'], TodoWrite: ['update_task_plan'],
 };
 export const PLUGIN_AGENT_DEFAULT_MAX_TURNS = 50;
@@ -146,7 +145,7 @@ export function pluginAgentTools(agent: PluginAgent, exposed: string[]): string[
   const allowed = agent.tools ? expand(agent.tools) : undefined;
   const denied = expand(agent.disallowedTools ?? []);
   const result = exposed.filter(name => (!allowed || allowed.has(name)) && !denied.has(name));
-  if (result.some(name => name.startsWith('mcp__'))) for (const name of ['mcp_search', 'mcp_call']) if (exposed.includes(name) && !denied.has(name) && !result.includes(name)) result.push(name);
+  if (result.some(name => name.startsWith('mcp__'))) for (const name of ['mcp_search', 'get_tool_schema', 'call_tool']) if (exposed.includes(name) && !denied.has(name) && !result.includes(name)) result.push(name);
   return result;
 }
 

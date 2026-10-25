@@ -30,11 +30,11 @@ function fixture() {
     synchronizeMcpDiscovery(registry, request, messages);
     return { model: JSON.parse(result.messages[0].content), record: store.get('s', 't', id) };
   };
-  const invoke = route => route === 'direct' ? call(toolName) : call('mcp_call', { name: toolName, arguments: {} });
+  const invoke = route => route === 'direct' ? call(toolName) : call(route, { name: toolName, arguments: {} });
   return { registry, request, messages, state, call, invoke };
 }
 
-for (const route of ['direct', 'mcp_call']) test(`${route}: omitted load returns executable recovery instructions and preserves approvals and hooks`, async () => {
+for (const route of ['direct', 'call_tool']) test(`${route}: omitted load returns executable recovery instructions and preserves approvals and hooks`, async () => {
   const f = fixture();
   const search = await f.call('mcp_search', { query: 'list_pages' });
   assert.equal(search.model.matches[0].loaded, false);
@@ -42,7 +42,7 @@ for (const route of ['direct', 'mcp_call']) test(`${route}: omitted load returns
   const error = failed.model.runtimeError;
   assert.equal(error.code, 'mcp_discovery_required');
   assert.equal(error.details.toolName, toolName);
-  assert.deepEqual(error.details.load, { name: 'mcp_search', arguments: { action: 'load', query: toolName } });
+  assert.deepEqual(error.details.load, { name: 'get_tool_schema', arguments: { name: toolName } });
   assert.deepEqual(failed.record.error.details, error.details, 'model feedback and execution journal describe the same recovery');
   assert.match(error.message, /has not executed/);
   assert.equal(f.state.executed, 0); assert.equal(f.state.asked, 0); assert.deepEqual(f.state.hooks, []);
@@ -69,7 +69,7 @@ for (const change of ['other-session', 'interface-only', 'removed-from-turn']) t
   if (change === 'other-session') f.registry.resolve(toolName).sessionScope = 'other';
   if (change === 'interface-only') f.registry.resolve(toolName).mcpHook.modelVisible = false;
   if (change === 'removed-from-turn') f.request.tools = f.request.tools.filter(tool => tool.name !== toolName);
-  for (const route of ['direct', 'mcp_call']) {
+  for (const route of ['direct', 'call_tool']) {
     const error = (await f.invoke(route)).model.runtimeError;
     assert.equal(error.code, 'tool_not_exposed'); assert.equal(error.details.load, undefined);
   }
@@ -79,7 +79,7 @@ for (const change of ['other-session', 'interface-only', 'removed-from-turn']) t
 
 for (const change of ['compaction', 'schema-revision']) test(`${change}: stale definitions return the same precise recovery and can be reloaded`, async () => {
   const f = fixture(); f.state.allow = true;
-  await f.call('mcp_search', { action: 'load', query: toolName });
+  await f.call('get_tool_schema', { name: toolName });
   if (change === 'compaction') f.messages.length = 0;
   else f.registry.resolve(toolName).definition.inputSchema = { type: 'object', properties: { extra: { type: 'string' } } };
   synchronizeMcpDiscovery(f.registry, f.request, f.messages);
@@ -93,8 +93,8 @@ for (const change of ['compaction', 'schema-revision']) test(`${change}: stale d
 test('real browser errors remain service failures after successful schema loading', async () => {
   const f = fixture(); f.state.allow = true;
   f.state.failure = Object.assign(new Error('Browser connector is disconnected.'), { code: 'browser_disconnected' });
-  await f.call('mcp_search', { action: 'load', query: toolName });
-  const error = (await f.invoke('mcp_call')).model.runtimeError;
+  await f.call('get_tool_schema', { name: toolName });
+  const error = (await f.invoke('call_tool')).model.runtimeError;
   assert.equal(error.code, 'browser_disconnected'); assert.equal(error.details.load, undefined);
   assert.equal(f.state.executed, 1);
 });
@@ -102,24 +102,24 @@ test('real browser errors remain service failures after successful schema loadin
 test('repeated native/MCP envelope errors return an exact correction and bounded recovery, never resubmit the operation', async () => {
   const f = fixture(), frozen = structuredClone(f.request.tools);
   const argumentsValue = { project_id: 'project-actual', nested: { keep: [1, 'two'] } };
-  const wrapped = { name: 'mcp_call', arguments: { name: toolName, arguments: argumentsValue } };
+  const wrapped = { name: 'call_tool', arguments: { name: toolName, arguments: argumentsValue } };
   let error;
   for (let attempt = 1; attempt <= 3; attempt++) {
     error = (await f.call('call_tool', wrapped)).model.runtimeError;
     assert.equal(error.code, 'tool_requires_direct_call');
-    assert.deepEqual(error.details.corrected_call, { name: 'mcp_call', arguments: wrapped.arguments });
+    assert.deepEqual(error.details.corrected_call, { name: 'call_tool', arguments: wrapped.arguments });
     assert.equal(error.details.execution.dispatch, 'not_started');
     assert.equal(error.details.execution.effects, 'none');
     if (attempt > 1) {
       assert.equal(error.details.route_recovery.attempts, attempt);
-      assert.deepEqual(error.details.route_recovery.next_step, { name: 'get_tool_schema', arguments: { name: 'mcp_call' } });
+      assert.deepEqual(error.details.route_recovery.next_step, { name: 'get_tool_schema', arguments: { name: 'call_tool' } });
       assert.equal(error.details.definition, undefined, 'do not repeat a long definition on every failed call');
     }
   }
   assert.equal(f.state.executed, 0); assert.equal(f.state.asked, 0);
   const changed = structuredClone(wrapped); changed.arguments.arguments.project_id = 'different';
   assert.equal((await f.call('call_tool', changed)).model.runtimeError.details.route_recovery, undefined);
-  await f.call('get_tool_schema', { name: 'mcp_call' });
+  await f.call('get_tool_schema', { name: 'call_tool' });
   const correction = error.details.corrected_call;
   const missing = (await f.call(correction.name, correction.arguments)).model.runtimeError;
   assert.equal(missing.code, 'mcp_discovery_required', 'route recovery does not grant schema access');
@@ -131,16 +131,16 @@ test('repeated native/MCP envelope errors return an exact correction and bounded
   assert.deepEqual(f.request.tools, frozen);
 });
 
-test('wrong-domain calls keep arguments and unknown tool aliases are never guessed', async () => {
+test('unified calls request missing schemas and direct-only route errors preserve arguments', async () => {
   const f = fixture();
   const params = { preserve: 'exact value' };
   const wrong = (await f.call('call_tool', { name: toolName, arguments: params })).model.runtimeError;
-  assert.equal(wrong.code, 'tool_route_mismatch');
-  assert.deepEqual(wrong.details.corrected_call, { name: 'mcp_call', arguments: { name: toolName, arguments: params } });
-  const native = (await f.call('mcp_call', { name: 'get_tool_schema', arguments: { name: 'mcp_call' } })).model.runtimeError;
-  assert.equal(native.code, 'tool_route_mismatch');
-  assert.deepEqual(native.details.corrected_call, { name: 'get_tool_schema', arguments: { name: 'mcp_call' } });
-  const unknown = (await f.call('mcp_call', { name: toolName + '_invented', arguments: params })).model.runtimeError;
+  assert.equal(wrong.code, 'mcp_discovery_required');
+  assert.deepEqual(wrong.details.load, { name: 'get_tool_schema', arguments: { name: toolName } });
+  const native = (await f.call('call_tool', { name: 'get_tool_schema', arguments: { name: 'call_tool' } })).model.runtimeError;
+  assert.equal(native.code, 'tool_requires_direct_call');
+  assert.deepEqual(native.details.corrected_call, { name: 'get_tool_schema', arguments: { name: 'call_tool' } });
+  const unknown = (await f.call('call_tool', { name: toolName + '_invented', arguments: params })).model.runtimeError;
   assert.equal(unknown.code, 'tool_not_found'); assert.equal(unknown.details.corrected_call, undefined);
   assert.equal(f.state.executed, 0);
 });

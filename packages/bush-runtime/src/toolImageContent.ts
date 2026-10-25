@@ -47,7 +47,6 @@ export async function snapshotMcpImages(result: unknown, toolCallId: string, sto
 export function mcpImageInputs(result: unknown): McpImageInput[] {
   const value = object(result);
   if (!value) return [];
-  if (object(value.mcp) && object(value.result)) return mcpImageInputs(value.result);
   if (!Array.isArray(value.content)) return [];
   return value.content.flatMap(block => {
     const item = object(block);

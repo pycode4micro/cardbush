@@ -27,20 +27,23 @@ export async function chatBrowserCommand(text: string, client: Pick<AgentHttpCli
     if (pairing) {
       if (!result.code || !result.expiresAt) throw new Error('The Agent did not return a pairing code.');
       io.status(`\n${terminalText(result.browser ?? pairing[1])} pairing code (expires ${terminalText(result.expiresAt)}):\n${terminalText(result.code)}\n`);
-      io.status('Paste this code into the CardBush Browser Use extension in that browser. Keep this CLI open while pairing.\n');
+      io.status('Manual connection / remote Agent pairing: paste this code directly into the CardBush Browser Use extension in that browser, never into the model conversation. Keep this CLI open while pairing.\n');
     } else {
       io.status(`Browser connector: ${terminalText(result.state ?? 'unavailable')}${result.error ? ` — ${terminalText(result.error)}` : ''}\n`);
       const connections = result.connector?.connections ?? [];
       for (const connection of connections) io.status(`${connection.id === result.connector?.defaultConnectionId ? '*' : ' '} ${terminalText(connection.id)}  ${terminalText(connection.browser)}  ${terminalText(connection.label)}  ${connection.connected ? 'online' : 'offline'}\n`);
       if (!connections.length) io.status(result.shared
-        ? 'Waiting for Browser Use. Install or reload the extension, then approve the first connection in the CardBush system dialog and extension. Manual fallback: /browser pair chrome or /browser pair edge.\n'
-        : 'No paired browsers. Use /browser pair chrome or /browser pair edge.\n');
-      if (result.state === 'disabled') io.status('Enable Browser Use in the shared plugin settings (/settings), then retry.\n');
+        ? 'Waiting for Browser Use. Install or reload the Chrome/Edge extension, then approve the first local connection in the CardBush system dialog and extension; no pairing code is needed. For manual connection only: /browser pair chrome or /browser pair edge.\n'
+        : 'No paired browsers on this Agent server. For manual connection or remote Agent pairing, use /browser pair chrome or /browser pair edge.\n');
+      else if (connections.some(connection => !connection.connected)) io.status('Open the original browser profile and let the extension reconnect automatically. If you explicitly disabled it, click Connect in the extension. A temporary disconnect does not require a new pairing code.\n');
+      if (result.state === 'disabled') io.status('Enable the Browser Use plugin in /settings, then retry.\n');
       io.status(usage);
     }
     if (result.extensionPath) io.status(`Extension folder: ${terminalText(result.extensionPath)}\nLoad it in chrome://extensions or edge://extensions if needed.\n`);
     io.status('After connecting, ask the Agent to list_browsers and select_browser using the returned connectionId. '
-      + (result.shared ? 'This local connection is shared with the desktop App and reconnects automatically.\n' : 'Pairing belongs to this Agent server.\n'));
+      + (result.shared
+        ? 'The local App and CLI share this connection and reconnect automatically after disconnects or restarts. Chrome/Edge work without the desktop App; integrated CardBush tabs require the App.\n'
+        : 'This Agent server keeps separate connections from the local App/CLI. Saved pairings reconnect automatically.\n'));
   } catch (error) {
     signal.throwIfAborted();
     io.status(`[Browser setup unavailable] ${terminalText(error instanceof Error ? error.message : String(error))}\n`);

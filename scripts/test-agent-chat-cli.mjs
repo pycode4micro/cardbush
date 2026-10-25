@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { terminalScreen } from './helpers/agent-chat-terminal-screen.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer, request as httpRequest } from 'node:http';
@@ -108,11 +109,11 @@ function terminal(answer = 'y', interactive = true) {
     status(text) { this.progress += text; }, async ask(prompt) { this.questions.push(prompt); return answer; } };
 }
 
-function nativeTerminal(t, live = false) {
+function nativeTerminal(t, live = false, columns = 120) {
   const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode() { return this; } });
   let progress = '', interrupts = 0;
   const output = Object.assign(new Writable({ write(data, _encoding, done) { progress += data.toString(); done(); } }),
-    { isTTY: true, columns: 120, rows: 30 });
+    { isTTY: true, columns, rows: 30 });
   const io = new NativeChatTerminal(() => { interrupts++; }, { input, output, status: output, env: { TERM: 'xterm', NO_COLOR: '' } });
   t.after(() => io.close());
   if (live) { io.enableLiveInput(() => assert.fail('An interaction must not submit chat')); io.beginTurn(); }
@@ -198,6 +199,48 @@ test('session selection reads summaries only, sanitizes labels and cancels witho
   assert.equal(await selectChatSession(client, terminal('/cancel'), signal), undefined);
   assert.equal(await selectChatSession(client, io, signal, 'missing'), undefined);
   assert.ok(calls.every(([method, input]) => method === 'sessions.list' && input.projection === 'summary'));
+});
+
+test('session picker uses local minute timestamps and only prints a list without selection menus', async () => {
+  const sessions = [
+    { sessionId: 'dated', updatedAt: new Date(2026, 9, 25, 0, 5, 59).toISOString(),
+      metadata: { title: '\x1b[2J项目会话', projectDir: 'D:\\other-project\x1b[2J' } },
+    { sessionId: 'invalid', updatedAt: 'not-a-date', metadata: { title: 'Invalid timestamp' } },
+    { sessionId: 'undated', metadata: { title: 'Missing timestamp' } },
+  ];
+  const client = { async call() { return sessions; } }, signal = AbortSignal.timeout(2000);
+  const io = terminal('/cancel'); io.selectionMenus = true;
+  let choices;
+  io.ask = async (_prompt, _signal, options) => { choices = options.choices; return '/cancel'; };
+  assert.equal(await selectChatSession(client, io, signal, '', 'dated'), undefined);
+  assert.equal(io.progress, '', 'the interactive picker must not be preceded by a static duplicate');
+  const dated = choices.find(item => item.value === 'dated');
+  assert.match(dated.label, /项目会话 · current$/);
+  assert.equal(dated.description, '2026-10-25 00:05 · D:\\other-project · dated');
+  assert.doesNotMatch(JSON.stringify(choices), /\\u001b|Invalid Date|NaN/);
+  for (const id of ['invalid', 'undated']) assert.match(choices.find(item => item.value === id).description, /^Unknown time · /);
+  const plain = terminal('dated'); plain.selectionMenus = false;
+  assert.equal((await selectChatSession(client, plain, signal)).sessionId, 'dated');
+  assert.equal(plain.progress.split('Sessions · most recent first').length - 1, 1);
+  assert.match(plain.progress, /2026-10-25 00:05 · D:\\other-project · dated/);
+  assert.match(plain.progress, /Enter a number or session ID/);
+});
+
+test('native session picker shows dates before long IDs and does not leave a static list above the prompt', async t => {
+  const session = { sessionId: 'session-d8b15e73-fffc-4fea-adda-65a7fac2cb92',
+    updatedAt: new Date(2026, 9, 25, 9, 19).toISOString(),
+    metadata: { title: '帮我做一个很长很长的中文标题用于验证会话列表的日期不会被截断', projectDir: 'D:\\proj\\bushserver' } };
+  const client = { async call() { return [session]; } };
+  for (const columns of [64, 80, 120]) {
+    const f = nativeTerminal(t, false, columns);
+    const selection = selectChatSession(client, f.io, AbortSignal.timeout(2000));
+    await until(() => f.progress, text => text.includes('Sessions · most recent first'));
+    assert.doesNotMatch(f.progress.split('Select a session:')[0], /Sessions|bushserver|很长/);
+    assert.match(f.progress, /1\. 帮我[^\r\n]*2026-10-25 09:19/);
+    f.input.write('\r');
+    assert.equal((await selection)?.sessionId, session.sessionId);
+    f.io.close();
+  }
 });
 
 test('native session picker opens the highlighted session with Enter and cancels with Escape', async t => {
@@ -558,12 +601,12 @@ function cli(t, args, { env = {}, input = '', interactive = false, cwd = resolve
   // or real model. Signals are delivered as native readline key sequences.
   const child = spawn(process.execPath, [interactive ? resolve('scripts/helpers/agent-chat-cli-terminal.mjs') : executable, ...args],
     { cwd, env: { ...process.env, CARDBUSH_AGENT_TOKEN: '', CARDBUSH_AGENT_URL: '', CARDBUSH_CLI_CONFIG: join(tempRoot, 'unconfigured.json'), ...env }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-  const state = { child, stdout: '', stderr: '', result: undefined };
+  const state = { child, stdout: '', stderr: '', combined: '', result: undefined };
   if (env.CARDBUSH_CLI_DATA_DIR) localChildren.set(child, env.CARDBUSH_CLI_DATA_DIR);
-  child.stdout.setEncoding('utf8').on('data', text => { state.stdout += text; });
-  child.stderr.setEncoding('utf8').on('data', text => { state.stderr += text; });
+  child.stdout.setEncoding('utf8').on('data', text => { state.stdout += text; state.combined += text; });
+  child.stderr.setEncoding('utf8').on('data', text => { state.stderr += text; state.combined += text; });
   child.stdin.on('error', () => {});
-  state.result = new Promise((resolve, reject) => { child.on('error', reject); child.on('close', (code, signal) => resolve({ code, signal, stdout: state.stdout, stderr: state.stderr })); });
+  state.result = new Promise((resolve, reject) => { child.on('error', reject); child.on('close', (code, signal) => resolve({ code, signal, stdout: state.stdout, stderr: state.stderr, combined: state.combined })); });
   t.after(() => { if (child.exitCode === null) child.kill(); });
   if (!interactive) child.stdin.end(input);
   return state;
@@ -574,6 +617,11 @@ test('CLI help and argument errors do not need a server or credentials', async t
   assert.equal(help.code, 0); assert.match(help.stdout, /cardbush --resume/); assert.match(help.stdout, /--full-access/);
   assert.match(help.stdout, /Usage: cardbush/); assert.doesNotMatch(help.stdout, /\p{Script=Han}/u);
   assert.match(help.stdout, /\/quit \(or \/exit\) exits/);
+  assert.match(help.stdout, /Local Chrome\/Edge: approve the first connection in the system dialog and extension/);
+  assert.match(help.stdout, /no pairing code is needed\. The local App and CLI share connections and reconnect automatically/);
+  assert.match(help.stdout, /is for manual connection or remote Agent pairing/);
+  assert.match(help.stdout, /remote Agents keep separate connections/);
+  assert.match(help.stdout, /Temporary disconnects do not require a new pairing code/);
   assert.match(help.stdout, /Model setting follows App config; Provider default lets the provider choose/);
   assert.match(help.stdout, /--model ID overrides this at launch/);
   assert.match(help.stdout, /native shell for command and path completion/);
@@ -725,9 +773,9 @@ test('bare --resume picks a session, replays only final replies and inspects ear
   const before = f.calls.length, child = cli(t, ['--resume'], { env: f.env, cwd: f.root, interactive: true });
   await until(() => child.stderr, text => text.includes('Select a session:'));
   child.child.stdin.write('\t'); await delay(120); child.child.stdin.write('\r');
-  await until(() => child.stdout, text => text.includes('fixture-answer-3'));
-  assert.match(child.stdout, /fixture-answer-2[\s\S]*fixture-answer-3/);
-  assert.equal(child.stdout.split('fixture-answer-2').length, 2);
+  await until(() => child.combined, text => text.includes('fixture-answer-3'));
+  assert.match(terminalScreen(child.combined, 80).text, /fixture-answer-2[\s\S]*fixture-answer-3/);
+  assert.equal(terminalScreen(child.combined, 80).text.split('fixture-answer-2').length, 2);
   assert.match(child.stderr, /First saved question[\s\S]*Second saved question/);
   assert.match(child.stderr, /Turn 1 · completed · \/tools --turn 1/);
   assert.doesNotMatch(child.stdout + child.stderr, /HISTORICAL_TOOL_RECEIPT|history-tool\.txt|Arguments:/);
@@ -753,13 +801,13 @@ test('/session switches workspace and reference scope without replaying jobs or 
   const sessions = await f.service.call('sessions.list', { projection: 'summary' });
   const first = sessions.find(item => item.metadata.projectDir === f.cwd), second = sessions.find(item => item.metadata.projectDir === other);
   const child = cli(t, ['--resume', first.sessionId], { env: f.env, cwd: f.root, interactive: true });
-  await until(() => child.stdout, text => text.includes('fixture-answer-1'));
+  await until(() => child.combined, text => text.includes('fixture-answer-1'));
   child.child.stdin.write('/session\r');
   await until(() => child.stderr, text => text.includes('Select a session:'));
   child.child.stdin.write(second.sessionId + '\r');
-  await until(() => child.stdout, text => text.includes('fixture-answer-2'));
+  await until(() => child.combined, text => text.includes('fixture-answer-2'));
   child.child.stdin.write('Read @"Read Me.md"\r');
-  await until(() => child.stdout, text => text.includes('fixture-answer-3'));
+  await until(() => child.combined, text => text.includes('fixture-answer-3'));
   await until(() => child.stderr, text => text.includes('✓ Completed'));
   const state = JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8'));
   assert.equal(state.jobs.at(-1).sessionId, second.sessionId);
@@ -792,10 +840,10 @@ test('session switching restores model and effort, clears empty-session override
     await until(() => f.service.call('chat.jobs', { sessionId: session.sessionId }), jobs => jobs.some(job => job.id === saved.id && job.status === 'completed'));
   }
   const child = cli(t, ['--resume', first.sessionId], { env: f.env, cwd: f.cwd, interactive: true });
-  await until(() => child.stdout, text => text.includes('fixture-answer-1'));
+  await until(() => child.combined, text => text.includes('fixture-answer-1'));
   assert.match(stripVTControlCharacters(child.stderr), /Effort: High/);
   child.child.stdin.write(`/session ${second.sessionId}\r`);
-  await until(() => child.stdout, text => text.includes('fixture-answer-2'));
+  await until(() => child.combined, text => text.includes('fixture-answer-2'));
   child.child.stdin.write('Continue second session\r');
   await until(() => child.stderr, text => text.includes('✓ Completed'));
   assert.equal(f.calls.at(-1).model, 'second-model');
@@ -865,14 +913,14 @@ test('resuming an active session replays committed replies and follows the exist
     turnId: 'resume-existing-turn', text: 'Already running', modelId: 'fixture', permissionMode: 'task_free' });
   await until(() => f.calls.length, value => value === 2);
   const child = cli(t, ['--resume', session.sessionId], { env: f.env, cwd: f.root, interactive: true });
-  await until(() => child.stdout, text => text.includes('fixture-answer-1'));
+  await until(() => child.combined, text => text.includes('fixture-answer-1'));
   await until(() => child.stderr, text => text.includes('Working'));
   assert.equal(f.calls.length, 2); f.release();
   await until(() => child.stderr, text => text.includes('✓ Completed'));
   child.child.stdin.write('/quit\r'); const result = await child.result;
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(result.stdout.split('fixture-answer-1').length, 2);
-  assert.equal(result.stdout.split('fixture-answer-2').length, 2);
+  assert.equal(terminalScreen(result.combined, 80).text.split('fixture-answer-1').length, 2);
+  assert.equal(terminalScreen(result.combined, 80).text.split('fixture-answer-2').length, 2);
   const jobs = await f.service.call('chat.jobs', { sessionId: session.sessionId });
   assert.equal(jobs.length, 2); assert.equal(jobs.at(-1).id, active.id); assert.equal(f.calls.length, 2);
 });
@@ -969,7 +1017,10 @@ test('browser pairing works from an idle or running CLI without sending codes or
   terminal.child.stdin.write('/exit\r'); const result = await terminal.result;
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stderr, /TERMINAL_ONLY_PAIRING_SECRET/);
-  assert.doesNotMatch(JSON.stringify(f.calls) + await readFile(join(f.service.root, 'agent.json'), 'utf8'), /TERMINAL_ONLY_PAIRING_SECRET|\/browser pair/);
+  const saved = await readFile(join(f.service.root, 'agent.json'), 'utf8');
+  assert.doesNotMatch(JSON.stringify(f.calls) + saved, /TERMINAL_ONLY_PAIRING_SECRET/);
+  const userInputs = f.calls.flatMap(call => call.input.filter(message => message.role === 'user'));
+  assert.doesNotMatch(JSON.stringify(userInputs) + saved, /\/browser pair/, 'setup commands never become user messages or saved jobs; system help may describe them');
 });
 
 test('queued CLI prompts appear once in turn order after the preceding completion', async t => {
@@ -997,7 +1048,7 @@ test('queued CLI prompts appear once in turn order after the preceding completio
   assert.match(visible, /❯ first ordering question[\s\S]*✓ Completed[\s\S]*❯ second ordering question[\s\S]*✓ Completed[\s\S]*❯ third ordering question[\s\S]*✓ Completed/);
   for (const prefix of ['first', 'second', 'third']) assert.equal(visible.split(`❯ ${prefix} ordering question`).length, 2, 'each prompt is committed exactly once');
   assert.equal(f.calls.length, 3);
-  assert.deepEqual(stripVTControlCharacters(result.stdout).trim().split(/\s+/), ['fixture-answer-1', 'fixture-answer-2', 'fixture-answer-3']);
+  assert.deepEqual(terminalScreen(result.combined, 80).text.match(/fixture-answer-\d+/g), ['fixture-answer-1', 'fixture-answer-2', 'fixture-answer-3']);
   const lastJob = (await f.service.call('chat.jobs', {})).at(-1);
   assert.equal(lastJob.reasoningEffort, 'high');
   assert.equal(lastJob.input, undefined, 'resuming uses public selection fields, not private job inputs');
@@ -1187,7 +1238,8 @@ test('real Agent and native readline: approval, question, multiple turns and Ctr
   assert.equal(f.calls.length, 1); process.child.stdin.write('\x1b[B\r');
   await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'completed');
   assert.match(JSON.stringify(f.calls[1]), /APPROVED_FILE/);
-  f.setTool({ name: 'solution_selection', arguments: { prompt: 'Pick a scope', options: ['First', 'Second'] } });
+  f.tools({ name: 'request_user_input_async', arguments: { questions: [{ id: 'scope', prompt: 'Pick a scope', options: ['First', 'Second'] }] } },
+    { name: 'tasks', arguments: { action: 'wait', yield_time_ms: 15000 } });
   process.child.stdin.write('choose scope\n');
   await until(() => process.stderr, text => text.includes('/cancel'));
   process.child.stdin.write('\x1b[B\r');
@@ -1509,15 +1561,19 @@ test('real Agent and native readline submit all question answers to the offline 
   const f = await fixture(t);
   const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
   await until(() => process.stderr, text => text.includes('❯ '));
-  f.setTool({ name: 'solution_selection', arguments: { questions: multiQuestion.questions } });
+  f.tools({ name: 'request_user_input_async', arguments: { questions: multiQuestion.questions } },
+    { name: 'tasks', arguments: { action: 'wait', yield_time_ms: 15000 } });
   process.child.stdin.write('ask two questions\n');
   await until(() => process.stderr, text => text.includes('[1/2] Which version?') && text.includes('/cancel'));
   process.child.stdin.write('2\n');
   await until(() => process.stderr, text => text.includes('[2/2] Which period?'));
-  assert.equal(f.calls.length, 1, 'provider has no partial answers');
+  await until(() => f.calls.length, count => count === 2);
+  const job = (await f.service.call('chat.jobs')).at(-1);
+  const pending = await f.service.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId: job.sessionId } });
+  assert.equal(pending.length, 1, 'the question task stays pending until all answers are submitted');
   process.child.stdin.write('Last month\n');
   await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'completed');
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 3);
   const receipt = JSON.stringify(f.calls.at(-1));
   assert.match(receipt, /New/); assert.match(receipt, /Last month/); assert.match(receipt, /questionId/);
   process.child.stdin.write('/exit\n');
@@ -1668,7 +1724,7 @@ test('simultaneous local windows share one host, run independent sessions, and f
   a.child.stdin.write('/exit\n'); assert.equal((await a.result).code, 0);
   assert.equal((await client.call('chat.jobs', { sessionId: beta.sessionId }))[0].status, 'running');
   assert.equal(await readFile(join(f.service.root, 'agent.lock'), 'utf8'), owner, 'closing the launcher preserves the shared host');
-  f.release(); await until(() => b.stdout, text => text.includes('fixture-answer-2'));
+  f.release(); await until(() => b.combined, text => text.includes('fixture-answer-2'));
   await until(() => client.call('chat.jobs', { sessionId: beta.sessionId }), rows => rows[0].status === 'completed');
   const forked = await client.call('sessions.fork', { sessionId: beta.sessionId });
   assert.notEqual(forked.sessionId, beta.sessionId);
@@ -1882,7 +1938,7 @@ test('native model/settings commands share App JSON, preserve secrets, and recov
   local.child.stdin.write('default\n');
   await until(() => local.stderr, text => text.includes('Switched to: second-model'));
   local.child.stdin.write('successful turn\n');
-  await until(() => local.stdout, text => text.includes('fixture-answer-2'));
+  await until(() => local.combined, text => text.includes('fixture-answer-2'));
   await until(() => local.stderr, text => (text.match(/(?:✓ Completed|! Task failed) ·/g) ?? []).length >= 2);
   local.child.stdin.write('/exit\n');
   const result = await local.result; assert.equal(result.code, 0, result.stderr);
@@ -1928,7 +1984,7 @@ test('unconfigured local CLI waits for file editing, reloads in place and never 
   await until(() => local.stderr, text => text.includes('❯ '));
   assert.equal(f.calls.length, 0, 'configuration does not make a test request to the provider');
   local.child.stdin.write('actual conversation\n');
-  await until(() => local.stdout, text => text.includes('fixture-answer-1'));
+  await until(() => local.combined, text => text.includes('fixture-answer-1'));
   await until(() => local.stderr, text => text.includes('✓ Completed'));
   local.child.stdin.write('/exit\n');
   const result = await local.result; assert.equal(result.code, 0, result.stderr);
@@ -1939,7 +1995,9 @@ test('unconfigured local CLI waits for file editing, reloads in place and never 
   assert.doesNotMatch(result.stdout + result.stderr, /fixture-model-secret|DO_NOT_ECHO_SECRET/);
 });
 
-test('empty or malformed local configuration preserves edits, exits pipes promptly, and can cancel setup', async t => {
+// Five consecutive cold Runtime starts include Windows sandbox/plugin startup
+// and idle shutdown. Each individual wait remains bounded by until().
+test('empty or malformed local configuration preserves edits, exits pipes promptly, and can cancel setup', { timeout: 90000 }, async t => {
   const f = await fixture(t); await f.stopService();
   const dataRoot = join(f.root, 'empty-models'), profile = join(f.root, 'no-desktop'), configPath = join(profile, 'product-host', 'config', 'models.json');
   await mkdir(join(profile, 'product-host', 'config'), { recursive: true });
