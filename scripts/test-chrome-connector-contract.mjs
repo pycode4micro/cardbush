@@ -19,7 +19,6 @@ assert.equal(extensionId, 'iibaamkfgackofhhpadgnmgcjkhckeln');
 assert.deepEqual(manifest.permissions.filter((permission) => [
   'alarms',
   'debugger',
-  'nativeMessaging',
   'storage',
   'tabGroups',
   'tabs',
@@ -50,8 +49,9 @@ assert.match(runtimeWorker, /permission: remoteDebugging \? 'ask' : 'allow'/);
 
 const electronMain = await readFile(path.resolve('electron', 'main.ts'), 'utf8');
 assert.match(electronMain, /activeChromeTurns\.add\(turnKey\)/);
-assert.match(electronMain, /activeChromeTools\.size === 0 && activeChromeTurns\.size === 0/);
-assert.match(electronMain, /chromeConnectorBroker\?\.suspendAll\('turn_terminal'\)/);
+assert.match(electronMain, /activeChromeTurns\.has\(turnKey\)/);
+assert.match(electronMain, /suspendBrowserSession\(event\.sessionId\)/);
+assert.doesNotMatch(electronMain, /chromeConnectorBroker\?\.suspendAll/);
 
 const root = await mkdtemp(path.join(tmpdir(), 'cardbush-chrome-connector-'));
 const broker = new ChromeConnectorBroker(root, { nativeHostPath: packagedRoot

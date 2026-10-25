@@ -2,24 +2,28 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 
 const root = new URL('../../../assets/plugins/chrome/extension/', import.meta.url);
 const source = await readFile(new URL('downloads.js', root), 'utf8') + '\n' + await readFile(new URL('background.js', root), 'utf8');
-const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, emit(...args) { this.listeners.forEach(fn => fn(...args)); } });
+const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, removeListener(fn) { this.listeners = this.listeners.filter(value => value !== fn); }, emit(...args) { this.listeners.forEach(fn => fn(...args)); } });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const pairingKey = 'cardbushConnectorPairingV2';
 const pairing = 'CB2.12345.' + 'a'.repeat(32) + '.' + 'b'.repeat(64);
-async function worker(saved = { cardbushConnectorEnabled: true }, local = { cardbushConnectorEnabled: true, [pairingKey]: pairing }) {
+async function worker(saved = { cardbushConnectorEnabled: true }, local = { cardbushConnectorEnabled: true, [pairingKey]: pairing }, requestPairing) {
   const ports = [], alarms = [], timers = new Map(), activeAlarms = new Map();
-  const storage = values => ({ get: async keys => Object.fromEntries(keys.map(key => [key, values[key]])), set: async value => Object.assign(values, structuredClone(value)) });
+  const storage = values => ({ get: async keys => Object.fromEntries(keys.map(key => [key, values[key]])), set: async value => Object.assign(values, structuredClone(value)), remove: async key => { delete values[key]; } });
   const chrome = {
-    runtime: { onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'test' }),
+    runtime: { onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'test' }), getURL: file => `chrome-extension://fixture/${file}`,
       connectNative: () => { const port = { onMessage: event(), onDisconnect: event(), postMessage() {}, disconnect() {} }; ports.push(port); return port; } },
     alarms: { onAlarm: event(), clear: async name => activeAlarms.delete(name), create: (name, options) => { alarms.push({ name, ...options }); activeAlarms.set(name, options); } },
     storage: { session: storage(saved), local: storage(local) },
     tabs: { onRemoved: event(), query: async () => [] }, tabGroups: { onRemoved: event() }, debugger: { onDetach: event() },
+    windows: { onRemoved: event(), create: async () => ({ id: 99, tabs: [{ id: 123 }] }), remove: async () => {} },
   };
-  const context = vm.createContext({ chrome, console, URL, structuredClone, importScripts() {},
+  const context = vm.createContext({ chrome, console, URL, structuredClone, AbortController, importScripts() {},
+    requestConnectorPairing: requestPairing ?? (async () => { throw new Error('Local App is offline'); }),
+    crypto: webcrypto, connectorHex: bytes => Buffer.from(bytes).toString('hex'), connectorBrowser: () => 'chrome',
     parseConnectorPairing: code => {
       if (code !== pairing) throw new Error('Pairing is required.');
       return { port: 12345, id: 'fixture', secret: 'fixture' };
@@ -84,8 +88,8 @@ test('a delayed pairing read cannot connect after a newer disable', async () => 
   assert.equal(f.ports.length, 0); assert.equal(f.state().connectorEnabled, false);
 });
 
-test('first install and explicitly disabled extensions never auto-connect', async () => {
-  for (const [session, local] of [[{}, {}],
+test('explicitly disabled extensions never auto-connect after install or restart', async () => {
+  for (const [session, local] of [[{}, { cardbushConnectorEnabled: false }],
     [{ cardbushConnectorEnabled: true }, { cardbushConnectorEnabled: false }]]) {
     const f = await worker(session, local);
     f.chrome.runtime.onInstalled.emit(); f.chrome.runtime.onStartup.emit();
@@ -108,12 +112,76 @@ test('a fresh browser session reconnects using local intent and preserves all-si
   assert.equal(status.activeScope, null, 'persistent consent never imports personal tabs or previous browser tab IDs');
 });
 
-test('missing pairing waits for the user instead of endlessly retrying', async () => {
+test('missing pairing waits for the local App with the bounded reconnect schedule', async () => {
   const f = await worker({}, { cardbushConnectorEnabled: true });
-  assert.equal(f.state().pairingRequired, true);
+  assert.equal(f.state().pairingRequired, false);
   await f.retry();
   assert.equal(f.ports.length, 0);
-  assert.equal(f.alarms.length, 0);
+  assert.ok(f.alarms.length > 0);
+});
+
+test('first install requests consent once, persists the same profile and does not expose credentials in status', async () => {
+  const calls = [];
+  const f = await worker({}, {}, async (identity, options) => { calls.push({ identity }); await options.onPrepared(pairing); return { code: pairing }; });
+  assert.equal(f.ports.length, 1); assert.equal(calls.length, 1);
+  assert.match(calls[0].identity.id, /^[a-f0-9]{32}$/);
+  assert.equal(f.local[pairingKey], pairing);
+  const state = await vm.runInContext('popupState()', f.context);
+  assert.ok(!JSON.stringify(state).includes(pairing));
+  const restarted = await worker({}, f.local, async () => { throw new Error('No second approval expected'); });
+  assert.equal(restarted.ports.length, 1);
+});
+
+test('a late approval cannot undo disable and denied/revoked identities require explicit reconnect', async () => {
+  let release;
+  const f = await worker({}, {}, () => new Promise(resolve => { release = resolve; }));
+  await vm.runInContext('disableConnector()', f.context); release({ code: pairing }); await flush();
+  assert.equal(f.local[pairingKey], undefined); assert.equal(f.ports.length, 0);
+  const revoked = await worker({}, {}, async () => { throw Object.assign(new Error('Revoked'), { code: 'connection_revoked' }); });
+  assert.equal(revoked.state().connectorEnabled, false); assert.equal(revoked.state().pairingRequired, true);
+  await revoked.retry(); assert.equal(revoked.ports.length, 0);
+  const oldIdentity = revoked.local.cardbushLocalBrowserIdentity.id;
+  revoked.context.requestConnectorPairing = async () => ({ code: pairing });
+  await revoked.manual();
+  assert.notEqual(revoked.local.cardbushLocalBrowserIdentity.id, oldIdentity);
+  assert.equal(revoked.ports.length, 1);
+  const denied = await worker({}, {}, async () => { throw Object.assign(new Error('Denied'), { code: 'connection_denied' }); });
+  assert.equal(denied.state().connectorEnabled, false);
+  await denied.retry(); assert.equal(denied.ports.length, 0);
+});
+
+test('browser consent requires its own confirmation tab and cancellation stays effective', async () => {
+  const f = await worker();
+  const controller = new AbortController(); f.context.consentSignal = controller.signal;
+  const pending = vm.runInContext('confirmLocalBrowserConnection(consentSignal)', f.context); await flush();
+  const token = vm.runInContext('browserConnectionConsent.token', f.context);
+  let reply;
+  f.chrome.runtime.onMessage.emit({ action: 'confirm_connection', token, allow: true },
+    { tab: { id: 999 }, url: 'chrome-extension://fixture/connection.html' }, value => { reply = value; });
+  assert.equal(reply.ok, false); assert.ok(vm.runInContext('browserConnectionConsent', f.context));
+  f.chrome.runtime.onMessage.emit({ action: 'confirm_connection', token, allow: true },
+    { tab: { id: 123 }, url: 'https://example.test' }, value => { reply = value; });
+  assert.equal(reply.ok, false);
+  controller.abort(); assert.equal(await pending, false);
+  f.chrome.runtime.onMessage.emit({ action: 'confirm_connection', token, allow: true },
+    { tab: { id: 123 }, url: 'chrome-extension://fixture/connection.html' }, value => { reply = value; });
+  assert.equal(reply.ok, false, 'a stale Allow click cannot revive a cancelled request');
+  const second = new AbortController(); f.context.consentSignal = second.signal;
+  const approved = vm.runInContext('confirmLocalBrowserConnection(consentSignal)', f.context); await flush();
+  const secondToken = vm.runInContext('browserConnectionConsent.token', f.context);
+  f.chrome.runtime.onMessage.emit({ action: 'confirm_connection', token: secondToken, allow: true },
+    { tab: { id: 123 }, url: 'chrome-extension://fixture/connection.html#' + secondToken }, value => { reply = value; });
+  assert.equal(reply.ok, true); assert.equal(await approved, true);
+});
+
+test('popup status and Disable remain responsive while native consent is pending', async () => {
+  let release;
+  const f = await worker({}, {}, () => new Promise(resolve => { release = resolve; }));
+  const state = await vm.runInContext('handlePopupMessage({ action: "status", reconnect: true })', f.context);
+  assert.equal(state.nativeConnecting, true);
+  await vm.runInContext('handlePopupMessage({ action: "disable_connector" })', f.context);
+  release({ code: pairing }); await flush();
+  assert.equal(f.state().connectorEnabled, false); assert.equal(f.ports.length, 0);
 });
 
 test('desktop disable persists before disconnect and late alarms, ports and upgrades cannot revive it', async () => {
@@ -172,7 +240,7 @@ test('explicit removal forgets pairing but only revoke clears persistent site pe
   assert.equal(f.local.allowAllSites, true);
   await f.retry(); await f.manual();
   assert.equal(f.ports.length, 1);
-  assert.equal(f.state().pairingRequired, true);
+  assert.equal(f.state().pairingRequired, false, 'explicit Connect requests a new automatic identity and waits for the native host');
   await vm.runInContext('handlePopupMessage({action: "revoke"})', f.context);
   assert.equal(f.local.allowAllSites, false);
 });

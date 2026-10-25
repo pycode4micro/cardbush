@@ -3,6 +3,7 @@ importScripts('build-info.js', 'downloads.js', 'connector-transport.js');
 // stale service worker after the unpacked extension files change on disk.
 const runtimeBuild = globalThis.CARDBUSH_CONNECTOR_BUILD;
 const PAIRING_KEY = 'cardbushConnectorPairingV2';
+const AUTOMATIC_IDENTITY_KEY = 'cardbushLocalBrowserIdentity';
 const CONNECTOR_PROTOCOL = 'cardbush.chrome_connector.v1';
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 const CONTROL_IDLE_TIMEOUT_MS = 60_000;
@@ -27,6 +28,9 @@ const GROUP_TITLE_PREFIX = 'CardBush · ';
 
 let nativePort = null;
 let nativeReady = false;
+let connectingEpoch = null;
+let pairingController = null;
+let browserConnectionConsent = null;
 let lastError = '';
 let connectionFailures = 0;
 let fastReconnectTimer = null;
@@ -56,7 +60,15 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === RECONNECT_ALARM) void reconnectReady.then(() => connectNative());
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === 'confirm_connection') {
+    const pending = browserConnectionConsent;
+    if (pending && message.token === pending.token && sender.tab?.id === pending.tabId
+      && sender.url?.split('#')[0] === chrome.runtime.getURL('connection.html')) {
+      pending.finish(message.allow === true); sendResponse({ ok: true });
+    } else sendResponse({ ok: false });
+    return false;
+  }
   void handlePopupMessage(message).then(sendResponse, (error) => {
     sendResponse({ ok: false, error: normalizedError(error) });
   });
@@ -95,7 +107,10 @@ async function connectNative(manual = false) {
   if (manual) {
     await reconnectReady;
     const epoch = ++connectionEpoch;
-    await persistConnectorPreference(true);
+    pairingController?.abort();
+    await persistConnectorPreference(true, async () => {
+      if (epoch === connectionEpoch && pairingRequired) await chrome.storage.local.remove(AUTOMATIC_IDENTITY_KEY);
+    });
     if (epoch !== connectionEpoch) return;
     connectorEnabled = true;
     connectionFailures = 0;
@@ -104,16 +119,22 @@ async function connectNative(manual = false) {
     void persistReconnectState();
   }
   if (!connectorEnabled || pairingRequired) return;
-  if (nativePort) return;
+  if (nativePort || connectingEpoch === connectionEpoch) return;
   const epoch = connectionEpoch;
+  connectingEpoch = epoch;
+  lastError = '';
   clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
   try {
     await connectionCleanup;
     const saved = await chrome.storage.local.get([PAIRING_KEY]);
     if (epoch !== connectionEpoch || !connectorEnabled || nativePort || pairingRequired) return;
     let pairing;
-    try { pairing = parseConnectorPairing(saved[PAIRING_KEY]); }
-    catch (error) { pairingRequired = true; lastError = errorMessage(error); return; }
+    if (saved[PAIRING_KEY]) {
+      try { pairing = parseConnectorPairing(saved[PAIRING_KEY]); }
+      catch (error) { pairingRequired = true; throw error; }
+    }
+    else pairing = await automaticConnectorPairing(epoch);
+    if (epoch !== connectionEpoch || !connectorEnabled || nativePort) return;
     void chrome.alarms.create(RECONNECT_ALARM, { delayInMinutes: RECONNECT_DELAY_MINUTES, periodInMinutes: RECONNECT_DELAY_MINUTES });
     const port = createConnectorPort(pairing);
     nativePort = port;
@@ -189,7 +210,78 @@ async function connectNative(manual = false) {
     nativePort = null;
     nativeReady = false;
     scheduleReconnect();
+  } finally {
+    if (connectingEpoch === epoch) connectingEpoch = null;
   }
+}
+
+async function automaticConnectorPairing(epoch) {
+  const saved = await chrome.storage.local.get([AUTOMATIC_IDENTITY_KEY]);
+  if (epoch !== connectionEpoch || !connectorEnabled) throw new Error('连接申请已取消。');
+  let identity = saved[AUTOMATIC_IDENTITY_KEY];
+  if (!identity) {
+    identity = { id: connectorHex(crypto.getRandomValues(new Uint8Array(16))) };
+    const operation = connectorPreferenceQueue.catch(() => {}).then(async () => {
+      if (epoch !== connectionEpoch || !connectorEnabled) throw new Error('连接申请已取消。');
+      await chrome.storage.local.set({ [AUTOMATIC_IDENTITY_KEY]: identity });
+    });
+    connectorPreferenceQueue = operation; await operation;
+  }
+  if (epoch !== connectionEpoch || !connectorEnabled) throw new Error('连接申请已取消。');
+  const controller = new AbortController(); pairingController = controller;
+  let result;
+  try {
+    result = await requestConnectorPairing(identity, { signal: controller.signal,
+      confirm: signal => confirmLocalBrowserConnection(signal), onPrepared: async (code, confirmed = false) => {
+      const operation = connectorPreferenceQueue.catch(() => {}).then(async () => {
+        if (epoch !== connectionEpoch || !connectorEnabled) throw new Error('连接申请已取消。');
+        identity = { id: identity.id, pending: code, confirmed };
+        await chrome.storage.local.set({ [AUTOMATIC_IDENTITY_KEY]: identity });
+      });
+      connectorPreferenceQueue = operation; await operation;
+    } });
+  } catch (error) {
+    if (['connection_denied', 'connection_revoked', 'identity_conflict'].includes(error.code) && epoch === connectionEpoch) {
+      pairingRequired = true; connectorEnabled = false; await persistConnectorPreference(false);
+    }
+    throw error;
+  } finally { if (pairingController === controller) pairingController = null; }
+  const pairing = parseConnectorPairing(result?.code);
+  // A late approval cannot undo an explicit disconnect or manual pairing.
+  const operation = connectorPreferenceQueue.catch(() => {}).then(async () => {
+    if (epoch === connectionEpoch && connectorEnabled) await chrome.storage.local.set({ [PAIRING_KEY]: result.code });
+  });
+  connectorPreferenceQueue = operation;
+  await operation;
+  return pairing;
+}
+
+function confirmLocalBrowserConnection(signal) {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise(resolve => {
+    const token = connectorHex(crypto.getRandomValues(new Uint8Array(24)));
+    let windowId, finished = false;
+    const removed = id => { if (id === windowId) finish(false); };
+    const cancel = () => finish(false);
+    const timer = setTimeout(cancel, 60_000);
+    const finish = allowed => {
+      if (finished) return; finished = true; clearTimeout(timer); signal.removeEventListener('abort', cancel);
+      chrome.windows.onRemoved.removeListener(removed);
+      if (browserConnectionConsent?.token === token) browserConnectionConsent = null;
+      if (windowId !== undefined) void chrome.windows.remove(windowId).catch(() => {});
+      resolve(allowed);
+    };
+    browserConnectionConsent = { token, tabId: null, finish };
+    signal.addEventListener('abort', cancel, { once: true });
+    chrome.windows.onRemoved.addListener(removed);
+    void chrome.windows.create({ url: chrome.runtime.getURL(`connection.html#${token}`), type: 'popup', width: 460, height: 360, focused: true })
+      .then(async window => {
+        windowId = window.id;
+        if (finished) { if (windowId !== undefined) await chrome.windows.remove(windowId); return; }
+        const tabs = window.tabs ?? await chrome.tabs.query({ windowId });
+        if (browserConnectionConsent?.token === token) browserConnectionConsent.tabId = tabs[0]?.id;
+      }).catch(cancel);
+  });
 }
 
 function scheduleReconnect() {
@@ -220,11 +312,12 @@ function suspendDisconnectedControl() {
 }
 
 async function restoreReconnectState() {
-  const preference = await chrome.storage.local.get([CONNECTOR_ENABLED_KEY]);
+  const preference = await chrome.storage.local.get([CONNECTOR_ENABLED_KEY, PAIRING_KEY]);
   const saved = await chrome.storage.session.get([RECONNECT_STATE_KEY]);
   // The user's explicit enable choice survives both browser and worker restarts.
   // Session storage only holds transient retry state, never the enable authority.
-  connectorEnabled = preference[CONNECTOR_ENABLED_KEY] === true;
+  connectorEnabled = preference[CONNECTOR_ENABLED_KEY] !== false;
+  pairingRequired = !connectorEnabled && !preference[PAIRING_KEY];
   if (!connectorEnabled) { await chrome.alarms.clear(RECONNECT_ALARM); return; }
   const state = saved[RECONNECT_STATE_KEY];
   if (!state || !Number.isInteger(state.failures) || state.failures < 0) return;
@@ -235,6 +328,7 @@ async function disableConnector(forgetPairing = false) {
   await reconnectReady;
   connectorEnabled = false;
   connectionEpoch++;
+  pairingController?.abort();
   clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
   fastReconnectAttempts = 0;
   nativeReady = false;
@@ -335,6 +429,12 @@ async function dispatch(method, params, progress = () => {}) {
     return result;
   }
   const scope = requiredScope(params);
+  if (method === 'debugger.suspendScope') {
+    // Turn completion must not activate/rename a group or renew a page grant.
+    if (!managedScopes.has(scope.id)) return { suspended: false, scopeId: scope.id };
+    await suspendScope(scope.id);
+    return { suspended: true, scopeId: scope.id };
+  }
   await activateScope(scope);
   progress('scope_ready');
 
@@ -440,7 +540,7 @@ async function handlePopupMessage(message) {
   if (action === 'status') {
     // Opening the popup may retry immediately; passive status polling does not
     // bypass backoff or re-enable an explicitly disabled extension.
-    if (message?.reconnect === true) await connectNative();
+    if (message?.reconnect === true) void connectNative().catch(error => { lastError = errorMessage(error); });
     return { ok: true, ...(await popupState(message?.scopeId)) };
   }
   if (action === 'pair') {
@@ -452,7 +552,8 @@ async function handlePopupMessage(message) {
     return { ok: true, ...(await popupState()) };
   }
   if (action === 'reconnect') {
-    await connectNative(true);
+    // Keep popup status and Disable usable while the system dialog is open.
+    void connectNative(true).catch(error => { lastError = errorMessage(error); });
     return { ok: true, ...(await popupState(message?.scopeId)) };
   }
   if (action === 'disable_connector') {
@@ -945,10 +1046,10 @@ async function popupState(preferredScopeId = '') {
     connectorEnabled,
     nativeConnected: nativePort != null && nativeReady,
     hasPairing,
-    pairingRequired: pairingRequired || !hasPairing,
+    pairingRequired,
     allowAllSites: stored.allowAllSites === true,
     allowedSiteCount: allowedOrigins.length,
-    nativeConnecting: nativePort != null && !nativeReady && !lastError,
+    nativeConnecting: (nativePort != null || connectingEpoch === connectionEpoch) && !nativeReady && !lastError,
     controlledTabCount: attachedTabs.size,
     activeScope: selectedScope ? {
       id: selectedScope.id,

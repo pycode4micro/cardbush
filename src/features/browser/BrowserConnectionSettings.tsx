@@ -77,7 +77,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
     <SettingsCard title={language === 'zh' ? '浏览器连接' : 'Browser connection'}>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
-        <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? '控制 CardBush 内置浏览器，以及配对的 Chrome、Edge。通过 @ 选择内置标签页即可操作，无需扩展或配对；Chrome、Edge 的连接器默认关闭，单独授权。' : 'Control CardBush tabs and paired Chrome or Edge profiles. Select an integrated tab with @; no extension or pairing is needed. Chrome/Edge connectors are off by default and authorized separately.'}</small></span>
+          <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? '启用插件并安装浏览器扩展，首次在系统弹窗和扩展中确认连接即可。本机 App 和 CLI 共用连接并自动重连，各会话保留独立的标签页和网站授权。内置标签页可通过 @ 选择。' : 'Enable the plugin, install the browser extension and approve the first connection in the system dialog and extension. The local App and CLI share connections and reconnect automatically; each conversation keeps its own tabs and site permissions. Select integrated tabs with @.'}</small></span>
       </label>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />
@@ -105,7 +105,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
                   ? (language === 'zh' ? '连接地址已自动调整，等待扩展重连。如仍未连接，请更新或重新加载 Browser Use 扩展；原配对和网站授权会保留。' : 'The connection address was recovered automatically. Waiting for the extension to reconnect. If needed, update or reload Browser Use; existing pairing and site permissions are preserved.')
                 : status?.paired
                   ? (language === 'zh' ? '配对已保存。开启连接器和浏览器后会自动重连，也可打开扩展立即重试，无需重新生成码或授权。' : 'Pairing is saved. Reconnects automatically when the connector and browser are open; open the extension to retry now. No new code or permission is needed.')
-                  : (language === 'zh' ? '首次使用时选择浏览器并生成配对码，粘贴到对应浏览器的 Browser Use 扩展中。页面授权单独选择。' : 'For first use, choose a browser and paste its pairing code into the Browser Use extension. Page access is authorized separately.')}</small>
+                    : (language === 'zh' ? '等待浏览器扩展申请连接。请依次在系统弹窗和扩展中确认；拒绝后可在扩展中点击“连接 CardBush”重新申请。页面访问仍需单独授权。' : 'Waiting for the browser extension. Confirm the system dialog and extension window; after declining, click Connect CardBush in the extension to request again. Page access still requires separate authorization.')}</small>
             </div>
           </div>
           <div className="chrome-connector-actions">
@@ -124,6 +124,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
             <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.copyChromeConnectorDiagnostics} onClick={() => void run('diagnostics', async () => { await connector?.copyChromeConnectorDiagnostics(); setDiagnosticsCopied(true); })}>{diagnosticsCopied ? (language === 'zh' ? '已复制诊断信息' : 'Diagnostics copied') : (language === 'zh' ? '复制诊断信息' : 'Copy diagnostics')}</button>
           </div>
           {status?.connectorEnabled && <>
+            <details><summary>{language === 'zh' ? '手动配对 / 连接其他 Agent' : 'Manual pairing / another Agent'}</summary>
             <div className="browser-pairing-controls">
               <SettingsDropdown label={language === 'zh' ? '要配对的浏览器' : 'Browser to pair'} value={browser}
                 options={[{ value: 'chrome', label: 'Google Chrome' }, { value: 'edge', label: 'Microsoft Edge' }]}
@@ -137,6 +138,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
                 {language === 'zh' ? '生成配对码' : 'Generate pairing code'}
               </button>
             </div>
+            </details>
             {status.connections.length > 0 && <div className="browser-connections">
               {status.connections.map(connection => <div className="browser-connection-row" key={connection.id}>
                 <div><strong>{connection.label}</strong><small>{connection.browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome'} · {connection.connected ? (language === 'zh' ? '已连接' : 'Connected') : (language === 'zh' ? '未连接' : 'Offline')}</small></div>

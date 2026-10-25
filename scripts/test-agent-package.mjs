@@ -17,7 +17,7 @@ async function fixture(t) {
     'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
     'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs', 'packages/bush-runtime/package.json', 'packages/bush-runtime/dist/processResourceGuard.js',
     'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs', 'deploy/agent/install-windows-desktop.ps1',
-    'dist-electron/agentBrowserConnector.mjs', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
+    'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectionApproval.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
     'scripts/agent-desktop/worker.py','scripts/agent-desktop/computer.py','scripts/agent-desktop/browser.py',
     'packages/cardbush-platform/package.json', 'packages/cardbush-platform/dist/index.js', 'packages/cardbush-platform/dist-cjs/index.js', 'assets/fixture.txt']) {
     await mkdir(dirname(join(source, path)), { recursive: true }); await writeFile(join(source, path), '{}');
@@ -36,7 +36,10 @@ async function fixture(t) {
   return { root, source, output: join(root, 'output') };
 }
 test('Linux Agent packaging retains runtime and CommonJS dependencies without requiring Windows helpers', async t => {
-  const f = await fixture(t); await packageAgent(f.source, f.output, 'linux');
+  const f = await fixture(t);
+  await writeFile(join(f.source, 'dist-electron/browserBootstrapRegistration.js'), 'obsolete registry bootstrap');
+  await packageAgent(f.source, f.output, 'linux');
+  await assert.rejects(access(join(f.output, 'dist-electron/browserBootstrapRegistration.js')), { code: 'ENOENT' });
   await verifyAgentPackage(f.output, 'linux');
   await access(join(f.output, 'packages/cardbush-platform/dist-cjs/index.js'));
   await access(join(f.output, 'dist-electron/agentChatCli.mjs'));

@@ -35,7 +35,7 @@ test('session 095c replay: missing bridge is setup state, mutations stay blocked
   assert.deepEqual(listed.structuredContent.connections, []);
   assert.match(listed.structuredContent.nextStep, /\/browser pair chrome/);
   assert.match(listed.structuredContent.nextStep, /\/browser pair edge/);
-  assert.match(listed.structuredContent.nextStep, /does not require the desktop App/);
+  assert.match(listed.structuredContent.nextStep, /without the App running/);
   const mutation = await server._registeredTools.new_page.handler({ url: 'https://example.invalid' }, context);
   assert.equal(mutation.isError, true); assert.equal(mutation.structuredContent.error.code, 'bridge_config_unavailable');
   assert.equal(mutation.structuredContent.error.details.execution, 'not_dispatched');

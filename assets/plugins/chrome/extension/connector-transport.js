@@ -22,6 +22,92 @@ async function connectorHmac(secret, text) {
   const key = await crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return connectorHex(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(text))));
 }
+// Initial trust comes from a native CardBush consent dialog. Key agreement
+// prevents discovery probes from exposing a reusable credential to other ports.
+async function requestConnectorPairing(identity, { signal, onPrepared, confirm, ports = CONNECTOR_DISCOVERY_PORTS,
+  attemptTimeoutMs = 750, approvalTimeoutMs = 95_000 } = {}) {
+  const browser = connectorBrowser();
+  const keys = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+  const publicKey = connectorHex(new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey)));
+  const problem = code => Object.assign(new Error({
+    connection_denied: '连接申请未获同意。需要连接时，请点击「连接 CardBush」重新申请。',
+    connection_revoked: '连接已被移除。需要连接时，请点击「连接 CardBush」重新申请。',
+    identity_conflict: '连接凭据已改变，请点击「连接 CardBush」重新申请。',
+    connection_limit: '浏览器连接记录已满，请先在 CardBush 设置中移除不用的连接。',
+    approval_busy: '另一个连接申请正在处理，请稍候。',
+  }[code] || '请先启动 CardBush App 或本机 CLI，并开启 Browser Use 插件。'), { code });
+  for (const port of ports) {
+    if (signal?.aborted) throw problem('cancelled');
+    const result = await new Promise(resolve => {
+      const consentAbort = new AbortController();
+      let socket, finished = false, secret = '', challengeSeen = false, confirmationStarted = false, locallyConfirmed = false, queue = Promise.resolve();
+      const nonce = connectorHex(crypto.getRandomValues(new Uint8Array(32)));
+      const finish = value => {
+        if (finished) return; finished = true; clearTimeout(timer); signal?.removeEventListener('abort', cancel); consentAbort.abort();
+        if (socket) { socket.onmessage = null; socket.onclose = null; socket.onerror = () => {}; try { socket.close(); } catch {} }
+        resolve(value);
+      };
+      const cancel = () => finish({ error: 'cancelled' });
+      let timer = setTimeout(() => finish(null), attemptTimeoutMs);
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) { cancel(); return; }
+      try { socket = new WebSocket(`ws://127.0.0.1:${port}/request-connection`, 'cardbush-pair-v1'); }
+      catch { finish(null); return; }
+      socket.onopen = () => { queue = queue.then(async () => {
+        let resumeProof;
+        if (identity.pending) {
+          const pending = parseConnectorPairing(identity.pending);
+          if (pending.id === identity.id && identity.confirmed === true) {
+            locallyConfirmed = true; secret = pending.secret; resumeProof = await connectorHmac(secret, `resume:${identity.id}:${nonce}`);
+          }
+        }
+        if (!finished) socket.send(JSON.stringify({ type: 'pair_request', id: identity.id, browser, key: publicKey, nonce, resumeProof }));
+      }).catch(() => finish(null)); };
+      socket.onmessage = event => { queue = queue.then(async () => {
+        if (finished || typeof event.data !== 'string' || event.data.length > 4096) return;
+        const message = JSON.parse(event.data);
+        if (message.type === 'pair_error') { finish({ error: message.code }); return; }
+        if (message.type === 'pair_challenge' && !challengeSeen && /^04[a-f0-9]{128}$/.test(message.key)) {
+          challengeSeen = true; locallyConfirmed = false; clearTimeout(timer);
+          timer = setTimeout(() => finish({ error: 'connection_denied' }), approvalTimeoutMs);
+          const serverKey = await crypto.subtle.importKey('raw', new Uint8Array(message.key.match(/../g).map(value => parseInt(value, 16))),
+            { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+          const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: serverKey }, keys.privateKey, 256));
+          const context = new TextEncoder().encode(`cardbush-pair-v1:${identity.id}:${browser}:${message.key}`);
+          const material = new Uint8Array(shared.length + context.length); material.set(shared); material.set(context, shared.length);
+          secret = connectorHex(new Uint8Array(await crypto.subtle.digest('SHA-256', material)));
+          const code = `CB2.${port}.${identity.id}.${secret}`;
+          // Persist provisional material before asking. If the worker loses the
+          // approval reply it can prove the same identity without a second dialog.
+          await onPrepared(code);
+          const proof = await connectorHmac(secret, `request:${identity.id}:${nonce}`);
+          if (!finished) socket.send(JSON.stringify({ type: 'pair_confirm', proof }));
+        } else if (message.type === 'pair_waiting' && challengeSeen) {
+          if (!finished) socket.send('{"type":"pair_ping"}');
+        } else if (message.type === 'pair_allowed' && challengeSeen && !confirmationStarted
+          && message.proof === await connectorHmac(secret, `allowed:${identity.id}:${nonce}`)) {
+          confirmationStarted = true; clearTimeout(timer);
+          timer = setTimeout(() => finish({ error: 'connection_denied' }), 60_000);
+          // A fabricated local service can claim host consent. Only this
+          // extension's own UI may grant browser-side access on first use.
+          void (async () => {
+            if (typeof confirm !== 'function' || !await confirm(consentAbort.signal)) { finish({ error: 'connection_denied' }); return; }
+            if (finished) return;
+            await onPrepared(`CB2.${port}.${identity.id}.${secret}`, true);
+            const proof = await connectorHmac(secret, `accept:${identity.id}:${nonce}`);
+            if (!finished) { locallyConfirmed = true; socket.send(JSON.stringify({ type: 'pair_accept', proof })); }
+          })().catch(() => finish({ error: 'connection_denied' }));
+        } else if (message.type === 'pair_approved' && locallyConfirmed && secret && message.proof === await connectorHmac(secret, `approved:${identity.id}:${nonce}`)) {
+          finish({ code: `CB2.${port}.${identity.id}.${secret}` });
+        }
+      }).catch(() => finish(null)); };
+      socket.onclose = socket.onerror = () => { void queue.then(() => finish(null)); };
+    });
+    if (result?.code) return result;
+    if (result?.error) throw problem(result.error);
+  }
+  throw problem('connector_unavailable');
+}
 function createConnectorPort(pairing, { attemptTimeoutMs = 1000 } = {}) {
   const messages = new Set(), disconnects = new Set();
   const attempts = new Set();

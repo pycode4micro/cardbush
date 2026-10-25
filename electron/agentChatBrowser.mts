@@ -21,7 +21,7 @@ export async function chatBrowserCommand(text: string, client: Pick<AgentHttpCli
     const input = pairing ? { action: 'pair', browser: pairing[1], ...(pairing[2] ? { label: pairing[2] } : {}) }
       : manage ? { action: manage[1] === 'default' ? 'select-default' : 'revoke', id: manage[2] } : { action: 'status' };
     const result = await client.call('browser.connector', input, AbortSignal.any([signal, AbortSignal.timeout(15_000)])) as {
-      code?: string; expiresAt?: string; browser?: string; extensionPath?: string; state?: string; error?: string;
+      code?: string; expiresAt?: string; browser?: string; extensionPath?: string; state?: string; error?: string; shared?: boolean;
       connector?: { defaultConnectionId: string; connections: Array<{ id: string; browser: string; label: string; connected: boolean }> };
     };
     if (pairing) {
@@ -32,12 +32,15 @@ export async function chatBrowserCommand(text: string, client: Pick<AgentHttpCli
       io.status(`Browser connector: ${terminalText(result.state ?? 'unavailable')}${result.error ? ` — ${terminalText(result.error)}` : ''}\n`);
       const connections = result.connector?.connections ?? [];
       for (const connection of connections) io.status(`${connection.id === result.connector?.defaultConnectionId ? '*' : ' '} ${terminalText(connection.id)}  ${terminalText(connection.browser)}  ${terminalText(connection.label)}  ${connection.connected ? 'online' : 'offline'}\n`);
-      if (!connections.length) io.status('No paired browsers. Use /browser pair chrome or /browser pair edge.\n');
+      if (!connections.length) io.status(result.shared
+        ? 'Waiting for Browser Use. Install or reload the extension, then approve the first connection in the CardBush system dialog and extension. Manual fallback: /browser pair chrome or /browser pair edge.\n'
+        : 'No paired browsers. Use /browser pair chrome or /browser pair edge.\n');
       if (result.state === 'disabled') io.status('Enable Browser Use in the shared plugin settings (/settings), then retry.\n');
       io.status(usage);
     }
     if (result.extensionPath) io.status(`Extension folder: ${terminalText(result.extensionPath)}\nLoad it in chrome://extensions or edge://extensions if needed.\n`);
-    io.status('After connecting, ask the Agent to list_browsers and select_browser using the returned connectionId. Pairing belongs to this Runtime; the desktop App has its own connections.\n');
+    io.status('After connecting, ask the Agent to list_browsers and select_browser using the returned connectionId. '
+      + (result.shared ? 'This local connection is shared with the desktop App and reconnects automatically.\n' : 'Pairing belongs to this Agent server.\n'));
   } catch (error) {
     signal.throwIfAborted();
     io.status(`[Browser setup unavailable] ${terminalText(error instanceof Error ? error.message : String(error))}\n`);

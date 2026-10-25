@@ -14,7 +14,7 @@
         <p id="extension-update-message" class="hint" role="status"></p>
         <button id="reload-extension">重新加载扩展</button>
       </div>
-      <details id="pairing-details" open><summary>首次配对 / 更换连接</summary>
+      <details id="pairing-details"><summary>手动配对 / 连接其他 Agent</summary>
       <label class="scope-picker"><span>与 CardBush 配对</span>
         <input id="pairing-code" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 CardBush 设置中的配对码" />
       </label>
@@ -41,7 +41,7 @@
         <button class="quiet" data-action="revoke">撤销授权</button>
         <button class="quiet" data-action="disconnect">停止控制</button>
       </footer>
-      <p class="hint">首次配对后自动重连，无需每次生成码。配对不授予页面访问权限；个人标签需明确复制进会话隔离组。移除配对或扩展后才需重新配对。</p>
+      <p class="hint">首次在系统弹窗和扩展中确认连接，无需复制配对码。之后本机 App 和 CLI 共用连接并自动重连。个人标签仍需明确复制进会话隔离组；拒绝或移除连接后不会自动重新授权。</p>
     </main>
     <script src="build-info.js"></script>
     <script src="popup.js"></script>

@@ -49,12 +49,9 @@ test('Store names cannot inject XML or builder macros; numeric identity prefix i
   assert.ok(manifest.includes('Application Id="CardBush" Executable="app\\CardBush.exe"'));
 });
 
-test('MSIX keeps default virtualization and needs no external registry capability', () => {
+test('browser connection needs no registry virtualization exemption or extra restricted capability', () => {
   const manifest = createManifest(identity);
-  assert.deepEqual([...manifest.matchAll(/<virtualization:ExcludedKey>(.*?)<\/virtualization:ExcludedKey>/g)]
-    .map(match => match[1]), []);
-  assert.doesNotMatch(manifest, /<desktop6:RegistryWriteVirtualization>/);
-  assert.doesNotMatch(manifest, /unvirtualizedResources/);
+  assert.doesNotMatch(manifest, /RegistryWriteVirtualization|ExcludedKey|unvirtualizedResources|NativeMessaging/);
   assert.doesNotMatch(manifest, /FileSystemWriteVirtualization|ExcludedDirector/);
   assert.match(manifest, /MinVersion="10\.0\.22000\.0"/);
 });

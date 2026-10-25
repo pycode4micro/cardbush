@@ -14,7 +14,7 @@ const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist
   'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
   'dist-electron/agentService.mjs', 'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs',
   'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs',
-  'dist-electron/agentBrowserConnector.mjs', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
+  'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectionApproval.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
   'deploy/agent/install-windows-desktop.ps1',
   'packages/bush-runtime/dist/processResourceGuard.js', 'scripts/agent-desktop/worker.py',
   'scripts/agent-desktop/computer.py', 'scripts/agent-desktop/browser.py'];
@@ -50,7 +50,8 @@ export async function packageAgent(root, output, platform = process.platform) {
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output);
   for (const file of ['package.json', 'package-lock.json', 'bin', 'dist-electron', 'assets']) {
-    await cp(join(root, file), join(output, file), { recursive: true });
+    await cp(join(root, file), join(output, file), { recursive: true,
+      filter: source => source !== join(root, 'dist-electron/browserBootstrapRegistration.js') });
   }
   await cp(join(root, 'scripts/agent-desktop'), join(output, 'scripts/agent-desktop'), { recursive: true });
   await mkdir(join(output, 'deploy/agent'), { recursive: true });
@@ -68,7 +69,8 @@ export async function packageAgent(root, output, platform = process.platform) {
     }
   }
   if (platform === 'win32') {
-    await cp(join(root, 'dist-native/chrome-connector'), join(output, 'dist-native/chrome-connector'), { recursive: true });
+    await mkdir(join(output, 'dist-native/chrome-connector'), { recursive: true });
+    await cp(join(root, 'dist-native/chrome-connector/CardBushBrowserHost.exe'), join(output, 'dist-native/chrome-connector/CardBushBrowserHost.exe'));
     const directory = join(root, 'dist-native', 'process-guard');
     const manifest = JSON.parse(await readFile(join(directory, 'current.json'), 'utf8'));
     const destination = join(output, 'dist-native', 'process-guard');

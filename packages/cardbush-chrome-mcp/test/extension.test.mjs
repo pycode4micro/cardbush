@@ -19,7 +19,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   const runtimeMessages = event();
   const posted = [];
   const alarms = [];
-  const stored = { cardbushConnectorEnabled: true };
+  const stored = { cardbushConnectorEnabled: true, cardbushConnectorPairingV2: 'saved-pairing' };
   const sessionStored = { cardbushConnectorEnabled: true };
   const attached = new Set();
   const screenshotTimers = new Set();
@@ -280,6 +280,12 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal((await debug(nativeMessages, posted, SCOPE_B, tabB.id)).result.accepted, true);
   assert.deepEqual([...attached].sort((left, right) => left - right), [tabA.id, tabB.id]);
 
+  const titleBeforeSuspend = groupA.title;
+  assert.equal((await nativeRequest(nativeMessages, posted, 'debugger.suspendScope', { scopeId: SCOPE_A.scopeId })).result.suspended, true);
+  assert.equal(groupA.title, titleBeforeSuspend, 'turn completion does not rename a group without a scope title');
+  assert.deepEqual([...attached], [tabB.id], 'finishing an App turn preserves the CLI conversation control');
+  assert.equal((await debug(nativeMessages, posted, SCOPE_A, tabA.id)).result.accepted, true, 'suspension preserves page authorization');
+
   const releasedA = await nativeRequest(nativeMessages, posted, 'debugger.detachScope', SCOPE_A);
   assert.equal(releasedA.result.scopeId, SCOPE_A.scopeId);
   assert.deepEqual([...attached], [tabB.id]);
@@ -362,6 +368,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal(disconnected.lastError, failed.lastError, 'disconnect must preserve the useful bridge error');
   assert.equal(alarms.at(-1).name, 'cardbush-native-reconnect');
   assert.equal(alarms.at(-1).options.delayInMinutes, 0.5);
+  await popupRequest(runtimeMessages, 'disable_connector');
 });
 
 test('MV3 worker restores a live scope lease and session tab grant', async () => {
@@ -384,7 +391,7 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
   const tabs = [tab(22, 2, true, 'Restored tab', 'https://focused.example/path')];
   tabs[0].groupId = 100;
   const now = Date.now();
-  const stored = { cardbushConnectorEnabled: true };
+  const stored = { cardbushConnectorEnabled: true, cardbushConnectorPairingV2: 'saved-pairing' };
   const sessionStored = {
     cardbushConnectorEnabled: true,
     cardbushManagedScopes: [{

@@ -8,6 +8,7 @@ buildBrowserExtension();
 const root = path.resolve(import.meta.dirname, '..');
 const source = path.join(root, 'native', 'chrome-connector', 'CardBushBrowserHost.cs');
 const securitySource = path.join(root, 'native', 'chrome-connector', 'ConnectorSecurity.cs');
+const approvalSource = path.join(root, 'native', 'chrome-connector', 'BrowserConnectionApproval.cs');
 const testBuild = process.argv.includes('--test');
 const outputDirectory = path.join(root, 'dist-native', testBuild ? 'chrome-connector-test'
   : process.argv.includes('--validation') ? 'chrome-connector-validation' : 'chrome-connector');
@@ -28,7 +29,7 @@ const compiler = compilers.find((candidate) => fs.existsSync(candidate));
 if (!compiler) throw new Error('The Windows .NET Framework C# compiler is required to build CardBushBrowserHost.exe.');
 fs.mkdirSync(outputDirectory, { recursive: true });
 
-const sourceModifiedAt = Math.max(fs.statSync(source).mtimeMs, fs.statSync(securitySource).mtimeMs);
+const sourceModifiedAt = Math.max(fs.statSync(source).mtimeMs, fs.statSync(securitySource).mtimeMs, fs.statSync(approvalSource).mtimeMs);
 if (fs.existsSync(output) && fs.statSync(output).mtimeMs >= sourceModifiedAt) {
   console.log(`Chrome Native Messaging host is current: ${output}`);
   process.exit(0);
@@ -43,6 +44,7 @@ const result = spawnSync(compiler, [
   ...(testBuild ? ['/define:CARDBUSH_CONNECTOR_TEST'] : []),
   source,
   securitySource,
+  approvalSource,
 ], {
   cwd: root,
   encoding: 'utf8',

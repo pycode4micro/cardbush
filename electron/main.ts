@@ -97,9 +97,9 @@ import {
   encodeSessionAttentionActivation,
 } from './sessionAttentionRouting';
 import {
-  ChromeConnectorBroker,
   type ChromeConnectorStatus,
 } from './chromeConnectorBroker';
+import type { BrowserConnectorHandle } from './sharedBrowserConnector';
 import {
   chromeConnectorRegistrationStatus,
   chromeConnectorRegistryKey,
@@ -203,7 +203,7 @@ let sandboxSetup: SandboxSetupHost | undefined;
 let runtimeHostIpc: RuntimeHostIpcRegistration | null = null;
 let unregisterDesktopControlMonitor: (() => void) | null = null;
 type DesktopControlTurn = { sessionId: string; turnId: string; toolCallId: string };
-let chromeConnectorBroker: ChromeConnectorBroker | null = null;
+let chromeConnectorBroker: BrowserConnectorHandle | null = null;
 let chromeConnectorLifecycle: ChromeConnectorLifecycle | null = null;
 let chromeConnectorRegistrationCache: { state: string; value: ReturnType<typeof chromeConnectorRegistrationStatus> } | null = null;
 let productHostController: {
@@ -2297,16 +2297,16 @@ ipcMain.handle('chrome-connector:pair', (event, input: { browser?: 'chrome' | 'e
   return broker.createPairing(input);
 });
 
-ipcMain.handle('browser-connector:select-default', (event, connectionId: string) => {
+ipcMain.handle('browser-connector:select-default', async (event, connectionId: string) => {
   assertMainWindowSender(event.sender.id);
   if (!chromeConnectorLifecycle?.broker) throw new Error('Enable Browser Use first.');
-  chromeConnectorLifecycle.broker.setDefaultConnection(connectionId);
+  await chromeConnectorLifecycle.broker.setDefaultConnection(connectionId);
   return currentChromeConnectorStatus();
 });
-ipcMain.handle('browser-connector:revoke', (event, connectionId: string) => {
+ipcMain.handle('browser-connector:revoke', async (event, connectionId: string) => {
   assertMainWindowSender(event.sender.id);
   if (!chromeConnectorLifecycle?.broker) throw new Error('Enable Browser Use first.');
-  chromeConnectorLifecycle.broker.revokeConnection(connectionId);
+  await chromeConnectorLifecycle.broker.revokeConnection(connectionId);
   return currentChromeConnectorStatus();
 });
 
@@ -4090,13 +4090,14 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
         permissions?.delete(event.payload.permissionId);
         if (permissions?.size === 0) pendingPermissions.delete(turnKey);
       } else if (event.kind === 'turn_terminal') {
+        const usedBrowser = activeChromeTurns.has(turnKey);
         for (const key of [...activeChromeTools]) {
           const [sessionId, turnId] = JSON.parse(key) as string[];
           if (sessionId === event.sessionId && turnId === event.turnId) activeChromeTools.delete(key);
         }
         clearTurn(event.sessionId, event.turnId);
-        if (activeChromeTools.size === 0 && activeChromeTurns.size === 0) {
-          chromeConnectorBroker?.suspendAll('turn_terminal');
+        if (usedBrowser) {
+          void suspendBrowserSession(event.sessionId);
         }
       }
       return;
@@ -4104,12 +4105,22 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
     const turn = subscriptionTurns.get(message.subscriptionId);
     subscriptionTurns.delete(message.subscriptionId);
     if (turn) {
+      const usedBrowser = activeChromeTurns.has(runtimeTurnKey(turn.sessionId, turn.turnId));
       clearTurn(turn.sessionId, turn.turnId);
-      if (activeChromeTools.size === 0 && activeChromeTurns.size === 0) {
-        chromeConnectorBroker?.suspendAll('stream_closed');
+      if (usedBrowser) {
+        void suspendBrowserSession(turn.sessionId);
       }
     }
   });
+}
+
+async function suspendBrowserSession(sessionId: string): Promise<void> {
+  try {
+    const { requestChromeConnector } = await import('./browserUseHost.mjs');
+    await requestChromeConnector('debugger.suspendScope', { scopeId: sessionId }, {
+      configPath: chromeConnectorBroker?.configPath ?? path.join(chromeConnectorDataRoot(), 'browser-connector', 'bridge.json'), timeoutMs: 3000,
+    });
+  } catch { /* A disconnected extension releases active control itself. */ }
 }
 
 function disposeDesktopControlMonitor(): void {
@@ -4430,6 +4441,7 @@ async function initializeProductHost(controller: RuntimeHostController, signal: 
     runtimeStateRoot,
     logRoots: [appLogsDir(), path.join(app.getPath('userData'), 'logs')],
     clearApplicationCaches,
+    prepareBundledMcp: syncBrowserConnectorPlugin,
     clearCrashReports: () => clearDiagnosticFiles(app.getPath('crashDumps'), (name, modified) => /\.(dmp|meta)$/i.test(name) && modified < Date.now() - 24 * 60 * 60_000),
     bundledSkillRoot,
     userSkillRoot,
@@ -4556,6 +4568,7 @@ function connectorLifecycle(): ChromeConnectorLifecycle {
   chromeConnectorLifecycle ??= new ChromeConnectorLifecycle({
     userDataPath: chromeConnectorDataRoot(), legacyUserDataPath: app.getPath('userData'),
     nativeHostPath: chromeConnectorNativeHostPath(), msixPackage: process.windowsStore === true,
+    shared: true, appsConfigPath: productAppsConfigPath(),
   }, () => {
     chromeConnectorBroker = chromeConnectorLifecycle?.broker ?? null;
     const status = chromeConnectorBroker?.status();
@@ -4575,6 +4588,21 @@ function connectorLifecycle(): ChromeConnectorLifecycle {
     }
   });
   return chromeConnectorLifecycle;
+}
+
+async function syncBrowserConnectorPlugin(): Promise<void> {
+  if (!platformFeatures(process.platform, process.arch).chromeNativeConnector) return;
+  try {
+    const apps = JSON.parse(await fs.promises.readFile(productAppsConfigPath(), 'utf8'));
+    const plugin = apps.plugins?.find((item: { id?: string }) => item.id === 'chrome');
+    const enabled = apps.serviceEnabled === true && plugin?.installed === true && plugin.enabled === true && plugin.config?.connectionMode !== 'remote_debugging';
+    const lifecycle = connectorLifecycle();
+    if (!enabled) { if (lifecycle.broker) lifecycle.dispose(); chromeConnectorLifecycle = null; chromeConnectorBroker = null; return; }
+    const preference = await fs.promises.readFile(path.join(chromeConnectorDataRoot(), 'browser-connector', 'preference.json'), 'utf8')
+      .then(JSON.parse, (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return null; });
+    if (preference?.enabled === false) return;
+    if (!lifecycle.broker) await lifecycle.setEnabled(true);
+  } catch (error) { console.warn('[chrome-connector] plugin connection unavailable', error instanceof Error ? error.message : String(error)); }
 }
 
 let resolvedConnectorDataRoot: string | undefined;

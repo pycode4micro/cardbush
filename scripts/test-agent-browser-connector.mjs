@@ -61,7 +61,7 @@ test('Agent starts the enabled connector and exposes management through its auth
   assert.deepEqual((await requestChromeConnector('browser.list', { scopeId: 'fixture' }, { configPath: f.configPath })).connections, []);
 });
 
-test('session 51b replay: local Runtime connects Chrome and Edge without the App and preserves separate App pairings', async t => {
+test('local Runtime connects without the App and then shares the same browsers with it', { skip: process.platform !== 'win32' }, async t => {
   const f = await fixture(t), profile = join(f.root, 'profile'), dataRoot = join(f.root, 'local');
   const configurationRoot = join(profile, 'product-host');
   await mkdir(join(configurationRoot, 'config'), { recursive: true });
@@ -69,8 +69,8 @@ test('session 51b replay: local Runtime connects Chrome and Edge without the App
   const service = await AgentService.open({ dataRoot, local: true, localProfileRoot: profile, bundledRoot: resolve('assets') });
   f.close.push(() => service.close());
   assert.equal((await service.call('browser.connector', { action: 'status' })).state, 'running');
-  await assert.rejects(readFile(join(profile, 'browser-connector/bridge.json')), { code: 'ENOENT' }, 'no desktop broker required');
-  const configPath = join(dataRoot, 'browser-connector/bridge.json');
+  await assert.rejects(readFile(join(dataRoot, 'browser-connector/bridge.json')), { code: 'ENOENT' }, 'no second CLI broker');
+  const configPath = join(profile, 'browser-connector/bridge.json');
   const server = createCardbushChromeServer({ browserConfigPath: configPath });
   const codes = [];
   for (const browser of ['chrome', 'edge']) {
@@ -89,15 +89,16 @@ test('session 51b replay: local Runtime connects Chrome and Edge without the App
     assert.equal((await server._registeredTools.list_pages.handler({}, context)).structuredContent.pages[0].browser, browser);
     assert.ok(codes.every(code => !JSON.stringify(listed).includes(code.split('.').at(-1))), 'browser tools never return pairing secrets');
   }
-  const desktop = new AgentBrowserConnector(profile, resolve('assets'), configurationRoot); f.close.push(() => desktop.close());
+  const desktop = new AgentBrowserConnector(profile, resolve('assets'), configurationRoot, true); f.close.push(() => desktop.close());
   await desktop.sync();
   const appPair = await desktop.call({ action: 'pair', browser: 'chrome' });
   const appPeer = await pairedClient(appPair.code); f.close.push(() => appPeer.destroy());
-  assert.equal(desktop.status().connector.connections.length, 1);
-  assert.equal((await service.call('browser.connector', { action: 'status' })).connector.connections.length, 2);
+  assert.equal((await desktop.call({ action: 'status' })).connector.connections.length, 3);
+  assert.equal((await service.call('browser.connector', { action: 'status' })).connector.connections.length, 3);
   await service.close();
-  await assert.rejects(readFile(configPath), { code: 'ENOENT' });
-  assert.equal((await requestChromeConnector('browser.list', { scopeId: 'app-stays-alive' }, { configPath: join(profile, 'browser-connector/bridge.json') })).connections[0].id, appPair.id);
+  await desktop.call({ action: 'status' });
+  const appResumed = await pairedClient(appPair.code); f.close.push(() => appResumed.destroy());
+  assert.ok((await requestChromeConnector('browser.list', { scopeId: 'app-stays-alive' }, { configPath })).connections.some(connection => connection.id === appPair.id && connection.connected));
   const restarted = await AgentService.open({ dataRoot, local: true, localProfileRoot: profile, bundledRoot: resolve('assets') });
   f.close.push(() => restarted.close());
   const resumed = await pairedClient(codes[1], { browser: 'edge' }); f.close.push(() => resumed.destroy());

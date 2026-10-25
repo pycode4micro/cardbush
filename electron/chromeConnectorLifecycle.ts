@@ -4,6 +4,7 @@ import os from 'node:os';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
 import { ChromeConnectorBroker } from './chromeConnectorBroker';
+import { SharedBrowserConnector, type BrowserConnectorHandle } from './sharedBrowserConnector';
 import { ChromeConnectorRegistration, chromeConnectorPlatformSupported, type ConnectorRegistry, type ConnectorRegistrationInput } from './chromeConnectorRegistration';
 import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './chromeConnectorFiles';
 
@@ -25,7 +26,7 @@ export async function acquireConnectorLease(identity = os.homedir().toLowerCase(
 }
 
 export class ChromeConnectorLifecycle {
-  broker: ChromeConnectorBroker | null = null;
+  broker: BrowserConnectorHandle | null = null;
   state: ConnectorLifecycleState = 'disabled';
   enabled = false;
   error = '';
@@ -37,7 +38,7 @@ export class ChromeConnectorLifecycle {
   readonly #registration: ChromeConnectorRegistration;
   readonly #statePath: string;
 
-  constructor(readonly input: ConnectorRegistrationInput & { legacyUserDataPath?: string }, readonly changed: () => void, readonly dependencies: {
+  constructor(readonly input: ConnectorRegistrationInput & { legacyUserDataPath?: string; shared?: boolean; appsConfigPath?: string }, readonly changed: () => void, readonly dependencies: {
     registry?: ConnectorRegistry;
     acquireLease?: () => Promise<() => void>;
     createBroker?: () => ChromeConnectorBroker;
@@ -80,15 +81,16 @@ export class ChromeConnectorLifecycle {
       this.error = '';
       this.state = enabled ? 'enabling' : 'disabling'; this.changed();
       try {
-        this.#releaseLease ??= await (this.dependencies.acquireLease ?? acquireConnectorLease)();
+        if (!this.input.shared) this.#releaseLease ??= await (this.dependencies.acquireLease ?? acquireConnectorLease)();
         if (this.#disposed) throw new Error('Connector is shutting down.');
         const directory = connectorDirectory(this.input.userDataPath);
-        if (!this.broker) this.#assertNoLiveLegacyBroker(directory);
+        if (!this.broker && !this.input.shared) this.#assertNoLiveLegacyBroker(directory);
         if (this.#registration.directory !== directory) this.#assertNoLiveLegacyBroker(this.#registration.directory);
         fs.mkdirSync(directory, { recursive: true });
         this.#cleanupLegacy();
         if (enabled) {
           (this.dependencies.secureDirectory ?? (dir => secureConnectorResource(this.input.nativeHostPath, 'directory', dir)))(directory);
+          if (this.input.shared) this.#persist(true);
           await this.#enable();
         }
         else await this.#disable(remove);
@@ -126,7 +128,9 @@ export class ChromeConnectorLifecycle {
   }
   async #enable(): Promise<void> {
     if (this.broker) { this.#persist(true); this.state = 'enabled'; return; }
-    const broker = this.dependencies.createBroker?.() ?? new ChromeConnectorBroker(this.input.userDataPath, { nativeHostPath: this.input.nativeHostPath });
+    const broker = this.dependencies.createBroker?.() ?? (this.input.shared
+      ? new SharedBrowserConnector(this.input.userDataPath, this.input.nativeHostPath, this.input.appsConfigPath)
+      : new ChromeConnectorBroker(this.input.userDataPath, { nativeHostPath: this.input.nativeHostPath }));
     try {
       await broker.start();
       if (this.#disposed) throw new Error('Connector is shutting down.');
@@ -143,9 +147,13 @@ export class ChromeConnectorLifecycle {
     // Persist first: even a crash during cleanup must not re-enable the connector.
     try {
       this.#persist(false, remove);
+      if (remove && this.input.shared) writeConnectorFile(path.join(connectorDirectory(this.input.userDataPath), 'revoke-all.json'), '{"version":1}');
       if (remove) await this.broker?.disableExtension(true);
     }
     finally { this.#stopBroker(); }
+    if (this.input.shared) {
+      this.state = 'disabled'; return;
+    }
     const bridge = path.join(connectorDirectory(this.input.userDataPath), 'bridge.json');
     assertConnectorFile(bridge);
     fs.rmSync(bridge, { force: true });
@@ -176,6 +184,7 @@ export class ChromeConnectorLifecycle {
       return;
     }
     this.#registration.remove();
+    if (this.input.shared) return; // Shared ownership checks/migration retain any live broker descriptor.
     const bridge = path.join(this.#registration.directory, 'bridge.json');
     assertConnectorFile(bridge); fs.rmSync(bridge, { force: true });
   }

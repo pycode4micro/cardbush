@@ -4,7 +4,7 @@ import net, { type Socket } from 'node:net';
 import path from 'node:path';
 import { createWebSocketStream, type WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
-import { ChromeConnectorWebSocket, type BrowserConnection, type ConnectorBrowser, type ConnectorPortRecovery } from './chromeConnectorWebSocket';
+import { ChromeConnectorWebSocket, type BrowserConnection, type ConnectorBrowser, type ConnectorPortRecovery, type BrowserApprovalOptions } from './chromeConnectorWebSocket';
 import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './chromeConnectorFiles';
 
 import {
@@ -13,7 +13,7 @@ import {
   chromeConnectorProtocol,
 } from './chromeConnectorConstants';
 
-type PeerRole = 'extension' | 'mcp';
+type PeerRole = 'extension' | 'mcp' | 'manager';
 
 const maximumPeerMessageCharacters = 64 * 1024 * 1024;
 const maximumCommandBytes = 1024 * 1024;
@@ -51,6 +51,8 @@ export class ChromeConnectorBroker {
   readonly configPath: string;
   readonly endpoint: string;
   readonly #token = randomBytes(32).toString('hex');
+  readonly #managerToken = randomBytes(32).toString('hex');
+  readonly managerPath: string;
   readonly #server = net.createServer();
   readonly #peers = new Map<string, Peer>();
   readonly #sockets = new Set<Duplex>();
@@ -64,11 +66,11 @@ export class ChromeConnectorBroker {
   #lastError = '';
 
   constructor(readonly userDataPath: string, readonly options: {
-    nativeHostPath?: string; handshakeTimeoutMs?: number; maximumPeers?: number;
-  } = {}) {
+    nativeHostPath?: string; handshakeTimeoutMs?: number; maximumPeers?: number; shared?: boolean;
+  } & BrowserApprovalOptions = {}) {
     this.#routesPath = path.join(connectorDirectory(userDataPath), 'routes.json');
     this.#webSocket = new ChromeConnectorWebSocket(connectorDirectory(userDataPath), (socket, connection) => this.#acceptExtension(socket, connection), options);
-    const identity = createHash('sha256').update(userDataPath + randomUUID()).digest('hex').slice(0, 24);
+    const identity = createHash('sha256').update(options.shared ? fs.realpathSync.native(userDataPath).toLowerCase() : userDataPath + randomUUID()).digest('hex').slice(0, 24);
     this.endpoint = process.platform === 'win32'
       ? `\\\\.\\pipe\\cardbush-browser-connector-${identity}`
       : path.join(userDataPath, chromeConnectorConfigDirectoryName, 'bridge.sock');
@@ -77,6 +79,7 @@ export class ChromeConnectorBroker {
       chromeConnectorConfigDirectoryName,
       chromeConnectorConfigFileName,
     );
+    this.managerPath = path.join(userDataPath, chromeConnectorConfigDirectoryName, 'manager.json');
   }
 
   async start(): Promise<void> {
@@ -95,7 +98,7 @@ export class ChromeConnectorBroker {
         this.#scopeBindings.set(entry[0], entry[1]);
       }
     }
-    if (process.platform !== 'win32') {
+    if (process.platform !== 'win32' && !this.options.shared) {
       try {
         fs.unlinkSync(this.endpoint);
       } catch (error) {
@@ -123,6 +126,14 @@ export class ChromeConnectorBroker {
     try {
       secureConnectorResource(nativeHost, 'pipe', this.endpoint);
       await this.#webSocket.start();
+      if (this.options.shared) {
+        const marker = path.join(directory, 'revoke-all.json');
+        assertConnectorFile(marker);
+        if (fs.existsSync(marker)) {
+          for (const connection of this.#webSocket.connections()) this.#webSocket.revoke(connection.id);
+          fs.unlinkSync(marker);
+        }
+      }
       writeConnectorFile(this.configPath, JSON.stringify({
         protocol: chromeConnectorProtocol,
         endpoint: this.endpoint,
@@ -130,6 +141,9 @@ export class ChromeConnectorBroker {
         pid: process.pid,
         updatedAt: new Date().toISOString(),
       }, null, 2));
+      if (this.options.shared) writeConnectorFile(this.managerPath, JSON.stringify({
+        protocol: chromeConnectorProtocol, endpoint: this.endpoint, token: this.#managerToken, pid: process.pid,
+      }));
     } catch (error) {
       this.#webSocket.stop();
       for (const socket of this.#sockets) socket.destroy();
@@ -156,6 +170,11 @@ export class ChromeConnectorBroker {
       assertConnectorFile(this.configPath);
       const config = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
       if (config.token === this.#token) fs.unlinkSync(this.configPath);
+      if (this.options.shared) {
+        assertConnectorFile(this.managerPath);
+        const manager = JSON.parse(fs.readFileSync(this.managerPath, 'utf8'));
+        if (manager.token === this.#managerToken) fs.unlinkSync(this.managerPath);
+      }
     } catch (error) {
       if (!isMissing(error)) console.error('[chrome-connector] failed to remove bridge config', error);
     }
@@ -257,14 +276,14 @@ export class ChromeConnectorBroker {
           return;
         }
         if (!authenticated) {
-          // The private pipe is MCP-only. Extensions must use the paired socket.
-          const role = message.role === 'mcp'
-            ? message.role
-            : null;
+          // Management uses a separate private credential, never the MCP token.
+          // Extensions still authenticate over the paired WebSocket transport.
+          const role = message.role === 'mcp' ? 'mcp'
+            : this.options.shared && message.role === 'manager' ? 'manager' : null;
           if (
             message.type !== 'hello' ||
             message.protocol !== chromeConnectorProtocol ||
-            message.token !== this.#token ||
+            message.token !== (role === 'manager' ? this.#managerToken : this.#token) ||
             !role
           ) {
             socket.destroy(new Error('Browser Use peer authentication failed.'));
@@ -279,10 +298,12 @@ export class ChromeConnectorBroker {
             type: 'hello_ack',
             protocol: chromeConnectorProtocol,
             clientId: pending.id,
+            ...(role === 'manager' ? { status: this.status() } : {}),
           });
           continue;
         }
-        this.#route(pending, message);
+        if (pending.role === 'manager') this.#manage(pending, message);
+        else this.#route(pending, message);
       }
     });
     socket.on('error', (error) => {
@@ -296,6 +317,34 @@ export class ChromeConnectorBroker {
       // browser. Keep its bounded request record until a response or disconnect,
       // so an explicit browser switch cannot race an uncertain mutation.
     });
+  }
+
+  #manage(peer: Peer, message: Record<string, unknown>): void {
+    if (message.type !== 'manage' || typeof message.id !== 'string') { peer.socket.destroy(); return; }
+    try {
+      const input = asRecord(message.input);
+      let result: unknown;
+      switch (message.action) {
+        case 'status': result = this.status(); break;
+        case 'pair': result = this.createPairing({ browser: input.browser as ConnectorBrowser, label: input.label as string | undefined }); break;
+        case 'default': this.setDefaultConnection(string(input.id)); result = this.status(); break;
+        case 'revoke': this.revokeConnection(string(input.id)); result = this.status(); break;
+        case 'import':
+          if (!Array.isArray(input.bindings) || input.bindings.length > 4096 || input.bindings.some(entry => !Array.isArray(entry)
+            || entry.length !== 2 || typeof entry[0] !== 'string' || !entry[0] || entry[0].length > 512 || !/^[a-f0-9]{32}$/.test(entry[1])))
+            throw new Error('Invalid legacy browser routes.');
+          if (new Set([...this.#scopeBindings.keys(), ...input.bindings.map(entry => entry[0])]).size > 4096) throw new Error('Browser session route limit reached.');
+          this.#webSocket.importPairings(input.credentials as Parameters<ChromeConnectorWebSocket['importPairings']>[0], string(input.defaultConnectionId));
+          for (const [scope, connection] of input.bindings) if (!this.#scopeBindings.has(scope)) this.#bind(scope, connection);
+          result = this.status(); this.#publish(); break;
+        case 'disable':
+          if (input.forgetPairing === true) for (const connection of this.#webSocket.connections()) this.revokeConnection(connection.id);
+          else void this.disableExtension();
+          result = null; break;
+        default: throw new Error('Unknown browser connector management action.');
+      }
+      writeLine(peer.socket, { type: 'managed', id: message.id, result });
+    } catch (error) { writeLine(peer.socket, { type: 'managed', id: message.id, error: error instanceof Error ? error.message : String(error) }); }
   }
 
   #acceptExtension(client: WebSocket, connection: BrowserConnection): void {
@@ -349,6 +398,9 @@ export class ChromeConnectorBroker {
           this.#reply(peer, id, undefined, 'browser_session_busy', 'Wait for the browser switch to finish.'); return;
         }
         let connectionId = referenceAction ? string(params.connectionId) : this.#scopeBindings.get(scopeId);
+        if (message.method === 'debugger.suspendScope' && !connectionId) {
+          this.#reply(peer, id, { suspended: false, scopeId }); return;
+        }
         let switchTo: string | undefined;
         if (message.method === 'browser.select') {
           const target = string(params.connectionId);
@@ -439,6 +491,7 @@ export class ChromeConnectorBroker {
   }
 
   #publish(): void {
+    for (const peer of this.#peers.values()) if (peer.role === 'manager') writeLine(peer.socket, { type: 'status', status: this.status() });
     const value = this.status();
     for (const listener of this.#listeners) listener(value);
   }

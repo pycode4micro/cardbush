@@ -98,7 +98,7 @@ async function refresh(reconnect = false) {
       : '新版扩展尚未生效。重新加载后将使用已保存的配对和网站授权，无需重新生成配对码。';
     const pairingState = staleWorker ? 'outdated' : Boolean(state.hasPairing);
     if (lastPairingState !== pairingState) {
-      pairingDetails.open = !staleWorker && !state.hasPairing;
+      pairingDetails.open = false;
       lastPairingState = pairingState;
     }
     const candidates = Array.isArray(state.scopeCandidates) ? state.scopeCandidates : [];
@@ -125,7 +125,7 @@ async function refresh(reconnect = false) {
     connection.textContent = actionError || (staleWorker
       ? '扩展后台仍在运行旧版本，需要重新加载。'
       : state.pairingRequired
-      ? '尚未配对，或配对已被移除。请填写 CardBush 设置中的配对码。'
+      ? '连接已移除。点击「连接 CardBush」重新连接本机，或使用手动配对连接其他 Agent。'
       : !state.connectorEnabled
       ? '扩展连接已关闭，配对与网站授权已保留。点击「连接 CardBush」即可恢复。'
       : state.nativeConnected
@@ -133,7 +133,7 @@ async function refresh(reconnect = false) {
         ? `正在控制 ${state.controlledTabCount} 个标签页`
         : '已连接 CardBush，等待控制'
       : state.nativeConnecting
-        ? '正在使用已保存的配对连接 CardBush…'
+        ? state.hasPairing ? '正在使用已保存的授权连接 CardBush…' : '正在申请连接，请依次在系统弹窗和扩展中确认…'
         : `CardBush 暂时离线，将自动重连。请确认应用和连接器已开启；无需重复授权。${state.lastError ? `\n${state.lastError}` : ''}`);
     connection.classList.toggle('offline', Boolean(actionError) || (!staleWorker && state.pairingRequired));
     connection.classList.toggle('waiting', staleWorker || (!state.nativeConnected && !state.pairingRequired && !actionError));
@@ -155,7 +155,7 @@ async function refresh(reconnect = false) {
       const permissionAction = ['allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action);
       button.disabled = permissionAction && (!state.nativeConnected || !state.activeScope || !state.origin);
       if (button.dataset.action === 'disable_connector') button.disabled = !state.connectorEnabled;
-      if (button.dataset.action === 'reconnect') button.disabled = !state.hasPairing || state.nativeConnected || state.nativeConnecting;
+      if (button.dataset.action === 'reconnect') button.disabled = state.nativeConnected || state.nativeConnecting;
       if (staleWorker && ['pair', 'reconnect', 'allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action)) button.disabled = true;
       if (button.dataset.action === 'allow_all') button.textContent = state.allowAllSites
         ? '复制当前页 · 已允许全部网站'

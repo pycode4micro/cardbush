@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createECDH, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import type { Socket } from 'node:net';
@@ -10,6 +10,11 @@ import { assertConnectorFile, writeConnectorFile } from './chromeConnectorFiles'
 export type ConnectorBrowser = 'chrome' | 'edge';
 export type BrowserConnection = { id: string; browser: ConnectorBrowser; label: string };
 export type ConnectorPortRecovery = { previousPort: number; port: number; reason: 'EADDRINUSE' | 'EACCES' };
+export type BrowserApprovalOptions = {
+  requestApproval?: (browser: ConnectorBrowser, signal: AbortSignal) => Promise<boolean>;
+  approvalTimeoutMs?: number;
+  approvalCooldownMs?: number;
+};
 type Credential = BrowserConnection & { secret: string };
 type Pairing = Credential & { expiresAt: number };
 const hex = (size: number) => randomBytes(size).toString('hex');
@@ -20,8 +25,8 @@ function matches(proof: string, expected: string): boolean {
   return /^[a-f0-9]{64}$/.test(proof) && timingSafeEqual(Buffer.from(proof, 'hex'), Buffer.from(expected, 'hex'));
 }
 
-/** Extension transport. Secrets travel only in the explicitly copied pairing
- * code, never in URLs, HTTP responses, status broadcasts or diagnostics. */
+/** Authenticated extension transport. First connection uses local user consent
+ * and key agreement; existing credentials never travel over the wire. */
 export class ChromeConnectorWebSocket {
   readonly #file: string;
   readonly #server = http.createServer({ maxHeaderSize: 8192 }, (_request, response) => {
@@ -29,10 +34,15 @@ export class ChromeConnectorWebSocket {
   });
   readonly #ws = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024,
     perMessageDeflate: false, handleProtocols: () => 'cardbush-v2' });
+  readonly #approvalWs = new WebSocketServer({ noServer: true, maxPayload: 4096,
+    perMessageDeflate: false, handleProtocols: () => 'cardbush-pair-v1' });
+  #approval?: WebSocket;
+  #approvalNotBefore = 0;
   readonly #sockets = new Set<Socket>();
   readonly #nonces = new Set<string>();
   #credentials = new Map<string, Credential>();
   #defaultConnectionId = '';
+  readonly #revoked = new Set<string>();
   readonly #clients = new Map<WebSocket, string>();
   #pending: Pairing | null = null;
   #port = 0;
@@ -40,7 +50,7 @@ export class ChromeConnectorWebSocket {
   #portRecovery?: ConnectorPortRecovery;
 
   constructor(directory: string, readonly connected: (socket: WebSocket, connection: BrowserConnection) => void,
-    readonly options: { handshakeTimeoutMs?: number; pairingTtlMs?: number } = {}) {
+    readonly options: { handshakeTimeoutMs?: number; pairingTtlMs?: number } & BrowserApprovalOptions = {}) {
     this.#file = path.join(directory, 'pairing.json');
     this.#server.requestTimeout = 5000;
     this.#server.headersTimeout = 5000;
@@ -53,11 +63,18 @@ export class ChromeConnectorWebSocket {
     });
     this.#server.on('upgrade', (request, socket, head) => {
       const reject = () => socket.destroy();
-      if (!this.#running || request.method !== 'GET' || request.url !== '/connect'
+      if (!this.#running || request.method !== 'GET'
         || request.headers.host !== `127.0.0.1:${this.#port}`
         || request.headers.origin !== `chrome-extension://${chromeConnectorExtensionId}`
         || request.socket.remoteAddress !== '127.0.0.1' || this.#ws.clients.size >= 16) return reject();
       const protocols = request.headers['sec-websocket-protocol']?.split(',').map(value => value.trim());
+      if (request.url === '/request-connection' && this.options.requestApproval && protocols?.length === 1 && protocols[0] === 'cardbush-pair-v1') {
+        this.#approvalWs.handleUpgrade(request, socket, head, client => {
+          request.socket.setTimeout(0); this.#requestConnection(client);
+        });
+        return;
+      }
+      if (request.url !== '/connect') return reject();
       if (protocols?.length !== 2 || protocols[0] !== 'cardbush-v2') return reject();
       const match = /^auth\.([a-f0-9]{32})\.([a-f0-9]{64})\.([a-f0-9]{64})$/.exec(protocols[1]!);
       if (!match) return reject();
@@ -95,6 +112,10 @@ export class ChromeConnectorWebSocket {
       this.#defaultConnectionId = saved.version === 2 ? credentials[0]?.id ?? '' : saved.defaultConnectionId;
       if (typeof this.#defaultConnectionId !== 'string' || (this.#defaultConnectionId && !this.#credentials.has(this.#defaultConnectionId))) throw invalid();
       this.#port = saved.port;
+      if (saved.revoked !== undefined && (!Array.isArray(saved.revoked) || saved.revoked.length > 256 || saved.revoked.some((id: unknown) => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)))) throw invalid();
+      for (const id of saved.revoked ?? []) this.#revoked.add(id);
+      if (saved.approvalNotBefore !== undefined && (!Number.isFinite(saved.approvalNotBefore) || saved.approvalNotBefore < 0)) throw invalid();
+      this.#approvalNotBefore = Math.min(saved.approvalNotBefore ?? 0, Date.now() + 60_000);
     }
     const savedPort = this.#port;
     const candidates = [...new Set([...(savedPort ? [savedPort] : []), ...chromeConnectorDiscoveryPorts])];
@@ -143,6 +164,98 @@ export class ChromeConnectorWebSocket {
       expiresAt: new Date(this.#pending.expiresAt).toISOString(), id: this.#pending.id, browser };
   }
   get port(): number { return this.#port; }
+  importPairings(credentials: Credential[], defaultId: string): void {
+    if (!Array.isArray(credentials) || credentials.length > 8) throw new Error('Invalid legacy browser pairings.');
+    const next = new Map(this.#credentials);
+    for (const item of credentials) {
+      if (!item || !/^[a-f0-9]{32}$/.test(item.id) || !/^[a-f0-9]{64}$/.test(item.secret)
+        || !['chrome', 'edge'].includes(item.browser) || typeof item.label !== 'string' || !item.label.trim() || item.label.length > 80)
+        throw new Error('Invalid legacy browser pairing.');
+      if (this.#revoked.has(item.id)) continue;
+      const existing = next.get(item.id);
+      if (existing && (existing.secret !== item.secret || existing.browser !== item.browser)) throw new Error('Conflicting legacy browser identity.');
+      next.set(item.id, item);
+    }
+    if (next.size > 8) throw new Error('Remove unused browser connections before importing the CLI pairings (maximum 8).');
+    const previous = this.#credentials, previousDefault = this.#defaultConnectionId;
+    this.#credentials = next;
+    if (previous.size === 0 && !previousDefault && next.has(defaultId)) this.#defaultConnectionId = defaultId;
+    try { this.#save(); } catch (error) { this.#credentials = previous; this.#defaultConnectionId = previousDefault; throw error; }
+  }
+  #requestConnection(client: WebSocket): void {
+    const controller = new AbortController();
+    let phase = 'hello', id = '', nonce = '', secret = '', browser: ConnectorBrowser;
+    let timer = setTimeout(() => client.terminate(), 5000);
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const fail = (code: string) => { if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ type: 'pair_error', code })); client.close();
+    } };
+    const approved = () => client.send(JSON.stringify({ type: 'pair_approved',
+      proof: connectorProof(secret, `approved:${id}:${nonce}`) }));
+    client.on('error', () => {});
+    client.once('close', () => {
+      clearTimeout(timer); clearInterval(heartbeat); controller.abort();
+      if (this.#approval === client && phase !== 'approving') this.#approval = undefined;
+    });
+    client.on('message', (data, binary) => { void (async () => {
+      if (binary || data.toString().length > 4096 || controller.signal.aborted) throw new Error('Invalid request');
+      const message = JSON.parse(data.toString());
+      if (message.type === 'pair_ping') return;
+      if (phase === 'browser') {
+        if (message.type !== 'pair_accept' || !matches(String(message.proof), connectorProof(secret, `accept:${id}:${nonce}`))) throw new Error('Browser confirmation required');
+        phase = 'done';
+        this.#credentials.set(id, { id, secret, browser, label: browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome' });
+        const previous = this.#defaultConnectionId;
+        if (this.#credentials.size === 1 && !previous) this.#defaultConnectionId = id;
+        try { this.#save(); } catch (error) { this.#credentials.delete(id); this.#defaultConnectionId = previous; throw error; }
+        approved(); client.close(); return;
+      }
+      if (phase === 'hello') {
+        phase = 'challenge';
+        if (message.type !== 'pair_request' || !/^[a-f0-9]{32}$/.test(message.id)
+          || !/^[a-f0-9]{64}$/.test(message.nonce) || !['chrome', 'edge'].includes(message.browser)
+          || !/^04[a-f0-9]{128}$/.test(message.key)) throw new Error('Invalid identity');
+        id = message.id; nonce = message.nonce; browser = message.browser;
+        if (this.#revoked.has(id)) { fail('connection_revoked'); return; }
+        const existing = this.#credentials.get(id);
+        if (existing) {
+          if (existing.browser !== browser || !matches(String(message.resumeProof), connectorProof(existing.secret, `resume:${id}:${nonce}`))) {
+            fail('identity_conflict'); return;
+          }
+          secret = existing.secret; approved(); client.close(); return;
+        }
+        if (this.#approval || Date.now() < this.#approvalNotBefore) { fail('approval_busy'); return; }
+        if (this.#credentials.size >= 8 || this.#revoked.size >= 256) { fail('connection_limit'); return; }
+        const key = createECDH('prime256v1'); key.generateKeys();
+        const publicKey = key.getPublicKey('hex');
+        secret = createHash('sha256').update(key.computeSecret(Buffer.from(message.key, 'hex')))
+          .update(`cardbush-pair-v1:${id}:${browser}:${publicKey}`).digest('hex');
+        this.#approval = client;
+        client.send(JSON.stringify({ type: 'pair_challenge', key: publicKey }));
+        return;
+      }
+      if (phase !== 'challenge' || message.type !== 'pair_confirm'
+        || !matches(String(message.proof), connectorProof(secret, `request:${id}:${nonce}`))) throw new Error('Invalid confirmation');
+      phase = 'approving';
+      this.#approvalNotBefore = Date.now() + (this.options.approvalCooldownMs ?? 30_000);
+      this.#save();
+      clearTimeout(timer); timer = setTimeout(() => { controller.abort(); fail('connection_denied'); }, this.options.approvalTimeoutMs ?? 90_000);
+      heartbeat = setInterval(() => { if (client.readyState === WebSocket.OPEN) client.send('{"type":"pair_waiting"}'); }, 15_000);
+      client.send('{"type":"pair_waiting"}');
+      try {
+        const allowed = await this.options.requestApproval!(browser, controller.signal);
+        if (!this.#running || controller.signal.aborted || client.readyState !== WebSocket.OPEN) return;
+        if (!allowed) {
+          this.#revoked.add(id); this.#save(); fail('connection_denied'); return;
+        }
+        phase = 'browser';
+        clearTimeout(timer); timer = setTimeout(() => fail('connection_denied'), 60_000);
+        client.send(JSON.stringify({ type: 'pair_allowed', proof: connectorProof(secret, `allowed:${id}:${nonce}`) }));
+      } finally {
+        if (phase !== 'browser') { phase = 'done'; if (this.#approval === client) this.#approval = undefined; }
+      }
+    })().catch(() => { if (this.#approval === client) this.#approval = undefined; fail('connection_failed'); }); });
+  }
   get portRecovery(): ConnectorPortRecovery | undefined { return this.#portRecovery; }
   get paired(): boolean { return this.#credentials.size > 0; }
   get defaultConnectionId(): string { return this.#defaultConnectionId; }
@@ -157,9 +270,11 @@ export class ChromeConnectorWebSocket {
     const credential = this.#credentials.get(id);
     if (!credential) throw new Error('Browser pairing not found.');
     const previous = this.#defaultConnectionId;
+    if (this.#revoked.size >= 256 && !this.#revoked.has(id)) throw new Error('Browser revocation history is full. Remove connector configuration to reset it.');
+    this.#revoked.add(id);
     this.#credentials.delete(id);
     if (previous === id) this.#defaultConnectionId = '';
-    try { this.#save(); } catch (error) { this.#credentials.set(id, credential); this.#defaultConnectionId = previous; throw error; }
+    try { this.#save(); } catch (error) { this.#revoked.delete(id); this.#credentials.set(id, credential); this.#defaultConnectionId = previous; throw error; }
     for (const [client, connectionId] of this.#clients) if (connectionId === id) {
       client.send(JSON.stringify({ type: 'control', method: 'connector.disable', reason: 'pairing_removed' }));
       client.close(1008, 'Pairing removed');
@@ -170,12 +285,13 @@ export class ChromeConnectorWebSocket {
   stop(): void {
     this.#running = false; this.#pending = null; this.#nonces.clear();
     for (const client of this.#ws.clients) client.terminate();
+    for (const client of this.#approvalWs.clients) client.terminate();
     for (const socket of this.#sockets) socket.destroy();
-    this.#server.close(); this.#ws.close();
+    this.#server.close(); this.#ws.close(); this.#approvalWs.close();
   }
   #save(): void {
     writeConnectorFile(this.#file, JSON.stringify({ version: 3, port: this.#port,
-      credentials: [...this.#credentials.values()], defaultConnectionId: this.#defaultConnectionId }));
+      credentials: [...this.#credentials.values()], defaultConnectionId: this.#defaultConnectionId, revoked: [...this.#revoked], approvalNotBefore: this.#approvalNotBefore }));
   }
   #authenticate(client: WebSocket, candidate: Credential, nonce: string): void {
     const serverNonce = hex(32);

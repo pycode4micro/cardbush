@@ -26,6 +26,8 @@ internal static class CardBushBrowserHost
 
     public static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--approve-browser-connection")
+            return BrowserConnectionApproval.Run(args[1]);
         if (args.Length == 1 && args[0] == "--package-data-root")
         {
             try {
