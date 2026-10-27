@@ -510,7 +510,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "terminal_exec",
-      description: terminalToolDescription() + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. environment="local" uses this host and its native shell.' : ''),
+      description: terminalToolDescription() + ' On Windows use PowerShell 7 (pwsh); shell="powershell" selects pwsh, never Windows PowerShell 5. If pwsh is missing, ask the user to install PowerShell 7 on the execution host before retrying; do not substitute powershell.exe.' + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. environment="local" uses this host and its native shell.' : ''),
       inputSchema: objectSchema({
         command: { type: "string", minLength: 1 },
         cwd: {
@@ -532,7 +532,7 @@ export function registerWorkspaceTools(
           type: "string",
           enum: options.remote ? ['cmd', 'powershell', 'posix'] : availableTerminalShells(),
           ...(options.remote ? {} : { default: defaultTerminalShell() }),
-          description: "Explicit command interpreter. When omitted, uses the selected environment's native default. Runtime never rewrites commands between shell syntaxes.",
+          description: "Explicit command interpreter. powershell means PowerShell 7 (pwsh), not Windows PowerShell 5. When omitted, uses the selected environment's native default. Runtime never rewrites commands between shell syntaxes.",
         },
         notify_on_exit: { type: 'boolean', default: true, description: 'After yielding a running command, Runtime delivers one completion notification during this turn and waits before ending it. Do other independent work; do not repeatedly poll. Set false for persistent servers or interactive processes that should outlive the task. Notifications stop when the turn is stopped; the command is not restarted.' },
         additional_permissions: {

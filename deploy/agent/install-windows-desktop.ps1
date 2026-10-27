@@ -1,3 +1,4 @@
+#requires -Version 7.0
 param(
   [Parameter(Mandatory=$true)][string]$ReleaseRoot,
   [Parameter(Mandatory=$true)][string]$DataRoot,
@@ -7,6 +8,8 @@ param(
   [int]$Port = 4782
 )
 $ErrorActionPreference = 'Stop'
+$powershell = Join-Path $PSHOME 'pwsh.exe'
+if (!(Test-Path -LiteralPath $powershell -PathType Leaf)) { throw 'PowerShell 7 (pwsh) is required. Install it before running this optional desktop helper setup.' }
 $ReleaseRoot = (Resolve-Path -LiteralPath $ReleaseRoot).Path
 $DataRoot = (Resolve-Path -LiteralPath $DataRoot).Path
 $node = if ($NodePath) { (Resolve-Path -LiteralPath $NodePath).Path } else { (Get-Command node.exe -ErrorAction Stop).Source }
@@ -63,7 +66,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare Computer Use policy.' }
 $log = Join-Path $captures 'helper.log'
 $command = "& '$($node.Replace("'","''"))' '$($entry.Replace("'","''"))' --data-dir '$($DataRoot.Replace("'","''"))' 2>> '$($log.Replace("'","''"))'; exit `$LASTEXITCODE"
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encoded" -WorkingDirectory $ReleaseRoot
+$action = New-ScheduledTaskAction -Execute $powershell -Argument "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encoded" -WorkingDirectory $ReleaseRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
 $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries

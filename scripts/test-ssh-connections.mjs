@@ -194,7 +194,7 @@ test('Windows SSH uses the selected user directory, native shells and one cached
   }
   assert.equal(f.controls.filter(command => command.includes('-EncodedCommand')).length, 1);
   assert.equal(f.launches.length, 3); assert.ok(f.launches.every(item => item.command.includes('echo 中文 & echo test')));
-  assert.ok(f.commands.every(command => command.startsWith('powershell.exe ') && command.length < 8191));
+  assert.ok(f.commands.every(command => command.startsWith('pwsh.exe ') && command.length < 8191));
   assert.ok(f.launches.every(item => item.script.includes("Set-Location -LiteralPath $cwd") && !item.script.includes('/bin/sh')));
   await assert.rejects(f.manager.execute(f.uri, 'wrong-shell', 'terminal_exec', { shell: 'posix', command: 'echo unsafe', cwd: '.' }), /host is windows/);
   assert.equal(f.launches.length, 3, 'unsupported shells never reach the executor');
@@ -260,6 +260,12 @@ test('SSH platform detection fails closed and rejects Windows paths on a POSIX s
   const linux = await fixture(t); await linux.trust();
   await assert.rejects(linux.manager.execute(linux.uri, 'owner', 'terminal_exec', { cwd: 'C:\\Users\\111', command: 'must-not-run', shell: 'posix' }), /POSIX/);
   assert.equal(linux.commands.length, 0);
+});
+
+test('Windows SSH without pwsh reports installation guidance before sending user commands', async t => {
+  const f=await fixture(t,{windows:true,unknownPlatform:true});await f.trust();
+  await assert.rejects(f.manager.execute(f.uri,'owner','terminal_exec',{command:'must-not-run',shell:'powershell'}),/Ask the user to install PowerShell 7/);
+  assert.equal(f.commands.length,0);assert.ok(f.controls.every(command=>command.startsWith('pwsh.exe ')));
 });
 
 for (const windows of [false, true]) test(`SFTP file access needs no command channel on ${windows ? 'Windows' : 'POSIX'} hosts`, async t => {

@@ -71,7 +71,16 @@ export function gitBashExecutable(context = createPlatformContext()): string | u
 }
 function powershell(context: PlatformContext): string | undefined {
   if (context.platform !== 'win32') return findExecutable('pwsh',context);
-  return findExecutable('pwsh.exe',context) ?? findExecutable('powershell.exe',context) ?? 'powershell.exe';
+  const selected = findExecutable('pwsh.exe',context);
+  if (selected && path.win32.isAbsolute(selected)) return selected;
+  const root = environment(context,'ProgramFiles');
+  const installed = root && path.win32.isAbsolute(root) && path.win32.join(root,'PowerShell','7','pwsh.exe');
+  return installed && context.isExecutable(installed) ? installed : undefined;
+}
+export function powerShellExecutable(context = createPlatformContext()): string {
+  const executable = powershell(context);
+  if (!executable) throw Error('PowerShell 7 (pwsh) is required. Ask the user to install PowerShell 7 on this host and make pwsh available. Windows PowerShell 5 is unsupported.');
+  return executable;
 }
 function nativeShell(context: PlatformContext): string {
   const preferred = environment(context,'SHELL')?.trim();
@@ -83,15 +92,16 @@ export function terminalRuntimes(context = createPlatformContext()): TerminalRun
   return ['powershell', ...(findExecutable('wsl.exe',context) ? ['wsl' as const] : []), ...(gitBashExecutable(context) ? ['git_bash' as const] : [])];
 }
 export function terminalInvocation(runtime?: TerminalRuntime, cwd?: string, command?: string, context = createPlatformContext()): {command: string; args: string[]} {
+  const override = environment(context,'CARDBUSH_TERMINAL_SHELL')?.trim();
   let selected = normalizeTerminalRuntime(runtime,context.platform);
-  if (selected === 'powershell' && !powershell(context)) {
-    if (command !== undefined) throw new Error('PowerShell is unavailable. Install pwsh or select the native shell.');
+  if (selected === 'powershell' && !powershell(context) && !(override && selected === defaultTerminalRuntime(context.platform))) {
+    if (context.platform === 'win32' || command !== undefined) powerShellExecutable(context);
     selected = defaultTerminalRuntime(context.platform);
   }
-  const override = environment(context,'CARDBUSH_TERMINAL_SHELL')?.trim();
   if (override && selected === defaultTerminalRuntime(context.platform)) {
     const executable = findExecutable(override,context);
     if (!executable) throw new Error('CARDBUSH_TERMINAL_SHELL must name an available executable, without command arguments.');
+    if (context.platform === 'win32' && selected === 'powershell' && path.win32.basename(executable).toLowerCase() !== 'pwsh.exe') throw Error('Windows terminal overrides must select PowerShell 7 (pwsh.exe); Windows PowerShell 5 is unsupported.');
     return {command:executable,args:command === undefined ? [] : selected === 'powershell'
       ? ['-NoLogo','-NoProfile','-NonInteractive','-Command',powerShellCommand(command)] : ['-lc',command]};
   }
@@ -106,7 +116,7 @@ export function terminalInvocation(runtime?: TerminalRuntime, cwd?: string, comm
 export function powerShellCommand(command: string, diagnosticToken?: string) {
   if (diagnosticToken && !/^[a-f0-9]{32}$/.test(diagnosticToken)) throw new Error('Invalid terminal diagnostic token.');
   // Inspect status in the user's scope, including trailing comments and cmdlet errors.
-  return ['[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)',
+  return ['if ($PSVersionTable.PSVersion.Major -lt 7) { [Console]::Error.WriteLine("PowerShell 7 (pwsh) is required; ask the user to install it. Windows PowerShell 5 is unsupported."); exit 2 }', '[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)',
     '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)', '$OutputEncoding = [Console]::OutputEncoding',
     '$cardbushPhase = "working_directory"', '$Error.Clear()',
     'try {',
@@ -138,8 +148,7 @@ export function powerShellCommand(command: string, diagnosticToken?: string) {
 }
 export function commandInvocation(shell: CommandShell, command: string, context = createPlatformContext(), diagnosticToken?: string): {executable:string;args:string[]} {
   if (shell === 'powershell') {
-    const executable = powershell(context);
-    if (!executable) throw new Error('PowerShell is unavailable on this host.');
+    const executable = powerShellExecutable(context);
     return {executable,args:['-NoLogo','-NoProfile','-NonInteractive','-Command',powerShellCommand(command, diagnosticToken)]};
   }
   if (shell === 'cmd') {

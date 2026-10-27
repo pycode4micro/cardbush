@@ -338,6 +338,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
 const help = `CardBush CLI (runs locally by default, or connects to an existing Agent)
 Usage: cardbush [options]
        cardbush --resume [session-id] [options]
+       cardbush serve --background | --status | --stop
 
 New sessions trust and use the current directory. Approval mode is the default;
 use --full-access to start with full access.

@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
-import { createPlatformContext, findExecutable } from '@cardbush/platform';
-import { loadCommandSandboxConfiguration, resolveLinuxSandboxExecutable, resolveProcessResourceHost, spawnResourceManagedProcess } from '@cardbush/bush-runtime';
+import { commandInvocation, createPlatformContext, findExecutable } from '@cardbush/platform';
+import { loadCommandSandboxConfiguration, resolveLinuxSandboxExecutable, resolveProcessResourceHost, spawnResourceManagedProcess, windowsInterpreterRoots } from '@cardbush/bush-runtime';
 import type { SandboxSetupStatus } from './sandboxTypes.js';
 
 const exec = promisify(execFile);
@@ -115,16 +115,23 @@ export class SandboxSetup {
     const directory = await mkdtemp(join(tmpdir(), 'cardbush-sandbox-check-'));
     const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 15000);
     try {
-      const executable = this.#platform === 'win32' ? join(this.#env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe') : '/bin/sh';
-      const managed = await spawnResourceManagedProcess({ executable, args: this.#platform === 'win32' ? ['/d', '/c', 'exit 0'] : ['-c', 'exit 0'],
+      // Exercise the same selected shell and base modules as terminal_exec.
+      // cmd.exe can start successfully while USER32/PowerShell initialization
+      // fails in a service session; that must not be reported as ready.
+      const marker = `cardbush-sandbox-${randomUUID()}`;
+      const invocation = this.#platform === 'win32'
+        ? commandInvocation('powershell', `$ErrorActionPreference='Stop'; Set-Content -LiteralPath './probe.txt' -Value '${marker}'; if ((Get-Content -LiteralPath './probe.txt') -ne '${marker}') { throw 'Sandbox file verification failed' }; @{ ready = $true } | ConvertTo-Json -Compress`, createPlatformContext({ platform: this.#platform, env: this.#env }))
+        : { executable: '/bin/sh', args: ['-c', 'exit 0'] };
+      const managed = await spawnResourceManagedProcess({ ...invocation,
         cwd: directory, env: this.#env, hostPath, signal: abort.signal,
-        sandbox: { writableRoots: [directory], network: 'disabled', linuxExecutable } });
+        sandbox: { writableRoots: [directory], readableRoots: windowsInterpreterRoots(invocation.executable, this.#env, this.#platform), network: 'disabled', linuxExecutable } });
       let stderr = ''; managed.child.stdout.resume(); managed.child.stderr.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-2000); });
       let code: number | null;
       try { code = await new Promise<number | null>((resolve, reject) => { managed.child.once('error', reject); managed.child.once('exit', resolve); }); }
       catch (error) { await managed.complete(); throw error; }
       const report = await managed.complete();
       if (report?.code || code !== 0) throw Error(report?.message || stderr || `Sandbox check exited with ${code}.`);
+      if (this.#platform === 'win32' && (await readFile(join(directory, 'probe.txt'), 'utf8')).replace(/^\uFEFF/, '').trim() !== marker) throw Error('Sandbox shell did not complete its file check.');
       return { state: 'ready', installed: true };
     } catch (error) { return { state: 'blocked', installed: true, detail: error instanceof Error ? error.message : String(error) }; }
     finally { clearTimeout(timer); await rm(directory, { recursive: true, force: true }); }

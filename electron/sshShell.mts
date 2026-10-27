@@ -10,7 +10,7 @@ export const powershellCommand = (script: string) => {
     const bytes = gzipSync(Buffer.from(script, 'utf8')).toString('base64');
     script = `$bytes=[Convert]::FromBase64String('${bytes}'); $memory=New-Object IO.MemoryStream(,$bytes); $gzip=New-Object IO.Compression.GZipStream($memory,[IO.Compression.CompressionMode]::Decompress); $reader=New-Object IO.StreamReader($gzip,[Text.Encoding]::UTF8); & ([ScriptBlock]::Create($reader.ReadToEnd()))`;
   }
-  const command = `powershell.exe -NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}`;
+  const command = `pwsh.exe -NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}`;
   if (command.length > 8100) throw Error('Windows SSH launcher exceeds the shell command line limit.');
   return command;
 };
@@ -25,7 +25,7 @@ export function remoteShell(platform: SshPlatform, requested?: string): SshShell
 }
 
 export const windowsHostProbe = powershellCommand(
-  `if ([Environment]::OSVersion.Platform -ne 'Win32NT') { exit 1 }; [Console]::WriteLine('CARDBUSH_HOST_WINDOWS_V1'); exit 0`);
+  `if ($PSVersionTable.PSVersion.Major -lt 7 -or [Environment]::OSVersion.Platform -ne 'Win32NT') { exit 1 }; [Console]::WriteLine('CARDBUSH_HOST_WINDOWS_V1'); exit 0`);
 
 // The handle belongs only to the SSH wrapper. Ordinary descendants inherit the
 // job, not its handle; wrapper exit closes the last handle and cleans them up.

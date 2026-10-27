@@ -12,6 +12,17 @@ const execFileAsync = promisify(execFile);
 const windowsCapabilities = new Map<string, Promise<{ scopes: boolean; files: boolean }>>();
 const linuxCapabilities = new Map<string, Promise<void>>();
 
+/** Only for a host-selected interpreter, never model-supplied executable/PATH.
+ * Public Windows install roots already allow AppContainer reads; a per-user
+ * shell needs its own installation directory, not the user's whole profile.
+ */
+export function windowsInterpreterRoots(executable: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
+  if (platform !== 'win32' || !isAbsolute(executable)) return [];
+  const publicRoots = [env.SystemRoot, env.ProgramFiles, env['ProgramFiles(x86)']]
+    .filter((value): value is string => Boolean(value && isAbsolute(value)));
+  return publicRoots.some(root => within(root, executable)) ? [] : [dirname(executable)];
+}
+
 // Runs inside bubblewrap before the requested executable. Mounts pin objects
 // after setup; checking there closes the pathname-to-mount race on older bwrap.
 const linuxSandboxVerifier = `

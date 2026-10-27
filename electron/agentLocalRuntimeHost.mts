@@ -1,14 +1,13 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmod, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { createServer } from 'node:net';
 import { promisify } from 'node:util';
 import { AgentService } from './agentService.mjs';
 import { serveAgentHttp } from './agentServer.mjs';
 import { AgentChatDiagnostics } from './agentChatDiagnostics.mjs';
 import { LocalModelAccessClient } from './localModelAccess.mjs';
-import { localRuntimeDirectory, localRuntimeEndpoint, localRuntimeProtocol } from './agentLocalRuntime.mjs';
+import { claimAgentDataDirectory, localRuntimeDirectory, localRuntimeEndpoint, localRuntimeProtocol } from './agentLocalRuntime.mjs';
 import { assertConnectorFile } from './chromeConnectorFiles.js';
 import { writePrivateJson } from './atomicJsonFile.mjs';
 
@@ -18,14 +17,7 @@ async function run() {
   // Windows pipes and Linux abstract sockets are released by the OS on crash.
   // Elect before stale PID-file recovery so simultaneous restarters cannot both
   // remove a crashed owner's lock. Other hosts retain AgentService's file lock.
-  const identity = createHash('sha256').update(process.platform === 'win32' ? dataRoot.toLowerCase() : dataRoot).digest('hex').slice(0, 32);
-  const electionPath = process.platform === 'win32' ? `\\\\.\\pipe\\cardbush-cli-owner-${identity}`
-    : process.platform === 'linux' ? `\0cardbush-cli-owner-${identity}` : undefined;
-  const election = electionPath ? createServer(socket => socket.destroy()) : undefined;
-  if (election) await new Promise<void>((done, fail) => {
-    election.once('error', () => fail(new Error('Another local Runtime already owns this data directory.')));
-    election.listen(electionPath!, done);
-  });
+  const election = await claimAgentDataDirectory(dataRoot);
   const diagnostics = new AgentChatDiagnostics(join(dataRoot, 'logs', 'runtime.log'));
   const access = new LocalModelAccessClient(profileRoot);
   let service: AgentService;

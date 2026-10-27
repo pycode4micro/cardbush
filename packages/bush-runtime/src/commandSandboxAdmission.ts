@@ -1,12 +1,11 @@
 import { commandInvocation } from '@cardbush/platform';
 import { createHash } from 'node:crypto';
-import { dirname, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 import { stat } from 'node:fs/promises';
 import type { RuntimePermissionTarget } from '@cardbush/bush-protocol';
 import type { ToolAdmissionContext, ToolAdmissionDecision } from './toolRegistry.js';
 import { commandSandboxPolicy, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
-import { canonicalSandboxRoots, canonicalSandboxFiles, sandboxError, type ExecutionSandboxPolicy } from './executionSandbox.js';
+import { canonicalSandboxRoots, canonicalSandboxFiles, sandboxError, windowsInterpreterRoots, type ExecutionSandboxPolicy } from './executionSandbox.js';
 import { commandPermission } from './commandPermission.js';
 import { allowedRoots, isWithin, normalizeIdentity, permissionBoundaryMode, resolveToolPath, workspaceRoot } from './workspaceAccessPolicy.js';
 
@@ -51,12 +50,7 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
   // The selected host interpreter must be readable, including user-installed
   // PowerShell. No model-supplied executable or PATH entry is trusted here.
   const executable = commandInvocation(context.input.shell, context.input.command).executable;
-  // Windows' public application/system directories already grant AppContainer
-  // read access. Do not edit their protected ACLs or walk System32 per command.
-  const systemRoots = [process.env.SystemRoot, process.env.ProgramFiles, process.env['ProgramFiles(x86)']]
-    .filter((value): value is string => Boolean(value && isAbsolute(value)));
-  const interpreterRoots = configuration.mode === 'auto' && process.platform === 'win32' && isAbsolute(executable) && !systemRoots.some(root => isWithin(root, executable))
-    ? [dirname(executable)] : [];
+  const interpreterRoots = configuration.mode === 'auto' ? windowsInterpreterRoots(executable) : [];
   const [baseWritableRoots, readableRoots, configuredWriteRoots, cwdRoots] = await Promise.all([
     canonicalSandboxRoots(base.writableRoots), canonicalSandboxRoots([...(base.readableRoots ?? []), ...interpreterRoots]),
     canonicalSandboxRoots(configuration.writableRoots), canonicalSandboxRoots([cwd]),

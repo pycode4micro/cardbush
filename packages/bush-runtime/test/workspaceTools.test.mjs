@@ -616,6 +616,9 @@ test("publishes an explicit platform shell contract and rejects unavailable shel
   assert.equal(definition.inputSchema.properties.yield_time_ms.maximum, 30_000);
   assert.match(definition.inputSchema.properties.cwd.description, /absolute path/i);
   assert.match(definition.description, /never rewrites commands/i);
+  assert.match(definition.description, /PowerShell 7 \(pwsh\)/);
+  assert.match(definition.description, /ask the user to install PowerShell 7/);
+  assert.match(shellSchema.description, /not Windows PowerShell 5/);
 
   const unavailable = await setup.execute("session", "terminal_exec", {
     command: "echo blocked",

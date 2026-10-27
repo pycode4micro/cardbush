@@ -18,7 +18,7 @@ license: Apache-2.0
 | 修改主题、配色、应用界面样式 | [样式管理](references/style-management.md)；新主题或全局变化再读 [主题契约](references/theme-contract.md) |
 | 导入日历、转换万年历/农历、查看每天安排 | [日历转换协议](references/calendar-protocol.md)；可用 [日期转换脚本](scripts/convert-date.mjs) |
 | 设置闹钟、定时任务，理解独立执行会话 | [定时与自动化](references/automations.md) |
-| 部署、更新、恢复本机或 SSH 上的 CardBush Agent，可选 Personal Agent 桌面 | [Agent 部署](references/agent-deploy.md)，按需读其中的部署和网络专题 |
+| 通过 npm 安装 Agent 核心与 CLI、后台服务启停、Windows/Linux 沙箱能力与限制、更新和恢复 | [Agent 部署](references/agent-deploy.md)，具体命令见 [部署与更新](references/agent-deployment.md) |
 | 切换语音服务/模型、解释 assistant 的任务气泡和播报 | [语音与 assistant](references/voice-assistant.md) |
 | 接入新的流式语音模型，实现本地适配器或兼容服务 | [实时语音接入](references/realtime-provider.md)，协议细节读 [CardBush Realtime v1](references/realtime-protocol.md) |
 

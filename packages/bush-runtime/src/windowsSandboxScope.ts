@@ -159,22 +159,36 @@ function within(root: string, path: string): boolean {
   return !value || (value !== '..' && !value.startsWith('..\\') && !isAbsolute(value));
 }
 
-/** PowerShell probes parent directories when initializing C:\\, even when the
- * process cwd itself is authorized. A provider drive rooted at that cwd avoids
- * granting traversal/listing on any parent. Bootstrap errors stop before user code.
+/** PowerShell may omit a volume drive when its root is not authorized. Use
+ * the public session-state API before cmdlet/module discovery: Get-Location
+ * itself can require an uninitialized module on PowerShell Core. No parent
+ * permissions or host execution are needed. Bootstrap errors stop user code.
  */
 export function sandboxPowerShellArgs(executable: string, args: string[]): string[] {
-  if (!/^(?:powershell|pwsh)\.exe$/i.test(basename(executable))) return args;
+  if (!/^pwsh\.exe$/i.test(basename(executable))) return args;
   const command = args.findIndex(arg => /^-command$/i.test(arg));
   if (command < 0 || command !== args.length - 2) return args;
   const bootstrap = [
     'try {',
     '  $cardbushWorkingDirectory = [Environment]::CurrentDirectory',
-    '  if ((Get-Location).ProviderPath.TrimEnd([char]92) -ine $cardbushWorkingDirectory.TrimEnd([char]92)) {',
-    "    New-PSDrive -Name CardBushWorkspace -PSProvider FileSystem -Root $cardbushWorkingDirectory -Scope Global -ErrorAction Stop | Out-Null",
-    "    Set-Location -LiteralPath 'CardBushWorkspace:\\' -ErrorAction Stop",
+    '  $cardbushPaths = $ExecutionContext.SessionState.Path',
+    '  if ($cardbushPaths.CurrentLocation.ProviderPath.TrimEnd([char]92) -ine $cardbushWorkingDirectory.TrimEnd([char]92)) {',
+    "    $cardbushProvider = $ExecutionContext.SessionState.Provider.GetOne('FileSystem')",
+    "    $cardbushDrive = [System.Management.Automation.PSDriveInfo]::new('CardBushWorkspace', $cardbushProvider, ('Microsoft.PowerShell.Core\\FileSystem::' + $cardbushWorkingDirectory), 'Sandbox working directory', $null)",
+    "    $null = $ExecutionContext.SessionState.Drive.New($cardbushDrive, 'Global')",
+    "    $null = $cardbushPaths.SetLocation('CardBushWorkspace:\\')",
     '  }',
-    '  if ((Get-Location).ProviderPath.TrimEnd([char]92) -ine $cardbushWorkingDirectory.TrimEnd([char]92)) { throw "Sandbox working directory mismatch" }',
+    '  if ($cardbushPaths.CurrentLocation.ProviderPath.TrimEnd([char]92) -ine $cardbushWorkingDirectory.TrimEnd([char]92)) { throw "Sandbox working directory mismatch" }',
+    // Import-Module is a core cmdlet. Load only the installed shell's own
+    // foundational assemblies when manifest discovery cannot resolve a drive.
+    // Assembly loading still runs inside the same AppContainer and file ACLs.
+    "  if ($PSVersionTable.PSEdition -eq 'Core') {",
+    "    foreach ($cardbushModule in @(@('Get-Location', 'Management'), @('ConvertTo-Json', 'Utility'))) {",
+    '      if ($null -eq $ExecutionContext.InvokeCommand.GetCommand($cardbushModule[0], [System.Management.Automation.CommandTypes]::Cmdlet)) {',
+    "        Import-Module -Assembly ([Reflection.Assembly]::LoadFrom([IO.Path]::Combine($PSHOME, ('Microsoft.PowerShell.Commands.' + $cardbushModule[1] + '.dll')))) -ErrorAction Stop",
+    '      }',
+    '    }',
+    '  }',
     '} catch { [Console]::Error.WriteLine("Sandbox working directory initialization failed: " + $_.Exception.Message); exit 1 }',
   ].join('\n');
   return [...args.slice(0, -1), bootstrap + '\n' + args.at(-1)];

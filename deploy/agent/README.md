@@ -73,56 +73,23 @@ cardbush --url "<服务地址>" --token-file "<令牌文件>"
 
 ### 部署与检查
 
-Windows 独立服务使用 `npm run package:agent -- --out <新的输出目录>` 收集部署文件。
-它复用 `build:agent` 的 Runtime 原生组件构建，并在收集前、收集后检查完整性。
-部署整个输出目录，在目标目录执行 `npm ci --omit=dev --ignore-scripts`，再启动 Agent。
-Windows 包必须包含 `dist-native/process-guard/current.json` 及其指定的版本化 EXE；
-不能只复制 `dist-electron`、`packages` 和 `assets`。可用
-`npm run verify:agent-package -- <部署目录>` 检查已收集的目录。
-
-Agent 在接收任务前检查进程保护组件是否存在、能否启动及协议版本，组件缺失或不兼容时拒绝启动执行服务。
-修复应补齐匹配当前代码的可信组件，不能关闭资源保护。仅显式 `--disable-tools` 的纯对话服务无需该组件。
-更新前检查没有正在运行或排队的任务，保留独立数据目录和上一版程序；替换完整程序后重启服务。
-Linux 服务不要求 Windows EXE，继续使用原有部署方式。
-
-独立服务从当前程序包的 `assets/plugins`、`assets/skills` 加载内置内容，数据目录只保存用户安装和配置。
-启动与打包会校验内置插件目录和市场清单，避免程序包里有插件、服务却查询空目录。
-同时校验并登记程序包自己的 Computer Use 与 Browser Use MCP 入口；服务模式不再移除这些入口。
-连接配置固定在该 Agent 数据目录，绝不复用接入端的浏览器桥或令牌。工具登记不等于桌面已可操作：
-浏览器桥未连接、Windows 服务账户无法访问交互桌面时，由实际工具返回具体问题；无需预先禁用整项插件。
-插件同步排除 `.gpu-cache` 等本机生成缓存；真实模型与其他资源仍遵守单文件及总包大小限制。
-
-服务会以自身账户探测桌面条件，`desktop.status` 返回可重新探测的环境检查、缺项及修复建议。
-Windows 检查交互会话与输入桌面访问权限；Linux 检查显示连接、工具、Python 模块与 Chromium。
-缺少显示服务可安装并配置 Xvfb；已有可访问显示时不要求 Xvfb。未启用、依赖缺失或探测失败不表示永久无桌面能力。
-`capabilities.desktop/computerUse/browserUi` 表示宿主内置控制后端是否已接通，不用于禁用独立 MCP 插件。探测不启动桌面、不采集画面、不注入输入。
-
-Browser Use 的普通连接模式复用桌面版连接器。启用 `chrome` 内置插件后，Agent 在配置刷新前启动自己的连接器，生成 `<data-dir>/browser-connector/bridge.json`；停用插件或切换远程调试模式时停止监听，保留已有配对。Windows 安装包必须包括 `dist-native/chrome-connector/CardBushBrowserHost.exe`，用于验证连接目录和命名管道的账户权限；不按 Windows 版本或桌面探测结果禁止连接器。
-
-在 Agent 主机上的 Chrome/Edge 安装随包提供的 `assets/plugins/chrome/extension`。通过已认证 Agent API `browser.connector` 查询 `action: "status"`，或以 `action: "pair", browser: "edge"`（也支持 `"chrome"`）生成短期配对码，在扩展弹窗中完成配对。配对码是凭据，不写入日志或公开文档。`select-default` 和 `revoke` 以连接 `id` 管理默认连接或撤销。普通服务重启会恢复已配对浏览器，浏览器资料留在其交互用户账户下；不会读取或复制客户端的浏览器登录数据。MCP 的 `list_browsers` 仍用于发现实际在线浏览器，配对不授予访问个人标签页的权限。
-
-Windows 服务通常位于 Session 0，不能用其显示器枚举结果证明能访问登录用户桌面。需要 Computer Use 时，部署包提供独立的交互会话助手；主 Agent 保留原服务账号，助手用指定用户的普通交互令牌运行。该方式遵循 [Windows 服务与交互用户分离](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services) 的部署方式。
-
-在目标 Windows 主机上，以管理员身份运行安装脚本（示例路径和账号需对应实际部署）：
-
-```powershell
-& .\deploy\agent\install-windows-desktop.ps1 -ReleaseRoot C:\cardbush\current -DataRoot C:\cardbush\data\agent-a -User 'HOST\desktop-user' -ServiceAccount 'HOST\cardbush-agent'
-```
-
-Node 不在安装终端的 PATH 中时，追加 `-NodePath 'C:\Program Files\nodejs\node.exe'`。助手按系统目录定位 Windows PowerShell，只补齐自身进程的 PATH，不修改整机环境变量。
-
-安装后，在没有运行中任务时重启 Agent 服务。助手作为登录计划任务运行，不存储登录密码、不提升主服务权限；原 `computer_use` 通过标准 MCP 和带令牌的回环 HTTP 接入，原权限、观察校验及用户停止机制继续生效。助手及其子进程使用原生资源保护。只向助手提供 Computer Use 设置，不共享模型配置或 Agent 访问令牌。`desktop.status` 会检查助手所在会话；这不启用 Linux 后端的内置桌面预览面板。
-
-用户未登录、锁屏或助手退出时应恢复指定用户的桌面/助手；已配置桥接时不会回退到 Session 0，也不会连接客户端电脑。升级保留 `desktop-bridge/connection.json` 和计划任务，更新完整 release 后重启助手与空闲的 Agent 服务。配置同步会更新单独投影的 Computer Use 设置，无需重装插件。
-内置可视化桌面后端目前为 Linux；Windows 插件按其自身协议运行。服务账户与登录桌面可能属于不同会话，应依据插件返回的访问或连接错误处理，不能由服务模式推断整台主机没有桌面。
-
-配置同步在运行时接收校验通过的配置后提交；可选 MCP 在后台连接，逐项状态继续由 MCP 设置展示，慢启动不会回滚整套模型和插件配置。必需组件、活动调用及配置本身的校验仍保留事务保护。
-
-在仓库根目录执行：
+Agent 核心和 CLI 使用同一个 npm 包，无需 GUI：
 
 ```sh
-docker compose -f deploy/agent/compose.yaml up --build -d
+npm install -g cardbush
+cardbush serve --background
+cardbush serve --status
+cardbush serve --stop
 ```
+
+后台直接运行 Node，不弹 PowerShell 窗口；默认使用当前用户的 `~/.cardbush/service` 和 `127.0.0.1:4780`。`--status` 给出连接令牌、模型配置和日志路径。已有实例通过 `--data-dir` 指定原目录，保留身份与历史。后台启动不自动注册系统服务或开机启动；外部服务管理器继续托管同一个前台 `cardbush serve` 命令。
+
+Windows 终端工具要求 PowerShell 7（pwsh），不回退 Windows PowerShell 5；已支持 AppContainer 沙箱及原生资源保护。Linux 已有 bubblewrap 沙箱，但需主机安装及允许用户命名空间，尚无额外 seccomp 过滤或 Windows Job Object 同等的内核资源限额。两端沙箱失败都不回退宿主执行。详细部署步骤、平台限制、模型配置、连接与更新方法统一维护在 [cardbush-docs 的部署说明](../../assets/skills/cardbush-docs/references/agent-deployment.md)。
+
+部署由 Agent 或用户执行，核心不管理系统账户、计划任务或插件依赖。第三方插件按其自己的安装说明另行处理。既有 Computer Use 桌面桥和可选 Personal Agent 桌面保留原实现，不属于默认核心部署步骤。
+
+源码构建完整核心目录包使用 `npm run package:agent -- --out <新目录>`；包内含服务、CLI、必要资源与部署 Skill。`DEPLOY.txt` 提供入口，实际安装通过发布版本或目标平台依赖安装完成。
+
 
 ## 可选 Personal Agent 桌面
 

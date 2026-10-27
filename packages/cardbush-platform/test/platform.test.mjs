@@ -53,6 +53,20 @@ test('Windows PATH and Git installations tolerate spaces, Unicode, and case vari
   assert.equal(terminalInvocation('git_bash',undefined,undefined,windows).command,'D:\\Git Tools\\bin\\bash.exe');
   assert.equal(defaultTerminalRuntime('win32'),'powershell');
 });
+
+test('Windows requires pwsh and never substitutes Windows PowerShell 5', () => {
+  const old='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const missing=context('win32',[old],{PATH:path.win32.dirname(old)});
+  assert.throws(()=>commandInvocation('powershell','Write-Output ok',missing),/PowerShell 7.*Ask the user to install/);
+  assert.throws(()=>terminalInvocation('powershell',undefined,undefined,missing),/PowerShell 7.*unsupported/);
+  const pwsh='C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+  const installed=context('win32',[old,pwsh],{ProgramFiles:'C:\\Program Files',PATH:path.win32.dirname(old)});
+  assert.equal(commandInvocation('powershell','Write-Output ok',installed).executable,pwsh);
+  const override=context('win32',[old,pwsh],{ProgramFiles:'C:\\Program Files',CARDBUSH_TERMINAL_SHELL:old});
+  assert.throws(()=>terminalInvocation('powershell',undefined,'Write-Output ok',override),/PowerShell 5 is unsupported/);
+  const portable=context('win32',['D:\\用户 安装\\pwsh.exe'],{CARDBUSH_TERMINAL_SHELL:'D:\\用户 安装\\pwsh.exe'});
+  assert.equal(terminalInvocation('powershell',undefined,undefined,portable).command,'D:\\用户 安装\\pwsh.exe');
+});
 test('commands and paths remain separate arguments and keep literal metacharacters', () => {
   const command='printf "%s" "中文; $HOME && `whoami`"';
   const cwd='C:\\项目 空间\\$(bad)';
@@ -61,7 +75,7 @@ test('commands and paths remain separate arguments and keep literal metacharacte
   const linux=context('linux',['/bin/sh']);
   assert.deepEqual(commandInvocation('posix',command,linux),{executable:'/bin/sh',args:['-c',command]});
   assert.throws(()=>commandInvocation('cmd',command,linux),/unavailable/);
-  assert.throws(()=>commandInvocation('powershell',command,linux),/unavailable/);
+  assert.throws(()=>commandInvocation('powershell',command,linux),/PowerShell 7.*required/);
 });
 test('a custom shell is an executable path, never parsed as a command string', () => {
   const linux=context('linux',['/bin/sh','/tools/终端 shell'],{CARDBUSH_TERMINAL_SHELL:'/tools/终端 shell'});

@@ -1,6 +1,7 @@
 import { fork } from 'node:child_process';
 import { mkdir, lstat, readFile, realpath } from 'node:fs/promises';
-import { createConnection } from 'node:net';
+import { createConnection, createServer } from 'node:net';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -9,6 +10,20 @@ import { AgentHttpClient } from './agentHttpClient.mjs';
 import { assertConnectorFile } from './chromeConnectorFiles.js';
 
 export const localRuntimeProtocol = 'cardbush.local-runtime.v1';
+/** Reuse one OS-owned election for CLI and HTTP hosts before stale-lock recovery. */
+export async function claimAgentDataDirectory(dataRoot: string) {
+  await mkdir(dataRoot, { recursive: true, mode: 0o700 });
+  const root = await realpath(dataRoot);
+  const identity = createHash('sha256').update(process.platform === 'win32' ? root.toLowerCase() : root).digest('hex').slice(0, 32);
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\cardbush-cli-owner-${identity}`
+    : process.platform === 'linux' ? `\0cardbush-cli-owner-${identity}` : undefined;
+  const server = endpoint ? createServer(socket => socket.destroy()) : undefined;
+  if (server) await new Promise<void>((done, fail) => {
+    server.once('error', () => fail(Error('Another Agent already owns or is already starting in this data directory.')));
+    server.listen(endpoint!, done);
+  });
+  return { root, close: () => server?.close() };
+}
 export const localRuntimeDescriptor = z.object({
   protocol: z.literal(localRuntimeProtocol), pid: z.number().int().positive(), agentId: z.string().min(1),
   profileRoot: z.string(), bundledRoot: z.string(), endpoint: z.string(), token: z.string().regex(/^[a-f0-9]{64}$/),

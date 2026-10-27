@@ -1,52 +1,130 @@
-import { parseArgs } from 'node:util';
-import { randomBytes } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { parseArgs, stripVTControlCharacters } from 'node:util';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { readFile, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { AgentService } from './agentService.mjs';
 import { serveAgentHttp } from './agentServer.mjs';
 import { verifyAgentBundledAssets, verifyAgentBundledMcp } from './agentBundledAssets.mjs';
+import { claimAgentDataDirectory } from './agentLocalRuntime.mjs';
+import { AgentChatDiagnostics } from './agentChatDiagnostics.mjs';
+import { writePrivateJson } from './atomicJsonFile.mjs';
+import { defaultServiceDirectory, inspectServiceProcess, readServiceProcess, serviceProcessPath, serviceUrl, startServiceProcess, stopServiceProcess, type ServiceProcess } from './agentServiceProcess.mjs';
 
-const { values } = parseArgs({ options: {
-  'data-dir': { type: 'string' }, name: { type: 'string' }, transport: { type: 'string', default: 'http' },
-  host: { type: 'string', default: '127.0.0.1' }, port: { type: 'string', default: '4780' }, help: { type: 'boolean' },
-  sandbox: { type: 'string' }, 'sandbox-network': { type: 'string' },
-  desktop: { type: 'boolean', default: false },
-  'web-restricted': { type: 'boolean', default: false },
-  'disable-tools': { type: 'boolean', default: false },
-} });
-if (values.help) {
-  process.stdout.write('Personal Agent 桌面（默认关闭）：--desktop。仅用于可选 Linux 桌面镜像；启动失败时拒绝启用，不降级到客户端桌面。详见 deploy/agent/README.md。\n\n');
-  process.stdout.write('命令沙盒（可选）：--sandbox auto --sandbox-network disabled\nauto：申请批准时隔离，完全访问时不隔离；required：始终强制隔离且不允许会话扩权。默认 off；启用后后端不可用时拒绝执行，不降级。详见 docs/EXECUTION_SANDBOX.md。\n\n');
-  process.stdout.write('CardBush Agent 服务（Node.js 22.12+）\n\nnode dist-electron/agentServiceCli.mjs --data-dir /srv/cardbush/agent-a --name Agent-A [--host 127.0.0.1] [--port 4780]\n\n每个 Agent 使用独立数据目录。本机与远程均通过 HTTP 接入。\nAPI：/api/agent/v1/info、/api/agent/v1/call、/api/agent/v1/events（SSE 或 NDJSON 流）。\n令牌保存在 DATA_DIR/access-token，也可通过 CARDBUSH_AGENT_TOKEN 指定。\n远程连接通过 HTTPS 反向代理或 SSH 隧道访问。不再提供 stdio 或 MCP Agent 入口。\n');
-} else {
-  if (!values['data-dir']) throw new Error('--data-dir is required; never use the desktop profile directory.');
-  if (values.transport !== 'http') throw new Error('Agent 服务仅支持 HTTP。请使用 --host 和 --port 启动，再通过 HTTP 地址连接。');
+async function run() {
+  const args = process.argv.slice(2);
+  const { values } = parseArgs({ args, options: {
+    'data-dir': { type: 'string' }, name: { type: 'string' }, transport: { type: 'string', default: 'http' },
+    host: { type: 'string', default: '127.0.0.1' }, port: { type: 'string', default: '4780' }, help: { type: 'boolean' },
+    background: { type: 'boolean' }, status: { type: 'boolean' }, stop: { type: 'boolean' },
+    sandbox: { type: 'string' }, 'sandbox-network': { type: 'string' }, desktop: { type: 'boolean', default: false },
+    'web-restricted': { type: 'boolean', default: false }, 'disable-tools': { type: 'boolean', default: false },
+  } });
+  if (values.help) {
+    process.stdout.write(`CardBush Agent service and CLI (Node.js 24, no GUI required)
+Usage: cardbush serve [options]
+       cardbush serve --background
+       cardbush serve --status
+       cardbush serve --stop
+
+  --background      Start the same service silently and return when ready
+  --status          Show service state and connection/configuration paths
+  --stop            Shut down this service and its tasks; preserve data
+  --data-dir PATH   Instance data (default: ~/.cardbush/service)
+  --host ADDRESS    HTTP listener (default: 127.0.0.1)
+  --port PORT       HTTP port (default: 4780)
+  --name NAME       Agent display name
+  --sandbox MODE    auto, required, or off; otherwise follow saved host settings
+  --sandbox-network disabled|enabled (default: disabled)
+  --desktop         Optional Linux desktop image only; disabled by default
+
+Without --background, run in this terminal. Background mode survives closing
+the launching terminal; it does not register an OS service or boot task.
+Windows terminal tools require PowerShell 7 (pwsh); PowerShell 5 is unsupported.
+Linux isolation requires bubblewrap and usable user namespaces. Sandbox startup
+failure never falls back to host execution. See the bundled cardbush-docs Skill.
+The access-token file authenticates clients; config/models.json configures models.
+Use HTTPS or an SSH tunnel for remote connections. Tokens are never printed.
+`); return;
+  }
+  if ([values.background, values.status, values.stop].filter(Boolean).length > 1) throw Error('Use only one of --background, --status, or --stop.');
+  const dataRoot = resolve(values['data-dir'] || defaultServiceDirectory());
+  if (values.status || values.stop) {
+    if (values.stop) await stopServiceProcess(dataRoot);
+    const record = await inspectServiceProcess(dataRoot);
+    printStatus(dataRoot, record); return;
+  }
+  if (values.transport !== 'http') throw Error('Agent services use HTTP. Use --host and --port.');
   const port = Number(values.port);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port.');
-  if (values.sandbox && !['off', 'auto', 'required'].includes(values.sandbox)) throw new Error('--sandbox 只支持 off、auto 或 required。');
-  if (values['sandbox-network'] && !['disabled', 'enabled'].includes(values['sandbox-network'])) throw new Error('--sandbox-network 只支持 disabled 或 enabled。');
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw Error('Invalid port.');
+  if (values.sandbox && !['off', 'auto', 'required'].includes(values.sandbox)) throw Error('--sandbox must be off, auto, or required.');
+  if (values['sandbox-network'] && !['disabled', 'enabled'].includes(values['sandbox-network'])) throw Error('--sandbox-network must be disabled or enabled.');
+  if (values.background) {
+    const childArgs = Object.entries({ ...values, 'data-dir': dataRoot }).flatMap(([key, value]) =>
+      key === 'background' || value === undefined || value === false ? [] : value === true ? [`--${key}`] : [`--${key}`, String(value)]);
+    const result = await startServiceProcess(dataRoot, childArgs);
+    printStatus(dataRoot, result.record, result.existing ? 'Already running' : 'Started'); return;
+  }
   const bundledRoot = await verifyAgentBundledAssets();
   if (!values['disable-tools'] && !values['web-restricted']) await verifyAgentBundledMcp(resolve(bundledRoot, '..'));
-  const service = await AgentService.open({ dataRoot: resolve(values['data-dir']), bundledRoot, name: values.name, desktop: values.desktop, toolsEnabled: !values['disable-tools'], webRestricted: values['web-restricted'], env: {
-    ...(values.sandbox ? { CARDBUSH_EXECUTION_SANDBOX: values.sandbox } : {}),
-    ...(values['sandbox-network'] ? { CARDBUSH_SANDBOX_NETWORK: values['sandbox-network'] } : {}),
-  } });
-  await service.inspectDesktop();
-  let listener: { close: () => Promise<void> };
+  const ownership = await claimAgentDataDirectory(dataRoot);
+  const background = process.connected;
+  const diagnostics = background ? new AgentChatDiagnostics(join(dataRoot, 'logs', 'service.log')) : undefined;
+  let service: AgentService | undefined, listener: Awaited<ReturnType<typeof serveAgentHttp>> | undefined;
+  let record: ServiceProcess | undefined, ready = false, abandoned = false, stopping: Promise<void> | undefined;
+  const close = () => stopping ??= (async () => {
+    try {
+      const results = await Promise.allSettled([listener?.close(), service?.close()]);
+      const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+      if (failures.length) throw new AggregateError(failures, 'Service cleanup failed.');
+    }
+    finally {
+      try {
+        const current = await readServiceProcess(dataRoot).catch(() => undefined);
+        if (record && current?.instance === record.instance) await rm(serviceProcessPath(dataRoot), { force: true });
+      } finally { ownership.close(); diagnostics?.close(); }
+    }
+  })();
+  const fail = (error: unknown) => { process.exitCode = 1; diagnostics?.write('stderr', `Service shutdown failed: ${String(error)}\n`); };
+  // A launcher that disappears before readiness must not leave an unreported host.
+  process.once('disconnect', () => { if (!ready) abandoned = true; });
   try {
-    const tokenPath = join(service.root, 'access-token');
+    service = await AgentService.open({ dataRoot, bundledRoot, name: values.name, desktop: values.desktop,
+      toolsEnabled: !values['disable-tools'], webRestricted: values['web-restricted'], runtimeDiagnostic: diagnostics?.write,
+      env: { ...(values.sandbox ? { CARDBUSH_EXECUTION_SANDBOX: values.sandbox } : {}),
+        ...(values['sandbox-network'] ? { CARDBUSH_SANDBOX_NETWORK: values['sandbox-network'] } : {}) } });
+    await service.inspectDesktop();
+    const tokenPath = join(dataRoot, 'access-token');
     let token = process.env.CARDBUSH_AGENT_TOKEN?.trim();
     if (!token) {
-      token = await readFile(tokenPath, 'utf8').then(value => value.trim()).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return ''; throw error; });
+      token = await readFile(tokenPath, 'utf8').then(value => value.trim()).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return ''; });
       if (!token) { token = randomBytes(32).toString('hex'); await writeFile(tokenPath, token + '\n', { mode: 0o600, flag: 'wx' }); }
     }
-    const http = await serveAgentHttp(service, { host: values.host, port, token }); listener = http;
-    process.stderr.write(`CardBush Agent ${service.info().id} listening on http://${values.host}:${http.port}\nAPI: /api/agent/v1 (JSON / SSE / NDJSON)\nAccess token: ${process.env.CARDBUSH_AGENT_TOKEN ? 'CARDBUSH_AGENT_TOKEN' : tokenPath}\n`);
-  } catch (error) { await service.close(); throw error; }
-  let closing = false;
-  const close = () => {
-    if (closing) return; closing = true;
-    void listener.close().finally(() => service.close()).then(() => { process.exitCode = 0; }, error => { process.stderr.write(String(error) + '\n'); process.exitCode = 1; });
-  };
-  process.once('SIGINT', close); process.once('SIGTERM', close);
+    listener = await serveAgentHttp(service, { host: values.host, port, token,
+      localRequest: async (path, request, response) => {
+        if (path !== 'stop' || request.method !== 'POST') { response.writeHead(404).end(); return; }
+        response.writeHead(202, { 'Content-Type': 'application/json' }).end('{"stopping":true}');
+        setImmediate(() => { void close().catch(fail); });
+      } });
+    record = { protocol: 'cardbush.service-process.v1', instance: randomUUID(), pid: process.pid,
+      agentId: service.info().id, host: listener.host!, port: listener.port, startedAt: new Date().toISOString() };
+    await writePrivateJson(serviceProcessPath(dataRoot), record);
+    if (abandoned) throw Error('Service launcher disconnected before readiness.');
+    ready = true;
+    diagnostics?.write('stderr', `Service ready: ${record.agentId}, PID ${record.pid}.\n`);
+    void service.runtime.failure.then(error => { if (stopping) return; diagnostics?.write('stderr', `Runtime failed: ${error.message}\n`); process.exitCode = 1; return close(); }).catch(fail);
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void close().catch(fail); });
+    if (background) process.send?.({ ready: true }, () => { if (process.connected) process.disconnect(); });
+    else process.stderr.write(`CardBush Agent ${record.agentId} listening on ${serviceUrl(record).replace(/\/$/, '')}\nAPI: /api/agent/v1 (JSON / SSE / NDJSON)\nAccess token: ${process.env.CARDBUSH_AGENT_TOKEN ? 'CARDBUSH_AGENT_TOKEN' : tokenPath}\n`);
+  } catch (error) { diagnostics?.write('stderr', `Service startup failed: ${String(error)}\n`); await close().catch(fail); throw error; }
 }
+
+function printStatus(root: string, record?: ServiceProcess, state = 'Running') {
+  process.stdout.write(record ? `${state}: ${record.agentId}\nURL: ${serviceUrl(record)}\nPID: ${record.pid}\n` : 'Stopped.\n');
+  process.stdout.write(`Data: ${root}\nAccess token: ${join(root, 'access-token')}\nModels: ${join(root, 'config', 'models.json')}\nLog: ${join(root, 'logs', 'service.log')}\n`);
+}
+run().catch(error => {
+  process.exitCode = 1;
+  const message = stripVTControlCharacters(error instanceof Error ? error.message : String(error)).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
+  process.stderr.write(message + '\n');
+  if (process.connected) process.send?.({ error: message }, () => { if (process.connected) process.disconnect(); });
+});

@@ -61,7 +61,7 @@ Windows `auto` 模式自动加入宿主选定的 shell 安装目录为只读范�
 
 终端返回和 `terminal_list` 中的 `sandbox` 字段表示该终端要求的隔离后端及网络策略；未要求隔离时为 `null`。它与资源限制分开：Windows 继续使用原来的内存、CPU、进程数和进程树预算；Linux 不能据此宣称具有 Windows Job Object 同等的内核资源配额。
 
-Windows PowerShell 启动时核对实际位置与进程 cwd。不一致时，在已授权 cwd 上建立 `CardBushWorkspace:` 文件系统盘并切换位置；不为此授予父目录访问权限。相对路径和原生子进程使用正确的目录；需要将 PowerShell 位置传给原生程序时，使用 `(Get-Location).ProviderPath` 获取磁盘路径。初始化失败在执行用户命令前终止。终端回执的 `phase` 区分 `preparing_sandbox`、`executing`、`cleaning_up` 和 `finished`，权限准备及回收不会伪装成命令正在计算。
+Windows 终端使用 PowerShell 7（pwsh），缺失时提示用户安装，不回退 Windows PowerShell 5。启动时先通过进程内 API 初始化已授权 cwd；盘符不可见时只从所选 PowerShell 安装加载基础模块，再建立 `CardBushWorkspace:` 文件系统盘，不扩大父目录权限。相对路径和原生子进程使用正确的目录；需要将 PowerShell 位置传给原生程序时，使用 `(Get-Location).ProviderPath` 获取磁盘路径。初始化失败在执行用户命令前终止。终端回执的 `phase` 区分 `preparing_sandbox`、`executing`、`cleaning_up` 和 `finished`，权限准备及回收不会伪装成命令正在计算。
 
 终端的 PowerShell 错误诊断包装复用已经初始化的 `ProviderPath`，仅在它与进程 cwd 不一致时切换位置，避免重新解析绝对路径而触碰未授权父目录。错误诊断仍区分目录初始化失败和用户命令失败；父目录元数据与目录列表保持未授权。
 

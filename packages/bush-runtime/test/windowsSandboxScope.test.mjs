@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createConnection, createServer } from 'node:net';
 import test from 'node:test';
-import { WindowsSandboxScopePool } from '../dist/windowsSandboxScope.js';
+import { WindowsSandboxScopePool, sandboxPowerShellArgs } from '../dist/windowsSandboxScope.js';
 import { spawnResourceManagedProcess, resolveProcessResourceHost } from '../dist/processResourceGuard.js';
 import { runResourceManagedCommand } from '../dist/processes.js';
 import { TerminalSessionManager } from '../dist/terminalSessionManager.js';
@@ -60,11 +60,9 @@ test('native authorization rejects a directory replaced after JavaScript prepara
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
-test('Windows PowerShell uses the admitted cwd for relative IO and native child commands without parent grants', { skip: !windows, timeout: 30_000 }, async t => {
+test('PowerShell 7 uses the admitted cwd for relative IO and native child commands without parent grants', { skip: !windows, timeout: 30_000 }, async t => {
   const { work, root } = await fixture(t);
-  // Exercise both the Windows inbox shell from the failing session and the
-  // installed host shell when applicable; absolute args never inject the path.
-  const executable = join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const executable = commandInvocation('powershell', '').executable;
   const source = `"cwd="+(Get-Location).ProviderPath; Set-Content -LiteralPath './relative.txt' -Value 'inside' -ErrorAction Stop; Get-Content './relative.txt'; & "$env:SystemRoot\\System32\\cmd.exe" /d /c echo CHILD_OK; try { [IO.File]::GetAttributes(${quote(root)}); throw 'parent unexpectedly accessible' } catch [UnauthorizedAccessException] { 'PARENT_DENIED' }`;
   const result = await runResourceManagedCommand({ executable, args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', source], cwd: work,
     sandbox: { writableRoots: [work], network: 'disabled' }, timeoutMs: 15_000 });
@@ -72,6 +70,24 @@ test('Windows PowerShell uses the admitted cwd for relative IO and native child 
   assert.equal(result.stderr, ''); assert.ok(result.stdout.includes(work));
   assert.match(result.stdout, /CHILD_OK/); assert.match(result.stdout, /PARENT_DENIED/);
   assert.equal((await readFile(join(work, 'relative.txt'), 'utf8')).trim(), 'inside');
+});
+
+test('PowerShell bootstrap works before filesystem drives and Core modules are available', { skip: !windows, timeout: 30_000 }, async t => {
+  const f = await fixture(t), executable = commandInvocation('powershell', '').executable;
+  const command = `Set-Content './bootstrapped.txt' 'ok' -ErrorAction Stop; @{cwd=(Get-Location).ProviderPath} | ConvertTo-Json -Compress`;
+  const bootstrap = sandboxPowerShellArgs(executable, ['-Command', command]).at(-1);
+  const reset = String.raw`
+$null = $ExecutionContext.SessionState.Path.SetLocation('Env:\')
+foreach ($drive in $ExecutionContext.SessionState.Drive.GetAll()) {
+  if ($drive.Provider.Name -eq 'FileSystem') { $ExecutionContext.SessionState.Drive.Remove($drive.Name, $true, 'Global') }
+}
+Remove-Module Microsoft.PowerShell.Management,Microsoft.PowerShell.Utility -Force -ErrorAction SilentlyContinue
+$env:PSModulePath = ''
+`;
+  const result = await runResourceManagedCommand({ executable, args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(reset + bootstrap, 'utf16le').toString('base64')], cwd: f.work,
+    sandbox: { writableRoots: [f.work], network: 'disabled' }, timeoutMs: 20000 });
+  assert.equal(result.exitCode, 0, JSON.stringify(result)); assert.equal(result.stderr, '');
+  assert.equal((await readFile(join(f.work, 'bootstrapped.txt'), 'utf8')).trim(), 'ok');
 });
 
 test('pooled directory capabilities preserve exact rights, network isolation, descendants and ACL restoration', { skip: !windows, timeout: 60_000 }, async t => {

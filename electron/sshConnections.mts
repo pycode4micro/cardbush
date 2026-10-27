@@ -149,6 +149,7 @@ export class SshConnectionManager {
       if (host.platform === 'windows') {
         const probe = await this.#captureChannel(client, windowsHostProbe, 10_000);
         if (probe.exitCode === 0 && probe.stdout.trim() === 'CARDBUSH_HOST_WINDOWS_V1') return;
+        throw Object.assign(Error('Cannot start PowerShell 7 (pwsh) on the Windows SSH host. Ask the user to install PowerShell 7 and make pwsh available. Windows PowerShell 5 is unsupported. No user command was sent.'), { code: 'ssh_platform_unavailable' });
       } else {
         const probe = await this.#captureChannel(client, 'uname -s', 10_000);
         if (probe.exitCode === 0 && /^(Linux|Darwin|FreeBSD|OpenBSD|NetBSD|SunOS)\s*$/.test(probe.stdout)) return;

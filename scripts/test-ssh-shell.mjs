@@ -31,7 +31,7 @@ async function directory(t) {
   const cwd = join(root, "项目 O'Brien & space"); await mkdir(cwd); return cwd;
 }
 function spawnControl(command) {
-  const child = spawn('powershell.exe', command.slice('powershell.exe '.length).split(' '), { windowsHide: true, stdio: 'pipe' });
+  const child = spawn('pwsh.exe', command.slice('pwsh.exe '.length).split(' '), { windowsHide: true, stdio: 'pipe' });
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   let stdout = '', stderr = '';
   child.stdout.on('data', value => { stdout += value; }); child.stderr.on('data', value => { stderr += value; });

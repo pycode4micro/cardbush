@@ -11,7 +11,8 @@
   ],
   "main": "dist-electron/bootstrap.js",
   "bin": {
-    "cardbush": "bin/cardbush.mjs"
+    "cardbush": "bin/cardbush.mjs",
+    "cardbush-agent": "bin/cardbush-agent.mjs"
   },
   "engines": {
     "node": "^24.0.0",
@@ -26,7 +27,7 @@
     "build:agent": "npm run build:runtime && node scripts/build-chrome-native-host.mjs && tsc -p tsconfig.node.json",
     "package:agent": "npm run build:agent && node scripts/package-agent.mjs",
     "verify:agent-package": "node scripts/package-agent.mjs --verify",
-    "test:agent-deployment": "npm run build:agent && node --test scripts/test-agent-package.mjs scripts/test-agent-bundled-mcp.mjs scripts/test-agent-browser-connector.mjs scripts/test-agent-desktop-bridge.mjs scripts/test-agent-process-host.mjs packages/bush-runtime/test/toolAdmissionFacts.test.mjs scripts/test-agent-shared-configuration.mjs scripts/test-agent-desktop-probe.mjs",
+    "test:agent-deployment": "npm run build:agent && node --test scripts/test-agent-package.mjs scripts/test-agent-service-process.mjs scripts/test-agent-bundled-mcp.mjs scripts/test-agent-browser-connector.mjs scripts/test-agent-desktop-bridge.mjs scripts/test-agent-process-host.mjs packages/bush-runtime/test/toolAdmissionFacts.test.mjs scripts/test-agent-shared-configuration.mjs scripts/test-agent-desktop-probe.mjs",
     "agent:serve": "node dist-electron/agentServiceCli.mjs",
     "agent:chat": "node dist-electron/agentChatCli.mjs",
     "test:agent-chat": "npm run build:agent && node --test --test-timeout=45000 scripts/test-agent-chat-cli.mjs scripts/test-agent-chat-presentation.mjs scripts/test-agent-chat-browser.mjs scripts/test-agent-chat-references.mjs scripts/test-agent-chat-diagnostics.mjs scripts/test-agent-package.mjs scripts/test-local-model-access.mjs scripts/test-model-activity.mjs",

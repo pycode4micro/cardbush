@@ -122,7 +122,8 @@ export async function serveAgentHttp(service: AgentService, options: { host?: st
   });
   const address = server.address();
   if (!address) throw new Error('Agent HTTP listener did not bind.');
-  return { port: typeof address === 'string' ? 0 : address.port, activeRequests: () => requests.size, close: async () => {
+  return { host: typeof address === 'string' ? undefined : address.address,
+    port: typeof address === 'string' ? 0 : address.port, activeRequests: () => requests.size, close: async () => {
     for (const abort of requests) abort.abort();
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));

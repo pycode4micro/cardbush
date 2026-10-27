@@ -68,8 +68,8 @@ export class AgentHttpClient {
     else if (['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)) this.#direct = new HttpAgent();
   }
   close() { this.#closed.abort(); void this.#direct?.destroy().catch(() => undefined); }
-  /** Private local-host lifecycle endpoint; ordinary remote services do not expose it. */
-  localRequest(path: 'lease' | 'reload', signal?: AbortSignal) {
+  /** Host lifecycle requests still authenticate the selected Agent instance. */
+  localRequest(path: 'lease' | 'reload' | 'stop', signal?: AbortSignal) {
     return this.#fetch(`local/${path}`, { method: path === 'lease' ? 'GET' : 'POST' }, signal);
   }
   async #fetch(path: string, init: RequestInit, signal?: AbortSignal) {

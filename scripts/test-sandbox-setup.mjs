@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -216,4 +217,21 @@ test('actual host detects its sandbox without installing packages and retains en
   assert.equal(status.enabled, true); assert.equal(status.canInstall, false);
   assert.equal((await setup.update(false)).enabled, false);
   assert.equal((await setup.get()).enabled, false);
+});
+
+test('Windows readiness rejects a selected shell that crashes or returns without running its probe', { skip: process.platform !== 'win32', timeout: 45000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'cardbush-shell-check-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const exit of ['0', 'unchecked((int)0xc0000142)']) {
+    const installation = join(directory, exit === '0' ? 'user shell' : '其他用户 shell'); await mkdir(installation);
+    const source = join(installation, 'Probe.cs'), executable = join(installation, 'pwsh.exe');
+    await writeFile(source, `class Probe { static int Main() { return ${exit}; } }`);
+    const build = spawnSync(join(process.env.SystemRoot, 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'),
+      ['/nologo', '/target:exe', '/platform:x64', `/out:${executable}`, source], { windowsHide: true, encoding: 'utf8' });
+    assert.equal(build.status, 0, build.stdout + build.stderr);
+    const setup = new SandboxSetup({ path: join(directory, 'sandbox.json'), env: { PATH: installation, CARDBUSH_EXECUTION_SANDBOX: undefined } });
+    const status = await setup.get();
+    assert.equal(status.state, 'blocked', JSON.stringify(status)); assert.equal(status.installed, true);
+    assert.match(status.detail, exit === '0' ? /probe\.txt|file check/i : /3221225794|0xC0000142/i);
+  }
 });

@@ -25,10 +25,8 @@ print(json.dumps({'modules':modules,'browser':browser}))
 type Run = (executable: string, args: string[]) => Promise<{ stdout: string; exitCode: number | null }>;
 
 export function findWindowsDesktopPowerShell(env: NodeJS.ProcessEnv, find = (name: string) => findExecutable(name, createPlatformContext({ platform: 'win32', env }))) {
-  const systemRoot = Object.entries(env).find(([key]) => key.toLowerCase() === 'systemroot')?.[1];
-  // Scheduled tasks and service accounts may have a shortened PATH even when
-  // Windows PowerShell is installed. Resolve the system binary before PATH.
-  return (systemRoot && find(win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'))) || find('powershell.exe');
+  const programFiles = Object.entries(env).find(([key]) => key.toLowerCase() === 'programfiles')?.[1];
+  return find('pwsh.exe') || (programFiles && find(win32.join(programFiles, 'PowerShell', '7', 'pwsh.exe')));
 }
 
 /** Read-only probes run as the Agent's own account. They never start a desktop/browser or inject input. */
@@ -60,7 +58,7 @@ export async function probeAgentDesktop(env: NodeJS.ProcessEnv, seams: {
       if (!powershell) {
         report.environment = 'missing'; report.checks.push({ id: 'powershell', state: 'missing' });
         report.summary = '当前尚缺 Windows 桌面探测依赖 / Windows desktop probe dependency missing';
-        report.remediation.push('恢复系统 PowerShell 后重新探测；不能由此判断主机没有桌面能力。');
+        report.remediation.push('请安装 PowerShell 7（pwsh）后重新探测；不支持 Windows PowerShell 5，也不能由此判断主机没有桌面能力。');
       } else {
         const result = await run(powershell, ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(windowsProbe,'utf16le').toString('base64')]);
         if (result.exitCode !== 0) throw Error('windows_probe_failed');

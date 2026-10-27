@@ -9,7 +9,7 @@ async function fixture(t) {
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(join(base, 'case-')), source = join(root, 'source');
   t.after(async () => { assert.ok(resolve(root).startsWith(base + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
-  for (const path of ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentService.mjs',
+  for (const path of ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/cardbush-agent.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentServiceProcess.mjs', 'dist-electron/agentService.mjs',
     'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
     'dist-electron/agentLocalRuntime.mjs', 'dist-electron/agentLocalRuntimeHost.mjs', 'dist-electron/agentServer.mjs',
     'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',
@@ -17,6 +17,8 @@ async function fixture(t) {
     'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
     'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs', 'packages/bush-runtime/package.json', 'packages/bush-runtime/dist/processResourceGuard.js',
     'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs', 'deploy/agent/install-windows-desktop.ps1',
+    'deploy/agent/README.md', 'assets/skills/cardbush-docs/SKILL.md',
+    'assets/skills/cardbush-docs/references/agent-deploy.md', 'assets/skills/cardbush-docs/references/agent-deployment.md',
     'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectionApproval.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
     'scripts/agent-desktop/worker.py','scripts/agent-desktop/computer.py','scripts/agent-desktop/browser.py',
     'packages/cardbush-platform/package.json', 'packages/cardbush-platform/dist/index.js', 'packages/cardbush-platform/dist-cjs/index.js', 'assets/fixture.txt']) {
@@ -47,6 +49,8 @@ test('Linux Agent packaging retains runtime and CommonJS dependencies without re
   await access(join(f.output, 'dist-electron/agentChatShell.mjs'));
   await access(join(f.output, 'bin/cardbush.mjs'));
   assert.match(await readFile(join(f.output, 'DEPLOY.txt'), 'utf8'), /cardbush --resume <session-id>/);
+  await access(join(f.output,'assets/skills/cardbush-docs/references/agent-deployment.md'));
+  await assert.rejects(access(join(f.output,'deploy/agent/install-windows-agent.ps1')),{code:'ENOENT'});
   await assert.rejects(packageAgent(f.source, f.output, 'linux'), { code: 'EEXIST' });
   await assert.rejects(packageAgent(f.source, f.root, 'linux'), /must not contain/);
 });

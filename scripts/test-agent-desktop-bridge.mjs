@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { get } from 'node:http';
+import { createConnection } from 'node:net';
 import { z } from 'zod';
 import { createCardbushAppsServer } from '@cardbush/apps-mcp';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -58,11 +59,21 @@ test('interactive helper retains standard MCP tool name, arguments and turn safe
 
 test('bridge rejects unauthenticated, browser-origin and wrong-host requests before dispatch',async t=>{
   const f=await bridge(t);
-  for(const headers of [{},{Authorization:'Bearer wrong'},{Authorization:`Bearer ${f.config.token}`,Origin:'http://localhost'},
-    {Authorization:`Bearer ${f.config.token}`,Host:'evil.invalid'}]){
+  for(const headers of [{},{Authorization:'Bearer wrong'},{Authorization:`Bearer ${f.config.token}`,Origin:'http://localhost'}]){
     const status=await new Promise((resolve,reject)=>get(f.server.url,{headers},response=>{response.resume();resolve(response.statusCode);}).on('error',reject));
     assert.equal(status,403);
   }
+  // New Node clients reject an authority/Host mismatch before sending it.
+  // Use a wire-level request only to this owned loopback fixture so the server's
+  // own Host validation remains covered rather than testing the HTTP client.
+  const url=new URL(f.server.url);assert.equal(url.hostname,'127.0.0.1');
+  const response=await new Promise((resolve,reject)=>{
+    const socket=createConnection({host:url.hostname,port:Number(url.port)});let text='';
+    socket.setEncoding('utf8');socket.setTimeout(5000,()=>socket.destroy(Error('Fixture response timed out')));
+    socket.once('connect',()=>socket.write(`GET /mcp HTTP/1.1\r\nHost: evil.invalid\r\nAuthorization: Bearer ${f.config.token}\r\nConnection: close\r\n\r\n`));
+    socket.on('data',chunk=>{text+=chunk;});socket.once('error',reject);socket.once('end',()=>{socket.destroy();resolve(text);});
+  });
+  assert.match(response,/^HTTP\/1\.1 403 /);
   assert.equal(f.calls.length,0);
   assert.equal((await inspectAgentDesktopBridge(f.config)).environment,'ready');
   await assert.rejects(inspectAgentDesktopBridge({...f.config,agentId:'another-agent'}),/verified/);

@@ -6,7 +6,7 @@ import { verifyProcessResourceHost } from '../packages/bush-runtime/dist/process
 import { verifyAgentBundledAssets, verifyAgentBundledMcp } from '../dist-electron/agentBundledAssets.mjs';
 
 const sourceRoot = resolve(import.meta.dirname, '..');
-const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist-electron/agentServiceCli.mjs',
+const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/cardbush-agent.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentServiceProcess.mjs',
   'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
   'dist-electron/agentLocalRuntime.mjs', 'dist-electron/agentLocalRuntimeHost.mjs', 'dist-electron/agentServer.mjs',
   'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',
@@ -16,6 +16,8 @@ const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'dist
   'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs',
   'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectionApproval.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
   'deploy/agent/install-windows-desktop.ps1',
+  'deploy/agent/README.md', 'assets/skills/cardbush-docs/SKILL.md',
+  'assets/skills/cardbush-docs/references/agent-deploy.md', 'assets/skills/cardbush-docs/references/agent-deployment.md',
   'packages/bush-runtime/dist/processResourceGuard.js', 'scripts/agent-desktop/worker.py',
   'scripts/agent-desktop/computer.py', 'scripts/agent-desktop/browser.py'];
 
@@ -56,6 +58,7 @@ export async function packageAgent(root, output, platform = process.platform) {
   await cp(join(root, 'scripts/agent-desktop'), join(output, 'scripts/agent-desktop'), { recursive: true });
   await mkdir(join(output, 'deploy/agent'), { recursive: true });
   await cp(join(root, 'deploy/agent/install-windows-desktop.ps1'), join(output, 'deploy/agent/install-windows-desktop.ps1'));
+  await cp(join(root, 'deploy/agent/README.md'), join(output, 'deploy/agent/README.md'));
   for (const entry of await readdir(join(root, 'packages'), { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const from = join(root, 'packages', entry.name), to = join(output, 'packages', entry.name);
@@ -79,15 +82,20 @@ export async function packageAgent(root, output, platform = process.platform) {
   }
   await verifyAgentPackage(output, platform);
   await writeFile(join(output, 'DEPLOY.txt'),
-    'Install Node.js 24. In this directory run: npm ci --omit=dev --ignore-scripts\n'
-    + 'Start: node dist-electron/agentServiceCli.mjs --data-dir <separate-data-directory>\n'
+    'CardBush Agent core and CLI (no desktop GUI). Install Node.js 24 and npm 10+.\n'
+    + 'Windows: install PowerShell 7 (pwsh); Windows PowerShell 5 is unsupported.\n'
+    + 'Linux: command/file isolation requires administrator-installed bubblewrap and usable user namespaces.\n'
+    + 'In this directory run: npm ci --omit=dev --ignore-scripts\n'
+    + 'Service: cardbush serve --background; inspect with --status, stop with --stop.\n'
+    + 'Foreground: cardbush serve --data-dir <separate-data-directory>\n'
     + 'Register the terminal command once: npm link --ignore-scripts\n'
     + 'Local chat: enter a working directory and run cardbush (approval) or cardbush --full-access; no service token needed.\n'
     + 'ChatGPT account models reuse the local App sign-in and require the App running. API-key models run independently.\n'
     + 'If no model is configured, edit the displayed models.json using its annotated example, then press Enter to reload.\n'
     + 'Optional service connection: cardbush --url <Agent URL> --token-file <access-token file>\n'
     + 'Resume: cardbush --resume <session-id> (keeps its workspace); options: cardbush --help\n'
-    + 'Deploy the whole directory, including dist-native on Windows. Never copy credentials or task data into this release.\n');
+    + 'Deploy the whole directory, including dist-native on Windows. Never copy credentials or task data into this release.\n'
+    + 'Deployment Skill: assets/skills/cardbush-docs/references/agent-deployment.md\n');
   return output;
 }
 

@@ -24,9 +24,9 @@ test('missing Windows probe dependency and execution failure remain repairable o
   assert.equal(failed.checks.at(-1).code,'resource_protection_unavailable');
 });
 
-test('Windows desktop probe finds the system binary when a service or scheduled task has no PowerShell on PATH',async()=>{
-  const executable='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-  const result=await probeAgentDesktop({SystemRoot:'C:\\Windows',Path:'C:\\Windows\\System32'},{platform:'win32',
+test('Windows desktop probe finds installed PowerShell 7 when PATH is shortened',async()=>{
+  const executable='C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+  const result=await probeAgentDesktop({ProgramFiles:'C:\\Program Files',Path:'C:\\Windows\\System32'},{platform:'win32',
     find:name=>name===executable?name:undefined,run:async name=>{assert.equal(name,executable);return ok({interactive:true,inputDesktop:true,sessionId:1});}});
   assert.equal(result.environment,'ready');
 });
