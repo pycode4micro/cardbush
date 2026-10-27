@@ -43,7 +43,7 @@ cardbush --url http://127.0.0.1:4780 --token-file /srv/cardbush/agent-a/access-t
 源码仓库仍为 private，不能直接发布仓库根目录。维护者运行 `npm run package:npm` 构建独立发布目录和 `.tgz`，命令打印产物路径及摘要，不自动发布。然后运行隔离安装验证：
 
 ```sh
-npm run verify:npm-package -- --tarball /absolute/path/cardbush-1.0.11.tgz
+npm run verify:npm-package -- --tarball /absolute/path/cardbush-1.0.12.tgz
 ```
 
 验证在仓库外创建临时安装目录，检查两个命令、原生资源、服务鉴权，并使用本地模拟模型分别完成服务与独立 CLI 对话；不覆盖用户全局安装、不读取用户配置、不发起付费模型调用。成功后将 `verification-report.json` 写到 tarball 旁边。确认发布名称和版本后，可将已验证的 tarball 提交 npm；无需分别发布内部工作区。
@@ -51,7 +51,7 @@ npm run verify:npm-package -- --tarball /absolute/path/cardbush-1.0.11.tgz
 也可以用该 tarball 安装到目标机器：
 
 ```sh
-npm install --global /absolute/path/cardbush-1.0.11.tgz
+npm install --global /absolute/path/cardbush-1.0.12.tgz
 cardbush --version
 cardbush serve --help
 ```

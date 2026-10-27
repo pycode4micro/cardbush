@@ -9,7 +9,7 @@
 服务与 CLI 由同一份版本交付。使用 [npm 发布包](../../docs/NPM_AGENT.md) 部署时，一次安装同时注册 `cardbush` 与 `cardbush-agent`：
 
 ```sh
-npm install --global /absolute/path/cardbush-1.0.11.tgz
+npm install --global /absolute/path/cardbush-1.0.12.tgz
 cardbush serve --data-dir /srv/cardbush/agent-a --name Agent-A
 ```
 
