@@ -321,6 +321,11 @@ test("tunnels a child permission request through the active parent Turn", async 
   assert.equal(requested.payload.permissionRouting, "parent");
   assert.equal(requested.payload.parentSessionId, "parent");
   assert.match(requested.payload.sourceSessionId, /^subagent_session_/);
+  const taskTool = registry.resolve('tasks');
+  const readTasks = () => taskTool.execute({ sessionId: 'parent', turnId: 'parent_turn', input: taskTool.decodeInput({ action: 'list' }) });
+  const pendingTask = (await readTasks()).tasks.find(task => task.kind === 'subagent');
+  assert.equal(pendingTask.progress.phase, 'waiting_user', 'parent-routed approvals remain visible in child progress');
+  assert.equal(pendingTask.progress.active_tool_calls, 1);
   await host.sendCommand({
     kind: "runtime.answer_permission",
     payload: {
@@ -333,6 +338,7 @@ test("tunnels a child permission request through the active parent Turn", async 
   });
   const terminal = await running;
   assert.equal(terminal.payload.status, "completed");
+  assert.equal((await readTasks()).tasks.find(task => task.kind === 'subagent').progress.phase, 'completed');
   assert.ok(host.events("parent", "parent_turn").some((event) =>
     event.kind === "permission_answered" && event.payload.sourceSessionId?.startsWith("subagent_session_")
   ));

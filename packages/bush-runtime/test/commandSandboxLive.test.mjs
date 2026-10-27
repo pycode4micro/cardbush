@@ -11,6 +11,31 @@ const quote = value => windows ? `'${value.replaceAll("'", "''")}'` : `'${value.
 const write = (path, content) => windows ? `Set-Content -LiteralPath ${quote(path)} -Value ${quote(content)} -ErrorAction Stop` : `printf '%s' ${quote(content)} > ${quote(path)}`;
 const read = path => windows ? `Get-Content -LiteralPath ${quote(path)} -ErrorAction Stop` : `cat ${quote(path)}`;
 
+test('a command installed outside the sandbox is diagnosed without host execution or automatic permission expansion', { skip: !windows, timeout: 60000 }, async t => {
+  const base = await realpath(tmpdir()), folder = await realpath(await mkdtemp(join(base, 'cardbush-command-diagnostic-')));
+  const work = join(folder, 'work'), tools = join(folder, 'tools'), marker = join(work, 'must-not-exist.txt');
+  await mkdir(work); await mkdir(tools);
+  const name = 'cardbush_diagnostic_fixture', executable = join(tools, name + '.cmd');
+  await writeFile(executable, `@echo off\r\necho should-not-run>"${marker}"\r\n`);
+  const key = Object.keys(process.env).find(k => k.toUpperCase() === 'PATH') ?? 'PATH', original = process.env[key];
+  process.env[key] = `${tools};${original ?? ''}`;
+  const terminals = new TerminalSessionManager();
+  t.after(async () => {
+    if (original === undefined) delete process.env[key]; else process.env[key] = original;
+    await terminals.close(); assert.equal(dirname(folder).toLowerCase(), base.toLowerCase()); await rm(folder, { recursive: true, force: true });
+  });
+  let result = await terminals.start({ ownerSessionId: 'diagnostic', command: name, cwd: work, shell: 'powershell', yieldTimeMs: 1000,
+    sandbox: { readableRoots: [], writableRoots: [work], network: 'disabled' } });
+  if (result.state === 'running') result = await terminals.waitForCompletion('diagnostic', result.terminalSessionId, AbortSignal.timeout(45000));
+  assert.equal(result.state, 'exited'); assert.notEqual(result.exitCode, 0);
+  assert.equal(result.shellDiagnostic.commandName, name);
+  assert.equal(result.environmentDiagnostic.host_command.status, 'found');
+  assert.equal(result.environmentDiagnostic.installation, 'executable_found_on_host');
+  assert.equal(result.environmentDiagnostic.access_granted, false);
+  assert.deepEqual(result.sandbox.readableRoots, []); assert.deepEqual(result.sandbox.writableRoots, [work]);
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
+});
+
 test('real sandbox execution and exact approvals preserve file boundaries and full access', { skip: !['linux', 'win32'].includes(process.platform), timeout: 60_000 }, async t => {
   const folder = await realpath(await mkdtemp(join(tmpdir(), 'cardbush-sandbox-live-')));
   const work = join(folder, 'work'), outside = join(folder, 'outside');

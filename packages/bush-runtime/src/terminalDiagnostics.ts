@@ -6,6 +6,7 @@ export interface TerminalShellDiagnostic {
   permissionDenied: boolean;
   category: string;
   exceptionType: string;
+  commandName?: string;
 }
 
 export class TerminalDiagnosticStream {
@@ -35,7 +36,8 @@ export class TerminalDiagnosticStream {
           if (value.source === 'powershell' && ['working_directory', 'command'].includes(value.phase) &&
               typeof value.permissionDenied === 'boolean' && typeof value.category === 'string' && typeof value.exceptionType === 'string') {
             this.report({ source: 'powershell', phase: value.phase, permissionDenied: value.permissionDenied,
-              category: value.category.slice(0, 128), exceptionType: value.exceptionType.slice(0, 256) });
+              category: value.category.slice(0, 128), exceptionType: value.exceptionType.slice(0, 256),
+              ...(typeof value.commandName === 'string' && /^[a-zA-Z0-9_+.-]{1,128}$/.test(value.commandName) ? { commandName: value.commandName } : {}) });
             this.#pending = this.#pending.subarray(end + 1); continue;
           }
         } catch { /* Malformed frames remain ordinary stderr, losslessly. */ }

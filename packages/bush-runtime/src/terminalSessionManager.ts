@@ -7,6 +7,7 @@ import type { ExecutionSandboxPolicy } from './executionSandbox.js';
 import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
 import { WindowsSandboxScopePool } from './windowsSandboxScope.js';
 import { TerminalDiagnosticStream, type TerminalShellDiagnostic } from './terminalDiagnostics.js';
+import { inspectHostCommand, terminalEnvironmentDiagnostic, type HostCommandLookup } from './terminalEnvironmentDiagnostic.js';
 
 export type TerminalShell = 'cmd' | 'powershell' | 'posix';
 interface TerminalPollInput { sessionId: string; yieldTimeMs: number }
@@ -34,6 +35,7 @@ interface ManagedTerminalSession {
   nativeErrorCode?: number;
   supervisorExitCode?: number;
   shellDiagnostic?: TerminalShellDiagnostic;
+  hostCommandLookup?: HostCommandLookup;
   startedAt: number;
   endedAt?: number;
   lastOutputAt?: number;
@@ -186,7 +188,8 @@ export class TerminalSessionManager {
       this.#notify(terminal);
     };
     const diagnostics = diagnosticToken ? new TerminalDiagnosticStream(diagnosticToken, appendError,
-      value => { terminal.shellDiagnostic = value; }) : undefined;
+      value => { terminal.shellDiagnostic = value;
+        terminal.hostCommandLookup = value.commandName ? inspectHostCommand(value.commandName) : undefined; }) : undefined;
     child.stderr?.on("data", (chunk: Buffer) => diagnostics ? diagnostics.write(chunk) : appendError(chunk));
     let finishing = false;
     const finish = async (exitCode: number | null, signal: NodeJS.Signals | null) => {
@@ -373,6 +376,11 @@ export class TerminalSessionManager {
       ...(terminal.nativeErrorCode === undefined ? {} : { nativeErrorCode: terminal.nativeErrorCode }),
       ...(terminal.supervisorExitCode === undefined ? {} : { supervisorExitCode: terminal.supervisorExitCode }),
       ...(terminal.shellDiagnostic ? { shellDiagnostic: terminal.shellDiagnostic } : {}),
+      ...(() => {
+        const environmentDiagnostic = terminalEnvironmentDiagnostic({ state: terminal.state, exitCode: terminal.exitCode,
+          shellDiagnostic: terminal.shellDiagnostic, sandbox: terminal.guarded.sandbox }, terminal.hostCommandLookup);
+        return environmentDiagnostic ? { environmentDiagnostic } : {};
+      })(),
     };
   }
 

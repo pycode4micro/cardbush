@@ -1,4 +1,5 @@
-import { TASK_WAIT_MAX_MS, TASK_WAIT_DEFAULT_MS, TASK_BATCH_LIMIT, TASK_PAGE_DEFAULT } from './taskLimits.js';
+import { TASK_WAIT_MAX_MS, TASK_BATCH_LIMIT, TASK_PAGE_DEFAULT } from './taskLimits.js';
+import type { RuntimeTaskProgress } from './runtimeTaskProgress.js';
 import { TEAM_WORKFLOW_MAX_NODES } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
@@ -11,6 +12,8 @@ export interface RuntimeTaskHandle {
   status: string;
   revision: string;
   summary?: string;
+  progress?: RuntimeTaskProgress;
+  readProgress?: () => RuntimeTaskProgress | undefined;
   result?: unknown;
   readResult?: (nodeIds?: string[]) => Promise<unknown>;
   readConversation?: (context: ToolHandlerContext<unknown>, cursor?: string) => Promise<unknown>;
@@ -26,7 +29,7 @@ const schema = z.object({
   node_ids: z.array(z.string().trim().min(1)).min(1).max(TEAM_WORKFLOW_MAX_NODES).refine(ids => new Set(ids).size === ids.length, 'node_ids must be unique').optional().describe('Selected node outputs from one Team run; inspect or wait only. Omit for final outputs.'),
   task_ids: z.array(z.string().min(1)).min(1).max(TASK_BATCH_LIMIT).optional().describe('Existing task_id handles from tasks list or launch results (subagent taskId, team task_id/run_id). Employee IDs, workflow definition IDs, node IDs and chat session IDs are not task handles.'),
   mode: z.enum(['any', 'all']).default('any'),
-  yield_time_ms: z.number().int().min(0).max(TASK_WAIT_MAX_MS).default(TASK_WAIT_DEFAULT_MS),
+  yield_time_ms: z.number().int().min(0).max(TASK_WAIT_MAX_MS).optional().describe('Omit to wait until completion or new guidance, without periodic model wakeups. 0 reads a snapshot; a positive value explicitly requests a timeout. Cancellation stops observation only.'),
   after: z.record(z.string(), z.string()).refine(value => Object.keys(value).length <= TASK_BATCH_LIMIT).optional(),
   offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(TASK_BATCH_LIMIT).default(TASK_PAGE_DEFAULT),
 }).strict();
@@ -34,7 +37,7 @@ const schema = z.object({
 /** A facade over existing executors; never creates a second task lifecycle. */
 export class RuntimeTaskTools {
   private readonly sources: TaskSource[] = [];
-  constructor(private readonly waitForWork: (context: ToolHandlerContext<unknown>, promises: Promise<unknown>[], mode: 'any' | 'all', signal: AbortSignal, duration: number) => Promise<string>) {}
+  constructor(private readonly waitForWork: (context: ToolHandlerContext<unknown>, promises: Promise<unknown>[], mode: 'any' | 'all', signal: AbortSignal, duration?: number) => Promise<string>) {}
   addSource(source: TaskSource) { this.sources.push(source); }
   async snapshot(context: ToolHandlerContext<unknown>) {
     const results = await Promise.allSettled(this.sources.map(async source => {
@@ -56,7 +59,7 @@ export class RuntimeTaskTools {
   }
   register(registry: ToolRegistry) {
     registry.register({
-      definition: { name: 'tasks', description: 'Observe or control existing terminal, subagent, team, MCP, script and question tasks in this conversation. Creates no work: subagent dispatches/follows up on individual children; team starts/resumes saved dependency workflows. list returns task handles; inspect reads results; conversation reads one owned child’s ordered inputs and final answers (one task_ids entry; follow nextCursor). Private reasoning and tool activity are excluded. wait wakes on any/all completion, user/peer guidance or yield_time_ms (default 1000; 0=snapshot). Continue independent work first; do not poll or restart pending tasks. after revisions omit unchanged results. inspect/conversation/stop/cancel_observation require task_ids. stop uses normal permissions; cancel_observation only removes a completion subscription. Wait cancellation never stops tasks. Independent peers use an available collaboration plugin.', inputSchema: z.toJSONSchema(schema) },
+      definition: { name: 'tasks', description: 'Observe or control existing terminal, subagent, team, MCP, script and question tasks in this conversation. Creates no work: subagent dispatches/follows up on individual children; team starts/resumes saved dependency workflows. list returns task handles; inspect reads results; conversation reads one owned child’s ordered inputs and final answers (one task_ids entry; follow nextCursor). Private reasoning and tool contents are excluded. Local child progress reports phase, last activity and counts. wait defaults to staying asleep until any/all completion or user/peer guidance; omit yield_time_ms while blocked. Use 0 for a snapshot or a positive value only for an explicit timeout. Continue independent work first; do not poll or restart pending tasks. after revisions omit unchanged results. inspect/conversation/stop/cancel_observation require task_ids. stop uses normal permissions; cancel_observation only removes a completion subscription. Wait cancellation never stops tasks. Independent peers use an available collaboration plugin.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'delegation', operation: 'tasks.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,
@@ -110,10 +113,11 @@ export class RuntimeTaskTools {
           ...(snapshot.unavailable_sources.length ? { complete: false, unavailable_sources: snapshot.unavailable_sources, note: 'Unavailable sources do not prove tasks ended or never started. Inspect the original handles before retrying.' } : {}),
           ...(input.action === 'wait' && !input.task_ids && all.filter(taskPending).length > selected.length ? { selection_limited: true, pending_count: snapshot.handles.filter(taskPending).length } : {}),
           ...(input.action === 'list' && !input.task_ids ? { total: all.length, offset: input.offset, next_offset: input.offset + selected.length < all.length ? input.offset + selected.length : null } : {}),
-          tasks: await Promise.all(selected.map(async ({ task_id, kind, status, revision, summary, result, readResult, stop, cancelObservation }) => {
+          tasks: await Promise.all(selected.map(async ({ task_id, kind, status, revision, summary, progress, readProgress, result, readResult, stop, cancelObservation }) => {
             const unchanged = !input.node_ids && input.after?.[task_id] === revision;
             const value = !unchanged && input.action !== 'list' ? readResult ? await readResult(input.node_ids) : result : undefined;
-            return { task_id, kind, status, revision, ...(summary ? { summary: input.action === 'list' ? briefText(summary) : summary } : {}),
+            progress = readProgress?.() ?? progress;
+            return { task_id, kind, status, revision, ...(summary ? { summary: input.action === 'list' ? briefText(summary) : summary } : {}), ...(progress ? { progress } : {}),
               ...(unchanged ? { unchanged: true } : value !== undefined ? { result: value } : {}),
               controls: { stop: !!stop, cancel_observation: !!cancelObservation } };
           })),

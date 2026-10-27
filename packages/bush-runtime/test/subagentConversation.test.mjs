@@ -107,6 +107,44 @@ test('conversation pagination is lossless for long messages and omits internal/h
   assert.throws(() => childConversationPage(source, '-1:0'), /cursor/);
 });
 
+test('parent-authored live follow-up never becomes a human intervention notification or next-turn reminder', async () => {
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  const { host, tasks, registry, seen, start, read } = setup(gate);
+  let observedChild;
+  const running = start();
+  try {
+    for (let i = 0; !tasks.list('parent').length && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    const task = tasks.list('parent')[0]; assert.ok(task);
+    for (let i = 0; !seen.some(item => item.sessionId === task.childSessionId) && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    // A pending task lets us observe the child's ordinary wait channel without
+    // launching a process or replaying any of the recorded business tools.
+    tasks.start({ taskId: 'observation-fixture', parentSessionId: task.childSessionId, parentTurnId: task.childTurnId,
+      childSessionId: 'fixture-child', childTurnId: 'fixture-turn', prompt: 'fixture', inheritContext: false, inheritedMessageCount: 0 });
+    observedChild = task.childSessionId;
+    const observer = registry.resolve('tasks'), observe = () => observer.execute({ sessionId: task.childSessionId, turnId: task.childTurnId,
+      signal: AbortSignal.timeout(5000), input: observer.decodeInput({ action: 'wait', task_ids: ['observation-fixture'] }) });
+    const waiting = observe();
+    const subagent = registry.resolve('subagent');
+    await subagent.execute({ sessionId: 'parent', turnId: 'dispatch', toolCall: { id: 'wrap-up' },
+      input: subagent.decodeInput({ task_id: task.taskId, prompt: '请收尾；这不是新的用户授权。' }),
+      turn: { request: { metadata: {} } } });
+    assert.equal((await waiting).wake_reason, 'peer_message');
+    assert.equal((await observe()).wake_reason, 'peer_message', 'queued parent guidance keeps its origin before a waiter subscribes');
+    tasks.finish({ parentSessionId: task.childSessionId, taskId: 'observation-fixture', status: 'completed', finalResponse: 'fixture done', errorMessage: '', usage: {} });
+    assert.ok((await read(task.taskId)).messages.some(m => m.content.includes('请收尾') && m.author === 'parent_agent'));
+    release(); await running;
+    assert.ok((await read(task.taskId)).messages.some(m => m.content.includes('请收尾') && m.author === 'parent_agent'));
+    assert.ok(!seen.filter(r => r.sessionId === 'parent').some(r => r.messages.some(m => m.content.includes('A direct user message was queued'))));
+    await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'next-r', sessionId: 'parent', turnId: 'next', model: 'fixture',
+      prefixMessages: [], inputMessages: [{ messageId: 'next-input', message: { role: 'user', content: '下一步' } }], tools: registry.definitions(), metadata: {} });
+    assert.ok(!seen.find(r => r.turnId === 'next').messages.some(m => m.name === 'subagent_conversation_updates'));
+  } finally {
+    if (observedChild && tasks.get(observedChild, 'observation-fixture')?.status === 'running') tasks.finish({ parentSessionId: observedChild,
+      taskId: 'observation-fixture', status: 'stopped', finalResponse: '', errorMessage: 'fixture cleanup', usage: {} });
+    release(); await running;
+  }
+});
+
 test('parent sees only ordered inputs and terminal answers across multiple turns, never loop activity', () => {
   const entry = (id, turnId, message, metadata) => ({ messageId: id, turnId, message, metadata, createdAt: '2026-09-28T00:00:00Z' });
   const messages = [

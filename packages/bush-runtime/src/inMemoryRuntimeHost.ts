@@ -423,9 +423,11 @@ export class InMemoryRuntimeHost {
   readonly #workspaceRedo: WorkspaceRedoStore;
 
   constructor(options: InMemoryRuntimeHostOptions) {
-    this.#turnSignals = new RuntimeTurnSignals((session, turn) =>
-      this.#guidanceQueues.get(JSON.stringify([session, turn]))?.length ? 'user_message'
-        : this.#conversations.hasPending(session, turn) ? 'peer_message' : undefined);
+    this.#turnSignals = new RuntimeTurnSignals((session, turn) => {
+      const guidance = this.#guidanceQueues.get(JSON.stringify([session, turn]));
+      return guidance?.length ? guidance.some(item => item.metadata?.subagentAuthor !== 'parent') ? 'user_message' : 'peer_message'
+        : this.#conversations.hasPending(session, turn) ? 'peer_message' : undefined;
+    });
     this.#conversations = new RuntimeConversations({
       busy: sessionId => this.#shuttingDown || this.#sessionAdmissions.has(sessionId) || !!this.#cacheMaintenance || this.#workspaceActions > 0,
       signal: (sessionId, turnId) => this.#turnSignals.wake(sessionId, turnId, 'peer_message'),
@@ -686,6 +688,14 @@ export class InMemoryRuntimeHost {
     taskTools.addSource(context => this.#teams.taskHandles(context.sessionId));
     taskTools.addSource(context => this.#subagentTasks.list(context.sessionId).filter(task => task.origin !== 'team').map(task => ({
       task_id: task.taskId, kind: 'subagent' as const, status: task.status, revision: String(task.revision), summary: task.agentName ?? task.prompt.slice(0, 160),
+      ...(!task.remote ? { readProgress: () => {
+        const progress = this.#eventLog.taskProgress(task.childSessionId, task.childTurnId);
+        // Child approvals may be presented in the parent's event stream. Read
+        // the owning broker rather than duplicating permission lifecycle events.
+        if (progress && task.status === 'running' && [...this.#toolLoops].some(loop =>
+          loop.matches(task.childSessionId, task.childTurnId) && loop.hasPendingPermissions())) progress.phase = 'waiting_user';
+        return progress;
+      } } : {}),
       result: { session_id: task.childSessionId, turn_id: task.childTurnId, ...(task.status !== 'running' ? { output: task.finalResponse, error: task.errorMessage } : {}) },
       ...(subagents?.readConversation ? { readConversation: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>, cursor?: string) => subagents.readConversation!(ctx, task.taskId, cursor) } : {}),
       wait: (signal: AbortSignal) => this.#subagentTasks.waitForCompletion(context.sessionId, task.taskId, signal),
@@ -1521,9 +1531,9 @@ export class InMemoryRuntimeHost {
             metadata: { ...guidance.metadata, guidance_mode: guidance.mode ?? 'append_context' },
           });
           this.#guidanceQueues.set(key, queue);
-          this.#turnSignals.wake(guidance.sessionId, guidance.turnId);
+          this.#turnSignals.wake(guidance.sessionId, guidance.turnId, guidance.metadata?.subagentAuthor === 'parent' ? 'peer_message' : 'user_message');
           if (guidance.mode === 'interrupt_and_continue') modelRequestInterrupted = this.#modelRequests.interrupt(key);
-          if (child?.metadata.agentRole === 'child' && typeof child.metadata.parentSessionId === 'string' && typeof child.metadata.subagentTaskId === 'string') {
+          if (guidance.metadata?.subagentAuthor === 'user' && child?.metadata.agentRole === 'child' && typeof child.metadata.parentSessionId === 'string' && typeof child.metadata.subagentTaskId === 'string') {
             this.#notifyChildConversation(child.metadata.parentSessionId, child.metadata.subagentTaskId,
               `A direct user message was queued in the child conversation: ${JSON.stringify(guidance.content)}`);
           }
@@ -1706,7 +1716,7 @@ export class InMemoryRuntimeHost {
       const commit = checkpoint.sessionCommit;
       if (!commit || session.turns.some(turn => turn.turnId === checkpoint.request.turnId)) continue;
       const inputs = commit.inputMessages;
-      const generated = checkpoint.request.messages.slice(commit.initialMessageCount).map((message, index) => ({ messageId: `live:${checkpoint.request.turnId}:${index}`, message }));
+      const generated = commit.generatedMessages;
       const pending = this.#guidanceQueues.get(JSON.stringify([sessionId, checkpoint.request.turnId])) ?? [];
       for (const [index, entry] of [...inputs, ...generated, ...pending.map(item => ({ messageId: item.messageId, createdAt: item.createdAt, metadata: { ...item.metadata, delivery: 'queued', subagentAuthor: item.metadata?.subagentAuthor ?? 'user' }, message: { role: 'user' as const, content: item.content, name: 'turn_guidance' } }))].entries()) {
         messages.push({ ...entry, message: entry.message as typeof messages[number]['message'], turnId: checkpoint.request.turnId, turnSequence: session.turns.length + 1, messageIndex: index, createdAt: 'createdAt' in entry && entry.createdAt ? entry.createdAt : checkpoint.createdAt });
@@ -1727,7 +1737,7 @@ export class InMemoryRuntimeHost {
       const updates = [...children.values()].flatMap(task => {
         const source = this.#childConversation(task.childSessionId);
         const latest = source?.messages.filter(entry => entry.message.role === 'user' &&
-          (entry.metadata?.subagentAuthor === 'user' || entry.message.name === 'turn_guidance')).at(-1);
+          entry.metadata?.subagentAuthor === 'user').at(-1);
         return latest ? [{ taskId: task.taskId, sessionId: task.childSessionId, messageId: latest.messageId }] : [];
       });
       if (updates.length) candidate.prefixMessages.push({ role: 'developer', name: 'subagent_conversation_updates',

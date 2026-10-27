@@ -161,6 +161,10 @@ export class RuntimeToolLoop {
     return this.#permissions.pendingIds().includes(permissionId);
   }
 
+  hasPendingPermissions(): boolean {
+    return this.#permissions.pendingIds().length > 0;
+  }
+
   answerPermission(answer: RuntimePermissionAnswer): RuntimePermissionAnswer {
     return this.#permissions.answer(answer);
   }

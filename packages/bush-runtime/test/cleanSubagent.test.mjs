@@ -141,14 +141,14 @@ test('invalid mode combinations and clean configuration fail before starting a c
   assert.equal(f.tasks.list(f.request.sessionId).length, 0);
 });
 
-test('legacy inherit_context calls remain decodable while the advertised API has one mode switch', async () => {
+test('unadvertised inherit_context is rejected rather than retaining a second mode switch', async () => {
   const f = fixture();
   for (const inherit_context of [true, false]) {
     const outcome = await invoke(f.registry, f.request, 'subagent', { prompt: 'Saved task', inherit_context });
-    assert.equal(outcome.kind, 'returned');
-    assert.equal(outcome.result.mode, inherit_context ? 'fork' : 'clean');
-    assert.deepEqual(f.requests.at(-1).prefixMessages, inherit_context ? f.request.messages : f.request.metadata.subagentChildPrefixMessages);
+    assert.equal(outcome.kind, 'failed');
+    assert.match(outcome.error.message, /unsupported subagent arguments: inherit_context/);
   }
+  assert.equal(f.requests.length, 0);
 });
 
 test('clean cannot raise its permission ceiling by changing routing or override a profile execution limit', () => {

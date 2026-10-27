@@ -130,6 +130,7 @@ export function powerShellCommand(command: string, diagnosticToken?: string) {
       '$cardbushPermission = $cardbushPermission -or $cardbushError.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::PermissionDenied',
       'if ($null -eq $cardbushDiagnostic -or $cardbushPermission) {',
       '$cardbushDiagnostic = @{source="powershell"; phase=$cardbushPhase; permissionDenied=$cardbushPermission; category=[string]$cardbushError.CategoryInfo.Category; exceptionType=$cardbushError.Exception.GetType().FullName}',
+      'if ($cardbushError.Exception -is [System.Management.Automation.CommandNotFoundException]) { $cardbushDiagnostic.commandName = [string]$cardbushError.Exception.CommandName }',
       '}', 'if ($cardbushPermission) { break }', '}',
       `if ($null -ne $cardbushDiagnostic) { [Console]::Error.Write(([char]30 + '${diagnosticToken}:' + (ConvertTo-Json -InputObject $cardbushDiagnostic -Compress) + [char]31)) }`,
       '}'] : []),

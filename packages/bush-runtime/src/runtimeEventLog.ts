@@ -1,5 +1,6 @@
 import { memoryCacheEntry, type CacheEntry, type CacheMaintenanceResult } from './cacheMaintenance.js';
 import { randomUUID } from "node:crypto";
+import { RuntimeTaskActivity } from './runtimeTaskProgress.js';
 
 import {
   BUSH_RUNTIME_EVENT_PROTOCOL,
@@ -53,6 +54,7 @@ export interface RuntimeEventPersistence {
 }
 
 interface TurnEventStream {
+  activity: RuntimeTaskActivity;
   identity?: RuntimeEventIdentity;
   events: RuntimeEvent[];
   listeners: Set<(event: RuntimeEvent) => void>;
@@ -131,6 +133,7 @@ export class InMemoryRuntimeEventLog {
     this.#persistence?.append(event);
     this.#eventIds.add(eventId);
     stream.events.push(event);
+    stream.activity.observe(event);
     for (const listener of stream.listeners) {
       listener(event);
     }
@@ -139,6 +142,11 @@ export class InMemoryRuntimeEventLog {
 
   isTerminal(sessionId: string, turnId: string): boolean {
     return this.#stream(sessionId, turnId).events.at(-1)?.kind === "turn_terminal";
+  }
+
+  taskProgress(sessionId: string, turnId: string) {
+    const stream = this.#stream(sessionId, turnId);
+    return stream.events.length ? stream.activity.snapshot() : undefined;
   }
 
   replay(
@@ -237,7 +245,10 @@ export class InMemoryRuntimeEventLog {
     let stream = this.#streams.get(key);
     if (!stream) {
       const events = this.#loadPersistedEvents(sessionId, turnId);
+      const activity = new RuntimeTaskActivity();
+      for (const event of events) activity.observe(event);
       stream = {
+        activity,
         identity: events[0]
           ? {
               requestId: events[0].requestId,

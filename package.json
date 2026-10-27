@@ -308,6 +308,7 @@
     "@types/ws": "^8.18.1",
     "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "^6.0.2",
+    "ajv": "^8.20.0",
     "concurrently": "^10.0.4",
     "electron": "^42.11.12",
     "electron-builder": "^26.15.3",

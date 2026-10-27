@@ -29,6 +29,7 @@ import { CLEAN_AGENT_SETTINGS_SCHEMA, decodeCleanAgentSettings, decodeToolOrSkil
 import { pluginAgentTools, validateAgentSkills, type PluginAgent } from './pluginExtensions.js';
 import { childConversationPage, childConversationReadHint, type ChildConversationSource } from './subagentConversation.js';
 import { presentTool } from './toolPresentation.js';
+import { onlySubagentArguments, subagentInputSchema } from './subagentContract.js';
 
 export const SUBAGENT_TOOL = "subagent" as const;
 
@@ -135,7 +136,7 @@ export function registerSubagentTool(
       name: SUBAGENT_TOOL,
       description:
         "Delegate ad-hoc work to one child per call; use separate calls for independent assignments, even with several agents. Choose team when the host should schedule a saved dependency workflow and resume unfinished steps. Follow up on an owned child with task_id and prompt: running children receive guidance; finished children resume their session and name. Give new ad-hoc children short responsibility names. Fork continuations inherit the current parent model; configured clean children retain theirs. Use tasks to inspect, wait, stop or read child conversations. Continue independent work and reconcile subagent_result. Independent peers use an available collaboration plugin. Host permissions and child restrictions remain enforced.",
-      inputSchema: {
+      inputSchema: subagentInputSchema({
         type: "object",
         additionalProperties: false,
         properties: {
@@ -146,7 +147,7 @@ export function registerSubagentTool(
             expected_revision: { type: 'integer', minimum: 0, description: 'Required for save/delete. 0 creates a new definition; otherwise use its observed revision.' },
           } : {}),
           prompt: { type: "string", minLength: 1, description: "Child assignment as a user message: necessary facts, original user's communication language, expected output, your concurrent next steps and handoffs. Distinguish pending dependencies from confirmed facts." },
-          name: { type: 'string', minLength: 1, maxLength: SUBAGENT_NAME_MAX_LENGTH, description: 'Short responsibility label in the user\'s language, e.g. 视觉设计 or API reviewer; put assignment details in prompt. Supply for a new ad-hoc child; registered employees and task_id follow-ups keep their existing name. This labels the task without changing its instructions or permissions.' },
+          name: { type: 'string', minLength: 1, maxLength: SUBAGENT_NAME_MAX_LENGTH, description: 'Short responsibility label in the user\'s language, e.g. 视觉设计 or API reviewer; put assignment details in prompt. New ad-hoc children only. Omit when task_id or agent_id is supplied: follow-ups and registered employees keep their existing name. This labels the task without changing its instructions or permissions.' },
           ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt, target_agent and optional name; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),
           ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Owned child taskId from a subagent result, or task_id with kind=subagent from tasks list. Never substitute agent_id, childSessionId, team run_id or a workflow node ID. Supply task_id and prompt, with optional run_in_background; the original history and execution host are retained.' } } : {}),
           mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork is a snapshot of the pre-dispatch conversation and intent; later parent messages are not synchronized. clean uses a registered agent_id, or explicit independent system_prompt/settings. Discover reusable employees with list_subagent_options. Each new clean task has its own conversation; use task_id to continue an existing task.' },
@@ -156,11 +157,11 @@ export function registerSubagentTool(
           ...(options.runBackground ? { run_in_background: { type: 'boolean', default: false } } : {}),
           ...(options.loadPluginAgents ? { agent_type: { type: 'string', description: 'Optional exact plugin Agent id from list_subagent_options.agent_roles. Its role and tool restrictions apply to the child.' } } : {}),
         },
-      },
+      }),
     },
     projectModelDefinition: (definition, scope) => !scope.canRecall ? definition : presentTool(definition, {
       fields: ['action', 'name', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'mode', 'run_in_background'], actions: ['run'],
-      description: `Delegate ad-hoc work to one child per call; separate calls suit independent assignments even with several agents. Choose team for saved dependency workflows scheduled by the host. Start with a saved agent_id, plugin agent_type or fork. Give new ad-hoc children a short responsibility name; put assignment details in prompt. Follow up with the returned taskId as task_id, never childSessionId, keeping the original name. Use tasks to inspect/wait for results, stop tasks or read child conversations. Independent peers use an available collaboration plugin. For employee registration or a new clean agent's configuration, load get_tool_schema(name="subagent"), then use call_tool with its full arguments.`,
+      description: `Delegate ad-hoc work to one child per call; separate calls suit independent assignments even with several agents. Choose team for saved dependency workflows scheduled by the host. Start with a saved agent_id, plugin agent_type or fork. Give new ad-hoc children a short responsibility name; put assignment details in prompt. Follow up with task_id and prompt only (optional run_in_background); omit name, mode and configuration. The host retains the original name and execution scope. Use tasks to inspect/wait for results, stop tasks or read child conversations. Independent peers use an available collaboration plugin. For employee registration or a new clean agent's configuration, load get_tool_schema(name="subagent"), then use call_tool with its full arguments.`,
     }),
     manifest: {
       effect_kind: "delegation",
@@ -469,13 +470,13 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   }
   const object = input as Record<string, unknown>;
   const unexpected = Object.keys(object).filter(
-    (key) => !['prompt', 'name', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'inherit_context', 'agent_type', 'run_in_background', 'task_id', 'target_agent', 'action', 'agent_id', 'agent', 'expected_revision'].includes(key),
+    (key) => !['prompt', 'name', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'agent_type', 'run_in_background', 'task_id', 'target_agent', 'action', 'agent_id', 'agent', 'expected_revision'].includes(key),
   );
   if (unexpected.length > 0) throw new Error(`unsupported subagent arguments: ${unexpected.join(", ")}`);
   if (object.action !== undefined && !['run', 'save', 'delete'].includes(String(object.action))) throw new Error('Invalid subagent action.');
   if (object.action === 'save' || object.action === 'delete') {
-    const allowed = object.action === 'save' ? ['action', 'agent', 'expected_revision'] : ['action', 'agent_id', 'expected_revision'];
-    if (Object.keys(object).some(key => !allowed.includes(key)) || !Number.isSafeInteger(object.expected_revision) || Number(object.expected_revision) < 0) throw new Error('Registration requires the definition/agent_id and expected_revision only.');
+    if (!onlySubagentArguments(object, object.action) || !Number.isSafeInteger(object.expected_revision) || Number(object.expected_revision) < 0) throw new Error('Registration requires the definition/agent_id and expected_revision only.');
+    if (object.action === 'save') registeredAgentSchema.parse(object.agent);
     if (object.action === 'delete' && (typeof object.agent_id !== 'string' || !object.agent_id.trim())) throw new Error('agent_id is required.');
     return { prompt: '', mode: 'clean', registration: { action: object.action, agent: object.agent, id: object.agent_id as string | undefined, revision: Number(object.expected_revision) } };
   }
@@ -489,28 +490,23 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   const name = typeof object.name === 'string' ? object.name.trim() : undefined;
   if (object.agent_id !== undefined) {
     if (typeof object.agent_id !== 'string' || !object.agent_id.trim() || object.mode !== undefined && object.mode !== 'clean' ||
-        Object.keys(object).some(key => !['action', 'prompt', 'agent_id', 'mode', 'run_in_background'].includes(key))) throw new Error('A registered employee accepts agent_id, prompt, clean mode and optional run_in_background only.');
+        !onlySubagentArguments(object, 'employee')) throw new Error('A registered employee accepts agent_id, prompt, clean mode and optional run_in_background only.');
     if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
     return { prompt, mode: 'clean', agentId: object.agent_id.trim(), runInBackground: object.run_in_background as boolean | undefined };
   }
   if (object.target_agent !== undefined) {
     if (typeof object.target_agent !== 'string' || !object.target_agent.trim()) throw new Error('target_agent must be a saved Agent connection ID.');
-    if (Object.keys(object).some(key => !['action', 'prompt', 'target_agent', 'name'].includes(key))) throw new Error('Remote delegation accepts prompt, target_agent and optional name only; the server owns its configuration.');
+    if (!onlySubagentArguments(object, 'remote')) throw new Error('Remote delegation accepts prompt, target_agent and optional name only; the server owns its configuration.');
     return { prompt, name, mode: 'clean', targetAgent: object.target_agent.trim() };
   }
   if (object.task_id !== undefined) {
     if (typeof object.task_id !== 'string' || !object.task_id.trim()) throw new Error('task_id must be non-empty.');
-    if (Object.keys(object).some(key => !['action', 'prompt', 'task_id', 'run_in_background'].includes(key))) throw new Error('Follow-up accepts prompt, task_id and optional run_in_background; the original configuration is preserved.');
+    if (!onlySubagentArguments(object, 'followup')) throw new Error('Follow-up accepts prompt, task_id and optional run_in_background (action may be run). Remove name, mode, agent_type and configuration fields; the existing child keeps its name and configuration. This call has not started or guided any child.');
     if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
     return { prompt, mode: 'fork', taskId: object.task_id.trim(), runInBackground: object.run_in_background as boolean | undefined };
   }
-  if (object.inherit_context !== undefined && typeof object.inherit_context !== "boolean") {
-    throw new Error("inherit_context must be a boolean.");
-  }
   if (object.mode !== undefined && object.mode !== 'fork' && object.mode !== 'clean') throw new Error('mode must be fork or clean.');
-  if (object.mode !== undefined && object.inherit_context !== undefined) throw new Error('Use mode instead of combining mode and legacy inherit_context.');
-  // Decode already-issued calls from older tool snapshots, without advertising a second mode switch.
-  const mode = object.mode ?? (object.inherit_context === false ? 'clean' : 'fork');
+  const mode = object.mode ?? 'fork';
   if (mode === 'fork' && (object.system_prompt !== undefined || object.allowed_tools !== undefined || object.settings !== undefined)) throw new Error('system_prompt, allowed_tools and settings require clean mode; fork preserves the parent prefix.');
   if ((object.mode === 'clean' || object.system_prompt !== undefined) && (typeof object.system_prompt !== 'string' || !object.system_prompt.trim())) throw new Error('clean mode requires a non-empty system_prompt.');
   const allowedTools = object.allowed_tools === undefined ? undefined : decodeToolOrSkillNames(object.allowed_tools, 'allowed_tools');

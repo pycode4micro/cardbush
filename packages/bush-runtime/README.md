@@ -266,6 +266,20 @@ parent attempts to finish with active children, Runtime joins them, injects thei
 terminal results, and requires one reconciliation round before committing the
 parent terminal fact. The parent may call `tasks action=wait` once when no useful
 independent work remains; this is an explicit join rather than status polling.
+Omitting `yield_time_ms` waits for completion or new guidance without periodic
+model wakeups; `0` requests a snapshot, and a positive value requests a timeout.
+Selected local child tasks expose derived progress (phase, last activity, model
+requests and unique completed/failed/active tool calls). Progress neither wakes
+the model nor exposes reasoning, file contents or tool payloads. It is replayed
+from the existing event journal on demand; pending approvals are read from the
+owning broker even when presented to the parent. Unselected histories are not loaded.
+Remote tasks without this evidence do not claim local progress.
+Parent follow-ups retain their `parent` author metadata while running and after
+restart. Only messages marked as human input produce direct-user reminders.
+For `subagent` follow-ups send `task_id`, `prompt` and optionally
+`run_in_background`; omit `name`, `mode` and configuration. The existing name and
+execution scope are retained. The portable object schema documents these
+cross-field rules; the shared decoder enforces them before execution.
 Tool registrations explicitly declare child visibility and parallel safety;
 Runtime does not derive either property. Subagent lifecycle facts are stored in a
 checksummed append-only journal and are queryable through typed commands.
@@ -310,6 +324,15 @@ was suppressed. Such records do not prove that no partial effects occurred.
 Exit 1 or localized error text alone never establishes a permission denial.
 The final model projection retains denial classification and sandbox status
 even when the full output must be archived.
+Failure receipts also retain `environmentDiagnostic`: a shell lookup failure,
+access denial and an unverified sandbox process failure are distinct from host
+installation state. A typed command-not-found record may trigger bounded,
+metadata-only lookup of a simple command name in absolute host PATH roots.
+No discovered program is executed and no permission is granted. A PATH miss
+does not prove the program is uninstalled; a venv launcher failure does not
+prove its interpreter environment is broken. Inspect scope and request narrow
+permissions before retrying diagnostics instead of reinstalling or bypassing
+the sandbox.
 
 On Windows, PowerShell uses a provider drive rooted at the admitted cwd when
 normal drive initialization cannot reach it. The diagnostic wrapper preserves

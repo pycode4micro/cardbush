@@ -1,4 +1,5 @@
 import { returnedToolError } from '@cardbush/bush-protocol';
+import { terminalEnvironmentDiagnostic } from './terminalEnvironmentDiagnostic.js';
 
 function terminalNotice(value: Record<string, unknown>): string | undefined {
   const failure = returnedToolError('terminal_exec', value);
@@ -31,7 +32,9 @@ export function renderTerminalResult(result: unknown): string | undefined {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return undefined;
   const value = result as Record<string, unknown>;
   const notice = terminalNotice(value);
-  return renderTextFields(notice ? { ...value, runtime_notice: notice } : value, ['stdout', 'stderr']);
+  const environmentDiagnostic = value.environmentDiagnostic ?? terminalEnvironmentDiagnostic(value);
+  return renderTextFields({ ...value, ...(notice ? { runtime_notice: notice } : {}),
+    ...(environmentDiagnostic ? { environmentDiagnostic } : {}) }, ['stdout', 'stderr']);
 }
 
 /** Preserve process status and diagnostic tails under the final shared ingress
@@ -51,11 +54,14 @@ export function projectTerminalResult(result: unknown, maxChars: number): string
   };
   const sandbox = value.sandbox as Record<string, unknown> | undefined;
   if (sandbox && ['windows-appcontainer', 'linux-bubblewrap'].includes(String(sandbox.backend))) essentials.sandbox = { backend: sandbox.backend, network: sandbox.network };
+  const environmentDiagnostic = value.environmentDiagnostic ?? terminalEnvironmentDiagnostic(value);
+  if (environmentDiagnostic) essentials.environmentDiagnostic = environmentDiagnostic;
   const notice = terminalNotice(value);
   const minimum = JSON.stringify({ ...essentials, ...(notice ? { runtime_notice: notice } : {}) });
   if (maxChars <= minimum.length) return minimum;
   const fields = ['error', 'stderr', 'stdout'].filter(key => typeof value[key] === 'string' && (value[key] as string).length > 0);
-  const fullMetadata = JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key]) => !fields.includes(key))));
+  const fullMetadata = JSON.stringify({ ...Object.fromEntries(Object.entries(value).filter(([key]) => !fields.includes(key))),
+    ...(environmentDiagnostic ? { environmentDiagnostic } : {}) });
   const metadata = fullMetadata.length <= Math.floor(maxChars / 3)
     ? JSON.stringify({ ...JSON.parse(fullMetadata), ...(notice ? { runtime_notice: notice } : {}) })
     : minimum;
