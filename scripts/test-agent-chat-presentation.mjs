@@ -30,6 +30,36 @@ function tty(t, { columns = 80, stdout = true, env = { NO_COLOR: '' }, shell } =
 }
 const tick = () => delay(5);
 
+test('Ctrl+Enter guides a running task once, including fragmented terminal key sequences', async t => {
+  for (const key of ['\n', '\x1b[13;5u', '\x1b[13;5:1u', '\x1b[27;5;13~']) {
+    const f = tty(t), sent = [];
+    f.terminal.enableLiveInput(text => sent.push(text)); f.terminal.beginTurn();
+    f.input.write('next task\r\n');
+    f.input.write('adjust this task');
+    for (const byte of key) f.input.write(byte);
+    f.input.write('\x1b[13;5:3u');
+    assert.deepEqual(sent, ['next task', '/steer adjust this task']);
+    assert.equal(f.interrupts, 0);
+    f.terminal.finishTurn('completed');
+    const idle = f.terminal.ask('❯ ', new AbortController().signal, true);
+    f.input.write('new task' + key);
+    assert.equal(await idle, 'new task');
+  }
+});
+
+test('Ctrl+Enter preserves paste boundaries and cannot send chat while approval owns input', async t => {
+  const f = tty(t), sent = [];
+  f.terminal.enableLiveInput(text => sent.push(text)); f.terminal.beginTurn();
+  f.input.write('keep '); f.input.write('\x1b[200~first\nsecond\x1b[201~');
+  assert.deepEqual(sent, []);
+  const resume = f.terminal.suspendInput();
+  const answer = f.terminal.ask('Allow? ', new AbortController().signal, { choices: [{ value: 'n' }, { value: 'y' }],
+    picker: { title: 'Approval', selected: 'n', cancelValue: 'n', cancelLabel: 'deny' } });
+  f.input.write('\x1b[13;5u'); assert.equal(await answer, 'n');
+  assert.deepEqual(sent, []); resume();
+  f.input.write('\n'); assert.deepEqual(sent, ['/steer keep first\nsecond']);
+});
+
 test('an interrupted observation is displayed separately from a failed task', t => {
   const f = tty(t);
   f.terminal.beginTurn(); f.terminal.finishTurn('detached');

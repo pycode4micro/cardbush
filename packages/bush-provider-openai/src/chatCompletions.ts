@@ -5,6 +5,7 @@ import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, protocolReasonin
 import { modelReplayMatches, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
 import type { ModelProviderConfig } from './providerConfig.js';
 import { resolveLocalImageInputs, namedMessageContent, portableMessages } from './modelInputs.js';
+import { wellFormedJson } from './wellFormedJson.js';
 import { providerToolName } from './toolNames.js';
 import { providerToolInputSchema } from './toolSchemas.js';
 import { providerFailureEvent } from './providerFailure.js';
@@ -48,14 +49,14 @@ export function toChatCompletionsParams(request: ModelRequest, baseURL?: string)
   }
   flush();
   const cacheKey = sessionPromptCacheKey(request, baseURL);
-  return { model: request.model, messages, stream: true, stream_options: { include_usage: true },
+  return wellFormedJson({ model: request.model, messages, stream: true, stream_options: { include_usage: true },
     ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
     ...(request.tools.length ? { tools: request.tools.map(tool => ({ type: 'function' as const,
       function: { name: providerToolName(tool.name), description: tool.description, parameters: providerToolInputSchema(tool), strict: false } })) } : {}),
     max_completion_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, temperature: request.temperature, top_p: request.topP,
     ...(request.reasoningEffort ? openRouter
       ? { reasoning: { effort: protocolReasoningEffort('openai_chat_completions', request.reasoningEffort) } }
-      : { reasoning_effort: protocolReasoningEffort('openai_chat_completions', request.reasoningEffort) } : {}) };
+      : { reasoning_effort: protocolReasoningEffort('openai_chat_completions', request.reasoningEffort) } : {}) });
 }
 
 export class OpenAIChatCompletionsProvider implements ModelProvider {

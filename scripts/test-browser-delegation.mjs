@@ -79,7 +79,49 @@ test('selected background pages and minimized windows never dispatch a screensho
     assert.equal(page.visible, false);
     await assert.rejects(f.call('conversation', 'debugger.command', { tabId: page.id, command: 'Page.captureScreenshot' }), error =>
       error.code === 'cardbush_page_not_visible' && error.details.inputDispatched === false);
+    for (const command of ['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText']) {
+      await assert.rejects(f.call('conversation', 'debugger.command', {tabId:page.id, command}), error =>
+        error.code === 'cardbush_page_not_interactive' && error.details.inputDispatched === false);
+    }
   }
+});
+
+test('background creation and selection do not request inspector activation', async () => {
+  const f = fixture({ presentation: page => ({ ...page, active: false, visible: false }) });
+  const a = await f.create('conversation'), b = await f.create('conversation');
+  assert.ok(f.actions.filter(action => action.action === 'open').every(action => action.background === true));
+  const selected = await f.call('conversation', 'tabs.activate', {tabId:a.id});
+  assert.equal(selected.selected, true);
+  assert.equal(selected.active, false);
+  assert.equal(selected.visible, false);
+  assert.equal(f.actions.at(-1).action, 'inspect');
+  await f.call('conversation', 'tabs.activate', {tabId:b.id, bringToFront:true});
+  assert.equal(f.actions.at(-1).action, 'activate');
+  await f.call('conversation', 'tabs.create', {url:'https://example.com/show', background:false});
+  assert.equal(f.actions.findLast(action => action.action === 'open').background, false);
+});
+
+test('concurrent integrated commands wait for background renderer initialization and detach clears control', async () => {
+  const f = fixture(), page = await f.create('conversation'), calls = [], onDetach = [];
+  let attached = false, ready;
+  f.guests.get(page.id).debugger = {
+    isAttached: () => attached, attach() { attached = true; },
+    once(event, callback) { assert.equal(event, 'detach'); onDetach.push(callback); },
+    detach() { attached = false; onDetach.splice(0).forEach(callback => callback()); },
+    sendCommand(command) {
+      calls.push(command);
+      return command === 'Emulation.setFocusEmulationEnabled' ? new Promise(resolve => { ready = resolve; }) : Promise.resolve({value:'read'});
+    },
+  };
+  const first = f.call('conversation', 'debugger.command', {tabId:page.id, command:'Runtime.evaluate'});
+  const second = f.call('conversation', 'debugger.command', {tabId:page.id, command:'Runtime.evaluate'});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['Emulation.setFocusEmulationEnabled']);
+  ready({});
+  await Promise.all([first,second]);
+  assert.deepEqual(calls, ['Emulation.setFocusEmulationEnabled','Runtime.evaluate','Runtime.evaluate']);
+  await f.call('conversation','debugger.detachScope');
+  assert.equal(attached,false);
 });
 
 test('cancelling a presentation wait ignores a late reply and allows the next request', async () => {

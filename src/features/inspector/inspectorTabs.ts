@@ -45,7 +45,7 @@ export function workSummaryInspectorTab(detail: WorkSummaryInspectorDetail, lang
 
 export interface InspectorTabsState { tabs: InspectorTab[]; activeId: string }
 export type InspectorTabsAction =
-  | { type: 'open'; tab: InspectorTab }
+  | { type: 'open'; tab: InspectorTab; activate?: boolean }
   | { type: 'activate'; id: string }
   | { type: 'close'; ids: ReadonlySet<string> };
 
@@ -63,14 +63,14 @@ export function inspectorTabsReducer(state: InspectorTabsState, action: Inspecto
       (['childSessionId', 'taskId', 'toolCallId', 'childTurnId'] as const).some(key =>
         Boolean(tab.detail.task[key]) && tab.detail.task[key] === next.detail.task[key])
     ));
-    if (index < 0) return { tabs: [...state.tabs, action.tab], activeId: action.tab.id };
+    if (index < 0) return { tabs: [...state.tabs, action.tab], activeId: action.activate === false ? state.activeId : action.tab.id };
     const previous = state.tabs[index];
     const tab = previous.kind === 'resource' && next.kind === 'resource'
       ? { ...next, detail: { ...previous.detail, ...next.detail, title: next.detail.title || previous.detail.title } }
       : { ...next, id: previous.id };
     const tabs = [...state.tabs];
     tabs[index] = tab;
-    return { tabs, activeId: tab.id };
+    return { tabs, activeId: action.activate === false ? state.activeId : tab.id };
   }
   const tabs = state.tabs.filter(tab => !action.ids.has(tab.id));
   if (tabs.length === state.tabs.length) return state;

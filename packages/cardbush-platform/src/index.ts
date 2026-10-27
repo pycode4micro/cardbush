@@ -153,9 +153,10 @@ export function commandInvocation(shell: CommandShell, command: string, context 
   }
   if (shell === 'cmd') {
     if (context.platform !== 'win32') throw new Error('cmd is unavailable on this host.');
-    // A hidden, console-less process cannot change its code page with chcp.
-    // /u keeps cmd built-ins lossless even on an English Windows installation.
-    return {executable:environment(context,'ComSpec')?.trim() || 'cmd.exe',args:['/d','/u','/s','/c',command]};
+    // /u affects only cmd built-ins. Mixing their UTF-16 with a native tool's
+    // byte output in the same pipe corrupts decoding (and even model JSON).
+    // Keep cmd's normal code-page output; PowerShell explicitly uses UTF-8.
+    return {executable:environment(context,'ComSpec')?.trim() || 'cmd.exe',args:['/d','/a','/s','/c',command]};
   }
   if (context.platform === 'win32') throw new Error('POSIX shell is unavailable in the native Windows runtime.');
   return {executable:'/bin/sh',args:['-c',command]};
@@ -164,16 +165,16 @@ export function commandInvocation(shell: CommandShell, command: string, context 
 /** Shell built-ins may use UTF-16; native child programs still emit their own encoding. */
 export function decodeCommandOutput(bytes: Buffer, platform: string = process.platform): string {
   if (!bytes.length) return '';
-  if (bytes[0] === 0xff && bytes[1] === 0xfe) return bytes.subarray(2).toString('utf16le');
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
   if (platform === 'win32' && bytes.length % 2 === 0) {
     let evenNulls = 0, oddNulls = 0;
     for (let index = 0; index < bytes.length; index += 2) {
       if (bytes[index] === 0) evenNulls++;
       if (bytes[index + 1] === 0) oddNulls++;
     }
-    if (oddNulls > evenNulls && oddNulls * 4 >= bytes.length) return bytes.toString('utf16le');
+    if (oddNulls > evenNulls && oddNulls * 4 >= bytes.length) return new TextDecoder('utf-16le').decode(bytes);
     // A Chinese-only cmd line can have no ASCII except its final CR/LF.
-    if (bytes.length >= 4 && bytes.subarray(-4).equals(Buffer.from([13, 0, 10, 0]))) return bytes.toString('utf16le');
+    if (bytes.length >= 4 && bytes.subarray(-4).equals(Buffer.from([13, 0, 10, 0]))) return new TextDecoder('utf-16le').decode(bytes);
   }
   try { return new TextDecoder('utf-8', {fatal:true}).decode(bytes); }
   catch {

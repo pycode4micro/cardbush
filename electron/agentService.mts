@@ -240,11 +240,13 @@ export class AgentService {
       if (state.version !== 1 || !state.id || !Array.isArray(state.jobs) || !Array.isArray(state.projects)) throw new Error('Unsupported or corrupt Agent data.');
       const configurationRoot = options.localProfileRoot ? join(options.localProfileRoot, 'product-host') : root;
       const sandbox = new SandboxSetup({ path: join(configurationRoot, 'config', 'sandbox.json'), env: options.env });
-      await sandbox.get().catch(error => console.warn('[sandbox-check]', error));
       await recoverSharedConfiguration(root);
       if (options.desktop) desktop = await AgentDesktop.open(root, { ...process.env, ...options.env });
       service = new AgentService(root, state, release, options, sandbox, desktop);
-      await service.runtime.ready;
+      // Importing the isolated Runtime and probing the execution sandbox are
+      // independent. Both must finish before publishing the service or starting
+      // recovered jobs, but making them serial adds a full shell startup to CLI.
+      await Promise.all([service.runtime.ready, sandbox.get().catch(error => console.warn('[sandbox-check]', error))]);
       const terminals = new Map<string, Extract<RuntimeEvent, { kind: 'turn_terminal' }>>();
       for (const job of state.jobs) if (job.status === 'running') {
         const events = await service.#command('runtime.list_turn_events', { sessionId: job.sessionId, turnId: job.turnId }) as RuntimeEvent[];

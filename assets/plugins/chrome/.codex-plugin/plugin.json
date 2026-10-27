@@ -1,6 +1,6 @@
 {
   "name": "chrome",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Browser Use for CardBush integrated tabs and authorized Chrome or Edge on Windows 11. Local first-use approval enables automatic reconnection; codes are for manual connection or remote Agent pairing.",
   "author": { "name": "CardBush" },
   "license": "Apache-2.0",

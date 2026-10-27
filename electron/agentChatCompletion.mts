@@ -30,7 +30,7 @@ const commands: ChatChoice[] = [
   { value: '/logs', description: 'Show the diagnostic log path' },
   { value: '/help', description: 'Show command help' },
   { value: '/new', description: 'Start a new session' },
-  { value: '/steer ', label: '/steer', description: 'Guide the running task' },
+  { value: '/steer ', label: '/steer', description: 'Guide the running task immediately (Ctrl+Enter)' },
   { value: '/shell ', label: '/shell', description: 'Open a local shell, or run /shell COMMAND / !COMMAND' },
   ...chatExitCommands.map(value => ({ value, description: 'Exit and show the resume command' })),
 ];

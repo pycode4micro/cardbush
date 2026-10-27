@@ -406,7 +406,8 @@ In Windows Terminal, Ctrl+click an underlined link to open it. /artifact also op
 Inline code paths become links when their location is explicit; ordinary code stays text.
 After summary_for_user succeeds, the next reply is separated as Final reply.
 Approval details stay in the input area while pending; completed choices do not clutter the transcript.
-While running, Enter queues the next turn; /steer TEXT guides the current task.
+While running, Enter queues the next turn; Ctrl+Enter sends guidance immediately.
+Use /steer TEXT for the same action if your terminal does not distinguish Ctrl+Enter.
 The live input keeps drafts while responses stream. Approval prompts temporarily
 take over input and restore the draft afterwards. Esc / Ctrl+C stops the current task.
 Type / for command and Skill suggestions. Use @ for workspace files and folders;

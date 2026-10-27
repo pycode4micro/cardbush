@@ -6,6 +6,7 @@ import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, type ModelEvent,
 import { modelReplayMatches, ModelRequestAttempts, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
 import type { ModelProviderConfig } from './providerConfig.js';
 import { resolveLocalImageInputs, namedMessageContent, portableMessages } from './modelInputs.js';
+import { wellFormedJson } from './wellFormedJson.js';
 import { providerToolName } from './toolNames.js';
 import { providerToolInputSchema } from './toolSchemas.js';
 import { anthropicValidationMessage, providerFailureEvent } from './providerFailure.js';
@@ -133,13 +134,13 @@ export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: '
   const thinking = effort && effort !== 'none';
   if (thinking && thinkingMode === 'budget' && maxTokens <= 1024) throw new Error('Anthropic budget thinking requires an output limit greater than 1024 tokens.');
   const budget = thinking && thinkingMode === 'budget' ? Math.min(maxTokens - 1, { low: 1024, medium: 2048, high: 4096, xhigh: 8192, max: 16384 }[effort]) : undefined;
-  return { model: request.model, messages, system: system.join('\n\n') || undefined, max_tokens: maxTokens, stream: true,
+  return wellFormedJson({ model: request.model, messages, system: system.join('\n\n') || undefined, max_tokens: maxTokens, stream: true,
     ...(cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
     ...(tools ? { tools } : {}),
     ...(thinking ? budget ? { thinking: { type: 'enabled' as const, budget_tokens: budget } }
       : { thinking: { type: 'adaptive' as const }, output_config: { effort } }
       : { ...(effort === 'none' ? { thinking: { type: 'disabled' as const } } : {}),
-        ...(request.temperature !== undefined ? { temperature: request.temperature } : { top_p: request.topP }) }) };
+        ...(request.temperature !== undefined ? { temperature: request.temperature } : { top_p: request.topP }) }) });
 }
 
 type Block = { value: Record<string, unknown>; json: string; stopped: boolean };

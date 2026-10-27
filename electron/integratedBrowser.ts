@@ -6,7 +6,7 @@ type Entry = { tabId: string; ownerId: number; guestId: number; targetKey: strin
 type Scope = { ownerId: number; entries: Map<string, Entry>; selected: string; bindingRevision: number;
   inheritedFrom?: { parentId: string; revision: number } };
 export type BrowserTabAction = { action: 'open' | 'bind' | 'activate' | 'close' | 'inspect'; tabId: string;
-  tabIds?: string[]; url?: string; sessionId?: string; requestId?: string };
+  tabIds?: string[]; url?: string; sessionId?: string; requestId?: string; background?: boolean };
 export type BrowserTabPresentation = { tabId: string; guestWebContentsId: number | null; inWorkspace: boolean; active: boolean; visible: boolean };
 export type BrowserTabActionResult = { requestId: string; pages: BrowserTabPresentation[] };
 const pageCommands = new Set([
@@ -41,6 +41,7 @@ export class IntegratedBrowser {
   private readonly scopes = new Map<string, Scope>();
   private readonly parents = new Map<string, string>();
   private readonly attached = new Set<number>();
+  private readonly attachmentReady = new Map<number, Promise<unknown>>();
   private readonly pendingActions = new Map<string, { ownerId: number; tabIds: string[]; resolve: (pages: BrowserTabPresentation[]) => void }>();
   constructor(private readonly options: {
     getContents: (id: number) => WebContents | undefined;
@@ -239,7 +240,7 @@ export class IntegratedBrowser {
     if (method === 'debugger.detachScope') { this.release(scopeId); return { released: true, browser: 'cardbush' }; }
     if (method === 'tabs.create') {
       const url = pageUrl(params.url), tabId = `browser:${randomUUID()}`;
-      this.options.action(scope.ownerId, { action: 'open', tabId, url, sessionId: this.actionSession(scopeId) });
+      this.options.action(scope.ownerId, { action: 'open', tabId, url, sessionId: this.actionSession(scopeId), background: params.background !== false });
       const deadline = Date.now() + 15_000;
       while (Date.now() < deadline) {
         signal?.throwIfAborted();
@@ -277,7 +278,9 @@ export class IntegratedBrowser {
     if (method === 'tabs.activate') {
       scope.selected = entry.tabId;
       scope.bindingRevision++;
-      const [presentation] = await this.present(scope, { action: 'activate', tabId: entry.tabId, sessionId: this.actionSession(scopeId) }, signal);
+      const [presentation] = params.bringToFront === true
+        ? await this.present(scope, { action: 'activate', tabId: entry.tabId, sessionId: this.actionSession(scopeId) }, signal)
+        : await this.inspect(scopeId, scope, [entry], signal);
       this.requirePresented(entry, presentation);
       return this.page(entry, scope, presentation);
     }
@@ -307,9 +310,24 @@ export class IntegratedBrowser {
           'The selected CardBush tab is not visible. Show its conversation and select the existing tab before taking a screenshot. Do not create a replacement or alter the website DOM.'),
           { code: 'cardbush_page_not_visible', details: { pageId: guest.id, sessionId: this.actionSession(scopeId), inputDispatched: false } });
       }
+      if (command.startsWith('Input.')) {
+        const [presentation] = await this.inspect(scopeId, scope, [entry], signal);
+        if (!this.page(entry, scope, presentation).visible) throw Object.assign(new Error(
+          'The selected CardBush tab is hidden and cannot receive native input. No input was sent. Ask the user to show the existing tab before interacting; do not open a replacement or bring it forward automatically.'),
+          { code: 'cardbush_page_not_interactive', details: { pageId: guest.id, sessionId: this.actionSession(scopeId), inputDispatched: false } });
+      }
+      const pendingAttachment = this.attachmentReady.get(guest.id);
+      if (pendingAttachment) await abortable(pendingAttachment, signal, () => this.detach(guest.id));
       if (!guest.debugger.isAttached()) {
         guest.debugger.attach('1.3'); this.attached.add(guest.id);
         guest.debugger.once('detach', () => this.attached.delete(guest.id));
+        // Renderer focus emulation keeps background page work live; it does not
+        // change inspector selection or focus the app. Input still checks visibility.
+        const ready = guest.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+        this.attachmentReady.set(guest.id, ready);
+        try { await abortable(ready, signal, () => this.detach(guest.id)); }
+        catch (error) { this.detach(guest.id); throw error; }
+        finally { if (this.attachmentReady.get(guest.id) === ready) this.attachmentReady.delete(guest.id); }
       }
       else if (!this.attached.has(guest.id)) unavailable('This tab is being debugged elsewhere. Close its developer tools before controlling it.', 'cardbush_debugger_busy');
       signal?.throwIfAborted();

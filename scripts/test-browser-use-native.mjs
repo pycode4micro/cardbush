@@ -16,6 +16,7 @@ await fs.mkdir(workspaceTmp, { recursive: true });
 const root = await fs.mkdtemp(path.join(workspaceTmp, 'browser-use-native-'));
 const report = { startedAt: new Date().toISOString(), success: false, browsers: [], checks: [] };
 const chromeOnly = process.argv.includes('--chrome-only');
+const quietTabs = process.argv.includes('--quiet-tabs');
 report.scope = chromeOnly ? 'chrome-only' : 'chrome-and-edge';
 const children = [];
 const createBroker = () => new ChromeConnectorBroker(root, { nativeHostPath: path.resolve('dist-native/chrome-connector-validation/CardBushBrowserHost.exe') });
@@ -98,7 +99,12 @@ try {
   }
   for (const [name, connection] of [['chrome', chrome], ['edge', edge]].filter(([, value]) => value)) {
     await call(name, 'select_browser', { connectionId: connection.id });
-    await call(name, 'new_page', { url: `http://127.0.0.1:${pageServer.address().port}/${name}` });
+    const activeTab = () => connection.evaluate('chrome.tabs.query({active:true,currentWindow:true}).then(tabs=>tabs[0]?.id)');
+    const previousActive = await activeTab();
+    const created = await call(name, 'new_page', { url: `http://127.0.0.1:${pageServer.address().port}/${name}` });
+    assert.equal(await activeTab(),previousActive,'default creation must not activate a real browser tab');
+    await call(name,'select_page',{pageId:created.structuredContent.id});
+    assert.equal(await activeTab(),previousActive,'target selection must not change the active tab');
     await call(name, 'wait_for', { text: 'Isolated browser validation', timeout: 5000 });
     const snapshot = await call(name, 'take_snapshot');
     const text = snapshot.content[0].text;
@@ -118,11 +124,29 @@ try {
     assert.equal(other.structuredContent.pages.length, 1);
     assert.ok(other.structuredContent.pages[0].url.endsWith('/' + name));
     const tabId = other.structuredContent.pages[0].id;
+    assert.equal(await activeTab(),previousActive,'reading, typing, clicking and screenshots preserve the user’s tab');
+    if (quietTabs) {
+      for (let repeat=0;repeat<2;repeat++) {
+        await call(name,'fill',{uid:input,value:`${name}-${repeat}`});
+        await call(name,'click',{uid:button});
+        const proof=await call(name,'evaluate_script',{expression:'document.querySelector("#proof").textContent'});
+        assert.ok(JSON.stringify(proof.structuredContent).includes(`${name}-${repeat}`));
+      }
+      await call(name,'release_browser');
+      assert.equal(await activeTab(),previousActive,'releasing the background group preserves the user’s tab');
+      await call(name,'select_page',{pageId:tabId,bringToFront:true});
+      assert.equal(await activeTab(),tabId,'explicit presentation still selects the intended tab');
+      await call(name,'release_browser');
+      assert.equal(await connection.evaluate(`chrome.tabs.get(${tabId}).then(tab=>chrome.tabGroups.get(tab.groupId)).then(group=>group.collapsed)`),false,'release preserves a group currently viewed by the user');
+      report.checks.push(`${name}: background creation/selection, repeated real typing/clicks, screenshot, release and explicit foreground presentation preserve the correct active tab`);
+      continue;
+    }
     const allowed = await connection.evaluate(`chrome.tabs.update(${JSON.stringify(tabId)}, {active:true}).then(() => chrome.runtime.sendMessage({action:'allow_all',scopeId:${JSON.stringify(name)}}))`);
     assert.equal(allowed.ok, true);
     assert.equal(allowed.allowAllSites, true);
     report.checks.push(`${name}: select, create, accessibility snapshot, fill, click, evaluate, screenshot, isolated page listing`);
   }
+  if (!quietTabs) {
   const savedPairingCount = broker.status().connections.length;
   const savedConnectorPort = JSON.parse(await fs.readFile(path.join(root, 'browser-connector/pairing.json'), 'utf8')).port;
   broker.stop();
@@ -180,6 +204,7 @@ try {
   await broker.disableExtension();
   await until(() => broker.status().connections.every(connection => !connection.connected), 'disable all browsers');
   report.checks.push(edge ? 'individual revocation and global disable' : 'individual revocation');
+  }
   report.success = true;
 } catch (error) { report.error = error.stack; process.exitCode = 1; }
 finally {

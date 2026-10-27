@@ -1127,7 +1127,7 @@ test('live queue and guidance reuse Agent jobs, recover a lost receipt and retai
   await until(() => original('chat.jobs', {}), jobs => jobs.length === 2 && jobs[1].status === 'queued');
   await until(() => process.stderr, text => text.includes('1 queued'));
   assert.equal(f.calls.length, 1, 'ordinary Enter does not interrupt the running turn');
-  f.block(false); process.child.stdin.write('/steer use the existing files\r');
+  f.block(false); process.child.stdin.write('use the existing files\n'); // Ctrl+Enter in Windows Terminal
   await until(() => original('chat.jobs', {}), jobs => jobs.length === 3 && jobs[2].guidance?.applied);
   process.child.stdin.write('preserved draft');
   const jobs = await until(() => original('chat.jobs', {}), jobs => jobs.filter(job => !job.guidance).every(job => job.status === 'completed'));

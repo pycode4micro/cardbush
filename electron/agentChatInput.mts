@@ -34,6 +34,10 @@ export class ChatPasteDecoder {
       } else {
         let retained = Math.min(this.#carry.length, marker.length - 1);
         while (retained && !marker.startsWith(this.#carry.slice(-retained))) retained--;
+        // Modified keys can arrive across several reads, just like paste markers.
+        // Keep an incomplete CSI until its final byte, without interpreting it as
+        // Escape (stop) or inserting the remainder into the user's draft.
+        if (!this.#pasting) retained = Math.max(retained, /\x1b(?:\[[0-?]*[ -/]*)?$/.exec(this.#carry)?.[0].length ?? 0);
         this.#consume(this.#carry.slice(0, this.#carry.length - retained));
         this.#carry = retained ? this.#carry.slice(-retained) : '';
         break;

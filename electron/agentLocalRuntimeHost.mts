@@ -1,14 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { execFile } from 'node:child_process';
 import { chmod, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { promisify } from 'node:util';
 import { AgentService } from './agentService.mjs';
 import { serveAgentHttp } from './agentServer.mjs';
 import { AgentChatDiagnostics } from './agentChatDiagnostics.mjs';
 import { LocalModelAccessClient } from './localModelAccess.mjs';
 import { claimAgentDataDirectory, localRuntimeDirectory, localRuntimeEndpoint, localRuntimeProtocol } from './agentLocalRuntime.mjs';
-import { assertConnectorFile } from './chromeConnectorFiles.js';
+import { assertConnectorFile, secureConnectorResourceAsync } from './chromeConnectorFiles.js';
 import { writePrivateJson } from './atomicJsonFile.mjs';
 
 async function run() {
@@ -85,8 +83,7 @@ async function run() {
     const nativeHost = resolve(bundledRoot, '..', 'dist-native', 'chrome-connector', 'CardBushBrowserHost.exe');
     // Named-pipe ACL inspection opens the pipe. Keep the event loop accepting
     // connections while the native helper sets and verifies its private DACL.
-    const secure = (kind: 'directory' | 'pipe', target: string) => promisify(execFile)(nativeHost,
-      [`--secure-${kind}`, target], { windowsHide: true, timeout: 10_000 });
+    const secure = (kind: 'directory' | 'pipe', target: string) => secureConnectorResourceAsync(nativeHost, kind, target);
     if (process.platform === 'win32') await secure('directory', directory);
     else await chmod(directory, 0o700);
     assertStarting();

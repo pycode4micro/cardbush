@@ -19,6 +19,23 @@ const resource = id => ({ id, kind: 'resource', detail: { target: 'https://examp
 const open = (state, workspaceId, id) => reduce(reduce(state, { type: 'tabs', workspaceId, action: { type: 'open', tab: resource(id) } }), { type: 'open-state', workspaceId, update: true });
 const act = (state, workspaceId, action) => reduce(state, { type: 'tabs', workspaceId, action });
 
+test('background browser tabs are retained without selecting a tab or opening the inspector', () => {
+  let state = act(emptyInspectorSessions, 'one', {type:'open', tab:resource('background'), activate:false});
+  assert.equal(state.workspaces.one.activeId, '');
+  assert.equal(view(state, 'one').open, false);
+  assert.deepEqual(retained(state).map(tab => tab.id), ['background']);
+  state = open(state, 'one', 'personal');
+  state = act(state, 'one', {type:'open', tab:resource('background'), activate:false});
+  state = act(state, 'one', {type:'open', tab:resource('another'), activate:false});
+  assert.equal(view(state, 'one').activeId, 'personal');
+  assert.equal(view(state, 'one').open, true);
+  state = act(state, 'one', {type:'activate', id:'background'});
+  assert.equal(view(state, 'one').activeId, 'background');
+  state = reduce(state, {type:'toggle-lock', id:'background'});
+  state = act(state, 'two', {type:'open', tab:resource('quiet'), activate:false});
+  assert.equal(view(state, 'two').activeId, 'background', 'a visible shared tab is preserved in a new workspace');
+});
+
 for (const collapsed of [false, true]) test(`first-send adoption retains draft tabs, selection and panel state (collapsed: ${collapsed})`, () => {
   const draft = local(''), session = local('created');
   let state = open(open(open(emptyInspectorSessions, draft, 'one'), draft, 'two'), local('other'), 'foreign');
@@ -181,7 +198,7 @@ for (const parentSelected of [true, false]) test(`browser actions belong to the 
   assert.equal(view(state, local('parent')).activeId, page.tabId, 'the page appears in the root inspector');
   assert.equal(view(state, local('grandchild')).tabs.length, 0, 'no hidden child workspace is created');
   assert.equal(view(state, local('unrelated')).activeId, 'unrelated-page', 'background work does not take over another conversation');
-  await browser.request('tabs.activate', { scopeId: 'grandchild', tabId: page.id });
+  await browser.request('tabs.activate', { scopeId: 'grandchild', tabId: page.id, bringToFront: true });
   await browser.request('tabs.close', { scopeId: 'grandchild', tabId: page.id });
   for (const scopeId of ['parent', 'child', 'grandchild']) {
     assert.deepEqual((await browser.request('tabs.list', { scopeId })).pages, [], 'explicit close removes the shared page from all granted scopes');

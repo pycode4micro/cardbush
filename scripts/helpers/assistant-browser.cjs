@@ -25,8 +25,9 @@ module.exports = async ({ router, ui, call, success, failure, guest, pageId, url
       failure(await call('select_page', { pageId: otherPage }, childId), 'cardbush_page_not_authorized');
       const snapshot = await call('take_snapshot', { query: 'Video opened' }, childId); success(snapshot);
       const uid = snapshot.content[0].text.match(/uid=(cb_\d+) role=button/)?.[1]; assert.ok(uid);
-      success(await call('click', { uid }, childId));
-      assert.equal(await guest.executeJavaScript('window.clicks'), 2, 'child controls the original visible guest');
+      failure(await call('click', { uid }, childId), 'cardbush_page_not_interactive');
+      assert.equal(await guest.executeJavaScript('window.clicks'), 1, 'a hidden child target does not pretend to receive input');
+      assert.equal(await ui('browserFixture.activeId'), otherTab, 'child inspection never changes the user’s visible tab');
       inspected = true; return { read: true, title: 'Same URL browser fixture' };
     } });
   function* response(request, text, calls = []) {

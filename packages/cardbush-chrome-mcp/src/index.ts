@@ -35,7 +35,7 @@ type BrowserPage = {
 function presentationNotice(page: Record<string, unknown>): string {
   if (page.browser !== 'cardbush') return '';
   return page.visible === true ? ' Page is visible in CardBush.'
-    : ' Page is not visible in the current CardBush view. Show its conversation and existing tab before visual verification; do not open a replacement.';
+    : ' Page is selected for background work and is not visible in CardBush. Reading and navigation can continue; native input and screenshots require the user to show the existing tab. Do not open a replacement or bring it forward automatically.';
 }
 
 type ToolContext = {
@@ -86,9 +86,9 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       'An @ CardBush browser reference identifies an exact integrated tab, not an interchangeable URL. The desktop binds that conversation to CardBush. Use list_pages, then a fresh snapshot; never substitute a Chrome/Edge page with the same URL. If the referenced tab is unavailable, report it and ask the user to select it again.',
       'Use list_browsers and select_browser when the user names a browser or profile. Otherwise use the conversation binding, including integrated pages returned by local child agents; if no binding exists, the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
       'For Chrome/Edge, each session is isolated in a visibly named tab group. For the integrated browser, controllable tabs are those explicitly referenced by the user, created in this conversation, or newly created by its verified local descendant tasks. Selecting a browser does not grant unrelated tabs. Use select_browser with connectionId cardbush to create integrated tabs.',
-      'Use new_page to create a tab in the selected browser. For existing Chrome/Edge personal tabs, ask the user to copy them into the current session group from the extension popup.',
+      'new_page opens in the background by default; select_page changes only the Agent target. Keep the user’s current tab and window unchanged. Use background:false or bringToFront:true only when the user wants to see the page. For existing Chrome/Edge personal tabs, ask the user to copy them into the current session group from the extension popup.',
       'When directing the user to an opened page, copy its returned reference URL into a Markdown link. Clicking this tab reference reveals the existing tab without reopening or navigating it. Do not invent references or substitute a website URL for a tab reference.',
-      'Call release_browser when browser work is complete; it detaches control and collapses external session groups without closing tabs.',
+      'Call release_browser when browser work is complete; it detaches control and collapses external session groups the user is not viewing, without closing tabs.',
       'For visual verification use take_screenshot (viewport/selector supported) or export_image; images are attached to the model and saved automatically. Do not trigger a browser download or open a popup merely to inspect an image.',
       'Tracked file downloads (download_file/download_status) are currently supported only in Chrome/Edge. Integrated tabs return an explicit unsupported error, never redirect to another browser. Reuse pending download taskIds instead of starting repeated downloads.',
       'For local file uploads use upload_file with absolute filePaths and a file-input uid or observed CSS selector (hidden inputs supported). Do not build a localhost file server or inject file bytes/Base64 to select files. For native file dialogs, crop/drag controls or other UI the browser interface cannot operate, discover Computer Use and observe the same authorized browser window before mouse/keyboard input; preserve the browser/profile and verify the result before continuing.',
@@ -144,8 +144,11 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     return result;
   };
 
-  const commandFor = (target: number, context: ToolContext, deadline?: number) => (command: string, commandParams: Record<string, unknown> = {}) =>
-    request('debugger.command', { tabId: target, command, commandParams }, context, deadline === undefined ? undefined : Math.max(1, deadline - Date.now()));
+  const commandFor = (target: number, context: ToolContext, deadline?: number) => async (command: string, commandParams: Record<string, unknown> = {}) => {
+    const remaining = deadline === undefined ? undefined : deadline - Date.now();
+    if (remaining !== undefined && remaining <= 0) throw new ChromeConnectorError('bridge_timeout', 'The observation deadline expired before dispatch.');
+    return request('debugger.command', { tabId: target, command, commandParams }, context, remaining);
+  };
   const imageResult = async (context: ToolContext, image: { data: string; mimeType: string }, details: Record<string, unknown> = {}) => {
     const saved = await artifacts.image(scopeFromContext(context).id, image, context.mcpReq.signal);
     return { text: `Image attached and saved (${saved.width} × ${saved.height}). No browser download is needed.`, image: saved.image,
@@ -263,12 +266,12 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('select_page', toolDefinition(
     'Select browser page',
-    'Select a browser tab by the numeric id returned by list_pages. CardBush confirms presentation in its owning conversation without switching the user away from another conversation. selected is the tool target; visible confirms the page is displayed. If not visible, ask the user to show that conversation instead of opening a replacement.',
-    z.object({ pageId: z.number().int().nonnegative() }),
+    'Select the Agent target by the numeric id returned by list_pages, without changing the user’s active tab or window. Only pass bringToFront:true when the user wants the page shown. selected is the tool target; active/visible describe the user interface. CardBush keeps the owning conversation; native input and screenshots need the existing tab visible. Ask the user to show it when needed; do not open a replacement.',
+    z.object({ pageId: z.number().int().nonnegative(), bringToFront: z.boolean().default(false) }),
     false,
   ), async (input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
-    const result = record(await request('tabs.activate', { tabId: input.pageId }, context));
+    const result = record(await request('tabs.activate', { tabId: input.pageId, bringToFront: input.bringToFront === true }, context));
     result.reference = browserPageReference(result);
     selectedPageIds.set(scope.id, input.pageId);
     return { text: `Selected browser tab ${input.pageId}: ${browserPageLink(result)}${presentationNotice(result)}`, structured: result };
@@ -276,13 +279,13 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('new_page', toolDefinition(
     'Open browser page',
-    'Open a website in the selected browser, scoped to this conversation. For web search, current news or internet research, pass a search-engine URL with the query, then read results with take_snapshot. CardBush opens a tab in this conversation and reports visible separately; background conversations do not take over the current view. Chrome/Edge uses the session group. Omit url for a blank new tab; otherwise pass an HTTP(S) URL.',
-    z.object({ url: z.string().url().optional() }),
+    'Open and select an Agent tab in the background, scoped to this conversation, preserving the user’s active tab and window. Pass background:false only when the user wants it shown. For web research, pass a search-engine URL with the query and read take_snapshot. CardBush reports visible separately; Chrome/Edge uses the session group. Omit url for a blank tab; otherwise pass an HTTP(S) URL.',
+    z.object({ url: z.string().url().optional(), background: z.boolean().default(true) }),
     false,
   ), async (input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
     const url = input.url ?? DEFAULT_BROWSER_START_PAGE;
-    const result = record(await request('tabs.create', { url }, context));
+    const result = record(await request('tabs.create', { url, background: input.background !== false }, context));
     result.reference = browserPageReference(result);
     const selectedPageId = integer(result.id);
     if (selectedPageId != null) selectedPageIds.set(scope.id, selectedPageId);
@@ -338,7 +341,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   server.registerTool('click', toolDefinition(
     'Click page element',
-    'Send a real mouse click to a uid from take_snapshot. Scroll into view, require two stable animation frames, and check the actual hit target after hover and before every press. A hidden or zero-area enabled control may use its explicitly associated visible label. Failures report observed reason (or unknown), target/hit facts, scrolling, hover and possibly dispatched presses; no automatic overlay dismissal, ancestor hover, JavaScript click or Enter fallback. No press does not imply no side effects: scrolling/hover may have happened. postState is immediate evidence, not proof of business success. Use wait_for with explicit result conditions or a fresh snapshot before continuing or retrying; possibly dispatched input must never be blindly repeated.',
+    'Send a real mouse click to a uid from take_snapshot. Scroll into view, verify stable bounds (animation frames, or bounded host-clock layout samples when background frames pause), and check the actual hit target after hover and before every press. A hidden or zero-area enabled control may use its explicitly associated visible label. Failures report observed reason (or unknown), target/hit facts, scrolling, hover and possibly dispatched presses; no automatic overlay dismissal, ancestor hover, JavaScript click or Enter fallback. No press does not imply no side effects: scrolling/hover may have happened. postState is immediate evidence, not proof of business success. Use wait_for with explicit result conditions or a fresh snapshot before continuing or retrying; possibly dispatched input must never be blindly repeated.',
     z.object({ uid: z.string().regex(/^cb_\d+$/), doubleClick: z.boolean().optional() }),
     false,
   ), async (input, context) => withToolResult(async () => {
@@ -609,13 +612,14 @@ export function createCardbushChromeServer(options: { connector?: typeof request
   ), async (input, context) => withToolResult(async () => {
     const target = await pageId(context);
     const parsed = waitSchema.parse(input);
-    const result = await waitForPage(commandFor(target, context, Date.now() + parsed.timeout), parsed, context.mcpReq.signal);
+    const deadline = Date.now() + parsed.timeout;
+    const result = await waitForPage(commandFor(target, context, deadline), parsed, context.mcpReq.signal, deadline);
     return { text: 'Requested page conditions observed. No action was repeated.', structured: { pageId: target, ...result } };
   }));
 
   server.registerTool('release_browser', toolDefinition(
     'Release browser',
-    'Detach CardBush from the current session tabs and collapse its browser groups after browser work is complete.',
+    'Detach CardBush from the current session tabs after browser work is complete. Collapse only groups the user is not currently viewing.',
     z.object({}),
     false,
   ), async (_input, context) => withToolResult(async () => {

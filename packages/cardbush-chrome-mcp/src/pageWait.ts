@@ -32,14 +32,23 @@ const checkElement = `function(condition) {
     ...(condition.kind==='value' && facts.value!==undefined ? {value:facts.value,valueTruncated:facts.valueTruncated} : {})};
 }`;
 
-export async function waitForPage(command: PageCommand, input: z.infer<typeof waitSchema>, signal?: AbortSignal) {
+export async function waitForPage(command: PageCommand, input: z.infer<typeof waitSchema>, signal?: AbortSignal, deadline = Date.now() + input.timeout) {
   const conditions: z.infer<typeof condition>[] = input.conditions ?? [{ kind: 'text', text: input.text!, present: true }];
   const start = Date.now(); const observations: Record<string, unknown>[] = [];
-  const timeout = () => new ChromeConnectorError('wait_for_timeout', 'The requested page conditions were not observed before the timeout.', { conditions, observations, elapsedMs: Date.now() - start });
+  const timeout = (cause?: ChromeConnectorError) => new ChromeConnectorError('wait_for_timeout', 'The requested page conditions were not observed before the timeout.', {
+    conditions, observations, elapsedMs: Date.now() - start,
+    ...(cause ? { lastRequestError: { code: cause.code, message: cause.message, details: cause.details } } : {}),
+  });
+  const checkBudget = () => { signal?.throwIfAborted(); if (Date.now() >= deadline) throw timeout(); };
   const send = command;
   command = async (name, params) => {
+    checkBudget();
     try { return await send(name, params); }
-    catch (error) { if (error instanceof ChromeConnectorError && error.code === 'bridge_timeout') throw timeout(); throw error; }
+    catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof ChromeConnectorError && ['bridge_timeout', 'browser_connector_timeout', 'cardbush_browser_timeout'].includes(error.code)) throw timeout(error);
+      throw error;
+    }
   };
   const targeted = conditions.some(item => 'uid' in item && item.uid);
   const seen = new Set<string>();
@@ -55,7 +64,7 @@ export async function waitForPage(command: PageCommand, input: z.infer<typeof wa
   signal?.throwIfAborted();
   const document = targeted ? await identity() : undefined;
   while (true) {
-    signal?.throwIfAborted();
+    checkBudget();
     if (targeted && document !== await identity()) throw new ChromeConnectorError('wait_document_changed', 'The document changed; take a fresh snapshot for new uids. No action was retried.');
     for (const [index, item] of conditions.entries()) {
       signal?.throwIfAborted();
@@ -79,7 +88,7 @@ export async function waitForPage(command: PageCommand, input: z.infer<typeof wa
     // A navigation between reads must not turn a stale uid into a successful wait.
     if (targeted && document !== await identity()) throw new ChromeConnectorError('wait_document_changed', 'The document changed while checking conditions. Take a fresh snapshot.');
     signal?.throwIfAborted();
-    const remaining = input.timeout - (Date.now() - start);
+    const remaining = deadline - Date.now();
     if (remaining <= 0) throw timeout();
     if (observations.every(item => item.matched === true)) return { matched: true, elapsedMs: Date.now() - start, conditions, observations };
     await delay(Math.min(100, remaining), undefined, { signal });

@@ -127,10 +127,19 @@ internal static partial class CardBushProcessHost
             startup.hStdOutput = InheritStandardHandle(-11, inheritedHandles);
             startup.hStdError = InheritStandardHandle(-12, inheritedHandles);
             var commandLine = new StringBuilder();
+            // cmd /s /c consumes one command string, not a CRT argv element.
+            // Backslash-escaping its quotes changes filenames, URL arguments,
+            // redirects and pipelines before the command ever reaches a tool.
+            bool cmdCommand = String.Equals(Path.GetFileName(args[commandStart]), "cmd.exe", StringComparison.OrdinalIgnoreCase)
+                && args.Length > commandStart + 2
+                && (String.Equals(args[args.Length - 2], "/c", StringComparison.OrdinalIgnoreCase)
+                    || String.Equals(args[args.Length - 2], "/k", StringComparison.OrdinalIgnoreCase))
+                && Array.Exists(args, value => String.Equals(value, "/s", StringComparison.OrdinalIgnoreCase));
             for (int i = commandStart; i < args.Length; i++)
             {
                 if (i > commandStart) commandLine.Append(' ');
-                commandLine.Append(QuoteArgument(args[i]));
+                if (cmdCommand && i == args.Length - 1) commandLine.Append('"').Append(args[i]).Append('"');
+                else commandLine.Append(QuoteArgument(args[i]));
             }
             // Bind BOTH jobs during creation. Killing this supervisor between
             // CreateProcess and a later assignment must never strand a suspended child.

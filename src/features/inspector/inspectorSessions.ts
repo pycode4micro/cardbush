@@ -134,10 +134,10 @@ export function inspectorSessionsReducer(state: InspectorSessionsState, action: 
       const refreshed = inspectorTabsReducer(original, update);
       return { ...state, workspaces: { ...state.workspaces,
         [owner]: { ...original, tabs: refreshed.tabs },
-        [action.workspaceId]: { ...own, activeId: refreshed.activeId } } };
+        [action.workspaceId]: { ...own, activeId: update.activate === false ? visible.activeId : refreshed.activeId } } };
     }
     if (update.tab.kind === 'resource') return state;
   }
-  const next = inspectorTabsReducer(own, update);
+  const next = inspectorTabsReducer(update.activate === false ? { ...own, activeId: visible.activeId } : own, update);
   return { ...state, workspaces: { ...state.workspaces, [action.workspaceId]: { ...own, ...next } } };
 }

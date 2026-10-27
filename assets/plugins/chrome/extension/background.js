@@ -41,6 +41,7 @@ let reconnectPaused = false;
 let pairingRequired = false;
 let activeScope = null;
 const attachedTabs = new Map();
+const attachmentReady = new Map();
 const viewportTabs = new Set();
 const downloadManager = createDownloadManager(chrome);
 const pendingScreenshots = new Map();
@@ -487,14 +488,19 @@ async function dispatch(method, params, progress = () => {}) {
   if (method === 'tabs.list') return await listScopeTabs(scope);
   if (method === 'tabs.activate') {
     const tabId = requiredTabId(params.tabId);
-    await requireManagedTab(scope, tabId);
-    const tab = await chrome.tabs.update(tabId, { active: true });
-    if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+    let tab = await requireManagedTab(scope, tabId);
+    // Selecting an automation target must not select the user's visible tab.
+    if (params.bringToFront === true) {
+      if (tab.groupId >= 0) await chrome.tabGroups.update(tab.groupId, { collapsed: false });
+      tab = await chrome.tabs.update(tabId, { active: true });
+      if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+    }
     return publicTab(tab);
   }
   if (method === 'tabs.create') {
     const targetUrl = safeNavigationUrl(params.url);
-    const tab = await chrome.tabs.create({ url: targetUrl, active: true });
+    const foreground = params.background === false;
+    const tab = await chrome.tabs.create({ url: targetUrl, active: foreground });
     try {
       await addTabToScope(scope, tab);
     } catch (error) {
@@ -506,6 +512,11 @@ async function dispatch(method, params, progress = () => {}) {
     if (tab.id != null) {
       setSessionGrant(tab.id, scope.id, originForUrl(targetUrl), 'created');
       await persistSessionState();
+    }
+    if (foreground) {
+      const created = await chrome.tabs.get(tab.id);
+      if (created.groupId >= 0) await chrome.tabGroups.update(created.groupId, { collapsed: false });
+      if (created.windowId != null) await chrome.windows.update(created.windowId, { focused: true });
     }
     return publicTab(await chrome.tabs.get(tab.id));
   }
@@ -668,7 +679,8 @@ async function copyTabIntoScope(scope, sourceTab) {
   const copied = await chrome.tabs.duplicate(sourceTab.id);
   if (copied?.id == null) throw connectorError('tab_copy_failed', 'The browser did not return the copied tab.');
   try {
-    await addTabToScope(scope, copied);
+    const groupId = await addTabToScope(scope, copied);
+    await chrome.tabGroups.update(groupId, { collapsed: false });
     await chrome.tabs.update(copied.id, { active: true });
     if (copied.windowId != null) await chrome.windows.update(copied.windowId, { focused: true });
     return await chrome.tabs.get(copied.id);
@@ -736,15 +748,24 @@ async function requireTabAccess(scope, tabId, requestedOrigin = '') {
 }
 
 async function ensureAttached(scope, tabId) {
+  if (attachmentReady.has(tabId)) await attachmentReady.get(tabId);
   const attachedScopeId = attachedTabs.get(tabId);
   if (attachedScopeId === scope.id) return;
   if (attachedScopeId) await detachTab(tabId);
-  try {
-    await chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION);
-    attachedTabs.set(tabId, scope.id);
-  } catch (error) {
-    throw connectorError('debugger_attach_failed', errorMessage(error), { tabId });
-  }
+  const ready = (async () => {
+    try {
+      await chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION);
+      attachedTabs.set(tabId, scope.id);
+      // Keep the controlled renderer live without activating its tab/window.
+      // Chrome clears this page-scoped override when the debugger detaches.
+      await chrome.debugger.sendCommand({ tabId }, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+    } catch (error) {
+      if (attachedTabs.get(tabId) === scope.id) await detachTab(tabId);
+      throw connectorError('debugger_attach_failed', errorMessage(error), { tabId });
+    }
+  })();
+  attachmentReady.set(tabId, ready);
+  try { await ready; } finally { if (attachmentReady.get(tabId) === ready) attachmentReady.delete(tabId); }
   await publishStatus();
 }
 
@@ -865,7 +886,6 @@ async function ensureManagedGroup(scope, windowId, seedTabId) {
       await chrome.tabGroups.update(existingGroupId, {
         title: groupTitle(known),
         color: GROUP_COLOR,
-        collapsed: false,
       });
       return existingGroupId;
     } catch {
@@ -933,6 +953,9 @@ async function collapseScopeGroups(scopeId) {
   let changed = false;
   for (const groupId of [...scope.groups.values()]) {
     try {
+      // Collapsing an active group can move the user to another tab.
+      const groupTabs = await chrome.tabs.query({ groupId });
+      if (groupTabs.some(tab => tab.active)) continue;
       await chrome.tabGroups.update(groupId, { collapsed: true });
     } catch {
       changed = forgetManagedGroup(groupId) || changed;

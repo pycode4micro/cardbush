@@ -1,4 +1,5 @@
 import { ChromeConnectorError } from './bridgeClient.js';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { PageCommand } from './pageCapture.js';
 import { callElement, inspectElement, obstructionReason } from './pageInspection.js';
 
@@ -57,6 +58,36 @@ const stableTarget = `function() {
     raf=requestAnimationFrame(sample);
   });
 }`;
+
+const targetBounds = `function() {
+  if (!this.isConnected) return {connected:false};
+  const r=this.getBoundingClientRect();
+  return {connected:true,bounds:[r.x,r.y,r.width,r.height]};
+}`;
+
+// Hidden/occluded renderers may stop RAF even while CDP and layout remain live.
+// Sample through the host clock in that case, without selecting the user's tab
+// or weakening the subsequent native hit tests. Moving bounds reset the window.
+async function stableBackgroundTarget(command: PageCommand, objectId: string, frames: unknown) {
+  const started = Date.now();
+  let previous: number[] | undefined, consecutive = 0, samples = 0, stableSince = started;
+  while (Date.now() - started < 500) {
+    const observation = await callElement(command, objectId, targetBounds);
+    samples++;
+    const evidence = { method: 'layout_samples', samples, frames, elapsedMs: Date.now() - started };
+    if (!observation.connected) return { ...evidence, stable: false, reason: 'detached' };
+    const bounds = observation.bounds;
+    if (!Array.isArray(bounds) || bounds.length !== 4 || bounds.some(value => typeof value !== 'number' || !Number.isFinite(value))) {
+      return { ...evidence, stable: false, reason: 'layout_unavailable' };
+    }
+    if (previous && bounds.every((value, index) => Math.abs(value - previous![index]) <= 0.25)) consecutive++;
+    else { consecutive = 1; stableSince = Date.now(); }
+    if (consecutive >= 3 && Date.now() - stableSince >= 100) return { ...evidence, stable: true };
+    previous = bounds;
+    await delay(50);
+  }
+  return { stable: false, reason: 'moving', method: 'layout_samples', samples, frames, elapsedMs: Date.now() - started };
+}
 
 const checkTarget = `function(source, hit, click) {
   source = source.nodeType === 3 ? source.parentElement : source;
@@ -146,7 +177,11 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     }
     const ensureStable = async () => {
       stability = await callElement(command, targetId!, stableTarget);
-      if (stability.stable !== true) throw new ChromeConnectorError('element_unstable', `${uid} did not provide two stable animation frames. Inspect the current page before retrying.`, { reason: stability.reason === 'detached' ? 'detached' : 'unstable', stability });
+      if (stability.reason === 'frames_unavailable') stability = await stableBackgroundTarget(command, targetId!, stability.frames);
+      if (stability.stable !== true) throw new ChromeConnectorError(
+        stability.reason === 'layout_unavailable' ? 'page_rendering_unavailable' : 'element_unstable',
+        `${uid} did not provide stable layout observations. Inspect the current page before retrying.`,
+        { reason: stability.reason === 'detached' || stability.reason === 'layout_unavailable' ? stability.reason : 'unstable', stability });
     };
     await ensureStable();
     const described = object(await command('DOM.describeNode', { objectId: targetId }));
@@ -276,6 +311,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
       inputDispatched: attemptedPresses ? 'possibly' : false, outcomeVerified: false,
       recovery: attemptedPresses
         ? 'Observe the page before retrying: input may already have taken effect.'
+        : reason === 'layout_unavailable' ? 'The renderer did not supply usable layout. Keep the existing tab, inspect its rendering state and do not bring it forward automatically.'
         : 'Take a fresh snapshot and select the visible enabled control or its associated label. For custom controls or native dialogs, use Computer Use in the same authorized browser window; observe before acting.',
     });
   } finally {

@@ -14,7 +14,7 @@ async function worker(saved = { cardbushConnectorEnabled: true }, local = { card
   const ports = [], alarms = [], timers = new Map(), activeAlarms = new Map();
   const storage = values => ({ get: async keys => Object.fromEntries(keys.map(key => [key, values[key]])), set: async value => Object.assign(values, structuredClone(value)), remove: async key => { delete values[key]; } });
   const chrome = {
-    runtime: { onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'test' }), getURL: file => `chrome-extension://fixture/${file}`,
+    runtime: { id: 'fixture', onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'test' }), getURL: file => `chrome-extension://fixture/${file}`,
       connectNative: () => { const port = { onMessage: event(), onDisconnect: event(), postMessage() {}, disconnect() {} }; ports.push(port); return port; } },
     alarms: { onAlarm: event(), clear: async name => activeAlarms.delete(name), create: (name, options) => { alarms.push({ name, ...options }); activeAlarms.set(name, options); } },
     storage: { session: storage(saved), local: storage(local) },
@@ -38,33 +38,36 @@ async function worker(saved = { cardbushConnectorEnabled: true }, local = { card
     manual: async () => { vm.runInContext('connectNative(true)', context); await flush(); } };
 }
 
-test('offline apps keep a durable 30-second alarm and saved pairing, including formerly paused workers', async () => {
+test('offline apps stop after three attempts and keep the exhausted budget across restarts until Connect', async () => {
   const f = await worker();
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     await f.fail('App is closed.');
-    assert.equal(f.alarms.at(-1).delayInMinutes, 0.5);
-    assert.equal(f.alarms.at(-1).periodInMinutes, 0.5);
-    await f.retry();
+    if (attempt < 2) {
+      assert.equal(f.alarms.at(-1).delayInMinutes, 0.5);
+      assert.equal(f.alarms.at(-1).periodInMinutes, undefined, 'recovery alarms are one-shot');
+      await f.retry();
+    }
   }
-  assert.equal(f.ports.length, 9);
+  assert.equal(f.ports.length, 3);
+  assert.equal(f.activeAlarms.size, 0); assert.equal(f.timers.size, 0);
+  await f.retry(); assert.equal(f.ports.length, 3, 'a stale alarm cannot restart exhausted attempts');
   assert.equal(f.local[pairingKey], pairing);
   assert.equal(f.state().connectorEnabled, true);
   const restarted = await worker({ cardbushNativeReconnect: { failures: 3, lastError: 'App is closed.' } }, f.local);
-  assert.equal(restarted.ports.length, 1);
+  assert.equal(restarted.ports.length, 0);
   assert.equal(restarted.state().pairingRequired, false);
+  await restarted.manual(); assert.equal(restarted.ports.length, 1);
 });
 
-test('short outages retry after 1, 2 and 4 seconds; successful handshake resets that bounded burst', async () => {
+test('short outages retry after 1 and 2 seconds; successful handshake resets the three-attempt budget', async () => {
   const f = await worker();
-  for (const ms of [1000, 2000, 4000]) {
+  for (const ms of [1000, 2000]) {
     await f.fail('App restarting');
     assert.equal(f.timers.size, 1);
     const [id, timer] = [...f.timers][0]; assert.equal(timer.ms, ms);
     f.timers.delete(id); timer.fn(); await flush();
     assert.equal(f.activeAlarms.size, 1, 'worker suspension during handshake still has a wake-up alarm');
   }
-  await f.fail('Still offline'); assert.equal(f.timers.size, 0);
-  await f.retry();
   f.ports.at(-1).onMessage.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
   await flush(); assert.equal(f.activeAlarms.size, 0);
   await f.fail('Another restart'); assert.equal([...f.timers.values()][0].ms, 1000);
@@ -156,21 +159,21 @@ test('browser consent requires its own confirmation tab and cancellation stays e
   const pending = vm.runInContext('confirmLocalBrowserConnection(consentSignal)', f.context); await flush();
   const token = vm.runInContext('browserConnectionConsent.token', f.context);
   let reply;
-  f.chrome.runtime.onMessage.emit({ action: 'confirm_connection', token, allow: true },
-    { tab: { id: 999 }, url: 'chrome-extension://fixture/connection.html' }, value => { reply = value; });
+  const confirm = (token, sender) => new Promise(resolve => f.chrome.runtime.onMessage.emit(
+    {action:'confirm_connection', token, allow:true}, {id:'fixture', ...sender}, resolve));
+  reply = await confirm(token, {tab:{id:999},url:'chrome-extension://fixture/connection.html'});
   assert.equal(reply.ok, false); assert.ok(vm.runInContext('browserConnectionConsent', f.context));
-  f.chrome.runtime.onMessage.emit({ action: 'confirm_connection', token, allow: true },
-    { tab: { id: 123 }, url: 'https://example.test' }, value => { reply = value; });
+  reply = await confirm(token, {tab:{id:123},url:'https://example.test'});
   assert.equal(reply.ok, false);
   controller.abort(); assert.equal(await pending, false);
-  f.chrome.runtime.onMessage.emit({ action: 'confirm_connection', token, allow: true },
-    { tab: { id: 123 }, url: 'chrome-extension://fixture/connection.html' }, value => { reply = value; });
+  reply = await confirm(token, {tab:{id:123},url:'chrome-extension://fixture/connection.html'});
   assert.equal(reply.ok, false, 'a stale Allow click cannot revive a cancelled request');
   const second = new AbortController(); f.context.consentSignal = second.signal;
   const approved = vm.runInContext('confirmLocalBrowserConnection(consentSignal)', f.context); await flush();
   const secondToken = vm.runInContext('browserConnectionConsent.token', f.context);
-  f.chrome.runtime.onMessage.emit({ action: 'confirm_connection', token: secondToken, allow: true },
-    { tab: { id: 123 }, url: 'chrome-extension://fixture/connection.html#' + secondToken }, value => { reply = value; });
+  reply = await confirm(secondToken, {id:'foreign-extension',tab:{id:123},url:'chrome-extension://fixture/connection.html#'+secondToken});
+  assert.equal(reply.ok,false,'another extension cannot confirm the request');
+  reply = await confirm(secondToken, {tab:{id:123},url:'chrome-extension://fixture/connection.html#'+secondToken});
   assert.equal(reply.ok, true); assert.equal(await approved, true);
 });
 

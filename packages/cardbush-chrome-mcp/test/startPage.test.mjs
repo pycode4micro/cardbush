@@ -31,3 +31,19 @@ test('new_page opens a blank tab independently of legacy home preferences and pr
   assert.notEqual((await open({})).isError, true, 'new tabs do not depend on legacy configuration');
   assert.deepEqual(requests, ['about:blank', 'about:blank', 'about:blank', 'https://explicit.test/path?query=1', 'about:blank']);
 });
+
+test('new_page and select_page default to background control and forward explicit presentation requests', async t => {
+  const calls = [];
+  const server = createCardbushChromeServer({connector: async (method, params) => {
+    calls.push({method, ...params}); return {id:42, active:false};
+  }});
+  t.after(() => server.close());
+  const context = {mcpReq:{signal:new AbortController().signal, _meta:{cardbush_session_id:'quiet-browser'}}};
+  for (const [tool, input] of [['new_page', {}], ['select_page', {pageId:42}],
+    ['new_page', {url:'https://example.com/', background:false}], ['select_page', {pageId:42, bringToFront:true}]]) {
+    const result = await server._registeredTools[tool].handler(input, context);
+    assert.notEqual(result.isError, true);
+  }
+  assert.deepEqual(calls.map(call => [call.method, call.background ?? call.bringToFront]),
+    [['tabs.create',true], ['tabs.activate',false], ['tabs.create',false], ['tabs.activate',true]]);
+});

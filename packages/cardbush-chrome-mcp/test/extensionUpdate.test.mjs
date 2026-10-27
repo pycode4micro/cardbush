@@ -67,7 +67,7 @@ test('old cached workers prompt reload instead of re-pairing or claiming auto-re
 test('matching builds retain normal reconnect and saved authorization display', async () => {
   const f = await popup({ ...offline, runtimeBuild: 'current-build', allowAllSites: true });
   assert.equal(f.element('#extension-update').hidden, true);
-  assert.match(f.element('#connection').textContent, /自动重连/);
+  assert.match(f.element('#connection').textContent, /有限重试/);
   assert.match(f.element('#site-access').textContent, /已保存：允许/);
   await f.reload();
   assert.equal(f.reloads, 0);

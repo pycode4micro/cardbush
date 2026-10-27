@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 
 export function connectorDataRoot(userDataPath: string, nativeHostPath: string, msixPackage: boolean): string {
   if (!msixPackage) return userDataPath;
@@ -55,5 +55,26 @@ export function secureConnectorResource(nativeHostPath: string, kind: 'directory
   // This is a fixed internal operation, never a renderer-supplied command.
   execFileSync(nativeHostPath, [`--secure-${kind}`, target], {
     windowsHide: true, encoding: 'utf8', timeout: 10_000,
+  });
+}
+
+/** The fixed helper has completed its ACL write AND verification when it exits.
+ * Concurrent Windows worker launches can retain a duplicate output-pipe handle;
+ * execFile then waits for EOF until its timeout even after exit code 0. Do not
+ * make readiness depend on another process releasing that unrelated handle. */
+export async function secureConnectorResourceAsync(nativeHostPath: string, kind: 'directory' | 'pipe', target: string): Promise<void> {
+  if (process.platform !== 'win32') return;
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(nativeHostPath, [`--secure-${kind}`, target], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    let settled = false, diagnostic = '';
+    const finish = (error?: Error) => {
+      if (settled) return; settled = true; clearTimeout(timer); child.stderr.destroy();
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => { child.kill(); finish(new Error(`Private IPC ${kind} permission verification timed out.`)); }, 10_000);
+    child.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-4096); });
+    child.once('error', finish);
+    child.once('exit', (code, signal) => finish(code === 0 && !signal ? undefined
+      : new Error(diagnostic.trim() || `Private IPC ${kind} permission verification failed (${signal ?? code}).`)));
   });
 }

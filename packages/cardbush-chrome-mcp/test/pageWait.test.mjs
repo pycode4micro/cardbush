@@ -69,13 +69,38 @@ test('public wait propagates its remaining budget into CDP requests and keeps la
     if(method==='tabs.list')return [{id:42,active:true}];
     assert.equal(method,'debugger.command');budgets.push(options.timeoutMs);
     if(budgets.length===1)return {result:{value:false}};
-    throw new ChromeConnectorError('bridge_timeout','Delayed response');
+    throw new ChromeConnectorError('browser_connector_timeout','Delayed response', { stage: 'command_pending' });
   }});
   const context={mcpReq:{signal:new AbortController().signal,_meta:{cardbush_session_id:'bounded-wait'}}};
   try {
     const result=await server._registeredTools.wait_for.handler({text:'ready',timeout:200},context);
     assert.equal(result.structuredContent.error.code,'wait_for_timeout');
     assert.equal(result.structuredContent.error.details.observations[0].matched,false);
+    assert.equal(result.structuredContent.error.details.lastRequestError.details.stage, 'command_pending');
     assert.ok(budgets[0]<=200 && budgets[1]<budgets[0]);
   } finally {await server.close();}
+});
+
+test('an elapsed deadline never sends another polling request, including within a condition batch', async () => {
+  let calls = 0;
+  const input = waitSchema.parse({ conditions: [{kind:'text', text:'ready'}, {kind:'url', value:'result', match:'includes'}], timeout:100 });
+  await assert.rejects(waitForPage(async () => { calls++; }, input, undefined, Date.now() - 1), {code:'wait_for_timeout'});
+  assert.equal(calls, 0);
+  await assert.rejects(waitForPage(async () => {
+    calls++;
+    await new Promise(resolve => setTimeout(resolve, 110));
+    return {result:{value:false}};
+  }, input), error => error.code === 'wait_for_timeout' && error.details.observations[0].matched === false);
+  assert.equal(calls, 1, 'the second condition must not start after the shared deadline');
+});
+
+test('waits preserve permission, offline and cancellation errors instead of relabelling them as timeouts', async () => {
+  for (const code of ['site_permission_required', 'browser_unavailable']) {
+    const error = new ChromeConnectorError(code, 'Original cause');
+    await assert.rejects(waitForPage(async () => { throw error; }, waitSchema.parse({text:'ready'})), value => value === error);
+  }
+  const abort = new AbortController();
+  await assert.rejects(waitForPage(async () => {
+    abort.abort(); throw new ChromeConnectorError('browser_connector_timeout', 'Delayed abort');
+  }, waitSchema.parse({text:'ready'}), abort.signal), {name:'AbortError'});
 });

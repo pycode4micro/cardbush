@@ -13,6 +13,7 @@ test('Windows output decoding preserves Unicode cmd built-ins and native UTF-8/l
   assert.equal(decodeCommandOutput(Buffer.from([0xd6, 0xd0, 0xce, 0xc4]), 'win32'), '中文');
   assert.equal(decodeCommandOutput(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('中文', 'utf16le')]), 'win32'), '中文');
   assert.equal(decodeCommandOutput(Buffer.from('plain\n'), 'linux'), 'plain\n');
+  assert.equal(decodeCommandOutput(Buffer.from('\ufeffbroken \ud801', 'utf16le'), 'win32'), 'broken �');
 });
 
 test('file URLs retain native separators, Unicode, escaped punctuation and UNC shares', () => {

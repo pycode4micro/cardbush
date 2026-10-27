@@ -11,7 +11,7 @@ export function useInspectorTabs(workspaceId = 'shared') {
   // Moving an Electron webview in the DOM destroys its native guest, even with
   // a stable React key. Keep retained pages ordered independently of ownership.
   const allTabs = useMemo(() => retainedInspectorTabs(state).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), [state]);
-  const openTab = useCallback((tab: InspectorTab, owner = workspace.workspaceId) => dispatch({ type: 'tabs', workspaceId: owner, action: { type: 'open', tab } }), [workspace]);
+  const openTab = useCallback((tab: InspectorTab, owner = workspace.workspaceId, activate = true) => dispatch({ type: 'tabs', workspaceId: owner, action: { type: 'open', tab, activate } }), [workspace]);
   const activateTab = useCallback((id: string, owner = workspace.workspaceId) => dispatch({ type: 'tabs', workspaceId: owner, action: { type: 'activate', id } }), [workspace]);
   const closeTabs = useCallback((ids: ReadonlySet<string>, owner = workspace.workspaceId) => dispatch({ type: 'tabs', workspaceId: owner, action: { type: 'close', ids } }), [workspace]);
   const setOpen = useCallback((update: SetStateAction<boolean>, owner = workspace.workspaceId) => dispatch({ type: 'open-state', workspaceId: owner, update }), [workspace]);

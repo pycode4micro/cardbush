@@ -145,7 +145,7 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#decoder = new ChatPasteDecoder(text => {
       // Input packets may contain typed text and Enter (or arrows and Enter).
       // Handle these keys in order, after the decoder has isolated pasted text.
-      for (const key of text.split(/(\x1b\[[ABZ]|\r\n|[\r\n\t])/).filter(Boolean)) this.#handleInput(key);
+      for (const key of text.split(/(\x1b\[[0-?]*[ -/]*[@-~]|\r\n|[\r\n\t])/).filter(Boolean)) this.#handleInput(key);
     }, text => {
       try { if (this.#editing()) {
         this.#hideHints(); this.#inputRevision++; this.#hintAbort?.abort(); this.#suggestions = undefined;
@@ -159,6 +159,18 @@ export class NativeChatTerminal implements ChatTerminal {
     this.#input.resume();
   }
   #handleInput(text: string) {
+    // Windows sends LF for Ctrl+Enter (also Ctrl+J). Other terminals may
+    // report CSI-u or modifyOtherKeys. CRLF remains one ordinary Enter.
+    const immediate = text === '\n' || /^\x1b\[13;5(?::[12])?u$/.test(text) || text === '\x1b[27;5;13~';
+    if (text === '\x1b[13;5:3u') return; // A key release must never submit twice.
+    if (immediate && this.#editing()) {
+      if (this.#turn && this.#chatPrompt && !this.#suspended && this.#reader!.line.trim() && !this.#reader!.line.trimStart().startsWith('/')) {
+        // Use the existing durable guidance path, including receipt recovery and
+        // the race where a running task finishes before guidance arrives.
+        this.#replaceDraft('/steer ' + this.#reader!.line);
+      }
+      text = '\r';
+    }
     if (this.#live && this.#turn && (text === '\x03' || text === '\x1b' && !(this.#waiting && this.#inputOptions.picker))) {
       if (text === '\x1b' && /^\s*\/(?:artifact|source)\s/.test(this.#reader!.line)) {
         this.#clearDraft(); this.#invalidateHints(); this.#live.schedule(); return;
@@ -334,8 +346,8 @@ export class NativeChatTerminal implements ChatTerminal {
       lines.push(...this.#suggestionRows(suggestions, capacity, width));
       lines.push(this.#style(terminalClip(suggestions.value.notice ?? (suggestions.value.items.length
         ? this.#hintHelp(suggestions) : '  No matches; keep typing to filter'), width), 'dim'));
-    } else if (this.#chatPrompt && !this.#reader.line) lines.push(this.#style(terminalClip(this.#turn
-      ? '  Enter queue · /steer guide · Esc / Ctrl+C stop'
+    } else if (this.#chatPrompt) lines.push(this.#style(terminalClip(this.#turn
+      ? '  Enter queue · Ctrl+Enter guide now · /steer · Esc stop'
       : '  Enter send · / commands · @ files · Tab complete', width), 'dim'));
     return { lines, cursor };
   }

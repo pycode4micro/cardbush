@@ -12,14 +12,20 @@ app.whenReady().then(async () => {
     webPreferences: { contextIsolation: true, backgroundThrottling: false, offscreen: true } });
   let tests = 0;
   try {
-    const wc = window.webContents;
+    let wc = window.webContents;
+    await window.loadURL('about:blank');
     wc.debugger.attach('1.3');
     const command = (name, params = {}) => wc.debugger.sendCommand(name, params);
+    const sampleFrames = async () => (await command('Runtime.evaluate', { expression:
+      `new Promise(resolve=>{let frames=0,raf;const sample=()=>{frames++;raf=requestAnimationFrame(sample)};raf=requestAnimationFrame(sample);setTimeout(()=>{cancelAnimationFrame(raf);resolve({frames,hidden:document.hidden,focus:document.hasFocus()})},150)})`,
+      awaitPromise:true, returnByValue:true })).result.value;
+    await command('Emulation.setFocusEmulationEnabled', {enabled:true});
     const events = [], released = [];
     let failRelease = false;
     const server = createCardbushChromeServer({ artifactsDirectory: path.join(directory, 'artifacts'), browserConfigPath: path.join(directory, 'browser.json'),
       connector: async (method, params) => {
         if (method === 'tabs.list') return [{ id: wc.id, active: true, title: 'Local fixture', url: wc.getURL() }];
+        if (method === 'tabs.activate') return { id: wc.id, active: false, title: 'Local fixture', url: wc.getURL() };
         if (method === 'debugger.detachScope') return {};
         assert.equal(method, 'debugger.command');
         if (params.command === 'Input.dispatchMouseEvent') {
@@ -282,9 +288,16 @@ app.whenReady().then(async () => {
 
     await load('<button id="target">Rendering paused</button>', 'window.requestAnimationFrame=()=>0');
     const paused=await click('#target');
-    assert.equal(paused.structuredContent.error.code,'element_unstable',JSON.stringify(paused));
-    assert.equal(paused.structuredContent.error.details.stability.reason,'frames_unavailable');
-    assert.equal(events.length,0);tests++;
+    await succeeds(paused);
+    assert.equal(paused.structuredContent.stability.method,'layout_samples');
+    assert.ok(paused.structuredContent.stability.samples>=3);
+    assert.ok(paused.structuredContent.stability.elapsedMs>=100);
+    assert.equal((await evaluate('audit')).clicks,1);tests++;
+    await load('<button id="target">Moving without animation frames</button>', `window.requestAnimationFrame=()=>0;let x=0;setInterval(()=>target.style.transform='translateX('+(x+=2)+'px)',10)`);
+    const backgroundMoving=await click('#target');
+    assert.equal(backgroundMoving.structuredContent.error.code,'element_unstable',JSON.stringify(backgroundMoving));
+    assert.equal(backgroundMoving.structuredContent.error.details.stability.method,'layout_samples');
+    assert.equal(events.filter(e=>e.type==='mousePressed').length,0);tests++;
     await load('<div id="target">Not a value-bearing control</div>');
     const emptyValue=await invoke('wait_for',{conditions:[{kind:'value',uid:await selectorUid('#target'),value:''}],timeout:100});
     assert.equal(emptyValue.structuredContent.error.code,'wait_for_timeout',JSON.stringify(emptyValue));tests++;
@@ -293,6 +306,23 @@ app.whenReady().then(async () => {
     const secret=await click('#secret'); await succeeds(secret);
     assert.doesNotMatch(JSON.stringify(secret),/never-echo-this-secret/);tests++;
     await invoke('release_browser');
+    const background = new BrowserWindow({show:false,paintWhenInitiallyHidden:false,width:1000,height:800,
+      webPreferences:{contextIsolation:true,backgroundThrottling:true}});
+    try {
+      wc=background.webContents;
+      await background.loadURL('data:text/html,<button id="target" onclick="window.clicks=(window.clicks||0)+1">Background target</button>');
+      wc.debugger.attach('1.3');
+      assert.equal((await sampleFrames()).frames,0,'a real hidden renderer starts with paused animation frames');
+      await command('Emulation.setFocusEmulationEnabled',{enabled:true});
+      await invoke('select_page',{pageId:wc.id});
+      for(let i=0;i<3;i++) await succeeds(await click('#target'));
+      assert.equal(await evaluate('window.clicks'),3,'consecutive background clicks remain usable');
+      assert.equal(background.isVisible(),false);assert.equal(background.isFocused(),false);tests++;
+      wc.debugger.detach(); wc.debugger.attach('1.3');
+      const releasedState=await sampleFrames();
+      assert.equal(releasedState.frames,0,'detach clears emulation and restores background throttling');
+      assert.equal(releasedState.hidden,true);tests++;
+    } finally {background.destroy();wc=window.webContents;}
     console.log(`Browser native CDP regressions passed: ${tests} cases (hidden fixture only).`);
   } catch (error) { console.error(`Failed after ${tests} native cases`); throw error; }
   finally { window.destroy(); }

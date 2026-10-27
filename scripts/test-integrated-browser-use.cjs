@@ -188,10 +188,28 @@ async function run() {
   success(await call('take_snapshot',{limit:3}));
   const assistantChild=await require('./helpers/assistant-browser.cjs')({router,ui,call,success,failure,guest,pageId,url,directory,until});
   assert.equal(externalCalls.length,externalBefore,'assistant delegation never switches to Chrome');
+  const selectedBefore = await ui('browserFixture.activeId');
+  await ui(`document.querySelector('#conversation-draft').focus(); void 0`);
   const newTab=success(await call('new_page',{url}));
   assert.notEqual(newTab.id,pageId);assert.ok(newTab.tabId.startsWith('browser:'));
-  await until(()=>ui(`browserFixture.activeId===${JSON.stringify(newTab.tabId)}`),'New CardBush tab not visible in inspector');
+  assert.equal(await ui('browserFixture.activeId'), selectedBefore, 'background new_page preserves the user’s selected inspector tab');
+  assert.equal(await ui('document.activeElement.id'), 'conversation-draft', 'background creation preserves typing focus');
+  assert.equal(newTab.visible, false);
   assert.equal(success(await call('list_pages')).selectedPageId,newTab.id);
+  const backgroundSnapshot = await call('take_snapshot',{query:'Play first video'}); success(backgroundSnapshot);
+  const backgroundUid = backgroundSnapshot.content[0].text.match(/uid=(cb_\d+) role=button/)?.[1]; assert.ok(backgroundUid);
+  const hiddenClick = await call('click',{uid:backgroundUid});
+  failure(hiddenClick,'cardbush_page_not_interactive');
+  assert.equal(hiddenClick.structuredContent.error.details.inputDispatched,false);
+  assert.equal(await webContents.fromId(newTab.id).executeJavaScript('window.clicks'),0);
+  assert.equal(await ui('browserFixture.activeId'), selectedBefore, 'hidden input is rejected without presenting the page');
+  assert.equal(await ui('document.activeElement.id'), 'conversation-draft');
+  success(await call('select_page',{pageId:newTab.id}));
+  assert.equal(await ui('browserFixture.activeId'), selectedBefore);
+  success(await call('select_page',{pageId:newTab.id,bringToFront:true}));
+  await until(()=>ui(`browserFixture.activeId===${JSON.stringify(newTab.tabId)}`),'Explicit presentation did not select the existing page');
+  success(await call('click',{uid:backgroundUid}));
+  assert.equal(await webContents.fromId(newTab.id).executeJavaScript('window.clicks'),1);
   // Re-mention an earlier tab after the server has selected a newer one.
   await ui(`browserFixture.reference(${JSON.stringify(scope)},${JSON.stringify(url)})`);
   assert.equal(success(await call('list_pages')).selectedPageId,pageId);
@@ -243,8 +261,9 @@ async function run() {
     success(await call('select_browser',{connectionId:'cardbush'},grandchild));
     assert.deepEqual(success(await call('list_pages',{},grandchild)).pages,[],'UI ancestry grants no existing tabs');
     failure(await call('select_page',{pageId:newTab.id},grandchild),'cardbush_page_not_authorized');
+    const previousTab = await ui('browserFixture.activeId');
     const created=success(await call('new_page',{url},grandchild));
-    await until(()=>ui(`browserFixture.activeId===${JSON.stringify(created.tabId)}`),'Child-created guest did not appear');
+    assert.equal(await ui('browserFixture.activeId'), previousTab, 'child-created pages stay in the background');
     const beforeParentRead=externalCalls.length;
     if(choice==='external') {
       assert.equal(success(await call('list_pages',{},parent)).selectedPageId,637760547,'the parent keeps its external browser until it explicitly switches');
@@ -257,6 +276,7 @@ async function run() {
     const returnedSnapshot=await call('take_snapshot',{query:'Play first video'},parent);success(returnedSnapshot);
     assert.match(returnedSnapshot.content[0].text,/role=button/,'the parent can read the real child page');
     const returnedUid=returnedSnapshot.content[0].text.match(/uid=(cb_\d+) role=button/)?.[1];assert.ok(returnedUid);
+    success(await call('select_page',{pageId:created.id,bringToFront:true},parent));
     success(await call('click',{uid:returnedUid},parent));
     assert.equal(await webContents.fromId(created.id).executeJavaScript('window.clicks'),1,'parent actions reach the original child-created guest');
     failure(await call('select_page',{pageId:created.id},otherScope),'cardbush_page_not_authorized');
@@ -334,7 +354,15 @@ async function run() {
   failure(hiddenCapture,'cardbush_page_not_visible');
   assert.equal(hiddenCapture.structuredContent.error.details.inputDispatched,false,'host diagnostics survive the MCP route');
   assert.ok(Date.now()-captureStarted<3000,'hidden screenshot fails before a CDP timeout');
+  success(await call('select_browser',{connectionId:'cardbush'},'unrelated-current'));
+  assert.equal(await ui('browserFixture.snapshot(browserFixture.workspaceId).open'),false);
+  const quietPage=success(await call('new_page',{url},'unrelated-current'));
+  assert.equal(await ui('browserFixture.snapshot(browserFixture.workspaceId).open'),false,'creating the first background page does not open a collapsed inspector');
+  assert.equal(quietPage.visible,false);
+  success(await call('take_snapshot',{query:'Play first video'},'unrelated-current'));
+  success(await call('close_page',{pageId:quietPage.id},'unrelated-current'));
   await ui(`browserFixture.setWorkspaceId(browserFixture.localInspectorWorkspace(${JSON.stringify(firstTurn)})); void 0`);
+  success(await call('select_page',{pageId:draftGuestId,bringToFront:true},firstTurn));
   await until(()=>ui(`browserFixture.activeId===${JSON.stringify(draftTab)}`),'Original selected tab was not restored');
   assert.equal(success(await call('list_pages',{},firstTurn)).pages[0].visible,true);
   success(await call('take_screenshot',{format:'png'},firstTurn));

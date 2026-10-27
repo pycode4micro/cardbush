@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { InspectorResourceTab, InspectorTabsState } from './inspectorTabs';
 import type { BrowserTabAction, BrowserTabPresentation } from '../../../electron/integratedBrowser';
 
-/** Main-process Browser Use controls the same visible tabs as the user. */
+/** Main-process Browser Use addresses the same retained inspector tabs as the user. */
 export function useInspectorBrowserActions(actions: {
   workspaceId: string;
   snapshot(workspaceId: string): InspectorTabsState & { open: boolean };
   bind(tabIds: string[], workspaceId?: string): void;
-  open(tab: InspectorResourceTab, workspaceId?: string): void;
+  open(tab: InspectorResourceTab, workspaceId?: string, activate?: boolean): void;
   activate(tabId: string, workspaceId?: string): void;
   close(tabId: string, workspaceId?: string): void;
   show(workspaceId?: string): void;
@@ -22,8 +22,8 @@ export function useInspectorBrowserActions(actions: {
     if (detail.action === 'bind') {
       actions.bind(detail.tabIds ?? [detail.tabId], workspaceId);
     } else if (detail.action === 'open' && detail.url) {
-      actions.open({ id: detail.tabId, kind: 'resource', detail: { target: detail.url } }, workspaceId);
-      actions.show(workspaceId);
+      actions.open({ id: detail.tabId, kind: 'resource', detail: { target: detail.url } }, workspaceId, detail.background !== true);
+      if (detail.background !== true) actions.show(workspaceId);
     } else if (detail.action === 'activate') {
       actions.activate(detail.tabId, workspaceId); actions.show(workspaceId);
     } else if (detail.action === 'close') actions.close(detail.tabId, workspaceId);

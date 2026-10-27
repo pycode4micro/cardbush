@@ -84,7 +84,7 @@ function Harness() {
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
     <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/>
       {citation && <MarkdownContent content={citation} language="zh"/>}</div><AppCenterDock language={language}/></section>
-    {presence.mounted && <aside className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
+    {(presence.mounted || tabs.allTabs.length > 0) && <aside className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
       inert={!presence.visible} aria-hidden={!presence.visible} style={{'--right-inspector-width':width+'px'}}>
     <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} softVisible={presence.visible} label="Resize workspace"/>
     <div className="right-inspector-viewport"><div className="right-inspector-content">

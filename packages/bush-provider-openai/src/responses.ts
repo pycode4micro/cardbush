@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { wellFormedJson } from './wellFormedJson.js';
 import { createHash } from "node:crypto";
 import type {
   Response,
@@ -261,7 +262,7 @@ export function toResponsesCreateParams(
     store: Boolean(providerState),
     stream: true,
   } as ResponseCreateParamsStreaming;
-  return options.chatGpt ? siwcResponsesParams(params) : params;
+  return wellFormedJson(options.chatGpt ? siwcResponsesParams(params) : params);
 }
 
 export function toResponsesInputTokenCountParams(

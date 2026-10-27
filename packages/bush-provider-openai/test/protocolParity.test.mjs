@@ -20,6 +20,26 @@ const events = (reason = 'end_turn', blocks = [{ type: 'text', text: 'Done.' }])
 ];
 const reject = (message, status = 400, type = 'invalid_request_error') => Response.json({ type: 'error', error: { type, message } }, { status });
 
+test('all wire protocols repair malformed Unicode in resumed tool output without rewriting the journal', () => {
+  const content = 'before\ud801 middle\udc05 after 😀 中文';
+  const request = req({ messages: [
+    ...req().messages,
+    { role: 'assistant', content: '', toolCalls: [{ id: 'call', name: 'terminal_exec', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: 'call', content },
+  ] });
+  const original = structuredClone(request);
+  const assertText = value => {
+    if (typeof value === 'string') assert.equal(value.isWellFormed(), true, JSON.stringify(value));
+    else if (value && typeof value === 'object') Object.values(value).forEach(assertText);
+  };
+  for (const project of [toResponsesCreateParams, toChatCompletionsParams, toAnthropicMessagesParams]) {
+    const body = project(request);
+    assertText(body);
+    assert.ok(JSON.stringify(body).includes('before� middle� after 😀 中文'));
+    assert.deepEqual(request, original);
+  }
+});
+
 test('Chat picker and wire use three levels while Responses and Messages retain their levels', () => {
   assert.deepEqual(reasoningEffortsForProtocol('openai_chat_completions'), ['low', 'medium', 'high']);
   for (const [level, chatLevel] of [['none', 'low'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'high'], ['max', 'high']]) {

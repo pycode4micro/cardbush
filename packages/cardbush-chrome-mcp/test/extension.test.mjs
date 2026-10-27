@@ -22,6 +22,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   const stored = { cardbushConnectorEnabled: true, cardbushConnectorPairingV2: 'saved-pairing' };
   const sessionStored = { cardbushConnectorEnabled: true };
   const attached = new Set();
+  const focusedWindows = [], debuggerCommands = [];
   const screenshotTimers = new Set();
   const groups = new Map();
   const tabs = [
@@ -60,7 +61,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
       onRemoved: event(),
       query: async (query) => query?.active && (query.lastFocusedWindow || query.currentWindow)
         ? tabs.filter((candidate) => candidate.id === activeTabId)
-        : tabs,
+        : query?.groupId != null ? tabs.filter(candidate => candidate.groupId === query.groupId) : tabs,
       get: async (tabId) => requiredTab(tabs, tabId),
       update: async (tabId, update) => {
         const candidate = requiredTab(tabs, tabId);
@@ -68,10 +69,10 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
         Object.assign(candidate, update);
         return candidate;
       },
-      create: async ({ url }) => {
-        const candidate = tab(nextTabId++, 2, true, '', url);
+      create: async ({ url, active = true }) => {
+        const candidate = tab(nextTabId++, 2, active, '', url);
         tabs.push(candidate);
-        setActiveTab(tabs, candidate, (value) => { activeTabId = value; });
+        if (active) setActiveTab(tabs, candidate, (value) => { activeTabId = value; });
         return candidate;
       },
       duplicate: async (tabId) => {
@@ -120,12 +121,12 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
       get: async (groupId) => requiredGroup(groups, groupId),
       update: async (groupId, update) => Object.assign(requiredGroup(groups, groupId), update),
     },
-    windows: { update: async () => undefined },
+    windows: { update: async (id, update) => { focusedWindows.push({ id, ...update }); } },
     debugger: {
       onDetach: event(),
       attach: async ({ tabId }) => { attached.add(tabId); },
       detach: async ({ tabId }) => { attached.delete(tabId); },
-      sendCommand: async (_target, command) => ({ command, accepted: true }),
+      sendCommand: async (target, command, params) => { debuggerCommands.push({ ...target, command, params }); return { command, accepted: true }; },
     },
     storage: {
       local: storageArea(stored),
@@ -187,11 +188,47 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   const groupA = requiredGroup(groups, tabA.groupId);
   assert.equal(groupA.color, 'cyan');
   assert.match(groupA.title, /^CardBush · Login check · sion-a$/);
+  assert.equal(activeTabId, 22, 'default tab creation preserves the personal tab');
+  assert.equal(createdA.result.active, false);
+  assert.equal(focusedWindows.length, 0);
+  await nativeRequest(nativeMessages, posted, 'tabs.activate', { ...SCOPE_A, tabId: tabA.id });
+  assert.equal(activeTabId, 22, 'selecting the Agent target does not activate it');
+  assert.equal(focusedWindows.length, 0);
+  groupA.collapsed = true;
+  const second = await nativeRequest(nativeMessages, posted, 'tabs.create', { ...SCOPE_A, url: 'https://a.example/second' });
+  assert.equal(groupA.collapsed, true, 'background additions preserve collapsed groups');
+  await nativeRequest(nativeMessages, posted, 'tabs.close', { ...SCOPE_A, tabId: second.result.id });
+  await nativeRequest(nativeMessages, posted, 'tabs.activate', { ...SCOPE_A, tabId: tabA.id, bringToFront: true });
+  assert.equal(activeTabId, tabA.id);
+  assert.equal(groupA.collapsed, false);
+  assert.equal(focusedWindows.length, 1, 'foreground presentation is explicit');
+  await nativeRequest(nativeMessages, posted, 'debugger.suspendScope', SCOPE_A);
+  assert.equal(groupA.collapsed, false, 'suspending never collapses a group the user is viewing');
+  setActiveTab(tabs, requiredTab(tabs, 22), value => { activeTabId = value; });
 
   const originalCommand = chrome.debugger.sendCommand;
+  let completeAttachment, initializationCalls = 0;
+  chrome.debugger.sendCommand = (target, command, params) => {
+    if (command === 'Emulation.setFocusEmulationEnabled') {
+      initializationCalls++;
+      return new Promise(resolve => { completeAttachment = resolve; });
+    }
+    return originalCommand(target, command, params);
+  };
+  const firstRead = debug(nativeMessages, posted, SCOPE_A, tabA.id);
+  await eventually(() => Boolean(completeAttachment));
+  const secondRead = debug(nativeMessages, posted, SCOPE_A, tabA.id);
+  await flush();
+  assert.equal(initializationCalls, 1);
+  assert.equal(debuggerCommands.length, 0, 'concurrent reads wait for background control initialization');
+  completeAttachment({});
+  assert.ok((await Promise.all([firstRead, secondRead])).every(reply => reply.result.accepted));
+  chrome.debugger.sendCommand = originalCommand;
+  await nativeRequest(nativeMessages, posted, 'debugger.detach', { ...SCOPE_A, tabId: tabA.id });
   let captures = 0;
   let completeCapture;
   chrome.debugger.sendCommand = (_target, command) => {
+    if (command !== 'Page.captureScreenshot') return originalCommand(_target, command, { enabled: true });
     assert.equal(command, 'Page.captureScreenshot');
     captures++;
     return new Promise(resolve => { completeCapture = resolve; });
@@ -229,6 +266,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal((await replacement).result.data, 'replacement-image');
   assert.equal(screenshotTimers.size, 0);
   chrome.debugger.sendCommand = originalCommand;
+  assert.ok(debuggerCommands.some(entry => entry.tabId === tabA.id && entry.command === 'Emulation.setFocusEmulationEnabled' && entry.params.enabled));
 
   nativeMessages.emit({ type: 'control', method: 'debugger.suspendAll' });
   await eventually(() => groupA.collapsed);
@@ -251,11 +289,14 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   const createdB = await nativeRequest(nativeMessages, posted, 'tabs.create', {
     ...SCOPE_B,
     url: 'https://b.example/',
+    background: false,
   });
   const tabB = requiredTab(tabs, createdB.result.id);
   const groupB = requiredGroup(groups, tabB.groupId);
   assert.notEqual(groupA.id, groupB.id);
   assert.match(groupB.title, /^CardBush · Billing check · sion-b$/);
+  assert.equal(activeTabId, tabB.id, 'explicit foreground creation still shows the page');
+  setActiveTab(tabs, requiredTab(tabs, 22), value => { activeTabId = value; });
 
   const listA = await nativeRequest(nativeMessages, posted, 'tabs.list', SCOPE_A);
   assert.deepEqual(listA.result.map((candidate) => candidate.id), [tabA.id]);
@@ -330,8 +371,9 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.ok(!listAfterCopy.result.some((candidate) => candidate.id === 22));
 
   nativeMessages.emit({ type: 'control', method: 'debugger.suspendAll' });
-  await eventually(() => attached.size === 0 && groupA.collapsed && groupB.collapsed);
-  assert.equal(groupA.collapsed, true);
+  await eventually(() => attached.size === 0 && groupB.collapsed);
+  assert.equal(groupA.collapsed, false, 'the user is viewing the explicitly copied tab');
+  assert.equal(activeTabId, copiedTab.id);
   assert.equal(groupB.collapsed, true);
   assert.ok(Array.isArray(sessionStored.cardbushManagedScopes));
   assert.ok(Array.isArray(sessionStored.cardbushSessionGrants));
