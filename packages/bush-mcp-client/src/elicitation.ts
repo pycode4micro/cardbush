@@ -30,7 +30,7 @@ export class McpInteractiveCalls {
   constructor(private readonly elicit?: McpElicitationHandler) {}
   prepare(client: Client) {
     if (!this.elicit) return;
-    client.registerCapabilities({ elicitation: { form: {}, url: {} } });
+    client.registerCapabilities({ elicitation: { form: { applyDefaults: true }, url: {} } });
     client.setRequestHandler('elicitation/create', async (request, context) => {
       const active = this.#scope.getStore() ?? this.#active.get(client);
       if (!active || active.client !== client || active.deadline.signal.aborted) return { action: 'cancel' };

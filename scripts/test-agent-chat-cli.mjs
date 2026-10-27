@@ -617,7 +617,9 @@ test('CLI help and argument errors do not need a server or credentials', async t
   assert.equal(help.code, 0); assert.match(help.stdout, /cardbush --resume/); assert.match(help.stdout, /--full-access/);
   assert.match(help.stdout, /Usage: cardbush/); assert.doesNotMatch(help.stdout, /\p{Script=Han}/u);
   assert.match(help.stdout, /\/quit \(or \/exit\) exits/);
-  assert.match(help.stdout, /Local Chrome\/Edge: approve the first connection in the system dialog and extension/);
+  assert.match(help.stdout, /Local Chrome\/Edge: approve the first connection in the CardBush extension window/);
+  assert.match(help.stdout, /cardbush serve --data-dir/);
+  assert.match(help.stdout, /--version/);
   assert.match(help.stdout, /no pairing code is needed\. The local App and CLI share connections and reconnect automatically/);
   assert.match(help.stdout, /is for manual connection or remote Agent pairing/);
   assert.match(help.stdout, /remote Agents keep separate connections/);
@@ -1442,7 +1444,7 @@ test('real CLI stays open after a late approval conflict and completes the origi
   assert.equal(process.child.exitCode, null, 'an expired permission must not exit the process');
   assert.equal(answers, 1);
   assert.equal((await call('chat.jobs', {})).length, 1);
-  assert.match(JSON.stringify(f.calls[1]), /APPROVED_ONCE/);
+  assert.match(JSON.stringify(f.calls[1].input.filter(item => item.type === 'function_call_output')), /APPROVED_ONCE/);
   assert.doesNotMatch(process.stderr, /Task failed|Reconnect to this task/);
   process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
 });
@@ -1866,7 +1868,7 @@ test('shared local sessions exchange room messages and retain stale-file protect
   f.setTool({ name: 'write_file', arguments: { path: file, content: 'stale overwrite' } });
   await run('alpha attempts stale write', a.sessionId);
   assert.equal(await readFile(file, 'utf8'), 'changed by another editor');
-  assert.match(JSON.stringify(f.calls.at(-1).input), /workspace_revision_not_observed/);
+  assert.match(JSON.stringify(f.calls.at(-1).input.filter(item => item.type === 'function_call_output')), /workspace_revision_not_observed/);
   await client.close();
 });
 

@@ -1,0 +1,78 @@
+name: Agent and CLI npm package
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'bin/**'
+      - 'electron/**'
+      - 'packages/**'
+      - 'assets/**'
+      - 'scripts/package-*.mjs'
+      - 'scripts/verify-npm-package.mjs'
+      - 'package*.json'
+      - 'docs/NPM_AGENT.md'
+      - '.github/workflows/npm-distribution.yml'
+  pull_request:
+    paths:
+      - 'bin/**'
+      - 'electron/**'
+      - 'packages/**'
+      - 'assets/**'
+      - 'scripts/package-*.mjs'
+      - 'scripts/verify-npm-package.mjs'
+      - 'package*.json'
+      - 'docs/NPM_AGENT.md'
+      - '.github/workflows/npm-distribution.yml'
+permissions:
+  contents: read
+concurrency:
+  group: npm-distribution-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run package:npm -- --out release/npm
+      - run: node --test scripts/test-agent-package.mjs scripts/test-agent-process-host.mjs packages/bush-runtime/test/distributionRoot.test.mjs
+      - name: Install and verify the Windows package without the App
+        shell: pwsh
+        run: |
+          $packageReport = Get-Content release/npm/package-report.json -Raw | ConvertFrom-Json
+          npm run verify:npm-package -- --tarball $packageReport.tarball
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-cli-npm
+          path: |
+            release/npm/*.tgz
+            release/npm/*report.json
+          if-no-files-found: error
+  linux-install:
+    needs: package
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-cli-npm
+          path: release/npm
+      # Verify the exact Windows-produced tarball; never rebuild it on Linux.
+      - name: Install and verify the same package on Linux
+        run: npm run verify:npm-package -- --tarball "$(find release/npm -maxdepth 1 -name '*.tgz' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: agent-cli-linux-verification
+          path: release/npm/verification-report.json

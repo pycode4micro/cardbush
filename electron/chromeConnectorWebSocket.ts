@@ -9,9 +9,13 @@ import { assertConnectorFile, writeConnectorFile } from './chromeConnectorFiles'
 
 export type ConnectorBrowser = 'chrome' | 'edge';
 export type BrowserConnection = { id: string; browser: ConnectorBrowser; label: string };
-export type ConnectorPortRecovery = { previousPort: number; port: number; reason: 'EADDRINUSE' | 'EACCES' };
+export type ConnectorPortRecovery = { previousPort: number; port: number; reason: 'EADDRINUSE' | 'EACCES' | 'discovery_migration' };
+export type ConnectorConnectionAttempt = { at: string; stage: 'rejected' | 'authenticating' | 'awaiting_browser_approval' | 'connected'; reason?: string; connectionId?: string };
 export type BrowserApprovalOptions = {
-  requestApproval?: (browser: ConnectorBrowser, signal: AbortSignal) => Promise<boolean>;
+  // Only the enabled local App/CLI exposes enrollment. Recheck before commit
+  // so a preference change while the browser dialog is open cannot grant access.
+  allowLocalPairing?: () => boolean;
+  onConnectionAttempt?: () => void;
   approvalTimeoutMs?: number;
   approvalCooldownMs?: number;
 };
@@ -25,7 +29,7 @@ function matches(proof: string, expected: string): boolean {
   return /^[a-f0-9]{64}$/.test(proof) && timingSafeEqual(Buffer.from(proof, 'hex'), Buffer.from(expected, 'hex'));
 }
 
-/** Authenticated extension transport. First connection uses local user consent
+/** Authenticated extension transport. First connection uses browser-owned consent
  * and key agreement; existing credentials never travel over the wire. */
 export class ChromeConnectorWebSocket {
   readonly #file: string;
@@ -35,7 +39,7 @@ export class ChromeConnectorWebSocket {
   readonly #ws = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024,
     perMessageDeflate: false, handleProtocols: () => 'cardbush-v2' });
   readonly #approvalWs = new WebSocketServer({ noServer: true, maxPayload: 4096,
-    perMessageDeflate: false, handleProtocols: () => 'cardbush-pair-v1' });
+    perMessageDeflate: false, handleProtocols: protocols => protocols.has('cardbush-pair-v2') ? 'cardbush-pair-v2' : 'cardbush-pair-v1' });
   #approval?: WebSocket;
   #approvalNotBefore = 0;
   readonly #sockets = new Set<Socket>();
@@ -48,6 +52,14 @@ export class ChromeConnectorWebSocket {
   #port = 0;
   #running = false;
   #portRecovery?: ConnectorPortRecovery;
+  #connectionAttempt?: ConnectorConnectionAttempt;
+
+  #observe(stage: ConnectorConnectionAttempt['stage'], reason?: string, connectionId?: string) {
+    // No headers, proofs, credentials or browser content enter diagnostics.
+    // A rejected attempt is an observation, never authority to change pairing.
+    this.#connectionAttempt = { at: new Date().toISOString(), stage, ...(reason ? { reason } : {}), ...(connectionId ? { connectionId } : {}) };
+    try { this.options.onConnectionAttempt?.(); } catch { /* Diagnostics never grant or interrupt a connection. */ }
+  }
 
   constructor(directory: string, readonly connected: (socket: WebSocket, connection: BrowserConnection) => void,
     readonly options: { handshakeTimeoutMs?: number; pairingTtlMs?: number } & BrowserApprovalOptions = {}) {
@@ -62,32 +74,41 @@ export class ChromeConnectorWebSocket {
       socket.on('error', () => {});
     });
     this.#server.on('upgrade', (request, socket, head) => {
-      const reject = () => socket.destroy();
+      const reject = (reason: string, id?: string) => { this.#observe('rejected', reason, id); socket.destroy(); };
       if (!this.#running || request.method !== 'GET'
         || request.headers.host !== `127.0.0.1:${this.#port}`
-        || request.headers.origin !== `chrome-extension://${chromeConnectorExtensionId}`
-        || request.socket.remoteAddress !== '127.0.0.1' || this.#ws.clients.size >= 16) return reject();
+        || request.socket.remoteAddress !== '127.0.0.1') return reject('invalid_endpoint');
+      if (request.headers.origin !== `chrome-extension://${chromeConnectorExtensionId}`) return reject('extension_origin_mismatch');
+      if (this.#ws.clients.size >= 16) return reject('connection_limit');
       const protocols = request.headers['sec-websocket-protocol']?.split(',').map(value => value.trim());
-      if (request.url === '/request-connection' && this.options.requestApproval && protocols?.length === 1 && protocols[0] === 'cardbush-pair-v1') {
+      if (request.url === '/request-connection' && this.options.allowLocalPairing && protocols?.length === 1
+        && ['cardbush-pair-v1', 'cardbush-pair-v2'].includes(protocols[0])) {
         this.#approvalWs.handleUpgrade(request, socket, head, client => {
-          request.socket.setTimeout(0); this.#requestConnection(client);
+          request.socket.setTimeout(0);
+          if (protocols[0] === 'cardbush-pair-v1') {
+            client.on('error', () => {});
+            this.#observe('rejected', 'extension_update_required');
+            client.send(JSON.stringify({ type: 'pair_error', code: 'extension_update_required' })); client.close();
+          } else this.#requestConnection(client);
         });
         return;
       }
-      if (request.url !== '/connect') return reject();
-      if (protocols?.length !== 2 || protocols[0] !== 'cardbush-v2') return reject();
+      if (request.url !== '/connect') return reject('unsupported_connection_request');
+      if (protocols?.length !== 2 || protocols[0] !== 'cardbush-v2') return reject('unsupported_protocol');
       const match = /^auth\.([a-f0-9]{32})\.([a-f0-9]{64})\.([a-f0-9]{64})$/.exec(protocols[1]!);
-      if (!match) return reject();
+      if (!match) return reject('invalid_authentication');
       const id = match[1]!, nonce = match[2]!, proof = match[3]!;
       const candidate = this.#pending?.id === id && this.#pending.expiresAt > Date.now()
         ? this.#pending : this.#credentials.get(id);
-      if (!candidate || this.#nonces.has(nonce)
-        || !matches(proof, connectorProof(candidate.secret, `upgrade:${id}:${nonce}`))) return reject();
+      if (!candidate) return reject(this.#revoked.has(id) ? 'pairing_revoked' : 'pairing_not_found', id);
+      if (this.#nonces.has(nonce)) return reject('replayed_nonce', id);
+      if (!matches(proof, connectorProof(candidate.secret, `upgrade:${id}:${nonce}`))) return reject('pairing_proof_mismatch', id);
       // Bound memory; a fresh server nonce still makes old handshakes unusable.
       if (this.#nonces.size >= 512) this.#nonces.delete(this.#nonces.values().next().value!);
       this.#nonces.add(nonce);
       this.#ws.handleUpgrade(request, socket, head, client => {
         request.socket.setTimeout(0);
+        this.#observe('authenticating', undefined, id);
         this.#authenticate(client, candidate, nonce);
       });
     });
@@ -118,8 +139,13 @@ export class ChromeConnectorWebSocket {
       this.#approvalNotBefore = Math.min(saved.approvalNotBefore ?? 0, Date.now() + 60_000);
     }
     const savedPort = this.#port;
-    const candidates = [...new Set([...(savedPort ? [savedPort] : []), ...chromeConnectorDiscoveryPorts])];
-    let savedPortError: ConnectorPortRecovery['reason'] | undefined;
+    // Fresh extensions only know the discovery range. A local consent-enabled
+    // broker must migrate old arbitrary ports into it; paired extensions can
+    // authenticate discovery with the same credentials. Remote/manual-only
+    // brokers retain their saved endpoint.
+    const migratePort = Boolean(this.options.allowLocalPairing && savedPort && !chromeConnectorDiscoveryPorts.includes(savedPort));
+    const candidates = [...new Set([...(savedPort && !migratePort ? [savedPort] : []), ...chromeConnectorDiscoveryPorts])];
+    let savedPortError: ConnectorPortRecovery['reason'] | undefined = migratePort ? 'discovery_migration' : undefined;
     let lastError: unknown;
     for (const port of candidates) {
       try { await this.#listen(port); lastError = undefined; break; }
@@ -187,7 +213,8 @@ export class ChromeConnectorWebSocket {
     let phase = 'hello', id = '', nonce = '', secret = '', browser: ConnectorBrowser;
     let timer = setTimeout(() => client.terminate(), 5000);
     let heartbeat: ReturnType<typeof setInterval> | undefined;
-    const fail = (code: string) => { if (client.readyState === WebSocket.OPEN) {
+    const fail = (code: string) => { phase = 'done'; controller.abort(); clearTimeout(timer); clearInterval(heartbeat);
+      this.#observe('rejected', code, id || undefined); if (client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify({ type: 'pair_error', code })); client.close();
     } };
     const approved = () => client.send(JSON.stringify({ type: 'pair_approved',
@@ -195,14 +222,19 @@ export class ChromeConnectorWebSocket {
     client.on('error', () => {});
     client.once('close', () => {
       clearTimeout(timer); clearInterval(heartbeat); controller.abort();
-      if (this.#approval === client && phase !== 'approving') this.#approval = undefined;
+      phase = 'done';
+      if (this.#approval === client) this.#approval = undefined;
     });
     client.on('message', (data, binary) => { void (async () => {
       if (binary || data.toString().length > 4096 || controller.signal.aborted) throw new Error('Invalid request');
       const message = JSON.parse(data.toString());
       if (message.type === 'pair_ping') return;
       if (phase === 'browser') {
+        if (message.type === 'pair_decline' && matches(String(message.proof), connectorProof(secret, `decline:${id}:${nonce}`))) {
+          this.#revoked.add(id); this.#save(); fail('connection_denied'); return;
+        }
         if (message.type !== 'pair_accept' || !matches(String(message.proof), connectorProof(secret, `accept:${id}:${nonce}`))) throw new Error('Browser confirmation required');
+        if (!this.options.allowLocalPairing?.()) { fail('connector_disabled'); return; }
         phase = 'done';
         this.#credentials.set(id, { id, secret, browser, label: browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome' });
         const previous = this.#defaultConnectionId;
@@ -216,6 +248,7 @@ export class ChromeConnectorWebSocket {
           || !/^[a-f0-9]{64}$/.test(message.nonce) || !['chrome', 'edge'].includes(message.browser)
           || !/^04[a-f0-9]{128}$/.test(message.key)) throw new Error('Invalid identity');
         id = message.id; nonce = message.nonce; browser = message.browser;
+        if (!this.options.allowLocalPairing?.()) { fail('connector_disabled'); return; }
         if (this.#revoked.has(id)) { fail('connection_revoked'); return; }
         const existing = this.#credentials.get(id);
         if (existing) {
@@ -229,34 +262,27 @@ export class ChromeConnectorWebSocket {
         const key = createECDH('prime256v1'); key.generateKeys();
         const publicKey = key.getPublicKey('hex');
         secret = createHash('sha256').update(key.computeSecret(Buffer.from(message.key, 'hex')))
-          .update(`cardbush-pair-v1:${id}:${browser}:${publicKey}`).digest('hex');
+          .update(`cardbush-pair-v2:${id}:${browser}:${publicKey}`).digest('hex');
         this.#approval = client;
         client.send(JSON.stringify({ type: 'pair_challenge', key: publicKey }));
         return;
       }
       if (phase !== 'challenge' || message.type !== 'pair_confirm'
         || !matches(String(message.proof), connectorProof(secret, `request:${id}:${nonce}`))) throw new Error('Invalid confirmation');
-      phase = 'approving';
+      if (!this.options.allowLocalPairing?.()) { fail('connector_disabled'); return; }
+      phase = 'browser';
       this.#approvalNotBefore = Date.now() + (this.options.approvalCooldownMs ?? 30_000);
       this.#save();
-      clearTimeout(timer); timer = setTimeout(() => { controller.abort(); fail('connection_denied'); }, this.options.approvalTimeoutMs ?? 90_000);
+      clearTimeout(timer); timer = setTimeout(() => { controller.abort(); fail('connection_denied'); }, this.options.approvalTimeoutMs ?? 60_000);
       heartbeat = setInterval(() => { if (client.readyState === WebSocket.OPEN) client.send('{"type":"pair_waiting"}'); }, 15_000);
-      client.send('{"type":"pair_waiting"}');
-      try {
-        const allowed = await this.options.requestApproval!(browser, controller.signal);
-        if (!this.#running || controller.signal.aborted || client.readyState !== WebSocket.OPEN) return;
-        if (!allowed) {
-          this.#revoked.add(id); this.#save(); fail('connection_denied'); return;
-        }
-        phase = 'browser';
-        clearTimeout(timer); timer = setTimeout(() => fail('connection_denied'), 60_000);
-        client.send(JSON.stringify({ type: 'pair_allowed', proof: connectorProof(secret, `allowed:${id}:${nonce}`) }));
-      } finally {
-        if (phase !== 'browser') { phase = 'done'; if (this.#approval === client) this.#approval = undefined; }
-      }
+      this.#observe('awaiting_browser_approval', undefined, id);
+      // An offer is not approval. Only an accept proof following the trusted
+      // extension window's explicit confirmation can persist a credential.
+      client.send(JSON.stringify({ type: 'pair_offer', proof: connectorProof(secret, `offer:${id}:${nonce}`) }));
     })().catch(() => { if (this.#approval === client) this.#approval = undefined; fail('connection_failed'); }); });
   }
   get portRecovery(): ConnectorPortRecovery | undefined { return this.#portRecovery; }
+  get connectionAttempt(): ConnectorConnectionAttempt | undefined { return this.#connectionAttempt; }
   get paired(): boolean { return this.#credentials.size > 0; }
   get defaultConnectionId(): string { return this.#defaultConnectionId; }
   connections(): BrowserConnection[] { return [...this.#credentials.values()].map(({ id, browser, label }) => ({ id, browser, label })); }
@@ -296,7 +322,7 @@ export class ChromeConnectorWebSocket {
   #authenticate(client: WebSocket, candidate: Credential, nonce: string): void {
     const serverNonce = hex(32);
     const transcript = `${candidate.id}:${nonce}:${serverNonce}`;
-    const timer = setTimeout(() => client.terminate(), this.options.handshakeTimeoutMs ?? 5000);
+    const timer = setTimeout(() => { this.#observe('rejected', 'handshake_timeout', candidate.id); client.terminate(); }, this.options.handshakeTimeoutMs ?? 5000);
     client.once('close', () => clearTimeout(timer));
     client.on('error', () => {});
     const authenticate = (data: import('ws').RawData, binary: boolean) => {
@@ -320,7 +346,8 @@ export class ChromeConnectorWebSocket {
         client.once('close', () => this.#clients.delete(client));
         const { id, browser, label } = candidate;
         this.connected(client, { id, browser, label });
-      } catch { client.terminate(); }
+        this.#observe('connected', undefined, id);
+      } catch { this.#observe('rejected', 'handshake_failed', candidate.id); client.terminate(); }
     };
     client.on('message', authenticate);
     client.send(JSON.stringify({ type: 'challenge', protocol: chromeConnectorProtocol, nonce: serverNonce,

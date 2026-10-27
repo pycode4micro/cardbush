@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 export async function oauthServer(options = {}) {
-  let base, registered, authorization, token = 'fixture-access-1';
+  let base, registered, authorization, token = 'fixture-access-1', grantedScope = 'tools:read';
   const counters = { registrations: 0, codes: 0, refreshes: 0, calls: 0 };
   const observations = {};
   const server = createServer(async (request, response) => {
@@ -12,7 +12,7 @@ export async function oauthServer(options = {}) {
       const metadataPath = options.resourceMetadataPath ?? '/.well-known/oauth-protected-resource';
       if (url.pathname.startsWith('/.well-known/oauth-protected-resource')) return options.resourceMetadataPath && url.pathname !== metadataPath ? json({}, 404)
         : json({ resource: base + '/mcp', authorization_servers: [base], scopes_supported: options.scopes ?? ['tools:read'] });
-      if (url.pathname === '/.well-known/oauth-authorization-server') return json({ issuer: base,
+      if (url.pathname === '/.well-known/oauth-authorization-server') return json({ issuer: base + (options.metadataIssuerPath ?? ''),
         authorization_endpoint: base + '/authorize', token_endpoint: base + '/token', ...(options.clientId ? {} : { registration_endpoint: base + '/register' }),
         response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
         token_endpoint_auth_methods_supported: [options.clientSecret ? 'client_secret_post' : 'none'], code_challenge_methods_supported: ['S256'], authorization_response_iss_parameter_supported: true });
@@ -28,7 +28,13 @@ export async function oauthServer(options = {}) {
         assert.equal(url.searchParams.get('resource'), base + '/mcp');
         assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
         const redirect = new URL(url.searchParams.get('redirect_uri'));
-        if (registered) assert.ok(registered.redirect_uris.includes(redirect.toString()));
+        if (registered) assert.ok(registered.redirect_uris.some(value => {
+          const expected = new URL(value);
+          // RFC 8252 §7.3: native loopback callbacks can obtain a new ephemeral
+          // port on each authorization. All other URI components still match.
+          if (expected.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(expected.hostname)) expected.port = redirect.port;
+          return expected.href === redirect.href;
+        }));
         observations.redirectUri = redirect.toString(); observations.scope = url.searchParams.get('scope');
         redirect.searchParams.set('state', url.searchParams.get('state'));
         redirect.searchParams.set('code', 'fixture-code'); redirect.searchParams.set('iss', base);
@@ -43,9 +49,9 @@ export async function oauthServer(options = {}) {
         } else {
           assert.equal(params.get('code'), 'fixture-code');
           assert.equal(createHash('sha256').update(params.get('code_verifier')).digest('base64url'), authorization.searchParams.get('code_challenge'));
-          counters.codes++;
+          counters.codes++; grantedScope = authorization.searchParams.get('scope') ?? '';
         }
-        return json({ access_token: token, token_type: 'Bearer', refresh_token: 'fixture-refresh', expires_in: 3600, scope: 'tools:read' });
+        return json({ access_token: token, token_type: 'Bearer', refresh_token: 'fixture-refresh', expires_in: 3600, scope: grantedScope });
       }
       if (url.pathname === '/mcp') {
         if (request.method !== 'POST') { response.writeHead(405).end(); return; }
@@ -56,7 +62,10 @@ export async function oauthServer(options = {}) {
           if (options.callStatus) return json({ error: 'fixture failure' }, options.callStatus);
         }
         const publicMethod = options.publicDiscovery && ['initialize', 'notifications/initialized', 'tools/list'].includes(message.method);
-        if (!publicMethod && (request.headers.authorization !== `Bearer ${token}` || options.rejectCalls && message.method === 'tools/call')) return json({ error: 'unauthorized' }, 401, { 'WWW-Authenticate': `Bearer resource_metadata="${base}${metadataPath}"` });
+        if (!publicMethod && (request.headers.authorization !== `Bearer ${token}` || options.rejectCalls && message.method === 'tools/call')) return json({ error: 'unauthorized' }, 401, { 'WWW-Authenticate': `Bearer resource_metadata="${base}${metadataPath}"${options.challengeScope ? `, scope="${options.challengeScope}"` : ''}` });
+        if (options.callScope && message.method === 'tools/call' && !grantedScope.split(' ').includes(options.callScope)) {
+          return json({ error: 'insufficient_scope' }, 403, { 'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${options.callScope}", resource_metadata="${base}${metadataPath}"` });
+        }
         if (message.id === undefined) { response.writeHead(202).end(); return; }
         const result = message.method === 'initialize' ? { protocolVersion: '2025-11-25', serverInfo: { name: 'oauth-fixture', version: '1' }, capabilities: { tools: {} } }
           : message.method === 'tools/list' ? { tools: [{ name: 'echo', inputSchema: { type: 'object', properties: { value: { type: 'string' } } } }] }

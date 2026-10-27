@@ -6,10 +6,13 @@ import { extensionOrigin } from './chrome-paired-client.mjs';
 
 const source = await readFile(new URL('../../assets/plugins/chrome/extension/connector-transport.js', import.meta.url), 'utf8');
 export async function approvalClient(port, identity, options = {}) {
-  const { origin = extensionOrigin, browser = 'chrome', ...rest } = options;
+  const { origin = extensionOrigin, browser = 'chrome', reachablePorts, ...rest } = options;
   const context = vm.createContext({ crypto: webcrypto, Uint8Array, TextEncoder, AbortController, setTimeout, clearTimeout,
     navigator: { userAgent: browser === 'edge' ? 'Edg/130' : 'Chrome/130' },
-    WebSocket: class extends WebSocket { constructor(url, protocols) { super(url, protocols, { origin }); } },
+    WebSocket: class extends WebSocket { constructor(url, protocols) {
+      if (reachablePorts && !reachablePorts.includes(Number(new URL(url).port))) throw new Error('Outside this test fixture');
+      super(url, protocols, { origin });
+    } },
   });
   vm.runInContext(source, context);
   return vm.runInContext('requestConnectorPairing', context)(identity, { ports: [Number(port)], attemptTimeoutMs: 1500,

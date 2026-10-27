@@ -6,7 +6,33 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { ChromeConnectorBroker, type ChromeConnectorStatus } from './chromeConnectorBroker';
 import { assertConnectorFile, connectorDirectory } from './chromeConnectorFiles';
 import { chromeConnectorProtocol } from './chromeConnectorConstants';
-import { requestBrowserConnectionApproval } from './browserConnectionApproval';
+
+/** A saved PID can be recycled, or fail signal 0 with EPERM on Windows after
+ * exit. Only a missing endpoint proves the old bridge no longer owns it. A
+ * listening, busy or inaccessible endpoint must never be taken over. */
+export async function assertLegacyBrowserConnectorStopped(config: { protocol?: unknown; endpoint?: unknown }, root: string): Promise<void> {
+  const endpoint = config.endpoint;
+  if (config.protocol !== chromeConnectorProtocol || typeof endpoint !== 'string' || (process.platform === 'win32'
+    ? !/^\\\\\.\\pipe\\cardbush-browser-connector-[a-f0-9]{24}$/.test(endpoint)
+    : endpoint !== path.join(root, 'browser-connector', 'bridge.sock'))) {
+    throw new Error('Invalid previous browser connector endpoint.');
+  }
+  await new Promise<void>((resolve, reject) => {
+    const socket = net.createConnection(endpoint);
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); socket.destroy();
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => finish(new Error('The previous browser connector did not respond. Close the older App and CLI, then retry /browser status.')), 1500);
+    socket.once('connect', () => finish(new Error('An older CardBush process is using this browser connection. Restart the App and local CLI to enable shared connections.')));
+    socket.once('error', error => {
+      if (['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code ?? '')) finish();
+      else finish(new Error(`Cannot verify the previous browser connector (${(error as NodeJS.ErrnoException).code ?? 'unknown'}). Close the older App and CLI, then retry /browser status.`));
+    });
+  });
+}
 
 export type BrowserConnectorHandle = Pick<ChromeConnectorBroker, 'configPath' | 'status' | 'onStatus' | 'stop'> & {
   start(): Promise<void>;
@@ -28,6 +54,8 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
   #recovering?: Promise<void>;
   #timer?: ReturnType<typeof setTimeout>;
   #watcher?: ReturnType<typeof setInterval>;
+  #recoveryFailures = 0;
+  #wasPermitted = true;
   #status: ChromeConnectorStatus = { protocol: chromeConnectorProtocol, bridgeRunning: false,
     extensionConnected: false, controlledTabCount: 0, paired: false, transport: 'loopback_websocket',
     defaultConnectionId: '', connections: [] };
@@ -38,7 +66,11 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
     this.#managerPath = path.join(connectorDirectory(root), 'manager.json');
   }
   status() { return this.#status; }
-  async refresh() { if (this.#permitted()) this.#publish(await this.#call('status') as ChromeConnectorStatus); return this.#status; }
+  async refresh(retry = false) {
+    if (retry) { this.#recoveryFailures = 0; this.#status = { ...this.#status, recoveryPaused: false }; }
+    if (this.#permitted() && !this.#status.recoveryPaused) this.#publish(await this.#call('status') as ChromeConnectorStatus);
+    return this.#status;
+  }
   async importLegacy(root: string) {
     const directory = connectorDirectory(root), pairingPath = path.join(directory, 'pairing.json');
     assertConnectorFile(pairingPath);
@@ -55,12 +87,18 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
   #publish(status: ChromeConnectorStatus) { this.#status = status; for (const listener of this.#listeners) listener(status); }
   async start() {
     this.#stopped = false;
+    this.#recoveryFailures = 0;
+    this.#wasPermitted = this.#permitted();
     await this.#recover();
     this.#watcher ??= setInterval(() => {
       if (this.#stopped) return;
-      if (!this.#permitted()) {
+      const permitted = this.#permitted();
+      if (!permitted) {
         this.#socket?.destroy(); this.#owner?.stop(); this.#owner = undefined;
-      } else if (!this.#socket) void this.#recover().catch(() => {});
+      } else if (!this.#wasPermitted && !this.#socket) {
+        this.#recoveryFailures = 0; this.#scheduleRecovery();
+      }
+      this.#wasPermitted = permitted;
     }, 1000);
     this.#watcher.unref();
   }
@@ -87,20 +125,16 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
     let lastError: unknown;
     while (!this.#stopped && Date.now() < deadline) {
       if (!this.#permitted()) return;
-      try { await this.#attach(); return; } catch (error) { lastError = error; }
+      try { await this.#attach(); this.#recoveryFailures = 0; return; } catch (error) { lastError = error; }
       if (this.#stopped) return;
       if (!this.#owner) {
         const owner = new ChromeConnectorBroker(this.root, { nativeHostPath: this.nativeHostPath, shared: true,
-          requestApproval: (browser, signal) => requestBrowserConnectionApproval(this.nativeHostPath, browser, signal) });
+          allowLocalPairing: () => !this.#stopped && this.#permitted() });
         try {
           assertConnectorFile(this.configPath);
           if (fs.existsSync(this.configPath)) {
             const previous = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
-            if (previous.endpoint !== owner.endpoint && Number.isInteger(previous.pid) && previous.pid > 0) {
-              let alive = true;
-              try { process.kill(previous.pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; alive = false; }
-              if (alive) throw new Error('An older CardBush process is using this browser connection. Restart the App and local CLI to enable shared connections.');
-            }
+            if (previous.endpoint !== owner.endpoint) await assertLegacyBrowserConnectorStopped(previous, this.root);
           }
           await owner.start(); if (this.#stopped) { owner.stop(); return; } this.#owner = owner;
         }
@@ -163,14 +197,20 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
   }
   #scheduleRecovery() {
     clearTimeout(this.#timer);
-    if (!this.#stopped) this.#timer = setTimeout(() => { void this.#recover().catch(error => {
+    if (this.#stopped || !this.#permitted()) return;
+    if (this.#recoveryFailures >= 3) {
+      this.#publish({ ...this.#status, recoveryPaused: true }); return;
+    }
+    this.#timer = setTimeout(() => { void this.#recover().catch(error => {
+      this.#recoveryFailures++;
       this.#publish({ ...this.#status, lastError: error instanceof Error ? error.message : String(error) }); this.#scheduleRecovery();
-    }); }, 500);
+    }); }, 500 * 2 ** this.#recoveryFailures);
     this.#timer?.unref();
   }
   async #call(action: string, input: Record<string, unknown> = {}): Promise<unknown> {
     if (this.#stopped) throw new Error('Browser connector is closed.');
     if (action !== 'disable' && !this.#permitted()) throw new Error('Browser connector is disabled.');
+    if (this.#status.recoveryPaused) throw new Error('Browser connector recovery paused after repeated failures. Use /browser retry to try again.');
     if (!this.#socket) await this.#recover();
     const socket = this.#socket;
     if (!socket || socket.destroyed) throw new Error('Browser connector is reconnecting.');

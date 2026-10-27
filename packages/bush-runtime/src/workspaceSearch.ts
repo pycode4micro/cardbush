@@ -1,7 +1,7 @@
 import { decodeCommandOutput } from '@cardbush/platform';
 import { realpath, stat } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runtimeDistributionRoot } from './distributionRoot.js';
 import { spawnResourceManagedProcess } from './processResourceGuard.js';
 import { WorkspacePathGuard, pathChanged } from './workspacePathGuard.js';
 import type { ExecutionSandboxPolicy, ExecutionSandboxStatus } from './executionSandbox.js';
@@ -112,7 +112,7 @@ export async function searchWorkspaceContent(root: string, input: WorkspaceSearc
 export async function trustedSearchExecutable(root: string, cwd: string, configured = hostEnvironmentValue('CARDBUSH_RG_PATH')?.trim()) {
   const name = process.platform === 'win32' ? 'rg.exe' : 'rg';
   const candidates = configured !== undefined ? [configured] : [
-    fileURLToPath(new URL(`../../../assets/runtime-tools/ripgrep/${process.platform}-${process.arch}/${name}`, import.meta.url)),
+    join(runtimeDistributionRoot(), 'assets', 'runtime-tools', 'ripgrep', `${process.platform}-${process.arch}`, name),
     ...(hostEnvironmentValue('PATH') ?? '').split(delimiter).filter(isAbsolute).map(directory => join(directory, name)),
   ];
   const [searchRoot, workspace] = await Promise.all([realpath(root), realpath(cwd)]);

@@ -15,7 +15,9 @@ interface ChromeConnectorStatus {
   connections: Array<{ id: string; browser: 'chrome' | 'edge'; label: string; connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
   paired: boolean;
   transport: 'loopback_websocket';
-  portRecovery?: { previousPort: number; port: number; reason: 'EADDRINUSE' | 'EACCES' };
+  portRecovery?: { previousPort: number; port: number; reason: 'EADDRINUSE' | 'EACCES' | 'discovery_migration' };
+  connectionAttempt?: { at: string; stage: 'rejected' | 'authenticating' | 'awaiting_browser_approval' | 'connected'; reason?: string; connectionId?: string };
+  recoveryPaused?: boolean;
   cleanupWarning?: string;
   connectorEnabled: boolean;
   lifecycleState: string;

@@ -1,11 +1,26 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CardBush · 确认连接</title><link rel="stylesheet" href="connection.css"></head>
-<body><main>
-  <img src="icons/cardbush-48.png" alt=""><h1>允许 CardBush 连接此浏览器？</h1>
-  <p>请先确认你已在 CardBush 系统弹窗中允许了本次请求。</p>
-  <p>连接后，本机 App 和 CLI 将共用此浏览器并自动重连。网页访问仍需单独授权，可随时移除连接。</p>
-  <footer><button id="cancel" autofocus>取消</button><button id="allow">允许连接</button></footer>
-  <small id="status" role="status"></small>
-</main><script src="connection.js"></script></body>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CardBush · 浏览器连接</title><link rel="stylesheet" href="connection.css">
+</head>
+<body>
+  <main aria-labelledby="heading">
+    <header><img src="icons/cardbush-48.png" alt=""><span>CardBush</span><small>浏览器连接</small></header>
+    <div class="connection-route" aria-hidden="true">
+      <span class="route-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 9h18M7 6h.01M10 6h.01"/></svg></span>
+      <span class="route-line"></span>
+      <span class="route-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="3"/><path d="M8 21h8m-4-4v4"/></svg></span>
+    </div>
+    <h1 id="heading">连接到 CardBush</h1>
+    <p class="description">让本机 App 和 CLI 使用<span id="browser-name">此浏览器</span>。</p>
+    <div class="details">
+      <p><span class="detail-mark" aria-hidden="true">✓</span>网页访问仍由你单独授权</p>
+      <p><span class="detail-mark" aria-hidden="true">✓</span>连接后自动重连，随时可以断开</p>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite">正在确认连接请求…</p>
+    <footer><button id="cancel" autofocus>取消</button><button id="allow" disabled>连接</button></footer>
+  </main>
+  <script src="connection.js"></script>
+</body>
 </html>

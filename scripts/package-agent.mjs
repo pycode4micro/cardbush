@@ -14,7 +14,7 @@ const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/
   'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
   'dist-electron/agentService.mjs', 'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs',
   'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs',
-  'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectionApproval.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
+  'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectorProfile.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
   'deploy/agent/install-windows-desktop.ps1',
   'deploy/agent/README.md', 'assets/skills/cardbush-docs/SKILL.md',
   'assets/skills/cardbush-docs/references/agent-deploy.md', 'assets/skills/cardbush-docs/references/agent-deployment.md',
@@ -51,11 +51,13 @@ export async function packageAgent(root, output, platform = process.platform) {
   // An existing release is never overwritten. Dependencies are installed on the target.
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output);
+  const filter = source => source !== join(root, 'dist-electron/browserBootstrapRegistration.js')
+    && !relative(root, source).split(/[\\/]/).some(part => ['__pycache__', '.venv', '.git'].includes(part) || /^\.env(?:\.|$)/.test(part))
+    && !/\.py[co]$/.test(source);
   for (const file of ['package.json', 'package-lock.json', 'bin', 'dist-electron', 'assets']) {
-    await cp(join(root, file), join(output, file), { recursive: true,
-      filter: source => source !== join(root, 'dist-electron/browserBootstrapRegistration.js') });
+    await cp(join(root, file), join(output, file), { recursive: true, filter });
   }
-  await cp(join(root, 'scripts/agent-desktop'), join(output, 'scripts/agent-desktop'), { recursive: true });
+  await cp(join(root, 'scripts/agent-desktop'), join(output, 'scripts/agent-desktop'), { recursive: true, filter });
   await mkdir(join(output, 'deploy/agent'), { recursive: true });
   await cp(join(root, 'deploy/agent/install-windows-desktop.ps1'), join(output, 'deploy/agent/install-windows-desktop.ps1'));
   await cp(join(root, 'deploy/agent/README.md'), join(output, 'deploy/agent/README.md'));
@@ -66,9 +68,9 @@ export async function packageAgent(root, output, platform = process.platform) {
     if (!manifest) continue;
     await mkdir(to, { recursive: true });
     await cp(join(from, 'package.json'), join(to, 'package.json'));
-    await cp(join(from, 'dist'), join(to, 'dist'), { recursive: true });
+    await cp(join(from, 'dist'), join(to, 'dist'), { recursive: true, filter });
     if (await stat(join(from, 'dist-cjs')).catch(error => { if (error.code !== 'ENOENT') throw error; })) {
-      await cp(join(from, 'dist-cjs'), join(to, 'dist-cjs'), { recursive: true });
+      await cp(join(from, 'dist-cjs'), join(to, 'dist-cjs'), { recursive: true, filter });
     }
   }
   if (platform === 'win32') {
@@ -89,6 +91,8 @@ export async function packageAgent(root, output, platform = process.platform) {
     + 'Service: cardbush serve --background; inspect with --status, stop with --stop.\n'
     + 'Foreground: cardbush serve --data-dir <separate-data-directory>\n'
     + 'Register the terminal command once: npm link --ignore-scripts\n'
+    + 'This registers both cardbush and cardbush-agent from this same release.\n'
+    + 'For npm deployment, install the tested CardBush tarball globally; both commands are installed together.\n'
     + 'Local chat: enter a working directory and run cardbush (approval) or cardbush --full-access; no service token needed.\n'
     + 'ChatGPT account models reuse the local App sign-in and require the App running. API-key models run independently.\n'
     + 'If no model is configured, edit the displayed models.json using its annotated example, then press Enter to reload.\n'

@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import {
-  auth, UnauthorizedError, validateAuthorizationResponseIssuer, checkResourceAllowed,
+  auth, UnauthorizedError, validateAuthorizationResponseIssuer, checkResourceAllowed, extractWWWAuthenticateParams, computeScopeUnion,
   type OAuthClientProvider, type OAuthDiscoveryState, type StoredOAuthClientInformation, type StoredOAuthTokens,
 } from '@modelcontextprotocol/client';
 import { mcpOAuthConfigSchema, type McpServerSnapshot } from '@cardbush/bush-protocol';
@@ -43,8 +43,40 @@ function boundCredential<T extends { issuer?: string }>(entries: Record<string, 
 export class McpOAuthCoordinator {
   readonly #sessions = new Map<string, AbortController>();
   readonly #credentials = new Map<string, Promise<CredentialState>>();
+  readonly #challenges = new Map<string, { scope?: string; resourceMetadataUrl?: URL; stepUp: boolean }>();
   constructor(private readonly store: McpCredentialStore, private readonly openUrl: (url: string) => Promise<void>,
     private readonly fetchForServer: (server: McpServerSnapshot) => typeof fetch = () => fetch) {}
+
+  /** Preserve the resource server's challenge across the background-to-interactive
+   * boundary. The SDK's transport-local scope is otherwise lost when login uses
+   * a fresh provider/listener. This does not start or approve authorization. */
+  fetchForTransport(server: McpServerSnapshot, fetchFn: typeof fetch = fetch): typeof fetch {
+    if (server.transport.kind === 'stdio') return fetchFn;
+    const endpoint = new URL(server.transport.url), key = credentialKey(server);
+    const isLegacySse = server.transport.kind === 'sse';
+    return async (input, init) => {
+      const response = await fetchFn(input, init);
+      const requested = new URL(input instanceof Request ? input.url : input);
+      let legacyMessage = false;
+      if (isLegacySse && requested.origin === endpoint.origin && typeof init?.body === 'string') {
+        try { legacyMessage = JSON.parse(init.body)?.jsonrpc === '2.0'; } catch { /* Not an MCP request. */ }
+      }
+      // Authorization/token endpoint errors must not become resource challenges.
+      if ((requested.href === endpoint.href || legacyMessage) && (response.status === 401 || response.status === 403)) {
+        const challenge = extractWWWAuthenticateParams(response);
+        const stepUp = response.status === 403 && challenge.error === 'insufficient_scope';
+        if ((response.status === 401 || stepUp) && (challenge.scope !== undefined || challenge.resourceMetadataUrl)) {
+          const previous = this.#challenges.get(key);
+          this.#challenges.set(key, {
+            scope: stepUp ? computeScopeUnion(previous?.scope, challenge.scope) : challenge.scope,
+            resourceMetadataUrl: challenge.resourceMetadataUrl,
+            stepUp,
+          });
+        }
+      }
+      return response;
+    };
+  }
 
   async #clientSecret(server: McpServerSnapshot): Promise<string | undefined> {
     if (server.transport.kind === 'stdio') throw new Error('OAuth requires an HTTP MCP service.');
@@ -178,8 +210,14 @@ export class McpOAuthCoordinator {
       callback.port = String(address.port);
       const provider = this.provider(server, { redirectUrl: callback.toString(), state });
       const fetchFn: typeof fetch = (input, init) => this.fetchForServer(server)(input, { ...init, signal: AbortSignal.any([abort, ...(init?.signal ? [init.signal] : [])]) });
-      const authOptions = { serverUrl: server.transport.url, scope: options.scopes?.join(' '), fetchFn };
-      if (await auth(provider, authOptions) === 'AUTHORIZED') return;
+      const key = credentialKey(server), challenge = this.#challenges.get(key);
+      const scope = challenge?.stepUp
+        ? computeScopeUnion((await provider.tokens())?.scope, options.scopes?.join(' '), challenge.scope)
+        : challenge?.scope ?? options.scopes?.join(' ');
+      const authOptions = { serverUrl: server.transport.url, scope, resourceMetadataUrl: challenge?.resourceMetadataUrl,
+        forceReauthorization: challenge?.stepUp === true, fetchFn };
+      const consumeChallenge = () => { if (this.#challenges.get(key) === challenge) this.#challenges.delete(key); };
+      if (await auth(provider, authOptions) === 'AUTHORIZED') { consumeChallenge(); return; }
       const returned = await completed;
       const discovery = await provider.discoveryState?.();
       validateAuthorizationResponseIssuer({ iss: returned.searchParams.get('iss') ?? undefined,
@@ -189,6 +227,7 @@ export class McpOAuthCoordinator {
       const code = returned.searchParams.get('code');
       if (!code) throw new Error('OAuth callback has no authorization code.');
       if (await auth(provider, { ...authOptions, authorizationCode: code, iss: returned.searchParams.get('iss') ?? undefined }) !== 'AUTHORIZED') throw new Error('OAuth authorization did not complete.');
+      consumeChallenge();
     } finally {
       abort.removeEventListener('abort', onAbort); listener.close(); listener.closeAllConnections(); this.#sessions.delete(server.id);
     }
@@ -197,10 +236,11 @@ export class McpOAuthCoordinator {
   async logout(server: McpServerSnapshot) {
     this.cancel(server.id);
     const key = credentialKey(server);
+    this.#challenges.delete(key);
     await this.#credentials.get(key)?.catch(() => undefined);
     await this.store.write(key, undefined); this.#credentials.delete(key);
   }
-  close() { for (const session of this.#sessions.values()) session.abort(); }
+  close() { for (const session of this.#sessions.values()) session.abort(); this.#challenges.clear(); }
 }
 export function credentialKey(server: McpServerSnapshot) {
   if (server.transport.kind === 'stdio') throw new Error('OAuth requires an HTTP service.');

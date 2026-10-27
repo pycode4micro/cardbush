@@ -17,7 +17,8 @@ test('MCP discovery explains local consent and reconnection before manual or rem
     assert.ok(tool, name); return tool.description;
   })];
   for (const description of descriptions) {
-    assert.match(description, /local Chrome\/Edge.*user approves the first connection.*system dialog and extension/);
+    assert.match(description, /local Chrome\/Edge.*user approves the first connection.*once in the CardBush extension window/);
+    assert.doesNotMatch(description, /system dialog|both dialogs/);
     assert.match(description, /no pairing code is needed/);
     assert.match(description, /local App and CLI share.*reconnect automatically.*restarts/);
     assert.match(description, /Chrome\/Edge without the App running/);
@@ -34,17 +35,20 @@ test('shipped skills, plugin metadata and setup help agree about local and remot
   const read = file => readFile(new URL('../../../' + file, import.meta.url), 'utf8');
   const plugin = JSON.parse(await read('assets/plugins/chrome/.codex-plugin/plugin.json'));
   for (const description of [plugin.description, plugin.interface.longDescription]) {
-    assert.match(description, /(?:first-use approval|first-use approval in the system dialog)/);
+    assert.match(description, /first-use approval|one confirmation in the CardBush extension window/);
+    assert.doesNotMatch(description, /system dialog|both dialogs/);
     assert.match(description, /automatic reconnection|reconnect automatically/);
     assert.match(description, /manual connection or remote Agent pairing/);
   }
   for (const file of ['assets/plugins/chrome/skills/browser-use/SKILL.md', 'assets/skills/cardbush-docs/references/browser-use.md',
     'docs/CORE_BROWSER_COMPUTER_USE.md', 'assets/plugins/chrome/extension/popup.html']) {
     const content = await read(file);
-    assert.match(content, /系统弹窗和扩展中确认/, file);
+    assert.match(content, /CardBush 风格的扩展窗口确认一次/, file);
+    assert.doesNotMatch(content, /系统弹窗|双重确认/, file);
     assert.match(content, /无需(?:输入|复制)配对码/, file);
     assert.match(content, /本机 App 和 CLI 共用连接/, file);
-    assert.match(content, /断线或重启后自动重连/, file);
+    assert.match(content, /自动重连/, file);
+    if (file.endsWith('popup.html')) assert.match(content, /连续失败 3 轮后停止/);
     assert.match(content, /仅用于手动连接或远程 Agent 配对/, file);
     assert.match(content, /远程 Agent 独立管理连接/, file);
     assert.doesNotMatch(content, /桌面 App 的连接与 CLI 分开管理|CLI 与桌面 App 的配对分别管理|首次使用[^。\n]*生成配对码/, file);

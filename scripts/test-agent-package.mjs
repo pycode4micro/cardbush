@@ -19,7 +19,7 @@ async function fixture(t) {
     'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs', 'deploy/agent/install-windows-desktop.ps1',
     'deploy/agent/README.md', 'assets/skills/cardbush-docs/SKILL.md',
     'assets/skills/cardbush-docs/references/agent-deploy.md', 'assets/skills/cardbush-docs/references/agent-deployment.md',
-    'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectionApproval.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
+    'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectorProfile.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
     'scripts/agent-desktop/worker.py','scripts/agent-desktop/computer.py','scripts/agent-desktop/browser.py',
     'packages/cardbush-platform/package.json', 'packages/cardbush-platform/dist/index.js', 'packages/cardbush-platform/dist-cjs/index.js', 'assets/fixture.txt']) {
     await mkdir(dirname(join(source, path)), { recursive: true }); await writeFile(join(source, path), '{}');
@@ -40,8 +40,16 @@ async function fixture(t) {
 test('Linux Agent packaging retains runtime and CommonJS dependencies without requiring Windows helpers', async t => {
   const f = await fixture(t);
   await writeFile(join(f.source, 'dist-electron/browserBootstrapRegistration.js'), 'obsolete registry bootstrap');
+  await mkdir(join(f.source, 'assets/skills/demo/__pycache__'), { recursive: true });
+  await writeFile(join(f.source, 'assets/skills/demo/__pycache__/demo.pyc'), 'cache');
+  await writeFile(join(f.source, 'assets/.env'), 'PRIVATE_FIXTURE');
+  await mkdir(join(f.source, 'scripts/agent-desktop/__pycache__'));
+  await writeFile(join(f.source, 'scripts/agent-desktop/__pycache__/browser.pyc'), 'cache');
   await packageAgent(f.source, f.output, 'linux');
   await assert.rejects(access(join(f.output, 'dist-electron/browserBootstrapRegistration.js')), { code: 'ENOENT' });
+  await assert.rejects(access(join(f.output, 'assets/skills/demo/__pycache__')), { code: 'ENOENT' });
+  await assert.rejects(access(join(f.output, 'assets/.env')), { code: 'ENOENT' });
+  await assert.rejects(access(join(f.output, 'scripts/agent-desktop/__pycache__')), { code: 'ENOENT' });
   await verifyAgentPackage(f.output, 'linux');
   await access(join(f.output, 'packages/cardbush-platform/dist-cjs/index.js'));
   await access(join(f.output, 'dist-electron/agentChatCli.mjs'));

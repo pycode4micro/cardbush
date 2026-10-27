@@ -4,7 +4,9 @@ Browser Use 的打开、导航、选中和列表结果会返回可直接用于 M
 
 设置入口：应用中心 → 设置 → 浏览器 → Browser Use。
 
-本机 Chrome/Edge 首次由用户在系统弹窗和扩展中确认连接，无需输入配对码；不要代替用户确认。本机 App 和 CLI 共用连接，断线或重启后自动重连，CLI 使用 Chrome/Edge 不依赖桌面 App。输入 `/browser status` 查看连接和扩展目录。Agent 用 `list_browsers` 找到对应配置 ID 后再 `select_browser`，不能将 `chrome`/`edge` 名称当作 ID。`/browser default ID` 设置默认连接，`/browser revoke ID` 撤销单条连接。
+本机 Chrome/Edge 首次由用户在 CardBush 风格的扩展窗口确认一次连接，无需输入配对码；不要代替用户确认。本机 App 和 CLI 共用连接，断线或重启后自动重连，CLI 使用 Chrome/Edge 不依赖桌面 App。输入 `/browser status` 查看连接和扩展目录。Agent 用 `list_browsers` 找到对应配置 ID 后再 `select_browser`，不能将 `chrome`/`edge` 名称当作 ID。`/browser default ID` 设置默认连接，`/browser revoke ID` 撤销单条连接。
+
+自动恢复连续失败最多 3 轮后停止，等待用户主动重试。宿主可输入 `/browser retry`；扩展点击「连接 CardBush」重试当前目标。打开面板、状态查询或扩展重启不重置已耗尽的次数。旧配对持续失败且用户要连接当前本机时，点击「重新申请本机连接」在扩展窗口确认一次；此后主动重试继续本机申请，不退回旧配对，扩展重启也保留该意图。普通旧配对重试不主动触发重新授权，成功前不覆盖原配对或清除网站授权。拒绝或取消后停止，用户再次点击才重新申请。`/browser status` 和 `list_browsers` 提供最近握手时间、阶段与拒绝原因，不能用过期日志推断当前状态。
 
 配对码仅用于手动连接或远程 Agent 配对。在目标 Agent 的 CLI 输入 `/browser pair chrome` 或 `/browser pair edge` 生成配对码；也可从桌面设置的手动配对入口生成本机配对码。用户直接将码粘贴到目标浏览器扩展，不发送给模型；通过 CLI 生成时保持该 CLI 开启。远程 Agent 独立管理连接，不继承本机 App/CLI 的连接。已有连接临时离线应恢复原连接，不要求重新授权或重新配对。
 
@@ -14,7 +16,7 @@ Browser Use 的打开、导航、选中和列表结果会返回可直接用于 M
 
 内置浏览器只开放用户在该会话中引用的标签或 Agent 为该会话新建的标签。已关闭、被替换、应用重启后尚未重新选择的目标会明确报错，不按网址寻找替代页面，也不切换到 Chrome / Edge。远程 Agent 不具备控制本机内置标签的通道，需在本机会话中操作。当前内置模式不支持 `download_file` 的任务跟踪接口；它会明确返回不支持，不转发到外部浏览器。
 
-启用 Browser Use 插件，在要使用的 Chrome 或 Edge 中加载随应用提供的扩展。管理页分别为 `chrome://extensions` 和 `edge://extensions`；两种浏览器和不同用户配置首次分别确认连接，可以同时在线。升级后重新加载原扩展；正常重启自动重连，打开扩展可立即重试。手动配对码的五分钟有效期仅限制首次接受，已建立的连接不会在五分钟后过期。
+启用 Browser Use 插件，在要使用的 Chrome 或 Edge 中加载随应用提供的扩展。管理页分别为 `chrome://extensions` 和 `edge://extensions`；两种浏览器和不同用户配置首次分别确认连接，可以同时在线。升级后重新加载原扩展；正常重启自动重连，重试耗尽后需要点击「连接 CardBush」。手动配对码的五分钟有效期仅限制首次接受，已建立的连接不会在五分钟后过期。
 
 默认连接用于尚未选择浏览器的会话。模型使用 `browser_use` 的 `list_browsers` 查看连接，用 `select_browser` 显式选择；绑定后不会因为默认值改变、断线或重启而切换。成功切换后重新获取页面和元素 ID。
 

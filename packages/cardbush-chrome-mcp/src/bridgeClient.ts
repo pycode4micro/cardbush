@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -41,6 +42,7 @@ export class ChromeConnectorError extends Error {
 
 type RequestOptions = {
   configPath?: string;
+  healthPath?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
   onDiagnostics?: (diagnostics: ChromeConnectorDiagnostics) => void;
@@ -75,11 +77,40 @@ export async function requestChromeConnector(method: string, params: Record<stri
       }
     }
   } catch (error) {
+    error = withConnectorHealth(error, options);
     if (error instanceof ChromeConnectorError && timing) throw new ChromeConnectorError(error.code, error.message, { ...error.details, diagnostics: timing });
     throw error;
   } finally {
     if (timing) { try { options.onDiagnostics?.(timing); } catch { /* Diagnostic subscribers do not affect delivery. */ } }
   }
+}
+
+/** Startup diagnostics belong to this Runtime instance, not an old shared
+ * descriptor or an arbitrary log. Consult them only after a failed connection;
+ * a working broker always wins, and an uncertain dispatched action stays so. */
+function withConnectorHealth(error: unknown, options: RequestOptions): unknown {
+  if (!(error instanceof ChromeConnectorError) || !['bridge_config_missing', 'bridge_config_unavailable',
+    'bridge_config_invalid', 'cardbush_bridge_unavailable'].includes(error.code)
+    || error.details.execution === 'unknown') return error;
+  const file = options.healthPath ?? process.env.CARDBUSH_CHROME_CONNECTOR_HEALTH;
+  const config = options.configPath ?? process.env.CARDBUSH_CHROME_CONNECTOR_CONFIG;
+  if (!file || !config) return error;
+  try {
+    const info = fs.lstatSync(file);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 16_384) return error;
+    const health = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const age = Date.now() - Date.parse(health.updatedAt);
+    if (health.protocol !== 'cardbush.browser_connector_health.v1' || typeof health.configPath !== 'string'
+      || path.resolve(health.configPath) !== path.resolve(config) || !Number.isFinite(age) || age < -5000 || age > 30_000) return error;
+    const failure = health.state === 'disabled' ? { code: 'browser_connector_disabled', message: 'Browser Use is disabled on this host.',
+      nextStep: 'Enable the Browser Use plugin in /settings, then retry /browser status.' } : health.state === 'unavailable' ? health.error : undefined;
+    if (!failure || !['browser_connector_disabled', 'browser_connector_legacy_active', 'browser_connector_component_missing',
+      'browser_connector_access_denied', 'browser_connector_config_invalid', 'browser_connector_start_failed'].includes(failure.code)
+      || typeof failure.message !== 'string' || failure.message.length > 1500 || typeof failure.nextStep !== 'string' || failure.nextStep.length > 1000) return error;
+    return new ChromeConnectorError(failure.code, failure.message, { ...error.details, execution: 'not_dispatched',
+      transportReason: error.code, connector: { state: health.state, checkedAt: health.updatedAt,
+        code: failure.code, message: failure.message, nextStep: failure.nextStep } });
+  } catch { return error; }
 }
 
 async function requestChromeConnectorOnce(
@@ -201,6 +232,7 @@ async function requestChromeConnectorOnce(
     socket.on('error', (error) => finish(new ChromeConnectorError(
       'cardbush_bridge_unavailable',
       `CardBush Browser Use bridge is unavailable: ${error.message}`,
+      { execution: requestSent ? 'unknown' : 'not_dispatched' },
     )));
     socket.on('close', () => {
       if (!settled) finish(new ChromeConnectorError(

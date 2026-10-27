@@ -1,6 +1,6 @@
 {
   "name": "chrome",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Browser Use for CardBush integrated tabs and authorized Chrome or Edge on Windows 11. Local first-use approval enables automatic reconnection; codes are for manual connection or remote Agent pairing.",
   "author": { "name": "CardBush" },
   "license": "Apache-2.0",
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Browser Use",
     "shortDescription": "Control CardBush, Chrome and Edge pages",
-    "longDescription": "Use @ to control the exact CardBush integrated tab without pairing. Local Chrome/Edge need first-use approval in the system dialog and extension, without a pairing code; the local App and CLI then share connections and reconnect automatically. Codes are for manual connection or remote Agent pairing; remote Agents keep separate connections. Each conversation retains its selected browser. Closed or unavailable tabs never redirect control to another browser with the same URL. External personal tabs require extension authorization. Advanced remote debugging remains a separate Chrome-only mode.",
+    "longDescription": "Use @ to control the exact CardBush integrated tab without pairing. Local Chrome/Edge need one confirmation in the CardBush extension window, without a pairing code; the local App and CLI then share connections and reconnect automatically. Codes are for manual connection or remote Agent pairing; remote Agents keep separate connections. Each conversation retains its selected browser. Closed or unavailable tabs never redirect control to another browser with the same URL. External personal tabs require extension authorization. Advanced remote debugging remains a separate Chrome-only mode.",
     "developerName": "CardBush",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
@@ -23,7 +23,7 @@
     "localizations": {
       "zh": {
         "shortDescription": "操作 CardBush 内置标签及授权的 Chrome、Edge 页面",
-        "longDescription": "通过 @ 操作准确的 CardBush 内置标签，无需扩展配对。本机 Chrome、Edge 首次由用户在系统弹窗和扩展中确认，无需输入配对码；本机 App 和 CLI 共用连接，断线或重启后自动重连。配对码仅用于手动连接或远程 Agent 配对，远程 Agent 独立管理连接。每个会话保持明确的浏览器目标，标签关闭或不可用时不会转到其他浏览器的同网址页面。外部个人标签仍需在扩展中授权。高级远程调试是独立的 Chrome 专用模式。",
+        "longDescription": "通过 @ 操作准确的 CardBush 内置标签，无需扩展配对。本机 Chrome、Edge 首次由用户在 CardBush 风格的扩展窗口确认一次，无需输入配对码；本机 App 和 CLI 共用连接，断线或重启后自动重连。配对码仅用于手动连接或远程 Agent 配对，远程 Agent 独立管理连接。每个会话保持明确的浏览器目标，标签关闭或不可用时不会转到其他浏览器的同网址页面。外部个人标签仍需在扩展中授权。高级远程调试是独立的 Chrome 专用模式。",
         "defaultPrompt": ["打开网页并检查页面内容", "使用 Edge 或 Chrome 操作授权网页"]
       }
     }

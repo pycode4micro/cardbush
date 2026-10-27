@@ -19,7 +19,7 @@ Development installation:
 
 Version 1.2.4 recovers when a saved loopback port is occupied or denied by Windows. The app tries the saved endpoint, then a bounded set of 32 spread-out ports below the default Windows dynamic client range. The extension tries its saved endpoint first, then discovers the same paired broker in that set with up to four concurrent, deadline-limited handshakes. It saves a replacement endpoint only after mutual authentication; existing pairing, session routing and site permissions remain unchanged. Discovery failure uses the existing reconnect backoff, and disabling cancels pending discovery.
 
-Reload the existing extension after upgrading; do not uninstall it, which deletes its saved state. Version 1.3 discovers the local connector and requests one-time consent in a system dialog. No `nativeMessaging` permission or registry registration is required. An already saved pairing continues to use the authenticated WebSocket transport without another dialog.
+Reload the existing extension after upgrading; do not uninstall it, which deletes its saved state. Version 1.4 discovers the enabled local connector and requests consent once in a CardBush-styled extension window. No Windows system dialog is opened. No `nativeMessaging` permission or registry registration is required. An already saved pairing continues to use the authenticated WebSocket transport without another dialog.
 `list_browsers` and `select_browser` expose the connected profiles to the agent. The configured default applies only to unbound sessions; existing bindings survive a broker restart. Switching explicitly releases the old session scope first. A failed release or disconnect never falls through to another browser. Browser and profile labels describe the target; the pairing credential and exact Origin authenticate it.
 
 Turn completion suspends the browser debugger and collapses managed groups, but
@@ -62,14 +62,21 @@ the reviewed install page instead of the unpacked-extension directory.
 
 Installing/enabling the plugin starts the local connector. A fresh extension
 attempts automatic connection; an explicit disable remains disabled. Only the
-elected local broker can request system consent. The listener checks loopback,
-Host and exact extension Origin; a bounded ECDH handshake creates a fresh secret
-for each target before user confirmation. Origin alone is not authentication of
-native processes: initial trust is the user's consent, followed by pinned mutual
-authentication. No browser data or control is available before confirmation.
+enabled local broker can offer enrollment, and it rechecks that policy before
+committing a credential. The listener checks loopback, Host and exact extension
+Origin; a bounded ECDH handshake binds the offer and acceptance to this request.
+The browser-owned CardBush window is the single user confirmation. The worker
+checks its extension ID, exact page, tab, request token and expiry before accepting
+an answer. A connection offer or fabricated approval never skips this window.
+Origin alone does not authenticate a native process; initial trust still depends
+on the user's explicit confirmation, followed by pinned mutual authentication.
+No browser data or control is available before confirmation.
 Rejected identities remain rejected across restarts until an explicit new request;
 one dialog is allowed at a time and a persisted cooldown limits repeated requests.
-Cancelling or disconnecting aborts the dialog. Remote Agents retain manual pairing
+Cancelling or disconnecting aborts the dialog. Pairing protocol v2 replaces the
+two-dialog enrollment flow; upgrade the App/CLI and reload the extension together
+for new requests. Existing CB2 pairings continue to reconnect without new consent.
+Remote Agents retain manual pairing
 and never open a dialog on the server or inherit the desktop's connection.
 For manual connection or remote Agent pairing, run `/browser pair chrome` or
 `/browser pair edge` in the CLI connected to the intended Agent, keep that CLI
@@ -78,9 +85,11 @@ settings can also generate a code for manual local pairing. Codes must not be
 sent to the model; `/browser status` checks connection health without creating one.
 The extension preserves its profile identity and automatic reconnection,
 including after a browser restart. Five minutes limits accepting a new pairing
-code, not the lifetime of an established pairing. Offline retries back off from
-short retries to a persistent 30-second alarm and continue while enabled;
-opening the popup retries immediately. No browser action is replayed.
+code, not the lifetime of an established pairing. Offline connections get at most
+three attempts, with short backoff and a one-shot 30-second alarm as a worker-sleep
+fallback. Exhaustion persists across restarts; opening the popup does not reset
+it. Connect explicitly retries the current target, including a pending local
+enrollment, without falling back to the old pairing. No browser action is replayed.
 Temporary disconnects do not require a new pairing code or another approval.
 
 Desktop disable stops the listener and active control while retaining pairings

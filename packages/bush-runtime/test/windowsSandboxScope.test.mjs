@@ -14,6 +14,7 @@ import { spawnResourceManagedProcess, resolveProcessResourceHost } from '../dist
 import { runResourceManagedCommand } from '../dist/processes.js';
 import { TerminalSessionManager } from '../dist/terminalSessionManager.js';
 import { commandInvocation } from '@cardbush/platform';
+import { windowsInterpreterRoots } from '../dist/executionSandbox.js';
 
 const windows = process.platform === 'win32';
 const quote = value => `'${value.replaceAll("'", "''")}'`;
@@ -65,7 +66,7 @@ test('PowerShell 7 uses the admitted cwd for relative IO and native child comman
   const executable = commandInvocation('powershell', '').executable;
   const source = `"cwd="+(Get-Location).ProviderPath; Set-Content -LiteralPath './relative.txt' -Value 'inside' -ErrorAction Stop; Get-Content './relative.txt'; & "$env:SystemRoot\\System32\\cmd.exe" /d /c echo CHILD_OK; try { [IO.File]::GetAttributes(${quote(root)}); throw 'parent unexpectedly accessible' } catch [UnauthorizedAccessException] { 'PARENT_DENIED' }`;
   const result = await runResourceManagedCommand({ executable, args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', source], cwd: work,
-    sandbox: { writableRoots: [work], network: 'disabled' }, timeoutMs: 15_000 });
+    sandbox: { writableRoots: [work], readableRoots: windowsInterpreterRoots(executable), network: 'disabled' }, timeoutMs: 15_000 });
   assert.equal(result.exitCode, 0, JSON.stringify(result));
   assert.equal(result.stderr, ''); assert.ok(result.stdout.includes(work));
   assert.match(result.stdout, /CHILD_OK/); assert.match(result.stdout, /PARENT_DENIED/);
@@ -85,7 +86,7 @@ Remove-Module Microsoft.PowerShell.Management,Microsoft.PowerShell.Utility -Forc
 $env:PSModulePath = ''
 `;
   const result = await runResourceManagedCommand({ executable, args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(reset + bootstrap, 'utf16le').toString('base64')], cwd: f.work,
-    sandbox: { writableRoots: [f.work], network: 'disabled' }, timeoutMs: 20000 });
+    sandbox: { writableRoots: [f.work], readableRoots: windowsInterpreterRoots(executable), network: 'disabled' }, timeoutMs: 20000 });
   assert.equal(result.exitCode, 0, JSON.stringify(result)); assert.equal(result.stderr, '');
   assert.equal((await readFile(join(f.work, 'bootstrapped.txt'), 'utf8')).trim(), 'ok');
 });

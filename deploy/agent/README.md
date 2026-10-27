@@ -6,11 +6,20 @@
 
 ### 原生终端对话
 
-在程序目录注册一次命令：
+服务与 CLI 由同一份版本交付。使用 [npm 发布包](../../docs/NPM_AGENT.md) 部署时，一次安装同时注册 `cardbush` 与 `cardbush-agent`：
+
+```sh
+npm install --global /absolute/path/cardbush-1.0.11.tgz
+cardbush serve --data-dir /srv/cardbush/agent-a --name Agent-A
+```
+
+发布到 npm 后可将 tarball 路径换为 `cardbush@版本号`。源码或目录包部署时，在程序目录注册一次命令：
 
 ```sh
 npm link --ignore-scripts
 ```
+
+Docker 的普通服务、可选桌面和 Web 镜像也包含这两个命令。进入容器后可用 `cardbush --url http://127.0.0.1:4780 --token-file /data/access-token` 连接对应实例，沿用实例鉴权；按实际服务端口与数据目录调整。更新部署时两个命令一起更新，无需安装桌面 App。
 
 之后进入要工作的文件夹，直接启动本地 CLI，无需预先启动 HTTP 服务或提供服务令牌：
 

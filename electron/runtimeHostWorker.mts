@@ -531,6 +531,7 @@ function withBundledAppsServer(input: unknown): unknown {
           } : {
             CARDBUSH_CHROME_CONNECTOR_CONFIG:
               process.env.CARDBUSH_CHROME_CONNECTOR_CONFIG?.trim() ?? '',
+            CARDBUSH_CHROME_CONNECTOR_HEALTH: process.env.CARDBUSH_CHROME_CONNECTOR_HEALTH?.trim() ?? '',
             CARDBUSH_BROWSER_CONFIG_PATH: process.env.CARDBUSH_BROWSER_CONFIG_PATH?.trim() ?? '',
           }),
         }),

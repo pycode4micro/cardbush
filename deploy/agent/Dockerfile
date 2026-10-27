@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && useradd --create-home --uid 1100 --shell /bin/bash cardbush \
     && mkdir -p /data && chown cardbush:cardbush /data
 COPY --from=build /opt/cardbush /opt/cardbush
+RUN chmod 755 bin/cardbush.mjs bin/cardbush-agent.mjs \
+    && ln -s /opt/cardbush/bin/cardbush.mjs /usr/local/bin/cardbush \
+    && ln -s /opt/cardbush/bin/cardbush-agent.mjs /usr/local/bin/cardbush-agent
 ENV NODE_ENV=production HOME=/home/cardbush
 USER cardbush
 EXPOSE 4780
@@ -33,7 +36,9 @@ COPY --from=build /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/np
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 COPY --from=build /opt/cardbush /opt/cardbush
-RUN chmod 755 /opt/cardbush/deploy/agent/desktop-entrypoint.sh
+RUN chmod 755 /opt/cardbush/deploy/agent/desktop-entrypoint.sh /opt/cardbush/bin/cardbush.mjs /opt/cardbush/bin/cardbush-agent.mjs \
+    && ln -s /opt/cardbush/bin/cardbush.mjs /usr/local/bin/cardbush \
+    && ln -s /opt/cardbush/bin/cardbush-agent.mjs /usr/local/bin/cardbush-agent
 WORKDIR /opt/cardbush
 ENV NODE_ENV=production HOME=/home/cardbush CARDBUSH_DESKTOP_PYTHON=/opt/desktop-venv/bin/python3 DISPLAY=:99
 USER cardbush

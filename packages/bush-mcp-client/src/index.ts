@@ -211,10 +211,14 @@ export class McpClientManager {
     this.#createTransport = options.createTransport ?? (async (server, signal) => {
       const network = await options.network?.(server, signal);
       signal?.throwIfAborted();
+      const oauthProvider = server.transport.kind !== 'stdio' && server.transport.auth !== 'none' && server.transport.auth !== 'openai' &&
+        !Object.keys(server.transport.headers).some(key => key.toLowerCase() === 'authorization') ? this.#oauth?.provider(server) : undefined;
+      const transportNetwork = oauthProvider ? {
+        fetch: this.#oauth!.fetchForTransport(server, network?.fetch), env: network?.env ?? {},
+      } : network;
       return server.transport.kind !== 'stdio' && server.transport.auth === 'openai'
         ? createOpenAiTransport(server, this.#openai?.getToken, network?.fetch ?? this.#openai?.fetch)
-        : createTransport(server, server.transport.kind !== 'stdio' && server.transport.auth !== 'none' && !Object.keys(server.transport.headers).some(key => key.toLowerCase() === 'authorization')
-          ? this.#oauth?.provider(server) : undefined, network);
+        : createTransport(server, oauthProvider, transportNetwork);
     });
     this.#wait = options.wait ?? delay;
     this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000;

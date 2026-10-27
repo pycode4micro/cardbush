@@ -6,6 +6,7 @@ const title = document.querySelector('#tab-title');
 const origin = document.querySelector('#tab-origin');
 const siteAccess = document.querySelector('#site-access');
 const pairingDetails = document.querySelector('#pairing-details');
+const localConnectionRepair = document.querySelector('#local-connection-repair');
 const extensionUpdate = document.querySelector('#extension-update');
 const extensionUpdateMessage = document.querySelector('#extension-update-message');
 const reloadExtension = document.querySelector('#reload-extension');
@@ -91,6 +92,7 @@ async function refresh(reconnect = false) {
     if (busy || requestRevision !== revision) return;
     if (state?.ok === false) throw new Error(state.error?.message || '无法读取连接状态');
     const staleWorker = needsReload(state);
+    localConnectionRepair.hidden = staleWorker || !state.hasPairing || state.nativeConnected;
     extensionUpdate.hidden = !staleWorker;
     reloadExtension.disabled = state.nativeConnected || state.nativeConnecting || state.controlledTabCount > 0;
     extensionUpdateMessage.textContent = reloadExtension.disabled
@@ -124,6 +126,8 @@ async function refresh(reconnect = false) {
     scopePicker.hidden = candidates.length <= 1;
     connection.textContent = actionError || (staleWorker
       ? '扩展后台仍在运行旧版本，需要重新加载。'
+      : !state.connectorEnabled && state.localConnectionRequested
+      ? `本机连接申请已停止。点击「连接 CardBush」重新申请；原配对与网站授权已保留。${state.lastError ? `\n${state.lastError}` : ''}`
       : state.pairingRequired
       ? '连接已移除。点击「连接 CardBush」重新连接本机，或使用手动配对连接其他 Agent。'
       : !state.connectorEnabled
@@ -133,8 +137,12 @@ async function refresh(reconnect = false) {
         ? `正在控制 ${state.controlledTabCount} 个标签页`
         : '已连接 CardBush，等待控制'
       : state.nativeConnecting
-        ? state.hasPairing ? '正在使用已保存的授权连接 CardBush…' : '正在申请连接，请依次在系统弹窗和扩展中确认…'
-        : `CardBush 暂时离线，将自动重连。请确认目标 Agent 或本机 App/CLI 正在运行，并已启用 Browser Use；无需重复授权或生成新配对码。${state.lastError ? `\n${state.lastError}` : ''}`);
+        ? state.hasPairing && !state.localConnectionRequested ? '正在使用已保存的授权连接 CardBush…' : '正在申请本机连接…授权窗口出现后，请在 CardBush 风格的扩展窗口确认一次。'
+        : state.reconnectPaused
+        ? `${state.localConnectionRequested
+          ? '本机连接申请连续失败，已停止自动重试。准备好后点击「连接 CardBush」继续本机申请，原配对仍保留。'
+          : '连接连续失败，已停止自动重试。准备好后点击「连接 CardBush」重试原连接，或主动「重新申请本机连接」。'}${state.lastError ? `\n${state.lastError}` : ''}`
+        : `${state.localConnectionRequested ? '本机连接申请未完成，等待有限重试。' : '尚未连接 CardBush，等待有限重试。'}请确认目标 App/CLI 正在运行并已启用 Browser Use。${state.lastError ? `\n${state.lastError}` : ''}`);
     connection.classList.toggle('offline', Boolean(actionError) || (!staleWorker && state.pairingRequired));
     connection.classList.toggle('waiting', staleWorker || (!state.nativeConnected && !state.pairingRequired && !actionError));
     siteAccess.textContent = staleWorker
@@ -156,7 +164,8 @@ async function refresh(reconnect = false) {
       button.disabled = permissionAction && (!state.nativeConnected || !state.activeScope || !state.origin);
       if (button.dataset.action === 'disable_connector') button.disabled = !state.connectorEnabled;
       if (button.dataset.action === 'reconnect') button.disabled = state.nativeConnected || state.nativeConnecting;
-      if (staleWorker && ['pair', 'reconnect', 'allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action)) button.disabled = true;
+      if (button.dataset.action === 'request_local_connection') button.disabled = state.nativeConnected || state.requestingLocalConnection;
+      if (staleWorker && ['pair', 'reconnect', 'request_local_connection', 'allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action)) button.disabled = true;
       if (button.dataset.action === 'allow_all') button.textContent = state.allowAllSites
         ? '复制当前页 · 已允许全部网站'
         : '复制并允许隔离组访问全部网站';

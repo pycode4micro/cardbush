@@ -338,6 +338,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
 const help = `CardBush CLI (runs locally by default, or connects to an existing Agent)
 Usage: cardbush [options]
        cardbush --resume [session-id] [options]
+       cardbush serve --data-dir <directory> [service-options]
        cardbush serve --background | --status | --stop
 
 New sessions trust and use the current directory. Approval mode is the default;
@@ -363,7 +364,10 @@ Successful connections are remembered.
   --models          List models
   --projects        List projects
   --sessions        List sessions
+  --version         Show the installed Agent/CLI release
   --help            Show help
+
+Service: cardbush serve --help (alias: cardbush-agent). The service and CLI are installed together.
 
 Commands: /model [ID] selects a model and reasoning effort; /settings shows config paths and reloads settings.
           Model selection: Up/Down selects, Tab fills, Enter confirms, Esc goes back; /cancel discards changes.
@@ -378,12 +382,13 @@ Commands: /model [ID] selects a model and reasoning effort; /settings shows conf
           /tools [number] [--turn N] inspects tools, arguments and results;
           /artifact [number] opens this turn's files; /source [number] shows evidence;
           /quit (or /exit) exits; /help shows help. Other input is sent to the Agent.
-          /browser checks connections. Local Chrome/Edge: approve the first connection in the system dialog and extension;
+          /browser checks connections. Local Chrome/Edge: approve the first connection in the CardBush extension window;
           no pairing code is needed. The local App and CLI share connections and reconnect automatically after restarts.
           Chrome/Edge work without the desktop App; integrated CardBush tabs require the App.
           /browser pair chrome or /browser pair edge is for manual connection or remote Agent pairing;
           remote Agents keep separate connections. Codes stay in this terminal; keep it open while pairing.
-          Temporary disconnects do not require a new pairing code.
+          After repeated failures, automatic recovery pauses. /browser retry retries the host connector;
+          click Connect in the extension to retry its saved connection. Temporary disconnects do not require a new pairing code.
           During a task, /exit stops the observed task and this window's queued messages;
           other windows' queued work is preserved. Connection recovery can explicitly leave tasks on the Agent.
           /shell [COMMAND] or !COMMAND runs in this local terminal; exit returns to chat.

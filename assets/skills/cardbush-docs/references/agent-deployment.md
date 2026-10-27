@@ -14,6 +14,8 @@ cardbush serve --background
 cardbush serve --status
 ```
 
+也可安装经过验证的 Agent + CLI tarball：`npm install --global /absolute/path/cardbush-VERSION.tgz`。一次安装同时提供 `cardbush` 与 `cardbush-agent`，更新包时两个命令一起更新；安装目录与数据目录分离，按下方维护流程等待任务结束后重启服务。
+
 `--background` 直接静默启动 Node 服务，确认 HTTP 就绪后返回。关闭启动终端后服务继续运行；它不自动注册开机启动，也不改变运行账户。`--status` 显示地址、PID、数据目录、连接令牌文件、模型配置和日志路径，不输出密钥。旧版本的帮助中没有 `--background` 时先更新，不把该版本当作已经支持后台命令。
 
 默认监听 `127.0.0.1:4780`，数据保存在当前用户的 `~/.cardbush/service`。已有部署使用原数据目录；多个实例分别指定目录和端口：
@@ -111,3 +113,5 @@ npm run package:agent -- --out /new/output/directory
 ```
 
 完整目录包包含服务、CLI、工作区包、内置资源、Windows 原生组件和本 Skill。在目标平台执行 `npm ci --omit=dev --ignore-scripts` 后可用 `npm link --ignore-scripts` 注册命令；不要跨平台复制 `node_modules`，也不要只复制一个 `.mjs`。Windows 原生构建需使用对应 Windows 构建环境。npm 发布沿用现有发布流程，普通部署不创建另一套安装器。
+
+直接在源码目录运行时，可在 `npm ci --ignore-scripts` 后执行 `npm run build:agent`，再用 `npm link --ignore-scripts` 注册两个命令，并用 `cardbush serve --help` 检查入口。

@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'recovery' } } };
 
 function assertSetupGuidance(text) {
-  assert.match(text, /user approves the first connection in the system dialog and extension; no pairing code is needed/);
+  assert.match(text, /user approves the first connection once in the CardBush extension window; no pairing code is needed/);
   assert.match(text, /local App and CLI share.*reconnect automatically/);
   assert.match(text, /only for manual connection or remote Agent pairing/);
   assert.match(text, /remote Agents keep connections separate/);
@@ -37,6 +37,23 @@ test('empty connector explains local consent while offline profiles reconnect wi
   connections[0].connected = true;
   const online = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
   assert.equal(online.nextStep, undefined); assert.equal(online.selectedConnectionId, id);
+});
+
+test('recent rejected handshakes explain explicit recovery without changing connections; stale failures do not', async () => {
+  const id = '1'.repeat(32);
+  let at = new Date().toISOString();
+  const calls = [];
+  const server = createCardbushChromeServer({ connector: async method => {
+    calls.push(method); return { connections: [{ id, connected: false }], selectedConnectionId: id,
+      connectionAttempt: { at, stage: 'rejected', reason: 'pairing_proof_mismatch', connectionId: id } };
+  } });
+  const current = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  assert.match(current.nextStep, /pairing_proof_mismatch/); assert.match(current.nextStep, /重新申请本机连接/);
+  assert.match(current.nextStep, /do not reset credentials/); assert.equal(current.selectedConnectionId, id);
+  at = new Date(Date.now() - 60_000).toISOString();
+  const stale = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  assert.doesNotMatch(stale.nextStep, /pairing_proof_mismatch/);
+  assert.deepEqual(calls, ['browser.list', 'browser.list']);
 });
 
 test('session 095c replay: missing bridge is setup state, mutations stay blocked and recovery is live', async t => {
@@ -77,6 +94,30 @@ test('availability guidance never rewrites uncertain dispatch into a safe-to-ret
   } });
   const result = await server._registeredTools.new_page.handler({ url: 'https://example.invalid' }, context);
   assert.equal(result.isError, true); assert.equal(result.structuredContent.error.details.execution, 'unknown');
+});
+
+test('only fresh diagnostics for this host explain startup failure; disabled, expired and foreign states stay distinct', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-browser-health-')), config = join(root, 'bridge.json'), healthPath = join(root, 'health.json');
+  t.after(async () => { assert.equal(dirname(root), tmpdir()); await rm(root, { recursive: true, force: true }); });
+  const health = { protocol: 'cardbush.browser_connector_health.v1', configPath: config, updatedAt: new Date().toISOString(), state: 'unavailable',
+    error: { code: 'browser_connector_component_missing', message: 'Agent browser connector component is missing.', nextStep: 'Run npm run build:agent and reopen the CLI.',
+      token: 'unexpected-field-must-not-reach-the-model' } };
+  const server = createCardbushChromeServer({ browserConfigPath: config, browserHealthPath: healthPath });
+  const list = async () => (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  await writeFile(healthPath, JSON.stringify(health));
+  const failed = await list();
+  assert.equal(failed.reason, 'browser_connector_component_missing'); assert.equal(failed.availability, 'host_unavailable');
+  assert.match(failed.nextStep, /build:agent/); assert.equal(failed.connector.checkedAt, health.updatedAt);
+  assert.doesNotMatch(JSON.stringify(failed), /unexpected-field/);
+  const mutation = await server._registeredTools.new_page.handler({ url: 'https://example.invalid' }, context);
+  assert.equal(mutation.isError, true); assert.equal(mutation.structuredContent.error.code, failed.reason);
+  assert.equal(mutation.structuredContent.error.details.execution, 'not_dispatched');
+  for (const override of [{ updatedAt: '2000-01-01T00:00:00Z' }, { configPath: join(root, 'other-host.json') }, { updatedAt: 'invalid' }]) {
+    await writeFile(healthPath, JSON.stringify({ ...health, ...override }));
+    assert.equal((await list()).reason, 'bridge_config_unavailable');
+  }
+  await writeFile(healthPath, JSON.stringify({ ...health, state: 'disabled' }));
+  const disabled = await list(); assert.equal(disabled.availability, 'disabled'); assert.match(disabled.nextStep, /Enable/);
 });
 
 test('empty selection and invalid tab ids never become a phantom page zero', async () => {

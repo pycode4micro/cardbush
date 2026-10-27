@@ -3,6 +3,15 @@ import test from 'node:test';
 import { chatBrowserCommand } from '../dist-electron/agentChatBrowser.mjs';
 import { commandSuggestions, applyChatSuggestion } from '../dist-electron/agentChatCompletion.mjs';
 
+test('browser retry is explicit and reports the latest handshake without changing pairing', async () => {
+  const calls = [], output = [];
+  const client = { async call(operation, input) { calls.push(input); return { state: 'running', connector: {
+    connections: [], defaultConnectionId: '', connectionAttempt: { at: '2026-10-25T15:00:00Z', stage: 'rejected', reason: 'pairing_not_found' } } }; } };
+  await chatBrowserCommand('/browser retry', client, { commitInput() {}, status: text => output.push(text) }, new AbortController().signal);
+  assert.deepEqual(calls, [{ action: 'retry' }]);
+  assert.match(output.join(''), /Latest browser handshake: rejected \(pairing_not_found\)/);
+});
+
 test('browser commands offer both browsers and keep pairing receipts in terminal output only', async () => {
   const calls = [], output = [], committed = [], signal = new AbortController().signal;
   const client = { async call(operation, input) { calls.push({ operation, input });
@@ -41,6 +50,15 @@ test('browser management validates IDs, reports failure and preserves cancellati
   await assert.rejects(chatBrowserCommand('/browser', client, io, controller.signal), { name: 'AbortError' });
 });
 
+test('host failures show their recovery action without asking the user to reinstall or pair the extension', async () => {
+  const output = [];
+  const client = { async call() { return { shared: true, state: 'unavailable', error: 'The previous connector is still active.',
+    nextStep: 'Close the older App and retry /browser status.', extensionPath: 'extension' }; } };
+  await chatBrowserCommand('/browser status', client, { commitInput() {}, status: text => output.push(text) }, new AbortController().signal);
+  assert.match(output.join(''), /previous connector is still active.*\nClose the older App/);
+  assert.doesNotMatch(output.join(''), /pair chrome|Install or reload|approve the first/);
+});
+
 test('local CLI status directs first-use consent without creating a pairing code', async () => {
   for (const state of ['running', 'disabled']) {
     const calls = [], output = [];
@@ -49,12 +67,16 @@ test('local CLI status directs first-use consent without creating a pairing code
     await chatBrowserCommand('/browser status', client, { commitInput() {}, status: text => output.push(text) }, new AbortController().signal);
     const text = output.join('');
     assert.deepEqual(calls, [{ operation: 'browser.connector', input: { action: 'status' } }]);
-    assert.match(text, /first local connection in the CardBush system dialog and extension; no pairing code is needed/);
+    if (state === 'disabled') {
+      assert.match(text, /Enable the Browser Use plugin in \/settings/);
+      assert.doesNotMatch(text, /pair chrome|Install or reload|approve the first/);
+      continue;
+    }
+    assert.match(text, /first local connection in the CardBush extension window; no pairing code is needed/);
     assert.match(text, /local App and CLI share this connection and reconnect automatically.*restarts/);
     assert.match(text, /Chrome\/Edge work without the desktop App; integrated CardBush tabs require the App/);
     assert.match(text, /For manual connection only: \/browser pair/);
     assert.doesNotMatch(text, /No paired browsers|Pairing belongs to this Agent server/);
-    if (state === 'disabled') assert.match(text, /Enable the Browser Use plugin in \/settings/);
   }
 });
 
@@ -80,16 +102,17 @@ test('offline CLI profiles preserve identity and use saved connections instead o
     const text = output.join('');
     assert.deepEqual(calls, [{ action: 'status' }]);
     assert.ok(text.includes(id)); assert.match(text, /edge\s+Work\s+offline/);
-    assert.match(text, /original browser profile.*reconnect automatically/);
-    assert.match(text, /explicitly disabled.*click Connect/);
+    assert.match(text, /original browser profile.*retries up to three times/);
+    assert.match(text, /waits for you to click Connect/);
     assert.match(text, /temporary disconnect does not require a new pairing code/);
     assert.doesNotMatch(text, /approve the first local connection|No paired browsers/);
   }
 });
 
-test('browser completion describes automatic local connections and labels both pairing commands as manual or remote', () => {
+test('browser completion describes bounded recovery and labels both pairing commands as manual or remote', () => {
   const top = commandSuggestions('/brow', 5, []).items.find(item => item.value === '/browser ');
-  assert.match(top.description, /local connections reconnect automatically/);
+  assert.match(top.description, /bounded connection recovery/);
+  assert.ok(commandSuggestions('/browser ', 9, []).items.some(item => item.value === 'retry'));
   assert.doesNotMatch(top.description, /pairing code/);
   const choices = commandSuggestions('/browser pair ', 14, []).items;
   assert.deepEqual(choices.map(item => item.value), ['pair chrome', 'pair edge']);

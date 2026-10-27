@@ -25,7 +25,7 @@ import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, sessionSupersessionSchema, reasonin
 import { AgentRuntimeHost, type AgentRuntimeDiagnosticSink } from './agentRuntimeHost.mjs';
 import { AgentDesktop } from './agentDesktop.mjs';
 import { AgentBrowserConnector } from './agentBrowserConnector.mjs';
-import { sharedBrowserDataRoot } from './browserConnectionApproval.js';
+import { sharedBrowserDataRoot } from './browserConnectorProfile.js';
 import { agentBundledMcpEnvironment } from './agentBundledAssets.mjs';
 import { probeAgentDesktop } from './agentDesktopProbe.mjs';
 import type { AgentDesktopSetup } from './agentDesktopTypes.js';
@@ -118,7 +118,8 @@ export class AgentService {
     // their own browser credentials, regardless of inherited environment values.
     const sharedBrowser = options.local === true && Boolean(options.localProfileRoot) && process.platform === 'win32';
     const browserRoot = sharedBrowser ? sharedBrowserDataRoot(options.localProfileRoot!) : root;
-    if (this.#toolsEnabled && !this.#webRestricted) this.#browserConnector = new AgentBrowserConnector(browserRoot, bundled, configurationRoot, sharedBrowser, sharedBrowser && browserRoot !== root ? root : undefined);
+    if (this.#toolsEnabled && !this.#webRestricted) this.#browserConnector = new AgentBrowserConnector(browserRoot, bundled, configurationRoot, sharedBrowser,
+      sharedBrowser && browserRoot !== root ? root : undefined, options.runtimeDiagnostic);
     this.instructions = new GlobalInstructionsStore(join(extensionRoot, 'AGENTS.md'));
     const explicitEnv = Object.fromEntries(Object.entries(options.env ?? {}).map(([key, value]) => [process.platform === 'win32' ? key.toUpperCase() : key, value]));
     const sourceEnv = normalizeHostEnvironment({ ...process.env, ...explicitEnv });
@@ -140,6 +141,7 @@ export class AgentService {
     for (const key of ['CARDBUSH_APPS_MCP_ENTRY', 'CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY', 'CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY', 'CARDBUSH_MCP_DESKTOP_BRIDGE', 'CARDBUSH_AGENT_DESKTOP_BRIDGE', 'CARDBUSH_RESOURCE_COORDINATION']) delete env[key];
     if (this.#toolsEnabled && !this.#webRestricted) Object.assign(env, agentBundledMcpEnvironment(root, bundled));
     if (sharedBrowser) env.CARDBUSH_CHROME_CONNECTOR_CONFIG = join(browserRoot, 'browser-connector', 'bridge.json');
+    if (this.#browserConnector) env.CARDBUSH_CHROME_CONNECTOR_HEALTH = this.#browserConnector.healthPath;
     if (options.localProfileRoot) Object.assign(env, {
       CARDBUSH_BROWSER_CONFIG_PATH: join(configurationRoot, 'config', 'browser.json'),
     });

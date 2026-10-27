@@ -61,11 +61,32 @@ test('an unavailable optional server cannot prevent healthy servers from supplyi
   } finally { await manager.close(); await server.close(); }
 });
 
-async function setup(versionMode, onElicitation) {
+for (const versionMode of ['legacy', 'modern']) {
+  test(`${versionMode}: accepted forms supply defaults without overriding explicit values or completing declined forms`, async () => {
+    const schema = { type: 'object', properties: {
+      label: { type: 'string', default: 'suggested' },
+      count: { type: 'integer', default: 12 },
+      enabled: { type: 'boolean', default: true },
+    } };
+    const explicit = { label: '', count: 0, enabled: false };
+    const fixture = await setup(versionMode, async ({ sessionId }) => sessionId === 'declined' ? { action: 'decline' }
+      : { action: 'accept', content: sessionId === 'explicit' ? structuredClone(explicit) : {} }, schema);
+    try {
+      const defaults = JSON.parse((await fixture.call('defaults', 5000)).content[0].text);
+      assert.deepEqual(defaults, { action: 'accept', content: { label: 'suggested', count: 12, enabled: true } });
+      const supplied = JSON.parse((await fixture.call('explicit', 5000)).content[0].text);
+      assert.deepEqual(supplied, { action: 'accept', content: explicit });
+      const declined = JSON.parse((await fixture.call('declined', 5000)).content[0].text);
+      assert.deepEqual(declined, { action: 'decline' });
+    } finally { await fixture.close(); }
+  });
+}
+
+async function setup(versionMode, onElicitation, requestedSchema) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const buildServer = () => { const server = new McpServer({ name: 'elicitation-fixture', version: '1' });
   server.registerTool('form', { inputSchema: z.object({ session: z.string() }) }, async ({ session }, context) => {
-    const params = { message: session, requestedSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] } };
+    const params = { message: session, requestedSchema: requestedSchema ?? { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] } };
     if (versionMode === 'modern') {
       const response = context.mcpReq.inputResponses?.form;
       if (!response) return inputRequired({ inputRequests: { form: inputRequired.elicit(params) }, requestState: 'opaque-state' });

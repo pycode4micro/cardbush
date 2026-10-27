@@ -11,6 +11,20 @@ function vault() {
   } };
 }
 
+test('discovery rejects metadata whose issuer path differs before registration or consent', async t => {
+  const fixture = await oauthServer({ metadataIssuerPath: '/oauth' });
+  t.after(() => fixture.close());
+  const { store } = vault();
+  let opened = 0;
+  const oauth = new McpOAuthCoordinator(store, async () => { opened++; });
+  t.after(() => oauth.close());
+  const server = { id: 'mismatched-metadata', transport: { kind: 'streamable_http', url: fixture.url + '/mcp' } };
+  await assert.rejects(oauth.login(server), error => error.name === 'IssuerMismatchError');
+  assert.equal(opened, 0, 'do not ask the user to approve an invalid issuer');
+  assert.equal(fixture.counters.registrations, 0);
+  assert.equal(fixture.counters.codes, 0);
+});
+
 test('discovery cannot relabel a preset secret for another authorization server', async t => {
   const fixture = await oauthServer({ clientId: 'private', clientSecret: 'must-not-be-sent' });
   t.after(() => fixture.close());

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import net from 'node:net';
+import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { SharedBrowserConnector } from '../dist-electron/sharedBrowserConnector.js';
+import { SharedBrowserConnector, assertLegacyBrowserConnectorStopped } from '../dist-electron/sharedBrowserConnector.js';
 import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
 import { ChromeConnectorLifecycle } from '../dist-electron/chromeConnectorLifecycle.js';
 import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
@@ -44,6 +46,18 @@ test('App and CLI share pairing, route by conversation and take over after owner
   await assert.rejects(pairedClient(pairing.code, { browser: 'edge' }));
 });
 
+test('shared owner loss has one bounded recovery loop and waits for explicit retry after exhaustion', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t), owner = f.create(), follower = f.create();
+  await owner.start(); await follower.start(); owner.stop();
+  await writeFile(follower.configPath, JSON.stringify({ protocol: 'invalid', endpoint: 'invalid' }));
+  await until(() => follower.status().recoveryPaused);
+  await rm(follower.configPath);
+  await delay(1300);
+  assert.equal((await follower.refresh()).recoveryPaused, true, 'the permission watcher cannot bypass exhaustion');
+  assert.equal(follower.status().bridgeRunning, false);
+  assert.equal((await follower.refresh(true)).bridgeRunning, true);
+});
+
 test('simultaneous clients elect one endpoint and explicit disable is observed by all', { skip: process.platform !== 'win32' }, async t => {
   const f = await fixture(t), handles = [f.create(), f.create(), f.create()];
   await Promise.all(handles.map(handle => handle.start()));
@@ -57,13 +71,13 @@ test('simultaneous clients elect one endpoint and explicit disable is observed b
 
 test('consent pairs without a copied code and preserves revocation across shared owners', { skip: process.platform !== 'win32' }, async t => {
   const f = await fixture(t); let approvals = 0;
-  const broker = new ChromeConnectorBroker(f.root, { nativeHostPath, shared: true, requestApproval: async () => { approvals++; return true; } });
+  const broker = new ChromeConnectorBroker(f.root, { nativeHostPath, shared: true, allowLocalPairing: () => true });
   t.after(() => broker.stop()); await broker.start();
   const app = f.create(); await app.start();
   const port = JSON.parse(await readFile(join(f.root, 'browser-connector/pairing.json'))).port;
   const identity = { id: randomBytes(16).toString('hex') };
   await assert.rejects(approvalClient(port, identity, { origin: 'chrome-extension://wrong' })); assert.equal(approvals, 0);
-  const result = await approvalClient(port, identity); assert.equal(approvals, 1);
+  const result = await approvalClient(port, identity, { confirm: async () => { approvals++; return true; } }); assert.equal(approvals, 1);
   const peer = await pairedClient(result.code); f.peers.push(peer);
   await until(() => app.status().extensionConnected);
   assert.equal((await approvalClient(port, identity)).code, result.code, 'a lost reply resumes the approved identity');
@@ -112,4 +126,40 @@ test('an older running App is not overwritten during a partial upgrade', { skip:
   const original = await readFile(old.configPath, 'utf8');
   await assert.rejects(f.create().start(), /older CardBush process/);
   assert.equal(await readFile(old.configPath, 'utf8'), original);
+});
+
+test('session 19c2 replay: stale legacy endpoint recovers despite a recycled PID or Windows EPERM, retaining pairing', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t), old = new ChromeConnectorBroker(f.root, { nativeHostPath });
+  t.after(() => old.stop()); await old.start();
+  const code = old.createPairing().code, descriptor = await readFile(old.configPath, 'utf8');
+  f.peers.push(await pairedClient(code));
+  old.stop(); await delay(100);
+  await writeFile(old.configPath, descriptor);
+  const kill = process.kill;
+  t.mock.method(process, 'kill', function(pid, signal) {
+    if (pid === process.pid && signal === 0) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    return kill.call(process, pid, signal);
+  });
+  const shared = f.create(); await shared.start();
+  assert.equal(shared.status().bridgeRunning, true);
+  assert.notEqual(JSON.parse(await readFile(shared.configPath)).endpoint, JSON.parse(descriptor).endpoint);
+  const peer = await pairedClient(code); f.peers.push(peer);
+  const result = await requestChromeConnector('browser.list', { scopeId: 'recovered' }, { configPath: shared.configPath });
+  assert.equal(result.connections[0].id, code.split('.')[2]);
+  assert.equal(result.connections[0].connected, true);
+});
+
+test('legacy endpoint permission failures and invalid paths never authorize takeover', async t => {
+  const root = resolve('tmp'), endpoint = process.platform === 'win32'
+    ? '\\\\.\\pipe\\cardbush-browser-connector-' + 'a'.repeat(24) : join(root, 'browser-connector', 'bridge.sock');
+  let attempts = 0;
+  t.mock.method(net, 'createConnection', () => {
+    attempts++; const socket = new PassThrough();
+    queueMicrotask(() => socket.emit('error', Object.assign(new Error('denied'), { code: 'EACCES' })));
+    return socket;
+  });
+  await assert.rejects(assertLegacyBrowserConnectorStopped({ protocol: 'cardbush.chrome_connector.v1', endpoint }, root), /Cannot verify.*EACCES/);
+  assert.equal(attempts, 1);
+  await assert.rejects(assertLegacyBrowserConnectorStopped({ protocol: 'cardbush.chrome_connector.v1', endpoint: '\\\\.\\pipe\\unrelated-application' }, root), /Invalid previous/);
+  assert.equal(attempts, 1, 'never probe an unrelated endpoint');
 });

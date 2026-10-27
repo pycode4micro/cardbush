@@ -77,7 +77,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
     <SettingsCard title={language === 'zh' ? '浏览器连接' : 'Browser connection'}>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
-          <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? '启用插件并安装浏览器扩展，首次在系统弹窗和扩展中确认连接即可。本机 App 和 CLI 共用连接并自动重连，各会话保留独立的标签页和网站授权。内置标签页可通过 @ 选择。' : 'Enable the plugin, install the browser extension and approve the first connection in the system dialog and extension. The local App and CLI share connections and reconnect automatically; each conversation keeps its own tabs and site permissions. Select integrated tabs with @.'}</small></span>
+          <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? '启用插件并安装浏览器扩展，首次在 CardBush 风格的扩展窗口确认一次连接即可。本机 App 和 CLI 共用连接并自动重连，各会话保留独立的标签页和网站授权。内置标签页可通过 @ 选择。' : 'Enable the plugin, install the browser extension and approve the first connection in the CardBush extension window. The local App and CLI share connections and reconnect automatically; each conversation keeps its own tabs and site permissions. Select integrated tabs with @.'}</small></span>
       </label>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />
@@ -104,8 +104,8 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
                 : status?.portRecovery && status?.paired
                   ? (language === 'zh' ? '连接地址已自动调整，等待扩展重连。如仍未连接，请更新或重新加载 Browser Use 扩展；原配对和网站授权会保留。' : 'The connection address was recovered automatically. Waiting for the extension to reconnect. If needed, update or reload Browser Use; existing pairing and site permissions are preserved.')
                 : status?.paired
-                  ? (language === 'zh' ? '配对已保存。开启连接器和浏览器后会自动重连，也可打开扩展立即重试，无需重新生成码或授权。' : 'Pairing is saved. Reconnects automatically when the connector and browser are open; open the extension to retry now. No new code or permission is needed.')
-                    : (language === 'zh' ? '等待浏览器扩展申请连接。请依次在系统弹窗和扩展中确认；拒绝后可在扩展中点击“连接 CardBush”重新申请。页面访问仍需单独授权。' : 'Waiting for the browser extension. Confirm the system dialog and extension window; after declining, click Connect CardBush in the extension to request again. Page access still requires separate authorization.')}</small>
+                  ? (language === 'zh' ? '配对已保存。开启连接器和浏览器后会自动重连，也可在扩展中点击“连接 CardBush”重试，无需重新生成码或授权。' : 'Pairing is saved. Reconnects automatically when the connector and browser are open; click Connect CardBush in the extension to retry. No new code or permission is needed.')
+                    : (language === 'zh' ? '等待浏览器扩展申请连接。请在 CardBush 风格的扩展窗口确认一次；拒绝后可在扩展中点击“连接 CardBush”重新申请。页面访问仍需单独授权。' : 'Waiting for the browser extension. Confirm once in the CardBush extension window; after declining, click Connect CardBush in the extension to request again. Page access still requires separate authorization.')}</small>
             </div>
           </div>
           <div className="chrome-connector-actions">
@@ -126,8 +126,8 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
           {status?.connectorEnabled && <>
             <details><summary>{language === 'zh' ? '手动配对' : 'Manual pairing'}</summary>
             <p className="browser-setting-note">{language === 'zh'
-              ? '本机首次连接只需在系统弹窗和扩展中确认，之后自动重连，无需配对码。此处生成本机手动配对码；远程 Agent 配对请在连接目标 Agent 的 CLI 中运行 /browser pair chrome 或 /browser pair edge。'
-              : 'Local first use needs approval in the system dialog and extension, then reconnects automatically without a pairing code. This generates a manual local code; for remote Agent pairing, run /browser pair chrome or /browser pair edge in the CLI connected to that Agent.'}</p>
+              ? '本机首次连接只需在 CardBush 风格的扩展窗口确认一次，之后自动重连，无需配对码。此处生成本机手动配对码；远程 Agent 配对请在连接目标 Agent 的 CLI 中运行 /browser pair chrome 或 /browser pair edge。'
+              : 'Local first use needs approval in the CardBush extension window, then reconnects automatically without a pairing code. This generates a manual local code; for remote Agent pairing, run /browser pair chrome or /browser pair edge in the CLI connected to that Agent.'}</p>
             <div className="browser-pairing-controls">
               <SettingsDropdown label={language === 'zh' ? '要配对的浏览器' : 'Browser to pair'} value={browser}
                 options={[{ value: 'chrome', label: 'Google Chrome' }, { value: 'edge', label: 'Microsoft Edge' }]}

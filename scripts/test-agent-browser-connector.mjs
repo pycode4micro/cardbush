@@ -7,6 +7,7 @@ import { AgentService } from '../dist-electron/agentService.mjs';
 import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 import { pairedClient } from './helpers/chrome-paired-client.mjs';
 import { createCardbushChromeServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
+import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
 
 const parent = resolve('tmp/agent-browser-connector-tests');
 async function fixture(t) {
@@ -20,6 +21,55 @@ async function fixture(t) {
   await configure(true);
   return { root, close, configure, configPath: join(root, 'browser-connector/bridge.json') };
 }
+
+test('host startup failures reach Browser Use and current logs, then recover automatically without re-pairing', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {
+  const f = await fixture(t), logs = [];
+  const old = new ChromeConnectorBroker(f.root, { nativeHostPath: resolve('dist-native/chrome-connector/CardBushBrowserHost.exe') });
+  f.close.push(() => old.stop()); await old.start();
+  const code = old.createPairing().code;
+  const originalPeer = await pairedClient(code); f.close.push(() => originalPeer.destroy());
+  const connector = new AgentBrowserConnector(f.root, resolve('assets'), f.root, true, undefined, (_stream, text) => logs.push(text));
+  f.close.push(() => connector.close());
+  const status = await connector.sync();
+  assert.equal(status.state, 'unavailable'); assert.equal(status.errorCode, 'browser_connector_legacy_active');
+  assert.match(logs.join(''), /browser_connector_health.*browser_connector_legacy_active/);
+  assert.ok(!logs.join('').includes(code.split('.').at(-1)));
+  // Once the legacy endpoint closes, the stale descriptor reproduces a
+  // connection failure while the current host's concrete error is still fresh.
+  const descriptor = await readFile(old.configPath, 'utf8');
+  old.stop(); await writeFile(old.configPath, descriptor);
+  const server = createCardbushChromeServer({ browserConfigPath: old.configPath, browserHealthPath: connector.healthPath });
+  const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'startup-recovery' } } };
+  const failed = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  assert.equal(failed.availability, 'host_unavailable');
+  assert.equal(failed.reason, 'browser_connector_legacy_active');
+  assert.match(failed.connector.message, /older CardBush process/);
+  assert.match(failed.nextStep, /Close the older/); assert.ok(failed.connector.checkedAt);
+  const end = Date.now() + 10000;
+  while (connector.status().state !== 'running' && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(connector.status().state, 'running', 'background recovery requires no settings toggle');
+  const peer = await pairedClient(code); f.close.push(() => peer.destroy());
+  const recovered = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
+  assert.equal(recovered.connections[0].connected, true); assert.equal(recovered.connector, undefined);
+  assert.match(logs.join(''), /"state":"running"/);
+  await connector.close(); await assert.rejects(readFile(connector.healthPath), { code: 'ENOENT' });
+});
+test('host recovery stops after three failures and status cannot restart it; retry can', { skip: process.platform !== 'win32', timeout: 15000 }, async t => {
+  const f = await fixture(t);
+  const old = new ChromeConnectorBroker(f.root, { nativeHostPath: resolve('dist-native/chrome-connector/CardBushBrowserHost.exe') });
+  f.close.push(() => old.stop()); await old.start();
+  const connector = new AgentBrowserConnector(f.root, resolve('assets'), f.root, true, undefined, () => {});
+  f.close.push(() => connector.close());
+  for (let i = 0; i < 3; i++) await connector.sync();
+  assert.equal(connector.status().recoveryPaused, true);
+  const health = await readFile(connector.healthPath, 'utf8');
+  old.stop(); await new Promise(resolve => setTimeout(resolve, 5300));
+  assert.equal(await readFile(connector.healthPath, 'utf8'), health, 'no recovery timer or repeated health writes remain');
+  assert.equal((await connector.call({ action: 'status' })).recoveryPaused, true);
+  const recovered = await connector.call({ action: 'retry' });
+  assert.equal(recovered.state, 'running'); assert.equal(recovered.recoveryPaused, false);
+});
+
 test('Agent owns a paired connector across restarts, disabling and explicit mode changes', async t => {
   const f = await fixture(t);
   let connector = new AgentBrowserConnector(f.root, resolve('assets'));

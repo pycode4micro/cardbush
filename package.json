@@ -19,6 +19,8 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:mcp-conformance": "npm run build:runtime && node scripts/run-mcp-conformance.mjs",
+    "test:mcp-conformance:all": "npm run test:mcp-conformance -- --suite all",
     "test:voice": "node scripts/build-voice-native-host.mjs && tsc -p tsconfig.node.json && node --test scripts/test-voice.mjs scripts/test-voice-native.mjs scripts/test-voice-models.mjs scripts/test-speaker-lock.mjs scripts/test-custom-speech.mjs && node scripts/test-voice-ui.cjs && node scripts/test-voice-routing-ui.cjs && node scripts/test-voice-composer-ui.cjs && node scripts/test-voice-settings-rendering.cjs",
     "test:voice-composer": "node scripts/test-voice-composer-ui.cjs",
     "test:voice-custom-native": "tsc -p tsconfig.node.json && node scripts/test-custom-speech-native.mjs",
@@ -26,6 +28,8 @@
     "test:voice-model-native": "tsc -p tsconfig.node.json && node scripts/test-voice-model-native.mjs",
     "build:agent": "npm run build:runtime && node scripts/build-chrome-native-host.mjs && tsc -p tsconfig.node.json",
     "package:agent": "npm run build:agent && node scripts/package-agent.mjs",
+    "package:npm": "npm run build:agent && node scripts/package-npm.mjs",
+    "verify:npm-package": "node scripts/verify-npm-package.mjs",
     "verify:agent-package": "node scripts/package-agent.mjs --verify",
     "test:agent-deployment": "npm run build:agent && node --test scripts/test-agent-package.mjs scripts/test-agent-service-process.mjs scripts/test-agent-bundled-mcp.mjs scripts/test-agent-browser-connector.mjs scripts/test-agent-desktop-bridge.mjs scripts/test-agent-process-host.mjs packages/bush-runtime/test/toolAdmissionFacts.test.mjs scripts/test-agent-shared-configuration.mjs scripts/test-agent-desktop-probe.mjs",
     "agent:serve": "node dist-electron/agentServiceCli.mjs",
@@ -295,11 +299,12 @@
     "word-extractor": "^1.0.4",
     "ws": "^8.22.0",
     "yauzl": "3.4.0",
-    "zod": "^4.1.12",
-    "zip-stream": "4.1.1"
+    "zip-stream": "4.1.1",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",
+    "@modelcontextprotocol/conformance": "0.1.16",
     "@types/node": "^24.19.1",
     "@types/pg": "8.23.1",
     "@types/react": "^19.2.14",

@@ -6,7 +6,7 @@ import { withToolFailureFacts, toolFailureFacts } from './toolFailureFacts.js';
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { freemem, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { runtimeDistributionRoot } from './distributionRoot.js';
 import { ProcessResourceObserver, type ResourceSample } from './processResourceObserver.js';
 import { windowsProcessFailure } from './windowsProcessFailure.js';
 import { prepareExecutionSandbox, type ExecutionSandboxPolicy, type ExecutionSandboxStatus, type PreparedExecutionSandbox } from './executionSandbox.js';
@@ -293,7 +293,7 @@ export function resolveProcessResourceHost(env: NodeJS.ProcessEnv = process.env)
   const supplied = env.CARDBUSH_PROCESS_HOST_PATH;
   if (pinnedProcessHost && env === process.env && !supplied) return pinnedProcessHost;
   const directory = env.CARDBUSH_PROCESS_HOST_DIRECTORY
-    || fileURLToPath(new URL("../../../dist-native/process-guard", import.meta.url));
+    || join(runtimeDistributionRoot(), 'dist-native', 'process-guard');
   let fileName = "";
   if (!supplied) {
     try {

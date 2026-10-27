@@ -1,0 +1,45 @@
+diff --git a/src/scenarios/client/auth/helpers/createAuthServer.ts b/src/scenarios/client/auth/helpers/createAuthServer.ts
+index c8c4ecd..bd1bc2f 100644
+--- a/src/scenarios/client/auth/helpers/createAuthServer.ts
++++ b/src/scenarios/client/auth/helpers/createAuthServer.ts
+@@ -34,6 +34,8 @@ export interface AuthServerOptions {
+   isOpenIdConfiguration?: boolean;
+   loggingEnabled?: boolean;
+   routePrefix?: string;
++  /** Issuer path can differ from the authorization endpoint route prefix. */
++  issuerPath?: string;
+   scopesSupported?: string[];
+   grantTypesSupported?: string[];
+   tokenEndpointAuthMethodsSupported?: string[];
+@@ -79,6 +81,7 @@ export function createAuthServer(
+     isOpenIdConfiguration = false,
+     loggingEnabled = true,
+     routePrefix = '',
++    issuerPath = routePrefix,
+     scopesSupported,
+     grantTypesSupported = ['authorization_code', 'refresh_token'],
+     tokenEndpointAuthMethodsSupported = ['none'],
+@@ -134,7 +137,7 @@ export function createAuthServer(
+     });
+ 
+     const metadata: any = {
+-      issuer: `${getAuthBaseUrl()}${routePrefix}`,
++      issuer: `${getAuthBaseUrl()}${issuerPath}`,
+       authorization_endpoint: `${getAuthBaseUrl()}${authRoutes.authorization_endpoint}`,
+       token_endpoint: `${getAuthBaseUrl()}${authRoutes.token_endpoint}`,
+       ...(!disableDynamicRegistration && {
+diff --git a/src/scenarios/client/auth/march-spec-backcompat.ts b/src/scenarios/client/auth/march-spec-backcompat.ts
+index 3bc857e..52cefa9 100644
+--- a/src/scenarios/client/auth/march-spec-backcompat.ts
++++ b/src/scenarios/client/auth/march-spec-backcompat.ts
+@@ -22,7 +22,9 @@ export class Auth20250326OAuthMetadataBackcompatScenario implements Scenario {
+       // Disable logging since the main server will already have logging enabled
+       loggingEnabled: false,
+       // Add a prefix to auth endpoints to avoid being caught by auth fallbacks
+-      routePrefix: '/oauth'
++      routePrefix: '/oauth',
++      // Metadata is discovered at the root: routing prefixes are not the issuer.
++      issuerPath: ''
+     });
+     const app = createServer(
+       this.checks,

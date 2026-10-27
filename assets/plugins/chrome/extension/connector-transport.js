@@ -22,8 +22,9 @@ async function connectorHmac(secret, text) {
   const key = await crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return connectorHex(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(text))));
 }
-// Initial trust comes from a native CardBush consent dialog. Key agreement
-// prevents discovery probes from exposing a reusable credential to other ports.
+// The enabled local connector offers a connection; only the extension's own
+// confirmation window can accept it. Key agreement binds that confirmation to
+// this endpoint/request without exposing a reusable credential during discovery.
 async function requestConnectorPairing(identity, { signal, onPrepared, confirm, ports = CONNECTOR_DISCOVERY_PORTS,
   attemptTimeoutMs = 750, approvalTimeoutMs = 95_000 } = {}) {
   const browser = connectorBrowser();
@@ -35,6 +36,8 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
     identity_conflict: '连接凭据已改变，请点击「连接 CardBush」重新申请。',
     connection_limit: '浏览器连接记录已满，请先在 CardBush 设置中移除不用的连接。',
     approval_busy: '另一个连接申请正在处理，请稍候。',
+    connector_disabled: '本机 Browser Use 已关闭。请开启后再主动连接。',
+    extension_update_required: '请更新并重新加载 CardBush Browser Use 扩展后再连接。',
   }[code] || '请先启动 CardBush App 或本机 CLI，并开启 Browser Use 插件。'), { code });
   for (const port of ports) {
     if (signal?.aborted) throw problem('cancelled');
@@ -51,7 +54,7 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
       let timer = setTimeout(() => finish(null), attemptTimeoutMs);
       signal?.addEventListener('abort', cancel, { once: true });
       if (signal?.aborted) { cancel(); return; }
-      try { socket = new WebSocket(`ws://127.0.0.1:${port}/request-connection`, 'cardbush-pair-v1'); }
+      try { socket = new WebSocket(`ws://127.0.0.1:${port}/request-connection`, 'cardbush-pair-v2'); }
       catch { finish(null); return; }
       socket.onopen = () => { queue = queue.then(async () => {
         let resumeProof;
@@ -73,7 +76,7 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
           const serverKey = await crypto.subtle.importKey('raw', new Uint8Array(message.key.match(/../g).map(value => parseInt(value, 16))),
             { name: 'ECDH', namedCurve: 'P-256' }, false, []);
           const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: serverKey }, keys.privateKey, 256));
-          const context = new TextEncoder().encode(`cardbush-pair-v1:${identity.id}:${browser}:${message.key}`);
+          const context = new TextEncoder().encode(`cardbush-pair-v2:${identity.id}:${browser}:${message.key}`);
           const material = new Uint8Array(shared.length + context.length); material.set(shared); material.set(context, shared.length);
           secret = connectorHex(new Uint8Array(await crypto.subtle.digest('SHA-256', material)));
           const code = `CB2.${port}.${identity.id}.${secret}`;
@@ -84,14 +87,21 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
           if (!finished) socket.send(JSON.stringify({ type: 'pair_confirm', proof }));
         } else if (message.type === 'pair_waiting' && challengeSeen) {
           if (!finished) socket.send('{"type":"pair_ping"}');
-        } else if (message.type === 'pair_allowed' && challengeSeen && !confirmationStarted
-          && message.proof === await connectorHmac(secret, `allowed:${identity.id}:${nonce}`)) {
+        } else if (message.type === 'pair_offer' && challengeSeen && !confirmationStarted
+          && message.proof === await connectorHmac(secret, `offer:${identity.id}:${nonce}`)) {
           confirmationStarted = true; clearTimeout(timer);
           timer = setTimeout(() => finish({ error: 'connection_denied' }), 60_000);
-          // A fabricated local service can claim host consent. Only this
-          // extension's own UI may grant browser-side access on first use.
+          // Neither a connection offer nor a fabricated approval is consent.
+          // Only this extension's own UI may grant access for this attempt.
           void (async () => {
-            if (typeof confirm !== 'function' || !await confirm(consentAbort.signal)) { finish({ error: 'connection_denied' }); return; }
+            if (typeof confirm !== 'function' || !await confirm(consentAbort.signal)) {
+              if (finished) return;
+              const proof = await connectorHmac(secret, `decline:${identity.id}:${nonce}`);
+              if (finished) return;
+              socket.send(JSON.stringify({ type: 'pair_decline', proof }));
+              clearTimeout(timer); timer = setTimeout(() => finish({ error: 'connection_denied' }), 1000);
+              return;
+            }
             if (finished) return;
             await onPrepared(`CB2.${port}.${identity.id}.${secret}`, true);
             const proof = await connectorHmac(secret, `accept:${identity.id}:${nonce}`);

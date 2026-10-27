@@ -4,7 +4,7 @@ import net, { type Socket } from 'node:net';
 import path from 'node:path';
 import { createWebSocketStream, type WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
-import { ChromeConnectorWebSocket, type BrowserConnection, type ConnectorBrowser, type ConnectorPortRecovery, type BrowserApprovalOptions } from './chromeConnectorWebSocket';
+import { ChromeConnectorWebSocket, type BrowserConnection, type ConnectorBrowser, type ConnectorPortRecovery, type ConnectorConnectionAttempt, type BrowserApprovalOptions } from './chromeConnectorWebSocket';
 import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './chromeConnectorFiles';
 
 import {
@@ -43,6 +43,8 @@ export interface ChromeConnectorStatus {
   paired: boolean;
   transport: 'loopback_websocket';
   portRecovery?: ConnectorPortRecovery;
+  connectionAttempt?: ConnectorConnectionAttempt;
+  recoveryPaused?: boolean;
   defaultConnectionId: string;
   connections: Array<BrowserConnection & { connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
 }
@@ -69,7 +71,8 @@ export class ChromeConnectorBroker {
     nativeHostPath?: string; handshakeTimeoutMs?: number; maximumPeers?: number; shared?: boolean;
   } & BrowserApprovalOptions = {}) {
     this.#routesPath = path.join(connectorDirectory(userDataPath), 'routes.json');
-    this.#webSocket = new ChromeConnectorWebSocket(connectorDirectory(userDataPath), (socket, connection) => this.#acceptExtension(socket, connection), options);
+    this.#webSocket = new ChromeConnectorWebSocket(connectorDirectory(userDataPath), (socket, connection) => this.#acceptExtension(socket, connection),
+      { ...options, onConnectionAttempt: () => this.#publish() });
     const identity = createHash('sha256').update(options.shared ? fs.realpathSync.native(userDataPath).toLowerCase() : userDataPath + randomUUID()).digest('hex').slice(0, 24);
     this.endpoint = process.platform === 'win32'
       ? `\\\\.\\pipe\\cardbush-browser-connector-${identity}`
@@ -199,6 +202,7 @@ export class ChromeConnectorBroker {
       paired: this.#webSocket.paired,
       transport: 'loopback_websocket',
       ...(this.#webSocket.portRecovery ? { portRecovery: this.#webSocket.portRecovery } : {}),
+      ...(this.#webSocket.connectionAttempt ? { connectionAttempt: this.#webSocket.connectionAttempt } : {}),
       defaultConnectionId: this.#webSocket.defaultConnectionId,
       connections: this.#webSocket.connections().map(connection => ({ ...connection,
         connected: this.#extensions.has(connection.id), extensionVersion: this.#extensions.get(connection.id)?.status?.extensionVersion,
@@ -390,6 +394,7 @@ export class ChromeConnectorBroker {
         if (!id || id.length > 256 || !scopeId || scopeId.length > 512) throw new Error('A request id and CardBush session scope are required.');
         if (message.method === 'browser.list') {
           this.#reply(peer, id, { connections: this.status().connections, defaultConnectionId: this.#webSocket.defaultConnectionId,
+            ...(this.#webSocket.connectionAttempt ? { connectionAttempt: this.#webSocket.connectionAttempt } : {}),
             selectedConnectionId: this.#scopeBindings.get(scopeId) ?? null }); return;
         }
         const referenceAction = message.method === 'tabs.reveal' || message.method === 'tabs.reopen';

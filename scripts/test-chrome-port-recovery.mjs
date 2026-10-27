@@ -8,22 +8,43 @@ import vm from 'node:vm';
 import { randomBytes, webcrypto } from 'node:crypto';
 import { ChromeConnectorWebSocket } from '../dist-electron/chromeConnectorWebSocket.js';
 import { chromeConnectorDiscoveryPorts } from '../dist-electron/chromeConnectorConstants.js';
+import { approvalClient } from './helpers/browser-approval-client.mjs';
+import { pairedClient } from './helpers/chrome-paired-client.mjs';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(predicate) {
   const deadline = Date.now() + 3000;
   while (!predicate()) { assert.ok(Date.now() < deadline, 'port recovery timed out'); await delay(10); }
 }
-function fixture(t) {
+function fixture(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-port-recovery-'));
   const credential = { id: randomBytes(16).toString('hex'), secret: randomBytes(32).toString('hex'), browser: 'chrome', label: 'Existing browser' };
   const saved = { version: 3, port: 60123, credentials: [credential], defaultConnectionId: credential.id };
   const file = path.join(root, 'pairing.json');
   fs.writeFileSync(file, JSON.stringify(saved));
-  const server = new ChromeConnectorWebSocket(root, () => {});
+  const server = new ChromeConnectorWebSocket(root, client => client.send(JSON.stringify({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' })), options);
   t.after(async () => { server.stop(); await delay(20); fs.rmSync(root, { recursive: true, force: true }); });
   return { server, saved, file };
 }
+
+test('local consent migrates an old port into the fresh extension discovery range without losing existing identities', async t => {
+  let approvals = 0;
+  const f = fixture(t, { allowLocalPairing: () => true });
+  await f.server.start();
+  assert.ok(chromeConnectorDiscoveryPorts.includes(f.server.port));
+  assert.deepEqual(f.server.portRecovery, { previousPort: 60123, port: f.server.port, reason: 'discovery_migration' });
+  const credential = f.saved.credentials[0];
+  const previous = await pairedClient(`CB2.${f.server.port}.${credential.id}.${credential.secret}`);
+  t.after(() => previous.destroy());
+  // Exercise the extension's real default discovery list, not a test-supplied
+  // port that would conceal the broken first-install path.
+  const identity = { id: randomBytes(16).toString('hex') };
+  await approvalClient(0, identity, { ports: undefined, reachablePorts: [f.server.port], confirm: async () => { approvals++; return true; } });
+  assert.equal(approvals, 1);
+  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  assert.deepEqual(saved.credentials.find(item => item.id === credential.id), credential);
+  assert.ok(saved.credentials.some(item => item.id === identity.id));
+});
 
 for (const code of ['EACCES', 'EADDRINUSE']) test(`${code}: a saved endpoint recovers without replacing pairing or accumulating listen callbacks`, async t => {
   const f = fixture(t), original = http.Server.prototype.listen, attempts = [];

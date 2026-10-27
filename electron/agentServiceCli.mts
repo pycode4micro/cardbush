@@ -25,6 +25,7 @@ Usage: cardbush serve [options]
        cardbush serve --background
        cardbush serve --status
        cardbush serve --stop
+Alias: cardbush-agent [options]
 
   --background      Start the same service silently and return when ready
   --status          Show service state and connection/configuration paths
@@ -36,6 +37,9 @@ Usage: cardbush serve [options]
   --sandbox MODE    auto, required, or off; otherwise follow saved host settings
   --sandbox-network disabled|enabled (default: disabled)
   --desktop         Optional Linux desktop image only; disabled by default
+
+Sandbox auto isolates approval-mode commands; required enforces isolation
+in every permission mode. Without an override, follow host settings and the capability probe.
 
 Without --background, run in this terminal. Background mode survives closing
 the launching terminal; it does not register an OS service or boot task.

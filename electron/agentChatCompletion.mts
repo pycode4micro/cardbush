@@ -19,7 +19,7 @@ export const isChatExitCommand = (text: string) => chatExitCommands.some(command
 const commands: ChatChoice[] = [
   { value: '/model ', label: '/model', description: 'Select model and reasoning effort' },
   { value: '/settings', description: 'View and reload shared App settings' },
-  { value: '/browser ', label: '/browser', description: 'Browser status and setup; local connections reconnect automatically' },
+  { value: '/browser ', label: '/browser', description: 'Browser status, setup and bounded connection recovery' },
   { value: '/habit ', label: '/habit', description: 'Show or set user habit memory: on / off / status' },
   { value: '/prediction ', label: '/prediction', description: 'Show or set next-step predictions: on / off / status' },
   { value: '/session ', label: '/session', description: 'Choose or switch a saved session' },
@@ -73,6 +73,7 @@ export function commandSuggestions(line: string, cursor: number, models: Model[]
   const browser = /^(\s*\/browser\s+)(.*)$/.exec(before);
   if (browser) return { start: browser[1].length, end: line.length, submitOnEnter: true,
     items: [{ value: 'status', description: 'List this Runtime’s browser connections' },
+      { value: 'retry', description: 'Retry the host connector after automatic recovery has stopped' },
       { value: 'pair chrome', description: 'Chrome code for manual connection or remote Agent pairing' },
       { value: 'pair edge', description: 'Edge code for manual connection or remote Agent pairing' },
       { value: 'default ', description: 'Set the default paired connection ID' },

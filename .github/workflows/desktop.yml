@@ -44,6 +44,15 @@ jobs:
       - run: npm run runtime-tools:install
       - run: npm run build
       - run: npx tsc --noEmit -p tsconfig.json
+      - name: MCP conformance (documented legacy fixture correction)
+        run: node scripts/run-mcp-conformance.mjs --suite all
+      - name: MCP conformance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-conformance-${{ matrix.platform }}
+          path: tmp/mcp-conformance/
+          if-no-files-found: ignore
       - name: Native command sandbox boundaries
         run: node --test --test-concurrency=1 packages/bush-runtime/test/commandSandboxPolicy.test.mjs packages/bush-runtime/test/commandPermission.test.mjs packages/bush-runtime/test/commandSandboxLive.test.mjs packages/bush-runtime/test/executionSandbox.test.mjs packages/bush-runtime/test/windowsSandboxScope.test.mjs packages/bush-runtime/test/workspaceSandbox.test.mjs packages/bush-runtime/test/workspaceAuthorization.test.mjs packages/bush-runtime/test/workspaceSearch.test.mjs packages/bush-runtime/test/fileBoundaryRegression.test.mjs packages/bush-runtime/test/sandboxArchitectureReplay.test.mjs packages/bush-runtime/test/processAdmission.test.mjs
       - name: Windows regression and adversarial tests

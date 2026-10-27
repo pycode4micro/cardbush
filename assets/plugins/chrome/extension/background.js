@@ -11,10 +11,13 @@ const CONTROL_IDLE_TIMEOUT_MS = 60_000;
 const SCREENSHOT_TIMEOUT_MS = 25_000;
 const RECONNECT_ALARM = 'cardbush-native-reconnect';
 const RECONNECT_DELAY_MINUTES = 0.5;
+const MAX_CONNECTION_ATTEMPTS = 3;
 const RECONNECT_STATE_KEY = 'cardbushNativeReconnect';
 const CONNECTOR_ENABLED_KEY = 'cardbushConnectorEnabled';
 let connectorEnabled = false;
 let connectionEpoch = 0;
+let localConnectionRequestEpoch = null;
+let localConnectionRequested = false;
 let connectorPreferenceQueue = Promise.resolve();
 let connectionCleanup = Promise.resolve();
 const MANAGED_SCOPES_STORAGE_KEY = 'cardbushManagedScopes';
@@ -34,7 +37,7 @@ let browserConnectionConsent = null;
 let lastError = '';
 let connectionFailures = 0;
 let fastReconnectTimer = null;
-let fastReconnectAttempts = 0;
+let reconnectPaused = false;
 let pairingRequired = false;
 let activeScope = null;
 const attachedTabs = new Map();
@@ -61,13 +64,19 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.action === 'confirm_connection') {
-    const pending = browserConnectionConsent;
-    if (pending && message.token === pending.token && sender.tab?.id === pending.tabId
-      && sender.url?.split('#')[0] === chrome.runtime.getURL('connection.html')) {
-      pending.finish(message.allow === true); sendResponse({ ok: true });
-    } else sendResponse({ ok: false });
-    return false;
+  if (['connection_state', 'confirm_connection'].includes(message?.action)) {
+    void (async () => {
+      const pending = browserConnectionConsent;
+      if (!pending || message.token !== pending.token || sender.id !== chrome.runtime.id
+        || sender.url?.split('#')[0] !== chrome.runtime.getURL('connection.html')) return { ok: false };
+      await pending.ready;
+      if (browserConnectionConsent !== pending || !Number.isInteger(pending.tabId)
+        || sender.tab?.id !== pending.tabId || Date.now() >= pending.expiresAt) return { ok: false };
+      if (message.action === 'connection_state') return { ok: true, browser: pending.browser, expiresAt: pending.expiresAt };
+      pending.finish(message.allow === true);
+      return { ok: true };
+    })().then(sendResponse, () => sendResponse({ ok: false }));
+    return true;
   }
   void handlePopupMessage(message).then(sendResponse, (error) => {
     sendResponse({ ok: false, error: normalizedError(error) });
@@ -103,39 +112,45 @@ chrome.tabGroups.onRemoved.addListener((group) => {
   });
 });
 
-async function connectNative(manual = false) {
+async function connectNative(manual = false, requestLocal) {
   if (manual) {
     await reconnectReady;
+    const renewLocalIdentity = requestLocal === true || (localConnectionRequested && !connectorEnabled);
     const epoch = ++connectionEpoch;
     pairingController?.abort();
     await persistConnectorPreference(true, async () => {
-      if (epoch === connectionEpoch && pairingRequired) await chrome.storage.local.remove(AUTOMATIC_IDENTITY_KEY);
+      if (epoch === connectionEpoch && (pairingRequired || renewLocalIdentity)) await chrome.storage.local.remove(AUTOMATIC_IDENTITY_KEY);
     });
     if (epoch !== connectionEpoch) return;
     connectorEnabled = true;
+    // Connect retries the user's current target. A failed local enrollment
+    // must not silently fall back to an unrelated saved/remote pairing.
+    if (requestLocal !== undefined) localConnectionRequested = requestLocal;
     connectionFailures = 0;
-    fastReconnectAttempts = 0;
+    reconnectPaused = false;
     pairingRequired = false;
     void persistReconnectState();
   }
-  if (!connectorEnabled || pairingRequired) return;
+  if (!connectorEnabled || pairingRequired || reconnectPaused) return;
   if (nativePort || connectingEpoch === connectionEpoch) return;
   const epoch = connectionEpoch;
   connectingEpoch = epoch;
+  if (localConnectionRequested) localConnectionRequestEpoch = epoch;
   lastError = '';
   clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
   try {
+    await chrome.alarms.clear(RECONNECT_ALARM);
     await connectionCleanup;
     const saved = await chrome.storage.local.get([PAIRING_KEY]);
     if (epoch !== connectionEpoch || !connectorEnabled || nativePort || pairingRequired) return;
     let pairing;
-    if (saved[PAIRING_KEY]) {
+    if (saved[PAIRING_KEY] && !localConnectionRequested) {
       try { pairing = parseConnectorPairing(saved[PAIRING_KEY]); }
       catch (error) { pairingRequired = true; throw error; }
     }
     else pairing = await automaticConnectorPairing(epoch);
     if (epoch !== connectionEpoch || !connectorEnabled || nativePort) return;
-    void chrome.alarms.create(RECONNECT_ALARM, { delayInMinutes: RECONNECT_DELAY_MINUTES, periodInMinutes: RECONNECT_DELAY_MINUTES });
+    void chrome.alarms.create(RECONNECT_ALARM, { delayInMinutes: RECONNECT_DELAY_MINUTES });
     const port = createConnectorPort(pairing);
     nativePort = port;
     nativeReady = false;
@@ -156,7 +171,7 @@ async function connectNative(manual = false) {
         nativeReady = true;
         lastError = '';
         connectionFailures = 0;
-        fastReconnectAttempts = 0;
+        reconnectPaused = false;
         void chrome.alarms.clear(RECONNECT_ALARM);
         pairingRequired = false;
         void persistConnectorEndpoint(pairing, port, epoch).catch(() => {
@@ -212,6 +227,7 @@ async function connectNative(manual = false) {
     scheduleReconnect();
   } finally {
     if (connectingEpoch === epoch) connectingEpoch = null;
+    if (localConnectionRequestEpoch === epoch) localConnectionRequestEpoch = null;
   }
 }
 
@@ -249,7 +265,10 @@ async function automaticConnectorPairing(epoch) {
   const pairing = parseConnectorPairing(result?.code);
   // A late approval cannot undo an explicit disconnect or manual pairing.
   const operation = connectorPreferenceQueue.catch(() => {}).then(async () => {
-    if (epoch === connectionEpoch && connectorEnabled) await chrome.storage.local.set({ [PAIRING_KEY]: result.code });
+    if (epoch === connectionEpoch && connectorEnabled) {
+      await chrome.storage.local.set({ [PAIRING_KEY]: result.code });
+      localConnectionRequested = false;
+    }
   });
   connectorPreferenceQueue = operation;
   await operation;
@@ -259,47 +278,54 @@ async function automaticConnectorPairing(epoch) {
 function confirmLocalBrowserConnection(signal) {
   if (signal.aborted) return Promise.resolve(false);
   return new Promise(resolve => {
+    browserConnectionConsent?.finish(false);
     const token = connectorHex(crypto.getRandomValues(new Uint8Array(24)));
+    let markReady;
+    const ready = new Promise(resolveReady => { markReady = resolveReady; });
+    const expiresAt = Date.now() + 60_000;
     let windowId, finished = false;
     const removed = id => { if (id === windowId) finish(false); };
     const cancel = () => finish(false);
     const timer = setTimeout(cancel, 60_000);
     const finish = allowed => {
-      if (finished) return; finished = true; clearTimeout(timer); signal.removeEventListener('abort', cancel);
+      if (finished) return; finished = true; markReady(); clearTimeout(timer); signal.removeEventListener('abort', cancel);
       chrome.windows.onRemoved.removeListener(removed);
       if (browserConnectionConsent?.token === token) browserConnectionConsent = null;
       if (windowId !== undefined) void chrome.windows.remove(windowId).catch(() => {});
       resolve(allowed);
     };
-    browserConnectionConsent = { token, tabId: null, finish };
+    browserConnectionConsent = { token, tabId: null, finish, ready, expiresAt, browser: connectorBrowser() };
     signal.addEventListener('abort', cancel, { once: true });
     chrome.windows.onRemoved.addListener(removed);
-    void chrome.windows.create({ url: chrome.runtime.getURL(`connection.html#${token}`), type: 'popup', width: 460, height: 360, focused: true })
+    void chrome.windows.create({ url: chrome.runtime.getURL(`connection.html#${token}`), type: 'popup', width: 480, height: 470, focused: true })
       .then(async window => {
         windowId = window.id;
         if (finished) { if (windowId !== undefined) await chrome.windows.remove(windowId); return; }
         const tabs = window.tabs ?? await chrome.tabs.query({ windowId });
+        if (!Number.isInteger(tabs[0]?.id)) { cancel(); return; }
         if (browserConnectionConsent?.token === token) browserConnectionConsent.tabId = tabs[0]?.id;
+        markReady();
       }).catch(cancel);
   });
 }
 
 function scheduleReconnect() {
   clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
-  if (!connectorEnabled || pairingRequired) { void chrome.alarms.clear(RECONNECT_ALARM); return; }
-  // An offline app is normal. Bound retry frequency, not the lifetime of consent.
-  connectionFailures = Math.min(connectionFailures + 1, 4);
+  if (!connectorEnabled || pairingRequired) {
+    void persistReconnectState();
+    void chrome.alarms.clear(RECONNECT_ALARM); return;
+  }
+  connectionFailures = Math.min(connectionFailures + 1, MAX_CONNECTION_ATTEMPTS);
+  reconnectPaused = connectionFailures >= MAX_CONNECTION_ATTEMPTS;
   void persistReconnectState();
+  if (reconnectPaused) { void chrome.alarms.clear(RECONNECT_ALARM); return; }
   void chrome.alarms.create(RECONNECT_ALARM, {
     delayInMinutes: RECONNECT_DELAY_MINUTES,
-    periodInMinutes: RECONNECT_DELAY_MINUTES,
   });
   // Timers make a quick app restart responsive while the worker is alive. The
   // persisted alarm remains armed if Chrome suspends the worker or a timer.
-  if (fastReconnectAttempts < 3) {
-    const delayMs = 1000 * 2 ** fastReconnectAttempts++;
-    fastReconnectTimer = setTimeout(() => { fastReconnectTimer = null; void connectNative(); }, delayMs);
-  }
+  const delayMs = 1000 * 2 ** (connectionFailures - 1);
+  fastReconnectTimer = setTimeout(() => { fastReconnectTimer = null; void connectNative(); }, delayMs);
 }
 
 function suspendDisconnectedControl() {
@@ -312,16 +338,24 @@ function suspendDisconnectedControl() {
 }
 
 async function restoreReconnectState() {
-  const preference = await chrome.storage.local.get([CONNECTOR_ENABLED_KEY, PAIRING_KEY]);
+  const preference = await chrome.storage.local.get([CONNECTOR_ENABLED_KEY, PAIRING_KEY, RECONNECT_STATE_KEY]);
   const saved = await chrome.storage.session.get([RECONNECT_STATE_KEY]);
   // The user's explicit enable choice survives both browser and worker restarts.
-  // Session storage only holds transient retry state, never the enable authority.
+  // Exhausted retry budgets survive worker and browser restarts. Only an
+  // explicit Connect or local authorization request starts another attempt set.
   connectorEnabled = preference[CONNECTOR_ENABLED_KEY] !== false;
   pairingRequired = !connectorEnabled && !preference[PAIRING_KEY];
-  if (!connectorEnabled) { await chrome.alarms.clear(RECONNECT_ALARM); return; }
-  const state = saved[RECONNECT_STATE_KEY];
+  const state = preference[RECONNECT_STATE_KEY] ?? saved[RECONNECT_STATE_KEY];
+  localConnectionRequested = state?.localConnectionRequested === true;
+  if (!connectorEnabled) {
+    if (typeof state?.lastError === 'string') lastError = state.lastError.slice(0, 1600);
+    await chrome.alarms.clear(RECONNECT_ALARM); return;
+  }
   if (!state || !Number.isInteger(state.failures) || state.failures < 0) return;
-  connectionFailures = Math.min(4, state.failures);
+  connectionFailures = Math.min(MAX_CONNECTION_ATTEMPTS, state.failures);
+  reconnectPaused = connectionFailures >= MAX_CONNECTION_ATTEMPTS;
+  if (typeof state.lastError === 'string') lastError = state.lastError.slice(0, 1600);
+  if (reconnectPaused) await chrome.alarms.clear(RECONNECT_ALARM);
 }
 
 async function disableConnector(forgetPairing = false) {
@@ -330,7 +364,6 @@ async function disableConnector(forgetPairing = false) {
   connectionEpoch++;
   pairingController?.abort();
   clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
-  fastReconnectAttempts = 0;
   nativeReady = false;
   const port = nativePort;
   nativePort = null;
@@ -380,9 +413,15 @@ function persistConnectorEndpoint(pairing, port, epoch) {
 }
 
 function persistReconnectState() {
-  return chrome.storage.session.set({ [RECONNECT_STATE_KEY]: {
-    failures: connectionFailures, lastError: lastError.slice(0, 1600),
-  } });
+  const epoch = connectionEpoch;
+  const state = {
+    failures: connectionFailures, lastError: lastError.slice(0, 1600), localConnectionRequested,
+  };
+  const operation = connectorPreferenceQueue.catch(() => {}).then(async () => {
+    if (epoch === connectionEpoch) await chrome.storage.local.set({ [RECONNECT_STATE_KEY]: state });
+  });
+  connectorPreferenceQueue = operation;
+  return operation;
 }
 
 async function handleNativeRequest(message) {
@@ -548,12 +587,21 @@ async function handlePopupMessage(message) {
     parseConnectorPairing(code);
     await disableConnector();
     await chrome.storage.local.set({ [PAIRING_KEY]: code });
-    await connectNative(true);
+    await connectNative(true, false);
     return { ok: true, ...(await popupState()) };
   }
   if (action === 'reconnect') {
-    // Keep popup status and Disable usable while the system dialog is open.
+    // Keep popup status and Disable usable while the confirmation is open.
     void connectNative(true).catch(error => { lastError = errorMessage(error); });
+    return { ok: true, ...(await popupState(message?.scopeId)) };
+  }
+  if (action === 'request_local_connection') {
+    if (nativeReady) throw connectorError('browser_already_connected', '当前连接正常，无需重新申请。');
+    // Only this explicit user action may replace the target of a saved pairing.
+    // Keep its credential until browser consent and the broker commit succeed.
+    // Background retries must never reset identity or silently switch hosts.
+    await disableConnector();
+    void connectNative(true, true).catch(error => { lastError = errorMessage(error); });
     return { ok: true, ...(await popupState(message?.scopeId)) };
   }
   if (action === 'disable_connector') {
@@ -1047,6 +1095,9 @@ async function popupState(preferredScopeId = '') {
     nativeConnected: nativePort != null && nativeReady,
     hasPairing,
     pairingRequired,
+    localConnectionRequested,
+    requestingLocalConnection: localConnectionRequestEpoch === connectionEpoch,
+    reconnectPaused,
     allowAllSites: stored.allowAllSites === true,
     allowedSiteCount: allowedOrigins.length,
     nativeConnecting: (nativePort != null || connectingEpoch === connectionEpoch) && !nativeReady && !lastError,

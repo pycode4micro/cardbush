@@ -26,6 +26,8 @@ docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml
 
 ## 构建与启动
 
+Agent 与 CLI 可通过同一个 [npm 发布包](NPM_AGENT.md) 安装，得到 `cardbush` 和 `cardbush-agent` 两个命令；`cardbush serve --data-dir ...` 启动服务，`cardbush` 提供终端对话。部署更新会一起更新服务与 CLI。npm 包不包含 Electron，模型可通过 JSON 配置文件接入，无需安装桌面 App；App 管理和同步配置仍是可选入口。下面的构建流程适用于源码部署。
+
 需要 Node.js 24 LTS、npm 10 及以上版本，与 `.nvmrc`、CI 和 Agent Docker 镜像保持一致；Node.js 25 不在支持范围内。先在本机版本管理器中选择 Node.js 24，再在仓库根目录安装依赖、构建并启动：
 
 ```sh
