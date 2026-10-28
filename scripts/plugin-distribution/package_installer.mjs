@@ -8,7 +8,9 @@ const { getMakeNsisPath } = require('app-builder-lib/out/toolsets/windows.js');
 const source = path.resolve(process.argv[2]);
 const output = path.resolve(process.argv[3]);
 const report = JSON.parse(await readFile(path.join(path.dirname(source), 'plugin-verification.json'), 'utf8'));
+const host = JSON.parse(await readFile(path.join(path.dirname(source), 'plugin-host-compatibility.json'), 'utf8'));
 const names = await readdir(source);
+assert.ok(host.passed && host.plugins === names.length, 'CardBush must accept every packaged plugin manifest');
 assert.equal(report.results.length, names.length, 'Every plugin needs a validation receipt');
 assert.ok(report.results.every(x => x.passed), 'Do not package failed plugins');
 assert.ok(names.every(name => /^[a-z0-9-]+$/.test(name)));
@@ -17,8 +19,8 @@ const script = path.join(path.dirname(output), 'plugins-installer.nsi');
 const lines = [
   'Unicode true', '!include "MUI2.nsh"', 'RequestExecutionLevel user',
   'Name "CardBush Plugins - Internal Unsigned"', `OutFile "${quote(output)}"`,
-  'InstallDir "$APPDATA\\cardbush\\plugins"', 'SetCompressor /SOLID lzma',
-  'SetCompressorDictSize 64', 'ShowInstDetails show',
+  'InstallDir "$APPDATA\\cardbush\\plugins"', 'SetCompressor /SOLID zlib',
+  'ShowInstDetails show',
   '!insertmacro MUI_PAGE_WELCOME', '!insertmacro MUI_PAGE_DIRECTORY',
   '!insertmacro MUI_PAGE_INSTFILES', '!insertmacro MUI_PAGE_FINISH',
   '!insertmacro MUI_LANGUAGE "SimpChinese"', '!insertmacro MUI_LANGUAGE "English"',

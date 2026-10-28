@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import lan_client
 from lan_gateway import BoundedServer, make_handler, load_routes
-from build_plugins import private_file, copy_source
+from build_plugins import private_file, copy_source, build
 
 class DistributionTests(unittest.TestCase):
     def test_private_files_not_distributed(self):
@@ -35,6 +35,25 @@ class DistributionTests(unittest.TestCase):
             os.symlink(outside,source/'linked',target_is_directory=True)
             with self.assertRaises(ValueError): copy_source(source,root/'output')
             self.assertFalse((root/'output/linked/private.txt').exists())
+
+    def test_portable_manifest_preserves_host_protocol_and_existing_runtime(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name); source=root/'source'; source.mkdir()
+            (source/'runtime').mkdir();(source/'runtime/app.py').write_text('application source')
+            schema='https://agent-plugins.org/schemas/1.0.0/mcp.schema.json'
+            (source/'mcp.json').write_text(json.dumps({'$schema':schema,'mcpServers':{'example':{'type':'stdio','command':'node'}}}))
+            executable=root/'fixture.exe';executable.write_bytes(b'fixture; never executed')
+            build({'output':str(root/'plugins'),'launcher':str(executable),'node':str(executable),
+                   'plugins':[{'id':'example','source':str(source),'kind':'node','server':'example','args':['server.cjs']}]})
+            target=root/'plugins/example'
+            portable=json.loads((target/'mcp.json').read_text())
+            codex=json.loads((target/'.mcp.json').read_text())
+            self.assertEqual(portable['$schema'],schema)
+            self.assertEqual(portable['mcpServers'],codex['mcpServers'])
+            self.assertEqual(portable['mcpServers']['example']['type'],'stdio')
+            self.assertEqual(portable['mcpServers']['example']['command'],'${PLUGIN_ROOT}/example.exe')
+            self.assertEqual((target/'runtime/app.py').read_text(),'application source')
+            self.assertTrue((target/'portable-runtime/node.exe').is_file())
 
     def test_http_client_rejects_public_plaintext_and_redirects(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -61,11 +61,13 @@ def build(plan):
             config = {'executable': 'portable-runtime/' + ('python.exe' if kind == 'python' else 'node.exe'),
                       'args': item['args'], 'environment': item.get('environment', {})}
             (target / 'portable-runtime.json').write_text(json.dumps(config, indent=2), encoding='utf-8')
-            mcp = {'mcpServers': {item['server']: {'command': '${PLUGIN_ROOT}/' + item['id'] + '.exe', 'args': []}}}
+            mcp = {'mcpServers': {item['server']: {'type': 'stdio', 'command': '${PLUGIN_ROOT}/' + item['id'] + '.exe', 'args': []}}}
             (target / '.mcp.json').write_text(json.dumps(mcp, indent=2), encoding='utf-8')
             # Remove alternate development launch configurations from the distribution.
             for name in ('mcp.json', 'mcp.posix.json'):
-                if (target / name).exists(): (target / name).write_text(json.dumps(mcp, indent=2), encoding='utf-8')
+                if (target / name).exists():
+                    portable = {'$schema': 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json', **mcp}
+                    (target / name).write_text(json.dumps(portable, indent=2), encoding='utf-8')
         report = {'id': item['id'], 'kind': kind, 'dependencies': dependencies}
         (target / 'portable-build.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
         reports.append(report)
