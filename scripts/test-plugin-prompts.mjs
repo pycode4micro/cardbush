@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import * as i18n from '@cardbush/platform/i18n';
 
 const source = readFileSync('src/features/plugins/pluginPrompts.ts', 'utf8');
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
 const exports = {};
-new Function('exports', outputText)(exports);
+new Function('exports', 'require', outputText)(exports, specifier => {
+  if (specifier === '../../i18n') return i18n;
+  throw new Error(`Unexpected source dependency: ${specifier}`);
+});
 const { pluginReference, pluginPrompt, pluginPromptParts, pluginTroubleshootingPrompt, pluginReferenceFromLink, findReferencedPlugin } = exports;
 const plugin = { id: 'example.tools', name: '同名插件', version: '1.2.3', manifestPath: 'C:\\Plugin Packages\\example\\.codex-plugin\\plugin.json', config: { env: { API_KEY: 'do-not-send-config' } } };
 const other = { ...plugin, id: 'other', manifestPath: 'C:/other/plugin.json' };

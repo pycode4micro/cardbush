@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { waitForFileViewerImages, waitForFileViewerNextPaint, type FileRenderExportAdapter } from '@file-viewer/core';
 
 // PNGs capture the real slide DOM, not a second decoder or embedded thumbnail.
@@ -6,7 +7,7 @@ export function presentationSnapshot(adapter: FileRenderExportAdapter) {
   let slides: HTMLElement[] = [];
   return {
     async prepare() {
-      if (!adapter.toHtml) throw Error('Presentation snapshot is unavailable.');
+      if (!adapter.toHtml) throw Error(uiText()('presentationSnapshot.presentation_snapshot_is_unavailable'));
       await adapter.beforeSnapshot?.();
       const html = await adapter.toHtml({ mode: 'export', title: document.title });
       stage = document.createElement('div');
@@ -14,7 +15,7 @@ export function presentationSnapshot(adapter: FileRenderExportAdapter) {
       stage.innerHTML = html;
       document.body.append(stage);
       slides = Array.from(stage.querySelectorAll<HTMLElement>('.slide'));
-      if (!slides.length) throw Error('No rendered slides to export.');
+      if (!slides.length) throw Error(uiText()('presentationSnapshot.no_rendered_slides_to_export'));
       document.documentElement.classList.add('cardbush-exporting-presentation');
       for (const node of Array.from(stage.querySelectorAll<HTMLElement>('.flyfish-pptx-scale-box, .flyfish-pptx-content, .flyfish-pptx'))) {
         node.style.transform = 'none'; node.style.margin = '0'; node.style.padding = '0';
@@ -30,17 +31,17 @@ export function presentationSnapshot(adapter: FileRenderExportAdapter) {
         const slot = slide.closest<HTMLElement>('.flyfish-pptx-slide-slot');
         const visible = index === page - 1;
         if (slot) {
-          slot.style.display = visible ? 'block' : 'none';
+          slot.dataset.exportVisible = String(visible);
           slot.style.position = 'absolute'; slot.style.inset = '0'; slot.style.margin = '0';
         }
-        slide.style.display = visible ? 'block' : 'none';
+        slide.dataset.exportVisible = String(visible);
       });
       const slide = slides[page - 1], style = getComputedStyle(slide);
       if (slide.querySelector('[data-cardbush-chart-state="failed"], [data-file-viewer-missing-capability="pptx-charts"]')) {
         throw Error(`PPTX chart preview failed on slide ${page}. No complete visual verification is available; the source presentation is unchanged.`);
       }
       const nativeWidth = parseFloat(style.width), nativeHeight = parseFloat(style.height);
-      if (!(nativeWidth > 0 && nativeHeight > 0)) throw Error('Invalid slide dimensions.');
+      if (!(nativeWidth > 0 && nativeHeight > 0)) throw Error(uiText()('presentationSnapshot.invalid_slide_dimensions'));
       const scale = width / nativeWidth, height = Math.round(nativeHeight * scale);
       stage.style.width = `${width}px`; stage.style.height = `${height}px`;
       slide.style.position = 'absolute'; slide.style.left = '0'; slide.style.top = '0';

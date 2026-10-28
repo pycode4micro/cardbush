@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useId, useRef, useState } from 'react';
 import { MAX_SEARCH_RESULT_LIMIT, searchResultLimitSchema } from '@cardbush/bush-protocol';
 import type { AppLanguage } from '../../types';
@@ -17,13 +18,13 @@ export function PluginSearchSettings({ language, value, busy, onSave }: {
     previousValue.current = value;
     setDraft(current => current === String(previous) ? String(value) : current);
   }, [value]);
-  const zh = language === 'zh';
+
   return <form className="plugin-search-settings" noValidate onSubmit={async event => {
     event.preventDefault();
     if (busy) return;
     const parsed = searchResultLimitSchema.safeParse(draft.trim() ? Number(draft) : NaN);
     if (!parsed.success) {
-      setError(zh ? `请输入 1–${MAX_SEARCH_RESULT_LIMIT} 之间的整数。` : `Enter an integer from 1 to ${MAX_SEARCH_RESULT_LIMIT}.`);
+      setError(uiText(language)('pluginSearchSettings.enterAnIntegerFrom1To', { MAX_SEARCH_RESULT_LIMIT }));
       return;
     }
     setError('');
@@ -31,17 +32,15 @@ export function PluginSearchSettings({ language, value, busy, onSave }: {
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
   }}>
     <div className="plugin-search-setting-copy">
-      <label htmlFor={id}>{zh ? '默认搜索结果数' : 'Default search results'}</label>
-      <p id={`${id}-help`}>{zh
-        ? `Skill 与 MCP 工具搜索共用，可设置 1–${MAX_SEARCH_RESULT_LIMIT} 条；单次搜索可另行指定。`
-        : `Shared by Skill and MCP tool searches, from 1 to ${MAX_SEARCH_RESULT_LIMIT}. Individual searches can override this.`}</p>
+      <label htmlFor={id}>{uiText(language)('pluginSearchSettings.defaultSearchResults')}</label>
+      <p id={`${id}-help`}>{uiText(language)('pluginSearchSettings.sharedBySkillAndMcpToolSearches', { MAX_SEARCH_RESULT_LIMIT })}</p>
     </div>
     <div className="plugin-search-setting-controls">
       <input id={id} type="number" min={1} max={MAX_SEARCH_RESULT_LIMIT} step={1} value={draft} disabled={busy}
         aria-describedby={`${id}-help${error ? ` ${id}-error` : ''}`} aria-invalid={Boolean(error)}
         onChange={event => { setDraft(event.target.value); setError(''); }}/>
       <button className="plugin-back" type="submit" disabled={busy || draft === String(value)}>
-        {zh ? '保存' : 'Save'}
+        {uiText(language)('appCenter.save')}
       </button>
     </div>
     {error && <p id={`${id}-error`} className="plugin-market-error" role="alert">{error}</p>}

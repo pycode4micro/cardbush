@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { showUiError } from '../shared/showUiError';
 
@@ -13,7 +14,7 @@ export class AppErrorBoundary extends Component<
 
   static getDerivedStateFromError(error: unknown): AppErrorBoundaryState {
     return {
-      message: (error instanceof Error ? error.message : String(error)) || '未知渲染错误',
+      message: (error instanceof Error ? error.message : String(error)) || uiText()('appErrorBoundary.unknown_rendering_error'),
     };
   }
 
@@ -24,7 +25,7 @@ export class AppErrorBoundary extends Component<
       error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       componentStack: info.componentStack,
     }).catch(() => undefined);
-    void showUiError('CardBush 界面异常', `${this.state.message}\n应用未自动重新加载。请关闭窗口后手动重新打开。`);
+    void showUiError(uiText()('appErrorBoundary.cardbush_interface_error'), uiText()('appErrorBoundary.value1_the_app_was_not_reloaded_automatically', { value1: this.state.message }));
   }
 
   render() {
@@ -34,10 +35,10 @@ export class AppErrorBoundary extends Component<
     return (
       <div className="app theme-dark">
         <div className="render-failure-shell">
-          <section className="render-failure-card" role="alert" aria-label="CardBush 界面异常">
-            <h1>CardBush 渲染异常</h1>
+          <section className="render-failure-card" role="alert" aria-label={uiText()('appErrorBoundary.cardbush_interface_error')}>
+            <h1>{uiText()('appErrorBoundary.cardbush_rendering_error')}</h1>
             <p>{this.state.message}</p>
-            <p>应用未自动重新加载。请关闭窗口后手动重新打开。</p>
+            <p>{uiText()('appErrorBoundary.the_app_was_not_reloaded_automatically_close')}</p>
           </section>
         </div>
       </div>

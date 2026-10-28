@@ -23,21 +23,22 @@ app.whenReady().then(async()=>{
       import {ComposerPortalContext} from ${file('src/features/composer/ComposerPortalContext.ts')};
       import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
       window.fixture={cancelled:0,sent:[],frames:0,started:0,closed:0,captures:0,transcriptions:0,tracks:[]};
+      document.documentElement.lang='zh';
       const getMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-      navigator.mediaDevices.getUserMedia=async options=>{fixture.captures++;const stream=await getMedia(options);fixture.tracks.push(...stream.getTracks());return stream;};
+      navigator.mediaDevices.getUserMedia=async options=>{fixture.captures++;if(fixture.failCapture)throw new DOMException('fixture missing microphone','NotFoundError');const stream=await getMedia(options);fixture.tracks.push(...stream.getTracks());return stream;};
       const settings=${JSON.stringify({...defaultVoiceSettings,engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,speakerLockEnabled:false})};
       window.cardbushDesktop={pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),voice:{settings:async()=>settings,setCallActive:async()=>{},cancel:async()=>{},
         transcribe:async()=>{fixture.transcriptions++;if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);if(fixture.failTranscription){fixture.failTranscription=false;throw Error('fixture transcription failed');}return{text:'这是录音测试',speakerVerified:true};},speak:async()=>{},onAudio:()=>()=>{},
         realtime:{settings:async()=>({mode:'realtime',hasApiKey:true}),start:async()=>{fixture.started++;if(fixture.failStart)throw Error('fixture connection failed');},audio:async()=>fixture.frames++,control:async()=>{},playback:async()=>{},close:async()=>fixture.closed++,onEvent:()=>()=>{}}}};
       fixture.state=()=>applicationVoiceSession().snapshot();
       const noop=()=>{},controls={selectedModel:'fixture',availableModels:[],onModelChange:noop,onConfigureModels:noop,referencePlanMode:'off',onReferencePlanModeChange:noop,permissionMode:'task_free',onPermissionModeChange:noop,subagentPermissionRouting:'inherit',onSubagentPermissionRoutingChange:noop,reasoningLevel:'medium',reasoningLevels:['medium'],reasoningLevelAvailable:false,onReasoningLevelChange:noop,skills:[],disabledSkillNames:new Set(),onToggleSkill:noop};
-      function Fixture(){const [style,setStyle]=useState('standard'),[draft,setDraft]=useState(''),[view,setView]=useState('chat'),[theme,setTheme]=useState('dark'),[sending,setSending]=useState(false),[portal,setPortal]=useState(false),[portalTarget,setPortalTarget]=useState(null);
-        fixture.sending=setSending;fixture.draft=setDraft;fixture.style=setStyle;fixture.view=setView;fixture.theme=setTheme;fixture.portal=setPortal;
+      function Fixture(){const [style,setStyle]=useState('standard'),[draft,setDraft]=useState(''),[view,setView]=useState('chat'),[theme,setTheme]=useState('dark'),[sending,setSending]=useState(false),[portal,setPortal]=useState(false),[portalTarget,setPortalTarget]=useState(null),[language,setLanguage]=useState('zh');
+        fixture.sending=setSending;fixture.draft=setDraft;fixture.style=setStyle;fixture.view=setView;fixture.theme=setTheme;fixture.portal=setPortal;fixture.language=value=>{document.documentElement.lang=value;setLanguage(value);};
         const target={environment:'local',sessionId:view,messages:[],sending,...(view==='assistant'?{assistant:{name:'assistant',persona:''}}:{}),send:async text=>{if(fixture.failSend){fixture.failSend=false;throw Error('fixture send failed');}fixture.sent.push(text);return true;}};
-        return <div className={'app theme-'+theme} style={{minHeight:'100vh',padding:'90px 20px'}}><ApplicationVoiceHost language="zh">
-          <div style={{width:'min(704px,100%)',margin:'0 auto'}}><VoiceConversation language="zh" target={target} active={view!=='hidden'}>
+        return <div className={'app theme-'+theme} style={{minHeight:'100vh',padding:'90px 20px'}}><ApplicationVoiceHost language={language}>
+          <div style={{width:'min(704px,100%)',margin:'0 auto'}}><VoiceConversation language={language} target={target} active={view!=='hidden'}>
             <ComposerPresentationContext.Provider value={{style,preservePermissions:true}}><ComposerPortalContext.Provider value={portal?portalTarget:null}>
-              <Composer {...controls} compact language="zh" draft={draft} onDraftChange={setDraft} sending={sending} referencePlanAvailable={false} onSend={target.send} onCancel={async()=>{fixture.cancelled++;}}/>
+              <Composer {...controls} compact language={language} draft={draft} onDraftChange={setDraft} sending={sending} referencePlanAvailable={false} onSend={target.send} onCancel={async()=>{fixture.cancelled++;}}/>
             </ComposerPortalContext.Provider></ComposerPresentationContext.Provider>
           </VoiceConversation></div>
           <aside ref={setPortalTarget} className="inspector-quick-input" style={{width:'min(450px,100%)',margin:'0 auto'}}/>
@@ -67,12 +68,56 @@ app.whenReady().then(async()=>{
   const screenshot=async name=>{win.webContents.invalidate();await pause(300);fs.writeFileSync(path.join(directory,name+'.png'),(await win.webContents.capturePage()).toPNG());};
   try{
     await win.loadFile(path.join(directory,'index.html'));await until('document.querySelector(".voice-dictation-button")');
+    await fill('切换会话时不能误发送的草稿');
+    await until('document.querySelector(".composer-surface textarea").value === "切换会话时不能误发送的草稿"');
     const rect=selector=>read('(()=>{const r=document.querySelector('+JSON.stringify(selector)+').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};})()');
+    const unavailable=async()=>{
+      await read(`fixture.failedStartHighlighted=false;fixture.buttonObserver=new MutationObserver(records=>{fixture.failedStartHighlighted ||= records.some(record=>record.oldValue?.includes('is-active')||record.target.classList.contains('is-active'));});fixture.buttonObserver.observe(document.querySelector('.voice-dictation-button'),{attributes:true,attributeFilter:['class'],attributeOldValue:true});void 0`);
+      await click('.voice-dictation-button');await until('document.querySelector(".voice-dictation-error")');
+      await read('fixture.buttonObserver.disconnect();void 0');
+      assert.equal(await read('fixture.failedStartHighlighted'),false,'a failed device acquisition must never flash the recording highlight');
+      assert.equal(await read('fixture.state().mode'),'idle','a missing microphone must release dictation ownership');
+      assert.equal(await read('document.querySelector(".voice-dictation-button").getAttribute("aria-pressed")'),'false');
+      assert.equal(await read('document.querySelector(".voice-dictation-button").classList.contains("is-active")'),false);
+    };
+    for(const [style,theme,language] of [['standard','dark','zh'],['simple','light','en']]){
+      await read(`fixture.style(${JSON.stringify(style)});fixture.theme(${JSON.stringify(theme)});fixture.language(${JSON.stringify(language)});fixture.failCapture=true;void 0`);await pause(200);
+      const mic=await rect('.voice-dictation-button'),icon=await rect('.voice-dictation-button > svg');
+      const position={x:Math.round(mic.x+mic.width/2),y:Math.round(mic.y+mic.height/2)};
+      win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...position});await pause(150);
+      assert.deepEqual(await rect('.voice-dictation-button > svg'),icon,'pressing must not scale or shift the microphone icon');
+      win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...position});
+      await until('document.querySelector(".voice-dictation-error")');
+      assert.equal(await read('fixture.state().mode'),'idle');
+      assert.deepEqual(await rect('.voice-dictation-button'),mic,'failure notice must not change toolbar geometry');
+      const message=await read('document.querySelector(".voice-dictation-error").textContent');
+      assert.match(message,language==='zh'?/所选麦克风不可用/:/selected microphone is unavailable/);
+      await screenshot(style+'-dictation-unavailable');
+      win.setSize(360,600);await until('innerWidth===360');
+      assert.ok(await read('(()=>{const notice=document.querySelector(".voice-dictation-error").getBoundingClientRect();return notice.left>=0&&notice.right<=innerWidth&&document.documentElement.scrollWidth<=innerWidth;})()'),'translated device errors fit a narrow composer');
+      await screenshot(style+'-dictation-unavailable-narrow');win.setSize(900,600);await until('innerWidth===900');
+      await click('.voice-dictation-error-close');await until('!document.querySelector(".voice-dictation-error")');
+      await unavailable();
+      await read('document.querySelector(".composer-surface textarea").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}));void 0');
+      await until('!document.querySelector(".voice-dictation-error")');
+      await unavailable();
+      await read('document.querySelector(".voice-dictation-button").focus();void 0');
+      win.webContents.sendInputEvent({type:'keyDown',keyCode:'ESCAPE'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'ESCAPE'});
+      await until('!document.querySelector(".voice-dictation-error")');
+      await unavailable();await pause(5200);
+      assert.equal(await read('!!document.querySelector(".voice-dictation-error")'),false,'failure notice expires without another click');
+      await unavailable();await read('fixture.view("hidden");void 0');await pause(100);await read('fixture.view("chat");void 0');await pause(100);
+      assert.equal(await read('!!document.querySelector(".voice-dictation-error")'),false,'leaving a failed attempt clears the stale warning');
+      assert.equal(await read('fixture.cancelled'),0,'dismissing microphone errors never cancels the Agent');
+      assert.equal(await read('fixture.sent.length'),0,'retrying a failed device never sends the text draft');
+    }
+    await read('fixture.failCapture=false;fixture.style("standard");fixture.theme("dark");fixture.language("zh");void 0');await pause(200);
     const point=await rect('.voice-call-trigger');
     win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,x:Math.round(point.x+14),y:Math.round(point.y+14)});await pause(100);
     await read('fixture.view("hidden");void 0');await pause(600);
     win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:Math.round(point.x+14),y:Math.round(point.y+14)});
     assert.equal(await read('fixture.state().mode'),'idle','leaving during a hold must not start a call');
+    assert.deepEqual(await read('fixture.sent'),[],'releasing an interrupted hold cannot submit the text draft');
     await read('fixture.view("chat");void 0');await pause(100);
     for(const [index,style] of ['standard','simple'].entries()){
       await read('fixture.style('+JSON.stringify(style)+');fixture.view('+JSON.stringify(index?'assistant':'chat')+');fixture.draft("");void 0');await pause(150);
@@ -94,6 +139,8 @@ app.whenReady().then(async()=>{
       await click('.voice-dictation-button');await until('typeof fixture.releaseTranscription==="function"');
       await fill('识别期间继续编辑');assert.equal(await read('fixture.tracks.every(t=>t.readyState==="ended")'),true);
       await read('fixture.holdTranscription=false;fixture.releaseTranscription();void 0');await until('document.querySelector(".voice-dictation-error")');
+      await click('.voice-dictation-error-close');await until('!document.querySelector(".voice-dictation-error")');
+      assert.equal(await read('fixture.state().retryAvailable'),true,'dismissing a notice preserves the recording for ASR retry');
       const captures=await read('fixture.captures');
       await click('.voice-dictation-button');await until('fixture.state().mode==="idle"');
       await until('document.querySelector(".composer-surface textarea").value==="识别期间继续编辑 这是录音测试"');
@@ -153,7 +200,7 @@ app.whenReady().then(async()=>{
     assert.ok(await read('document.querySelector(".voice-call-error").textContent.includes("fixture connection failed")'));
     await click('.voice-composer-end');await until('fixture.state().mode==="idle"');
     assert.ok(await read('fixture.tracks.every(t=>t.readyState==="ended")'));
-    assert.deepEqual(errors,[]);console.log('Voice Composer UI passed: fixed dictation control, draft-only ASR/retry/cancel, running Agent, call hold/stop, draft and attachments, navigation, portal, themes and narrow layout. Screenshots: '+directory);
+    assert.deepEqual(errors,[]);console.log('Voice Composer UI passed: stable press geometry, no failed-start highlight, device failure cleanup, notice expiry/close/outside/Escape, retained ASR retry, draft-only dictation, running Agent, call hold/stop, navigation, portal, languages, themes and narrow layout. Screenshots: '+directory);
   }finally{win.destroy();clearTimeout(deadline);}
   app.exit(0);
 }).catch(error=>{console.error(error);clearTimeout(deadline);app.exit(1);});

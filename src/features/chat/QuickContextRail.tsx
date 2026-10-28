@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { prefersReducedMotion } from '../../shared/motionPreference';
 import { useContext } from 'react';
 import { ConversationHostContext } from '../conversationHost';
@@ -308,7 +309,7 @@ export function QuickContextRail({
     <aside
       ref={railRef}
       className={`quick-context-rail${panelView !== 'closed' ? ' panel-open' : ''}`}
-      aria-label={language === 'zh' ? '快速上下文' : 'Quick context'}
+      aria-label={uiText(language)('quickContextRail.quickContext')}
     >
       <div ref={railHandleRef} className="quick-context-handle">
         <span
@@ -347,7 +348,7 @@ export function QuickContextRail({
           <div className="hover-preview-title">
             <strong>{compactText(conversationDisplayTitle(hoveredMessage.content), 160)}</strong>
           </div>
-          <p className="turn-hover-preview-reply">{turnHoverText(hoverReply) || (language === 'zh' ? '暂时没有回复' : 'No reply yet')}</p>
+          <p className="turn-hover-preview-reply">{turnHoverText(hoverReply) || (uiText(language)('quickContextRail.noReplyYet'))}</p>
         </>}
       </HoverPreview>
       <div className="quick-context-popovers">
@@ -355,13 +356,13 @@ export function QuickContextRail({
           <section id={panelId} role="dialog" aria-labelledby={`${panelId}-title`} className={`quick-context-panel ${panelView}`}>
             <header>
               <strong id={`${panelId}-title`}>
-                {language === 'zh' ? '本轮对话' : 'Conversation turn'}
+                {uiText(language)('quickContextRail.conversationTurn')}
               </strong>
               <button
                 type="button"
                 className="quick-context-close"
                 onClick={closePanel}
-                aria-label={language === 'zh' ? '关闭' : 'Close'}
+                aria-label={uiText(language)('common.close')}
               >
                 <X size={14} />
               </button>
@@ -372,7 +373,7 @@ export function QuickContextRail({
               {previewMessages.map((message) => (
                 <article className={`quick-context-message ${message.role}`} key={message.id}>
                   <div>
-                    <small>{message.role === 'user' ? (language === 'zh' ? '你' : 'You') : 'CardBush'}</small>
+                    <small>{message.role === 'user' ? (uiText(language)('quickContextRail.you')) : 'CardBush'}</small>
                     <FileMemoScope sessionId={message.conversationId || sessionId} turnId={message.turnId}>
                       <MarkdownContent content={message.content} language={language} />
                     </FileMemoScope>
@@ -387,7 +388,7 @@ export function QuickContextRail({
                 onClick={jumpToSelectedTurn}
               >
                 <ArrowUpRight size={14} />
-                {language === 'zh' ? '跳转到该轮' : 'Jump to turn'}
+                {uiText(language)('quickContextRail.jumpToTurn')}
               </button>
               <button
                 type="button"
@@ -396,8 +397,8 @@ export function QuickContextRail({
               >
                 {copied ? <Check size={14} /> : <Copy size={14} />}
                 {copied
-                  ? language === 'zh' ? '已复制' : 'Copied'
-                  : language === 'zh' ? '复制 AI 回复' : 'Copy AI reply'}
+                  ? uiText(language)('browserConnectionSettings.copied')
+                  : uiText(language)('quickContextRail.copyAiReply')}
               </button>
             </footer>
           </section>

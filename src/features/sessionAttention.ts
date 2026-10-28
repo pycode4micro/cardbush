@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import type { AppLanguage, SessionAttentionState } from '../types';
 import { isWindowVisible } from '../shared/windowVisibility';
 
@@ -59,9 +60,9 @@ export function sessionAttentionNeedsNotification(attention: { kind: unknown; in
 }
 
 export function sessionAttentionLabel(attention: Pick<SessionAttentionState, 'kind'>, language: AppLanguage) {
-  if (attention.kind === 'interaction') return language === 'zh' ? '等待确认' : 'Confirmation pending';
-  if (attention.kind === 'error') return language === 'zh' ? '执行出错' : 'Execution failed';
-  return language === 'zh' ? '已完成，待查看' : 'Complete, not viewed';
+  if (attention.kind === 'interaction') return uiText(language)('sessionAttention.confirmationPending');
+  if (attention.kind === 'error') return uiText(language)('sessionAttention.executionFailed');
+  return uiText(language)('sessionAttention.completeNotViewed');
 }
 
 export function isCardbushForeground() {

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { localConversationBackend, type ConversationBackend } from '../../backend/conversationBackend';
 import { conversationRuntime } from '../../backend/conversationRuntime';
 import { runtimeConversation } from '../../backend/api';
@@ -36,7 +37,7 @@ export function creationConversationBackend(sessionId: string, scope = 'creation
     async fetchConversations() {
       if (!persisted) return [];
       const conversation = await read();
-      if (!conversation) throw Error('会话不存在，请重新创建对话。 / Conversation no longer exists.');
+      if (!conversation) throw Error(uiText()('creationConversationBackend.conversation_no_longer_exists'));
       return [conversation];
     },
   };

@@ -62,7 +62,7 @@ export function useWelcomeEditorOverlays({ root, canvas, toolbar, preferred, dra
           ?? clamp(above, frame.y, frame.y + frame.height - height);
         handles.style.left = `${left - bounds.x}px`;
         handles.style.top = `${top - bounds.y}px`;
-        handles.style.visibility = overlap(bounds, pageRect) > 0 ? '' : 'hidden';
+        handles.dataset.inViewport = String(overlap(bounds, pageRect) > 0);
       }
     };
     measure();

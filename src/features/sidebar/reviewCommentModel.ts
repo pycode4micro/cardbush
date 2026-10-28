@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { AppLanguage } from '../../types';
 import type { DiffLine } from '../tools/toolChangeReports';
 import { diffLineNumbers, diffLineSource } from '../tools/diffSyntax';
@@ -51,15 +52,13 @@ export function reviewLineLabel(anchor: ReviewCommentAnchor) {
 }
 
 export function formatReviewComments(comments: ReviewComment[], language: AppLanguage) {
-  const zh = language === 'zh';
-  return [zh
-    ? '请按以下代码审查评论处理修改。行号和代码片段对应评论时的版本，请先核对当前文件。L 表示修改前，R 表示修改后。'
-    : 'Please address these code review comments. Lines and excerpts refer to the version reviewed; verify the current file first. L is before the change and R is after.',
+
+  return [uiText(language)('reviewCommentModel.pleaseAddressTheseCodeReviewCommentsLines'),
   ...comments.map((comment, index) => [
-    `${index + 1}. ${zh ? '文件' : 'File'}: ${comment.path}`,
-    `${zh ? '位置' : 'Location'}: ${reviewLineLabel(comment)} · ${zh ? '轮次' : 'Turn'}: ${comment.turnId}`,
-    `${zh ? '评论' : 'Comment'}: ${comment.text.trim()}`,
-    `${zh ? '当时的代码片段' : 'Reviewed excerpt'}:\n${comment.excerpt.split('\n').map(line => `    ${line}`).join('\n')}`,
+    `${index + 1}. ${uiText(language)('reviewCommentModel.file')}: ${comment.path}`,
+    `${uiText(language)('pluginManagementPanel.location')}: ${reviewLineLabel(comment)} · ${uiText(language)('reviewCommentModel.turn')}: ${comment.turnId}`,
+    `${uiText(language)('reviewCommentModel.comment')}: ${comment.text.trim()}`,
+    `${uiText(language)('reviewCommentModel.reviewedExcerpt')}:\n${comment.excerpt.split('\n').map(line => `    ${line}`).join('\n')}`,
   ].join('\n'))].join('\n\n');
 }
 

@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import type {
   RuntimePermissionAnswer,
   RuntimePermissionRequest,
@@ -34,7 +35,7 @@ export function createRuntimeInteractions() {
   function registerRuntimeSolution(request: RuntimeSolutionSelection, notify = true): PendingInteraction {
     const interaction: PendingInteraction = {
       id: request.selectionId, type: 'solution_selection', sessionId: request.sessionId, turnId: request.turnId,
-      title: 'Solution Selection', toolName: 'request_user_input_async',
+      title: uiText()('solutionSelectionModel.solution_selection'), toolName: 'request_user_input_async',
       questions: solutionInteractionQuestions(request), raw: { ...request },
     };
     solutions.set(request.selectionId, interaction);
@@ -84,18 +85,18 @@ export function createRuntimeInteractions() {
       type: 'path_permission_request',
       sessionId: input.sessionId,
       turnId: input.turnId,
-      title: fromSubagent ? 'Subagent permission' : 'Permission',
+      title: fromSubagent ? uiText()('runtimeInteractionBridge.subagent_permission') : uiText()('runtimeInteractionBridge.permission'),
       reason: input.request.reason,
       toolName: 'request_permission',
       runtimePermission: structuredClone(input.request),
       questions: [{
         id: 'permission',
-        label: 'Permission',
-        question: 'Allow this exact access request?',
+        label: uiText()('runtimeInteractionBridge.permission'),
+        question: uiText()('runtimeInteractionBridge.allow_this_exact_access_request'),
         options: [
-          { id: 'allow_once', label: 'Allow once' },
-          { id: 'allow_session', label: 'Allow for this session' },
-          { id: 'deny', label: 'Deny' },
+          { id: 'allow_once', label: uiText()('runtimeInteractionBridge.allow_once') },
+          { id: 'allow_session', label: uiText()('runtimeInteractionBridge.allow_for_this_session') },
+          { id: 'deny', label: uiText()('mcpAppPanel.deny') },
         ],
       }],
       raw: {

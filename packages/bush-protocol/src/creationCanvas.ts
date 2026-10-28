@@ -1,3 +1,4 @@
+import { uiText } from '@cardbush/platform/i18n';
 import { z } from 'zod';
 
 export const CANVAS_FILE_NAME = 'space.canvas.json';
@@ -97,15 +98,14 @@ export function canvasLayoutFacts(document: CreationCanvas) {
       ...(item.kind === 'file' ? { source: item.source } : {}), ...(item.reference ? { reference: item.reference } : {}) })) };
 }
 
-export function developmentDesktop(repository: string, language: 'zh' | 'en' = 'zh'): CreationCanvas {
-  const t = (zh: string, en: string) => language === 'zh' ? zh : en;
+export function developmentDesktop(repository: string, language: string = 'zh'): CreationCanvas {
   const region = (id: string, title: string, purpose: string, frame: CanvasItem['frame']): CanvasItem => ({ id, title, purpose, kind: 'markdown', frame,
-    markdown: `## ${title}\n\n${t('等待首次更新', 'Awaiting first update')}\n\n${purpose}` });
-  return { ...emptyCanvas(t('CardBush 开发桌面', 'CardBush development desk')), desktop: { kind: 'development', repository }, items: [
-    region('changes', t('最近改动', 'Recent changes'), t('根据实际提交与本地改动整理进度，保留来源与更新时间。', 'Summarize actual commits and local changes with sources and update time.'), { x: 24, y: 36, width: 388, height: 400 }),
-    region('release', t('准备发布', 'Release checklist'), t('整理本次发布内容、待办与阻塞项，未经验证的事项保持待确认。', 'Track release scope, pending work and blockers; keep unverified items pending.'), { x: 436, y: 36, width: 556, height: 400 }),
-    region('verification', t('验证与问题', 'Checks & issues'), t('放置实际测试结果、问题与截图，不把执行结束当作验证通过。', 'Keep actual test results, issues and screenshots; completion alone is not verification.'), { x: 1016, y: 36, width: 400, height: 400 }),
-    region('comparison', t('版本对照', 'Version comparison'), t('放置需要对照的设计、文件或截图；固定的版本保留不动。', 'Keep designs, files or screenshots for comparison; preserve fixed versions.'), { x: 24, y: 484, width: 680, height: 440 }),
-    region('decisions', t('设计与记录', 'Decisions & notes'), t('记录已确认的取舍与发布记录，延续已有内容。', 'Maintain confirmed decisions and release notes, building on existing records.'), { x: 728, y: 484, width: 688, height: 440 }),
+    markdown: `## ${title}\n\n${uiText(language)('creationCanvas.awaitingFirstUpdate')}\n\n${purpose}` });
+  return { ...emptyCanvas(uiText(language)('creationCanvasApp.cardbushDevelopmentDesk')), desktop: { kind: 'development', repository }, items: [
+    region('changes', uiText(language)('creationCanvas.recentChanges'), uiText(language)('creationCanvas.summarizeActualCommitsAndLocalChangesWith'), { x: 24, y: 36, width: 388, height: 400 }),
+    region('release', uiText(language)('creationCanvas.releaseChecklist'), uiText(language)('creationCanvas.trackReleaseScopePendingWorkAndBlockers'), { x: 436, y: 36, width: 556, height: 400 }),
+    region('verification', uiText(language)('creationCanvas.checksIssues'), uiText(language)('creationCanvas.keepActualTestResultsIssuesAndScreenshots'), { x: 1016, y: 36, width: 400, height: 400 }),
+    region('comparison', uiText(language)('creationCanvas.versionComparison'), uiText(language)('creationCanvas.keepDesignsFilesOrScreenshotsForComparison'), { x: 24, y: 484, width: 680, height: 440 }),
+    region('decisions', uiText(language)('creationCanvas.decisionsNotes'), uiText(language)('creationCanvas.maintainConfirmedDecisionsAndReleaseNotesBuilding'), { x: 728, y: 484, width: 688, height: 440 }),
   ] };
 }

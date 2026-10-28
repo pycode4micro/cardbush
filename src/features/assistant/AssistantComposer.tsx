@@ -14,7 +14,7 @@ export type AssistantComposerControls = Pick<ComposerProps,
   'reasoningLevelAvailable' | 'reasoningLevels' | 'onReasoningLevelChange' | 'skills' | 'disabledSkillNames' | 'onToggleSkill'>;
 
 export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, onSend, messages, fileDropTarget, browserTabs, nextStepPrediction, predictionPending }: {
-  controls: AssistantComposerControls; language: 'zh' | 'en'; draft: string; onDraftChange(value: string): void;
+  controls: AssistantComposerControls; language: string; draft: string; onDraftChange(value: string): void;
   ready: boolean; submitting: boolean; onSend(text: string): Promise<boolean>; messages: ChatMessage[];
   fileDropTarget: RefObject<HTMLElement | null>;
   browserTabs: BrowserPromptReference[];

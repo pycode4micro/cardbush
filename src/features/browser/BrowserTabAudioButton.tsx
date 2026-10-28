@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Volume2, VolumeX } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import type { InspectorNavigationState, InspectorWebviewHandle } from '../inspector/InspectorWebview';
@@ -16,8 +17,8 @@ export function BrowserTabAudioButton({ navigation, handle, language, title, men
   if (!contextMenu && ((!navigation?.audible && !navigation?.audioMuted) || !handle?.toggleAudioMuted)) return null;
   const muted = Boolean(navigation?.audioMuted);
   const label = muted
-    ? language === 'zh' ? '取消标签页静音' : 'Unmute tab'
-    : language === 'zh' ? '将标签页静音' : 'Mute tab';
+    ? uiText(language)('browserTabAudioButton.unmuteTab')
+    : uiText(language)('browserTabAudioButton.muteTab');
   const menuItem = menu || contextMenu;
   return <button type="button" className={contextMenu ? 'right-inspector-tab-context-action' : `right-inspector-tab-audio${muted ? ' muted' : ''}`}
     title={label} aria-label={`${label} · ${title}`} role={menuItem ? 'menuitemcheckbox' : undefined}

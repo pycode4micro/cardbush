@@ -95,7 +95,7 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
 }
 
 .app button:not(:disabled):not(.window-button):not(.right-inspector-resizer):not(.window-sidebar-toggle):not(.compact-sidebar-backdrop):not(.scroll-bottom):active {
-  scale: 0.975;
+  scale: var(--button-press-scale, 0.975);
   transition-duration: 80ms;
 }
 

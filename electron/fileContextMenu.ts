@@ -1,11 +1,12 @@
+import { uiText, type MessageKey } from '@cardbush/platform/i18n';
 import type { MenuItemConstructorOptions } from 'electron';
 
 export interface FileContextMenuOptions {
-  language?: 'zh' | 'en';
+  language?: string;
 }
 
 export function buildFileContextMenu(input: {
-  path: string; exists: boolean; isFile: boolean; language?: 'zh' | 'en';
+  path: string; exists: boolean; isFile: boolean; language?: string;
 }, actions: {
   open?: () => void | Promise<unknown>;
   openWith: () => void | Promise<unknown>;
@@ -14,21 +15,21 @@ export function buildFileContextMenu(input: {
   copyFile: () => void | Promise<unknown>;
   onError: (error: unknown) => void;
 }): MenuItemConstructorOptions[] {
-  const en = input.language === 'en';
-  const item = (label: string, labelEn: string, action: () => unknown, enabled = true): MenuItemConstructorOptions => ({
-    label: en ? labelEn : label, enabled,
+  const t = uiText(input.language ?? 'zh');
+  const item = (message: MessageKey, action: () => unknown, enabled = true): MenuItemConstructorOptions => ({
+    label: t(message), enabled,
     click: () => { void Promise.resolve().then(action).catch(actions.onError); },
   });
   const items: MenuItemConstructorOptions[] = [];
   if (!input.path) return items;
-  if (!input.exists) items.push({ label: en ? 'File does not exist' : '文件不存在（无法打开）', enabled: false });
-  if (actions.open) items.push(item('在 CardBush 中打开', 'Open in CardBush', actions.open, input.exists));
+  if (!input.exists) items.push({ label: t('fileContextMenu.file_does_not_exist'), enabled: false });
+  if (actions.open) items.push(item('fileContextMenu.open_in_cardbush', actions.open, input.exists));
   items.push(
-    item('打开方式...', 'Open with...', actions.openWith, input.exists),
-    item('跳转到文件位置', 'Show in folder', actions.reveal, input.exists),
+    item('fileContextMenu.open_with', actions.openWith, input.exists),
+    item('fileContextMenu.show_in_folder', actions.reveal, input.exists),
     { type: 'separator' },
-    item('复制文件', 'Copy file', actions.copyFile, input.isFile),
-    item('复制路径', 'Copy path', actions.copyPath),
+    item('fileContextMenu.copy_file', actions.copyFile, input.isFile),
+    item('fileContextMenu.copy_path', actions.copyPath),
   );
   return items;
 }

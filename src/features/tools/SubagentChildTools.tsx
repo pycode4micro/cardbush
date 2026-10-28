@@ -1,5 +1,6 @@
+import { uiText } from '../../i18n';
 import type { AppLanguage, ChatToolExecution } from '../../types';
-import { decodeToolExecutionState } from './toolExecutionState';
+import { decodeToolExecutionState, toolActivityStatus } from './toolExecutionState';
 import { displayToolName } from './toolExecutionState';
 import { asRecord } from './toolPayload';
 import { ToolLogo } from './ToolLogo';
@@ -16,7 +17,7 @@ export function SubagentChildTools({
   }
   return (
     <div className="subagent-child-tools">
-      <strong>{language === 'zh' ? '子 Agent 工具' : 'Subagent tools'}</strong>
+      <strong>{uiText(language)('subagentChildTools.subagentTools')}</strong>
       <div>
         {executions.map((child, index) => (
           <div
@@ -25,8 +26,8 @@ export function SubagentChildTools({
             className="subagent-child-tool"
           >
             <ToolLogo name={child.name} size={14} />
-            <span>{displayToolName(child.name)}</span>
-            <em>{child.summary || child.output || child.state}</em>
+            <span>{displayToolName(child.name, language)}</span>
+            <em>{child.summary || child.output || toolActivityStatus(child, language, true)}</em>
           </div>
         ))}
       </div>

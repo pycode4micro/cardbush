@@ -75,8 +75,11 @@ test('execution-specific guidance is discoverable on the tool or its parameter',
   assert.match(subagent.inputSchema.properties.mode.description, /use task_id to continue an existing task/);
   assert.match(subagent.inputSchema.properties.prompt.description, /original user's communication language/);
   assert.match(tool('tasks').description, /do not poll/);
-  assert.equal(tool('tasks').inputSchema.properties.yield_time_ms.default, 1000);
-  assert.equal(tool('tasks').inputSchema.properties.yield_time_ms.default, 1000);
+  const waitTime = tool('tasks').inputSchema.properties.yield_time_ms;
+  assert.equal(waitTime.default, undefined);
+  assert.equal(waitTime.minimum, 0);
+  assert.match(waitTime.description, /Omit to wait until completion or new guidance/);
+  assert.ok(!tool('tasks').inputSchema.required.includes('yield_time_ms'));
   assert.match(tool('update_goal').description, /parent must call this before completing the Turn; children report/);
   assert.match(tool('request_user_input_async').description, /dismissal|dismissed/);
   assert.equal(tool('request_user_input_async').inputSchema.properties.questions.items.properties.prompt.maxLength, 500);

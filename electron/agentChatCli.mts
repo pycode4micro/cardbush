@@ -124,6 +124,16 @@ async function readConnection(file: string): Promise<SavedConnection | undefined
   return value;
 }
 
+async function readConnectionToken(file: string, savedConnectionFile?: string): Promise<string> {
+  try { return await readFile(file, 'utf8'); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'read failed';
+    throw new Error(`Cannot read ${savedConnectionFile ? 'saved ' : ''}Agent token file: ${file} (${code}). `
+      + (savedConnectionFile ? `Saved CLI connection: ${savedConnectionFile}. ` : '')
+      + 'Reconnect with --url <Agent-URL> --token-file <existing-token-file>, or use cardbush --local to run locally.', { cause: error });
+  }
+}
+
 async function interactionPending(client: Client, event: Interaction, signal: AbortSignal, cursor: { sequence: number }) {
   if (event.kind === 'permission_requested') {
     const later = await client.call('runtime.command', { kind: 'runtime.list_turn_events', payload: {
@@ -473,7 +483,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
   // Never reuse a saved credential for a different explicitly selected server.
   const savedForUrl = saved && agentBaseUrl(saved.url) === url ? saved : undefined;
   const tokenFile = values['token-file'] ? resolve(values['token-file']) : !process.env.CARDBUSH_AGENT_TOKEN?.trim() ? savedForUrl?.tokenFile : undefined;
-  const token = local ? '' : (tokenFile ? await readFile(tokenFile, 'utf8') : process.env.CARDBUSH_AGENT_TOKEN ?? '').trim();
+  const token = local ? '' : (tokenFile ? await readConnectionToken(tokenFile, values['token-file'] ? undefined : connectionFile) : process.env.CARDBUSH_AGENT_TOKEN ?? '').trim();
   if (!local && !token) throw new Error('Remote connections require --token-file <Agent-data-dir>/access-token or CARDBUSH_AGENT_TOKEN. Use cardbush --local to run locally.');
   const client: ChatClient = local ? await (await import('./agentLocalChat.mjs')).openLocalChatClient()
     : new AgentHttpClient(url!, token, !values['token-file'] && tokenFile ? savedForUrl?.agentId : undefined);

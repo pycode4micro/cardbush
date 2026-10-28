@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { WorkspacePathGuard } from '../dist/workspacePathGuard.js';
 
 import {
   CREATE_RUNTIME_SESSION_COMMAND,
@@ -138,7 +139,14 @@ test("replays a historical workspace change after its project folder is renamed"
 
   const nextRoot = `${setup.root}-renamed`;
   t.after(() => rmSync(nextRoot, { recursive: true, force: true }));
-  renameSync(setup.root, nextRoot);
+  // A concurrent workspace operation can pin the shared temporary directory.
+  // Our project must have a private parent so that renaming it does not mutate
+  // another operation's pinned directory. Keep that contention deterministic.
+  const peerGuard = new WorkspacePathGuard();
+  try {
+    if (process.platform === 'win32') await peerGuard.pin(tmpdir());
+    renameSync(setup.root, nextRoot);
+  } finally { await peerGuard.close(); }
   const session = await setup.host.sendCommand({
     kind: GET_RUNTIME_SESSION_COMMAND,
     payload: { sessionId: setup.sessionId },
@@ -207,8 +215,10 @@ test('retains redo bytes across host restart and rejects missing or corrupted by
 });
 
 async function environment(t, sessionId, persistent = false) {
-  const root = mkdtempSync(join(tmpdir(), "cardbush-workspace-revert-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const container = mkdtempSync(join(tmpdir(), "cardbush-workspace-revert-"));
+  const root = join(container, 'project');
+  mkdirSync(root);
+  t.after(() => rmSync(container, { recursive: true, force: true }));
   const registry = new ToolRegistry();
   registerWorkspaceTools(registry, new WorkspaceObservationStore());
   const toolPersistence = persistent ? new FileToolExecutionPersistence({ root: join(root, 'tool-journal') }) : undefined;

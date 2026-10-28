@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Network } from 'lucide-react';
 
 import type { AppLanguage, ChatToolExecution } from '../../types';
@@ -29,26 +30,22 @@ export function SubagentAuditSignalsPanel({
   language: AppLanguage;
 }) {
   const rows = [
-    [language === 'zh' ? '有效动作' : 'Last action', signals.lastEffectiveAction],
+    [uiText(language)('subagentAuditSignalsPanel.lastAction'), signals.lastEffectiveAction],
     [
-      language === 'zh' ? '验证观察' : 'Verification',
+      uiText(language)('subagentAuditSignalsPanel.verification'),
       signals.verificationObserved,
     ],
     [
-      language === 'zh' ? '需父级介入' : 'Parent intervene',
+      uiText(language)('subagentAuditSignalsPanel.parentIntervene'),
       signals.shouldParentIntervene == null
         ? ''
         : signals.shouldParentIntervene
-          ? language === 'zh'
-            ? '是'
-            : 'Yes'
-          : language === 'zh'
-            ? '否'
-            : 'No',
+          ? uiText(language)('subagentAuditSignalsPanel.yes')
+          : uiText(language)('subagentAuditSignalsPanel.no'),
     ],
-    [language === 'zh' ? '下一步' : 'Next action', signals.nextParentAction],
+    [uiText(language)('subagentAuditSignalsPanel.nextAction'), signals.nextParentAction],
     [
-      language === 'zh' ? '变更文件' : 'Changed files',
+      uiText(language)('subagentAuditSignalsPanel.changedFiles'),
       signals.changedFiles.length > 0 ? summarizeWriteScope(signals.changedFiles) : '',
     ],
   ].filter(([, value]) => value);
@@ -60,7 +57,7 @@ export function SubagentAuditSignalsPanel({
     >
       <header>
         <Network size={14} />
-        <strong>{language === 'zh' ? '子 Agent 状态' : 'Subagent status'}</strong>
+        <strong>{uiText(language)('subagentAuditSignalsPanel.subagentStatus')}</strong>
         {signals.taskHealth && <em>{signals.taskHealth}</em>}
       </header>
       {rows.length > 0 && (

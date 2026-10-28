@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { NotebookText, PanelRightOpen } from 'lucide-react';
 import type { AppLanguage } from '../types';
 import type { HTMLAttributes, ReactNode } from 'react';
@@ -40,7 +41,7 @@ export function TopBar({
           data-work-summary-toggle
           aria-expanded={Boolean(workSummaryVisible)}
           onClick={(event) => onToggleWorkSummary(event.currentTarget)}
-          aria-label={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
+          aria-label={uiText(language)('topBar.showOrHideWorkSummary')}
         >
           <NotebookText size={15} />
         </button>
@@ -51,7 +52,7 @@ export function TopBar({
         data-inspector-toggle
         data-shortcut="toggleInspector"
         onClick={() => onToggleInspector()}
-        aria-label={language === 'zh' ? '展开右侧栏' : 'Expand sidebar'}
+        aria-label={uiText(language)('topBar.expandSidebar')}
         aria-expanded={false}
         aria-controls="right-inspector"
       >

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useSyncExternalStore } from 'react';
 import { parseMarkdownGraph } from './markdownGraph';
 import { pageTitle } from './pageDocument';
@@ -35,18 +36,18 @@ export function flushBushItPages() {
     const pages = saved.pages.map(page => page.file && !page.externalFile && page.source === page.file.text
       ? { ...page, source: '', file: { ...page.file, text: '' }, unloaded: true } : page);
     localStorage.setItem(key, JSON.stringify({ ...saved, pages })); if (snapshot!.error) { snapshot = { ...snapshot!, error: '' }; notify(); } }
-  catch { snapshot = { ...read(), error: '页面无法自动保存，请将当前内容保存为 .md 文件。 / Could not store pages. Save your document as a .md file.' }; notify(); }
+  catch { snapshot = { ...read(), error: uiText()('bushItPageStore.could_not_store_pages_save_your_document') }; notify(); }
 }
 function publish(change: Partial<Pages>) { snapshot = { ...read(), ...change }; notify(); clearTimeout(timer); timer = setTimeout(flushBushItPages, 180); }
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', flushBushItPages);
-export function bushItPageName(page: BushItPage, language: 'zh' | 'en') {
+export function bushItPageName(page: BushItPage, language: string) {
   let title = names.get(page);
   if (title === undefined) {
     try { title = pageTitle(parseMarkdownGraph(page.source)).title; }
     catch { title = page.source.match(/^# (.+)$/m)?.[1] || ''; }
     names.set(page, title);
   }
-  return title || (!page.temporary && page.file?.path.split(/[\\/]/).pop()) || (page.draftNumber ? `${language === 'zh' ? '未命名' : 'Untitled'} ${page.draftNumber}` : language === 'zh' ? '无标题页' : 'Untitled page');
+  return title || (!page.temporary && page.file?.path.split(/[\\/]/).pop()) || (page.draftNumber ? `${uiText(language)('bushItPageStore.untitled')} ${page.draftNumber}` : uiText(language)('bushItPageStore.untitledPage'));
 }
 export function createBushItPage(source = '', file?: BushItPage['file'], projectDir = '') {
   const state = read(), page = { id: crypto.randomUUID(), source, updatedAt: Date.now(), ...(file ? { file } : { temporary: true, draftNumber: Math.max(0, ...state.pages.map(page => page.draftNumber ?? 0)) + 1 }), ...(projectDir ? { projectDir } : {}) };

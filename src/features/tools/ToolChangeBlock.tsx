@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ChevronDown, LoaderCircle, RefreshCw, RotateCcw, RotateCw } from 'lucide-react';
 import { Suspense, useCallback, useContext, useRef, useState } from 'react';
 
@@ -46,7 +47,7 @@ export function ToolChangeBlock({
   const [reverting, setReverting] = useState(false);
   const changeState = useContext(WorkspaceChangeStateContext);
   const reverted = identity ? workspaceChangeReverted(changeState.states, identity.sessionId, { ...identity, reverted: report.reverted }) : report.reverted;
-  const actionLabel = reverted ? (language === 'zh' ? '取消撤回' : 'Undo revert') : (language === 'zh' ? '撤回' : 'Revert');
+  const actionLabel = reverted ? (uiText(language)('app.undoRevert')) : (uiText(language)('app.revert'));
   const blockRef = useRef<HTMLDivElement>(null);
   const hasDetails = report.files.some((file) => file.lines.length > 0);
   const canExpand = hasDetails || detailsDeferred;
@@ -95,7 +96,7 @@ export function ToolChangeBlock({
               </b>
             )}
           </span>
-          <em>{expanded ? (language === 'zh' ? '收起' : 'Hide') : language === 'zh' ? '查看改动' : 'View diff'}</em>
+          <em>{expanded ? (uiText(language)('toolChangeBlock.hide')) : uiText(language)('toolChangeBlock.viewDiff')}</em>
           <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
         </button>
         {onRevert && report.files.length > 0 && (
@@ -122,18 +123,18 @@ export function ToolChangeBlock({
         <div className="tool-change-files">
           {detailsDeferred && !hasDetails && detailsStatus === 'failed' ? (
             <div className="tool-change-details-failed" role="alert">
-              <span>{language === 'zh' ? '改动详情加载失败' : 'Unable to load change details'}</span>
+              <span>{uiText(language)('chatSidebar.unableToLoadChangeDetails')}</span>
               {onRetryDetails && (
                 <button type="button" onClick={onRetryDetails}>
                   <RefreshCw size={13} />
-                  <span>{language === 'zh' ? '重试' : 'Retry'}</span>
+                  <span>{uiText(language)('common.retry')}</span>
                 </button>
               )}
             </div>
           ) : detailsDeferred && !hasDetails && detailsStatus !== 'loaded' ? (
             <p className="tool-change-details-loading">
               <LoaderCircle size={14} />
-              <span>{language === 'zh' ? '正在加载改动详情' : 'Loading change details'}</span>
+              <span>{uiText(language)('chatSidebar.loadingChangeDetails')}</span>
             </p>
           ) : (
             report.files.map((file, index) => (
@@ -177,19 +178,11 @@ function toolChangeTitle({
   language: AppLanguage;
 }) {
   if (!running) {
-    return language === 'zh'
-      ? `${fileCount} 个文件已更改`
-      : `${fileCount} file${fileCount === 1 ? '' : 's'} changed`;
+    return uiText(language)('tools.changedFiles', { count: fileCount });
   }
   const compactPath = compactFilePath(path);
   const verb =
-    language === 'zh'
-      ? hasDetails
-        ? '正在编辑'
-        : '正在写入'
-      : hasDetails
-        ? 'Editing'
-        : 'Writing';
+    (hasDetails ? uiText(language)('toolChangeBlock.editing') : uiText(language)('toolChangeBlock.writing'));
   return compactPath ? `${verb} ${compactPath}` : verb;
 }
 
@@ -210,7 +203,7 @@ export function ToolFileChangeView({
         </span>
       </header>
       {file.lines.length === 0 ? (
-        <p>{language === 'zh' ? '没有可展开的 diff 内容' : 'No diff details available'}</p>
+        <p>{uiText(language)('toolChangeBlock.noDiffDetailsAvailable')}</p>
       ) : (
         <Suspense fallback={<PlainDiffLines lines={file.lines} />}>
           <DiffSyntaxLines lines={file.lines} path={file.path} language={language} />

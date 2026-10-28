@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useState, useRef, type ReactNode } from 'react';
 import type { AppLanguage, CardbushAppPlugin, CardbushAppsConfiguration } from '../../types';
 import { fetchCardbushAppsConfiguration, saveCardbushAppsConfiguration } from '../../backend/api';
@@ -16,7 +17,7 @@ export function CoreCapabilitySettings({ id, language, children }: {
   const [configuration, setConfiguration] = useState<CardbushAppsConfiguration | null>(null);
   const [busy, setBusy] = useState(false), saving = useRef(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const zh = language === 'zh';
+
   const load = async () => {
     if (saving.current) return;
     try { setConfiguration(await fetchCardbushAppsConfiguration()); setError(''); }
@@ -41,16 +42,16 @@ export function CoreCapabilitySettings({ id, language, children }: {
     finally { saving.current = false; setBusy(false); }
   };
   return <div className="settings-stack core-capability-settings">
-    {error && <p role="alert" className="settings-form-error">{error}<button type="button" className="secondary-button compact" disabled={busy} onClick={() => void load()}>{zh ? '刷新' : 'Refresh'}</button></p>}
+    {error && <p role="alert" className="settings-form-error">{error}<button type="button" className="secondary-button compact" disabled={busy} onClick={() => void load()}>{uiText(language)('automationPanel.refresh')}</button></p>}
     {notice && <p role="status">{notice}</p>}
     {plugin ? <>
       <SettingsCard title={id === 'chrome' ? 'Browser Use' : 'Computer Use'}>
-        <SettingsSwitch title={zh ? '允许智能体使用' : 'Allow agent use'} checked={plugin.installed && plugin.enabled} disabled={busy}
-          subtitle={zh ? 'CardBush 内置能力，由应用管理权限和会话隔离。' : 'A built-in capability with permissions and session isolation managed by CardBush.'}
-          onChange={enabled => void persist({ ...plugin, installed: true, enabled }, zh ? '设置已保存' : 'Settings saved')} />
-        {!configuration?.serviceEnabled && <p>{zh ? '工具服务总开关当前已关闭，请在插件设置中开启后使用。' : 'The tool service is disabled. Enable it in plugin settings to use this capability.'}</p>}
+        <SettingsSwitch title={uiText(language)('coreCapabilitySettings.allowAgentUse')} checked={plugin.installed && plugin.enabled} disabled={busy}
+          subtitle={uiText(language)('coreCapabilitySettings.aBuiltInCapabilityWithPermissionsAnd')}
+          onChange={enabled => void persist({ ...plugin, installed: true, enabled }, uiText(language)('coreCapabilitySettings.settingsSaved'))} />
+        {!configuration?.serviceEnabled && <p>{uiText(language)('coreCapabilitySettings.theToolServiceIsDisabledEnableIt')}</p>}
       </SettingsCard>
       {children({ language, plugin, busy, onReplace: replace, onPersist: (next, message) => void persist(next, message) })}
-    </> : !error && <p>{configuration ? (zh ? '当前安装不包含此能力。' : 'This capability is unavailable in this installation.') : (zh ? '正在加载…' : 'Loading…')}</p>}
+    </> : !error && <p>{configuration ? (uiText(language)('coreCapabilitySettings.thisCapabilityIsUnavailableInThisInstallation')) : (uiText(language)('common.loading'))}</p>}
   </div>;
 }

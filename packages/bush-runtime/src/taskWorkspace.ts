@@ -9,7 +9,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceChange, WorkspaceCheckpoint, WorkspaceDescriptor, WorkspaceReview } from "@cardbush/bush-protocol";
 import { WORKSPACE_REVIEW_TURN_LIMIT } from "@cardbush/bush-protocol";
 import { GitWorkspaceStore, decodeGitPaths, mapFiles, type GitFileEntry, type GitFileTree } from "./gitWorkspaceStore.js";
-import { MAX_IN_PROCESS_FILE_BYTES, readFileBounded } from "./workspaceFileRead.js";
+import { readFileBounded } from "./workspaceFileRead.js";
 import { trustedGit } from './trustedGit.js';
 import { withWorkspaceFileAccess, openWorkspaceFile, recordWorkspaceRead, writeWorkspaceFile, unlinkWorkspaceFile, createWorkspaceParent } from './workspaceFileAccess.js';
 import { WorkspacePathGuard } from './workspacePathGuard.js';
@@ -509,6 +509,9 @@ export class TaskWorkspaceManager {
   }
 
   async #capture(state: State, root: string, known: Snapshot, enrolled: string[] = []): Promise<Snapshot> {
+    const guard = new WorkspacePathGuard();
+    try {
+    await guard.pin(root);
     await this.#assertDestination(root);
     const store = this.#store(state);
     const list = async () => {
@@ -524,57 +527,55 @@ export class TaskWorkspaceManager {
     const describe = async () => mapFiles(paths, async path => {
       const absolute = await this.#filePath(root, path);
       let stat;
-      try { stat = await lstat(absolute); }
+      // A known descendant may legitimately disappear when its directory is
+      // replaced by a regular file. Existing entries are re-inspected after
+      // pinning; a missing parent needs no content access or native handle.
+      try { await lstat(absolute); await guard.pin(dirname(absolute)); stat = await lstat(guard.file(absolute), { bigint: true }); }
       catch (error) { if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined; throw error; }
       if (stat.isDirectory()) return undefined;
       if (!stat.isFile() && !stat.isSymbolicLink()) throw problem("workspace_file_type_unsupported", `Cannot version non-file entry ${path}.`);
-      return { path, absolute, large: stat.size > MAX_IN_PROCESS_FILE_BYTES, kind: stat.isSymbolicLink() ? "symlink" as const : "file" as const,
-        mode: process.platform === "win32" ? 0o666 : stat.isSymbolicLink() ? 0o777 : stat.mode & 0o111 ? 0o755 : 0o644 };
+      if (stat.isFile() && stat.nlink !== 1n) throw problem('workspace_authorization_changed', 'File identity changed.');
+      return { path, absolute, identity: `${stat.dev}:${stat.ino}`, kind: stat.isSymbolicLink() ? "symlink" as const : "file" as const,
+        mode: process.platform === "win32" ? 0o666 : stat.isSymbolicLink() ? 0o777 : stat.mode & 0o111n ? 0o755 : 0o644 };
     });
     const entries = await describe();
     const files = entries.filter(entry => entry?.kind === "file");
-    const ids = await store.hashFiles(root, files.map(entry => entry!.path));
+    const identities = Object.fromEntries(files.map(entry => [entry!.absolute, entry!.identity]));
+    const ids = await store.hashFiles(root, files.map(entry => entry!.path), true, identities);
     const snapshot: Snapshot = Object.create(null), blobs = new Map<string, () => Promise<Buffer>>();
-    const knownObjects = new Set(Object.values(known).map(entry => entry.hash));
-    const largeFiles: string[] = [], largeIds: string[] = [];
     let index = 0;
     for (const entry of entries) {
       if (!entry) continue;
-      const read = () => entry.kind === "symlink" ? readlink(entry.absolute, { encoding: "buffer" }) : readFileBounded(entry.absolute);
-      const id = entry.kind === "file" ? ids[index++]! : await store.blobId(await read());
+      // readlink only reads link metadata, relative to the pinned parent.
+      const content = entry.kind === 'symlink' ? await readlink(guard.file(entry.absolute), { encoding: 'buffer' }) : undefined;
+      const id = entry.kind === "file" ? ids[index++]! : await store.blobId(content!);
       snapshot[entry.path] = { hash: id, kind: entry.kind, mode: entry.mode };
-      if (!knownObjects.has(id)) {
-        if (entry.kind === "file" && entry.large) { largeFiles.push(entry.path); largeIds.push(id); }
-        else blobs.set(id, read);
-      }
-    }
-    // Git streams large files into its object store; never send their full bytes
-    // through Runtime merely to checkpoint an XLSX/media artifact.
-    const writtenIds = await store.hashFiles(root, largeFiles, true);
-    if (writtenIds.some((id, index) => id !== largeIds[index])) {
-      throw problem("workspace_changed_during_checkpoint", "A large file changed while capturing its Git version.");
+      if (content) blobs.set(id, async () => content);
     }
     await store.storeBlobs(blobs);
-    // Hash bytes in Git in bulk; timestamps never prove that content is unchanged.
-    const verified = await store.hashFiles(root, files.map(entry => entry!.path));
+    // Read the checked objects again; timestamps do not prove unchanged content.
+    const verified = await store.hashFiles(root, files.map(entry => entry!.path), false, identities);
     if (ids.some((id, index) => id !== verified[index]) || JSON.stringify(paths) !== JSON.stringify(await list()) ||
         JSON.stringify(entries) !== JSON.stringify(await describe())) {
       throw problem("workspace_changed_during_checkpoint", "Workspace files changed during Git version capture.");
     }
-    for (const entry of entries) if (entry?.kind === "symlink" && snapshot[entry.path]!.hash !== await store.blobId(await readlink(entry.absolute, { encoding: "buffer" }))) {
+    for (const entry of entries) if (entry?.kind === "symlink" && snapshot[entry.path]!.hash !== await store.blobId(await readlink(guard.file(entry.absolute), { encoding: "buffer" }))) {
       throw problem("workspace_changed_during_checkpoint", `${entry.path} changed during Git version capture.`);
     }
     return changed(known, snapshot).length ? snapshot : known;
+    } finally { await guard.close(); }
   }
 
   async #readEntry(state: State, root: string, path: string): Promise<Entry | undefined> {
     const absolute = await this.#filePath(root, path);
+    const guard = new WorkspacePathGuard();
+    try {
     let stat;
-    try { stat = await lstat(absolute); } catch (error) { if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined; throw error; }
+    try { await lstat(absolute); await guard.pin(dirname(absolute)); stat = await lstat(guard.file(absolute), { bigint: true }); } catch (error) { if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined; throw error; }
     if (stat.isDirectory()) return undefined;
     if (!stat.isFile() && !stat.isSymbolicLink()) throw problem("workspace_file_type_unsupported", `Cannot checkpoint non-file entry ${path}.`);
     const store = this.#store(state);
-    const id = stat.isSymbolicLink() ? await store.blobId(await readlink(absolute, { encoding: 'buffer' }))
+    const id = stat.isSymbolicLink() ? await store.blobId(await readlink(guard.file(absolute), { encoding: 'buffer' }))
       : await withWorkspaceFileAccess([absolute], false, async () => {
         const file = await openWorkspaceFile(absolute);
         try {
@@ -587,9 +588,10 @@ export class TaskWorkspaceManager {
           recordWorkspaceRead(absolute, revision.digest('hex'));
           return git.digest('hex');
         } finally { await file.close(); }
-      });
-    return { hash: id, mode: process.platform === "win32" ? 0o666 : stat.isSymbolicLink() ? 0o777 : stat.mode & 0o111 ? 0o755 : 0o644,
+      }, { expectedIdentities: { [absolute]: `${stat.dev}:${stat.ino}` } });
+    return { hash: id, mode: process.platform === "win32" ? 0o666 : stat.isSymbolicLink() ? 0o777 : stat.mode & 0o111n ? 0o755 : 0o644,
       kind: stat.isSymbolicLink() ? "symlink" : "file" };
+    } finally { await guard.close(); }
   }
 
   async #filePath(root: string, path: string): Promise<string> {

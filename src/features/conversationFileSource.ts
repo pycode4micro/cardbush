@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { useContext, useEffect, useState } from 'react';
 import { ConversationHostContext } from './conversationHost';
 import { mediaResourceUrl, resourceTargetKind } from '../shared/localPaths';
@@ -18,10 +19,10 @@ export function useConversationFileSource(path: string, enabled = true, options:
     const load = async () => {
       if (host?.resolveFileSource) return host.resolveFileSource(path, { preview });
       if (preview) {
-        if (!host?.previewFile) throw Error('Remote preview is unavailable. Update and restart CardBush.');
+        if (!host?.previewFile) throw Error(uiText()('conversationFileSource.remote_preview_is_unavailable_update_and_restart'));
         return host.previewFile(path);
       }
-      if (!host?.readFile) throw Error('Remote file reading is unavailable.');
+      if (!host?.readFile) throw Error(uiText()('conversationFileSource.remote_file_reading_is_unavailable'));
       const { blob } = await host.readFile(path);
       const source = URL.createObjectURL(blob);
       return { source, dispose: () => URL.revokeObjectURL(source) };
@@ -32,6 +33,6 @@ export function useConversationFileSource(path: string, enabled = true, options:
     }).catch(error => { if (alive) setFile({ key, source: '', error: String(error.message ?? error) }); });
     return () => { alive = false; dispose?.(); };
   }, [host?.readFile, host?.previewFile, host?.resolveFileSource, path, remote, enabled, preview, key]);
-  return !enabled ? { source: '' } : !supported ? { source: '', error: 'Unsupported resource address.' }
+  return !enabled ? { source: '' } : !supported ? { source: '', error: uiText()('conversationFileSource.unsupported_resource_address') }
     : remote ? file?.key === key ? file : { source: host?.peekFileSource?.(path) ?? '' } : { source: mediaResourceUrl(path) };
 }

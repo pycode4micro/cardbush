@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { Component, lazy, useState, type ComponentType, type ReactNode } from 'react';
 
 class ModuleLoadError extends Error {
@@ -68,16 +69,16 @@ export function DeferredModuleNotice({
   retry,
   basicPreview = false,
 }: {
-  language: 'zh' | 'en';
+  language: string;
   retry?: () => void;
   basicPreview?: boolean;
 }) {
   return (
     <div className="deferred-module-notice" role="status">
       <span>{basicPreview
-        ? language === 'zh' ? '已显示基本预览' : 'Showing a basic preview'
-        : language === 'zh' ? '此面板暂时无法加载' : 'This panel is temporarily unavailable'}</span>
-      {retry && <button type="button" onClick={retry}>{language === 'zh' ? '重试' : 'Retry'}</button>}
+        ? uiText(language)('recoverableLazy.showingABasicPreview')
+        : uiText(language)('recoverableLazy.thisPanelIsTemporarilyUnavailable')}</span>
+      {retry && <button type="button" onClick={retry}>{uiText(language)('common.retry')}</button>}
     </div>
   );
 }

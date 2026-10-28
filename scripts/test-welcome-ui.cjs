@@ -22,6 +22,7 @@ async function bundle() {
     ts.isVariableStatement(node) && node.declarationList.declarations[0].name.getText(hookSource) === name).getText(hookSource));
   const localConversation = hookSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'localConversation').getText(hookSource);
   const navigationFixture = `import { useCallback, useRef, useState } from 'react';
+    import { uiText } from ${JSON.stringify(path.join(root, 'src/i18n/index.ts'))};
     import { withWorkspaceReference } from ${JSON.stringify(path.join(root, 'src/shared/promptReferences.ts'))};
     import { conversationMatchesScope } from ${JSON.stringify(path.join(root, 'src/features/conversationScope.ts'))};
     import { conversationProjectDir } from ${JSON.stringify(path.join(root, 'src/features/conversationWorkspace.ts'))};
@@ -29,9 +30,15 @@ async function bundle() {
     import { pickWorkspace } from ${JSON.stringify(path.join(root, 'src/features/ssh/WorkspaceLocationPicker.tsx'))};
     import { showUiError } from ${JSON.stringify(path.join(root, 'src/shared/showUiError.ts'))};
     import { automationSetupPrompt } from ${JSON.stringify(path.join(root, 'src/features/automations/automationPrompts.ts'))};
-    ${appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'stableProjectId').getText(appSource)}
+    import { stableProjectId } from ${JSON.stringify(path.join(root, 'src/features/sidebar/projectStore.ts'))};
+    import { adoptDraftConversationStyle } from ${JSON.stringify(path.join(root, 'src/features/settings/conversationStyle.ts'))};
+    import { adoptDraftConversationSource } from ${JSON.stringify(path.join(root, 'src/features/settings/conversationSource.ts'))};
+    import { adoptDraftConversationModel } from ${JSON.stringify(path.join(root, 'src/features/settings/conversationModel.ts'))};
+    import { adoptConversationDraft } from ${JSON.stringify(path.join(root, 'src/shared/conversationDraft.ts'))};
     ${localConversation}
     function useDraftFixture({ activeId, setActiveId, conversations, setConversations }: any) {
+      const backend = { scope: undefined, keepRunningOnUnmount: false }, selectedModel = 'fixture';
+      const activeConversationIdRef = useRef(activeId); activeConversationIdRef.current = activeId;
       const [preparedConversationsById, setPreparedConversationsById] = useState({});
       const preparedConversationsRef = useRef(preparedConversationsById);
       const conversationsRef = useRef(conversations); conversationsRef.current = conversations;
@@ -73,11 +80,13 @@ async function bundle() {
       : id === '\0welcome-history' ? `export async function fetchWelcomeHistory(signal) { window.historyRequests++; const rows = await window.historyGate; return rows; }` : undefined,
   }], build: { write: false, minify: false, lib: { entry: path.join(root, '__welcome__.ts'), formats: ['cjs'] },
     rolldownOptions: { external: /^react(?:-dom)?(?:\/|$)/, output: { codeSplitting: false } } } });
-  return (Array.isArray(result) ? result : [result]).flatMap(item => item.output).find(item => item.type === 'chunk').code;
+  const output = (Array.isArray(result) ? result : [result]).flatMap(item => item.output);
+  return { code: output.find(item => item.type === 'chunk').code,
+    css: output.filter(item => item.type === 'asset' && item.fileName.endsWith('.css')).map(item => item.source).join('\n') };
 }
 
 app.whenReady().then(async () => {
-  const code = await bundle();
+  const { code, css } = await bundle();
   process.env.NODE_ENV = 'development';
   const win = new BrowserWindow({ width: 1180, height: 760, show: false,
     webPreferences: { nodeIntegration: true, contextIsolation: false, offscreen: true, backgroundThrottling: false, partition: 'welcome-ui-fixture' } });
@@ -91,11 +100,11 @@ app.whenReady().then(async () => {
   const run = code => win.webContents.executeJavaScript(code);
   const until = async (condition, label) => {
     for (let index = 0; index < 100; index++) { if (await run(condition)) return; await pause(30); }
-    throw Error('Timed out: ' + label + '\n' + await run('JSON.stringify({failures, active:routing?.chat.activeConversation, draft:draftValue, text:document.body.innerText})'));
+    throw Error('Timed out: ' + label + '\n' + await run('JSON.stringify({failures:window.failures, active:window.routing?.chat.activeConversation, draft:window.draftValue, text:document.body.innerText})'));
   };
   try {
     await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
-    await win.webContents.insertCSS(readSourceFile(path.join(root, 'src/features/ssh/ssh.css'), 'utf8') + '\n' + ['theme.css', 'app.css', 'windowMaterial.css'].map(file => readSourceFile(path.join(root, 'src/styles', file), 'utf8')).join('\n'));
+    await win.webContents.insertCSS(readSourceFile(path.join(root, 'src/features/ssh/ssh.css'), 'utf8') + '\n' + ['theme.css', 'app.css', 'windowMaterial.css'].map(file => readSourceFile(path.join(root, 'src/styles', file), 'utf8')).join('\n') + '\n' + css);
     await run(`
       window.failures = []; window.historyRequests = 0; window.sent = 0; window.workspaceSwitchCalls = []; window.workspaceErrors = [];
       window.cardbushDesktop = { showErrorDialog: async value => workspaceErrors.push(value) };
@@ -114,6 +123,7 @@ app.whenReady().then(async () => {
       window.setReduced = value => { motion.matches = value; motion.dispatchEvent(new Event('change')); };
       let hidden = false;
       Object.defineProperty(document, 'hidden', { get: () => hidden });
+      Object.defineProperty(document, 'visibilityState', { get: () => hidden ? 'hidden' : 'visible' });
       window.setHidden = value => { hidden = value; document.dispatchEvent(new Event('visibilitychange')); };
       const clear = CanvasRenderingContext2D.prototype.clearRect, move = CanvasRenderingContext2D.prototype.moveTo;
       window.draws = 0; window.points = [];
@@ -174,7 +184,7 @@ app.whenReady().then(async () => {
     await until("document.querySelectorAll('.welcome-suggestion').length === 3 && draws > 3", 'welcome cards and animation');
     assert.equal(await run("document.querySelector('.welcome-star-wordmark').getAttribute('aria-label')"), 'cardbush');
     assert.ok(await run('points.length > 100'), 'word must contain visible stars');
-    assert.equal(await run("document.querySelector('.workspace-location-control > button').textContent.trim()"), '本地', 'saved global preferences cannot select a project');
+    assert.equal(await run("document.querySelector('.workspace-project-chip').textContent.trim()"), '选择项目', 'saved global preferences cannot select a project');
     assert.equal(await run("document.querySelector('.only-talk-toggle')"), null);
     await run("changeDraft('保留我的输入草稿')"); await pause(30);
     await run("document.querySelector('.workspace-location-control > button').click()");
@@ -185,7 +195,7 @@ app.whenReady().then(async () => {
     for (let index = 0; index < 4; index++) {
       await run("document.querySelector('.workspace-location-control > button').click()");
       await until("!!document.querySelector('.ssh-dialog')", 'project menu');
-      const label = index % 2 === 0 ? '不关联项目' : 'Fixture';
+      const label = index % 2 === 0 ? '不在项目中工作' : 'Fixture';
       await run(`[...document.querySelectorAll('.ssh-dialog .ssh-project-list button, .ssh-dialog > button')].find(item=>item.textContent.includes(${JSON.stringify(label)})).click()`);
       await until(`routing.projectDir === ${JSON.stringify(index % 2 === 0 ? '' : 'D:/fixture')}`, 'project association updated');
       assert.equal(await run('routing.chat.activeConversationId'), draftId, 'project association retains the same draft');
@@ -377,7 +387,7 @@ app.whenReady().then(async () => {
     assert.equal(await run("projectItems.find(project=>project.rootPath==='ssh://test-server/work').rootPath"),'ssh://test-server/work','other project remains available');
 
     await openRemoteProject('ssh://test-server/work/Child');
-    await run("document.querySelector('.workspace-picker button[aria-label=关闭]').click()");
+    await run("document.querySelector('.workspace-picker').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     await until("!document.querySelector('.workspace-picker')",'cancel remote selection');
     assert.equal(await run('workspaceSwitchCalls.length'),beforeRemoteSwitch+1);
     await openRemoteProject('ssh://test-server/work/Child');

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { AppLanguage, ManagedModelConfig } from '../../types';
 import { SettingsDropdown } from './SettingsDropdown';
 
@@ -24,13 +25,13 @@ export function ModelProviderSelect({ language, value, options, disabled, onChan
   disabled?: boolean;
   onChange: (value: string) => void;
 }) {
-  const label = language === 'zh' ? '模型商' : 'Provider';
+  const label = uiText(language)('modelProviderSelect.provider');
   return <label className="settings-field">
     <span>{label}</span>
     <SettingsDropdown label={label} value={value} disabled={disabled} onChange={onChange}
       options={options.map(provider => ({
         value: provider,
-        label: provider === customProviderValue ? language === 'zh' ? '自定义服务商…' : 'Custom provider…' : provider,
+        label: provider === customProviderValue ? uiText(language)('modelProviderSelect.customProvider') : provider,
       }))}/>
   </label>;
 }

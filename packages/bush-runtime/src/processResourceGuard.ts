@@ -320,7 +320,7 @@ export async function verifyProcessResourceHost(env: NodeJS.ProcessEnv = process
       env, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: 'utf8',
     });
     const capabilities = JSON.parse(stdout);
-    if (capabilities.protocol !== 'cardbush.process-host.v1' || capabilities.sandboxVersion !== 1 || capabilities.sandboxFileVersion !== 2 || capabilities.sandboxScopeVersion !== 3) {
+    if (capabilities.protocol !== 'cardbush.process-host.v1' || capabilities.sandboxVersion !== 1 || capabilities.sandboxFileVersion !== 3 || capabilities.sandboxScopeVersion !== 4) {
       throw Error('Incompatible process host capabilities.');
     }
     return hostPath;

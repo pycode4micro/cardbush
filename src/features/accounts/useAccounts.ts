@@ -1,20 +1,21 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountsSnapshotSchema, type AccountCommand, type AccountsSnapshot } from '@cardbush/bush-protocol';
 
-export function useAccounts(language: 'zh' | 'en') {
+export function useAccounts(language: string) {
   const [snapshot, setSnapshot] = useState<AccountsSnapshot>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<Record<string, string>>({});
   const reads = useRef(0), alive = useRef(true), operations = useRef(new Map<string, number>()), active = useRef(new Set<string>());
   const refresh = useCallback(async () => {
     const generation = ++reads.current;
-    if (!window.cardbushDesktop?.accountsSnapshot) throw new Error(language === 'zh' ? '请重启 CardBush 以加载账号管理。' : 'Restart CardBush to load account management.');
+    if (!window.cardbushDesktop?.accountsSnapshot) throw new Error(uiText(language)('useAccounts.restartCardbushToLoadAccountManagement'));
     const next = accountsSnapshotSchema.parse(await window.cardbushDesktop.accountsSnapshot());
     if (alive.current && generation === reads.current) setSnapshot(next);
   }, [language]);
   useEffect(() => {
     alive.current = true;
-    const update = () => { const revision = reads.current + 1; void refresh().catch(() => { if (alive.current && reads.current === revision) setError(language === 'zh' ? '无法读取账号状态，请刷新或重启 CardBush。' : 'Could not read accounts. Refresh or restart CardBush.'); }); };
+    const update = () => { const revision = reads.current + 1; void refresh().catch(() => { if (alive.current && reads.current === revision) setError(uiText(language)('useAccounts.couldNotReadAccountsRefreshOrRestart')); }); };
     const unsubscribe = window.cardbushDesktop?.onAccountsChanged?.(update);
     window.addEventListener('focus', update); update();
     return () => { alive.current = false; reads.current++; unsubscribe?.(); window.removeEventListener('focus', update); };
@@ -36,5 +37,5 @@ export function useAccounts(language: 'zh' | 'en') {
       if (current()) { active.current.delete(key); setBusy(value => { const next = { ...value }; delete next[key]; return next; }); }
     }
   };
-  return { snapshot, error, busy, execute, refresh: async () => { setError(''); try { await refresh(); } catch { setError(language === 'zh' ? '无法读取账号状态，请重试。' : 'Could not read accounts. Try again.'); } } };
+  return { snapshot, error, busy, execute, refresh: async () => { setError(''); try { await refresh(); } catch { setError(uiText(language)('useAccounts.couldNotReadAccountsTryAgain')); } } };
 }

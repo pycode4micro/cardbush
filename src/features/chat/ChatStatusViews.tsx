@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { AlertCircle, CheckCircle2, LoaderCircle, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { AppLanguage, RuntimeConnectionUpdate } from '../../types';
@@ -11,9 +12,9 @@ export function BackendLoading({
 }) {
   return (
     <div className="loading-view">
-      <div className="loading-brand" aria-label="cardbush">
+      <div className="loading-brand" aria-label={uiText(language)('windowSidebarToggle.cardbush')}>
         <img className="loading-logo-mark" src="./cardbush-logo.png" alt="" />
-        <strong>cardbush</strong>
+        <strong>{uiText(language)('windowSidebarToggle.cardbush')}</strong>
       </div>
       <div className="loading-rhythm" aria-hidden="true">
         <span />
@@ -24,8 +25,8 @@ export function BackendLoading({
       </div>
       <p>
         {history
-          ? language === 'zh' ? '正在加载会话...' : 'Loading conversation...'
-          : language === 'zh' ? '正在连接运行服务...' : 'Connecting to the runtime...'}
+          ? uiText(language)('chatStatusViews.loadingConversation')
+          : uiText(language)('chatStatusViews.connectingToTheRuntime')}
       </p>
     </div>
   );
@@ -58,9 +59,9 @@ export function RuntimeStatusBanner({
     }
   }, [actionState, onAction]);
   const statusLabel = actionState === 'running'
-    ? language === 'zh' ? '正在重试' : 'Retrying'
+    ? uiText(language)('chatStatusViews.retrying')
     : actionState === 'failed'
-      ? language === 'zh' ? '重试失败' : 'Retry failed'
+      ? uiText(language)('chatStatusViews.retryFailed')
       : actionLabel;
 
   return (
@@ -85,8 +86,8 @@ export function RuntimeStatusBanner({
       <button
         className="runtime-status-dismiss"
         type="button"
-        aria-label={language === 'zh' ? '关闭提示' : 'Dismiss notification'}
-        title={language === 'zh' ? '关闭' : 'Dismiss'}
+        aria-label={uiText(language)('chatStatusViews.dismissNotification')}
+        title={uiText(language)('chatStatusViews.dismiss')}
         onClick={onDismiss}
       >
         <X size={16} />
@@ -117,40 +118,26 @@ export function ConversationConnectionNotice({
     return () => window.clearInterval(timer);
   }, [retryAt, update.state]);
   const attempt = update.attempt && update.attempt > 0
-    ? language === 'zh'
-      ? ` · 第 ${update.attempt} 次`
-      : ` · attempt ${update.attempt}`
+    ? uiText(language)('chatStatusViews.attempt', { value1: update.attempt })
     : '';
   const remainingSeconds = Number.isFinite(retryAt) ? Math.max(0, Math.ceil((retryAt - now) / 1000)) : 0;
   const retryDelay = update.state === 'retrying' && remainingSeconds > 0
-    ? language === 'zh'
-      ? `${remainingSeconds} 秒后重试`
-      : `Retrying in ${remainingSeconds}s`
+    ? uiText(language)('chatStatusViews.retryingInS', { remainingSeconds })
     : '';
   const title = isFailed
     ? update.source === 'provider'
-      ? language === 'zh'
-        ? '模型服务重试失败'
-        : 'Model provider retry failed.'
-      : language === 'zh'
-        ? '连接恢复失败，请检查 Runtime 或模型服务'
-        : 'Connection recovery failed. Check the Runtime or model provider.'
+      ? uiText(language)('chatStatusViews.modelProviderRetryFailed')
+      : uiText(language)('chatStatusViews.connectionRecoveryFailedCheckTheRuntimeOr')
     : isSyncing
-      ? language === 'zh'
-        ? '连接已建立，正在同步运行状态'
-        : 'Connected. Synchronizing the running turn.'
+      ? uiText(language)('chatStatusViews.connectedSynchronizingTheRunningTurn')
       : update.source === 'provider'
-        ? language === 'zh'
-          ? `模型服务异常，正在重试${attempt}`
-          : `Model provider issue. Retrying${attempt}`
-        : language === 'zh'
-          ? `连接异常，正在恢复${attempt}`
-          : `Connection interrupted. Recovering${attempt}`;
+        ? uiText(language)('chatStatusViews.modelProviderIssueRetrying', { attempt })
+        : uiText(language)('chatStatusViews.connectionInterruptedRecovering', { attempt });
   const retryStatus = update.state === 'retrying' && update.source === 'provider'
-    ? retryDelay || (language === 'zh' ? '正在重新请求模型' : 'Requesting the model again')
+    ? retryDelay || (uiText(language)('chatStatusViews.requestingTheModelAgain'))
     : retryDelay;
   const keepTrying = update.state === 'retrying' && update.source === 'provider' && update.maxAttempts === null
-    ? language === 'zh' ? '将持续重试，可点击停止' : 'Will keep retrying; use Stop to cancel'
+    ? uiText(language)('chatStatusViews.willKeepRetryingUseStopToCancel')
     : '';
   const detail = isFailed || isSyncing
     ? update.message || update.reason || ''

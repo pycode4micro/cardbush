@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ChevronRight, GripHorizontal, LayoutGrid, MoveDiagonal2, MoveHorizontal, RotateCcw, Trash2, Undo2, X, Check } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
 import type { AppLanguage } from '../../types';
@@ -18,7 +19,7 @@ type LayoutDrag = { pointerId: number; start: LayoutPoint; client: LayoutPoint; 
 );
 
 export function WelcomeLayoutEditor({ collection, language, onClose }: { collection: ComponentCollection; language: AppLanguage; onClose: () => void }) {
-  const zh = language === 'zh';
+
   const [initial] = useState(() => structuredClone(collection));
   const [layout, setLayout] = useState<WelcomeLayout | undefined>(initial.welcomeLayout);
   const [history, setHistory] = useState<(WelcomeLayout | undefined)[]>([]);
@@ -180,7 +181,7 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
     return () => { window.removeEventListener('pointerdown', outside); window.removeEventListener('blur', cancelDrag); window.removeEventListener('keydown', escape); };
   }, [menu, onClose]);
   useEffect(() => () => document.body.classList.remove('component-layout-editing'), []);
-  return <div className="welcome-layout-editor" ref={root} role="region" aria-label={zh ? '编辑新会话布局' : 'Edit new conversation layout'}
+  return <div className="welcome-layout-editor" ref={root} role="region" aria-label={uiText(language)('welcomeLayoutEditor.editNewConversationLayout')}
     onPointerMove={event => {
       if (drag.current?.pointerId === event.pointerId) moveDrag(event.clientX, event.clientY, event.altKey);
     }}
@@ -193,15 +194,15 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
       }
       releaseDrag();
     }} onPointerCancel={cancelDrag} onLostPointerCapture={cancelDrag}>
-    <TopBar title="cardbush" language={language} inspectorOpen={false}/>
+    <TopBar title={uiText(language)('windowSidebarToggle.cardbush')} language={language} inspectorOpen={false}/>
     <div className="welcome-editor-page">
       <WelcomePage language={language} collection={initial} layout={layout} editing canvasRef={canvas} minHeight={minHeight} onMove={(event, item) => begin(event, item, 'move')}
         overlay={<div className="welcome-alignment-guides" aria-hidden="true">{guides.map(guide => <div key={`${guide.axis}:${guide.position}`}
           className={`welcome-alignment-guide ${guide.axis}`} style={guide.axis === 'x' ? { left: guide.position } : { top: guide.position }}/>)}</div>}
         controls={item => <>
         <div className="welcome-layout-handles">
-          <button type="button" className="welcome-layout-drag" aria-label={`${zh ? '移动' : 'Move'} ${componentTitle(item, language)}`} onPointerDown={event => begin(event, item, 'move')}
-            title={item.id === 'system-input' ? zh ? '水平居中，仅上下移动' : 'Centered horizontally; move up or down' : undefined}
+          <button type="button" className="welcome-layout-drag" aria-label={`${uiText(language)('welcomeLayoutEditor.move')} ${componentTitle(item, language)}`} onPointerDown={event => begin(event, item, 'move')}
+            title={item.id === 'system-input' ? uiText(language)('welcomeLayoutEditor.centeredHorizontallyMoveUpOrDown') : undefined}
             onKeyDown={event => {
               if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
               event.preventDefault();
@@ -211,18 +212,18 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
                 y: Math.max(0, Math.min(10000, current.y + (event.key === 'ArrowUp' ? -10 : event.key === 'ArrowDown' ? 10 : 0))),
               }); update(next);
             }}><GripHorizontal size={14}/>{componentTitle(item, language)}</button>
-          {isBuiltinComponent(item) && item.builtin === 'input' && <div className="component-input-choices" role="group" aria-label={zh ? '输入框样式' : 'Composer style'}>
+          {isBuiltinComponent(item) && item.builtin === 'input' && <div className="component-input-choices" role="group" aria-label={uiText(language)('componentsApp.composerStyle')}>
             {(['standard', 'simple'] as const).map(style => <button type="button" key={style} aria-pressed={(layout?.items.find(current => current.componentId === item.id)?.inputStyle ?? item.inputStyle ?? 'standard') === style}
               onClick={() => { const next = snapshot(); next.items = next.items.map(current => current.componentId === item.id ? { ...current, inputStyle: style } : current); update(next); }}>
-              {style === 'standard' ? zh ? '标准' : 'Standard' : zh ? '精简' : 'Simple'}</button>)}
+              {style === 'standard' ? uiText(language)('componentsApp.standard') : uiText(language)('componentsApp.simple')}</button>)}
           </div>}
           {isBuiltinComponent(item) && item.builtin === 'input' && <ComposerLayoutSettings language={language}
             flow={layout?.items.find(current => current.componentId === item.id)?.composerFlow ?? item.composerFlow}
             onChange={composerFlow => { const next = snapshot(); next.items = next.items.map(current => current.componentId === item.id ? { ...current, composerFlow } : current); update(next); }}/>}
-          <button type="button" title={zh ? '从页面移除' : 'Remove from page'} onClick={() => toggleComponent(item)}><X size={13}/></button>
+          <button type="button" title={uiText(language)('welcomeLayoutEditor.removeFromPage')} onClick={() => toggleComponent(item)}><X size={13}/></button>
         </div>
-        <button type="button" className="welcome-layout-resize" aria-label={`${zh ? '调整大小' : 'Resize'} ${componentTitle(item, language)}`} onPointerDown={event => begin(event, item, 'resize')}
-          title={item.id === 'system-input' ? zh ? '居中调整宽度，高度随内容变化' : 'Resize width around the center; height follows content' : undefined}
+        <button type="button" className="welcome-layout-resize" aria-label={`${uiText(language)('welcomeLayoutEditor.resize')} ${componentTitle(item, language)}`} onPointerDown={event => begin(event, item, 'resize')}
+          title={item.id === 'system-input' ? uiText(language)('welcomeLayoutEditor.resizeWidthAroundTheCenterHeightFollows') : undefined}
           onKeyDown={event => {
             if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
             event.preventDefault();
@@ -236,17 +237,17 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
       {pageBounds.height > 0 && <div className={`welcome-layout-bottom-hint${pageBounds.overflow ? ' is-overflow' : ''}`}
         role="note" data-layout-overflow={pageBounds.overflow}>
         <span className="welcome-layout-bottom-pill">
-          <span className="welcome-layout-bottom-label">{zh ? '可视区域底部' : 'Viewport bottom'}</span>
+          <span className="welcome-layout-bottom-label">{uiText(language)('welcomeLayoutEditor.viewportBottom')}</span>
           <span>{pageBounds.overflow
-            ? zh ? `超出 ${pageBounds.overflow} px · 上移或缩小组件` : `${pageBounds.overflow} px overflow · Move up or resize`
-            : zh ? '布局完整可见' : 'Layout fits in view'}</span>
+            ? uiText(language)('welcomeLayoutEditor.pxOverflowMoveUpOrResize', { value1: pageBounds.overflow })
+            : uiText(language)('welcomeLayoutEditor.layoutFitsInView')}</span>
         </span>
       </div>}
     </div>
-    <div className={`welcome-layout-toolbar${(toolbarPoint?.y ?? 70) > viewport.height / 2 ? ' menus-above' : ''}`} ref={toolbar} role="toolbar" aria-label={zh ? '布局操作' : 'Layout actions'}
-      style={toolbarPoint ? { left: toolbarPoint.x, top: toolbarPoint.y, transform: 'none' } : undefined}>
-      <button type="button" className="welcome-layout-pill welcome-toolbar-drag" aria-label={zh ? '移动编辑工具栏' : 'Move editing toolbar'}
-        title={zh ? '拖动工具栏，或使用方向键移动' : 'Drag toolbar, or move with arrow keys'} onPointerDown={beginToolbar}
+    <div className={`welcome-layout-toolbar${(toolbarPoint?.y ?? 70) > viewport.height / 2 ? ' menus-above' : ''}`} ref={toolbar} role="toolbar" aria-label={uiText(language)('welcomeLayoutEditor.layoutActions')}
+      data-positioned={Boolean(toolbarPoint)} style={toolbarPoint ? { left: toolbarPoint.x, top: toolbarPoint.y } : undefined}>
+      <button type="button" className="welcome-layout-pill welcome-toolbar-drag" aria-label={uiText(language)('welcomeLayoutEditor.moveEditingToolbar')}
+        title={uiText(language)('welcomeLayoutEditor.dragToolbarOrMoveWithArrowKeys')} onPointerDown={beginToolbar}
         onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
           event.preventDefault(); const rect = toolbar.current!.getBoundingClientRect(), point = layoutPoint(layoutSpace(root.current!), rect.left, rect.top);
@@ -254,8 +255,8 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
             y: point.y + (event.key === 'ArrowUp' ? -10 : event.key === 'ArrowDown' ? 10 : 0) })); setMenu(null); setPreview(null);
         }}><GripHorizontal size={14}/></button>
       <div className="welcome-toolbar-group">
-        <button type="button" className="welcome-layout-pill" aria-expanded={menu === 'components'} onClick={() => { setPreview(null); setMenu(menu === 'components' ? null : 'components'); }}><LayoutGrid size={15}/>{zh ? '组件' : 'Components'}</button>
-        {menu === 'components' && <div className="welcome-layout-menu welcome-component-picker" aria-label={zh ? '可用组件' : 'Available components'}
+        <button type="button" className="welcome-layout-pill" aria-expanded={menu === 'components'} onClick={() => { setPreview(null); setMenu(menu === 'components' ? null : 'components'); }}><LayoutGrid size={15}/>{uiText(language)('appCenterModel.components')}</button>
+        {menu === 'components' && <div className="welcome-layout-menu welcome-component-picker" aria-label={uiText(language)('welcomeLayoutEditor.availableComponents')}
           onMouseLeave={() => setPreview(null)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setPreview(null); }}>
           {initial.items.map(item => <button type="button" key={item.id} aria-pressed={ids.includes(item.id)} onClick={() => toggleComponent(item)}
             aria-describedby={preview?.item.id === item.id ? 'welcome-component-preview' : undefined}
@@ -265,21 +266,21 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
       </div>
       <div className="welcome-toolbar-group">
         <div className="welcome-layout-pill welcome-undo-split">
-          <button type="button" disabled={!history.length} onClick={() => { setLayout(history.at(-1)); setHistory(current => current.slice(0, -1)); setError(''); }}><Undo2 size={15}/>{zh ? '撤回' : 'Undo'}</button>
-          <button type="button" aria-label={zh ? '更多布局操作' : 'More layout actions'} aria-expanded={menu === 'undo'} onClick={() => setMenu(menu === 'undo' ? null : 'undo')}><ChevronRight size={14}/></button>
+          <button type="button" disabled={!history.length} onClick={() => { setLayout(history.at(-1)); setHistory(current => current.slice(0, -1)); setError(''); }}><Undo2 size={15}/>{uiText(language)('welcomeLayoutEditor.undo')}</button>
+          <button type="button" aria-label={uiText(language)('welcomeLayoutEditor.moreLayoutActions')} aria-expanded={menu === 'undo'} onClick={() => setMenu(menu === 'undo' ? null : 'undo')}><ChevronRight size={14}/></button>
         </div>
         {menu === 'undo' && <div className="welcome-layout-menu">
-          <button type="button" onClick={() => { update(initial.welcomeLayout); setMenu(null); }}><RotateCcw size={14}/>{zh ? '重置到开始状态' : 'Reset to starting layout'}</button>
-          <button type="button" className="danger" onClick={() => { update({ items: [] }); setMenu(null); }}><Trash2 size={14}/>{zh ? '清空' : 'Clear'}</button>
+          <button type="button" onClick={() => { update(initial.welcomeLayout); setMenu(null); }}><RotateCcw size={14}/>{uiText(language)('welcomeLayoutEditor.resetToStartingLayout')}</button>
+          <button type="button" className="danger" onClick={() => { update({ items: [] }); setMenu(null); }}><Trash2 size={14}/>{uiText(language)('cardlingSceneHost.clear')}</button>
         </div>}
       </div>
-      <button type="button" className="welcome-layout-pill" onClick={onClose}>{zh ? '取消' : 'Cancel'}</button>
+      <button type="button" className="welcome-layout-pill" onClick={onClose}>{uiText(language)('agentConnectionForm.cancel')}</button>
       <button type="button" className="welcome-layout-pill save" onClick={() => {
         try { saveComponents({ ...initial, welcomeLayout: layout ? snapshot() : undefined }, initial.revision); onClose(); }
         catch (cause) { setError(String(cause).includes('REVISION_CONFLICT')
-          ? zh ? '布局已在其他窗口更新，请取消后重新编辑。' : 'The layout changed in another window. Cancel and reopen.'
-          : zh ? '布局保存失败，请重试。' : 'Unable to save the layout. Please retry.'); }
-      }}>{zh ? '保存' : 'Save'}</button>
+          ? uiText(language)('welcomeLayoutEditor.theLayoutChangedInAnotherWindowCancel')
+          : uiText(language)('welcomeLayoutEditor.unableToSaveTheLayoutPleaseRetry')); }
+      }}>{uiText(language)('appCenter.save')}</button>
       {error && <p className="welcome-layout-error" role="alert">{error}</p>}
     </div>
     {menu === 'components' && preview && <WelcomeComponentPreview key={preview.item.id} item={isBuiltinComponent(preview.item) && preview.item.builtin === 'input'

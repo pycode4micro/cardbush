@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useState } from 'react';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
@@ -57,7 +58,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
   const selectMode = (connectionMode: 'connector' | 'remote_debugging') => {
     const next = { ...plugin, config: { ...plugin.config, connectionMode } };
     onReplace(next);
-    onPersist(next, language === 'zh' ? 'Browser Use 连接方式已保存' : 'Browser Use connection mode saved');
+    onPersist(next, uiText(language)('browserConnectionSettings.browserUseConnectionModeSaved'));
   };
 
   const run = async (key: string, action: () => Promise<unknown>) => {
@@ -74,14 +75,14 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
   };
 
   return (
-    <SettingsCard title={language === 'zh' ? '浏览器连接' : 'Browser connection'}>
+    <SettingsCard title={uiText(language)('browserConnectionSettings.browserConnection')}>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
-          <span><strong>Browser Use · Windows 11</strong><small>{language === 'zh' ? '启用插件并安装浏览器扩展，首次在 CardBush 风格的扩展窗口确认一次连接即可。本机 App 和 CLI 共用连接并自动重连，各会话保留独立的标签页和网站授权。内置标签页可通过 @ 选择。' : 'Enable the plugin, install the browser extension and approve the first connection in the CardBush extension window. The local App and CLI share connections and reconnect automatically; each conversation keeps its own tabs and site permissions. Select integrated tabs with @.'}</small></span>
+          <span><strong>{uiText(language)('browserConnectionSettings.browser_use_windows_11')}</strong><small>{uiText(language)('browserConnectionSettings.enableThePluginInstallTheBrowserExtension')}</small></span>
       </label>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />
-        <span><strong>{language === 'zh' ? '远程调试兼容模式' : 'Remote debugging compatibility mode'}</strong><small>{language === 'zh' ? '使用 Google 的 Chrome DevTools MCP，仅供开发者连接已主动开启远程调试的 Chrome，不创建临时资料。' : 'Uses Google’s Chrome DevTools MCP for advanced development with an opted-in remote-debugging Chrome. Does not create a temporary profile.'}</small></span>
+        <span><strong>{uiText(language)('browserConnectionSettings.remoteDebuggingCompatibilityMode')}</strong><small>{uiText(language)('browserConnectionSettings.usesGoogleSChromeDevtoolsMcpFor')}</small></span>
       </label>
       {mode === 'connector' ? (
         <div className="chrome-connector-card">
@@ -89,98 +90,92 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
             <span className={`chrome-connector-indicator ${status?.extensionConnected ? 'online' : status?.bridgeRunning ? 'waiting' : ''}`} />
             <div>
               <strong>{status?.lifecycleState === 'needs_repair'
-                ? (language === 'zh' ? '连接器需要处理' : 'Connector needs attention')
+                ? (uiText(language)('browserConnectionSettings.connectorNeedsAttention'))
                 : !status?.connectorEnabled
-                ? (language === 'zh' ? '连接器已关闭' : 'Connector disabled')
+                ? (uiText(language)('browserConnectionSettings.connectorDisabled'))
                 : status?.extensionConnected
-                ? (language === 'zh' ? '浏览器已连接' : 'Browser connected')
+                ? (uiText(language)('browserConnectionSettings.browserConnected'))
                 : status?.bridgeRunning
-                  ? (language === 'zh' ? '本地桥已就绪，等待扩展' : 'Local bridge ready; waiting for extension')
-                  : (language === 'zh' ? '连接器未就绪' : 'Connector not ready')}</strong>
+                  ? (uiText(language)('browserConnectionSettings.localBridgeReadyWaitingForExtension'))
+                  : (uiText(language)('browserConnectionSettings.connectorNotReady'))}</strong>
               <small>{status?.extensionConnected
-                ? `${status.activeTabTitle || (language === 'zh' ? '当前标签页' : 'Current tab')} · ${status.controlledTabCount} ${language === 'zh' ? '个受控标签页' : 'controlled tabs'}`
+                ? `${status.activeTabTitle || (uiText(language)('browserConnectionSettings.currentTab'))} · ${status.controlledTabCount} ${uiText(language)('browserConnectionSettings.controlledTabs')}`
                 : status?.lifecycleState === 'needs_repair'
-                  ? (language === 'zh' ? '启动失败不表示配对或网站授权已失效。请先重试连接。' : 'A startup failure does not invalidate saved pairing or site permissions. Retry the connection first.')
+                  ? (uiText(language)('browserConnectionSettings.aStartupFailureDoesNotInvalidateSaved'))
                 : status?.portRecovery && status?.paired
-                  ? (language === 'zh' ? '连接地址已自动调整，等待扩展重连。如仍未连接，请更新或重新加载 Browser Use 扩展；原配对和网站授权会保留。' : 'The connection address was recovered automatically. Waiting for the extension to reconnect. If needed, update or reload Browser Use; existing pairing and site permissions are preserved.')
+                  ? (uiText(language)('browserConnectionSettings.theConnectionAddressWasRecoveredAutomaticallyWaiting'))
                 : status?.paired
-                  ? (language === 'zh' ? '配对已保存。开启连接器和浏览器后会自动重连，也可在扩展中点击“连接 CardBush”重试，无需重新生成码或授权。' : 'Pairing is saved. Reconnects automatically when the connector and browser are open; click Connect CardBush in the extension to retry. No new code or permission is needed.')
-                    : (language === 'zh' ? '等待浏览器扩展申请连接。请在 CardBush 风格的扩展窗口确认一次；拒绝后可在扩展中点击“连接 CardBush”重新申请。页面访问仍需单独授权。' : 'Waiting for the browser extension. Confirm once in the CardBush extension window; after declining, click Connect CardBush in the extension to request again. Page access still requires separate authorization.')}</small>
+                  ? (uiText(language)('browserConnectionSettings.pairingIsSavedReconnectsAutomaticallyWhenThe'))
+                    : (uiText(language)('browserConnectionSettings.waitingForTheBrowserExtensionConfirmOnce'))}</small>
             </div>
           </div>
           <div className="chrome-connector-actions">
             <button className="primary-button compact" type="button" disabled={working !== '' || !status || !connector?.setupChromeConnector || (!status.connectorEnabled && (!status.platformSupported || !status.nativeHostAvailable))} title={status?.setupMessage} onClick={() => void run('bridge', async () => status?.connectorEnabled && status.lifecycleState !== 'needs_repair' ? connector?.disableChromeConnector() : connector?.setupChromeConnector())}>
               {working === 'bridge' ? <LoaderCircle className="spin" size={14} /> : null}
-              {status?.lifecycleState === 'needs_repair' ? (language === 'zh' ? '重试连接' : 'Retry connection') : status?.connectorEnabled ? (language === 'zh' ? '关闭连接器' : 'Disable connector') : (language === 'zh' ? '开启连接器' : 'Enable connector')}
+              {status?.lifecycleState === 'needs_repair' ? (uiText(language)('browserConnectionSettings.retryConnection')) : status?.connectorEnabled ? (uiText(language)('browserConnectionSettings.disableConnector')) : (uiText(language)('browserConnectionSettings.enableConnector'))}
             </button>
             {status?.connectorEnabled && status.lifecycleState === 'needs_repair' && <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.disableChromeConnector}
-              onClick={() => void run('disable', async () => connector?.disableChromeConnector())}>{language === 'zh' ? '关闭连接器' : 'Disable connector'}</button>}
-            <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.removeChromeConnector || !status?.platformSupported} onClick={() => void run('remove', async () => connector?.removeChromeConnector())}>{language === 'zh' ? '移除连接器配置' : 'Remove connector configuration'}</button>
+              onClick={() => void run('disable', async () => connector?.disableChromeConnector())}>{uiText(language)('browserConnectionSettings.disableConnector')}</button>}
+            <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.removeChromeConnector || !status?.platformSupported} onClick={() => void run('remove', async () => connector?.removeChromeConnector())}>{uiText(language)('browserConnectionSettings.removeConnectorConfiguration')}</button>
             <button className="primary-button compact" type="button" disabled={working !== '' || !connector?.openChromeConnectorInstaller} onClick={() => void run('extension', async () => connector?.openChromeConnectorInstaller())}>
               {working === 'extension' ? <LoaderCircle className="spin" size={14} /> : null}
-              {status?.storeUrl ? (language === 'zh' ? '安装 Browser Use 扩展' : 'Install Browser Use extension') : (language === 'zh' ? '打开扩展目录' : 'Open extension folder')}
+              {status?.storeUrl ? (uiText(language)('browserConnectionSettings.installBrowserUseExtension')) : (uiText(language)('browserConnectionSettings.openExtensionFolder'))}
             </button>
-            <button className="secondary-button compact" type="button" disabled={working !== ''} onClick={() => void refresh()}><RefreshCw size={14} />{language === 'zh' ? '刷新状态' : 'Refresh'}</button>
-            <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.copyChromeConnectorDiagnostics} onClick={() => void run('diagnostics', async () => { await connector?.copyChromeConnectorDiagnostics(); setDiagnosticsCopied(true); })}>{diagnosticsCopied ? (language === 'zh' ? '已复制诊断信息' : 'Diagnostics copied') : (language === 'zh' ? '复制诊断信息' : 'Copy diagnostics')}</button>
+            <button className="secondary-button compact" type="button" disabled={working !== ''} onClick={() => void refresh()}><RefreshCw size={14} />{uiText(language)('browserConnectionSettings.refresh')}</button>
+            <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.copyChromeConnectorDiagnostics} onClick={() => void run('diagnostics', async () => { await connector?.copyChromeConnectorDiagnostics(); setDiagnosticsCopied(true); })}>{diagnosticsCopied ? (uiText(language)('browserConnectionSettings.diagnosticsCopied')) : (uiText(language)('browserConnectionSettings.copyDiagnostics'))}</button>
           </div>
           {status?.connectorEnabled && <>
-            <details><summary>{language === 'zh' ? '手动配对' : 'Manual pairing'}</summary>
-            <p className="browser-setting-note">{language === 'zh'
-              ? '本机首次连接只需在 CardBush 风格的扩展窗口确认一次，之后自动重连，无需配对码。此处生成本机手动配对码；远程 Agent 配对请在连接目标 Agent 的 CLI 中运行 /browser pair chrome 或 /browser pair edge。'
-              : 'Local first use needs approval in the CardBush extension window, then reconnects automatically without a pairing code. This generates a manual local code; for remote Agent pairing, run /browser pair chrome or /browser pair edge in the CLI connected to that Agent.'}</p>
+            <details><summary>{uiText(language)('browserConnectionSettings.manualPairing')}</summary>
+            <p className="browser-setting-note">{uiText(language)('browserConnectionSettings.localFirstUseNeedsApprovalInThe')}</p>
             <div className="browser-pairing-controls">
-              <SettingsDropdown label={language === 'zh' ? '要配对的浏览器' : 'Browser to pair'} value={browser}
+              <SettingsDropdown label={uiText(language)('browserConnectionSettings.browserToPair')} value={browser}
                 options={[{ value: 'chrome', label: 'Google Chrome' }, { value: 'edge', label: 'Microsoft Edge' }]}
                 disabled={working !== ''} onChange={value => { setBrowser(value as 'chrome' | 'edge'); setPairing(null); }} />
               <input className="browser-connection-name" value={connectionLabel} maxLength={80} disabled={working !== ''}
-                aria-label={language === 'zh' ? '连接名称（可选）' : 'Connection name (optional)'}
-                placeholder={language === 'zh' ? '连接名称（可选，如工作账号）' : 'Connection name (optional, e.g. Work)'}
+                aria-label={uiText(language)('browserConnectionSettings.connectionNameOptional')}
+                placeholder={uiText(language)('browserConnectionSettings.connectionNameOptionalEGWork')}
                 onChange={event => setConnectionLabel(event.target.value)} />
               <button className="secondary-button compact" type="button" disabled={working !== '' || !status.bridgeRunning}
                 onClick={() => void run('pair', async () => { setPairing(await connector!.pairChromeConnector({ browser, label: connectionLabel })); setPairingCopied(false); })}>
-                {language === 'zh' ? '生成配对码' : 'Generate pairing code'}
+                {uiText(language)('browserConnectionSettings.generatePairingCode')}
               </button>
             </div>
             </details>
             {status.connections.length > 0 && <div className="browser-connections">
               {status.connections.map(connection => <div className="browser-connection-row" key={connection.id}>
-                <div><strong>{connection.label}</strong><small>{connection.browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome'} · {connection.connected ? (language === 'zh' ? '已连接' : 'Connected') : (language === 'zh' ? '未连接' : 'Offline')}</small></div>
+                <div><strong>{connection.label}</strong><small>{connection.browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome'} · {connection.connected ? (uiText(language)('browserConnectionSettings.connected')) : (uiText(language)('browserConnectionSettings.offline'))}</small></div>
                 <button type="button" className="secondary-button compact" disabled={working !== '' || status.defaultConnectionId === connection.id}
                   onClick={() => void run('default', () => connector!.selectDefaultBrowserConnection(connection.id))}>
-                  {status.defaultConnectionId === connection.id ? (language === 'zh' ? '默认浏览器' : 'Default browser') : (language === 'zh' ? '设为默认' : 'Set default')}
+                  {status.defaultConnectionId === connection.id ? (uiText(language)('browserConnectionSettings.defaultBrowser')) : (uiText(language)('browserConnectionSettings.setDefault'))}
                 </button>
                 <button type="button" className="secondary-button compact" disabled={working !== ''}
-                  aria-label={`${language === 'zh' ? '移除连接' : 'Remove connection'} ${connection.label}`}
-                  onClick={() => void run('revoke', () => connector!.revokeBrowserConnection(connection.id))}>{language === 'zh' ? '移除' : 'Remove'}</button>
+                  aria-label={`${uiText(language)('browserConnectionSettings.removeConnection')} ${connection.label}`}
+                  onClick={() => void run('revoke', () => connector!.revokeBrowserConnection(connection.id))}>{uiText(language)('appCenter.remove')}</button>
               </div>)}
-              <p className="browser-setting-note">{language === 'zh' ? '默认浏览器用于尚未选择浏览器的会话。已绑定会话保持原连接；你也可以让 Agent 明确切换浏览器。断线不会自动切换。' : 'The default applies to sessions without a browser selection. Existing sessions keep their connection; ask the agent to switch explicitly. Disconnection never switches browsers automatically.'}</p>
+              <p className="browser-setting-note">{uiText(language)('browserConnectionSettings.theDefaultAppliesToSessionsWithoutA')}</p>
             </div>}
           </>}
           {pairing && <div className="chrome-connector-pairing">
-            <label>{language === 'zh' ? '配对码（5 分钟内有效）' : 'Pairing code (valid for 5 minutes)'}
-              <input type="password" readOnly value={pairing.code} autoComplete="off" aria-label={language === 'zh' ? '配对码' : 'Pairing code'} />
+            <label>{uiText(language)('browserConnectionSettings.pairingCodeValidFor5Minutes')}
+              <input type="password" readOnly value={pairing.code} autoComplete="off" aria-label={uiText(language)('browserConnectionSettings.pairingCode')} />
             </label>
             <button className="secondary-button compact" type="button" onClick={() => void run('copy-pair', async () => {
               await navigator.clipboard.writeText(pairing.code); setPairingCopied(true);
-            })}>{pairingCopied ? (language === 'zh' ? '已复制' : 'Copied') : (language === 'zh' ? '复制配对码' : 'Copy pairing code')}</button>
-            <p className="browser-setting-note">{language === 'zh' ? `仅粘贴到 ${pairing.browser === 'edge' ? 'Edge' : 'Chrome'} 的 CardBush Browser Use 扩展。其他连接会继续保留；更换同一配置的配对后可移除旧记录。` : `Paste only into CardBush Browser Use in ${pairing.browser === 'edge' ? 'Edge' : 'Chrome'}. Other connections are retained; remove old records after re-pairing a profile.`}</p>
+            })}>{pairingCopied ? (uiText(language)('browserConnectionSettings.copied')) : (uiText(language)('browserConnectionSettings.copyPairingCode'))}</button>
+            <p className="browser-setting-note">{uiText(language)('browserConnectionSettings.pasteOnlyIntoCardbushBrowserUseIn', { value1: pairing.browser === 'edge' ? 'Edge' : 'Chrome' })}</p>
           </div>}
-          <p className="browser-setting-note">{language === 'zh'
-            ? '“停止控制”只结束当前控制。关闭连接器保留配对，再次开启后自动重连。移除单个连接只撤销该配对；移除连接器配置撤销全部配对和会话绑定。已保存的网站授权可在扩展中单独撤销。'
-            : 'Stop control only ends current control. Disabling the connector preserves pairings for reconnection when re-enabled. Removing a connection revokes that pairing; removing connector configuration clears all pairings and session bindings. Saved site permissions can be revoked separately in the extension.'}</p>
+          <p className="browser-setting-note">{uiText(language)('browserConnectionSettings.stopControlOnlyEndsCurrentControlDisabling')}</p>
           {status?.cleanupWarning && <div className="browser-setting-note">
             <p>{status.cleanupWarning === 'legacy_external_registration'
-              ? (language === 'zh' ? '检测到旧版的外部注册项。请退出所有 CardBush 窗口和后台进程，在 Windows 终端的 PowerShell 中执行清理命令。新版本不会再创建此注册项。' : 'A legacy external registration remains. Exit all CardBush windows and background processes and run the cleanup command in Windows Terminal’s PowerShell. This version does not recreate it.')
+              ? (uiText(language)('browserConnectionSettings.aLegacyExternalRegistrationRemainsExitAll'))
               : status.cleanupWarning}</p>
             {status.cleanupWarning === 'legacy_external_registration' && <button className="secondary-button compact" type="button"
               onClick={() => void run('legacy-cleanup', async () => { await connector?.copyLegacyChromeConnectorCleanup(); setCleanupCopied(true); })}>
-              {cleanupCopied ? (language === 'zh' ? '已复制，请在 PowerShell 中执行' : 'Copied; run in PowerShell') : (language === 'zh' ? '复制旧版清理命令' : 'Copy legacy cleanup command')}
+              {cleanupCopied ? (uiText(language)('browserConnectionSettings.copiedRunInPowershell')) : (uiText(language)('browserConnectionSettings.copyLegacyCleanupCommand'))}
             </button>}
           </div>}
-          <p className="browser-setting-note">{language === 'zh'
-            ? '连接器不直接读取浏览器的密码或 Cookie 数据库。授权页面的文字、截图和操作结果可能发送给你配置的模型服务。'
-            : 'The connector does not read browser password or cookie databases directly. Authorized page text, screenshots and action results may be sent to your configured model provider.'}</p>
-          {!status?.storeUrl && <p className="browser-setting-note">{language === 'zh' ? `扩展已随 CardBush 提供。打开扩展目录后，在 ${browser === 'edge' ? 'edge://extensions' : 'chrome://extensions'} 开启开发者模式，选择“加载解压缩的扩展”，选中该目录。Chrome 和 Edge 使用同一份扩展，首次分别确认连接，之后自动重连。` : `The extension ships with CardBush. Enable developer mode at ${browser === 'edge' ? 'edge://extensions' : 'chrome://extensions'} and choose “Load unpacked”. Chrome and Edge use the same extension; approve each profile on first use, then it reconnects automatically.`}</p>}
+          <p className="browser-setting-note">{uiText(language)('browserConnectionSettings.theConnectorDoesNotReadBrowserPassword')}</p>
+          {!status?.storeUrl && <p className="browser-setting-note">{uiText(language)('browserConnectionSettings.theExtensionShipsWithCardbushEnableDeveloper', { value1: browser === 'edge' ? 'edge://extensions' : 'chrome://extensions' })}</p>}
           {status?.setupMessage && <p className="browser-setting-note">{status.setupMessage}</p>}
           {status?.registrationConflict && <p className="settings-form-error">{status.registrationConflict}</p>}
           {status?.lastError && <p className="settings-form-error">{status.lastError}</p>}
@@ -188,9 +183,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
         </div>
       ) : (
         <p className="browser-setting-note">
-          {language === 'zh'
-            ? '在 Chrome 144+ 的 chrome://inspect/#remote-debugging 中主动开启远程调试。此兼容路径仍依赖 DevToolsActivePort，仅在扩展连接器不可用时使用。'
-            : 'Explicitly enable remote debugging at chrome://inspect/#remote-debugging in Chrome 144+. This compatibility path still relies on DevToolsActivePort and is only for cases where the extension connector cannot be used.'}
+          {uiText(language)('browserConnectionSettings.explicitlyEnableRemoteDebuggingAtChromeInspect')}
         </p>
       )}
     </SettingsCard>

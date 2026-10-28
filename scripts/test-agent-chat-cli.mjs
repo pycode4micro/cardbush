@@ -612,6 +612,33 @@ function cli(t, args, { env = {}, input = '', interactive = false, cwd = resolve
   return state;
 }
 
+test('missing saved tokens explain the remembered connection without switching servers or starting a local Runtime', async t => {
+  await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, "saved O'Brien "));
+  t.after(async () => { assert.ok(resolve(root).startsWith(tempRoot + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
+  let requests = 0;
+  const server = createServer((_req, res) => { requests++; res.end('{}'); });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise(done => server.close(done)));
+  const url = `http://127.0.0.1:${server.address().port}/`, tokenFile = join(root, 'removed-token');
+  const env = { CARDBUSH_CLI_CONFIG: join(root, 'cli.json'), CARDBUSH_CLI_DATA_DIR: join(root, 'local-data'), CARDBUSH_CLI_PROFILE_DIR: join(root, 'profile') };
+  const saved = JSON.stringify({ url, tokenFile, agentId: 'saved-agent' });
+  await writeFile(env.CARDBUSH_CLI_CONFIG, saved);
+  for (const args of [[], ['--resume'], ['--resume', 'saved-session']]) {
+    const result = await cli(t, args, { env, interactive: true }).result;
+    assert.equal(result.code, 1, result.stderr);
+    assert.match(result.stderr, /Cannot read saved Agent token file:/);
+    assert.ok(result.stderr.includes(tokenFile)); assert.ok(result.stderr.includes(env.CARDBUSH_CLI_CONFIG));
+    assert.match(result.stderr, /ENOENT/); assert.match(result.stderr, /--url <Agent-URL> --token-file/);
+    assert.match(result.stderr, /cardbush --local/);
+  }
+  const explicit = await cli(t, ['--url', url, '--token-file', tokenFile, '--sessions'], { env }).result;
+  assert.equal(explicit.code, 1); assert.match(explicit.stderr, /Cannot read Agent token file:/);
+  assert.doesNotMatch(explicit.stderr, /Saved CLI connection:/);
+  assert.equal(requests, 0, 'unreadable credentials must fail before any connection');
+  assert.equal(await readFile(env.CARDBUSH_CLI_CONFIG, 'utf8'), saved, 'failure preserves the selected connection');
+  await assert.rejects(readFile(join(env.CARDBUSH_CLI_DATA_DIR, 'agent.json')), { code: 'ENOENT' });
+});
+
 test('CLI help and argument errors do not need a server or credentials', async t => {
   const help = await cli(t, ['--help']).result;
   assert.equal(help.code, 0); assert.match(help.stdout, /cardbush --resume/); assert.match(help.stdout, /--full-access/);
@@ -640,9 +667,9 @@ test('CLI help and argument errors do not need a server or credentials', async t
 });
 
 test('desktop profile discovery uses the current account, independent of cwd', () => {
-  assert.equal(localDesktopProfile({ APPDATA: 'C:/Users/me/AppData/Roaming' }, 'C:/Users/me', 'win32').replaceAll('\\', '/'), 'C:/Users/me/AppData/Roaming/cardbush');
-  assert.equal(localDesktopProfile({}, '/Users/me', 'darwin').replaceAll('\\', '/'), '/Users/me/Library/Application Support/cardbush');
-  assert.equal(localDesktopProfile({ XDG_CONFIG_HOME: '/settings' }, '/home/me', 'linux').replaceAll('\\', '/'), '/settings/cardbush');
+  assert.equal(localDesktopProfile({ APPDATA: 'C:/Users/fixture/AppData/Roaming' }, 'C:/Users/fixture', 'win32').replaceAll('\\', '/'), 'C:/Users/fixture/AppData/Roaming/cardbush');
+  assert.equal(localDesktopProfile({}, '/Users/fixture', 'darwin').replaceAll('\\', '/'), '/Users/fixture/Library/Application Support/cardbush');
+  assert.equal(localDesktopProfile({ XDG_CONFIG_HOME: '/settings' }, '/home/fixture', 'linux').replaceAll('\\', '/'), '/settings/cardbush');
 });
 
 test('native shell parsing is explicit and reuses platform discovery without noninteractive flags', () => {

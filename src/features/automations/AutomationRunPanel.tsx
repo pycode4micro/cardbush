@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Check, Mail, RefreshCw, Square, ExternalLink, MessageSquare } from 'lucide-react';
 import { isAutomationResult, type AutomationConversation } from '@cardbush/bush-protocol';
@@ -20,10 +21,10 @@ const ignore = () => undefined;
 type MessageState = Record<string, ChatMessage[]>;
 
 export function AutomationRunPanel({ jobId, runId, language, active = true, onOpenConversation }: {
-  jobId: string; runId: string; language: 'zh' | 'en'; onOpenConversation: (sessionId: string) => void;
+  jobId: string; runId: string; language: string; onOpenConversation: (sessionId: string) => void;
   active?: boolean;
 }) {
-  const zh = language === 'zh';
+
   const [detail, setDetail] = useState<AutomationConversation>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
@@ -172,23 +173,22 @@ export function AutomationRunPanel({ jobId, runId, language, active = true, onOp
     return () => observer.disconnect();
   }, [active]);
   const rendered = useMemo(() => projectRenderableChatMessages(normalizeChatMessagesForDisplay(messages)), [messages]);
-  const labels = zh ? { queued: '排队中', running: '执行中', completed: '已完成', failed: '失败', stopped: '已停止', interrupted: '执行中断', awaiting_user_action: '等待处理' }
-    : { queued: 'Queued', running: 'Running', completed: 'Completed', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted', awaiting_user_action: 'Needs attention' };
+  const labels = ({ queued: uiText(language)('automationPanel.queued'), running: uiText(language)('automationPanel.running'), completed: uiText(language)('automationPanel.completed'), failed: uiText(language)('automationPanel.failed'), stopped: uiText(language)('automationPanel.stopped'), interrupted: uiText(language)('automationPanel.interrupted'), awaiting_user_action: uiText(language)('automationPanel.needsAttention') });
   return <section className="automation-run-panel shadow-inspector-shell">
-    <header className="automation-run-heading"><div><strong>{detail?.job.name || (zh ? '执行结果' : 'Execution result')}</strong><span>{detail ? `${labels[detail.run.status]}${isAutomationResult(detail.run) ? ` · ${detail.run.readAt ? (zh ? '已读' : 'Read') : (zh ? '未读' : 'Unread')}` : ''}` : (zh ? '正在加载…' : 'Loading…')}</span></div>
-      <div className="automation-actions"><button type="button" aria-label={zh ? '刷新结果' : 'Refresh result'} onClick={() => { setError(''); void refresh(); if (!sending) setHistoryRevision(value => value + 1); }}><RefreshCw size={14}/></button>
-        {detail && <button type="button" disabled={sending || !isAutomationResult(detail.run) || detail.executionSessionAvailable === false} title={zh ? '打开执行会话' : 'Open execution conversation'} aria-label={zh ? '打开执行会话' : 'Open execution conversation'} onClick={() => onOpenConversation(detail.sessionId)}><ExternalLink size={14}/></button>}
-        {detail && isAutomationResult(detail.run) && <button type="button" disabled={readBusy} onClick={() => void toggleRead()}>{detail.run.readAt ? <Mail size={14}/> : <Check size={14}/>} {detail.run.readAt ? (zh ? '标记未读' : 'Mark unread') : (zh ? '标记已读' : 'Mark read')}</button>}
+    <header className="automation-run-heading"><div><strong>{detail?.job.name || (uiText(language)('automationRunPanel.executionResult'))}</strong><span>{detail ? `${labels[detail.run.status]}${isAutomationResult(detail.run) ? ` · ${detail.run.readAt ? (uiText(language)('automationRunPanel.read')) : (uiText(language)('automationPanel.unread'))}` : ''}` : (uiText(language)('common.loading'))}</span></div>
+      <div className="automation-actions"><button type="button" aria-label={uiText(language)('automationRunPanel.refreshResult')} onClick={() => { setError(''); void refresh(); if (!sending) setHistoryRevision(value => value + 1); }}><RefreshCw size={14}/></button>
+        {detail && <button type="button" disabled={sending || !isAutomationResult(detail.run) || detail.executionSessionAvailable === false} title={uiText(language)('automationRunPanel.openExecutionConversation')} aria-label={uiText(language)('automationRunPanel.openExecutionConversation')} onClick={() => onOpenConversation(detail.sessionId)}><ExternalLink size={14}/></button>}
+        {detail && isAutomationResult(detail.run) && <button type="button" disabled={readBusy} onClick={() => void toggleRead()}>{detail.run.readAt ? <Mail size={14}/> : <Check size={14}/>} {detail.run.readAt ? (uiText(language)('automationPanel.markUnread')) : (uiText(language)('automationPanel.markRead'))}</button>}
       </div></header>
     {detail && detail.job.sessionId !== detail.sessionId && <div className="automation-run-source">
-      {detail.sourceSession ? <button type="button" title={detail.sourceSession.title} onClick={() => onOpenConversation(detail.sourceSession!.id)}><MessageSquare size={13}/>{zh ? '返回来源会话' : 'Back to source conversation'}</button>
-        : <span>{zh ? '来源会话已删除 · 本次执行结果保留' : 'Source conversation deleted · Execution result retained'}</span>}
+      {detail.sourceSession ? <button type="button" title={detail.sourceSession.title} onClick={() => onOpenConversation(detail.sourceSession!.id)}><MessageSquare size={13}/>{uiText(language)('automationRunPanel.backToSourceConversation')}</button>
+        : <span>{uiText(language)('automationRunPanel.sourceConversationDeletedExecutionResultRetained')}</span>}
     </div>}
     <div className="automation-run-transcript message-list" ref={scroll} onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.clientHeight - node.scrollTop < 70; }}>
       <MessageFileReferenceScope workspaceRoot={detail?.workspaceDir || detail?.projectDir}><div className="message-list-content">
         {rendered.map(message => <div className="message-list-item" key={message.id}><MessageBubble message={message} language={language} sending={sending} activeTurnId={turnId} activeAssistantMessageId="" selectedModel={detail?.modelName ?? detail?.model}
           readOnlyActions onRegenerate={ignoreAsync} onEditUserMessage={ignoreAsync} onRetryMessage={ignoreAsync} onRetryGuidance={ignoreAsync} onRevertChangeReport={ignoreAsync} onOpenScene={ignore}/></div>)}
-        {!rendered.length && <p className="automation-hint">{detail?.run.status === 'queued' ? (zh ? '等待执行，开始后会显示对话。' : 'Waiting to execute. The conversation will appear here.') : (zh ? '本次执行还没有对话内容。' : 'This execution has no conversation content yet.')}</p>}
+        {!rendered.length && <p className="automation-hint">{detail?.run.status === 'queued' ? (uiText(language)('automationRunPanel.waitingToExecuteTheConversationWillAppear')) : (uiText(language)('automationRunPanel.thisExecutionHasNoConversationContentYet'))}</p>}
         {detail?.run.error && <p className="automation-error">{detail.run.error}</p>}
         {error && <p className="automation-error" role="alert">{error}</p>}
       </div></MessageFileReferenceScope>
@@ -197,10 +197,10 @@ export function AutomationRunPanel({ jobId, runId, language, active = true, onOp
       onReply={async answers => { await replyInteraction({ interactionId: scopedInteraction.id, answers }); const next = await fetchPendingInteraction(scopedInteraction.sessionId!); if (mounted.current) setInteraction(next); }}
       onCancel={async () => { await cancelInteraction(scopedInteraction.id); const next = await fetchPendingInteraction(scopedInteraction.sessionId!); if (mounted.current) setInteraction(next); }}/ >}
     {!scopedInteraction && <form className="automation-run-composer composer-surface" onSubmit={event => { event.preventDefault(); void send(); }}>
-      <textarea aria-label={zh ? '继续本次对话' : 'Continue this conversation'} placeholder={zh ? '继续本次对话…' : 'Continue this conversation…'} rows={2} value={draft} onChange={event => setDraft(event.target.value)}
+      <textarea aria-label={uiText(language)('automationRunPanel.continueThisConversation')} placeholder={uiText(language)('automationRunPanel.continueThisConversation_601e025')} rows={2} value={draft} onChange={event => setDraft(event.target.value)}
         onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}/>
-      <div><span>{detail?.modelName ?? detail?.model}</span>{sending ? <button type="button" aria-label={zh ? '停止执行' : 'Stop execution'} onClick={() => { if (detail && continuations.has(detail.sessionId)) continuations.get(detail.sessionId)!.controller.abort(); else if (turnId) void stopTurn(turnId).catch(reason => setError(String(reason))); }}><Square size={15}/></button>
-        : <button type="submit" aria-label={zh ? '发送追问' : 'Send follow-up'} disabled={!draft.trim() || !detail || !isAutomationResult(detail.run) || detail.executionSessionAvailable === false}><ArrowUp size={17}/></button>}</div>
+      <div><span>{detail?.modelName ?? detail?.model}</span>{sending ? <button type="button" aria-label={uiText(language)('automationRunPanel.stopExecution')} onClick={() => { if (detail && continuations.has(detail.sessionId)) continuations.get(detail.sessionId)!.controller.abort(); else if (turnId) void stopTurn(turnId).catch(reason => setError(String(reason))); }}><Square size={15}/></button>
+        : <button type="submit" aria-label={uiText(language)('automationRunPanel.sendFollowUp')} disabled={!draft.trim() || !detail || !isAutomationResult(detail.run) || detail.executionSessionAvailable === false}><ArrowUp size={17}/></button>}</div>
     </form>}
   </section>;
 }

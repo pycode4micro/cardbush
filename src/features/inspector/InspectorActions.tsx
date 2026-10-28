@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Clipboard, Clock3, Ellipsis, FolderOpen, PanelsTopLeft, Plus, Save } from 'lucide-react';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import type { AppLanguage } from '../../types';
@@ -39,7 +40,7 @@ export function InspectorActions({
   onSaveLayout?: () => void;
   onOpenLayout?: (layout: SavedInspectorLayout) => void;
 }) {
-  const zh = language === 'zh';
+
   const shortcuts = useKeyboardShortcuts();
   const [bookmarkDialog, setBookmarkDialog] = useState<'bookmarks' | 'import' | null>(null);
   const savedLayouts = useSavedInspectorLayouts();
@@ -47,37 +48,37 @@ export function InspectorActions({
   const actions = [
     ...(onOpenReview ? [{
       id: 'review', icon: <Clipboard size={16} aria-hidden="true" />,
-      label: zh ? '审查' : 'Review', shortcut: shortcuts.label('openReview'), keyShortcut: shortcuts.aria('openReview'),
-      description: zh ? '查看文件修改与工作区操作' : 'Review file changes and workspace actions',
+      label: uiText(language)('app.review'), shortcut: shortcuts.label('openReview'), keyShortcut: shortcuts.aria('openReview'),
+      description: uiText(language)('inspectorActions.reviewFileChangesAndWorkspaceActions'),
       unavailable: '', onClick: onOpenReview,
     }] : []),
     ...(onOpenHistory ? [{
       id: 'history', icon: <Clock3 size={16} aria-hidden="true" />,
-      label: zh ? '历史记录' : 'History', shortcut: '', keyShortcut: undefined,
-      description: zh ? '查看与切换回合执行详情' : 'Browse turn details and tool activity',
+      label: uiText(language)('browserMenu.history'), shortcut: '', keyShortcut: undefined,
+      description: uiText(language)('inspectorActions.browseTurnDetailsAndToolActivity'),
       unavailable: '', onClick: onOpenHistory,
     }] : []),
     {
       id: 'files', icon: <FolderOpen size={16} aria-hidden="true" />,
-      label: zh ? '文件' : 'Files', shortcut: shortcuts.label('openFiles'), keyShortcut: shortcuts.aria('openFiles'),
-      description: zh ? '选择一个或多个文件' : 'Choose one or more files',
-      unavailable: filesAvailable ? '' : zh ? '当前环境不支持选择本地文件' : 'Local file selection is unavailable',
+      label: uiText(language)('inspectorActions.files'), shortcut: shortcuts.label('openFiles'), keyShortcut: shortcuts.aria('openFiles'),
+      description: uiText(language)('inspectorActions.chooseOneOrMoreFiles'),
+      unavailable: filesAvailable ? '' : uiText(language)('inspectorActions.localFileSelectionIsUnavailable'),
       onClick: onOpenFiles,
     },
     {
       id: 'shadow', icon: <ShadowCloneIcon size={16} />,
-      label: zh ? 'Shadow 对话' : 'Shadow chat', shortcut: shortcuts.label('openShadow'), keyShortcut: shortcuts.aria('openShadow'),
-      description: zh ? '基于当前会话冻结历史' : 'Freeze the current conversation history',
+      label: uiText(language)('inspectorActions.shadowChat'), shortcut: shortcuts.label('openShadow'), keyShortcut: shortcuts.aria('openShadow'),
+      description: uiText(language)('inspectorActions.freezeTheCurrentConversationHistory'),
       unavailable: shadowUnavailableReason, onClick: onOpenShadow,
     },
     ...(onMultiPage ? [{ id: 'multi-page', icon: <PanelsTopLeft size={16} aria-hidden="true" />,
-      label: zh ? `${multiPage ? '退出' : ''}多页面 (Beta)` : `${multiPage ? 'Exit ' : ''}Multiple pages (Beta)`, shortcut: '', keyShortcut: undefined,
-      description: zh ? '适用于大屏，同时排列多个侧栏页面' : 'Arrange multiple inspector pages on a large display', unavailable: '', onClick: onMultiPage }] : []),
+      label: uiText(language)('inspectorActions.multiplePagesBeta', { value1: (multiPage ? uiText(language)('inspectorActions.exit') : '') }), shortcut: '', keyShortcut: undefined,
+      description: uiText(language)('inspectorActions.arrangeMultipleInspectorPagesOnALarge'), unavailable: '', onClick: onMultiPage }] : []),
   ];
   return (
-    <div className="right-inspector-start-actions" aria-label={zh ? '新标签页' : 'New tab'}>
-      <section className="inspector-start-tools" aria-label={zh ? '工具' : 'Tools'}>
-      <h2>{zh ? '工具' : 'Tools'}</h2>
+    <div className="right-inspector-start-actions" aria-label={uiText(language)('browserStartPage.newTab')}>
+      <section className="inspector-start-tools" aria-label={uiText(language)('inspectorActions.tools')}>
+      <h2>{uiText(language)('inspectorActions.tools')}</h2>
       {actions.map((action) => (
         <button key={action.id} type="button"
           data-inspector-action={action.id}
@@ -94,16 +95,16 @@ export function InspectorActions({
         </button>
       ))}
       {onAddPage && <button type="button" className="inspector-add-page" onClick={onAddPage}>
-        <Plus size={16} aria-hidden="true"/><span><strong>{zh ? '添加页面' : 'Add page'}</strong></span>
+        <Plus size={16} aria-hidden="true"/><span><strong>{uiText(language)('inspectorActions.addPage')}</strong></span>
       </button>}
       {multiPage && onSaveLayout && <button type="button" data-inspector-action="save-layout" onClick={onSaveLayout}>
-        <Save size={16} aria-hidden="true"/><span><strong>{zh ? '保存多页面' : 'Save layout'}</strong></span>
+        <Save size={16} aria-hidden="true"/><span><strong>{uiText(language)('inspectorActions.saveLayout')}</strong></span>
       </button>}
       {onOpenLayout && savedLayouts.map(layout => <div key={layout.id} className="inspector-saved-layout" data-saved-layout={layout.id}>
         <button type="button" className="inspector-saved-layout-open" onClick={() => onOpenLayout(layout)}>
           <PanelsTopLeft size={16} aria-hidden="true"/><span><strong>{layout.name}</strong></span><small>{layout.pages.length}</small>
         </button>
-        <button type="button" className="inspector-saved-layout-edit" aria-label={zh ? `编辑 ${layout.name}` : `Edit ${layout.name}`} onClick={() => setEditingLayout(layout)}><Ellipsis size={15} aria-hidden="true"/></button>
+        <button type="button" className="inspector-saved-layout-edit" aria-label={uiText(language)('inspectorActions.edit', { value1: layout.name })} onClick={() => setEditingLayout(layout)}><Ellipsis size={15} aria-hidden="true"/></button>
       </div>)}
       </section>
       {onOpenBookmark && <BrowserStartBookmarks language={language} onNavigate={onOpenBookmark}

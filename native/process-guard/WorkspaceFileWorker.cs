@@ -17,7 +17,7 @@ internal static partial class CardBushProcessHost
         Check(GetWorkspaceHandleInformation(stream.SafeFileHandle.DangerousGetHandle(), out info), "Inspect workspace file");
         WorkspaceBasicInformation basic;
         Check(GetWorkspaceBasicInformation(stream.SafeFileHandle.DangerousGetHandle(), 0, out basic, (uint)Marshal.SizeOf(typeof(WorkspaceBasicInformation))), "Inspect workspace file timestamps");
-        if ((info.Attributes & (0x10 | 0x400)) != 0) throw new IOException("workspace_authorization_changed");
+        if ((info.Attributes & (0x10 | 0x400)) != 0 || info.Links != 1) throw new IOException("workspace_authorization_changed");
         return new Dictionary<string, object> {
             { "dev", info.VolumeSerial.ToString() }, { "ino", (((ulong)info.IndexHigh << 32) | info.IndexLow).ToString() },
             { "size", stream.Length.ToString() }, { "mtimeNs", ((((long)info.WriteTime.dwHighDateTime << 32) | (uint)info.WriteTime.dwLowDateTime) - 116444736000000000L).ToString() + "00" },
@@ -54,13 +54,13 @@ internal static partial class CardBushProcessHost
                         Check(handle != new IntPtr(-1), "Open sandbox file");
                         file = new FileStream(new SafeFileHandle(handle, true), writable ? FileAccess.ReadWrite : FileAccess.Read);
                         var metadata = WorkspaceFileStat(file);
-                        if (Convert.ToString(metadata["dev"]) + ":" + Convert.ToString(metadata["ino"]) != Convert.ToString(input["identity"]) ||
-                            writable && Convert.ToString(metadata["nlink"]) != "1") throw new IOException("workspace_authorization_changed");
+                        if (Convert.ToString(metadata["dev"]) + ":" + Convert.ToString(metadata["ino"]) != Convert.ToString(input["identity"])) throw new IOException("workspace_authorization_changed");
                         result = metadata;
                     }
                     else if (operation == "stat" && file != null) result = WorkspaceFileStat(file);
                     else if (operation == "read" && file != null)
                     {
+                        WorkspaceFileStat(file);
                         int count = Convert.ToInt32(input["count"]);
                         if (count < 1 || count > 65536) throw new IOException("File protocol budget exceeded.");
                         var bytes = new byte[count]; file.Position = Convert.ToInt64(input["offset"]);
@@ -68,6 +68,7 @@ internal static partial class CardBushProcessHost
                     }
                     else if ((operation == "truncate" && writable) || (operation == "delete" && deleting))
                     {
+                        WorkspaceFileStat(file);
                         if (operation == "delete" && (!input.ContainsKey("sha256") || input["sha256"] == null)) throw new IOException("Deletion requires an observed revision.");
                         if (input.ContainsKey("sha256") && input["sha256"] != null)
                         {
@@ -85,10 +86,12 @@ internal static partial class CardBushProcessHost
                     }
                     else if (operation == "write" && writable)
                     {
+                        WorkspaceFileStat(file);
                         var bytes = Convert.FromBase64String(Convert.ToString(input["data"]));
                         if (bytes.Length > 65536) throw new IOException("File protocol budget exceeded.");
                         file.Write(bytes, 0, bytes.Length);
                     }
+                    else if (operation == "release" && file != null && !writable) { file.Dispose(); file = null; }
                     else if (operation == "close") { if (file != null) { file.Dispose(); file = null; } Console.WriteLine("{\"ok\":true}"); return 0; }
                     else throw new IOException("Invalid file protocol operation.");
                     Console.WriteLine(json.Serialize(new { ok = true, result = result }));

@@ -36,7 +36,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture(timeout = 2000) {
-  const gates = {}, controllers = [], managers = [], products = [], calls = [], statuses = [], ipc = new Map();
+  const gates = {}, controllers = [], managers = [], browserEndpoints = [], products = [], calls = [], statuses = [], ipc = new Map();
   const wait = name => gates[name]?.promise ?? Promise.resolve();
   class Controller {
     disposed = false;
@@ -63,14 +63,14 @@ function fixture(timeout = 2000) {
     runtimeStartupStatus: { phase: 'initializing', attempt: 0 }, runtimeHostController: null,
     productHostController: null, sandboxSetup: undefined, productMcpManagement: null,
     runtimeHostIpc: { reset() {} }, disposeCapabilityCatalogWatcher: undefined,
-    chromeConnectorBroker: null, shadowWindows: new Map(), bushRuntimeIpcProtocol: 'bush.runtime_ipc.v1',
+    chromeConnectorBroker: null, browserUseEndpoint: null, browserUseRouter: async () => ({}), shadowWindows: new Map(), bushRuntimeIpcProtocol: 'bush.runtime_ipc.v1',
     publishRuntimeStartupStatus(status) { context.runtimeStartupStatus = status; statuses.push(status); },
     registerDesktopControlMonitor() {}, disposeDesktopControlMonitor() {},
     resolveBundledRipgrepPath: () => undefined, productSkillRoots: () => [], productPluginRoots: () => [],
     visualThemeContextPath: () => '/theme', browserConfigurationPath: () => '/browser', productAppsConfigPath: () => '/apps',
     platformFeatures: () => ({}), productAppsConfig: () => ({}), appLogsDir: () => '/logs',
     bundledProductSkillRoot: () => '/skills', legacyBushserverModelConfigPaths: () => [],
-    clearApplicationCaches() {}, watchCapabilityCatalog: () => () => {},
+    clearApplicationCaches() {}, watchCapabilityCatalog: () => () => {}, syncBrowserConnectorPlugin: async () => {},
     assertMainWindowSender() {}, assertRuntimeRendererSender() {},
     randomUUID: (() => { let id = 0; return () => `operation-${++id}`; })(),
     ipcMain: { handle: (channel, fn) => ipc.set(channel, fn) },
@@ -81,13 +81,17 @@ function fixture(timeout = 2000) {
         managers.push(manager); await wait('management'); return manager;
       } };
       if (url.endsWith('runtimeHostController.mjs')) return { RuntimeUtilityProcessController: Controller };
+      if (url.endsWith('browserUseHost.mjs')) return { async startBrowserUseHost() {
+        const endpoint = { url: 'fixture-browser', token: 'fixture-browser', closed: 0, async close() { this.closed++; } };
+        browserEndpoints.push(endpoint); await wait('browser'); return endpoint;
+      } };
       if (url.endsWith('productHostController.mjs')) { await wait('product-import'); return { ElectronProductHostController: Product }; }
       throw Error(`Unexpected module ${url}`);
     },
   };
   vm.runInNewContext(code, context);
   const invoke = (channel, ...args) => ipc.get(channel)({ sender: { id: 1 } }, ...args);
-  return { context, gates, controllers, managers, products, calls, statuses, invoke };
+  return { context, gates, controllers, managers, browserEndpoints, products, calls, statuses, invoke };
 }
 
 test('early desktop requests wait for one boot and each dispatches once', async () => {
@@ -127,12 +131,12 @@ test('failed boot retains the cause, background reads never retry, explicit retr
   assert.equal(f.calls.filter(item => item.command.kind === 'runtime.automation').length, 1, 'the failed request was not replayed');
 });
 
-for (const stage of ['probe', 'management', 'product-import']) {
+for (const stage of ['probe', 'management', 'browser', 'product-import']) {
   test(`timeout during ${stage} cannot publish an old host after retry`, async () => {
     const f = fixture(30); const oldGate = deferred(); f.gates[stage] = oldGate;
     await assert.rejects(f.context.ensureRuntimeHostReady(), /did not become ready within 30ms/);
     assert.equal(f.context.runtimeStartupStatus.phase, 'error');
-    const oldControllers = [...f.controllers], oldManagers = [...f.managers];
+    const oldControllers = [...f.controllers], oldManagers = [...f.managers], oldBrowserEndpoints = [...f.browserEndpoints];
     delete f.gates[stage]; f.context.runtimeServicesStartupTimeoutMs = 2000;
     await f.invoke('app:retry-runtime');
     const current = f.context.runtimeHostController, product = f.context.productHostController;
@@ -143,6 +147,7 @@ for (const stage of ['probe', 'management', 'product-import']) {
     assert.equal(f.context.runtimeStartupStatus.phase, 'ready');
     assert.ok(oldControllers.every(item => item.disposed));
     assert.ok(oldManagers.every(item => item.closed === 1));
+    assert.ok(oldBrowserEndpoints.every(item => item.closed === 1));
   });
 }
 

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions, TextLayer, version, type PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -70,13 +71,13 @@ export default function PdfInspectorPreview({ path, source, language, onLoadingC
     });
     return () => { disposed = true; void job.destroy().catch(() => {}); };
   }, [path, source, onLoadingChange]);
-  return <div ref={setRoot} className="inspector-pdf-preview" aria-label={language === 'zh' ? 'PDF 预览' : 'PDF preview'}>
+  return <div ref={setRoot} className="inspector-pdf-preview" aria-label={uiText(language)('pdfInspectorPreview.pdfPreview')}>
     {pdf && <div className="inspector-pdf-toolbar" data-region-ui>
-      <span>{pdf.numPages} {language === 'zh' ? '页' : 'pages'}</span>
-      <button type="button" aria-label={language === 'zh' ? '缩小 PDF' : 'Zoom out PDF'} disabled={zoom <= .5} onClick={() => setZoom(value => Math.max(.5, value - .25))}><Minus size={14}/></button>
-      <button type="button" aria-label={language === 'zh' ? 'PDF 适应宽度' : 'Fit PDF width'} onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
-      <button type="button" aria-label={language === 'zh' ? '放大 PDF' : 'Zoom in PDF'} disabled={zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + .25))}><Plus size={14}/></button>
-      <a href={source.startsWith('blob:') ? source : fileUrl(path)} download={path.split(/[\\/]/).at(-1)} aria-label={language === 'zh' ? '下载 PDF' : 'Download PDF'}><Download size={14}/></a>
+      <span>{pdf.numPages} {uiText(language)('pdfInspectorPreview.pages')}</span>
+      <button type="button" aria-label={uiText(language)('pdfInspectorPreview.zoomOutPdf')} disabled={zoom <= .5} onClick={() => setZoom(value => Math.max(.5, value - .25))}><Minus size={14}/></button>
+      <button type="button" aria-label={uiText(language)('pdfInspectorPreview.fitPdfWidth')} onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
+      <button type="button" aria-label={uiText(language)('pdfInspectorPreview.zoomInPdf')} disabled={zoom >= 3} onClick={() => setZoom(value => Math.min(3, value + .25))}><Plus size={14}/></button>
+      <a href={source.startsWith('blob:') ? source : fileUrl(path)} download={path.split(/[\\/]/).at(-1)} aria-label={uiText(language)('pdfInspectorPreview.downloadPdf')}><Download size={14}/></a>
     </div>}
     {error && <p role="alert">{error}</p>}
     {pdf && Array.from({ length: pdf.numPages }, (_, index) => <PdfPage key={index} pdf={pdf} number={index + 1} width={width * zoom} scrollRoot={root}/>)}

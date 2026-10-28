@@ -48,7 +48,7 @@ export type SubagentTask = z.infer<typeof subagentTaskSchema>;
 export interface RemoteSubagentRequest {
   connectionId: string; agentId?: string; taskId: string;
   parentSessionId: string; parentTurnId: string; sessionId: string; turnId: string;
-  prompt: string; permissionMode: 'task_free' | 'user_free' | 'all_free'; language: 'zh' | 'en';
+  prompt: string; permissionMode: 'task_free' | 'user_free' | 'all_free'; language: string;
 }
 export interface RemoteSubagentResult {
   status: 'completed' | 'failed' | 'stopped'; finalResponse: string; errorMessage: string; usage: SubagentTask['usage'];

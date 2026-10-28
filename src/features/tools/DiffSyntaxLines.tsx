@@ -1,4 +1,6 @@
 import { Highlight } from 'prism-react-renderer';
+import { uiText } from '../../i18n';
+import { useUiLanguage } from '../../i18n/react';
 import { memo } from 'react';
 import { Prism } from '../../shared/syntaxPrism';
 import { cardbushSyntaxTheme } from '../../shared/syntaxTheme';
@@ -19,6 +21,7 @@ export default memo(function DiffSyntaxLines({
   lines: DiffLine[];
   path: string;
 }) {
+  const language = useUiLanguage();
   const sources = lines.map(diffLineSource);
   const lineNumbers = diffLineNumbers(lines);
   return (
@@ -40,10 +43,10 @@ export default memo(function DiffSyntaxLines({
               key={lineIndex}
             >
               <span className="diff-marker" />
-              <span className="diff-line-number old" aria-label={`Old line ${lineNumbers[lineIndex]?.oldLine ?? ''}`}>
+              <span className="diff-line-number old" aria-label={uiText(language)('source.oldLineNumber', { number: lineNumbers[lineIndex]?.oldLine ?? '' })}>
                 {lineNumbers[lineIndex]?.oldLine ?? ''}
               </span>
-              <span className="diff-line-number new" aria-label={`New line ${lineNumbers[lineIndex]?.newLine ?? ''}`}>
+              <span className="diff-line-number new" aria-label={uiText(language)('source.newLineNumber', { number: lineNumbers[lineIndex]?.newLine ?? '' })}>
                 {lineNumbers[lineIndex]?.newLine ?? ''}
               </span>
               <span className="diff-prefix" aria-hidden="true">{diffLinePrefix(line)}</span>

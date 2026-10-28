@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as productAgent from '../packages/bush-product-agent/dist/index.js';
+import * as i18n from '@cardbush/platform/i18n';
 import test from 'node:test';
 import ts from 'typescript';
 import vm from 'node:vm';
@@ -8,7 +9,7 @@ import * as react from 'react';
 import { createProductAgentTurnRequest } from '../packages/bush-product-agent/dist/index.js';
 const module = { exports: {} };
 const source = ts.transpileModule(readFileSync('src/features/settings/conversationStyle.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-new Function('require', 'module', 'exports', source)(id => { if (id === '@cardbush/bush-product-agent') return productAgent; throw Error(id); }, module, module.exports);
+new Function('require', 'module', 'exports', source)(id => { if (id === '@cardbush/bush-product-agent') return productAgent; if (id === '../../i18n') return i18n; throw Error(id); }, module, module.exports);
 const api = module.exports;
 const sourceModule = { exports: {} };
 const sourcePreferences = ts.transpileModule(readFileSync('src/features/settings/conversationSource.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;

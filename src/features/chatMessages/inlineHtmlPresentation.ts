@@ -163,12 +163,12 @@ export function connectInlineHtmlPresentation(
       '--popover': color('--surface-raised'), '--popover-foreground': color('--text'),
       '--primary': color('--action'), '--primary-foreground': color('--on-action'),
       '--font-sans': style.fontFamily,
-      '--viz-series-1': theme === 'dark' ? '#6aa9ff' : '#2468c4',
-      '--viz-series-2': theme === 'dark' ? '#f6b36b' : '#b45b08',
-      '--viz-series-3': theme === 'dark' ? '#73c9a2' : '#247b56',
-      '--viz-series-4': theme === 'dark' ? '#c2a3ee' : '#8150b6',
-      '--viz-series-5': theme === 'dark' ? '#ee91a6' : '#b94267',
-      '--viz-series-6': theme === 'dark' ? '#70c9d6' : '#247d8c',
+      '--viz-series-1': color('--viz-series-1'),
+      '--viz-series-2': color('--viz-series-2'),
+      '--viz-series-3': color('--viz-series-3'),
+      '--viz-series-4': color('--viz-series-4'),
+      '--viz-series-5': color('--viz-series-5'),
+      '--viz-series-6': color('--viz-series-6'),
     };
     const serialized = JSON.stringify({ theme, tokens });
     if (serialized === previousTheme) return '';

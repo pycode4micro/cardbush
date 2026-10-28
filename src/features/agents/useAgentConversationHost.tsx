@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardbushAppPlugin, PluginCommandSummary, SkillSummary } from '../../types';
 import { runtimeHistoryToolExecution } from '../../backend/api';
@@ -34,9 +35,9 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     return () => { alive = false; window.removeEventListener('cardbush:agent-connection-restored', restored); window.removeEventListener('cardbush:agent-configuration-synced', restored); };
   }, [call, connectionId, enabled]);
   const uploadFiles = useCallback(async (files: File[]) => {
-    if (!enabled) throw new Error('请更新此 Agent 服务以支持附件。Update this Agent service to transfer files.');
-    if (files.length > 32) throw new Error('一次最多上传 32 个文件 / Upload up to 32 files at a time');
-    for (const file of files) if (file.size > maxSize) throw new Error('附件不能超过 64 MiB / Maximum attachment size: 64 MiB');
+    if (!enabled) throw new Error(uiText()('useAgentConversationHost.update_this_agent_service_to_transfer_files'));
+    if (files.length > 32) throw new Error(uiText()('useAgentConversationHost.upload_up_to_32_files_at_a'));
+    for (const file of files) if (file.size > maxSize) throw new Error(uiText()('uploadAgentFile.maximum_attachment_size_64_mib'));
     const result: Array<{ path: string; name: string }> = [];
     for (const file of files) {
       const uploadId = crypto.randomUUID();
@@ -47,7 +48,7 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
   }, [call, sessionId, enabled]);
   const pastedTextAttachments = useMemo<PastedTextAttachmentApi>(() => ({
     create: async text => {
-      if (!enabled) throw new Error('请更新此 Agent 服务以支持文本附件 / Update this Agent service to attach pasted text');
+      if (!enabled) throw new Error(uiText()('useAgentConversationHost.update_this_agent_service_to_attach_pasted'));
       const id = crypto.randomUUID();
       try {
         const result = await uploadAgentFile(new Blob([text], { type: 'text/plain;charset=utf-8' }), chunk =>
@@ -63,7 +64,7 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     discard: id => call<void>('files.pasted-text', { sessionId, action: 'discard', id }),
   }), [call, sessionId, enabled]);
   const readFile = useCallback(async (path: string) => {
-      if (!enabled) throw new Error('Update this Agent service to preview files.');
+      if (!enabled) throw new Error(uiText()('useAgentConversationHost.update_this_agent_service_to_preview_files'));
       if (path.startsWith('cardbush-extract://')) {
         const id = path.slice('cardbush-extract://'.length).replace(/\.md$/, '');
         const result = await call<{ name: string; content: string }>('conversation.extracts', { action: 'read', id });
@@ -72,10 +73,10 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
       const parts: Uint8Array<ArrayBuffer>[] = []; let offset = 0; let name = '';
       while (true) {
         const part = await call<{ content: string; name: string; size: number; offset: number; done: boolean }>('files.read', { sessionId, path, offset });
-        if (part.size > maxSize || part.offset !== offset) throw new Error('Invalid file response.');
+        if (part.size > maxSize || part.offset !== offset) throw new Error(uiText()('useAgentConversationHost.invalid_file_response'));
         const bytes = Uint8Array.from(atob(part.content), char => char.charCodeAt(0));
         parts.push(bytes); offset += bytes.length; name = part.name;
-        if (offset > maxSize || (!part.done && !bytes.length)) throw new Error('Invalid file response.');
+        if (offset > maxSize || (!part.done && !bytes.length)) throw new Error(uiText()('useAgentConversationHost.invalid_file_response'));
         if (part.done) break;
       }
       const ext = name.split('.').at(-1)?.toLowerCase() ?? '';
@@ -86,7 +87,7 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
   const openFile = useCallback((path: string) => { setPreview({ path, name: path.replaceAll('\\', '/').split('/').at(-1) || path }); }, [setPreview]);
   const previewFile = useCallback(async (path: string) => {
     const api = window.cardbushDesktop?.agents;
-    if (!enabled || !api?.filePreview) throw new Error('请重启更新后的 CardBush，并连接支持文件读取的 Agent。');
+    if (!enabled || !api?.filePreview) throw new Error(uiText()('useAgentConversationHost.restart_the_updated_cardbush_app_and_connect'));
     const preview = await api.filePreview(connectionId, sessionId, path);
     return { source: preview.url, dispose: () => { void api.releaseFilePreview(preview.id).catch(() => {}); } };
   }, [connectionId, sessionId, enabled]);

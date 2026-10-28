@@ -48,7 +48,7 @@ export function LocalFileReferenceLink({
   onOpen?: () => void;
   disabled?: boolean;
   className?: string;
-  language?: 'zh' | 'en';
+  language?: string;
 }) {
   const gallery = useContext(ImageGalleryContext);
   const [previewOpen, setPreviewOpen] = useState(false);

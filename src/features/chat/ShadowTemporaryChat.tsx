@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { X } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
@@ -35,14 +36,14 @@ export function ShadowTemporaryChat({
   if (!open) return null;
 
   return (
-    <section className="shadow-temporary-chat" style={style} aria-label="Shadow temporary chat">
+    <section className="shadow-temporary-chat" style={style} aria-label={uiText(language)('shadowTemporaryChat.shadow_temporary_chat')}>
       <header>
         <span className="shadow-chat-title">
           <ShadowCloneIcon size={14} />
           <strong>{agentName}</strong>
-          <small>{language === 'zh' ? '同上下文 · 只读观察' : 'Shared context · read only'}</small>
+          <small>{uiText(language)('shadowTemporaryChat.sharedContextReadOnly')}</small>
         </span>
-        <button type="button" title={language === 'zh' ? '收起' : 'Collapse'} onClick={onClose}>
+        <button type="button" title={uiText(language)('shadowTemporaryChat.collapse')} onClick={onClose}>
           <X size={14} />
         </button>
       </header>
@@ -55,7 +56,7 @@ export function ShadowTemporaryChat({
             {entry.content}
           </p>
         ))}
-        {busy && <span className="shadow-chat-activity" aria-label={language === 'zh' ? '回复中' : 'Responding'} />}
+        {busy && <span className="shadow-chat-activity" aria-label={uiText(language)('shadowTemporaryChat.responding')} />}
         {error && <p className="shadow-chat-error">{error}</p>}
       </div>
     </section>

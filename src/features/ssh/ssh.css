@@ -174,3 +174,22 @@
 .workspace-picker-empty { margin:8px 18px; font-size:12px; color:var(--text-soft); }
 .workspace-picker .workspace-picker-row { margin:0 6px; width:calc(100% - 12px); border-radius:9px; padding:7px 12px; }
 .workspace-picker .workspace-picker-row[aria-current=true] { background:var(--menu-hover,#8882); }
+
+/* Project selection stays a light menu; connection forms retain their roomier layout. */
+.ssh-dialog.workspace-picker-project {
+  width: 280px;
+  padding: 6px 0;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px #0003;
+}
+.workspace-picker-project .workspace-picker-row {
+  min-height: 32px;
+  margin: 0 4px;
+  width: calc(100% - 8px);
+  padding: 6px 10px;
+  gap: 10px;
+  border-radius: 6px;
+}
+.workspace-picker-project .workspace-picker-search { margin: 0 6px 6px; }
+.workspace-picker-project .workspace-picker-section-label { padding: 4px 14px; }
+.workspace-picker-project .workspace-picker-separator { margin: 6px 0; }

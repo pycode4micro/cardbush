@@ -1,6 +1,7 @@
 import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
+import { assertUiMessage } from './helpers/ui-message-contract.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -226,7 +227,7 @@ assert.match(
   /const jumpToSelectedTurn = \(\) => \{[\s\S]*?data-message-id[\s\S]*?scroller\.scrollTo\([\s\S]*?behavior:/,
   'Turn details must provide a real jump back to the source message',
 );
-assert.match(quickContextSource, /跳转到该轮/);
+assertUiMessage(quickContextSource, 'quickContextRail.jumpToTurn', { zh: '跳转到该轮', en: 'Jump to turn' });
 const contextRailStyles = styles.slice(
   styles.indexOf('.quick-context-rail {'),
   styles.indexOf('.quick-context-pre-test-header {'),

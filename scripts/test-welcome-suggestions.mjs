@@ -16,7 +16,7 @@ function load(file) {
   new Function('exports', 'require', code)(exports, specifier => {
     if (specifier.startsWith('.')) {
       const base = resolve(dirname(file), specifier);
-      const source = [base, base + '.ts', base + '.tsx'].find(candidate => existsSync(candidate));
+      const source = [base + '.ts', base + '.tsx', resolve(base, 'index.ts'), base].find(candidate => /\.tsx?$/.test(candidate) && existsSync(candidate));
       if (source && /\.tsx?$/.test(source)) return load(source);
     }
     return require(specifier);

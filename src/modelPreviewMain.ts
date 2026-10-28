@@ -1,28 +1,32 @@
+import { htmlText } from './i18n/htmlText';
+import { uiText, resolveUiLanguage } from './i18n';
 import type { SceneView } from './features/modelPreview/sceneView';
 import type { ModelPreviewMetadata } from '../electron/modelPreview';
 import './styles/modelPreview.css';
 
 const root = document.getElementById('model-preview-root')!;
 const parameters = new URLSearchParams(location.search);
+const language = resolveUiLanguage(parameters.get('lang') ?? navigator.language);
+document.documentElement.lang = language;
 const filePath = parameters.get('path') ?? '';
 const fileName = filePath.split(/[\\/]/).at(-1) ?? filePath;
-document.title = `${fileName} · Blender 只读预览`;
+document.title = uiText(language)('modelPreviewMain.value1_blender_read_only_preview', { value1: fileName });
 root.innerHTML = `
-  <header><strong id="file-name"></strong><span class="readonly">只读</span></header>
-  <div class="model-toolbar" role="toolbar" aria-label="三维查看工具">
-    <select id="scenes" aria-label="场景" disabled></select>
-    <button id="fit" disabled>适应窗口</button><button id="front" disabled>正视</button><button id="top" disabled>俯视</button>
-    <label><input id="wireframe" type="checkbox" disabled>线框</label><label><input id="grid" type="checkbox" checked disabled>网格</label>
+  <header><strong id="file-name"></strong><span class="readonly">${htmlText(uiText(language)('messageBubble.readOnly'))}</span></header>
+  <div class="model-toolbar" role="toolbar" aria-label="${htmlText(uiText(language)('modelPreviewMain.3d_viewing_tools'))}">
+    <select id="scenes" aria-label="${htmlText(uiText(language)('modelPreviewMain.scene'))}" disabled></select>
+    <button id="fit" disabled>${htmlText(uiText(language)('image.resetHint'))}</button><button id="front" disabled>${htmlText(uiText(language)('modelPreviewMain.front_view'))}</button><button id="top" disabled>${htmlText(uiText(language)('modelPreviewMain.top_view'))}</button>
+    <label><input id="wireframe" type="checkbox" disabled>${htmlText(uiText(language)('modelPreviewMain.wireframe'))}</label><label><input id="grid" type="checkbox" checked disabled>${htmlText(uiText(language)('modelPreviewMain.grid'))}</label>
   </div>
-  <main id="viewport" aria-label="只读三维场景"><div id="status" role="status">正在使用 Blender 准备场景…</div></main>
-  <section id="error" role="alert" hidden><strong>无法显示三维预览</strong><p></p><button id="retry">重试预览</button></section>
+  <main id="viewport" aria-label="${htmlText(uiText(language)('modelPreviewMain.read_only_3d_scene'))}"><div id="status" role="status">${htmlText(uiText(language)('modelPreviewMain.preparing_the_scene_with_blender'))}</div></main>
+  <section id="error" role="alert" hidden><strong>${htmlText(uiText(language)('modelPreviewMain.could_not_display_the_3d_preview'))}</strong><p></p><button id="retry">${htmlText(uiText(language)('inspectorErrorBoundary.retryPreview'))}</button></section>
   <div id="animation-controls" hidden>
-    <select id="animations" aria-label="动画"></select><button id="play">播放</button>
-    <input id="timeline" type="range" aria-label="动画进度" min="0" max="1" step="0.01" value="0"><output id="time">0.00 s</output>
+    <select id="animations" aria-label="${htmlText(uiText(language)('modelPreviewMain.animation'))}"></select><button id="play">${htmlText(uiText(language)('modelPreviewMain.play'))}</button>
+    <input id="timeline" type="range" aria-label="${htmlText(uiText(language)('modelPreviewMain.animation_progress'))}" min="0" max="1" step="0.01" value="0"><output id="time">0.00 s</output>
   </div>
-  <footer><span id="summary"></span><span>拖动旋转 · 滚轮缩放 · 右键平移</span></footer>
-  <details id="objects-panel"><summary>场景对象 <span id="object-count"></span></summary><div id="objects"></div></details>
-  <details id="info-panel"><summary>文件信息与预览范围</summary><div id="info"></div></details>`;
+  <footer><span id="summary"></span><span>${htmlText(uiText(language)('modelPreviewMain.drag_to_rotate_scroll_to_zoom_right'))}</span></footer>
+  <details id="objects-panel"><summary>${htmlText(uiText(language)('modelPreviewMain.scene_objects'))}<span id="object-count"></span></summary><div id="objects"></div></details>
+  <details id="info-panel"><summary>${htmlText(uiText(language)('modelPreviewMain.file_information_and_preview_scope'))}</summary><div id="info"></div></details>`;
 
 function element<T extends HTMLElement>(id: string) { return document.getElementById(id) as T; }
 element('file-name').textContent = fileName;
@@ -67,9 +71,9 @@ async function loadScene(scene = '') {
   view = null;
   errorPanel.hidden = true;
   errorPanel.classList.remove('dependency-missing');
-  errorPanel.querySelector('strong')!.textContent = '无法显示三维预览';
+  errorPanel.querySelector('strong')!.textContent = uiText(language)('modelPreviewMain.could_not_display_the_3d_preview');
   status.hidden = false;
-  status.textContent = '正在使用 Blender 准备场景…';
+  status.textContent = uiText(language)('modelPreviewMain.preparing_the_scene_with_blender');
   document.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>('.model-toolbar input, .model-toolbar button, .model-toolbar select')
     .forEach(control => { control.disabled = true; });
   element('animation-controls').hidden = true;
@@ -85,23 +89,23 @@ async function loadScene(scene = '') {
     url.searchParams.set('requestId', requestId);
     if (scene) url.searchParams.set('scene', scene);
     const response = await fetch(url, { signal });
-    if (!response.ok) throw new Error(`文件读取失败（${response.status}）。`);
+    if (!response.ok) throw new Error(uiText(language)('modelPreviewMain.could_not_read_the_file_value1', { value1: response.status }));
     const result = await response.json() as ModelPreviewMetadata & { resource: string; size: number; error?: string; code?: string };
     if (result.error) {
       if (result.code === 'blender_missing') {
         errorPanel.classList.add('dependency-missing');
-        errorPanel.querySelector('strong')!.textContent = '三维预览需要 Blender';
-        throw new Error(`${filePath}\n\n未找到 Blender。安装后即可在此查看三维场景，无需手动启动软件。便携版可通过 CARDBUSH_BLENDER_PATH 指定位置。`);
+        errorPanel.querySelector('strong')!.textContent = uiText(language)('modelPreviewMain.3d_previews_require_blender');
+        throw new Error(uiText(language)('modelPreviewMain.value1_blender_was_not_found_install_it', { value1: filePath }));
       }
-      if (result.code === 'timeout') throw new Error('Blender 转换超过 120 秒，请在 Blender 中检查场景复杂度后重试。');
-      if (result.code === 'busy') throw new Error('正在准备其他三维预览，请稍后重试。');
+      if (result.code === 'timeout') throw new Error(uiText(language)('modelPreviewMain.blender_conversion_exceeded_120_seconds_check_the'));
+      if (result.code === 'busy') throw new Error(uiText(language)('modelPreviewMain.other_3d_previews_are_being_prepared_retry'));
       throw new Error(result.error);
     }
     resource = result.resource;
     if (signal.aborted) return;
-    status.textContent = '正在加载三维视图…';
+    status.textContent = uiText(language)('modelPreviewMain.loading_3d_view');
     const bytes = await fetch(resource, { signal }).then(response => {
-      if (!response.ok) throw new Error('临时预览已过期，请重试。');
+      if (!response.ok) throw new Error(uiText(language)('modelPreviewMain.the_temporary_preview_expired_retry_the_preview'));
       return response.arrayBuffer();
     });
     validateSceneBudget(bytes);
@@ -136,27 +140,27 @@ async function loadScene(scene = '') {
 
 function validateSceneBudget(bytes: ArrayBuffer) {
   const data = new DataView(bytes);
-  if (bytes.byteLength < 20 || data.getUint32(0, true) !== 0x46546c67 || data.getUint32(4, true) !== 2) throw new Error('Blender 返回了无效的场景文件。');
+  if (bytes.byteLength < 20 || data.getUint32(0, true) !== 0x46546c67 || data.getUint32(4, true) !== 2) throw new Error(uiText(language)('modelPreviewMain.blender_returned_an_invalid_scene_file'));
   const jsonLength = data.getUint32(12, true);
-  if (jsonLength > 8 * 1024 * 1024 || jsonLength + 20 > bytes.byteLength) throw new Error('场景结构过大或不完整。');
+  if (jsonLength > 8 * 1024 * 1024 || jsonLength + 20 > bytes.byteLength) throw new Error(uiText(language)('modelPreviewMain.the_scene_structure_is_too_large_or'));
   const json = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes, 20, jsonLength)));
   const vertices = (json.meshes ?? []).reduce((total: number, mesh: { primitives: Array<{ attributes: { POSITION: number } }> }) =>
     total + mesh.primitives.reduce((count, primitive) => count + (json.accessors?.[primitive.attributes.POSITION]?.count ?? 0), 0), 0);
-  if (vertices > 3_000_000 || (json.nodes?.length ?? 0) > 20_000) throw new Error('场景超过交互预览容量（300 万顶点或 2 万节点），请使用 Blender 查看。');
+  if (vertices > 3_000_000 || (json.nodes?.length ?? 0) > 20_000) throw new Error(uiText(language)('modelPreviewMain.the_scene_exceeds_the_interactive_preview_limit'));
 }
 
 function showMetadata(metadata: ModelPreviewMetadata) {
-  element('summary').textContent = `${metadata.objects} 个对象 · ${metadata.materials} 个材质`;
+  element('summary').textContent = uiText(language)('modelPreviewMain.value1_objects_value2_materials', { value1: metadata.objects, value2: metadata.materials });
   const info = element('info');
   info.replaceChildren();
   const text = (value: string) => { const p = document.createElement('p'); p.textContent = value; info.append(p); };
-  text(`Blender ${metadata.blenderVersion} · ${metadata.scene} · ${metadata.frameStart}–${metadata.frameEnd} 帧 · ${metadata.fps.toFixed(2)} fps`);
-  text('仅查看临时转换的场景；原文件未修改。几何体、可转换的材质、灯光和动画按 glTF 能力展示，与 Blender 最终渲染可能不同。');
+  text(uiText(language)('modelPreviewMain.blender_value1_value2_frames_value3_value4_value5', { value1: metadata.blenderVersion, value2: metadata.scene, value3: metadata.frameStart, value4: metadata.frameEnd, value5: metadata.fps.toFixed(2) }));
+  text(uiText(language)('modelPreviewMain.this_is_a_temporary_converted_scene_the'));
   const labels: Record<string, string> = {
-    unsupported_objects: '体积、蜡笔或点云等对象无法完整转换', simulations: '模拟、粒子等效果无法完整还原',
-    procedural_materials: '程序化纹理可能简化', missing_images: '存在缺失的外部贴图',
-    scripts_disabled: '文件内脚本和 Python 驱动未执行', unapplied_modifiers: '为保留形态键，部分修改器未应用',
-    texture_load_failed: '部分内嵌贴图加载失败，相关材质已简化',
+    unsupported_objects: uiText(language)('modelPreviewMain.volume_grease_pencil_or_point_cloud_objects'), simulations: uiText(language)('modelPreviewMain.simulations_and_particle_effects_cannot_be_fully'),
+    procedural_materials: uiText(language)('modelPreviewMain.procedural_textures_may_be_simplified'), missing_images: uiText(language)('modelPreviewMain.some_external_textures_are_missing'),
+    scripts_disabled: uiText(language)('modelPreviewMain.embedded_scripts_and_python_drivers_were_not'), unapplied_modifiers: uiText(language)('modelPreviewMain.some_modifiers_were_not_applied_to_preserve'),
+    texture_load_failed: uiText(language)('modelPreviewMain.some_embedded_textures_failed_to_load_affected'),
   };
   for (const issue of metadata.issues) text(`${labels[issue.code] ?? issue.code}（${issue.count}）：${issue.examples.join('、')}`);
   if (metadata.issues.length) element<HTMLDetailsElement>('info-panel').open = true;

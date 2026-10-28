@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ConversationHostContext } from '../conversationHost';
 import { useContext, useEffect, useState, type ReactNode } from 'react';
 import { CheckCircle2, ChevronRight, CircleStop, GitFork, LoaderCircle, TriangleAlert, Images } from 'lucide-react';
@@ -71,7 +72,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
   const agents = hydrated.filter(execution => toolAgentActivity(execution)?.action === 'run');
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
   const tasks = useLoopSubagentTasks(sessionId, agents.length > 0, active);
-  const zh = language === 'zh';
+
   const imagesByPath = new Map<string, ChatToolArtifact>();
   const imageStates: ReactNode[] = [];
   const agentRows = new Map<string, ReactNode>();
@@ -100,8 +101,8 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
         <span key={execution.id} className="loop-image-status" data-execution-id={execution.id}>
           {pending || loadingPreview ? <LoaderCircle size={16} className="spin" /> : failed || previewFailed ? <TriangleAlert size={16} /> :
             execution.state === 'cancelled' ? <CircleStop size={16} /> : <Images size={16} />}
-          <span>{pending ? activeToolStatusLabel(execution, language) : loadingPreview ? (zh ? '正在加载预览' : 'Loading preview') : previewFailed ? (zh ? '预览加载失败' : 'Preview failed') : failed ? (zh ? '执行失败' : 'Failed') :
-            execution.state === 'cancelled' ? (zh ? '已停止' : 'Stopped') : (zh ? '暂无预览' : 'No preview')}</span>
+          <span>{pending ? activeToolStatusLabel(execution, language) : loadingPreview ? (uiText(language)('inspectorWebview.loadingPreview')) : previewFailed ? (uiText(language)('loopExecutionPreviews.previewFailed')) : failed ? (uiText(language)('loopExecutionPreviews.failed')) :
+            execution.state === 'cancelled' ? (uiText(language)('automationPanel.stopped')) : (uiText(language)('loopExecutionPreviews.noPreview'))}</span>
         </span>,
       );
       continue;
@@ -127,9 +128,9 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
       if (employee) { runningEmployees += Number(running); failedEmployees += Number(failed); }
       else { runningAgents += Number(running); failedAgents += Number(failed); }
       const status = task ? subagentTaskPresentation(task, language).label :
-        running ? (zh ? '运行中' : 'Running') : failed ? (zh ? '执行失败' : 'Failed') :
-        stopped ? (zh ? '已停止' : 'Stopped') : returnedStatus === 'completed' ? (zh ? '已完成' : 'Completed') : (zh ? '已派发' : 'Dispatched');
-      const title = task ? employeeTaskTitle(task, language) : typeof member?.agentName === 'string' ? member.agentName : activity?.name || activity?.id || (zh ? '子 Agent' : 'Subagent');
+        running ? (uiText(language)('cardlingWindow.running')) : failed ? (uiText(language)('loopExecutionPreviews.failed')) :
+        stopped ? (uiText(language)('automationPanel.stopped')) : returnedStatus === 'completed' ? (uiText(language)('automationPanel.completed')) : (uiText(language)('loopExecutionPreviews.dispatched'));
+      const title = task ? employeeTaskTitle(task, language) : typeof member?.agentName === 'string' ? member.agentName : activity?.name || activity?.id || (uiText(language)('employeePresentation.subagent'));
       const Icon = running ? LoaderCircle : failed ? TriangleAlert : stopped ? CircleStop : task?.status === 'completed' || returnedStatus === 'completed' ? CheckCircle2 : GitFork;
       (employee ? employeeRows : agentRows).set(key, <button key={key} type="button" className="tool-preview-card loop-subagent-preview"
         data-execution-id={execution.id} data-task-id={taskId || undefined} disabled={!task} title={`${title} · ${status}`}
@@ -144,26 +145,25 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
   const registrations = hydrated.some(execution => isDefinitionActivity(toolAgentActivity(execution)));
   if (!registrations && !agentRows.size && !employeeRows.size && !images.length && !imageStates.length && !detailsFailed) return null;
   const statusLabel = (running: number, failed: number) => [
-    running ? (zh ? `${running} 项进行中` : `${running} running`) : '',
-    failed ? (zh ? `${failed} 项失败` : `${failed} failed`) : '',
+    running ? (uiText(language)('loopExecutionPreviews.running', { running })) : '',
+    failed ? (uiText(language)('loopExecutionPreviews.failed_764cd7f', { failed })) : '',
   ].filter(Boolean).join(' · ');
-  return <div className="loop-execution-previews" aria-label={zh ? '执行预览' : 'Execution previews'}>
+  return <div className="loop-execution-previews" aria-label={uiText(language)('loopExecutionPreviews.executionPreviews')}>
     <RegistrationPreviews executions={hydrated} sessionId={sessionId} language={language} />
     {employeeRows.size > 0 && <LoopPreviewGroup kind="employee" icon={<EmployeeIcon size={15} />}
-      label={zh ? `${employeeRows.size} 位员工执行` : `${employeeRows.size} employee runs`}
+      label={uiText(language)('loopExecutionPreviews.employeeRuns', { value1: employeeRows.size })}
       status={statusLabel(runningEmployees, failedEmployees)}>{[...employeeRows.values()]}</LoopPreviewGroup>}
     {agentRows.size > 0 && <LoopPreviewGroup kind="subagent" icon={<GitFork size={15} />}
-      label={zh ? `${agentRows.size} 个子 Agent` : `${agentRows.size} subagents`}
+      label={uiText(language)('loopExecutionPreviews.subagents', { value1: agentRows.size })}
       status={statusLabel(runningAgents, failedAgents)}>
       {[...agentRows.values()]}
     </LoopPreviewGroup>}
     {(images.length > 0 || imageStates.length > 0) && <LoopPreviewGroup kind="image" icon={<Images size={15} />}
-      label={images.length ? (zh ? `${viewedImages ? '已查看 ' : ''}${images.length} 张图像` :
-        `${images.length} images${viewedImages ? ' viewed' : ''}`) : (zh ? '查看图像' : 'View images')}
+      label={images.length ? (uiText(language)(viewedImages ? 'images.viewedCount' : 'images.count', { count: images.length })) : (uiText(language)('loopExecutionPreviews.viewImages'))}
       status={statusLabel(pendingImages, failedImages)}>
       <ToolImageArtifactViewer artifacts={images} language={language} variant="thumbnail" />
       {imageStates}
     </LoopPreviewGroup>}
-    {detailsFailed && <button className="loop-preview-retry" type="button" onClick={() => setRetry(value => value + 1)}>{zh ? '重试读取预览' : 'Retry previews'}</button>}
+    {detailsFailed && <button className="loop-preview-retry" type="button" onClick={() => setRetry(value => value + 1)}>{uiText(language)('loopExecutionPreviews.retryPreviews')}</button>}
   </div>;
 }

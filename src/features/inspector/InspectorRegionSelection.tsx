@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { ArrowUp, Check, LoaderCircle, RefreshCw, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
@@ -15,7 +16,7 @@ export function InspectorRegionSelection({ surface, guest, enabled, language, ta
   target: string; revision: string; conversation?: RegionConversation; onClose: () => void; onRefresh?: () => void;
   onReference?: (region: PreviewRegion, image: string) => Promise<void>;
 }) {
-  const zh = language === 'zh', layer = useRef<HTMLDivElement>(null), form = useRef<HTMLFormElement>(null), input = useRef<HTMLTextAreaElement>(null);
+  const layer = useRef<HTMLDivElement>(null), form = useRef<HTMLFormElement>(null), input = useRef<HTMLTextAreaElement>(null);
   const hitArea = useRef<HTMLDivElement>(null), wheel = useRef<(event: WheelEvent) => void>(() => {});
   const capturing = useRef<number | null>(null);
   const [hover, setHover] = useState<PreviewRegion | null>(null), [selection, setSelection] = useState<PreviewRegion | null>(null);
@@ -55,7 +56,7 @@ export function InspectorRegionSelection({ surface, guest, enabled, language, ta
     const result = await guest.current.executeJavaScript?.(`(${queryPreviewRegion.toString()})(${JSON.stringify(payload)})`) as PreviewRegion | null;
     if (!result) return null;
     const r = result.rect;
-    if (![r?.x, r?.y, r?.width, r?.height].every(Number.isFinite)) throw Error(zh ? '无法定位该区域，请重新框选。' : 'Unable to locate this region. Select it again.');
+    if (![r?.x, r?.y, r?.width, r?.height].every(Number.isFinite)) throw Error(uiText(language)('inspectorRegionSelection.unableToLocateThisRegionSelectIt'));
     return { ...result, rect: { x: r.x / sx + at.x - bounds.x, y: r.y / sy + at.y - bounds.y, width: r.width / sx, height: r.height / sy } };
   };
   const choose = async (point: RegionPoint, custom?: RegionRect) => {
@@ -74,7 +75,7 @@ export function InspectorRegionSelection({ surface, guest, enabled, language, ta
         ? { x: (result.rect.x + bounds.x - guestBounds.x) / guestBounds.width, y: (result.rect.y + bounds.y - guestBounds.y) / guestBounds.height, width: result.rect.width / guestBounds.width, height: result.rect.height / guestBounds.height }
         : { x: (result.rect.x + bounds.x) / innerWidth, y: (result.rect.y + bounds.y) / innerHeight, width: result.rect.width / innerWidth, height: result.rect.height / innerHeight };
       const capture = window.cardbushDesktop?.captureInspectorRegion;
-      if (!capture) throw Error(zh ? '当前环境暂不支持区域截图。' : 'Region capture is unavailable in this environment.');
+      if (!capture) throw Error(uiText(language)('inspectorRegionSelection.regionCaptureIsUnavailableInThisEnvironment'));
       const data = await capture({ rect, guestId: guest.current?.getWebContentsId?.() });
       if (token === request.current) { setImage(data); input.current?.focus({ preventScroll: true }); }
     } catch (cause) { if (token === request.current) setError(String((cause as Error).message)); }
@@ -102,11 +103,11 @@ export function InspectorRegionSelection({ surface, guest, enabled, language, ta
     const baseline = new Set(sender.messages.map(message => message.id));
     const requestId = crypto.randomUUID();
     try {
-      const path = sender.saveImage ? await sender.saveImage(screenshot) : (await window.cardbushDesktop!.saveImageDataUrl(screenshot, '选区.png', { copyToClipboard: false })).path;
+      const path = sender.saveImage ? await sender.saveImage(screenshot) : (await window.cardbushDesktop!.saveImageDataUrl(screenshot, uiText(language)('inspectorRegionSelection.selection_png'), { copyToClipboard: false })).path;
       if (currentScope.current !== sender.scope || token !== request.current) return;
       const accepted = await sender.send(regionPrompt(text, target, selected, path, requestId));
       if (currentScope.current !== sender.scope || token !== request.current) return;
-      if (accepted) { setDraft(''); setSent({ baseline, requestId }); } else setError(zh ? '尚未发送，请检查当前会话或模型配置后重试。' : 'Not sent. Check the conversation or model settings and retry.');
+      if (accepted) { setDraft(''); setSent({ baseline, requestId }); } else setError(uiText(language)('inspectorRegionSelection.notSentCheckTheConversationOrModel'));
     } catch (cause) { if (token === request.current) setError(String((cause as Error).message)); }
     finally { if (currentScope.current === sender.scope) setSending(false); }
   };
@@ -139,7 +140,7 @@ export function InspectorRegionSelection({ surface, guest, enabled, language, ta
   const reply = replies.filter(message => message.role === 'assistant' && message.content?.trim()).at(-1);
   const localPoint = (event: { clientX: number; clientY: number }) => { const at = surface.current!.getBoundingClientRect(); return { x: Math.max(0, Math.min(at.width, event.clientX - at.x)), y: Math.max(0, Math.min(at.height, event.clientY - at.y)) }; };
   return <div ref={layer} className="inspector-region-layer" data-region-ui>
-    <div ref={hitArea} className="inspector-region-hit-area" aria-label={zh ? '点击内容块或拖动框选区域' : 'Click a block or drag to select a region'}
+    <div ref={hitArea} className="inspector-region-hit-area" aria-label={uiText(language)('app.clickABlockOrDragToSelect')}
       onPointerMove={event => {
         const point = localPoint(event), drag = gesture.current;
         if (drag) { drag.last = point; if (Math.hypot(point.x - drag.start.x, point.y - drag.start.y) > 5) setBox({ x: Math.min(point.x, drag.start.x), y: Math.min(point.y, drag.start.y), width: Math.abs(point.x - drag.start.x), height: Math.abs(point.y - drag.start.y) }); return; }
@@ -152,21 +153,21 @@ export function InspectorRegionSelection({ surface, guest, enabled, language, ta
       onPointerUp={event => { const drag = gesture.current; if (event.button !== 0 || !drag || drag.pointerId !== event.pointerId) return; gesture.current = null; const end = localPoint(event); const custom = Math.hypot(end.x - drag.start.x, end.y - drag.start.y) > 5 ? { x: Math.min(end.x, drag.start.x), y: Math.min(end.y, drag.start.y), width: Math.max(2, Math.abs(end.x - drag.start.x)), height: Math.max(2, Math.abs(end.y - drag.start.y)) } : undefined; void choose(end, custom); }}
       onPointerCancel={reset}
       onContextMenu={event => event.preventDefault()}/>
-    <div className="inspector-region-help">{zh ? '点击选择 · 拖动框选 · Esc 退出' : 'Click a block · Drag a region · Esc to exit'}<button type="button" aria-label={zh ? '退出框选' : 'Exit selection'} onClick={onClose}><X size={14}/></button></div>
+    <div className="inspector-region-help">{uiText(language)('inspectorRegionSelection.clickABlockDragARegionEsc')}<button type="button" aria-label={uiText(language)('inspectorRegionSelection.exitSelection')} onClick={onClose}><X size={14}/></button></div>
     {visible && <div className={`inspector-region-outline${selection ? ' selected' : ''}`} style={{ left: visible.x, top: visible.y, width: visible.width, height: visible.height }}/>}
-    {selection && <form ref={form} className="inspector-region-conversation" style={position} aria-label={zh ? '选区 AI 对话' : 'Region AI conversation'} onSubmit={event => { event.preventDefault(); void submit(); }}>
-      <header><span>{selection.page ? `${zh ? '第' : 'Page '}${selection.page}${zh ? '页 · ' : ' · '}` : ''}{selection.sheet ? selection.label : selection.custom ? (zh ? '自定义区域' : 'Custom region') : (zh ? '所选内容' : 'Selected content')}</span><button type="button" aria-label={zh ? '关闭选区对话' : 'Close region conversation'} onClick={reset}><X size={14}/></button></header>
+    {selection && <form ref={form} className="inspector-region-conversation" style={position} aria-label={uiText(language)('inspectorRegionSelection.regionAiConversation')} onSubmit={event => { event.preventDefault(); void submit(); }}>
+      <header><span>{selection.page ? `${uiText(language)('inspectorRegionSelection.page')}${selection.page}${uiText(language)('inspectorRegionSelection.message')}` : ''}{selection.sheet ? selection.label : selection.custom ? (uiText(language)('inspectorRegionSelection.customRegion')) : (uiText(language)('inspectorRegionSelection.selectedContent'))}</span><button type="button" aria-label={uiText(language)('inspectorRegionSelection.closeRegionConversation')} onClick={reset}><X size={14}/></button></header>
       {reply && <div className="inspector-region-reply"><MarkdownContent content={reply.content} language={language}/></div>}
-      {sent && !conversation?.busy && onRefresh && <button className="inspector-region-refresh" type="button" onClick={onRefresh}><RefreshCw size={13}/>{zh ? '刷新预览' : 'Refresh preview'}</button>}
-      {sent && !reply && <p className="inspector-region-status"><Check size={13}/>{zh ? '已发送到当前会话' : 'Sent to the current conversation'}</p>}
+      {sent && !conversation?.busy && onRefresh && <button className="inspector-region-refresh" type="button" onClick={onRefresh}><RefreshCw size={13}/>{uiText(language)('inspectorRegionSelection.refreshPreview')}</button>}
+      {sent && !reply && <p className="inspector-region-status"><Check size={13}/>{uiText(language)('inspectorRegionSelection.sentToTheCurrentConversation')}</p>}
       {error && <p role="alert">{error}</p>}
       {sent && conversation?.error && <p role="alert">{conversation.error}</p>}
       {onReference && <button type="button" disabled={!image || preparing || sending} onClick={() => {
         setSending(true); setError(''); void onReference(selection, image).then(reset, cause => setError(String((cause as Error).message))).finally(() => setSending(false));
-      }}>{zh ? '引用到画板' : 'Reference on canvas'}</button>}
-      {!conversation && !onReference && <p role="status">{zh ? '请先打开一个可对话的会话，再发送选区要求。' : 'Open a conversation before sending region instructions.'}</p>}
-      <textarea ref={input} value={draft} rows={2} aria-label={zh ? '选区修改要求' : 'Region instructions'} placeholder={zh ? '想怎么修改这里？' : 'How should this region change?'} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}/>
-      <footer><span>{preparing ? (zh ? '正在准备选区…' : 'Preparing region…') : conversation?.busy ? (zh ? '处理中' : 'Working') : (zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for newline')}</span><button type="submit" disabled={!draft.trim() || !image || preparing || sending || !conversation} aria-label={zh ? '发送选区要求' : 'Send region instructions'}>{preparing || sending ? <LoaderCircle className="spinning" size={17}/> : <ArrowUp size={17}/>}</button></footer>
+      }}>{uiText(language)('inspectorRegionSelection.referenceOnCanvas')}</button>}
+      {!conversation && !onReference && <p role="status">{uiText(language)('inspectorRegionSelection.openAConversationBeforeSendingRegionInstructions')}</p>}
+      <textarea ref={input} value={draft} rows={2} aria-label={uiText(language)('inspectorRegionSelection.regionInstructions')} placeholder={uiText(language)('inspectorRegionSelection.howShouldThisRegionChange')} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}/>
+      <footer><span>{preparing ? (uiText(language)('inspectorRegionSelection.preparingRegion')) : conversation?.busy ? (uiText(language)('inspectorRegionSelection.working')) : (uiText(language)('inspectorRegionSelection.enterToSendShiftEnterForNewline'))}</span><button type="submit" disabled={!draft.trim() || !image || preparing || sending || !conversation} aria-label={uiText(language)('inspectorRegionSelection.sendRegionInstructions')}>{preparing || sending ? <LoaderCircle className="spinning" size={17}/> : <ArrowUp size={17}/>}</button></footer>
     </form>}
   </div>;
 }

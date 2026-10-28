@@ -245,7 +245,7 @@ export function registerSubagentTool(
           prompt: context.input.prompt, inheritContext: false, inheritedMessageCount: 0, remote, ...(previous ? { resumedFromTaskId: previous.taskId } : {}) });
         const completion = options.remoteAgents.run({ ...remote, taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
           sessionId: childSessionId, turnId: childTurnId, prompt: context.input.prompt,
-          permissionMode, language: parent.metadata.uiLanguage === 'en' ? 'en' : 'zh',
+          permissionMode, language: String(parent.metadata.uiLanguage || 'zh'),
         }, context.signal).catch(error => ({ status: error instanceof Error && error.name === 'AbortError' ? 'stopped' as const : 'failed' as const, finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} }))
           .then(result => tasks.finish({ parentSessionId: context.sessionId, taskId, ...result }));
         if (options.asyncDispatch && !execution.waitForResult) {

@@ -54,7 +54,8 @@ const settingsSource = readSourceFile(
 );
 assert.match(settingsSource, /selected=\{config\.defaultModelId === model\.id\}/);
 assert.match(settingsSource, /onSelect\(model\.id\)/);
-assert.match(settingsSource, /最大输出 tokens 必须小于总体上下文窗口/);
+assert.match(settingsSource, /uiText\(language\)\('modelsSettingsPanel\.maximumOutputTokensMustBeBelowThe'\)/);
+assert.match((await import('@cardbush/platform/i18n')).uiText('zh')('modelsSettingsPanel.maximumOutputTokensMustBeBelowThe'), /最大输出 tokens 必须小于总体上下文窗口/);
 assert.match(settingsSource, /model.maxCompletionTokens/);
 
 const apiSource = readSourceFile(
@@ -110,9 +111,10 @@ assert.match(composerSource, /className="model-reasoning-secondary-options"/);
 assert.match(composerSource, /aria-expanded=\{reasoningExpanded\}/);
 assert.match(composerSource, /const progressPercentage = Math\.min\(100, percentage\)/);
 assert.match(composerSource, /Math\.max\(0, usedTokens - maxTokens\)/);
-assert.match(composerSource, /'超出' : 'Over'/);
+assert.match(composerSource, /uiText\(language\)\('composer\.over'\)/);
+assert.equal((await import('@cardbush/platform/i18n')).uiText('zh')('composer.over'), '超出');
 for (const level of ['none', 'low', 'medium', 'high', 'xhigh', 'max']) {
-  assert.match(composerSource, new RegExp(`${level}: \\{`));
+  assert.match(composerSource, new RegExp(`${level}: ['"]composer\\.`));
 }
 assert.doesNotMatch(composerSource, /minimal:\s*\{/);
 assert.doesNotMatch(composerSource, /middle:\s*\{/);

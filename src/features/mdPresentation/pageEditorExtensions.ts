@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Node, createDocument, type Editor, type JSONContent } from '@tiptap/core';
 import type { EditorState } from '@tiptap/pm/state';
 import StarterKit from '@tiptap/starter-kit';
@@ -57,31 +58,31 @@ export function pageMarkdownContent(editor: Editor, source: string): JSONContent
   return { type: 'doc', content };
 }
 
-export function pageEditorExtensions(navigate: (id: string) => void, language: 'zh' | 'en', beforeEdit?: () => void) {
-  const zh = language === 'zh';
+export function pageEditorExtensions(navigate: (id: string) => void, language: string, beforeEdit?: () => void) {
+
   const PageImage = Image.extend({
     addNodeView() { return ({ node, getPos, editor }) => {
       const dom = document.createElement('figure'); dom.className = 'bush-page-image'; dom.contentEditable = 'false';
       const image = document.createElement('img'); image.draggable = false;
       const panel = document.createElement('div'); panel.className = 'bush-image-slot';
-      const upload = document.createElement('button'); upload.type = 'button'; upload.textContent = zh ? '＋ 添加图片' : '+ Add image';
+      const upload = document.createElement('button'); upload.type = 'button'; upload.textContent = uiText(language)('pageEditorExtensions.addImage');
       const file = document.createElement('input'); file.type = 'file'; file.accept = 'image/png,image/jpeg,image/webp,image/gif'; file.hidden = true;
-      const url = document.createElement('input'); url.type = 'url'; url.placeholder = zh ? '或粘贴图片链接，按 Enter' : 'Or paste an image URL and press Enter';
-      url.setAttribute('aria-label', zh ? '图片链接' : 'Image URL');
+      const url = document.createElement('input'); url.type = 'url'; url.placeholder = uiText(language)('pageEditorExtensions.orPasteAnImageUrlAndPress');
+      url.setAttribute('aria-label', uiText(language)('pageEditorExtensions.imageUrl'));
       const status = document.createElement('small'); status.setAttribute('role', 'status');
       const valid = (value: string) => /^https?:\/\//i.test(value) || /^data:image\/(png|jpeg|webp|gif);base64,/i.test(value);
       const save = (src: string) => { beforeEdit?.(); const position = getPos(); if (typeof position === 'number' && dom.isConnected) editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, src })); };
       upload.onclick = () => file.click();
       file.onchange = () => {
         const selected = file.files?.[0]; if (!selected) return;
-        if (selected.size > 700 * 1024 || !/^image\/(png|jpeg|webp|gif)$/.test(selected.type)) { status.textContent = zh ? '请选择 700 KB 内的 PNG、JPEG、WebP 或 GIF。' : 'Choose a PNG, JPEG, WebP or GIF under 700 KB.'; return; }
+        if (selected.size > 700 * 1024 || !/^image\/(png|jpeg|webp|gif)$/.test(selected.type)) { status.textContent = uiText(language)('pageEditorExtensions.chooseAPngJpegWebpOrGif'); return; }
         const reader = new FileReader(); reader.onload = () => { if (typeof reader.result === 'string') save(reader.result); }; reader.readAsDataURL(selected);
       };
-      url.onkeydown = event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); if (valid(url.value.trim())) save(url.value.trim()); else status.textContent = zh ? '请输入 http 或 https 图片地址。' : 'Enter an http or https image URL.'; } };
+      url.onkeydown = event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); if (valid(url.value.trim())) save(url.value.trim()); else status.textContent = uiText(language)('pageEditorExtensions.enterAnHttpOrHttpsImageUrl'); } };
       panel.append(upload, url, file, status); dom.append(image, panel);
       const render = () => { const src = String(node.attrs.src || ''); image.hidden = !valid(src); panel.hidden = valid(src);
         if (valid(src)) { if (image.getAttribute('src') !== src) image.src = src; image.alt = String(node.attrs.alt || ''); } else image.removeAttribute('src'); };
-      image.onerror = () => { image.hidden = true; panel.hidden = false; status.textContent = zh ? '图片未能加载，可重新选择。' : 'Image could not load. Choose another image.'; };
+      image.onerror = () => { image.hidden = true; panel.hidden = false; status.textContent = uiText(language)('pageEditorExtensions.imageCouldNotLoadChooseAnotherImage'); };
       render();
       return { dom, stopEvent: event => event.target instanceof HTMLElement && Boolean(event.target.closest('input,button')), ignoreMutation: () => true,
         update: next => { if (next.type !== node.type) return false; node = next; render(); return true; } };
@@ -96,5 +97,5 @@ export function pageEditorExtensions(navigate: (id: string) => void, language: '
     return state.tr.replace(start, end.a + overlap, next.slice(start, end.b + overlap));
   };
   return [StarterKit.configure({ link: false, underline: false }), pageLink(refreshDefinitions), Markdown, TableKit, TaskList, TaskItem.configure({ nested: true }),
-    PageImage, LiteralMarkdown, WikiReference.configure({ navigate }), Placeholder.configure({ placeholder: zh ? '输入 / 插入内容，开始写作…' : 'Type / to insert content and start writing…' })];
+    PageImage, LiteralMarkdown, WikiReference.configure({ navigate }), Placeholder.configure({ placeholder: uiText(language)('pageEditorExtensions.typeToInsertContentAndStartWriting') })];
 }

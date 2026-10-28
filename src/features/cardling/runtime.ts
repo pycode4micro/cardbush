@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { CSSProperties } from 'react';
 
 import type { AppLanguage } from '../../types';
@@ -431,20 +432,7 @@ export function formatSceneFeedbackRunPrompt(
       : `${item.nodeLabel} (${item.stepId ?? 'overview'})`;
     return `${index + 1}. ${target}\n${item.text}`;
   });
-  if (language === 'zh') {
-    return [
-      `请根据我在 Kabu Scene「${scene.title}」里提交的反馈继续处理这个 HTML 场景。`,
-      '反馈如下：',
-      ...lines,
-      '请优先理解这些反馈对应的节点/步骤，给出修改方案并在需要时继续更新场景。',
-    ].join('\n\n');
-  }
-  return [
-    `Please continue the HTML scene "${scene.title}" based on the feedback I submitted in Kabu Scene.`,
-    'Feedback:',
-    ...lines,
-    'Please map each item to its node/step, propose the update, and continue updating the scene when needed.',
-  ].join('\n\n');
+  return ([uiText(language)('runtime.pleaseContinueTheHtmlSceneBasedOn', { value1: scene.title }), uiText(language)('runtime.feedback'), ...lines, uiText(language)('runtime.pleaseMapEachItemToItsNode')]).join('\n\n');
 }
 
 export function formatSceneActionRunPrompt(
@@ -466,24 +454,7 @@ export function formatSceneActionRunPrompt(
   if (!action && !nodeId) {
     return '';
   }
-  if (language === 'zh') {
-    return [
-      `请继续处理 Kabu Scene「${scene.title}」里的交互请求。`,
-      action ? `用户请求：${action}` : '',
-      nodeId ? `关联节点：${nodeId}` : '',
-      `场景上下文：\n${context}`,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-  }
-  return [
-    `Please continue handling the interaction request in Kabu Scene "${scene.title}".`,
-    action ? `User request: ${action}` : '',
-    nodeId ? `Related node: ${nodeId}` : '',
-    `Scene context:\n${context}`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+  return (([uiText(language)('runtime.pleaseContinueHandlingTheInteractionRequestIn', { value1: scene.title }), (action ? uiText(language)('runtime.userRequest', { value1: action }) : ''), (nodeId ? uiText(language)('runtime.relatedNode', { value1: nodeId }) : ''), uiText(language)('runtime.sceneContext', { value1: context })]).filter(Boolean)).join('\n\n');
 }
 
 export function formatSceneKabuChatPrompt(
@@ -508,24 +479,7 @@ export function formatSceneKabuChatPrompt(
     : freeChat
       ? nodeLabel
       : `${nodeLabel} (${stepId ?? 'overview'})`;
-  if (language === 'zh') {
-    return [
-      `我正在 Kabu Scene「${scene.title}」里和卡布对话。`,
-      `当前目标：${target}`,
-      `我对卡布说：${text}`,
-      freeChat
-        ? '请把这句话作为对整个 HTML 场景的自由对话来处理，不要假定它绑定到某个节点。必要时解释、提出方案或更新场景。'
-        : '请把这句话作为对当前场景节点/步骤的直接对话来处理，必要时继续解释、提出方案或更新场景。',
-    ].join('\n\n');
-  }
-  return [
-    `I am talking to Kabu inside Kabu Scene "${scene.title}".`,
-    `Current target: ${target}`,
-    `My message to Kabu: ${text}`,
-    freeChat
-      ? 'Treat this as a free conversation about the whole HTML scene, not bound to a specific node. Explain, propose changes, or update the scene when appropriate.'
-      : 'Treat this as a direct conversation about the current scene node/step. Explain, propose changes, or update the scene when appropriate.',
-  ].join('\n\n');
+  return ([uiText(language)('runtime.iAmTalkingToKabuInsideKabu', { value1: scene.title }), uiText(language)('runtime.currentTarget', { value1: target }), uiText(language)('runtime.myMessageToKabu', { value1: text }), (freeChat ? uiText(language)('runtime.treatThisAsAFreeConversationAbout') : uiText(language)('runtime.treatThisAsADirectConversationAbout'))]).join('\n\n');
 }
 
 export function sceneCardlingStyle(

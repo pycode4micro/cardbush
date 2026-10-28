@@ -26,19 +26,20 @@ function request(overrides = {}) {
   });
 }
 function assertOneCommunicationPolicy(messages) {
-  assert.equal(messages.filter(m => m.content.includes('Choose the communication language')).length, 1);
-  const policy = messages.find(m => m.content.includes('Choose the communication language')).content;
-  assert.match(policy, /first user-visible sentence.*progress updates.*final response/s);
-  assert.match(policy, /explicit preference first/);
-  assert.match(policy, /artifact language independently/);
-  assert.match(policy, /context checkpoints and summaries/);
+  const marker = "Use the human user's explicit language preference";
+  assert.equal(messages.filter(m => m.content.includes(marker)).length, 1);
+  const policy = messages.find(m => m.content.includes(marker)).content;
+  assert.match(policy, /all user-facing text/);
+  assert.match(policy, /explicit language preference, otherwise the latest substantive human request/);
+  assert.match(policy, /artifact's requested language independently/);
+  assert.match(policy, /children, checkpoints and summaries/);
 }
 
 test('first model context has one communication policy; locale changes do not churn the stable prefix', () => {
   const zh = request();
   const en = request({ uiLanguage: 'en' });
   assert.deepEqual(zh.prefixMessages, en.prefixMessages);
-  for (const [turn, locale] of [[zh, 'zh-CN'], [en, 'en']]) {
+  for (const [turn, locale] of [[zh, 'zh'], [en, 'en'], [request({ uiLanguage: 'fr' }), 'fr'], [request({ uiLanguage: 'pt-BR' }), 'pt-BR']]) {
     const context = assembleContext({
       session: emptySession, prefix: turn.prefixMessages,
       current: turn.inputMessages.map(m => m.message),
@@ -100,9 +101,9 @@ test('children inherit human language evidence and fallback even when assignment
     assert.deepEqual(child.prefixMessages[0], parent.prefixMessages[0]);
     assert.ok(child.prefixMessages.some(m => m.name === 'global_instructions' && m.content.includes('先核对事实再修改。')));
     assert.ok(child.prefixMessages.some(m => m.content.includes('Mode: professional')));
-    assert.ok(child.prefixMessages.some(m => m.content.includes('ui_language_fallback: zh-CN')));
+    assert.ok(child.prefixMessages.some(m => m.content.includes('ui_language_fallback: zh')));
     if (inherit) assert.deepEqual(child.prefixMessages, context.turn.contextMessages);
-    assert.ok(child.inputMessages[0].message.content.startsWith('你当前处于子agent状态\n'));
+    assert.equal(child.inputMessages.at(-1).message.content, '你当前处于子agent状态\n\nVerify the MCP source. Report in Chinese.');
     assert.equal(child.prefixMessages.some(m => m.content === parent.inputMessages.at(-1).message.content), inherit);
   }
 });

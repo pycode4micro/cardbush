@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../i18n/react';
+import { uiText } from '../../i18n';
 import { useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -6,7 +8,9 @@ import { decodeFragment, scrollMarkdownAnchor } from './markdownAnchors';
 import { openMarkdownExternalLink } from './markdownLinkNavigation';
 export { markdownOutline } from './markdownAnchors';
 
-export function MarkdownDocument({ source, scope, onNavigate, language = 'zh' }: { source: string; scope: string; onNavigate: (id: string) => void; language?: 'zh' | 'en' }) {
+export function MarkdownDocument({ source, scope, onNavigate, language: selectedLanguage }: { source: string; scope: string; onNavigate: (id: string) => void; language?: string }) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
   const root = useRef<HTMLDivElement>(null), [missing, setMissing] = useState('');
   const heading = ({ node, children, ...props }: React.ComponentProps<'h1'> & { node?: { position?: { start: { line: number } } } }) =>
     ({ ...props, id: `${scope}-${node?.position?.start.line}`, children });
@@ -25,6 +29,6 @@ export function MarkdownDocument({ source, scope, onNavigate, language = 'zh' }:
       }}>{children}</a>;
     },
   }}>{mapWikiLinks(source, (id, label) => `[${label.replaceAll('[', '\\[').replaceAll(']', '\\]')}](#md-node=${encodeURIComponent(id)})`)}</ReactMarkdown>
-    {missing && <small role="status" className="md-link-notice">{language === 'zh' ? '未找到链接目标：' : 'Link target not found: '}{missing}</small>}
+    {missing && <small role="status" className="md-link-notice">{uiText(language)('markdownDocument.linkTargetNotFound')}{missing}</small>}
   </div>;
 }

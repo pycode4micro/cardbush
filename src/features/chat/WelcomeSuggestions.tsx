@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ArrowUpRight } from 'lucide-react';
 import { useContext, useEffect, useMemo, useState } from 'react';
 import type { RuntimeUserPrompt } from '@cardbush/bush-protocol';
@@ -6,7 +7,7 @@ import { buildWelcomeSuggestions, type WelcomeSuggestion } from './welcomeSugges
 import { ConversationHostContext } from '../conversationHost';
 
 export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect, preview = false }: {
-  language: 'zh' | 'en'; disabled: boolean; hasDraft: boolean; onSelect: (suggestion: WelcomeSuggestion) => void;
+  language: string; disabled: boolean; hasDraft: boolean; onSelect: (suggestion: WelcomeSuggestion) => void;
   preview?: boolean;
 }) {
   const [history, setHistory] = useState<RuntimeUserPrompt[]>([]);
@@ -39,15 +40,15 @@ export function WelcomeSuggestions({ language, disabled, hasDraft, onSelect, pre
   const hasHistory = suggestions.some(item => item.fromHistory);
   return <div className="welcome-suggestions">
     <p className="welcome-suggestions-caption">{hasHistory
-      ? language === 'zh' ? '从最近 7 天常聊的事开始' : 'Inspired by your last 7 days'
-      : language === 'zh' ? '从一个想法开始' : 'Start with an idea'}</p>
+      ? uiText(language)('welcomeSuggestions.inspiredByYourLast7Days')
+      : uiText(language)('welcomeSuggestions.startWithAnIdea')}</p>
     <div className="welcome-suggestions-list">
       {suggestions.map(item => <button key={item.text} type="button" className="welcome-suggestion"
         disabled={preview || disabled || (hasDraft && !item.sessionId)} onClick={() => onSelect(item)}
-        title={item.sessionId ? `${language === 'zh' ? '打开会话' : 'Open conversation'}: ${item.text}` : item.text}>
+        title={item.sessionId ? `${uiText(language)('welcomeSuggestions.openConversation')}: ${item.text}` : item.text}>
         <span className="welcome-suggestion-topic">{item.topic}<span>{item.fromHistory
-          ? language === 'zh' ? '最近常聊' : 'Recent'
-          : language === 'zh' ? '试一试' : 'Try this'}</span></span>
+          ? uiText(language)('welcomeSuggestions.recent')
+          : uiText(language)('welcomeSuggestions.tryThis')}</span></span>
         <span className="welcome-suggestion-text">{item.text}</span>
         <ArrowUpRight className="welcome-suggestion-arrow" size={15} aria-hidden="true" />
       </button>)}

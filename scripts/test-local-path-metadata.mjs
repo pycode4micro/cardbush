@@ -6,6 +6,7 @@ import vm from 'node:vm';
 
 import ts from 'typescript';
 import * as protocol from '@cardbush/bush-protocol';
+import * as i18n from '@cardbush/platform/i18n';
 
 const fileReferenceSource = readSourceFile(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'fileReferences.ts'),
@@ -232,7 +233,8 @@ assert.match(fileContextMenuHandler, /buildFileContextMenu/);
 const menuModule = { exports: {} };
 vm.runInNewContext(ts.transpileModule(readSourceFile(path.join(process.cwd(), 'electron/fileContextMenu.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { module: menuModule, exports: menuModule.exports });
+}).outputText, { module: menuModule, exports: menuModule.exports,
+  require: name => { assert.equal(name, '@cardbush/platform/i18n'); return i18n; } });
 let copiedPath = false;
 const noOp = () => {};
 const missingMenu = menuModule.exports.buildFileContextMenu({ path: absoluteDocument, exists: false, isFile: false }, {

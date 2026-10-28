@@ -258,3 +258,6 @@ html[data-office-preview-kind='presentation'] {
   border: 1px dashed currentColor;
   font: 14px/1.5 sans-serif;
 }
+
+.cardbush-presentation-export [data-export-visible="true"] { display: block !important; }
+.cardbush-presentation-export [data-export-visible="false"] { display: none !important; }

@@ -32,7 +32,7 @@ export async function verifyAgentPackage(root, platform = process.platform) {
   if (!(await stat(join(root, 'dist-native/chrome-connector/CardBushBrowserHost.exe'))).isFile()) throw Error('Agent browser connector component is missing.');
   const directory = join(root, 'dist-native', 'process-guard');
   const manifest = JSON.parse(await readFile(join(directory, 'current.json'), 'utf8'));
-  if (manifest.sandboxVersion !== 1 || manifest.sandboxScopeVersion !== 3 || !/^CardBushProcessHost-[a-f0-9]{16}\.exe$/.test(manifest.fileName)) {
+  if (manifest.sandboxVersion !== 1 || manifest.sandboxFileVersion !== 3 || manifest.sandboxScopeVersion !== 4 || !/^CardBushProcessHost-[a-f0-9]{16}\.exe$/.test(manifest.fileName)) {
     throw Error('Invalid Agent process host manifest.');
   }
   if (!(await stat(join(directory, manifest.fileName))).isFile()) throw Error('Agent process host executable is missing.');

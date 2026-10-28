@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ArrowDown, ArrowUp, RotateCw, X } from 'lucide-react';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type RefObject } from 'react';
 import type { AppLanguage } from '../../types';
@@ -11,7 +12,7 @@ type Guest = HTMLElement & {
 };
 
 export const BrowserPageTools = forwardRef<BrowserPageToolsHandle, { webviewRef: RefObject<Guest | null>; revision: number; language: AppLanguage }>(function BrowserPageTools({ webviewRef, revision, language }, ref) {
-  const zh = language === 'zh', [findOpen, setFindOpen] = useState(false), [query, setQuery] = useState('');
+  const [findOpen, setFindOpen] = useState(false), [query, setQuery] = useState('');
   const [matches, setMatches] = useState({ current: 0, total: 0 });
   const [device, setDevice] = useState(false), [width, setWidth] = useState('390'), [height, setHeight] = useState('844');
   const [error, setError] = useState(''), input = useRef<HTMLInputElement>(null), request = useRef(0);
@@ -66,22 +67,22 @@ export const BrowserPageTools = forwardRef<BrowserPageToolsHandle, { webviewRef:
     return () => { active = false; window.clearTimeout(timer); observer.disconnect(); guest.removeEventListener('dom-ready', schedule); };
   }, [webviewRef, revision, device, width, height]);
   return <>
-    {findOpen && <div className="browser-find-bar" role="search" aria-label={zh ? '在页面中查找' : 'Find in page'}>
-      <input ref={input} autoFocus value={query} aria-label={zh ? '查找内容' : 'Find text'} placeholder={zh ? '在页面中查找' : 'Find in page'} onChange={event => setQuery(event.target.value)}
+    {findOpen && <div className="browser-find-bar" role="search" aria-label={uiText(language)('browserMenu.findInPage')}>
+      <input ref={input} autoFocus value={query} aria-label={uiText(language)('browserPageTools.findText')} placeholder={uiText(language)('browserMenu.findInPage')} onChange={event => setQuery(event.target.value)}
         onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); search(!event.shiftKey, true); } if (event.key === 'Escape') { event.stopPropagation(); closeFind(); } }}/>
       <output aria-live="polite">{matches.current} / {matches.total}</output>
-      <button type="button" disabled={!query} aria-label={zh ? '上一个' : 'Previous match'} onClick={() => search(false, true)}><ArrowUp size={15}/></button>
-      <button type="button" disabled={!query} aria-label={zh ? '下一个' : 'Next match'} onClick={() => search(true, true)}><ArrowDown size={15}/></button>
-      <button type="button" aria-label={zh ? '关闭查找' : 'Close find'} onClick={closeFind}><X size={15}/></button>
+      <button type="button" disabled={!query} aria-label={uiText(language)('browserPageTools.previousMatch')} onClick={() => search(false, true)}><ArrowUp size={15}/></button>
+      <button type="button" disabled={!query} aria-label={uiText(language)('browserPageTools.nextMatch')} onClick={() => search(true, true)}><ArrowDown size={15}/></button>
+      <button type="button" aria-label={uiText(language)('browserPageTools.closeFind')} onClick={closeFind}><X size={15}/></button>
     </div>}
-    {device && <div className="browser-device-bar" aria-label={zh ? '设备工具栏' : 'Device toolbar'}>
-      <select aria-label={zh ? '设备尺寸' : 'Device size'} value={['390x844', '768x1024', '1440x900'].includes(`${width}x${height}`) ? `${width}x${height}` : 'custom'} onChange={event => { if (event.target.value === 'custom') return; const [w, h] = event.target.value.split('x'); setWidth(w); setHeight(h); }}>
-        <option value="custom">{zh ? '响应式' : 'Responsive'}</option><option value="390x844">{zh ? '手机' : 'Phone'} · 390 × 844</option><option value="768x1024">{zh ? '平板' : 'Tablet'} · 768 × 1024</option><option value="1440x900">{zh ? '桌面' : 'Desktop'} · 1440 × 900</option>
+    {device && <div className="browser-device-bar" aria-label={uiText(language)('browserPageTools.deviceToolbar')}>
+      <select aria-label={uiText(language)('browserPageTools.deviceSize')} value={['390x844', '768x1024', '1440x900'].includes(`${width}x${height}`) ? `${width}x${height}` : 'custom'} onChange={event => { if (event.target.value === 'custom') return; const [w, h] = event.target.value.split('x'); setWidth(w); setHeight(h); }}>
+        <option value="custom">{uiText(language)('browserPageTools.responsive')}</option><option value="390x844">{uiText(language)('browserPageTools.phone')} · 390 × 844</option><option value="768x1024">{uiText(language)('browserPageTools.tablet')} · 768 × 1024</option><option value="1440x900">{uiText(language)('browserPageTools.desktop')} · 1440 × 900</option>
       </select>
-      <input type="number" min={240} max={3840} aria-label={zh ? '视口宽度' : 'Viewport width'} value={width} onChange={event => setWidth(event.target.value)}/><span>×</span>
-      <input type="number" min={240} max={3840} aria-label={zh ? '视口高度' : 'Viewport height'} value={height} onChange={event => setHeight(event.target.value)}/>
-      <button type="button" aria-label={zh ? '旋转设备' : 'Rotate device'} onClick={() => { setWidth(height); setHeight(width); }}><RotateCw size={15}/></button>
-      <button type="button" aria-label={zh ? '关闭设备工具栏' : 'Close device toolbar'} onClick={() => setDevice(false)}><X size={15}/></button>
+      <input type="number" min={240} max={3840} aria-label={uiText(language)('browserPageTools.viewportWidth')} value={width} onChange={event => setWidth(event.target.value)}/><span>×</span>
+      <input type="number" min={240} max={3840} aria-label={uiText(language)('browserPageTools.viewportHeight')} value={height} onChange={event => setHeight(event.target.value)}/>
+      <button type="button" aria-label={uiText(language)('browserPageTools.rotateDevice')} onClick={() => { setWidth(height); setHeight(width); }}><RotateCw size={15}/></button>
+      <button type="button" aria-label={uiText(language)('browserPageTools.closeDeviceToolbar')} onClick={() => setDevice(false)}><X size={15}/></button>
     </div>}
     {error && (findOpen || device) && <div className="browser-inline-error" role="alert">{error}</div>}
   </>;

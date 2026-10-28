@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { createPortal } from 'react-dom';
 import { EmployeeIcon, employeeTaskTitle, isEmployeeTask } from '../team/employeePresentation';
@@ -49,7 +50,7 @@ export function SubagentConversation(props: Props) {
   const connectionId = props.task.remote?.connectionId || parentHost?.environmentId;
   const parentRuntime = parentHost?.runtime;
   const readTasks = useCallback(() => api.fetchSubagentTasks(props.parentSessionId, { limit: 1000 }, parentRuntime), [props.parentSessionId, parentRuntime]);
-  if (!props.task.childSessionId) return <p className="subagent-conversation-pending" role="status">{props.language === 'zh' ? '正在创建子会话…' : 'Creating child conversation…'}</p>;
+  if (!props.task.childSessionId) return <p className="subagent-conversation-pending" role="status">{uiText(props.language)('subagentConversation.creatingChildConversation')}</p>;
   return connectionId
     ? <RemoteChildConversation key={`${connectionId}:${props.task.childSessionId}`} {...props} connectionId={connectionId} readTasks={readTasks}/>
     : <LocalChildConversation key={props.task.childSessionId} {...props} readTasks={readTasks}/>;
@@ -63,7 +64,7 @@ function LocalChildConversation(props: Props & { readTasks: () => Promise<Subage
 function RemoteChildConversation({ connectionId, ...props }: Props & { connectionId: string; readTasks: () => Promise<SubagentTaskSnapshot[]> }) {
   const call = useCallback<AgentCall>(async (operation, input) => {
     const desktop = window.cardbushDesktop?.agents;
-    if (!desktop) throw new Error('Agent connections are unavailable.');
+    if (!desktop) throw new Error(uiText()('agentsView.agent_connections_are_unavailable'));
     return await desktop.call(connectionId, operation, input) as never;
   }, [connectionId]);
   const connection = useMemo(() => createAgentConversationBackend(call, connectionId,
@@ -86,7 +87,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   disabledSkillNames = noSkills, onToggleSkill = nothing, onConfigureModels = nothing }: Props & {
   runtime: ConversationRuntime; base: ConversationBackend; host?: ConversationHost; call?: AgentCall; readTasks: () => Promise<SubagentTaskSnapshot[]>;
 }) {
-  const sessionId = task.childSessionId!, zh = language === 'zh';
+  const sessionId = task.childSessionId!;
   const [models, setModels] = useState<ManagedModelConfig[]>([]);
   const [modelsReady, setModelsReady] = useState(false);
   const [executionModel, setExecutionModel] = useState<SubagentExecutionModel>();
@@ -161,7 +162,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   const inspector = useContext(ConversationInspectorContext);
   const reviewId = `subagent-review:${host?.id ?? sessionId}`;
   const [review, setReview] = useState<{ path: string; turnId?: string }>();
-  const openReview = (path = '', turnId?: string) => { setReview({ path, turnId }); inspector?.open(reviewId, zh ? '审查' : 'Review'); };
+  const openReview = (path = '', turnId?: string) => { setReview({ path, turnId }); inspector?.open(reviewId, uiText(language)('app.review')); };
   useEffect(() => () => inspector?.close(reviewId), [reviewId, inspector?.close]);
   const latestReply = [...chat.activeMessages].reverse().find(message => message.role === 'assistant');
   const displayedStatus = busy ? 'running' : latestReply?.turnId !== task.childTurnId && latestReply?.status && ['completed', 'failed', 'stopped'].includes(latestReply.status)
@@ -172,13 +173,13 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   return <ConversationHostContext.Provider value={host}>
     <ConversationMessageTargetContext.Provider value={`${backend.scope}:${sessionId}`}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || !!reverting }}>
-    <section className="subagent-conversation" aria-label={isEmployeeTask(task) ? (zh ? '员工会话' : 'Employee conversation') : (zh ? '子代理会话' : 'Subagent conversation')}>
+    <section className="subagent-conversation" aria-label={isEmployeeTask(task) ? (uiText(language)('subagentConversation.employeeConversation')) : (uiText(language)('subagentConversation.subagentConversation'))}>
       <header className="subagent-conversation-heading">
         <span className={`subagent-inspector-state ${status.tone}`}>
           {isEmployeeTask(task) ? <EmployeeIcon size={18}/> : displayedStatus === 'running' ? <LoaderCircle className="spin" size={16}/> : displayedStatus === 'failed' ? <TriangleAlert size={16}/> : displayedStatus === 'stopped' ? <CircleStop size={16}/> : <CheckCircle2 size={16}/>}
         </span>
-        <div><strong>{employeeTaskTitle(task, language)}</strong><small>{isEmployeeTask(task) ? (zh ? '员工任务会话' : 'Employee task conversation') : (zh ? '主 Agent 的子会话' : 'Child of the parent Agent')} · {status.label}</small></div>
-        <button type="button" disabled={refreshing} title={zh ? '刷新会话' : 'Refresh conversation'} onClick={() => void refreshAll().catch(error => setError(String(error)))}><RefreshCw size={15} className={refreshing ? 'spin' : ''}/></button>
+        <div><strong>{employeeTaskTitle(task, language)}</strong><small>{isEmployeeTask(task) ? (uiText(language)('subagentConversation.employeeTaskConversation')) : (uiText(language)('subagentConversation.childOfTheParentAgent'))} · {status.label}</small></div>
+        <button type="button" disabled={refreshing} title={uiText(language)('subagentConversation.refreshConversation')} onClick={() => void refreshAll().catch(error => setError(String(error)))}><RefreshCw size={15} className={refreshing ? 'spin' : ''}/></button>
       </header>
       <ChatPanel embedded welcomeEnabled={false} workSummaryAvailable={false}
         language={language} theme={theme} title={employeeTaskTitle(task, language)} sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => openReview()}

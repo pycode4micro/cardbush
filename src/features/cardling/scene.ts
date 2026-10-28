@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 
 type CardlingScenePlacement = 'top' | 'right' | 'bottom' | 'left';
@@ -110,9 +111,7 @@ export function buildCardlingSceneSteps(
         title: scene.title,
         speech:
           fallbackSpeech ||
-          (language === 'zh'
-            ? '我已打开这个交互场景，可以直接在页面节点上给我反馈。'
-            : 'I opened this interactive scene. You can comment on nodes directly.'),
+          (uiText(language)('scene.iOpenedThisInteractiveSceneYouCan')),
         holdMs: 900,
       },
     ];
@@ -143,13 +142,9 @@ export function nodePurposeSpeech(
   }
   const label = node.label || node.nodeId;
   if (node.purpose) {
-    return language === 'zh'
-      ? `${label}：${node.purpose}`
-      : `${label}: ${node.purpose}`;
+    return uiText(language)('scene.message', { label, value2: node.purpose });
   }
-  return language === 'zh'
-    ? `${label}：这里可以作为当前任务场景的反馈节点。`
-    : `${label}: This is a feedback node in the current task scene.`;
+  return uiText(language)('scene.thisIsAFeedbackNodeInThe', { label });
 }
 
 export function latestCardlingSceneFromMessages(messages: ChatMessage[]) {

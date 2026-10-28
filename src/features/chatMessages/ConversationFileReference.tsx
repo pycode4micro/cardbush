@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useContext, useState, type ReactNode } from 'react';
 import { ConversationHostContext } from '../conversationHost';
 import { useConversationFileSource } from '../conversationFileSource';
@@ -21,7 +22,7 @@ export function ConversationFileReference({ path, children, inline = false, lang
   const label = children || basename(path);
   const kind = resourceTargetKind(path);
   useImageGalleryFallback(!inline || !(isImagePath(path) || /\.svg$/i.test(path)));
-  if (kind !== 'local-file' && kind !== 'ssh-file') return <span>{label} · {language === 'zh' ? '文件引用不可用' : 'File reference unavailable'}</span>;
+  if (kind !== 'local-file' && kind !== 'ssh-file') return <span>{label} · {uiText(language)('conversationFileReference.fileReferenceUnavailable')}</span>;
   if (host && inline && html) return <InlineHtmlPreview path={path} title={typeof label === 'string' ? label : basename(path)} language={language} fileVersion={fileVersion} />;
   if (media && file.source && failed !== file.source) {
     const props = { src: file.source, onError: () => setFailed(file.source), 'aria-label': typeof label === 'string' ? label : basename(path) };
@@ -34,6 +35,6 @@ export function ConversationFileReference({ path, children, inline = false, lang
   }
   return <span className="file-memo-reference">
     <button type="button" className="markdown-file-link" onClick={() => host?.openFile(path)}>{label}</button>
-    {media && <small role="status">{file.error || failed ? (language === 'zh' ? ' · 预览不可用，点击文件重试' : ' · Preview unavailable; open the file to retry') : (language === 'zh' ? ' · 正在加载…' : ' · Loading…')}</small>}
+    {media && <small role="status">{file.error || failed ? (uiText(language)('conversationFileReference.previewUnavailableOpenTheFileToRetry')) : (uiText(language)('conversationFileReference.loading'))}</small>}
   </span>;
 }

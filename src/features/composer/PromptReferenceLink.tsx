@@ -1,3 +1,5 @@
+import { uiText } from '../../i18n';
+import { useUiLanguage } from '../../i18n/react';
 import { Fragment, useContext } from 'react';
 import { ConversationHostContext, type ConversationHost } from '../conversationHost';
 import { Globe, LayoutGrid, MessageSquare, UsersRound } from 'lucide-react';
@@ -26,24 +28,25 @@ export async function openPromptReference(reference: PromptReference, host?: Con
   }
   if (reference.kind === 'browser') {
     const result = await openBrowserTabReference({ connectionId: 'cardbush', tabId: reference.tabId, title: reference.title, url: reference.url });
-    if (result.status !== 'opened') void showUiError('标签不可用', result.status === 'missing' ? '原标签已关闭。' : result.message || '无法显示原标签。');
+    if (result.status !== 'opened') void showUiError(uiText()('app.tabUnavailable'), result.status === 'missing' ? uiText()('promptReferenceLink.the_original_tab_was_closed') : result.message || uiText()('promptReferenceLink.could_not_display_the_original_tab'));
   }
   else if (reference.kind === 'conversation-extract') {
     try {
       const result = await window.cardbushDesktop?.conversationExtracts?.resolve(reference.id);
-      if (!result) throw new Error('对话提取不可用。');
+      if (!result) throw new Error(uiText()('conversationExtraction.conversation_excerpts_are_unavailable'));
       openInspector(result.path, result.title);
-    } catch (error) { void showUiError('无法打开对话提取', String(error)); }
+    } catch (error) { void showUiError(uiText()('promptReferenceLink.could_not_open_the_conversation_excerpt'), String(error)); }
   } else openWorkSummaryInspector({ kind: 'turn-history', sessionId: reference.sessionId, turnId: reference.turnId });
 }
 
 export function PromptReferenceLink({ reference }: { reference: PromptReference }) {
+  const language = useUiLanguage();
   const host = useContext(ConversationHostContext);
   const { sessionId } = useContext(ComposerReferenceContext);
   if (reference.kind === 'browser') return <BrowserTabReferenceLink reference={{ connectionId: 'cardbush', tabId: reference.tabId, title: reference.title, url: reference.url }}/>;
   if (reference.kind === 'ssh') return <span className="context-reference-token" title={reference.path}><Globe size={16}/><span>{reference.title}</span></span>;
   return <a className="context-reference-token" href={promptReferenceHref(reference)}
-    title={reference.kind === 'team' ? `Team · ${reference.title}` : reference.title}
+    title={reference.kind === 'team' ? uiText(language)('reference.teamTitle', { title: reference.title }) : reference.title}
     onClick={event => {
       event.preventDefault();
       void openPromptReference(reference, host, sessionId);

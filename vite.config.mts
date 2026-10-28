@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import react from '@vitejs/plugin-react';
@@ -9,6 +10,9 @@ import { pdfPreviewAssetsPlugin } from './scripts/pdf-preview-assets-plugin.mjs'
 import { spreadsheetRegionPlugin } from './scripts/spreadsheet-region-plugin.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
+const languageDirectory = path.join(rootDir, 'src/i18n/locales');
+const languageLocales = readdirSync(languageDirectory).filter(file => file.endsWith('.json'))
+  .map(file => Intl.getCanonicalLocales(JSON.parse(readFileSync(path.join(languageDirectory, file), 'utf8')).locale)[0]);
 
 export default defineConfig({
   base: './',
@@ -29,6 +33,18 @@ export default defineConfig({
       output: {
         codeSplitting: {
           groups: [
+            ...languageLocales.map(locale => ({
+              name: `ui-language-${locale}`,
+              test: new RegExp(`[\\\\/]i18n[\\\\/]generatedPacks[\\\\/]${locale}\\.js$`),
+              priority: 40,
+              entriesAware: true,
+            })),
+            {
+              name: 'page-editor-engine',
+              test: /node_modules[\\/](?:@tiptap|prosemirror-[^\\/]+)[\\/]/,
+              priority: 40,
+              entriesAware: true,
+            },
             // Stable library boundaries stay behind the preview's dynamic
             // imports; changing a viewer must not invalidate its whole engine.
             {

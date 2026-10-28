@@ -1,6 +1,7 @@
 import { Check, MoreHorizontal } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { AppLanguage } from '../../types';
+import { uiText } from '../../i18n';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import './queueActions.css';
 
@@ -21,7 +22,8 @@ export function QueueActionsMenu({ language, locked, lockPending = false, onTogg
   const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const shortcuts = useKeyboardShortcuts();
-  const label = language === 'zh' ? '更多引导操作' : 'More guidance actions';
+  const t = uiText(language);
+  const label = t('queue.actions');
   const close = (focus = false) => {
     menu.current?.hidePopover();
     setOpen(false);
@@ -36,11 +38,11 @@ export function QueueActionsMenu({ language, locked, lockPending = false, onTogg
     const width = Math.min(220, window.innerWidth - margin * 2);
     const above = rect.top - gap - margin, below = window.innerHeight - rect.bottom - gap - margin;
     const upwards = below < 190 && above > below;
+    menu.current.dataset.placement = upwards ? 'above' : 'below';
     Object.assign(menu.current.style, {
       left: `${Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin))}px`,
       top: `${upwards ? rect.top - gap : rect.bottom + gap}px`,
       width: `${width}px`, maxHeight: `${Math.max(60, upwards ? above : below)}px`,
-      translate: upwards ? '0 -100%' : 'none',
     });
     menu.current.showPopover();
     menu.current.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
@@ -60,8 +62,8 @@ export function QueueActionsMenu({ language, locked, lockPending = false, onTogg
   }, [open]);
 
   return <>
-    <button ref={trigger} type="button" className={`queue-actions-trigger${locked ? ' is-locked' : ''}`}
-      aria-label={label} title={locked ? `${label} · ${language === 'zh' ? '已锁定' : 'Locked'}` : label}
+    <button ref={trigger} type="button" className="queue-actions-trigger" data-locked={locked}
+      aria-label={label} title={t(locked ? 'queue.lockedActions' : 'queue.actions')}
       aria-haspopup="menu" aria-controls={menuId} aria-expanded={open}
       onClick={() => open ? close() : setOpen(true)} onKeyDown={event => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); }
@@ -82,21 +84,21 @@ export function QueueActionsMenu({ language, locked, lockPending = false, onTogg
         {onToggleLock && <button type="button" role="menuitemcheckbox" aria-checked={locked}
           data-queue-action="lock" disabled={lockPending} aria-busy={lockPending}
           aria-keyshortcuts={shortcuts.aria('toggleQueueLock')}
-          title={[language === 'zh' ? '暂停自动发送，仍可手动发送' : 'Pause automatic sending; manual sending stays available', shortcuts.label('toggleQueueLock')].filter(Boolean).join(' · ')}
+          title={[t('queue.lockHint'), shortcuts.label('toggleQueueLock')].filter(Boolean).join(' · ')}
           onClick={() => choose(onToggleLock)}>
-          <span className="queue-menu-label">{language === 'zh' ? '锁定引导队列' : 'Lock guidance queue'}</span>
+          <span className="queue-menu-label">{t('queue.lock')}</span>
           {locked && <Check size={14} aria-hidden="true" />}
         </button>}
         {onEdit && <button type="button" role="menuitem" data-queue-action="edit" disabled={busy} onClick={() => choose(onEdit)}>
-          <span className="queue-menu-label">{language === 'zh' ? '编辑' : 'Edit'}</span>
+          <span className="queue-menu-label">{t('common.edit')}</span>
         </button>}
         {(onMoveUp || onMoveDown) && <>
           <div className="queue-menu-divider" role="separator" />
           <button type="button" role="menuitem" data-queue-action="up" disabled={busy || !onMoveUp} onClick={() => choose(onMoveUp)}>
-            <span className="queue-menu-label">{language === 'zh' ? '上移' : 'Move up'}</span>
+            <span className="queue-menu-label">{t('common.moveUp')}</span>
           </button>
           <button type="button" role="menuitem" data-queue-action="down" disabled={busy || !onMoveDown} onClick={() => choose(onMoveDown)}>
-            <span className="queue-menu-label">{language === 'zh' ? '下移' : 'Move down'}</span>
+            <span className="queue-menu-label">{t('common.moveDown')}</span>
           </button>
         </>}
       </>}

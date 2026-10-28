@@ -7,6 +7,7 @@ import ts from 'typescript';
 import { webcrypto } from 'node:crypto';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 import path from 'node:path';
+import { uiText } from '@cardbush/platform/i18n';
 
 const attentionStorage = new Map();
 const attentionApi = await loadChatTranscript({ source: [
@@ -163,7 +164,7 @@ test('actual chat callbacks require interaction identities, clear background bad
   const compiled = ts.transpileModule(declarations.join('\n') + '\nexports.mark = markSessionAttention; exports.sync = syncInteractionAttention; exports.clear = clearSessionAttention;',
     { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const sounds = [], toasts = [], exports = {}, attention = { current: {} };
-  const context = { ...attentionApi, exports, useCallback: fn => fn, notifyAttentionSound: event => sounds.push(event),
+  const context = { ...attentionApi, uiText, languageRef: { current: 'zh' }, exports, useCallback: fn => fn, notifyAttentionSound: event => sounds.push(event),
     backend: {}, attentionByConversationRef: attention, viewActiveRef: { current: true }, activeConversationIdRef: { current: 'visible' },
     isCardbushForeground: () => true, localize: zh => zh,
     truncateText: text => text,
@@ -241,7 +242,7 @@ function turnFixture({ status, transport, latestTurn, goal = null, goalReadFails
   const identity = value => value;
   let messages = {};
   const context = {
-    ...attentionApi,
+    ...attentionApi, uiText,
     exports: {}, crypto: webcrypto, AbortController, console: { warn() {} },
     window: { setTimeout, cardbushDesktop: {} }, backend: {}, requestContext: {},
     activeConversation: candidate, activeConversationId: 'chat', activeConversationIdRef: { current: 'chat' },

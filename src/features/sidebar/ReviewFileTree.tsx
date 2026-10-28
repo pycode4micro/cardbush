@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ConversationHostContext } from '../conversationHost';
@@ -16,7 +17,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
   rootPath: string; selectedPath: string; changedPaths: string[]; language: AppLanguage; revision?: string;
   onSelect: (path: string) => void;
 }) {
-  const zh = language === 'zh';
+
   const host = useContext(ConversationHostContext);
   const [directories, setDirectories] = useState<Map<string, Directory>>(() => new Map());
   const directoriesRef = useRef(directories);
@@ -39,7 +40,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
     setDirectories(previous => new Map(previous).set(key, { entries: previous.get(key)?.entries ?? [], loading: true }));
     try {
       const reader = host ? host.readDirectory : window.cardbushDesktop?.readWorkspaceDirectory;
-      if (!reader) throw new Error(zh ? '文件目录服务不可用' : 'Directory service unavailable');
+      if (!reader) throw new Error(uiText(language)('reviewFileTree.directoryServiceUnavailable'));
       const page = host ? await host.readDirectory!({ directoryPath: path, offset }) : await window.cardbushDesktop!.readWorkspaceDirectory!({ rootPath, directoryPath: path, offset });
       if (version !== generation.current) return;
       setDirectories(previous => new Map(previous).set(key, {
@@ -51,7 +52,7 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
         entries: previous.get(key)?.entries ?? [], error: String((error as Error).message),
       }));
     } finally { if (version === generation.current) loading.current.delete(request); }
-  }, [rootPath, zh, host]);
+  }, [rootPath, language, host]);
   const refresh = useCallback(() => {
     generation.current++;
     loading.current.clear();
@@ -123,17 +124,17 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
         result.push({ ...entry, depth, virtual });
         if (entry.kind === 'folder' && expanded.has(reviewPathKey(entry.path))) append(entry.path, depth + 1, virtual);
       }
-      if (directory?.loading) result.push({ name: zh ? '正在读取…' : 'Loading…', path: parent, kind: 'file', depth, action: 'loading' });
-      else if (directory?.error) result.push({ name: zh ? '读取失败，重试' : 'Unable to read. Retry', path: parent, kind: 'file', depth, action: 'retry' });
-      else if (directory?.nextOffset !== undefined) result.push({ name: zh ? '加载更多文件' : 'Load more files', path: parent, kind: 'file', depth, action: 'more' });
+      if (directory?.loading) result.push({ name: uiText(language)('reviewFileTree.loading'), path: parent, kind: 'file', depth, action: 'loading' });
+      else if (directory?.error) result.push({ name: uiText(language)('reviewFileTree.unableToReadRetry'), path: parent, kind: 'file', depth, action: 'retry' });
+      else if (directory?.nextOffset !== undefined) result.push({ name: uiText(language)('reviewFileTree.loadMoreFiles'), path: parent, kind: 'file', depth, action: 'more' });
     };
     if (rootPath) append(rootPath, 0);
     for (const { path, name } of outsideRoots) {
-      result.push({ name: `${name} · ${zh ? '其他位置' : 'Other location'}`, path, kind: 'folder', depth: 0, virtual: true });
+      result.push({ name: `${name} · ${uiText(language)('reviewFileTree.otherLocation')}`, path, kind: 'folder', depth: 0, virtual: true });
       if (expanded.has(reviewPathKey(path))) append(path, 1, true);
     }
     return result;
-  }, [directories, changedPaths, expanded, rootPath, outsideRoots, zh]);
+  }, [directories, changedPaths, expanded, rootPath, outsideRoots, language]);
   useEffect(() => {
     if (!pendingReveal.current || !viewport.current) return;
     const index = rows.findIndex(row => reviewPathKey(row.path) === pendingReveal.current);
@@ -157,11 +158,11 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
   return <>
     <div className="change-review-tree-root">
       <span title={rootPath} onContextMenu={host ? undefined : event => rootPath && openFileContextMenu(event, rootPath, { language })}>
-        <FolderOpen size={14} /><strong>{basename(rootPath) || (zh ? '会话文件' : 'Task files')}</strong><span>/</span>
+        <FolderOpen size={14} /><strong>{basename(rootPath) || (uiText(language)('reviewFileTree.taskFiles'))}</strong><span>/</span>
       </span>
-      <button type="button" aria-label={zh ? '刷新文件目录' : 'Refresh directory'} title={zh ? '刷新文件目录' : 'Refresh directory'} onClick={refresh}><RefreshCw size={13} /></button>
+      <button type="button" aria-label={uiText(language)('reviewFileTree.refreshDirectory')} title={uiText(language)('reviewFileTree.refreshDirectory')} onClick={refresh}><RefreshCw size={13} /></button>
     </div>
-    <div ref={viewport} className="change-review-files" role="tree" tabIndex={0} aria-label={zh ? '工作目录文件' : 'Workspace files'}
+    <div ref={viewport} className="change-review-files" role="tree" tabIndex={0} aria-label={uiText(language)('reviewFileTree.workspaceFiles')}
       aria-activedescendant={focusedIndex >= start && focusedIndex < end ? `${treeId}-${focusedIndex}` : undefined}
       onScroll={event => setScrollTop(event.currentTarget.scrollTop)}
       onKeyDown={event => {
@@ -195,11 +196,11 @@ export function ReviewFileTree({ rootPath, selectedPath, changedPaths, language,
             {row.action === 'loading' ? <LoaderCircle size={13} /> : row.kind === 'folder' ? (expanded.has(key) ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span />}
             {row.kind === 'folder' ? <Folder size={14} /> : <FileTypeIcon path={row.path} />}
             <strong>{row.name}</strong>
-            {changed.has(key) && !row.action && <span className="change-review-file-marker" title={zh ? '所选轮次有修改' : 'Changed in selected turn'} />}
+            {changed.has(key) && !row.action && <span className="change-review-file-marker" title={uiText(language)('reviewFileTree.changedInSelectedTurn')} />}
           </button>;
         })}
       </div>
-      {rows.length === 0 && <p className="change-review-tree-empty">{zh ? '此文件夹为空' : 'This folder is empty'}</p>}
+      {rows.length === 0 && <p className="change-review-tree-empty">{uiText(language)('reviewFileTree.thisFolderIsEmpty')}</p>}
     </div>
   </>;
 }

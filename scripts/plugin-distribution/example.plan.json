@@ -1,0 +1,19 @@
+{
+  "output": "C:/private-build/plugins",
+  "launcher": "C:/private-build/PortablePlugin.exe",
+  "node": "C:/build-tools/node.exe",
+  "plugins": [
+    {
+      "id": "example-plugin",
+      "source": "C:/sources/example-plugin",
+      "kind": "python",
+      "server": "example",
+      "args": ["${PLUGIN_ROOT}/server.py"],
+      "python": {
+        "base": "C:/build-tools/Python312",
+        "site": "C:/build-tools/example-venv/Lib/site-packages",
+        "requirements": ["mcp>=1.28,<2"]
+      }
+    }
+  ]
+}

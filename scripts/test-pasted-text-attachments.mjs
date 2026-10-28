@@ -4,11 +4,17 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import ts from 'typescript';
+import * as i18n from '@cardbush/platform/i18n';
 import { PastedTextAttachments, pastedTextDraftLifetime } from '../dist-electron/pastedTextAttachments.mjs';
 
 async function load(file) {
   const source = await readFile(file, 'utf8');
-  return import('data:text/javascript;base64,' + Buffer.from(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText).toString('base64'));
+  const exports = {};
+  new Function('exports', 'require', ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(exports, specifier => {
+    if (specifier === '../../i18n') return i18n;
+    throw new Error(`Unexpected source dependency: ${specifier}`);
+  });
+  return exports;
 }
 const { pastedTextSummary } = await load('src/features/composer/pastedText.ts');
 const { uploadAgentFile } = await load('src/features/agents/uploadAgentFile.ts');

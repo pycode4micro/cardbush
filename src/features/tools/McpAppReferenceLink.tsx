@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { PanelsTopLeft } from 'lucide-react';
@@ -16,11 +17,11 @@ export function McpAppReferenceLink({ reference, children, language }: { referen
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   useEffect(() => { setOpen(false); }, [reference, scope?.sessionId, enabled]);
-  const label = children || (language === 'zh' ? '打开 App' : 'Open App');
+  const label = children || (uiText(language)('mcpAppReferenceLink.openApp'));
   const close = () => { setOpen(false); button.current?.focus({ preventScroll: true }); };
   return <>
     <button ref={button} className="message-app-reference" type="button" disabled={!enabled} aria-haspopup="dialog"
-      onClick={() => setOpen(true)} title={!enabled ? (language === 'zh' ? '本轮结束后可打开有效的 App 引用' : 'Valid App references can be opened after this turn') : undefined}>
+      onClick={() => setOpen(true)} title={!enabled ? (uiText(language)('mcpAppReferenceLink.validAppReferencesCanBeOpenedAfter')) : undefined}>
       <PanelsTopLeft size={14} aria-hidden="true" /><span>{label}</span>
     </button>
     {enabled && open && identity && createPortal(<McpAppPanel key={reference} {...identity} language={language} autoOpen presentation="modal" onClose={close} />,

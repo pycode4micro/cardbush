@@ -8,6 +8,32 @@ using System.Security.Principal;
 
 internal static partial class CardBushProcessHost
 {
+    // ACL inheritance operates on file objects, including every hard-link
+    // alias. Keep names pinned while checking and propagating a directory ACL.
+    private sealed class SandboxTreeGuard : IDisposable
+    {
+        private readonly List<IntPtr> handles = new List<IntPtr>();
+        public SandboxTreeGuard(string root)
+        {
+            try {
+                var pending = new Stack<string>(); pending.Push(root);
+                while (pending.Count > 0) {
+                    string path = pending.Pop();
+                    IntPtr handle = OpenScopeDirectory(path, 0x80, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+                    Check(handle != new IntPtr(-1), "Pin sandbox tree entry");
+                    handles.Add(handle);
+                    WorkspaceHandleInformation info;
+                    Check(GetWorkspaceHandleInformation(handle, out info), "Inspect sandbox tree entry");
+                    if ((info.Attributes & 0x400) != 0) continue;
+                    if ((info.Attributes & 0x10) != 0) {
+                        foreach (string child in Directory.EnumerateFileSystemEntries(path)) pending.Push(child);
+                    } else if (info.Links != 1) throw new IOException("Sandbox access cannot include a file with multiple hard links.");
+                }
+            } catch { Dispose(); throw; }
+        }
+        public void Dispose() { foreach (IntPtr handle in handles) CloseHandle(handle); handles.Clear(); }
+    }
+
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct WorkspaceStandardInformation {
         public long AllocationSize, EndOfFile;
@@ -54,8 +80,8 @@ internal static partial class CardBushProcessHost
         WorkspaceHandleInformation file;
         Check(GetWorkspaceHandleInformation(handle, out file), "Inspect sandbox file");
         CheckSandboxIdentity(path, expected, file);
-        // A write through one hard link would mutate names outside this grant.
-        if ((file.Attributes & (0x10 | 0x400)) != 0 || write && file.Links != 1)
+        // Neither content nor ACL grants may escape through another hard link.
+        if ((file.Attributes & (0x10 | 0x400)) != 0 || file.Links != 1)
             throw new IOException("Sandbox file is redirected, special, or has multiple writable aliases.");
         WithSandboxAclLock(delegate {
             var security = ReadSandboxFileSecurity(handle);

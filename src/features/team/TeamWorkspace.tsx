@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useState } from 'react';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import { EmployeeIcon } from './employeePresentation';
@@ -14,20 +15,20 @@ import './team-workspace.css';
 
 export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { language: AppLanguage; chatOptions?: CreationChatOptions; onOpenConversation?: (id: string) => void }) {
   const state = useTeamWorkspace();
-  const zh = language === 'zh', t = (cn: string, en: string) => zh ? cn : en;
+
   const { tab } = useTeamWorkspaceNavigation();
   const [agent, setAgent] = useState<DefinitionReceipt<RegisteredAgent> | null>(null);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   useEffect(() => { setError(''); }, [tab]);
   const explainError = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('acyclic')) return t('节点依赖存在循环或无效引用，请检查各节点的等待条件。', 'Dependencies form a cycle or reference a missing node. Check each node’s prerequisites.');
-    if (message.includes('Definition changed')) return t('配置已在别处修改。请刷新并重新选择该记录后再保存。', 'This definition changed elsewhere. Refresh and reselect it before saving.');
+    if (message.includes('acyclic')) return uiText(language)('teamWorkspace.dependenciesFormACycleOrReferenceA');
+    if (message.includes('Definition changed')) return uiText(language)('teamWorkspace.thisDefinitionChangedElsewhereRefreshAndReselect');
     if (error && typeof error === 'object' && 'issues' in error && Array.isArray(error.issues)) return error.issues.map(issue => String(issue.message)).join(' · ');
     return message;
   };
-  const statusLabel = (status: string) => ({ pending: t('等待依赖', 'Pending'), running: t('运行中', 'Running'), completed: t('已完成', 'Completed'),
-    failed: t('失败', 'Failed'), stopped: t('已停止', 'Stopped'), interrupted: t('运行已中断', 'Interrupted') }[status] ?? status);
+  const statusLabel = (status: string) => ({ pending: uiText(language)('teamWorkspace.pending'), running: uiText(language)('cardlingWindow.running'), completed: uiText(language)('automationPanel.completed'),
+    failed: uiText(language)('automationPanel.failed'), stopped: uiText(language)('automationPanel.stopped'), interrupted: uiText(language)('teamWorkspace.interrupted') }[status] ?? status);
   useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refreshTeamWorkspace(false, true); }, 4000); return () => window.clearInterval(timer); }, []);
   const perform = async (operation: () => Promise<unknown>) => {
     setError(''); setBusy(true);
@@ -35,44 +36,44 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
     finally { setBusy(false); }
   };
   const changeAgent = (patch: Partial<RegisteredAgent>) => { setError(''); setAgent(current => current && ({ ...current, definition: { ...current.definition, ...patch } })); };
-  const newAgent = () => setAgent({ revision: 0, updatedAt: '', definition: registeredAgentSchema.parse({ id: `agent-${crypto.randomUUID()}`, name: t('新员工', 'New agent'), system_prompt: t('明确岗位职责、原则及交付要求。', 'Define responsibilities, principles and deliverables.') }) });
+  const newAgent = () => setAgent({ revision: 0, updatedAt: '', definition: registeredAgentSchema.parse({ id: `agent-${crypto.randomUUID()}`, name: uiText(language)('teamWorkspace.newAgent'), system_prompt: uiText(language)('teamWorkspace.defineResponsibilitiesPrinciplesAndDeliverables') }) });
   const names = (value: string) => value.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
   return <div className="native-team-workspace">
     {(error || state.error) && <p role="alert">{error || state.error}</p>}
     {tab === 'library' && <TeamWorkflowLibrary teams={state.teams} runs={state.runs} language={language}/>}
-    {tab === 'agents' && <section className="native-team-management"><h1>{t('员工', 'Agents')}</h1><div className="native-team-columns">
-      <div className="native-team-list"><button type="button" onClick={newAgent}><Plus size={16} />{t('注册员工', 'Register agent')}</button>
+    {tab === 'agents' && <section className="native-team-management"><h1>{uiText(language)('teamWorkspace.agents')}</h1><div className="native-team-columns">
+      <div className="native-team-list"><button type="button" onClick={newAgent}><Plus size={16} />{uiText(language)('teamWorkspace.registerAgent')}</button>
         {state.agents.map(record => <button type="button" key={record.definition.id} aria-pressed={agent?.definition.id === record.definition.id} onClick={() => setAgent(structuredClone(record))}><strong className="native-team-identity"><EmployeeIcon size={17} />{record.definition.name}</strong><small>{record.definition.description || record.definition.id}</small></button>)}
-        {!state.agents.length && <p>{t('可以在对话中让 Agent 注册员工，也可以在这里创建。', 'Ask an agent to register an employee, or create one here.')}</p>}
+        {!state.agents.length && <p>{uiText(language)('teamWorkspace.askAnAgentToRegisterAnEmployee')}</p>}
       </div>
       {agent && <form className="native-team-editor" onSubmit={event => { event.preventDefault(); void perform(async () => {
         const receipt = await teamCommand<DefinitionReceipt<RegisteredAgent>>(AGENT_REGISTRY_COMMAND, { action: 'save', definition: registeredAgentSchema.parse(agent.definition), expected_revision: agent.revision });
         setAgent(current => current?.definition.id === receipt.definition.id ? { ...receipt, definition: current.definition } : current);
       }); }}>
-        <label>{t('名称', 'Name')}<input required value={agent.definition.name} onChange={event => changeAgent({ name: event.target.value })} /></label>
-        <label>ID<input required disabled={agent.revision > 0} value={agent.definition.id} onChange={event => changeAgent({ id: event.target.value })} /></label>
-        <label>{t('职责说明', 'Description')}<textarea value={agent.definition.description} onChange={event => changeAgent({ description: event.target.value })} /></label>
-        <label>{t('岗位指令', 'System prompt')}<textarea required rows={8} value={agent.definition.system_prompt} onChange={event => changeAgent({ system_prompt: event.target.value })} /></label>
-        <label className="native-team-check"><input type="checkbox" checked={agent.definition.enabled} onChange={event => changeAgent({ enabled: event.target.checked })} />{t('启用员工', 'Enabled')}</label>
-        <label className="native-team-check"><input type="checkbox" checked={agent.definition.guards.includes('read_only')} onChange={event => changeAgent({ guards: event.target.checked ? ['read_only'] : [] })} />{t('只读约束', 'Read-only guard')}</label>
-        <details><summary>{t('工具与 Hooks', 'Tools and hooks')}</summary>
-          <label className="native-team-check"><input type="checkbox" checked={agent.definition.allowed_tools !== undefined} onChange={event => changeAgent({ allowed_tools: event.target.checked ? [] : undefined })} />{t('限定可用工具', 'Restrict available tools')}</label>
-          {agent.definition.allowed_tools && <label>{t('工具名称（每行一个）', 'Tool names (one per line)')}<textarea value={agent.definition.allowed_tools.join('\n')} onChange={event => changeAgent({ allowed_tools: names(event.target.value) })} /></label>}
-          <label>{t('已安装且受信任的 Hook ID（每行一个）', 'Installed trusted hook IDs (one per line)')}<textarea value={agent.definition.hooks.join('\n')} onChange={event => changeAgent({ hooks: names(event.target.value) })} /></label>
+        <label>{uiText(language)('agentConnectionForm.name')}<input required value={agent.definition.name} onChange={event => changeAgent({ name: event.target.value })} /></label>
+        <label>{uiText(language)('agentDefinitionInspector.id')}<input required disabled={agent.revision > 0} value={agent.definition.id} onChange={event => changeAgent({ id: event.target.value })} /></label>
+        <label>{uiText(language)('teamWorkspace.description')}<textarea value={agent.definition.description} onChange={event => changeAgent({ description: event.target.value })} /></label>
+        <label>{uiText(language)('agentDefinitionInspector.systemPrompt')}<textarea required rows={8} value={agent.definition.system_prompt} onChange={event => changeAgent({ system_prompt: event.target.value })} /></label>
+        <label className="native-team-check"><input type="checkbox" checked={agent.definition.enabled} onChange={event => changeAgent({ enabled: event.target.checked })} />{uiText(language)('teamWorkspace.enabled')}</label>
+        <label className="native-team-check"><input type="checkbox" checked={agent.definition.guards.includes('read_only')} onChange={event => changeAgent({ guards: event.target.checked ? ['read_only'] : [] })} />{uiText(language)('teamWorkspace.readOnlyGuard')}</label>
+        <details><summary>{uiText(language)('teamWorkspace.toolsAndHooks')}</summary>
+          <label className="native-team-check"><input type="checkbox" checked={agent.definition.allowed_tools !== undefined} onChange={event => changeAgent({ allowed_tools: event.target.checked ? [] : undefined })} />{uiText(language)('teamWorkspace.restrictAvailableTools')}</label>
+          {agent.definition.allowed_tools && <label>{uiText(language)('teamWorkspace.toolNamesOnePerLine')}<textarea value={agent.definition.allowed_tools.join('\n')} onChange={event => changeAgent({ allowed_tools: names(event.target.value) })} /></label>}
+          <label>{uiText(language)('teamWorkspace.installedTrustedHookIdsOnePerLine')}<textarea value={agent.definition.hooks.join('\n')} onChange={event => changeAgent({ hooks: names(event.target.value) })} /></label>
         </details>
-        <div className="native-team-actions"><button type="submit" disabled={busy}><Save size={16} />{t('保存员工', 'Save agent')}</button>
-          {agent.revision > 0 && <button type="button" disabled={busy} onClick={() => void perform(async () => { await teamCommand(AGENT_REGISTRY_COMMAND, { action: 'delete', agent_id: agent.definition.id, expected_revision: agent.revision }); setAgent(null); })}><Trash2 size={16} />{t('删除注册', 'Delete definition')}</button>}
+        <div className="native-team-actions"><button type="submit" disabled={busy}><Save size={16} />{uiText(language)('teamWorkspace.saveAgent')}</button>
+          {agent.revision > 0 && <button type="button" disabled={busy} onClick={() => void perform(async () => { await teamCommand(AGENT_REGISTRY_COMMAND, { action: 'delete', agent_id: agent.definition.id, expected_revision: agent.revision }); setAgent(null); })}><Trash2 size={16} />{uiText(language)('teamWorkspace.deleteDefinition')}</button>}
         </div>
       </form>}
     </div></section>}
     <div className="team-graph-tab" hidden={tab !== 'teams'}><TeamGraphWorkspace language={language} chatOptions={chatOptions} onOpenConversation={onOpenConversation} visible={tab === 'teams'}/></div>
-    {tab === 'runs' && <section className="native-team-management"><h1>{t('运行记录', 'Runs')}</h1><div className="native-team-runs">{!state.runs.length && <p>{t('还没有运行记录。', 'No runs yet.')}</p>}
+    {tab === 'runs' && <section className="native-team-management"><h1>{uiText(language)('teamSidebar.runs')}</h1><div className="native-team-runs">{!state.runs.length && <p>{uiText(language)('teamWorkspace.noRunsYet')}</p>}
       {[...state.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(run => <article key={run.id}><strong>{run.workflow.name}</strong><span>{statusLabel(run.status)}</span><p>{run.input}</p>
-        <button type="button" onClick={() => requestTeamDocument({ kind: 'select', id: run.teamId, runId: run.id })}>{t('查看流程与结果', 'View workflow and results')}</button>
+        <button type="button" onClick={() => requestTeamDocument({ kind: 'select', id: run.teamId, runId: run.id })}>{uiText(language)('teamWorkspace.viewWorkflowAndResults')}</button>
         {run.nodes.map(node => <details key={node.id}><summary>{teamNodeTitle(run.workflow.nodes.find(item => item.id === node.id)!, run.agents.map(item => item.definition))} · {statusLabel(node.status)}</summary><MarkdownContent content={node.output || node.error} language={language}/></details>)}
-        {run.error && <p role="alert">{run.error}</p>}<time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')}</time>
-        {run.status === 'running' && <button type="button" disabled={busy} onClick={() => void perform(() => teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'stop', run_id: run.id }))}>{t('停止团队', 'Stop run')}</button>}
-        {['failed', 'stopped', 'interrupted'].includes(run.status) && <p>{t('可在原对话中要求继续此运行；已完成节点会保留。', 'Ask to resume this run in its original chat; completed nodes are retained.')}</p>}
+        {run.error && <p role="alert">{run.error}</p>}<time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString(language)}</time>
+        {run.status === 'running' && <button type="button" disabled={busy} onClick={() => void perform(() => teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'stop', run_id: run.id }))}>{uiText(language)('teamWorkspace.stopRun')}</button>}
+        {['failed', 'stopped', 'interrupted'].includes(run.status) && <p>{uiText(language)('teamWorkspace.askToResumeThisRunInIts')}</p>}
       </article>)}
     </div></section>}
   </div>;

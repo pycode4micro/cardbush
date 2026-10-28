@@ -12,7 +12,7 @@ export function realtimeConversationRecord(entries: ConversationEntry[], maxCont
 }
 export interface RealtimeConversationExecutor {
   initialContext?(): { role: 'user' | 'assistant'; text: string }[];
-  summarize?(taskId: string, language: 'zh' | 'en', signal?: AbortSignal): Promise<string>;
+  summarize?(taskId: string, language: string, signal?: AbortSignal): Promise<string>;
   record?(entry: ConversationEntry): Promise<void>;
   pageWrite?(id: string, content: string): Promise<void>;
   prepareConversation?(): Promise<string>;

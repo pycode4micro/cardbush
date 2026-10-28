@@ -105,3 +105,6 @@
   .welcome-layout-pill.welcome-toolbar-drag { width: 24px; padding: 0; }
 }
 @media (max-height: 680px) { .default-layout .welcome-slot-brand { height: 100px; } .default-layout .welcome-slot-suggestions { margin-top: 6px; } }
+
+.welcome-component-preview[data-positioned="false"] { visibility: hidden; }
+.welcome-layout-toolbar[data-positioned="true"] { transform: none; }

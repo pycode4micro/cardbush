@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GitBranch, Plus } from 'lucide-react';
 import type { AppLanguage } from '../../types';
@@ -29,7 +30,7 @@ export function GitBranchMenu({
     const root = activeProjectDir?.trim();
     if (!root || !window.cardbushDesktop?.gitInfo) {
       setLoading(false);
-      setStatus(language === 'zh' ? '请先打开一个 Git 项目' : 'Open a Git project first');
+      setStatus(uiText(language)('gitBranchMenu.openAGitProjectFirst'));
       return;
     }
     setLoading(true);
@@ -39,7 +40,7 @@ export function GitBranchMenu({
       if (sequence !== readSequence.current) return;
       if (info.missing || info.error) {
         setStatus(info.error && !/not a git repository/i.test(info.error) ? info.error : info.missing || /not a git repository/i.test(info.error ?? '')
-          ? (language === 'zh' ? '此目录不是 Git 仓库，仍可查看文件工具记录的修改。' : 'This directory is not a Git repository. Recorded file edits are still available for review.')
+          ? (uiText(language)('gitBranchMenu.thisDirectoryIsNotAGitRepository'))
           : info.error ?? '');
         return;
       }
@@ -71,7 +72,7 @@ export function GitBranchMenu({
       try {
         const result = await window.cardbushDesktop!.gitCheckout(root, branch);
         setCurrentBranch(result.branch || branch);
-        setStatus(result.output || (language === 'zh' ? '已切换分支' : 'Branch switched'));
+        setStatus(result.output || (uiText(language)('gitBranchMenu.branchSwitched')));
         await reload();
         await onChanged?.();
       } catch (caught) {
@@ -87,7 +88,7 @@ export function GitBranchMenu({
     const root = activeProjectDir?.trim();
     const branch = newBranch.trim();
     if (disabled || loading || !repositoryAvailable || !root || !branch) {
-      setStatus(language === 'zh' ? '请输入新分支名称' : 'Enter a new branch name');
+      setStatus(uiText(language)('gitBranchMenu.enterANewBranchName'));
       return;
     }
     setLoading(true);
@@ -96,7 +97,7 @@ export function GitBranchMenu({
       const result = await window.cardbushDesktop!.gitCreateBranch(root, branch);
       setCurrentBranch(result.branch || branch);
       setNewBranch('');
-      setStatus(result.output || (language === 'zh' ? '已创建并切换分支' : 'Branch created'));
+      setStatus(result.output || (uiText(language)('gitBranchMenu.branchCreated')));
       await reload();
       await onChanged?.();
     } catch (caught) {
@@ -111,9 +112,7 @@ export function GitBranchMenu({
       <p>
         {activeProjectDir?.trim()
           ? activeProjectDir
-          : language === 'zh'
-            ? '请先打开一个 Git 项目'
-            : 'Open a Git project first'}
+          : uiText(language)('gitBranchMenu.openAGitProjectFirst')}
       </p>
       <div className="branch-create-row">
         <input
@@ -126,23 +125,19 @@ export function GitBranchMenu({
               void createBranch();
             }
           }}
-          placeholder={language === 'zh' ? '新分支名称' : 'New branch name'}
+          placeholder={uiText(language)('gitBranchMenu.newBranchName')}
         />
         <button type="button" disabled={disabled || loading || !repositoryAvailable || !newBranch.trim()} onClick={() => void createBranch()}>
           <Plus size={14} />
-          {language === 'zh' ? '创建' : 'Create'}
+          {uiText(language)('gitBranchMenu.create')}
         </button>
       </div>
       <div className="branch-list">
         {branches.length === 0 && (loading || repositoryAvailable) && (
           <span className="popover-status">
             {loading
-              ? language === 'zh'
-                ? '正在加载分支...'
-                : 'Loading branches...'
-              : language === 'zh'
-                ? '暂无分支列表'
-                : 'No branches found'}
+              ? uiText(language)('gitBranchMenu.loadingBranches')
+              : uiText(language)('gitBranchMenu.noBranchesFound')}
           </span>
         )}
         {branches.map((branch) => (
@@ -158,12 +153,8 @@ export function GitBranchMenu({
               <strong>{branch}</strong>
               <small>
                 {branch === currentBranch
-                  ? language === 'zh'
-                    ? '当前分支'
-                    : 'Current branch'
-                  : language === 'zh'
-                    ? '切换到此分支'
-                    : 'Switch to this branch'}
+                  ? uiText(language)('gitBranchMenu.currentBranch')
+                  : uiText(language)('gitBranchMenu.switchToThisBranch')}
               </small>
             </span>
           </button>

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { FileText, Maximize2, Minus, Plus, Unlink, WandSparkles } from 'lucide-react';
 import { graphLinks, layoutNodes, MAX_GRAPH_COORDINATE, nodeDependencies, nodeName, nodePosition, type MdDocument, type MdNode, type MdPosition } from './markdownGraph';
@@ -5,11 +6,11 @@ import { graphLinks, layoutNodes, MAX_GRAPH_COORDINATE, nodeDependencies, nodeNa
 export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnect, onLayout, language, flow = false, icon, subtitle, readOnly = false, saving = false, caption, nodeDetail, nodeStatus }: {
   document: MdDocument; selectedId: string; onSelect: (id: string) => void; onMove: (id: string, point: MdPosition) => void;
   onConnect: (source: string, target: string) => void; onLayout: (positions: Map<string, MdPosition>) => void | Promise<void>;
-  language: 'zh' | 'en'; flow?: boolean; icon?: (node: MdNode) => ReactNode; subtitle?: (node: MdNode) => string; readOnly?: boolean; saving?: boolean;
+  language: string; flow?: boolean; icon?: (node: MdNode) => ReactNode; subtitle?: (node: MdNode) => string; readOnly?: boolean; saving?: boolean;
   caption?: ReactNode; nodeDetail?: (node: MdNode) => ReactNode; nodeStatus?: (node: MdNode) => string;
 }) {
   const width = 184, height = nodeDetail ? 94 : 76;
-  const t = (cn: string, en: string) => language === 'zh' ? cn : en;
+
   const viewport = useRef<HTMLDivElement>(null), markerId = useId().replaceAll(':', '');
   const [camera, setCamera] = useState({ x: 20, y: 20, scale: 1 }), [connecting, setConnecting] = useState('');
   const [drag, setDrag] = useState<{ id: string; point: MdPosition } | null>(null);
@@ -46,7 +47,7 @@ export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnec
     element.addEventListener('wheel', wheel, { passive: false }); return () => element.removeEventListener('wheel', wheel);
   }, []);
   const completeLink = (id: string) => { if (!readOnly && !saving && connecting && id !== connecting) { onConnect(connecting, id); setConnecting(''); } else if (!connecting) onSelect(id); };
-  return <div className="md-graph" ref={viewport} data-readonly={readOnly} aria-busy={saving} aria-label={t('节点图谱', 'Node graph')} tabIndex={0}
+  return <div className="md-graph" ref={viewport} data-readonly={readOnly} aria-busy={saving} aria-label={uiText(language)('mdGraphCanvas.nodeGraph')} tabIndex={0}
     onKeyDown={event => {
       if (event.key === 'Escape') { setConnecting(''); setDrag(null); gesture.current = null; }
       const direction = { ArrowLeft: [80, 0], ArrowRight: [-80, 0], ArrowUp: [0, 80], ArrowDown: [0, -80] }[event.key];
@@ -73,8 +74,8 @@ export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnec
       gesture.current = null; setDrag(null);
     }}
     onPointerCancel={() => { gesture.current = null; setDrag(null); }}>
-    <div className="md-graph-caption"><span>{caption ?? t(flow ? 'Team 任务关系' : '文档关系', flow ? 'Team dependencies' : 'Document links')}</span><small>{document.nodes.length} {t(flow ? '步骤' : '章节', flow ? 'steps' : 'sections')} · {links.length} {t(flow ? '依赖' : '链接', flow ? 'dependencies' : 'links')}</small></div>
-    {!document.nodes.length && <div className="md-graph-empty"><FileText size={30}/><strong>{t('从一个节点开始', 'Start with a node')}</strong><p>{t('添加节点，或打开一份 Markdown。', 'Add a node or open a Markdown file.')}</p></div>}
+    <div className="md-graph-caption"><span>{caption ?? (flow ? uiText(language)('mdGraphCanvas.teamDependencies') : uiText(language)('mdGraphCanvas.documentLinks'))}</span><small>{document.nodes.length} {(flow ? uiText(language)('teamViewPicker.steps') : uiText(language)('mdGraphCanvas.sections'))} · {links.length} {(flow ? uiText(language)('mdGraphCanvas.dependencies') : uiText(language)('mdGraphCanvas.links'))}</small></div>
+    {!document.nodes.length && <div className="md-graph-empty"><FileText size={30}/><strong>{uiText(language)('mdGraphCanvas.startWithANode')}</strong><p>{uiText(language)('mdGraphCanvas.addANodeOrOpenAMarkdown')}</p></div>}
     <div className="md-graph-stage" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})` }}>
       <svg className="md-graph-edges" width="1" height="1" aria-hidden="true"><defs><marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>
         {links.map(({ from, to, dependency }) => { const a = positions.get(from)!, b = positions.get(to)!;
@@ -85,7 +86,7 @@ export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnec
       {document.nodes.map(node => { const point = positions.get(node.id)!, connectable = !readOnly && (!flow || 'agent_id' in node.attributes);
         return <div className="md-graph-node" key={node.id} data-node-id={node.id} data-status={nodeStatus?.(node)} data-selected={selectedId === node.id} data-linking={connecting === node.id}
           style={{ left: point.x, top: point.y, width, height }}>
-          {connectable && <button type="button" className="md-node-port md-node-in" aria-label={`${t('连接到', 'Connect to')} ${nodeName(node)}`} onClick={() => completeLink(node.id)} />}
+          {connectable && <button type="button" className="md-node-port md-node-in" aria-label={`${uiText(language)('mdGraphCanvas.connectTo')} ${nodeName(node)}`} onClick={() => completeLink(node.id)} />}
           <button type="button" className="md-node-face" aria-pressed={selectedId === node.id} onClick={event => { if (event.detail === 0) completeLink(node.id); }}
             onFocus={event => { const view = viewport.current?.getBoundingClientRect(), node = event.currentTarget.getBoundingClientRect(); if (!view) return;
               if (node.left < view.left + 12 || node.right > view.right - 12 || node.top < view.top + 70 || node.bottom > view.bottom - 50)
@@ -100,12 +101,12 @@ export function MdGraphCanvas({ document, selectedId, onSelect, onMove, onConnec
             }}>
             <span className="md-node-icon">{icon?.(node) ?? <FileText size={19}/>}</span><span><strong title={nodeName(node)}>{nodeName(node)}</strong><small>{subtitle?.(node) || node.id}</small>{nodeDetail && <small className="md-node-detail">{nodeDetail(node)}</small>}</span>
           </button>
-          {connectable && <button type="button" className="md-node-port md-node-out" aria-label={`${t('从此节点连线', 'Link from')} ${nodeName(node)}`} onClick={() => { if (!saving) setConnecting(node.id); }} />}
+          {connectable && <button type="button" className="md-node-port md-node-out" aria-label={`${uiText(language)('mdGraphCanvas.linkFrom')} ${nodeName(node)}`} onClick={() => { if (!saving) setConnecting(node.id); }} />}
         </div>;
       })}
     </div>
-    {connecting && <div className="md-link-hint" role="status">{t(flow ? '选择下游步骤；它将等待当前步骤完成。' : '选择下游节点；它将引用当前节点。', flow ? 'Choose a downstream step that will wait for this step.' : 'Choose a downstream node to reference this node.')}<button type="button" onClick={() => setConnecting('')} aria-label={t('取消连线', 'Cancel link')}><Unlink size={14}/></button></div>}
-    {missing.length > 0 && <div className="md-link-warning" role="status">{t('未找到节点：', 'Unresolved links: ')}{[...new Set(missing)].join(', ')}</div>}
-    <div className="md-graph-controls"><span>{Math.round(camera.scale * 100)}%</span><button type="button" onClick={() => zoom(1 / 1.2)} aria-label={t('缩小图谱', 'Zoom out')}><Minus size={15}/></button><button type="button" onClick={() => zoom(1.2)} aria-label={t('放大图谱', 'Zoom in')}><Plus size={15}/></button><button type="button" onClick={() => fit()} aria-label={t('适应画布', 'Fit graph')}><Maximize2 size={15}/></button>{!readOnly && <button type="button" onClick={async () => { if (saving) return; await onLayout(defaults); requestAnimationFrame(() => fitRef.current(true)); }} aria-label={t('自动排列', 'Auto layout')}><WandSparkles size={15}/></button>}</div>
+    {connecting && <div className="md-link-hint" role="status">{(flow ? uiText(language)('mdGraphCanvas.chooseADownstreamStepThatWillWait') : uiText(language)('mdGraphCanvas.chooseADownstreamNodeToReferenceThis'))}<button type="button" onClick={() => setConnecting('')} aria-label={uiText(language)('mdGraphCanvas.cancelLink')}><Unlink size={14}/></button></div>}
+    {missing.length > 0 && <div className="md-link-warning" role="status">{uiText(language)('mdGraphCanvas.unresolvedLinks')}{[...new Set(missing)].join(', ')}</div>}
+    <div className="md-graph-controls"><span>{Math.round(camera.scale * 100)}%</span><button type="button" onClick={() => zoom(1 / 1.2)} aria-label={uiText(language)('mdGraphCanvas.zoomOut')}><Minus size={15}/></button><button type="button" onClick={() => zoom(1.2)} aria-label={uiText(language)('mdGraphCanvas.zoomIn')}><Plus size={15}/></button><button type="button" onClick={() => fit()} aria-label={uiText(language)('mdGraphCanvas.fitGraph')}><Maximize2 size={15}/></button>{!readOnly && <button type="button" onClick={async () => { if (saving) return; await onLayout(defaults); requestAnimationFrame(() => fitRef.current(true)); }} aria-label={uiText(language)('mdGraphCanvas.autoLayout')}><WandSparkles size={15}/></button>}</div>
   </div>;
 }

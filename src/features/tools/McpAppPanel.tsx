@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CircleAlert, Loader2, Maximize2, Minimize2, PanelsTopLeft, RotateCw, X } from 'lucide-react';
@@ -50,7 +51,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
       if (frameLoads.current > 0) setFrameReady(true);
     }, 80);
   }, []);
-  const zh = language === 'zh';
+
   const setDisplayMode = useCallback((expanded: boolean) => {
     if (presentation === 'modal') return;
     if (expanded && !fullRef.current) setInlineSpace(panel.current?.getBoundingClientRect().height ?? 0);
@@ -76,13 +77,13 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
     return () => observer.disconnect();
   }, [view, loading]);
   const hostContext = useRef(() => ({}));
-  hostContext.current = () => ({ theme, styles: { variables: styleVariables }, locale: zh ? 'zh-CN' : 'en-US', displayMode: fullRef.current ? 'fullscreen' : 'inline', availableDisplayModes: presentation === 'modal' ? ['fullscreen'] : ['inline', 'fullscreen'],
+  hostContext.current = () => ({ theme, styles: { variables: styleVariables }, locale: language, displayMode: fullRef.current ? 'fullscreen' : 'inline', availableDisplayModes: presentation === 'modal' ? ['fullscreen'] : ['inline', 'fullscreen'],
     containerDimensions: { width: viewport.current?.clientWidth ?? 0, ...(fullRef.current ? { height: viewport.current?.clientHeight ?? 0 } : { maxHeight: 900 }) } });
   const open = useCallback(async (recovering = false) => {
     if (opening.current && !opening.current.signal.aborted) return;
     if (!recovering) recoveries.current = 0;
     activeToken.current = null;
-    pendingRef.current?.reject(new Error('Interface reopened.')); pendingRef.current = null;
+    pendingRef.current?.reject(new Error(uiText(language)('mcpAppPanel.interface_reopened'))); pendingRef.current = null;
     setPending(null); setPermission(null); setView(null); setFrameReady(false);
     setError(''); setErrorCode(''); setDocumentFailure(null); setLoading(true); const controller = new AbortController(); opening.current = controller;
     try {
@@ -96,7 +97,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
       }
       if (controller.signal.aborted) { if (result?.token) void command({ action: 'close', token: result.token }).catch(() => {}); return; }
       if (result) { frameLoads.current = 0; activeToken.current = result.token; setView(result); }
-      else setError(currentLanguage.current === 'zh' ? '此插件界面目前不可用。' : 'This plugin interface is currently unavailable.');
+      else setError(uiText(currentLanguage.current)('mcpAppPanel.thisPluginInterfaceIsCurrentlyUnavailable'));
     } catch (cause) { if (!controller.signal.aborted) { setError(errorMessage(cause)); setErrorCode(interfaceErrorCode(cause)); } }
     finally { if (opening.current === controller) opening.current = null; if (!controller.signal.aborted) setLoading(false); }
   }, [sessionId, turnId, toolCallId, command]);
@@ -105,7 +106,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
     if (staleInterface(cause) && recoveries.current === 0) { recoveries.current++; void open(true); }
     else { setError(errorMessage(cause)); setErrorCode(interfaceErrorCode(cause)); }
   }, [open]);
-  const close = () => { activeToken.current = null; opening.current?.abort(); setLoading(false); pendingRef.current?.reject(new Error('Interface closed.')); pendingRef.current = null; setPending(null); setView(null); setError(''); setErrorCode(''); setDocumentFailure(null); setPermission(null); setDisplayMode(false); onClose?.(); };
+  const close = () => { activeToken.current = null; opening.current?.abort(); setLoading(false); pendingRef.current?.reject(new Error(uiText(language)('mcpAppPanel.interface_closed'))); pendingRef.current = null; setPending(null); setView(null); setError(''); setErrorCode(''); setDocumentFailure(null); setPermission(null); setDisplayMode(false); onClose?.(); };
   // Keep srcdoc stable across progress renders, resizing and host theme changes.
   const frameDocument = useMemo(() => view ? mcpAppDocument(view, language, theme, styleVariables) : '', [view]);
   useEffect(() => {
@@ -119,11 +120,11 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
   }, []);
   useEffect(() => {
     frame.current?.contentWindow?.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: hostContext.current() }, '*');
-  }, [theme, styleVariables, zh, full, viewportSize, frameReady]);
+  }, [theme, styleVariables, language, full, viewportSize, frameReady]);
   const waiting = loading || !!view && !frameReady;
   useEffect(() => { setSlow(false); if (!waiting) return; const timer = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(timer); }, [waiting]);
   useEffect(() => { if (autoOpen) void open(); }, [autoOpen, open]);
-  useEffect(() => () => { activeToken.current = null; opening.current?.abort(); pendingRef.current?.reject(new Error('Interface closed.')); }, []);
+  useEffect(() => () => { activeToken.current = null; opening.current?.abort(); pendingRef.current?.reject(new Error(uiText(language)('mcpAppPanel.interface_closed'))); }, []);
   useEffect(() => { if (!view) return; return () => { void command({ action: 'close', token: view.token }).catch(() => {}); }; }, [view, command]);
   useEffect(() => {
     if (!view) return;
@@ -133,11 +134,11 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
       if (!controller.signal.aborted && activeToken.current === view.token) frame.current?.contentWindow?.postMessage(value, '*');
     };
     const requestUser = (text: string, label: string, run: () => Promise<unknown>) => new Promise((resolve, reject) => {
-      if (pendingRef.current) { reject(new Error('Another interface request is awaiting a response.')); return; }
+      if (pendingRef.current) { reject(new Error(uiText(language)('mcpAppPanel.another_interface_request_is_awaiting_a_response'))); return; }
       const action = { text, label, run, resolve, reject }; pendingRef.current = action; setPending(action);
     });
     const listener = async (event: MessageEvent) => {
-      const zh = currentLanguage.current === 'zh';
+
       if (activeToken.current !== view.token || event.source !== frame.current?.contentWindow || event.origin !== 'null') return;
       const data = event.data;
       if (!data || data.jsonrpc !== '2.0' || typeof data.method !== 'string' || JSON.stringify(data).length > 128_000) return;
@@ -171,7 +172,7 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
           return;
         }
         const legacy = typeof data.id === 'string' && data.id.startsWith('openai-');
-        if (!initialized && !legacy) throw new Error('Initialize the interface before sending requests.');
+        if (!initialized && !legacy) throw new Error(uiText(language)('mcpAppPanel.initialize_the_interface_before_sending_requests'));
         if (data.method === 'ping' || data.method === 'notifications/message') { respond({}); return; }
         if (data.method === 'ui/request-display-mode') { const mode = presentation === 'modal' || params.mode === 'fullscreen' ? 'fullscreen' : 'inline'; setDisplayMode(mode === 'fullscreen'); respond({ mode }); return; }
         if (data.method === 'tools/call' || data.method === 'resources/read') {
@@ -184,15 +185,15 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
         if (data.method === 'ui/message') {
           const content = Array.isArray(params.content) ? params.content : [params.content];
           const text = content.filter((item: any) => item?.type === 'text' && typeof item.text === 'string').map((item: any) => item.text).join('\n');
-          if (!text.trim() || text.length > 32_000 || params.role && params.role !== 'user') throw new Error('The interface message must be user text up to 32,000 characters.');
-          respond(await requestUser(text, zh ? '发送到会话' : 'Send to conversation', async () => {
+          if (!text.trim() || text.length > 32_000 || params.role && params.role !== 'user') throw new Error(uiText(language)('mcpAppPanel.the_interface_message_must_be_user_text'));
+          respond(await requestUser(text, uiText(currentLanguage.current)('mcpAppPanel.sendToConversation'), async () => {
             await new Promise<void>((resolve, reject) => window.dispatchEvent(new CustomEvent('cardbush:mcp-app-message', { detail: { sessionId, hostId: messageTarget, text, resolve, reject } })));
             return {};
           })); return;
         }
         if (data.method === 'ui/open-link') {
-          const url = new URL(params.url); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Only HTTP(S) links can be opened.');
-          respond(await requestUser(url.href, zh ? '打开链接' : 'Open link', async () => { await window.cardbushDesktop?.openExternal(url.href); return {}; })); return;
+          const url = new URL(params.url); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error(uiText(language)('mcpAppPanel.only_http_s_links_can_be_opened'));
+          respond(await requestUser(url.href, uiText(currentLanguage.current)('mcpAppPanel.openLink'), async () => { await window.cardbushDesktop?.openExternal(url.href); return {}; })); return;
         }
         throw new Error(`Unsupported MCP interface method: ${data.method}`);
       } catch (cause) {
@@ -213,40 +214,40 @@ export function McpAppPanel({ sessionId, turnId, toolCallId, title, serverTitle,
     return () => { controller.abort(); clearInterval(timer); window.removeEventListener('message', listener); };
   }, [view, sessionId, messageTarget, command, handleError, setDisplayMode, scheduleViewport]);
   if (!sessionId || !turnId) return null;
-  const displayTitle = title || view?.title || serverTitle || view?.serverTitle || (zh ? '插件界面' : 'Plugin interface');
+  const displayTitle = title || view?.title || serverTitle || view?.serverTitle || (uiText(language)('mcpAppPanel.pluginInterface'));
   const prefersBorder = (view?.meta.ui?.prefersBorder ?? view?.meta['openai/widgetPrefersBorder']) !== false;
   const errorSummary = error
-    ? errorCode === 'mcp_app_html_too_large' ? (zh ? '插件界面超出加载大小限制' : 'Plugin interface exceeds the size limit')
-      : errorCode === 'mcp_app_html_missing' ? (zh ? '插件未提供可加载的 HTML 界面' : 'The plugin did not supply a loadable HTML interface')
-        : (zh ? '界面暂时未能加载' : 'Unable to load the interface')
-    : documentFailure?.kind === 'runtime' ? (zh ? '插件界面运行出错，可重试。' : 'The plugin interface encountered an error. Try again.')
-      : (zh ? '部分界面资源加载失败，可重试。' : 'Some interface resources failed to load. Try again.');
+    ? errorCode === 'mcp_app_html_too_large' ? (uiText(language)('mcpAppPanel.pluginInterfaceExceedsTheSizeLimit'))
+      : errorCode === 'mcp_app_html_missing' ? (uiText(language)('mcpAppPanel.thePluginDidNotSupplyALoadable'))
+        : (uiText(language)('mcpAppPanel.unableToLoadTheInterface'))
+    : documentFailure?.kind === 'runtime' ? (uiText(language)('mcpAppPanel.thePluginInterfaceEncounteredAnErrorTry'))
+      : (uiText(language)('mcpAppPanel.someInterfaceResourcesFailedToLoadTry'));
   return <div className="mcp-app-anchor" style={full ? { height: inlineSpace } : undefined}><dialog ref={panel} className={`mcp-app-panel ${full ? 'fullscreen' : ''} ${presentation === 'modal' ? 'reference-view' : ''} ${prefersBorder ? '' : 'unframed'}`} aria-label={displayTitle} aria-modal={full || undefined} onCancel={dialogEventHandler(event => { event.preventDefault(); presentation === 'modal' ? close() : setDisplayMode(false); })}>
     <header className="mcp-app-heading">
       <span className="mcp-app-title" title={view ? String(view.tool.name) : undefined}><PanelsTopLeft size={16} /><strong>{displayTitle}</strong></span>
       <span className="mcp-app-actions">
-        {view && <><button type="button" title={zh ? '重新加载' : 'Reload'} aria-label={zh ? '重新加载' : 'Reload'} onClick={() => void open()}><RotateCw size={14} /></button>{presentation !== 'modal' && <button type="button" title={full ? (zh ? '收起' : 'Collapse') : (zh ? '展开视图' : 'Expand view')} aria-label={full ? (zh ? '收起' : 'Collapse') : (zh ? '展开视图' : 'Expand view')} onClick={() => setDisplayMode(!fullRef.current)}>{full ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>}</>}
-        {(view || loading || error || documentFailure) && <button type="button" title={waiting ? (zh ? '取消加载' : 'Cancel loading') : (zh ? '关闭界面' : 'Close interface')} aria-label={waiting ? (zh ? '取消加载' : 'Cancel loading') : (zh ? '关闭界面' : 'Close interface')} onClick={close}><X size={16} /></button>}
+        {view && <><button type="button" title={uiText(language)('mcpAppPanel.reload')} aria-label={uiText(language)('mcpAppPanel.reload')} onClick={() => void open()}><RotateCw size={14} /></button>{presentation !== 'modal' && <button type="button" title={full ? (uiText(language)('shadowTemporaryChat.collapse')) : (uiText(language)('mcpAppPanel.expandView'))} aria-label={full ? (uiText(language)('shadowTemporaryChat.collapse')) : (uiText(language)('mcpAppPanel.expandView'))} onClick={() => setDisplayMode(!fullRef.current)}>{full ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>}</>}
+        {(view || loading || error || documentFailure) && <button type="button" title={waiting ? (uiText(language)('mcpAppPanel.cancelLoading')) : (uiText(language)('mcpAppPanel.closeInterface'))} aria-label={waiting ? (uiText(language)('mcpAppPanel.cancelLoading')) : (uiText(language)('mcpAppPanel.closeInterface'))} onClick={close}><X size={16} /></button>}
       </span>
     </header>
-    {(error || documentFailure) && <div className="mcp-app-error" role="status"><CircleAlert size={16} /><details><summary>{errorSummary}</summary><pre>{error || documentFailure?.detail}</pre></details><button type="button" onClick={() => void open()}><RotateCw size={13} />{zh ? '重试' : 'Retry'}</button></div>}
-    {!view && !loading && !error && <button className="mcp-app-reopen" type="button" onClick={() => void open()}>{zh ? '打开插件界面' : 'Open plugin interface'}</button>}
+    {(error || documentFailure) && <div className="mcp-app-error" role="status"><CircleAlert size={16} /><details><summary>{errorSummary}</summary><pre>{error || documentFailure?.detail}</pre></details><button type="button" onClick={() => void open()}><RotateCw size={13} />{uiText(language)('common.retry')}</button></div>}
+    {!view && !loading && !error && <button className="mcp-app-reopen" type="button" onClick={() => void open()}>{uiText(language)('mcpAppPanel.openPluginInterface')}</button>}
     {view && <>
       {permission && <div className="mcp-app-confirm" role="alert"><p>{permission.reason}</p><code>{JSON.stringify(permission.targets)}</code>{['allow_once', 'deny'].map(decision => <button type="button" key={decision} onClick={() => {
         const permissionId = permission.permissionId; answeredPermissions.current.add(permissionId);
         void command({ action: 'answer', token: view.token, permissionId, decision }).catch(cause => { if (activeToken.current === view.token) answeredPermissions.current.delete(permissionId); handleError(cause, view.token); }); setPermission(null);
-      }}>{decision === 'allow_once' ? (zh ? '允许本次' : 'Allow once') : (zh ? '拒绝' : 'Deny')}</button>)}</div>}
-      {pending && <div className="mcp-app-confirm"><p>{pending.text}</p><button type="button" onClick={() => { pendingRef.current = null; setPending(null); void pending.run().then(pending.resolve, pending.reject); }}>{pending.label}</button><button type="button" onClick={() => { pending.reject(new Error('User declined.')); pendingRef.current = null; setPending(null); }}>{zh ? '取消' : 'Cancel'}</button></div>}
+      }}>{decision === 'allow_once' ? (uiText(language)('mcpAppPanel.allowOnce')) : (uiText(language)('mcpAppPanel.deny'))}</button>)}</div>}
+      {pending && <div className="mcp-app-confirm"><p>{pending.text}</p><button type="button" onClick={() => { pendingRef.current = null; setPending(null); void pending.run().then(pending.resolve, pending.reject); }}>{pending.label}</button><button type="button" onClick={() => { pending.reject(new Error(uiText(language)('mcpAppPanel.user_declined'))); pendingRef.current = null; setPending(null); }}>{uiText(language)('agentConnectionForm.cancel')}</button></div>}
     </>}
     {(loading || view) && <div ref={viewport} className={`mcp-app-viewport ${frameReady ? 'is-loaded' : ''}`} style={{ height: full ? undefined : height }} aria-busy={waiting}>
-      {waiting && <div className="mcp-app-loading" role="status"><div className="mcp-app-skeleton" aria-hidden="true"><i /><i /><i /></div><span><Loader2 size={14} />{slow ? (zh ? '加载较慢，可稍后重试' : 'Taking longer than usual') : (zh ? '正在载入界面' : 'Loading interface')}</span></div>}
+      {waiting && <div className="mcp-app-loading" role="status"><div className="mcp-app-skeleton" aria-hidden="true"><i /><i /><i /></div><span><Loader2 size={14} />{slow ? (uiText(language)('mcpAppPanel.takingLongerThanUsual')) : (uiText(language)('mcpAppPanel.loadingInterface'))}</span></div>}
       {view && <iframe key={view.token} ref={frame} name="cardbush-mcp-app" title={displayTitle} sandbox="allow-scripts" referrerPolicy="no-referrer" onLoad={() => {
         if (activeToken.current !== view.token) return;
         if (++frameLoads.current > 1) {
           void command({ action: 'observe', token: view.token, event: 'failed', detail: 'Interface document navigated away.' }).catch(() => {}); close();
-          setError(zh ? '界面页面已更换，请重新打开。' : 'The interface document changed. Reopen it to continue.');
+          setError(uiText(language)('mcpAppPanel.theInterfaceDocumentChangedReopenItTo'));
         } else { scheduleViewport(view.token); void command({ action: 'observe', token: view.token, event: 'frame_loaded' }).catch(cause => handleError(cause, view.token)); }
-      }} onError={() => { if (activeToken.current !== view.token) return; setError(zh ? '插件界面加载失败，可重试。' : 'Interface failed to load. Try again.'); setErrorCode(''); setFrameReady(true); void command({ action: 'observe', token: view.token, event: 'failed', detail: 'Iframe load error.' }).catch(() => {}); }} allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'" srcDoc={frameDocument} />}
+      }} onError={() => { if (activeToken.current !== view.token) return; setError(uiText(language)('mcpAppPanel.interfaceFailedToLoadTryAgain')); setErrorCode(''); setFrameReady(true); void command({ action: 'observe', token: view.token, event: 'failed', detail: 'Iframe load error.' }).catch(() => {}); }} allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'" srcDoc={frameDocument} />}
     </div>}
   </dialog></div>;
 }

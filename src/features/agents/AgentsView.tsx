@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { UserPromptInput } from '@cardbush/bush-protocol';
 import { createPortal } from 'react-dom';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -39,7 +40,7 @@ import { conversationViewKey, useConversationViewState } from '../../shared/conv
 type Call = <T = unknown>(operation: AgentOperation, input?: Record<string, unknown>) => Promise<T>;
 type Models = { defaultModelId: string; models: ManagedModelConfig[] };
 type Projects = { projects: AgentProject[]; defaultProjectId: string | null };
-const api = () => { const value = window.cardbushDesktop?.agents; if (!value) throw new Error('Agent connections are unavailable.'); return value; };
+const api = () => { const value = window.cardbushDesktop?.agents; if (!value) throw new Error(uiText()('agentsView.agent_connections_are_unavailable')); return value; };
 
 type AgentChatAppearance = { composerPortalTarget?: HTMLElement | null; visualInputEnabled?: boolean; disabledSkillNames?: Set<string>; onToggleSkill?: (name: string, enabled: boolean) => void; onOpenSettings?: (section: SettingsSection) => void; theme?: ThemeMode; sidebarCollapsed?: boolean; windowMaximized?: boolean; thinkingVisible?: boolean; guidanceDeliveryMode?: 'queue' | 'immediate' };
 
@@ -49,7 +50,7 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
   language: AppLanguage; agents: AgentConnectionsController; active?: boolean;
 } & AgentChatAppearance) {
   const { connections, selectedId, select: onSelect, refresh: onRefresh } = agents;
-  const zh = language === 'zh';
+
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AgentConnection>();
   // Keep controllers, cursors and transcripts per host. Only the selected chat
@@ -80,13 +81,13 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
     if (selected?.connected && selected.info) { setConnectedHosts(current => current[selected.id] === selected.info ? current : { ...current, [selected.id]: selected.info! }); setError(''); setConnecting(false); }
     else if (selected?.connectionError && selected.connectionState === 'disconnected') setError(selected.connectionError);
   }, [selected]);
-  return <div className="agents-view" hidden={!active} style={!active ? { display: 'none' } : undefined}>
+  return <div className="agents-view" hidden={!active}>
     {(!selected || !info) && <TopBar title={selected?.name || 'Agents'} language={language} inspectorOpen={false}
-      workspaceControl={<button className="agents-add" onClick={() => setAdding(true)}><Plus size={16}/>{zh ? '添加 Agent' : 'Add Agent'}</button>}/>}
-    {!selected && <div className="agents-overview"><h2>{zh ? '让每个 Agent 专注自己的工作' : 'A workspace for every Agent'}</h2><p>{zh ? '连接后直接对话。本机与云端共用模型、全局指令等运行设置。插件按需安装，项目和历史记录保存在执行任务的 Agent 上。' : 'Chat directly after connecting. Model settings, global instructions and other runtime settings are shared. Install plugins as needed; projects and history stay on the Agent running the work.'}</p>
-      <div className="agents-cards">{connections.map(item => <button key={item.id} className="agents-card" onClick={() => onSelect(item.id)}><Server size={24}/><strong>{item.name}</strong><span>{item.migrationIssue || (item.sshTunnel ? `${zh ? 'SSH 直连 · 服务器端口' : 'SSH direct · Server port'} ${item.sshTunnel.remotePort}` : item.url)}</span></button>)}
-      <button className="agents-card" onClick={() => setAdding(true)}><Plus size={24}/><strong>{zh ? '添加连接' : 'Add connection'}</strong><span>SSH / HTTP / HTTPS</span></button></div></div>}
-    {connecting && !info && selected?.connectionState !== 'reconnecting' && <div className="agents-empty"><LoaderCircle className="spin"/>{zh ? '正在连接 Agent…' : 'Connecting…'}</div>}
+      workspaceControl={<button className="agents-add" onClick={() => setAdding(true)}><Plus size={16}/>{uiText(language)('agentConnectionForm.addAgent')}</button>}/>}
+    {!selected && <div className="agents-overview"><h2>{uiText(language)('agentsView.aWorkspaceForEveryAgent')}</h2><p>{uiText(language)('agentsView.chatDirectlyAfterConnectingModelSettingsGlobal')}</p>
+      <div className="agents-cards">{connections.map(item => <button key={item.id} className="agents-card" onClick={() => onSelect(item.id)}><Server size={24}/><strong>{item.name}</strong><span>{item.migrationIssue || (item.sshTunnel ? `${uiText(language)('agentsView.sshDirectServerPort')} ${item.sshTunnel.remotePort}` : item.url)}</span></button>)}
+      <button className="agents-card" onClick={() => setAdding(true)}><Plus size={24}/><strong>{uiText(language)('agentsView.addConnection')}</strong><span>{uiText(language)('agentsView.ssh_http_https')}</span></button></div></div>}
+    {connecting && !info && selected?.connectionState !== 'reconnecting' && <div className="agents-empty"><LoaderCircle className="spin"/>{uiText(language)('agentsView.connecting')}</div>}
     {selected && <AgentConnectionStatus key={selected.id} connection={selected} language={language} error={error} pending={connecting} retained={Boolean(info)}
       onEdit={() => onSelect(selected.id, undefined, 'settings')} onRetry={() => setReconnect(value => value + 1)}/>}
     {connections.filter(item => connectedHosts[item.id]).map(connection => <AgentWorkspace {...appearance} key={connection.id}
@@ -109,7 +110,7 @@ export function AgentsView({ language, agents, active = true, ...appearance }: {
 }
 
 function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdit, active, configurationDialogEnabled, ...appearance }: { active: boolean; configurationDialogEnabled: boolean; connection: AgentConnection; info: AgentInfo; language: AppLanguage; agents: AgentConnectionsController; onReconnect: () => void; onEdit: () => void } & AgentChatAppearance) {
-  const zh = language === 'zh';
+
   const inspector = useContext(ConversationInspectorContext);
   const inspectorRef = useRef(inspector); inspectorRef.current = inspector;
   const desktopId = `agent-desktop:${connection.id}`;
@@ -165,15 +166,15 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
     window.addEventListener('cardbush:agent-settings-updated', updated);
     return () => window.removeEventListener('cardbush:agent-settings-updated', updated);
   }, [connection.id, refresh]);
-  const create = () => agents.createSession(connection.id, zh ? '新对话' : 'New conversation');
+  const create = () => agents.createSession(connection.id, uiText(language)('agentsView.newConversation'));
   const title = String(sessions.find(item => item.sessionId === sessionId)?.metadata?.title || connection.name);
   const headerActions = <div className="agent-header-actions">
-      {info.capabilities.desktop && inspector && <button className="topbar-inspector-action icon-only" title={zh ? '查看电脑' : 'View computer'} aria-label={zh ? '查看电脑' : 'View computer'} onClick={() => inspector.open(desktopId, zh ? `${connection.name} 的电脑` : `${connection.name}’s computer`)}><Monitor size={16}/></button>}
-      <button className="topbar-inspector-action icon-only" title={zh ? '刷新连接' : 'Refresh connection'} aria-label={zh ? '刷新连接' : 'Refresh connection'} onClick={onReconnect}><RefreshCw size={15}/></button>
-      <button className="topbar-inspector-action icon-only" title={zh ? '新建会话' : 'New chat'} aria-label={zh ? '新建会话' : 'New chat'} disabled={creating} onClick={() => void create()}><Plus size={16}/></button>
-      <button className="topbar-inspector-action icon-only agent-manage" title={zh ? '连接设置' : 'Connection settings'} aria-label={zh ? '连接设置' : 'Connection settings'} onClick={onEdit}><Settings size={15}/></button>
+      {info.capabilities.desktop && inspector && <button className="topbar-inspector-action icon-only" title={uiText(language)('agentsView.viewComputer')} aria-label={uiText(language)('agentsView.viewComputer')} onClick={() => inspector.open(desktopId, uiText(language)('agentsView.sComputer', { value1: connection.name }))}><Monitor size={16}/></button>}
+      <button className="topbar-inspector-action icon-only" title={uiText(language)('agentsView.refreshConnection')} aria-label={uiText(language)('agentsView.refreshConnection')} onClick={onReconnect}><RefreshCw size={15}/></button>
+      <button className="topbar-inspector-action icon-only" title={uiText(language)('agentsView.newChat')} aria-label={uiText(language)('agentsView.newChat')} disabled={creating} onClick={() => void create()}><Plus size={16}/></button>
+      <button className="topbar-inspector-action icon-only agent-manage" title={uiText(language)('agentConnectionForm.connectionSettings')} aria-label={uiText(language)('agentConnectionForm.connectionSettings')} onClick={onEdit}><Settings size={15}/></button>
     </div>;
-  return <div className="agent-workspace" hidden={!active} style={!active ? { display: 'none' } : undefined}>
+  return <div className="agent-workspace" hidden={!active}>
     {info.capabilities.desktop && inspector?.outlets.get(desktopId) && createPortal(<AgentDesktopView call={call} name={connection.name} language={language}
       active={inspector.visibleTabIds?.has(desktopId) ?? (active && inspector.visible)}/>, inspector.outlets.get(desktopId)!)}
     {active && !sessionId && <TopBar title={title} language={language} inspectorOpen={false} workspaceControl={headerActions}/>}
@@ -184,12 +185,12 @@ function AgentWorkspace({ connection, info, language, agents, onReconnect, onEdi
       enhanced={Boolean(info.capabilities.conversationUi)} management={Boolean(info.capabilities.conversationManagement)} sharedSettings={info.capabilities.sharedSettings === true}
       visualInputAvailable={visualInputAvailable} connectionId={connection.id} sessionId={retainedSessionId} language={language} models={models} projects={projects}
       onChanged={refreshConversationList} onConfigure={() => appearance.onOpenSettings?.('models')} onOpenSession={id => agents.select(connection.id, id)} onForkSession={id => agents.forkSession(connection.id, id)}/>)}
-    {active && !sessionId && <div className="agents-empty"><h2>{zh ? '有什么可以帮你？' : 'How can I help?'}</h2><p>{zh ? `与 ${connection.name} 开始新对话，或从左侧选择会话。` : `Start a chat with ${connection.name}, or select one in the sidebar.`}</p><button className="agents-primary" disabled={creating} onClick={() => void create()}><Plus size={16}/>{zh ? '开始对话' : 'Start chat'}</button></div>}
+    {active && !sessionId && <div className="agents-empty"><h2>{uiText(language)('agentsView.howCanIHelp')}</h2><p>{uiText(language)('agentsView.startAChatWithOrSelectOne', { value1: connection.name })}</p><button className="agents-primary" disabled={creating} onClick={() => void create()}><Plus size={16}/>{uiText(language)('agentsView.startChat')}</button></div>}
   </div>;
 }
 
 function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhanced, management, visualInputAvailable, connectionId, sessionId, language, models, projects, onChanged, onConfigure, onOpenSession, onForkSession, title, headerActions, onCreate, theme = 'dark', sidebarCollapsed = false, windowMaximized = false, thinkingVisible = true, guidanceDeliveryMode = 'queue', visualInputEnabled = false, disabledSkillNames, onToggleSkill }: { active: boolean; call: Call; sharedSettings: boolean; enhanced: boolean; management: boolean; visualInputAvailable: boolean; connectionId: string; sessionId: string; language: AppLanguage; models: Models; projects: Projects; onChanged: () => Promise<void>; onConfigure: () => void; onOpenSession: (id: string) => void; onForkSession: (id: string) => Promise<void>; title: string; headerActions: ReactNode; onCreate: () => void } & AgentChatAppearance) {
-  const zh = language === 'zh'; const storageKey = `cardbush-agent-draft:${connectionId}:${sessionId}`;
+   const storageKey = `cardbush-agent-draft:${connectionId}:${sessionId}`;
   const viewKey = (field: string) => conversationViewKey(connectionId, sessionId, field);
   const submittedRef = useRef<(sessionId: string) => void>(() => {});
   const connection = useMemo(() => createAgentConversationBackend(call, connectionId,
@@ -211,7 +212,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
   const previewId = `agent-file:${baseHost.id}`;
   const openWorkSummary = useCallback((detail: WorkSummaryInspectorDetail) => {
     setSummary({ ...detail, sessionId: detail.sessionId || sessionId });
-    inspectorRef.current?.open(summaryId, detail.title || (language === 'zh' ? '执行详情' : 'Execution details'));
+    inspectorRef.current?.open(summaryId, detail.title || (uiText(language)('agentsView.executionDetails')));
   }, [sessionId, summaryId, language, setSummary]);
   const host = useMemo(() => ({ ...baseHost, optimisticSubmission: true, conversationStyleAvailable: sharedSettings, sessionId, runtime: connection.runtime, openWorkSummary }), [baseHost, sharedSettings, sessionId, connection, openWorkSummary]);
   // Reopening the chat must preserve its selected tab. Only a new file request
@@ -271,7 +272,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
       };
       const accept = () => finish(true);
       acceptSubmissionRef.current.set(sessionId, { accept, refreshFailed: error =>
-        setError(`${zh ? '消息已接收，会话列表刷新失败：' : 'Message accepted; conversation refresh failed: '}${errorText(error)}`) });
+        setError(`${uiText(language)('agentsView.messageAcceptedConversationRefreshFailed')}${errorText(error)}`) });
       // The composer waits for durable admission, not for the whole streamed Turn.
       // A later completion must not clear attachments prepared for the next message.
       void chat.sendMessage(text).then(() => finish(false), error => {
@@ -285,7 +286,7 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
     saveImage: async data => {
       const blob = await (await fetch(data)).blob();
       const uploaded = await host.uploadFiles([new File([blob], 'region.png', { type: 'image/png' })]);
-      if (!uploaded[0]?.path) throw Error(zh ? '选区截图上传失败' : 'Region upload failed');
+      if (!uploaded[0]?.path) throw Error(uiText(language)('agentsView.regionUploadFailed'));
       return uploaded[0].path;
     },
   }, active);
@@ -305,18 +306,18 @@ function AgentChat({ composerPortalTarget, active, call, sharedSettings, enhance
   const [comments, setComments] = useConversationViewState<ReviewCommentState>(viewKey('comments'), () => emptyReviewComments, value => Boolean(value.comments.length || value.draft));
   const openReview = (path = '', turnId?: string) => {
     setReview({ path, turnId, requestId: crypto.randomUUID() });
-    inspector?.open(reviewId, zh ? '审查' : 'Review');
+    inspector?.open(reviewId, uiText(language)('app.review'));
   };
   const reviewOutlet = inspector?.outlets.get(reviewId);
   const selectProject = async (projectDir: string | null) => {
     const project = projectDir ? projects.projects.find(item => item.path === projectDir) : undefined;
-    if (projectDir && !project) throw new Error(zh ? '请选择此 Agent 的项目。' : 'Select a project on this Agent.');
+    if (projectDir && !project) throw new Error(uiText(language)('agentsView.selectAProjectOnThisAgent'));
     await call('sessions.bind', { sessionId, projectId: project?.id ?? null });
     await chat.refreshActiveSession({ silent: true }); await onChanged();
   };
-  const projectPicker = <div className="agent-project-picker"><SettingsDropdown label={zh ? '会话项目' : 'Conversation project'} disabled={busy || submissionPending || !management} value={selectedProject?.id ?? ''}
+  const projectPicker = <div className="agent-project-picker"><SettingsDropdown label={uiText(language)('agentsView.conversationProject')} disabled={busy || submissionPending || !management} value={selectedProject?.id ?? ''}
     onChange={projectId => void selectProject(projects.projects.find(project => project.id === projectId)?.path ?? null).catch(error => setError(errorText(error)))} options={[
-      { value: '', label: zh ? '独立目录' : 'Private workspace', disabled: !management },
+      { value: '', label: uiText(language)('agentsView.privateWorkspace'), disabled: !management },
       ...projects.projects.map(project => ({ value: project.id, label: project.name, icon: <Folder size={14}/> })),
     ]}/></div>;
   return <ConversationHostContext.Provider value={host}><ConversationExtractionProvider api={connection.extracts} activeSessionId={sessionId} contextWindowTokens={maxContextTokens}

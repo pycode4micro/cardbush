@@ -1,6 +1,6 @@
 .runtime-queue-actions > .queue-actions-trigger {
-  min-width: 28px;
-  width: 28px;
+  min-width: var(--queue-control-size);
+  width: var(--queue-control-size);
   padding: 0;
 }
 .interaction-queue-lock > .queue-actions-trigger {
@@ -12,7 +12,7 @@
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--text-soft);
 }
-.queue-actions-trigger.is-locked {
+.queue-actions-trigger[data-locked="true"] {
   color: var(--accent);
 }
 
@@ -28,6 +28,7 @@
   color: var(--text);
   box-shadow: 0 8px 26px color-mix(in srgb, var(--shadow) 65%, transparent);
 }
+.queue-actions-popover[data-placement="above"] { translate: 0 -100%; }
 
 .queue-actions-popover:popover-open { display: grid; gap: 2px; }
 

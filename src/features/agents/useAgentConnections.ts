@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentConnection, AgentProject } from '../../../electron/agentTypes';
 import { copyText } from '../messageFeedback';
@@ -7,7 +8,7 @@ import { agentErrorText as message } from './agentErrorText';
 
 export type AgentSessionItem = { sessionId: string; metadata?: Record<string, unknown>; updatedAt?: string };
 type SessionList = { sessions: AgentSessionItem[]; management?: boolean; projects?: AgentProject[]; loading?: boolean; creating?: boolean; error?: string };
-const api = () => { const value = window.cardbushDesktop?.agents; if (!value) throw new Error('Agent connections are unavailable.'); return value; };
+const api = () => { const value = window.cardbushDesktop?.agents; if (!value) throw new Error(uiText()('agentsView.agent_connections_are_unavailable')); return value; };
 
 export function useAgentConnections() {
   const [connections, setConnections] = useState<AgentConnection[]>([]);
@@ -136,7 +137,7 @@ export function useAgentConnections() {
     try {
       const snapshot = await api().call(id, 'sessions.get', { sessionId }) as import('@cardbush/bush-protocol').SessionSnapshot;
       const messages = snapshot.turns.flatMap(turn => projectRuntimeTurnMessages(turn, sessionId)).filter(item => !snapshot.supersededMessageIds?.includes(item.id) && ['user', 'assistant'].includes(item.role));
-      await copyText(messages.map(item => `${item.role === 'user' ? 'User' : 'Assistant'}:\n${item.content}`).join('\n\n'));
+      await copyText(messages.map(item => `${item.role === 'user' ? uiText()('pluginManagementPanel.user') : uiText()('useAgentConnections.assistant')}:\n${item.content}`).join('\n\n'));
     } catch (error) { updateList(id, { error: message(error) }); }
   }, [updateList]);
   const refresh = useCallback(async () => {

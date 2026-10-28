@@ -20,7 +20,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.previewAnswer={id:'answer',role:'assistant',content:'检查完成，这是本次回复。',status:'completed',turnId:'cover-turn',createdAt:new Date().toISOString()};
     window.previewLong=Array.from({length:45},(_,index)=>'第 '+(index+1)+' 项：这是可滚动查看的执行结果。').join('\\n\\n');
     window.previewUpdate=(suffix='')=>coverUpdate({messages:[{...previewAnswer,content:previewLong+suffix}]});
-    previewUpdate();
+    require(${JSON.stringify(require.resolve('react-dom'))}).flushSync(() => previewUpdate());
+    // Deliver a queued event after growth and before ResizeObserver. It must
+    // not turn a previously pinned preview into a detached reading position.
+    document.querySelector('.quick-input-transcript').dispatchEvent(new Event('scroll', {bubbles:true}));
   `);
   await until('document.querySelector(".quick-input-transcript")?.textContent.includes("第 45 项")', 'long reply streams into preview');
   const pinned = '(()=>{const p=document.querySelector(".quick-input-transcript");return p.scrollHeight-p.scrollTop-p.clientHeight<4})()';

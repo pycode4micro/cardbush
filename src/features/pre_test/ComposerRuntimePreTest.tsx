@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useMemo, useState, type CSSProperties } from 'react';
 
 import type { ExperimentalGoal } from '../../backend/api';
@@ -131,13 +132,13 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
   const showQueue = fixture === 'queue' || fixture === 'combined';
   const fixtureOptions = useMemo<Array<{ id: RuntimeFixture; label: string }>>(
     () => [
-      { id: 'processing', label: language === 'zh' ? '处理中' : 'Working' },
+      { id: 'processing', label: uiText(language)('inspectorRegionSelection.working') },
       { id: 'thinking', label: 'Thinking' },
-      { id: 'changes', label: language === 'zh' ? '文件更改' : 'Changes' },
+      { id: 'changes', label: uiText(language)('composerRuntimePreTest.changes') },
       { id: 'shadow', label: 'Shadow' },
-      { id: 'queue', label: language === 'zh' ? '排队' : 'Queue' },
-      { id: 'permission', label: language === 'zh' ? '权限请求' : 'Permission' },
-      { id: 'combined', label: language === 'zh' ? '组合状态' : 'Combined' },
+      { id: 'queue', label: uiText(language)('composerRuntimePreTest.queue') },
+      { id: 'permission', label: uiText(language)('composerRuntimePreTest.permission') },
+      { id: 'combined', label: uiText(language)('composerRuntimePreTest.combined') },
     ],
     [language],
   );
@@ -149,8 +150,8 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
     <div className="chat-panel composer-runtime-pre-test" style={style}>
       <header className="composer-runtime-pre-test-header">
         <span>
-          <strong>{language === 'zh' ? '输入区运行状态 · Pre Test' : 'Composer runtime · Pre Test'}</strong>
-          <small>{language === 'zh' ? '本地占位数据，不连接运行服务' : 'Local fixtures, no Runtime required'}</small>
+          <strong>{uiText(language)('composerRuntimePreTest.composerRuntimePreTest')}</strong>
+          <small>{uiText(language)('composerRuntimePreTest.localFixturesNoRuntimeRequired')}</small>
         </span>
         <nav aria-label="Runtime fixture">
           {fixtureOptions.map((option) => (
@@ -170,9 +171,9 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
       </header>
       <main className="composer-runtime-pre-test-stage">
         <div className="composer-runtime-pre-test-copy">
-          <small>{language === 'zh' ? '运行中的会话' : 'Active conversation'}</small>
-          <h2>{language === 'zh' ? '运行状态归入会话，文件改动居中显示在输入框上方。' : 'Runtime progress stays in the conversation; file changes sit above the composer.'}</h2>
-          <p>{language === 'zh' ? '思考、计划和目标跟随当前回合；排队消息单独管理。' : 'Thinking, plans and goals stay with the current turn; queued messages are managed separately.'}</p>
+          <small>{uiText(language)('composerRuntimePreTest.activeConversation')}</small>
+          <h2>{uiText(language)('composerRuntimePreTest.runtimeProgressStaysInTheConversationFile')}</h2>
+          <p>{uiText(language)('composerRuntimePreTest.thinkingPlansAndGoalsStayWithThe')}</p>
         </div>
         <div className="composer-runtime-pre-test-dock runtime-attached">
           {fixture === 'permission' ? (

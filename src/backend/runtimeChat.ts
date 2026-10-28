@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { authoredPromptContent, readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import { conversationRuntime, conversationInteractions, type ConversationRuntime } from './conversationRuntime';
 import { publishFileEditEvent } from './fileEditEvents';
@@ -64,7 +65,7 @@ import { realtimeConversationRecord } from '@cardbush/bush-runtime/realtime-conv
 
 export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, runtime: ReturnType<typeof createDesktopRuntimeSession>,
   options: { turnId?: string; signal?: AbortSignal } = {}) {
-  if (!request.model.trim()) throw new Error('Runtime model is required.');
+  if (!request.model.trim()) throw new Error(uiText()('runtimeChat.runtime_model_is_required'));
   const signal = options.signal;
   const turnId = options.turnId?.trim() || `turn_${crypto.randomUUID()}`;
   const requestId = `request_${crypto.randomUUID()}`;
@@ -218,9 +219,9 @@ export async function streamRuntimeChat(
   options: { turnId?: string; supersession?: RuntimeSessionTurnRequest['supersession'] } = {},
 ): Promise<void> {
   if (!window.cardbushDesktop?.runtime) {
-    throw new Error('Electron Runtime bridge is unavailable.');
+    throw new Error(uiText()('runtimeChat.electron_runtime_bridge_is_unavailable'));
   }
-  if (!request.model.trim()) throw new Error('Runtime model is required.');
+  if (!request.model.trim()) throw new Error(uiText()('runtimeChat.runtime_model_is_required'));
   const runtime = createDesktopRuntimeSession();
   const controller = new AbortController();
   const detachAbort = forwardAbort(request.signal, controller);
@@ -275,7 +276,7 @@ export async function streamRuntimeChat(
           if (!terminal) throw error;
         }
         await Promise.allSettled([...pendingToolLoads]);
-        if (!terminal) throw new Error('Runtime Turn ended without a terminal fact.');
+        if (!terminal) throw new Error(uiText()('runtimeChat.runtime_turn_ended_without_a_terminal_fact'));
       } finally {
         detachStreamAbort();
         streamController.abort();
@@ -363,14 +364,14 @@ interface ResolvedProductModel {
 
 export async function resolveProductModel(modelId: string): Promise<ResolvedProductModel> {
   const execute = window.cardbushDesktop?.productHostCommand;
-  if (!execute) throw new Error('CardBush Product Host is unavailable.');
+  if (!execute) throw new Error(uiText()('productMcp.cardbush_product_host_is_unavailable'));
   const response = await execute({
     protocol: 'cardbush.product_host_ipc.v1',
     kind: 'model.resolve',
     modelId,
   });
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
-    throw new Error('CardBush Product Host returned an invalid model resolution.');
+    throw new Error(uiText()('runtimeChat.cardbush_product_host_returned_an_invalid_model'));
   }
   const envelope = response as Record<string, unknown>;
   if (envelope.ok !== true) {
@@ -383,7 +384,7 @@ export async function resolveProductModel(modelId: string): Promise<ResolvedProd
     ? envelope.value as Record<string, unknown>
     : {};
   const model = String(value.model ?? '').trim();
-  if (!model) throw new Error('Product model resolution omitted the model name.');
+  if (!model) throw new Error(uiText()('runtimeChat.product_model_resolution_omitted_the_model_name'));
   return {
     model,
     binding: runtimeProviderBindingRefSchema.parse(value.binding),
@@ -399,13 +400,13 @@ export async function resolveProductModel(modelId: string): Promise<ResolvedProd
 
 async function readProductSubagentConfig(): Promise<ProductSubagentConfig> {
   const execute = window.cardbushDesktop?.productHostCommand;
-  if (!execute) throw new Error('CardBush Product Host is unavailable.');
+  if (!execute) throw new Error(uiText()('productMcp.cardbush_product_host_is_unavailable'));
   const response = await execute({
     protocol: 'cardbush.product_host_ipc.v1',
     kind: 'subagents.get',
   });
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
-    throw new Error('CardBush Product Host returned an invalid Subagent configuration.');
+    throw new Error(uiText()('runtimeChat.cardbush_product_host_returned_an_invalid_subagent'));
   }
   const envelope = response as Record<string, unknown>;
   if (envelope.ok !== true) {
@@ -416,7 +417,7 @@ async function readProductSubagentConfig(): Promise<ProductSubagentConfig> {
   }
   const value = envelope.value;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Product Subagent configuration payload must be an object.');
+    throw new Error(uiText()('runtimeChat.product_subagent_configuration_payload_must_be_an'));
   }
   return value as unknown as ProductSubagentConfig;
 }

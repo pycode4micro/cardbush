@@ -50,7 +50,8 @@ run(['--test', 'scripts/test-permission-modes.mjs']);
 run(['--test', 'scripts/test-sandbox-setup.mjs']);
 run(['--test', 'scripts/test-runtime-startup-races.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-service.mjs']);
-run(['--test', 'scripts/test-guidance-queue-lock.mjs']);
+run(['--test', 'scripts/test-guidance-queue-lock.mjs', 'scripts/test-agent-transcript.mjs']);
+run(['--test', 'scripts/test-ui-localization.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-agent-shared-configuration.mjs']);
 run(['--test', '--test-timeout=45000', 'scripts/test-model-protocols-host.mjs']);
 run(['--test', 'scripts/test-plugin-local-install.mjs', 'scripts/test-plugin-uninstall.mjs', 'scripts/test-plugin-environment.mjs']);
@@ -73,10 +74,12 @@ if (!process.argv.includes('--no-ui')) {
   run(['scripts/run-settings-context-ui-test.mjs', 'layout']);
   run(['scripts/run-settings-context-ui-test.mjs', 'styles']);
   run(['scripts/run-agents-ui-test.mjs']);
+  run(['scripts/run-welcome-ui.mjs']);
+  run(['scripts/test-voice-composer-ui.cjs']);
   for (const script of ['run-app-views-test.mjs', 'test-source-memo-ui.mjs', 'test-subagent-conversation-ui.mjs', 'test-plugin-connections-ui.mjs', 'test-plugin-appearance.mjs',
     'run-image-preview-test.mjs', 'test-inspector-navigation-ui.mjs']) run(['scripts/' + script]);
   for (const view of ['html-references', 'html-wheel', 'code-rendering', 'markdown-tables', 'status-indicators', 'loop-previews', 'startup-presentation', 'composer-resize', 'pasted-text', 'sidebar-menu', 'app-center']) run(['scripts/run-app-views-test.mjs', view]);
-  for (const view of ['html-components', 'inspector-cover', 'composer-presentation', 'composer-prediction', 'page-navigation']) run(['scripts/run-app-views-test.mjs', view]);
+  for (const view of ['html-components', 'inspector-cover', 'composer-presentation', 'composer-layout', 'first-submission', 'ssh', 'composer-prediction', 'page-navigation']) run(['scripts/run-app-views-test.mjs', view]);
   run(['scripts/test-inspector-browser-navigation.mjs']);
   run(['scripts/test-inspector-browser-navigation.mjs', '--browser-use']);
   run(['scripts/run-chrome-capture-test.mjs']);

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useConversationFileSource } from '../conversationFileSource';
 import { modelActivityLabel, subscribeModelActivity } from '../../runtime-client/modelActivity';
 import { AutomationReminderCard } from '../automations/AutomationReminderCard';
@@ -172,7 +173,7 @@ function userGoalCommandPresentation(
   const match = text.match(/^\/goal(?:[ \t]+([\s\S]*))?$/i);
   if (match) {
     return {
-      label: language === 'zh' ? '目标' : 'Goal',
+      label: uiText(language)('turnRuntimeDetails.goal'),
       content: (match[1] ?? '').trim(),
       commandToken: '/goal',
     };
@@ -185,7 +186,7 @@ function userGoalCommandPresentation(
     return null;
   }
   return {
-    label: language === 'zh' ? '目标' : 'Goal',
+    label: uiText(language)('turnRuntimeDetails.goal'),
     content: text,
     commandToken: '',
   };
@@ -230,21 +231,17 @@ function assistantTimeoutPresentation(
   if (reason === 'llm-first-activity-timeout') {
     return {
       reason,
-      title: language === 'zh' ? '模型服务没有开始响应' : 'Model provider did not start responding',
+      title: uiText(language)('messageBubble.modelProviderDidNotStartResponding'),
       detail:
-        language === 'zh'
-          ? '在首包等待上限内没有检测到流式活动。请检查服务商连接后重试。'
-          : 'No stream activity arrived before the first-response deadline. Check the provider connection and retry.',
+        uiText(language)('messageBubble.noStreamActivityArrivedBeforeTheFirst'),
     };
   }
   if (reason === 'llm-stream-idle-timeout') {
     return {
       reason,
-      title: language === 'zh' ? '模型流长时间没有活动' : 'Model stream became idle',
+      title: uiText(language)('messageBubble.modelStreamBecameIdle'),
       detail:
-        language === 'zh'
-          ? '本轮已停止，此前收到的思考、正文和工具进度均已保留。'
-          : 'The turn stopped; previously received reasoning, text, and tool progress were preserved.',
+        uiText(language)('messageBubble.theTurnStoppedPreviouslyReceivedReasoningText'),
     };
   }
   if (
@@ -254,11 +251,9 @@ function assistantTimeoutPresentation(
   ) {
     return {
       reason,
-      title: language === 'zh' ? '模型调用达到总时长上限' : 'Model call reached its duration limit',
+      title: uiText(language)('messageBubble.modelCallReachedItsDurationLimit'),
       detail:
-        language === 'zh'
-          ? '本轮已停止，已收到的进度会保留在当前会话中。'
-          : 'The turn stopped, and received progress remains available in this conversation.',
+        uiText(language)('messageBubble.theTurnStoppedAndReceivedProgressRemains'),
     };
   }
   return null;
@@ -283,27 +278,22 @@ function assistantFailurePresentation(
     const inputTokens = Number(stopDetails.estimatedPromptTokens);
     const usableTokens = Number(stopDetails.usableInputTokens);
     const measured = Number.isFinite(inputTokens) && Number.isFinite(usableTokens)
-      ? (language === 'zh' ? `输入估算 ${inputTokens.toLocaleString()} token，可用输入额度 ${usableTokens.toLocaleString()} token。` :
-        `Estimated input: ${inputTokens.toLocaleString()} tokens; input allowance: ${usableTokens.toLocaleString()} tokens. `) : '';
-    return { reason, title: language === 'zh' ? '当前输入超出上下文额度' : 'Current input exceeds the context allowance',
-      detail: measured + (language === 'zh' ? '输入额度是总上下文减去预留输出额度；增大最大输出会减少可用输入。已有进度已保留。' :
-        'Input allowance is the total context minus reserved output. Increasing maximum output reduces room for input. Existing progress is preserved.') };
+      ? (uiText(language)('messageBubble.estimatedInputTokensInputAllowanceTokens', { value1: inputTokens.toLocaleString(), value2: usableTokens.toLocaleString() })) : '';
+    return { reason, title: uiText(language)('messageBubble.currentInputExceedsTheContextAllowance'),
+      detail: measured + (uiText(language)('messageBubble.inputAllowanceIsTheTotalContextMinus')) };
   }
   if (reason === 'reference_invalid') {
-    return { reason, title: language === 'zh' ? '回复引用需要修正' : 'Reply references need correction',
-      detail: language === 'zh' ? '已尝试纠正回复引用，但仍无法确认对应来源或文件。已有文件和完成的操作已保留，可以继续让助手重新提供链接。'
-        : 'The delivery links still could not be verified after a correction attempt. Existing files and completed work are preserved. Ask the assistant to provide the links again.' };
+    return { reason, title: uiText(language)('messageBubble.replyReferencesNeedCorrection'),
+      detail: uiText(language)('messageBubble.theDeliveryLinksStillCouldNotBe') };
   }
   if (reason === 'reasoning-budget-exhausted-before-action' || reason === 'model_output_limit_exceeded') {
     const attempts = Number(stopDetails.continuationAttempts) || 0;
     const maxOutput = Number(stopDetails.maxOutputTokens);
     const limit = Number.isFinite(maxOutput) && maxOutput > 0
-      ? (language === 'zh' ? `当前最大输出为 ${maxOutput.toLocaleString()} token。` : `The current output limit is ${maxOutput.toLocaleString()} tokens. `)
+      ? (uiText(language)('messageBubble.theCurrentOutputLimitIsTokens', { value1: maxOutput.toLocaleString() }))
       : '';
-    return { reason, title: language === 'zh' ? '模型输出达到单次上限' : 'Model output reached its per-response limit',
-      detail: language === 'zh'
-        ? `${limit}${attempts ? `已自动续接 ${attempts} 次，仍未完成。` : '本次回复未能在输出上限内完成。'}已有正文和工具操作进度已保留，请提高最大输出后继续任务。`
-        : `${limit}${attempts ? `Automatic continuation was attempted ${attempts} times without completion. ` : 'This response could not finish within the output limit. '}Existing text and tool progress are preserved. Increase the maximum output before continuing.` };
+    return { reason, title: uiText(language)('messageBubble.modelOutputReachedItsPerResponseLimit'),
+      detail: uiText(language)('messageBubble.existingTextAndToolProgressArePreserved', { value1: limit, value2: (attempts ? uiText(language)('messageBubble.automaticContinuationWasAttemptedTimesWithoutCompletion', { value1: attempts }) : uiText(language)('messageBubble.thisResponseCouldNotFinishWithinThe')) }) };
   }
   return {
     reason,
@@ -394,8 +384,8 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           type="button"
           className="markdown-link-error"
           onClick={() => void showUiError(
-            language === 'zh' ? '无法打开链接' : 'Unable to open link',
-            language === 'zh' ? '链接地址为空或使用了不支持的协议。' : 'The link is empty or uses an unsupported protocol.',
+            uiText(language)('messageBubble.unableToOpenLink'),
+            uiText(language)('messageBubble.theLinkIsEmptyOrUsesAn'),
           )}
         >{children}</button>;
       }
@@ -415,7 +405,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           }}
         >
           {children}
-        </a>{missingAnchor && <small role="status"> · {language === 'zh' ? '未找到对应标题' : 'Heading not found'}</small>}</>
+        </a>{missingAnchor && <small role="status"> · {uiText(language)('messageBubble.headingNotFound')}</small>}</>
       );
     },
     img: ({ src, alt, node: _node, ...props }) => {
@@ -648,25 +638,25 @@ function MarkdownCodeBlock({
           aria-pressed={wrapped}
           title={
             wrapped
-              ? language === 'zh' ? '取消换行' : 'Disable wrapping'
-              : language === 'zh' ? '换行显示' : 'Wrap lines'
+              ? uiText(language)('messageBubble.disableWrapping')
+              : uiText(language)('messageBubble.wrapLines')
           }
           onClick={() => setWrapped((value) => !value)}
         >
           <WrapText size={12} />
           <span>
             {wrapped
-              ? language === 'zh' ? '不换行' : 'No wrap'
-              : language === 'zh' ? '换行' : 'Wrap'}
+              ? uiText(language)('messageBubble.noWrap')
+              : uiText(language)('messageBubble.wrap')}
           </span>
         </button>
         <button
           type="button"
-          title={language === 'zh' ? '复制' : 'Copy'}
+          title={uiText(language)('messageBubble.copy')}
           onClick={() => void copyText(text).catch(() => undefined)}
         >
           <Copy size={12} />
-          <span>{language === 'zh' ? '复制' : 'Copy'}</span>
+          <span>{uiText(language)('messageBubble.copy')}</span>
         </button>
       </div>
       <pre {...props}>{highlight
@@ -928,7 +918,7 @@ function MessageBubbleView({
         connectionId: host?.environmentId, memoryAvailable: !host || Boolean(host.environmentId) });
     } catch (error) {
       if (feedbackOperationRef.current === operation) setAssistantFeedback(readAssistantFeedback(feedbackStorageId, feedbackId));
-      void showUiError(language === 'zh' ? '评价未保存，请重试' : 'Feedback was not saved. Please retry.', error instanceof Error ? error.message : String(error));
+      void showUiError(uiText(language)('messageBubble.feedbackWasNotSavedPleaseRetry'), error instanceof Error ? error.message : String(error));
     } finally {
       if (feedbackOperationRef.current === operation) {
         feedbackOperationRef.current = null;
@@ -984,7 +974,7 @@ function MessageBubbleView({
                   setEditing(false);
                 }
               }}
-              placeholder={language === 'zh' ? '修改这条提问' : 'Edit this message'}
+              placeholder={uiText(language)('messageBubble.editThisMessage')}
               rows={Math.min(5, Math.max(2, editText.split(/\r?\n/).length))}
             />
             <div className="message-edit-actions">
@@ -993,7 +983,7 @@ function MessageBubbleView({
                 disabled={submittingEdit}
                 onClick={() => setEditing(false)}
               >
-                {language === 'zh' ? '取消' : 'Cancel'}
+                {uiText(language)('agentConnectionForm.cancel')}
               </button>
               <button
                 className="primary-button"
@@ -1011,7 +1001,7 @@ function MessageBubbleView({
                 aria-keyshortcuts={keyboardShortcuts.aria('submitEdit')}
               >
                 {submittingEdit ? <LoaderCircle size={14} /> : <ArrowUp size={14} />}
-                {language === 'zh' ? '更新并重跑' : 'Update and rerun'}
+                {uiText(language)('messageBubble.updateAndRerun')}
               </button>
             </div>
           </div>
@@ -1023,7 +1013,7 @@ function MessageBubbleView({
       <div className="message-row user">
         <div className="user-bubble">
           {Boolean(message.metadata?.subagent_author) && <div className="subagent-message-author">
-            {message.metadata?.subagent_author === 'parent' ? (language === 'zh' ? '主 Agent' : 'Parent Agent') : (language === 'zh' ? '你' : 'You')}
+            {message.metadata?.subagent_author === 'parent' ? (uiText(language)('messageBubble.parentAgent')) : (uiText(language)('quickContextRail.you'))}
           </div>}
           <MessageImageStrip paths={imagePaths} language={language} />
           <MessageMediaStrip
@@ -1063,7 +1053,7 @@ function MessageBubbleView({
               aria-live="polite"
             >
               <X size={12} />
-              <span>{language === 'zh' ? '发送失败' : 'Failed to send'}</span>
+              <span>{uiText(language)('messageBubble.failedToSend')}</span>
               <button
                 type="button"
                 className="message-retry-button"
@@ -1071,7 +1061,7 @@ function MessageBubbleView({
                 onClick={() => void onRetryMessage(message)}
               >
                 <RefreshCw size={11} />
-                {language === 'zh' ? '重试' : 'Retry'}
+                {uiText(language)('common.retry')}
               </button>
             </div>
           )}
@@ -1079,14 +1069,14 @@ function MessageBubbleView({
         <div className="message-actions">
           <button
             type="button"
-            title={language === 'zh' ? '复制' : 'Copy'}
+            title={uiText(language)('messageBubble.copy')}
             onClick={() => void copyText(text).catch(() => undefined)}
           >
             <Copy size={14} />
           </button>
           <button
             type="button"
-            title={language === 'zh' ? '编辑并重跑' : 'Edit and rerun'}
+            title={uiText(language)('messageBubble.editAndRerun')}
             hidden={readOnlyActions}
             disabled={sending}
             onClick={() => setEditing(true)}
@@ -1383,7 +1373,7 @@ function MessageBubbleView({
                 <strong>{failurePresentation.title}</strong>
                 <small>{failurePresentation.detail}</small>
                 {failurePresentation.technicalDetails && <details className="assistant-failure-details">
-                  <summary>{language === 'zh' ? '错误详情' : 'Error details'}</summary>
+                  <summary>{uiText(language)('messageBubble.errorDetails')}</summary>
                   <pre>{failurePresentation.technicalDetails}</pre>
                 </details>}
               </div>
@@ -1393,7 +1383,7 @@ function MessageBubbleView({
         {showAssistantActions && <div className={`message-actions${keepActionsVisible ? ' latest' : ''}`}>
             <button
               type="button"
-              title={language === 'zh' ? '复制' : 'Copy'}
+              title={uiText(language)('messageBubble.copy')}
               onClick={() => void copyText(message.content).catch(() => undefined)}
             >
               <Copy size={14} />
@@ -1406,7 +1396,7 @@ function MessageBubbleView({
               hidden={host?.messageFeedbackAvailable === false}
               disabled={feedbackPending}
               aria-pressed={assistantFeedback === 'up'}
-              title={language === 'zh' ? '有帮助' : 'Helpful'}
+              title={uiText(language)('messageBubble.helpful')}
               onClick={() => void toggleAssistantFeedback('up')}
             >
               <ThumbsUp size={14} />
@@ -1419,7 +1409,7 @@ function MessageBubbleView({
               hidden={host?.messageFeedbackAvailable === false}
               disabled={feedbackPending}
               aria-pressed={assistantFeedback === 'down'}
-              title={language === 'zh' ? '不理想' : 'Needs improvement'}
+              title={uiText(language)('messageBubble.needsImprovement')}
               onClick={() => void toggleAssistantFeedback('down')}
             >
               <ThumbsDown size={14} />
@@ -1427,7 +1417,7 @@ function MessageBubbleView({
             {activeMessageTurn && (
               <button
                 type="button"
-                title={language === 'zh' ? '重新生成' : 'Retry'}
+                title={uiText(language)('messageBubble.retry')}
                 hidden={readOnlyActions}
                 disabled={sending}
                 onClick={() => void onRegenerate(message)}
@@ -1553,7 +1543,7 @@ function TaskPlanBlock({
   return (
     <section className={`task-plan-block ${waiting ? 'waiting' : plan.active ? 'active' : 'completed'}`}>
       <div className="task-plan-header">
-        <strong>{language === 'zh' ? '任务计划' : 'Task plan'}</strong>
+        <strong>{uiText(language)('messageBubble.taskPlan')}</strong>
         <span>{completed}/{plan.nodes.length}</span>
       </div>
       {plan.explanation && <p>{plan.explanation}</p>}
@@ -1567,7 +1557,7 @@ function TaskPlanBlock({
             ) : (
               <Clock3 size={14} />
             )}
-            <span>{item.step}{item.status === 'waiting' && <small> — {taskPlanWaitingLabel(item.waitingKind, language)}{language === 'zh' ? '：' : ': '}{item.waitingFor}</small>}</span>
+            <span>{item.step}{item.status === 'waiting' && <small> — {taskPlanWaitingLabel(item.waitingKind, language)}{uiText(language)('turnRuntimeDetails.message')}{item.waitingFor}</small>}</span>
           </li>
         ))}
       </ol>
@@ -1786,13 +1776,11 @@ function AgentHookSummaryBadge({
     <div className={`agent-hook-summary ${tone}`}>
       {tone === 'ok' ? <CheckCircle2 size={14} /> : <ShieldCheck size={14} />}
       <span>
-        <strong>{language === 'zh' ? 'Profile Hook' : 'Profile hook'}</strong>
+        <strong>{uiText(language)('messageBubble.profileHook')}</strong>
         <em>{statusLabel}</em>
         {summary.changedFiles.length > 0 && (
           <small>
-            {language === 'zh'
-              ? `${summary.changedFiles.length} 个文件需要/已完成验证`
-              : `${summary.changedFiles.length} changed file${summary.changedFiles.length > 1 ? 's' : ''}`}
+            {uiText(language)('message.verifiedFiles', { count: summary.changedFiles.length })}
           </small>
         )}
       </span>
@@ -2060,9 +2048,9 @@ function AssistantCompletedDisclosure({
             <i className="assistant-run-divider" aria-hidden="true" />
             <button type="button" className="assistant-completed-collapse" onClick={collapseFromEnd}
               aria-expanded={true} aria-controls={contentId}
-              aria-label={language === 'zh' ? '收起执行过程' : 'Collapse process'}>
+              aria-label={uiText(language)('messageBubble.collapseProcess')}>
               <ChevronUp size={12} aria-hidden="true" />
-              {language === 'zh' ? '收起' : 'Collapse'}
+              {uiText(language)('shadowTemporaryChat.collapse')}
             </button>
             <i className="assistant-run-divider" aria-hidden="true" />
           </div>
@@ -2099,16 +2087,10 @@ function assistantProgressLabel({
   const elapsedMs = assistantTurnElapsedMs(message, executions, isActive, now);
   const duration = formatCompactDuration(elapsedMs);
   if (isActive && activity) return duration ? `${activity} ${duration}` : activity;
-  if (language === 'zh') {
-    if (isActive) {
-      return duration ? `处理中 ${duration}` : '处理中';
-    }
-    return duration ? `已处理 ${duration}` : '已处理';
-  }
   if (isActive) {
-    return duration ? `Working ${duration}` : 'Working';
+    return duration ? uiText(language)('messageBubble.working_value1', { value1: duration }) : uiText(language)('inspectorRegionSelection.working');
   }
-  return duration ? `Processed ${duration}` : 'Processed';
+  return duration ? uiText(language)('messageBubble.processed_value1', { value1: duration }) : uiText(language)('messageBubble.processed');
 }
 
 function assistantTurnElapsedMs(
@@ -2200,7 +2182,7 @@ function assistantTurnCompletedAt(
 }
 
 function formatAssistantCompletedAt(timestamp: number, language: AppLanguage) {
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+  return new Intl.DateTimeFormat(language, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -2209,7 +2191,7 @@ function formatAssistantCompletedAt(timestamp: number, language: AppLanguage) {
 }
 
 function formatAssistantCompletedAtTitle(timestamp: number, language: AppLanguage) {
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+  return new Intl.DateTimeFormat(language, {
     dateStyle: 'medium',
     timeStyle: 'medium',
   }).format(new Date(timestamp));
@@ -2429,9 +2411,7 @@ export function AssistantLoopHistoryBlock({
   const [presentToolOutputs] = useState(createToolOutputProjector);
   const outputPresentation = presentToolOutputs(turnActivityExecutions({ loopHistory: history }), pathAliases);
   const summary =
-    language === 'zh'
-      ? '历史执行记录'
-      : 'Execution history';
+    uiText(language)('messageBubble.executionHistory');
 
   if (visibleHistory.length === 0) {
     return null;
@@ -2551,18 +2531,18 @@ function hookVerificationStatusLabel(
 ) {
   const normalized = status.trim().toLowerCase();
   if (normalized === 'satisfied' || normalized === 'verified') {
-    return language === 'zh' ? '验证已满足' : 'verified';
+    return uiText(language)('messageBubble.verified');
   }
   if (normalized === 'attempted_failed' || normalized === 'failed') {
-    return language === 'zh' ? '验证失败' : 'verification failed';
+    return uiText(language)('messageBubble.verificationFailed');
   }
   if (normalized === 'attempted' || normalized === 'attempted_unknown') {
-    return language === 'zh' ? '已尝试验证' : 'verification attempted';
+    return uiText(language)('messageBubble.verificationAttempted');
   }
   if (required) {
-    return language === 'zh' ? '需要验证' : 'verification required';
+    return uiText(language)('messageBubble.verificationRequired');
   }
-  return language === 'zh' ? '无强制验证' : 'no verification required';
+  return uiText(language)('messageBubble.noVerificationRequired');
 }
 
 function splitUserFileAttachments(content: string) {
@@ -2695,7 +2675,7 @@ function MessagePlayableMedia({ path, kind, language }: { path: string; kind: 'v
   const caption = <figcaption title={path}>{name}</figcaption>;
   return <figure className={`message-${kind}-player`} onContextMenu={host ? undefined : event => openFileContextMenu(event, path, { language })}>
     {kind === 'audio' && caption}
-    {file.error ? <span role="alert">{file.error}</span> : file.source ? <Player controls preload="metadata" src={file.source} language={language} aria-label={language === 'zh' ? `播放${kind === 'video' ? '视频' : '音频'} ${name}` : `Play ${kind} ${name}`}/> : <span role="status">{language === 'zh' ? '正在加载…' : 'Loading…'}</span>}
+    {file.error ? <span role="alert">{file.error}</span> : file.source ? <Player controls preload="metadata" src={file.source} language={language} aria-label={uiText(language)('media.play', { kind: uiText(language)(`output.type.${kind}`), name })}/> : <span role="status">{uiText(language)('common.loading')}</span>}
     {kind === 'video' && caption}
   </figure>;
 }
@@ -2832,8 +2812,8 @@ export function MessageFileAttachmentStrip({
               <strong>{name}</strong>
               <small>
                 {kind === 'folder'
-                  ? language === 'zh' ? '文件夹 · 点击打开' : 'Folder · Open'
-                  : `${formatMessageFileSize(size)} · ${language === 'zh' ? '只读' : 'Read only'}`}
+                  ? uiText(language)('messageBubble.folderOpen')
+                  : `${formatMessageFileSize(size)} · ${uiText(language)('messageBubble.readOnly')}`}
               </small>
             </span>
           </button>

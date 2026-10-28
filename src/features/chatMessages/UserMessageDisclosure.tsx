@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ChevronDown } from 'lucide-react';
 import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { AppLanguage } from '../../types';
@@ -65,7 +66,7 @@ export function UserMessageDisclosure({ children, language }: {
             () => setExpanded((value) => !value),
           )}
         >
-          {language === 'zh' ? (expanded ? '收起' : '展示更多') : (expanded ? 'Show less' : 'Show more')}
+          {(expanded ? uiText(language)('conversationWorkSummary.showLess') : uiText(language)('userMessageDisclosure.showMore'))}
           <ChevronDown size={13} aria-hidden="true" />
         </button>
       )}

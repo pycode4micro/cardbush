@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import type { RegionConversation } from './InspectorRegionSelection';
 
@@ -9,7 +10,7 @@ export function usePublishRegionConversation(value: RegionConversation, active: 
   const latest = useRef(value); latest.current = value;
   const send = useCallback<RegionConversation['send']>((text) => latest.current.send(text), []);
   const saveImage = useCallback(async (data: string) => {
-    if (!latest.current.saveImage) throw Error('Screenshot upload is unavailable.');
+    if (!latest.current.saveImage) throw Error(uiText()('regionConversationContext.screenshot_upload_is_unavailable'));
     return latest.current.saveImage(data);
   }, []);
   const hasImageUpload = Boolean(value.saveImage);

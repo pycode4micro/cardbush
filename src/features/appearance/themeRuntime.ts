@@ -10,6 +10,19 @@ export const THEME_ACCENTS: Readonly<Record<ThemeMode, string>> = {
   dark: '#83baff',
 };
 
+export const THEME_FOREGROUNDS: Readonly<Record<ThemeMode, string>> = {
+  bright: '#1e1c1a',
+  dark: '#f0ede7',
+};
+
+export const COLOR_INPUT_FALLBACK = '#808080';
+
+/** Canvas colors are calculated; their theme-dependent parameters live here. */
+export const WORDMARK_PALETTES = [
+  { saturation: 70, luminance: 69, luminanceStep: 4 },
+  { saturation: 62, luminance: 37, luminanceStep: 3 },
+] as const;
+
 export function themeClassNames(theme: ThemeMode) {
   return 'theme-' + theme;
 }

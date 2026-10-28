@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import test from 'node:test';
 import * as protocol from '@cardbush/bush-protocol';
+import * as i18n from '@cardbush/platform/i18n';
 const exports = {};
 const localApps = {};
 new Function('exports', ts.transpileModule(readFileSync('src/shared/localApplications.ts', 'utf8'), {
@@ -10,7 +11,7 @@ new Function('exports', ts.transpileModule(readFileSync('src/shared/localApplica
 }).outputText)(localApps);
 new Function('exports', 'require', ts.transpileModule(readFileSync('src/features/appCenter/appCenterModel.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText)(exports, name => { if (name === '@cardbush/bush-protocol') return protocol; assert.equal(name, '../../shared/localApplications'); return localApps; });
+}).outputText)(exports, name => { if (name === '@cardbush/bush-protocol') return protocol; if (name === '../../i18n') return i18n; assert.equal(name, '../../shared/localApplications'); return localApps; });
 const { normalizeAppCenterPreferences, applicationLink, applicationCatalog, applicationReference, moveApplication } = exports;
 
 test('web apps join the catalog, dock and references without becoming external links or plugins', () => {
@@ -43,7 +44,8 @@ test('only explicit launchable pages enter the app center; connectors, tools and
     { id: 'invalid', installed: true, enabled: true, components: [{ ...canvas, app: { kind: 'url', url: 'javascript:alert(1)' } }] }];
   const entries = applicationCatalog('zh', plugins, normalizeAppCenterPreferences(null));
   assert.equal(entries.length, 7); assert.deepEqual(entries.slice(0, 6).map(app => app.id), ['builtin:plugins', 'builtin:automations', 'builtin:settings', 'builtin:components', 'builtin:team', 'builtin:md-presentation']);
-  assert.equal(entries[5].title, '创作');
+  assert.equal(entries[5].title, i18n.uiText('zh')('appCenterModel.create'));
+  assert.equal(applicationCatalog('en', plugins, normalizeAppCenterPreferences(null))[5].title, i18n.uiText('en')('appCenterModel.create'));
   const app = entries[6]; assert.equal(app.id, 'plugin:demo:canvas'); assert.equal(app.launch.url, canvas.app.url);
   assert.deepEqual(applicationReference(app), { kind: 'application', id: app.id, title: 'Canvas', applicationKind: 'plugin', target: 'demo', componentId: 'canvas' });
   assert.ok(entries.every(app => !('command' in app) && !('toolCallId' in app)));

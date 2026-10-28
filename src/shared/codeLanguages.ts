@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { resourceBasename } from './localPaths';
 
 type CodeLanguage = {
@@ -104,9 +105,9 @@ export function codeLanguageForPath(path: string): CodeLanguage | undefined {
   return byExtension.get(filename.includes('.') ? filename.split('.').at(-1)! : '');
 }
 
-export function codeLanguageLabel(value: string, language: 'zh' | 'en'): string {
+export function codeLanguageLabel(value: string, language: string): string {
   const descriptor = codeLanguageForFence(value);
-  if (!value || descriptor?.id === 'plain') return language === 'zh' ? '纯文本' : 'Plain text';
+  if (!value || descriptor?.id === 'plain') return uiText(language)('codeLanguages.plainText');
   const normalized = value.trim().toLowerCase();
   if (['html', 'xml', 'svg'].includes(normalized)) return normalized.toUpperCase();
   // Keep an unknown fence's authored label without claiming syntax support.

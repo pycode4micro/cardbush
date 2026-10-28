@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../i18n/react';
+import { uiText, formatMessageList } from '../i18n';
 import { modelRequestHeaders } from '@cardbush/bush-protocol';
 import { normalizeAppearance, updateAppearanceProfile } from './appearance/appearancePreferences';
 import { useSettingsHost } from './settings/SettingsHostContext';
@@ -304,7 +306,7 @@ export function SettingsView({
         filePath,
       },
     }));
-    notify(language === 'zh' ? '字体已导入' : 'Font imported');
+    notify(uiText(language)('settingsView.fontImported'));
   }, [language, notify, updateSettings, themePreference]);
 
   const importThemeStyle = useCallback(async () => {
@@ -324,12 +326,10 @@ export function SettingsView({
         appearance: updateAppearanceProfile(normalizeAppearance(current.appearance), importedThemeStyle.base === 'light' ? 'bright' : 'dark', { theme: 'imported' }),
       }));
       onThemePreferenceChange(importedThemeStyle.base);
-      notify(language === 'zh' ? '主题配置已导入' : 'Theme configuration imported');
+      notify(uiText(language)('settingsView.themeConfigurationImported'));
     } catch {
       notify(
-        language === 'zh'
-          ? `无法导入主题配置，请检查 ${IMPORTED_THEME_STYLE_PROTOCOL} 格式`
-          : `Unable to import theme configuration. Check the ${IMPORTED_THEME_STYLE_PROTOCOL} format.`,
+        uiText(language)('settingsView.unableToImportThemeConfigurationCheckThe', { IMPORTED_THEME_STYLE_PROTOCOL }),
       );
     }
   }, [language, notify, onThemePreferenceChange, updateSettings]);
@@ -340,7 +340,7 @@ export function SettingsView({
       importedThemeStyle: null,
       appearance: (() => { const next = normalizeAppearance(current.appearance); for (const key of ['shared', 'light', 'dark'] as const) next[key].theme = 'default'; return next; })(),
     }));
-    notify(language === 'zh' ? '已移除导入主题' : 'Imported theme removed');
+    notify(uiText(language)('settingsView.importedThemeRemoved'));
   }, [language, notify, onThemePreferenceChange, themePreference, updateSettings]);
 
   const resetFont = useCallback(() => {
@@ -377,21 +377,17 @@ export function SettingsView({
         <div className="settings-stack">
           <SandboxSettingsPanel language={language}/>
           <SettingsCard
-            title={language === 'zh' ? '默认终端' : 'Default terminal'}
+            title={uiText(language)('settingsView.defaultTerminal')}
             subtitle={
-              language === 'zh'
-                ? '选择应用内终端使用的 Shell。Agent 工具仍按命令指定的 Shell 执行。'
-                : 'Choose the embedded terminal Shell. Agent tools use the Shell specified by each command.'
+              uiText(language)('settingsView.chooseTheEmbeddedTerminalShellAgentTools')
             }
           >
             {backendCapabilities.terminalRuntimes.includes('powershell') && <SettingsRadio
               name="terminal-runtime"
               value="powershell"
-              title="PowerShell"
+              title={uiText(language)('settingsView.powershell')}
               subtitle={
-                language === 'zh'
-                  ? '使用已安装的 PowerShell，支持本机路径和 PowerShell 脚本。'
-                  : 'Use installed PowerShell for local paths and PowerShell scripts.'
+                uiText(language)('settingsView.useInstalledPowershellForLocalPathsAnd')
               }
               checked={settings.terminal.runtime === 'powershell'}
               onChange={() =>
@@ -408,11 +404,9 @@ export function SettingsView({
               <SettingsRadio
                 name="terminal-runtime"
                 value="wsl"
-                title="WSL"
+                title={uiText(language)('settingsView.wsl')}
                 subtitle={
-                  language === 'zh'
-                    ? '使用 Windows Subsystem for Linux 执行命令；需要本机已安装并配置 WSL。'
-                    : 'Run commands through Windows Subsystem for Linux. Requires WSL to be installed and configured.'
+                  uiText(language)('settingsView.runCommandsThroughWindowsSubsystemForLinux')
                 }
                 checked={settings.terminal.runtime === 'wsl'}
                 onChange={() =>
@@ -430,11 +424,9 @@ export function SettingsView({
               <SettingsRadio
                 name="terminal-runtime"
                 value="git_bash"
-                title="Git Bash"
+                title={uiText(language)('settingsView.git_bash')}
                 subtitle={
-                  language === 'zh'
-                    ? '使用 Git for Windows 自带的 Bash，适合 Unix 命令和 Windows 项目路径。'
-                    : 'Use Git for Windows Bash for Unix-style commands and Windows project paths.'
+                  uiText(language)('settingsView.useGitForWindowsBashForUnix')
                 }
                 checked={settings.terminal.runtime === 'git_bash'}
                 onChange={() =>
@@ -452,11 +444,9 @@ export function SettingsView({
               <SettingsRadio
                 name="terminal-runtime"
                 value="bash"
-                title={language === 'zh' ? '系统 Shell' : 'Native Shell'}
+                title={uiText(language)('settingsView.nativeShell')}
                 subtitle={
-                  language === 'zh'
-                    ? '使用系统默认 Shell，未配置时使用 Bash 或 sh。'
-                    : 'Use the system Shell, falling back to Bash or sh when unconfigured.'
+                  uiText(language)('settingsView.useTheSystemShellFallingBackTo')
                 }
                 checked={settings.terminal.runtime === 'bash'}
                 onChange={() =>
@@ -477,7 +467,7 @@ export function SettingsView({
     if (effectiveSection === 'proxy') {
       return (
         <div className="settings-stack network-settings-stack">
-        <div className="settings-page-tabs" role="tablist" aria-label={language === 'zh' ? '网络代理类别' : 'Proxy category'}>
+        <div className="settings-page-tabs" role="tablist" aria-label={uiText(language)('settingsView.proxyCategory')}>
           {(['models', 'plugins'] as const).map(tab => <button key={tab} id={`proxy-tab-${tab}`} role="tab" type="button"
             tabIndex={networkTab === tab ? 0 : -1}
             onKeyDown={event => {
@@ -488,7 +478,7 @@ export function SettingsView({
               document.getElementById(`proxy-tab-${next}`)?.focus();
             }}
             aria-selected={networkTab === tab} aria-controls={`proxy-panel-${tab}`} onClick={() => setNetworkTab(tab)}>
-            {tab === 'models' ? language === 'zh' ? '应用默认' : 'App default' : language === 'zh' ? '市场与插件' : 'Marketplace & plugins'}
+            {tab === 'models' ? uiText(language)('settingsView.appDefault') : uiText(language)('settingsView.marketplacePlugins')}
           </button>)}
         </div>
         <div role="tabpanel" id={`proxy-panel-${networkTab}`} aria-labelledby={`proxy-tab-${networkTab}`}>
@@ -497,10 +487,8 @@ export function SettingsView({
           onToggleSkill={onToggleSkill} onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail}
           onOpenMcp={serverId => { setSection('mcp'); setPluginMcpTarget({ serverId }); }} onNotify={notify} /> :
         <SettingsCard
-          title={language === 'zh' ? '应用默认代理' : 'App default proxy'}
-          subtitle={language === 'zh'
-            ? '用于模型请求、模型列表、账号登录和云端语音。市场与插件默认跟随，也可在另一页单独设置。'
-            : 'Used for model requests, model lists, account sign-in and cloud speech. The marketplace and plugins follow by default; override them in the other tab.'}
+          title={uiText(language)('settingsView.appDefaultProxy')}
+          subtitle={uiText(language)('settingsView.usedForModelRequestsModelListsAccount')}
         >
           <NetworkProxySettings scope="application" language={language} value={settings.proxy}
             onSave={async proxy => {
@@ -531,7 +519,7 @@ export function SettingsView({
         <div className="plugin-mcp-settings">
           <button className="plugin-back" type="button" onClick={() => setPluginMcpTarget(null)}>
             <ArrowLeft size={17} />
-            {language === 'zh' ? '返回插件' : 'Back to plugins'}
+            {uiText(language)('pluginManagementPanel.backToPlugins')}
           </button>
           <McpServersPanel
             initialServerId={pluginMcpTarget.serverId}
@@ -612,20 +600,20 @@ export function SettingsView({
         <div className="sidebar-panel-content">
         <button className="back-button" type="button" onClick={onBack}>
           <ArrowLeft size={18} />
-          {language === 'zh' ? '返回应用' : 'Back to app'}
+          {uiText(language)('app.backToApp')}
         </button>
         <label className="settings-search">
           <Search size={15} aria-hidden="true" />
           <input value={settingsQuery} onChange={event => setSettingsQuery(event.target.value)}
-            aria-label={language === 'zh' ? '搜索设置' : 'Search settings'}
-            placeholder={language === 'zh' ? '搜索设置…' : 'Search settings…'}
+            aria-label={uiText(language)('settingsView.searchSettings')}
+            placeholder={uiText(language)('settingsView.searchSettings_5d017d7')}
             onKeyDown={event => { if (event.key === 'Escape') setSettingsQuery(''); }} />
-          {settingsQuery && <button type="button" aria-label={language === 'zh' ? '清除搜索' : 'Clear search'} onClick={() => setSettingsQuery('')}><X size={14} /></button>}
+          {settingsQuery && <button type="button" aria-label={uiText(language)('settingsView.clearSearch')} onClick={() => setSettingsQuery('')}><X size={14} /></button>}
         </label>
-        <nav className="settings-navigation" ref={settingsNavigationRef} aria-label={language === 'zh' ? '设置分类' : 'Settings sections'}>
+        <nav className="settings-navigation" ref={settingsNavigationRef} aria-label={uiText(language)('settingsView.settingsSections')}>
           {filteredNavigation.map((group) => (
-            <div className="settings-nav-group" key={group.label.en}>
-              <span className="settings-nav-group-label">{group.label[language]}</span>
+            <div className="settings-nav-group" key={uiText('en')(group.label)}>
+              <span className="settings-nav-group-label">{uiText(language)(group.label)}</span>
               {group.sections.map((id) => {
                 const Icon = settingsIcons[id];
                 return (
@@ -638,13 +626,13 @@ export function SettingsView({
                     onClick={() => { setSection(id); setSettingsQuery(''); if (compactLayout) onSidebarCollapse(); }}
                   >
                     <Icon size={18} />
-                    <span>{settingsLabels[id][language]}</span>
+                    <span>{uiText(language)(settingsLabels[id])}</span>
                   </button>
                 );
               })}
             </div>
           ))}
-          {filteredNavigation.length === 0 && <p className="settings-search-empty" role="status">{language === 'zh' ? '没有匹配的设置' : 'No matching settings'}</p>}
+          {filteredNavigation.length === 0 && <p className="settings-search-empty" role="status">{uiText(language)('settingsView.noMatchingSettings')}</p>}
         </nav>
         </div>
       </aside>
@@ -656,8 +644,8 @@ export function SettingsView({
         <div className={`settings-track${section === 'mcp' ? ' plugin-settings-track' : ''}`}>
           {effectiveSection !== 'mcp' && <header className="settings-page-header">
             <div>
-              <h2>{settingsLabels[effectiveSection][language]}</h2>
-              <p>{settingsDescriptions[effectiveSection][language]}</p>
+              <h2>{uiText(language)(settingsLabels[effectiveSection])}</h2>
+              <p>{uiText(language)(settingsDescriptions[effectiveSection])}</p>
             </div>
           </header>}
           <div>{content}</div>
@@ -701,24 +689,16 @@ export function CacheMaintenancePanel({
           : capabilities.maintenanceLogsCacheClear;
       if (!supported) {
         setError(
-          language === 'zh'
-            ? 'Product Host 尚未提供这个缓存维护命令。'
-            : 'Product Host does not expose this cache maintenance command yet.',
+          uiText(language)('settingsView.productHostDoesNotExposeThisCache'),
         );
         return;
       }
       const confirmed = window.confirm(
-        scopeName ? (language === 'zh' ? `确定清理 ${scopeName} 的${target === 'conversation' ? '全部对话历史' : target === 'cache' ? '应用缓存' : '运行日志'}吗？` : `Clear ${target} data on ${scopeName}?`) : target === 'conversation'
-          ? language === 'zh'
-            ? '确定清空本地对话历史吗？这会删除会话、消息、摘要和不再使用的附件，并暂停绑定的自动化。项目文件、任务工作目录和累计用量统计会保留。'
-            : 'Clear local conversation history and unreferenced attachments? Bound automations will be paused. Project files, task workspaces and cumulative usage statistics are kept.'
+        scopeName ? (uiText(language)(`settings.clear.${target}`, { name: scopeName })) : target === 'conversation'
+          ? uiText(language)('settingsView.clearLocalConversationHistoryAndUnreferencedAttachments')
           : target === 'cache'
-            ? language === 'zh'
-              ? '清理应用缓存、过期预览和无引用的历史残留？保留现有对话、登录状态、草稿和用户文件。'
-              : 'Clear application caches, expired previews and unreferenced history data? Keep conversations, sign-ins, drafts and user files.'
-            : language === 'zh'
-              ? '确定清空本地运行日志和过期崩溃报告吗？会保留对话历史与使用记录。'
-              : 'Clear local runtime logs and old crash reports? Conversations and usage records are kept.',
+            ? uiText(language)('settingsView.clearApplicationCachesExpiredPreviewsAndUnreferenced')
+            : uiText(language)('settingsView.clearLocalRuntimeLogsAndOldCrash'),
       );
       if (!confirmed) {
         return;
@@ -736,24 +716,18 @@ export function CacheMaintenancePanel({
           await onConversationHistoryCleared?.();
         }
         onNotify(
-          cleared.errors?.length ? (language === 'zh' ? '部分清理未完成，请查看详情' : 'Some cleanup could not finish; see details')
-          : !cleared.cleared ? (language === 'zh' ? '没有需要清理的数据' : 'No data to clear')
-          : target === 'cache' ? (language === 'zh' ? '缓存清理完成' : 'Cache cleanup finished')
+          cleared.errors?.length ? (uiText(language)('settingsView.someCleanupCouldNotFinishSeeDetails'))
+          : !cleared.cleared ? (uiText(language)('settingsView.noDataToClear'))
+          : target === 'cache' ? (uiText(language)('settingsView.cacheCleanupFinished'))
           : target === 'conversation'
-            ? language === 'zh'
-              ? '对话历史已清空'
-              : 'Conversation history cleared'
-            : language === 'zh'
-              ? '日志缓存已清空'
-              : 'Logs cache cleared',
+            ? uiText(language)('settingsView.conversationHistoryCleared')
+            : uiText(language)('settingsView.logsCacheCleared'),
         );
       } catch (caught) {
         const message = errorMessage(caught);
         setError(
           message.includes('404')
-            ? language === 'zh'
-              ? 'Product Host 尚未提供缓存维护命令。'
-              : 'Product Host does not expose the cache maintenance command yet.'
+            ? uiText(language)('settingsView.productHostDoesNotExposeTheCache')
             : message,
         );
       } finally {
@@ -768,11 +742,9 @@ export function CacheMaintenancePanel({
   return (
     <div className="settings-stack">
       <SettingsCard
-        title={scopeName || (language === 'zh' ? '本地数据' : 'Local data')}
+        title={scopeName || (uiText(language)('settingsView.localData'))}
         subtitle={
-          language === 'zh'
-            ? '管理当前环境的历史、日志与缓存，保留项目文件、任务工作目录和累计用量。'
-            : 'Manage history, logs and caches in this environment. Keep project files, task workspaces and cumulative usage.'
+          uiText(language)('settingsView.manageHistoryLogsAndCachesInThis')
         }
       >
         <div className="maintenance-action-list">
@@ -780,12 +752,10 @@ export function CacheMaintenancePanel({
             <Archive size={18} />
             <span>
               <strong>
-                {language === 'zh' ? '清空对话历史' : 'Clear conversation history'}
+                {uiText(language)('settingsView.clearConversationHistory')}
               </strong>
               <small>
-                {language === 'zh'
-                  ? '删除会话、消息和摘要，保留项目文件与累计用量统计。'
-                  : 'Delete conversations, messages and summaries. Keep project files and cumulative usage statistics.'}
+                {uiText(language)('settingsView.deleteConversationsMessagesAndSummariesKeepProject')}
               </small>
             </span>
             <button
@@ -796,9 +766,7 @@ export function CacheMaintenancePanel({
               title={
                 conversationClearSupported
                   ? undefined
-                  : language === 'zh'
-                    ? '当前 Runtime 尚未提供此接口'
-                    : 'This API is not available in the current Runtime'
+                  : uiText(language)('settingsView.thisApiIsNotAvailableInThe')
               }
             >
               {busyTarget === 'conversation' ? (
@@ -806,17 +774,15 @@ export function CacheMaintenancePanel({
               ) : (
                 <Trash2 size={14} />
               )}
-              {language === 'zh' ? '清空' : 'Clear'}
+              {uiText(language)('cardlingSceneHost.clear')}
             </button>
           </div>
           <div className="maintenance-action-row">
             <Clipboard size={18} />
             <span>
-              <strong>{language === 'zh' ? '清空日志缓存' : 'Clear logs cache'}</strong>
+              <strong>{uiText(language)('settingsView.clearLogsCache')}</strong>
               <small>
-                {language === 'zh'
-                  ? '清理运行日志和过期崩溃报告。'
-                  : 'Clear runtime logs and old crash reports.'}
+                {uiText(language)('settingsView.clearRuntimeLogsAndOldCrashReports')}
               </small>
             </span>
             <button
@@ -827,40 +793,36 @@ export function CacheMaintenancePanel({
               title={
                 logsClearSupported
                   ? undefined
-                  : language === 'zh'
-                    ? '当前 Runtime 尚未提供此接口'
-                    : 'This API is not available in the current Runtime'
+                  : uiText(language)('settingsView.thisApiIsNotAvailableInThe')
               }
             >
               {busyTarget === 'logs' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-              {language === 'zh' ? '清空' : 'Clear'}
+              {uiText(language)('cardlingSceneHost.clear')}
             </button>
           </div>
           <div className="maintenance-action-row">
             <Trash2 size={18} />
             <span>
-              <strong>{language === 'zh' ? '清理应用缓存' : 'Clear application cache'}</strong>
-              <small>{language === 'zh' ? '回收过期预览、无引用附件和已删除会话的残留，保留登录状态与草稿。' : 'Reclaim expired previews, unreferenced attachments and deleted conversation data. Keep sign-ins and drafts.'}</small>
+              <strong>{uiText(language)('settingsView.clearApplicationCache')}</strong>
+              <small>{uiText(language)('settingsView.reclaimExpiredPreviewsUnreferencedAttachmentsAndDeleted')}</small>
             </span>
             <button className="secondary-button" type="button" disabled={Boolean(busyTarget) || runtimeBusy || !logsClearSupported} onClick={() => void runClear('cache')}>
               {busyTarget === 'cache' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-              {language === 'zh' ? '清理' : 'Clear'}
+              {uiText(language)('settingsView.clear')}
             </button>
           </div>
         </div>
-        {runtimeBusy && <small>{language === 'zh' ? '当前任务结束后可清理历史与应用缓存。' : 'History and application caches can be cleared after active tasks finish.'}</small>}
+        {runtimeBusy && <small>{uiText(language)('settingsView.historyAndApplicationCachesCanBeCleared')}</small>}
         {(!conversationClearSupported || !logsClearSupported) && (
           <p className="settings-inline-error">
-            {language === 'zh'
-              ? '部分缓存维护能力尚未由 Product Host 暴露，已暂时禁用对应按钮。'
-              : 'Some cache maintenance capabilities are not exposed by Product Host yet, so the matching buttons are disabled.'}
+            {uiText(language)('settingsView.someCacheMaintenanceCapabilitiesAreNotExposed')}
           </p>
         )}
         {error && <p className="settings-inline-error">{error}</p>}
         {result && (
           <div className="maintenance-result">
             <strong>
-              {language === 'zh' ? '上次执行结果' : 'Last result'}
+              {uiText(language)('settingsView.lastResult')}
               {result.target ? ` · ${result.target}` : ''}
             </strong>
             <div className="maintenance-count-grid">
@@ -872,14 +834,14 @@ export function CacheMaintenancePanel({
                   </span>
                 ))
               ) : (
-                <em>{language === 'zh' ? '无计数返回' : 'No counts returned'}</em>
+                <em>{uiText(language)('settingsView.noCountsReturned')}</em>
               )}
             </div>
           </div>
         )}
       </SettingsCard>
       {!scopeName && <details className="settings-disclosure" open={Boolean(readPendingRuntimeAssetReset()) || undefined}>
-      <summary>{language === 'zh' ? '恢复内置配置' : 'Restore bundled configuration'}</summary>
+      <summary>{uiText(language)('settingsView.restoreBundledConfiguration')}</summary>
       <div className="settings-disclosure-body"><RuntimeAssetResetCard
         language={language}
         capabilities={capabilities}
@@ -986,9 +948,7 @@ function RuntimeAssetResetCard({
         const runtime = await fetchSubagentRuntime();
         setActiveChildTasks(runtime.activeTasks.length);
         if (runtime.activeTasks.length > 0) {
-          setError(language === 'zh'
-            ? '仍有子 Agent 任务在运行，请等待或停止任务后再重置。'
-            : 'Subagent tasks are still active. Wait for or stop them before resetting.');
+          setError(uiText(language)('settingsView.subagentTasksAreStillActiveWaitFor'));
           return;
         }
       } catch {
@@ -996,9 +956,7 @@ function RuntimeAssetResetCard({
       }
     }
     const confirmed = window.confirm(
-      language === 'zh'
-          ? `确定恢复 ${selectedCategories.map((item) => runtimeAssetCategoryLabel(item, language)).join('、')} 吗？\n\n所选类别中的本地修改、运行时自定义包和过期文件将被永久移除。`
-          : `Restore ${selectedCategories.map((item) => runtimeAssetCategoryLabel(item, language)).join(', ')}?\n\nLocal edits, runtime-only packages, and stale files in the selected categories will be permanently removed.`,
+      uiText(language)('settings.restoreAssets', { categories: formatMessageList(language, selectedCategories.map(item => runtimeAssetCategoryLabel(item, language))) }),
     );
     if (!confirmed) return;
     setBusy('reset');
@@ -1011,21 +969,17 @@ function RuntimeAssetResetCard({
       setRestartVerified(false);
       persistPendingRuntimeAssetReset(next.restartRequired ? next : null);
       onNotify(next.changed
-        ? language === 'zh' ? '内置配置已恢复' : 'Bundled runtime assets restored'
-        : language === 'zh' ? '配置已与内置版本一致' : 'Runtime assets already match the bundled version');
+        ? uiText(language)('settingsView.bundledRuntimeAssetsRestored')
+        : uiText(language)('settingsView.runtimeAssetsAlreadyMatchTheBundledVersion'));
     } catch (caught) {
       if (
         isProductHostCommandError(caught, 'runtime_asset_reset_requires_idle_runtime')
       ) {
-        setError(language === 'zh'
-          ? '检测到主 Agent 或子 Agent 正在运行。请先结束所有任务，再重新手动执行重置。'
-          : 'A parent or child turn is active. Stop all tasks, then start the reset again manually.');
+        setError(uiText(language)('settingsView.aParentOrChildTurnIsActive'));
       } else if (
         isProductHostCommandError(caught, 'runtime_asset_reset_confirmation_required')
       ) {
-        setError(language === 'zh'
-          ? 'Product Host 未收到有效确认，本次没有执行任何重置。'
-          : 'Product Host did not receive valid confirmation. Nothing was reset.');
+        setError(uiText(language)('settingsView.productHostDidNotReceiveValidConfirmation'));
       } else {
         setError(errorMessage(caught));
       }
@@ -1052,9 +1006,7 @@ function RuntimeAssetResetCard({
       setRestartVerified(true);
       persistPendingRuntimeAssetReset(null);
       await refreshInspection();
-      onNotify(language === 'zh'
-        ? 'CardBush 运行时已就绪，配置能力已重新加载'
-        : 'The CardBush Runtime is ready and its capabilities were reloaded');
+      onNotify(uiText(language)('settingsView.theCardbushRuntimeIsReadyAndIts'));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -1076,10 +1028,8 @@ function RuntimeAssetResetCard({
 
   return (
     <SettingsCard
-      title={language === 'zh' ? '恢复内置配置包' : 'Restore bundled runtime assets'}
-      subtitle={language === 'zh'
-        ? '将 Prompts 和 Skills 恢复为当前 CardBush 随附的内置版本。'
-        : 'Restore Prompts and Skills to the versions bundled with the current CardBush build.'}
+      title={uiText(language)('settingsView.restoreBundledRuntimeAssets')}
+      subtitle={uiText(language)('settingsView.restorePromptsAndSkillsToTheVersions')}
     >
       <div className="runtime-asset-reset-panel">
         <div className="runtime-asset-category-grid">
@@ -1103,23 +1053,17 @@ function RuntimeAssetResetCard({
 
         <div className="runtime-asset-reset-warning">
           <AlertCircle size={17} />
-          <span>{language === 'zh'
-            ? '会删除所选类别中的本地编辑、运行时安装包、过期文件和工具启用覆盖。项目文件与对话历史不受影响。'
-            : 'Removes local edits, runtime-installed packages, stale files, and tool enable overrides in selected categories. Project files and conversations are not affected.'}</span>
+          <span>{uiText(language)('settingsView.removesLocalEditsRuntimeInstalledPackagesStale')}</span>
         </div>
 
         {runtimeActive && (
           <p className="settings-inline-error">
-            {language === 'zh'
-              ? `运行时正忙${activeChildTasks > 0 ? `（${activeChildTasks} 个子任务）` : ''}，重置已禁用。`
-              : `The runtime is busy${activeChildTasks > 0 ? ` (${activeChildTasks} child tasks)` : ''}; reset is disabled.`}
+            {uiText(language)('settingsView.theRuntimeIsBusyResetIsDisabled', { value1: (activeChildTasks > 0 ? uiText(language)('settingsView.childTasks', { value1: activeChildTasks }) : '') })}
           </p>
         )}
         {!available && (
           <p className="settings-inline-error">
-            {language === 'zh'
-              ? '当前 CardBush 产品宿主未声明 runtime asset reset 能力。'
-              : 'The current CardBush Product Host does not advertise runtime asset reset.'}
+            {uiText(language)('settingsView.theCurrentCardbushProductHostDoesNot')}
           </p>
         )}
         {error && (
@@ -1127,14 +1071,14 @@ function RuntimeAssetResetCard({
             <p className="settings-inline-error">{error}</p>
             <button className="secondary-button" type="button" onClick={() => void loadServiceLogs()}>
               {loadingLogs ? <LoaderCircle size={14} /> : <Clipboard size={14} />}
-              {language === 'zh' ? '查看服务日志' : 'View service logs'}
+              {uiText(language)('settingsView.viewServiceLogs')}
             </button>
           </div>
         )}
 
         {serviceLogs && (
           <details className="runtime-asset-service-logs" open>
-            <summary>{language === 'zh' ? '最近服务日志' : 'Recent service logs'}</summary>
+            <summary>{uiText(language)('settingsView.recentServiceLogs')}</summary>
             <pre>{JSON.stringify(serviceLogs, null, 2)}</pre>
           </details>
         )}
@@ -1147,7 +1091,7 @@ function RuntimeAssetResetCard({
             onClick={() => void runReset()}
           >
             {busy === 'reset' ? <LoaderCircle size={14} /> : <PackageOpen size={14} />}
-            {language === 'zh' ? '恢复所选配置' : 'Restore selected assets'}
+            {uiText(language)('settingsView.restoreSelectedAssets')}
           </button>
           <button
             className="secondary-button"
@@ -1156,7 +1100,7 @@ function RuntimeAssetResetCard({
             onClick={() => void refreshInspection()}
           >
             {busy === 'inspect' ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-            {language === 'zh' ? '检查状态' : 'Inspect status'}
+            {uiText(language)('settingsView.inspectStatus')}
           </button>
         </div>
 
@@ -1166,10 +1110,8 @@ function RuntimeAssetResetCard({
           <div className="runtime-asset-restart-required" role="alert">
             <RotateCcw size={18} />
             <span>
-              <strong>{language === 'zh' ? '必须重启 CardBush' : 'CardBush restart required'}</strong>
-              <small>{language === 'zh'
-                ? '配置已经写入，但尚未激活。请先重启 CardBush，然后再验证。'
-                : 'Assets were written but are not active yet. Restart CardBush, then verify.'}</small>
+              <strong>{uiText(language)('settingsView.cardbushRestartRequired')}</strong>
+              <small>{uiText(language)('settingsView.assetsWereWrittenButAreNotActive')}</small>
             </span>
             <button
               className="primary-button"
@@ -1178,14 +1120,14 @@ function RuntimeAssetResetCard({
               onClick={() => void verifyRestart()}
             >
               {busy === 'verify' ? <LoaderCircle size={14} /> : <Check size={14} />}
-              {language === 'zh' ? '我已重启，验证并加载' : 'Restarted — verify and reload'}
+              {uiText(language)('settingsView.restartedVerifyAndReload')}
             </button>
           </div>
         )}
 
         {plan && (
           <details className="runtime-asset-paths">
-            <summary>{language === 'zh' ? '查看内置来源与运行时路径' : 'View bundled source and runtime paths'}</summary>
+            <summary>{uiText(language)('settingsView.viewBundledSourceAndRuntimePaths')}</summary>
             {supportedCategories.map((category) => {
               const location = plan.categories[category];
               if (!location) return null;
@@ -1214,8 +1156,8 @@ function RuntimeAssetResetResultView({
   return (
     <div className="runtime-asset-reset-result">
       <strong>{result.changed
-        ? language === 'zh' ? '恢复结果' : 'Restore result'
-        : language === 'zh' ? '已经是内置版本' : 'Already matches bundled assets'}</strong>
+        ? uiText(language)('settingsView.restoreResult')
+        : uiText(language)('settingsView.alreadyMatchesBundledAssets')}</strong>
       <div>
         {result.selectedCategories.map((category) => {
           const item = result.categories[category];
@@ -1224,9 +1166,7 @@ function RuntimeAssetResetResultView({
             <span key={category}>
               <b>{runtimeAssetCategoryLabel(category, language)}</b>
               <small>
-                {language === 'zh'
-                  ? `恢复 ${item.restoredFileCount} · 删除 ${item.removedRuntimeFileCount} · 内置 ${item.seedFileCount}`
-                  : `restored ${item.restoredFileCount} · removed ${item.removedRuntimeFileCount} · bundled ${item.seedFileCount}`}
+                {uiText(language)('settingsView.restoredRemovedBundled', { value1: item.restoredFileCount, value2: item.removedRuntimeFileCount, value3: item.seedFileCount })}
               </small>
             </span>
           );
@@ -1238,18 +1178,18 @@ function RuntimeAssetResetResultView({
 
 function runtimeAssetCategoryLabel(category: RuntimeAssetCategory, language: AppLanguage) {
   const labels = {
-    prompts: { zh: 'Prompts', en: 'Prompts' },
-    skills: { zh: 'Skills', en: 'Skills' },
+    prompts: 'settingsView.prompts',
+    skills: 'composer.skills_4b57155',
   } as const;
-  return labels[category][language];
+  return uiText(language)(labels[category]);
 }
 
 function runtimeAssetCategoryDescription(category: RuntimeAssetCategory, language: AppLanguage) {
   const descriptions = {
-    prompts: { zh: '系统提示词与内置模板', en: 'System prompts and bundled templates' },
-    skills: { zh: '内置技能包及其文件', en: 'Bundled skill packages and files' },
+    prompts: 'settingsView.systemPromptsAndBundledTemplates',
+    skills: 'settingsView.bundledSkillPackagesAndFiles',
   } as const;
-  return descriptions[category][language];
+  return uiText(language)(descriptions[category]);
 }
 
 function readPendingRuntimeAssetReset(): RuntimeAssetResetResult | null {
@@ -1297,19 +1237,19 @@ function DiagnosticsPanel({
     try {
       const [runtime, productHost, capabilities] = await Promise.all([
         localDiagnosticProbe(
-          language === 'zh' ? '内嵌 Runtime' : 'Embedded Runtime',
+          uiText(language)('settingsView.embeddedRuntime'),
           async () => {
             assertDesktopRuntime();
             const readiness = await fetchBackendReadiness();
             if (readiness.ready !== true) {
-              throw new Error(language === 'zh' ? 'Runtime 尚未就绪' : 'Runtime is not ready');
+              throw new Error(uiText(language)('settingsView.runtimeIsNotReady'));
             }
             const versions = Array.isArray(readiness.protocolVersions)
               ? readiness.protocolVersions.join(' / ')
               : '';
             return [String(readiness.runtimeVersion ?? '').trim(), versions]
               .filter(Boolean)
-              .join(' · ') || (language === 'zh' ? '已就绪' : 'Ready');
+              .join(' · ') || (uiText(language)('runtimeStreamPreTest.ready'));
           },
         ),
         localDiagnosticProbe(
@@ -1317,22 +1257,18 @@ function DiagnosticsPanel({
           async () => {
             assertProductHost();
             const snapshot = await fetchModelConfigs();
-            return language === 'zh'
-              ? `IPC 可用 · ${snapshot.models.length} 个模型配置`
-              : `IPC available · ${snapshot.models.length} model configurations`;
+            return uiText(language)('settingsView.ipcAvailableModelConfigurations', { value1: snapshot.models.length });
           },
         ),
         localDiagnosticProbe(
-          language === 'zh' ? '能力契约' : 'Capability contract',
+          uiText(language)('settingsView.capabilityContract'),
           async () => {
             assertDesktopRuntime();
             const capabilities = await fetchBackendCapabilities();
             if (!capabilities.chatStream || !capabilities.sessions) {
-              throw new Error(language === 'zh' ? '缺少核心对话能力' : 'Core chat capabilities are missing');
+              throw new Error(uiText(language)('settingsView.coreChatCapabilitiesAreMissing'));
             }
-            return language === 'zh'
-              ? '类型化命令、事件流与会话持久化已就绪'
-              : 'Typed commands, event streaming, and session persistence are ready';
+            return uiText(language)('settingsView.typedCommandsEventStreamingAndSessionPersistence');
           },
         ),
       ]);
@@ -1367,28 +1303,26 @@ function DiagnosticsPanel({
 
   return (
     <SettingsCard
-      title={language === 'zh' ? '运行诊断' : 'Runtime diagnostics'}
+      title={uiText(language)('settingsView.runtimeDiagnostics')}
       subtitle={
-        language === 'zh'
-          ? '检查内嵌 TypeScript Runtime、Product Host 与当前模型配置，不使用 localhost HTTP 端口。'
-          : 'Check the embedded TypeScript Runtime, Product Host, and current model configuration without a localhost HTTP port.'
+        uiText(language)('settingsView.checkTheEmbeddedTypescriptRuntimeProductHost')
       }
     >
       <div className="settings-subblock">
-        <strong>{language === 'zh' ? '当前请求配置' : 'Current request config'}</strong>
-        <InfoRow label={language === 'zh' ? '模式' : 'Mode'} value={modelInfo.source} />
-        <InfoRow label={language === 'zh' ? '模型名称' : 'Model name'} value={modelInfo.model} />
-        <InfoRow label={language === 'zh' ? '模型商' : 'Provider'} value={modelInfo.provider} />
-        <InfoRow label="api_key" value={modelInfo.apiKeyLabel} />
-        <InfoRow label="base_url" value={modelInfo.baseUrl} />
+        <strong>{uiText(language)('settingsView.currentRequestConfig')}</strong>
+        <InfoRow label={uiText(language)('settingsAppearancePanel.mode')} value={modelInfo.source} />
+        <InfoRow label={uiText(language)('modelFormDialog.modelName')} value={modelInfo.model} />
+        <InfoRow label={uiText(language)('modelProviderSelect.provider')} value={modelInfo.provider} />
+        <InfoRow label={uiText(language)('settingsView.api_key')} value={modelInfo.apiKeyLabel} />
+        <InfoRow label={uiText(language)('settingsView.base_url')} value={modelInfo.baseUrl} />
         <InfoRow
-          label={language === 'zh' ? '运行传输' : 'Runtime transport'}
+          label={uiText(language)('settingsView.runtimeTransport')}
           value="Electron typed IPC"
         />
       </div>
       <SettingsDivider />
       <div className="settings-subblock">
-        <strong>{language === 'zh' ? '本地组件检查' : 'Local component check'}</strong>
+        <strong>{uiText(language)('settingsView.localComponentCheck')}</strong>
         {result ? (
           <>
             <DiagnosticRow probe={result.runtime} />
@@ -1398,12 +1332,8 @@ function DiagnosticsPanel({
         ) : (
           <p className="settings-muted">
             {checking
-              ? language === 'zh'
-                ? '正在检查...'
-                : 'Checking...'
-              : language === 'zh'
-                ? '尚未检查'
-                : 'Not checked'}
+              ? uiText(language)('settingsView.checking')
+              : uiText(language)('settingsView.notChecked')}
           </p>
         )}
         <div className="settings-actions">
@@ -1415,16 +1345,12 @@ function DiagnosticsPanel({
           >
             {checking ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
             {checking
-              ? language === 'zh'
-                ? '检查中'
-                : 'Checking'
-              : language === 'zh'
-                ? '运行检查'
-                : 'Run check'}
+              ? uiText(language)('settingsView.checking_0fc35fb')
+              : uiText(language)('settingsView.runCheck')}
           </button>
           <button className="secondary-button" type="button" onClick={() => void copyDiagnostics()}>
             <Copy size={14} />
-            {language === 'zh' ? '复制诊断信息' : 'Copy diagnostics'}
+            {uiText(language)('browserConnectionSettings.copyDiagnostics')}
           </button>
         </div>
       </div>
@@ -1453,26 +1379,24 @@ function AboutSettingsPanel({
   };
   return (
     <SettingsCard
-      title={language === 'zh' ? '关于' : 'About'}
+      title={uiText(language)('settingsView.about')}
       subtitle={
-        language === 'zh'
-          ? 'cardbush 桌面端设置信息'
-          : 'Desktop app information for cardbush.'
+        uiText(language)('settingsView.desktopAppInformationForCardbush')
       }
     >
-      <InfoRow label={language === 'zh' ? '应用' : 'App'} value="cardbush" />
-      <InfoRow label={language === 'zh' ? '版本' : 'Version'} value={applicationVersion} />
-      <InfoRow label="Runtime" value="Embedded TypeScript Runtime" />
-      <InfoRow label={language === 'zh' ? '通信方式' : 'Transport'} value="Electron typed IPC" />
+      <InfoRow label={uiText(language)('settingsView.app')} value="cardbush" />
+      <InfoRow label={uiText(language)('pluginManagementPanel.version')} value={applicationVersion} />
+      <InfoRow label={uiText(language)('settingsView.runtime')} value="Embedded TypeScript Runtime" />
+      <InfoRow label={uiText(language)('settingsView.transport')} value="Electron typed IPC" />
       <InfoRow
-        label={language === 'zh' ? '当前模型' : 'Current model'}
+        label={uiText(language)('settingsView.currentModel')}
         value={`${modelInfo.provider} / ${modelInfo.model}`}
       />
-      <InfoRow label="base_url" value={modelInfo.baseUrl} />
+      <InfoRow label={uiText(language)('settingsView.base_url')} value={modelInfo.baseUrl} />
       <div className="settings-actions">
         <button className="secondary-button" type="button" onClick={() => void copyEnvironment()}>
           <Copy size={14} />
-          {language === 'zh' ? '复制环境信息' : 'Copy environment'}
+          {uiText(language)('settingsView.copyEnvironment')}
         </button>
       </div>
     </SettingsCard>
@@ -1562,7 +1486,7 @@ export function McpServersPanel({
       } else if (currentId) {
         selectServerId('');
         setDraft(emptyMcpDraft);
-        setError(language === 'zh' ? '该 MCP 服务已被移除，请刷新插件列表。' : 'This MCP server was removed. Refresh the plugin catalog.');
+        setError(uiText(language)('settingsView.thisMcpServerWasRemovedRefreshThe'));
       }
       if (initialEditorPending.current) {
         initialEditorPending.current = false;
@@ -1629,12 +1553,8 @@ export function McpServersPanel({
       setValidation(result);
       onNotify(
         result.ok
-          ? language === 'zh'
-            ? 'MCP 配置校验通过'
-            : 'MCP config validation passed'
-          : language === 'zh'
-            ? 'MCP 配置校验未通过'
-            : 'MCP config validation failed',
+          ? uiText(language)('settingsView.mcpConfigValidationPassed')
+          : uiText(language)('settingsView.mcpConfigValidationFailed'),
       );
     } catch (caught) {
       setError(mcpErrorText(caught, language));
@@ -1655,7 +1575,7 @@ export function McpServersPanel({
       setDraft(mcpDraftFromServer(saved));
       setValidation(null);
       await loadServers();
-      onNotify(language === 'zh' ? 'MCP 服务配置已保存' : 'MCP server saved');
+      onNotify(uiText(language)('settingsView.mcpServerSaved'));
       closeEditor();
     } catch (caught) {
       setError(mcpErrorText(caught, language));
@@ -1675,12 +1595,8 @@ export function McpServersPanel({
         await loadServers();
         onNotify(
           nextEnabled
-            ? language === 'zh'
-              ? 'MCP 服务已启用'
-              : 'MCP server enabled'
-            : language === 'zh'
-              ? 'MCP 服务已停用'
-              : 'MCP server disabled',
+            ? uiText(language)('settingsView.mcpServerEnabled')
+            : uiText(language)('settingsView.mcpServerDisabled'),
         );
       } catch (caught) {
         setError(mcpErrorText(caught, language));
@@ -1694,9 +1610,7 @@ export function McpServersPanel({
   const removeServer = useCallback(
     async (server: McpServerConfig) => {
       const confirmed = window.confirm(
-        language === 'zh'
-          ? `确定删除 MCP 服务 ${server.name || server.id} 吗？`
-          : `Delete MCP server ${server.name || server.id}?`,
+        uiText(language)('settingsView.deleteMcpServer', { value1: server.name || server.id }),
       );
       if (!confirmed) {
         return;
@@ -1711,7 +1625,7 @@ export function McpServersPanel({
           closeEditor();
         }
         await loadServers();
-        onNotify(language === 'zh' ? 'MCP 服务已删除' : 'MCP server deleted');
+        onNotify(uiText(language)('settingsView.mcpServerDeleted'));
       } catch (caught) {
         setError(mcpErrorText(caught, language));
       } finally {
@@ -1727,83 +1641,83 @@ export function McpServersPanel({
 
   const editor = editorOpen && <SettingsFormDialog id="mcp-server-editor" className="mcp-server-dialog"
     language={language} busy={Boolean(busyKey) || loading} onCancel={closeEditor} onSubmit={saveServer}
-    title={selectedId ? (language === 'zh' ? '配置服务器' : 'Configure server') : (language === 'zh' ? '添加服务器' : 'Add server')}
-    description={language === 'zh' ? '填写连接信息，接入外部工具和数据源。' : 'Configure a connection to external tools and data sources.'}
+    title={selectedId ? (uiText(language)('settingsView.configureServer')) : (uiText(language)('settingsView.addServer'))}
+    description={uiText(language)('settingsView.configureAConnectionToExternalToolsAnd')}
     footer={<>
       {selectedServer && <button className="secondary-button danger settings-dialog-secondary-action" type="button" disabled={Boolean(busyKey) || loading}
-        onClick={() => void removeServer(selectedServer)}><Trash2 size={14}/>{language === 'zh' ? '删除' : 'Delete'}</button>}
-      <button className="secondary-button" type="button" disabled={Boolean(busyKey) || loading} onClick={closeEditor}>{language === 'zh' ? '取消' : 'Cancel'}</button>
+        onClick={() => void removeServer(selectedServer)}><Trash2 size={14}/>{uiText(language)('appCenter.delete')}</button>}
+      <button className="secondary-button" type="button" disabled={Boolean(busyKey) || loading} onClick={closeEditor}>{uiText(language)('agentConnectionForm.cancel')}</button>
       <button className="secondary-button" type="button" disabled={Boolean(busyKey) || loading} onClick={() => void validateServer()}>
-        {busyKey === 'validate' ? <LoaderCircle size={14} className="spin"/> : <CheckCircle2 size={14}/>}{language === 'zh' ? '校验' : 'Validate'}</button>
+        {busyKey === 'validate' ? <LoaderCircle size={14} className="spin"/> : <CheckCircle2 size={14}/>}{uiText(language)('settingsView.validate')}</button>
       <button className="primary-button" type="submit" disabled={Boolean(busyKey) || loading}>
-        {busyKey === 'save' ? <LoaderCircle size={14} className="spin"/> : <Upload size={14}/>}{busyKey === 'save' ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存' : 'Save')}</button>
+        {busyKey === 'save' ? <LoaderCircle size={14} className="spin"/> : <Upload size={14}/>}{busyKey === 'save' ? (uiText(language)('automationPanel.saving')) : (uiText(language)('appCenter.save'))}</button>
     </>}>
     <fieldset className="settings-dialog-fields" disabled={Boolean(busyKey) || loading}>
       <div className="mcp-compact-form">
         <SettingsInput
-          label={language === 'zh' ? '名称' : 'Name'}
+          label={uiText(language)('agentConnectionForm.name')}
           value={draft.name}
-          placeholder="node_repl"
+          placeholder={uiText(language)('settingsView.node_repl')}
           onChange={(value) => updateDraft({ name: value })}
         />
         <label className="settings-field">
-          <span>{language === 'zh' ? '连接方式' : 'Connection'}</span>
-          <SettingsDropdown label={language === 'zh' ? '连接方式' : 'Connection'} value={draft.transport}
+          <span>{uiText(language)('settingsView.connection')}</span>
+          <SettingsDropdown label={uiText(language)('settingsView.connection')} value={draft.transport}
             onChange={transport => updateDraft({ transport: transport as McpTransport })}
-            options={[{ value: 'stdio', label: 'stdio' }, { value: 'sse', label: 'SSE' }, { value: 'streamable_http', label: 'HTTP stream' }, { value: 'http', label: 'HTTP' }]} />
+            options={[{ value: 'stdio', label: 'stdio' }, { value: 'sse', label: 'SSE' }, { value: 'streamable_http', label: uiText(language)('settingsView.http_stream') }, { value: 'http', label: 'HTTP' }]} />
         </label>
         {draft.transport === 'stdio' ? (
           <SettingsInput
-            label={language === 'zh' ? '启动命令' : 'Command'}
+            label={uiText(language)('settingsView.command')}
             value={draft.command}
-            placeholder="npx @modelcontextprotocol/server-filesystem C:\\Users\\fixture\\Desktop"
+            placeholder={uiText(language)('settingsView.npx_modelcontextprotocol_server_filesystem_c_users_fixture')}
             onChange={(value) => updateDraft({ command: value })}
           />
         ) : (
           <SettingsInput
-            label="URL"
+            label={uiText(language)('settingsView.url')}
             value={draft.url}
-            placeholder="http://127.0.0.1:3000/sse"
+            placeholder={uiText(language)('settingsView.http_127_0_0_1_3000_sse')}
             onChange={(value) => updateDraft({ url: value })}
           />
         )}
       </div>
       <details key={selectedId || 'new'} className="mcp-advanced">
-        <summary>{language === 'zh' ? '高级设置' : 'Advanced settings'}</summary>
+        <summary>{uiText(language)('pluginMcpSettings.advancedSettings')}</summary>
         <div className="mcp-form-grid">
           <SettingsInput
-            label="id"
+            label={uiText(language)('settingsView.id')}
             value={draft.id}
-            placeholder="filesystem"
+            placeholder={uiText(language)('settingsView.filesystem')}
             onChange={(value) => updateDraft({ id: value })}
           />
           <SettingsInput
-            label={language === 'zh' ? '工作目录' : 'Working directory'}
+            label={uiText(language)('settingsView.workingDirectory')}
             value={draft.cwd}
-            placeholder="C:\\Users\\..."
+            placeholder={uiText(language)('settingsView.c_users')}
             onChange={(value) => updateDraft({ cwd: value })}
           />
           <SettingsInput
-            label={language === 'zh' ? '描述' : 'Description'}
+            label={uiText(language)('settingsView.description')}
             value={draft.description}
-            placeholder={language === 'zh' ? '这个 MCP 服务提供什么工具' : 'What this MCP server provides'}
+            placeholder={uiText(language)('settingsView.whatThisMcpServerProvides')}
             onChange={(value) => updateDraft({ description: value })}
           />
         </div>
         <div className="mcp-form-grid">
           <label className="mcp-editor">
-            <span>env JSON</span>
+            <span>{uiText(language)('settingsView.env_json')}</span>
             <textarea
               value={draft.envText}
-              placeholder="{&#10;  &quot;API_KEY&quot;: &quot;...&quot;&#10;}"
+              placeholder={uiText(language)('settingsView.10_quot_api_key_quot_quot_quot')}
               onChange={(event) => updateDraft({ envText: event.currentTarget.value })}
             />
           </label>
           <label className="mcp-editor">
-            <span>headers JSON</span>
+            <span>{uiText(language)('settingsView.headers_json')}</span>
             <textarea
               value={draft.headersText}
-              placeholder="{&#10;  &quot;Authorization&quot;: &quot;Bearer ...&quot;&#10;}"
+              placeholder={uiText(language)('settingsView.10_quot_authorization_quot_quot_bearer_quot')}
               onChange={(event) => updateDraft({ headersText: event.currentTarget.value })}
             />
           </label>
@@ -1813,12 +1727,8 @@ export function McpServersPanel({
         <div className={`subagent-validation ${validation.ok ? 'ok' : 'invalid'}`}>
           <strong>
             {validation.ok
-              ? language === 'zh'
-                ? '校验通过'
-                : 'Validation passed'
-              : language === 'zh'
-                ? '校验未通过'
-                : 'Validation failed'}
+              ? uiText(language)('settingsView.validationPassed')
+              : uiText(language)('settingsView.validationFailed')}
             {validation.tools.length ? ` · tools: ${validation.tools.length}` : ''}
           </strong>
           {validation.messages.length > 0 ? (
@@ -1832,9 +1742,7 @@ export function McpServersPanel({
             <p>
               {validation.tools.length
                 ? validation.tools.join(', ')
-                : language === 'zh'
-                  ? '服务未返回错误详情。'
-                  : 'No error details were returned.'}
+                : uiText(language)('settingsView.noErrorDetailsWereReturned')}
             </p>
           )}
         </div>
@@ -1848,18 +1756,16 @@ export function McpServersPanel({
     <div className="mcp-simple-page">
       <header className="mcp-page-header">
         <div>
-          <h3>{language === 'zh' ? 'MCP 服务器' : 'MCP servers'}</h3>
+          <h3>{uiText(language)('pluginWorkspace.mcpServers')}</h3>
           <p>
-            {language === 'zh'
-              ? '连接外部工具和数据源。'
-              : 'Connect external tools and data sources.'}
+            {uiText(language)('settingsView.connectExternalToolsAndDataSources')}
             <a
               className="mcp-inline-link"
               href="https://modelcontextprotocol.io"
               target="_blank"
               rel="noreferrer"
             >
-              {language === 'zh' ? '了解更多。' : 'Learn more.'}
+              {uiText(language)('settingsView.learnMore')}
             </a>
           </p>
         </div>
@@ -1867,62 +1773,60 @@ export function McpServersPanel({
 
       {capabilityUndeclared && (
         <p className="settings-inline-error">
-          {language === 'zh'
-            ? '当前 TypeScript Runtime 未声明 MCP 快照能力。'
-            : 'The TypeScript Runtime does not expose MCP snapshot capability.'}
+          {uiText(language)('settingsView.theTypescriptRuntimeDoesNotExposeMcp')}
         </p>
       )}
       {error && !editorOpen && <p className="settings-inline-error">{error}</p>}
 
       <section className="mcp-simple-section">
         {servers.some((server) => server.status === 'pending') && <p role="status">
-          {language === 'zh' ? '配置已保存，相关工具调用完成后自动更新，无需停止会话。' : 'Saved. Updates apply after the affected tool calls finish; the conversation can continue.'}
+          {uiText(language)('settingsView.savedUpdatesApplyAfterTheAffectedTool')}
         </p>}
         {servers.find((server) => server.lastError)?.lastError && <p className="settings-inline-error" role="alert">
-          {language === 'zh' ? 'MCP 连接异常：' : 'MCP connection issue: '}
+          {uiText(language)('settingsView.mcpConnectionIssue')}
           {servers.find((server) => server.lastError)?.lastError}
         </p>}
         <div className="mcp-section-title">
-          <strong>{language === 'zh' ? '服务器' : 'Servers'}</strong>
+          <strong>{uiText(language)('settingsView.servers')}</strong>
           <button ref={addButtonRef} className="mcp-add-button" type="button" disabled={loading || Boolean(busyKey)}
             aria-haspopup="dialog" aria-controls="mcp-server-editor" onClick={startNew}>
             <Plus size={16} />
-            {language === 'zh' ? '添加服务器' : 'Add server'}
+            {uiText(language)('settingsView.addServer')}
           </button>
         </div>
         <div className="mcp-simple-list">
           {loading ? (
             <div className="mcp-empty-row">
               <LoaderCircle size={16} />
-              <span>{language === 'zh' ? '正在加载' : 'Loading'}</span>
+              <span>{uiText(language)('settingsView.loading')}</span>
             </div>
           ) : userServers.length === 0 ? (
             <div className="mcp-empty-row">
-              <span>{language === 'zh' ? '暂无服务器' : 'No servers'}</span>
+              <span>{uiText(language)('settingsView.noServers')}</span>
             </div>
           ) : (
             userServers.map((server) => (
               <div className="mcp-simple-row" key={server.id}>
                 <PluginIcon size={18} />
                 <strong>{server.name || server.id}</strong>
-                {server.status === 'waiting_for_resources' && <span role="status">{language === 'zh' ? '等待可用资源，稍后自动连接' : 'Waiting for resources; connects automatically'}</span>}
+                {server.status === 'waiting_for_resources' && <span role="status">{uiText(language)('settingsView.waitingForResourcesConnectsAutomatically')}</span>}
                 {!host.remote && server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey)} onClick={() => {
                   setBusyKey(server.id); setError('');
                   void window.cardbushDesktop!.mcpConnectionAction(server.id, 'login').then(() => host.fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language))).finally(() => setBusyKey(''));
-                }}>{server.status === 'auth_required' ? (language === 'zh' ? '需要登录' : 'Sign-in required') : (language === 'zh' ? '登录' : 'Sign in')}</button>}
+                }}>{server.status === 'auth_required' ? (uiText(language)('pluginMcpSettings.signInRequired')) : (uiText(language)('pluginMcpSettings.signIn'))}</button>}
                 {server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey) && busyKey !== server.id} onClick={() => {
                   const action = busyKey === server.id ? 'cancel_login' : 'logout';
                   void window.cardbushDesktop!.mcpConnectionAction(server.id, action).then(() => host.fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language)));
-                }}>{busyKey === server.id ? (language === 'zh' ? '取消登录' : 'Cancel sign-in') : (language === 'zh' ? '退出登录' : 'Sign out')}</button>}
+                }}>{busyKey === server.id ? (uiText(language)('pluginMcpSettings.cancelSignIn')) : (uiText(language)('pluginMcpSettings.signOut'))}</button>}
 
 
                 {host.remote && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey)} onClick={() => {
                   setBusyKey(server.id); void host.mcpConnectionAction(server.id, 'reconnect').then(loadServers).catch(error => setError(mcpErrorText(error, language))).finally(() => setBusyKey(''));
-                }}>{language === 'zh' ? '重新连接' : 'Reconnect'}</button>}
+                }}>{uiText(language)('pluginMcpSettings.reconnect')}</button>}
                 <button
                   className="mcp-icon-button"
                   type="button"
-                  title={language === 'zh' ? '配置' : 'Configure'}
+                  title={uiText(language)('settingsView.configure')}
                   disabled={Boolean(busyKey)}
                   aria-haspopup="dialog"
                   aria-controls="mcp-server-editor"
@@ -1934,7 +1838,7 @@ export function McpServersPanel({
                   className={`mcp-toggle ${server.enabled ? 'on' : ''}`}
                   type="button"
                   disabled={Boolean(busyKey)}
-                  title={server.enabled ? (language === 'zh' ? '停用' : 'Disable') : (language === 'zh' ? '启用' : 'Enable')}
+                  title={server.enabled ? (uiText(language)('pluginMcpSettings.disable')) : (uiText(language)('automationPanel.enable'))}
                   onClick={() => void toggleServer(server)}
                 >
                   <span />
@@ -1982,15 +1886,14 @@ function CardbushAppsPanel({
   const persist = useCallback(async (
     next: CardbushAppsConfiguration,
     key: string,
-    zh: string,
-    en: string,
+    message: string,
   ) => {
     setBusyKey(key);
     setError('');
     try {
       const saved = await saveCardbushAppsConfiguration(next);
       setConfiguration(saved);
-      onNotify(language === 'zh' ? zh : en);
+      onNotify(message);
     } catch (caught) {
       setError(errorMessage(caught));
       await load();
@@ -2012,23 +1915,20 @@ function CardbushAppsPanel({
     <section className="mcp-simple-section cardbush-apps-section">
       <div className="mcp-section-title">
         <div>
-          <strong>CardBush Apps</strong>
-          <small>{language === 'zh'
-            ? '独立 MCP 插件服务；插件只在该服务内注册和执行。'
-            : 'Independent MCP plugin service; apps register and run only inside it.'}</small>
+          <strong>{uiText(language)('settingsView.cardbush_apps')}</strong>
+          <small>{uiText(language)('settingsView.independentMcpPluginServiceAppsRegisterAnd')}</small>
         </div>
         <button
           className={`mcp-toggle ${serviceEnabled ? 'on' : ''}`}
           type="button"
           disabled={!configuration || Boolean(busyKey)}
           title={serviceEnabled
-            ? language === 'zh' ? '停用 CardBush Apps' : 'Disable CardBush Apps'
-            : language === 'zh' ? '启用 CardBush Apps' : 'Enable CardBush Apps'}
+            ? uiText(language)('settingsView.disableCardbushApps')
+            : uiText(language)('settingsView.enableCardbushApps')}
           onClick={() => configuration && void persist(
             { ...configuration, serviceEnabled: !configuration.serviceEnabled },
             'service',
-            configuration.serviceEnabled ? 'CardBush Apps 已停用' : 'CardBush Apps 已启用',
-            configuration.serviceEnabled ? 'CardBush Apps disabled' : 'CardBush Apps enabled',
+            configuration.serviceEnabled ? uiText(language)('apps.disabled') : uiText(language)('apps.enabled'),
           )}
         >
           <span />
@@ -2038,7 +1938,7 @@ function CardbushAppsPanel({
       {error && <p className="settings-inline-error">{error}</p>}
       <div className="cardbush-app-list">
         {!configuration || busyKey === 'load' ? (
-          <div className="mcp-empty-row"><LoaderCircle size={16} /><span>{language === 'zh' ? '正在加载' : 'Loading'}</span></div>
+          <div className="mcp-empty-row"><LoaderCircle size={16} /><span>{uiText(language)('settingsView.loading')}</span></div>
         ) : configuration.plugins.map((plugin) => {
           const expanded = expandedPluginId === plugin.id;
           return (
@@ -2052,7 +1952,7 @@ function CardbushAppsPanel({
                   <button
                     className="mcp-icon-button"
                     type="button"
-                    title={language === 'zh' ? '插件配置' : 'Plugin settings'}
+                    title={uiText(language)('settingsView.pluginSettings')}
                     onClick={() => setExpandedPluginId(expanded ? '' : plugin.id)}
                   >
                     <Settings size={16} />
@@ -2064,13 +1964,13 @@ function CardbushAppsPanel({
                       className={`mcp-toggle ${plugin.enabled ? 'on' : ''}`}
                       type="button"
                       disabled={Boolean(busyKey)}
-                      title={plugin.enabled ? (language === 'zh' ? '停用插件' : 'Disable plugin') : (language === 'zh' ? '启用插件' : 'Enable plugin')}
+                      title={plugin.enabled ? (uiText(language)('settingsView.disablePlugin')) : (uiText(language)('settingsView.enablePlugin'))}
                       onClick={() => void persist({
                         ...configuration,
                         plugins: configuration.plugins.map((item) => item.id === plugin.id
                           ? { ...item, enabled: !item.enabled }
                           : item),
-                      }, `toggle:${plugin.id}`, plugin.enabled ? '插件已停用' : '插件已启用', plugin.enabled ? 'Plugin disabled' : 'Plugin enabled')}
+                      }, `toggle:${plugin.id}`, plugin.enabled ? uiText(language)('plugins.disabled') : uiText(language)('plugins.enabled'))}
                     >
                       <span />
                     </button>
@@ -2079,19 +1979,17 @@ function CardbushAppsPanel({
                       type="button"
                       disabled={Boolean(busyKey)}
                       onClick={() => {
-                        const confirmed = window.confirm(language === 'zh'
-                          ? `确定卸载 ${plugin.name} 吗？插件配置会保留，重新安装后可以继续使用。`
-                          : `Uninstall ${plugin.name}? Its settings will be retained for reinstall.`);
+                        const confirmed = window.confirm(uiText(language)('settingsView.uninstallItsSettingsWillBeRetainedFor', { value1: plugin.name }));
                         if (!confirmed) return;
                         void persist({
                           ...configuration,
                           plugins: configuration.plugins.map((item) => item.id === plugin.id
                             ? { ...item, installed: false, enabled: false }
                             : item),
-                        }, `uninstall:${plugin.id}`, '插件已卸载', 'Plugin uninstalled');
+                        }, `uninstall:${plugin.id}`, uiText(language)('plugins.uninstalled'));
                       }}
                     >
-                      {language === 'zh' ? '卸载' : 'Uninstall'}
+                      {uiText(language)('settingsView.uninstall')}
                     </button>
                   </>
                 ) : (
@@ -2104,10 +2002,10 @@ function CardbushAppsPanel({
                       plugins: configuration.plugins.map((item) => item.id === plugin.id
                         ? { ...item, installed: true, enabled: true }
                         : item),
-                    }, `install:${plugin.id}`, '插件已安装', 'Plugin installed')}
+                    }, `install:${plugin.id}`, uiText(language)('plugins.installed'))}
                   >
                     <Plus size={14} />
-                    {language === 'zh' ? '安装' : 'Install'}
+                    {uiText(language)('browserInstallButton.install')}
                   </button>
                 )}
               </div>
@@ -2116,7 +2014,7 @@ function CardbushAppsPanel({
                 <ComputerUseSettings language={language} plugin={plugin} busy={Boolean(busyKey)} onReplace={replacePlugin}
                   onPersist={(next, message) => void persist({ ...configuration,
                     plugins: configuration.plugins.map(item => item.id === next.id ? next : item),
-                  }, 'config:' + plugin.id, message, message)} />
+                  }, 'config:' + plugin.id, message)} />
               )}
               {expanded && plugin.id === 'chrome' && (
                 <div className="cardbush-app-config chrome-connector-settings-wrap">
@@ -2128,7 +2026,7 @@ function CardbushAppsPanel({
                     onPersist={(next, message) => void persist({
                       ...configuration,
                       plugins: configuration.plugins.map((item) => item.id === next.id ? next : item),
-                    }, `config:${plugin.id}`, message, message)}
+                    }, `config:${plugin.id}`, message)}
                   />
                 </div>
               )}
@@ -2177,10 +2075,10 @@ function mcpDraftToInput(
     .map((line) => line.trim())
     .filter(Boolean);
   if (draft.transport === 'stdio' && commandParts.length === 0) {
-    throw new Error(language === 'zh' ? 'stdio 模式需要填写命令' : 'stdio transport requires a command');
+    throw new Error(uiText(language)('settingsView.stdioTransportRequiresACommand'));
   }
   if (draft.transport !== 'stdio' && !draft.url.trim()) {
-    throw new Error(language === 'zh' ? '远程 MCP 模式需要填写 URL' : 'Remote MCP transport requires a URL');
+    throw new Error(uiText(language)('settingsView.remoteMcpTransportRequiresAUrl'));
   }
   return {
     id,
@@ -2275,9 +2173,7 @@ function parseStringRecordText(
     );
   } catch {
     throw new Error(
-      language === 'zh'
-        ? `${label} 必须是合法 JSON 对象`
-        : `${label} must be a valid JSON object`,
+      uiText(language)('settingsView.mustBeAValidJsonObject', { label }),
     );
   }
 }
@@ -2298,14 +2194,13 @@ function mcpServerIsFromPlugin(server: McpServerConfig) {
 function mcpErrorText(caught: unknown, language: AppLanguage) {
   const message = errorMessage(caught);
   if (/mcp/i.test(message) && /transport/i.test(message)) {
-    return language === 'zh'
-      ? `MCP transport 配置无效：${message}`
-      : `Invalid MCP transport config: ${message}`;
+    return uiText(language)('settingsView.invalidMcpTransportConfig', { message });
   }
   return message;
 }
 
 function DiagnosticRow({ probe }: { probe: DiagnosticProbe }) {
+  const language = useUiLanguage();
   return (
     <div className={`diagnostic-row ${probe.ok ? 'ok' : 'fail'}`}>
       {probe.ok ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
@@ -2313,7 +2208,7 @@ function DiagnosticRow({ probe }: { probe: DiagnosticProbe }) {
         <strong>{probe.label}</strong>
         <span>{probe.detail}</span>
       </div>
-      <small>{probe.elapsedMs}ms</small>
+      <small>{probe.elapsedMs}{uiText(language)('settingsView.ms')}</small>
     </div>
   );
 }
@@ -2383,16 +2278,16 @@ async function requestProviderModels(
 function modelListEndpoint(baseUrl: string) {
   const trimmed = baseUrl.trim().replace(/\/+$/, '');
   if (!trimmed) {
-    throw new Error('Missing base_url');
+    throw new Error(uiText()('settingsView.missing_base_url'));
   }
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
   } catch {
-    throw new Error('base_url must be an http(s) URL');
+    throw new Error(uiText()('settingsView.base_url_must_be_an_http_s'));
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new Error('base_url must be an http(s) URL');
+    throw new Error(uiText()('settingsView.base_url_must_be_an_http_s'));
   }
   const normalizedPath = parsed.pathname.replace(/\/+$/, '');
   parsed.pathname = normalizedPath.endsWith('/models')
@@ -2442,7 +2337,7 @@ function resolveEffectiveModelInfo(
   language: AppLanguage,
 ): EffectiveModelInfo {
   const determinedByHost =
-    language === 'zh' ? '(由 Product Host 决定)' : '(determined by Product Host)';
+    uiText(language)('settingsView.determinedByProductHost');
   const config = settings.managedModelConfigs.find(
     (item) => item.id.trim().toLowerCase() === selectedModel.trim().toLowerCase(),
   ) ?? settings.managedModelConfigs.find(
@@ -2450,7 +2345,7 @@ function resolveEffectiveModelInfo(
   );
   if (!config || !shouldUseManagedConfig(config)) {
     return {
-      source: language === 'zh' ? 'Product Host 默认配置' : 'Product Host default config',
+      source: uiText(language)('settingsView.productHostDefaultConfig'),
       model: config?.modelName || selectedModel || determinedByHost,
       provider: determinedByHost,
       apiKeyLabel: determinedByHost,
@@ -2458,15 +2353,15 @@ function resolveEffectiveModelInfo(
     };
   }
   return {
-    source: language === 'zh' ? '托管模型配置' : 'Managed model config',
+    source: uiText(language)('settingsView.managedModelConfig'),
     model: config.modelName,
-    provider: config.provider || (language === 'zh' ? '(未填写)' : '(not filled)'),
+    provider: config.provider || (uiText(language)('settingsView.notFilled')),
     apiKeyLabel:
       config.apiKeyMasked ||
       (config.hasApiKey
-        ? language === 'zh' ? '(已配置)' : '(configured)'
+        ? uiText(language)('settingsView.configured')
         : maskSecret(config.apiKey, language)),
-    baseUrl: config.baseUrl || (language === 'zh' ? '(未填写)' : '(not filled)'),
+    baseUrl: config.baseUrl || (uiText(language)('settingsView.notFilled')),
   };
 }
 
@@ -2483,7 +2378,7 @@ function shouldUseManagedConfig(config: ManagedModelConfig) {
 function maskSecret(value: string, language: AppLanguage) {
   const raw = value.trim();
   if (!raw) {
-    return language === 'zh' ? '(未填写)' : '(not filled)';
+    return uiText(language)('settingsView.notFilled');
   }
   if (raw.length <= 8) {
     return `${raw[0]}${'*'.repeat(Math.max(0, raw.length - 1))}`;
@@ -2515,13 +2410,13 @@ async function localDiagnosticProbe(
 
 function assertDesktopRuntime() {
   if (!window.cardbushDesktop?.runtime) {
-    throw new Error('Electron Runtime bridge is unavailable.');
+    throw new Error(uiText()('runtimeChat.electron_runtime_bridge_is_unavailable'));
   }
 }
 
 function assertProductHost() {
   if (!window.cardbushDesktop?.productHostCommand) {
-    throw new Error('CardBush Product Host is unavailable.');
+    throw new Error(uiText()('productMcp.cardbush_product_host_is_unavailable'));
   }
 }
 
@@ -2568,7 +2463,7 @@ async function copyText(value: string) {
   const copied = document.execCommand('copy');
   textarea.remove();
   if (!copied) {
-    throw new Error('Copy failed');
+    throw new Error(uiText()('messageFeedback.copy_failed'));
   }
   window.dispatchEvent(new CustomEvent(COPY_FEEDBACK_EVENT));
 }

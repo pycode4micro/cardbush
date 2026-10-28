@@ -5,7 +5,10 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { BigIntStats } from 'node:fs';
 import { trustedGit } from './trustedGit.js';
+import { openWorkspaceFile, withWorkspaceFileAccess } from './workspaceFileAccess.js';
+import { SandboxFileHandle } from './workspaceSandboxFile.js';
 
 const exec = promisify(execFile);
 export type GitFileEntry = { hash: string; mode: number; kind: "file" | "symlink" };
@@ -52,13 +55,79 @@ export class GitWorkspaceStore {
     return createHash(await this.format()).update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
   }
 
-  async hashFiles(root: string, paths: string[], writeObjects = false): Promise<string[]> {
-    if (!paths.length) return [];
-    // --no-filters preserves bytes even with autocrlf, clean filters or working-tree-encoding.
-    const input = Buffer.from(paths.map(path => quoteGitPath(resolve(root, path).replaceAll("\\", "/"))).join("\n") + "\n");
-    const ids = (await this.git(["-c", "core.bigFileThreshold=8m", "hash-object", ...(writeObjects ? ["-w"] : []), "--no-filters", "--stdin-paths"], input)).toString("utf8").trim().split("\n");
-    if (ids.length !== paths.length || ids.some(id => !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(id))) throw corrupt("Git returned an invalid file object list.");
-    return ids;
+  async hashFiles(root: string, paths: string[], writeObjects = false, expectedIdentities?: Readonly<Record<string, string>>): Promise<string[]> {
+    const format = paths.length ? await this.format() : 'sha1';
+    if (expectedIdentities && paths.every(path => expectedIdentities[resolve(root, path)])) {
+      const ids: string[] = [];
+      // Reuse the sandbox supervisor without broadening to a directory grant.
+      // Bound both the number of exact grants and the native policy size.
+      for (let offset = 0; offset < paths.length;) {
+        const identities: Record<string, string> = {};
+        let size = 0;
+        do {
+          const path = resolve(root, paths[offset]!);
+          identities[path] = expectedIdentities[path]!;
+          size += Buffer.byteLength(JSON.stringify(path)) * 3 + 128;
+          offset++;
+        } while (offset < paths.length && Object.keys(identities).length < 64 && size < 32 * 1024);
+        const file = await SandboxFileHandle.openReadBatch(identities);
+        try {
+          async function* contents() {
+            for (const [path, identity] of Object.entries(identities)) {
+              await file.request({ op: 'open', path, identity, write: false });
+              const before = await file.stat({ bigint: true });
+              const digest = createHash(format).update(`blob ${before.size}\0`);
+              let count = 0n;
+              if (writeObjects) yield Buffer.from(`blob\ndata ${before.size}\n`);
+              for await (const chunk of file.createReadStream()) {
+                count += BigInt(chunk.length);
+                if (count > before.size) throw changedDuringCapture();
+                digest.update(chunk);
+                if (writeObjects) yield chunk;
+              }
+              const after = await file.stat({ bigint: true });
+              if (count !== before.size || before.size !== after.size || before.mtimeNs !== after.mtimeNs ||
+                  before.ctimeNs !== after.ctimeNs || after.nlink !== 1n) throw changedDuringCapture();
+              ids.push(digest.digest('hex'));
+              await file.request({ op: 'release' });
+              if (writeObjects) yield Buffer.from('\n');
+            }
+            if (writeObjects) yield Buffer.from('done\n');
+          }
+          if (writeObjects) await this.git(['fast-import', '--quiet', '--done'], contents());
+          else for await (const _ of contents()) { /* Hash checked bytes without storing another copy. */ }
+        } finally { await file.close(); }
+      }
+      return ids;
+    }
+    return mapFiles(paths, async path => {
+      const absolute = resolve(root, path);
+      return withWorkspaceFileAccess([absolute], false, async () => {
+        const file = await openWorkspaceFile(absolute);
+        try {
+          const before = await file.stat({ bigint: true }) as BigIntStats;
+          const digest = createHash(format).update(`blob ${before.size}\0`);
+          let count = 0n;
+          async function* bytes() {
+            for await (const chunk of file.createReadStream({ autoClose: false })) {
+              count += BigInt(chunk.length);
+              if (count > before.size) throw changedDuringCapture();
+              digest.update(chunk);
+              yield chunk;
+            }
+            const after = await file.stat({ bigint: true }) as BigIntStats;
+            if (count !== before.size || before.size !== after.size || before.mtimeNs !== after.mtimeNs ||
+                before.ctimeNs !== after.ctimeNs || after.nlink !== 1n) throw changedDuringCapture();
+          }
+          // Git receives only bytes from the checked sandbox handle. It must
+          // never reopen a workspace pathname, even for large binary artifacts.
+          const id = (await this.git(['hash-object', ...(writeObjects ? ['-w'] : []), '--no-filters', '--stdin'], bytes())).toString('utf8').trim();
+          assertOid(id);
+          if (id !== digest.digest('hex')) throw corrupt('Git returned an invalid file object identity.');
+          return id;
+        } finally { await file.close(); }
+      }, { expectedIdentities });
+    }, 2);
   }
 
   async storeBlobs(blobs: Map<string, () => Promise<Buffer>>) {
@@ -208,14 +277,12 @@ export function decodeGitPaths(bytes: Buffer) {
   return text;
 }
 
-function quoteGitPath(path: string) {
-  return '"' + path.replace(/[\\"\x00-\x1f\x7f]/g, char => char === '"' || char === "\\" ? `\\${char}` : `\\${char.charCodeAt(0).toString(8).padStart(3, "0")}`) + '"';
-}
+const changedDuringCapture = () => Object.assign(new Error('A file changed while capturing its Git version.'), { code: 'workspace_changed_during_checkpoint' });
 
-export async function mapFiles<T, U>(items: T[], apply: (item: T) => Promise<U>): Promise<U[]> {
+export async function mapFiles<T, U>(items: T[], apply: (item: T) => Promise<U>, concurrency = 32): Promise<U[]> {
   const result = new Array<U>(items.length);
   let next = 0;
-  const settled = await Promise.allSettled(Array.from({ length: Math.min(32, items.length) }, async () => {
+  const settled = await Promise.allSettled(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     for (;;) {
       const index = next++;
       if (index >= items.length) return;

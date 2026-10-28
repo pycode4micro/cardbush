@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { RefreshCw, X } from 'lucide-react';
 import type { AppLanguage, ChatMessage } from '../../types';
 import { useLiveThinkingNotice } from '../composer/useLiveThinkingNotice';
@@ -40,17 +41,17 @@ export function GuidanceActivity({ message, conversationId, turnId, language, mo
     enabled: thinkingVisible && reasoningActive && state === 'sent',
     running: reasoningActive && !stopping && state === 'sent' });
   const notice = reasoningActive && thinkingVisible && state === 'sent' && !stopping ? liveNotice : null;
-  const label = stopping ? (language === 'zh' ? '正在停止' : 'Stopping')
-    : state === 'pending' ? (language === 'zh' ? '正在发送引导' : 'Sending guidance')
-    : state === 'queued' ? (language === 'zh' ? '等待当前步骤完成' : 'Waiting for the current step')
-    : !reasoningActive ? (language === 'zh' ? '等待引导生效' : 'Waiting for guidance to apply')
-    : language === 'zh' ? '正在继续处理' : 'Continuing';
+  const label = stopping ? (uiText(language)('guidanceActivity.stopping'))
+    : state === 'pending' ? (uiText(language)('guidanceActivity.sendingGuidance'))
+    : state === 'queued' ? (uiText(language)('guidanceActivity.waitingForTheCurrentStep'))
+    : !reasoningActive ? (uiText(language)('guidanceActivity.waitingForGuidanceToApply'))
+    : uiText(language)('guidanceActivity.continuing');
   return <div className="message-row assistant guidance-activity" data-guidance-id={message.id}
     data-guidance-state={state} role="status" aria-live="polite">
     {state === 'failed' ? <div className="guidance-activity-error">
-      <X size={12} /><span>{language === 'zh' ? '引导发送失败' : 'Guidance failed to send'}</span>
+      <X size={12} /><span>{uiText(language)('guidanceActivity.guidanceFailedToSend')}</span>
       {retryAvailable && <button type="button" className="guidance-retry-button" onClick={() => void onRetry(message)}>
-        <RefreshCw size={11} />{language === 'zh' ? '重试' : 'Retry'}
+        <RefreshCw size={11} />{uiText(language)('common.retry')}
       </button>}
     </div> : <div className="assistant-bubble">
       <AssistantThinkingDetail language={language} model={model} notice={notice}

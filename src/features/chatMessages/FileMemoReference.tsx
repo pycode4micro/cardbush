@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../i18n/react';
+import { uiText } from '../../i18n';
 import { useContext, useEffect, useState, type ReactNode } from 'react';
 import { parseFileMemoReference, type FileMemoResolution } from '@cardbush/bush-protocol';
 import { fetchFileMemo } from '../../backend/fileMemo';
@@ -13,10 +15,12 @@ import { ConversationHostContext } from '../conversationHost';
 import { ConversationFileReference } from './ConversationFileReference';
 import { MessageContentImage, useImageGalleryFallback } from './MessageImageGalleryFrame';
 
-export function FileMemoReference({ reference, children, inline = false, language = 'zh', load = fetchFileMemo }: {
-  reference: string; children?: ReactNode; inline?: boolean; language?: 'zh' | 'en';
+export function FileMemoReference({ reference, children, inline = false, language: selectedLanguage, load = fetchFileMemo }: {
+  reference: string; children?: ReactNode; inline?: boolean; language?: string;
   load?: typeof fetchFileMemo;
 }) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
   const presentedMedia = useContext(PresentedMediaContext);
   const host = useContext(ConversationHostContext);
   const { sessionId, turnId } = useContext(FileMemoScopeContext);
@@ -46,26 +50,26 @@ export function FileMemoReference({ reference, children, inline = false, languag
   if (current?.failed || current?.result?.status === 'unresolved') {
     const reason = current.result?.status === 'unresolved' ? current.result.reason : undefined;
     const detail = current.failed
-      ? language === 'zh' ? '暂时无法读取文件引用，请重试。' : 'Unable to load this file reference right now. Please retry.'
+      ? uiText(language)('fileMemoReference.unableToLoadThisFileReferenceRight')
       : reason === 'missing_context'
-        ? language === 'zh' ? '请在此文件所属的原会话中打开。' : 'Open this file in its original conversation.'
+        ? uiText(language)('fileMemoReference.openThisFileInItsOriginalConversation')
         : reason === 'ambiguous_reference' || reason === 'reference_mismatch'
-          ? language === 'zh' ? '无法确认对应文件，请让助手重新提供链接。' : 'The target file is uncertain. Ask the assistant for a new link.'
-          : language === 'zh' ? '链接未找到对应文件记录，请让助手重新提供链接。' : 'No file record matches this link. Ask the assistant for a new link.';
+          ? uiText(language)('fileMemoReference.theTargetFileIsUncertainAskThe')
+          : uiText(language)('fileMemoReference.noFileRecordMatchesThisLinkAsk');
     return <span className="file-memo-reference file-memo-reference-error">
-      <span>{children || (language === 'zh' ? '文件链接' : 'File link')}</span>
+      <span>{children || (uiText(language)('fileMemoReference.fileLink'))}</span>
       <small role="status">{detail}</small>
-      <button type="button" className="file-memo-retry" onClick={() => setAttempt(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button>
+      <button type="button" className="file-memo-retry" onClick={() => setAttempt(value => value + 1)}>{uiText(language)('common.retry')}</button>
     </span>;
   }
-  if (!current?.result) return <span aria-busy="true">{children || (language === 'zh' ? '正在读取文件…' : 'Loading file…')}</span>;
+  if (!current?.result) return <span aria-busy="true">{children || (uiText(language)('fileMemoReference.loadingFile'))}</span>;
   const { memo, status, currentVersion } = current.result;
   const label = children || memo.file.name;
   const path = memo.file.path;
   const targetKind = resourceTargetKind(path);
   if (status === 'unavailable' || (targetKind !== 'local-file' && targetKind !== 'ssh-file')) return <span className="local-file-reference-unavailable">
-    {label} · {language === 'zh' ? '文件不可访问' : 'File unavailable'}
-    {' '}<button type="button" className="file-memo-retry" onClick={() => setAttempt(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button>
+    {label} · {uiText(language)('fileMemoReference.fileUnavailable')}
+    {' '}<button type="button" className="file-memo-retry" onClick={() => setAttempt(value => value + 1)}>{uiText(language)('common.retry')}</button>
   </span>;
   const mediaKey = JSON.stringify([reference, sessionId, memo.file.size, memo.file.mtimeMs]);
   const html = isHtmlPreviewPath(path);
@@ -75,7 +79,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
   const media = inline && (status === 'available' || html) && failedMedia !== mediaKey && !presentedMedia.has(mediaPresentationKey(path));
   if (host) return <span>
     <ConversationFileReference path={path} inline={media} language={language} fileVersion={JSON.stringify(htmlVersion)}>{label}</ConversationFileReference>
-    {status === 'changed' && !(media && html) && <small role="status"> · {language === 'zh' ? '文件已变化，打开查看当前版本' : 'File changed; open the current version'}</small>}
+    {status === 'changed' && !(media && html) && <small role="status"> · {uiText(language)('fileMemoReference.fileChangedOpenTheCurrentVersion')}</small>}
   </span>;
   const source = fileUrl(path);
   return <span className="file-memo-reference">
@@ -89,7 +93,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
       : media && isVideoPath(path) ? <InlineVideo src={source} language={language} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : media && isAudioPath(path) ? <InlineAudio src={source} language={language} onError={() => setFailedMedia(mediaKey)} onContextMenu={event => openFileContextMenu(event, path, { language })} />
       : <LocalFileReferenceLink path={path} knownFileName={memo.file.name}>{label}</LocalFileReferenceLink>}
-    {status === 'changed' && !(media && html) && <small role="status"> · {language === 'zh' ? '文件已变化，打开查看当前版本' : 'File changed; open the current version'}</small>}
-    {status === 'available' && inline && failedMedia === mediaKey && <small role="status"> · {language === 'zh' ? '无法预览，打开文件查看' : 'Preview unavailable; open the file'}</small>}
+    {status === 'changed' && !(media && html) && <small role="status"> · {uiText(language)('fileMemoReference.fileChangedOpenTheCurrentVersion')}</small>}
+    {status === 'available' && inline && failedMedia === mediaKey && <small role="status"> · {uiText(language)('fileMemoReference.previewUnavailableOpenTheFile')}</small>}
   </span>;
 }

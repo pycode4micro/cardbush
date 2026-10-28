@@ -102,7 +102,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
         for (const state of ['voice', 'send', 'stop', 'stopping']) {
           const running = state === 'stop' || state === 'stopping';
           await run(`updateChat({draft:${JSON.stringify(state === 'send' ? '发送测试' : '')}, sending:${running}, stopping:${state === 'stopping'}, activeTurnId:${JSON.stringify(running ? 'toolbar-turn' : '')}})`);
-          await until(`!!document.querySelector('.send-button .lucide-${state === 'voice' ? 'mic' : state === 'send' ? 'arrow-up' : state === 'stop' ? 'square' : 'loader-circle'}')`, state + ' icon');
+          await until(`!!document.querySelector('.send-button .lucide-${state === 'voice' ? 'audio-lines' : state === 'send' ? 'arrow-up' : state === 'stop' ? 'square' : 'loader-circle'}')`, state + ' icon');
+          assert.ok(await run('!!document.querySelector(".voice-dictation-button .lucide-mic")'), 'dictation stays separate from the primary action');
           const geometry = await run('toolbarGeometry()');
           const label = `${theme}, ${width}px, ${state}: ${JSON.stringify(geometry)}`;
           assert.ok(geometry.send.width >= 28 && Math.abs(geometry.send.width - geometry.send.height) < 0.5, 'circular send/stop target: ' + label);
@@ -116,7 +117,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run("document.querySelector('.composer-stack').style.removeProperty('width')");
     assert.equal(await run("getComputedStyle(document.querySelector('.permission-center-button span')).display !== 'none' && getComputedStyle(document.querySelector('.model-select span')).display !== 'none'"), true, 'wide composer restores labels');
     await run("updateChat({messages:[], sending:false, stopping:false, activeTurnId:'', draft:'', queuedMessageCount:0})");
-    await until("!!document.querySelector('.welcome-composer .send-button .lucide-mic')", 'empty welcome composer uses voice');
+    await until("!!document.querySelector('.welcome-composer .send-button .lucide-audio-lines')", 'empty welcome composer exposes voice call');
     await run("document.querySelector('.composer-stack').style.width='240px'");
     const welcome = await run('toolbarGeometry()');
     assert.equal(welcome.send.width, welcome.send.height, 'welcome send target remains circular');

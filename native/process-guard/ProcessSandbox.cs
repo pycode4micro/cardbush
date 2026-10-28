@@ -106,6 +106,10 @@ internal static partial class CardBushProcessHost
                 }
                 else
                 {
+                    // A cached directory capability is not evidence that the
+                    // current descendants still have only authorized aliases.
+                    foreach (string path in policy.readableRoots) using (new SandboxTreeGuard(path)) { }
+                    foreach (string path in policy.writableRoots) using (new SandboxTreeGuard(path)) { }
                     var scope = ReadSandboxScope(policy.scope.policyPath, false);
                     if (!SameScope(scope.readableRoots, policy.readableRoots) || !SameScope(scope.writableRoots, policy.writableRoots))
                         throw new ArgumentException("Sandbox authorization does not match the admitted directories.");
@@ -321,6 +325,7 @@ internal static partial class CardBushProcessHost
     private static void GrantSandboxDirectory(string path, SecurityIdentifier identity, FileSystemRights rights)
     {
         WithSandboxAclLock(delegate {
+            using (new SandboxTreeGuard(path)) {
             IntPtr handle = SandboxAclHandle(path);
             var security = ReadSandboxDirectorySecurity(handle);
             // The root itself cannot be deleted or renamed by this command.
@@ -328,6 +333,7 @@ internal static partial class CardBushProcessHost
             security.AddAccessRule(new FileSystemAccessRule(identity, rights,
                 InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Allow));
             WriteSandboxDirectorySecurity(handle, security);
+            }
         });
     }
 

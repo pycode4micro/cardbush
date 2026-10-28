@@ -1,4 +1,5 @@
 import { readSourceFile } from './helpers/read-source-file.cjs';
+import { assertUiMessage } from './helpers/ui-message-contract.mjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -47,12 +48,13 @@ assert(
 );
 assert(
   app.includes("<BackendLoading language={language} history={historyLoading} />") &&
-    app.includes("Connecting to the runtime..."),
+    app.includes("uiText(language)('chatStatusViews.connectingToTheRuntime')"),
   'runtime loading state must support both UI languages',
 );
+assertUiMessage(app, 'chatStatusViews.connectingToTheRuntime', { zh: '正在连接运行服务...', en: 'Connecting to the runtime...' });
 assert(
   app.includes('function RuntimeStatusBanner(') &&
-    app.includes("actionLabel={language === 'zh' ? '重试' : 'Retry'}") &&
+    app.includes("actionLabel={uiText(language)('common.retry')}") &&
     app.includes('await refreshBackendWithFeedback({ silent: false })'),
   'runtime errors must expose an inline localized retry action',
 );
@@ -92,24 +94,19 @@ assert(
     packageJson.dependencies?.['@xterm/xterm'] == null,
   'retired product-side Git and terminal consoles must not return',
 );
-assert(
-  windowFrame.includes("const zh = language === 'zh'") &&
-    ["zh ? '最小化' : 'Minimize'", "zh ? '最大化' : 'Maximize'",
-      "zh ? '还原窗口' : 'Restore'", "zh ? '关闭' : 'Close'"].every(label => windowFrame.includes(label)),
-  'window frame actions must support both UI languages',
-);
+for (const [key, zh, en] of [
+  ['windowFrame.minimize', '最小化', 'Minimize'], ['windowFrame.maximize', '最大化', 'Maximize'],
+  ['windowFrame.restore', '还原窗口', 'Restore'], ['common.close', '关闭', 'Close'],
+]) assertUiMessage(windowFrame, key, { zh, en });
 assert(!windowFrame.includes('cache-chip'), 'the retired title-bar cache button must not return');
-assert(
-  messageBubble.includes("language === 'zh' ? '复制' : 'Copy'"),
-  'markdown copy action must support both UI languages',
-);
+assertUiMessage(messageBubble, 'messageBubble.copy', { zh: '复制', en: 'Copy' });
 assert(
   messageBubble.includes('await recordAssistantFeedback(message, nextRating, {') &&
     !messageBubble.includes('反馈给 LEM'),
   'assistant thumbs use the built-in feedback service without requiring an optional memory plugin',
 );
 assert(
-  chat.includes('language?: AppLanguage') && chat.includes('const localize = useCallback'),
+  chat.includes('language?: AppLanguage') && chat.includes('languageRef.current = requestContext.language') && chat.includes('uiText(languageRef.current)'),
   'chat lifecycle errors must receive the active UI language',
 );
 assert(
@@ -120,11 +117,9 @@ assert(
   !/setNotice\((?:`|')\p{Script=Han}/u.test(chat),
   'chat notices must not be Chinese-only literals',
 );
-assert(
-  chat.includes('Unable to reach the model provider or an external integration') &&
-    chat.includes('无法连接模型服务或外部集成'),
-  'external connection failures must support both UI languages',
-);
+assertUiMessage(chat, 'useCardbushChat.could_not_connect_to_the_model_service', {
+  zh: '无法连接模型服务或外部集成。', en: 'Could not connect to the model service or external integration.',
+});
 assert(
   !api.includes('/v1/') && !api.includes('BushServer') && !api.includes('VITE_BACKEND_BASE_URL'),
   'production API must not contain the retired local HTTP service boundary',
@@ -144,9 +139,10 @@ assert(
   'retired generic user-choice Tool and protocol must not return',
 );
 assert(
-  api.includes('function localizedClientMessage') &&
+  api.includes("import { uiText } from '../i18n'") &&
+    /throw new Error\(\s*uiText\(undefined\)\('api\./.test(api) &&
     !/throw new Error\('.*\p{Script=Han}/u.test(api),
-  'API validation errors must use localizedClientMessage',
+  'API validation errors must use the shared language catalog',
 );
 assert(!readme.includes('C:\\Users\\'), 'README must not contain a developer-specific path');
 assert(readme.includes(packageJson.version) && readmeZh.includes(packageJson.version), 'both READMEs must describe the release version');
@@ -156,19 +152,20 @@ assert(readmeZh.includes('README.md'), 'Chinese README must link to the English 
 if (process.argv.includes('--dist')) {
   const assetsDir = resolve(root, 'dist/assets');
   assert(existsSync(assetsDir), 'dist/assets is missing; run the production build first');
-  const productionJavaScript = readdirSync(assetsDir)
-    .filter((name) => name.endsWith('.js'))
-    .map((name) => readSourceFile(resolve(assetsDir, name), 'utf8'))
-    .join('\n');
-  assert(
-    !productionJavaScript.includes('cardbush_pre_test'),
-    'production bundle still contains the pre-test activation key',
-  );
-  assert(
-    !productionJavaScript.includes('bush.runtime_fixture.v1') &&
-      !productionJavaScript.includes('single-turn-reasoning-assistant-terminal'),
-    'production bundle still contains the runtime protocol fixture',
-  );
+  // Vite retains older chunks for open windows. Check every retained file but
+  // never concatenate the entire history into a string larger than V8 allows.
+  for (const name of readdirSync(assetsDir).filter(name => name.endsWith('.js'))) {
+    const productionJavaScript = readSourceFile(resolve(assetsDir, name), 'utf8');
+    assert(
+      !productionJavaScript.includes('cardbush_pre_test'),
+      `production bundle still contains the pre-test activation key: ${name}`,
+    );
+    assert(
+      !productionJavaScript.includes('bush.runtime_fixture.v1') &&
+        !productionJavaScript.includes('single-turn-reasoning-assistant-terminal'),
+      `production bundle still contains the runtime protocol fixture: ${name}`,
+    );
+  }
 }
 
 console.log(`release cleanup contract tests passed${process.argv.includes('--dist') ? ' (production bundle)' : ''}`);

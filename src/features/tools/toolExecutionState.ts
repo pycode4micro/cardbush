@@ -1,3 +1,6 @@
+import type { MessageKey } from '../../i18n';
+import { localizedContent } from '../../i18n';
+import { uiText } from '../../i18n';
 import type { AppLanguage, ChatToolExecution } from '../../types';
 import { normalizeToolDisplay, selectToolActivity, terminalToolOutcome, terminalCommandOutcomeSchema } from '@cardbush/bush-protocol';
 
@@ -34,7 +37,7 @@ export function runningToolLabel(
 // Never use raw arguments, shell commands or error payloads as a fallback title.
 export function toolActionTitle(execution: ChatToolExecution, language: AppLanguage): string {
   const display = normalizeToolDisplay(execution.metadata.displayTitles) ?? normalizeToolDisplay(execution.metadata.displayTitle);
-  const localized = display?.titles?.[language];
+  const localized = localizedContent(display?.titles, language);
   if (typeof localized === 'string' && localized.trim()) return compactActionTitle(localized);
   const supplied = display?.title;
   // Legacy receipts have one title only. Keep it in its own locale; otherwise
@@ -42,26 +45,27 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
   if (typeof supplied === 'string' && supplied.trim() &&
       (/[\p{Script=Han}]/u.test(supplied) ? language === 'zh' : language === 'en')) return compactActionTitle(supplied);
   const name = execution.name.toLowerCase();
-  const labels: Record<string, [string, string]> = {
-    terminal_exec: ['执行命令', 'Run command'], shell_command: ['执行命令', 'Run command'],
-    open_external_url: ['打开网页', 'Open webpage'],
-    linux_computer_use: ['操作云端电脑', 'Use cloud computer'],
-    linux_browser_use: ['操作云端浏览器', 'Use cloud browser'],
-    terminal_poll: ['查看命令进度', 'Check command progress'], terminal_write: ['向终端输入', 'Write to terminal'],
-    read_file: ['读取文件', 'Read file'], read_files: ['读取文件', 'Read files'],
-    summary_for_user: ['准备最终回复', 'Prepare final reply'], check_habit: ['查看个性化记忆', 'Check personalization'], revise_memory: ['修正个性化记忆', 'Correct memory'],
-    search_file_content: ['检索文件内容', 'Search file contents'], list_directory: ['查看目录', 'List directory'],
-    apply_patch: ['修改文件', 'Edit files'], edit_file: ['修改文件', 'Edit file'], write_file: ['写入文件', 'Write file'],
-    terminal_stop: ['停止命令', 'Stop command'], terminal_list: ['查看终端任务', 'List terminal tasks'],
-    search_skills: ['查找相关技能', 'Find relevant skills'], run_skill: ['使用技能', 'Use skill'],
-    mcp_search: ['查找可用工具', 'Find available tools'], call_tool: ['调用工具', 'Call tool'],
-    run_tools: ['执行任务', 'Run tasks'], start_mcp_tool: ['启动后台任务', 'Start background task'],
-    tasks: ['查看任务进度', 'Check task progress'],
-    subagent: ['分配任务', 'Delegate task'], update_task_plan: ['更新计划', 'Update plan'],
-    request_user_input_async: ['询问用户', 'Ask user'],
-    runtime_context_compaction: ['整理上下文', 'Organize context'],
+  const labels: Record<string, MessageKey> = {
+    terminal_exec: 'toolExecutionState.run_command' as const, shell_command: 'toolExecutionState.run_command' as const,
+    open_external_url: 'toolExecutionState.open_webpage' as const,
+    linux_computer_use: 'toolExecutionState.use_cloud_computer' as const,
+    linux_browser_use: 'toolExecutionState.use_cloud_browser' as const,
+    terminal_poll: 'toolExecutionState.check_command_progress' as const, terminal_write: 'toolExecutionState.write_to_terminal' as const,
+    read_file: 'toolExecutionState.read_file' as const, read_files: 'toolExecutionState.read_files' as const,
+    summary_for_user: 'toolExecutionState.prepare_final_reply' as const, check_habit: 'toolExecutionState.check_personalization' as const, revise_memory: 'toolExecutionState.correct_memory' as const,
+    search_file_content: 'toolExecutionState.search_file_contents' as const, list_directory: 'toolExecutionState.list_directory' as const,
+    apply_patch: 'toolExecutionState.edit_files' as const, edit_file: 'toolExecutionState.edit_file' as const, write_file: 'toolExecutionState.write_file' as const,
+    terminal_stop: 'toolExecutionState.stop_command' as const, terminal_list: 'toolExecutionState.list_terminal_tasks' as const,
+    search_skills: 'toolExecutionState.find_relevant_skills' as const, run_skill: 'toolExecutionState.use_skill' as const,
+    mcp_search: 'toolExecutionState.find_available_tools' as const, call_tool: 'toolExecutionState.call_tool' as const,
+    run_tools: 'toolExecutionState.run_tasks' as const, start_mcp_tool: 'toolExecutionState.start_background_task' as const,
+    tasks: 'toolExecutionState.check_task_progress' as const,
+    await_subagents: 'toolExecutionState.wait_task_results' as const,
+    subagent: 'toolExecutionState.delegate_task' as const, update_task_plan: 'toolExecutionState.update_plan' as const,
+    request_user_input_async: 'toolExecutionState.ask_user' as const,
+    runtime_context_compaction: 'toolExecutionState.organize_context' as const,
   };
-  return labels[name]?.[language === 'zh' ? 0 : 1] ?? displayToolName(execution.name);
+  return (labels[name] && uiText(language)(labels[name])) ?? displayToolName(execution.name, language);
 }
 
 function compactActionTitle(value: string) {
@@ -74,15 +78,15 @@ export function selectToolActivityExecution(executions: ChatToolExecution[], pre
 
 export function toolActivityStatus(execution: ChatToolExecution, language: AppLanguage, active: boolean): string {
   if (active && isToolRunning(execution)) return activeToolStatusLabel(execution, language)!;
-  if (isToolRunning(execution) || execution.state === 'cancelled') return language === 'zh' ? '已中止' : 'Stopped';
-  if (execution.state === 'failed') return language === 'zh' ? '失败' : 'Failed';
+  if (isToolRunning(execution) || execution.state === 'cancelled') return uiText(language)('toolExecutionBlock.stopped');
+  if (execution.state === 'failed') return uiText(language)('automationPanel.failed');
   const terminal = toolTerminalOutcome(execution);
-  if (terminal === 'failed') return language === 'zh' ? '执行失败' : 'Command failed';
-  if (terminal === 'stopped') return language === 'zh' ? '已停止' : 'Stopped';
-  if (terminal === 'running') return language === 'zh' ? '已转后台' : 'Sent to background';
-  if (terminal === 'succeeded') return language === 'zh' ? '命令已结束' : 'Command exited';
+  if (terminal === 'failed') return uiText(language)('toolExecutionState.commandFailed');
+  if (terminal === 'stopped') return uiText(language)('automationPanel.stopped');
+  if (terminal === 'running') return uiText(language)('toolExecutionState.sentToBackground');
+  if (terminal === 'succeeded') return uiText(language)('toolExecutionState.commandExited');
   // A returned tool receipt can represent a submitted/running remote job.
-  return language === 'zh' ? '已返回' : 'Returned';
+  return uiText(language)('toolExecutionState.returned');
 }
 
 export function toolTerminalOutcome(execution: ChatToolExecution) {
@@ -98,35 +102,35 @@ export function activeToolStatusLabel(
   language: AppLanguage,
 ) {
   const state = execution.state;
-  if (state === 'awaiting_solution') return language === 'zh' ? '等待方案选择' : 'Awaiting solution selection';
+  if (state === 'awaiting_solution') return uiText(language)('toolExecutionState.awaitingSolutionSelection');
   if (state === 'awaiting_permission') {
-    return language === 'zh' ? '等待授权' : 'Awaiting permission';
+    return uiText(language)('toolExecutionState.awaitingPermission');
   }
   if (state === 'queued') {
-    return language === 'zh' ? '排队中' : 'Queued';
+    return uiText(language)('automationPanel.queued');
   }
   if (state === 'running') {
-    return language === 'zh' ? '运行中' : 'Running';
+    return uiText(language)('cardlingWindow.running');
   }
   return undefined;
 }
 
-export function displayToolName(value: string) {
+export function displayToolName(value: string, language?: AppLanguage) {
   let text = value.trim();
   if (!text) {
-    return 'Tool';
+    return uiText(language)('toolExecutionState.tool');
   }
   const lowered = text.toLowerCase();
-  if (lowered === 'request_user_input_async') return 'Ask user';
-  if (lowered === 'runtime_context_compaction') return 'Context compaction';
-  if (lowered === 'workspace_checkpoint') return 'Workspace changes';
+  if (lowered === 'request_user_input_async') return uiText(language)('toolExecutionState.ask_user');
+  if (lowered === 'runtime_context_compaction') return uiText(language)('toolExecutionBlock.contextCompaction');
+  if (lowered === 'workspace_checkpoint') return uiText(language)('toolExecutionState.workspace_changes');
   for (const separator of [':', '.', '/']) {
     if (text.includes(separator)) {
       text = text.split(separator).pop() ?? text;
     }
   }
   if (text === 'shell_command' || text === 'terminal_exec') {
-    return 'Shell';
+    return uiText(language)('toolExecutionState.shell');
   }
   return text;
 }

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Eye, FileImage, LoaderCircle } from 'lucide-react';
 import { useCallback, useContext, useEffect, useState } from 'react';
 
@@ -51,7 +52,7 @@ export function ToolImageArtifactViewer({
       ) {
         retryLocalImage(pathValue);
         const dataUrl = await recoverLocalImage(pathValue, window.cardbushDesktop.readImageDataUrl);
-        if (!dataUrl) throw new Error('Image is unavailable at its original path.');
+        if (!dataUrl) throw new Error(uiText(language)('toolImageArtifactViewer.image_is_unavailable_at_its_original_path'));
         src = dataUrl;
       }
       setFailedPaths((current) => {
@@ -84,7 +85,7 @@ export function ToolImageArtifactViewer({
               type="button"
               key={`${artifact.id}:${pathValue}`}
               title={/^(?:data:|blob:)/i.test(pathValue) ? name : `${name}\n${pathValue}`}
-              aria-label={`${language === 'zh' ? '查看图像' : 'View image'}: ${name}${failed ? (language === 'zh' ? '（预览失败，点击重试）' : ' (preview failed, retry)') : ''}`}
+              aria-label={`${uiText(language)('toolImageArtifactViewer.viewImage')}: ${name}${failed ? (uiText(language)('toolImageArtifactViewer.previewFailedRetry')) : ''}`}
               aria-busy={loading || undefined}
               disabled={!pathValue || loading}
               onClick={() => void openImage(artifact)}
@@ -93,7 +94,7 @@ export function ToolImageArtifactViewer({
               {variant === 'thumbnail' ? <>
                 <ToolImageThumbnail key={pathValue} path={pathValue} name={name} language={language} />
                 {(loading || failed) && <span className="tool-image-thumbnail-overlay" aria-hidden="true">
-                  {loading ? <LoaderCircle size={16} className="spin" /> : <span>{language === 'zh' ? '点击重试' : 'Retry'}</span>}
+                  {loading ? <LoaderCircle size={16} className="spin" /> : <span>{uiText(language)('toolImageArtifactViewer.retry')}</span>}
                 </span>}
               </> : <><span className="tool-preview-icon" aria-hidden="true">
                 {loading ? <LoaderCircle size={14} /> : <FileImage size={14} />}
@@ -101,8 +102,8 @@ export function ToolImageArtifactViewer({
               <span className="tool-preview-content">
                 <strong>
                   {failed
-                    ? language === 'zh' ? '图片无法预览' : 'Preview unavailable'
-                    : language === 'zh' ? '查看图像' : 'View image'}
+                    ? uiText(language)('image.unavailable')
+                    : uiText(language)('toolImageArtifactViewer.viewImage')}
                 </strong>
                 <small>{name}</small>
               </span>
@@ -140,7 +141,7 @@ function ToolImageThumbnail({ path, name, language }: { path: string; name: stri
   }, [host, failed, path]);
   if (host && !source && !error) return <span className="tool-image-thumbnail-fallback" aria-hidden="true"><LoaderCircle size={20} className="spin" /></span>;
   if (error || fallbackFailed || (failed && !fallback)) return <span className="tool-image-thumbnail-fallback" aria-hidden="true">
-    <FileImage size={20} /><span>{name}</span><small>{language === 'zh' ? '图片不可用，点击重试' : 'Image unavailable. Retry'}</small>
+    <FileImage size={20} /><span>{name}</span><small>{uiText(language)('image.retry')}</small>
   </span>;
   return <img src={fallback || source} alt="" loading="lazy" decoding="async" draggable={false}
     onError={() => fallback ? setFallbackFailed(true) : setFailed(true)} />;

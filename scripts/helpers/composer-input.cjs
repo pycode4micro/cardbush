@@ -42,7 +42,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run('document.querySelector(".message-list").focus()');
     const paddingPoint = await run(`(() => {
       const surface = document.querySelector('.composer-surface'), rect = surface.getBoundingClientRect();
-      const x = Math.ceil(rect.left + 6), y = Math.ceil(rect.top + 6);
+      // Click the flat top inset, outside the rounded corners.
+      const x = Math.round(rect.left + rect.width / 2), y = Math.ceil(rect.top + 6);
       if (document.elementFromPoint(x, y) !== surface) throw Error('Fixture must click composer padding');
       return { x, y };
     })()`);
@@ -140,6 +141,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
       for (const rich of [true, false]) {
         await run(`updateChat({ draft: ${rich ? 'inputSkillLink + " "' : '"普通输入 "'} })`);
         await until(`!!document.querySelector('${rich ? '.composer-prompt-editor' : 'textarea[data-composer-input]'}')`, 'IME editor ready');
+        // Rich-to-rich updates retain the same node. Its presence alone does
+        // not mean React has replaced the previous fixture's text yet.
+        await until(rich
+          ? '!document.querySelector(".composer-prompt-editor").textContent.includes("恢复输入")'
+          : 'document.querySelector("textarea[data-composer-input]").value === chatProps.draft', 'IME draft committed');
         await run(rich ? 'inputSelectAll(); getSelection().collapseToEnd()' : 'inputType(chatProps.draft)');
         const before = await run('chatProps.draft');
         const sentCount = await run('inputSent.length');

@@ -1,10 +1,12 @@
+import type { MessageKey } from '../../i18n';
+import { uiText } from '../../i18n';
 import type { AppLanguage, ReasoningLevel } from '../../types';
 
 export function modelReasoningLabel(level: ReasoningLevel, language: AppLanguage) {
-  const labels: Record<ReasoningLevel, { zh: string; en: string }> = {
-    default: { zh: '服务商默认', en: 'Provider default' },
-    none: { zh: '关闭', en: 'None' }, low: { zh: '低', en: 'Low' }, medium: { zh: '中', en: 'Medium' },
-    high: { zh: '高', en: 'High' }, xhigh: { zh: '超高', en: 'Extra high' }, max: { zh: '最高', en: 'Max' },
+  const labels: Record<ReasoningLevel, MessageKey> = {
+    default: 'modelReasoning.providerDefault',
+    none: 'composer.none', low: 'composer.low', medium: 'composer.medium',
+    high: 'composer.high', xhigh: 'composer.extraHigh', max: 'composer.max',
   };
-  return labels[level][language];
+  return uiText(language)(labels[level]);
 }

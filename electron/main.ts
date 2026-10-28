@@ -1,3 +1,4 @@
+import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { readWorkspaceDirectory } from './workspaceFiles';
@@ -263,7 +264,7 @@ type ShadowWindowPayload = {
   sessionId: string;
   sourceTurnId: string;
   title: string;
-  language: 'zh' | 'en';
+  language: string;
   theme: AppThemeMode;
   accentColor: string;
   themeVariables?: Record<string, string>;
@@ -364,7 +365,7 @@ const terminalSessions = new Map<
 
 type CardlingDesktopState = {
   enabled: boolean;
-  language: 'zh' | 'en';
+  language: string;
   theme: 'bright' | 'dark';
   settings: {
     size: 'compact' | 'normal' | 'large';
@@ -754,7 +755,7 @@ function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 
     sessionId,
     sourceTurnId: String(input.sourceTurnId ?? '').trim(),
     title: String(input.title ?? 'Shadow').trim().slice(0, 180) || 'Shadow',
-    language: input.language === 'en' ? 'en' : 'zh',
+    language: resolveUiLanguage(input.language),
     theme,
     accentColor: String(input.accentColor ?? '').trim().slice(0, 32),
     ...(Object.keys(themeVariables).length > 0 ? { themeVariables } : {}),
@@ -931,7 +932,7 @@ function installMainWindowNavigationGuard(target: BrowserWindow) {
     event.preventDefault();
     if (isAllowedAppNavigation(targetUrl)) {
       appendDebugLog('renderer-lifecycle', { stage: 'app-navigation-blocked', targetUrl });
-      void showWindowError(target, '无法打开链接', '链接指向了应用页面，已阻止离开当前界面。');
+      void showWindowError(target, nativeText()('main.could_not_open_link'), nativeText()('main.the_link_points_to_an_application_page'));
       return;
     }
     if (sendUiPreviewToInspector(target, targetUrl)) {
@@ -954,7 +955,7 @@ function showWindowError(target: BrowserWindow, title: string, message: string) 
   if (active) return active;
   const pending = dialog.showMessageBox(target, {
     type: 'error', title, message,
-    buttons: ['关闭提示'], defaultId: 0, cancelId: 0, noLink: true,
+    buttons: [nativeText()('main.close_notice')], defaultId: 0, cancelId: 0, noLink: true,
   }).then(() => undefined).catch((error: unknown) => {
     appendDebugLog('renderer-lifecycle', { stage: 'error-dialog-failed', error: String(error) });
   }).finally(() => { windowErrorDialogs.delete(target); });
@@ -1001,13 +1002,13 @@ function installMainRendererResilience(target: BrowserWindow) {
     });
     if (isQuitting || target.isDestroyed() || details.reason === 'clean-exit') return;
 
-    void showWindowError(target, 'CardBush 界面异常',
-      `界面进程已退出（${details.reason}，退出码 ${details.exitCode}）。\n应用未自动重新加载。请关闭窗口后手动重新打开。`);
+    void showWindowError(target, nativeText()('appErrorBoundary.cardbush_interface_error'),
+      nativeText()('native.rendererExited', { reason: details.reason, exitCode: details.exitCode }));
   });
 
   target.on('unresponsive', () => {
     appendDebugLog('renderer-lifecycle', { stage: 'unresponsive' });
-    void showWindowError(target, 'CardBush 暂时未响应', '当前界面未响应。可以关闭此提示继续等待，应用不会自动重新加载。');
+    void showWindowError(target, nativeText()('main.cardbush_is_not_responding'), nativeText()('main.the_interface_is_not_responding_close_this'));
   });
   target.on('responsive', () => {
     appendDebugLog('renderer-lifecycle', { stage: 'responsive' });
@@ -1022,7 +1023,7 @@ function installMainRendererResilience(target: BrowserWindow) {
         errorDescription,
         validatedURL,
       });
-      void showWindowError(target, '无法加载应用界面', `${errorDescription}（${errorCode}）\n${validatedURL}`);
+      void showWindowError(target, nativeText()('main.could_not_load_the_application_interface'), `${errorDescription}（${errorCode}）\n${validatedURL}`);
     },
   );
 }
@@ -1329,7 +1330,7 @@ function sendCardlingState() {
 function sanitizeCardlingState(payload: CardlingDesktopState): CardlingDesktopState {
   return {
     enabled: payload.enabled !== false,
-    language: payload.language === 'en' ? 'en' : 'zh',
+    language: resolveUiLanguage(payload.language),
     theme:
       payload.theme === 'bright' ||
       payload.theme === 'dark'
@@ -1606,20 +1607,30 @@ function createTray() {
   const icon = loadCardbushTrayIcon(32);
   tray = new Tray(icon);
   tray.setToolTip('cardbush');
+  updateTrayMenu();
+  tray.on('double-click', () => showMainWindow());
+}
+
+let nativeUiLanguage: string | undefined;
+function nativeText(language = nativeUiLanguage ?? (app.isReady() ? app.getLocale() : 'en')) {
+  return uiText(resolveUiLanguage(language));
+}
+
+function updateTrayMenu() {
+  if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: '打开 cardbush',
+        label: nativeText()('main.open_cardbush'),
         click: () => showMainWindow(),
       },
       { type: 'separator' },
       {
-        label: '退出',
+        label: nativeText()('main.quit'),
         click: () => requestAppQuit(),
       },
     ]),
   );
-  tray.on('double-click', () => showMainWindow());
 }
 
 function requestAppQuit() {
@@ -2177,12 +2188,20 @@ ipcMain.handle('app:runtime-startup-status', (event) => {
   return { ...runtimeStartupStatus };
 });
 
+ipcMain.handle('app:set-ui-language', (event, language: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  const next = resolveUiLanguage(language);
+  if (next === nativeUiLanguage) return;
+  nativeUiLanguage = next;
+  updateTrayMenu();
+});
+
 ipcMain.handle('app:show-error', (event, error: { title?: unknown; message?: unknown }) => {
   assertMainWindowSender(event.sender.id);
   const target = BrowserWindow.fromWebContents(event.sender);
   if (!target || target.isDestroyed()) return;
   const title = typeof error?.title === 'string' ? error.title.slice(0, 200) : 'CardBush';
-  const message = typeof error?.message === 'string' ? error.message.slice(0, 8000) : '发生了未知错误。';
+  const message = typeof error?.message === 'string' ? error.message.slice(0, 8000) : nativeText()('main.an_unknown_error_occurred');
   appendDebugLog('renderer-lifecycle', { stage: 'error-dialog', title, message });
   return showWindowError(target, title, message);
 });
@@ -2472,7 +2491,7 @@ ipcMain.handle('app-center:pick-local', async (event, language: string) => {
     owner?.once('closed', close);
     try {
       const selected = await pickWindowsApplication(language, owner?.getNativeWindowHandle(), abort.signal);
-      return selected ? await inspectLocalApplication(selected.path, readWindowsApplicationIcon) : null;
+      return selected ? await inspectLocalApplication(selected.path, readWindowsApplicationIcon, process.platform, resolveUiLanguage(language)) : null;
     } finally { owner?.removeListener('closed', close); }
   }
   const options = { ...localApplicationDialog(language), defaultPath: app.getPath('desktop') };
@@ -2481,7 +2500,7 @@ ipcMain.handle('app-center:pick-local', async (event, language: string) => {
   return inspectLocalApplication(result.filePaths[0], async target => {
     const icon = await app.getFileIcon(target, { size: 'normal' });
     return icon.isEmpty() ? '' : icon.toDataURL();
-  });
+  }, process.platform, resolveUiLanguage(language));
 });
 
 ipcMain.handle('app-center:refresh-local-icons', async (event, paths: unknown) => {
@@ -2496,7 +2515,7 @@ ipcMain.handle('app-center:refresh-local-icons', async (event, paths: unknown) =
   ])));
 });
 
-ipcMain.handle('app-center:open-local', async (event, target: unknown) => {
+ipcMain.handle('app-center:open-local', async (event, target: unknown, language: string) => {
   assertMainWindowSender(event.sender.id);
   await launchLocalApplication(target, async applicationPath => {
     if (process.platform !== 'linux') return shell.openPath(applicationPath);
@@ -2508,12 +2527,12 @@ ipcMain.handle('app-center:open-local', async (event, target: unknown) => {
       child.once('error', reject); child.once('spawn', () => { child.unref(); resolve(); });
     });
     return '';
-  });
+  }, process.platform, resolveUiLanguage(language));
 });
 
 ipcMain.handle('dialog:pick-attachments', async () => {
   const options: OpenDialogOptions = {
-    title: 'Select attachments',
+    title: nativeText()('main.select_attachments'),
     properties: ['openFile', 'multiSelections'],
   };
   const result = mainWindow
@@ -2530,9 +2549,9 @@ ipcMain.handle('creation:canvas', async (event, input: import('./creationCanvasF
     const { CreationCanvasFiles } = await import('./creationCanvasFiles.mjs');
     canvasFiles = new CreationCanvasFiles(async action => {
       const options: OpenDialogOptions = action === 'open'
-        ? { title: '打开画板', properties: ['openFile'], filters: [{ name: 'Canvas', extensions: ['canvas.json'] }] }
-        : action === 'repository' ? { title: '选择代码文件夹', properties: ['openDirectory'] }
-        : { title: '将创作空间保存到文件夹', properties: ['openDirectory', 'createDirectory'] };
+        ? { title: nativeText()('canvasSidebar.openCanvas'), properties: ['openFile'], filters: [{ name: nativeText()('canvasComponents.canvas'), extensions: ['canvas.json'] }] }
+        : action === 'repository' ? { title: nativeText()('main.choose_code_folder'), properties: ['openDirectory'] }
+        : { title: nativeText()('main.save_creation_workspace_to_folder'), properties: ['openDirectory', 'createDirectory'] };
       const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
       return result.canceled ? undefined : result.filePaths[0];
     });
@@ -2548,11 +2567,11 @@ ipcMain.handle('markdown:file', async (event, input: import('./mdPresentationFil
     markdownFiles = new MarkdownFiles(async (mode, name) => {
       const filters = [{ name: 'Markdown', extensions: ['md', 'markdown'] }];
       if (mode === 'open') {
-        const options: OpenDialogOptions = { title: '打开 Markdown', properties: ['openFile'], filters };
+        const options: OpenDialogOptions = { title: nativeText()('main.open_markdown'), properties: ['openFile'], filters };
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
         return result.canceled ? undefined : result.filePaths[0];
       }
-      const options = { title: '保存 Markdown', filters, defaultPath: `${String(name || '创作').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100)}.md` };
+      const options = { title: nativeText()('mdPresentationApp.saveMarkdown'), filters, defaultPath: `${String(name || nativeText()('main.creation')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100)}.md` };
       const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
       return result.canceled ? undefined : result.filePath;
     });
@@ -2733,7 +2752,7 @@ ipcMain.handle('ssh:connections', async (event, action: string, input: any) => {
     case 'test': return manager.test(String(input));
     case 'directory': return manager.directory(String(input));
     case 'disconnect': return manager.disconnect(String(input));
-    case 'pick-key': return (await dialog.showOpenDialog(mainWindow!, { title: 'SSH 私钥', properties: ['openFile'] })).filePaths[0] ?? null;
+    case 'pick-key': return (await dialog.showOpenDialog(mainWindow!, { title: nativeText()('main.ssh_private_key'), properties: ['openFile'] })).filePaths[0] ?? null;
     default: throw Error('Unknown SSH management action.');
   }
 });
@@ -2983,7 +3002,7 @@ ipcMain.handle('conversation-extracts:command', async (event, input: { action?: 
     case 'resolve': return store.resolve(String(input.id), input.contextWindowTokens);
     case 'remove': return store.remove(String(input.id));
     case 'export': return store.export(input.selection, async title => {
-      const options = { title: '保存会话提取', defaultPath: `${title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100) || 'conversation'}.md`,
+      const options = { title: nativeText()('main.save_conversation_extract'), defaultPath: `${title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 100) || 'conversation'}.md`,
         filters: [{ name: 'Markdown', extensions: ['md'] }] };
       const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
       return result.canceled ? undefined : result.filePath;
@@ -2995,7 +3014,7 @@ ipcMain.handle('calendar:command', async (event, input: unknown) => {
   assertMainWindowSender(event.sender.id);
   calendarStore ??= import('./calendarStore.mjs').then(({ CalendarStore }) => new CalendarStore(path.join(app.getPath('userData'), 'calendars', 'calendars.json')));
   const result = await (await calendarStore).command(input, async () => {
-    const options = { title: '导入日历', properties: ['openFile'] as Array<'openFile'>, filters: [{ name: '日历数据', extensions: ['json', 'ics'] }] };
+    const options = { title: nativeText()('main.import_calendar'), properties: ['openFile'] as Array<'openFile'>, filters: [{ name: nativeText()('main.calendar_data'), extensions: ['json', 'ics'] }] };
     const chosen = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return chosen.canceled ? undefined : chosen.filePaths[0];
   });
@@ -3061,7 +3080,7 @@ ipcMain.handle('plugins:market-add', async (event, source: string) => {
 });
 ipcMain.handle('plugins:market-add-local', async event => {
   assertMainWindowSender(event.sender.id);
-  const result = await dialog.showOpenDialog(mainWindow!, { title: 'Choose plugin marketplace root', properties: ['openDirectory'] });
+  const result = await dialog.showOpenDialog(mainWindow!, { title: nativeText()('main.choose_plugin_marketplace_root'), properties: ['openDirectory'] });
   if (result.canceled || !result.filePaths[0]) return null;
   return pluginMarkets().addLocal(result.filePaths[0]);
 });
@@ -3096,7 +3115,7 @@ ipcMain.handle('plugins:market-presentation', async (event, sourceId: string, na
 
 ipcMain.handle('dialog:pick-project-directory', async () => {
   const options: OpenDialogOptions = {
-    title: 'Open project',
+    title: nativeText()('main.open_project'),
     properties: ['openDirectory'],
   };
   const result = mainWindow
@@ -3107,11 +3126,11 @@ ipcMain.handle('dialog:pick-project-directory', async () => {
 
 ipcMain.handle('dialog:pick-font', async () => {
   const options: OpenDialogOptions = {
-    title: 'Import font',
+    title: nativeText()('settingsAppearancePanel.importFont'),
     properties: ['openFile'],
     filters: [
-      { name: 'Fonts', extensions: ['ttf', 'otf', 'woff', 'woff2'] },
-      { name: 'All files', extensions: ['*'] },
+      { name: nativeText()('main.fonts'), extensions: ['ttf', 'otf', 'woff', 'woff2'] },
+      { name: nativeText()('main.all_files'), extensions: ['*'] },
     ],
   };
   const result = mainWindow
@@ -3122,11 +3141,11 @@ ipcMain.handle('dialog:pick-font', async () => {
 
 ipcMain.handle('dialog:pick-appearance-style', async () => {
   const options: OpenDialogOptions = {
-    title: 'Import CardBush theme configuration',
+    title: nativeText()('main.import_cardbush_theme_configuration'),
     properties: ['openFile'],
     filters: [
-      { name: 'CardBush theme configuration', extensions: ['json'] },
-      { name: 'All files', extensions: ['*'] },
+      { name: nativeText()('main.cardbush_theme_configuration'), extensions: ['json'] },
+      { name: nativeText()('main.all_files'), extensions: ['*'] },
     ],
   };
   const result = mainWindow
@@ -3413,30 +3432,30 @@ ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
   const template: MenuItemConstructorOptions[] = [];
 
   if (selectionText) {
-    template.push({ label: '复制', click: () => guest.copy() });
+    template.push({ label: nativeText()('messageBubble.copy'), click: () => guest.copy() });
   } else if (payload?.isEditable) {
     template.push(
-      { label: '剪切', click: () => guest.cut() },
-      { label: '复制', click: () => guest.copy() },
-      { label: '粘贴', click: () => guest.paste() },
+      { label: nativeText()('applicationMenus.cut'), click: () => guest.cut() },
+      { label: nativeText()('messageBubble.copy'), click: () => guest.copy() },
+      { label: nativeText()('applicationMenus.paste'), click: () => guest.paste() },
     );
   }
   if (payload?.mediaType === 'image' && srcURL) {
     if (template.length > 0) template.push({ type: 'separator' });
-    template.push({ label: '复制图片地址', click: () => clipboard.writeText(srcURL) });
+    template.push({ label: nativeText()('main.copy_image_address'), click: () => clipboard.writeText(srcURL) });
   }
   if (linkURL) {
     if (template.length > 0) template.push({ type: 'separator' });
-    template.push({ label: '复制链接地址', click: () => clipboard.writeText(linkURL) });
+    template.push({ label: nativeText()('main.copy_link_address'), click: () => clipboard.writeText(linkURL) });
   }
   if (localStats?.isFile()) {
     if (template.length > 0) template.push({ type: 'separator' });
-    template.push(...buildFileContextMenu({ path: localTarget, exists: true, isFile: true }, {
+    template.push(...buildFileContextMenu({ path: localTarget, exists: true, isFile: true, language: nativeUiLanguage }, {
       openWith: () => openFileWithChooser(localTarget),
       reveal: () => shell.showItemInFolder(localTarget),
       copyFile: () => copyLocalFileToClipboard(localTarget),
       copyPath: () => clipboard.writeText(localTarget),
-      onError: error => { if (mainWindow) void showWindowError(mainWindow, '文件操作失败', error instanceof Error ? error.message : String(error)); },
+      onError: error => { if (mainWindow) void showWindowError(mainWindow, nativeText()('main.file_operation_failed'), error instanceof Error ? error.message : String(error)); },
     }));
   }
   if (template.length === 0) {
@@ -3587,7 +3606,7 @@ ipcMain.handle('shell:file-context-menu', async (event, targetPath: string, opti
     reveal: () => shell.showItemInFolder(normalizedPath),
     copyPath: () => clipboard.writeText(normalizedPath),
     copyFile: () => copyLocalFileToClipboard(normalizedPath),
-    onError: error => { void showWindowError(sourceWindow, options.language === 'en' ? 'File operation failed' : '文件操作失败', error instanceof Error ? error.message : String(error)); },
+    onError: error => { void showWindowError(sourceWindow, nativeText(options.language)('native.fileOperationFailed'), error instanceof Error ? error.message : String(error)); },
   }));
   await showWindowPopupMenu(sourceWindow, menu);
   return '';
@@ -3832,7 +3851,7 @@ app.whenReady().then(async () => {
   if (!applicationInstance.primary) return;
   trustedGitSync = (await import('@cardbush/bush-runtime/processes')).trustedGitSync;
   if (process.platform === 'win32' && Number(os.release().split('.')[2]) < 22000) {
-    dialog.showErrorBox('CardBush', 'CardBush requires Windows 11 or later. / CardBush 需要 Windows 11 或更高版本。');
+    dialog.showErrorBox('CardBush', nativeText()('main.cardbush_requires_windows_11_or_later'));
     app.quit();
     return;
   }

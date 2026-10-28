@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import type { AppLanguage } from '../../types';
@@ -5,7 +6,7 @@ import { SettingsCard } from './SettingsControls';
 import { loadCumulativeUsageStatistics, type CumulativeUsageStatistics } from './usageActivity';
 
 export function UsageStatisticsPanel({ language, active = true }: { language: AppLanguage; active?: boolean }) {
-  const zh = language === 'zh';
+
   const [statistics, setStatistics] = useState<CumulativeUsageStatistics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -32,34 +33,34 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
   }, [active, retry]);
 
   const heatmap = useMemo(() => usageHeatmap(statistics?.activity ?? [], language, activityRange), [statistics?.activity, language, activityRange]);
-  const locale = zh ? 'zh-CN' : 'en-US';
+  const locale = language;
   const statItems = [
-    { label: zh ? '累计 Token' : 'Total tokens', value: statistics?.totalTokens },
-    { label: zh ? '输入 Token' : 'Input tokens', value: statistics?.promptTokens },
-    { label: zh ? '输出 Token' : 'Output tokens', value: statistics?.completionTokens },
-    { label: zh ? '活跃天数' : 'Active days', value: statistics?.activeDays },
+    { label: uiText(language)('usageStatisticsPanel.totalTokens'), value: statistics?.totalTokens },
+    { label: uiText(language)('usageStatisticsPanel.inputTokens'), value: statistics?.promptTokens },
+    { label: uiText(language)('usageStatisticsPanel.outputTokens'), value: statistics?.completionTokens },
+    { label: uiText(language)('usageStatisticsPanel.activeDays'), value: statistics?.activeDays },
   ];
   const startedDay = statistics ? localDayKey(new Date(statistics.startedAt)) : '';
   const describeDay = (day: typeof heatmap.days[number]) => {
     const date = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(new Date(`${day.date}T12:00:00`));
-    if (day.date < startedDay) return zh ? `${date} · 尚未开始记录` : `${date} · Before recording began`;
-    return zh ? `${date} 使用了 ${day.tokens.toLocaleString(locale)} 个 Token` : `${date}: ${day.tokens.toLocaleString(locale)} tokens used`;
+    if (day.date < startedDay) return uiText(language)('usageStatisticsPanel.beforeRecordingBegan', { date });
+    return uiText(language)('usageStatisticsPanel.tokensUsed', { date, value2: day.tokens.toLocaleString(locale) });
   };
 
   return <div className="usage-settings">
-    <SettingsCard title={zh ? '用量概览' : 'Usage overview'}>
+    <SettingsCard title={uiText(language)('usageStatisticsPanel.usageOverview')}>
     <div className="usage-stat-grid" aria-busy={loading}>
       {statItems.map(item => <div className="usage-stat" key={item.label} title={item.value?.toLocaleString(locale)}>
         <strong>{item.value === undefined ? '—' : formatUsageNumber(item.value, locale)}</strong><span>{item.label}</span>
       </div>)}
     </div>
     </SettingsCard>
-    <SettingsCard className="usage-activity-card" title={zh ? 'Token 活动' : 'Token activity'} headerAction={
+    <SettingsCard className="usage-activity-card" title={uiText(language)('usageStatisticsPanel.tokenActivity')} headerAction={
       <div className="usage-activity-actions">
-        <div className="usage-range-switcher" role="group" aria-label={zh ? '活跃度日期跨度' : 'Activity date range'}>
+        <div className="usage-range-switcher" role="group" aria-label={uiText(language)('usageStatisticsPanel.activityDateRange')}>
           {(['year', 'month', 'week'] as const).map(range => <button type="button" className={activityRange === range ? 'active' : ''}
             aria-pressed={activityRange === range} key={range} onClick={() => setActivityRange(range)}>
-            {zh ? { year: '年', month: '月', week: '周' }[range] : { year: 'Year', month: 'Month', week: 'Week' }[range]}
+            {(({ year: uiText(language)('usageStatisticsPanel.year'), month: uiText(language)('usageStatisticsPanel.month'), week: uiText(language)('usageStatisticsPanel.week') }))[range]}
           </button>)}
         </div>
         {loading && <LoaderCircle className="spin" size={15} aria-hidden="true" />}
@@ -67,7 +68,7 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
     }>
     <div className="usage-heatmap-scroll">
       <div className={`usage-heatmap-frame range-${activityRange}`} style={{ '--usage-heatmap-columns': heatmap.weekCount } as CSSProperties}>
-        <div className="usage-heatmap-grid" key={`${activityRange}-${Boolean(statistics)}-${active}`} aria-label={zh ? 'Token 使用活动' : 'Token usage activity'}>
+        <div className="usage-heatmap-grid" key={`${activityRange}-${Boolean(statistics)}-${active}`} aria-label={uiText(language)('usageStatisticsPanel.tokenUsageActivity')}>
           {heatmap.days.map((day, index) => <button type="button" key={day.date}
             className={`usage-heatmap-cell level-${day.level}${day.future ? ' future' : ''}${statistics && active ? ' entering' : ''}`}
             style={{ '--usage-enter-delay': `${Math.floor(index / 7) * 11}ms` } as CSSProperties}
@@ -89,16 +90,14 @@ export function UsageStatisticsPanel({ language, active = true }: { language: Ap
       </div>
     </div>
     {statistics && <div className="usage-insights">
-      <span>{zh ? `${statistics.requestCount.toLocaleString(locale)} 次模型请求` : `${statistics.requestCount.toLocaleString(locale)} model requests`}</span>
-      <span>{zh ? `最长连续 ${statistics.longestStreak} 天` : `${statistics.longestStreak}-day longest streak`}</span>
+      <span>{uiText(language)('usageStatisticsPanel.modelRequests', { value1: statistics.requestCount.toLocaleString(locale) })}</span>
+      <span>{uiText(language)('usageStatisticsPanel.dayLongestStreak', { value1: statistics.longestStreak })}</span>
     </div>}
     </SettingsCard>
-    {error && <p className="usage-load-error" role="alert">{zh ? '无法读取用量记录。' : 'Unable to read usage records.'}
-      <button className="secondary-button" type="button" onClick={() => setRetry(value => value + 1)}><RefreshCw size={13} />{zh ? '重试' : 'Retry'}</button>
+    {error && <p className="usage-load-error" role="alert">{uiText(language)('usageStatisticsPanel.unableToReadUsageRecords')}
+      <button className="secondary-button" type="button" onClick={() => setRetry(value => value + 1)}><RefreshCw size={13} />{uiText(language)('common.retry')}</button>
     </p>}
-    {statistics && <p className="usage-recording-note">{zh
-      ? `自 ${new Date(statistics.startedAt).toLocaleDateString(locale)} 起记录模型服务返回的 Token 用量；清理缓存或删除会话不会清除统计。`
-      : `Recording provider-reported tokens since ${new Date(statistics.startedAt).toLocaleDateString(locale)}. Clearing caches or conversations does not remove these statistics.`}</p>}
+    {statistics && <p className="usage-recording-note">{uiText(language)('usageStatisticsPanel.recordingProviderReportedTokensSinceClearingCaches', { value1: new Date(statistics.startedAt).toLocaleDateString(locale) })}</p>}
   </div>;
 }
 
@@ -131,7 +130,7 @@ function usageHeatmap(activity: CumulativeUsageStatistics['activity'], language:
     const key = localDayKey(date), tokens = byDate.get(key) ?? 0;
     return { date: key, tokens, future: date > today, level: tokens ? Math.max(1, Math.ceil(tokens / maximum * 4)) : 0 };
   });
-  const formatter = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { month: 'short' });
+  const formatter = new Intl.DateTimeFormat(language, { month: 'short' });
   const monthLabels = Array.from({ length: weekCount }, (_, index) => {
     const current = new Date(start); current.setDate(start.getDate() + index * 7);
     const previous = new Date(current); previous.setDate(current.getDate() - 7);

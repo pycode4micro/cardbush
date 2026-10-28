@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { AppLanguage } from '../../types';
 import { BuiltinComponentSurface } from './BuiltinComponentSurface';
@@ -33,9 +34,9 @@ export function WelcomeComponentPreview({ item, language, anchor }: { item: Comp
     window.addEventListener('resize', place); root.addEventListener('scroll', place, true);
     return () => { observer.disconnect(); window.removeEventListener('resize', place); root.removeEventListener('scroll', place, true); };
   }, [anchor]);
-  return <div ref={preview} className="welcome-component-preview" role="tooltip" id="welcome-component-preview"
-    style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight, visibility: position.visible ? 'visible' : 'hidden' }}>
-    <div className="welcome-preview-heading"><span>{componentTitle(item, language)}</span><span>{language === 'zh' ? '预览' : 'Preview'}</span></div>
+  return <div ref={preview} className="welcome-component-preview" role="tooltip" id="welcome-component-preview" data-positioned={position.visible}
+    style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight }}>
+    <div className="welcome-preview-heading"><span>{componentTitle(item, language)}</span><span>{uiText(language)('inlineHtmlPreview.preview')}</span></div>
     <div className="welcome-preview-surface" inert>
       <ComposerPortalContext.Provider value={null}>
         <HtmlComponentContext.Provider value={null}>

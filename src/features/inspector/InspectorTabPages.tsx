@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../i18n/react';
+import { uiText } from '../../i18n';
 import { useEffect, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { InspectorTab } from './inspectorTabs';
 import type { AppLanguage } from '../../types';
@@ -5,7 +7,7 @@ import { panelDividers, panelRects, type PanelLayout } from './panelLayout';
 import './inspectorWorkspace.css';
 
 /** Switching tabs preserves each page's local state and its underlying guest. */
-export function InspectorTabPages({ tabs, activeId, children, layout = null, onResize, renderFrame, onActivate, language = 'en', workspaceId = 'shared' }: {
+export function InspectorTabPages({ tabs, activeId, children, layout = null, onResize, renderFrame, onActivate, language: selectedLanguage, workspaceId = 'shared' }: {
   workspaceId?: string;
   language?: AppLanguage;
   tabs: InspectorTab[];
@@ -16,6 +18,8 @@ export function InspectorTabPages({ tabs, activeId, children, layout = null, onR
   renderFrame?: (tab: InspectorTab) => ReactNode;
   onActivate?: (id: string) => void;
 }) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
   const ref = useRef<HTMLDivElement>(null);
   const cancelDrag = useRef<((restore?: boolean) => void) | null>(null);
   const resize = useRef(onResize);
@@ -81,7 +85,7 @@ export function InspectorTabPages({ tabs, activeId, children, layout = null, onR
       </section>;
     })}
     {layout && panelDividers(layout).map(divider => <div key={divider.path} role="separator" tabIndex={0}
-      aria-label={divider.axis === 'x' ? (language === 'zh' ? '调整列宽' : 'Resize columns') : (language === 'zh' ? '调整行高' : 'Resize rows')} aria-orientation={divider.axis === 'x' ? 'vertical' : 'horizontal'}
+      aria-label={divider.axis === 'x' ? (uiText(language)('inspectorTabPages.resizeColumns')) : (uiText(language)('inspectorTabPages.resizeRows'))} aria-orientation={divider.axis === 'x' ? 'vertical' : 'horizontal'}
       aria-valuenow={Math.round(divider.ratio * 100)} aria-valuemin={15} aria-valuemax={85}
       className={`inspector-tile-divider axis-${divider.axis}`}
       style={divider.axis === 'x' ? { left: `${(divider.rect.x + divider.rect.width * divider.ratio) * 100}%`, top: `${divider.rect.y * 100}%`, height: `${divider.rect.height * 100}%` }

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CalendarClock, Plus, RefreshCw, Play, Pause, Square, Pencil, Trash2, MessageSquare, Check, Mail, ChevronRight, Search } from 'lucide-react';
 import { isAutomationResult } from '@cardbush/bush-protocol';
@@ -8,28 +9,28 @@ import { AutomationPlanCard } from './AutomationPlanCard';
 import './automations.css';
 
 const localInput = (value: string) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-const errorText = (caught: unknown, zh: boolean) => {
+const errorText = (caught: unknown, uiLanguage: string) => {
   const text = String(caught).replace(/^Error: /, '').replace(/^Error invoking remote method '[^']+': Error: /, '');
-  if (!zh) return text;
+
   return ({
-    'Automation changed. Refresh before saving.': '自动化已被其他操作修改，请刷新后重新编辑。',
-    'Send a message in the target conversation before scheduling it.': '请先在目标会话发送一条消息，再创建自动化。',
-    'Stop the queued or running automation before editing it.': '请先停止排队或执行中的任务，再进行编辑。',
-    'Stop the running automation before deleting it.': '请先停止执行中的任务，再删除自动化。',
-    'This automation is already queued or running.': '此自动化已在排队或执行中。',
-    'The target conversation was removed.': '目标会话已删除，请重新选择会话。',
-    'No conversation execution context is available.': '没有可用的执行配置，请编辑任务并选择一个已开始的会话作为配置来源。',
-    'The originating plugin hook is disabled, changed, or no longer trusted.': '来源插件的 Hook 已停用、修改或撤销信任，请检查插件设置。',
-    'Runtime stopped before completion was recorded. Check the conversation before running again.': '执行中途应用退出，未能确认最终结果。请先检查会话，再决定是否重新执行。',
-    'The automation model was removed. Send a message in the target conversation with an available model.': '原模型已移除，请在目标会话选择可用模型并发送一条消息。',
+    'Automation changed. Refresh before saving.': uiText(uiLanguage)('automationErrors.automation_changed_refresh_before_saving'),
+    'Send a message in the target conversation before scheduling it.': uiText(uiLanguage)('automationErrors.send_a_message_in_the_target_conversation'),
+    'Stop the queued or running automation before editing it.': uiText(uiLanguage)('automationErrors.stop_the_queued_or_running_automation_before'),
+    'Stop the running automation before deleting it.': uiText(uiLanguage)('automationErrors.stop_the_running_automation_before_deleting_it'),
+    'This automation is already queued or running.': uiText(uiLanguage)('automationErrors.this_automation_is_already_queued_or_running'),
+    'The target conversation was removed.': uiText(uiLanguage)('automationErrors.the_target_conversation_was_removed'),
+    'No conversation execution context is available.': uiText(uiLanguage)('automationErrors.no_conversation_execution_context_is_available'),
+    'The originating plugin hook is disabled, changed, or no longer trusted.': uiText(uiLanguage)('automationErrors.the_originating_plugin_hook_is_disabled_changed'),
+    'Runtime stopped before completion was recorded. Check the conversation before running again.': uiText(uiLanguage)('automationErrors.runtime_stopped_before_completion_was_recorded_check'),
+    'The automation model was removed. Send a message in the target conversation with an available model.': uiText(uiLanguage)('automationErrors.the_automation_model_was_removed_send_a'),
   } as Record<string, string>)[text] ?? text;
 };
 export function AutomationPanel({ language, onOpenConversation, onCreateAutomation }: {
-  language: 'zh' | 'en';
+  language: string;
   onOpenConversation: (id: string) => void;
   onCreateAutomation: () => void;
 }) {
-  const zh = language === 'zh';
+  const uiLanguage = language;
   const [overview, setOverview] = useState<AutomationOverview>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -41,11 +42,11 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   const refresh = useCallback(async () => {
     const revision = ++generation.current;
     try {
-      if (!window.cardbushDesktop?.automationCommand) throw new Error(zh ? '请重启 CardBush 以加载定时服务。' : 'Restart CardBush to load the automation service.');
+      if (!window.cardbushDesktop?.automationCommand) throw new Error(uiText(language)('automationPanel.restartCardbushToLoadTheAutomationService'));
       const result = await window.cardbushDesktop.automationCommand({ action: 'list' }) as AutomationOverview;
       if (revision === generation.current) { setOverview(result); setError(''); }
-    } catch (caught) { if (revision === generation.current) setError(errorText(caught, zh)); }
-  }, [zh]);
+    } catch (caught) { if (revision === generation.current) setError(errorText(caught, uiLanguage)); }
+  }, [uiLanguage]);
   useEffect(() => {
     let timer = 0;
     const update = () => { window.clearTimeout(timer); timer = window.setTimeout(() => void refresh(), 120); };
@@ -61,7 +62,7 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
       await window.cardbushDesktop!.automationCommand(command);
       if (command.action === 'update') setForm(undefined);
       await refresh();
-    } catch (caught) { setError(errorText(caught, zh)); }
+    } catch (caught) { setError(errorText(caught, uiLanguage)); }
     finally { mutation.current = false; setBusy(''); }
   };
   const edit = (job: AutomationJob) => {
@@ -80,12 +81,11 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
         : form.kind === 'interval' ? { kind: 'interval', at: new Date(form.at).toISOString(), seconds: form.minutes * 60 } : { kind: 'once', at: new Date(form.at).toISOString() };
       void operate({ action: 'update', id: form.id, expectedRevision: form.revision,
         definition: { name: form.name, sessionId: form.sessionId, prompt: form.prompt, trigger, executionMode: form.kind === 'event' ? form.executionMode : 'isolated', timeZone: form.timeZone } }, 'form');
-    } catch { setError(zh ? '请输入有效的执行时间。' : 'Enter a valid execution time.'); }
+    } catch { setError(uiText(language)('automationPanel.enterAValidExecutionTime')); }
   };
-  const runLabels: Record<AutomationRun['status'], string> = zh ? { queued: '排队中', running: '执行中', completed: '已完成', failed: '失败', stopped: '已停止', interrupted: '执行中断', awaiting_user_action: '等待处理' }
-    : { queued: 'Queued', running: 'Running', completed: 'Completed', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted', awaiting_user_action: 'Needs attention' };
-  const eventLabel = (event: string) => zh ? ({ Stop: '任务完成', PostToolUse: '工具执行成功', PostToolUseFailure: '工具执行失败' }[event] ?? event) : event;
-  const time = (value?: string) => value ? new Date(value).toLocaleString(zh ? 'zh-CN' : 'en-US') : '—';
+  const runLabels: Record<AutomationRun['status'], string> = ({ queued: uiText(language)('automationPanel.queued'), running: uiText(language)('automationPanel.running'), completed: uiText(language)('automationPanel.completed'), failed: uiText(language)('automationPanel.failed'), stopped: uiText(language)('automationPanel.stopped'), interrupted: uiText(language)('automationPanel.interrupted'), awaiting_user_action: uiText(language)('automationPanel.needsAttention') });
+  const eventLabel = (event: string) => ({ Stop: uiText(language)('automation.event.Stop'), PostToolUse: uiText(language)('automation.event.PostToolUse'), PostToolUseFailure: uiText(language)('automation.event.PostToolUseFailure') }[event] ?? event);
+  const time = (value?: string) => value ? new Date(value).toLocaleString(language) : '—';
   const jobs = overview?.jobs.filter(job => `${job.name} ${job.prompt}`.toLowerCase().includes(filter.toLowerCase())) ?? [];
   const unreadCount = overview?.jobs.reduce((count, job) => count + job.runs.filter(run => isAutomationResult(run) && !run.readAt).length, 0) ?? 0;
   const entries = jobs.flatMap(job => job.runs.map(run => ({ job, run })))
@@ -94,80 +94,80 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   const unreadIds = entries.filter(({ run }) => isAutomationResult(run) && !run.readAt).map(({ run }) => run.id).slice(0, 500);
   const groups = new Map<string, typeof entries>();
   for (const entry of entries) {
-    const date = new Date(entry.run.finishedAt ?? entry.run.queuedAt).toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'long', day: 'numeric', weekday: 'short', year: 'numeric' });
+    const date = new Date(entry.run.finishedAt ?? entry.run.queuedAt).toLocaleDateString(language, { month: 'long', day: 'numeric', weekday: 'short', year: 'numeric' });
     groups.set(date, [...(groups.get(date) ?? []), entry]);
   }
   const triggerLabel = (job: AutomationJob) => job.trigger.kind === 'event' ? `${eventLabel(job.trigger.event)}${job.trigger.tool ? ` · ${job.trigger.tool}` : ''}`
-    : job.trigger.kind === 'interval' ? (zh ? `每 ${job.trigger.seconds / 60} 分钟` : `Every ${job.trigger.seconds / 60} minutes`) : (zh ? '单次执行' : 'One-time');
+    : job.trigger.kind === 'interval' ? (uiText(language)('automationPanel.everyMinutes', { value1: job.trigger.seconds / 60 })) : (uiText(language)('automationPanel.oneTime'));
   const renderPlan = (job: AutomationJob) => {
     const latest = job.runs.at(-1), active = latest?.status === 'running' || latest?.status === 'queued';
     const state = active ? latest.status : job.state;
-    const label = active ? runLabels[latest.status] : job.state === 'active' ? (zh ? '已启用' : 'Active') : job.state === 'paused' ? (zh ? '已暂停' : 'Paused') : (zh ? '已完成' : 'Completed');
+    const label = active ? runLabels[latest.status] : job.state === 'active' ? (uiText(language)('automationPanel.active')) : job.state === 'paused' ? (uiText(language)('automationPanel.paused')) : (uiText(language)('automationPanel.completed'));
     const runs = job.runs;
     const hint = `${triggerLabel(job)}${job.state === 'active' && job.nextRunAt ? ` · ${time(job.nextRunAt)}` : ''}`;
     const action = (action: AutomationCommand['action']) => void operate({ action, id: job.id, expectedRevision: job.revision }, job.id);
     return <AutomationPlanCard key={job.id} job={job} label={label} state={state} hint={hint}>
       <p className="automation-prompt">{job.prompt}</p>
-      <p className="automation-hint">{triggerLabel(job)}{job.state === 'active' && job.nextRunAt && ` · ${zh ? '下次：' : 'Next: '}${time(job.nextRunAt)}`}{job.plugin && ` · ${zh ? '插件：' : 'Plugin: '}${job.plugin.id}`}</p>
-      <div className="automation-actions"><button type="button" disabled={!overview?.sessions.some(session => session.id === job.sessionId)} onClick={() => onOpenConversation(job.sessionId)}><MessageSquare size={14}/>{overview?.sessions.some(session => session.id === job.sessionId) ? (zh ? '返回来源会话' : 'Source conversation') : (zh ? '来源会话已删除' : 'Source deleted')}</button>
-        <button type="button" disabled={Boolean(busy) || active} onClick={() => edit(job)}><Pencil size={14}/>{zh ? '编辑' : 'Edit'}</button>
-        <button type="button" disabled={Boolean(busy) || active} onClick={() => action('run')}><Play size={14}/>{zh ? '立即执行' : 'Run now'}</button>
-        {active ? <button type="button" disabled={Boolean(busy)} onClick={() => action('stop')}><Square size={14}/>{zh ? '停止' : 'Stop'}</button>
-          : <button type="button" disabled={Boolean(busy)} onClick={() => action(job.state === 'active' ? 'pause' : 'resume')}><Pause size={14}/>{job.state === 'active' ? (zh ? '暂停' : 'Pause') : (zh ? '启用' : 'Enable')}</button>}
-        <button type="button" disabled={Boolean(busy) || latest?.status === 'running'} onClick={() => action('delete')}><Trash2 size={14}/>{zh ? '删除' : 'Delete'}</button></div>
-      {runs.length > 0 && <details><summary>{zh ? `执行记录 · ${runLabels[runs.at(-1)!.status]}` : `History · ${runLabels[runs.at(-1)!.status]}`}</summary><ol>{[...runs].reverse().map(run => <li key={run.id}>
-        <button className="automation-history-open" type="button" onClick={() => openAutomationRun(job.id, run.id, job.name)}><strong>{runLabels[run.status]}</strong> · {time(run.queuedAt)}{!run.readAt && isAutomationResult(run) && ` · ${zh ? '未读' : 'Unread'}`}<ChevronRight size={14}/></button>{run.error && <p className="automation-error">{errorText(run.error, zh)}</p>}
+      <p className="automation-hint">{triggerLabel(job)}{job.state === 'active' && job.nextRunAt && ` · ${uiText(language)('automationPanel.next')}${time(job.nextRunAt)}`}{job.plugin && ` · ${uiText(language)('automationPanel.plugin')}${job.plugin.id}`}</p>
+      <div className="automation-actions"><button type="button" disabled={!overview?.sessions.some(session => session.id === job.sessionId)} onClick={() => onOpenConversation(job.sessionId)}><MessageSquare size={14}/>{overview?.sessions.some(session => session.id === job.sessionId) ? (uiText(language)('automationPanel.sourceConversation')) : (uiText(language)('automationPanel.sourceDeleted'))}</button>
+        <button type="button" disabled={Boolean(busy) || active} onClick={() => edit(job)}><Pencil size={14}/>{uiText(language)('common.edit')}</button>
+        <button type="button" disabled={Boolean(busy) || active} onClick={() => action('run')}><Play size={14}/>{uiText(language)('automationPanel.runNow')}</button>
+        {active ? <button type="button" disabled={Boolean(busy)} onClick={() => action('stop')}><Square size={14}/>{uiText(language)('automationPanel.stop')}</button>
+          : <button type="button" disabled={Boolean(busy)} onClick={() => action(job.state === 'active' ? 'pause' : 'resume')}><Pause size={14}/>{job.state === 'active' ? (uiText(language)('automationPanel.pause')) : (uiText(language)('automationPanel.enable'))}</button>}
+        <button type="button" disabled={Boolean(busy) || latest?.status === 'running'} onClick={() => action('delete')}><Trash2 size={14}/>{uiText(language)('appCenter.delete')}</button></div>
+      {runs.length > 0 && <details><summary>{uiText(language)('automationPanel.history', { value1: runLabels[runs.at(-1)!.status] })}</summary><ol>{[...runs].reverse().map(run => <li key={run.id}>
+        <button className="automation-history-open" type="button" onClick={() => openAutomationRun(job.id, run.id, job.name)}><strong>{runLabels[run.status]}</strong> · {time(run.queuedAt)}{!run.readAt && isAutomationResult(run) && ` · ${uiText(language)('automationPanel.unread')}`}<ChevronRight size={14}/></button>{run.error && <p className="automation-error">{errorText(run.error, uiLanguage)}</p>}
       </li>)}</ol></details>}
     </AutomationPlanCard>;
   };
   return <div className="feature-content automation-panel">
     <header className="automation-heading">
-      <nav className="automation-tabs" aria-label={zh ? '定时视图' : 'Automation views'}>
+      <nav className="automation-tabs" aria-label={uiText(language)('automationPanel.automationViews')}>
         {(['plans', 'unread', 'today', 'all'] as const).map(tab => <button type="button" key={tab} aria-pressed={view === tab} onClick={() => { setView(tab); setForm(undefined); }}>
-          {{ unread: zh ? '未读' : 'Unread', today: zh ? '今天' : 'Today', all: zh ? '全部结果' : 'All results', plans: zh ? '计划管理' : 'Plans' }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}
+          {{ unread: uiText(language)('automationPanel.unread'), today: uiText(language)('automationPanel.today'), all: uiText(language)('automationPanel.allResults'), plans: uiText(language)('automationPanel.plans') }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}
         </button>)}
       </nav>
     </header>
     <div className="automation-command-bar">
-      <label className="automation-search-field"><Search size={15}/><input className="automation-search" aria-label={zh ? '搜索自动化' : 'Search automations'} placeholder={zh ? '搜索自动化' : 'Search automations'} value={filter} onChange={event => setFilter(event.target.value)}/></label>
-      <div className="automation-actions"><button type="button" aria-label={zh ? '刷新自动化' : 'Refresh automations'} title={zh ? '刷新' : 'Refresh'} onClick={() => void refresh()}><RefreshCw size={15}/></button>
-        <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={onCreateAutomation} title={zh ? '在新会话中设置定时任务' : 'Set up a scheduled task in a new conversation'}><Plus size={15}/>{zh ? '新建自动化' : 'New automation'}</button></div>
+      <label className="automation-search-field"><Search size={15}/><input className="automation-search" aria-label={uiText(language)('automationPanel.searchAutomations')} placeholder={uiText(language)('automationPanel.searchAutomations')} value={filter} onChange={event => setFilter(event.target.value)}/></label>
+      <div className="automation-actions"><button type="button" aria-label={uiText(language)('automationPanel.refreshAutomations')} title={uiText(language)('automationPanel.refresh')} onClick={() => void refresh()}><RefreshCw size={15}/></button>
+        <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={onCreateAutomation} title={uiText(language)('automationPanel.setUpAScheduledTaskInA')}><Plus size={15}/>{uiText(language)('automationPanel.newAutomation')}</button></div>
     </div>
     {error && <p className="automation-error" role="alert">{error}</p>}
     {form && <form className="automation-form" onSubmit={event => { event.preventDefault(); save(); }}>
-      <h2>{zh ? '编辑自动化' : 'Edit automation'}</h2>
+      <h2>{uiText(language)('automationPanel.editAutomation')}</h2>
       <fieldset disabled={Boolean(busy)}>
-        <div className="automation-fields"><label>{zh ? '名称' : 'Name'}<input required maxLength={120} value={form.name} onChange={event => setForm({ ...form, name: event.target.value })}/></label>
-          <label>{zh ? '配置来源' : 'Configuration source'}<select required value={form.sessionId} onChange={event => setForm({ ...form, sessionId: event.target.value })}><option value="">{zh ? '选择一个已开始的会话' : 'Choose a started conversation'}</option>
-            {!overview?.sessions.some(session => session.id === form.sessionId) && <option value={form.sessionId}>{zh ? '来源会话已删除 · 保留任务配置' : 'Source deleted · Keep saved settings'}</option>}
+        <div className="automation-fields"><label>{uiText(language)('agentConnectionForm.name')}<input required maxLength={120} value={form.name} onChange={event => setForm({ ...form, name: event.target.value })}/></label>
+          <label>{uiText(language)('automationPanel.configurationSource')}<select required value={form.sessionId} onChange={event => setForm({ ...form, sessionId: event.target.value })}><option value="">{uiText(language)('automationPanel.chooseAStartedConversation')}</option>
+            {!overview?.sessions.some(session => session.id === form.sessionId) && <option value={form.sessionId}>{uiText(language)('automationPanel.sourceDeletedKeepSavedSettings')}</option>}
             {overview?.sessions.map(session => <option key={session.id} value={session.id}>{session.title} · {session.model}</option>)}</select></label></div>
-        <label>{zh ? '执行提示词' : 'Prompt'}<textarea required maxLength={32000} rows={4} value={form.prompt} onChange={event => setForm({ ...form, prompt: event.target.value })} placeholder={zh ? '例如：检查项目构建结果，整理失败原因并提出修复建议。' : 'For example: inspect the project build results and suggest fixes for failures.'}/></label>
-        <div className="automation-fields"><label>{zh ? '触发方式' : 'Trigger'}<select value={form.kind} onChange={event => setForm({ ...form, kind: event.target.value as typeof form.kind })}>
-          <option value="once">{zh ? '指定时间' : 'At a time'}</option><option value="interval">{zh ? '重复间隔' : 'Repeating interval'}</option><option value="event">{zh ? '会话事件' : 'Conversation event'}</option></select></label>
-          {form.kind !== 'event' && <label>{zh ? '首次执行时间（本机时区）' : 'First run (local time)'}<input required type="datetime-local" value={form.at} onChange={event => setForm({ ...form, at: event.target.value })}/></label>}
-          {form.kind === 'interval' && <label>{zh ? '每隔多少分钟' : 'Interval in minutes'}<input required type="number" min={1} max={525600} step={1} value={form.minutes} onChange={event => setForm({ ...form, minutes: Number(event.target.value) })}/></label>}
-          {form.kind === 'event' && <><label>{zh ? '事件' : 'Event'}<select value={form.event} onChange={event => setForm({ ...form, event: event.target.value as typeof form.event })}>{['Stop', 'PostToolUse', 'PostToolUseFailure'].map(value => <option key={value} value={value}>{eventLabel(value)}</option>)}</select></label>
-            {form.event !== 'Stop' && <label>{zh ? '工具名称（留空匹配全部）' : 'Tool name (blank matches all)'}<input value={form.tool} onChange={event => setForm({ ...form, tool: event.target.value })}/></label>}
-            <label>{zh ? '触发冷却时间（秒）' : 'Cooldown in seconds'}<input required type="number" min={60} max={86400} value={form.cooldown} onChange={event => setForm({ ...form, cooldown: Number(event.target.value) })}/></label></>}
+        <label>{uiText(language)('automationPanel.prompt')}<textarea required maxLength={32000} rows={4} value={form.prompt} onChange={event => setForm({ ...form, prompt: event.target.value })} placeholder={uiText(language)('automationPanel.forExampleInspectTheProjectBuildResults')}/></label>
+        <div className="automation-fields"><label>{uiText(language)('automationPanel.trigger')}<select value={form.kind} onChange={event => setForm({ ...form, kind: event.target.value as typeof form.kind })}>
+          <option value="once">{uiText(language)('automationPanel.atATime')}</option><option value="interval">{uiText(language)('automationPanel.repeatingInterval')}</option><option value="event">{uiText(language)('automationPanel.conversationEvent')}</option></select></label>
+          {form.kind !== 'event' && <label>{uiText(language)('automationPanel.firstRunLocalTime')}<input required type="datetime-local" value={form.at} onChange={event => setForm({ ...form, at: event.target.value })}/></label>}
+          {form.kind === 'interval' && <label>{uiText(language)('automationPanel.intervalInMinutes')}<input required type="number" min={1} max={525600} step={1} value={form.minutes} onChange={event => setForm({ ...form, minutes: Number(event.target.value) })}/></label>}
+          {form.kind === 'event' && <><label>{uiText(language)('automationPanel.event')}<select value={form.event} onChange={event => setForm({ ...form, event: event.target.value as typeof form.event })}>{['Stop', 'PostToolUse', 'PostToolUseFailure'].map(value => <option key={value} value={value}>{eventLabel(value)}</option>)}</select></label>
+            {form.event !== 'Stop' && <label>{uiText(language)('automationPanel.toolNameBlankMatchesAll')}<input value={form.tool} onChange={event => setForm({ ...form, tool: event.target.value })}/></label>}
+            <label>{uiText(language)('automationPanel.cooldownInSeconds')}<input required type="number" min={60} max={86400} value={form.cooldown} onChange={event => setForm({ ...form, cooldown: Number(event.target.value) })}/></label></>}
         </div>
         <p className="automation-hint">{form.kind === 'event'
-          ? (zh ? '由来源会话的事件触发；删除来源会话会暂停任务。' : 'Triggered by source conversation events; deleting the source pauses the plan.')
-          : (zh ? '每次在独立临时会话执行，结果显示在未读和全部结果中。提示词需包含完整任务要求，不携带来源聊天记录；删除来源会话不影响执行。保存时使用所选来源的模型、工作区和权限；来源已删除时保留任务配置。' : 'Each run uses a temporary conversation, with results in Unread and All results. Include all task requirements in the prompt; source chat history is not included. Deleting the source does not stop execution. Saving uses the selected source’s model, workspace and permissions, or keeps saved settings if the source was deleted.')}</p>
-        {form.kind === 'event' && <label>{zh ? '执行会话' : 'Execution conversation'}<select value={form.executionMode} onChange={event => setForm({ ...form, executionMode: event.target.value as typeof form.executionMode })}>
-          <option value="isolated">{zh ? '每次新建会话' : 'New conversation for each run'}</option><option value="conversation">{zh ? '继续原会话' : 'Continue the original conversation'}</option>
+          ? (uiText(language)('automationPanel.triggeredBySourceConversationEventsDeletingThe'))
+          : (uiText(language)('automationPanel.eachRunUsesATemporaryConversationWith'))}</p>
+        {form.kind === 'event' && <label>{uiText(language)('automationPanel.executionConversation')}<select value={form.executionMode} onChange={event => setForm({ ...form, executionMode: event.target.value as typeof form.executionMode })}>
+          <option value="isolated">{uiText(language)('automationPanel.newConversationForEachRun')}</option><option value="conversation">{uiText(language)('automationPanel.continueTheOriginalConversation')}</option>
         </select></label>}
-        <div className="automation-actions"><button type="button" onClick={() => setForm(undefined)}>{zh ? '取消' : 'Cancel'}</button><button type="submit" className="primary-button">{busy === 'form' ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存自动化' : 'Save automation')}</button></div>
+        <div className="automation-actions"><button type="button" onClick={() => setForm(undefined)}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit" className="primary-button">{busy === 'form' ? (uiText(language)('automationPanel.saving')) : (uiText(language)('automationPanel.saveAutomation'))}</button></div>
       </fieldset></form>}
-    {!overview && !error && <p role="status">{zh ? '正在读取自动化…' : 'Loading automations…'}</p>}
-    {overview && !jobs.length && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (zh ? '没有匹配的自动化。' : 'No matching automations.') : (zh ? '还没有自动化。点击“新建自动化”添加。' : 'No automations yet. Click New automation to add one.')}</p></div>}
+    {!overview && !error && <p role="status">{uiText(language)('automationPanel.loadingAutomations')}</p>}
+    {overview && !jobs.length && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (uiText(language)('automationPanel.noMatchingAutomations')) : (uiText(language)('automationPanel.noAutomationsYetClickNewAutomationTo'))}</p></div>}
     {view !== 'plans' && <section className="automation-inbox">
-      {unreadIds.length > 0 && <div className="automation-inbox-heading automation-actions"><button disabled={Boolean(busy)} type="button" onClick={() => void operate({ action: 'mark_read', runIds: unreadIds }, 'read-batch')}><Check size={14}/>{zh ? `标记这 ${unreadIds.length} 条已读` : `Mark these ${unreadIds.length} read`}</button></div>}
-      {overview && jobs.length > 0 && !entries.length && <div className="automation-empty"><Check size={28}/><p>{view === 'unread' ? (zh ? '未读结果已清空。下一次执行结束后会出现在这里。' : 'No unread results. New results will appear here after execution.') : (zh ? '暂时没有执行结果。' : 'No execution results yet.')}</p><button type="button" onClick={() => setView('plans')}>{zh ? '查看计划' : 'View plans'}</button></div>}
+      {unreadIds.length > 0 && <div className="automation-inbox-heading automation-actions"><button disabled={Boolean(busy)} type="button" onClick={() => void operate({ action: 'mark_read', runIds: unreadIds }, 'read-batch')}><Check size={14}/>{uiText(language)('automationPanel.markTheseRead', { value1: unreadIds.length })}</button></div>}
+      {overview && jobs.length > 0 && !entries.length && <div className="automation-empty"><Check size={28}/><p>{view === 'unread' ? (uiText(language)('automationPanel.noUnreadResultsNewResultsWillAppear')) : (uiText(language)('automationPanel.noExecutionResultsYet'))}</p><button type="button" onClick={() => setView('plans')}>{uiText(language)('automationPanel.viewPlans')}</button></div>}
       {[...groups].map(([date, items]) => <section className="automation-day" key={date}><h2>{date}</h2>{items.map(({ job, run }) => <article key={run.id} className="automation-result" data-unread={!run.readAt && isAutomationResult(run)}>
         <button className="automation-result-open" type="button" onClick={() => openAutomationRun(job.id, run.id, job.name)}>
-          <span className="automation-result-dot"/><span className="automation-result-content"><strong>{job.name}</strong><span className="automation-result-summary">{run.summary || run.error || (zh ? '查看本次执行对话' : 'View this execution conversation')}</span><span className="automation-hint">{time(run.finishedAt ?? run.startedAt ?? run.queuedAt)} · {runLabels[run.status]}</span></span><ChevronRight size={16}/>
+          <span className="automation-result-dot"/><span className="automation-result-content"><strong>{job.name}</strong><span className="automation-result-summary">{run.summary || run.error || (uiText(language)('automationPanel.viewThisExecutionConversation'))}</span><span className="automation-hint">{time(run.finishedAt ?? run.startedAt ?? run.queuedAt)} · {runLabels[run.status]}</span></span><ChevronRight size={16}/>
         </button>
-        {isAutomationResult(run) && <button className="automation-read-toggle" type="button" disabled={Boolean(busy)} title={run.readAt ? (zh ? '标记未读' : 'Mark unread') : (zh ? '标记已读' : 'Mark read')} aria-label={run.readAt ? (zh ? '标记未读' : 'Mark unread') : (zh ? '标记已读' : 'Mark read')}
+        {isAutomationResult(run) && <button className="automation-read-toggle" type="button" disabled={Boolean(busy)} title={run.readAt ? (uiText(language)('automationPanel.markUnread')) : (uiText(language)('automationPanel.markRead'))} aria-label={run.readAt ? (uiText(language)('automationPanel.markUnread')) : (uiText(language)('automationPanel.markRead'))}
           onClick={() => void operate({ action: run.readAt ? 'mark_unread' : 'mark_read', id: job.id, runIds: [run.id] }, run.id)}>{run.readAt ? <Mail size={16}/> : <Check size={16}/>}</button>}
       </article>)}</section>)}
     </section>}

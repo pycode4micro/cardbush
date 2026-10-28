@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
 import { useConversationViewState, conversationViewKey } from '../../shared/conversationViewState';
 import { Sparkles } from 'lucide-react';
@@ -434,9 +435,7 @@ export function ChatPanel({
       setRefreshError('');
     } catch (caught) {
       setRefreshError(
-        language === 'zh'
-          ? 'TypeScript Runtime 不可用，请重启 CardBush 后重试。'
-          : 'The TypeScript Runtime is unavailable. Restart CardBush and retry.',
+        uiText(language)('chatPanel.theTypescriptRuntimeIsUnavailableRestartCardbush'),
       );
       throw caught;
     }
@@ -2509,7 +2508,7 @@ export function ChatPanel({
       expandOnError={progressive}
       submitting={submissionPending} waiting={hasInteraction} error={error || refreshError} recovery={connectionRecovery} queued={queuedMessageCount}
       errorContent={progressive && (error || refreshError) ? <RuntimeStatusBanner language={language} tone="error" message={error || refreshError}
-        actionLabel={language === 'zh' ? '重试' : 'Retry'} onAction={async () => { await refreshBackendWithFeedback({ silent: false }); onClearError(); }}
+        actionLabel={uiText(language)('common.retry')} onAction={async () => { await refreshBackendWithFeedback({ silent: false }); onClearError(); }}
         onDismiss={() => { setRefreshError(''); onClearError(); }}/> : undefined}
       sessionId={activeConversationId} interaction={interactionContent ?? (pendingInteraction && <InteractionCard
         key={pendingInteraction.id} language={language} interaction={pendingInteraction} onReply={onReplyInteraction} onCancel={onCancelInteraction}/>)}>
@@ -2552,7 +2551,7 @@ export function ChatPanel({
           language={language}
           tone="error"
           message={error || refreshError}
-          actionLabel={language === 'zh' ? '重试' : 'Retry'}
+          actionLabel={uiText(language)('common.retry')}
           onAction={async () => {
             await refreshBackendWithFeedback({ silent: false });
             onClearError();
@@ -2621,7 +2620,7 @@ export function ChatPanel({
               onCancel={onCancel}
               shadowActive={false}
               shadowAvailable={!showWelcome && shadowCanActivate}
-              shadowAgentName={language === 'zh' ? '新窗口' : 'New window'}
+              shadowAgentName={uiText(language)('chatPanel.newWindow')}
               onToggleShadow={shadowCanActivate ? openShadowPopup : undefined}
               contextWindow={contextWindowUsage ?? (contextWindowMaxTokens != null
                 ? contextWindowMetrics(undefined, contextWindowMaxTokens, selectedModelConfig?.maxCompletionTokens) : undefined)}
@@ -2721,7 +2720,7 @@ export function ChatPanel({
             className="message-list"
             ref={setListScrollerRef}
             tabIndex={0}
-            aria-label={language === 'zh' ? '会话消息' : 'Conversation messages'}
+            aria-label={uiText(language)('chatPanel.conversationMessages')}
             onKeyDownCapture={handleListKeyDownCapture}
             onWheelCapture={handleListWheelCapture}
             onPointerDownCapture={handleListPointerDownCapture}
@@ -2745,13 +2744,13 @@ export function ChatPanel({
               <div className="message-list-content">
                 {historyPages?.hasMore && <div className="conversation-history-paging">
                   <button type="button" className="secondary-button" disabled={historyPages.loadingOlder} onClick={loadEarlier}>
-                    {historyPages.loadingOlder ? (language === 'zh' ? '正在加载…' : 'Loading…')
-                      : historyPages.needsRefresh ? (language === 'zh' ? '重新加载历史' : 'Refresh history')
-                        : language === 'zh' ? '加载更早消息' : 'Load earlier messages'}
+                    {historyPages.loadingOlder ? (uiText(language)('common.loading'))
+                      : historyPages.needsRefresh ? (uiText(language)('chatPanel.refreshHistory'))
+                        : uiText(language)('chatPanel.loadEarlierMessages')}
                   </button>
                   {historyPages.historyError && <span role="alert" title={historyPages.historyError}>
-                    {historyPages.needsRefresh ? (language === 'zh' ? '历史已更新，请重新加载' : 'History changed. Refresh to continue.')
-                      : language === 'zh' ? '加载失败，请重试' : 'Unable to load. Try again.'}
+                    {historyPages.needsRefresh ? (uiText(language)('chatPanel.historyChangedRefreshToContinue'))
+                      : uiText(language)('chatPanel.unableToLoadTryAgain')}
                   </span>}
                 </div>}
                 {renderMessages.map((message, index) => renderMessage(message, index))}
@@ -2784,10 +2783,10 @@ export function ChatPanel({
             className="scene-reopen-button"
             type="button"
             onClick={() => openScene(availableScene)}
-            title={language === 'zh' ? '继续交互场景' : 'Continue interactive scene'}
+            title={uiText(language)('chatPanel.continueInteractiveScene')}
           >
             <Sparkles size={15} />
-            <span>{language === 'zh' ? '继续场景' : 'Scene'}</span>
+            <span>{uiText(language)('chatPanel.scene')}</span>
           </button>
         )}
         {!showWelcome && !quickInputTarget && (pendingInteraction || interactionContent) && (
@@ -2796,8 +2795,8 @@ export function ChatPanel({
             ref={composerDockRef}
           >
             {onToggleQueueLock && (queuedMessageCount > 0 || queueLocked) && <div className="interaction-queue-lock">
-              <span>{queueLocked ? language === 'zh' ? '引导队列已锁定' : 'Guidance queue locked'
-                : language === 'zh' ? '引导队列自动发送已开启' : 'Guidance auto-send is on'}</span>
+              <span>{queueLocked ? uiText(language)('chatPanel.guidanceQueueLocked')
+                : uiText(language)('chatPanel.guidanceAutoSendIsOn')}</span>
               <QueueActionsMenu language={language} locked={queueLocked} lockPending={queueLockPending} onToggleLock={onToggleQueueLock} />
             </div>}
             {interactionContent ?? (pendingInteraction && <InteractionCard

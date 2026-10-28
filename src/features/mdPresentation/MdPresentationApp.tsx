@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { UserPromptInput } from '@cardbush/bush-protocol';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilePlus2, FolderOpen, Plus, Play, RefreshCw, Save, UsersRound } from 'lucide-react';
@@ -22,7 +23,7 @@ import { documentTeam, enableDocumentTeam, teamFromMarkdown, teamToMarkdown } fr
 import { refreshTeamWorkspace, selectTeam, teamCommand, useTeamWorkspace } from '../team/teamWorkspaceStore';
 const CreationConversation = lazy(() => import('./CreationConversation').then(module => ({ default: module.CreationConversation })));
 
-type BushItAppProps = CreationChatOptions & { language: 'zh' | 'en'; onPractice?: (team: TeamWorkflow) => void; inspectorOpen?: boolean; onToggleInspector?: () => void };
+type BushItAppProps = CreationChatOptions & { language: string; onPractice?: (team: TeamWorkflow) => void; inspectorOpen?: boolean; onToggleInspector?: () => void };
 export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggleInspector, composerPortalTarget, externalComposerControls = false, onOpenComposer, ...chatOptions }: BushItAppProps) {
   const state = useBushItPages(), current = useRef(state); current.current = state;
   const [chatOpen, setChatOpen] = useState(false), [error, setError] = useState('');
@@ -56,7 +57,7 @@ export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggl
   const scope = creationSessionScope(state.projectDir, page), sessionId = state.sessions[state.projectDir || page?.conversationRoot || ''] || state.sessionDrafts[scope];
   const chatScope = state.projectDir || page?.id;
   useEffect(dismissInput, [chatScope, dismissInput]);
-  const t = (cn: string, en: string) => language === 'zh' ? cn : en;
+
   const startChat = () => {
     setChatOpen(true);
     if (sessionId) return;
@@ -72,18 +73,18 @@ export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggl
     if (captured?.unloaded) await refreshCreationFile(captured.id);
     if (captured && !captured.file) {
       const directory = state.projectDir || captured.conversationRoot || await window.cardbushDesktop?.ensureTaskWorkspace(sessionId);
-      if (!directory) throw Error(t('无法准备工作区，请重试。', 'Could not prepare the workspace. Please retry.'));
+      if (!directory) throw Error(uiText(language)('mdPresentationApp.couldNotPrepareTheWorkspacePleaseRetry'));
       const file = await markdownFile({ action: 'create', rootPath: directory, path: `document-${captured.id.slice(0, 8)}.md`, text: getBushItPages().pages.find(item => item.id === captured.id)?.source || '' });
-      if (!file) throw Error(t('无法准备创作文档，请重试。', 'Could not prepare the document. Please retry.'));
+      if (!file) throw Error(uiText(language)('mdPresentationApp.couldNotPrepareTheDocumentPleaseRetry'));
       updateBushItPage(captured.id, { file, temporary: true, ...(!captured.projectDir ? { conversationRoot: directory } : {}) });
     }
     if (captured?.file) await saveCreationFile(captured.id);
     const saved = getBushItPages().pages.find(item => item.id === captured?.id);
     return creationRequest(text, saved, selected, language);
   };
-  return <div className="creation-app" aria-label={t('创作', 'Create')} data-chat-open={chatOpen && !!sessionId}>
-    <TopBar title={page ? bushItPageName(page, language) : t('创作', 'Create')} language={language} inspectorOpen={!!inspectorOpen} onToggleInspector={onToggleInspector}
-      workspaceControl={<div className="creation-top-actions"><button type="button" className="icon-only" aria-label={t('新建临时文档', 'New untitled document')} onClick={() => createBushItPage()}><Plus size={16}/></button></div>}/>
+  return <div className="creation-app" aria-label={uiText(language)('appCenterModel.create')} data-chat-open={chatOpen && !!sessionId}>
+    <TopBar title={page ? bushItPageName(page, language) : uiText(language)('appCenterModel.create')} language={language} inspectorOpen={!!inspectorOpen} onToggleInspector={onToggleInspector}
+      workspaceControl={<div className="creation-top-actions"><button type="button" className="icon-only" aria-label={uiText(language)('mdPresentationApp.newUntitledDocument')} onClick={() => createBushItPage()}><Plus size={16}/></button></div>}/>
     <div className="creation-workspace">
     <div className="md-app bush-pages-app creation-editor" ref={editor} tabIndex={-1} onClickCapture={event => {
       const anchor = (event.target as Element).closest('a[href]'), href = anchor?.getAttribute('href');
@@ -104,13 +105,13 @@ export function MdPresentationApp({ language, onPractice, inspectorOpen, onToggl
     {page ? <BushItDocumentPage key={page.id} page={page} language={language} onPractice={onPractice} sessionId={sessionId} root={root}
       anchorRequest={anchorRequest?.pageId === page.id ? anchorRequest : undefined}
       onSourceSelection={value => setSelection(current => current?.id === page.id && current.value.source === value.source && current.value.startLine === value.startLine && current.value.endLine === value.endLine ? current : { id: page.id, value })}/>
-      : <div className="creation-empty"><FolderOpen size={28}/><h2>{t('开始创作', 'Start writing')}</h2><p>{t('从左侧选择 Markdown 文件，或新建文档。也可以通过下方输入让 AI 帮你创作。', 'Select or create a Markdown file on the left, or use Input below to write with AI.')}</p></div>}
+      : <div className="creation-empty"><FolderOpen size={28}/><h2>{uiText(language)('mdPresentationApp.startWriting')}</h2><p>{uiText(language)('mdPresentationApp.selectOrCreateAMarkdownFileOn')}</p></div>}
     </div>
     {localControls && <InspectorCoverControls language={language} inputOpen={chatOpen} onTargetChange={setInputTarget}
       onToggleInput={() => { if (chatOpen) dismissInput(); else void startChat(); }}/>}
     </div>
     {sessionId && <Suspense fallback={null}><CreationConversation key={sessionId} {...chatOptions} sessionId={sessionId} root={root} language={language}
-      preparation={state.sessionDrafts[scope] === sessionId ? { title: `${t('创作', 'Create')} · ${page ? bushItPageName(page, language) : fileName(state.projectDir)}`,
+      preparation={state.sessionDrafts[scope] === sessionId ? { title: `${uiText(language)('appCenterModel.create')} · ${page ? bushItPageName(page, language) : fileName(state.projectDir)}`,
         projectDir: state.projectDir || undefined, metadata: { creation_workspace: true }, onCreated: conversation => {
           const directory = conversationWorkspaceRoot(conversation);
           if (page && !page.projectDir) updateBushItPage(page.id, { conversationRoot: directory });
@@ -135,7 +136,7 @@ export function BushItDocumentPage({ page, language, onPractice, onSourceSelecti
   const [fileError, setFileError] = useState(''), [readError, setReadError] = useState(''), [saving, setSaving] = useState(false);
   const document = useMemo(() => { try { return parseMarkdownGraph(source); } catch { return undefined; } }, [source]);
   const config = document && documentTeam(document), teamId = String(config?.id || '');
-  const state = useTeamWorkspace(Boolean(config)), files = useMarkdownFile(), t = (cn: string, en: string) => language === 'zh' ? cn : en;
+  const state = useTeamWorkspace(Boolean(config)), files = useMarkdownFile();
   useEffect(() => { if (page.file) files.accept(page.file); }, [page.file]);
   useEffect(() => {
     if (!page.file) return;
@@ -171,31 +172,31 @@ export function BushItDocumentPage({ page, language, onPractice, onSourceSelecti
       if (practice) { selectTeam(definition.id); onPractice?.(definition); }
     } catch (caught) { setTeamError(String((caught as Error).message)); } finally { setTeamBusy(false); }
   };
-  if (page.unloaded) return <div className="creation-empty" role="status">{readError || t('正在加载 Markdown…', 'Loading Markdown…')}</div>;
+  if (page.unloaded) return <div className="creation-empty" role="status">{readError || uiText(language)('mdPresentationApp.loadingMarkdown')}</div>;
   return <>{(fileError || readError || files.error || teamError) && <p role="alert" className="md-error">{fileError || readError || files.error || teamError}</p>}
-    {page.externalFile && <div className="creation-conflict" role="alert"><span>{t('文件已有新版本，当前编辑内容已保留。', 'The file has a new version. Your draft is preserved.')}</span>
-      <button type="button" disabled={saving} onClick={async () => { setSaving(true); try { if (onKeepDraft) await onKeepDraft(page.source); else createBushItPage(page.source); updateBushItPage(page.id, { source: page.externalFile!.text, file: page.externalFile, externalFile: undefined }); selectBushItPage(page.id); setFileError(''); } catch (error) { setFileError(String((error as Error).message)); } finally { setSaving(false); } }}>{t('保留草稿并载入新版本', 'Keep draft and load new version')}</button>
-      <button type="button" onClick={() => void saveFile(true)}>{t('草稿另存为', 'Save draft as')}</button></div>}
+    {page.externalFile && <div className="creation-conflict" role="alert"><span>{uiText(language)('mdPresentationApp.theFileHasANewVersionYour')}</span>
+      <button type="button" disabled={saving} onClick={async () => { setSaving(true); try { if (onKeepDraft) await onKeepDraft(page.source); else createBushItPage(page.source); updateBushItPage(page.id, { source: page.externalFile!.text, file: page.externalFile, externalFile: undefined }); selectBushItPage(page.id); setFileError(''); } catch (error) { setFileError(String((error as Error).message)); } finally { setSaving(false); } }}>{uiText(language)('mdPresentationApp.keepDraftAndLoadNewVersion')}</button>
+      <button type="button" onClick={() => void saveFile(true)}>{uiText(language)('mdPresentationApp.saveDraftAs')}</button></div>}
     <TeamDocumentEditor source={live.preview?.source ?? source} liveEdit={live.preview} onBeforeEdit={live.beforeEdit} onCompositionChange={live.compositionChange}
       anchorRequest={anchorRequest}
       onChange={value => { live.beforeEdit(); setSource(value); setTeamError(''); }} language={language} teamEnabled={Boolean(config)} agents={state.agents} lockedId={registered?.id === teamId && registered.revision > 0}
       onSourceSelection={onSourceSelection}
-      headerActions={<>{embedded && <span className="canvas-document-save-state" role="status">{page.externalFile ? t('存在版本冲突', 'Version conflict') : saving ? t('正在保存…', 'Saving…') : page.file && page.source !== page.file.text ? t('待保存', 'Unsaved') : t('已保存', 'Saved')}</span>}
-        {onOpenTeam && registered?.id === teamId && <button type="button" disabled={teamBusy} onClick={() => onOpenTeam(teamId)}>{t('查看流程', 'View workflow')}</button>}
-        {embedded && config && <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(false)}><Save size={14}/>{registered?.source === source ? t('已保存到流程', 'Saved to workflow') : t('保存到流程', 'Save to workflow')}</button>}
-        <button type="button" disabled={saving || files.busy || !!live.preview} onClick={() => void saveFile()} aria-label={t('保存 Markdown', 'Save Markdown')} title="Ctrl+S"><Save size={16}/></button></>}
+      headerActions={<>{embedded && <span className="canvas-document-save-state" role="status">{page.externalFile ? uiText(language)('mdPresentationApp.versionConflict') : saving ? uiText(language)('networkProxySettings.saving') : page.file && page.source !== page.file.text ? uiText(language)('canvasMarkdownWorkspace.unsaved') : uiText(language)('modelsSettingsPanel.saved')}</span>}
+        {onOpenTeam && registered?.id === teamId && <button type="button" disabled={teamBusy} onClick={() => onOpenTeam(teamId)}>{uiText(language)('mdPresentationApp.viewWorkflow')}</button>}
+        {embedded && config && <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(false)}><Save size={14}/>{registered?.source === source ? uiText(language)('mdPresentationApp.savedToWorkflow') : uiText(language)('mdPresentationApp.saveToWorkflow')}</button>}
+        <button type="button" disabled={saving || files.busy || !!live.preview} onClick={() => void saveFile()} aria-label={uiText(language)('mdPresentationApp.saveMarkdown')} title={uiText(language)('mdPresentationApp.ctrl_s')}><Save size={16}/></button></>}
       toolbar={<>
-        {config ? <><span className="md-team-save-state">{registered?.source === source ? t('已保存到 Team', 'Saved to Team') : 'Team'}</span>
-          <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(false)}><Save size={14}/>{t('保存到 Team', 'Save to Team')}</button>
-          {onPractice && <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(true)}><Play size={14}/>{t('实践', 'Practice')}</button>}</>
-          : <button type="button" disabled={!document} onClick={() => setSource(enableDocumentTeam(source))}><UsersRound size={15}/>{t('用 Team 实践', 'Practice with Team')}</button>}
+        {config ? <><span className="md-team-save-state">{registered?.source === source ? uiText(language)('mdPresentationApp.savedToTeam') : uiText(language)('mdPresentationApp.team')}</span>
+          <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(false)}><Save size={14}/>{uiText(language)('mdPresentationApp.saveToTeam')}</button>
+          {onPractice && <button type="button" disabled={teamBusy || state.loading || !!live.preview} onClick={() => void saveTeam(true)}><Play size={14}/>{uiText(language)('mdPresentationApp.practice')}</button>}</>
+          : <button type="button" disabled={!document} onClick={() => setSource(enableDocumentTeam(source))}><UsersRound size={15}/>{uiText(language)('mdPresentationApp.practiceWithTeam')}</button>}
         <div className="bush-page-menu-group">
-          {!embedded && <><button type="button" onClick={() => createBushItPage()}><FilePlus2 size={15}/>{t('新建页面', 'New page')}</button>
-          <button type="button" disabled={files.busy} onClick={() => void open()}><FolderOpen size={15}/>{t('打开 .md', 'Open .md')}</button></>}
-          <button type="button" disabled={files.busy || !!live.preview} onClick={() => void saveFile()}><Save size={15}/>{t('保存 .md', 'Save .md')}</button>
-          {files.file && <><button type="button" disabled={files.busy || !!live.preview} onClick={() => void saveFile(true)}>{t('另存为', 'Save as')}</button>
-            <button type="button" disabled={files.busy} onClick={() => void reload()}><RefreshCw size={15}/>{t('检查文件更新', 'Check file changes')}</button></>}
-          <small>{files.file?.path || t('页面自动保存在本机', 'Pages are stored on this device')}</small>
+          {!embedded && <><button type="button" onClick={() => createBushItPage()}><FilePlus2 size={15}/>{uiText(language)('bushItSidebar.newPage')}</button>
+          <button type="button" disabled={files.busy} onClick={() => void open()}><FolderOpen size={15}/>{uiText(language)('mdPresentationApp.openMd')}</button></>}
+          <button type="button" disabled={files.busy || !!live.preview} onClick={() => void saveFile()}><Save size={15}/>{uiText(language)('mdPresentationApp.saveMd')}</button>
+          {files.file && <><button type="button" disabled={files.busy || !!live.preview} onClick={() => void saveFile(true)}>{uiText(language)('mdPresentationApp.saveAs')}</button>
+            <button type="button" disabled={files.busy} onClick={() => void reload()}><RefreshCw size={15}/>{uiText(language)('mdPresentationApp.checkFileChanges')}</button></>}
+          <small>{files.file?.path || uiText(language)('mdPresentationApp.pagesAreStoredOnThisDevice')}</small>
         </div>
       </>}/>
   </>;

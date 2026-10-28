@@ -1,0 +1,9 @@
+# Internal distribution only. Public release signing remains mandatory in the
+# separate electron-builder.release.yml configuration.
+extends: electron-builder.yml
+directories:
+  output: release-internal
+win:
+  artifactName: CardBush-${version}-windows-${arch}-internal-unsigned.${ext}
+  forceCodeSigning: false
+publish: null

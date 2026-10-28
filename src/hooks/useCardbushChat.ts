@@ -1,3 +1,5 @@
+import { isDefaultConversationTitle } from '../i18n/conversationTitles';
+import { uiText } from '../i18n';
 import { readUserPrompt, promptContextMetadata, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
 import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttachmentsForVision, streamAttachmentsFromChatAttachments } from '../shared/chatAttachments';
 import { createRealtimeAgentExecutor } from '../backend/realtimeAgent';
@@ -222,10 +224,6 @@ export function useCardbushChat(
   }), [backend.scope]);
   const languageRef = useRef<AppLanguage>(requestContext.language ?? 'zh');
   languageRef.current = requestContext.language ?? 'zh';
-  const localize = useCallback(
-    (zh: string, en: string) => (languageRef.current === 'zh' ? zh : en),
-    [],
-  );
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [preparedConversationsById, setPreparedConversationsById] = useState<
     Record<string, ConversationSummary>
@@ -472,17 +470,17 @@ export function useCardbushChat(
       return;
     }
     const conversation = conversationsRef.current.find((item) => item.id === normalized);
-    const title = conversation?.title?.trim() || localize('CardBush 会话', 'CardBush session');
+    const title = conversation?.title?.trim() || uiText(languageRef.current)('useCardbushChat.cardbushSession');
     const attention: SessionAttentionState = {
       sessionId: normalized,
       kind,
       ...(kind === 'interaction' ? { interactionId: notificationId } : {}),
       title,
       body: body.trim() || (kind === 'interaction'
-        ? localize('有待处理的方案或审批请求。', 'A solution or approval request needs your response.')
+        ? uiText(languageRef.current)('useCardbushChat.aSolutionOrApprovalRequestNeedsYour')
         : kind === 'error'
-          ? localize('任务遇到问题，点击查看详情。', 'The task needs attention. Click to view details.')
-          : localize('任务已完成，点击查看结果。', 'Task complete. Click to view the result.')),
+          ? uiText(languageRef.current)('useCardbushChat.theTaskNeedsAttentionClickToView')
+          : uiText(languageRef.current)('useCardbushChat.taskCompleteClickToViewTheResult')),
       turnId: normalizedTurnId || undefined,
       updatedAt: new Date().toISOString(),
     };
@@ -504,7 +502,7 @@ export function useCardbushChat(
     };
     attentionByConversationRef.current = next;
     setAttentionByConversation(next);
-  }, [clearSessionAttention, localize]);
+  }, [clearSessionAttention]);
 
   const syncInteractionAttention = useCallback((
     sessionId: string,
@@ -832,9 +830,9 @@ export function useCardbushChat(
     // while saving must never apply this selection to the new model.
     const save = requestContext.onModelReasoningChange;
     void Promise.resolve().then(() => save(selectedReasoningConfig.id, effort)).catch(error => {
-      setError(localize('思考强度保存失败：', 'Unable to save reasoning effort: ') + String(error instanceof Error ? error.message : error));
+      setError(uiText(languageRef.current)('useCardbushChat.unableToSaveReasoningEffort') + String(error instanceof Error ? error.message : error));
     });
-  }, [selectedReasoningConfig, requestContext.onModelReasoningChange, localize]);
+  }, [selectedReasoningConfig, requestContext.onModelReasoningChange]);
 
   const refreshMeasuredContextWindowUsage = useCallback((
     sessionId: string,
@@ -1042,7 +1040,7 @@ export function useCardbushChat(
     if (!terminal?.turnId.trim() || terminal.stopped || terminal.status === 'stopped') return;
     if (terminal.status === 'failed') {
       markSessionAttention(sessionId, 'error', terminal.stopReason ||
-        localize('任务执行失败。', 'The task failed.'), terminal.turnId);
+        uiText(languageRef.current)('useCardbushChat.theTaskFailed'), terminal.turnId);
       return;
     }
     if (terminal.status !== 'completed') return;
@@ -1050,7 +1048,7 @@ export function useCardbushChat(
     if (goal?.status === 'active') return;
     markSessionAttention(sessionId, 'completed', truncateText(
       body.replace(/\s+/g, ' ').trim() || goal?.statusReason || goal?.objective || '', 180), terminal.turnId);
-  }, [localize, markSessionAttention, refreshGoal]);
+  }, [markSessionAttention, refreshGoal]);
 
   const applyGoalExecution = useCallback((
     sessionId: string,
@@ -1568,7 +1566,6 @@ export function useCardbushChat(
     clearConnectionRecovery,
     clearSessionRunning,
     scheduleQueuedMessage,
-    localize,
     markSessionAttention,
     syncInteractionAttention,
     markTurnAttention,
@@ -2076,10 +2073,10 @@ export function useCardbushChat(
   const deleteConversation = useCallback(async (conversationId: string) => {
     const title = conversationsRef.current.find(item => item.id === conversationId)?.title || conversationId;
     if (!await confirmAction({
-      title: localize('删除会话', 'Delete conversation'),
-      message: localize(`确定删除会话“${title}”吗？\n定时任务不受影响。`, `Delete “${title}”?\nScheduled tasks are unaffected.`),
-      confirmLabel: localize('删除', 'Delete'),
-      cancelLabel: localize('取消', 'Cancel'),
+      title: uiText(languageRef.current)('useCardbushChat.deleteConversation'),
+      message: uiText(languageRef.current)('useCardbushChat.deleteScheduledTasksAreUnaffected', { title }),
+      confirmLabel: uiText(languageRef.current)('appCenter.delete'),
+      cancelLabel: uiText(languageRef.current)('agentConnectionForm.cancel'),
     })) return;
     setError(null);
     try {
@@ -2100,7 +2097,7 @@ export function useCardbushChat(
       delete next[conversationId];
       return next;
     });
-  }, [clearSessionAttention, localize, setMessageHistoryLoading, backend.scope]);
+  }, [clearSessionAttention, setMessageHistoryLoading, backend.scope]);
 
   const renameConversation = useCallback(async (conversationId: string, title: string) => {
     const normalizedId = conversationId.trim();
@@ -2153,7 +2150,7 @@ export function useCardbushChat(
     if (workspaceSwitchesRef.current.has(sessionId)) return workspaceSwitchesRef.current.get(sessionId);
     if (sendingSessionsRef.current.has(sessionId) || activeTurnIdsRef.current[sessionId] ||
       conversationCreationPromisesRef.current.has(sessionId) || queuedMessagesRef.current.some(item => queuedMessageConversationId(item) === sessionId)) {
-      const caught = new Error('请等待此会话的任务及排队消息处理完，再切换工作区。 / Wait for this conversation to finish before switching workspaces.');
+      const caught = new Error(uiText()('useCardbushChat.wait_for_this_conversation_to_finish_before'));
       setError(caught.message);
       throw caught;
     }
@@ -2209,7 +2206,7 @@ export function useCardbushChat(
     const previousRoot = previousProjectDir.trim();
     const nextRoot = nextProjectDir.trim();
     if (!normalizedProjectId || !previousRoot || !nextRoot) {
-      throw new Error('Project relocation requires an id and both paths.');
+      throw new Error(uiText()('useCardbushChat.project_relocation_requires_an_id_and_both'));
     }
     const targets = conversationsRef.current.filter((conversation) => {
       const sessionProjectId = conversationProjectId(conversation);
@@ -2395,7 +2392,7 @@ export function useCardbushChat(
         optimisticAttachments.map((attachment) => attachment.name).join(', ') ||
         outbound.userInput;
       if (!turnModel.trim()) {
-        setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
+        setError(uiText(languageRef.current)('useCardbushChat.configureAModelInSettingsFirst'));
         return;
       }
       let candidate =
@@ -2859,7 +2856,6 @@ export function useCardbushChat(
       enqueueMessage,
       isSessionSending,
       loadTeamFlow,
-      localize,
       markSessionAttention,
       syncInteractionAttention,
       markTurnAttention,
@@ -2896,13 +2892,13 @@ export function useCardbushChat(
 
   const voiceGuidanceRef = useRef<(message: ChatMessage, text: string) => Promise<boolean>>(async () => false);
   const prepareVoiceRequest = useCallback(async (fixedSessionId?: string) => {
-    if (backend.scope) throw new Error('Realtime delegation requires a local conversation.');
+    if (backend.scope) throw new Error(uiText()('useCardbushChat.realtime_delegation_requires_a_local_conversation'));
     const voiceModel = resolveConversationModelId(availableModels, fixedSessionId ?? activeConversationId, backend.scope, defaultModelId);
-    if (!voiceModel.trim()) throw Object.assign(new Error('请先配置 Agent 模型。'), { code: 'realtime_model_required' });
+    if (!voiceModel.trim()) throw Object.assign(new Error(uiText()('useCardbushChat.configure_an_agent_model_first')), { code: 'realtime_model_required' });
     const voiceModelConfig = modelConfigFor(managedModelConfigs, voiceModel);
     const voiceReasoningLevel: ReasoningLevel = resolveModelReasoningEffort(voiceModelConfig ?? {}) ?? 'default';
     const conversation = fixedSessionId ? { id: fixedSessionId } as ConversationSummary
-      : await persistPreparedConversation(activeConversation ?? prepareConversation(undefined, '语音任务'));
+      : await persistPreparedConversation(activeConversation ?? prepareConversation(undefined, uiText()('useCardbushChat.voice_task')));
     if (!readConversationModel(conversation.id)) selectConversationModel(voiceModel, conversation.id);
     return {
       sessionId: conversation.id, userInput: '',
@@ -2923,7 +2919,7 @@ export function useCardbushChat(
     executor.pin = async target => {
       const config = await prepareVoiceRequest();
       const conversation = conversationsRef.current.find(item => item.id === config.sessionId) ?? preparedConversationsRef.current[config.sessionId]
-        ?? { id: config.sessionId, title: '语音对话', preview: '', updatedAt: new Date().toISOString(), projectDir: config.projectDir };
+        ?? { id: config.sessionId, title: uiText()('useCardbushChat.voice_conversation'), preview: '', updatedAt: new Date().toISOString(), projectDir: config.projectDir };
       const pinned: VoiceTarget = { ...target, sessionId: config.sessionId,
         agent: createRealtimeAgentExecutor(async () => config, () => config.sessionId),
         send: (text, options) => {
@@ -2970,7 +2966,7 @@ export function useCardbushChat(
         conversations.find((item) => item.id === sessionId) ??
         (activeConversation?.id === sessionId ? activeConversation : undefined);
       if (!conversation) {
-        setError(localize('未找到原会话，无法重试消息', 'The original conversation was not found, so the message cannot be retried'));
+        setError(uiText(languageRef.current)('useCardbushChat.theOriginalConversationWasNotFoundSo'));
         return;
       }
       const projectPathAliases = conversationProjectPathAliases(conversation);
@@ -3010,8 +3006,8 @@ export function useCardbushChat(
       const { sessionId, hostId, text, resolve, reject } = (event as CustomEvent).detail;
       if ((hostId ?? '') !== (backend.scope ? `${backend.scope}:${sessionId}` : '')) return;
       const conversation = conversationsRef.current.find(item => item.id === sessionId);
-      if (!conversation || typeof text !== 'string' || !text.trim() || text.length > 32_000) { reject(new Error('The conversation is unavailable.')); return; }
-      if (sendingSessionsRef.current.has(sessionId)) { reject(new Error('Wait for the current task to finish.')); return; }
+      if (!conversation || typeof text !== 'string' || !text.trim() || text.length > 32_000) { reject(new Error(uiText()('useCardbushChat.the_conversation_is_unavailable'))); return; }
+      if (sendingSessionsRef.current.has(sessionId)) { reject(new Error(uiText()('useCardbushChat.wait_for_the_current_task_to_finish'))); return; }
       // This event is dispatched only after confirmation in the host UI, outside the sandbox.
       void sendMessageRef.current(text, conversation).catch(reject);
       resolve();
@@ -3379,7 +3375,6 @@ export function useCardbushChat(
       applyGoalExecution,
       clearConnectionRecovery,
       loadTeamFlow,
-      localize,
       markSessionAttention,
       syncInteractionAttention,
       markTurnAttention,
@@ -3402,16 +3397,16 @@ export function useCardbushChat(
       const conversation =
         conversations.find((item) => item.id === conversationId) ?? activeConversation;
       if (!conversation || !conversationId) {
-        setError(localize('这条回复缺少会话信息，无法重新生成', 'This response is missing conversation information and cannot be regenerated'));
+        setError(uiText(languageRef.current)('useCardbushChat.thisResponseIsMissingConversationInformationAnd'));
         return;
       }
       if (!selectedModel.trim()) {
-        setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
+        setError(uiText(languageRef.current)('useCardbushChat.configureAModelInSettingsFirst'));
         return;
       }
       const expectedTurnId = chatMessageTurnId(message);
       if (message.role !== 'assistant' || !expectedTurnId) {
-        setError(localize('这条回复缺少轮次信息，无法重新生成', 'This response is missing Turn information and cannot be regenerated'));
+        setError(uiText(languageRef.current)('useCardbushChat.thisResponseIsMissingTurnInformationAnd'));
         return;
       }
       let messages = messagesByConversation[conversationId] ?? activeMessages;
@@ -3425,10 +3420,7 @@ export function useCardbushChat(
           includeSuperseded: false,
         }).catch((caught) => {
           refreshFailed = true;
-          setError(localize(
-            `刷新会话消息失败: ${errorMessage(caught)}`,
-            `Failed to refresh conversation messages: ${errorMessage(caught)}`,
-          ));
+          setError(uiText(languageRef.current)('useCardbushChat.failedToRefreshConversationMessages', { value1: errorMessage(caught) }));
           return [] as ChatMessage[];
         });
         if (!isHistoryReadCurrent(historyRead)) return;
@@ -3446,10 +3438,7 @@ export function useCardbushChat(
         return;
       }
       if (!sourceUserMessage || !messageId) {
-        setError(localize(
-          '未定位到可编辑的用户消息，无法重新生成。请编辑上一条用户消息重跑。',
-          'No editable user message was found. Edit the previous user message and run it again.',
-        ));
+        setError(uiText(languageRef.current)('useCardbushChat.noEditableUserMessageWasFoundEdit'));
         return;
       }
       if (isSessionSending(conversationId)) return;
@@ -3457,7 +3446,7 @@ export function useCardbushChat(
         messageIdentityMatches(item, sourceUserMessage),
       );
       if (userIndex < 0 || chatMessageTurnId(sourceUserMessage) !== expectedTurnId) {
-        setError(localize('未定位到本轮原消息，已取消重新生成', 'The original message for this Turn was not found. Regeneration was cancelled'));
+        setError(uiText(languageRef.current)('useCardbushChat.theOriginalMessageForThisTurnWas'));
         return;
       }
       const keptMessages = messages.slice(0, userIndex);
@@ -3546,7 +3535,6 @@ export function useCardbushChat(
       applyHistoryRead,
       conversations,
       isSessionSending,
-      localize,
       managedModelConfigs,
       messagesByConversation,
       requestContext.disabledSkillNames,
@@ -3589,7 +3577,7 @@ export function useCardbushChat(
         return;
       }
       if (!selectedModel.trim()) {
-        setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
+        setError(uiText(languageRef.current)('useCardbushChat.configureAModelInSettingsFirst'));
         return;
       }
       const messages = messagesByConversation[conversationId] ?? activeMessages;
@@ -3606,10 +3594,7 @@ export function useCardbushChat(
           includeSuperseded: true,
         }).catch((caught) => {
           refreshFailed = true;
-          setError(localize(
-            `刷新会话消息失败: ${errorMessage(caught)}`,
-            `Failed to refresh conversation messages: ${errorMessage(caught)}`,
-          ));
+          setError(uiText(languageRef.current)('useCardbushChat.failedToRefreshConversationMessages', { value1: errorMessage(caught) }));
           return [] as ChatMessage[];
         });
         if (!isHistoryReadCurrent(historyRead)) return;
@@ -3626,10 +3611,7 @@ export function useCardbushChat(
         return;
       }
       if (!editSourceMessage || !messageId) {
-        setError(localize(
-          '未定位到原消息，更新重跑已取消，没有创建新轮次。',
-          'The original message was not found. Update and rerun was cancelled without creating a new Turn.',
-        ));
+        setError(uiText(languageRef.current)('useCardbushChat.theOriginalMessageWasNotFoundUpdate'));
         return;
       }
       const editedAttachments = optimisticAttachments.length > 0
@@ -3774,7 +3756,7 @@ export function useCardbushChat(
         return submissionReceipt(accepted => sendMessage({ ...prompt, text }, conversation, undefined, undefined, undefined, undefined, accepted));
       }
       if (!conversationId || !turnId || !active || active !== turnId) {
-        setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
+        setError(uiText(languageRef.current)('useCardbushChat.thisResponseIsNotReadyForGuidance'));
         return false;
       }
       const clientMessageId = `guidance-${crypto.randomUUID()}`;
@@ -3836,10 +3818,7 @@ export function useCardbushChat(
         setMessagesByConversation((current) =>
           markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
         );
-        setError(localize(
-          `引导发送失败: ${errorMessage(caught)}`,
-          `Failed to send guidance: ${errorMessage(caught)}`,
-        ));
+        setError(uiText(languageRef.current)('useCardbushChat.failedToSendGuidance', { value1: errorMessage(caught) }));
         return false;
       } finally {
         guidanceRequestIdsRef.current.delete(clientMessageId);
@@ -3888,7 +3867,7 @@ export function useCardbushChat(
         return;
       }
       if (!isSessionSending(conversationId) || !conversationId || !active) {
-        setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
+        setError(uiText(languageRef.current)('useCardbushChat.thisResponseIsNotReadyForGuidance'));
         return;
       }
       const clientMessageId = `guidance-${crypto.randomUUID()}`;
@@ -3948,10 +3927,7 @@ export function useCardbushChat(
         setMessagesByConversation((current) =>
           markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
         );
-        setError(localize(
-          `引导发送失败: ${errorMessage(caught)}`,
-          `Failed to send guidance: ${errorMessage(caught)}`,
-        ));
+        setError(uiText(languageRef.current)('useCardbushChat.failedToSendGuidance', { value1: errorMessage(caught) }));
       } finally {
         guidanceRequestIdsRef.current.delete(clientMessageId);
       }
@@ -4043,10 +4019,7 @@ export function useCardbushChat(
         setMessagesByConversation((current) =>
           markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
         );
-        setError(localize(
-          `引导发送失败: ${errorMessage(caught)}`,
-          `Failed to send guidance: ${errorMessage(caught)}`,
-        ));
+        setError(uiText(languageRef.current)('useCardbushChat.failedToSendGuidance', { value1: errorMessage(caught) }));
       } finally {
         guidanceRequestIdsRef.current.delete(clientMessageId);
       }
@@ -4203,7 +4176,7 @@ export function useCardbushChat(
         latestGoal = await updateExperimentalGoal({
           goalId: goal.goalId,
           status: 'cancelled',
-          statusReason: localize('用户主动取消', 'Cancelled by user'),
+          statusReason: uiText(languageRef.current)('useCardbushChat.cancelledByUser'),
           expectedRevision: goal.revision,
         });
       } catch {
@@ -4216,7 +4189,7 @@ export function useCardbushChat(
           latestGoal = await updateExperimentalGoal({
             goalId: refreshed.goalId,
             status: 'cancelled',
-            statusReason: localize('用户主动取消', 'Cancelled by user'),
+            statusReason: uiText(languageRef.current)('useCardbushChat.cancelledByUser'),
             expectedRevision: refreshed.revision,
           });
         }
@@ -4316,10 +4289,7 @@ export function useCardbushChat(
       }
       stoppingRequestsRef.current.delete(sessionId);
       markSessionStopping(sessionId, false);
-      setError(localize(
-        '停止请求未成功，当前任务仍在运行。',
-        'The stop request was not accepted; the turn is still running.',
-      ));
+      setError(uiText(languageRef.current)('useCardbushChat.theStopRequestWasNotAcceptedThe'));
     } catch (caught) {
       stoppingRequestsRef.current.delete(sessionId);
       markSessionStopping(sessionId, false);
@@ -4327,7 +4297,6 @@ export function useCardbushChat(
     }
   }, [
     activeConversationId,
-    localize,
     markSessionStopping,
     reconcileTerminalTurn,
   ]);
@@ -4581,7 +4550,7 @@ function upsertConversationPreview(
   const existing = current.find((item) => item.id === conversation.id);
   const currentTitle = existing?.title ?? conversation.title;
   const nextTitle = shouldAutoTitleConversation(currentTitle, conversation.id)
-    ? conversationTitleFromUserText(titleSource) || currentTitle || '新会话'
+    ? conversationTitleFromUserText(titleSource) || currentTitle || uiText()('conversationSearchDialog.newChat')
     : currentTitle;
   const updated = {
     ...conversation,
@@ -4625,7 +4594,7 @@ function conversationPreviewFromMessages(messages: ChatMessage[]) {
 
 function shouldAutoTitleConversation(title: string | undefined, sessionId?: string) {
   const normalized = String(title ?? '').trim();
-  if (!normalized || ['新会话', '新对话', 'New chat', 'New conversation'].includes(normalized)) {
+  if (!normalized || isDefaultConversationTitle(normalized)) {
     return true;
   }
   const normalizedId = String(sessionId ?? '').trim();
@@ -4665,7 +4634,7 @@ function localConversation(
   const id = `local-${crypto.randomUUID()}`;
   return {
     id,
-    title: initialTitle?.trim() || '新会话',
+    title: initialTitle?.trim() || uiText()('conversationSearchDialog.newChat'),
     preview: '',
     updatedAt: new Date().toISOString(),
     projectId: projectId?.trim() || undefined,
@@ -4831,7 +4800,7 @@ function errorMessage(error: unknown) {
   if (error instanceof RuntimeRemoteError && error.fact.kind === 'transport') {
     return english
       ? 'Unable to reach the model provider or an external integration.'
-      : '无法连接模型服务或外部集成。';
+      : uiText()('useCardbushChat.could_not_connect_to_the_model_service');
   }
   return message;
 }

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ChevronRight } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import { useEffect, useRef, useState } from 'react';
@@ -13,9 +14,9 @@ async function loadPresentation(bridge: PluginMarketplaceApi, source: string, na
   finally { active--; waiting.shift()?.(); }
 }
 
-export function PluginMarketCard({ bridge, entry, sourceId, busy, zh, onOpen }: {
+export function PluginMarketCard({ bridge, entry, sourceId, busy, uiLanguage, onOpen }: {
   bridge: PluginMarketplaceApi;
-  entry: PluginMarketEntry; sourceId: string; busy: boolean; zh: boolean; onOpen: () => void;
+  entry: PluginMarketEntry; sourceId: string; busy: boolean; uiLanguage: string; onOpen: () => void;
 }) {
   const element = useRef<HTMLElement>(null);
   const [metadata, setMetadata] = useState<PluginMarketPresentation>();
@@ -40,8 +41,8 @@ export function PluginMarketCard({ bridge, entry, sourceId, busy, zh, onOpen }: 
         {darkLogo && <img className="plugin-logo-dark" src={darkLogo} alt="" loading="lazy" onError={() => setDarkFailed(true)} />}</> : <PluginIcon size={22} />}</span>
     <span className="plugin-market-card-copy"><strong>{metadata?.displayName || entry.name}</strong>
       <small>{metadata?.description || entry.description || entry.category}</small>
-      <span className="plugin-market-kind">{!entry.available ? entry.unavailableReason === 'policy' ? (zh ? '暂未开放' : 'Unavailable')
-        : (zh ? '来源暂不支持' : 'Unsupported source') : entry.category || (zh ? '插件' : 'Plugin')}</span></span>
+      <span className="plugin-market-kind">{!entry.available ? entry.unavailableReason === 'policy' ? (uiText(uiLanguage)('pluginMarketCard.unavailable'))
+        : (uiText(uiLanguage)('pluginMarketCard.unsupportedSource')) : entry.category || (uiText(uiLanguage)('pluginManagementPanel.plugin'))}</span></span>
     <ChevronRight className="plugin-row-chevron" size={16} />
   </button></article>;
 }

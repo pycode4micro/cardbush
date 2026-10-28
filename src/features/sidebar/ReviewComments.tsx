@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { createContext, useContext, useMemo, useRef, useEffect, useState, type Dispatch, type SetStateAction, type ReactNode } from 'react';
 import { ChevronDown, MessageSquare, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { AppLanguage } from '../../types';
@@ -71,11 +72,11 @@ export function ReviewDiffLine({ index, oldLine, newLine, kind, children }: {
     <div className={`diff-line ${kind}${enabled ? ' review-commentable-line' : ''}${row?.selected ? ' review-comment-selected' : ''}`}>
       {children}
       {enabled && <span className="review-line-actions">
-        <button type="button" className="review-add-comment" aria-label={review.language === 'zh' ? `在 ${newLine ?? oldLine} 行添加评论` : `Comment on line ${newLine ?? oldLine}`}
-          title={review.language === 'zh' ? '添加评论 · Shift+点击另一行可选择多行' : 'Add comment · Shift+click another line to select a range'}
+        <button type="button" className="review-add-comment" aria-label={uiText(review.language)('reviewComments.commentOnLine', { value1: newLine ?? oldLine })}
+          title={uiText(review.language)('reviewComments.addCommentShiftClickAnotherLineTo')}
           onClick={event => open(newLine != null ? 'new' : 'old', event.shiftKey, event.currentTarget)}><Plus size={13} /></button>
-        {oldLine != null && <button type="button" className="review-line-target old" aria-label={`L${oldLine}`} title={review.language === 'zh' ? '评论修改前的行' : 'Comment on the original line'} onClick={event => open('old', event.shiftKey, event.currentTarget)} />}
-        {newLine != null && <button type="button" className="review-line-target new" aria-label={`R${newLine}`} title={review.language === 'zh' ? '评论修改后的行' : 'Comment on the updated line'} onClick={event => open('new', event.shiftKey, event.currentTarget)} />}
+        {oldLine != null && <button type="button" className="review-line-target old" aria-label={`L${oldLine}`} title={uiText(review.language)('reviewComments.commentOnTheOriginalLine')} onClick={event => open('old', event.shiftKey, event.currentTarget)} />}
+        {newLine != null && <button type="button" className="review-line-target new" aria-label={`R${newLine}`} title={uiText(review.language)('reviewComments.commentOnTheUpdatedLine')} onClick={event => open('new', event.shiftKey, event.currentTarget)} />}
       </span>}
     </div>
     {review && row && (row.comments.length > 0 || row.draft) && <div className="review-line-comments">
@@ -98,24 +99,24 @@ function ReviewCommentEditor({ state, onChange, language }: { state: ReviewComme
     });
   };
   return <form className="review-comment-editor" onSubmit={event => { event.preventDefault(); save(); }}>
-    <header><strong>{language === 'zh' ? '你' : 'You'}</strong><span>{reviewLineLabel(draft)} · {language === 'zh' ? '本地评论' : 'Local comment'}</span></header>
-    <textarea ref={input} aria-label={language === 'zh' ? '代码评论' : 'Code comment'} placeholder={language === 'zh' ? '描述希望修改的地方…' : 'Describe the requested change…'} value={draft.text}
+    <header><strong>{uiText(language)('quickContextRail.you')}</strong><span>{reviewLineLabel(draft)} · {uiText(language)('reviewComments.localComment')}</span></header>
+    <textarea ref={input} aria-label={uiText(language)('reviewComments.codeComment')} placeholder={uiText(language)('reviewComments.describeTheRequestedChange')} value={draft.text}
       onChange={event => { const text = event.target.value; onChange(current => current.draft ? { ...current, draft: { ...current.draft, text } } : current); }}
       onKeyDown={event => {
         if (event.nativeEvent.isComposing) return;
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); save(); }
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onChange(current => ({ ...current, draft: null })); }
       }} />
-    <footer><button type="button" onClick={() => onChange(current => ({ ...current, draft: null }))}>{language === 'zh' ? '取消' : 'Cancel'}</button>
-      <button type="submit" className="review-comment-save" disabled={!draft.text.trim()}>{draft.id ? (language === 'zh' ? '保存' : 'Save') : (language === 'zh' ? '评论' : 'Comment')}</button></footer>
+    <footer><button type="button" onClick={() => onChange(current => ({ ...current, draft: null }))}>{uiText(language)('agentConnectionForm.cancel')}</button>
+      <button type="submit" className="review-comment-save" disabled={!draft.text.trim()}>{draft.id ? (uiText(language)('appCenter.save')) : (uiText(language)('reviewCommentModel.comment'))}</button></footer>
   </form>;
 }
 
 function ReviewCommentCard({ comment, language, onChange, editing }: { comment: ReviewComment; language: AppLanguage; onChange: ReviewCommentsChange; editing: boolean }) {
   return <article className="review-comment-card">
-    <header><strong>{language === 'zh' ? '你' : 'You'}</strong><span>{reviewLineLabel(comment)} · {language === 'zh' ? '待提交' : 'Pending'}</span>
-      <button type="button" aria-label={language === 'zh' ? '编辑评论' : 'Edit comment'} disabled={editing} onClick={() => onChange(current => ({ ...current, draft: { ...comment } }))}><Pencil size={12} /></button>
-      <button type="button" aria-label={language === 'zh' ? '删除评论' : 'Delete comment'} onClick={() => onChange(current => ({ ...current, comments: current.comments.filter(item => item.id !== comment.id) }))}><Trash2 size={12} /></button></header>
+    <header><strong>{uiText(language)('quickContextRail.you')}</strong><span>{reviewLineLabel(comment)} · {uiText(language)('reviewComments.pending')}</span>
+      <button type="button" aria-label={uiText(language)('reviewComments.editComment')} disabled={editing} onClick={() => onChange(current => ({ ...current, draft: { ...comment } }))}><Pencil size={12} /></button>
+      <button type="button" aria-label={uiText(language)('reviewComments.deleteComment')} onClick={() => onChange(current => ({ ...current, comments: current.comments.filter(item => item.id !== comment.id) }))}><Trash2 size={12} /></button></header>
     <p>{comment.text}</p>
   </article>;
 }
@@ -135,9 +136,9 @@ export function ReviewCommentsFooter({ state, onChange, onCompose, language, pat
       <ReviewCommentCard comment={comment} language={language} onChange={onChange} editing={!!state.draft} />
     </div>)}</div>}
     <div className="review-comments-toolbar"><button type="button" aria-expanded={expanded} disabled={!state.comments.length} onClick={() => setExpanded(value => !value)}><MessageSquare size={14} />
-      <span>{state.comments.length ? (language === 'zh' ? `${state.comments.length} 条评论` : `${state.comments.length} comments`) : (language === 'zh' ? '正在写评论' : 'Writing a comment')}</span>{state.comments.length > 0 && <ChevronDown size={12} />}</button>
-      <button type="button" className="review-comment-compose" disabled={!state.comments.length || !!state.draft} title={state.draft ? (language === 'zh' ? '请先保存或取消正在编辑的评论' : 'Save or cancel the open comment first') : (language === 'zh' ? '将评论加入此会话输入框' : 'Add comments to this conversation draft')}
+      <span>{state.comments.length ? (uiText(language)('reviewComments.comments', { value1: state.comments.length })) : (uiText(language)('reviewComments.writingAComment'))}</span>{state.comments.length > 0 && <ChevronDown size={12} />}</button>
+      <button type="button" className="review-comment-compose" disabled={!state.comments.length || !!state.draft} title={state.draft ? (uiText(language)('reviewComments.saveOrCancelTheOpenCommentFirst')) : (uiText(language)('reviewComments.addCommentsToThisConversationDraft'))}
         onClick={() => { onCompose(state.comments); const ids = new Set(state.comments.map(comment => comment.id)); onChange(current => ({ ...current, comments: current.comments.filter(comment => !ids.has(comment.id)) })); }}>
-        {language === 'zh' ? '加入对话' : 'Add to conversation'}</button></div>
+        {uiText(language)('reviewComments.addToConversation')}</button></div>
   </div>;
 }

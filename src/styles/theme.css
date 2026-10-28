@@ -173,3 +173,15 @@ button {
     --sidebar-width: 272px;
   }
 }
+
+/* Shared visual tokens used by canvas and embedded HTML surfaces. */
+:root, .theme-bright {
+  --wordmark-emphasis: #181818;
+  --viz-series-1: #2468c4; --viz-series-2: #b45b08; --viz-series-3: #247b56;
+  --viz-series-4: #8150b6; --viz-series-5: #b94267; --viz-series-6: #247d8c;
+}
+.theme-dark {
+  --wordmark-emphasis: #fff;
+  --viz-series-1: #6aa9ff; --viz-series-2: #f6b36b; --viz-series-3: #73c9a2;
+  --viz-series-4: #c2a3ee; --viz-series-5: #ee91a6; --viz-series-6: #70c9d6;
+}

@@ -7,10 +7,11 @@ import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
 import * as protocol from '@cardbush/bush-protocol';
+import * as i18n from '@cardbush/platform/i18n';
 const require = createRequire(import.meta.url);
 function module(path, deps = {}) {
   const exports = {};
-  new Function('exports', 'require', ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText)(exports, id => deps[id] ?? require(id));
+  new Function('exports', 'require', ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText)(exports, id => deps[id] ?? (id === '../../i18n' ? i18n : require(id)));
   return exports;
 }
 const graph = module('src/features/mdPresentation/markdownGraph.ts');
@@ -120,7 +121,7 @@ test('adding Team configuration preserves a plain article and requires explicit 
   assert.equal(document.introduction, source.trim());
   assert.equal(document.attributes.name, '一份普通文档');
   assert.equal(document.nodes.length, 0);
-  assert.throws(() => teamFromMarkdown(enabled), /至少/);
+  assert.throws(() => teamFromMarkdown(enabled), /at least one section/);
   assert.equal(enableDocumentTeam(enabled), enabled);
 });
 
@@ -252,7 +253,7 @@ test('Create synchronizes clean buffers, preserves manual conflicts, and ignores
     pages.updateBushItPage(id, { source: '# Manual draft' });
     disk = { ...disk, text: '# Another agent edit', revision: 'three' }; await files.refreshCreationFile(id);
     assert.equal(current(id).source, '# Manual draft'); assert.equal(current(id).externalFile.text, disk.text);
-    await assert.rejects(files.saveCreationFile(id), /版本冲突/);
+    await assert.rejects(files.saveCreationFile(id), /Resolve the conflict before saving/);
     assert.equal(disk.text, '# Another agent edit');
     pages.selectCreationProject('D:/other'); pages.selectCreationProject('D:/writing');
     assert.equal(current(id).source, '# Manual draft');
@@ -270,7 +271,7 @@ test('Create synchronizes clean buffers, preserves manual conflicts, and ignores
     const restored = module('src/features/mdPresentation/bushItPageStore.ts', { './markdownGraph': graph, './pageDocument': page });
     const restoredFiles = module('src/features/mdPresentation/creationFiles.ts', { './bushItPageStore': restored });
     assert.equal(restored.getBushItPages().pages.find(page => page.id === id).unloaded, true);
-    await assert.rejects(restoredFiles.saveCreationFile(id), /加载/);
+    await assert.rejects(restoredFiles.saveCreationFile(id), /document is loading/);
     await restoredFiles.refreshCreationFile(id);
     assert.equal(restored.getBushItPages().pages.find(page => page.id === id).source, '# Saved locally');
     restored.flushBushItPages();

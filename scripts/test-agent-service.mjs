@@ -766,15 +766,23 @@ test('HTTP requires authentication, rejects browser origins, survives disconnect
   } finally { await manager.close(); await httpA.close(); await httpB.close(); await a.service.close(); await b.service.close(); }
 });
 
-test('standalone HTTP CLI survives client removal and stdin EOF, and persists its identity', async t => {
+test('standalone HTTP CLI survives client removal and stdin EOF, and persists its identity', { timeout: 150_000 }, async t => {
   const root = await directory(t);
   const manager = new AgentConnectionManager(join(root, 'connections.json'), { encrypt: value => value, decrypt: value => value });
   const args = [fileURLToPath(new URL('../dist-electron/agentServiceCli.mjs', import.meta.url)), '--data-dir', join(root, 'service'), '--port', '0'];
   let child;
   const launch = async () => {
+    const started = Date.now();
     child = spawn(process.execPath, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let logs = ''; child.stderr.on('data', chunk => logs += chunk); child.stdout.on('data', () => {}); child.stdin.end();
-    await until(() => logs, value => /listening on http:\/\/127.0.0.1:\d+/.test(value));
+    // Match startServiceProcess's readiness budget. This starts the full bundled
+    // Runtime twice, including a cold restart; the 12s RPC fixture budget can
+    // expire before the Runtime's own 30s startup deadline under release load.
+    await until(() => {
+      assert.equal(child.exitCode, null, `CLI exited before readiness: ${logs}`);
+      return logs;
+    }, value => /listening on http:\/\/127.0.0.1:\d+/.test(value), 60_000);
+    t.diagnostic(`CLI ready after ${Date.now() - started}ms`);
     const url = logs.match(/listening on (http:\/\/127.0.0.1:\d+)/)[1];
     const token = (await readFile(join(root, 'service', 'access-token'), 'utf8')).trim();
     assert.ok(!logs.includes(token)); return { url, token };

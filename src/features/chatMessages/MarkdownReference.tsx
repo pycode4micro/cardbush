@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { ReactNode } from 'react';
 import { parseFileMemoReference, parseMcpAppReference, parseSourceMemoReference, parseBrowserTabReference, browserTabReferenceHref, type BrowserTabReference } from '@cardbush/bush-protocol';
 import { BrowserTabReferenceLink } from '../browser/BrowserTabReferenceLink';
@@ -28,7 +29,7 @@ export function parseMarkdownReference(value: string | undefined): Reference | n
 
 export function UnavailableMarkdownReference({ children, language }: { children?: ReactNode; language: AppLanguage }) {
   return <span className="markdown-reference-unavailable">
-    {children}{children ? ' · ' : ''}<small>{language === 'zh' ? '引用不可用' : 'Reference unavailable'}</small>
+    {children}{children ? ' · ' : ''}<small>{uiText(language)('markdownReference.referenceUnavailable')}</small>
   </span>;
 }
 

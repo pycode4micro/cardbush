@@ -17,7 +17,8 @@ if (typeof electron === 'string') {
 const { app } = electron, root = resolve(process.argv[2]), node = process.argv[3];
 assert.ok(root.startsWith(parent + sep + 'cardbush-uninstall-worker-'));
 mkdirSync(join(root, 'profile')); app.setPath('userData', join(root, 'profile'));
-const deadline = setTimeout(() => { console.error('Uninstall worker fixture timed out'); app.exit(1); }, 40000);
+let stage = 'startup';
+const deadline = setTimeout(() => { console.error('Uninstall worker fixture timed out: ' + stage); app.exit(1); }, 40000);
 void run().then(() => app.exit(0), error => { console.error(error); app.exit(1); });
 
 async function run() {
@@ -56,7 +57,9 @@ async function run() {
     bundledSkillRoot: join(root, 'skills'), userSkillRoot: join(root, 'user-skills'), bundledPluginRoot: join(root, 'bundled'), userPluginRoot: plugins, runtimeBridge: controller });
   const command = (kind, payload = {}) => controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: randomUUID(), command: { kind, payload } });
   const until = async check => { const end = Date.now() + 8000; while (!await check()) { assert.ok(Date.now() < end, 'Worker should settle'); await new Promise(r => setTimeout(r, 25)); } };
+  let running, mutation;
   try {
+    stage = 'initial MCP refresh';
     await host.refreshMcp();
     let snapshot;
     try { await until(async () => { snapshot = await command('runtime.get_mcp_snapshot'); return snapshot.result?.servers.some(server => server.id === 'plugin_alpha_echo' && server.health === 'ready'); }); }
@@ -66,6 +69,7 @@ async function run() {
     cpSync(pkg, source, { recursive: true });
     const manifest = join(source, '.codex-plugin', 'plugin.json');
     writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), version: '2.0.0' }));
+    stage = 'replace idle plugin';
     await installProductPlugin(source, plugins, (id, replace) => host.replacePlugin(id, async () => {
       assert.equal(readFileSync(closed, 'utf8'), 'closed', 'MCP with its cwd inside the plugin exits before rename');
       assert.equal(readFileSync(disposed, 'utf8'), 'disposed', 'runtime extension is disposed before rename');
@@ -76,18 +80,46 @@ async function run() {
     assert.ok(existsSync(data), 'updating preserves plugin data');
     await until(async () => (await command('runtime.get_mcp_snapshot')).result?.servers.some(server => server.id === 'plugin_alpha_echo' && server.health === 'ready'));
     rmSync(closed); rmSync(disposed);
-    const running = command('plugin.alpha.hold'); await until(() => existsSync(join(root, 'busy')));
-    await assert.rejects(installProductPlugin(source, plugins, (id, replace) => host.replacePlugin(id, replace)), /仍在使用.*更新/);
-    assert.equal((await store.read()).plugins[0].enabled, true, 'busy update restores the original enabled state');
-    assert.equal(existsSync(closed), false, 'busy update does not stop the active service');
-    await assert.rejects(host.uninstallPlugin('alpha'), /仍在使用/);
+    stage = 'start busy command';
+    running = command('plugin.alpha.hold'); await until(() => existsSync(join(root, 'busy')));
+    stage = 'drain busy update';
+    writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), version: '3.0.0' }));
+    let settled = false;
+    mutation = installProductPlugin(source, plugins, (id, replace) => host.replacePlugin(id, replace));
+    void mutation.then(() => { settled = true; }, () => { settled = true; });
+    await until(() => JSON.parse(readFileSync(config, 'utf8')).plugins[0].enabled === false);
+    await command('runtime.get_capabilities');
+    assert.equal(settled, false, 'replacement waits for dispatched work');
+    assert.equal(JSON.parse(readFileSync(join(pkg, '.codex-plugin', 'plugin.json'), 'utf8')).version, '2.0.0');
+    assert.equal(existsSync(closed), false, 'the active service is retained while draining');
+    assert.equal(existsSync(disposed), false, 'the active extension is retained while draining');
+    writeFileSync(join(root, 'release'), 'go'); assert.equal((await running).ok, true); await mutation;
+    assert.equal((await store.read()).plugins[0].version, '3.0.0');
+    assert.equal((await store.read()).plugins[0].enabled, true);
+    assert.ok(existsSync(data));
+    await until(async () => (await command('runtime.get_mcp_snapshot')).result?.servers.some(server => server.id === 'plugin_alpha_echo' && server.health === 'ready'));
+    for (const file of [closed, disposed, join(root, 'busy'), join(root, 'release')]) rmSync(file);
+    running = command('plugin.alpha.hold'); await until(() => existsSync(join(root, 'busy')));
+    stage = 'drain busy uninstall'; settled = false;
+    mutation = host.uninstallPlugin('alpha');
+    void mutation.then(() => { settled = true; }, () => { settled = true; });
+    await until(() => JSON.parse(readFileSync(config, 'utf8')).plugins[0].removalPending === true);
+    await command('runtime.get_capabilities');
+    assert.equal(settled, false, 'uninstall waits for dispatched work');
     assert.ok(existsSync(pkg) && existsSync(data)); assert.equal(existsSync(disposed), false);
-    assert.equal((await store.read()).plugins[0].removalPending, true);
     writeFileSync(join(root, 'release'), 'go'); assert.equal((await running).ok, true);
-    const result = await host.uninstallPlugin('alpha');
+    const result = await mutation;
     assert.equal(result.plugins.length, 0); assert.equal(existsSync(pkg), false); assert.equal(existsSync(data), false);
     assert.equal(readFileSync(closed, 'utf8'), 'closed'); assert.equal(readFileSync(disposed, 'utf8'), 'disposed');
     assert.equal((await command('runtime.get_mcp_snapshot')).result.servers.some(server => server.id === 'plugin_alpha_echo'), false);
-    console.log('Real runtime update/uninstall passed: replacement stops MCP and extensions first, preserves data, reconnects, and busy work blocks replacement/deletion.');
-  } finally { await host.shutdown(); controller.stop(); clearTimeout(deadline); }
+    console.log('Real runtime update/uninstall passed: replacement drains dispatched work, stops MCP and extensions before file changes, preserves data, reconnects, and uninstall retains files until work completes.');
+  } catch (error) { console.error('Uninstall worker failed during ' + stage, error); throw error; }
+  finally {
+    // Always release our synthetic command, including when an assertion fails.
+    // Otherwise shutdown masks the actual failure behind the fixture deadline.
+    writeFileSync(join(root, 'release'), 'go');
+    await running?.catch(() => {});
+    await mutation?.catch(() => {});
+    await host.shutdown(); controller.stop(); clearTimeout(deadline);
+  }
 }

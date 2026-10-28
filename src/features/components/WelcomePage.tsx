@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useContext, useRef, type CSSProperties, type ReactNode, type RefObject, type PointerEvent } from 'react';
 import type { AppLanguage } from '../../types';
 import { ComposerPresentationContext } from '../composer/ComposerPresentationContext';
@@ -20,7 +21,7 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
   onMove?: (event: PointerEvent, item: ComponentItem) => void;
   overlay?: ReactNode; minHeight?: number;
 }) {
-  const context = useContext(HtmlComponentContext), host = editing ? null : context, zh = language === 'zh';
+  const context = useContext(HtmlComponentContext), host = editing ? null : context;
   const internalRef = useRef<HTMLDivElement>(null), pageRef = canvasRef ?? internalRef;
   const flow = welcomeComposerFlow({ ...collection, welcomeLayout: layout });
   useWelcomeLayout(pageRef, layout, flow, collection, editing);
@@ -32,7 +33,7 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
     </ComposerPresentationContext.Provider>;
     if (!editing && slots[item.builtin] !== undefined) return slots[item.builtin];
     if (item.builtin === 'brand') return <StarWordmark/>;
-    if (item.builtin === 'greeting') return <h2>{zh ? '你想做些什么？' : 'What would you like to do?'}</h2>;
+    if (item.builtin === 'greeting') return <h2>{uiText(language)('welcomeComposer.whatWouldYouLikeToDo')}</h2>;
     if (item.builtin === 'suggestions') return <WelcomeSuggestions language={language} preview={editing} disabled={!host || host.running} hasDraft={Boolean(host?.draft?.trim())}
       onSelect={suggestion => host?.selectSuggestion ? host.selectSuggestion(suggestion) : host?.fill(suggestion.text)}/>;
     return <BuiltinComponentSurface component={item} language={language} preview={editing}/>;
@@ -50,8 +51,8 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
   const landing = editing && flow.afterSend === 'bottom' && (layout?.items.some(item => item.componentId === 'system-input') ?? true)
     ? <div className="welcome-composer-landing" role="note">
       <span className="welcome-composer-landing-label">
-        <span className="composer-will-move">{zh ? '发送后落点 · 下移 ' : 'After sending · Move down '}<span data-composer-travel/></span>
-        <span className="composer-stays">{zh ? '已吸附底部 · 发送后不移动' : 'Docked · Stays here after sending'}</span>
+        <span className="composer-will-move">{uiText(language)('welcomePage.afterSendingMoveDown')}<span data-composer-travel/></span>
+        <span className="composer-stays">{uiText(language)('welcomePage.dockedStaysHereAfterSending')}</span>
       </span>
     </div> : null;
   return <HtmlComponentContext.Provider value={host}><div className={`welcome-composer welcome-layout-surface ${layout ? 'custom-layout' : 'default-layout'}${editing ? ' is-editing' : ''}`} ref={pageRef}>

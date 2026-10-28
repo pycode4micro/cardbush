@@ -1,10 +1,9 @@
+import { uiText } from '../i18n';
 import { taskPlanWaitingSchema, type TaskPlanWaiting } from '@cardbush/bush-protocol';
 import type { AppLanguage, TurnTerminalSnapshot } from '../types';
 
 export function taskPlanWaitingLabel(kind: TaskPlanWaiting['kind'] | undefined, language: AppLanguage) {
-  const labels = language === 'zh'
-    ? { user: '等待用户确认', background: '等待后台任务', dependency: '等待前置步骤', unspecified: '等待中' }
-    : { user: 'Waiting for user input', background: 'Waiting for a background task', dependency: 'Waiting for a prerequisite', unspecified: 'Waiting' };
+  const labels = ({ user: uiText(language)('taskPlanWaiting.waitingForUserInput'), background: uiText(language)('taskPlanWaiting.waitingForABackgroundTask'), dependency: uiText(language)('taskPlanWaiting.waitingForAPrerequisite'), unspecified: uiText(language)('taskPlanWaiting.waiting') });
   return labels[kind ?? 'unspecified'];
 }
 

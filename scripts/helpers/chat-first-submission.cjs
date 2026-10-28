@@ -15,7 +15,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       firstFrames.push({input:!!input,focus:document.activeElement===input,welcome:!!document.querySelector('.welcome-composer'),
         surfaceTop:surface?.getBoundingClientRect().top, surfaceHeight:surface?.getBoundingClientRect().height,
         buttonBottom:button?.getBoundingClientRect().bottom,dockTop:dock?.getBoundingClientRect().top,
-        voice:!!document.querySelector('.voice-idle-button'),actionsWidth:document.querySelector('.composer-actions')?.getBoundingClientRect().width});
+        voice:!!document.querySelector('.send-button .lucide-audio-lines'),actionsWidth:document.querySelector('.composer-actions')?.getBoundingClientRect().width});
       window.firstFrame=requestAnimationFrame(sampleFirst);
     };
     window.startFirst=(style,custom,long,completeAtAdmission)=>{
@@ -41,16 +41,28 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const cases = ['standard','simple'].flatMap(style => [
     {style,custom:false,zoom:1}, {style,custom:true,zoom:1},
     {style,custom:false,zoom:1,long:true}, {style,custom:true,zoom:1.25},
-  ]).concat({style:'standard',custom:false,zoom:1,completeAtAdmission:true});
-  for(const {style,custom,zoom,long=false,completeAtAdmission=false} of cases) {
+  ]).concat({style:'standard',custom:false,zoom:1,completeAtAdmission:true},
+    {style:'standard',custom:false,zoom:1,activation:'click'},
+    {style:'simple',custom:true,zoom:1,activation:'pointer'});
+  for(const {style,custom,zoom,long=false,completeAtAdmission=false,activation='enter'} of cases) {
     await run(`document.querySelector('.app').style.zoom=${zoom};startFirst(${JSON.stringify(style)},${custom},${long},${completeAtAdmission})`);
     await until('!!document.querySelector(".welcome-composer [data-composer-input]")','welcome input'); await pause(180);
-    await run('firstFrames=[];firstNodes=new Set();document.querySelector("[data-composer-input]").focus();sampleFirst();for(let n=0;n<2;n++)document.querySelector("[data-composer-input]").dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));');
+    await run('firstFrames=[];firstNodes=new Set();document.querySelector("[data-composer-input]").focus();sampleFirst();');
+    if(activation==='pointer') {
+      const point=await run('(()=>{const r=document.querySelector(".send-button").getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()');
+      for(let n=0;n<2;n++) {
+        window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});
+        window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});
+      }
+    } else {
+      await run(activation==='click' ? 'for(let n=0;n<2;n++)document.querySelector(".send-button").click();'
+        : 'for(let n=0;n<2;n++)document.querySelector("[data-composer-input]").dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));');
+    }
     await until('!!document.querySelector(".message-list")','first transcript'); await pause(600);
     const state=await run('cancelAnimationFrame(firstFrame);({frames:firstFrames,nodes:firstNodes.size})');
-    results.push({style,custom,zoom,long,completeAtAdmission,...state});
+    results.push({style,custom,zoom,long,completeAtAdmission,activation,...state});
     assert.equal(state.nodes,1,'first admission keeps the mounted input');
-    assert.ok(state.frames.every(frame=>frame.input&&frame.focus),'input and focus remain available on every frame');
+    assert.ok(state.frames.every(frame=>frame.input&&(activation==='pointer'||frame.focus)),'input stays mounted and keyboard submission preserves focus on every frame');
     const widths=state.frames.map(frame=>frame.actionsWidth);
     assert.ok(Math.max(...widths)-Math.min(...widths)<1,'the action bar never shrinks to idle controls during admission');
     const settled=state.frames.at(-1);
@@ -72,6 +84,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('document.querySelector("[data-composer-input]").value === "" && !document.querySelector("[aria-label=正在提交]")','rejected submission settles');
   await run(`updateChat({activeConversationId:'opened-after-rejection',messages:[{id:'existing-user',role:'user',content:'已有会话'}]});`);
   await until('document.querySelector("[data-composer-input]") !== rejectedInput','failed submission cannot adopt a later unrelated session');
+  await run(`updateChat({draft:'切换会话后的首次点击',onSend:async text=>{firstSends++;return true;}});`);
+  await until('document.querySelector("[data-composer-input]").value === "切换会话后的首次点击"','idle session switch prepares draft');
+  const beforeClick=await run('firstSends');
+  await run('document.querySelector(".send-button").click()');
+  await until(`firstSends === ${beforeClick+1}`,'idle session change cannot swallow the first click');
   fs.writeFileSync(path.join(root,'tmp','first-submission-frames.json'),JSON.stringify(results,null,2));
-  console.log('First submission passed: stable input/focus, admission controls, duplicate guard, fixed backdrop and bottom shortcut across 9 standard/simple, multiline, custom, zoom and early-acknowledgement cases; session switching and rejection remain isolated.');
+  console.log('First submission passed: stable input/focus, admission controls, duplicate guard, fixed backdrop and bottom shortcut across 11 standard/simple, multiline, custom, zoom, early-acknowledgement, click and native-pointer cases; session switching and rejection remain isolated.');
 };

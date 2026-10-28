@@ -83,13 +83,13 @@ test('split streamed links, citations and tables retain clickable labels with bo
 });
 
 test('inline code file paths become real links while ordinary code and unknown filenames stay text', async () => {
-  const content = '文件：`C:\\Users\\EDY\\Desktop\\中文 hello%20world.txt`\n内容：`Hello, World!`\n' +
+  const content = '文件：`C:\\Users\\fixture\\Desktop\\中文 hello%20world.txt`\n内容：`Hello, World!`\n' +
     '`unknown.txt`\n[`说明.md`](<C:/work/说明.md:12>)\n```text\nC:\\work\\literal.txt\n```\n';
   const f = fixture(); let output = '';
   const markdown = new ChatMarkdown(text => { output += text; }, true, () => 80, f.references);
   for (const char of content) { markdown.write(char); markdown.flush(false); }
   markdown.end();
-  assert.match(output, /\x1b\]8;;file:\/\/\/C:\/Users\/EDY\/Desktop\/%E4%B8%AD%E6%96%87%20hello%2520world\.txt/);
+  assert.match(output, /\x1b\]8;;file:\/\/\/C:\/Users\/fixture\/Desktop\/%E4%B8%AD%E6%96%87%20hello%2520world\.txt/);
   assert.match(output, /\x1b\[4;94m/);
   assert.doesNotMatch(output, /file:[^\x1b]*unknown|file:[^\x1b]*literal|file:[^\x1b]*Hello/);
   assert.doesNotMatch(stripVTControlCharacters(output), /`说明\.md`/);
@@ -97,7 +97,7 @@ test('inline code file paths become real links while ordinary code and unknown f
   assert.equal(f.references.path('unknown.txt'), undefined);
   assert.ok(f.references.path('中文 hello%20world.txt').href.includes('%2520'));
   await f.references.handle('artifact', '1', signal());
-  assert.deepEqual(f.opened, [{ target: 'C:\\Users\\EDY\\Desktop\\中文 hello%20world.txt', kind: 'file' }]);
+  assert.deepEqual(f.opened, [{ target: 'C:\\Users\\fixture\\Desktop\\中文 hello%20world.txt', kind: 'file' }]);
 });
 
 test('inline file references retain explicit remote/open fallbacks and never make scripts executable hyperlinks', () => {

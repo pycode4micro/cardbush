@@ -40,3 +40,5 @@ id_ed25519
 /private-release/
 voice-speaker-profile.json
 voice-speaker-profile.json.*.tmp
+/packages/cardbush-platform/src/i18n/generatedMessages.ts
+/packages/cardbush-platform/src/i18n/generatedPacks/

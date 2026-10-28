@@ -1,5 +1,6 @@
 import { Children, createContext, isValidElement, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ImgHTMLAttributes, type ReactNode } from 'react';
 import type { AppLanguage } from '../../types';
+import { uiText } from '../../i18n';
 import './message-image-gallery.css';
 
 type GalleryImageSource = { src: string; alt: string };
@@ -39,6 +40,7 @@ function ImageSlot({ index, children, active, onImage, onFallback }: {
 }
 
 export function MessageImageGalleryFrame({ children, language }: { children: ReactNode; language: AppLanguage }) {
+  const t = uiText(language);
   const items = Children.toArray(children).filter(isValidElement);
   const [selected, setSelected] = useState(0);
   const [images, setImages] = useState<Record<number, GalleryImageSource | null>>({});
@@ -63,14 +65,14 @@ export function MessageImageGalleryFrame({ children, language }: { children: Rea
     else if (top + button.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + button.offsetHeight - list.clientHeight;
   }, [active, grouped]);
   return <div className={`message-image-gallery${grouped ? '' : ' is-ungrouped'}`} role="group"
-    aria-label={language === 'zh' ? '图片组' : 'Image gallery'}>
+    aria-label={t('image.gallery')}>
     <div className="message-image-gallery-stage">
       {items.map((child, index) => <ImageSlot key={child.key ?? index} index={index} active={!grouped || active === index}
         onImage={onImage} onFallback={onFallback}>{child}</ImageSlot>)}
     </div>
     {grouped && <div className="message-image-gallery-rail" ref={rail}>
       {items.map((child, index) => <button key={child.key ?? index} type="button" className="message-image-gallery-thumbnail"
-        aria-label={language === 'zh' ? `查看第 ${index + 1} 张图片` : `Show image ${index + 1}`}
+        aria-label={t('image.show', { index: index + 1 })}
         title={images[index]?.alt || `${index + 1} / ${items.length}`} aria-pressed={active === index}
         onClick={() => setSelected(index)} onKeyDown={event => {
           const next = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? Math.min(items.length - 1, index + 1)

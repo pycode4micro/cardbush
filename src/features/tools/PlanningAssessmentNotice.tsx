@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Clipboard } from 'lucide-react';
 
 import type { AppLanguage, ChatToolExecution } from '../../types';
@@ -19,7 +20,7 @@ export function PlanningAssessmentNotice({ language }: { language: AppLanguage }
   return (
     <div className="tool-planning-assessment">
       <Clipboard size={13} />
-      <span>{language === 'zh' ? '已生成计划书' : 'Reference plan saved'}</span>
+      <span>{uiText(language)('planningAssessmentNotice.referencePlanSaved')}</span>
     </div>
   );
 }

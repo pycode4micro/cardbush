@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import * as i18n from '@cardbush/platform/i18n';
 
 const module = { exports: {} };
 const compiled = ts.transpileModule(readFileSync('src/features/shortcuts/keyboardShortcuts.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-new Function('module', 'exports', compiled)(module, module.exports);
+new Function('module', 'exports', 'require', compiled)(module, module.exports, id => { if (id === '../../i18n') return i18n; throw Error(id); });
 const { matchesShortcut, bindingFromEvent, conflictingShortcut, bindingError, normalizeShortcutOverrides, shortcutBinding } = module.exports;
 const key = (value, options = {}) => ({ key: value, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...options });
 assert.equal(matchesShortcut('searchConversations', key('f', { ctrlKey: true }), {}), true);

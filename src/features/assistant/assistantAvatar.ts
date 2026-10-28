@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useSyncExternalStore } from 'react';
 
 const key = 'cardbush_personal_assistant_avatar_v1', eventName = 'cardbush:assistant-avatar';
@@ -19,18 +20,18 @@ function subscribe(listener: () => void) {
 export const useAssistantAvatar = () => useSyncExternalStore(subscribe, readAssistantAvatar);
 
 /** Store a small, decoded raster copy, independent of the source file's lifetime. */
-export async function prepareAssistantAvatar(file: File, language: 'zh' | 'en') {
-  const zh = language === 'zh';
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw Error(zh ? '请选择 PNG、JPG 或 WebP 图片。' : 'Choose a PNG, JPG or WebP image.');
-  if (file.size > 8 * 1024 * 1024) throw Error(zh ? '图片不能超过 8 MB。' : 'Choose an image smaller than 8 MB.');
+export async function prepareAssistantAvatar(file: File, language: string) {
+
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw Error(uiText(language)('assistantAvatar.chooseAPngJpgOrWebpImage'));
+  if (file.size > 8 * 1024 * 1024) throw Error(uiText(language)('assistantAvatar.chooseAnImageSmallerThan8Mb'));
   const url = URL.createObjectURL(file);
   try {
     const image = new Image(); image.src = url;
-    try { await image.decode(); } catch { throw Error(zh ? '无法读取这张图片，请换一张重试。' : 'This image could not be read. Try another image.'); }
-    if (!image.naturalWidth || !image.naturalHeight) throw Error(zh ? '图片尺寸无效。' : 'Invalid image dimensions.');
+    try { await image.decode(); } catch { throw Error(uiText(language)('assistantAvatar.thisImageCouldNotBeReadTry')); }
+    if (!image.naturalWidth || !image.naturalHeight) throw Error(uiText(language)('assistantAvatar.invalidImageDimensions'));
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
     const context = canvas.getContext('2d');
-    if (!context) throw Error(zh ? '无法处理头像，请重试。' : 'Unable to prepare the avatar. Try again.');
+    if (!context) throw Error(uiText(language)('assistantAvatar.unableToPrepareTheAvatarTryAgain'));
     const side = Math.min(image.naturalWidth, image.naturalHeight);
     context.drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, 256, 256);
     return canvas.toDataURL('image/webp', .9);

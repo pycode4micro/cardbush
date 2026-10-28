@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../i18n/react';
+import { uiText } from '../../i18n';
 import { useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from 'react';
 import { mediaResourceUrl } from '../../shared/localPaths';
 import type { AppLanguage } from '../../types';
@@ -27,7 +29,7 @@ function InlineMedia({ kind, props, language }: { kind: 'video' | 'audio'; props
     };
   }, []);
   const source = props.src ? mediaResourceUrl(props.src) : '';
-  if (!source) return <span className="inline-media-unavailable" role="status">{language === 'zh' ? '媒体地址不可用' : 'Media address unavailable'}</span>;
+  if (!source) return <span className="inline-media-unavailable" role="status">{uiText(language)('inlineMedia.mediaAddressUnavailable')}</span>;
   return <span ref={container} className={`inline-media-frame is-${kind}${ready ? ' is-ready' : ''}`} aria-busy={!ready}>
     {kind === 'video' ? <video controls playsInline preload="metadata" {...props as VideoProps} src={source} />
       : <audio controls preload="metadata" {...props as AudioProps} src={source} />}
@@ -35,10 +37,14 @@ function InlineMedia({ kind, props, language }: { kind: 'video' | 'audio'; props
   </span>;
 }
 
-export function InlineVideo({ language = 'zh', ...props }: VideoProps & { language?: AppLanguage }) {
+export function InlineVideo({ language: selectedLanguage, ...props }: VideoProps & { language?: AppLanguage }) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
   return <InlineMedia key={props.src} kind="video" props={props} language={language} />;
 }
 
-export function InlineAudio({ language = 'zh', ...props }: AudioProps & { language?: AppLanguage }) {
+export function InlineAudio({ language: selectedLanguage, ...props }: AudioProps & { language?: AppLanguage }) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
   return <InlineMedia key={props.src} kind="audio" props={props} language={language} />;
 }

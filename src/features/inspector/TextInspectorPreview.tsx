@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ConversationHostContext } from '../conversationHost';
 import { Suspense, useContext, useEffect, useState } from 'react';
 import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages';
@@ -42,7 +43,7 @@ export function MarkdownInspectorPreview({
     setEncoding('');
     const readTextPreview = host?.readFile ? async (path: string) => { const { blob } = await host.readFile!(path); return { content: await blob.slice(0, 2 * 1024 * 1024).text(), truncated: blob.size > 2 * 1024 * 1024, encoding: 'utf-8' }; } : window.cardbushDesktop?.readTextPreview;
     if (!readTextPreview) {
-      setError(language === 'zh' ? '当前环境不支持本地 Markdown 预览。' : 'Local Markdown preview is unavailable.');
+      setError(uiText(language)('textInspectorPreview.localMarkdownPreviewIsUnavailable'));
       onLoadingChange(false);
       return () => {
         disposed = true;
@@ -60,7 +61,7 @@ export function MarkdownInspectorPreview({
         const message = textPreviewErrorMessage(reason, language);
         const expected = textPreviewErrorCode(reason) !== undefined;
         setError(message);
-        if (!expected) void showUiError(language === 'zh' ? '无法读取文件预览' : 'Unable to read preview', `${path}\n\n${message}`);
+        if (!expected) void showUiError(uiText(language)('textInspectorPreview.unableToReadPreview'), `${path}\n\n${message}`);
       })
       .finally(() => {
         if (!disposed) onLoadingChange(false);
@@ -78,11 +79,11 @@ export function MarkdownInspectorPreview({
         ) : (
           <>
             {encoding === 'gb18030' && <div className="inspector-preview-notice">
-              {language === 'zh' ? '按 GB18030 编码预览，原文件未修改。' : 'Preview decoded as GB18030; original file unchanged.'}
+              {uiText(language)('textInspectorPreview.previewDecodedAsGb18030OriginalFileUnchanged')}
             </div>}
             {truncated && (
               <div className="inspector-preview-notice">
-                {language === 'zh' ? '文件较大，仅显示前 2 MiB' : 'Large file · showing the first 2 MiB'}
+                {uiText(language)('textInspectorPreview.largeFileShowingTheFirst2Mib')}
               </div>
             )}
             {shouldUsePlainTextPreview(content) ? <Suspense fallback={<PlainSourceLines content={content} />}>
@@ -120,7 +121,7 @@ export function SourceInspectorPreview({
     setEncoding('');
     const readTextPreview = host?.readFile ? async (path: string) => { const { blob } = await host.readFile!(path); return { content: await blob.slice(0, 2 * 1024 * 1024).text(), truncated: blob.size > 2 * 1024 * 1024, encoding: 'utf-8' }; } : window.cardbushDesktop?.readTextPreview;
     if (!readTextPreview) {
-      setError(language === 'zh' ? '当前环境不支持本地源码预览。' : 'Local source preview is unavailable.');
+      setError(uiText(language)('textInspectorPreview.localSourcePreviewIsUnavailable'));
       onLoadingChange(false);
       return () => {
         disposed = true;
@@ -138,7 +139,7 @@ export function SourceInspectorPreview({
         const message = textPreviewErrorMessage(reason, language);
         const expected = textPreviewErrorCode(reason) !== undefined;
         setError(message);
-        if (!expected) void showUiError(language === 'zh' ? '无法读取文件预览' : 'Unable to read preview', `${path}\n\n${message}`);
+        if (!expected) void showUiError(uiText(language)('textInspectorPreview.unableToReadPreview'), `${path}\n\n${message}`);
       })
       .finally(() => {
         if (!disposed) onLoadingChange(false);
@@ -156,11 +157,11 @@ export function SourceInspectorPreview({
         ) : (
           <>
             {encoding === 'gb18030' && <div className="inspector-preview-notice source">
-              {language === 'zh' ? '按 GB18030 编码预览，原文件未修改。' : 'Preview decoded as GB18030; original file unchanged.'}
+              {uiText(language)('textInspectorPreview.previewDecodedAsGb18030OriginalFileUnchanged')}
             </div>}
             {truncated && (
               <div className="inspector-preview-notice source">
-                {language === 'zh' ? '文件较大，仅显示前 2 MiB' : 'Large file · showing the first 2 MiB'}
+                {uiText(language)('textInspectorPreview.largeFileShowingTheFirst2Mib')}
               </div>
             )}
             <Suspense fallback={<PlainSourceLines content={content} />}>

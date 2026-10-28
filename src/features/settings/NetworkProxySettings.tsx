@@ -1,11 +1,12 @@
+import { uiText } from '../../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { defaultPluginProxy, pluginProxySchema, type PluginProxySettings } from '@cardbush/bush-protocol';
 import type { AppLanguage } from '../../types';
 import { SettingsDropdown } from './SettingsDropdown';
 
-export function proxyLabel(mode: string, zh: boolean): string {
-  return ({ inherit: zh ? '使用默认' : 'Use default', model: zh ? '跟随应用默认' : 'Follow app default',
-    none: zh ? '无代理' : 'No proxy', system: zh ? '跟随系统' : 'Follow system', manual: zh ? '手动代理' : 'Manual proxy' })[mode] ?? mode;
+export function proxyLabel(mode: string, uiLanguage: string): string {
+  return ({ inherit: uiText(uiLanguage)('networkProxySettings.useDefault'), model: uiText(uiLanguage)('networkProxySettings.followAppDefault'),
+    none: uiText(uiLanguage)('networkProxySettings.noProxy'), system: uiText(uiLanguage)('networkProxySettings.followSystem'), manual: uiText(uiLanguage)('networkProxySettings.manualProxy') })[mode] ?? mode;
 }
 
 export function NetworkProxySettings({ language, value, defaults, scope = 'plugins', individual = false, busy = false, onSave, label, caption, compact = false, resetRevision = 0, applyToAll }: {
@@ -15,7 +16,7 @@ export function NetworkProxySettings({ language, value, defaults, scope = 'plugi
   onSave: (value: PluginProxySettings | undefined) => Promise<boolean>;
   applyToAll?: { formId: string; save: (value: PluginProxySettings) => Promise<boolean> };
 }) {
-  const zh = language === 'zh';
+  const uiLanguage = language;
   const [draft, setDraft] = useState(value ?? defaultPluginProxy());
   const [inherit, setInherit] = useState(individual && !value);
   const [dirty, setDirty] = useState(false);
@@ -35,15 +36,15 @@ export function NetworkProxySettings({ language, value, defaults, scope = 'plugi
   const save = async (candidate = draft, useDefault = inherit, all = false) => {
     if (busy || savingRef.current) return;
     const result = pluginProxySchema.safeParse(candidate);
-    if (!useDefault && !result.success) { setError(zh ? '请输入有效的代理地址（HTTP、HTTPS 或 SOCKS）。' : 'Enter a valid HTTP, HTTPS or SOCKS proxy address.'); return; }
+    if (!useDefault && !result.success) { setError(uiText(language)('networkProxySettings.enterAValidHttpHttpsOrSocks')); return; }
     if (!useDefault && candidate.mode === 'manual' && !candidate.httpProxy.trim() && !candidate.httpsProxy.trim()) {
-      setError(zh ? '请至少填写一个代理地址。' : 'Enter at least one proxy address.'); return;
+      setError(uiText(language)('networkProxySettings.enterAtLeastOneProxyAddress')); return;
     }
     savingRef.current = true; setSaving(true); setError('');
     try {
       const saved = all && applyToAll && result.success ? await applyToAll.save(result.data) : await onSave(useDefault ? undefined : result.data);
       if (saved) setDirty(false);
-      else setError(all ? (zh ? '尚未全部应用，请重试。' : 'Not all settings were applied. Please retry.') : (zh ? '保存未完成，请重试。' : 'Save did not complete. Please retry.'));
+      else setError(all ? (uiText(language)('networkProxySettings.notAllSettingsWereAppliedPleaseRetry')) : (uiText(language)('networkProxySettings.saveDidNotCompletePleaseRetry')));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally { savingRef.current = false; setSaving(false); }
@@ -52,8 +53,8 @@ export function NetworkProxySettings({ language, value, defaults, scope = 'plugi
   return <Container id={applyToAll?.formId} className={`plugin-proxy-settings${compact ? ' plugin-proxy-row' : ''}`}
     onSubmit={event => { event.preventDefault(); if (applyToAll) void save(draft, false, true); }}>
     {label && <div className="plugin-proxy-row-name"><strong>{label}</strong>{caption && <small>{caption}</small>}</div>}
-    <label className="plugin-proxy-mode"><span>{zh ? '代理方式' : 'Proxy mode'}</span>
-      <SettingsDropdown label={label ? `${label} ${zh ? '代理方式' : 'proxy mode'}` : zh ? '代理方式' : 'Proxy mode'} value={mode} disabled={busy || saving} onChange={mode => {
+    <label className="plugin-proxy-mode"><span>{uiText(language)('networkProxySettings.proxyMode')}</span>
+      <SettingsDropdown label={label ? `${label} ${uiText(language)('networkProxySettings.proxyMode_c6e146e')}` : uiText(language)('networkProxySettings.proxyMode')} value={mode} disabled={busy || saving} onChange={mode => {
         setInherit(mode === 'inherit');
         if (mode !== 'inherit') {
           const next = { ...draft, mode: mode as PluginProxySettings['mode'] };
@@ -63,25 +64,25 @@ export function NetworkProxySettings({ language, value, defaults, scope = 'plugi
           if (!individual && mode !== 'manual') void save(next, false);
         } else { setDirty(true); setError(''); }
       }} options={(scope === 'application' ? ['none', 'system', 'manual'] : individual ? ['inherit', 'model', 'none', 'system', 'manual'] : ['model', 'none', 'system', 'manual']).map(mode => ({ value: mode, label: mode === 'inherit'
-          ? `${proxyLabel(mode, zh)}${zh ? '（' : ' ('}${proxyLabel(defaults?.mode ?? 'model', zh)}${zh ? '）' : ')'}`
-          : proxyLabel(mode, zh) }))} />
+          ? `${proxyLabel(mode, uiLanguage)}${uiText(language)('networkProxySettings.message')}${proxyLabel(defaults?.mode ?? 'model', uiLanguage)}${uiText(language)('networkProxySettings.message_6e7f5ac')}`
+          : proxyLabel(mode, uiLanguage) }))} />
     </label>
     {!compact && <p className="plugin-proxy-help">{inherit
-      ? `${zh ? '当前插件默认：' : 'Current plugin default: '}${proxyLabel(defaults?.mode ?? 'model', zh)}`
-      : mode === 'model' ? (zh ? '使用“网络代理 → 应用默认”的设置，修改后自动跟随。' : 'Uses Network proxy → App default and follows changes automatically.')
-      : mode === 'system' ? (zh ? '按目标地址使用操作系统的代理和绕过规则。' : 'Uses the operating system proxy and bypass rules for each destination.')
-      : mode === 'none' ? (zh ? '直接连接，不继承环境中的代理。' : 'Connects directly without inheriting environment proxies.')
-      : (zh ? '支持 HTTP、HTTPS 和 SOCKS；未填写的协议直连。填写完成后保存。' : 'Supports HTTP, HTTPS and SOCKS. An empty protocol field connects directly. Save when ready.')}</p>}
+      ? `${uiText(language)('networkProxySettings.currentPluginDefault')}${proxyLabel(defaults?.mode ?? 'model', uiLanguage)}`
+      : mode === 'model' ? (uiText(language)('networkProxySettings.usesNetworkProxyAppDefaultAndFollows'))
+      : mode === 'system' ? (uiText(language)('networkProxySettings.usesTheOperatingSystemProxyAndBypass'))
+      : mode === 'none' ? (uiText(language)('networkProxySettings.connectsDirectlyWithoutInheritingEnvironmentProxies'))
+      : (uiText(language)('networkProxySettings.supportsHttpHttpsAndSocksAnEmpty'))}</p>}
     {mode === 'manual' && <div className="plugin-proxy-fields">{(['httpProxy', 'httpsProxy', 'noProxy'] as const).map(field =>
       <label key={field}><span>{field === 'httpProxy' ? 'HTTP_PROXY' : field === 'httpsProxy' ? 'HTTPS_PROXY' : 'NO_PROXY'}</span>
         <input value={draft[field]} disabled={busy || saving} autoComplete="off" spellCheck={false}
           placeholder={field === 'noProxy' ? 'localhost,127.0.0.1,.internal' : 'http://127.0.0.1:7890'} onChange={event => update({ [field]: event.target.value })} />
       </label>)}</div>}
     {error && <p className="plugin-market-error" role="alert">{error}</p>}
-    {!individual && <p className="plugin-proxy-help" role="status">{saving ? (zh ? '正在保存…' : 'Saving…') : dirty
-      ? (applyToAll ? (zh ? '当前修改尚未保存。填写完成后保存，或一键应用到全部。' : 'Changes are not saved. Save when ready, or apply to all.')
-        : (zh ? '当前修改尚未保存，填写完成后请保存。' : 'Changes are not saved. Save when ready.'))
-      : (zh ? '已保存，重新进入或重启后保留。' : 'Saved. Retained when reopening or restarting.')}</p>}
-    {dirty && <button type="button" className="plugin-install-button" disabled={busy || saving} onClick={() => void save()}>{saving ? (zh ? '保存中…' : 'Saving…') : compact ? (zh ? '保存' : 'Save') : (zh ? '保存代理设置' : 'Save proxy settings')}</button>}
+    {!individual && <p className="plugin-proxy-help" role="status">{saving ? (uiText(language)('networkProxySettings.saving')) : dirty
+      ? (applyToAll ? (uiText(language)('networkProxySettings.changesAreNotSavedSaveWhenReady'))
+        : (uiText(language)('networkProxySettings.changesAreNotSavedSaveWhenReady_cbd7029')))
+      : (uiText(language)('networkProxySettings.savedRetainedWhenReopeningOrRestarting'))}</p>}
+    {dirty && <button type="button" className="plugin-install-button" disabled={busy || saving} onClick={() => void save()}>{saving ? (uiText(language)('automationPanel.saving')) : compact ? (uiText(language)('appCenter.save')) : (uiText(language)('networkProxySettings.saveProxySettings'))}</button>}
   </Container>;
 }

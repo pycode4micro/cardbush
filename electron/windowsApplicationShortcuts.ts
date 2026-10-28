@@ -1,3 +1,4 @@
+import { uiText } from '@cardbush/platform/i18n';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 
@@ -130,11 +131,10 @@ export async function readWindowsApplicationIcons(targets: string[]): Promise<Re
 }
 
 export async function pickWindowsApplication(language: string, owner: Buffer | undefined, signal?: AbortSignal): Promise<IconResult | null> {
-  const zh = language === 'zh';
   const handle = owner ? (owner.length >= 8 ? owner.readBigUInt64LE().toString() : String(owner.readUInt32LE())) : '0';
   const result = await runShell({ action: 'pick', owner: handle,
-    title: zh ? '添加桌面快捷方式或本地应用' : 'Add a desktop shortcut or local app',
-    filter: zh ? '桌面快捷方式 (*.lnk;*.url)|*.lnk;*.url|应用程序 (*.exe)|*.exe' : 'Desktop shortcuts (*.lnk;*.url)|*.lnk;*.url|Applications (*.exe)|*.exe',
+    title: uiText(language)('windowsApplicationShortcuts.addADesktopShortcutOrLocalApp'),
+    filter: uiText(language)('windowsApplicationShortcuts.desktopShortcutsLnkUrlLnkUrlApplications'),
   }, signal);
   if (result === null) return null;
   if (!result || typeof result !== 'object' || !('path' in result) || typeof result.path !== 'string') throw Error('Invalid shortcut selection');

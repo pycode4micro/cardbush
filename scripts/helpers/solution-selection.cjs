@@ -88,9 +88,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('failSolution=true'); await next();
   await until('!!document.querySelector(".solution-selection-error")', 'batch failure is retryable');
   assert.equal(await run('solutionReplies.length'), 2);
-  await run(`failSolution=false;window.solutionAttempts=0;updateChat({onReplyInteraction:async answers=>{
+  await run(`failSolution=false;window.solutionAttempts=0;window.solutionPreviousTitle=chatProps.title;
+    updateChat({title:'Atomic solution submission',onReplyInteraction:async answers=>{
     solutionAttempts++;await new Promise(resolve=>window.finishSolution=resolve);solutionReplies.push(answers);updateChat({pendingInteraction:null});
   }});`);
+  // Updating root props schedules a React commit. Wait for that same render's
+  // visible title before clicking, or the old reply handler can finish the card.
+  await until("document.body.innerText.includes('Atomic solution submission')", 'new reply handler committed');
   await run(`document.querySelector('.solution-selection-actions button').click();document.querySelector('.solution-selection-actions button').click()`);
   await until('solutionAttempts===1', 'one atomic submission');
   assert.equal(await run('document.querySelector(".solution-selection-steps button").disabled'), true, 'cannot edit during submit');
@@ -112,6 +116,6 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('solutionCancels===2 && !document.querySelector(".solution-selection-card")', 'cancel discards the entire batch');
   assert.equal(await run('solutionReplies.length'), 3, 'cancel never publishes partial answers');
   window.setBounds(bounds);
-  await run(`document.querySelector('.app').className='app theme-dark';updateChat({language:'en',draft:'',sending:false,pendingInteraction:null,onReplyInteraction:async()=>{},onCancelInteraction:async()=>{}})`);
+  await run(`document.querySelector('.app').className='app theme-dark';updateChat({title:solutionPreviousTitle,language:'en',draft:'',sending:false,pendingInteraction:null,onReplyInteraction:async()=>{},onCancelInteraction:async()=>{}})`);
   console.log('Solution Selection UI passed: single-question compatibility, multi-step navigation, all drafts preserved across sessions, atomic submit/retry, missing answers, duplicate-submit guard, cancellation, light/dark and narrow layout.');
 };

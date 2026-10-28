@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useContext, useEffect, useState } from 'react';
 import type { AppLanguage } from '../../types';
 import { StarWordmark } from '../chat/StarWordmark';
@@ -27,7 +28,7 @@ function useLocalTime() {
 }
 
 function Clock({ digital, language }: { digital: boolean; language: AppLanguage }) {
-  const now = useLocalTime(), locale = language === 'zh' ? 'zh-CN' : 'en-US';
+  const now = useLocalTime(), locale = language;
   const time = now.toLocaleTimeString(locale, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const date = now.toLocaleDateString(locale, { month: 'long', day: 'numeric', weekday: 'long' });
   return <div className={`builtin-clock${digital ? ' digital' : ''}`}>
@@ -45,19 +46,19 @@ function Clock({ digital, language }: { digital: boolean; language: AppLanguage 
 }
 
 export function BuiltinComponentSurface({ component, language, preview = false }: { component: BuiltinComponent; language: AppLanguage; preview?: boolean }) {
-  const context = useContext(HtmlComponentContext), host = preview ? null : context, zh = language === 'zh';
+  const context = useContext(HtmlComponentContext), host = preview ? null : context;
   switch (component.builtin) {
     case 'clock': return <Clock digital={false} language={language}/>;
     case 'digital-clock': return <Clock digital language={language}/>;
     case 'calendar': return <CalendarWidget language={language}/>;
     case 'brand': return <div className="builtin-brand"><StarWordmark/></div>;
-    case 'greeting': return <div className="builtin-greeting"><h2>{zh ? '你想做些什么？' : 'What would you like to do?'}</h2></div>;
+    case 'greeting': return <div className="builtin-greeting"><h2>{uiText(language)('welcomeComposer.whatWouldYouLikeToDo')}</h2></div>;
     case 'suggestions': return <div className="builtin-suggestions"><WelcomeSuggestions language={language} preview={preview} disabled={!host || host.running} hasDraft={Boolean(host?.draft?.trim())}
       onSelect={suggestion => host?.selectSuggestion ? host.selectSuggestion(suggestion) : host?.fill(suggestion.text)}/></div>;
     case 'input': return <div className={`builtin-input ${component.inputStyle ?? 'standard'}`}>
       <ComposerPresentationContext.Provider value={{ style: component.inputStyle ?? 'standard', preview }}>
         {preview ? <ComponentComposerPreview language={language}/>
-          : host?.composer ?? <p className="builtin-unavailable">{zh ? '输入框将在会话就绪后可用' : 'The composer will be available when the conversation is ready'}</p>}
+          : host?.composer ?? <p className="builtin-unavailable">{uiText(language)('builtinComponentSurface.theComposerWillBeAvailableWhenThe')}</p>}
       </ComposerPresentationContext.Provider>
       {!preview && host?.notice && <p role="status" className="builtin-input-notice">{host.notice}</p>}
     </div>;

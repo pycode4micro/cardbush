@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useMemo, useSyncExternalStore } from 'react';
 import { usePluginCatalog } from '../plugins/pluginCatalog';
 import type { AppLanguage } from '../../types';
@@ -25,8 +26,8 @@ export function saveAppCenterPreferences(next: AppCenterPreferences) {
 export function installWebApplication(info: WebApplicationInfo, pin = false) {
   const prefs = read(), existing = prefs.webApps?.find(app => app.identity === info.identity);
   const app = normalizeWebApplications([{ ...info, id: existing?.id ?? `web:${crypto.randomUUID()}` }])[0];
-  if (!app) throw Error('网页应用信息无效。Invalid web app.');
-  if (pin && !prefs.shortcuts.includes(app.id) && prefs.shortcuts.length >= 4) throw Error('快捷方式已满，请先移除一个。Remove a shortcut before pinning this app.');
+  if (!app) throw Error(uiText()('appCenterStore.invalid_web_app'));
+  if (pin && !prefs.shortcuts.includes(app.id) && prefs.shortcuts.length >= 4) throw Error(uiText()('appCenterStore.remove_a_shortcut_before_pinning_this_app'));
   saveAppCenterPreferences({ ...prefs, webApps: [...(prefs.webApps ?? []).filter(item => item.id !== app.id), app],
     shortcuts: pin && !prefs.shortcuts.includes(app.id) ? [...prefs.shortcuts, app.id] : prefs.shortcuts });
   return app;

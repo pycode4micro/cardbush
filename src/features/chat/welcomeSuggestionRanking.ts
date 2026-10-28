@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { RuntimeUserPrompt } from '@cardbush/bush-protocol';
 
 export interface WelcomeSuggestion {
@@ -60,22 +61,11 @@ function similarity(left: string[], right: string[]) {
   return common / Math.max(1, Math.min(left.length, right.length));
 }
 
-const starters = {
-  zh: [
-    ['想法', '帮我梳理一个想法，整理成可执行的步骤。'],
-    ['探索', '陪我研究一个感兴趣的话题，从关键问题开始。'],
-    ['创作', '和我一起打磨一段内容，让表达更清楚。'],
-  ],
-  en: [
-    ['Ideas', 'Help me turn an idea into a clear, practical plan.'],
-    ['Explore', 'Explore a topic with me, starting with the key questions.'],
-    ['Create', 'Help me refine a piece of writing and make it clearer.'],
-  ],
-};
+const starters = ([['welcomeSuggestionRanking.ideas', 'welcomeSuggestionRanking.help_me_turn_an_idea_into_a'], ['welcomeSuggestionRanking.explore', 'welcomeSuggestionRanking.explore_a_topic_with_me_starting_with'], ['appCenterModel.create', 'welcomeSuggestionRanking.help_me_refine_a_piece_of_writing']] as const);
 
 /** Extractive ranking: frequency across authored prompts, then diverse, complete
  * sentences from those prompts. No model call or mutation of model context. */
-export function buildWelcomeSuggestions(history: RuntimeUserPrompt[], language: 'zh' | 'en', now = Date.now()): WelcomeSuggestion[] {
+export function buildWelcomeSuggestions(history: RuntimeUserPrompt[], language: string, now = Date.now()): WelcomeSuggestion[] {
   const since = now - 7 * 86400000;
   const unique = new Map<string, { prose: string; terms: string[]; time: number; truncated: boolean; sessionId: string }>();
   for (const row of [...history].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
@@ -125,9 +115,9 @@ export function buildWelcomeSuggestions(history: RuntimeUserPrompt[], language: 
     usedTopics.add(topic);
     suggestions.push({ text: candidate.text, topic, fromHistory: true, sessionId: candidate.sessionId });
   }
-  for (const [topic, text] of starters[language]) {
+  for (const [topicKey, textKey] of starters) {
     if (suggestions.length === 3) break;
-    suggestions.push({ text, topic, fromHistory: false });
+    suggestions.push({ text: uiText(language)(textKey), topic: uiText(language)(topicKey), fromHistory: false });
   }
   return suggestions;
 }

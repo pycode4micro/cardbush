@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { MarkdownFile, MarkdownFileRequest } from '../../../electron/mdPresentationFiles';
 import { createBushItPage, getBushItPages, selectBushItPage, updateBushItPage, type BushItPage } from './bushItPageStore';
 
@@ -20,7 +21,7 @@ export function linkedMarkdownTarget(currentPath: string, href: string): { path:
   } catch { return undefined; }
 }
 export async function markdownFile(input: MarkdownFileRequest) {
-  if (!window.cardbushDesktop?.markdownFile) throw Error('Markdown 文件服务不可用，请重启更新后的应用。');
+  if (!window.cardbushDesktop?.markdownFile) throw Error(uiText()('creationFiles.the_markdown_file_service_is_unavailable_restart'));
   return window.cardbushDesktop.markdownFile(input);
 }
 export function acceptCreationFile(file: MarkdownFile, projectDir = '') {
@@ -53,9 +54,9 @@ const saves = new Map<string, Promise<MarkdownFile | undefined>>();
 export function saveCreationFile(id: string): Promise<MarkdownFile | undefined> {
   const task = (saves.get(id) ?? Promise.resolve()).catch(() => undefined).then(async () => {
     const page = getBushItPages().pages.find(page => page.id === id);
-    if (page?.unloaded) throw Error('文档正在加载，请稍后再保存。');
+    if (page?.unloaded) throw Error(uiText()('creationFiles.the_document_is_loading_save_it_shortly'));
     if (!page?.file || page.source === page.file.text && !page.externalFile) return page?.file;
-    if (page.externalFile) throw Error('文件已被 Agent 或其他编辑器修改，请先处理版本冲突。');
+    if (page.externalFile) throw Error(uiText()('creationFiles.the_file_was_changed_by_an_agent'));
     try {
       const file = await markdownFile({ action: 'save', path: page.file.path, rootPath: page.projectDir || parentDirectory(page.file.path), revision: page.file.revision, text: page.source });
       const latest = getBushItPages().pages.find(item => item.id === id);

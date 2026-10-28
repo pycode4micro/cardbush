@@ -1,3 +1,5 @@
+import { uiText } from '../../i18n';
+import { useUiLanguage } from '../../i18n/react';
 import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { Copy, Check } from 'lucide-react';
@@ -8,18 +10,21 @@ export function SourcePreviewRows({ block, renderLine }: {
   block: SourcePreviewBlock;
   renderLine?: (index: number) => ReactNode;
 }) {
+  const language = useUiLanguage();
   return <>{block.rows.map((row, index) => <div className="source-code-line" key={index}
     data-source-line={row.line} data-source-continuation={row.continuation || undefined}>
-    <span className="source-line-number" aria-label={`Line ${row.line}`}>{row.continuation ? '↳' : row.line}</span>
+    <span className="source-line-number" aria-label={uiText(language)('source.lineNumber', { number: row.line })}>{row.continuation ? '↳' : row.line}</span>
     <code>{row.text ? renderLine?.(index) ?? row.text : ' '}</code>
   </div>)}</>;
 }
 
-export const VirtualSourceLines = memo(function VirtualSourceLines({ content, renderBlock, language = 'en' }: {
+export const VirtualSourceLines = memo(function VirtualSourceLines({ content, renderBlock, language: selectedLanguage }: {
   content: string;
   renderBlock?: (block: SourcePreviewBlock) => ReactNode;
-  language?: 'zh' | 'en';
+  language?: string;
 }) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
   const root = useRef<HTMLDivElement>(null);
   const [scrollParent, setScrollParent] = useState<HTMLElement>();
   const [copied, setCopied] = useState(false);
@@ -30,12 +35,12 @@ export const VirtualSourceLines = memo(function VirtualSourceLines({ content, re
   }, []);
   const copy = async () => {
     try { await navigator.clipboard.writeText(content); setCopied(true); }
-    catch (error) { void showUiError(language === 'zh' ? '复制失败' : 'Unable to copy', String(error)); }
+    catch (error) { void showUiError(uiText(language)('virtualSourceLines.unableToCopy'), String(error)); }
   };
   return <div ref={root} className="source-code-lines source-virtual-lines" data-render-mode="virtual">
     <div className="source-virtual-toolbar">
       <button type="button" onClick={() => void copy()}>{copied ? <Check size={12} /> : <Copy size={12} />}
-        {language === 'zh' ? (copied ? '已复制' : '复制内容') : (copied ? 'Copied' : 'Copy contents')}
+        {(copied ? uiText(language)('browserConnectionSettings.copied') : uiText(language)('virtualSourceLines.copyContents'))}
       </button>
     </div>
     {scrollParent && <Virtuoso customScrollParent={scrollParent} data={blocks}

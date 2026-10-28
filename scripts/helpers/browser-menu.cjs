@@ -134,7 +134,7 @@ module.exports = async ({ window, original, origin, directory, read, waitFor, ac
       await read(`document.querySelector('.browser-menu-trigger').click(); void 0`);
     }
     await menu('浏览器设置'); await waitFor(`toolClicks.includes('browser-settings')`);
-    assert.equal(await read(`document.querySelector('webview').getWebContentsId()`), original.id, 'menu tools preserve the guest');
+    assert.equal(await read(`document.querySelector('.right-inspector-tab-page.active webview').getWebContentsId()`), original.id, 'menu tools preserve the active guest');
     await read(`browserFixture.open({target:${JSON.stringify(origin + '/browser-menu-download')},newTab:true}); void 0`);
     await until(() => uiService.library.list('downloads').then(page => page.total === 1 && page.items[0].state === 'completed'), 'a direct download is tracked before a document becomes ready');
     console.log('Browser menu passed: native page/frame outside clicks, preserved click/focus, Escape, in-menu controls, real find/next/Ctrl+F, persistent page zoom, device/rotation, print routing, PNG, 165 bookmark import/dedup/search, native download pause/resume, history, origin-scoped clear, app data/file preservation, light/dark menus.');

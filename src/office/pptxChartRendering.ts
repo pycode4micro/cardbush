@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 /** The upstream post-processor catches failures. Leave an observable result for
  * the live document and reject incomplete snapshots instead of exporting blanks. */
 export async function renderPptxChart(chart: Record<string, unknown>, generate: (options: unknown) => { flush(): void; destroy(): void }, target: HTMLElement) {
@@ -22,7 +23,7 @@ export function markPptxChartFailure(target: HTMLElement, error: unknown) {
   target.replaceChildren();
   const message = target.ownerDocument.createElement('div');
   message.className = 'cardbush-chart-error';
-  message.textContent = '图表预览失败，请在原应用中查看';
+  message.textContent = uiText()('pptxChartRendering.the_chart_preview_failed_view_it_in');
   message.title = error instanceof Error ? error.message : String(error);
   target.append(message);
 }

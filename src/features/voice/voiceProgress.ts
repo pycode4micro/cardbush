@@ -1,15 +1,16 @@
+import { localizedContent } from '../../i18n';
 import type { ChatMessage, ChatToolExecution } from '../../types';
 import { spokenText, visibleVoiceMessages } from './speechText';
 
 const silentTools = new Set(['summary_for_user', 'check_habit', 'remember_source']);
-function title(tool: ChatToolExecution, language: 'zh' | 'en') {
+function title(tool: ChatToolExecution, language: string) {
   const titles = tool.metadata?.displayTitles as Record<string, unknown> | undefined;
-  const raw = titles?.[language] ?? tool.metadata?.displayTitle;
+  const raw = localizedContent(titles, language) ?? tool.metadata?.displayTitle;
   // Display only the runtime's public title, never arguments or hidden reasoning.
   return typeof raw === 'string' ? spokenText(raw).slice(0, 160) : '';
 }
 export class VoiceProgress {
-  update(messages: ChatMessage[], turnId: string | null | undefined, language: 'zh' | 'en') {
+  update(messages: ChatMessage[], turnId: string | null | undefined, language: string) {
     let activity = '';
     for (const message of visibleVoiceMessages(messages)) for (const tool of message.toolExecutions ?? []) {
       if (!turnId || (tool.turnId ?? message.turnId) !== turnId || silentTools.has(tool.name) || tool.state === 'queued') continue;

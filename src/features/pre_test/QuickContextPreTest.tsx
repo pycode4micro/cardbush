@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useState, type CSSProperties } from 'react';
 
 import type { AppLanguage, ChatMessage } from '../../types';
@@ -48,15 +49,15 @@ export function QuickContextPreTest({ language }: { language: AppLanguage }) {
   return (
     <div className="chat-panel quick-context-pre-test">
       <header className="quick-context-pre-test-header">
-        <strong>{language === 'zh' ? '快速上下文 · Pre Test' : 'Quick Context · Pre Test'}</strong>
-        <small>{language === 'zh' ? '本地占位数据，不连接运行服务' : 'Local fixtures, no Runtime required'}</small>
+        <strong>{uiText(language)('quickContextPreTest.quickContextPreTest')}</strong>
+        <small>{uiText(language)('composerRuntimePreTest.localFixturesNoRuntimeRequired')}</small>
       </header>
       <div className="chat-body" style={style}>
         <QuickContextRail language={language} messages={preTestMessages} />
         <div className="quick-context-pre-test-feed">
           {preTestMessages.map((message) => (
             <article className={message.role} key={message.id}>
-              <small>{message.role === 'user' ? (language === 'zh' ? '你' : 'You') : 'CardBush'}</small>
+              <small>{message.role === 'user' ? (uiText(language)('quickContextRail.you')) : 'CardBush'}</small>
               <p>{message.content}</p>
             </article>
           ))}
@@ -65,10 +66,10 @@ export function QuickContextPreTest({ language }: { language: AppLanguage }) {
         <div className="quick-context-pre-test-composer">
           <textarea
             value={draft}
-            placeholder={language === 'zh' ? '输入内容不会改变已展开的会话预览' : 'Typing keeps the selected turn open'}
+            placeholder={uiText(language)('quickContextPreTest.typingKeepsTheSelectedTurnOpen')}
             onChange={(event) => setDraft(event.currentTarget.value)}
           />
-          <small>{language === 'zh' ? '悬停刻度预览提问，点击展开本轮会话' : 'Hover a tick to preview its prompt; click to open the turn'}</small>
+          <small>{uiText(language)('quickContextPreTest.hoverATickToPreviewItsPrompt')}</small>
         </div>
       </div>
     </div>

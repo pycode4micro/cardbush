@@ -1,3 +1,4 @@
+import { uiText, localizedContent } from '../../i18n';
 import {
   CheckCircle2,
   Circle,
@@ -99,7 +100,7 @@ function FeaturePanelLoading({ language }: { language: AppLanguage }) {
   return (
     <div className="feature-content feature-loading">
       <LoaderCircle size={18} />
-      <span>{language === 'zh' ? '正在加载...' : 'Loading...'}</span>
+      <span>{uiText(language)('featureContentPanel.loading')}</span>
     </div>
   );
 }
@@ -198,22 +199,18 @@ function SkillsPanel({
           <input
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder={language === 'zh' ? '搜索技能' : 'Search skills'}
+            placeholder={uiText(language)('featureContentPanel.searchSkills')}
           />
         </div>
         <button className="secondary-button" type="button" disabled={loading} onClick={() => void reload()}>
           {loading ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-          {language === 'zh' ? '刷新' : 'Refresh'}
+          {uiText(language)('automationPanel.refresh')}
         </button>
       </div>
       <p className="feature-hint">
         {loading
-          ? language === 'zh'
-            ? '正在从 CardBush Skill 目录加载...'
-            : 'Loading the CardBush Skill catalog...'
-          : language === 'zh'
-            ? `共 ${localItems.length} 个 skills，点击详情查看 SKILL.md。`
-            : `${localItems.length} skills. Open details to view SKILL.md.`}
+          ? uiText(language)('featureContentPanel.loadingTheCardbushSkillCatalog')
+          : uiText(language)('featureContentPanel.skillsOpenDetailsToViewSkillMd', { value1: localItems.length })}
       </p>
       {error && <p className="feature-error">{error}</p>}
       <div className="result-stack">
@@ -232,11 +229,11 @@ function SkillsPanel({
                 <SkillIcon skill={skill} />
                 <div>
                   <h3>{skill.name}</h3>
-                  <p>{language === 'zh' ? skill.descriptionZh : skill.description}</p>
+                  <p>{localizedContent({ zh: skill.descriptionZh, en: skill.description }, language)}</p>
                   <small>{skill.path}</small>
                 </div>
                 <span className="skill-detail-label">
-                  {language === 'zh' ? '详情' : 'Details'}
+                  {uiText(language)('featureContentPanel.details')}
                 </span>
               </button>
               <button
@@ -246,12 +243,8 @@ function SkillsPanel({
               >
                 {enabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
                 {enabled
-                  ? language === 'zh'
-                    ? '已启用'
-                    : 'Enabled'
-                  : language === 'zh'
-                    ? '已关闭'
-                    : 'Disabled'}
+                  ? uiText(language)('featureContentPanel.enabled')
+                  : uiText(language)('featureContentPanel.disabled')}
               </button>
             </article>
           );
@@ -299,25 +292,25 @@ function SkillDetailDialog({
         {loading ? (
           <div className="skill-detail-loading">
             <LoaderCircle size={22} />
-            {language === 'zh' ? '正在加载 Skill 详情...' : 'Loading skill detail...'}
+            {uiText(language)('featureContentPanel.loadingSkillDetail')}
           </div>
         ) : (
           <>
-            <p>{(language === 'zh' ? detail.descriptionZh : detail.description) || detail.description || (language === 'zh' ? '暂无描述' : 'No description')}</p>
+            <p>{(localizedContent({ zh: detail.descriptionZh, en: detail.description }, language)) || detail.description || (uiText(language)('featureContentPanel.noDescription'))}</p>
             <div className="skill-meta">
-              {detail.version && <span>v{detail.version}</span>}
-              {detail.routingHidden && <span>{language === 'zh' ? '隐藏路由' : 'hidden routing'}</span>}
-              {detail.minServerVersion && <span>server &gt;= {detail.minServerVersion}</span>}
+              {detail.version && <span>{uiText(language)('featureContentPanel.v')}{detail.version}</span>}
+              {detail.routingHidden && <span>{uiText(language)('featureContentPanel.hiddenRouting')}</span>}
+              {detail.minServerVersion && <span>{uiText(language)('featureContentPanel.server_gt')}{detail.minServerVersion}</span>}
               {detail.requires.map((item) => (
-                <span key={`requires-${item}`}>requires {item}</span>
+                <span key={`requires-${item}`}>{uiText(language)('featureContentPanel.requires')}{item}</span>
               ))}
             </div>
-            {detail.packageDir && <InfoRow label="package_dir" value={detail.packageDir} />}
-            {detail.path && <InfoRow label="SKILL.md" value={detail.path} />}
+            {detail.packageDir && <InfoRow label={uiText(language)('featureContentPanel.package_dir')} value={detail.packageDir} />}
+            {detail.path && <InfoRow label={uiText(language)('featureContentPanel.skill_md')} value={detail.path} />}
             {error ? (
               <p className="feature-error">{error}</p>
             ) : (
-              <pre className="skill-content">{detail.content || (language === 'zh' ? 'Skill 详情为空' : 'Skill detail is empty')}</pre>
+              <pre className="skill-content">{detail.content || (uiText(language)('featureContentPanel.skillDetailIsEmpty'))}</pre>
             )}
           </>
         )}

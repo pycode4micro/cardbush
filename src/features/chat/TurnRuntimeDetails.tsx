@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { CheckCircle2, Circle, Clock3, ListChecks, LoaderCircle, Target } from 'lucide-react';
 import type { AppLanguage, TaskPlanSnapshot } from '../../types';
 import type { ExperimentalGoal } from '../../backend/api';
@@ -13,16 +14,16 @@ export function TurnRuntimeDetails({ language, running, stopping, goal, goalRoun
   onCancelGoal,
 }: TurnRuntimeProps) {
   if (!goal && !stopping) return null;
-  return <div className="turn-runtime-details" aria-label={language === 'zh' ? '本轮进度' : 'Turn progress'}>
-    {stopping && <p role="status">{language === 'zh' ? '正在停止并保存本轮记录…' : 'Stopping and saving this turn…'}</p>}
+  return <div className="turn-runtime-details" aria-label={uiText(language)('turnRuntimeDetails.turnProgress')}>
+    {stopping && <p role="status">{uiText(language)('turnRuntimeDetails.stoppingAndSavingThisTurn')}</p>}
     {goal && (
       <section className={`runtime-goal-detail ${goal.status}`}>
         <div className="runtime-detail-heading">
           <Target size={14} />
-          <strong>{language === 'zh' ? '目标' : 'Goal'}</strong>
+          <strong>{uiText(language)('turnRuntimeDetails.goal')}</strong>
           <span>
             {goal.status === 'active' && goalWaiting
-              ? language === 'zh' ? '等待任务继续' : 'Waiting for the task'
+              ? uiText(language)('turnRuntimeDetails.waitingForTheTask')
               : goalStatusLabel(goal.status, language)}
           </span>
           {goal.status === 'active' && onCancelGoal && (
@@ -33,8 +34,8 @@ export function TurnRuntimeDetails({ language, running, stopping, goal, goalRoun
               onClick={() => void onCancelGoal()}
             >
               {goalCancelling
-                ? language === 'zh' ? '取消中' : 'Cancelling'
-                : language === 'zh' ? '取消目标' : 'Cancel goal'}
+                ? uiText(language)('turnRuntimeDetails.cancelling')
+                : uiText(language)('turnRuntimeDetails.cancelGoal')}
             </button>
           )}
         </div>
@@ -66,7 +67,7 @@ export function TurnRuntimeDetails({ language, running, stopping, goal, goalRoun
                   )}
                   <span>
                     <strong>
-                      {language === 'zh' ? `第 ${index + 1} 轮` : `Round ${index + 1}`}
+                      {uiText(language)('turnRuntimeDetails.round', { value1: index + 1 })}
                     </strong>
                     <small>{goalDecisionLabel(round.decision, language)}</small>
                     {round.reason && <em>{round.reason}</em>}
@@ -88,7 +89,7 @@ export function RuntimeTaskPlan({ plan, language, running = false }: {
   return <section className="runtime-plan-detail">
         <div className="runtime-detail-heading">
           <ListChecks size={14} />
-          <strong>{language === 'zh' ? '计划' : 'Plan'}</strong>
+          <strong>{uiText(language)('turnRuntimeDetails.plan')}</strong>
           <span>{plan.nodes.filter(node => node.status === 'completed').length}/{plan.nodes.length}</span>
         </div>
         {plan.explanation && <p>{plan.explanation}</p>}
@@ -102,28 +103,26 @@ export function RuntimeTaskPlan({ plan, language, running = false }: {
               ) : (
                 <Clock3 size={13} />
               )}
-              <span>{node.step}{node.status === 'waiting' && <small> — {taskPlanWaitingLabel(node.waitingKind, language)}{language === 'zh' ? '：' : ': '}{node.waitingFor}</small>}</span>
+              <span>{node.step}{node.status === 'waiting' && <small> — {taskPlanWaitingLabel(node.waitingKind, language)}{uiText(language)('turnRuntimeDetails.message')}{node.waitingFor}</small>}</span>
             </li>
           ))}
         </ol>
       </section>;
 }
 function goalTokenLabel(goal: ExperimentalGoal, language: AppLanguage) {
-  const prefix = language === 'zh' ? 'Token' : 'Tokens';
+  const prefix = uiText(language)('turnRuntimeDetails.tokens');
   return goal.tokenBudget == null
     ? `${prefix}：${goal.consumedTokens}`
     : `${prefix}：${goal.consumedTokens} / ${goal.tokenBudget}`;
 }
 
 function goalStatusLabel(status: ExperimentalGoal['status'], language: AppLanguage) {
-  const labels = language === 'zh'
-    ? { active: '进行中', complete: '已完成', blocked: '已阻塞', cancelled: '已取消' }
-    : { active: 'Active', complete: 'Complete', blocked: 'Blocked', cancelled: 'Cancelled' };
+  const labels = ({ active: uiText(language)('turnRuntimeDetails.active'), complete: uiText(language)('turnRuntimeDetails.complete'), blocked: uiText(language)('turnRuntimeDetails.blocked'), cancelled: uiText(language)('browserLibraryDialog.cancelled') });
   return labels[status];
 }
 
 function goalDecisionLabel(decision: GoalToolUpdate['decision'], language: AppLanguage) {
-  if (decision === 'continue') return language === 'zh' ? '继续执行' : 'Continue';
-  if (decision === 'complete') return language === 'zh' ? '确认完成' : 'Complete';
-  return language === 'zh' ? '确认阻塞' : 'Blocked';
+  if (decision === 'continue') return uiText(language)('turnRuntimeDetails.continue');
+  if (decision === 'complete') return uiText(language)('turnRuntimeDetails.complete_5d09a48');
+  return uiText(language)('turnRuntimeDetails.blocked_ffb9b04');
 }

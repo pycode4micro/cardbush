@@ -32,7 +32,7 @@ app.whenReady().then(async () => {
     await pause();
   };
   const key = (value, options = {}) => run(`(document.activeElement??document.body).dispatchEvent(new KeyboardEvent('keydown',${JSON.stringify({key:value,bubbles:true,cancelable:true,...options})}))`);
-  const menu = async id => { await click(`[data-menu-trigger="${id}"]`); await until(`Boolean(document.querySelector('[role="menu"]'))`); };
+  const menu = async id => { await click(`[data-menu-trigger="${id}"]`); await until(`document.querySelector('[data-menu-trigger="${id}"]')?.getAttribute('aria-expanded')==='true' && Boolean(document.querySelector('[role="menu"]'))`, `menu ${id} opened`); };
   const item = async id => { await click(`[data-menu-item="${id}"]`); await until(`!document.querySelector('[role="menu"]')`); };
   try {
     await win.loadFile(path.join(directory, 'ui', 'index.html'));
@@ -146,7 +146,14 @@ app.whenReady().then(async () => {
     }
     win.setContentSize(620,280);
     await until('Math.abs(innerHeight-280)<=2', 'short content viewport applied');
-    await menu('view');
+    // A retained native pointer over the menu bar can enter a different trigger
+    // when the resized layout settles. Park it before exercising keyboard open.
+    win.webContents.sendInputEvent({type:'mouseMove',x:600,y:260}); await pause();
+    // Native offscreen pointer coordinates can lag a resize. This case tests
+    // menu geometry; pointer opening is exercised above at the settled size.
+    await run(`document.querySelector('[data-menu-trigger="view"]').focus()`);
+    await key('ArrowDown');
+    await until(`document.querySelector('[data-menu-trigger="view"]').getAttribute('aria-expanded')==='true'`);
     await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const bounds=await run(`(()=>{const n=document.querySelector('[role="menu"]');const r=n.getBoundingClientRect();return {bottom:r.bottom,height:r.height,scroll:n.scrollHeight,client:n.clientHeight,viewport:innerHeight}})()`);
     assert.ok(bounds.bottom<=bounds.viewport); assert.ok(bounds.scroll>bounds.client,'long menus scroll in short windows: ' + JSON.stringify(bounds));

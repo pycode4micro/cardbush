@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { CheckCircle2, Pencil, Trash2 } from 'lucide-react';
 import type { AppLanguage, ManagedModelConfig } from '../../types';
 import { modelProtocols } from './modelProtocols';
@@ -7,19 +8,19 @@ export function ModelConfigRow({ config, language, selected, onUse, onDelete, di
   config: ManagedModelConfig; language: AppLanguage; selected: boolean; onUse: () => void; onDelete: () => void;
   disabled?: boolean; onEdit: () => void; defaultSelection?: boolean;
 }) {
-  const zh = language === 'zh';
+
   const protocol = modelProtocols.find(item => item.value === (config.apiProtocol ?? 'openai_responses'))!;
   return <div className="model-row model-row-compact">
-    <button type="button" className="model-row-summary model-row-edit" disabled={disabled} aria-label={(zh ? '编辑 ' : 'Edit ') + config.modelName} onClick={onEdit}>
+    <button type="button" className="model-row-summary model-row-edit" disabled={disabled} aria-label={(uiText(language)('conversationStyleSettings.edit')) + config.modelName} onClick={onEdit}>
       <strong>{config.modelName}</strong>
-      <span>{protocol.label}{' · '}{zh ? '思考：' : 'Reasoning: '}{modelReasoningLabel(config.reasoningEffort ?? 'default', language)}{' · '}{config.authentication?.kind === 'chatgpt' ? zh ? 'ChatGPT 套餐' : 'ChatGPT plan' : config.apiKey || config.hasApiKey ? zh ? '凭证已保存' : 'Credential saved' : zh ? '未设置凭证' : 'No credential'}</span>
+      <span>{protocol.label}{' · '}{uiText(language)('modelConfigRow.reasoning')}{modelReasoningLabel(config.reasoningEffort ?? 'default', language)}{' · '}{config.authentication?.kind === 'chatgpt' ? uiText(language)('modelConfigRow.chatgptPlan') : config.apiKey || config.hasApiKey ? uiText(language)('modelConfigRow.credentialSaved') : uiText(language)('modelConfigRow.noCredential')}</span>
       <small>{config.baseUrl || protocol.baseUrl}</small>
     </button>
     <div className="model-row-actions">
-      {selected ? <span className="current-badge"><CheckCircle2 size={13}/>{defaultSelection ? zh ? '默认' : 'Default' : zh ? '当前' : 'Current'}</span>
-        : <button className="secondary-button model-use-button" type="button" disabled={disabled} onClick={onUse}>{defaultSelection ? zh ? '设为默认' : 'Set default' : zh ? '使用' : 'Use'}</button>}
-      <button className="icon-button" type="button" disabled={disabled} title={zh ? '编辑模型' : 'Edit model'} aria-label={zh ? '编辑模型' : 'Edit model'} onClick={onEdit}><Pencil size={14}/></button>
-      <button className="icon-button model-delete-button" type="button" disabled={disabled} title={zh ? '删除模型' : 'Delete model'} aria-label={(zh ? '删除 ' : 'Delete ') + config.modelName} onClick={onDelete}><Trash2 size={14}/></button>
+      {selected ? <span className="current-badge"><CheckCircle2 size={13}/>{defaultSelection ? uiText(language)('agentDataSettings.default') : uiText(language)('modelConfigRow.current')}</span>
+        : <button className="secondary-button model-use-button" type="button" disabled={disabled} onClick={onUse}>{defaultSelection ? uiText(language)('browserConnectionSettings.setDefault') : uiText(language)('modelConfigRow.use')}</button>}
+      <button className="icon-button" type="button" disabled={disabled} title={uiText(language)('modelConfigRow.editModel')} aria-label={uiText(language)('modelConfigRow.editModel')} onClick={onEdit}><Pencil size={14}/></button>
+      <button className="icon-button model-delete-button" type="button" disabled={disabled} title={uiText(language)('modelConfigRow.deleteModel')} aria-label={(uiText(language)('conversationStyleSettings.delete')) + config.modelName} onClick={onDelete}><Trash2 size={14}/></button>
     </div>
   </div>;
 }

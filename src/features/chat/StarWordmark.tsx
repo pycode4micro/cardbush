@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../i18n/react';
+import { WORDMARK_PALETTES } from '../appearance/themeRuntime';
+import { uiText } from '../../i18n';
 import { prefersReducedMotion } from '../../shared/motionPreference';
 import { isWindowVisible, watchWindowVisibility } from '../../shared/windowVisibility';
 import { useEffect, useRef } from 'react';
@@ -13,13 +16,15 @@ export function starPalette(date: Date, light: boolean) {
   const [start, hue] = stops[index], [end, nextHue] = stops[index + 1];
   const delta = ((nextHue - hue + 540) % 360) - 180;
   const base = hue + delta * (hour - start) / (end - start) + Math.sin(day / 366 * TAU) * 12 + Math.sin(day * 1.7) * 4;
+  const profile = WORDMARK_PALETTES[Number(light)];
   return [-22, 0, 23, 48].map((offset, index) =>
-    `hsl(${(base + offset + 360) % 360} ${light ? 62 : 70}% ${light ? 37 + index * 3 : 69 + index * 4}%)`);
+    `hsl(${(base + offset + 360) % 360} ${profile.saturation}% ${profile.luminance + index * profile.luminanceStep}%)`);
 }
 
 type Star = { homeX: number; homeY: number; x: number; y: number; vx: number; vy: number; size: number; shape: number; phase: number; color: number; emphasized: boolean };
 
 export function StarWordmark() {
+  const language = useUiLanguage();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -41,7 +46,7 @@ export function StarWordmark() {
       const rgb = getComputedStyle(canvas!).color.match(/[\d.]+/g)?.map(Number) ?? [255, 255, 255];
       const light = rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722 < 128;
       palette = starPalette(new Date(), light);
-      emphasisColor = light ? '#181818' : '#ffffff';
+      emphasisColor = getComputedStyle(canvas!).getPropertyValue('--wordmark-emphasis').trim();
     }
     function draw(time: number, step: number) {
       if (!context) return;
@@ -173,5 +178,5 @@ export function StarWordmark() {
       canvas.removeEventListener('lostpointercapture', leave);
     };
   }, []);
-  return <canvas ref={canvasRef} className="welcome-star-wordmark" role="img" aria-label="cardbush">cardbush</canvas>;
+  return <canvas ref={canvasRef} className="welcome-star-wordmark" role="img" aria-label={uiText(language)('windowSidebarToggle.cardbush')}>{uiText(language)('windowSidebarToggle.cardbush')}</canvas>;
 }

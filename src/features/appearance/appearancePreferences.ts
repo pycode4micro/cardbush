@@ -1,3 +1,4 @@
+import { THEME_BACKGROUNDS, THEME_FOREGROUNDS } from './themeRuntime';
 import type { ImportedThemeStyle, ThemeMode } from '../../types';
 import { importedThemeStyleVariables } from './importedThemeStyle';
 
@@ -119,8 +120,8 @@ export function appearanceVariables(settings: AppearancePreferences, theme: Them
   const vars: Record<string, string | number> = { ...custom };
   if (profile.accent) vars['--accent'] = profile.accent;
   if (profile.background || profile.foreground) {
-    const bg = profile.background || vars['--bg'] || (theme === 'bright' ? '#f5f3ef' : '#1a1a1a');
-    const fg = profile.foreground || vars['--text'] || (theme === 'bright' ? '#1e1c1a' : '#f0ede7');
+    const bg = profile.background || vars['--bg'] || THEME_BACKGROUNDS[theme];
+    const fg = profile.foreground || vars['--text'] || THEME_FOREGROUNDS[theme];
     Object.assign(vars, {
       '--bg': bg, '--surface': bg, '--text': fg,
       '--surface-strong': `color-mix(in srgb, ${bg} 94%, ${fg})`,

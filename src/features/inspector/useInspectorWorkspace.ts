@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AppLanguage, AppSection } from '../../types';
 import { inspectorMaximum, minimumConversationWidth, minimumInspectorWidth } from '../../components/rightInspectorSizing';
@@ -164,7 +165,7 @@ export function useInspectorWorkspace({
     multiPageRestore.current = { width: inspectorWidthRef.current, sidebar: sidebarCollapsed };
     const initial = [activeInspectorTab, ...inspectorTabs.filter(tab => tab.id !== activeInspectorTab?.id)].filter((tab): tab is InspectorTab => Boolean(tab)).slice(0, 2);
     while (initial.length < 2) {
-      const tab: InspectorResourceTab = { id: `browser:${crypto.randomUUID()}`, kind: 'resource', detail: { target: 'about:blank', title: language === 'zh' ? '新页面' : 'New page' } };
+      const tab: InspectorResourceTab = { id: `browser:${crypto.randomUUID()}`, kind: 'resource', detail: { target: 'about:blank', title: uiText(language)('useInspectorWorkspace.newPage') } };
       openInspectorTab(tab); initial.push(tab);
     }
     setInspectorLayout(initial.reduce<PanelLayout | null>((tree, tab) => addPanel(tree, tab.id), null));

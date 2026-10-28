@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import * as i18n from '@cardbush/platform/i18n';
 import { build } from 'vite';
 import ts from 'typescript';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -10,7 +11,8 @@ const sourceModule = { exports: {} };
 const compiled = ts.transpileModule(await readFile('src/features/inspector/inspectorTabs.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-new Function('module', 'exports', compiled)(sourceModule, sourceModule.exports);
+new Function('module', 'exports', 'require', compiled)(sourceModule, sourceModule.exports,
+  name => { assert.equal(name, '../../i18n'); return i18n; });
 const { inspectorTabsReducer: reduce, workSummaryInspectorTab: summaryTab } = sourceModule.exports;
 let state = { tabs: [], activeId: '' };
 assert.equal(reduce(state, { type: 'activate', id: 'missing' }), state);

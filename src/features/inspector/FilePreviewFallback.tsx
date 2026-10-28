@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useState } from 'react';
 import { File } from 'lucide-react';
 import { basename, resourceTargetKind } from '../../shared/localPaths';
@@ -21,26 +22,26 @@ export function FilePreviewFallback({ path, language, message, onLoadingChange }
     setOpening(true);
     try {
       const open = window.cardbushDesktop?.openPath;
-      if (!open) throw new Error(language === 'zh' ? '当前环境无法打开本地文件。' : 'Opening local files is unavailable.');
+      if (!open) throw new Error(uiText(language)('filePreviewFallback.openingLocalFilesIsUnavailable'));
       const error = await open(path);
       if (error) throw new Error(error);
     } catch (error) {
-      await showUiError(language === 'zh' ? '无法打开文件' : 'Unable to open file', `${path}\n\n${String(error)}`);
+      await showUiError(uiText(language)('filePreviewFallback.unableToOpenFile'), `${path}\n\n${String(error)}`);
     } finally {
       setOpening(false);
     }
   };
 
-  return <section className="inspector-file-fallback" aria-label={language === 'zh' ? '文件预览' : 'File preview'}>
+  return <section className="inspector-file-fallback" aria-label={uiText(language)('filePreviewFallback.filePreview')}>
     <File size={36} strokeWidth={1.25} aria-hidden="true" />
     <strong className="inspector-file-fallback-name">{basename(path)}</strong>
     <div className="inspector-file-fallback-path">{path}</div>
     <div role={message ? 'alert' : undefined}>
-      <p>{!fileTarget ? (language === 'zh' ? '资源地址不可用。' : 'Resource address unavailable.')
-        : message || (language === 'zh' ? '此文件格式暂不支持内置预览。' : 'No built-in preview is available for this file format.')}</p>
+      <p>{!fileTarget ? (uiText(language)('filePreviewFallback.resourceAddressUnavailable'))
+        : message || (uiText(language)('filePreviewFallback.noBuiltInPreviewIsAvailableFor'))}</p>
     </div>
     {fileTarget && <button className="inspector-open-external" type="button" disabled={opening} onClick={() => void openExternally()}>
-      {language === 'zh' ? '用系统默认应用打开' : 'Open in default application'}
+      {uiText(language)('filePreviewFallback.openInDefaultApplication')}
     </button>}
   </section>;
 }

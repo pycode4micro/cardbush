@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { createElement, memo, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Maximize2, MoreHorizontal, Play, RotateCw, X } from 'lucide-react';
 import type { AppLanguage } from '../../types';
@@ -62,7 +63,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   const openFull = () => host ? host.openFile(path) : openInspector(path, label);
   const fileLink = host ? <button type="button" className="markdown-file-link" onClick={openFull}>{label}</button>
     : <LocalFileReferenceLink path={path} knownFileName={basename(path)}>{label}</LocalFileReferenceLink>;
-  const zh = language === 'zh';
+
   const canExpand = measured && state !== 'failed' && height > previewLimit;
   const folded = canExpand && !expanded;
   const guestHeight = height;
@@ -319,8 +320,8 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
     <span className="inline-html-toolbar">
       {fileLink}
       <span className="inline-html-actions">
-        <button className="inline-html-reopen" type="button" onClick={openPreview} aria-label={zh ? '打开 HTML 预览' : 'Open HTML preview'}><Play size={13} /><span>{zh ? '预览' : 'Preview'}</span></button>
-        <button type="button" onClick={openFull} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'}><Maximize2 size={14} /></button>
+        <button className="inline-html-reopen" type="button" onClick={openPreview} aria-label={uiText(language)('inlineHtmlPreview.openHtmlPreview')}><Play size={13} /><span>{uiText(language)('inlineHtmlPreview.preview')}</span></button>
+        <button type="button" onClick={openFull} aria-label={uiText(language)('inlineHtmlPreview.openHtmlInSidePanel')}><Maximize2 size={14} /></button>
       </span>
     </span>
   </span>;
@@ -329,17 +330,17 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   return <span ref={container} className={`inline-html-preview${visualization ? ' is-visualization' : ''}${folded ? ' is-folded' : ''}${folded && viewportHeight < previewLimit ? ' is-section-folded' : ''}`} aria-label={label}>
     {visualization && <span className="inline-html-heading">
       {canExpand && expanded && <button className="inline-html-collapse-top" type="button" aria-expanded={true} aria-controls={viewportId}
-        onClick={event => toggleExpansion(event.currentTarget)}><ChevronUp size={14} />{zh ? '收起' : 'Collapse'}</button>}
-      <button className="inline-html-menu-toggle" type="button" aria-label={zh ? '预览选项' : 'Preview options'}
+        onClick={event => toggleExpansion(event.currentTarget)}><ChevronUp size={14} />{uiText(language)('shadowTemporaryChat.collapse')}</button>}
+      <button className="inline-html-menu-toggle" type="button" aria-label={uiText(language)('inlineHtmlPreview.previewOptions')}
         aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><MoreHorizontal size={18} /></button>
-      <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'}><X size={14} /></button>
+      <button className="inline-html-close" type="button" onClick={closePreview} aria-label={uiText(language)('inlineHtmlPreview.closeHtmlPreview')}><X size={14} /></button>
     </span>}
     <span className="inline-html-toolbar" hidden={visualization && !menuOpen && state !== 'failed'}>
       {fileLink}
       <span className="inline-html-actions">
-        <button type="button" onClick={() => void reload()} aria-label={zh ? '重新加载 HTML' : 'Reload HTML'}><RotateCw size={14} /></button>
-        <button type="button" onClick={() => { setMenuOpen(false); openFull(); }} aria-label={zh ? '在侧栏展开 HTML' : 'Open HTML in side panel'}><Maximize2 size={14} /></button>
-        {!visualization && <button className="inline-html-close" type="button" onClick={closePreview} aria-label={zh ? '关闭 HTML 预览' : 'Close HTML preview'}><X size={14} /></button>}
+        <button type="button" onClick={() => void reload()} aria-label={uiText(language)('inlineHtmlPreview.reloadHtml')}><RotateCw size={14} /></button>
+        <button type="button" onClick={() => { setMenuOpen(false); openFull(); }} aria-label={uiText(language)('inlineHtmlPreview.openHtmlInSidePanel')}><Maximize2 size={14} /></button>
+        {!visualization && <button className="inline-html-close" type="button" onClick={closePreview} aria-label={uiText(language)('inlineHtmlPreview.closeHtmlPreview')}><X size={14} /></button>}
       </span>
     </span>
     <span id={viewportId} className={`inline-html-viewport is-${visible ? state : 'suspended'}`} style={{ height: viewportHeight }} aria-busy={visible && state === 'loading'}>
@@ -357,16 +358,16 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       })}
       {(!visible || state !== 'ready') && <span className="inline-html-status" role="status">
         {state === 'failed' ? <>
-          <span>{zh ? '预览暂时无法加载' : 'Preview could not load'}</span>
-          <button type="button" onClick={() => void reload()}>{zh ? '重试' : 'Retry'}</button>
-        </> : <span>{!visible ? (zh ? '预览已暂停' : 'Preview suspended') : (zh ? 'HTML 预览' : 'HTML preview')}</span>}
+          <span>{uiText(language)('inlineHtmlPreview.previewCouldNotLoad')}</span>
+          <button type="button" onClick={() => void reload()}>{uiText(language)('common.retry')}</button>
+        </> : <span>{!visible ? (uiText(language)('inlineHtmlPreview.previewSuspended')) : (uiText(language)('inlineHtmlPreview.htmlPreview'))}</span>}
       </span>}
     </span>
     {canExpand && <span className="inline-html-footer">
       <button ref={expansionButton} className="inline-html-expand-toggle" type="button" aria-expanded={expanded} aria-controls={viewportId}
         onClick={event => toggleExpansion(event.currentTarget)}>
         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        {expanded ? (zh ? '收起' : 'Collapse') : (zh ? '展开' : 'Expand')}
+        {expanded ? (uiText(language)('shadowTemporaryChat.collapse')) : (uiText(language)('inlineHtmlPreview.expand'))}
       </button>
     </span>}
   </span>;

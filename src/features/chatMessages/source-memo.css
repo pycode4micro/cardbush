@@ -50,3 +50,5 @@
   background: color-mix(in srgb, var(--text) 4%, transparent);
   font: 12px/1.7 var(--mono-font-family, ui-monospace, Consolas, monospace);
 }
+
+.source-memo-card[data-has-excerpt="true"] { max-height: min(460px, calc(100vh - 16px)); }

@@ -56,3 +56,5 @@ body.component-layout-editing iframe { pointer-events: none !important; }
 .builtin-input.simple .builtin-workspace-control { display: none; }
 @container component-suggestions (max-width:480px) { .builtin-suggestions .welcome-suggestions-list { grid-template-columns: 1fr; } }
 @container component-canvas (max-width:540px) { .html-component-card { grid-column: span 12; } }
+
+.welcome-layout-handles[data-in-viewport="false"] { visibility: hidden; }

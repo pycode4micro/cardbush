@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import {
   AlertCircle,
   ArrowLeft,
@@ -112,9 +113,7 @@ export function CardlingSceneHost({
     sceneSteps[Math.min(activeStepIndex, Math.max(0, sceneSteps.length - 1))];
   const activeStepNodeId = activeStep?.nodeId?.trim() ?? '';
   const activeSpeech = freeTalkMode
-    ? language === 'zh'
-      ? '自由对话已开启。你可以直接测试这个 HTML 页面，点击不会切换反馈节点；点我可以聊整个场景。'
-      : 'Free chat is on. You can test this HTML page directly; clicks will not retarget feedback nodes. Click me to discuss the whole scene.'
+    ? uiText(language)('cardlingSceneHost.freeChatIsOnYouCanTest')
     : activeStep?.speech || scene.cardling.speech;
   const displayedSpeech = typedSpeech || (playbackRunning ? '' : activeSpeech);
   const embedded = scene.cardling.mode === 'embedded';
@@ -258,13 +257,11 @@ export function CardlingSceneHost({
           node?.label ||
           (step.nodeId
             ? step.nodeId
-            : language === 'zh'
-              ? '整体设计概述'
-              : 'Design overview'),
+            : uiText(language)('cardlingSceneHost.designOverview')),
         purpose:
           step.nodeId
             ? node?.purpose || step.speech
-            : step.speech || (language === 'zh' ? '整体说明' : 'Overview'),
+            : step.speech || (uiText(language)('cardlingSceneHost.overview')),
         overview: !step.nodeId,
       };
     });
@@ -303,13 +300,11 @@ export function CardlingSceneHost({
   }, [feedbackQueue]);
   const currentNodeLabel =
     freeTalkMode
-      ? language === 'zh'
-        ? '自由对话'
-        : 'Free chat'
+      ? uiText(language)('cardlingSceneHost.freeChat')
       : sceneNodeById.get(currentNodeId)?.label ||
         activeStep?.title ||
         currentNodeId ||
-        (language === 'zh' ? '整体场景' : 'Overall scene');
+        (uiText(language)('cardlingSceneHost.overallScene'));
 
   const requestAnchorRect = useCallback(
     (nodeId = currentNodeId, options?: { reveal?: boolean }) => {
@@ -555,21 +550,13 @@ export function CardlingSceneHost({
       const target = sceneOpenTargetFromPayload(payload);
       if (!target) {
         setError(
-          language === 'zh'
-            ? '这个打开动作缺少可识别的链接或本地路径。'
-            : 'This open action does not include a recognizable link or local path.',
+          uiText(language)('cardlingSceneHost.thisOpenActionDoesNotIncludeA'),
         );
         return;
       }
       setError('');
       setNotice(
-        language === 'zh'
-          ? target.kind === 'url'
-            ? '正在打开链接...'
-            : '正在打开本地文件...'
-          : target.kind === 'url'
-            ? 'Opening link...'
-            : 'Opening local file...',
+        (target.kind === 'url' ? uiText(language)('cardlingSceneHost.openingLink') : uiText(language)('cardlingSceneHost.openingLocalFile')),
       );
       try {
         if (target.kind === 'url') {
@@ -578,9 +565,7 @@ export function CardlingSceneHost({
             window.cardbushDesktop?.openExternal
           )?.(target.target);
           setNotice(
-            language === 'zh'
-              ? '链接已在 CardBush 右侧浏览器标签页中打开。'
-              : 'The link was opened in a CardBush browser tab on the right.',
+            uiText(language)('cardlingSceneHost.theLinkWasOpenedInACardbush'),
           );
           return;
         }
@@ -589,16 +574,12 @@ export function CardlingSceneHost({
           throw new Error(result);
         }
         setNotice(
-          language === 'zh'
-            ? '已交给系统打开本地文件。'
-            : 'The local file was handed to the system.',
+          uiText(language)('cardlingSceneHost.theLocalFileWasHandedToThe'),
         );
       } catch (caught) {
         setNotice('');
         setError(
-          language === 'zh'
-            ? `打开失败：${errorMessage(caught)}`
-            : `Open failed: ${errorMessage(caught)}`,
+          uiText(language)('cardlingSceneHost.openFailed', { value1: errorMessage(caught) }),
         );
       }
     },
@@ -709,9 +690,7 @@ export function CardlingSceneHost({
         recordSceneRuntimeEvent(type, asRecord(data), nodeId);
         if (message) {
           setError(
-            language === 'zh'
-              ? `场景脚本错误：${message}`
-              : `Scene script error: ${message}`,
+            uiText(language)('cardlingSceneHost.sceneScriptError', { message }),
           );
         }
         void sendSceneUserEvent(scene, {
@@ -775,9 +754,7 @@ export function CardlingSceneHost({
         }
         if (type === 'node_reorder') {
           setNotice(
-            language === 'zh'
-              ? '节点顺序已同步。'
-              : 'Node order synced.',
+            uiText(language)('cardlingSceneHost.nodeOrderSynced'),
           );
         }
         if (type === 'scene_toast') {
@@ -798,9 +775,7 @@ export function CardlingSceneHost({
         })
           .then(() =>
             setNotice(
-              language === 'zh'
-                ? '表单事件已发送'
-                : 'Form event sent',
+              uiText(language)('cardlingSceneHost.formEventSent'),
             ),
           )
           .catch((caught) => setError(sceneEventError(caught, language)));
@@ -861,13 +836,7 @@ export function CardlingSceneHost({
     setError('');
     setEventStatus('idle');
     setNotice(
-      language === 'zh'
-        ? sceneLlmRunning
-          ? '已加入反馈清单，不会打断 LLM 当前思考。'
-          : '已加入反馈清单，可继续选择节点补充。'
-        : sceneLlmRunning
-          ? 'Added to the feedback list without interrupting the current run.'
-          : 'Added to the feedback list. You can keep reviewing nodes.',
+      (sceneLlmRunning ? uiText(language)('cardlingSceneHost.addedToTheFeedbackListWithoutInterrupting') : uiText(language)('cardlingSceneHost.addedToTheFeedbackListYouCan')),
     );
   }, [
     comment,
@@ -920,13 +889,7 @@ export function CardlingSceneHost({
       setEventStatus(continued || sceneLlmRunning ? 'continuing' : 'recorded');
       setComment('');
       setNotice(
-        language === 'zh'
-          ? continued || sceneLlmRunning
-            ? '这条反馈已交给 LLM 继续处理。'
-            : '这条反馈已发送给 LLM 处理。'
-          : continued || sceneLlmRunning
-            ? 'This feedback was handed to the running LLM task.'
-            : 'This feedback was sent to the LLM.',
+        (continued || sceneLlmRunning ? uiText(language)('cardlingSceneHost.thisFeedbackWasHandedToTheRunning') : uiText(language)('cardlingSceneHost.thisFeedbackWasSentToTheLlm')),
       );
     } catch (caught) {
       setEventStatus('failed');
@@ -986,13 +949,7 @@ export function CardlingSceneHost({
       setKabuDialogOpen(false);
       setEventStatus(continued || sceneLlmRunning ? 'continuing' : 'recorded');
       setNotice(
-        language === 'zh'
-          ? continued || sceneLlmRunning
-            ? '卡布已把这句话交给正在运行的任务。'
-            : '卡布已把这句话发给 LLM 继续处理。'
-          : continued || sceneLlmRunning
-            ? 'Kabu handed this message to the running task.'
-            : 'Kabu sent this message to the LLM.',
+        (continued || sceneLlmRunning ? uiText(language)('cardlingSceneHost.kabuHandedThisMessageToTheRunning') : uiText(language)('cardlingSceneHost.kabuSentThisMessageToTheLlm')),
       );
     } catch (caught) {
       setEventStatus('failed');
@@ -1055,13 +1012,7 @@ export function CardlingSceneHost({
       setEventStatus(continued || sceneLlmRunning ? 'continuing' : 'recorded');
       setFeedbackQueue([]);
       setNotice(
-        language === 'zh'
-          ? continued || sceneLlmRunning
-            ? '反馈清单已提交给正在运行的任务。'
-            : '反馈清单已发送给 LLM 处理。'
-          : continued || sceneLlmRunning
-            ? 'Feedback list submitted to the running task.'
-            : 'Feedback list sent to the LLM.',
+        (continued || sceneLlmRunning ? uiText(language)('cardlingSceneHost.feedbackListSubmittedToTheRunningTask') : uiText(language)('cardlingSceneHost.feedbackListSentToTheLlm')),
       );
     } catch (caught) {
       setEventStatus('failed');
@@ -1094,12 +1045,8 @@ export function CardlingSceneHost({
         });
         setNotice(
           event === 'confirm'
-            ? language === 'zh'
-              ? '确认已发送'
-              : 'Confirmation sent'
-            : language === 'zh'
-              ? '取消已发送'
-              : 'Cancellation sent',
+            ? uiText(language)('cardlingSceneHost.confirmationSent')
+            : uiText(language)('cardlingSceneHost.cancellationSent'),
         );
       } catch (caught) {
         setError(sceneEventError(caught, language));
@@ -1118,9 +1065,7 @@ export function CardlingSceneHost({
           <span>
             <strong>{scene.title}</strong>
             <small>
-              {language === 'zh'
-                ? 'HTML 任务场景'
-                : 'HTML task scene'}
+              {uiText(language)('cardlingSceneHost.htmlTaskScene')}
             </small>
           </span>
         </div>
@@ -1128,16 +1073,10 @@ export function CardlingSceneHost({
           {sceneWorkActive ? <LoaderCircle size={13} /> : <Bot size={13} />}
           <span>
             {eventStatus === 'sending'
-              ? language === 'zh'
-                ? '正在提交反馈'
-                : 'Submitting feedback'
+              ? uiText(language)('cardlingSceneHost.submittingFeedback')
               : sceneWorkActive
-              ? language === 'zh'
-                ? 'LLM 正在思考'
-                : 'LLM thinking'
-              : language === 'zh'
-                ? '卡布待命'
-                : 'Kabu ready'}
+              ? uiText(language)('cardlingSceneHost.llmThinking')
+              : uiText(language)('cardlingSceneHost.kabuReady')}
           </span>
         </div>
         <button
@@ -1146,34 +1085,26 @@ export function CardlingSceneHost({
           onClick={toggleFreeTalkMode}
           title={
             freeTalkMode
-              ? language === 'zh'
-                ? '切回节点讲解'
-                : 'Return to node narration'
-              : language === 'zh'
-                ? '开启自由对话，测试页面时不切换节点'
-                : 'Enable free chat without retargeting nodes while testing the page'
+              ? uiText(language)('cardlingSceneHost.returnToNodeNarration')
+              : uiText(language)('cardlingSceneHost.enableFreeChatWithoutRetargetingNodesWhile')
           }
         >
           <MessageSquare size={14} />
           <span>
             {freeTalkMode
-              ? language === 'zh'
-                ? '自由对话'
-                : 'Free chat'
-              : language === 'zh'
-                ? '节点讲解'
-                : 'Node mode'}
+              ? uiText(language)('cardlingSceneHost.freeChat')
+              : uiText(language)('cardlingSceneHost.nodeMode')}
           </span>
         </button>
         {sceneSteps.length > 0 && (
           <div
             className="scene-playback-controls"
-            aria-label={language === 'zh' ? '场景播放控制' : 'Scene playback controls'}
+            aria-label={uiText(language)('cardlingSceneHost.scenePlaybackControls')}
           >
             <button
               type="button"
               onClick={restartScenePlayback}
-              title={language === 'zh' ? '重播讲解' : 'Replay narration'}
+              title={uiText(language)('cardlingSceneHost.replayNarration')}
             >
               <RotateCcw size={14} />
             </button>
@@ -1181,7 +1112,7 @@ export function CardlingSceneHost({
               type="button"
               disabled={activeStepIndex <= 0}
               onClick={() => activateSceneStep(activeStepIndex - 1)}
-              title={language === 'zh' ? '上一个节点' : 'Previous node'}
+              title={uiText(language)('cardlingSceneHost.previousNode')}
             >
               <ArrowLeft size={14} />
             </button>
@@ -1189,12 +1120,8 @@ export function CardlingSceneHost({
               type="button"
               onClick={toggleScenePlayback}
               title={playbackRunning
-                ? language === 'zh'
-                  ? '暂停讲解'
-                  : 'Pause narration'
-                : language === 'zh'
-                  ? '继续讲解'
-                  : 'Resume narration'}
+                ? uiText(language)('cardlingSceneHost.pauseNarration')
+                : uiText(language)('cardlingSceneHost.resumeNarration')}
             >
               {playbackRunning ? <Pause size={14} /> : <Play size={14} />}
             </button>
@@ -1202,7 +1129,7 @@ export function CardlingSceneHost({
               type="button"
               disabled={activeStepIndex >= sceneSteps.length - 1}
               onClick={() => activateSceneStep(activeStepIndex + 1)}
-              title={language === 'zh' ? '下一个节点' : 'Next node'}
+              title={uiText(language)('cardlingSceneHost.nextNode')}
             >
               <ArrowRight size={14} />
             </button>
@@ -1215,12 +1142,8 @@ export function CardlingSceneHost({
           onClick={() => setInspectorCollapsed((current) => !current)}
           title={
             inspectorCollapsed
-              ? language === 'zh'
-                ? '展开反馈面板'
-                : 'Show feedback panel'
-              : language === 'zh'
-                ? '折叠反馈面板'
-                : 'Hide feedback panel'
+              ? uiText(language)('cardlingSceneHost.showFeedbackPanel')
+              : uiText(language)('cardlingSceneHost.hideFeedbackPanel')
           }
         >
           {inspectorCollapsed ? (
@@ -1233,14 +1156,14 @@ export function CardlingSceneHost({
         <button
           type="button"
           onClick={() => requestAnchorRect()}
-          title={language === 'zh' ? '重新同步卡布位置' : 'Resync Kabu position'}
+          title={uiText(language)('cardlingSceneHost.resyncKabuPosition')}
         >
           <RefreshCw size={15} />
         </button>
         <button
           type="button"
           onClick={onClose}
-          title={language === 'zh' ? '返回对话' : 'Back to chat'}
+          title={uiText(language)('cardlingSceneHost.backToChat')}
         >
           <X size={16} />
         </button>
@@ -1275,8 +1198,8 @@ export function CardlingSceneHost({
               <button
                 className="scene-cardling-avatar scene-cardling-avatar-button"
                 type="button"
-                aria-label={language === 'zh' ? '和卡布对话' : 'Talk to Kabu'}
-                title={language === 'zh' ? '和卡布对话' : 'Talk to Kabu'}
+                aria-label={uiText(language)('cardlingSceneHost.talkToKabu')}
+                title={uiText(language)('cardlingSceneHost.talkToKabu')}
                 onClick={() => setKabuDialogOpen((current) => !current)}
               >
                 <span className="cardling-orbit" />
@@ -1301,13 +1224,7 @@ export function CardlingSceneHost({
                   {sceneWorkActive && !playbackRunning && (
                     <small>
                       <LoaderCircle size={11} />
-                      {language === 'zh'
-                        ? eventStatus === 'sending'
-                          ? '我正在提交反馈，随后交由模型处理。'
-                          : '我正在跟进任务，反馈会先收进清单。'
-                        : eventStatus === 'sending'
-                          ? 'I am submitting the feedback for model processing.'
-                          : 'I am following the task. Feedback is collected first.'}
+                      {(eventStatus === 'sending' ? uiText(language)('cardlingSceneHost.iAmSubmittingTheFeedbackForModel') : uiText(language)('cardlingSceneHost.iAmFollowingTheTaskFeedbackIs'))}
                     </small>
                   )}
                 </div>
@@ -1321,36 +1238,28 @@ export function CardlingSceneHost({
             >
               <header>
                 <Sparkles size={14} />
-                <strong>{language === 'zh' ? '和卡布说' : 'Talk to Kabu'}</strong>
+                <strong>{uiText(language)('cardlingSceneHost.talkToKabu_ca85e7d')}</strong>
                 <button
                   type="button"
                   onClick={() => setKabuDialogOpen(false)}
-                  title={language === 'zh' ? '关闭' : 'Close'}
+                  title={uiText(language)('common.close')}
                 >
                   <X size={13} />
                 </button>
               </header>
               <small>
                 {freeTalkMode
-                  ? language === 'zh'
-                    ? '自由对话：不绑定具体节点'
-                    : 'Free chat: not bound to a specific node'
+                  ? uiText(language)('cardlingSceneHost.freeChatNotBoundToASpecific')
                   : currentNodeId
-                  ? `${language === 'zh' ? '当前节点' : 'Current node'}: ${currentNodeLabel}`
+                  ? `${uiText(language)('cardlingSceneHost.currentNode')}: ${currentNodeLabel}`
                   : activeStep?.title ||
-                    (language === 'zh' ? '整体场景' : 'Overall scene')}
+                    (uiText(language)('cardlingSceneHost.overallScene'))}
               </small>
               <textarea
                 value={kabuDraft}
                 autoFocus
                 placeholder={
-                  language === 'zh'
-                    ? freeTalkMode
-                      ? '和卡布自由聊这个页面、交互感受或测试结果...'
-                      : '告诉卡布你想调整哪里，或让它解释这个节点...'
-                    : freeTalkMode
-                      ? 'Freely talk with Kabu about this page, interactions, or test results...'
-                      : 'Tell Kabu what to adjust, or ask it to explain this node...'
+                  (freeTalkMode ? uiText(language)('cardlingSceneHost.freelyTalkWithKabuAboutThisPage') : uiText(language)('cardlingSceneHost.tellKabuWhatToAdjustOrAsk'))
                 }
                 onChange={(event) => setKabuDraft(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -1362,7 +1271,7 @@ export function CardlingSceneHost({
               />
               <footer>
                 <button type="button" onClick={() => setKabuDraft('')}>
-                  {language === 'zh' ? '清空' : 'Clear'}
+                  {uiText(language)('cardlingSceneHost.clear')}
                 </button>
                 <button
                   className="primary-button"
@@ -1371,7 +1280,7 @@ export function CardlingSceneHost({
                   onClick={() => void submitKabuDialog()}
                 >
                   {submitting ? <LoaderCircle size={13} /> : <ArrowUp size={13} />}
-                  {language === 'zh' ? '发送' : 'Send'}
+                  {uiText(language)('cardlingWindow.send')}
                 </button>
               </footer>
             </div>
@@ -1386,45 +1295,35 @@ export function CardlingSceneHost({
               className="scene-inspector-rail"
               type="button"
               onClick={() => setInspectorCollapsed(false)}
-              title={language === 'zh' ? '展开节点反馈' : 'Show node feedback'}
+              title={uiText(language)('cardlingSceneHost.showNodeFeedback')}
             >
               <MessageSquare size={15} />
               {feedbackQueue.length > 0 && <span>{feedbackQueue.length}</span>}
             </button>
           ) : (
             <>
-          <strong>{language === 'zh' ? '节点反馈' : 'Node feedback'}</strong>
+          <strong>{uiText(language)('cardlingSceneHost.nodeFeedback')}</strong>
           <p>
             {freeTalkMode
-              ? language === 'zh'
-                ? '自由对话模式：页面点击不会切换节点。'
-                : 'Free chat mode: page clicks will not retarget nodes.'
+              ? uiText(language)('cardlingSceneHost.freeChatModePageClicksWillNot')
               : currentNodeId
-              ? `${language === 'zh' ? '当前节点' : 'Current node'}: ${currentNodeId}`
+              ? `${uiText(language)('cardlingSceneHost.currentNode')}: ${currentNodeId}`
               : activeStep?.title
-                ? `${language === 'zh' ? '当前步骤' : 'Current step'}: ${activeStep.title}`
-              : language === 'zh'
-                ? '点击场景里的节点来定位反馈。'
-                : 'Click a node in the scene to target feedback.'}
+                ? `${uiText(language)('cardlingSceneHost.currentStep')}: ${activeStep.title}`
+              : uiText(language)('cardlingSceneHost.clickANodeInTheSceneTo')}
           </p>
           {!sceneHealth.ok && (
             <div className="scene-health-warning">
               <AlertCircle size={14} />
               <span>
                 <strong>
-                  {language === 'zh'
-                    ? '场景部分渲染异常'
-                    : 'Scene rendered with issues'}
+                  {uiText(language)('cardlingSceneHost.sceneRenderedWithIssues')}
                 </strong>
                 <small>
                   {sceneHealth.issues[0]?.message ||
-                    (language === 'zh'
-                      ? '已回传健康检查结果。'
-                      : 'Health check result sent.')}
+                    (uiText(language)('cardlingSceneHost.healthCheckResultSent'))}
                   {sceneHealth.issues.length > 1
-                    ? language === 'zh'
-                      ? `，另有 ${sceneHealth.issues.length - 1} 项`
-                      : `, plus ${sceneHealth.issues.length - 1} more`
+                    ? uiText(language)('cardlingSceneHost.plusMore', { value1: sceneHealth.issues.length - 1 })
                     : ''}
                 </small>
               </span>
@@ -1432,14 +1331,10 @@ export function CardlingSceneHost({
           )}
           <div className="scene-state-strip">
             <span>
-              {language === 'zh'
-                ? `节点 ${sceneState.nodes.length}`
-                : `Nodes ${sceneState.nodes.length}`}
+              {uiText(language)('cardlingSceneHost.nodes', { value1: sceneState.nodes.length })}
             </span>
             <span>
-              {language === 'zh'
-                ? `事件 ${sceneState.userEvents.length}`
-                : `Events ${sceneState.userEvents.length}`}
+              {uiText(language)('cardlingSceneHost.events', { value1: sceneState.userEvents.length })}
             </span>
           </div>
           {sceneNavigationItems.length > 0 && (
@@ -1498,54 +1393,30 @@ export function CardlingSceneHost({
               <span>
                 <strong>
                   {eventStatus === 'sending'
-                    ? language === 'zh'
-                      ? '正在提交反馈'
-                      : 'Submitting feedback'
+                    ? uiText(language)('cardlingSceneHost.submittingFeedback')
                     : sceneWorkActive
-                    ? language === 'zh'
-                      ? 'LLM 正在处理'
-                      : 'LLM is running'
-                    : language === 'zh'
-                      ? '反馈清单'
-                      : 'Feedback list'}
+                    ? uiText(language)('cardlingSceneHost.llmIsRunning')
+                    : uiText(language)('cardlingSceneHost.feedbackList')}
                 </strong>
                 <small>
                   {eventStatus === 'sending'
-                    ? language === 'zh'
-                      ? '正在提交反馈，随后会触发模型处理。'
-                      : 'Submitting feedback, then model processing will start.'
+                    ? uiText(language)('cardlingSceneHost.submittingFeedbackThenModelProcessingWillStart')
                     : eventStatus === 'recorded'
-                      ? language === 'zh'
-                        ? '反馈已提交。若没有运行中任务，前端已发起一轮 LLM 请求。'
-                        : 'Feedback submitted. If no task was running, a new LLM request was started.'
+                      ? uiText(language)('cardlingSceneHost.feedbackSubmittedIfNoTaskWasRunning')
                     : eventStatus === 'failed'
-                      ? language === 'zh'
-                        ? '反馈提交失败，请查看错误信息。'
-                        : 'Feedback submission failed. See the error below.'
+                      ? uiText(language)('cardlingSceneHost.feedbackSubmissionFailedSeeTheErrorBelow')
                     : sceneWorkActive
-                    ? language === 'zh'
-                      ? '继续添加反馈，默认不会打断当前思考。'
-                      : 'Keep adding feedback; it will not interrupt by default.'
+                    ? uiText(language)('cardlingSceneHost.keepAddingFeedbackItWillNotInterrupt')
                     : feedbackQueue.length > 0
-                      ? language === 'zh'
-                        ? `待提交 ${feedbackQueue.length} 条反馈`
-                        : `${feedbackQueue.length} feedback item(s) pending`
-                      : language === 'zh'
-                        ? '点选页面节点后添加修改意见。'
-                        : 'Select nodes and add review notes.'}
+                      ? uiText(language)('cardlingSceneHost.feedbackItemSPending', { value1: feedbackQueue.length })
+                      : uiText(language)('cardlingSceneHost.selectNodesAndAddReviewNotes')}
                 </small>
               </span>
             </div>
             <textarea
               value={comment}
               placeholder={
-                language === 'zh'
-                  ? sceneLlmRunning
-                    ? 'LLM 正在思考。这里写下反馈，先加入清单...'
-                    : '对这个位置提出修改、疑问或确认...'
-                  : sceneLlmRunning
-                    ? 'LLM is thinking. Write feedback here and collect it first...'
-                    : 'Comment, ask, or confirm this position...'
+                (sceneLlmRunning ? uiText(language)('cardlingSceneHost.llmIsThinkingWriteFeedbackHereAnd') : uiText(language)('cardlingSceneHost.commentAskOrConfirmThisPosition'))
               }
               onChange={(event) => setComment(event.currentTarget.value)}
             />
@@ -1557,32 +1428,28 @@ export function CardlingSceneHost({
                 onClick={addFeedbackToQueue}
               >
                 <MessageSquare size={14} />
-                {language === 'zh' ? '添加反馈' : 'Add feedback'}
+                {uiText(language)('cardlingSceneHost.addFeedback')}
               </button>
               <button
                 type="button"
                 disabled={submitting || !comment.trim()}
                 onClick={() => void submitImmediateComment()}
                 title={
-                  language === 'zh'
-                    ? '绕过清单，立即提交当前这条反馈'
-                    : 'Bypass the list and send this note immediately'
+                  uiText(language)('cardlingSceneHost.bypassTheListAndSendThisNote')
                 }
               >
                 {submitting ? <LoaderCircle size={14} /> : <ArrowUp size={14} />}
-                {language === 'zh' ? '立即发送' : 'Send now'}
+                {uiText(language)('cardlingSceneHost.sendNow')}
               </button>
             </div>
             {feedbackQueue.length > 0 && (
               <div className="scene-feedback-queue">
                 <header>
                   <strong>
-                    {language === 'zh'
-                      ? `待提交反馈 ${feedbackQueue.length}`
-                      : `Pending feedback ${feedbackQueue.length}`}
+                    {uiText(language)('cardlingSceneHost.pendingFeedback', { value1: feedbackQueue.length })}
                   </strong>
                   <button type="button" onClick={() => setFeedbackQueue([])}>
-                    {language === 'zh' ? '清空' : 'Clear'}
+                    {uiText(language)('cardlingSceneHost.clear')}
                   </button>
                 </header>
                 <div>
@@ -1592,7 +1459,7 @@ export function CardlingSceneHost({
                       <p>{item.text}</p>
                       <button
                         type="button"
-                        title={language === 'zh' ? '移除这条反馈' : 'Remove this feedback'}
+                        title={uiText(language)('cardlingSceneHost.removeThisFeedback')}
                         onClick={() => removeFeedback(item.id)}
                       >
                         <X size={12} />
@@ -1607,7 +1474,7 @@ export function CardlingSceneHost({
                   onClick={() => void submitFeedbackQueue()}
                 >
                   {submitting ? <LoaderCircle size={14} /> : <Check size={14} />}
-                  {language === 'zh' ? '提交全部反馈' : 'Submit all feedback'}
+                  {uiText(language)('cardlingSceneHost.submitAllFeedback')}
                 </button>
               </div>
             )}
@@ -1623,7 +1490,7 @@ export function CardlingSceneHost({
                   ) : (
                     <X size={14} />
                   )}
-                  {language === 'zh' ? '取消' : 'Cancel'}
+                  {uiText(language)('agentConnectionForm.cancel')}
                 </button>
                 <button
                   className="primary-button"
@@ -1636,7 +1503,7 @@ export function CardlingSceneHost({
                   ) : (
                     <Check size={14} />
                   )}
-                  {language === 'zh' ? '确认' : 'Confirm'}
+                  {uiText(language)('cardlingSceneHost.confirm')}
                 </button>
               </div>
             )}

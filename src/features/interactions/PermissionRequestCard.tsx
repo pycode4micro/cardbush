@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import {
   Check,
   Clock3,
@@ -39,10 +40,15 @@ export function PermissionRequestCard({
   const question = permissionQuestion(interaction.questions ?? []);
   const options = normalizedPermissionOptions(question?.options ?? [], language);
   const sourceTitle = interaction.title?.trim() ?? '';
-  const title = !sourceTitle || sourceTitle === 'Permission'
-    ? language === 'zh' ? '需要批准' : 'Approval required'
+  const runtimePermission = interaction.raw.protocol === 'bush.runtime_permission_answer.v1';
+  const fromSubagent = Boolean(interaction.raw.subagentTaskId ||
+    interaction.raw.sourceSessionId && interaction.raw.sourceSessionId !== interaction.sessionId);
+  const title = runtimePermission
+    ? uiText(language)(fromSubagent ? 'permission.subagentTitle' : 'permissionRequestCard.approvalRequired')
+    : !sourceTitle || sourceTitle === 'Permission'
+    ? uiText(language)('permissionRequestCard.approvalRequired')
     : sourceTitle === 'Subagent permission'
-      ? language === 'zh' ? '子 Agent 需要权限' : sourceTitle
+      ? uiText(language)('permission.subagentTitle')
       : sourceTitle;
 
   return (
@@ -58,7 +64,7 @@ export function PermissionRequestCard({
           type="button"
           onClick={onCancel}
           disabled={busy}
-          title={language === 'zh' ? '取消请求' : 'Cancel request'}
+          title={uiText(language)('permissionRequestCard.cancelRequest')}
         >
           <X size={16} />
         </button>
@@ -71,8 +77,8 @@ export function PermissionRequestCard({
             {details.resourceKind === 'process' ? <Terminal size={17} /> : <Folder size={17} />}
           </span>
           <span className="permission-target-copy">
-            <small>{language === 'zh' ? '精确目标' : 'Exact target'}</small>
-            <code>{details.target || (language === 'zh' ? '未提供结构化目标' : 'Structured target unavailable')}</code>
+            <small>{uiText(language)('permissionRequestCard.exactTarget')}</small>
+            <code>{details.target || (uiText(language)('permissionRequestCard.structuredTargetUnavailable'))}</code>
           </span>
           {details.accessKind && (
             <span className={`permission-access ${details.accessKind}`}>
@@ -87,7 +93,7 @@ export function PermissionRequestCard({
             <div>
               <MessageSquare size={14} />
               <span>
-                <small>{language === 'zh' ? '原因' : 'Reason'}</small>
+                <small>{uiText(language)('permissionRequestCard.reason')}</small>
                 <p>{details.reason}</p>
               </span>
             </div>
@@ -96,7 +102,7 @@ export function PermissionRequestCard({
             <div>
               <Terminal size={14} />
               <span>
-                <small>{language === 'zh' ? '计划操作' : 'Planned operation'}</small>
+                <small>{uiText(language)('permissionRequestCard.plannedOperation')}</small>
                 <p>{details.operation}</p>
               </span>
             </div>
@@ -108,7 +114,7 @@ export function PermissionRequestCard({
             <div>
               <Folder size={14} />
               <span>
-                <small>{language === 'zh' ? '当前授权边界' : 'Current permission boundary'}</small>
+                <small>{uiText(language)('permissionRequestCard.currentPermissionBoundary')}</small>
                 <p>{details.scopeNotice}</p>
               </span>
             </div>
@@ -132,9 +138,7 @@ export function PermissionRequestCard({
         </div>
 
         <p className="permission-scope-note">
-          {language === 'zh'
-            ? '一次批准仅用于本次请求；会话批准仅对当前任务中匹配的操作有效。'
-            : 'Allow once applies to this request. Session approval covers matching operations in this task only.'}
+          {uiText(language)('permissionRequestCard.allowOnceAppliesToThisRequestSession')}
         </p>
       </div>
     </section>
@@ -172,9 +176,7 @@ function permissionScopeNotice(
 ) {
   if (!scope) return '';
   if (scope.mode === 'task_free' && scope.roots.length === 0) {
-    return language === 'zh'
-      ? '当前会话未绑定项目或任务工作区。'
-      : 'No project or task workspace is bound to this session.';
+    return uiText(language)('permissionRequestCard.noProjectOrTaskWorkspaceIsBound');
   }
   return scope.roots.join(' · ');
 }
@@ -196,32 +198,20 @@ function normalizedPermissionOptions(
 }
 
 function permissionOptionLabel(optionId: string, language: AppLanguage) {
-  if (language === 'zh') {
-    if (optionId === 'allow_session') return '本次会话';
-    if (optionId === 'deny') return '拒绝';
-    return '仅这一次';
-  }
-  if (optionId === 'allow_session') return 'This session';
-  if (optionId === 'deny') return 'Deny';
-  return 'Allow once';
+  const labels = { allow_session: 'permission.this_session', deny: 'mcpAppPanel.deny', allow_once: 'permission.allow_once' } as const;
+  return uiText(language)(labels[optionId as keyof typeof labels] ?? labels.allow_once);
 }
 
 function permissionOptionDescription(optionId: string, language: AppLanguage) {
-  if (language === 'zh') {
-    if (optionId === 'allow_session') return '当前任务会话内有效';
-    if (optionId === 'deny') return '拒绝该操作，继续寻找更安全的方案';
-    return '仅批准本次请求';
-  }
-  if (optionId === 'allow_session') return 'Valid only in this task session';
-  if (optionId === 'deny') return 'Reject this action and seek a safer alternative';
-  return 'Approve this request only';
+  const labels = { allow_session: 'permission.valid_only_in_this_task_session', deny: 'permission.reject_this_action_and_seek_a_safer', allow_once: 'permission.approve_this_request_only' } as const;
+  return uiText(language)(labels[optionId as keyof typeof labels] ?? labels.allow_once);
 }
 
 function permissionAccessLabel(accessKind: string, language: AppLanguage) {
   if (accessKind === 'write') {
-    return language === 'zh' ? '写入' : 'Write';
+    return uiText(language)('permissionRequestCard.write');
   }
-  return language === 'zh' ? '读取' : 'Read';
+  return uiText(language)('permissionRequestCard.read');
 }
 
 function permissionOptionClass(optionId: string) {

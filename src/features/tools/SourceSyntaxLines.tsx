@@ -1,4 +1,6 @@
 import { Highlight } from 'prism-react-renderer';
+import { uiText } from '../../i18n';
+import { useUiLanguage } from '../../i18n/react';
 import { memo, useCallback, useMemo } from 'react';
 
 import { cardbushSyntaxTheme } from '../../shared/syntaxTheme';
@@ -10,12 +12,14 @@ import { shouldVirtualizeSource, type SourcePreviewBlock } from './sourcePreview
 export default memo(function SourceSyntaxLines({
   content,
   path,
-  language = 'en',
+  language: selectedLanguage,
 }: {
   content: string;
   path: string;
-  language?: 'zh' | 'en';
+  language?: string;
 }) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
   const normalized = useMemo(() => content.replace(/\r\n?/g, '\n'), [content]);
   const renderBlock = useCallback((block: SourcePreviewBlock) => <HighlightedBlock block={block} path={path} />, [path]);
   if (shouldVirtualizeSource(normalized)) {
@@ -39,7 +43,7 @@ export default memo(function SourceSyntaxLines({
               // eslint-disable-next-line react/no-array-index-key
               key={lineIndex}
             >
-              <span className="source-line-number" aria-label={`Line ${lineIndex + 1}`}>
+              <span className="source-line-number" aria-label={uiText(language)('source.lineNumber', { number: lineIndex + 1 })}>
                 {lineIndex + 1}
               </span>
               <code>

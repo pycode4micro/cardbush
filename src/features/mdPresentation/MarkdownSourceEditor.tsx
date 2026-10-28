@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useMemo, useRef } from 'react';
 import { AiEditingCursor, textareaCaretRect } from './AiEditingCursor';
 
@@ -9,7 +10,7 @@ export function markdownSelection(source: string, start: number, end: number): M
   return { startLine, endLine, source };
 }
 export function MarkdownSourceEditor({ source, onChange, onSelection, readOnly, language, aiEdit }: {
-  source: string; onChange: (source: string) => void; onSelection?: (selection: MarkdownSelection) => void; readOnly?: boolean; language: 'zh' | 'en';
+  source: string; onChange: (source: string) => void; onSelection?: (selection: MarkdownSelection) => void; readOnly?: boolean; language: string;
   aiEdit?: { cursor: number; state: 'streaming' | 'ready' };
 }) {
   const gutter = useRef<HTMLPreElement>(null), input = useRef<HTMLTextAreaElement>(null), status = useRef<HTMLOutputElement>(null);
@@ -29,10 +30,10 @@ export function MarkdownSourceEditor({ source, onChange, onSelection, readOnly, 
     return () => element?.removeEventListener('select', selected);
   }, []);
   return <div className="creation-source-editor">
-    <div className="creation-source-heading"><span>{language === 'zh' ? 'Markdown 源码' : 'Markdown source'}</span><output ref={status}>Ln 1</output></div>
+    <div className="creation-source-heading"><span>{uiText(language)('markdownSourceEditor.markdownSource')}</span><output ref={status}>{uiText(language)('markdownSourceEditor.ln_1')}</output></div>
     <div className="creation-source-content">
       <pre ref={gutter} className="creation-line-numbers" aria-hidden="true">{numbers}</pre>
-      <textarea ref={input} className="md-source creation-source-input" aria-label={language === 'zh' ? 'Markdown 源码' : 'Markdown source'}
+      <textarea ref={input} className="md-source creation-source-input" aria-label={uiText(language)('markdownSourceEditor.markdownSource')}
         wrap="off" readOnly={readOnly} spellCheck={false} value={source} onChange={event => { onChange(event.target.value); selected(); }} onSelect={selected} onKeyUp={selected} onMouseUp={selected}
         onScroll={event => { if (gutter.current) gutter.current.scrollTop = event.currentTarget.scrollTop; }}/>
       {aiEdit && <AiEditingCursor language={language} state={aiEdit.state} revision={source} surface={() => input.current} locate={() => textareaCaretRect(input.current, aiEdit.cursor)}/>}

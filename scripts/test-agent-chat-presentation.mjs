@@ -1202,12 +1202,12 @@ test('transient approval details disappear after a decision or cancellation and 
     if (live) { f.terminal.enableLiveInput(() => {}); f.terminal.beginTurn(); f.input.write('draft'); }
     const controller = new AbortController();
     const answer = f.terminal.ask('Allow once? ', controller.signal, { transient: true,
-      details: ['Approval required: write outside workspace', 'write', 'filesystem_path: C:\\Users\\EDY\\Desktop\\hello.txt'],
+      details: ['Approval required: write outside workspace', 'write', 'filesystem_path: C:\\Users\\fixture\\Desktop\\hello.txt'],
       choices: [{ value: 'n', label: 'Deny' }, { value: 'y', label: 'Allow once' }],
       picker: { title: 'Choose an approval', selected: 'n', cancelValue: 'n', cancelLabel: 'deny' } });
     await waitForPaint(() => terminalScreen(f.combined, 100).text.includes('filesystem_path:'));
     const pending = terminalScreen(f.combined, 100).text;
-    assert.match(pending, /write outside workspace/); assert.match(pending, /C:\\Users\\EDY\\Desktop\\hello.txt/);
+    assert.match(pending, /write outside workspace/); assert.match(pending, /C:\\Users\\fixture\\Desktop\\hello.txt/);
     if (action === 'abort') controller.abort(); else f.input.write(action === 'allow' ? '\x1b[B\r' : '\x1b');
     assert.equal(await answer, action === 'allow' ? 'y' : action === 'escape' ? 'n' : null);
     await delay(40);

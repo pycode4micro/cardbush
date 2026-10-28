@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 
 import type { AppLanguage } from '../../types';
@@ -23,7 +24,7 @@ export class InspectorErrorBoundary extends Component<{
       error: String(error), componentStack: info.componentStack,
     }).catch(() => undefined);
     void showUiError(
-      this.props.language === 'zh' ? '无法显示预览' : 'Unable to display preview',
+      uiText(this.props.language)('inspectorErrorBoundary.unableToDisplayPreview'),
       `${this.props.target}\n\n${this.state.message}`,
     );
   }
@@ -33,7 +34,7 @@ export class InspectorErrorBoundary extends Component<{
     return <div className="inspector-preview-error" role="alert">
       <p>{this.state.message}</p>
       <button type="button" onClick={this.props.onRetry}>
-        {this.props.language === 'zh' ? '重试预览' : 'Retry preview'}
+        {uiText(this.props.language)('inspectorErrorBoundary.retryPreview')}
       </button>
     </div>;
   }

@@ -16,6 +16,7 @@ const imagePreviewDialog = read('src', 'features', 'chatMessages', 'ImagePreview
 const chatHook = read('src', 'hooks', 'useCardbushChat.ts');
 const chatAttachments = read('src', 'shared', 'chatAttachments.ts');
 const api = read('src', 'backend', 'api.ts');
+const historyToolExecution = read('src', 'backend', 'runtimeHistoryToolExecution.ts');
 const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
 const productAgent = read('packages', 'bush-product-agent', 'src', 'index.ts');
 const runtimeWorker = read('electron', 'runtimeHostWorker.mts');
@@ -36,8 +37,9 @@ assert.match(types, /type:\s*'image' \| 'video' \| 'audio' \| 'document' \| 'fol
 assert.match(chatHook, /chatAttachmentsFromOutbound\(/);
 assert.match(chatAttachments, /isVideoPath\(pathValue\)[\s\S]*?'video'/);
 assert.match(chatAttachments, /isAudioPath\(pathValue\)[\s\S]*?'audio'/);
-assert.match(api, /toolArtifactsFromPayload\(\{ result: record\.result \}\)/);
-assert.match(api, /artifacts\.length > 0 \? \{ artifacts \} : \{\}/);
+assert.match(api, /runtimeHistoryToolExecution\(record\)/);
+assert.match(historyToolExecution, /toolArtifactsFromPayload\(\{ result: record\.result \}\)/);
+assert.match(historyToolExecution, /artifacts\.length > 0 \? \{ artifacts \} : \{\}/);
 assert.match(runtimeChat, /toolArtifactsFromPayload\(\{ result: record\.result \}\)/);
 assert.match(runtimeChat, /images: request\.images\?\.map\(\(image\) => image\.path\)/);
 assert.match(productAgent, /images: input\.images\.slice\(0, 4\)\.map\(\(url\) => \(\{ url \}\)\)/);
@@ -47,7 +49,8 @@ assert.match(messageBubble, /<InlineVideo/);
 assert.match(messageBubble, /<InlineAudio/);
 assert.match(inlineMedia, /<video[\s\S]*?controls[\s\S]*?preload="metadata"/);
 assert.match(inlineMedia, /<audio[\s\S]*?controls[\s\S]*?preload="metadata"/);
-assert.match(imageGallery, /readImageDataUrl\(pathValue\)/);
+assert.match(imageGallery, /recoverImage\(pathValue, window\.cardbushDesktop\.readImageDataUrl\)/);
+assert.match(read('src', 'shared', 'localImageRecovery.ts'), /then\(\(\) => read\(path\)\)/);
 assert.match(imageGallery, /message-image-preview-fallback/);
 assert.match(
   imageGallery,
@@ -90,7 +93,8 @@ assert.match(
   /\.message-image-strip\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*100%/,
   'Message image strips must resolve their width from the current bubble instead of intrinsic media width',
 );
-assert.match(css, /\.image-preview-stage\.is-dragging\s*\{[\s\S]*?cursor:\s*grabbing/);
+assert.match(css, /\.image-preview-stage\[data-dragging="true"\]\s*\{[\s\S]*?cursor:\s*grabbing/);
+assert.match(imagePreviewDialog, /data-dragging=\{dragging\}/);
 assert.match(electronMain, /localFileResponse\(/);
 assert.match(localFileStream, /status:\s*range\s*\?\s*206\s*:\s*200/);
 assert.match(localFileStream, /'content-range':\s*`bytes/);

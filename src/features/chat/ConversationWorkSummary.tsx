@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ConversationHostContext } from '../conversationHost';
 import {
   CheckCircle2,
@@ -112,12 +113,12 @@ export function ConversationWorkSummary({
             <header className="work-summary-header">
               <div>
                 <span className="work-summary-kicker">
-                  {language === 'zh' ? '当前对话' : 'Current conversation'}
+                  {uiText(language)('conversationWorkSummary.currentConversation')}
                 </span>
-                <h2>{language === 'zh' ? '工作摘要' : 'Work summary'}</h2>
+                <h2>{uiText(language)('conversationWorkSummary.workSummary')}</h2>
               </div>
               <div className="work-summary-metrics">
-                <span>{outputs.length} {language === 'zh' ? '产物' : 'outputs'}</span>
+                <span>{outputs.length} {uiText(language)('conversationWorkSummary.outputs')}</span>
               </div>
             </header>
 
@@ -128,7 +129,7 @@ export function ConversationWorkSummary({
             <div className="work-summary-section outputs">
               <div className="work-summary-section-title">
                 <FileOutput size={14} />
-                <strong>{language === 'zh' ? '最近产出' : 'Recent outputs'}</strong>
+                <strong>{uiText(language)('conversationWorkSummary.recentOutputs')}</strong>
                 <span>{outputs.length}</span>
               </div>
               {recentOutputs.length > 0 ? (
@@ -154,29 +155,27 @@ export function ConversationWorkSummary({
                       {output.change && output.type === 'document' ? (
                         <small><b>+{output.change.additions}</b><i>-{output.change.deletions}</i></small>
                       ) : (
-                        <small>{language === 'zh'
-                          ? { document: '文件', image: '图片', video: '视频', audio: '音频' }[output.type]
-                          : output.type === 'document' ? 'File' : output.type[0].toUpperCase() + output.type.slice(1)}</small>
+                        <small>{uiText(language)(`output.type.${output.type}`)}</small>
                       )}
                     </button>
                   ))}
                 </div>
               ) : (
-                <p className="work-summary-empty">{language === 'zh' ? '尚无文件产出' : 'No outputs yet'}</p>
+                <p className="work-summary-empty">{uiText(language)('conversationWorkSummary.noOutputsYet')}</p>
               )}
               {(outputs.length > outputPageSize || changeSummary) && (
                 <div className="work-summary-output-actions">
                   {outputs.length > outputPageSize && (
                     <button type="button" aria-expanded={outputsExpanded} onClick={() => setOutputsExpanded(value => !value)}>
                       {outputsExpanded
-                        ? language === 'zh' ? '收起' : 'Show less'
-                        : language === 'zh' ? `展开其余 ${outputs.length - outputPageSize} 项` : `Show ${outputs.length - outputPageSize} more`}
+                        ? uiText(language)('conversationWorkSummary.showLess')
+                        : uiText(language)('conversationWorkSummary.showMore', { value1: outputs.length - outputPageSize })}
                       <ChevronDown size={12} />
                     </button>
                   )}
                   {changeSummary && (
                     <button type="button" onClick={() => onOpenChangeReview()}>
-                      {language === 'zh' ? '查看全部更改' : 'Review all changes'}
+                      {uiText(language)('conversationWorkSummary.reviewAllChanges')}
                     </button>
                   )}
                 </div>
@@ -187,7 +186,7 @@ export function ConversationWorkSummary({
             {subagentTasks.length > 0 && (
               <div className="work-summary-section work-summary-subagents" data-testid="work-summary-subagents">
                 <div className="work-summary-section-title">
-                  <strong>{language === 'zh' ? '子 Agent 派发' : 'Subagent dispatches'}</strong>
+                  <strong>{uiText(language)('conversationWorkSummary.subagentDispatches')}</strong>
                   <span>{subagentTasks.length}</span>
                 </div>
                 <div className="work-summary-subagent-list">
@@ -218,9 +217,9 @@ export function ConversationWorkSummary({
                           <strong>{subagentTaskTitle(task, language)}</strong>
                           {task.origin === 'team' && (
                             <span className="work-summary-subagent-tags">
-                              {task.teamId && <em>Team · {task.teamId}</em>}
-                              {task.teamMemberId && <em>{language === 'zh' ? '成员' : 'Member'} · {task.teamMemberId}</em>}
-                              {task.agentProfileId && <em>Profile · {task.agentProfileId}</em>}
+                              {task.teamId && <em>{uiText(language)('conversationWorkSummary.team')}{task.teamId}</em>}
+                              {task.teamMemberId && <em>{uiText(language)('conversationWorkSummary.member')} · {task.teamMemberId}</em>}
+                              {task.agentProfileId && <em>{uiText(language)('conversationWorkSummary.profile')}{task.agentProfileId}</em>}
                             </span>
                           )}
                           <small title={task.requestPrompt || task.errorMessage}>
@@ -243,9 +242,7 @@ export function ConversationWorkSummary({
                       (current) => current + subagentTaskPageSize,
                     )}
                   >
-                    {language === 'zh'
-                      ? `显示更早的 ${Math.min(subagentTaskPageSize, remainingSubagentTaskCount)} 个子任务`
-                      : `Show ${Math.min(subagentTaskPageSize, remainingSubagentTaskCount)} earlier tasks`}
+                    {uiText(language)('conversationWorkSummary.showEarlierTasks', { value1: Math.min(subagentTaskPageSize, remainingSubagentTaskCount) })}
                     <ChevronDown size={13} />
                   </button>
                 )}
@@ -435,7 +432,7 @@ function subagentTaskTitle(task: SubagentTaskSnapshot, language: AppLanguage) {
   if (task.origin === 'team' && task.teamMemberId?.trim()) return task.teamMemberId.trim();
   if (task.taskId?.trim()) {
     const compact = task.taskId.trim().replace(/^subagent[_:-]?/i, '').slice(0, 8);
-    return language === 'zh' ? `子任务 ${compact}` : `Task ${compact}`;
+    return uiText(language)('conversationWorkSummary.task', { compact });
   }
-  return language === 'zh' ? '正在派发子 Agent' : 'Dispatching subagent';
+  return uiText(language)('conversationWorkSummary.dispatchingSubagent');
 }

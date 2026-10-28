@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { AppLanguage, ChatMessage } from '../../types';
 
 export interface WorkSummaryHistoryTurn {
@@ -183,8 +184,8 @@ export function historyTurnLabel(
   group: WorkSummaryHistoryTurn | undefined,
   language: AppLanguage,
 ) {
-  if (!group) return language === 'zh' ? '回合详情' : 'Turn details';
-  return group.prompt || (language === 'zh' ? '未命名指令' : 'Untitled instruction');
+  if (!group) return uiText(language)('workSummaryHistory.turnDetails');
+  return group.prompt || (uiText(language)('workSummaryHistory.untitledInstruction'));
 }
 
 export function historyTurnTimestamp(message: ChatMessage, language: AppLanguage) {
@@ -195,7 +196,7 @@ export function historyTurnTimestamp(message: ChatMessage, language: AppLanguage
   );
   const parsed = new Date(source);
   if (!Number.isFinite(parsed.getTime())) return '';
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+  return new Intl.DateTimeFormat(language, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

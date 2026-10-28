@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useContext, useEffect, useState } from 'react';
 import { ConversationHostContext } from '../conversationHost';
 import type { AppLanguage } from '../../types';
@@ -36,16 +37,16 @@ export function ConversationHostPreview({ path, language, sourceMode = false }: 
         window.setTimeout(() => URL.revokeObjectURL(source), 1000);
         setError('');
       } catch (error) { setError(String(error)); }
-    }}>{language === 'zh' ? '下载 HTML' : 'Download HTML'}</button>
+    }}>{uiText(language)('conversationHostPreview.downloadHtml')}</button>
     {error && <p role="alert">{error}</p>}
   </div>;
-  if (error) return <p role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button></p>;
-  if (!file) return <p role="status">{language === 'zh' ? '正在加载文件…' : 'Loading file…'}</p>;
+  if (error) return <p role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>{uiText(language)('common.retry')}</button></p>;
+  if (!file) return <p role="status">{uiText(language)('conversationHostPreview.loadingFile')}</p>;
   const Renderer = sourceMode ? SourceInspectorPreview : adapter && adapter.renderer !== 'webview' ? inspectorFilePreviewRenderers[adapter.renderer] : null;
   return <div className="conversation-host-preview">
     {Renderer ? <Renderer path={path} source={file.source} language={language} onLoadingChange={ignoreLoading}/>
       : adapter?.id === 'pdf' ? <iframe title={file.name} src={file.source} className="inspector-pdf-preview"/>
-      : <p>{language === 'zh' ? '下载文件以查看内容' : 'Download this file to view it'}</p>}
-    <a href={file.source} download={file.name}>{language === 'zh' ? '下载' : 'Download'} {file.name}</a>
+      : <p>{uiText(language)('conversationHostPreview.downloadThisFileToViewIt')}</p>}
+    <a href={file.source} download={file.name}>{uiText(language)('turnArtifactsMenu.download')} {file.name}</a>
   </div>;
 }

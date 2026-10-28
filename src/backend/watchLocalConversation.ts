@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { conversationRuntime } from './conversationRuntime';
 import { watchHostConversation, type HostConversationStatus, type HostConversationWatchState } from './hostConversationWatcher';
 import type { ProtocolRuntimeClient } from '../runtime-client/ProtocolRuntimeClient';
@@ -9,7 +10,7 @@ export async function readHostConversationStatus(client: ProtocolRuntimeClient, 
   return client.command({ kind, payload: { sessionId } }, value => {
     const result = value as HostConversationStatus;
     if (!result || typeof result.revision !== 'string' || result.activeTurnId !== undefined && typeof result.activeTurnId !== 'string') {
-      throw new Error('Invalid host conversation status');
+      throw new Error(uiText()('watchLocalConversation.invalid_host_conversation_status'));
     }
     return result;
   }, signal);

@@ -68,3 +68,6 @@
 .bush-it-sidebar.canvas-sidebar .bush-pages-sidebar-content{flex:1;height:auto;min-height:0;padding-bottom:0}
 .canvas-sidebar .sidebar-footer{margin-top:0}
 .canvas-sidebar-manage{flex-shrink:0;color:var(--text-mid);padding:4px 0}.canvas-sidebar-manage>summary{cursor:pointer;padding:7px 10px;font-size:12px}.canvas-sidebar-manage button{width:100%}
+
+.canvas-stage { --canvas-ink: #e5e5e5; --canvas-dot: #ffffff18; --canvas-boundary: #ffffff24; color: var(--canvas-ink); }
+.canvas-stage[data-light-paper="true"] { --canvas-ink: #252525; --canvas-dot: #0000001a; --canvas-boundary: #00000030; }

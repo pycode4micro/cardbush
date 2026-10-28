@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { MoreHorizontal, Plus } from 'lucide-react';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss';
@@ -13,7 +14,7 @@ export function AppCenterSettingsMenu({ language, active, display, onDisplayChan
   onAddLocal: () => void;
   onAddLink: () => void;
 }) {
-  const zh = language === 'zh', label = zh ? '应用中心设置' : 'App center settings';
+  const label = uiText(language)('appCenterSettingsMenu.appCenterSettings');
   const [open, setOpen] = useState(false), trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null), id = useId();
   const close = useCallback((focus = false) => {
     menu.current?.hidePopover(); setOpen(false);
@@ -61,17 +62,17 @@ export function AppCenterSettingsMenu({ language, active, display, onDisplayChan
       onToggle={event => { if ((event.nativeEvent as ToggleEvent).newState === 'closed') setOpen(false); }}>
       {open && <>
         <div className="app-center-dock-settings">
-          <span>{zh ? '底部快捷方式' : 'Dock shortcuts'}</span>
-          <div className="app-center-display" role="group" aria-label={zh ? '快捷方式显示' : 'Show shortcuts'}>
+          <span>{uiText(language)('appCenterSettingsMenu.dockShortcuts')}</span>
+          <div className="app-center-display" role="group" aria-label={uiText(language)('appCenterSettingsMenu.showShortcuts')}>
             {(['always', 'hover'] as const).map(value => <button type="button" key={value} aria-pressed={display === value}
-              onClick={() => onDisplayChange(value)}>{value === 'always' ? (zh ? '始终显示' : 'Always visible') : (zh ? '悬停展开' : 'Show on hover')}</button>)}
+              onClick={() => onDisplayChange(value)}>{value === 'always' ? (uiText(language)('appCenterSettingsMenu.alwaysVisible')) : (uiText(language)('appCenterSettingsMenu.showOnHover'))}</button>)}
           </div>
         </div>
         <div className="app-center-add-actions">
           <button type="button" className="app-center-add" disabled={selectingLocal || !window.cardbushDesktop?.localApplications}
-            title={zh ? '选择桌面快捷方式，自动读取名称和图标' : 'Choose a desktop shortcut and load its name and icon'}
-            onClick={() => choose(onAddLocal)}><Plus size={16} aria-hidden="true"/>{selectingLocal ? (zh ? '正在选择…' : 'Choosing…') : (zh ? '添加本地应用' : 'Add local app')}</button>
-          <button type="button" className="app-center-add" onClick={() => choose(onAddLink)}><Plus size={16} aria-hidden="true"/>{zh ? '添加应用链接' : 'Add app link'}</button>
+            title={uiText(language)('appCenterSettingsMenu.chooseADesktopShortcutAndLoadIts')}
+            onClick={() => choose(onAddLocal)}><Plus size={16} aria-hidden="true"/>{selectingLocal ? (uiText(language)('appCenterSettingsMenu.choosing')) : (uiText(language)('appCenterSettingsMenu.addLocalApp'))}</button>
+          <button type="button" className="app-center-add" onClick={() => choose(onAddLink)}><Plus size={16} aria-hidden="true"/>{uiText(language)('appCenterSettingsMenu.addAppLink')}</button>
         </div>
       </>}
     </div>

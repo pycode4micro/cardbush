@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -11,7 +12,7 @@ export async function readScene(bytes: ArrayBuffer) {
   manager.onError = () => { failedResources++; };
   manager.setURLModifier(url => {
     if (/^(?:blob:|data:)/.test(url)) return url;
-    throw new Error('预览场景包含未内嵌的资源，无法完整显示。');
+    throw new Error(uiText()('sceneView.the_preview_contains_resources_that_were_not'));
   });
   const gltf = await new GLTFLoader(manager).parseAsync(bytes, '');
   return { gltf, failedResources };
@@ -46,7 +47,7 @@ export function createSceneView(gltf: GLTF, { root, viewport, onError: displayEr
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.setClearColor(0x181c20);
-  renderer.domElement.setAttribute('aria-label', '三维场景画布');
+  renderer.domElement.setAttribute('aria-label', uiText()('sceneView.3d_scene_canvas'));
   viewport.prepend(renderer.domElement);
   const world = new THREE.Scene();
   const environmentScene = new RoomEnvironment();
@@ -65,7 +66,7 @@ export function createSceneView(gltf: GLTF, { root, viewport, onError: displayEr
   if (box.isEmpty()) { box.min.set(-1, -1, -1); box.max.set(1, 1, 1); }
   const center = box.getCenter(new THREE.Vector3());
   const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.01);
-  if (!Number.isFinite(radius)) throw new Error('场景包含无效的几何坐标，无法显示。');
+  if (!Number.isFinite(radius)) throw new Error(uiText()('sceneView.the_scene_contains_invalid_geometry_coordinates_and'));
   const grid = new THREE.GridHelper(radius * 4, 20, 0x58616a, 0x303942);
   grid.position.set(center.x, box.min.y, center.z);
   world.add(grid);
@@ -109,7 +110,7 @@ export function createSceneView(gltf: GLTF, { root, viewport, onError: displayEr
   };
   const setPlaying = (value: boolean) => {
     playing = value;
-    element('play').textContent = value ? '暂停' : '播放';
+    element('play').textContent = value ? uiText()('automationPanel.pause') : uiText()('modelPreviewMain.play');
     cancelAnimationFrame(animationFrame);
     previousTime = 0;
     if (value && !document.hidden) animationFrame = requestAnimationFrame(animate);
@@ -129,7 +130,7 @@ export function createSceneView(gltf: GLTF, { root, viewport, onError: displayEr
   const contextLost = (event: Event) => {
     event.preventDefault();
     setPlaying(false);
-    displayError(new Error('三维显示上下文已中断，请重试此预览。'));
+    displayError(new Error(uiText()('sceneView.the_3d_rendering_context_was_interrupted_retry')));
   };
   renderer.domElement.addEventListener('webglcontextlost', contextLost);
   document.addEventListener('visibilitychange', visibility);
@@ -156,7 +157,7 @@ export function createSceneView(gltf: GLTF, { root, viewport, onError: displayEr
   };
   element<HTMLInputElement>('wireframe').onchange = wireframe;
   wireframe();
-  animationSelect.replaceChildren(...gltf.animations.map((clip, index) => new Option(clip.name || `动画 ${index + 1}`, String(index))));
+  animationSelect.replaceChildren(...gltf.animations.map((clip, index) => new Option(clip.name || uiText()('sceneView.animation_value1', { value1: index + 1 }), String(index))));
   element('animation-controls').hidden = gltf.animations.length === 0;
   animationSelect.onchange = chooseAnimation;
   element('play').onclick = () => setPlaying(!playing);
@@ -178,7 +179,7 @@ export function createSceneView(gltf: GLTF, { root, viewport, onError: displayEr
     label.append(toggle, document.createTextNode(object.name || object.type));
     return label;
   }));
-  if (objects.length > 500) element('objects').append('仅列出前 500 个对象，其余仍在场景中显示。');
+  if (objects.length > 500) element('objects').append(uiText()('sceneView.only_the_first_500_objects_are_listed'));
   return {
     dispose() {
       if (disposed) return;

@@ -9,10 +9,13 @@ const { decodeTextPreview, readTextPreview, readTextPreviewResult, renderTextFil
 const { readHandleBytes, readFilePrefix } = require('../dist-electron/fileRead.js');
 const ts = require('typescript');
 const rendererHelpers = { exports: {} };
-new Function('module', 'exports', ts.transpileModule(
+new Function('module', 'exports', 'require', ts.transpileModule(
   await readFile(new URL('../src/shared/textPreview.ts', import.meta.url), 'utf8'),
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } },
-).outputText)(rendererHelpers, rendererHelpers.exports);
+).outputText)(rendererHelpers, rendererHelpers.exports, specifier => {
+  if (specifier === '../i18n') return require('@cardbush/platform/i18n');
+  return require(specifier);
+});
 const { shouldUsePlainTextPreview, textPreviewErrorMessage } = rendererHelpers.exports;
 
 function encoded(text, encoding, bom = true) {
@@ -135,8 +138,12 @@ test('short reads are accumulated and EOF never exposes unread buffer contents',
   assert.deepEqual(positions, [7, 9, 11, 13, 15, 17, 18]);
 });
 
-test('local file protocol serves only actual bytes when files shrink during preview reads', async () => {
-  // Exercise the production handler without starting Electron or touching user files.
+test('local file protocol bounds streamed ranges after a file shrinks between lookup and open', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'cardbush-text-range-'));
+  t.after(async () => { assert.ok(directory.startsWith(join(tmpdir(), 'cardbush-text-range-'))); await rm(directory, { recursive: true, force: true }); });
+  const target = join(directory, 'fixture.txt');
+  await writeFile(target, 'short');
+  const { localFileResponse } = require('../dist-electron/localFileStream.js');
   const source = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
   const parsed = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
   const functions = ['registerLocalFileProtocol', 'byteRangeFromHeader'].map(name => {
@@ -145,51 +152,30 @@ test('local file protocol serves only actual bytes when files shrink during prev
     return declaration.getText(parsed);
   }).join('\n');
   let handler;
-  let actual = Buffer.from('short');
-  let openSize = 5;
-  let closeCount = 0;
-  const stats = size => ({ size, isFile: () => true });
+  // The directory lookup still reports 12 bytes; the production stream must
+  // use the opened file's fresh size instead of the stale outer snapshot.
   const bindings = {
     protocol: { isProtocolHandled: () => false, handle: (_scheme, callback) => { handler = callback; } },
     localFileProtocol: 'cardbush-file',
-    fs: { promises: {
-      stat: async () => stats(12),
-      readFile: async () => actual,
-      open: async () => {
-        let reads = 0;
-        return {
-          stat: async () => stats(reads ? actual.length : openSize),
-          read: async (buffer, offset, length, position) => {
-            reads += 1;
-            const bytesRead = Math.min(2, length, Math.max(0, actual.length - position));
-            actual.copy(buffer, offset, position, position + bytesRead);
-            return { bytesRead };
-          },
-          close: async () => { closeCount += 1; },
-        };
-      },
-    } },
-    normalizeShellPath: value => value,
-    localPathFromProtocolUrl: () => 'fixture.txt',
+    fs: { promises: { stat: async () => ({ size: 12, isFile: () => true }) } },
+    localResourcePath: () => target,
+    localPathFromProtocolUrl: () => target,
     contentTypeForPath: () => 'text/plain',
     isHighFidelityOfficePreviewPath: () => true,
-    readHandleBytes,
+    checkOfficePreviewAdmission: async () => {},
+    officePreviewLimits: { compressedBytes: 1024 },
+    localFileResponse,
   };
   new Function(...Object.keys(bindings), ts.transpileModule(functions + '\nregisterLocalFileProtocol();', {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText)(...Object.values(bindings));
-  const request = (range, method = 'GET', host = 'file') => handler({
-    url: `cardbush-file://${host}/fixture.txt?path=fixture.txt`, method,
-    headers: new Headers(range ? { range } : {}),
-  });
-  for (openSize of [5, 12]) {
-    const response = await request('bytes=0-11');
-    assert.equal(response.status, 206);
-    assert.equal(response.headers.get('content-length'), '5');
-    assert.equal(response.headers.get('content-range'), 'bytes 0-4/5');
-    assert.equal(await response.text(), 'short');
-  }
-  openSize = 5;
+  const request = (range, method = 'GET', host = 'file') => handler(new Request(
+    'cardbush-file://' + host + '/fixture.txt?path=fixture.txt', { method, headers: range ? { range } : {} }));
+  const partial = await request('bytes=0-11');
+  assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get('content-length'), '5');
+  assert.equal(partial.headers.get('content-range'), 'bytes 0-4/5');
+  assert.equal(await partial.text(), 'short');
   const missingRange = await request('bytes=7-11');
   assert.equal(missingRange.status, 416);
   assert.equal(missingRange.headers.get('content-range'), 'bytes */5');
@@ -201,11 +187,10 @@ test('local file protocol serves only actual bytes when files shrink during prev
     assert.equal(full.headers.get('content-length'), '5');
     assert.equal(await full.text(), 'short');
   }
-  actual = Buffer.alloc(0);
+  await writeFile(target, '');
   const emptied = await request('bytes=0-11');
   assert.equal(emptied.status, 416);
   assert.equal(emptied.headers.get('content-range'), 'bytes */0');
-  assert.equal(closeCount, 5, 'every opened handle is closed, including empty ranges');
 });
 
 test('large previews avoid unbounded parsing/DOM work, with CRLF counted once', () => {

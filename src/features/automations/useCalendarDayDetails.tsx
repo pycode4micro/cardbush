@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type FocusEvent } from 'react';
 import type { AutomationJob, CalendarDataset } from '@cardbush/bush-protocol';
 import { chineseDate } from '../../../assets/skills/cardbush-docs/scripts/calendar-date.mjs';
@@ -6,13 +7,13 @@ import { prefersReducedMotion } from '../../shared/motionPreference';
 import './calendarSurface.css';
 
 export function useCalendarDayDetails({ jobs, calendars, chineseLunar, now, language }: {
-  jobs: AutomationJob[]; calendars: CalendarDataset[]; chineseLunar: boolean; now: number; language: 'zh' | 'en';
+  jobs: AutomationJob[]; calendars: CalendarDataset[]; chineseLunar: boolean; now: number; language: string;
 }) {
   const id = useId(), panel = useRef<HTMLDivElement>(null), timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const restoringFocus = useRef(false);
   const [active, setActive] = useState<{ date: Date; anchor: HTMLElement; pinned: boolean; closing?: boolean } | null>(null);
   const [limit, setLimit] = useState(30);
-  const zh = language === 'zh', key = active ? calendarDayKey(active.date) : '';
+  const key = active ? calendarDayKey(active.date) : '';
   const clearTimer = () => { clearTimeout(timer.current); timer.current = undefined; };
   const dismiss = (current: typeof active) => !current || prefersReducedMotion() ? null : { ...current, closing: true };
   const close = () => { clearTimer(); setActive(dismiss); };
@@ -73,30 +74,30 @@ export function useCalendarDayDetails({ jobs, calendars, chineseLunar, now, lang
     onBlur: (event: FocusEvent<HTMLElement>) => { if (!panel.current?.contains(event.relatedTarget)) leave(); },
     onClick: (event: MouseEvent<HTMLElement>) => { clearTimer(); const anchor = event.currentTarget; setActive(current => current?.anchor === anchor && current.pinned && !current.closing ? dismiss(current) : { date, anchor, pinned: true }); },
   });
-  const clock = (at: number) => new Date(at).toLocaleTimeString(zh ? 'zh-CN' : 'en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
-  const popover = active && <div ref={panel} id={id} popover="manual" className="calendar-day-details" data-closing={Boolean(active.closing)} role="dialog" aria-label={zh ? '日期详情' : 'Date details'}
+  const clock = (at: number) => new Date(at).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit', hour12: false });
+  const popover = active && <div ref={panel} id={id} popover="manual" className="calendar-day-details" data-closing={Boolean(active.closing)} role="dialog" aria-label={uiText(language)('useCalendarDayDetails.dateDetails')}
     onMouseEnter={keepOpen} onMouseLeave={leave} onFocus={keepOpen} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
-    <header><strong>{active.date.toLocaleDateString(zh ? 'zh-CN' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}</strong>
+    <header><strong>{active.date.toLocaleDateString(language, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}</strong>
       {lunar && <span className="calendar-lunar-date">{lunar.fullLabel}</span>}</header>
     <div className="calendar-day-details-content" tabIndex={0}>
-    {!!imported?.count && <section aria-label={zh ? '节日与日程' : 'Holidays and events'}><h3>{zh ? '节日与日程' : 'Holidays & events'}</h3>
+    {!!imported?.count && <section aria-label={uiText(language)('useCalendarDayDetails.holidaysAndEvents')}><h3>{uiText(language)('useCalendarDayDetails.holidaysEvents')}</h3>
       {imported.items.map(({ calendar, entry }) => <div className="calendar-day-note" key={`${calendar.id}:${entry.id}`}>
-        <strong>{entry.title}</strong><span>{[entry.time || (zh ? '全天' : 'All day'), calendar.name].join(' · ')}</span>{entry.description && <p>{entry.description}</p>}
+        <strong>{entry.title}</strong><span>{[entry.time || (uiText(language)('useCalendarDayDetails.allDay')), calendar.name].join(' · ')}</span>{entry.description && <p>{entry.description}</p>}
       </div>)}
-      {imported.count > limit && <button className="calendar-details-more" type="button" onClick={() => setLimit(value => value + 50)}>{zh ? `还有 ${imported.count - limit} 项，显示更多` : `${imported.count - limit} more · Show more`}</button>}
+      {imported.count > limit && <button className="calendar-details-more" type="button" onClick={() => setLimit(value => value + 50)}>{uiText(language)('useCalendarDayDetails.moreShowMore', { value1: imported.count - limit })}</button>}
     </section>}
-    {entries.length > 0 && <section aria-label={zh ? '自动化安排' : 'Automations'}><h3>{zh ? '自动化安排' : 'Automations'}</h3>
+    {entries.length > 0 && <section aria-label={uiText(language)('useCalendarDayDetails.automations')}><h3>{uiText(language)('useCalendarDayDetails.automations')}</h3>
       {entries.slice(0, limit).map(entry => <div className="calendar-day-job" key={entry.job.id} data-job-id={entry.job.id}>
         <time>{clock(entry.firstAt)}{entry.lastAt !== entry.firstAt && <small>– {clock(entry.lastAt)}</small>}</time>
         <div><strong>{entry.job.name}</strong><span>{[
-          entry.scheduledCount ? (zh ? `预计 ${entry.scheduledCount} 次` : `${entry.scheduledCount} scheduled`) : '',
-          entry.runs.length ? (zh ? `已记录 ${entry.runs.length} 次` : `${entry.runs.length} recorded`) : '',
-          entry.runs.at(-1)?.status ? (zh ? { queued: '排队中', running: '执行中', completed: '已完成', failed: '失败', stopped: '已停止', interrupted: '执行中断', awaiting_user_action: '等待处理' }[entry.runs.at(-1)!.status] : entry.runs.at(-1)!.status) : entry.overdue ? (zh ? '待执行' : 'Due') : '',
+          entry.scheduledCount ? (uiText(language)('useCalendarDayDetails.scheduled', { value1: entry.scheduledCount })) : '',
+          entry.runs.length ? (uiText(language)('useCalendarDayDetails.recorded', { value1: entry.runs.length })) : '',
+          entry.runs.at(-1)?.status ? (uiText(language)(`automation.state.${entry.runs.at(-1)!.status}`)) : entry.overdue ? (uiText(language)('useCalendarDayDetails.due')) : '',
         ].filter(Boolean).join(' · ')}</span></div>
       </div>)}
-      {entries.length > limit && <button className="calendar-details-more" type="button" onClick={() => setLimit(value => value + 50)}>{zh ? '显示更多自动化' : 'More automations'}</button>}
+      {entries.length > limit && <button className="calendar-details-more" type="button" onClick={() => setLimit(value => value + 50)}>{uiText(language)('useCalendarDayDetails.moreAutomations')}</button>}
     </section>}
-    {!entries.length && !imported?.count && <p className="calendar-day-empty">{zh ? '这一天没有安排' : 'Nothing scheduled'}</p>}
+    {!entries.length && !imported?.count && <p className="calendar-day-empty">{uiText(language)('useCalendarDayDetails.nothingScheduled')}</p>}
     </div>
   </div>;
   return { dayProps, popover, close };

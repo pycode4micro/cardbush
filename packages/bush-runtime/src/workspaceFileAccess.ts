@@ -22,7 +22,7 @@ async function inspect(path: string) { try { return await lstat(path, { bigint: 
 async function capture(context: ToolAdmissionContext, candidate: string, writing: boolean): Promise<Target> {
   const path = await resolveToolPath(context, candidate, writing);
   const info = await inspect(path);
-  if (info?.isSymbolicLink() || info && !info.isFile() && !info.isDirectory()) throw pathChanged();
+  if (info?.isSymbolicLink() || info?.isFile() && info.nlink !== 1n || info && !info.isFile() && !info.isDirectory()) throw pathChanged();
   let ancestor = info?.isDirectory() ? path : dirname(path);
   let parent = await inspect(ancestor);
   while (!parent) { const next = dirname(ancestor); if (next === ancestor) throw pathChanged(); ancestor = next; parent = await inspect(ancestor); }
@@ -89,22 +89,24 @@ export function bindWorkspaceFileAuthorization<T>(registration: ToolRegistration
  * transport. Callers supply exact recorded paths, never a new permission root.
  * Existing tool scopes cannot be expanded by a nested helper. */
 export async function withWorkspaceFileAccess<T>(paths: string[], writing: boolean, operation: () => Promise<T>,
-  options: { signal?: AbortSignal; linuxExecutable?: string; rejectRedirects?: boolean } = {}): Promise<T> {
+  options: { signal?: AbortSignal; linuxExecutable?: string; rejectRedirects?: boolean; expectedIdentities?: Readonly<Record<string, string>> } = {}): Promise<T> {
   const existing = active.getStore();
   if (existing) { for (const path of paths) existing.allowed(path, writing); return operation(); }
   const context = { input: {}, sessionId: 'host-file-operation' } as ToolAdmissionContext;
   const targets = await Promise.all([...new Set(paths)].map(async path => {
     const target = await capture(context, path, writing);
     if (options.rejectRedirects !== false && !samePath(target.path, resolve(path))) throw pathChanged();
+    if (options.expectedIdentities?.[path] !== undefined && target.identity !== options.expectedIdentities[path]) throw pathChanged();
     return target;
   }));
-  const access = new WorkspaceFileAccess(targets, writing, options.signal, options.linuxExecutable);
+  const linuxExecutable = options.linuxExecutable ?? process.env.CARDBUSH_BWRAP_PATH?.trim();
+  const access = new WorkspaceFileAccess(targets, writing, options.signal, linuxExecutable);
   try {
     for (const target of targets) {
       await access.guard.pin(target.ancestor);
       if (identity(await stat(access.guard.directory(target.ancestor), { bigint: true })) !== target.ancestorIdentity) throw pathChanged();
     }
-    await verifyWorkspaceFileSandbox(options.linuxExecutable);
+    await verifyWorkspaceFileSandbox(linuxExecutable);
     return await active.run(access, operation);
   } finally { await access.close(); }
 }
@@ -176,7 +178,7 @@ class WorkspaceFileAccess {
       finally { await placeholder.close(); }
     }
     try {
-      if (!actual.isFile() || write && actual.nlink !== 1n) throw pathChanged();
+      if (!actual.isFile() || actual.nlink !== 1n) throw pathChanged();
       // Linux descriptor-relative names can differ after an authorized directory
       // is renamed; resolve the still-pinned object for the sandbox mount.
       const handle = await SandboxFileHandle.open(await realpath(fixed), identity(actual), write, write && !reserved ? this.#hashes.get(key) : undefined, this.signal, this.linuxExecutable);

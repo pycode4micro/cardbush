@@ -1,3 +1,5 @@
+import type { MessageKey } from '../../i18n';
+import { uiText, localizedContent } from '../../i18n';
 import { useConversationSource } from '../settings/conversationSource';
 import { VoiceButton } from '../voice/VoiceConversation';
 import { VoiceCallButton } from '../voice/VoiceCallButton';
@@ -296,7 +298,7 @@ function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read image'));
+    reader.onerror = () => reject(reader.error ?? new Error(uiText()('composer.failed_to_read_image')));
     reader.readAsDataURL(file);
   });
 }
@@ -494,7 +496,7 @@ export function Composer({
   const conversationStyle = useConversationStyle(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
   const styleAvailable = host?.conversationStyleAvailable !== false;
   const styleOptions = [
-    { value: '', label: (language === 'zh' ? '默认 · ' : 'Default · ') + conversationStyleName(conversationStyle.preferences.defaultId, conversationStyle.preferences, language) },
+    { value: '', label: (uiText(language)('composer.default')) + conversationStyleName(conversationStyle.preferences.defaultId, conversationStyle.preferences, language) },
     ...[...conversationStylePresets, ...conversationStyle.preferences.styles].map(style => ({ value: style.id, label: conversationStyleName(style.id, conversationStyle.preferences, language) })),
   ];
   const sshConnections = useSshConnections(!host);
@@ -519,7 +521,7 @@ export function Composer({
   const dropTargetRef = fileDropTarget ?? composerStackRef;
   const fileDragActive = useFileDropZone(dropTargetRef, transfer => {
     void handleDrop(transfer).catch(error => showUiError(
-      language === 'zh' ? '无法添加附件' : 'Unable to add attachments',
+      uiText(language)('composer.unableToAddAttachments'),
       error instanceof Error ? error.message : String(error),
     ));
   });
@@ -559,22 +561,22 @@ export function Composer({
     focusComposer(prediction.text.length);
   }
   const sendButtonLabel = submissionPending
-    ? language === 'zh' ? '正在提交' : 'Submitting'
+    ? uiText(language)('composer.submitting')
     : !runtimeReady
     ? runtimeStartupFailed
-      ? language === 'zh' ? 'Runtime 启动失败，点击重试' : 'Runtime failed to start. Click to retry'
-      : language === 'zh' ? 'Runtime 正在准备' : 'Runtime is preparing'
+      ? uiText(language)('composer.runtimeFailedToStartClickToRetry')
+      : uiText(language)('composer.runtimeIsPreparing')
     : sending
     ? hasContent
       ? guidanceDeliveryMode === 'immediate'
-        ? language === 'zh' ? '马上发送引导' : 'Send guidance now'
-        : language === 'zh' ? '加入发送队列' : 'Queue message'
+        ? uiText(language)('composer.sendGuidanceNow')
+        : uiText(language)('composer.queueMessage')
       : stopping
-        ? language === 'zh' ? '正在停止' : 'Stopping'
+        ? uiText(language)('guidanceActivity.stopping')
       : cancelReady
-        ? language === 'zh' ? '停止生成' : 'Stop generating'
-        : language === 'zh' ? '等待任务启动' : 'Waiting for task to start'
-    : language === 'zh' ? '发送' : 'Send';
+        ? uiText(language)('composer.stopGenerating')
+        : uiText(language)('composer.waitingForTaskToStart')
+    : uiText(language)('cardlingWindow.send');
 
   useEffect(() => {
     if (!sending || !cancelEnabled) {
@@ -664,12 +666,12 @@ export function Composer({
       if (pastedIds.length) {
         setAttachmentUploads(current => current + 1);
         try {
-          if (!pastedTextApi) throw new Error('Text attachment storage is unavailable.');
+          if (!pastedTextApi) throw new Error(uiText(language)('composer.text_attachment_storage_is_unavailable'));
           // Retain before handing off: guidance can be queued and a lost network
           // acknowledgement must not let cleanup break a successfully sent reference.
           for (let offset = 0; offset < pastedIds.length; offset += 32) await pastedTextApi.retain(pastedIds.slice(offset, offset + 32));
         } catch (error) {
-          showUiError(language === 'zh' ? '无法发送文本附件' : 'Unable to send text attachment', String(error));
+          showUiError(uiText(language)('composer.unableToSendTextAttachment'), String(error));
           return;
         } finally { setAttachmentUploads(current => current - 1); }
       }
@@ -876,7 +878,7 @@ export function Composer({
   async function pickAttachments() {
     if (host) {
       const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
-      input.onchange = () => { void addTransferredFiles([...input.files ?? []]).catch(error => showUiError(language === 'zh' ? '附件上传失败' : 'Upload failed', String(error))); };
+      input.onchange = () => { void addTransferredFiles([...input.files ?? []]).catch(error => showUiError(uiText(language)('composer.uploadFailed'), String(error))); };
       input.click(); return;
     }
     const paths = await window.cardbushDesktop?.pickAttachments?.();
@@ -905,11 +907,11 @@ export function Composer({
     // Capture before either textarea or rich-editor paste handling inserts text.
     event.preventDefault(); event.stopPropagation();
     void attachPastedText(text, summary).catch(error => showUiError(
-      language === 'zh' ? '未能保存粘贴文本，原文仍在剪贴板中，可重试粘贴' : 'Could not save pasted text. It remains on the clipboard; try pasting again.', String(error)));
+      uiText(language)('composer.couldNotSavePastedTextItRemains'), String(error)));
   }
 
   async function attachPastedText(text: string, summary: ReturnType<typeof pastedTextSummary>) {
-    if (!pastedTextApi) throw new Error(language === 'zh' ? '请更新并重启 CardBush / Agent 服务以使用文本附件。' : 'Update and restart CardBush / the Agent service to attach pasted text.');
+    if (!pastedTextApi) throw new Error(uiText(language)('composer.updateAndRestartCardbushTheAgentService'));
     setAttachmentUploads(current => current + 1);
     try {
       const saved = await pastedTextApi.create(text);
@@ -922,7 +924,7 @@ export function Composer({
 
   async function removeFileAttachment(file: ComposerFileAttachment) {
     if (file.pastedText) {
-      if (!pastedTextApi) throw new Error('Text attachment storage is unavailable.');
+      if (!pastedTextApi) throw new Error(uiText(language)('composer.text_attachment_storage_is_unavailable'));
       await pastedTextApi.discard(file.pastedText.id);
     }
     setFileAttachments(current => current.filter(item => item.id !== file.id));
@@ -1053,7 +1055,7 @@ export function Composer({
 
   const pluginCommandItems = useMemo<ComposerCommandItem[]>(() => plugins.map(plugin => ({
     id: `$${plugin.id}`, title: plugin.name, category: 'plugins',
-    subtitle: `${plugin.enabled ? '' : language === 'zh' ? '已停用 · ' : 'Disabled · '}${plugin.description}`,
+    subtitle: `${plugin.enabled ? '' : uiText(language)('composer.disabled')}${plugin.description}`,
     icon: <PluginGlyph plugin={plugin} />, value: `${pluginReference(plugin)} `,
     searchText: `${plugin.id} ${plugin.name} ${plugin.description} ${plugin.keywords.join(' ')}`,
   })), [plugins, language]);
@@ -1061,81 +1063,67 @@ export function Composer({
   const slashCommands = useMemo<ComposerCommandItem[]>(
     () => {
       const commands: ComposerCommandItem[] = [
-        ...(styleAvailable ? [{ id: '/style', title: '/style', subtitle: language === 'zh' ? '选择当前会话的对话风格' : 'Choose a style for this chat', searchText: 'style 风格 对话 语气', icon: <MessageSquare size={16}/>, value: '/style ' }] : []),
+        ...(styleAvailable ? [{ id: '/style', title: '/style', subtitle: uiText(language)('composer.chooseAStyleForThisChat'), searchText: uiText(language)('composer.style_conversation_tone'), icon: <MessageSquare size={16}/>, value: '/style ' }] : []),
         ...(delegationCommand ? [{
           id: delegationCommand,
-          title: language === 'zh' ? '选择 Team' : 'Select Team',
-          subtitle: language === 'zh'
-            ? '选择已保存的团队流程'
-            : 'Choose a saved team workflow',
+          title: uiText(language)('composer.selectTeam'),
+          subtitle: uiText(language)('composer.chooseASavedTeamWorkflow'),
           icon: <UsersRound size={16} />,
           run: () => {
             setPopoverAnchor(null);
             setActiveMenu('teams');
           },
-          searchText: `${delegationCommand} Team 团队 agent`,
+          searchText: uiText(language)('composer.value1_team_agent', { value1: delegationCommand }),
         }] : []),
         {
           id: '/model',
-          title: language === 'zh' ? '模型切换' : 'Switch model',
+          title: uiText(language)('composer.switchModel'),
           subtitle:
-            language === 'zh'
-              ? '选择当前会话使用的模型'
-              : 'Choose the model used by this conversation',
+            uiText(language)('composer.chooseTheModelUsedByThisConversation'),
           icon: <Box size={16} />,
           run: () => {
             setPopoverAnchor(null);
             setActiveMenu('models');
           },
-          searchText: '/model 模型切换 switch model',
+          searchText: uiText(language)('composer.model_switch_model'),
         },
         {
           id: '/goal',
-          title: language === 'zh' ? '目标' : 'Goal',
+          title: uiText(language)('turnRuntimeDetails.goal'),
           subtitle:
-            language === 'zh'
-              ? '填入命令，通过对话创建或管理目标'
-              : 'Insert the command to create or manage a goal in chat',
+            uiText(language)('composer.insertTheCommandToCreateOrManage'),
           icon: <Target size={16} />,
           value: '/goal ',
-          searchText: '/goal 目标 goal',
+          searchText: uiText(language)('composer.goal_goal'),
         },
         {
           id: '/skill',
-          title: language === 'zh' ? '技能' : 'Skills',
+          title: uiText(language)('composer.skills'),
           subtitle:
-            language === 'zh'
-              ? '查看并选择当前会话启用的技能'
-              : 'View and choose skills enabled for this session',
+            uiText(language)('composer.viewAndChooseSkillsEnabledForThis'),
           icon: <Puzzle size={16} />,
           run: () => {
             setPopoverAnchor(null);
             setActiveMenu('skills');
           },
-          searchText: '/skill 技能 skill skills',
+          searchText: uiText(language)('composer.skill_skill_skills'),
         },
         {
           id: '/collect',
-          title: language === 'zh' ? '总结为技能' : 'Collect as a skill',
-          subtitle: language === 'zh'
-            ? '将当前会话流程总结为 Skill 并安装'
-            : 'Summarize this conversation’s workflow as a skill and install it',
+          title: uiText(language)('composer.collectAsASkill'),
+          subtitle: uiText(language)('composer.summarizeThisConversationSWorkflowAsA'),
           icon: <Puzzle size={16} />,
-          value: language === 'zh'
-            ? '根据我们的当前已有的会话信息，帮我总结成 skill 进行安装。'
-            : 'Based on our current conversation, summarize the workflow into a skill and install it.',
-          searchText: '/collect 收集 总结 流程 技能 安装 collect workflow skill install',
+          value: uiText(language)('composer.basedOnOurCurrentConversationSummarizeThe'),
+          searchText: uiText(language)('composer.collect_collect_workflow_skill_install'),
         },
         {
           id: '/new',
-          title: language === 'zh' ? '新会话' : 'New conversation',
+          title: uiText(language)('composer.newConversation'),
           subtitle:
-            language === 'zh'
-              ? '在当前项目中开始一个新会话'
-              : 'Start a new conversation in the current project',
+            uiText(language)('composer.startANewConversationInTheCurrent'),
           icon: <Edit3 size={16} />,
           run: () => onCreateConversation?.(),
-          searchText: '/new 新会话 new conversation',
+          searchText: uiText(language)('composer.new_new_conversation'),
         },
       ];
       commands.push(...pluginCommandItems);
@@ -1154,7 +1142,7 @@ export function Composer({
       commands.push(...skills.filter(skill => !commandPaths.has(skill.path) && !pluginCommands.some(command => command.id === skill.name) &&
         !disabledSkillNames.has(skill.name) && skill.invocationMode !== 'model' && skill.invocationMode !== 'disabled').map(skill => ({
           id: `skill:${skill.name}`, title: skill.displayName || skill.name, category: 'skills' as const,
-          subtitle: [skill.sourceLabel, language === 'zh' ? skill.descriptionZh || skill.description : skill.description].filter(Boolean).join(' · '),
+          subtitle: [skill.sourceLabel, localizedContent({ zh: skill.descriptionZh, en: skill.description }, language)].filter(Boolean).join(' · '),
           icon: <SkillIcon skill={skill} compact />,
           value: `${skillReference(skill)} `,
           searchText: `${skill.name} ${skill.displayName || ''} ${skill.description} ${skill.descriptionZh || ''}`,
@@ -1182,46 +1170,46 @@ export function Composer({
     }
     const items: ComposerCommandItem[] = commandState.mode === 'style' ? (styleAvailable ? styleOptions.map(option => ({
       id: 'style:' + (option.value || 'default'), title: option.label,
-      subtitle: language === 'zh' ? '仅当前会话，从下一轮回复生效' : 'This chat only; applies from the next reply',
+      subtitle: uiText(language)('composer.thisChatOnlyAppliesFromTheNext'),
       icon: (conversationStyle.override ?? '') === option.value ? <Check size={16}/> : <MessageSquare size={16}/>,
       run: () => conversationStyle.select(option.value || null),
     })) : []) : commandState.mode === 'mention' ? [
       ...applications.map(app => ({ id: `application:${app.id}`, category: 'apps' as const, title: app.title, subtitle: app.description,
         icon: <ApplicationIcon app={app} size={18}/>, value: `${promptReferenceMarkdown(applicationReference(app))} `,
-        searchText: `app application 应用 ${app.title} ${app.description}` })),
+        searchText: uiText(language)('composer.app_application_value1_value2', { value1: app.title, value2: app.description }) })),
       ...sshConnections.map(connection => ({
         id: `ssh:${connection.id}`, category: 'ssh' as const, title: connection.name, subtitle: `${connection.username}@${connection.host}`,
         icon: <Globe size={18} />, disabled: !referenceContext.onWorkspaceSelect,
-        searchText: `ssh remote 远程 服务器 ${connection.name} ${connection.host}`,
+        searchText: uiText(language)('composer.ssh_remote_server_value1_value2', { value1: connection.name, value2: connection.host }),
         run: async () => {
           const uri = await pickWorkspace({ language, connectionId: connection.id, projects: referenceContext.projects });
           if (!uri) return;
           try { const target = parseSshWorkspace(uri); await referenceContext.onWorkspaceSelect?.(uri, target ? promptReferenceMarkdown({ kind: 'ssh', ...target, title: (sshConnections.find(item => item.id === target.connectionId)?.name ?? 'SSH') + target.path }) : undefined); }
-          catch (error) { void showUiError(language === 'zh' ? 'SSH 连接失败' : 'SSH connection failed', (error as Error).message); }
+          catch (error) { void showUiError(uiText(language)('composer.sshConnectionFailed'), (error as Error).message); }
         },
       })),
-      { id: 'ssh:manage', category: 'ssh', title: language === 'zh' ? '连接 SSH 项目…' : 'Connect to an SSH project…', subtitle: language === 'zh' ? '选择连接和远程目录' : 'Choose a connection and directory', icon: <Globe size={18}/>, disabled: !referenceContext.onWorkspaceSelect,
-        run: async () => { const uri = await pickWorkspace({ language, projects: referenceContext.projects, remote: true }); if (uri) try { await referenceContext.onWorkspaceSelect?.(uri); } catch (error) { void showUiError(language === 'zh' ? 'SSH 连接失败' : 'SSH connection failed', (error as Error).message); } } },
-      { id: 'reference:files', category: 'files', title: language === 'zh' ? '文件和文件夹' : 'Files and folders',
-        subtitle: language === 'zh' ? '从电脑中添加附件' : 'Attach from your computer', icon: <Paperclip size={18} />,
-        run: pickAttachments, searchText: 'file folder attachment 文件 附件 文件夹' },
+      { id: 'ssh:manage', category: 'ssh', title: uiText(language)('composer.connectToAnSshProject'), subtitle: uiText(language)('composer.chooseAConnectionAndDirectory'), icon: <Globe size={18}/>, disabled: !referenceContext.onWorkspaceSelect,
+        run: async () => { const uri = await pickWorkspace({ language, projects: referenceContext.projects, remote: true }); if (uri) try { await referenceContext.onWorkspaceSelect?.(uri); } catch (error) { void showUiError(uiText(language)('composer.sshConnectionFailed'), (error as Error).message); } } },
+      { id: 'reference:files', category: 'files', title: uiText(language)('composer.filesAndFolders'),
+        subtitle: uiText(language)('composer.attachFromYourComputer'), icon: <Paperclip size={18} />,
+        run: pickAttachments, searchText: uiText(language)('composer.file_folder_attachment') },
       ...referenceContext.browserTabs.map(tab => ({
         id: `browser:${tab.tabId}`, category: 'browser' as const, title: tab.title, subtitle: tab.url,
-        icon: <Globe size={18} />, value: `${promptReferenceMarkdown(tab)} `, searchText: `browser 浏览器 ${tab.title} ${tab.url}`,
+        icon: <Globe size={18} />, value: `${promptReferenceMarkdown(tab)} `, searchText: uiText(language)('composer.browser_value1_value2', { value1: tab.title, value2: tab.url }),
       })),
       ...(extraction?.permanent ?? []).map(item => ({
         id: `extract:${item.id}`, category: 'extracts' as const, title: item.title, subtitle: item.description,
         icon: <MessageSquare size={18} />, value: `${promptReferenceMarkdown({ kind: 'conversation-extract', id: item.id, title: item.title })} `,
-        searchText: `conversation 会话 提取 ${item.title} ${item.description}`,
+        searchText: uiText(language)('composer.conversation_excerpt_value1_value2', { value1: item.title, value2: item.description }),
       })),
       ...referenceableUserMessages(referenceContext.messages, referenceContext.sessionId).map((message, index) => {
         const title = message.content.trim().replace(/\s+/g, ' ').slice(0, 80) || message.attachments?.map(item => item.name).join(', ') || '';
-        const turnLabel = language === 'zh' ? `用户指令 ${index + 1}` : `User instruction ${index + 1}`;
+        const turnLabel = uiText(language)('composer.userInstruction', { value1: index + 1 });
         return { id: `turn:${message.messageId}`, category: 'turns' as const, title,
           subtitle: turnLabel, icon: <MessageSquare size={18} />,
           value: `${promptReferenceMarkdown({ kind: 'user-turn', sessionId: referenceContext.sessionId,
             turnId: message.turnId!, messageId: message.messageId!, title })} `,
-          searchText: `turn 用户 指令 ${turnLabel} ${message.content}` };
+          searchText: uiText(language)('composer.turn_user_instruction_value1_value2', { value1: turnLabel, value2: message.content }) };
       }).reverse(),
     ] : commandState.mode === 'plugin' ? pluginCommandItems : slashCommands;
     const order = ['actions', 'apps', 'ssh', 'files', 'browser', 'extracts', 'turns', 'plugins', 'skills', 'commands'];
@@ -1269,7 +1257,7 @@ export function Composer({
   const modelLabel =
     selectedModelConfig
       ? selectedModelConfig.modelName
-      : language === 'zh' ? '待配置' : 'Configure';
+      : uiText(language)('composer.configure');
   const supportedReasoningLevels: ReasoningLevel[] = reasoningEffortsForProtocol(selectedModelConfig?.apiProtocol);
   const effectiveReasoningLevel = reasoningLevel === 'default' ? 'default' : protocolReasoningEffort(selectedModelConfig?.apiProtocol, reasoningLevel);
   const permissionLabel = permissionModeLabel(permissionMode, language);
@@ -1282,7 +1270,7 @@ export function Composer({
     try {
       await onGuideQueuedMessage(id);
     } catch (error) {
-      showUiError(language === 'zh' ? '引导发送失败' : 'Unable to send guidance', error instanceof Error ? error.message : String(error));
+      showUiError(uiText(language)('composer.unableToSendGuidance'), error instanceof Error ? error.message : String(error));
     } finally {
       immediatePendingRef.current = false;
       setGuidingQueuedId('');
@@ -1298,7 +1286,7 @@ export function Composer({
     try {
       await submit(true);
     } catch (error) {
-      showUiError(language === 'zh' ? '引导发送失败' : 'Unable to send guidance', error instanceof Error ? error.message : String(error));
+      showUiError(uiText(language)('composer.unableToSendGuidance'), error instanceof Error ? error.message : String(error));
     } finally { immediatePendingRef.current = false; }
   }
   immediateHandlerRef.current = sendImmediate;
@@ -1424,13 +1412,13 @@ export function Composer({
           textareaRef.current?.focus();
         }}
         onPasteCapture={capturePastedText}
-        onPaste={(event) => void pasteAttachments(event).catch(error => showUiError(language === 'zh' ? '无法添加附件' : 'Unable to add attachments', String(error)))}
+        onPaste={(event) => void pasteAttachments(event).catch(error => showUiError(uiText(language)('composer.unableToAddAttachments'), String(error)))}
       >
         {fileDragActive && dropTargetRef.current && createPortal(
           <div className="composer-file-drop-overlay" role="status">
             <Paperclip size={20} />
-            <strong>{language === 'zh' ? '松开即可添加' : 'Drop to attach'}</strong>
-            <span>{language === 'zh' ? '支持文件、文件夹和图片' : 'Files, folders and images are supported'}</span>
+            <strong>{uiText(language)('composer.dropToAttach')}</strong>
+            <span>{uiText(language)('composer.filesFoldersAndImagesAreSupported')}</span>
           </div>, dropTargetRef.current,
         )}
         {imageAttachments.length > 0 && (
@@ -1440,7 +1428,7 @@ export function Composer({
                 <button
                   className="composer-image-preview"
                   type="button"
-                  aria-label={language === 'zh' ? `查看图片：${image.name}` : `Preview image: ${image.name}`}
+                  aria-label={uiText(language)('composer.previewImage', { value1: image.name })}
                   onClick={event => {
                     const thumbnail = event.currentTarget.querySelector('img');
                     setPreviewImage({
@@ -1457,7 +1445,7 @@ export function Composer({
                 <button
                   className="composer-image-remove"
                   type="button"
-                  aria-label={language === 'zh' ? '移除图片' : 'Remove image'}
+                  aria-label={uiText(language)('composer.removeImage')}
                   onClick={() =>
                     setImageAttachments((current) =>
                       current.filter((item) => item.id !== image.id),
@@ -1478,19 +1466,19 @@ export function Composer({
                   className="composer-file-preview"
                   type="button"
                   title={file.kind === 'folder'
-                    ? language === 'zh' ? `打开文件夹 ${file.name}` : `Open folder ${file.name}`
-                    : language === 'zh' ? `只读预览 ${file.name}` : `Preview ${file.name} read-only`}
+                    ? uiText(language)('composer.openFolder', { value1: file.name })
+                    : uiText(language)('composer.previewReadOnly', { value1: file.name })}
                   onClick={() => host ? host.openFile(file.path) : file.kind === 'folder'
                     ? void window.cardbushDesktop?.openPath?.(file.path)
                     : openInspector(file.path, file.name)}
                 >
                   <ComposerFileIcon name={file.name} kind={file.kind} />
                   <span className="composer-file-meta">
-                    <strong>{file.pastedText ? language === 'zh' ? '粘贴文本' : 'Pasted text' : file.name}</strong>
+                    <strong>{file.pastedText ? uiText(language)('composer.pastedText') : file.name}</strong>
                     <small>{file.pastedText
-                      ? `${file.pastedText.lines} ${language === 'zh' ? '行' : file.pastedText.lines === 1 ? 'line' : 'lines'} · ${formatFileSize(file.size)}`
+                      ? `${file.pastedText.lines} ${uiText(language)('composer.lineUnit', { count: file.pastedText.lines })} · ${formatFileSize(file.size)}`
                       : file.kind === 'folder'
-                      ? language === 'zh' ? '文件夹' : 'Folder'
+                      ? uiText(language)('composer.folder')
                       : formatFileSize(file.size)}</small>
                     {file.pastedText?.preview && <small className="composer-pasted-text-preview">{file.pastedText.preview}</small>}
                   </span>
@@ -1500,12 +1488,12 @@ export function Composer({
                   type="button"
                   disabled={attachmentUploads > 0}
                   aria-label={file.kind === 'folder'
-                    ? language === 'zh' ? `移除文件夹 ${file.name}` : `Remove folder ${file.name}`
-                    : language === 'zh' ? `移除文件 ${file.name}` : `Remove ${file.name}`}
+                    ? uiText(language)('composer.removeFolder', { value1: file.name })
+                    : uiText(language)('composer.remove', { value1: file.name })}
                   title={file.kind === 'folder'
-                    ? language === 'zh' ? '移除文件夹' : 'Remove folder'
-                    : language === 'zh' ? '移除文件' : 'Remove file'}
-                  onClick={() => void removeFileAttachment(file).catch(error => showUiError(language === 'zh' ? '无法移除附件' : 'Unable to remove attachment', String(error)))}
+                    ? uiText(language)('composer.removeFolder_85e388c')
+                    : uiText(language)('composer.removeFile')}
+                  onClick={() => void removeFileAttachment(file).catch(error => showUiError(uiText(language)('composer.unableToRemoveAttachment'), String(error)))}
                 >
                   <X size={12} />
                 </button>
@@ -1513,15 +1501,15 @@ export function Composer({
             ))}
           </div>
         )}
-        {attachmentUploads > 0 && <div className="composer-attachment-progress" role="status">{language === 'zh' ? '正在准备附件…' : 'Preparing attachment…'}</div>}
+        {attachmentUploads > 0 && <div className="composer-attachment-progress" role="status">{uiText(language)('composer.preparingAttachment')}</div>}
         {goalDraft && (
           <div className="composer-command-mode goal" role="status">
             <Target size={15} />
-            <strong>{language === 'zh' ? '目标' : 'Goal'}</strong>
+            <strong>{uiText(language)('turnRuntimeDetails.goal')}</strong>
             <button
               type="button"
-              aria-label={language === 'zh' ? '退出目标模式' : 'Exit goal mode'}
-              title={language === 'zh' ? '退出目标模式' : 'Exit goal mode'}
+              aria-label={uiText(language)('composer.exitGoalMode')}
+              title={uiText(language)('composer.exitGoalMode')}
               onClick={() => {
                 onDraftChange(goalDraft.content);
                 focusComposer(goalDraft.content.length);
@@ -1624,21 +1612,13 @@ export function Composer({
           placeholder={
             !runtimeReady
               ? runtimeStartupFailed
-                ? language === 'zh' ? 'Runtime 启动失败，点击发送按钮重试' : 'Runtime failed to start. Use Send to retry'
-                : language === 'zh' ? 'CardBush Runtime 正在准备…' : 'CardBush Runtime is preparing...'
+                ? uiText(language)('composer.runtimeFailedToStartUseSendTo')
+                : uiText(language)('composer.cardbushRuntimeIsPreparing')
             : prediction ? prediction.text
             : simple ? "let's talk"
             : shadowActive
-              ? language === 'zh'
-                ? `回复 ${shadowAgentName || 'Shadow Agent'}…`
-                : `Reply to ${shadowAgentName || 'Shadow Agent'}...`
-              : language === 'zh'
-              ? compact
-                ? '问 cardbush 任何事。/ 选择功能，@ 引用'
-                : '给 cardbush 发消息…'
-              : compact
-                ? 'Ask cardbush anything. / for actions, @ to reference'
-                : 'Message cardbush...'
+              ? uiText(language)('composer.replyTo', { value1: shadowAgentName || 'Shadow Agent' })
+              : (compact ? uiText(language)('composer.askCardbushAnythingForActionsToReference') : uiText(language)('composer.messageCardbush'))
           }
         />
         <div className={`composer-footer${voiceComposer.visible ? ' is-voice-call' : ''}`}>
@@ -1646,21 +1626,21 @@ export function Composer({
           <div className="composer-tools">
             <ToolChip
               icon={<Plus size={15} />}
-              label={language === 'zh' ? '添加' : 'Add'}
+              label={uiText(language)('composer.add')}
               active={activeMenu === 'more'}
               menuTrigger
               onClick={(event) => toggleMenu('more', event)}
             />
             {prediction && <button type="button" id={predictionHintId} className="composer-prediction-accept"
               aria-keyshortcuts="Tab Enter"
-              aria-label={language === 'zh' ? '填入下一步预测，可编辑后发送' : 'Insert next-step prediction to edit before sending'}
-              onClick={acceptPrediction}><CornerDownLeft size={13}/>{language === 'zh' ? 'Tab / 回车填入' : 'Tab / Enter to insert'}</button>}
+              aria-label={uiText(language)('composer.insertNextStepPredictionToEditBefore')}
+              onClick={acceptPrediction}><CornerDownLeft size={13}/>{uiText(language)('composer.tabEnterToInsert')}</button>}
             {shadowAvailable && onToggleShadow && (
               <ToolChip
                 icon={<ShadowCloneIcon size={15} />}
                 label={shadowActive
-                  ? language === 'zh' ? '收起 Shadow' : 'Close Shadow'
-                  : language === 'zh' ? '打开 Shadow' : 'Open Shadow'}
+                  ? uiText(language)('composer.closeShadow')
+                  : uiText(language)('composer.openShadow')}
                 active={shadowActive}
                 onClick={onToggleShadow}
               />
@@ -1697,9 +1677,7 @@ export function Composer({
               type="button"
               data-composer-menu-trigger="true"
               title={
-                language === 'zh'
-                  ? `模型：${modelLabel}`
-                  : `Model: ${modelLabel}`
+                uiText(language)('composer.model', { modelLabel })
               }
               onClick={(event) => {
                 if (!hasConfiguredModels) {
@@ -1718,8 +1696,8 @@ export function Composer({
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
               disabled={submissionPending || attachmentUploads > 0 || (!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
-              title={[!sending && runtimeReady && !submissionPending ? (hasContent ? sendButtonLabel + ' · ' : '') + (language === 'zh' ? '长按语音通话' : 'Hold for a voice call') : sendButtonLabel, hasContent ? keyboardShortcuts.label('sendMessage') : '', sending && hasContent && keyboardShortcuts.label('guideNow') ? keyboardShortcuts.label('guideNow') + (language === 'zh' ? ' 立即引导' : ' Send guidance now') : ''].filter(Boolean).join(' · ')}
-              aria-label={!hasContent && !sending && runtimeReady && !submissionPending ? language === 'zh' ? '长按语音通话' : 'Hold for a voice call' : sendButtonLabel}
+              title={[!sending && runtimeReady && !submissionPending ? (hasContent ? sendButtonLabel + ' · ' : '') + (uiText(language)('composer.holdForAVoiceCall')) : sendButtonLabel, hasContent ? keyboardShortcuts.label('sendMessage') : '', sending && hasContent && keyboardShortcuts.label('guideNow') ? keyboardShortcuts.label('guideNow') + (uiText(language)('composer.sendGuidanceNow_1341d0b')) : ''].filter(Boolean).join(' · ')}
+              aria-label={!hasContent && !sending && runtimeReady && !submissionPending ? uiText(language)('composer.holdForAVoiceCall') : sendButtonLabel}
               aria-keyshortcuts={hasContent ? keyboardShortcuts.aria('sendMessage') : undefined}
               onClick={() => { if (!runtimeReady || hasContent || sending) void (runtimeReady && sending && !hasContent ? stopGeneration() : submit()); }}
             >
@@ -1740,9 +1718,7 @@ export function Composer({
       </div>
       {!compact && (
         <div className="composer-note">
-          {language === 'zh'
-            ? 'cardbush 可能出错，请核实重要信息'
-            : 'cardbush can make mistakes. Check important information.'}
+          {uiText(language)('composer.cardbushCanMakeMistakesCheckImportantInformation')}
         </div>
       )}
     </div>
@@ -1765,10 +1741,8 @@ function ComposerCommandPalette({
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const listRef = useRef<HTMLDivElement>(null);
-  const emptyLabel = mode === 'style' ? (language === 'zh' ? '没有匹配的风格，可在设置 → 个性化中添加' : 'No matching styles. Add one in Settings → Personalization') : mode === 'mention' ? (language === 'zh' ? '没有匹配的应用或引用' : 'No matching apps or references') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
-  const categories = language === 'zh'
-    ? { ssh: 'SSH 连接', actions: '快捷操作', apps: '应用', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', extracts: '已保存的对话提取', turns: '当前对话 · 用户指令' }
-    : { ssh: 'SSH connections', actions: 'Actions', apps: 'Applications', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', extracts: 'Saved conversation extracts', turns: 'This conversation · User instructions' };
+  const emptyLabel = mode === 'style' ? (uiText(language)('composer.noMatchingStylesAddOneInSettings')) : mode === 'mention' ? (uiText(language)('composer.noMatchingAppsOrReferences')) : mode === 'plugin' ? (uiText(language)('composer.noMatchingInstalledPlugins')) : uiText(language)('composer.noMatchingQuickActions');
+  const categories = ({ ssh: uiText(language)('agentConnectionForm.sshConnections'), actions: uiText(language)('composer.actions'), apps: uiText(language)('composer.applications'), plugins: uiText(language)('appCenterModel.plugins'), skills: uiText(language)('composer.skills'), commands: uiText(language)('composer.pluginCommands'), files: uiText(language)('composer.add'), browser: uiText(language)('composer.cardbushBrowser'), extracts: uiText(language)('composer.savedConversationExtracts'), turns: uiText(language)('composer.thisConversationUserInstructions') });
   useLayoutEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
     const list = listRef.current;
@@ -1782,8 +1756,8 @@ function ComposerCommandPalette({
   return (
     <div className="composer-command-palette">
       <header>
-        <strong>{mode === 'style' ? (language === 'zh' ? '对话风格' : 'Conversation styles') : mode === 'mention' ? (language === 'zh' ? '引用' : 'Reference') : mode === 'plugin' ? (language === 'zh' ? '插件' : 'Plugins') : language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
-        <span>{language === 'zh' ? '输入关键词筛选' : 'Type to filter'}</span>
+        <strong>{mode === 'style' ? (uiText(language)('composer.conversationStyles')) : mode === 'mention' ? (uiText(language)('composer.reference')) : mode === 'plugin' ? (uiText(language)('appCenterModel.plugins')) : uiText(language)('composer.quickActions')}</strong>
+        <span>{uiText(language)('composer.typeToFilter')}</span>
       </header>
       <div className="composer-command-list" ref={listRef}>
         {items.length === 0 ? (
@@ -2020,7 +1994,7 @@ function ComposerPopover({
       {!pickerMenu && (
         <header>
           <strong>{composerMenuTitle(menu, language)}</strong>
-          <button type="button" onClick={onClose} aria-label="close popover">
+          <button type="button" onClick={onClose} aria-label={uiText(language)('composer.close_popover')}>
             <X size={15} />
           </button>
         </header>
@@ -2030,15 +2004,15 @@ function ComposerPopover({
           <button className="composer-add-action" type="button" onClick={onPickAttachments}>
             <Paperclip size={18} />
             <span className="composer-add-copy">
-              <strong>{language === 'zh' ? '文件和文件夹' : 'Files and folders'}</strong>
-              <small>{language === 'zh' ? '添加到当前消息' : 'Attach to this message'}</small>
+              <strong>{uiText(language)('composer.filesAndFolders')}</strong>
+              <small>{uiText(language)('composer.attachToThisMessage')}</small>
             </span>
           </button>
           <button className="composer-add-action" type="button" role="switch" aria-checked={sourceEnabled}
-            aria-label="Source" onClick={() => onSourceChange(!sourceEnabled)}>
+            aria-label={uiText(language)('composer.source')} onClick={() => onSourceChange(!sourceEnabled)}>
             <Quote size={18} />
-            <span className="composer-add-copy"><strong>Source</strong>
-              <small>{language === 'zh' ? '为关键结论附上说明与依据，会增加少量用量' : 'Explain key claims with sources; uses additional tokens'}</small>
+            <span className="composer-add-copy"><strong>{uiText(language)('composer.source')}</strong>
+              <small>{uiText(language)('composer.explainKeyClaimsWithSourcesUsesAdditional')}</small>
             </span>
             <span className={`composer-add-toggle${sourceEnabled ? ' on' : ''}`} aria-hidden="true" />
           </button>
@@ -2048,23 +2022,23 @@ function ComposerPopover({
               type="button"
               role="switch"
               aria-checked={referencePlanEnabled}
-              aria-label={language === 'zh' ? '任务计划' : 'Task plan'}
+              aria-label={uiText(language)('messageBubble.taskPlan')}
               onClick={() => onSelectReferencePlanMode(referencePlanEnabled ? 'off' : 'auto')}
             >
               <ListChecks size={18} />
               <span className="composer-add-copy">
-                <strong>{language === 'zh' ? '任务计划' : 'Task plan'}</strong>
-                <small>{language === 'zh' ? '允许模型规划和更新任务步骤' : 'Let the model plan and update task steps'}</small>
+                <strong>{uiText(language)('messageBubble.taskPlan')}</strong>
+                <small>{uiText(language)('composer.letTheModelPlanAndUpdateTask')}</small>
               </span>
               <span className={`composer-add-toggle${referencePlanEnabled ? ' on' : ''}`} aria-hidden="true" />
             </button>
           )}
           <button className="composer-add-action" type="button" role="switch" aria-checked={memory.habits}
-            aria-label={language === 'zh' ? '个性化记忆' : 'Personalization memory'} onClick={() => memory.setHabits(!memory.habits)}>
+            aria-label={uiText(language)('composer.personalizationMemory')} onClick={() => memory.setHabits(!memory.habits)}>
             <Brain size={18} />
             <span className="composer-add-copy">
-              <strong>{language === 'zh' ? '个性化记忆' : 'Personalization memory'}</strong>
-              <small>{language === 'zh' ? '记住并参考用户习惯，从下一轮生效' : 'Remember and use habits next turn'}</small>
+              <strong>{uiText(language)('composer.personalizationMemory')}</strong>
+              <small>{uiText(language)('composer.rememberAndUseHabitsNextTurn')}</small>
             </span>
             <span className={`composer-add-toggle${memory.habits ? ' on' : ''}`} aria-hidden="true" />
           </button>
@@ -2091,21 +2065,17 @@ function ComposerPopover({
           ))}
           <section className="subagent-permission-routing">
             <div className="subagent-permission-routing-copy">
-              <strong>{language === 'zh' ? '子 Agent 权限管理' : 'Subagent permissions'}</strong>
+              <strong>{uiText(language)('composer.subagentPermissions')}</strong>
               <small>
                 {subagentPermissionRouting === 'user'
-                  ? language === 'zh'
-                    ? '父子 Agent 共同使用当前选择的权限。'
-                    : 'Parent and child Agents use the permission selected above.'
-                  : language === 'zh'
-                    ? '子 Agent 继承权限限制，额外请求转交父任务审批。'
-                    : 'Subagents inherit permission limits; extra requests go through the parent task.'}
+                  ? uiText(language)('composer.parentAndChildAgentsUseThePermission')
+                  : uiText(language)('composer.subagentsInheritPermissionLimitsExtraRequestsGo')}
               </small>
             </div>
             <div
               className={`subagent-routing-switch mode-${subagentPermissionRouting}`}
               role="group"
-              aria-label={language === 'zh' ? '子 Agent 权限路由' : 'Subagent permission routing'}
+              aria-label={uiText(language)('composer.subagentPermissionRouting')}
             >
               <button
                 type="button"
@@ -2113,7 +2083,7 @@ function ComposerPopover({
                 aria-pressed={subagentPermissionRouting === 'user'}
                 onClick={() => onSelectSubagentPermissionRouting('user')}
               >
-                {language === 'zh' ? '统一权限' : 'Unified'}
+                {uiText(language)('composer.unified')}
               </button>
               <button
                 type="button"
@@ -2121,7 +2091,7 @@ function ComposerPopover({
                 aria-pressed={subagentPermissionRouting === 'parent'}
                 onClick={() => onSelectSubagentPermissionRouting('parent')}
               >
-                {language === 'zh' ? '模型审批' : 'Model approval'}
+                {uiText(language)('composer.modelApproval')}
               </button>
             </div>
           </section>
@@ -2132,7 +2102,7 @@ function ComposerPopover({
         <div className="popover-list skill-popover-list">
           {skills.length === 0 ? (
             <p className="composer-popover-empty">
-              {language === 'zh' ? '暂无可用 skill' : 'No skills available'}
+              {uiText(language)('composer.noSkillsAvailable')}
             </p>
           ) : (
             skills.map((skill) => {
@@ -2151,7 +2121,7 @@ function ComposerPopover({
                     <span>
                       <strong>{skill.name}</strong>
                       <small>
-                        {language === 'zh' ? skill.descriptionZh : skill.description}
+                        {localizedContent({ zh: skill.descriptionZh, en: skill.description }, language)}
                       </small>
                     </span>
                   </button>
@@ -2160,24 +2130,16 @@ function ComposerPopover({
                     type="button"
                     title={
                       enabled
-                        ? language === 'zh'
-                          ? '禁用这个 skill'
-                          : 'Disable this skill'
-                        : language === 'zh'
-                          ? '启用这个 skill'
-                          : 'Enable this skill'
+                        ? uiText(language)('composer.disableThisSkill')
+                        : uiText(language)('composer.enableThisSkill')
                     }
                     onClick={() => onToggleSkill(skill.name, !enabled)}
                   >
                     {enabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
                     <span>
                       {enabled
-                        ? language === 'zh'
-                          ? '开'
-                          : 'On'
-                        : language === 'zh'
-                          ? '关'
-                          : 'Off'}
+                        ? uiText(language)('composer.on')
+                        : uiText(language)('composer.off')}
                     </span>
                   </button>
                 </div>
@@ -2189,7 +2151,7 @@ function ComposerPopover({
       {menu === 'models' && (
         <div className="model-picker-menu">
           <div className="model-picker-section-label">
-            {language === 'zh' ? '模型' : 'Model'}
+            {uiText(language)('composer.model_a67ac1c')}
           </div>
           {models.length === 0 ? (
             <button
@@ -2198,7 +2160,7 @@ function ComposerPopover({
               onClick={onConfigureModels}
             >
               <Box size={15} />
-              <span>{language === 'zh' ? '待配置，前往模型设置' : 'Configure models'}</span>
+              <span>{uiText(language)('composer.configureModels')}</span>
               <ArrowRight size={15} />
             </button>
           ) : (
@@ -2228,9 +2190,9 @@ function ComposerPopover({
           {reasoningLevelAvailable && reasoningLevels.length > 0 && (
             <div className="model-reasoning-section">
               <div className="model-picker-inline-label">
-                <span>{reasoningMode === 'budget' ? (language === 'zh' ? '思考预算' : 'Thinking budget')
-                  : reasoningMode === 'adaptive' ? (language === 'zh' ? '思考强度' : 'Thinking effort')
-                  : language === 'zh' ? '推理强度' : 'Reasoning effort'}</span>
+                <span>{reasoningMode === 'budget' ? (uiText(language)('composer.thinkingBudget'))
+                  : reasoningMode === 'adaptive' ? (uiText(language)('composer.thinkingEffort'))
+                  : uiText(language)('composer.reasoningEffort')}</span>
                 <span className="model-reasoning-current">
                   {reasoningLevel !== 'default' && <strong>{reasoningLevelLabel(reasoningLevel, language)}</strong>}
                   <button type="button" className="model-reasoning-default" aria-pressed={reasoningLevel === 'default'}
@@ -2278,8 +2240,8 @@ function ComposerPopover({
                     className={`model-reasoning-expand ${!reasoningExpanded && reasoningLevelGroups.secondary.includes(reasoningLevel) ? 'hidden-selection' : ''}`}
                     type="button"
                     aria-expanded={reasoningExpanded}
-                    aria-label={language === 'zh' ? (reasoningExpanded ? '收起其他推理强度' : '展开其他推理强度') : (reasoningExpanded ? 'Collapse other reasoning levels' : 'Show other reasoning levels')}
-                    title={language === 'zh' ? (reasoningExpanded ? '收起' : '显示其他强度') : (reasoningExpanded ? 'Collapse' : 'Show other levels')}
+                    aria-label={(reasoningExpanded ? uiText(language)('composer.collapseOtherReasoningLevels') : uiText(language)('composer.showOtherReasoningLevels'))}
+                    title={(reasoningExpanded ? uiText(language)('shadowTemporaryChat.collapse') : uiText(language)('composer.showOtherLevels'))}
                     onClick={() => setReasoningExpanded((current) => !current)}
                   >
                     <ChevronLeft size={14} />
@@ -2295,7 +2257,7 @@ function ComposerPopover({
             onClick={onConfigureModels}
           >
             <SlidersHorizontal size={15} />
-            <span>{language === 'zh' ? '管理模型' : 'Manage models'}</span>
+            <span>{uiText(language)('composer.manageModels')}</span>
             <ArrowRight size={15} />
           </button>
           </>}
@@ -2306,14 +2268,14 @@ function ComposerPopover({
 }
 
 function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLanguage) {
-  const labels: Record<Exclude<ComposerMenu, null>, { zh: string; en: string }> = {
-    more: { zh: '添加', en: 'Add' },
-    skills: { zh: 'Skills', en: 'Skills' },
-    models: { zh: '模型', en: 'Model' },
-    permissions: { zh: '权限中心', en: 'Permissions' },
-    teams: { zh: '选择 Team', en: 'Select team' },
+  const labels: Record<Exclude<ComposerMenu, null>, MessageKey> = {
+    more: 'composer.add',
+    skills: 'composer.skills_4b57155',
+    models: 'composer.model_a67ac1c',
+    permissions: 'composer.permissions',
+    teams: 'composer.selectTeam_f5d091c',
   };
-  return labels[menu][language];
+  return uiText(language)(labels[menu]);
 }
 
 function ComposerTeamPicker({ language, selectedId, onSelect, onClose }: { language: AppLanguage; selectedId: string; onSelect: (reference?: TeamPromptReference) => void; onClose: () => void }) {
@@ -2332,8 +2294,8 @@ function ComposerTeamPicker({ language, selectedId, onSelect, onClose }: { langu
     () => [
       {
         id: '',
-        name: language === 'zh' ? '不使用 Team' : 'No team',
-        description: language === 'zh' ? '移除当前 Team 选择' : 'Remove the selected team',
+        name: uiText(language)('composer.noTeam'),
+        description: uiText(language)('composer.removeTheSelectedTeam'),
       },
       ...teams,
     ],
@@ -2390,7 +2352,7 @@ function ComposerTeamPicker({ language, selectedId, onSelect, onClose }: { langu
 
   return (
     <div className="composer-team-picker">
-      <label><Search size={14} /><input autoFocus role="combobox" aria-label={language === 'zh' ? '搜索 Team' : 'Search teams'} aria-expanded="true" aria-controls={listboxId} aria-activedescendant={`${listboxId}-option-${activeIndex}`} aria-autocomplete="list" value={query} onChange={(event) => setQuery(event.currentTarget.value)} onKeyDown={handleKeyDown} placeholder={language === 'zh' ? '搜索 Team' : 'Search teams'} /></label>
+      <label><Search size={14} /><input autoFocus role="combobox" aria-label={uiText(language)('composer.searchTeams')} aria-expanded="true" aria-controls={listboxId} aria-activedescendant={`${listboxId}-option-${activeIndex}`} aria-autocomplete="list" value={query} onChange={(event) => setQuery(event.currentTarget.value)} onKeyDown={handleKeyDown} placeholder={uiText(language)('composer.searchTeams')} /></label>
       <div className="popover-list" id={listboxId} role="listbox">
         <button ref={(element) => { optionRefs.current[0] = element; }} id={`${listboxId}-option-0`} role="option" aria-selected={!selectedId} className={`popover-row ${selectedId ? '' : 'active'} ${activeIndex === 0 && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} onMouseEnter={() => setActiveIndex(0)} onClick={() => select('')}>
           <Circle size={14} /><span><strong>{options[0].name}</strong><small>{options[0].description}</small></span>{!selectedId && <Check size={14} />}
@@ -2399,23 +2361,23 @@ function ComposerTeamPicker({ language, selectedId, onSelect, onClose }: { langu
           const optionIndex = index + 1;
           return <button ref={(element) => { optionRefs.current[optionIndex] = element; }} id={`${listboxId}-option-${optionIndex}`} role="option" aria-selected={selectedId === team.id} className={`popover-row ${selectedId === team.id ? 'active' : ''} ${activeIndex === optionIndex && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} key={team.id} onMouseEnter={() => setActiveIndex(optionIndex)} onClick={() => select(team.id)}><UsersRound size={14} /><span><strong>{team.name}</strong><small>{team.description || team.id}</small></span>{selectedId === team.id && <Check size={14} />}</button>;
         })}
-        {!workspace.loading && teams.length === 0 && <p className="composer-popover-empty">{workspace.error || (language === 'zh' ? '没有可用 Team' : 'No teams available')}</p>}
+        {!workspace.loading && teams.length === 0 && <p className="composer-popover-empty">{workspace.error || (uiText(language)('composer.noTeamsAvailable'))}</p>}
       </div>
     </div>
   );
 }
 
 function reasoningLevelLabel(level: ReasoningLevel, language: AppLanguage) {
-  const labels: Record<ReasoningLevel, { zh: string; en: string }> = {
-    default: { zh: '默认', en: 'Default' },
-    none: { zh: '关闭', en: 'None' },
-    low: { zh: '低', en: 'Low' },
-    medium: { zh: '中', en: 'Medium' },
-    high: { zh: '高', en: 'High' },
-    xhigh: { zh: '超高', en: 'Extra high' },
-    max: { zh: '最高', en: 'Max' },
+  const labels: Record<ReasoningLevel, MessageKey> = {
+    default: 'agentDataSettings.default',
+    none: 'composer.none',
+    low: 'composer.low',
+    medium: 'composer.medium',
+    high: 'composer.high',
+    xhigh: 'composer.extraHigh',
+    max: 'composer.max',
   };
-  return labels[level][language];
+  return uiText(language)(labels[level]);
 }
 
 function splitReasoningLevels(levels: ReasoningLevel[]) {
@@ -2437,16 +2399,16 @@ function splitReasoningLevels(levels: ReasoningLevel[]) {
 }
 
 function reasoningLevelDescription(level: ReasoningLevel, language: AppLanguage) {
-  const descriptions: Record<ReasoningLevel, { zh: string; en: string }> = {
-    default: { zh: '使用当前模型的服务商默认值，不额外指定思考强度', en: 'Leave reasoning effort unspecified and use the provider default' },
-    none: { zh: '不分配推理预算，适合最低延迟请求', en: 'No reasoning budget for lowest-latency requests' },
-    low: { zh: '更快，适合直接问题', en: 'Faster for direct questions' },
-    medium: { zh: '质量与延迟的平衡档', en: 'Balanced quality and latency' },
-    high: { zh: '更深入分析复杂问题', en: 'Deeper analysis for complex work' },
-    xhigh: { zh: '适合高难度代理和长链路任务', en: 'For difficult agentic and long-horizon work' },
-    max: { zh: '当前模型支持的最大推理强度', en: 'Maximum reasoning effort supported by the current model' },
+  const descriptions: Record<ReasoningLevel, MessageKey> = {
+    default: 'composer.leaveReasoningEffortUnspecifiedAndUseThe',
+    none: 'composer.noReasoningBudgetForLowestLatencyRequests',
+    low: 'composer.fasterForDirectQuestions',
+    medium: 'composer.balancedQualityAndLatency',
+    high: 'composer.deeperAnalysisForComplexWork',
+    xhigh: 'composer.forDifficultAgenticAndLongHorizonWork',
+    max: 'composer.maximumReasoningEffortSupportedByTheCurrent',
   };
-  return descriptions[level][language];
+  return uiText(language)(descriptions[level]);
 }
 
 function compactTokenCount(value: number) {
@@ -2482,26 +2444,24 @@ function ContextWindowMeter({
     : 0;
   const valueLabel = usedTokens != null && maxTokens != null
     ? overflowTokens > 0
-      ? `${compactTokenCount(usedTokens)} / ${compactTokenCount(maxTokens)} · ${percentage}% · ${language === 'zh' ? '超出' : 'Over'} ${compactTokenCount(overflowTokens)}`
+      ? `${compactTokenCount(usedTokens)} / ${compactTokenCount(maxTokens)} · ${percentage}% · ${uiText(language)('composer.over')} ${compactTokenCount(overflowTokens)}`
       : `${compactTokenCount(usedTokens)} / ${compactTokenCount(maxTokens)} · ${percentage}%`
     : maxTokens != null
-      ? `${language === 'zh' ? '等待统计' : 'Pending'} / ${compactTokenCount(maxTokens)}`
+      ? `${uiText(language)('composer.pending')} / ${compactTokenCount(maxTokens)}`
       : usedTokens != null
-        ? `${compactTokenCount(usedTokens)} · ${language === 'zh' ? '上限未知' : 'Unknown limit'}`
-      : language === 'zh'
-        ? '等待用量统计'
-        : 'Waiting for usage';
+        ? `${compactTokenCount(usedTokens)} · ${uiText(language)('composer.unknownLimit')}`
+      : uiText(language)('composer.waitingForUsage');
 
   return (
     <div className={`model-context-section ${overflowTokens > 0 ? 'is-overflow' : ''}`}>
       <div className="model-picker-inline-label">
-        <span>{language === 'zh' ? '对话上下文窗口' : 'Conversation context window'}</span>
+        <span>{uiText(language)('composer.conversationContextWindow')}</span>
         <strong>{valueLabel}</strong>
       </div>
       <div
         className="model-context-progress"
         role="progressbar"
-        aria-label={language === 'zh' ? '对话上下文窗口占用' : 'Conversation context window usage'}
+        aria-label={uiText(language)('composer.conversationContextWindowUsage')}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={usedTokens != null && maxTokens != null ? progressPercentage : undefined}
@@ -2509,7 +2469,7 @@ function ContextWindowMeter({
         <span style={{ width: `${progressPercentage}%` }} />
       </div>
       {usage?.totalTokens != null && <div className="model-context-total">
-        <span>{language === 'zh' ? '总体上下文窗口' : 'Total context window'}</span>
+        <span>{uiText(language)('composer.totalContextWindow')}</span>
         <span>{compactTokenCount(usage.totalTokens)}</span>
       </div>}
     </div>

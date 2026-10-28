@@ -32,7 +32,8 @@
     "test:unit": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@cardbush/platform": "*"
   },
   "license": "Apache-2.0"
 }

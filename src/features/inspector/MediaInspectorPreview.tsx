@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useContext, useEffect, useRef, useState } from 'react';
 import { ConversationHostContext } from '../conversationHost';
 import { basename, mediaResourceUrl } from '../../shared/localPaths';
@@ -64,8 +65,8 @@ export function MediaInspectorPreview({ kind, source: rawSource, path, name: dis
   return (
     <div className="inspector-media-preview" ref={containerRef}
       onContextMenu={host ? undefined : event => openFileContextMenu(event, path, { language })}>
-      {!source ? <p role="status">{language === 'zh' ? '媒体地址不可用' : 'Media address unavailable'}</p> : kind === 'image' ? (
-        <button type="button" className="inspector-image-open" aria-label={language === 'zh' ? `查看 ${name}` : `View ${name}`}
+      {!source ? <p role="status">{uiText(language)('inlineMedia.mediaAddressUnavailable')}</p> : kind === 'image' ? (
+        <button type="button" className="inspector-image-open" aria-label={uiText(language)('mediaInspectorPreview.view', { name })}
           onClick={event => {
             const image = event.currentTarget.querySelector('img');
             setPreview({ src: source, path, name, naturalWidth: image?.naturalWidth, naturalHeight: image?.naturalHeight });
@@ -77,11 +78,9 @@ export function MediaInspectorPreview({ kind, source: rawSource, path, name: dis
       )}
       {error && (
         <div className="inspector-media-error" role="alert">
-          <p>{language === 'zh'
-            ? error === 'timeout' ? '媒体加载超时，请重试。' : '无法预览媒体，请检查文件是否存在、是否损坏或编码是否受支持。'
-            : error === 'timeout' ? 'Media loading timed out. Please retry.' : 'Unable to preview media. Check that the file exists and uses a supported encoding.'}</p>
+          <p>{(error === 'timeout' ? uiText(language)('mediaInspectorPreview.mediaLoadingTimedOutPleaseRetry') : uiText(language)('mediaInspectorPreview.unableToPreviewMediaCheckThatThe'))}</p>
           <button type="button" onClick={() => setRevision((value) => value + 1)}>
-            {language === 'zh' ? '重试' : 'Retry'}
+            {uiText(language)('common.retry')}
           </button>
         </div>
       )}

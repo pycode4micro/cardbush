@@ -9,10 +9,10 @@ import { windowsSftpPath, windowsShellPath, sshWorkspace, parseSshWorkspace } fr
 import { windowsTerminalCommand, windowsTerminalInput, windowsStopCommand, powershellQuote } from '../dist-electron/sshShell.mjs';
 
 test('Windows SSH separates native drive paths, SFTP identities and virtual roots', () => {
-  for (const path of ['C:\\Users\\111', 'C:/Users/111', '/C:/Users/111']) {
-    assert.equal(windowsSftpPath(path), '/C:/Users/111');
-    assert.equal(windowsShellPath(path), 'C:\\Users\\111');
-    assert.equal(parseSshWorkspace(sshWorkspace('fixture', path)).path, '/C:/Users/111');
+  for (const path of ['C:\\Users\\fixture', 'C:/Users/fixture', '/C:/Users/fixture']) {
+    assert.equal(windowsSftpPath(path), '/C:/Users/fixture');
+    assert.equal(windowsShellPath(path), 'C:\\Users\\fixture');
+    assert.equal(parseSshWorkspace(sshWorkspace('fixture', path)).path, '/C:/Users/fixture');
   }
   assert.equal(windowsShellPath('/D:/'), 'D:\\');
   assert.equal(windowsSftpPath('目录\\file.txt'), '目录/file.txt');

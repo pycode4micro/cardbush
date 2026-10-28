@@ -3,13 +3,17 @@
 .voice-hold-progress circle { fill:none; stroke:var(--accent,#72adff); stroke-width:1.5; stroke-linecap:round; stroke-dasharray:113.1; animation:voice-hold-ring .5s linear both; }
 @keyframes voice-hold-ring { from { stroke-dashoffset:113.1; } to { stroke-dashoffset:0; } }
 .voice-dictation-control { position:relative; display:flex; flex:0 0 28px; width:28px; height:28px; }
-.voice-dictation-button { display:flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--text-mid); cursor:pointer; }
+.voice-dictation-button { --button-press-scale:1; display:flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--text-mid); cursor:pointer; }
 .voice-dictation-button:hover:not(:disabled) { background:color-mix(in srgb,var(--text) 7%,transparent); }
 .voice-dictation-button.is-active { color:#368ded; }
 .theme-dark .voice-dictation-button.is-active { color:#70b1ff; }
 .voice-dictation-button:disabled { opacity:.4; cursor:default; }
-.voice-dictation-button:focus-visible,.voice-composer-end:focus-visible { outline:2px solid var(--accent,#70b1ff); outline-offset:3px; }
-.voice-dictation-error { position:absolute; bottom:calc(100% + 12px); right:0; width:260px; max-width:70vw; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--surface); color:var(--danger,#d85c5c); font-size:12px; line-height:1.5; box-shadow:0 6px 20px #0002; z-index:4; }
+.voice-dictation-button:focus-visible,.voice-dictation-error-close:focus-visible,.voice-composer-end:focus-visible { outline:2px solid var(--accent,#70b1ff); outline-offset:3px; }
+.voice-dictation-error { position:absolute; display:flex; align-items:flex-start; gap:8px; bottom:calc(100% + 12px); right:0; width:260px; max-width:70vw; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--surface); color:var(--danger,#d85c5c); font-size:12px; line-height:1.5; box-shadow:0 6px 20px #0002; z-index:4; }
+.voice-dictation-error-message { flex:1; min-width:0; overflow-wrap:anywhere; }
+.voice-dictation-error-close { --button-press-scale:1; flex:0 0 20px; display:flex; align-items:center; justify-content:center; width:20px; height:20px; padding:0; border:0; border-radius:4px; background:transparent; color:var(--text-mid); cursor:pointer; }
+.voice-dictation-error-close:hover { background:var(--hover); color:var(--text); }
+.voice-dictation-error-close > svg { width:14px; height:14px; }
 .composer-footer { position:relative; }
 .composer-footer.is-voice-call > :is(.composer-tools,.composer-actions) { visibility:hidden; pointer-events:none; }
 .voice-composer-call { display:flex; align-items:center; gap:14px; min-width:0; height:36px; color:var(--text); }

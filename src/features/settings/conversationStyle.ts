@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { normalizeConversationStyle, type ConversationStyleSettings } from '@cardbush/bush-product-agent';
 
 export interface NamedConversationStyle { id: string; name: string; instructions: string }
@@ -11,9 +12,9 @@ const presetIds = ['natural', 'professional', 'concise'];
 const legacyId = 'custom-legacy';
 const draftKey = 'cardbush_conversation_style_draft';
 export const conversationStylePresets = [
-  { id: 'natural', zh: '自然', en: 'Natural' },
-  { id: 'professional', zh: '专业', en: 'Professional' },
-  { id: 'concise', zh: '直率', en: 'Direct' },
+  { id: 'natural', labelKey: 'conversationStyle.natural' as const },
+  { id: 'professional', labelKey: 'conversationStyle.professional' as const },
+  { id: 'concise', labelKey: 'conversationStyle.direct' as const },
 ];
 
 /** Keep the transport small: the model receives only the selected tone. */
@@ -44,9 +45,10 @@ export function normalizeConversationStylePreferences(value: unknown): Conversat
   return { ...selectedStyle(styles, defaultId), defaultId, styles };
 }
 
-export function conversationStyleName(id: string, preferences: ConversationStylePreferences, language: 'zh' | 'en'): string {
-  return conversationStylePresets.find(style => style.id === id)?.[language]
-    ?? (preferences.styles.find(style => style.id === id)?.name || (language === 'zh' ? '自定义' : 'Custom'));
+export function conversationStyleName(id: string, preferences: ConversationStylePreferences, language: string): string {
+  const preset = conversationStylePresets.find(style => style.id === id);
+  return (preset && uiText(language)(preset.labelKey))
+    ?? (preferences.styles.find(style => style.id === id)?.name || (uiText(language)('conversationStyle.custom')));
 }
 
 export function readConversationStyle(): ConversationStylePreferences {

@@ -310,7 +310,7 @@
   position: relative;
   container: composer / inline-size;
   width: 100%;
-  padding: 10px 8px 8px 12px;
+  padding: 16px 8px 8px 12px;
   cursor: text;
   background:
     linear-gradient(

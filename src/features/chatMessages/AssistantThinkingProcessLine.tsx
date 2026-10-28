@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ChevronDown, LoaderCircle } from 'lucide-react';
 import { createContext, useContext, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { HoverPreview, useHoverPreview } from '../../components/HoverPreview';
@@ -66,17 +67,15 @@ export function TurnChangeSummary({ summary, language, onOpen, onContextMenu }: 
       if (first) first.focus();
       else { focusRequested.current = true; preview.open(event.currentTarget); }
     }}
-    aria-label={language === 'zh'
-      ? `本轮 ${summary.fileCount} 个文件改动，新增 ${summary.additions} 行，删除 ${summary.deletions} 行`
-      : `${summary.fileCount} changed files, ${summary.additions} additions, ${summary.deletions} deletions`}>
-    <span>file {summary.fileCount}</span><span className="turn-change-separator" aria-hidden="true">|</span>
+    aria-label={uiText(language)('assistantThinkingProcessLine.changedFilesAdditionsDeletions', { value1: summary.fileCount, value2: summary.additions, value3: summary.deletions })}>
+    <span>{uiText(language)('assistantThinkingProcessLine.file')}{summary.fileCount}</span><span className="turn-change-separator" aria-hidden="true">|</span>
     <b className="diff-count add">+{summary.additions}</b><b className="diff-count del">-{summary.deletions}</b>
   </div>
-    <HoverPreview preview={preview} placement="top" className="turn-change-preview" interactiveLabel={language === 'zh' ? '本轮文件改动' : 'Changed files this turn'}>
+    <HoverPreview preview={preview} placement="top" className="turn-change-preview" interactiveLabel={uiText(language)('assistantThinkingProcessLine.changedFilesThisTurn')}>
       {preview.anchor && <ul className="turn-change-files">
         {summary.files.map(file => <li key={file.path}><button type="button" className="turn-change-file-action" disabled={!onOpen}
           title={file.path}
-          aria-label={language === 'zh' ? `查看 ${file.path} 的改动` : `Review changes to ${file.path}`}
+          aria-label={uiText(language)('assistantThinkingProcessLine.reviewChangesTo', { value1: file.path })}
           onContextMenu={onContextMenu ? event => {
             const completion = onContextMenu(event, file.path);
             if (completion) preview.keepOpenUntil(completion);
@@ -129,7 +128,7 @@ export function AssistantThinkingDetail({ language, model, execution, notice, st
           </span>
         )}
         <span className="assistant-thinking-label">
-          {statusLabel ?? (execution ? activeToolStatusLabel(execution, language) : language === 'zh' ? '思考中' : 'Thinking')}
+          {statusLabel ?? (execution ? activeToolStatusLabel(execution, language) : uiText(language)('assistantThinkingProcessLine.thinking'))}
         </span>
         {thinking && <>
           <small>{thinking.preview}</small>

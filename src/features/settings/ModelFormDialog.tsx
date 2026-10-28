@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Download } from 'lucide-react';
 import { SettingsFormDialog } from './SettingsFormDialog';
@@ -19,7 +20,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
   onCancel: () => void; onSave: (model: ManagedModelConfig) => Promise<void>; discoverModels?: DiscoverModels;
   allowChatGpt?: boolean;
 }) {
-  const zh = language === 'zh';
+
   const [name, setName] = useState(model?.modelName ?? '');
   const [authentication, setAuthentication] = useState<'api_key' | 'chatgpt'>(model?.authentication?.kind ?? 'api_key');
   const [accountId, setAccountId] = useState(model?.authentication?.kind === 'chatgpt' ? model.authentication.accountId : '');
@@ -52,7 +53,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
     setFormError('');
     try {
       if (!chatGpt) modelApiBaseURL(apiProtocol, baseUrl);
-      if (chatGpt && (!allowChatGpt || !accountId)) throw Error(zh ? '请先选择本机 ChatGPT 账号。' : 'Select a local ChatGPT account first.');
+      if (chatGpt && (!allowChatGpt || !accountId)) throw Error(uiText(language)('modelFormDialog.selectALocalChatgptAccountFirst'));
       await onSave({ ...model, id: model?.id ?? crypto.randomUUID(), modelName: name.trim(), provider: chatGpt ? 'openai' : provider,
         authentication: chatGpt ? { kind: 'chatgpt', accountId } : { kind: 'api_key' },
         apiProtocol, baseUrl: chatGpt ? SIWC.resource : baseUrl.trim(), apiKey: chatGpt ? '' : key.trim(), defaultHeaders: chatGpt ? {} : readHeaders(),
@@ -62,16 +63,16 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
     } catch (failure) { setFormError(agentErrorText(failure)); }
   };
   return <SettingsFormDialog className="model-config-dialog" language={language} busy={busy} onCancel={onCancel} onSubmit={submit}
-    title={model ? zh ? '编辑模型' : 'Edit model' : zh ? '添加模型' : 'Add model'}
-    description={zh ? '选择接入协议，填写服务地址和模型信息。' : 'Choose an API protocol and configure the model connection.'}
-    footer={<><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{zh ? '取消' : 'Cancel'}</button>
-      <button type="submit" className="primary-button" disabled={busy || !name.trim() || !provider}>{busy ? zh ? '保存中…' : 'Saving…' : zh ? '保存模型' : 'Save model'}</button></>}>
+    title={model ? uiText(language)('modelConfigRow.editModel') : uiText(language)('modelFormDialog.addModel')}
+    description={uiText(language)('modelFormDialog.chooseAnApiProtocolAndConfigureThe')}
+    footer={<><button type="button" className="secondary-button" disabled={busy} onClick={onCancel}>{uiText(language)('agentConnectionForm.cancel')}</button>
+      <button type="submit" className="primary-button" disabled={busy || !name.trim() || !provider}>{busy ? uiText(language)('automationPanel.saving') : uiText(language)('modelFormDialog.saveModel')}</button></>}>
       <fieldset disabled={busy} className="agent-model-fields">
-        {(allowChatGpt && window.cardbushDesktop?.siwcSnapshot || chatGpt) && <label className="settings-field"><span>{zh ? '授权方式' : 'Authentication'}</span>
-          <SettingsDropdown label={zh ? '授权方式' : 'Authentication'} value={authentication} options={[{ value: 'api_key', label: 'API Key' }, { value: 'chatgpt', label: 'ChatGPT · SIWC', disabled: !allowChatGpt }]}
+        {(allowChatGpt && window.cardbushDesktop?.siwcSnapshot || chatGpt) && <label className="settings-field"><span>{uiText(language)('modelFormDialog.authentication')}</span>
+          <SettingsDropdown label={uiText(language)('modelFormDialog.authentication')} value={authentication} options={[{ value: 'api_key', label: uiText(language)('modelFormDialog.api_key_0533a4d') }, { value: 'chatgpt', label: 'ChatGPT · SIWC', disabled: !allowChatGpt }]}
             onChange={value => { setAuthentication(value as 'api_key' | 'chatgpt'); if (value === 'chatgpt') setApiProtocol('openai_responses'); changedConnection(); }}/></label>}
         {chatGpt ? allowChatGpt ? <SiwcModelConnection language={language} accountId={accountId} onAccountChange={setAccountId} modelName={name} onModelChange={setName}/>
-          : <p className="model-connection-note">{zh ? 'ChatGPT 账号保存在本机。请为此远程 Agent 改用 API Key。' : 'ChatGPT accounts stay on this device. Choose API Key for this remote Agent.'}</p> : <>
+          : <p className="model-connection-note">{uiText(language)('modelFormDialog.chatgptAccountsStayOnThisDeviceChoose')}</p> : <>
         <div className="model-form-grid"><ModelProviderSelect language={language} value={providerSelection} options={providerOptions} onChange={value => {
           setProviderSelection(value);
           // Do not overwrite an existing connection when only changing its label.
@@ -80,43 +81,43 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
           }
           changedConnection();
         }}/>
-          <label className="settings-field"><span>{zh ? '接入协议' : 'API protocol'}</span><SettingsDropdown label={zh ? '接入协议' : 'API protocol'} value={apiProtocol} options={modelProtocols}
+          <label className="settings-field"><span>{uiText(language)('modelFormDialog.apiProtocol')}</span><SettingsDropdown label={uiText(language)('modelFormDialog.apiProtocol')} value={apiProtocol} options={modelProtocols}
             onChange={value => { setApiProtocol(value as ModelApiProtocol); changedConnection(); }}/></label></div>
-        {providerSelection === customProviderValue && <SettingsInput label={zh ? '模型商名称' : 'Provider name'} value={customProvider} placeholder="myprovider" onChange={setCustomProvider}/>}
-        <SettingsInput label={zh ? 'API 地址' : 'API base URL'} type="url" value={baseUrl} placeholder={protocol.baseUrl} onChange={value => { setBaseUrl(value); changedConnection(); }}/>
-        <p className="model-field-hint">{zh ? `填写 API 根地址，请求会发送到 ${protocol.path}。` : `Enter the API root; requests will use ${protocol.path}.`}</p>
-        <SettingsInput label="API Key" type="password" value={key} placeholder={hasKey ? zh ? '已保存，留空保留' : 'Saved; leave blank to keep' : zh ? '模型服务的 API Key' : 'Provider API key'} onChange={value => { setKey(value); changedConnection(); }}/>
+        {providerSelection === customProviderValue && <SettingsInput label={uiText(language)('modelFormDialog.providerName')} value={customProvider} placeholder={uiText(language)('modelFormDialog.myprovider')} onChange={setCustomProvider}/>}
+        <SettingsInput label={uiText(language)('modelFormDialog.apiBaseUrl')} type="url" value={baseUrl} placeholder={protocol.baseUrl} onChange={value => { setBaseUrl(value); changedConnection(); }}/>
+        <p className="model-field-hint">{uiText(language)('modelFormDialog.enterTheApiRootRequestsWillUse', { value1: protocol.path })}</p>
+        <SettingsInput label={uiText(language)('modelFormDialog.api_key')} type="password" value={key} placeholder={hasKey ? uiText(language)('modelFormDialog.savedLeaveBlankToKeep') : uiText(language)('modelFormDialog.providerApiKey')} onChange={value => { setKey(value); changedConnection(); }}/>
         </>}
-        <div className="model-name-row"><SettingsInput label={zh ? '模型名称' : 'Model name'} value={name} placeholder={gateway === 'openrouter' ? 'provider/model-id' : apiProtocol === 'anthropic_messages' ? 'claude-sonnet-4-6' : 'gpt-6-luna'} onChange={setName}/>
-          {!chatGpt && discoverModels && <button type="button" className="secondary-button model-fetch-button" disabled={discovering || !key.trim()} title={hasKey && !key.trim() ? zh ? '获取列表需要重新输入 API Key' : 'Re-enter the API key to fetch models' : undefined}
+        <div className="model-name-row"><SettingsInput label={uiText(language)('modelFormDialog.modelName')} value={name} placeholder={gateway === 'openrouter' ? 'provider/model-id' : apiProtocol === 'anthropic_messages' ? 'claude-sonnet-4-6' : 'gpt-6-luna'} onChange={setName}/>
+          {!chatGpt && discoverModels && <button type="button" className="secondary-button model-fetch-button" disabled={discovering || !key.trim()} title={hasKey && !key.trim() ? uiText(language)('modelFormDialog.reEnterTheApiKeyToFetch') : undefined}
             onClick={async () => {
               const version = discoveryVersion.current; setDiscovering(true); setFormError('');
               try { const result = await discoverModels(modelApiBaseURL(apiProtocol, baseUrl), key.trim(), { apiProtocol, defaultHeaders: readHeaders() });
-                if (mounted.current && version === discoveryVersion.current) { setDiscovered(result.models); if (!result.models.length) setFormError(zh ? '没有返回模型，请手动填写名称。' : 'No models returned. Enter a model name manually.'); } }
+                if (mounted.current && version === discoveryVersion.current) { setDiscovered(result.models); if (!result.models.length) setFormError(uiText(language)('modelFormDialog.noModelsReturnedEnterAModelName')); } }
               catch (failure) { if (mounted.current && version === discoveryVersion.current) setFormError(agentErrorText(failure)); }
               finally { if (mounted.current) setDiscovering(false); }
-            }}><Download size={14}/>{discovering ? zh ? '获取中…' : 'Fetching…' : zh ? '获取列表' : 'Fetch models'}</button>}</div>
-        {discovered.length > 0 && <SettingsDropdown label={zh ? '选择模型' : 'Choose model'} value={name} options={discovered.map(value => ({ value, label: value }))} onChange={setName}/>}
-        <label className="settings-field"><span>{zh ? '思考强度' : 'Reasoning effort'}</span>
-          <SettingsDropdown label={zh ? '思考强度' : 'Reasoning effort'} value={effectiveReasoning}
+            }}><Download size={14}/>{discovering ? uiText(language)('modelFormDialog.fetching') : uiText(language)('modelFormDialog.fetchModels')}</button>}</div>
+        {discovered.length > 0 && <SettingsDropdown label={uiText(language)('modelFormDialog.chooseModel')} value={name} options={discovered.map(value => ({ value, label: value }))} onChange={setName}/>}
+        <label className="settings-field"><span>{uiText(language)('modelFormDialog.reasoningEffort')}</span>
+          <SettingsDropdown label={uiText(language)('modelFormDialog.reasoningEffort')} value={effectiveReasoning}
             options={(['default', ...reasoningEffortsForProtocol(apiProtocol)] as ReasoningLevel[]).map(value => ({ value, label: modelReasoningLabel(value, language) }))}
             onChange={value => setReasoning(value as ReasoningLevel)}/>
-          <small className="model-field-hint">{zh ? '仅用于这个模型，切换模型时自动切换。未指定时使用服务商默认；具体档位需由模型支持。' : 'Saved for this model and restored when switching models. Provider default leaves effort unspecified; individual levels require model support.'}</small>
+          <small className="model-field-hint">{uiText(language)('modelFormDialog.savedForThisModelAndRestoredWhen')}</small>
         </label>
-        {gateway === 'opencode' && <p className="model-connection-note">{zh ? '已支持 OpenCode：自动传入当前对话的会话 ID 和 CardBush 标识，无需手动填写。' : 'OpenCode: the conversation ID and CardBush user agent are sent automatically.'}</p>}
-        {gateway === 'openrouter' && <p className="model-connection-note">{zh ? 'OpenRouter：自动携带当前对话 ID 和 CardBush 标识。模型名称请使用列表中的完整 ID，例如 provider/model-id。' : 'OpenRouter: the current conversation ID and CardBush identifier are sent automatically. Use the full model ID from the list, such as provider/model-id.'}</p>}
-        <button type="button" className="model-advanced-disclosure" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}><ChevronDown size={14}/>{zh ? '高级选项' : 'Advanced options'}</button>
+        {gateway === 'opencode' && <p className="model-connection-note">{uiText(language)('modelFormDialog.opencodeTheConversationIdAndCardbushUser')}</p>}
+        {gateway === 'openrouter' && <p className="model-connection-note">{uiText(language)('modelFormDialog.openrouterTheCurrentConversationIdAndCardbush')}</p>}
+        <button type="button" className="model-advanced-disclosure" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}><ChevronDown size={14}/>{uiText(language)('modelFormDialog.advancedOptions')}</button>
         {advanced && <div className="model-advanced-fields">
-          {apiProtocol === 'anthropic_messages' && <label className="settings-field"><span>{zh ? '思考参数模式' : 'Thinking parameters'}</span>
-            <SettingsDropdown label={zh ? '思考参数模式' : 'Thinking parameters'} value={anthropicThinkingMode} onChange={value => setAnthropicThinkingMode(value as 'adaptive' | 'budget')}
-              options={[{ value: 'adaptive', label: zh ? '自适应（较新模型）' : 'Adaptive (newer models)' }, { value: 'budget', label: zh ? 'Token 预算（旧模型）' : 'Token budget (older models)' }]}/>
-            <small className="model-field-hint">{zh ? '选择推理强度时使用；未指定强度时遵循服务商默认。' : 'Used when a reasoning effort is selected; otherwise provider defaults apply.'}</small></label>}
-          <div className="model-form-grid"><SettingsInput label={zh ? '总体上下文窗口（tokens）' : 'Total context window (tokens)'} type="number" value={context} placeholder={String(DEFAULT_MAX_CONTEXT_TOKENS)} onChange={setContext}/>
-            {!chatGpt && <SettingsInput label={zh ? '最大输出 tokens' : 'Maximum output tokens'} type="number" value={completion} placeholder={String(DEFAULT_MAX_OUTPUT_TOKENS)} onChange={setCompletion}/>}</div>
+          {apiProtocol === 'anthropic_messages' && <label className="settings-field"><span>{uiText(language)('modelFormDialog.thinkingParameters')}</span>
+            <SettingsDropdown label={uiText(language)('modelFormDialog.thinkingParameters')} value={anthropicThinkingMode} onChange={value => setAnthropicThinkingMode(value as 'adaptive' | 'budget')}
+              options={[{ value: 'adaptive', label: uiText(language)('modelFormDialog.adaptiveNewerModels') }, { value: 'budget', label: uiText(language)('modelFormDialog.tokenBudgetOlderModels') }]}/>
+            <small className="model-field-hint">{uiText(language)('modelFormDialog.usedWhenAReasoningEffortIsSelected')}</small></label>}
+          <div className="model-form-grid"><SettingsInput label={uiText(language)('modelFormDialog.totalContextWindowTokens')} type="number" value={context} placeholder={String(DEFAULT_MAX_CONTEXT_TOKENS)} onChange={setContext}/>
+            {!chatGpt && <SettingsInput label={uiText(language)('modelFormDialog.maximumOutputTokens')} type="number" value={completion} placeholder={String(DEFAULT_MAX_OUTPUT_TOKENS)} onChange={setCompletion}/>}</div>
           <ModelContextWindow language={language} contextTokens={context.trim() ? Number(context) : DEFAULT_MAX_CONTEXT_TOKENS}
             outputTokens={!chatGpt && completion.trim() ? Number(completion) : undefined}/>
-          {!chatGpt && <><label className="settings-field"><span>{zh ? '自定义请求头（JSON）' : 'Custom headers (JSON)'}</span><textarea rows={4} value={headers} spellCheck={false} placeholder={'{\n  "x-session-id": "{{sessionId}}"\n}'} onChange={event => { setHeaders(event.currentTarget.value); changedConnection(); }}/></label>
-          <p className="model-field-hint">{zh ? '可使用 {{sessionId}} 引用当前对话 ID；同一对话的后续请求保持一致。' : 'Use {{sessionId}} for the stable ID of the current conversation.'}</p></>}
+          {!chatGpt && <><label className="settings-field"><span>{uiText(language)('modelFormDialog.customHeadersJson')}</span><textarea rows={4} value={headers} spellCheck={false} placeholder={'{\n  "x-session-id": "{{sessionId}}"\n}'} onChange={event => { setHeaders(event.currentTarget.value); changedConnection(); }}/></label>
+          <p className="model-field-hint">{uiText(language)('modelFormDialog.useForTheStableIdOfThe')}</p></>}
         </div>}
         {(formError || error) && <p className="settings-inline-error" role="alert">{formError || error}</p>}
       </fieldset>

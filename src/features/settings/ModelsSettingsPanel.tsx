@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
 import { ModelFormDialog } from './ModelFormDialog';
@@ -20,7 +21,7 @@ export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visua
   scopeName?: string; visionControl?: ReactNode; discoverModels?: DiscoverModels; onSelect?: (id: string) => void;
   defaultSelection?: boolean;
 }) {
-  const zh = language === 'zh';
+
   const [config, setConfig] = useState(models);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState('');
@@ -35,16 +36,16 @@ export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visua
     try {
       for (const model of next.models) {
         for (const limit of [model.maxContextTokens, model.maxCompletionTokens]) {
-          if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw Error(zh ? 'Token 上限请输入正整数。' : 'Token limits must be positive integers.');
+          if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw Error(uiText(language)('modelsSettingsPanel.tokenLimitsMustBePositiveIntegers'));
         }
         if ((model.maxCompletionTokens ?? DEFAULT_MAX_OUTPUT_TOKENS) >= (model.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS)) {
-          throw Error(zh ? '最大输出 tokens 必须小于总体上下文窗口。' : 'Maximum output tokens must be below the total context window.');
+          throw Error(uiText(language)('modelsSettingsPanel.maximumOutputTokensMustBeBelowThe'));
         }
       }
       setConfig(await onSave(next));
-      setNotice(scopeName ? (zh ? `已保存到 ${scopeName}` : `Saved to ${scopeName}`) : (zh ? '已保存' : 'Saved'));
+      setNotice(scopeName ? (uiText(language)('modelsSettingsPanel.savedTo', { scopeName })) : (uiText(language)('modelsSettingsPanel.saved')));
       try { await onRefresh(); }
-      catch (error) { setError(`${zh ? '已保存，但刷新失败：' : 'Saved, but refresh failed: '}${agentErrorText(error)}`); }
+      catch (error) { setError(`${uiText(language)('modelsSettingsPanel.savedButRefreshFailed')}${agentErrorText(error)}`); }
       return true;
     } catch (error) { setError(agentErrorText(error)); return false; }
     finally { saving.current = false; setBusy(false); }
@@ -55,19 +56,19 @@ export function ModelsSettingsPanel({ language, models, onSave, onRefresh, visua
   for (const model of config.models) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model]);
   return <div className="settings-stack model-settings-stack agent-model-settings">
     {error && <p className="settings-inline-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    <SettingsCard title={zh ? '模型输入' : 'Model input'}>{visionControl ?? <SettingsSwitch title={zh ? '视觉功能' : 'Vision input'}
+    <SettingsCard title={uiText(language)('modelsSettingsPanel.modelInput')}>{visionControl ?? <SettingsSwitch title={uiText(language)('modelsSettingsPanel.visionInput')}
       subtitle={visualInputAvailable
-        ? (zh ? '允许模型直接接收图片。请使用支持视觉输入的模型；关闭后仍可通过文件工具处理图片。' : 'Allow native image input with a vision-capable model. File tools remain available when disabled.')
-        : (zh ? '更新此 Agent 服务后可开启视觉输入。关闭时仍可通过文件工具处理图片。' : 'Update this Agent service to enable vision input. File tools can still process images while it is off.')}
+        ? (uiText(language)('modelsSettingsPanel.allowNativeImageInputWithAVision'))
+        : (uiText(language)('modelsSettingsPanel.updateThisAgentServiceToEnableVision'))}
       checked={visualInputEnabled} disabled={!visualInputAvailable} onChange={onVisualInputEnabledChange}/>}</SettingsCard>
-    <SettingsCard title={zh ? '已配置模型' : 'Configured models'} subtitle={zh ? config.models.length + ' 个模型' : config.models.length + ' models'}
+    <SettingsCard title={uiText(language)('modelsSettingsPanel.configuredModels')} subtitle={uiText(language)('modelsSettingsPanel.models', { value1: config.models.length })}
       headerAction={<div className="settings-actions">
         {config.models.length > 0 && <button type="button" className="secondary-button" disabled={busy} onClick={async () => {
-          if (await confirmAction({ title: zh ? '清空模型配置' : 'Clear model configurations', message: zh ? '删除此环境的所有模型配置？' : 'Delete every model configuration in this environment?', confirmLabel: zh ? '清空' : 'Clear all', cancelLabel: zh ? '取消' : 'Cancel' })) void save({ defaultModelId: '', models: [] });
-        }}>{zh ? '清空' : 'Clear all'}</button>}
-        <button type="button" className="primary-button" disabled={busy} onClick={() => { setAdding(true); setEditing(''); setError(''); setNotice(''); }}><Plus size={14}/>{zh ? '添加模型' : 'Add model'}</button>
+          if (await confirmAction({ title: uiText(language)('modelsSettingsPanel.clearModelConfigurations'), message: uiText(language)('modelsSettingsPanel.deleteEveryModelConfigurationInThisEnvironment'), confirmLabel: uiText(language)('modelsSettingsPanel.clearAll'), cancelLabel: uiText(language)('agentConnectionForm.cancel') })) void save({ defaultModelId: '', models: [] });
+        }}>{uiText(language)('modelsSettingsPanel.clearAll')}</button>}
+        <button type="button" className="primary-button" disabled={busy} onClick={() => { setAdding(true); setEditing(''); setError(''); setNotice(''); }}><Plus size={14}/>{uiText(language)('modelFormDialog.addModel')}</button>
       </div>}>
-      {config.models.length === 0 ? <p className="settings-empty-state">{zh ? '添加模型后即可开始对话。' : 'Add a model to start chatting.'}</p> :
+      {config.models.length === 0 ? <p className="settings-empty-state">{uiText(language)('modelsSettingsPanel.addAModelToStartChatting')}</p> :
         <div className="model-provider-list">{[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([provider, entries]) => <section className="model-provider-group" key={provider}>
           <header><strong>{provider}</strong><span>{entries.length}</span></header>
           {entries.map(model => <div className="agent-model-entry" key={model.id}>

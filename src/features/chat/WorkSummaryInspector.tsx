@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Suspense } from 'react';
 import type { AppLanguage, ChatMessage } from '../../types';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
@@ -23,7 +24,7 @@ export function WorkSummaryInspector({ detail, messages, language, active = true
   active?: boolean;
   conversationOptions?: SubagentConversationOptions;
 }) {
-  return <Suspense fallback={<div className="deferred-module-notice" role="status">{language === 'zh' ? '正在加载执行详情…' : 'Loading execution details…'}</div>}>
+  return <Suspense fallback={<div className="deferred-module-notice" role="status">{uiText(language)('workSummaryInspector.loadingExecutionDetails')}</div>}>
     {detail.kind === 'turn-history'
       ? <TurnHistoryInspector detail={detail} messages={messages} language={language} active={active}/>
       : detail.kind === 'agent-definition'

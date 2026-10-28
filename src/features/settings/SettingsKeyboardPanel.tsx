@@ -1,3 +1,4 @@
+import { uiText, uiLanguages } from '../../i18n';
 import { RotateCcw, Search, X } from 'lucide-react';
 import { useState } from 'react';
 import type { AppLanguage } from '../../types';
@@ -8,20 +9,20 @@ import { SettingsCard } from './SettingsControls';
 import './keyboardSettings.css';
 
 export function SettingsKeyboardPanel({ language }: { language: AppLanguage }) {
-  const zh = language === 'zh';
+
   const shortcuts = useKeyboardShortcuts();
   const [query, setQuery] = useState('');
   const [recording, setRecording] = useState<ShortcutId | null>(null);
   const [error, setError] = useState('');
   const [errorId, setErrorId] = useState<ShortcutId | null>(null);
   const groups = [
-    { id: 'application', title: zh ? '应用' : 'Application' },
-    { id: 'conversation', title: zh ? '对话' : 'Conversation' },
-    { id: 'inspector', title: zh ? '右侧栏' : 'Right sidebar' },
-    { id: 'image', title: zh ? '图片预览' : 'Image preview' },
+    { id: 'application', title: uiText(language)('settingsKeyboardPanel.application') },
+    { id: 'conversation', title: uiText(language)('settingsKeyboardPanel.conversation') },
+    { id: 'inspector', title: uiText(language)('settingsKeyboardPanel.rightSidebar') },
+    { id: 'image', title: uiText(language)('settingsKeyboardPanel.imagePreview') },
   ] as const;
   const filtered = shortcutDefinitions.filter(item => {
-    const text = [item.title.zh, item.title.en, item.description.zh, item.description.en, shortcuts.label(item.id)].join(' ').toLowerCase();
+    const text = [...uiLanguages.flatMap(locale => [uiText(locale.locale)(item.title), uiText(locale.locale)(item.description)]), shortcuts.label(item.id)].join(' ').toLowerCase();
     return query.trim().toLowerCase().split(/\s+/).every(term => text.includes(term));
   });
 
@@ -30,7 +31,7 @@ export function SettingsKeyboardPanel({ language }: { language: AppLanguage }) {
     const candidate = binding === undefined ? shortcutDefinitions.find(item => item.id === id)!.defaultBinding : binding;
     const conflict = shortcuts.conflict(id, candidate);
     if (conflict) {
-      setError(zh ? '与“' + conflict.title.zh + '”冲突，请换一个组合。' : 'Already used by “' + conflict.title.en + '”. Choose another combination.');
+      setError(uiText(language)('keyboard.conflict', { name: uiText(language)(conflict.title) }));
       return;
     }
     const next = { ...shortcuts.overrides };
@@ -39,34 +40,34 @@ export function SettingsKeyboardPanel({ language }: { language: AppLanguage }) {
       saveKeyboardShortcuts(next);
       setRecording(null);
       setError('');
-    } catch { setError(zh ? '快捷键未能保存，请重试。' : 'Could not save the shortcut. Try again.'); }
+    } catch { setError(uiText(language)('settingsKeyboardPanel.couldNotSaveTheShortcutTryAgain')); }
   }
 
   return <div className="settings-stack keyboard-settings" data-keyboard-settings>
     <div className="keyboard-settings-toolbar">
       <label className="keyboard-settings-search"><Search size={16} aria-hidden="true" />
-        <input aria-label={zh ? '搜索快捷键' : 'Search shortcuts'} placeholder={zh ? '搜索操作或快捷键…' : 'Search actions or shortcuts…'} value={query}
+        <input aria-label={uiText(language)('settingsKeyboardPanel.searchShortcuts')} placeholder={uiText(language)('settingsKeyboardPanel.searchActionsOrShortcuts')} value={query}
           onChange={event => setQuery(event.target.value)} />
       </label>
       <button className="keyboard-reset-all" type="button" disabled={!Object.keys(shortcuts.overrides).length}
-        onClick={() => { setErrorId(null); try { saveKeyboardShortcuts({}); setRecording(null); setError(''); } catch { setError(zh ? '恢复失败，请重试。' : 'Could not reset shortcuts. Try again.'); } }}>
-        <RotateCcw size={14} aria-hidden="true" />{zh ? '恢复默认' : 'Reset all'}
+        onClick={() => { setErrorId(null); try { saveKeyboardShortcuts({}); setRecording(null); setError(''); } catch { setError(uiText(language)('settingsKeyboardPanel.couldNotResetShortcutsTryAgain')); } }}>
+        <RotateCcw size={14} aria-hidden="true" />{uiText(language)('settingsKeyboardPanel.resetAll')}
       </button>
     </div>
-    <p className="keyboard-settings-help">{zh ? '点击按键后输入新组合，自动保存。按 Esc 取消修改。' : 'Click a shortcut and press a new combination. Changes save automatically. Esc cancels.'}</p>
+    <p className="keyboard-settings-help">{uiText(language)('settingsKeyboardPanel.clickAShortcutAndPressANew')}</p>
     {error && !errorId && <p className="keyboard-settings-error" role="alert">{error}</p>}
     {groups.map(group => {
       const items = filtered.filter(item => item.group === group.id);
       if (!items.length) return null;
       return <SettingsCard key={group.id} title={group.title}>
         {items.map(item => <div className="keyboard-settings-row" key={item.id} data-shortcut-row={item.id}>
-          <span className="keyboard-settings-description"><strong>{item.title[language]}</strong><small>{item.description[language]}</small>
+          <span className="keyboard-settings-description"><strong>{uiText(language)(item.title)}</strong><small>{uiText(language)(item.description)}</small>
             {error && errorId === item.id && <small className="keyboard-binding-error" role="alert">{error}</small>}
           </span>
           <div className="keyboard-settings-actions">
             <button className={'keyboard-binding' + (recording === item.id ? ' recording' : '')} type="button"
               data-shortcut-recorder={item.id} aria-pressed={recording === item.id}
-              aria-label={(zh ? '修改快捷键：' : 'Change shortcut: ') + item.title[language]}
+              aria-label={(uiText(language)('settingsKeyboardPanel.changeShortcut')) + uiText(language)(item.title)}
               onClick={() => { setRecording(item.id); setError(''); }} onBlur={() => setRecording(null)}
               onKeyDown={event => {
                 if (recording !== item.id || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -80,28 +81,28 @@ export function SettingsKeyboardPanel({ language }: { language: AppLanguage }) {
                 if (invalid) { setErrorId(item.id); setError(invalid); return; }
                 save(item.id, binding);
               }}>
-              {recording === item.id ? (zh ? '请按下快捷键…' : 'Press shortcut…') : <kbd>{shortcuts.label(item.id) || (zh ? '未设置' : 'Not set')}</kbd>}
+              {recording === item.id ? (uiText(language)('settingsKeyboardPanel.pressShortcut')) : <kbd>{shortcuts.label(item.id) || (uiText(language)('settingsKeyboardPanel.notSet'))}</kbd>}
             </button>
             <button className="keyboard-binding-action" type="button" disabled={!shortcutBinding(item.id, shortcuts.overrides)}
-              aria-label={(zh ? '停用快捷键：' : 'Disable shortcut: ') + item.title[language]}
-              title={zh ? '停用' : 'Disable'} onClick={() => save(item.id, null)}><X size={14} /></button>
+              aria-label={(uiText(language)('settingsKeyboardPanel.disableShortcut')) + uiText(language)(item.title)}
+              title={uiText(language)('pluginMcpSettings.disable')} onClick={() => save(item.id, null)}><X size={14} /></button>
             <button className="keyboard-binding-action" type="button" disabled={!Object.hasOwn(shortcuts.overrides, item.id)}
-              aria-label={(zh ? '恢复默认：' : 'Reset shortcut: ') + item.title[language]}
-              title={zh ? '恢复默认' : 'Reset'} onClick={() => save(item.id, undefined)}><RotateCcw size={14} /></button>
+              aria-label={(uiText(language)('settingsKeyboardPanel.resetShortcut')) + uiText(language)(item.title)}
+              title={uiText(language)('settingsKeyboardPanel.reset')} onClick={() => save(item.id, undefined)}><RotateCcw size={14} /></button>
           </div>
         </div>)}
       </SettingsCard>;
     })}
-    {!filtered.length && <p className="keyboard-settings-help">{zh ? '没有匹配的快捷键。' : 'No matching shortcuts.'}</p>}
-    {!query.trim() && <SettingsCard title={zh ? '常用键盘操作' : 'Standard keyboard controls'} subtitle={zh ? '以下操作跟随当前焦点，保持系统默认。' : 'These controls follow keyboard focus and keep their standard behavior.'}>
+    {!filtered.length && <p className="keyboard-settings-help">{uiText(language)('settingsKeyboardPanel.noMatchingShortcuts')}</p>}
+    {!query.trim() && <SettingsCard title={uiText(language)('settingsKeyboardPanel.standardKeyboardControls')} subtitle={uiText(language)('settingsKeyboardPanel.theseControlsFollowKeyboardFocusAndKeep')}>
       {[
-        [zh ? '输入框换行' : 'New line in composer', 'Shift + Enter'],
-        [zh ? '会话区滚动 / 翻页' : 'Scroll / page through conversation', '↑ ↓ / PageUp PageDown'],
-        [zh ? '会话区顶部 / 底部' : 'Conversation top / bottom', 'Home / End'],
-        [zh ? '会话区上翻 / 下翻一页' : 'Page up / down in conversation', 'Shift + Space / Space'],
-        [zh ? '候选菜单切换 / 确认' : 'Navigate / confirm suggestions', '↑ ↓ / Enter Tab'],
-        [zh ? '队列手柄调整顺序' : 'Reorder using queue handle', '↑ ↓'],
-        [zh ? '关闭弹层或取消编辑' : 'Dismiss popup or cancel edit', 'Esc'],
+        [uiText(language)('settingsKeyboardPanel.newLineInComposer'), 'Shift + Enter'],
+        [uiText(language)('settingsKeyboardPanel.scrollPageThroughConversation'), '↑ ↓ / PageUp PageDown'],
+        [uiText(language)('settingsKeyboardPanel.conversationTopBottom'), 'Home / End'],
+        [uiText(language)('settingsKeyboardPanel.pageUpDownInConversation'), 'Shift + Space / Space'],
+        [uiText(language)('settingsKeyboardPanel.navigateConfirmSuggestions'), '↑ ↓ / Enter Tab'],
+        [uiText(language)('settingsKeyboardPanel.reorderUsingQueueHandle'), '↑ ↓'],
+        [uiText(language)('settingsKeyboardPanel.dismissPopupOrCancelEdit'), 'Esc'],
       ].map(([label, keys]) => <div className="keyboard-reference-row" key={label}><span>{label}</span><kbd>{keys}</kbd></div>)}
     </SettingsCard>}
   </div>;

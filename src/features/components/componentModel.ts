@@ -1,3 +1,5 @@
+import type { MessageKey } from '../../i18n';
+import { uiText } from '../../i18n';
 export const componentProtocol = 'cardbush.html-surface/1';
 export const componentStorageKey = 'cardbush.html_components.v1';
 export const maxComponentBytes = 256 * 1024;
@@ -12,18 +14,18 @@ export type WelcomePlacement = ComposerFlowOptions & { componentId: string; x: n
 export type WelcomeLayout = { items: WelcomePlacement[]; viewportHeight?: number };
 export type ComponentCollection = { version: 1; revision: number; items: ComponentItem[]; welcomeLayout?: WelcomeLayout };
 export const defaultWelcomeIds = ['system-brand', 'system-greeting', 'system-suggestions', 'system-input'];
-const builtinDefinitions: { builtin: BuiltinKind; zh: string; en: string; width: number; height: number }[] = [
-  { builtin: 'clock', zh: '时钟', en: 'Clock', width: 4, height: 300 },
-  { builtin: 'digital-clock', zh: '数字时钟', en: 'Digital clock', width: 4, height: 300 },
-  { builtin: 'calendar', zh: '日历', en: 'Calendar', width: 4, height: 300 },
-  { builtin: 'brand', zh: '品牌展示', en: 'Wordmark', width: 8, height: 200 },
-  { builtin: 'greeting', zh: '欢迎语', en: 'Greeting', width: 4, height: 200 },
-  { builtin: 'suggestions', zh: '对话引导', en: 'Suggestions', width: 12, height: 240 },
-  { builtin: 'input', zh: '输入框', en: 'Composer', width: 12, height: 240 },
+const builtinDefinitions: { builtin: BuiltinKind; width: number; height: number; labelKey: MessageKey }[] = [
+  { builtin: 'clock', width: 4, height: 300, labelKey: 'componentModel.clock' as const },
+  { builtin: 'digital-clock', width: 4, height: 300, labelKey: 'componentModel.digital_clock' as const },
+  { builtin: 'calendar', width: 4, height: 300, labelKey: 'componentModel.calendar' as const },
+  { builtin: 'brand', width: 8, height: 200, labelKey: 'componentModel.wordmark' as const },
+  { builtin: 'greeting', width: 4, height: 200, labelKey: 'componentModel.greeting' as const },
+  { builtin: 'suggestions', width: 12, height: 240, labelKey: 'componentModel.suggestions' as const },
+  { builtin: 'input', width: 12, height: 240, labelKey: 'componentModel.composer' as const },
 ];
 export const isBuiltinComponent = (item: ComponentItem): item is BuiltinComponent => item.kind === 'builtin';
-export function componentTitle(item: ComponentItem, language: 'zh' | 'en') {
-  return isBuiltinComponent(item) ? builtinDefinitions.find(def => def.builtin === item.builtin)![language] : item.title;
+export function componentTitle(item: ComponentItem, language: string) {
+  return isBuiltinComponent(item) ? uiText(language)(builtinDefinitions.find(def => def.builtin === item.builtin)!.labelKey) : item.title;
 }
 export const defaultComponents: ComponentCollection = { version: 1, revision: 0, items: builtinDefinitions.map((def, order) => ({
   id: `system-${def.builtin}`, kind: 'builtin', builtin: def.builtin, width: def.width, height: def.height, order,

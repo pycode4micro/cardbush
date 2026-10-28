@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { teamWorkflowSchema, type TeamWorkflow } from '@cardbush/bush-protocol';
 import { mapWikiLinks, nodeDependencies, nodeLinks, parseMarkdownGraph, writeMarkdownGraph, type MdDocument, type MdNode } from '../mdPresentation/markdownGraph';
 
@@ -12,7 +13,7 @@ export function enableDocumentTeam(source: string): string {
   const document = parseMarkdownGraph(source);
   if (documentTeam(document)) return source;
   return writeMarkdownGraph({ ...document, attributes: { ...document.attributes,
-    name: document.attributes.name || /^# (.+)$/m.exec(document.introduction)?.[1] || '新团队',
+    name: document.attributes.name || /^# (.+)$/m.exec(document.introduction)?.[1] || uiText()('teamMarkdown.new_team'),
     team: { id: `team-${crypto.randomUUID().slice(0, 8)}`, max_parallel: 3, description: '' } } });
 }
 
@@ -44,12 +45,12 @@ export function teamToMarkdown(team: TeamWorkflow): string {
 
 export function teamFromMarkdown(source: string): TeamWorkflow {
   const document = parseMarkdownGraph(source), config = documentTeam(document);
-  if (!config) throw Error('请先添加 Team 配置。Add Team configuration first.');
+  if (!config) throw Error(uiText()('teamMarkdown.add_team_configuration_first'));
   const legacy = !document.attributes.team;
   const allowed = legacy ? ['id', 'name', 'max_parallel'] : ['id', 'max_parallel', 'description'];
   const extra = Object.keys(config).filter(key => !allowed.includes(key));
   if (extra.length) throw Error(`Unknown Team metadata: ${extra.join(', ')}`);
-  if (!document.nodes.some(node => 'agent_id' in node.attributes)) throw Error('至少将一个章节标记为 Team 任务，并选择员工。Mark at least one section as a Team task and choose an agent.');
+  if (!document.nodes.some(node => 'agent_id' in node.attributes)) throw Error(uiText()('teamMarkdown.mark_at_least_one_section_as_a'));
   return teamWorkflowSchema.parse({ id: config.id, name: document.attributes.name,
     description: legacy ? document.introduction : config.description ?? '', max_parallel: config.max_parallel,
     presentation: { markdown: source },

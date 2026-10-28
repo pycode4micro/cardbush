@@ -1,3 +1,4 @@
+import { uiText, type MessageKey } from '../../i18n';
 import type { WindowMenuAction } from '../../../electron/windowMenu';
 import type { AppLanguage } from '../../types';
 import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
@@ -26,65 +27,63 @@ type Actions = {
 export function applicationMenus(language: AppLanguage, actions: Actions, state: {
   sidebarVisible: boolean; inspectorVisible: boolean; native: boolean; externalLinks: boolean;
 }): ApplicationMenu[] {
-  const zh = language === 'zh';
-  const label = (cn: string, en: string) => zh ? cn : en;
   const separator = { separator: true } as const;
-  const item = (id: string, cn: string, en: string, onSelect?: WindowMenuItem['onSelect'], shortcut?: ShortcutId,
+  const item = (id: string, message: MessageKey, onSelect?: WindowMenuItem['onSelect'], shortcut?: ShortcutId,
     extra: Partial<WindowMenuItem> = {}): WindowMenuItem =>
-    ({ id, label: label(cn, en), onSelect, shortcut, disabled: !onSelect, ...extra });
-  const native = (id: WindowMenuAction, cn: string, en: string, shortcut?: ShortcutId, keyLabel?: string): WindowMenuItem =>
-    ({ id, label: label(cn, en), nativeAction: id, shortcut, keyLabel, disabled: !state.native });
-  const external = (id: string, cn: string, en: string, suffix: string) => item(id, cn, en,
+    ({ id, label: uiText(language)(message), onSelect, shortcut, disabled: !onSelect, ...extra });
+  const native = (id: WindowMenuAction, message: MessageKey, shortcut?: ShortcutId, keyLabel?: string): WindowMenuItem =>
+    ({ id, label: uiText(language)(message), nativeAction: id, shortcut, keyLabel, disabled: !state.native });
+  const external = (id: string, message: MessageKey, suffix: string) => item(id, message,
     state.externalLinks ? () => window.cardbushDesktop?.openExternal(homepage + suffix) : undefined);
   const menus: ApplicationMenu[] = [
-    { id: 'file', label: label('文件', 'File'), items: [
-      item('newConversation', '新会话', 'New chat', actions.newConversation, 'newConversation'), separator,
-      item('openAppCenter', '应用中心', 'App center', actions.openAppCenter, 'openAppCenter'),
-      { id: 'applications', label: label('应用', 'Applications'), children: [
-        item('openPlugins', '插件', 'Plugins', actions.openPlugins, 'openPlugins'),
-        item('openAutomations', '定时与自动化', 'Automations', actions.openAutomations, 'openAutomations'),
+    { id: 'file', label: uiText(language)('reviewCommentModel.file'), items: [
+      item('newConversation', 'conversationSearchDialog.newChat', actions.newConversation, 'newConversation'), separator,
+      item('openAppCenter', 'appCenter.appCenter', actions.openAppCenter, 'openAppCenter'),
+      { id: 'applications', label: uiText(language)('composer.applications'), children: [
+        item('openPlugins', 'appCenterModel.plugins', actions.openPlugins, 'openPlugins'),
+        item('openAutomations', 'appCenterModel.automations', actions.openAutomations, 'openAutomations'),
       ] }, separator,
-      item('openProject', '打开文件夹…', 'Open folder…', actions.openProject, 'openProject'),
-      item('openFiles', '打开文件…', 'Open files…', actions.openFiles, 'openFiles'), separator,
-      native('close', '关闭窗口', 'Close window', 'closeWindow'),
-      native('quit', '退出 CardBush', 'Quit CardBush', 'quitApp'),
+      item('openProject', 'applicationMenus.open_folder', actions.openProject, 'openProject'),
+      item('openFiles', 'applicationMenus.open_files', actions.openFiles, 'openFiles'), separator,
+      native('close', 'keyboardShortcuts.closeWindow', 'closeWindow'),
+      native('quit', 'keyboardShortcuts.quitCardbush', 'quitApp'),
     ] },
-    { id: 'edit', label: label('编辑', 'Edit'), items: [
-      native('undo', '撤销', 'Undo', undefined, 'Ctrl + Z'),
-      native('redo', '重做', 'Redo', undefined, 'Ctrl + Y'), separator,
-      native('cut', '剪切', 'Cut', undefined, 'Ctrl + X'),
-      native('copy', '复制', 'Copy', undefined, 'Ctrl + C'),
-      native('paste', '粘贴', 'Paste', undefined, 'Ctrl + V'),
-      native('delete', '删除', 'Delete'), separator,
-      native('selectAll', '全选', 'Select all', undefined, 'Ctrl + A'), separator,
-      item('openSettings', '设置', 'Settings', actions.openSettings, 'openSettings'),
+    { id: 'edit', label: uiText(language)('common.edit'), items: [
+      native('undo', 'applicationMenus.undo', undefined, 'Ctrl + Z'),
+      native('redo', 'applicationMenus.redo', undefined, 'Ctrl + Y'), separator,
+      native('cut', 'applicationMenus.cut', undefined, 'Ctrl + X'),
+      native('copy', 'messageBubble.copy', undefined, 'Ctrl + C'),
+      native('paste', 'applicationMenus.paste', undefined, 'Ctrl + V'),
+      native('delete', 'appCenter.delete'), separator,
+      native('selectAll', 'applicationMenus.select_all', undefined, 'Ctrl + A'), separator,
+      item('openSettings', 'cardlingWindow.settings', actions.openSettings, 'openSettings'),
     ] },
-    { id: 'view', label: label('视图', 'View'), items: [
-      item('toggleSidebar', '切换侧边栏', 'Toggle sidebar', actions.toggleSidebar, 'toggleSidebar', { checked: state.sidebarVisible }),
-      item('toggleInspector', '切换右侧栏', 'Toggle right sidebar', actions.toggleInspector, 'toggleInspector', { checked: state.inspectorVisible }),
-      item('openReview', '打开审查', 'Open review', actions.openReview, 'openReview'),
-      item('openHistory', '查看会话历史', 'View conversation history', actions.openHistory),
-      item('openShadow', '打开 Shadow 对话', 'Open Shadow chat', actions.openShadow, 'openShadow'), separator,
-      { id: 'browser', label: label('浏览器', 'Browser'), children: [
-        item('openBrowser', '打开浏览器标签页', 'Open browser tab', actions.openBrowser, 'openBrowser'),
-        item('focusBrowserAddress', '聚焦浏览器地址栏', 'Focus browser address', actions.focusBrowserAddress, 'focusBrowserAddress'),
-        item('reloadBrowser', '重新加载页面', 'Reload page', actions.reloadBrowser, 'reloadBrowser'),
+    { id: 'view', label: uiText(language)('applicationMenus.view'), items: [
+      item('toggleSidebar', 'keyboardShortcuts.toggleSidebar', actions.toggleSidebar, 'toggleSidebar', { checked: state.sidebarVisible }),
+      item('toggleInspector', 'keyboardShortcuts.toggleRightSidebar', actions.toggleInspector, 'toggleInspector', { checked: state.inspectorVisible }),
+      item('openReview', 'keyboardShortcuts.openReview', actions.openReview, 'openReview'),
+      item('openHistory', 'applicationMenus.view_conversation_history', actions.openHistory),
+      item('openShadow', 'keyboardShortcuts.openShadowChat', actions.openShadow, 'openShadow'), separator,
+      { id: 'browser', label: uiText(language)('settingsNavigation.browser'), children: [
+        item('openBrowser', 'applicationMenus.open_browser_tab', actions.openBrowser, 'openBrowser'),
+        item('focusBrowserAddress', 'keyboardShortcuts.focusBrowserAddress', actions.focusBrowserAddress, 'focusBrowserAddress'),
+        item('reloadBrowser', 'keyboardShortcuts.reloadPage', actions.reloadBrowser, 'reloadBrowser'),
       ] }, separator,
-      item('search', '查找', 'Find', actions.search, 'searchConversations', { shortcutHandledElsewhere: true }),
-      item('previousConversation', '切回上个会话', 'Switch to previous chat', actions.previousConversation, 'previousConversation', { shortcutHandledElsewhere: true }),
-      item('back', '返回', 'Back', actions.back, 'navigateBack'),
-      item('forward', '前进', 'Forward', actions.forward, 'navigateForward'), separator,
-      native('zoomIn', '放大', 'Zoom in', 'appZoomIn'),
-      native('zoomOut', '缩小', 'Zoom out', 'appZoomOut'),
-      native('resetZoom', '实际大小', 'Actual size', 'appZoomReset'), separator,
-      native('toggleFullscreen', '切换全屏', 'Toggle full screen', 'toggleFullscreen'),
+      item('search', 'applicationMenus.find', actions.search, 'searchConversations', { shortcutHandledElsewhere: true }),
+      item('previousConversation', 'keyboardShortcuts.switchToPreviousChat', actions.previousConversation, 'previousConversation', { shortcutHandledElsewhere: true }),
+      item('back', 'windowFrame.back', actions.back, 'navigateBack'),
+      item('forward', 'app.forward', actions.forward, 'navigateForward'), separator,
+      native('zoomIn', 'image.zoomInHint', 'appZoomIn'),
+      native('zoomOut', 'image.zoomOutHint', 'appZoomOut'),
+      native('resetZoom', 'applicationMenus.actual_size', 'appZoomReset'), separator,
+      native('toggleFullscreen', 'keyboardShortcuts.toggleFullScreen', 'toggleFullscreen'),
     ] },
-    { id: 'help', label: label('帮助', 'Help'), items: [
-      external('documentation', '文档', 'Documentation', '#readme'),
-      item('showShortcuts', '显示键盘快捷键', 'Show keyboard shortcuts', actions.showShortcuts, 'showShortcuts'), separator,
-      item('diagnostics', '诊断与关于', 'Diagnostics and about', actions.openDiagnostics),
-      external('feedback', '反馈', 'Feedback', '/issues/new'),
-      external('releases', '查看发布版本', 'View releases', '/releases'),
+    { id: 'help', label: uiText(language)('applicationMenus.help'), items: [
+      external('documentation', 'applicationMenus.documentation', '#readme'),
+      item('showShortcuts', 'keyboardShortcuts.showKeyboardShortcuts', actions.showShortcuts, 'showShortcuts'), separator,
+      item('diagnostics', 'applicationMenus.diagnostics_and_about', actions.openDiagnostics),
+      external('feedback', 'applicationMenus.feedback', '/issues/new'),
+      external('releases', 'applicationMenus.view_releases', '/releases'),
     ] },
   ];
   return menus;

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { Monitor, Server, Settings2, X, Link } from 'lucide-react';
@@ -37,13 +38,13 @@ const sessionId = PERSONAL_ASSISTANT_SESSION;
 const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
 export function AssistantView({ active, language, connections, prepare, onManageHosts, composerControls,
   inspectorOpen = false, onToggleInspector, browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
-  active: boolean; language: 'zh' | 'en'; connections: AgentConnection[];
+  active: boolean; language: string; connections: AgentConnection[];
   prepare(): Promise<ChatStreamRequest>; onManageHosts(): void;
   composerControls: AssistantComposerControls;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
   composerPortalTarget?: HTMLElement | null; windowMaximized?: boolean; subagentObservabilityAvailable?: boolean;
 }) {
-  const zh = language === 'zh', profile = useAssistantProfile();
+  const profile = useAssistantProfile();
   const [entries, setEntries] = useState<ConversationEntry[]>([]), [ready, setReady] = useState(false);
   const pageEntries = useMemo(() => entries.filter(isPageEntry), [entries]);
   const allTasks = useLoopSubagentTasks(sessionId, active && ready, active);
@@ -180,17 +181,17 @@ export function AssistantView({ active, language, connections, prepare, onManage
     historyMessages: journalMessages(entriesRef.current.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busyRef.current });
   const remoteCall = useCallback(async <T,>(operation: AgentOperation, input?: Record<string, unknown>) => {
     const api = window.cardbushDesktop?.agents;
-    if (!api || !profile.targetAgent) throw Error('请先选择执行主机。');
+    if (!api || !profile.targetAgent) throw Error(uiText(language)('assistantView.select_an_execution_host_first'));
     await api.connect(profile.targetAgent);
     return api.call(profile.targetAgent, operation, input) as Promise<T>;
   }, [profile.targetAgent]);
   const headerControls = <div className="assistant-actions">
     <SettingsDropdown value={profile.targetAgent} onChange={targetAgent => { saveAssistantProfile({ ...profile, targetAgent }); setDesktop(false); }}
-      label={zh ? '执行主机' : 'Execution host'} options={[{ value: '', label: zh ? '本地' : 'Local', icon: <Monitor size={14}/> }, ...connections.map(item => ({ value: item.id, label: `${item.name}${item.sshTunnel ? ' · SSH' : ''}`, icon: <Server size={14}/> }))]}/>
+      label={uiText(language)('assistantView.executionHost')} options={[{ value: '', label: uiText(language)('workspace.local'), icon: <Monitor size={14}/> }, ...connections.map(item => ({ value: item.id, label: `${item.name}${item.sshTunnel ? ' · SSH' : ''}`, icon: <Server size={14}/> }))]}/>
     <div className="assistant-composer-tools">
-      <button type="button" title={zh ? '连接 SSH / 管理主机' : 'Connect SSH / manage hosts'} onClick={onManageHosts}><Link size={17}/></button>
-      {host && <button type="button" aria-pressed={desktop} title={zh ? '云端电脑' : 'Remote computer'} onClick={() => setDesktop(value => !value)}><Monitor size={18}/></button>}
-      <button type="button" title={zh ? '助手设置' : 'Assistant settings'} onClick={() => setSettings(true)}><Settings2 size={18}/></button>
+      <button type="button" title={uiText(language)('assistantView.connectSshManageHosts')} onClick={onManageHosts}><Link size={17}/></button>
+      {host && <button type="button" aria-pressed={desktop} title={uiText(language)('assistantView.remoteComputer')} onClick={() => setDesktop(value => !value)}><Monitor size={18}/></button>}
+      <button type="button" title={uiText(language)('assistantSettingsDialog.assistantSettings')} onClick={() => setSettings(true)}><Settings2 size={18}/></button>
     </div>
   </div>;
   const renderTimelineItem = (item: typeof timeline[number]) => {
@@ -205,22 +206,22 @@ export function AssistantView({ active, language, connections, prepare, onManage
   </article></div>;
   };
   const typingBubble = replying && <div className="message-list-item assistant-message-row assistant-activity-row" data-message-role="status">
-    <div className="assistant-typing-bubble" role="status" aria-label={zh ? '正在回复' : 'Replying'}>
+    <div className="assistant-typing-bubble" role="status" aria-label={uiText(language)('assistantView.replying')}>
       <span aria-hidden="true"/><span aria-hidden="true"/><span aria-hidden="true"/>
     </div>
     {busy && <button className="assistant-stop-reply" type="button" disabled={stopping} onClick={() => void stopReply()}>
-      {zh ? '停止等待' : 'Stop waiting'}
+      {uiText(language)('assistantView.stopWaiting')}
     </button>}
   </div>;
   return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>
     <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
-      titleIcon={<span title={callHere ? zh ? '通话中 · 切换页面仍可继续' : 'In call · continues in the background' : profile.name}><AssistantBulb size={22} working={busy}/></span>}
+      titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantBulb size={22} working={busy}/></span>}
       workspaceControl={headerControls} conversationContentAvailable={timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
     {settings && active && <AssistantSettingsDialog language={language} onClose={() => setSettings(false)}/>}
     {(error || runtimeError) && <RuntimeStatusBanner language={language} tone="error" message={error || runtimeError}
-      actionLabel={canRetry ? zh ? '重试回复' : 'Retry reply' : undefined} onAction={canRetry ? retryReply : undefined}
+      actionLabel={canRetry ? uiText(language)('assistantView.retryReply') : undefined} onAction={canRetry ? retryReply : undefined}
       onDismiss={() => { setError(''); setRuntimeError(''); }}/>}
     {retry && !error && !runtimeError && <ConversationConnectionNotice language={language}
       update={{ ...retry, sessionId, state: 'retrying', source: 'provider', reason: retry.code }}/>}
@@ -230,9 +231,9 @@ export function AssistantView({ active, language, connections, prepare, onManage
         hoverProps={summary.workSummaryPanelProps} keepOpenUntil={summary.keepWorkSummaryOpenUntil}
         running={busy} softVisible={summary.workSummaryPresence.visible}/>}
       <div className="chat-content-frame">
-      <div className="assistant-messages message-list" ref={scroller} tabIndex={-1} role="log" aria-label={zh ? '助手对话' : 'Assistant conversation'}>
+      <div className="assistant-messages message-list" ref={scroller} tabIndex={-1} role="log" aria-label={uiText(language)('assistantView.assistantConversation')}>
       <div className="message-list-content">
-        {!timeline.length && <div className="assistant-welcome"><AssistantBulb size={68}/><h2>{zh ? '随时聊聊' : 'Let’s talk'}</h2><p>{zh ? '说说想法，或把事情交给我。任务在后台进行，我们可以继续聊。' : 'Share a thought or hand over a task. We can keep talking while work continues.'}</p></div>}
+        {!timeline.length && <div className="assistant-welcome"><AssistantBulb size={68}/><h2>{uiText(language)('assistantView.letSTalk')}</h2><p>{uiText(language)('assistantView.shareAThoughtOrHandOverA')}</p></div>}
         {timeline.map(renderTimelineItem)}
         {typingBubble}
       </div></div>
@@ -252,6 +253,6 @@ export function AssistantView({ active, language, connections, prepare, onManage
         </div>
       </VoiceConversation>
       </div><ScrollBottomButton language={language} visible={viewport.scrollBottomVisible} running={busy} onClick={viewport.scrollToBottom}/>
-    </div>{desktop && host && <aside className="assistant-desktop"><button className="assistant-desktop-close" type="button" onClick={() => setDesktop(false)} aria-label={zh ? '关闭云端电脑' : 'Close remote computer'}><X size={18}/></button><AgentDesktopView call={remoteCall} active={active} name={host.name} language={language}/></aside>}</div>
+    </div>{desktop && host && <aside className="assistant-desktop"><button className="assistant-desktop-close" type="button" onClick={() => setDesktop(false)} aria-label={uiText(language)('assistantView.closeRemoteComputer')}><X size={18}/></button><AgentDesktopView call={remoteCall} active={active} name={host.name} language={language}/></aside>}</div>
   </section>;
 }

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useSyncExternalStore } from 'react';
 import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, type RegisteredAgent, type TeamWorkflow, type TeamRun, type DefinitionReceipt } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../../runtime-client/ElectronRuntimeSession';
@@ -63,7 +64,7 @@ export function selectTeam(id: string) { publish({ selectedId: id }); }
 export function useTeamWorkspace(enabled = true) {
   useEffect(() => { if (enabled) void refreshTeamWorkspace(false, true); }, [enabled]);
   const state = useSyncExternalStore(subscribe, () => snapshot);
-  return { ...state, title: 'Team', command: enabled ? 'team' : '',
+  return { ...state, title: uiText()('mdPresentationApp.team'), command: enabled ? 'team' : '',
     choices: choicesSnapshot.choices,
     instructions: enabled && state.selectedId ? teamReferenceInstructions(state.selectedId) : '',
   };
@@ -73,6 +74,6 @@ export function useTeamWorkspace(enabled = true) {
 export function useTeamChoices(enabled = true) {
   useEffect(() => { if (enabled) void refreshTeamWorkspace(false, true); }, [enabled]);
   const state = useSyncExternalStore(subscribe, () => choicesSnapshot);
-  return { ...state, title: 'Team', command: enabled ? 'team' : '',
+  return { ...state, title: uiText()('mdPresentationApp.team'), command: enabled ? 'team' : '',
     instructions: enabled && state.selectedId ? teamReferenceInstructions(state.selectedId) : '' };
 }

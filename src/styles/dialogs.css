@@ -293,12 +293,13 @@
   }
 }
 
-.image-preview-stage.is-dragging {
+.image-preview-stage[data-dragging="true"] {
   cursor: grabbing;
   user-select: none;
 }
 
 .image-preview-canvas {
+  visibility: hidden;
   position: absolute;
   top: 0;
   left: 0;
@@ -308,6 +309,7 @@
   min-width: 1px;
   min-height: 1px;
 }
+.image-preview-canvas[data-ready="true"] { visibility: visible; }
 
 .image-preview-canvas img {
   display: block;

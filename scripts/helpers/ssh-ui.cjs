@@ -27,25 +27,61 @@ module.exports = async ({run,until,pause,window,root}) => {
   }
   await run(`updateChat({language:'zh',loading:false,historyLoading:false,selectedProjectDir:'',activeProjectDir:'',messages:[],onWelcomeProjectChange:async (uri,reference)=>{selected.push(uri);updateChat({selectedProjectDir:uri||'',activeProjectDir:uri||'',...(reference?{draft:reference}: {})});},onDraftChange:draft=>updateChat({draft})})`);
   await until("!!document.querySelector('.workspace-location-control > button')",'welcome local/SSH switch');
-  await run("updateChat({availableProjects:[{id:'project',title:'CardBush',rootPath:'D:/projects/cardbush'},{id:'long',title:'服务端 API',rootPath:'D:/projects/team/backend/service-api/production'},{id:'archived',title:'Archived hidden',rootPath:'D:/archived',archived:true},{id:'remote',title:'远程服务',rootPath:'ssh://test-server/home/developer/projects/service-api'}]})");
+  await run("window.pickerProjects=[{id:'project',title:'CardBush',rootPath:'D:/projects/cardbush'},{id:'long',title:'服务端 API',rootPath:'D:/projects/team/backend/service-api/production'},{id:'archived',title:'Archived hidden',rootPath:'D:/archived',archived:true},{id:'missing',title:'Missing hidden',rootPath:'D:/missing',missing:true},{id:'remote',title:'远程服务',rootPath:'ssh://test-server/home/developer/projects/service-api'}];updateChat({availableProjects:pickerProjects})");
+  const key = async (keyCode, modifiers=[]) => {
+    window.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});
+    if(keyCode==='Return')window.webContents.sendInputEvent({type:'char',keyCode:'\r',modifiers});
+    window.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});await pause(40);
+  };
+  const openProjects = async () => {
+    await run("document.querySelector('.workspace-project-chip').focus();document.querySelector('.workspace-project-chip').click()");
+    await until("!!document.querySelector('.workspace-picker-anchored')",'anchored project menu');
+  };
+  const dismissOutside = async () => {
+    await run("document.querySelector('.workspace-picker-backdrop').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));undefined;");
+    await until("!document.querySelector('.workspace-picker')",'outside click dismisses project menu');
+    assert.equal(await run("document.activeElement===document.querySelector('.workspace-project-chip')"),true,'dismissal restores the opener');
+  };
   for (const theme of ['dark', 'bright']) {
     await run(`viewTheme='theme-${theme}';updateChat({});undefined;`);await pause(60);
-    await run("document.querySelector('.workspace-location-control > button').click()");
-    await until("!!document.querySelector('.workspace-picker-anchored')",'anchored project menu');
+    await openProjects();
     assert.equal(await run("document.querySelector('.workspace-picker').textContent.includes('Archived hidden')"),false);
     assert.equal(await run("document.querySelector('.workspace-location-control > button').getAttribute('aria-expanded')"),'true');
-    await run("fill('.workspace-picker-search input','服务端')");
-    assert.equal(await run("document.querySelectorAll('.ssh-project-list .workspace-picker-row').length"),1,'project search filters the current location');
-    await run("fill('.workspace-picker-search input','')");
+    assert.equal(await run("!!document.querySelector('.workspace-picker-heading,.workspace-picker-search,.workspace-picker button[aria-label=关闭]')"),false,'few projects need only choices');
     await pause(80);
     const rect=await run(`(()=>{const n=document.querySelector('.workspace-picker'),r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom,viewportWidth:innerWidth,viewportHeight:innerHeight,overflow:n.scrollWidth>n.clientWidth}})()`);
     assert.ok(rect.x>=8&&rect.y>=8&&rect.right<=rect.viewportWidth-8&&rect.bottom<=rect.viewportHeight-8,JSON.stringify(rect));
     assert.equal(rect.overflow,false);
+    assert.ok(rect.width<=280&&rect.height<200,JSON.stringify(rect));
     fs.writeFileSync(path.join(root,'tmp','project-picker-'+theme+'.png'),(await window.webContents.capturePage({x:Math.floor(rect.x)-8,y:Math.floor(rect.y)-8,width:Math.ceil(rect.width)+16,height:Math.ceil(rect.height)+16})).toPNG());
-    await run("document.querySelector('.workspace-picker').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));undefined;");
+    await key('Tab');assert.equal(await run("document.activeElement.textContent"),'CardBush');
+    await key('Tab',['shift']);assert.equal(await run("document.activeElement.textContent"),'不在项目中工作','focus wraps without a header button');
+    await key('Escape');
     await until("!document.querySelector('.workspace-picker')",'Escape dismisses project menu');
     assert.equal(await run("document.querySelector('.workspace-location-control > button').getAttribute('aria-expanded')"),'false');
+    assert.equal(await run("document.activeElement===document.querySelector('.workspace-project-chip')"),true);
     fs.writeFileSync(path.join(root,'tmp','composer-workspace-'+theme+'.png'),(await window.capturePage()).toPNG());
+
+    await run("updateChat({availableProjects:[]})");await pause(30);await openProjects();await pause(80);
+    assert.ok(await run("document.querySelector('.workspace-picker').getBoundingClientRect().height<90"),'empty menu stays compact');
+    assert.ok(await run("document.querySelector('.workspace-picker').getBoundingClientRect().bottom<document.querySelector('.workspace-project-chip').getBoundingClientRect().top"),'short bottom-anchored menu opens above the composer');
+    fs.writeFileSync(path.join(root,'tmp','project-picker-empty-'+theme+'.png'),(await window.capturePage()).toPNG());
+    await dismissOutside();assert.deepEqual(await run('selected'),[],'dismissal never changes the workspace');
+
+    await run("window.extraProjects=Array.from({length:4},(_,i)=>({id:'extra-'+i,title:'项目 '+i,rootPath:'D:/projects/extra-'+i}));updateChat({availableProjects:[...pickerProjects,...extraProjects.slice(0,3)]})");
+    await pause(30);await openProjects();
+    assert.equal(await run("document.querySelectorAll('.ssh-project-list button').length"),5);
+    assert.equal(await run("!!document.querySelector('.workspace-picker-search')"),false,'five usable local projects do not need search; other hosts and unavailable projects do not count');
+    await dismissOutside();
+    await run("updateChat({availableProjects:[...pickerProjects,...extraProjects]})");await pause(30);await openProjects();
+    await run("fill('.workspace-picker-search input','服务端')");
+    assert.equal(await run("document.querySelectorAll('.ssh-project-list button').length"),1);
+    await run("fill('.workspace-picker-search input','no-match')");
+    assert.equal(await run("!!document.querySelector('.workspace-picker-search')&&document.querySelector('.workspace-picker-empty').textContent"),'没有匹配的项目','search remains available with no results');
+    await run("fill('.workspace-picker-search input','CardBush');document.querySelector('.workspace-picker-search input').focus()");
+    await key('Tab');assert.equal(await run("document.activeElement.textContent"),'CardBush');
+    await key('Return');await until("selected.at(-1)==='D:/projects/cardbush'",'keyboard selects the filtered project');
+    await run("selected=[];updateChat({availableProjects:pickerProjects,selectedProjectDir:'',activeProjectDir:''})");
   }
   await run("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').click()");await until("!!document.querySelector('.ssh-dialog')",'location picker');
   const surface=await run("getComputedStyle(document.querySelector('.ssh-dialog')).backgroundColor");assert.equal(surface,'rgb(255, 255, 255)','portal inherits bright theme');
@@ -79,7 +115,8 @@ module.exports = async ({run,until,pause,window,root}) => {
   await until("chatProps.draft.includes('cardbush-reference://ssh')",'@ switches actual workspace and inserts reference');
   assert.equal(await run('selected.length'),2);
   await run("updateChat({messages:[],draft:''})");await until("!!document.querySelector('.welcome-input-stack .workspace-location-control > button')",'welcome keeps workspace selection');
-  await run("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').click()");await until("!!document.querySelector('.ssh-dialog')",'switch back');await run("clickText('此计算机')");await until("!document.querySelector('.workspace-picker')",'local location');
+  await run("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').click()");await until("!!document.querySelector('.ssh-dialog')",'switch back');await run("clickText('此计算机')");await until("!document.querySelector('.workspace-picker') && chatProps.selectedProjectDir === ''",'local location');
+  await until("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').textContent.trim() === '此计算机'", 'local location committed');
   await run("document.querySelector('.workspace-project-chip').click()");await until("document.body.textContent.includes('选择本地文件夹')",'local projects');await run("clickText('选择本地文件夹')");await until("selected.at(-1)==='D:/local-project'",'local selection');
   window.setContentSize(480, 640);
   for (const theme of ['dark', 'bright']) {

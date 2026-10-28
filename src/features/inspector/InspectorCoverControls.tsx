@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { AlertCircle, ArrowLeft, CheckCircle2, GripVertical, LoaderCircle, MessageSquare } from 'lucide-react';
 import type { QuickInputState } from '../composer/quickInputState';
 import type { AppLanguage } from '../../types';
@@ -14,22 +15,22 @@ export function InspectorCoverControls({ language, inputOpen, inputPending = fal
   onToggleInput: () => void;
 }) {
   const floating = useInspectorCoverPosition(inputOpen, inert);
-  const zh = language === 'zh';
+
   const collapsedStatus = !inputOpen && status?.hasActivity ? status : undefined;
   const Icon = collapsedStatus && { alert: AlertCircle, working: LoaderCircle, complete: CheckCircle2, chat: MessageSquare }[collapsedStatus.icon];
   return <div className="inspector-cover-controls" ref={floating.root} inert={inert}>
-    {inputOpen && <div className="inspector-quick-input" ref={onTargetChange} aria-label={zh ? '快速输入' : 'Quick input'} aria-busy={inputPending}>
-      {inputPending && <p className="quick-input-loading" role="status">{zh ? '正在准备对话…' : 'Preparing conversation…'}</p>}
+    {inputOpen && <div className="inspector-quick-input" ref={onTargetChange} aria-label={uiText(language)('inspectorCoverControls.quickInput')} aria-busy={inputPending}>
+      {inputPending && <p className="quick-input-loading" role="status">{uiText(language)('inspectorCoverControls.preparingConversation')}</p>}
     </div>}
     <div className="inspector-cover-capsule" ref={floating.capsule}>
-      {onBack && <button type="button" className="inspector-cover-back" onClick={onBack}><ArrowLeft size={15} />{zh ? '返回' : 'Back'}</button>}
-      <button type="button" className="inspector-cover-drag" aria-label={zh ? '移动输入框' : 'Move input panel'}
+      {onBack && <button type="button" className="inspector-cover-back" onClick={onBack}><ArrowLeft size={15} />{uiText(language)('windowFrame.back')}</button>}
+      <button type="button" className="inspector-cover-drag" aria-label={uiText(language)('inspectorCoverControls.moveInputPanel')}
         aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home" {...floating.handlers}>
         <GripVertical size={16} aria-hidden="true" />
       </button>
       <button type="button" className="inspector-cover-input-toggle" aria-expanded={inputOpen} onClick={onToggleInput}>
         {collapsedStatus && Icon && <span className="inspector-cover-status" data-state={collapsedStatus.state}><Icon size={14}/><span role="status">{collapsedStatus.label}</span></span>}
-        {zh ? '输入' : 'Input'}
+        {uiText(language)('inspectorCoverControls.input')}
       </button>
     </div>
   </div>;

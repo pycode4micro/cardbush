@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { dialogEventHandler } from '../../shared/dialogEvents';
@@ -28,7 +29,7 @@ export function SettingsFormDialog({ id, className = '', title, description, lan
     }}>
     <header className="settings-dialog-header"><div><h2 id={titleId}>{title}</h2>
       {description && <p id={descriptionId}>{description}</p>}</div>
-      <button type="button" className="icon-button" disabled={busy} aria-label={language === 'zh' ? '关闭' : 'Close'} onClick={onCancel}><X size={18}/></button></header>
+      <button type="button" className="icon-button" disabled={busy} aria-label={uiText(language)('common.close')} onClick={onCancel}><X size={18}/></button></header>
     <form className="settings-dialog-form" onSubmit={event => { event.preventDefault(); if (!busy) void onSubmit(); }}>
       <div className="settings-dialog-body">{children}</div>
       <footer className="settings-dialog-footer">{footer}</footer>

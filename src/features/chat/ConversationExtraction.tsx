@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, FileOutput, GitFork, Lightbulb, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -12,6 +13,7 @@ export const CONVERSATION_DRAG_TYPE = 'application/x-cardbush-conversation';
 type Draft = { sessionId: string; title: string; description: string; mode: 'default' | 'select';
   selecting: boolean; keys: string[]; preview?: ConversationExtractPreview; error?: string; busy: boolean };
 type ExtractionContext = {
+  language: AppLanguage;
   open: (sessionId: string) => void; fork: (sessionId: string) => void;
   permanent: ConversationExtractItem[]; pending: ConversationExtractItem[];
   draft: Draft | null; toggle: (key: string) => void; limit: number;
@@ -87,7 +89,7 @@ export function ConversationExtractionProvider({ activeSessionId, contextWindowT
   const toggle = (key: string) => setDraft(current => {
     if (!current || current.busy) return current;
     const next = { ...current, keys: current.keys.includes(key) ? current.keys.filter(item => item !== key) : [...current.keys, key], error: undefined };
-    if (count(next) > limit && next.keys.length > current.keys.length) return { ...current, error: '已达到当前模型上下文窗口的 1/4 上限。' };
+    if (count(next) > limit && next.keys.length > current.keys.length) return { ...current, error: uiText(language)('conversationExtraction.the_selection_has_reached_one_quarter_of') };
     return next;
   });
   const close = () => { generation.current++; setDraft(null); };
@@ -102,13 +104,13 @@ export function ConversationExtractionProvider({ activeSessionId, contextWindowT
     } catch (error) { if (generation.current === request) setDraft(current => current && { ...current, busy: false, error: String(error) }); }
   };
   const referenceSession = async (sessionId: string) => {
-    if (!api) throw new Error('对话提取不可用。');
+    if (!api) throw new Error(uiText(language)('conversationExtraction.conversation_excerpts_are_unavailable'));
     const preview = await api.preview({ sessionId, keys: [], title: '', description: '', contextWindowTokens });
     return markdown(await api.save({ sessionId, keys: defaultKeys(preview), title: '', description: '', contextWindowTokens }, 'reference'));
   };
-  const context: ExtractionContext = { open, fork: sessionId => { void onFork(sessionId).catch(error => showUiError('Fork 会话失败', String(error))); },
+  const context: ExtractionContext = { language, open, fork: sessionId => { void onFork(sessionId).catch(error => showUiError(uiText(language)('conversationExtraction.could_not_fork_the_conversation'), String(error))); },
     permanent: items.permanent, pending: items.pending.filter(item => (item.expiresAt ?? 0) > now), draft, toggle, limit, referenceSession,
-    consume: async id => { if (!api) throw new Error('对话提取不可用。'); return markdown(await api.consume(id)); } };
+    consume: async id => { if (!api) throw new Error(uiText(language)('conversationExtraction.conversation_excerpts_are_unavailable')); return markdown(await api.consume(id)); } };
   const choose = () => { if (draft) { setDraft({ ...draft, mode: 'select', selecting: true }); onOpen(draft.sessionId); } };
   return <ConversationExtractionContext.Provider value={context}>
     {children}
@@ -123,39 +125,38 @@ export function ConversationExtractionProvider({ activeSessionId, contextWindowT
             else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
           }
         }}>
-        <header><FileOutput size={20} /><h2 id="extract-title">{language === 'zh' ? '提取对话' : 'Extract conversation'}</h2>
-          <button type="button" aria-label="关闭" disabled={draft.busy} onClick={close}><X size={18} /></button></header>
-        <label>标题（可选）<input autoFocus maxLength={160} value={draft.title} disabled={draft.busy}
-          onChange={event => setDraft({ ...draft, title: event.target.value })} placeholder={draft.preview?.source.title || '给这段对话起个名字'} /></label>
-        <label>描述（可选）<textarea maxLength={2000} rows={2} value={draft.description} disabled={draft.busy}
-          onChange={event => setDraft({ ...draft, description: event.target.value })} placeholder="这段对话能提供什么背景或帮助" /></label>
-        <label>提取范围<select value={draft.mode} disabled={draft.busy || !draft.preview} onChange={event => {
+        <header><FileOutput size={20} /><h2 id="extract-title">{uiText(language)('conversationExtraction.extractConversation')}</h2>
+          <button type="button" aria-label={uiText(language)('common.close')} disabled={draft.busy} onClick={close}><X size={18} /></button></header>
+        <label>{uiText(language)('conversationExtraction.title_optional')}<input autoFocus maxLength={160} value={draft.title} disabled={draft.busy}
+          onChange={event => setDraft({ ...draft, title: event.target.value })} placeholder={draft.preview?.source.title || uiText(language)('conversationExtraction.name_this_conversation_excerpt')} /></label>
+        <label>{uiText(language)('conversationExtraction.description_optional')}<textarea maxLength={2000} rows={2} value={draft.description} disabled={draft.busy}
+          onChange={event => setDraft({ ...draft, description: event.target.value })} placeholder={uiText(language)('conversationExtraction.what_context_or_help_does_this_excerpt')} /></label>
+        <label>{uiText(language)('conversationExtraction.excerpt_range')}<select value={draft.mode} disabled={draft.busy || !draft.preview} onChange={event => {
           if (event.target.value === 'select') choose(); else setDraft({ ...draft, mode: 'default', keys: defaultKeys(draft.preview!) });
-        }}><option value="default">默认 · 最近 5 轮</option><option value="select">选择</option></select></label>
-        {draft.mode === 'select' && <button type="button" className="extract-select-again" disabled={draft.busy} onClick={choose}>返回会话调整选择</button>}
-        <p className="extract-hint">提取已保存的轮次，优先采用后台总结；无总结时保留可见回复。超出预算时，默认范围从最早一轮开始缩减。</p>
+        }}><option value="default">{uiText(language)('conversationExtraction.default_last_5_turns')}</option><option value="select">{uiText(language)('conversationExtraction.select')}</option></select></label>
+        {draft.mode === 'select' && <button type="button" className="extract-select-again" disabled={draft.busy} onClick={choose}>{uiText(language)('conversationExtraction.return_to_the_conversation_to_adjust_the')}</button>}
+        <p className="extract-hint">{uiText(language)('conversationExtraction.extract_saved_turns_using_background_summaries_when')}</p>
         <div className={`extract-budget${count(draft) > limit ? ' over' : ''}`} role="status">
-          已选 {draft.keys.length} 条 · {count(draft).toLocaleString()} / {limit.toLocaleString()} Token
-          <small>{draft.preview?.tokenMethod || '正在读取会话…'} · 当前模型上下文的 1/4</small>
+          {uiText(language)('extraction.budget', { count: draft.keys.length, used: count(draft).toLocaleString(language), limit: limit.toLocaleString(language) })}<small>{draft.preview?.tokenMethod || uiText(language)('conversationExtraction.reading_conversation')}{uiText(language)('extraction.budgetFraction')}</small>
         </div>
         {draft.error && <p className="extract-error" role="alert">{draft.error}</p>}
-        {draft.preview && !draft.keys.length && <p className="extract-hint">没有选中的内容。可切换“选择”手动勾选能放入预算的消息。</p>}
-        <p className="extract-hint">填写标题和描述后可永久保存，并从任意输入框通过 @ 引用。永久保存仅记录来源和范围。</p>
+        {draft.preview && !draft.keys.length && <p className="extract-hint">{uiText(language)('conversationExtraction.nothing_is_selected_choose_select_to_pick')}</p>}
+        <p className="extract-hint">{uiText(language)('conversationExtraction.add_a_title_and_description_to_save')}</p>
         <footer>
-          <button type="button" disabled={draft.busy || !draft.keys.length || count(draft) > limit} onClick={() => void save('file')}>另存为 Markdown</button>
-          <button type="button" disabled={draft.busy || !draft.keys.length || count(draft) > limit} onClick={() => void save('temporary')}>临时保存 · 30 秒</button>
+          <button type="button" disabled={draft.busy || !draft.keys.length || count(draft) > limit} onClick={() => void save('file')}>{uiText(language)('conversationExtraction.save_as_markdown')}</button>
+          <button type="button" disabled={draft.busy || !draft.keys.length || count(draft) > limit} onClick={() => void save('temporary')}>{uiText(language)('conversationExtraction.save_temporarily_30_seconds')}</button>
           <button type="button" className="primary" disabled={draft.busy || !draft.keys.length || count(draft) > limit || !draft.title.trim() || !draft.description.trim()}
-            title={!draft.title.trim() || !draft.description.trim() ? '请填写标题和描述' : '永久保存并加入 @ 引用列表'} onClick={() => void save('permanent')}>永久保存</button>
+            title={!draft.title.trim() || !draft.description.trim() ? uiText(language)('conversationExtraction.enter_a_title_and_description') : uiText(language)('conversationExtraction.save_permanently_and_add_to_references')} onClick={() => void save('permanent')}>{uiText(language)('conversationExtraction.save_permanently')}</button>
         </footer>
       </section>
     </div>, document.querySelector('.app') ?? document.body)}
-    {draft?.selecting && createPortal(<div className="extract-selection-bar" role="region" aria-label="对话提取选择">
-      <span>已选 {draft.keys.length} 条 · {count(draft).toLocaleString()} / {limit.toLocaleString()} Token（保守上界）</span>
+    {draft?.selecting && createPortal(<div className="extract-selection-bar" role="region" aria-label={uiText(language)('conversationExtraction.conversation_excerpt_selection')}>
+      <span>{uiText(language)('extraction.conservativeBudget', { count: draft.keys.length, used: count(draft).toLocaleString(language), limit: limit.toLocaleString(language) })}</span>
       {draft.error && <span className="extract-error" role="alert">{draft.error}</span>}
-      {draft.sessionId !== activeSessionId && <button type="button" onClick={() => onOpen(draft.sessionId)}>返回来源会话</button>}
-      <button type="button" onClick={() => setDraft({ ...draft, keys: [], error: undefined })}>清空选择</button>
-      <button type="button" onClick={close}>取消</button>
-      <button type="button" className="primary" onClick={() => setDraft({ ...draft, selecting: false })}>完成选择</button>
+      {draft.sessionId !== activeSessionId && <button type="button" onClick={() => onOpen(draft.sessionId)}>{uiText(language)('conversationExtraction.return_to_source_conversation')}</button>}
+      <button type="button" onClick={() => setDraft({ ...draft, keys: [], error: undefined })}>{uiText(language)('conversationExtraction.clear_selection')}</button>
+      <button type="button" onClick={close}>{uiText(language)('agentConnectionForm.cancel')}</button>
+      <button type="button" className="primary" onClick={() => setDraft({ ...draft, selecting: false })}>{uiText(language)('conversationExtraction.finish_selection')}</button>
     </div>, document.querySelector('.app') ?? document.body)}
   </ConversationExtractionContext.Provider>;
 }
@@ -169,17 +170,17 @@ export function ExtractionSelector({ message, sessionId }: { message: ChatMessag
   const checked = draft.keys.includes(unit.key);
   return <div className={`extract-message-choice ${unit.role}${checked ? ' selected' : ''}`}>
     <button type="button" className="extract-circle" role="checkbox" aria-checked={checked}
-      aria-label={`选择${unit.role === 'user' ? '用户消息' : 'Agent 回复'}${unit.summarized ? '（后台总结）' : ''}`}
+      aria-label={uiText(context?.language)('conversationExtraction.select_value1_value2', { value1: unit.role === 'user' ? uiText(context?.language)('conversationExtraction.user_message') : uiText(context?.language)('conversationExtraction.agent_reply'), value2: unit.summarized ? uiText(context?.language)('conversationExtraction.background_summary') : '' })}
       onClick={() => context.toggle(unit.key)}>{checked && <Check size={15} />}</button>
-    {unit.summarized && <span className="extract-summary-note" title={unit.preview}>使用后台总结</span>}
+    {unit.summarized && <span className="extract-summary-note" title={unit.preview}>{uiText()('conversationExtraction.using_a_background_summary')}</span>}
   </div>;
 }
 
 export function ExtractionBulbs({ onInsert }: { onInsert: (text: string) => void }) {
   const context = useContext(ConversationExtractionContext);
   return <>{context?.pending.map(item => <button key={item.id} className="tool-chip extract-bulb" type="button"
-    title={`插入对话提取：${item.title}（30 秒内有效）`} aria-label={`插入对话提取：${item.title}`}
-    onClick={() => { void context.consume(item.id).then(onInsert).catch(error => showUiError('无法插入提取', String(error))); }}><Lightbulb size={17} /></button>)}</>;
+    title={uiText(context?.language)('conversationExtraction.insert_excerpt_value1_valid_for_30_seconds', { value1: item.title })} aria-label={uiText(context?.language)('conversationExtraction.insert_excerpt_value1', { value1: item.title })}
+    onClick={() => { void context.consume(item.id).then(onInsert).catch(error => showUiError(uiText(context?.language)('conversationExtraction.could_not_insert_the_excerpt'), String(error))); }}><Lightbulb size={17} /></button>)}</>;
 }
 
 export function ExtractionMenuIcon({ fork = false }: { fork?: boolean }) { return fork ? <GitFork size={15} /> : <FileOutput size={15} />; }

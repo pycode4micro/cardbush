@@ -17,6 +17,10 @@
         "default": "./dist-cjs/index.js"
       }
     },
+    "./i18n": {
+      "import": { "types": "./dist/i18n/index.d.ts", "default": "./dist/i18n/index.js" },
+      "require": { "types": "./dist-cjs/i18n/index.d.ts", "default": "./dist-cjs/i18n/index.js" }
+    },
     "./contracts": {
       "import": {
         "types": "./dist/contracts.d.ts",
@@ -33,7 +37,7 @@
     "dist-cjs"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node scripts/finalize.cjs",
+    "build": "node ../../scripts/build-ui-language-packs.mjs && tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node scripts/finalize.cjs",
     "test": "node --test test/*.test.mjs"
   }
 }

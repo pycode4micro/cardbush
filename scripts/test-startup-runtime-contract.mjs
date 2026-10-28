@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertUiMessage } from './helpers/ui-message-contract.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -30,7 +31,8 @@ assert.match(main, /webContents\.on\('before-input-event'/);
 assert.match(main, /key === 'f5'.*key === 'r'/);
 assert.match(main, /webContents\.on\('render-process-gone'/);
 assert.doesNotMatch(main, /target\.webContents\.reload\(\)|stage: 'automatic-reload'/);
-assert.match(main, /void showWindowError\(target, 'CardBush 界面异常'/);
+assert.match(main, /void showWindowError\(target, nativeText\(\)\('appErrorBoundary.cardbush_interface_error'\)/);
+assertUiMessage(main, 'appErrorBoundary.cardbush_interface_error', { zh: 'CardBush 界面异常', en: 'CardBush interface error' });
 assert.match(main, /ipcMain\.handle\('app:show-error'/);
 assert.doesNotMatch(read('src', 'App.tsx'), /window\.location\.reload\(\)/);
 assert.match(rendererMain, /window\.addEventListener\('error'/);
@@ -54,7 +56,7 @@ assert.match(
 );
 assert.match(preload, /runtimeStartupStatus:/);
 assert.match(preload, /onRuntimeStartupStatus:/);
-assert.match(composer, /Runtime 正在准备/);
+assertUiMessage(composer, 'composer.runtimeIsPreparing', { zh: 'Runtime 正在准备', en: 'Runtime is preparing' });
 assert.match(composer, /retryRuntimeStartup/);
 assert.match(chat, /requestContext\.runtimeReady === false/);
 assert.match(builder, /asar: true/);

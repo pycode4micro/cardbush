@@ -12,3 +12,5 @@
 .agent-desktop-view button:disabled { opacity: .45; cursor: default; }
 .agent-desktop-text { display: flex; margin: 0 16px 16px; gap: 8px; }
 .agent-desktop-text input { flex: 1; min-width: 0; background: var(--surface-strong); color: var(--text); border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; font: inherit; font-size: 13px; }
+
+.agent-desktop-screen img[data-has-frame="false"] { opacity: 0; }

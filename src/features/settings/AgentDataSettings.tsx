@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentConnection, AgentInfo, AgentProject } from '../../../electron/agentTypes';
 import type { AppLanguage, BackendCapabilities } from '../../types';
@@ -13,7 +14,7 @@ export function AgentDataSettings({ connection, language, onNotify }: {
 }) {
   const [expanded, setExpanded] = useState(false);
   return <details className="settings-agent-data" data-agent-data={connection.id} onToggle={event => setExpanded(event.currentTarget.open)}>
-    <summary>{connection.name} · {language === 'zh' ? '项目与数据' : 'Projects and data'}</summary>
+    <summary>{connection.name} · {uiText(language)('agentDataSettings.projectsAndData')}</summary>
     {expanded && <AgentDataContent connection={connection} language={language} onNotify={onNotify}/>}
   </details>;
 }
@@ -34,9 +35,9 @@ function AgentDataContent({ connection, language, onNotify }: Parameters<typeof 
     void window.cardbushDesktop!.agents!.connect(connection.id).then(value => { if (alive) setInfo(value); }, error => { if (alive) setError(agentErrorText(error)); });
     return () => { alive = false; };
   }, [connection.id, retry]);
-  const zh = language === 'zh';
-  if (error) return <p role="alert">{error}<button className="secondary-button" onClick={() => setRetry(value => value + 1)}>{zh ? '重试' : 'Retry'}</button></p>;
-  if (!info) return <p role="status">{zh ? '正在连接 Agent…' : 'Connecting to Agent…'}</p>;
+
+  if (error) return <p role="alert">{error}<button className="secondary-button" onClick={() => setRetry(value => value + 1)}>{uiText(language)('common.retry')}</button></p>;
+  if (!info) return <p role="status">{uiText(language)('agentDataSettings.connectingToAgent')}</p>;
   const capabilities = { maintenanceConversationHistoryClear: true, maintenanceLogsCacheClear: true } as BackendCapabilities;
   return <div className="settings-stack">
     {info.capabilities.conversationManagement && <AgentArchivesPanel call={call} connectionId={connection.id} language={language} onNotify={onNotify}/>}
@@ -47,18 +48,18 @@ function AgentDataContent({ connection, language, onNotify }: Parameters<typeof 
 }
 
 function AgentProjects({ call, language }: { call: AgentCall; language: AppLanguage }) {
-  const zh = language === 'zh';
+
   const [projects, setProjects] = useState<{ projects: AgentProject[]; defaultProjectId: string | null }>({ projects: [], defaultProjectId: null });
   const [name, setName] = useState(''); const [path, setPath] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const refresh = useCallback(async () => setProjects(await call('projects.list')), [call]);
   useEffect(() => { let alive = true; void call<typeof projects>('projects.list').then(value => { if (alive) setProjects(value); }, error => { if (alive) setError(agentErrorText(error)); }); return () => { alive = false; }; }, [call]);
   async function act(fn: () => Promise<unknown>) { if (busy) return; setBusy(true); setError(''); try { await fn(); await refresh(); } catch (error) { setError(agentErrorText(error)); } finally { setBusy(false); } }
-  return <SettingsCard title={zh ? '绑定项目' : 'Projects'}>
+  return <SettingsCard title={uiText(language)('agentDataSettings.projects')}>
     {error && <p role="alert">{error}</p>}{projects.projects.map(project => <div className="settings-project-row" key={project.id}><div><strong>{project.name}</strong><small>{project.path}</small></div>
-      <button disabled={busy || project.id === projects.defaultProjectId} onClick={() => void act(() => call('projects.default', { id: project.id }))}>{project.id === projects.defaultProjectId ? zh ? '默认' : 'Default' : zh ? '设为默认' : 'Make default'}</button>
-      <button disabled={busy} onClick={() => void act(() => call('projects.remove', { id: project.id }))}>{zh ? '移除' : 'Remove'}</button></div>)}
+      <button disabled={busy || project.id === projects.defaultProjectId} onClick={() => void act(() => call('projects.default', { id: project.id }))}>{project.id === projects.defaultProjectId ? uiText(language)('agentDataSettings.default') : uiText(language)('agentDataSettings.makeDefault')}</button>
+      <button disabled={busy} onClick={() => void act(() => call('projects.remove', { id: project.id }))}>{uiText(language)('appCenter.remove')}</button></div>)}
     <form className="settings-stack" onSubmit={event => { event.preventDefault(); void act(async () => { await call('projects.save', { name: name.trim(), path: path.trim() }); setName(''); setPath(''); }); }}>
-      <SettingsInput label={zh ? '项目名称' : 'Project name'} value={name} onChange={setName}/><SettingsInput label={zh ? 'Agent 主机上的目录' : 'Directory on the Agent host'} value={path} onChange={setPath}/>
-      <button className="secondary-button" disabled={busy || !name.trim() || !path.trim()}>{zh ? '添加项目' : 'Add project'}</button></form>
+      <SettingsInput label={uiText(language)('agentDataSettings.projectName')} value={name} onChange={setName}/><SettingsInput label={uiText(language)('agentDataSettings.directoryOnTheAgentHost')} value={path} onChange={setPath}/>
+      <button className="secondary-button" disabled={busy || !name.trim() || !path.trim()}>{uiText(language)('agentDataSettings.addProject')}</button></form>
   </SettingsCard>;
 }

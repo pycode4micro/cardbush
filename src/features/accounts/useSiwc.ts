@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { siwcSnapshotSchema, type SiwcSnapshot, type SiwcAction } from '@cardbush/bush-protocol';
 import { agentErrorText } from '../agents/agentErrorText';
@@ -21,7 +22,7 @@ export function useSiwc() {
   }, [refresh]);
   const action = useCallback(async (input: SiwcAction) => {
     try {
-      if (!window.cardbushDesktop?.siwcAction) throw Error('ChatGPT sign-in requires the local CardBush desktop.');
+      if (!window.cardbushDesktop?.siwcAction) throw Error(uiText()('useSiwc.chatgpt_sign_in_requires_the_local_cardbush'));
       const value = siwcSnapshotSchema.parse(await window.cardbushDesktop.siwcAction(input));
       if (mounted.current) { version.current++; setSnapshot(value); setError(''); }
       return value;

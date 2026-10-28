@@ -8,7 +8,7 @@ export async function workspaceFileWorkerMain() {
   let writable = false;
   const metadata = async () => {
     const info = await file!.stat({ bigint: true });
-    if (!info.isFile()) throw Object.assign(Error('File identity changed.'), { code: 'workspace_authorization_changed' });
+    if (!info.isFile() || info.nlink !== 1n) throw Object.assign(Error('File identity changed.'), { code: 'workspace_authorization_changed' });
     return Object.fromEntries(['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs', 'nlink'].map(key => [key, String(info[key as keyof typeof info])]));
   };
   try {
@@ -21,16 +21,18 @@ export async function workspaceFileWorkerMain() {
           writable = input.write === true;
           file = await open(input.path, (writable ? constants.O_RDWR : constants.O_RDONLY) | constants.O_NOFOLLOW | constants.O_NONBLOCK);
           const info = await metadata();
-          if (`${info.dev}:${info.ino}` !== input.identity || writable && info.nlink !== '1')
+          if (`${info.dev}:${info.ino}` !== input.identity)
             throw Object.assign(Error('File identity changed.'), { code: 'workspace_authorization_changed' });
           result = info;
         } else if (input.op === 'stat' && file) result = await metadata();
         else if (input.op === 'read' && file) {
+          await metadata();
           if (!Number.isSafeInteger(input.count) || input.count < 1 || input.count > 65536 || !Number.isSafeInteger(input.offset) || input.offset < 0) throw Error('Invalid read budget.');
           const bytes = Buffer.alloc(input.count);
           const read = await file.read(bytes, 0, bytes.length, input.offset);
           result = bytes.subarray(0, read.bytesRead).toString('base64');
         } else if (input.op === 'truncate' && file && writable) {
+          await metadata();
           if (input.sha256) {
             const hash = createHash('sha256');
             for await (const chunk of file.createReadStream({ autoClose: false, start: 0 })) hash.update(chunk);
@@ -38,14 +40,17 @@ export async function workspaceFileWorkerMain() {
           }
           await file.truncate(0);
         } else if (input.op === 'write' && file && writable) {
+          await metadata();
           const bytes = Buffer.from(input.data, 'base64');
           if (bytes.length > 65536 || !Number.isSafeInteger(input.offset) || input.offset < 0) throw Error('Invalid write budget.');
           let offset = 0;
           while (offset < bytes.length) offset += (await file.write(bytes, offset, bytes.length - offset, input.offset + offset)).bytesWritten;
         } else if (input.op === 'chmod' && file && writable) {
+          await metadata();
           if (!Number.isSafeInteger(input.mode) || input.mode < 0 || input.mode > 0o777) throw Error('Invalid file mode.');
           await file.chmod(input.mode);
-        } else if (input.op === 'close') { await file?.close(); file = undefined; process.stdout.write('{"ok":true}\n'); break; }
+        } else if (input.op === 'release' && file && !writable) { await file.close(); file = undefined; }
+        else if (input.op === 'close') { await file?.close(); file = undefined; process.stdout.write('{"ok":true}\n'); break; }
         else throw Error('Invalid file protocol operation.');
         process.stdout.write(JSON.stringify({ ok: true, result }) + '\n');
       } catch (error) {

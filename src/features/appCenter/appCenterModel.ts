@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import type { ApplicationPromptReference } from '../../shared/promptReferences';
 import { normalizeLocalApplications, type LocalApplication } from '../../shared/localApplications';
@@ -29,14 +30,14 @@ export function normalizeAppCenterPreferences(value: unknown): AppCenterPreferen
 }
 
 export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPlugin[], prefs: AppCenterPreferences): ApplicationEntry[] {
-  const zh = language === 'zh';
+
   const entries: ApplicationEntry[] = [
-    { id: 'builtin:plugins', kind: 'builtin', target: 'plugins', title: zh ? '插件' : 'Plugins', description: zh ? '发现与管理技能、工具和插件' : 'Discover and manage skills, tools and plugins', shortcut: 'openPlugins' },
-    { id: 'builtin:automations', kind: 'builtin', target: 'automations', title: zh ? '定时与自动化' : 'Automations', description: zh ? '日历、定时任务与执行结果' : 'Calendar, scheduled tasks and results', shortcut: 'openAutomations' },
-    { id: 'builtin:settings', kind: 'builtin', target: 'settings', title: zh ? '设置' : 'Settings', description: zh ? '模型、连接、外观和偏好' : 'Models, connections, appearance and preferences', shortcut: 'openSettings' },
-    { id: 'builtin:components', kind: 'builtin', target: 'components', title: zh ? '组件' : 'Components', description: zh ? '排列内置视图与自定义组件，调整大小和位置' : 'Arrange and resize built-in views and custom components' },
-    { id: 'builtin:team', kind: 'builtin', target: 'team', title: zh ? '协作流程' : 'Workflows', description: zh ? '通过对话建立协作流程，查看步骤、进度和结果' : 'Build workflows through conversation and inspect progress and results' },
-    { id: 'builtin:md-presentation', kind: 'builtin', target: 'md-presentation', title: zh ? '创作' : 'Create', description: zh ? '与 Agent 一起编辑项目中的 Markdown，实时预览文档' : 'Write project Markdown with an Agent and preview changes live' },
+    { id: 'builtin:plugins', kind: 'builtin', target: 'plugins', title: uiText(language)('appCenterModel.plugins'), description: uiText(language)('appCenterModel.discoverAndManageSkillsToolsAndPlugins'), shortcut: 'openPlugins' },
+    { id: 'builtin:automations', kind: 'builtin', target: 'automations', title: uiText(language)('appCenterModel.automations'), description: uiText(language)('appCenterModel.calendarScheduledTasksAndResults'), shortcut: 'openAutomations' },
+    { id: 'builtin:settings', kind: 'builtin', target: 'settings', title: uiText(language)('cardlingWindow.settings'), description: uiText(language)('appCenterModel.modelsConnectionsAppearanceAndPreferences'), shortcut: 'openSettings' },
+    { id: 'builtin:components', kind: 'builtin', target: 'components', title: uiText(language)('appCenterModel.components'), description: uiText(language)('appCenterModel.arrangeAndResizeBuiltInViewsAnd') },
+    { id: 'builtin:team', kind: 'builtin', target: 'team', title: uiText(language)('appCenterModel.workflows'), description: uiText(language)('appCenterModel.buildWorkflowsThroughConversationAndInspectProgress') },
+    { id: 'builtin:md-presentation', kind: 'builtin', target: 'md-presentation', title: uiText(language)('appCenterModel.create'), description: uiText(language)('appCenterModel.writeProjectMarkdownWithAnAgentAnd') },
     ...plugins.filter(plugin => plugin.installed && plugin.enabled && !plugin.removalPending).flatMap(plugin => plugin.components.filter(component => component.kind === 'app' && (
       component.app?.kind === 'url' ? Boolean(applicationLink(component.app.url)) : component.app?.kind === 'renderer' && component.app.extensionId === plugin.id
     )).map(component => ({
@@ -45,7 +46,7 @@ export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPl
     }))),
     ...prefs.links.map(link => ({ id: link.id, kind: 'external' as const, target: link.url, title: link.title, description: new URL(link.url).host })),
     ...(prefs.localApps ?? []).map(app => ({ id: app.id, kind: 'local' as const, target: app.path, title: app.title, description: app.path, icon: app.icon })),
-    ...(prefs.webApps ?? []).map(app => ({ id: app.id, kind: 'web' as const, target: app.url, title: app.title, description: `${zh ? '网页应用' : 'Web app'} · ${new URL(app.url).host}`, icon: app.icon })),
+    ...(prefs.webApps ?? []).map(app => ({ id: app.id, kind: 'web' as const, target: app.url, title: app.title, description: `${uiText(language)('appCenterModel.webApp')} · ${new URL(app.url).host}`, icon: app.icon })),
   ];
   const order = new Map((prefs.order ?? []).map((id, index) => [id, index]));
   return entries.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));

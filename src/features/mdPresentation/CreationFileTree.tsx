@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, Folder } from 'lucide-react';
 import type { WorkspaceDirectoryPage } from '../../../electron/workspaceFiles';
@@ -5,7 +6,7 @@ import { acceptCreationFile, markdownFile, sameFile } from './creationFiles';
 import { getBushItPages } from './bushItPageStore';
 
 export function CreationFileTree({ root, directory = root, language, selectedPath, query, refresh, onSelect, onError, depth = 0 }: {
-  root: string; directory?: string; language: 'zh' | 'en'; selectedPath?: string; query: string; refresh: number;
+  root: string; directory?: string; language: string; selectedPath?: string; query: string; refresh: number;
   onSelect?: () => void; onError: (error: string) => void; depth?: number;
 }) {
   const [page, setPage] = useState<WorkspaceDirectoryPage>({ entries: [] }), [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -53,7 +54,7 @@ export function CreationFileTree({ root, directory = root, language, selectedPat
       {entry.kind === 'folder' ? <>{expanded.has(entry.path) ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}<Folder size={15}/></> : <FileText size={15}/>}<span>{entry.name}</span>
     </button>
     {entry.kind === 'folder' && expanded.has(entry.path) && <CreationFileTree root={root} directory={entry.path} depth={depth + 1} language={language} selectedPath={selectedPath} query={query} refresh={refresh} onSelect={onSelect} onError={onError}/>}
-  </div>)}{page.nextOffset !== undefined && <button disabled={busy} onClick={() => void more()}>{language === 'zh' ? '加载更多' : 'Load more'}</button>}
-    {!entries.length && !depth && <small>{language === 'zh' ? '暂无 Markdown 文件' : 'No Markdown files'}</small>}
+  </div>)}{page.nextOffset !== undefined && <button disabled={busy} onClick={() => void more()}>{uiText(language)('image.loadMore')}</button>}
+    {!entries.length && !depth && <small>{uiText(language)('creationFileTree.noMarkdownFiles')}</small>}
   </div>;
 }

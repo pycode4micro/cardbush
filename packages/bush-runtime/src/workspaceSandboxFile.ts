@@ -48,18 +48,30 @@ export class SandboxFileHandle {
   }
 
   static async open(path: string, identity: string, write: boolean, expectedHash?: string, signal?: AbortSignal, linuxExecutable?: string, deleting = false) {
+    return SandboxFileHandle.#start({ [path]: identity }, write, expectedHash, signal, linuxExecutable, deleting, path);
+  }
+
+  /** A trusted checkpoint can reuse a worker for a bounded set of exact read
+   * grants. Each open still verifies its recorded identity inside the worker. */
+  static async openReadBatch(identities: Record<string, string>, signal?: AbortSignal, linuxExecutable = process.env.CARDBUSH_BWRAP_PATH?.trim()) {
+    return SandboxFileHandle.#start(identities, false, undefined, signal, linuxExecutable);
+  }
+
+  static async #start(identities: Record<string, string>, write: boolean, expectedHash?: string, signal?: AbortSignal, linuxExecutable?: string, deleting = false, initialPath?: string) {
     const release = await reserveFileWorker(signal);
     try {
+    const paths = Object.keys(identities);
+    if (!paths.length || paths.length > 64 || write && paths.length !== 1) throw Error('Invalid exact-file batch.');
     const executable = await realpath(process.platform === 'win32' ? resolveProcessResourceHost() : process.execPath);
     const policy: ExecutionSandboxPolicy = { readableRoots: [], writableRoots: [],
-      readableFiles: [executable, ...(!write ? [path] : [])], writableFiles: write ? [path] : [],
-      ...(deleting ? { deletableFiles: [path] } : {}),
-      network: 'disabled', privateWorkingDirectory: true, requireCanonicalRoots: true, expectedIdentities: { [path]: identity }, linuxExecutable };
+      readableFiles: [executable, ...(!write ? paths : [])], writableFiles: write ? paths : [],
+      ...(deleting ? { deletableFiles: paths } : {}),
+      network: 'disabled', privateWorkingDirectory: true, requireCanonicalRoots: true, expectedIdentities: identities, linuxExecutable };
     const managed = await spawnResourceManagedProcess({ executable,
       args: process.platform === 'win32' ? ['--workspace-file-worker'] : ['--input-type=module', '-e', `(${workspaceFileWorkerMain.toString()})()`],
-      cwd: dirname(path), sandbox: policy, signal, lifetime: 'io' });
+      cwd: dirname(paths[0]!), sandbox: policy, signal, lifetime: 'io' });
     const handle = new SandboxFileHandle(managed, expectedHash, release);
-    try { await handle.request({ op: 'open', path, identity, write, deleting }); return handle; }
+    try { if (initialPath) await handle.request({ op: 'open', path: initialPath, identity: identities[initialPath], write, deleting }); return handle; }
     catch (error) { managed.stop(); await handle.#complete(); throw error; }
     } catch (error) { release(); throw error; }
   }

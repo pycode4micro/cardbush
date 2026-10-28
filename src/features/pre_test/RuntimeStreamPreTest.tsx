@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
@@ -80,9 +81,7 @@ function RuntimeFixturePreTest({ language }: { language: AppLanguage }) {
       <header className="runtime-stream-pre-test-header">
         <span>
           <strong>
-            {language === 'zh'
-              ? 'Runtime Event 首轮消费 · Pre Test'
-              : 'Runtime Event first consumer · Pre Test'}
+            {uiText(language)('runtimeStreamPreTest.runtimeEventFirstConsumerPreTest')}
           </strong>
           <small>
             {setup.fixture.name} · {setup.fixture.protocol}
@@ -94,7 +93,7 @@ function RuntimeFixturePreTest({ language }: { language: AppLanguage }) {
             {setup.fixture.events.length}
           </output>
           <button type="button" onClick={() => void replay().catch(() => undefined)}>
-            {language === 'zh' ? '重新播放' : 'Replay'}
+            {uiText(language)('runtimeStreamPreTest.replay')}
           </button>
         </div>
       </header>
@@ -102,31 +101,29 @@ function RuntimeFixturePreTest({ language }: { language: AppLanguage }) {
       <main className="runtime-stream-pre-test-stage">
         <section className="runtime-stream-pre-test-contract">
           <span>
-            <small>{language === 'zh' ? '协议' : 'Protocol'}</small>
+            <small>{uiText(language)('runtimeStreamPreTest.protocol')}</small>
             <strong>{state.capabilities?.eventProtocol ?? '—'}</strong>
           </span>
           <span>
-            <small>{language === 'zh' ? '最后事件' : 'Last event'}</small>
+            <small>{uiText(language)('runtimeStreamPreTest.lastEvent')}</small>
             <strong>{state.lastEventKind ?? '—'}</strong>
           </span>
           <span>
-            <small>{language === 'zh' ? '终态来源' : 'Terminal source'}</small>
+            <small>{uiText(language)('runtimeStreamPreTest.terminalSource')}</small>
             <strong>{terminal ? 'turn_terminal' : '—'}</strong>
           </span>
         </section>
 
         {state.error && (
           <section className="runtime-stream-pre-test-error" role="alert">
-            <strong>{language === 'zh' ? '协议消费失败' : 'Protocol consumer failed'}</strong>
+            <strong>{uiText(language)('runtimeStreamPreTest.protocolConsumerFailed')}</strong>
             <span>{state.error}</span>
           </section>
         )}
 
         <section className="runtime-stream-pre-test-transcript">
           <article className="runtime-stream-pre-test-user">
-            {language === 'zh'
-              ? '验证首轮 Runtime 流是否保持 Thinking、Assistant 与终态分离。'
-              : 'Verify that the first Runtime stream separates Thinking, Assistant and terminal state.'}
+            {uiText(language)('runtimeStreamPreTest.verifyThatTheFirstRuntimeStreamSeparates')}
           </article>
 
           {(reasoningContent || streaming) && (
@@ -140,7 +137,7 @@ function RuntimeFixturePreTest({ language }: { language: AppLanguage }) {
               <small>Thinking</small>
               <p>
                 {reasoningContent ||
-                  (language === 'zh' ? '等待推理事件…' : 'Waiting for reasoning events…')}
+                  (uiText(language)('runtimeStreamPreTest.waitingForReasoningEvents'))}
               </p>
             </section>
           )}
@@ -163,16 +160,14 @@ function RuntimeFixturePreTest({ language }: { language: AppLanguage }) {
             </div>
           ) : (
             <div className="runtime-stream-pre-test-waiting">
-              {language === 'zh'
-                ? '等待 assistant_segment…'
-                : 'Waiting for assistant_segment…'}
+              {uiText(language)('runtimeStreamPreTest.waitingForAssistantSegment')}
             </div>
           )}
         </section>
 
         <footer className="runtime-stream-pre-test-terminal">
-          <small>{language === 'zh' ? '明确终态' : 'Explicit terminal'}</small>
-          <strong>{terminal?.status ?? (language === 'zh' ? '尚未收到' : 'Not received')}</strong>
+          <small>{uiText(language)('runtimeStreamPreTest.explicitTerminal')}</small>
+          <strong>{terminal?.status ?? (uiText(language)('runtimeStreamPreTest.notReceived'))}</strong>
           <span>{terminal?.reason ?? 'turn_terminal pending'}</span>
         </footer>
       </main>
@@ -212,9 +207,7 @@ function ConnectedRuntimeLivePreTest({
   const session = useMemo(() => createDesktopRuntimeSession(), []);
   const state = useRuntimeTurnStore(session.store);
   const [prompt, setPrompt] = useState(
-    language === 'zh'
-      ? '用一句话说明这条消息已经通过 TypeScript Runtime。'
-      : 'Confirm in one sentence that this message passed through the TypeScript Runtime.',
+    uiText(language)('runtimeStreamPreTest.confirmInOneSentenceThatThisMessage'),
   );
   const [submittedPrompt, setSubmittedPrompt] = useState('');
   const [error, setError] = useState('');
@@ -232,9 +225,7 @@ function ConnectedRuntimeLivePreTest({
     if (!content) return;
     if (!modelConfig?.apiKey.trim()) {
       setError(
-        language === 'zh'
-          ? '当前模型配置没有可用的 API Key。'
-          : 'The selected model configuration has no usable API key.',
+        uiText(language)('runtimeStreamPreTest.theSelectedModelConfigurationHasNoUsable'),
       );
       return;
     }
@@ -298,16 +289,12 @@ function ConnectedRuntimeLivePreTest({
       <header className="runtime-stream-pre-test-header">
         <span>
           <strong>
-            {language === 'zh'
-              ? 'TypeScript Runtime · Live Gate'
-              : 'TypeScript Runtime · Live Gate'}
+            {uiText(language)('runtimeStreamPreTest.typescriptRuntimeLiveGate')}
           </strong>
           <small>
             {modelConfig
               ? `${modelConfig.provider} · ${modelConfig.modelName}`
-              : language === 'zh'
-                ? '未选择模型配置'
-                : 'No model configuration selected'}
+              : uiText(language)('runtimeStreamPreTest.noModelConfigurationSelected')}
           </small>
         </span>
         <output data-state={state.streamState}>
@@ -318,15 +305,15 @@ function ConnectedRuntimeLivePreTest({
       <main className="runtime-stream-pre-test-stage">
         <section className="runtime-stream-pre-test-contract">
           <span>
-            <small>{language === 'zh' ? '协议' : 'Protocol'}</small>
+            <small>{uiText(language)('runtimeStreamPreTest.protocol')}</small>
             <strong>{state.capabilities?.eventProtocol ?? '—'}</strong>
           </span>
           <span>
-            <small>{language === 'zh' ? '宿主' : 'Host'}</small>
+            <small>{uiText(language)('runtimeStreamPreTest.host')}</small>
             <strong>{state.capabilities?.hostId ?? '—'}</strong>
           </span>
           <span>
-            <small>{language === 'zh' ? '终态' : 'Terminal'}</small>
+            <small>{uiText(language)('runtimeStreamPreTest.terminal')}</small>
             <strong>{state.view.terminal?.status ?? '—'}</strong>
           </span>
         </section>
@@ -342,18 +329,18 @@ function ConnectedRuntimeLivePreTest({
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             disabled={running}
-            aria-label={language === 'zh' ? 'Live Runtime 测试消息' : 'Live Runtime test message'}
+            aria-label={uiText(language)('runtimeStreamPreTest.liveRuntimeTestMessage')}
           />
           <button type="submit" disabled={running || !modelConfig}>
             {running
-              ? language === 'zh' ? '执行中…' : 'Running…'
-              : language === 'zh' ? '运行真实 Turn' : 'Run live Turn'}
+              ? uiText(language)('runtimeStreamPreTest.running')
+              : uiText(language)('runtimeStreamPreTest.runLiveTurn')}
           </button>
         </form>
 
         {(error || state.error) && (
           <section className="runtime-stream-pre-test-error" role="alert">
-            <strong>{language === 'zh' ? 'Live Gate 失败' : 'Live Gate failed'}</strong>
+            <strong>{uiText(language)('runtimeStreamPreTest.liveGateFailed')}</strong>
             <span>{error || state.error}</span>
           </section>
         )}
@@ -388,7 +375,7 @@ function ConnectedRuntimeLivePreTest({
         </section>
 
         <footer className="runtime-stream-pre-test-terminal">
-          <small>{language === 'zh' ? 'Runtime 终态事实' : 'Runtime terminal fact'}</small>
+          <small>{uiText(language)('runtimeStreamPreTest.runtimeTerminalFact')}</small>
           <strong>{state.view.terminal?.status ?? 'pending'}</strong>
           <span>{state.view.terminal?.reason ?? state.lastEventKind ?? '—'}</span>
         </footer>
@@ -405,22 +392,6 @@ function runtimeStateLabel(
   state: ReturnType<typeof useRuntimeTurnStore>['streamState'],
   language: AppLanguage,
 ) {
-  const labels = language === 'zh'
-    ? {
-        idle: '待机',
-        discovering: '能力发现',
-        ready: '已就绪',
-        streaming: '流式接收',
-        settled: '已结束',
-        error: '错误',
-      }
-    : {
-        idle: 'Idle',
-        discovering: 'Discovering',
-        ready: 'Ready',
-        streaming: 'Streaming',
-        settled: 'Settled',
-        error: 'Error',
-      };
+  const labels = ({ idle: uiText(language)('runtimeStreamPreTest.idle'), discovering: uiText(language)('runtimeStreamPreTest.discovering'), ready: uiText(language)('runtimeStreamPreTest.ready'), streaming: uiText(language)('runtimeStreamPreTest.streaming'), settled: uiText(language)('runtimeStreamPreTest.settled'), error: uiText(language)('runtimeStreamPreTest.error') });
   return labels[state];
 }

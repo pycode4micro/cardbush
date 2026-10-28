@@ -1,6 +1,7 @@
+import { uiText } from '../../i18n';
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Mic } from 'lucide-react';
+import { Mic, X } from 'lucide-react';
 import { VoiceSession, type VoiceState, type VoiceTarget } from './voiceSession';
 import { voiceComposerPresentation } from './voiceComposerPresentation';
 import { VoiceComposerPanel } from './VoiceComposerPanel';
@@ -13,19 +14,20 @@ export const useVoiceContext = () => useContext(VoiceContext);
 const VoiceHostContext = createContext(false);
 let applicationSession: VoiceSession | undefined;
 export const applicationVoiceSession = () => applicationSession ??= new VoiceSession(window.cardbushDesktop?.voice);
-export function ApplicationVoiceHost({ language, children }: { language: 'zh' | 'en'; children: ReactNode }) {
+export function ApplicationVoiceHost({ language, children }: { language: string; children: ReactNode }) {
   const session = applicationVoiceSession();
   useEffect(() => () => session.end(), [session]);
   return <VoiceHostContext.Provider value={true}>{children}<UndockedVoiceCall session={session} language={language}/></VoiceHostContext.Provider>;
 }
-export function VoiceConversation({ target, language, disabled, active = true, children }: { target: VoiceTarget; language: 'zh' | 'en'; disabled?: boolean; active?: boolean; children: ReactNode }) {
+export function VoiceConversation({ target, language, disabled, active = true, children }: { target: VoiceTarget; language: string; disabled?: boolean; active?: boolean; children: ReactNode }) {
   const hosted = useContext(VoiceHostContext);
   const [session] = useState(() => hosted ? applicationVoiceSession() : new VoiceSession(window.cardbushDesktop?.voice));
   const currentTarget = useRef(target);
   useLayoutEffect(() => {
+    const previousTarget = currentTarget.current;
     currentTarget.current = target;
     if (active && !disabled) session.update(target);
-    else session.releaseRecording(target);
+    else session.releaseRecording(previousTarget);
   }, [session, target, disabled, active]);
   useLayoutEffect(() => () => {
     if (hosted) session.releaseRecording(currentTarget.current);
@@ -36,11 +38,33 @@ export function VoiceConversation({ target, language, disabled, active = true, c
 
 const idle = { mode: 'idle', phase: 'idle', error: '', retryAvailable: false } as const;
 const noopSubscribe = () => () => {};
+/** Dismissing a notice does not discard audio retained for transcription retry. */
+function DictationErrorNotice({ message, language }: { message: string; language: string }) {
+  const [visible, setVisible] = useState(true);
+  const notice = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const dismiss = () => setVisible(false);
+    const timer = window.setTimeout(dismiss, 5000);
+    const outside = (event: PointerEvent) => { if (event.target instanceof Node && !notice.current?.contains(event.target)) dismiss(); };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); }
+    };
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', escape, true);
+    return () => { window.clearTimeout(timer); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape, true); };
+  }, [visible]);
+  if (!visible) return null;
+  return <span ref={notice} className="voice-dictation-error">
+    <span className="voice-dictation-error-message" role="alert">{message}</span>
+    <button type="button" className="voice-dictation-error-close" aria-label={uiText(language)('common.close')} title={uiText(language)('common.close')} onClick={() => setVisible(false)}><X aria-hidden="true"/></button>
+  </span>;
+}
 /** The microphone has one job: insert recognized speech into this input. */
 export function VoiceButton({ language, disabled, onTranscript }: {
-  language: 'zh' | 'en'; disabled?: boolean; onTranscript: (text: string) => void;
+  language: string; disabled?: boolean; onTranscript: (text: string) => void;
 }) {
-  const context = useVoiceContext(), session = context?.session, zh = language === 'zh';
+  const context = useVoiceContext(), session = context?.session;
   const state = useSyncExternalStore<Pick<VoiceState, 'mode' | 'phase' | 'error' | 'retryAvailable'>>(session?.subscribe ?? noopSubscribe, session?.snapshot ?? (() => idle));
   const [starting, setStarting] = useState(false), sequence = useRef(0);
   const current = useRef({ context, disabled, onTranscript });
@@ -50,12 +74,15 @@ export function VoiceButton({ language, disabled, onTranscript }: {
     return () => { sequence.current++; };
   }, [session, context?.target.environment, context?.target.sessionId, disabled]);
   const recording = state.mode === 'recording' && Boolean(context && session?.ownsVoice(context.target));
-  const active = starting || recording;
-  const label = active ? state.error ? zh ? '重试转写' : 'Retry transcription'
-    : state.phase === 'transcribing' ? zh ? '取消转写' : 'Cancel transcription'
-    : starting || state.phase === 'connecting' ? zh ? '取消录音' : 'Cancel dictation'
-    : zh ? '结束录音并转写' : 'Finish dictation'
-    : zh ? '语音转写' : 'Dictate';
+  const error = context && session?.matchesTarget(context.target) && state.mode !== 'call' ? state.error : '';
+  const engaged = starting || recording && state.phase !== 'idle' && !error;
+  // Requesting a device is cancellable, but is not yet a live recording.
+  const active = engaged && !starting && state.phase !== 'connecting';
+  const label = uiText(language)(error && state.retryAvailable ? 'voiceConversation.retryTranscription'
+    : !engaged ? 'voiceConversation.dictate'
+    : state.phase === 'transcribing' ? 'voiceConversation.cancelTranscription'
+    : starting || state.phase === 'connecting' ? 'voiceConversation.cancelDictation'
+    : 'voiceConversation.finishDictation');
   async function toggle() {
     if (!context || disabled) return;
     if (starting) { sequence.current++; setStarting(false); return; }
@@ -66,26 +93,27 @@ export function VoiceButton({ language, disabled, onTranscript }: {
       return;
     }
     if (state.mode !== 'idle') return;
+    if (state.error) session!.end();
     const attempt = ++sequence.current;
     setStarting(true);
     // Play before acquiring the microphone, so the cue cannot enter the transcript.
     await playDictationCue();
     if (attempt !== sequence.current || current.current.disabled || !current.current.context) return;
-    setStarting(false);
     session!.update(current.current.context.target);
     void session!.start('recording', text => current.current.onTranscript(text));
+    setStarting(false);
   }
   return <span className="voice-dictation-control">
     <button type="button" className={`voice-dictation-button${active ? ' is-active' : ''}`} aria-label={label} title={label}
-      aria-pressed={active} aria-keyshortcuts={active ? 'Escape' : undefined} disabled={!context || disabled || state.mode !== 'idle' && !recording}
-      onKeyDown={event => { if (event.key === 'Escape' && active) { event.preventDefault(); event.stopPropagation(); sequence.current++; setStarting(false); if (recording) session?.end(); } }}
+      aria-pressed={engaged} aria-busy={starting || recording && (state.phase === 'connecting' || state.phase === 'transcribing')} aria-keyshortcuts={engaged || recording ? 'Escape' : undefined} disabled={!context || disabled || state.mode !== 'idle' && !recording}
+      onKeyDown={event => { if (event.key === 'Escape' && (engaged || recording)) { event.preventDefault(); event.stopPropagation(); sequence.current++; setStarting(false); if (recording) session?.end(); } }}
       onClick={() => void toggle()}><Mic size={17} strokeWidth={1.7}/></button>
-    {recording && state.error && <span className="voice-dictation-error" role="alert">{state.error}</span>}
+    {error && !starting && <DictationErrorNotice key={error} message={error} language={language}/>}
   </span>;
 }
 
 /** Navigation keeps a call alive; its stop control must remain reachable. */
-function UndockedVoiceCall({ session, language }: { session: VoiceSession; language: 'zh' | 'en' }) {
+function UndockedVoiceCall({ session, language }: { session: VoiceSession; language: string }) {
   const mode = useSyncExternalStore(session.subscribe, () => session.snapshot().mode);
   const presentation = voiceComposerPresentation(session);
   const docked = useSyncExternalStore(presentation.subscribe, presentation.snapshot);

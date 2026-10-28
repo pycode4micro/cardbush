@@ -11,7 +11,18 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {inspectServiceProcess,processExists,serviceUrl} from '../dist-electron/agentServiceProcess.mjs';
 
 const exec=promisify(execFile),base=resolve('tmp/agent-service-process-tests'),bin=resolve('bin/cardbush.mjs');
-const cli=(args,options={})=>exec(process.execPath,[bin,...args],{cwd:process.cwd(),windowsHide:true,timeout:80000,maxBuffer:128*1024,...options});
+async function cli(args,{env,...options}={}){
+  await mkdir(base,{recursive:true});const clientRoot=await mkdtemp(join(base,'client-'));
+  try{
+    return await exec(process.execPath,[bin,...args],{cwd:process.cwd(),windowsHide:true,timeout:80000,maxBuffer:128*1024,...options,
+      // Explicit token connections are remembered. Never read or overwrite the
+      // invoking user's CLI configuration, including an inherited override.
+      env:{...process.env,...env,CARDBUSH_AGENT_URL:'',CARDBUSH_AGENT_TOKEN:'',CARDBUSH_CLI_CONFIG:join(clientRoot,'cli.json')}});
+  }finally{
+    assert.ok((await realpath(clientRoot)).startsWith(await realpath(base)+sep));
+    await rm(clientRoot,{recursive:true,force:true,maxRetries:3});
+  }
+}
 const record=root=>readFile(join(root,'service-process.json'),'utf8').then(JSON.parse);
 async function fixture(t){
   await mkdir(base,{recursive:true});const root=await mkdtemp(join(base,"服务 O'Brien "));
@@ -46,7 +57,12 @@ test('background launch detaches, authenticates, survives the CLI, and stops wit
   }
   assert.equal((await inspectServiceProcess(root)).pid,first.pid);
   const again=await cli(start(root));assert.match(again.stdout,/Already running/);assert.equal((await record(root)).pid,first.pid);
-  await cli(['--url',serviceUrl(first),'--token-file',join(root,'access-token'),'--sessions']);
+  const inheritedConfig=join(root,'user-cli.json'),savedUserConnection=JSON.stringify({url:'http://127.0.0.1:1/',tokenFile:join(root,'user-token'),agentId:'user-agent'});
+  await writeFile(inheritedConfig,savedUserConnection);
+  await cli(['--url',serviceUrl(first),'--token-file',join(root,'access-token'),'--sessions'],{
+    env:{CARDBUSH_CLI_CONFIG:inheritedConfig,CARDBUSH_AGENT_URL:'http://127.0.0.1:1/',CARDBUSH_AGENT_TOKEN:'user-secret'},
+  });
+  assert.equal(await readFile(inheritedConfig,'utf8'),savedUserConnection,'test connections must not overwrite inherited user configuration');
   const stopped=await cli(['serve','--stop','--data-dir',root]);assert.match(stopped.stdout,/Stopped/);assert.equal(processExists(first.pid),false);
   await assert.rejects(access(join(root,'agent.lock')),{code:'ENOENT'});await assert.rejects(access(join(root,'service-process.json')),{code:'ENOENT'});
   await cli(start(root));const second=await record(root);assert.equal(second.agentId,first.agentId);assert.notEqual(second.pid,first.pid);

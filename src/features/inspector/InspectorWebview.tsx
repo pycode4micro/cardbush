@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import {
   createElement,
   forwardRef,
@@ -91,7 +92,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
 }>(function InspectorWebview({
   identity,
   target,
-  source,
+  source: requestedSource,
   mediaType,
   title,
   language,
@@ -106,6 +107,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   onRegionReference,
   resourceRevision,
 }, forwardedRef) {
+  const source = localizedPreviewSource(requestedSource, language);
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const toolsRef = useRef<BrowserPageToolsHandle>(null);
@@ -165,7 +167,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       onNavigationStateChange(identity, {
         guestWebContentsId: webview.getWebContentsId?.(),
         url,
-        title: /^about:blank(?:[?#]|$)/i.test(url) ? (languageRef.current === 'zh' ? '新标签页' : 'New tab') : webview.getTitle?.().trim() || '',
+        title: /^about:blank(?:[?#]|$)/i.test(url) ? (uiText(languageRef.current)('browserStartPage.newTab')) : webview.getTitle?.().trim() || '',
         faviconUrl: faviconRef.current?.page === url ? faviconRef.current.icons[0] : undefined,
         faviconUrls: faviconRef.current?.page === url ? faviconRef.current.icons : undefined,
         faviconRevision: faviconRevisionRef.current,
@@ -514,9 +516,9 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       {showStartPage && <div className="inspector-new-tab-page">{startPage}</div>}
       {!rendererPreview && previewError && (
         <div className="inspector-preview-error" role="alert">
-          <p>{language === 'zh' ? '无法加载预览，文件可能不可用、格式不受支持，或加载已超时。' : 'Preview unavailable. The file may be missing, unsupported, or taking too long to load.'}</p>
+          <p>{uiText(language)('inspectorWebview.previewUnavailableTheFileMayBeMissing')}</p>
           <button type="button" onClick={() => setWebviewRevision(value => value + 1)}>
-            {language === 'zh' ? '重试' : 'Retry'}
+            {uiText(language)('common.retry')}
           </button>
         </div>
       )}
@@ -525,7 +527,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           <span />
           <span />
           <span />
-          <small>{language === 'zh' ? '正在加载预览' : 'Loading preview'}</small>
+          <small>{uiText(language)('inspectorWebview.loadingPreview')}</small>
         </div>
       )}
       <InspectorRegionSelection surface={surfaceRef} guest={webviewRef} enabled={regionEnabled && active && !showStartPage && !loading && !previewError} language={language} target={isInspectorBrowserTarget(target, mediaType) ? currentUrl : filePath}
@@ -535,3 +537,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     </DeferredResizePreview>
   );
 });
+
+function localizedPreviewSource(source: string, language: string) {
+  if (!/^cardbush-file:\/\/(?:office-preview|model-preview)\//i.test(source)) return source;
+  const url = new URL(source);
+  url.searchParams.set('lang', language);
+  return url.href;
+}

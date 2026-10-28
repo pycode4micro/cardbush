@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../i18n/react';
+import { uiText } from '../../i18n';
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight, Globe } from 'lucide-react';
@@ -13,19 +15,21 @@ import './source-memo.css';
 function evidenceLabel(source: SourceEvidence) {
   return source.kind === 'file' ? resourceBasename(source.target) || source.target : source.label || source.target;
 }
-function evidenceLocation(source: SourceEvidence, zh: boolean) {
+function evidenceLocation(source: SourceEvidence, uiLanguage: string) {
   if (source.locator?.line) {
     const lines = `${source.locator.line}${source.locator.endLine ? `–${source.locator.endLine}` : ''}`;
-    return zh ? `第 ${lines} 行` : `${source.locator.endLine ? 'Lines' : 'Line'} ${lines}`;
+    return uiText(uiLanguage)(source.locator.endLine ? 'source.lines' : 'source.line', { lines });
   }
-  return source.locator?.page ? (zh ? `第 ${source.locator.page} 页` : `Page ${source.locator.page}`) : '';
+  return source.locator?.page ? (uiText(uiLanguage)('sourceMemoReference.page', { value1: source.locator.page })) : '';
 }
 
-export function SourceMemoReference({ reference, language = 'zh', load = fetchSourceMemo }: {
-  reference: string; language?: 'zh' | 'en'; load?: typeof fetchSourceMemo;
+export function SourceMemoReference({ reference, language: selectedLanguage, load = fetchSourceMemo }: {
+  reference: string; language?: string; load?: typeof fetchSourceMemo;
 }) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
   const host = useContext(ConversationHostContext);
-  const zh = language === 'zh', id = useId();
+  const uiLanguage = language, id = useId();
   const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
   const excerptPanel = useRef<HTMLDivElement>(null);
   const evidenceRows = useRef<(HTMLDivElement | null)[]>([]);
@@ -86,7 +90,8 @@ export function SourceMemoReference({ reference, language = 'zh', load = fetchSo
     if (child && !child.matches(':popover-open')) child.showPopover();
     const position = () => {
       const anchor = trigger.current?.getBoundingClientRect(); if (!anchor) return;
-      node.style.maxHeight = child ? 'min(460px, calc(100vh - 16px))' : '';
+      node.style.maxHeight = '';
+      node.dataset.hasExcerpt = String(Boolean(child));
       const box = node.getBoundingClientRect();
       node.style.left = `${Math.max(8, Math.min(innerWidth - box.width - 8, anchor.left))}px`;
       node.style.top = `${Math.max(8, anchor.top - box.height - 8 >= 8 ? anchor.top - box.height - 8 : Math.min(innerHeight - box.height - 8, anchor.bottom + 8))}px`;
@@ -166,7 +171,7 @@ export function SourceMemoReference({ reference, language = 'zh', load = fetchSo
   };
   const pinForContextMenu = () => { cancelClose(); cancelExcerptTimer(); setOpen('pinned'); };
   return <>
-    <button ref={trigger} type="button" className="source-memo-marker" aria-label={`Source ${parseSourceMemoReference(reference)}`}
+    <button ref={trigger} type="button" className="source-memo-marker" aria-label={uiText(language)('reference.sourceNumber', { number: parseSourceMemoReference(reference) })}
       aria-expanded={Boolean(open)} aria-controls={open ? id : undefined} aria-haspopup="dialog"
       onMouseEnter={() => { cancelClose(); setOpen(value => value ?? 'hover'); }} onMouseLeave={closeSoon}
       onFocus={event => { if (!suppressFocus.current && event.currentTarget.matches(':focus-visible')) setOpen('hover'); }} onBlur={blur}
@@ -179,13 +184,13 @@ export function SourceMemoReference({ reference, language = 'zh', load = fetchSo
     </button>
     {open && createPortal(<div ref={panel} popover="manual" id={id} role="dialog" tabIndex={-1} aria-labelledby={`${id}-heading`} className="source-memo-card"
       onMouseEnter={cancelClose} onMouseLeave={closeSoon} onBlur={blur} onContextMenuCapture={pinForContextMenu}>
-      <div className="source-memo-heading"><h3 id={`${id}-heading`}>{zh ? '为什么这样说' : 'Why this conclusion'}</h3>
-        <span>Source {parseSourceMemoReference(reference)}</span></div>
+      <div className="source-memo-heading"><h3 id={`${id}-heading`}>{uiText(language)('sourceMemoReference.whyThisConclusion')}</h3>
+        <span>{uiText(language)('sourceMemoReference.source')}{parseSourceMemoReference(reference)}</span></div>
       {memo ? <>
         <p className="source-memo-explanation">{memo.explanation}</p>
         {memo.sources.length > 0 ? <section className="source-memo-evidence" aria-labelledby={`${id}-sources`}>
-          <div className="source-memo-evidence-heading"><h3 id={`${id}-sources`}>{zh ? '依据来源' : 'Supporting sources'}</h3>
-            <small>{host ? (zh ? '点击打开' : 'Click to open') : (zh ? '点击打开 · 右键更多' : 'Click to open · Right-click for more')}</small></div>
+          <div className="source-memo-evidence-heading"><h3 id={`${id}-sources`}>{uiText(language)('sourceMemoReference.supportingSources')}</h3>
+            <small>{host ? (uiText(language)('sourceMemoReference.clickToOpen')) : (uiText(language)('sourceMemoReference.clickToOpenRightClickForMore'))}</small></div>
           <div className="source-memo-evidence-list">
           {memo.sources.map((source, index) => <div key={index} ref={node => { evidenceRows.current[index] = node; }}
             className="source-memo-evidence-row" data-expanded={excerptIndex === index || undefined}
@@ -193,32 +198,32 @@ export function SourceMemoReference({ reference, language = 'zh', load = fetchSo
             onKeyDown={event => { if (event.key === 'ArrowRight' && source.excerpt !== undefined) { event.preventDefault(); showExcerpt(index); } }}>
             <div className="source-memo-evidence-info">
               {evidenceLink(source, index)}
-              {evidenceLocation(source, zh) && <small>{evidenceLocation(source, zh)}</small>}
+              {evidenceLocation(source, uiLanguage) && <small>{evidenceLocation(source, uiLanguage)}</small>}
               {result?.status === 'resolved' && ['changed', 'unavailable'].includes(result.evidenceStatus[index]) &&
-                <small>{result.evidenceStatus[index] === 'changed' ? (zh ? '文件已变化，点击打开当前版本' : 'File changed; opens the current version') : (zh ? '文件已不可用，保留当时依据' : 'File unavailable; original evidence retained')}</small>}
+                <small>{result.evidenceStatus[index] === 'changed' ? (uiText(language)('sourceMemoReference.fileChangedOpensTheCurrentVersion')) : (uiText(language)('sourceMemoReference.fileUnavailableOriginalEvidenceRetained'))}</small>}
             </div>
             {source.excerpt !== undefined && <button type="button" className="source-memo-excerpt-trigger"
-              aria-label={`${zh ? '查看引用原文' : 'View original excerpt'} · ${evidenceLabel(source)}`}
-              title={zh ? '查看引用原文' : 'View original excerpt'} aria-haspopup="dialog"
+              aria-label={`${uiText(language)('sourceMemoReference.viewOriginalExcerpt')} · ${evidenceLabel(source)}`}
+              title={uiText(language)('sourceMemoReference.viewOriginalExcerpt')} aria-haspopup="dialog"
               aria-expanded={excerptIndex === index} aria-controls={excerptIndex === index ? excerptId : undefined}
-              onClick={() => showExcerpt(index)}><span>{zh ? '原文' : 'Excerpt'}</span><ChevronRight size={14} aria-hidden="true" /></button>}
+              onClick={() => showExcerpt(index)}><span>{uiText(language)('sourceMemoReference.excerpt')}</span><ChevronRight size={14} aria-hidden="true" /></button>}
           </div>)}
           </div>
-        </section> : <small className="source-memo-judgment">{zh ? 'Agent 的判断，未附引用材料' : 'Agent judgment · No supporting materials attached'}</small>}
+        </section> : <small className="source-memo-judgment">{uiText(language)('sourceMemoReference.agentJudgmentNoSupportingMaterialsAttached')}</small>}
       </> : <p role="status">{failed || result?.status === 'unresolved'
-        ? zh ? '此条依据暂时无法读取。' : 'This source note is unavailable.'
-        : zh ? '正在读取依据…' : 'Loading source…'}</p>}
-      {(failed || result?.status === 'unresolved') && <button type="button" onClick={() => setAttempt(value => value + 1)}>{zh ? '重试' : 'Retry'}</button>}
+        ? uiText(language)('sourceMemoReference.thisSourceNoteIsUnavailable')
+        : uiText(language)('sourceMemoReference.loadingSource')}</p>}
+      {(failed || result?.status === 'unresolved') && <button type="button" onClick={() => setAttempt(value => value + 1)}>{uiText(language)('common.retry')}</button>}
     </div>, document.querySelector('.app') ?? document.body)}
     {open && excerpt?.excerpt !== undefined && createPortal(<div ref={excerptPanel} popover="manual" id={excerptId}
       role="dialog" tabIndex={-1} aria-labelledby={`${excerptId}-heading`} className="source-memo-card source-memo-excerpt"
       onMouseEnter={() => { cancelClose(); cancelExcerptTimer(); }} onMouseLeave={() => { closeSoon(); closeExcerptSoon(); }} onBlur={blur} onContextMenuCapture={pinForContextMenu}>
       <div className="source-memo-excerpt-heading">
-        <h3 id={`${excerptId}-heading`}>{zh ? '引用原文' : 'Original excerpt'}</h3>
-        <small>{zh ? '生成说明时保存的片段' : 'Saved when this explanation was written'}</small>
+        <h3 id={`${excerptId}-heading`}>{uiText(language)('sourceMemoReference.originalExcerpt')}</h3>
+        <small>{uiText(language)('sourceMemoReference.savedWhenThisExplanationWasWritten')}</small>
       </div>
       <div className="source-memo-excerpt-label">{evidenceLink(excerpt, excerptIndex!)}
-        {evidenceLocation(excerpt, zh) && <small>{evidenceLocation(excerpt, zh)}</small>}</div>
+        {evidenceLocation(excerpt, uiLanguage) && <small>{evidenceLocation(excerpt, uiLanguage)}</small>}</div>
       <pre tabIndex={0}>{excerpt.excerpt}</pre>
     </div>, document.querySelector('.app') ?? document.body)}
   </>;

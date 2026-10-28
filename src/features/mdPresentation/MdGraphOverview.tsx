@@ -1,15 +1,16 @@
+import { uiText } from '../../i18n';
 import { Network } from 'lucide-react';
 import { graphLinks, layoutNodes, nodeDependencies, nodeName, nodePosition, type MdDocument } from './markdownGraph';
 
 /** A quiet overview of the article. The full canvas is an explicit secondary view. */
-export function MdGraphOverview({ document, flow, onOpen, language }: { document: MdDocument; flow?: boolean; onOpen: () => void; language: 'zh' | 'en' }) {
+export function MdGraphOverview({ document, flow, onOpen, language }: { document: MdDocument; flow?: boolean; onOpen: () => void; language: string }) {
   if (!document.nodes.length) return null;
   const layout = layoutNodes(document.nodes, flow);
   const points = new Map(document.nodes.map(node => [node.id, nodePosition(node) ?? layout.get(node.id)!]));
   const values = [...points.values()], x = Math.min(...values.map(point => point.x)) - 24, y = Math.min(...values.map(point => point.y)) - 24;
   const width = Math.max(...values.map(point => point.x)) - x + 208, height = Math.max(...values.map(point => point.y)) - y + 100;
-  return <button type="button" className="md-graph-overview" onClick={onOpen} aria-label={language === 'zh' ? '展开关系图' : 'Expand graph'}>
-    <span><Network size={13}/>{language === 'zh' ? '关系概览' : 'Overview'}</span>
+  return <button type="button" className="md-graph-overview" onClick={onOpen} aria-label={uiText(language)('mdGraphOverview.expandGraph')}>
+    <span><Network size={13}/>{uiText(language)('mdGraphOverview.overview')}</span>
     <svg viewBox={`${x} ${y} ${width} ${height}`} aria-hidden="true">
       {document.nodes.flatMap(node => graphLinks(node).filter(id => points.has(id)).map(id => {
         const from = points.get(id)!, to = points.get(node.id)!;

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Pin, Search, Settings, Trash2, UsersRound, X } from 'lucide-react';
@@ -41,7 +42,7 @@ function ShortcutItems({ language, unread = 0 }: { language: AppLanguage; unread
       <button type="button" className="app-center-shortcut" aria-label={app.title} title={app.title} data-shortcut={app.shortcut}
         draggable onDragStart={event => center.startDrag(event, id)} onDragEnd={center.endDrag}
         onKeyDown={event => center.move(event, id)} onClick={() => center.launch(app)}>
-        <ApplicationIcon app={app} size={17}/>{app.target === 'automations' && unread > 0 && <span className="app-shortcut-dot" aria-label={`${unread} ${language === 'zh' ? '条未读结果' : 'unread results'}`} />}
+        <ApplicationIcon app={app} size={17}/>{app.target === 'automations' && unread > 0 && <span className="app-shortcut-dot" aria-label={`${unread} ${uiText(language)('appCenter.unreadResults')}`} />}
       </button>
     </span>] : [];
   })}</>;
@@ -74,18 +75,18 @@ export function AppCenterDock({ language, unread = 0 }: { language: AppLanguage;
     }}
     onDragOver={allowDrop} onDrop={event => center.drop(event)}>
     <button type="button" className="app-center-launcher" onClick={center.open} aria-haspopup="dialog" data-shortcut="openAppCenter"
-      title={language === 'zh' ? '应用中心' : 'App center'}
-      aria-label={language === 'zh' ? '应用中心' : 'App center'} aria-keyshortcuts={shortcuts.aria('openAppCenter')}>
+      title={uiText(language)('appCenter.appCenter')}
+      aria-label={uiText(language)('appCenter.appCenter')} aria-keyshortcuts={shortcuts.aria('openAppCenter')}>
       <LayoutGrid size={18} aria-hidden="true"/>
     </button>
-    <div className="app-center-shortcuts" aria-label={language === 'zh' ? '应用快捷方式' : 'App shortcuts'}>
+    <div className="app-center-shortcuts" aria-label={uiText(language)('appCenter.appShortcuts')}>
       <ShortcutItems language={language} unread={unread}/>
     </div>
   </div>;
 }
 
 export function AppCenterProvider({ language, onNavigate, children }: { language: AppLanguage; onNavigate: (app: ApplicationEntry, environmentId?: string) => void; children: ReactNode }) {
-  const zh = language === 'zh', apps = useApplications(language), prefs = useAppCenterPreferences();
+  const apps = useApplications(language), prefs = useAppCenterPreferences();
   const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [dragging, setDragging] = useState('');
   const [link, setLink] = useState<{ id?: string; title: string; url: string } | null>(null), [error, setError] = useState('');
   const [selectingLocal, setSelectingLocal] = useState(false);
@@ -99,29 +100,29 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     opener.current = null; setOpen(false);
     try {
       if (app.kind === 'web') {
-        if (!applicationLink(app.target)) throw new Error(zh ? '应用地址无效。' : 'Invalid app URL.');
+        if (!applicationLink(app.target)) throw new Error(uiText(language)('appCenter.invalidAppUrl'));
         current.current.onNavigate(app); return;
       }
       if (app.kind === 'local') {
-        if (!window.cardbushDesktop?.localApplications) throw new Error(zh ? '请在桌面应用中打开本地应用。' : 'Open local apps from the desktop app.');
-        await window.cardbushDesktop.localApplications.open(app.target);
+        if (!window.cardbushDesktop?.localApplications) throw new Error(uiText(language)('appCenter.openLocalAppsFromTheDesktopApp'));
+        await window.cardbushDesktop.localApplications.open(app.target, language);
         return;
       }
       const url = app.kind === 'external' ? app.target : app.launch?.kind === 'url' ? app.launch.url : undefined;
       if (url) {
-        if (!applicationLink(url)) throw new Error(zh ? '应用地址无效。' : 'Invalid app URL.');
+        if (!applicationLink(url)) throw new Error(uiText(language)('appCenter.invalidAppUrl'));
         if (window.cardbushDesktop?.openExternal) await window.cardbushDesktop.openExternal(url);
         else window.open(url, '_blank', 'noopener,noreferrer');
       } else if (app.kind === 'plugin' && (!app.launch || environmentId)) {
-        throw new Error(zh ? '此应用没有当前桌面可打开的页面。' : 'This app has no page available on this desktop.');
+        throw new Error(uiText(language)('appCenter.thisAppHasNoPageAvailableOn'));
       } else current.current.onNavigate(app, environmentId);
     } catch (cause) { setError(String(cause)); setOpen(true); }
-  }, [zh]);
+  }, [language]);
   const launch = useCallback((app: ApplicationEntry) => {
     const available = current.current.apps.find(item => item.id === app.id);
     if (available) void openApplication(available);
-    else { show(); setError(zh ? '此应用已移除或停用。' : 'This app was removed or disabled.'); }
-  }, [openApplication, show, zh]);
+    else { show(); setError(uiText(language)('appCenter.thisAppWasRemovedOrDisabled')); }
+  }, [openApplication, show, language]);
   useEffect(() => {
     const center = () => show();
     const application = async (event: Event) => {
@@ -131,20 +132,20 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
         let available = current.current.apps;
         if (environmentId && reference?.applicationKind === 'plugin') {
           const api = window.cardbushDesktop?.agents;
-          if (!api) throw new Error(zh ? '远端应用不可用。' : 'Remote apps are unavailable.');
+          if (!api) throw new Error(uiText(language)('appCenter.remoteAppsAreUnavailable'));
           await api.connect(environmentId);
           const config = await api.call(environmentId, 'product.command', { kind: 'apps.get' }) as { plugins: CardbushAppPlugin[] };
           available = applicationCatalog(language, config.plugins, { ...current.current.prefs, links: [] });
         }
         if (revision !== requestRevision.current) return;
         const app = available.find(item => item.id === id);
-        if (!app) throw new Error(zh ? '此应用已移除、停用或没有可打开的页面。' : 'This app was removed, disabled or has no launchable page.');
+        if (!app) throw new Error(uiText(language)('appCenter.thisAppWasRemovedDisabledOrHas'));
         await openApplication(app, environmentId);
       } catch (cause) { if (revision === requestRevision.current) { show(); setError(String(cause)); } }
     };
     window.addEventListener(OPEN_APP_CENTER_EVENT, center); window.addEventListener(OPEN_APPLICATION_EVENT, application);
     return () => { requestRevision.current++; window.removeEventListener(OPEN_APP_CENTER_EVENT, center); window.removeEventListener(OPEN_APPLICATION_EVENT, application); };
-  }, [language, zh, show, openApplication]);
+  }, [language, language, show, openApplication]);
   useEffect(() => {
     if (!presence.mounted) return;
     const node = dialog.current; node?.showModal();
@@ -166,7 +167,7 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     }
   }, [dragging, presence.mounted]);
   useEffect(() => () => { window.cancelAnimationFrame(dragFrame.current); dragPreview.current?.remove(); }, []);
-  const save = useCallback((next: typeof prefs) => { try { saveAppCenterPreferences(next); setError(''); return true; } catch { setError(zh ? '无法保存快捷方式，请检查本机存储。' : 'Could not save shortcuts to local storage.'); return false; } }, [zh]);
+  const save = useCallback((next: typeof prefs) => { try { saveAppCenterPreferences(next); setError(''); return true; } catch { setError(uiText(language)('appCenter.couldNotSaveShortcutsToLocalStorage')); return false; } }, [language]);
   useEffect(() => {
     const api = window.cardbushDesktop?.localApplications;
     const stale = (current.current.prefs.localApps ?? []).filter(app => app.iconVersion !== 1);
@@ -194,7 +195,7 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
       if (!selected) return;
       const latest = current.current.prefs, localApps = latest.localApps ?? [];
       const existing = localApps.find(app => app.id === selected.id);
-      if (!existing && localApps.length >= 100) throw Error(zh ? '最多保存 100 个本地应用，请先移除不再使用的应用。' : 'Up to 100 local apps can be saved. Remove an unused app first.');
+      if (!existing && localApps.length >= 100) throw Error(uiText(language)('appCenter.upTo100LocalAppsCanBe'));
       const next = existing ? localApps.map(app => app.id === selected.id ? { ...selected, title: app.title } : app) : [...localApps, selected];
       if (save({ ...latest, localApps: next })) setQuery('');
     } catch (cause) { setError(String(cause)); }
@@ -205,7 +206,7 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     const shortcuts = prefs.shortcuts.filter(id => apps.some(item => item.id === id));
     if (prefs.shortcuts.includes(app.id)) unpin(app.id);
     else if (shortcuts.length < 4) save({ ...prefs, shortcuts: [...shortcuts, app.id] });
-    else setError(zh ? '底部最多放置 4 个快捷方式，请先移除一个。' : 'The dock holds four shortcuts. Remove one first.');
+    else setError(uiText(language)('appCenter.theDockHoldsFourShortcutsRemoveOne'));
   };
   const endDrag = useCallback(() => {
     window.cancelAnimationFrame(dragFrame.current); dragPreview.current?.remove(); dragPreview.current = null;
@@ -230,9 +231,9 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     const { apps, prefs } = current.current;
     if (!apps.some(app => app.id === id)) return;
     const visible = prefs.shortcuts.filter(item => apps.some(app => app.id === item));
-    if (!visible.includes(id) && visible.length >= 4) { setError(zh ? '最多放置 4 个快捷方式，请先移除一个。' : 'Remove a shortcut before adding a fifth.'); return; }
+    if (!visible.includes(id) && visible.length >= 4) { setError(uiText(language)('appCenter.removeAShortcutBeforeAddingAFifth')); return; }
     save({ ...prefs, shortcuts: moveApplication(visible, id, target) });
-  }, [save, zh]);
+  }, [save, language]);
   const drop = useCallback((event: DragEvent, target?: string) => {
     if (!event.dataTransfer.types.includes(dragType)) return;
     event.preventDefault(); event.stopPropagation();
@@ -257,34 +258,34 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     {presence.mounted && <dialog ref={dialog} className="app-center-drawer" data-visible={presence.visible} data-dragging={Boolean(dragging)} aria-labelledby="app-center-title" aria-modal={!dragging} role="dialog"
       onCancel={dialogEventHandler(event => { event.preventDefault(); setOpen(false); })} onClick={event => { if (event.target === event.currentTarget) setOpen(false); }}>
       <div className="app-center-content" inert={!open ? true : undefined}>
-        <header><div><LayoutGrid size={20}/><h2 id="app-center-title">{zh ? '应用中心' : 'App center'}</h2></div>
+        <header><div><LayoutGrid size={20}/><h2 id="app-center-title">{uiText(language)('appCenter.appCenter')}</h2></div>
           <div className="app-center-header-actions">
             <AppCenterSettingsMenu language={language} active={open && !dragging} display={prefs.display} onDisplayChange={display => save({ ...current.current.prefs, display })}
               selectingLocal={selectingLocal} onAddLocal={() => void addLocal()} onAddLink={() => { setLink({ title: '', url: '' }); setError(''); }}/>
-            <button type="button" className="app-center-icon" aria-label={zh ? '关闭应用中心' : 'Close app center'} title={zh ? '关闭 · Esc' : 'Close · Esc'} onClick={() => setOpen(false)}><X size={18}/></button>
+            <button type="button" className="app-center-icon" aria-label={uiText(language)('appCenter.closeAppCenter')} title={uiText(language)('appCenter.closeEsc')} onClick={() => setOpen(false)}><X size={18}/></button>
           </div>
         </header>
-        <label className="app-center-search"><Search size={16}/><input placeholder={zh ? '搜索应用' : 'Search apps'} aria-label={zh ? '搜索应用' : 'Search apps'} value={query} onChange={event => setQuery(event.target.value)}/></label>
+        <label className="app-center-search"><Search size={16}/><input placeholder={uiText(language)('appCenter.searchApps')} aria-label={uiText(language)('appCenter.searchApps')} value={query} onChange={event => setQuery(event.target.value)}/></label>
         <div className="app-center-grid">{filtered.map(app => <article key={app.id} className="app-center-tile" data-application-id={app.id} data-dragging={dragging === app.id}>
           <button type="button" className="app-center-tile-open" data-shortcut={app.shortcut} title={app.title} onClick={() => launch(app)}
             draggable onDragStart={event => startDrag(event, app.id)} onDragEnd={endDrag}>
             <span className="app-center-tile-icon"><ApplicationIcon app={app}/></span><strong>{app.title}</strong>
             {(app.kind === 'external' || app.launch?.kind === 'url') && <ExternalLink className="app-center-external" size={12}/>}</button>
-          <div className="app-center-tile-actions"><button type="button" className={`app-center-icon${prefs.shortcuts.includes(app.id) ? ' selected' : ''}`} aria-pressed={prefs.shortcuts.includes(app.id)} aria-label={`${prefs.shortcuts.includes(app.id) ? (zh ? '取消固定' : 'Unpin') : (zh ? '固定到快捷方式' : 'Pin shortcut')} ${app.title}`} onClick={() => pin(app)}><Pin size={14}/></button>
-            {app.kind === 'local' && <button type="button" className="app-center-icon" aria-label={`${zh ? '移除' : 'Remove'} ${app.title}`} title={zh ? '从应用中心移除' : 'Remove from app center'} onClick={() => save({ ...prefs, localApps: prefs.localApps?.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id) })}><Trash2 size={14}/></button>}
-            {app.kind === 'web' && <button type="button" className="app-center-icon" aria-label={`${zh ? '移除' : 'Remove'} ${app.title}`} title={zh ? '移除网页应用，保留网站数据' : 'Remove web app; keep site data'} onClick={() => save({ ...prefs, webApps: prefs.webApps?.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id), order: prefs.order?.filter(id => id !== app.id) })}><Trash2 size={14}/></button>}
-            {app.kind === 'external' && <><button type="button" className="app-center-icon" aria-label={`${zh ? '编辑' : 'Edit'} ${app.title}`} onClick={() => setLink({ id: app.id, title: app.title, url: app.target })}><Pencil size={14}/></button>
-              <button type="button" className="app-center-icon" aria-label={`${zh ? '删除' : 'Delete'} ${app.title}`} onClick={() => save({ ...prefs, links: prefs.links.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id) })}><Trash2 size={14}/></button></>}
+          <div className="app-center-tile-actions"><button type="button" className={`app-center-icon${prefs.shortcuts.includes(app.id) ? ' selected' : ''}`} aria-pressed={prefs.shortcuts.includes(app.id)} aria-label={`${prefs.shortcuts.includes(app.id) ? (uiText(language)('appCenter.unpin')) : (uiText(language)('appCenter.pinShortcut'))} ${app.title}`} onClick={() => pin(app)}><Pin size={14}/></button>
+            {app.kind === 'local' && <button type="button" className="app-center-icon" aria-label={`${uiText(language)('appCenter.remove')} ${app.title}`} title={uiText(language)('appCenter.removeFromAppCenter')} onClick={() => save({ ...prefs, localApps: prefs.localApps?.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id) })}><Trash2 size={14}/></button>}
+            {app.kind === 'web' && <button type="button" className="app-center-icon" aria-label={`${uiText(language)('appCenter.remove')} ${app.title}`} title={uiText(language)('appCenter.removeWebAppKeepSiteData')} onClick={() => save({ ...prefs, webApps: prefs.webApps?.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id), order: prefs.order?.filter(id => id !== app.id) })}><Trash2 size={14}/></button>}
+            {app.kind === 'external' && <><button type="button" className="app-center-icon" aria-label={`${uiText(language)('common.edit')} ${app.title}`} onClick={() => setLink({ id: app.id, title: app.title, url: app.target })}><Pencil size={14}/></button>
+              <button type="button" className="app-center-icon" aria-label={`${uiText(language)('appCenter.delete')} ${app.title}`} onClick={() => save({ ...prefs, links: prefs.links.filter(item => item.id !== app.id), shortcuts: prefs.shortcuts.filter(id => id !== app.id) })}><Trash2 size={14}/></button></>}
           </div>
         </article>)}</div>
-        {!filtered.length && <p className="app-center-empty">{zh ? '没有匹配的应用' : 'No matching apps'}</p>}
-        {link && <form className="app-center-link-form" onSubmit={event => { event.preventDefault(); const url = applicationLink(link.url); if (!url || !link.title.trim()) { setError(zh ? '请填写名称和有效的 HTTP / HTTPS 地址。' : 'Enter a name and valid HTTP / HTTPS address.'); return; }
-          if (!link.id && prefs.links.length >= 100) { setError(zh ? '最多保存 100 个应用链接，请先删除不再使用的链接。' : 'Up to 100 app links can be saved. Remove an unused link first.'); return; }
+        {!filtered.length && <p className="app-center-empty">{uiText(language)('appCenter.noMatchingApps')}</p>}
+        {link && <form className="app-center-link-form" onSubmit={event => { event.preventDefault(); const url = applicationLink(link.url); if (!url || !link.title.trim()) { setError(uiText(language)('appCenter.enterANameAndValidHttpHttps')); return; }
+          if (!link.id && prefs.links.length >= 100) { setError(uiText(language)('appCenter.upTo100AppLinksCanBe')); return; }
           const id = link.id ?? `external:${Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')}`;
           const value = { id, title: link.title, url }; if (save({ ...prefs, links: [...prefs.links.filter(item => item.id !== value.id), value] })) setLink(null); }}>
-          <input aria-label={zh ? '应用名称' : 'App name'} placeholder={zh ? '应用名称' : 'App name'} maxLength={80} autoFocus required value={link.title} onChange={event => { const title = event.target.value; setLink(previous => previous && { ...previous, title }); }}/>
-          <input aria-label={zh ? '应用地址' : 'App address'} placeholder="https:// / http://localhost:…" maxLength={4096} required value={link.url} onChange={event => { const url = event.target.value; setLink(previous => previous && { ...previous, url }); }}/>
-          <div><button type="button" onClick={() => setLink(null)}>{zh ? '取消' : 'Cancel'}</button><button type="submit">{zh ? '保存' : 'Save'}</button></div>
+          <input aria-label={uiText(language)('appCenter.appName')} placeholder={uiText(language)('appCenter.appName')} maxLength={80} autoFocus required value={link.title} onChange={event => { const title = event.target.value; setLink(previous => previous && { ...previous, title }); }}/>
+          <input aria-label={uiText(language)('appCenter.appAddress')} placeholder={uiText(language)('appCenter.https_http_localhost')} maxLength={4096} required value={link.url} onChange={event => { const url = event.target.value; setLink(previous => previous && { ...previous, url }); }}/>
+          <div><button type="button" onClick={() => setLink(null)}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit">{uiText(language)('appCenter.save')}</button></div>
         </form>}
         {error && <p className="app-center-error" role="alert">{error}</p>}
       </div>

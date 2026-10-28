@@ -1,3 +1,4 @@
+import { uiText, localizedContent } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useSettingsHost } from '../settings/SettingsHostContext';
 import { BrowserConnectionSettings } from '../browser/BrowserConnectionSettings';
@@ -269,12 +270,12 @@ export function PluginManagementPanel({
       dirtyPluginIds.current.delete(plugin.id);
       receiveConfiguration(result.configuration);
       dismissPlugin(plugin.id);
-      onNotify(language === 'zh' ? `${plugin.name} 已卸载` : `${plugin.name} uninstalled`);
+      onNotify(uiText(language)('pluginManagementPanel.uninstalled', { value1: plugin.name }));
       try { setLocalSkills(await onReloadSkills()); }
-      catch (caught) { setError(current => current || (language === 'zh' ? `插件已卸载，但技能列表刷新失败：${errorMessage(caught)}` : `Plugin uninstalled, but skill refresh failed: ${errorMessage(caught)}`)); }
+      catch (caught) { setError(current => current || (uiText(language)('pluginManagementPanel.pluginUninstalledButSkillRefreshFailed', { value1: errorMessage(caught) }))); }
       await loadConnections();
     } catch (caught) {
-      setError(language === 'zh' ? `卸载未完成：${errorMessage(caught)}` : `Uninstall incomplete: ${errorMessage(caught)}`);
+      setError(uiText(language)('pluginManagementPanel.uninstallIncomplete', { value1: errorMessage(caught) }));
       await host.fetchCardbushAppsConfiguration().then(receiveConfiguration).catch(() => undefined);
     }
     finally { uninstalling.current = false; setBusy(''); }
@@ -302,7 +303,7 @@ export function PluginManagementPanel({
     try {
       const installed = await window.cardbushDesktop.installLocalPlugin(kind);
       if (!installed) return;
-      onNotify(language === 'zh' ? `已安装 ${installed.id}` : `Installed ${installed.id}`);
+      onNotify(uiText(language)('pluginManagementPanel.installed', { value1: installed.id }));
       await load();
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setBusy(''); }
@@ -336,13 +337,13 @@ export function PluginManagementPanel({
 
   const savePluginProxy = (pluginId: string, proxy?: ProxySettings) => configuration ? persist({ ...configuration,
     plugins: configuration.plugins.map(item => item.id === pluginId ? { ...item, config: { ...item.config, proxy } } : item),
-  }, `proxy:${pluginId}`, language === 'zh' ? '代理设置已保存' : 'Proxy settings saved') : Promise.resolve(false);
+  }, `proxy:${pluginId}`, uiText(language)('pluginManagementPanel.proxySettingsSaved')) : Promise.resolve(false);
   const saveStandaloneProxy = async (id: string, proxy?: ProxySettings) => {
     setBusy(`proxy:mcp:${id}`); setError('');
     try {
       await host.setMcpServerProxy(id, proxy);
       setMcpOverview(current => current ? { ...current, servers: current.servers.map(server => server.id === id ? { ...server, proxy } : server) } : current);
-      await loadConnections(); onNotify(language === 'zh' ? 'MCP 代理已保存' : 'MCP proxy saved'); return true;
+      await loadConnections(); onNotify(uiText(language)('pluginManagementPanel.mcpProxySaved')); return true;
     }
     catch (caught) { setError(errorMessage(caught)); return false; }
     finally { setBusy(''); }
@@ -367,8 +368,8 @@ export function PluginManagementPanel({
         setProxyResetRevision(value => value + 1);
       }
       onNotify(applyToAll
-        ? (language === 'zh' ? '已保存并应用到全部插件和 MCP' : 'Saved and applied to all plugins and MCP servers')
-        : (language === 'zh' ? '插件代理已保存' : 'Plugin proxy saved'));
+        ? (uiText(language)('pluginManagementPanel.savedAndAppliedToAllPluginsAnd'))
+        : (uiText(language)('pluginManagementPanel.pluginProxySaved')));
       return true;
     } catch (caught) {
       setError(errorMessage(caught));
@@ -384,16 +385,16 @@ export function PluginManagementPanel({
     setBusy('search:default'); setError('');
     try {
       receiveConfiguration(await host.savePluginSearchResultLimit(limit));
-      onNotify(language === 'zh' ? '搜索结果数量已保存' : 'Search result limit saved');
+      onNotify(uiText(language)('pluginManagementPanel.searchResultLimitSaved'));
     } catch (caught) { throw new Error(errorMessage(caught)); }
     finally { setBusy(''); }
   };
   const proxyMatches = (name: string, id: string) => `${name} ${id}`.toLocaleLowerCase().includes(proxyQuery.trim().toLocaleLowerCase());
   const renderPage = (page: Page, parent?: Page) => {
   const selectedPlugin = page.kind === 'plugin' ? plugins.find(plugin => plugin.id === page.pluginId) : undefined;
-  const backLabel = parent?.kind === 'marketplace' ? (language === 'zh' ? '返回市场' : 'Back to marketplace')
-    : parent?.kind === 'manage' ? (language === 'zh' ? '返回管理' : 'Back to management')
-    : (language === 'zh' ? '返回插件' : 'Back to plugins');
+  const backLabel = parent?.kind === 'marketplace' ? (uiText(language)('pluginManagementPanel.backToMarketplace'))
+    : parent?.kind === 'manage' ? (uiText(language)('pluginManagementPanel.backToManagement'))
+    : (uiText(language)('pluginManagementPanel.backToPlugins'));
 
   if (page.kind === 'mcp') return <div className="plugin-mcp-settings">
     <button type="button" className="plugin-back" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
@@ -403,30 +404,30 @@ export function PluginManagementPanel({
   if (presentation === 'network' || page.kind === 'network') return <div className="plugin-detail-page plugin-network-page">
     {presentation !== 'network' && <>
     <button type="button" className="plugin-back" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
-    <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '插件设置' : 'Plugin settings'}</h2></header>
+    <header className="plugin-catalog-heading"><h2>{uiText(language)('pluginManagementPanel.pluginSettings')}</h2></header>
     {configuration && <PluginSearchSettings language={language} value={configuration.searchResultLimit ?? DEFAULT_SEARCH_RESULT_LIMIT}
       busy={Boolean(busy)} onSave={saveSearchLimit}/>}
     </>}
     {onOpenNetwork && presentation !== 'network' ? <button type="button" className="settings-link-row" onClick={onOpenNetwork}>
-      <span><strong>{language === 'zh' ? '网络代理' : 'Network proxy'}</strong><small>{language === 'zh' ? '管理插件市场、插件与 MCP 的代理。' : 'Manage proxies for the marketplace, plugins, and MCP.'}</small></span><ChevronRight size={17} />
+      <span><strong>{uiText(language)('pluginManagementPanel.networkProxy')}</strong><small>{uiText(language)('pluginManagementPanel.manageProxiesForTheMarketplacePluginsAnd')}</small></span><ChevronRight size={17} />
     </button> : <>
-    <SettingsCard title={language === 'zh' ? '市场与插件默认' : 'Marketplace and plugin default'}
-      subtitle={language === 'zh' ? '默认跟随应用代理，覆盖插件市场、下载和插件页面；插件与 MCP 可在下方单独覆盖。“一键应用”会清除这些单项覆盖。' : 'Follows the app default unless overridden here. Covers the marketplace, downloads and plugin pages. Set plugin and MCP exceptions below; Apply to all clears those exceptions.'}>
+    <SettingsCard title={uiText(language)('pluginManagementPanel.marketplaceAndPluginDefault')}
+      subtitle={uiText(language)('pluginManagementPanel.followsTheAppDefaultUnlessOverriddenHere')}>
     {configuration && <NetworkProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
       onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())}
       applyToAll={{ formId: 'plugin-proxy-global', save: proxy => saveGlobalProxy(proxy, true) }} />}
     </SettingsCard>
-    <section className="plugin-proxy-list"><div className="plugin-section-title"><h3>{language === 'zh' ? '插件与 MCP' : 'Plugins and MCP'}</h3><span>{plugins.filter(item => item.installed).length + (mcpOverview?.servers.length ?? 0)}</span>
-      <button type="submit" form="plugin-proxy-global" className="plugin-proxy-reset" disabled={Boolean(busy) || !configuration}>{language === 'zh' ? '一键应用' : 'Apply to all'}</button></div>
-      <label className="plugin-search"><Search size={17}/><input aria-label={language === 'zh' ? '搜索插件或 MCP' : 'Search plugins or MCP'} placeholder={language === 'zh' ? '搜索插件或 MCP' : 'Search plugins or MCP'} value={proxyQuery} onChange={event => setProxyQuery(event.target.value)}/></label>
+    <section className="plugin-proxy-list"><div className="plugin-section-title"><h3>{uiText(language)('pluginManagementPanel.pluginsAndMcp')}</h3><span>{plugins.filter(item => item.installed).length + (mcpOverview?.servers.length ?? 0)}</span>
+      <button type="submit" form="plugin-proxy-global" className="plugin-proxy-reset" disabled={Boolean(busy) || !configuration}>{uiText(language)('pluginManagementPanel.applyToAll')}</button></div>
+      <label className="plugin-search"><Search size={17}/><input aria-label={uiText(language)('pluginManagementPanel.searchPluginsOrMcp')} placeholder={uiText(language)('pluginManagementPanel.searchPluginsOrMcp')} value={proxyQuery} onChange={event => setProxyQuery(event.target.value)}/></label>
       <McpCatalogNotice language={language} loading={mcpLoading} error={mcpError}/>
       {plugins.filter(item => item.installed).map(plugin => <div key={`plugin:${plugin.id}`} hidden={!proxyMatches(plugin.name, plugin.id)} data-proxy-scope={`plugin:${plugin.id}`}>
-        <NetworkProxySettings compact individual language={language} label={plugin.name} caption={language === 'zh' ? '插件' : 'Plugin'} value={plugin.config.proxy} defaults={configuration?.proxy} resetRevision={proxyResetRevision} busy={Boolean(busy)} onSave={proxy => savePluginProxy(plugin.id, proxy)}/>
+        <NetworkProxySettings compact individual language={language} label={plugin.name} caption={uiText(language)('pluginManagementPanel.plugin')} value={plugin.config.proxy} defaults={configuration?.proxy} resetRevision={proxyResetRevision} busy={Boolean(busy)} onSave={proxy => savePluginProxy(plugin.id, proxy)}/>
       </div>)}
       {(mcpOverview?.servers ?? []).map(server => <div key={`mcp:${server.id}`} hidden={!proxyMatches(server.name, server.id)} data-proxy-scope={`mcp:${server.id}`}>
         <NetworkProxySettings compact individual language={language} label={server.name} caption={`MCP · ${server.transport}`} value={server.proxy} defaults={configuration?.proxy} resetRevision={proxyResetRevision} busy={Boolean(busy)} onSave={proxy => saveStandaloneProxy(server.id, proxy)}/>
       </div>)}
-      {!plugins.some(item => item.installed && proxyMatches(item.name, item.id)) && !mcpOverview?.servers.some(item => proxyMatches(item.name, item.id)) && <p className="plugin-proxy-help">{language === 'zh' ? '没有匹配的插件或 MCP' : 'No matching plugins or MCP servers'}</p>}
+      {!plugins.some(item => item.installed && proxyMatches(item.name, item.id)) && !mcpOverview?.servers.some(item => proxyMatches(item.name, item.id)) && <p className="plugin-proxy-help">{uiText(language)('pluginManagementPanel.noMatchingPluginsOrMcpServers')}</p>}
     </section>
     </>}
     {error && <p className="plugin-market-error" role="alert">{error}</p>}
@@ -440,14 +441,14 @@ export function PluginManagementPanel({
       onNotify={onNotify}
       onInstalled={async (id, enabled) => {
         const latest = await host.fetchCardbushAppsConfiguration();
-        if (!latest.plugins.some(plugin => plugin.id === id)) throw new Error(language === 'zh' ? '已安装文件，插件目录尚未刷新。' : 'Files installed; plugin catalog has not refreshed yet.');
+        if (!latest.plugins.some(plugin => plugin.id === id)) throw new Error(uiText(language)('pluginManagementPanel.filesInstalledPluginCatalogHasNotRefreshed'));
         const saved = await host.saveCardbushAppsConfiguration({ ...latest,
           plugins: latest.plugins.map(plugin => plugin.id === id ? { ...plugin, installed: true, enabled } : plugin) });
         setConfiguration(saved);
         setLocalSkills(await onReloadSkills());
         void loadConnections();
       }} />{marketProxyOpen && configuration && <dialog className="plugin-proxy-dialog" ref={node => { if (node && !node.open) node.showModal(); }} onCancel={dialogEventHandler(() => setMarketProxyOpen(false))}>
-        <header><h3>{language === 'zh' ? '市场与插件默认' : 'Marketplace and plugin default'}</h3><button type="button" className="plugin-back" onClick={() => setMarketProxyOpen(false)}>{language === 'zh' ? '关闭代理设置' : 'Close proxy settings'}</button></header>
+        <header><h3>{uiText(language)('pluginManagementPanel.marketplaceAndPluginDefault')}</h3><button type="button" className="plugin-back" onClick={() => setMarketProxyOpen(false)}>{uiText(language)('pluginManagementPanel.closeProxySettings')}</button></header>
         <NetworkProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
           onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())} />
         {error && <p className="plugin-market-error" role="alert">{error}</p>}
@@ -455,13 +456,13 @@ export function PluginManagementPanel({
   }
   if (!host.remote && page.kind === 'workspace') {
     const plugin = plugins.find(item => item.id === page.pluginId);
-    return <div className="plugin-workspace-page"><button className="plugin-back" type="button" onClick={back}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugin'}</button>
-      {plugin?.installed && plugin.enabled ? <RuntimePluginWorkspace id={page.extensionId} language={language}/> : <p>{language === 'zh' ? '请先启用插件。' : 'Enable this plugin first.'}</p>}
+    return <div className="plugin-workspace-page"><button className="plugin-back" type="button" onClick={back}><ArrowLeft size={17}/>{uiText(language)('accountsPanel.backToPlugin')}</button>
+      {plugin?.installed && plugin.enabled ? <RuntimePluginWorkspace id={page.extensionId} language={language}/> : <p>{uiText(language)('pluginManagementPanel.enableThisPluginFirst')}</p>}
     </div>;
   }
   if (page.kind === 'plugin' && !selectedPlugin) return <div className="plugin-detail-page">
     <button className="plugin-back" type="button" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
-    <p role="status">{language === 'zh' ? '此插件已不可用，请返回列表刷新。' : 'This plugin is no longer available. Return to the list to refresh.'}</p>
+    <p role="status">{uiText(language)('pluginManagementPanel.thisPluginIsNoLongerAvailableReturn')}</p>
   </div>;
   if (selectedPlugin) {
     return (
@@ -532,49 +533,49 @@ export function PluginManagementPanel({
       <div className="plugin-hub-toolbar">
         <div className="plugin-hub-tabs" role="tablist">
           <button className={tab === 'plugins' ? 'active' : ''} type="button" onClick={() => setTab('plugins')}>
-            {language === 'zh' ? '插件' : 'Plugins'}
+            {uiText(language)('appCenterModel.plugins')}
           </button>
           <button className={tab === 'skills' ? 'active' : ''} type="button" onClick={() => setTab('skills')}>
-            {language === 'zh' ? '技能' : 'Skills'}
+            {uiText(language)('composer.skills')}
           </button>
-          <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{language === 'zh' ? '市场' : 'Marketplace'}</button>
-          {!host.remote && <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{language === 'zh' ? '账号' : 'Accounts'}</button>}
+          <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{uiText(language)('pluginManagementPanel.marketplace')}</button>
+          {!host.remote && <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{uiText(language)('accountsPanel.accounts')}</button>}
         </div>
         {tab !== 'accounts' && <div className="plugin-hub-actions">
-          <button type="button" title={language === 'zh' ? '插件设置' : 'Plugin settings'} onClick={() => setPage({ kind: 'network' })}>{language === 'zh' ? '设置' : 'Settings'}</button>
+          <button type="button" title={uiText(language)('pluginManagementPanel.pluginSettings')} onClick={() => setPage({ kind: 'network' })}>{uiText(language)('cardlingWindow.settings')}</button>
           <button className="plugin-mcp-manage-button" type="button" onClick={() => setPage({ kind: 'manage', tab: 'mcp' })}>
-            <Server size={17} /><span>{language === 'zh' ? 'MCP 服务' : 'MCP servers'}</span>
+            <Server size={17} /><span>{uiText(language)('pluginManagementPanel.mcpServers')}</span>
           </button>
-          <button type="button" title={language === 'zh' ? '刷新' : 'Refresh'} onClick={() => void load()}>
+          <button type="button" title={uiText(language)('automationPanel.refresh')} onClick={() => void load()}>
             {busy === 'load' ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}
           </button>
-          <button type="button" title={language === 'zh' ? '管理' : 'Manage'} onClick={() => setPage({ kind: 'manage' })}>
+          <button type="button" title={uiText(language)('browserStartBookmarks.manage')} onClick={() => setPage({ kind: 'manage' })}>
             <Settings size={17} />
           </button>
           <div className="plugin-add-wrap" ref={addMenuRef}>
             <button className="plugin-add-button" type="button" disabled={Boolean(busy)} onClick={() => setAddOpen((value) => !value)}>
-              {language === 'zh' ? '添加' : 'Add'} <ChevronDown size={15} />
+              {uiText(language)('composer.add')} <ChevronDown size={15} />
             </button>
             {addOpen && (
               <div className="plugin-add-menu">
                 <button type="button" onClick={() => { setAddOpen(false); setPage({ kind: 'marketplace' }); }}>
-                  <Store size={15} /><span><strong>{language === 'zh' ? '从市场安装插件' : 'Install from marketplace'}</strong><small>{language === 'zh' ? '浏览 GitHub 和本地插件市场' : 'Browse GitHub and local plugin marketplaces'}</small></span>
+                  <Store size={15} /><span><strong>{uiText(language)('pluginManagementPanel.installFromMarketplace')}</strong><small>{uiText(language)('pluginManagementPanel.browseGithubAndLocalPluginMarketplaces')}</small></span>
                 </button>
                 {!host.remote && <button type="button" onClick={() => void installLocal('zip')}>
                   <FileArchive size={15} />
-                  <span><strong>{language === 'zh' ? '从 ZIP 安装插件' : 'Install from ZIP'}</strong><small>{language === 'zh' ? '直接导入插件压缩包' : 'Import a plugin archive'}</small></span>
+                  <span><strong>{uiText(language)('pluginManagementPanel.installFromZip')}</strong><small>{uiText(language)('pluginManagementPanel.importAPluginArchive')}</small></span>
                 </button>}
                 <button type="button" onClick={() => void installLocal('directory')}>
                   <FolderOpen size={15} />
-                  <span><strong>{language === 'zh' ? '从文件夹安装插件' : 'Install from folder'}</strong><small>{language === 'zh' ? '选择解压后的插件目录' : 'Choose an unpacked plugin'}</small></span>
+                  <span><strong>{uiText(language)('pluginManagementPanel.installFromFolder')}</strong><small>{uiText(language)('pluginManagementPanel.chooseAnUnpackedPlugin')}</small></span>
                 </button>
                 <button type="button" onClick={() => { addMenuRef.current?.querySelector<HTMLButtonElement>('.plugin-add-button')?.focus(); setAddOpen(false); openMcp(); }}>
                   <Plus size={15} />
-                  <span><strong>{language === 'zh' ? '添加 MCP 服务' : 'Add MCP server'}</strong><small>{language === 'zh' ? '连接本地或远程工具服务' : 'Connect a local or remote tool service'}</small></span>
+                  <span><strong>{uiText(language)('pluginManagementPanel.addMcpServer')}</strong><small>{uiText(language)('pluginManagementPanel.connectALocalOrRemoteToolService')}</small></span>
                 </button>
                 <button type="button" onClick={() => { setAddOpen(false); setTab('skills'); }}>
                   <PackagePlus size={15} />
-                  <span><strong>{language === 'zh' ? '查看技能' : 'Browse skills'}</strong><small>{language === 'zh' ? '管理 CardBush 技能目录' : 'Manage the CardBush Skill catalog'}</small></span>
+                  <span><strong>{uiText(language)('pluginManagementPanel.browseSkills')}</strong><small>{uiText(language)('pluginManagementPanel.manageTheCardbushSkillCatalog')}</small></span>
                 </button>
               </div>
             )}
@@ -587,8 +588,8 @@ export function PluginManagementPanel({
         setBusy('install'); setError('');
         void host.installDirectory(installPath.trim()).then(async () => { setInstallOpen(false); setInstallPath(''); await load(); })
           .catch(error => setError(errorMessage(error))).finally(() => setBusy(''));
-      }}><label className="settings-field">{language === 'zh' ? 'Agent 主机上的插件目录' : 'Plugin directory on the Agent host'}<input required value={installPath} onChange={event => setInstallPath(event.target.value)}/></label>
-        <div className="settings-actions"><button type="button" disabled={Boolean(busy)} onClick={() => setInstallOpen(false)}>{language === 'zh' ? '取消' : 'Cancel'}</button><button disabled={Boolean(busy) || !installPath.trim()}>{language === 'zh' ? '安装 / 更新' : 'Install / update'}</button></div></form>}
+      }}><label className="settings-field">{uiText(language)('pluginManagementPanel.pluginDirectoryOnTheAgentHost')}<input required value={installPath} onChange={event => setInstallPath(event.target.value)}/></label>
+        <div className="settings-actions"><button type="button" disabled={Boolean(busy)} onClick={() => setInstallOpen(false)}>{uiText(language)('agentConnectionForm.cancel')}</button><button disabled={Boolean(busy) || !installPath.trim()}>{uiText(language)('pluginManagementPanel.installUpdate')}</button></div></form>}
       {tab !== 'accounts' && error && <p className="plugin-hub-error" role="alert">{error}</p>}
       {tab === 'accounts' ? <AccountsPanel language={language}/> : tab === 'plugins' ? (
         <PluginCatalog
@@ -608,7 +609,7 @@ export function PluginManagementPanel({
             plugins: configuration.plugins.map((item) => item.id === plugin.id
               ? { ...item, installed: true, enabled: true }
               : item),
-          }, `install:${plugin.id}`, language === 'zh' ? '插件已安装' : 'Plugin installed')}
+          }, `install:${plugin.id}`, uiText(language)('pluginManagementPanel.pluginInstalled'))}
         />
       ) : (
         <SkillCatalog
@@ -658,31 +659,31 @@ function PluginCatalog({ language, configuration, plugins, connections, mcpLoadi
   const standalone = connections.filter(item => !item.plugin);
   return (
     <div className="plugin-catalog-page">
-      <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '插件' : 'Plugins'}</h2><p>{language === 'zh' ? '在你常用的工具中使用 CardBush' : 'Use CardBush with the tools you rely on'}</p></header>
+      <header className="plugin-catalog-heading"><h2>{uiText(language)('appCenterModel.plugins')}</h2><p>{uiText(language)('pluginManagementPanel.useCardbushWithTheToolsYouRely')}</p></header>
       <SearchField language={language} value={query} onChange={onQuery} kind="integrations" />
       <section className="plugin-installed-section">
-        <div className="plugin-section-title"><h3>{language === 'zh' ? '已添加' : 'Added'}</h3><span>{installed.length + standalone.length}</span></div>
+        <div className="plugin-section-title"><h3>{uiText(language)('pluginManagementPanel.added')}</h3><span>{installed.length + standalone.length}</span></div>
         <McpCatalogNotice language={language} loading={mcpLoading} error={mcpError} />
         <div className="plugin-added-grid">
           {installed.map((plugin) => <button className="plugin-added-card" type="button" key={plugin.id} onClick={() => onOpen(plugin)}>
             <PluginLogo plugin={plugin} />
-            <span className="plugin-added-copy"><strong>{plugin.name}</strong><small>{language === 'zh' ? '插件' : 'Plugin'} · {plugin.enabled && configuration?.serviceEnabled ? (language === 'zh' ? '已启用' : 'Enabled') : (language === 'zh' ? '已停用' : 'Disabled')}</small></span>
+            <span className="plugin-added-copy"><strong>{plugin.name}</strong><small>{uiText(language)('pluginManagementPanel.plugin')} · {plugin.enabled && configuration?.serviceEnabled ? (uiText(language)('featureContentPanel.enabled')) : (uiText(language)('pluginManagementPanel.disabled'))}</small></span>
             <ChevronRight size={16} />
           </button>)}
           {standalone.map(item => <button className="plugin-added-card" type="button" key={`mcp:${item.id}`} onClick={() => onOpenMcp(item.id)}>
             <span className="plugin-logo"><Server size={23} /></span>
-            <span className="plugin-added-copy"><strong>{item.name}</strong><small>{language === 'zh' ? '独立 MCP 服务' : 'Standalone MCP'}</small><McpConnectionBadge item={item} language={language} /></span>
+            <span className="plugin-added-copy"><strong>{item.name}</strong><small>{uiText(language)('pluginManagementPanel.standaloneMcp')}</small><McpConnectionBadge item={item} language={language} /></span>
             <ChevronRight size={16} />
           </button>)}
-          {!installed.length && !standalone.length && !mcpLoading && !mcpError && <small>{query.trim() ? (language === 'zh' ? '没有匹配的项目' : 'No matching items') : (language === 'zh' ? '暂无已添加项目' : 'Nothing added yet')}</small>}
+          {!installed.length && !standalone.length && !mcpLoading && !mcpError && <small>{query.trim() ? (uiText(language)('pluginManagementPanel.noMatchingItems')) : (uiText(language)('pluginManagementPanel.nothingAddedYet'))}</small>}
         </div>
         <div className="plugin-scope-tabs" role="tablist">
-          <button className={scope === 'public' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'public'} onClick={() => setScope('public')}>{language === 'zh' ? '公开' : 'Public'}</button>
-          <button className={scope === 'personal' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'personal'} onClick={() => setScope('personal')}>{language === 'zh' ? '个人' : 'Personal'}</button>
+          <button className={scope === 'public' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'public'} onClick={() => setScope('public')}>{uiText(language)('pluginManagementPanel.public')}</button>
+          <button className={scope === 'personal' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'personal'} onClick={() => setScope('personal')}>{uiText(language)('pluginManagementPanel.personal')}</button>
         </div>
       </section>
       <section className="plugin-featured-section">
-        <div className="plugin-section-title"><h3>{scope === 'personal' ? (language === 'zh' ? '个人插件' : 'Personal plugins') : (language === 'zh' ? 'CardBush 精选' : 'CardBush featured')}</h3></div>
+        <div className="plugin-section-title"><h3>{scope === 'personal' ? (uiText(language)('pluginManagementPanel.personalPlugins')) : (uiText(language)('pluginManagementPanel.cardbushFeatured'))}</h3></div>
         <div className="plugin-featured-grid">
           {scopedPlugins.map((plugin) => (
             <article key={plugin.id}>
@@ -691,11 +692,11 @@ function PluginCatalog({ language, configuration, plugins, connections, mcpLoadi
                 <span><strong>{plugin.name}</strong><small>{pluginPresentation(plugin, language).description}</small></span>
               </button>
               {plugin.installed ? <span className="plugin-installed-check"><Check size={17} /></span> : (
-                <button className="plugin-install-button" type="button" disabled={busy || !configuration} onClick={() => onInstall(plugin)}>{language === 'zh' ? '安装' : 'Install'}</button>
+                <button className="plugin-install-button" type="button" disabled={busy || !configuration} onClick={() => onInstall(plugin)}>{uiText(language)('browserInstallButton.install')}</button>
               )}
             </article>
           ))}
-          {scopedPlugins.length === 0 && <p className="plugin-catalog-empty">{language === 'zh' ? '当前分类还没有插件' : 'No plugins in this scope'}</p>}
+          {scopedPlugins.length === 0 && <p className="plugin-catalog-empty">{uiText(language)('pluginManagementPanel.noPluginsInThisScope')}</p>}
         </div>
       </section>
     </div>
@@ -718,7 +719,7 @@ function SkillCatalog({ language, skills, query, disabledSkillNames, onQuery, on
     const key = skill.sourceId || skill.sourceLabel || 'plugin';
     const group = groups.get(key) ?? {
       key,
-      label: skill.sourceLabel || skill.sourceId || (language === 'zh' ? '插件' : 'Plugin'),
+      label: skill.sourceLabel || skill.sourceId || (uiText(language)('pluginManagementPanel.plugin')),
       skills: [] as SkillSummary[],
     };
     group.skills.push(skill);
@@ -735,10 +736,10 @@ function SkillCatalog({ language, skills, query, disabledSkillNames, onQuery, on
   });
   return (
     <div className="plugin-catalog-page">
-      <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '技能' : 'Skills'}</h2><p>{language === 'zh' ? '通过任务专用技能扩展 CardBush' : 'Extend CardBush with task-specific skills'}</p></header>
+      <header className="plugin-catalog-heading"><h2>{uiText(language)('composer.skills')}</h2><p>{uiText(language)('pluginManagementPanel.extendCardbushWithTaskSpecificSkills')}</p></header>
       <SearchField language={language} value={query} onChange={onQuery} kind="skills" />
       <section className="plugin-featured-section">
-        <div className="plugin-section-title"><h3>{language === 'zh' ? '已安装' : 'Installed'}</h3><span>{skills.length}</span></div>
+        <div className="plugin-section-title"><h3>{uiText(language)('pluginManagementPanel.installed_7bf4259')}</h3><span>{skills.length}</span></div>
         <div className="skill-catalog-grid">
           {standaloneSkills.map((skill) => (
             <SkillCatalogCard
@@ -752,9 +753,7 @@ function SkillCatalog({ language, skills, query, disabledSkillNames, onQuery, on
           ))}
           {pluginGroups.map((group) => {
             const expanded = searching || expandedGroups.has(group.key);
-            const countLabel = language === 'zh'
-              ? `${group.skills.length} 个技能`
-              : `${group.skills.length} ${group.skills.length === 1 ? 'skill' : 'skills'}`;
+            const countLabel = uiText(language)('plugins.skillCount', { count: group.skills.length });
             return (
               <section className={`skill-plugin-group${expanded ? ' expanded' : ''}`} key={group.key}>
                 <button
@@ -784,7 +783,7 @@ function SkillCatalog({ language, skills, query, disabledSkillNames, onQuery, on
               </section>
             );
           })}
-          {skills.length === 0 && <p className="plugin-catalog-empty">{language === 'zh' ? '没有匹配的技能' : 'No matching skills'}</p>}
+          {skills.length === 0 && <p className="plugin-catalog-empty">{uiText(language)('pluginManagementPanel.noMatchingSkills')}</p>}
         </div>
       </section>
     </div>
@@ -805,7 +804,7 @@ function SkillCatalogCard({ language, skill, enabled, onOpen, onToggle }: {
         <SkillIcon skill={skill} />
         <span>
           <span className="skill-card-title"><strong>{skill.displayName || skill.name}</strong>{source && <em>{source}</em>}</span>
-          <small>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</small>
+          <small>{localizedContent({ zh: skill.descriptionZh, en: skill.description }, language)}</small>
         </span>
       </button>
       <button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" aria-pressed={enabled} onClick={() => onToggle(skill.name, !enabled)}><span /></button>
@@ -847,30 +846,30 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
         ? { ...item, enabled: !item.enabled }
         : item),
     }, plugin.enabled
-      ? (language === 'zh' ? '插件已停用' : 'Plugin disabled')
-      : (language === 'zh' ? '插件已启用' : 'Plugin enabled'));
+      ? (uiText(language)('pluginManagementPanel.pluginDisabled'))
+      : (uiText(language)('pluginManagementPanel.pluginEnabled')));
   };
   return (
     <div className="plugin-manage-page">
-      <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{language === 'zh' ? '插件' : 'Plugins'}</button>
+      <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{uiText(language)('appCenterModel.plugins')}</button>
       <div className="plugin-manage-tabs" role="tablist">
-        <button className={activeTab === 'plugins' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'plugins'} onClick={() => setActiveTab('plugins')}>{language === 'zh' ? '插件' : 'Plugins'} <em>{installed.length}</em></button>
-        <button className={activeTab === 'apps' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'apps'} onClick={() => setActiveTab('apps')}>{language === 'zh' ? '应用' : 'Apps'} <em>{appCount}</em></button>
-        <button className={activeTab === 'mcp' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')}>MCP <em>{mcpCount}</em></button>
+        <button className={activeTab === 'plugins' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'plugins'} onClick={() => setActiveTab('plugins')}>{uiText(language)('appCenterModel.plugins')} <em>{installed.length}</em></button>
+        <button className={activeTab === 'apps' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'apps'} onClick={() => setActiveTab('apps')}>{uiText(language)('pluginManagementPanel.apps')} <em>{appCount}</em></button>
+        <button className={activeTab === 'mcp' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')}>{uiText(language)('pluginManagementPanel.mcp')}<em>{mcpCount}</em></button>
       </div>
       <SearchField language={language} value={query} onChange={onQuery} kind={activeTab === 'plugins' ? 'plugins' : activeTab} />
       {error && <p className="plugin-market-error" role="alert">{error}</p>}
       {activeTab === 'mcp' && <>
         <McpCatalogNotice language={language} loading={mcpLoading} error={mcpError} />
-        <button className="plugin-back" type="button" onClick={() => onOpenMcp()}><Plus size={16} />{language === 'zh' ? '添加 MCP 服务' : 'Add MCP server'}</button>
-        <button className="plugin-back" type="button" disabled={mcpLoading} onClick={onRefreshMcp}><RefreshCw size={16} />{language === 'zh' ? '刷新状态' : 'Refresh status'}</button>
+        <button className="plugin-back" type="button" onClick={() => onOpenMcp()}><Plus size={16} />{uiText(language)('pluginManagementPanel.addMcpServer')}</button>
+        <button className="plugin-back" type="button" disabled={mcpLoading} onClick={onRefreshMcp}><RefreshCw size={16} />{uiText(language)('pluginManagementPanel.refreshStatus')}</button>
       </>}
       <div className="plugin-manage-list">
         {activeTab === 'plugins' && installed.map((plugin) => (
           <article key={plugin.id}>
             <button className="plugin-featured-main" type="button" onClick={() => onOpen(plugin)}><PluginLogo plugin={plugin} /><span><strong>{plugin.name}</strong><small>{pluginPresentation(plugin, language).description}</small></span></button>
             <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || !configuration || plugin.removalPending} onClick={() => togglePlugin(plugin)}><span /></button>
-            {plugin.source === 'user' && <button className="plugin-uninstall-button" type="button" disabled={busy || !configuration} aria-label={language === 'zh' ? `卸载 ${plugin.name}` : `Uninstall ${plugin.name}`} title={language === 'zh' ? '卸载插件并删除文件与设置' : 'Uninstall plugin and delete its files and settings'} onClick={() => onUninstall(plugin)}><Trash2 size={16}/></button>}
+            {plugin.source === 'user' && <button className="plugin-uninstall-button" type="button" disabled={busy || !configuration} aria-label={uiText(language)('pluginManagementPanel.uninstall', { value1: plugin.name })} title={uiText(language)('pluginManagementPanel.uninstallPluginAndDeleteItsFilesAnd')} onClick={() => onUninstall(plugin)}><Trash2 size={16}/></button>}
           </article>
         ))}
         {activeTab === 'apps' && components.map(({ plugin, component }) => (
@@ -885,12 +884,12 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
         {activeTab === 'mcp' && connections.map(item => <article key={`${item.plugin?.id ?? 'standalone'}:${item.id}`}>
           <button className="plugin-featured-main" type="button" onClick={() => item.plugin ? onOpen(item.plugin) : onOpenMcp(item.id)}>
             {item.plugin ? <PluginLogo plugin={item.plugin} /> : <span className="plugin-logo"><Server size={23} /></span>}
-            <span><strong>{item.name}</strong><small>{item.plugin ? (language === 'zh' ? `由 ${item.plugin.name} 管理` : `Managed by ${item.plugin.name}`) : (language === 'zh' ? '独立 MCP 服务' : 'Standalone MCP')}</small><McpConnectionBadge item={item} language={language} /></span>
+            <span><strong>{item.name}</strong><small>{item.plugin ? (uiText(language)('pluginManagementPanel.managedBy', { value1: item.plugin.name })) : (uiText(language)('pluginManagementPanel.standaloneMcp'))}</small><McpConnectionBadge item={item} language={language} /></span>
             <ChevronRight size={16} className="plugin-row-chevron" />
           </button>
         </article>)}
         {((activeTab === 'plugins' && installed.length === 0) || (activeTab === 'apps' && components.length === 0) || (activeTab === 'mcp' && connections.length === 0 && !mcpLoading && !mcpError)) && (
-          <p className="plugin-manage-empty">{language === 'zh' ? '没有匹配的已安装项目' : 'No matching installed items'}</p>
+          <p className="plugin-manage-empty">{uiText(language)('pluginManagementPanel.noMatchingInstalledItems')}</p>
         )}
       </div>
     </div>
@@ -898,19 +897,19 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
 }
 
 function McpCatalogNotice({ language, loading, error }: { language: AppLanguage; loading: boolean; error: string }) {
-  if (error) return <p className="plugin-hub-error" role="alert">{language === 'zh' ? 'MCP 列表读取失败，请刷新重试：' : 'MCP list unavailable. Refresh to retry: '}{error}</p>;
-  return loading ? <p className="plugin-mcp-loading" role="status">{language === 'zh' ? '正在读取 MCP 服务状态…' : 'Reading MCP server status…'}</p> : null;
+  if (error) return <p className="plugin-hub-error" role="alert">{uiText(language)('pluginManagementPanel.mcpListUnavailableRefreshToRetry')}{error}</p>;
+  return loading ? <p className="plugin-mcp-loading" role="status">{uiText(language)('pluginManagementPanel.readingMcpServerStatus')}</p> : null;
 }
 
 function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; language: AppLanguage }) {
   const labels = {
-    waiting_for_resources: ['等待可用资源', 'Waiting for resources'],
-    auth_required: ['需要登录', 'Sign-in required'], configuration_required: ['需要配置', 'Configuration required'], connected: ['已连接', 'Connected'], pending: ['等待生效', 'Pending'], restarting: ['重新连接中', 'Reconnecting'],
-    unavailable: ['连接异常', 'Unavailable'], disabled: ['已停用', 'Disabled'], unknown: ['连接待确认', 'Connection unconfirmed'],
+    waiting_for_resources: 'pluginMcpSettings.waitingForResources' as const,
+    auth_required: 'pluginMcpSettings.signInRequired' as const, configuration_required: 'pluginMcpSettings.configurationRequired' as const, connected: 'browserConnectionSettings.connected' as const, pending: 'pluginManagementPanel.pending' as const, restarting: 'pluginManagementPanel.reconnecting' as const,
+    unavailable: 'pluginManagementPanel.unavailable' as const, disabled: 'pluginManagementPanel.disabled' as const, unknown: 'pluginManagementPanel.connection_unconfirmed' as const,
   };
   return <span className={`plugin-connection-status ${item.state}`}>
-    <i aria-hidden="true" />{labels[item.state][language === 'zh' ? 0 : 1]}
-    {item.state === 'connected' && item.toolCount !== undefined && ` · ${item.toolCount} ${language === 'zh' ? '个工具' : 'tools'}`}
+    <i aria-hidden="true" />{uiText(language)(labels[item.state])}
+    {item.state === 'connected' && item.toolCount !== undefined && ` · ${item.toolCount} ${uiText(language)('pluginManagementPanel.tools')}`}
   </span>;
 }
 
@@ -939,28 +938,28 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
       <header className="plugin-detail-hero">
         <PluginLogo plugin={plugin} large />
         <div><h2>{plugin.name}</h2><p>{presentation.description}</p></div>
-        {plugin.installed ? <div className="plugin-detail-actions"><button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || plugin.removalPending} onClick={() => onPersist({ ...plugin, enabled: !plugin.enabled }, plugin.enabled ? (language === 'zh' ? '插件已停用' : 'Plugin disabled') : (language === 'zh' ? '插件已启用' : 'Plugin enabled'))}><span /></button>
-          {plugin.source === 'user' && <button className="plugin-uninstall-button" type="button" disabled={busy} onClick={onUninstall}><Trash2 size={15}/>{language === 'zh' ? '卸载插件' : 'Uninstall'}</button>}</div>
-          : <button className="plugin-detail-primary" type="button" disabled={busy} onClick={() => onPersist({ ...plugin, installed: true, enabled: true }, language === 'zh' ? '插件已安装' : 'Plugin installed')}>{language === 'zh' ? '安装插件' : 'Install'}</button>}
+        {plugin.installed ? <div className="plugin-detail-actions"><button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || plugin.removalPending} onClick={() => onPersist({ ...plugin, enabled: !plugin.enabled }, plugin.enabled ? (uiText(language)('pluginManagementPanel.pluginDisabled')) : (uiText(language)('pluginManagementPanel.pluginEnabled')))}><span /></button>
+          {plugin.source === 'user' && <button className="plugin-uninstall-button" type="button" disabled={busy} onClick={onUninstall}><Trash2 size={15}/>{uiText(language)('pluginManagementPanel.uninstall_776f552')}</button>}</div>
+          : <button className="plugin-detail-primary" type="button" disabled={busy} onClick={() => onPersist({ ...plugin, installed: true, enabled: true }, uiText(language)('pluginManagementPanel.pluginInstalled'))}>{uiText(language)('pluginManagementPanel.install')}</button>}
       </header>
       <p className="plugin-uninstall-hint">{plugin.installed
         ? (plugin.source === 'user'
-          ? (language === 'zh' ? '卸载将删除插件的安装文件、专属数据和设置。仅暂停使用可选择停用。' : 'Uninstall deletes this plugin’s installed files, data and settings. Disable it to keep them.')
-          : (language === 'zh' ? '内置组件可停用。' : 'Bundled components can be disabled.'))
-        : (language === 'zh' ? '此插件尚未安装。安装后可使用其能力。' : 'This plugin is not installed. Install it to use its capabilities.')}</p>
+          ? (uiText(language)('pluginManagementPanel.uninstallDeletesThisPluginSInstalledFiles'))
+          : (uiText(language)('pluginManagementPanel.bundledComponentsCanBeDisabled')))
+        : (uiText(language)('pluginManagementPanel.thisPluginIsNotInstalledInstallIt'))}</p>
       {presentation.defaultPrompts.length > 0 && <div className="plugin-prompt-showcase" style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{presentation.defaultPrompts.map((prompt) => <button type="button" key={prompt} disabled={!plugin.installed || busy || !onOpenPrompt}
-        title={language === 'zh' ? '在新会话中使用此提示词' : 'Use this prompt in a new conversation'}
+        title={uiText(language)('pluginManagementPanel.useThisPromptInANewConversation')}
         onClick={() => onOpenPrompt?.(pluginPrompt(plugin, prompt))}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></button>)}</div>}
       <p className="plugin-long-description">{presentation.longDescription}</p>
       {error && <p className="plugin-market-error" role="alert">{error}</p>}
-      {!host.remote && plugin.installed && plugin.enabled && plugin.components.filter(component => component.kind === 'runtime' && component.runtime?.settings).map(component => <section className="plugin-detail-section" key={component.id}><button type="button" className="plugin-back" onClick={() => onOpenWorkspace(component.id)}><Settings size={16}/>{language === 'zh' ? '打开插件配置' : 'Open plugin settings'}</button></section>)}
-      {plugin.removalPending && <p className="plugin-market-error">{language === 'zh' ? '卸载尚未完成，可点击卸载重试。' : 'Uninstall is incomplete. Click Uninstall to retry.'}</p>}
+      {!host.remote && plugin.installed && plugin.enabled && plugin.components.filter(component => component.kind === 'runtime' && component.runtime?.settings).map(component => <section className="plugin-detail-section" key={component.id}><button type="button" className="plugin-back" onClick={() => onOpenWorkspace(component.id)}><Settings size={16}/>{uiText(language)('pluginManagementPanel.openPluginSettings')}</button></section>)}
+      {plugin.removalPending && <p className="plugin-market-error">{uiText(language)('pluginManagementPanel.uninstallIsIncompleteClickUninstallToRetry')}</p>}
       {plugin.installed && !plugin.removalPending && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
-      {plugin.installed && <details className="plugin-detail-section plugin-proxy-section"><summary>{language === 'zh' ? '网络代理' : 'Network proxy'} · {proxyLabel(plugin.config.proxy?.mode ?? 'inherit', language === 'zh')}</summary>
+      {plugin.installed && <details className="plugin-detail-section plugin-proxy-section"><summary>{uiText(language)('pluginManagementPanel.networkProxy')} · {proxyLabel(plugin.config.proxy?.mode ?? 'inherit', language)}</summary>
         <NetworkProxySettings key={plugin.id} language={language} value={plugin.config.proxy} defaults={proxyDefaults} individual busy={busy} onSave={onProxySave} />
       </details>}
       {plugin.installed && <PluginHookTrust plugin={plugin} language={language} busy={busy} onPersist={onPersist} />}
-      <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind kind-${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && component.kind !== 'mcp' && component.kind !== 'app' && <Check size={17} />}</div>)}</section>
+      <section className="plugin-detail-section"><h3>{uiText(language)('pluginManagementPanel.components', { value1: plugin.components.length })}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind kind-${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && component.kind !== 'mcp' && component.kind !== 'app' && <Check size={17} />}</div>)}</section>
       {!host.remote && plugin.id === 'computer-use' && plugin.installed && <ComputerUseSettings language={language} plugin={plugin} busy={busy} onReplace={onReplace} onPersist={onPersist} />}
       {!host.remote && plugin.id === 'chrome' && plugin.installed && (
         <BrowserConnectionSettings
@@ -971,7 +970,7 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
           onPersist={onPersist}
         />
       )}
-      <section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3><Info label={language === 'zh' ? '功能' : 'Capabilities'} value={plugin.capabilities.join(', ')} /><Info label={language === 'zh' ? '开发者' : 'Developer'} value={plugin.developerName} /><Info label={language === 'zh' ? '类别' : 'Category'} value={plugin.category} /><Info label={language === 'zh' ? '版本' : 'Version'} value={plugin.version} /><Info label="Manifest" value={plugin.manifestPath} /></section>
+      <section className="plugin-detail-section plugin-info"><h3>{uiText(language)('pluginManagementPanel.information')}</h3><Info label={uiText(language)('pluginManagementPanel.capabilities')} value={plugin.capabilities.join(', ')} /><Info label={uiText(language)('pluginManagementPanel.developer')} value={plugin.developerName} /><Info label={uiText(language)('pluginManagementPanel.category')} value={plugin.category} /><Info label={uiText(language)('pluginManagementPanel.version')} value={plugin.version} /><Info label={uiText(language)('pluginManagementPanel.manifest')} value={plugin.manifestPath} /></section>
     </div>
   );
 }
@@ -982,19 +981,19 @@ export function PluginHookTrust({ plugin, language, busy, onPersist }: {
 }) {
   const hooks = plugin.components.filter(component => component.hook);
   if (!hooks.length) return null;
-  const zh = language === 'zh';
+
   const trusted = new Set(Array.isArray(plugin.config.trustedHookHashes) ? plugin.config.trustedHookHashes.filter((value): value is string => typeof value === 'string') : []);
-  return <section className="plugin-detail-section plugin-hook-trust"><h3>{zh ? '自动执行审核' : 'Review automatic execution'}</h3>
-    <p>{zh ? '查看 Hooks 和 Agent 局部 MCP 声明，信任需要运行的定义。安装和启用插件不会自动授予信任；定义变更后需要重新审核。' : 'Review Hooks and Agent-local MCP declarations before trusting them. Installing a plugin does not grant trust. Changed definitions need review again.'}</p>
+  return <section className="plugin-detail-section plugin-hook-trust"><h3>{uiText(language)('pluginManagementPanel.reviewAutomaticExecution')}</h3>
+    <p>{uiText(language)('pluginManagementPanel.reviewHooksAndAgentLocalMcpDeclarations')}</p>
     {hooks.map(component => {
       const hook = component.hook!, enabled = trusted.has(hook.definitionHash);
-      return <details key={component.id}><summary>{component.name} · {hook.executable ? enabled ? (zh ? '已信任' : 'Trusted') : (zh ? '待审核' : 'Needs review') : (zh ? '跳过执行' : 'Skipped')}</summary>
+      return <details key={component.id}><summary>{component.name} · {hook.executable ? enabled ? (uiText(language)('pluginManagementPanel.trusted')) : (uiText(language)('pluginManagementPanel.needsReview')) : (uiText(language)('pluginManagementPanel.skipped'))}</summary>
         <pre>{JSON.stringify(hook.definition, null, 2)}</pre>
         {hook.executable ? <button className="plugin-install-button" type="button" disabled={busy} onClick={() => {
           const hashes = new Set(trusted); if (enabled) hashes.delete(hook.definitionHash); else hashes.add(hook.definitionHash);
-          onPersist({ ...plugin, config: { ...plugin.config, trustedHookHashes: [...hashes] } }, zh ? (enabled ? '已撤销此定义的信任' : '已信任当前定义') : (enabled ? 'Definition trust revoked' : 'Current definition trusted'));
-        }}>{enabled ? (zh ? '撤销信任并停用' : 'Revoke trust and disable') : (zh ? '信任并允许运行' : 'Trust and allow execution')}</button>
-          : <p>{zh ? '与 OpenAI 一致，prompt 和 agent 类型的 Hook 仅解析，不执行。' : 'Like OpenAI, prompt and agent hook handlers are parsed but not executed.'}</p>}
+          onPersist({ ...plugin, config: { ...plugin.config, trustedHookHashes: [...hashes] } }, (enabled ? uiText(language)('pluginManagementPanel.definitionTrustRevoked') : uiText(language)('pluginManagementPanel.currentDefinitionTrusted')));
+        }}>{enabled ? (uiText(language)('pluginManagementPanel.revokeTrustAndDisable')) : (uiText(language)('pluginManagementPanel.trustAndAllowExecution'))}</button>
+          : <p>{uiText(language)('pluginManagementPanel.likeOpenaiPromptAndAgentHookHandlers')}</p>}
       </details>;
     })}
   </section>;
@@ -1002,37 +1001,37 @@ export function PluginHookTrust({ plugin, language, busy, onPersist }: {
 
 function SkillDetailPage({ language, skill, loading, error, enabled, onBack, onToggle }: { language: AppLanguage; skill: SkillSummary | SkillDetail | null; loading: boolean; error: string; enabled: boolean; onBack: () => void; onToggle: (enabled: boolean) => void }) {
   return <div className="plugin-detail-page">
-    <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{language === 'zh' ? '返回技能' : 'Back to skills'}</button>
+    <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{uiText(language)('pluginManagementPanel.backToSkills')}</button>
     {error && <p className="plugin-hub-error" role="alert">{error}</p>}
-    {loading ? <div className="plugin-detail-loading"><LoaderCircle className="spin" />{language === 'zh' ? '正在加载技能' : 'Loading skill'}</div> : skill ? <>
-      <header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.displayName || skill.name}</h2><p>{language === 'zh' ? skill.descriptionZh || skill.description : skill.description}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header>
-      {skill.invocationMode && <p>{language === 'zh' ? ({ manual: '仅手动调用', model: '仅由模型调用', both: '支持手动和模型调用', disabled: '已禁止调用' })[skill.invocationMode] : ({ manual: 'Manual invocation only', model: 'Model invocation only', both: 'Manual and model invocation', disabled: 'Invocation disabled' })[skill.invocationMode]}{['manual', 'both'].includes(skill.invocationMode) && <> · <code>{skill.name.includes(':') ? `/${skill.name}` : `$${skill.name}`}</code></>}</p>}
-      {skill.defaultPrompt && <section className="plugin-detail-section"><h3>{language === 'zh' ? '使用示例' : 'Suggested prompt'}</h3><p>{skill.defaultPrompt}</p></section>}
-      <section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3>{'version' in skill && <Info label={language === 'zh' ? '版本' : 'Version'} value={skill.version || '—'} />}<Info label={language === 'zh' ? '来源' : 'Source'} value={skillSourceText(language, skill) || '—'} /><Info label={language === 'zh' ? '位置' : 'Location'} value={skill.path} /></section>
-      {'content' in skill && <section className="plugin-detail-section"><h3>SKILL.md</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}
+    {loading ? <div className="plugin-detail-loading"><LoaderCircle className="spin" />{uiText(language)('pluginManagementPanel.loadingSkill')}</div> : skill ? <>
+      <header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.displayName || skill.name}</h2><p>{localizedContent({ zh: skill.descriptionZh, en: skill.description }, language)}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header>
+      {skill.invocationMode && <p>{(({ manual: uiText(language)('pluginManagementPanel.manualInvocationOnly'), model: uiText(language)('pluginManagementPanel.modelInvocationOnly'), both: uiText(language)('pluginManagementPanel.manualAndModelInvocation'), disabled: uiText(language)('pluginManagementPanel.invocationDisabled') }))[skill.invocationMode]}{['manual', 'both'].includes(skill.invocationMode) && <> · <code>{skill.name.includes(':') ? `/${skill.name}` : `$${skill.name}`}</code></>}</p>}
+      {skill.defaultPrompt && <section className="plugin-detail-section"><h3>{uiText(language)('pluginManagementPanel.suggestedPrompt')}</h3><p>{skill.defaultPrompt}</p></section>}
+      <section className="plugin-detail-section plugin-info"><h3>{uiText(language)('pluginManagementPanel.information')}</h3>{'version' in skill && <Info label={uiText(language)('pluginManagementPanel.version')} value={skill.version || '—'} />}<Info label={uiText(language)('pluginManagementPanel.source')} value={skillSourceText(language, skill) || '—'} /><Info label={uiText(language)('pluginManagementPanel.location')} value={skill.path} /></section>
+      {'content' in skill && <section className="plugin-detail-section"><h3>{uiText(language)('featureContentPanel.skill_md')}</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}
     </> : null}
   </div>;
 }
 
 function skillSourceText(language: AppLanguage, skill: SkillSummary): string {
   if (skill.source === 'plugin') {
-    const plugin = skill.sourceLabel || skill.sourceId || (language === 'zh' ? '插件' : 'Plugin');
-    return language === 'zh' ? `来自 ${plugin}` : `From ${plugin}`;
+    const plugin = skill.sourceLabel || skill.sourceId || (uiText(language)('pluginManagementPanel.plugin'));
+    return uiText(language)('pluginManagementPanel.from', { plugin });
   }
-  if (skill.source === 'bundled') return language === 'zh' ? '内置' : 'Built in';
-  if (skill.source === 'user') return language === 'zh' ? '用户' : 'User';
-  if (skill.source === 'external') return language === 'zh' ? '外部' : 'External';
+  if (skill.source === 'bundled') return uiText(language)('pluginManagementPanel.builtIn');
+  if (skill.source === 'user') return uiText(language)('pluginManagementPanel.user');
+  if (skill.source === 'external') return uiText(language)('pluginManagementPanel.external');
   return '';
 }
 
 function PluginLogo({ plugin, large = false, compact = false }: { plugin: CardbushAppPlugin; large?: boolean; compact?: boolean }) {
   const source = plugin.logoPath ? fileUrl(plugin.logoPath) : '';
-  return <span className={`plugin-logo${large ? ' large' : ''}${compact ? ' compact' : ''}`} style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{source ? <img src={source} alt="" /> : <PluginIcon size={large ? 28 : 20} />}</span>;
+  return <span className={`plugin-logo${large ? ' large' : ''}${compact ? ' compact' : ''}`} style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{source ? <img src={source} alt="" /> : <PluginIcon className="plugin-logo-fallback-icon" />}</span>;
 }
 
 function SearchField({ language, value, onChange, kind }: { language: AppLanguage; value: string; onChange: (value: string) => void; kind: 'plugins' | 'skills' | 'apps' | 'mcp' | 'integrations' }) {
-  const chineseKind = kind === 'integrations' ? '插件或 MCP' : kind === 'plugins' ? '插件' : kind === 'skills' ? '技能' : kind === 'apps' ? '应用' : 'MCP';
-  const label = language === 'zh' ? `搜索${chineseKind}` : kind === 'integrations' ? 'Search plugins or MCP' : `Search ${kind}`;
+
+  const label = uiText(language)(`plugins.search.${kind}`);
   return <label className="plugin-search"><Search size={18} /><input aria-label={label} value={value} onChange={(event) => onChange(event.currentTarget.value)} placeholder={label} /></label>;
 }
 

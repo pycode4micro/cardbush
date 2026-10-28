@@ -18,7 +18,7 @@ import { registerSourceMemoTools, resolveSourceMemo } from '../packages/bush-run
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'cardbush-ssh-test-'));
   const key = generateKeyPairSync('rsa', { modulusLength:2048 }).privateKey.export({format:'pem',type:'pkcs1'});
-  const work = options.windows ? '/C:/Users/111' : '/work', home = options.windows ? work : '/home/test';
+  const work = options.windows ? '/C:/Users/fixture' : '/work', home = options.windows ? work : '/home/test';
   const files = new Map([[work+'/file.txt',Buffer.from('first\n中文\nlast')],['/home/test/outside.txt',Buffer.from('outside')]]);
   const directories = new Set(['/','/work','/work/child','/home','/home/test', ...(options.windows ? ['/C:/','/C:/Users',work,work+'/child',work+"/项目 O'Brien & 测试"] : [])]);
   const clients=new Set(), jobs=new Map(), jobNames=new Map(), commands=[], controls=[], launches=[]; let authCount=0, pid=700;
@@ -182,11 +182,11 @@ function runtimeTools(f) {
 test('Windows SSH uses the selected user directory, native shells and one cached OS probe', async t => {
   const f = await fixture(t, { windows: true }); await f.trust(); const execute = runtimeTools(f);
   assert.equal((await f.manager.list())[0].defaultDirectory, '/');
-  const read = await execute('read_file', { path: 'c:\\users\\111\\file.txt' });
+  const read = await execute('read_file', { path: 'c:\\users\\fixture\\file.txt' });
   assert.equal(read.content, 'first\n中文\nlast');
-  for (const [cwd, shell] of [['C:\\Users\\111', 'cmd'], ['/C:/Users/111', 'powershell'], ['.', undefined]]) {
+  for (const [cwd, shell] of [['C:\\Users\\fixture', 'cmd'], ['/C:/Users/fixture', 'powershell'], ['.', undefined]]) {
     const result = await execute('terminal_exec', { command: 'echo 中文 & echo test', cwd, ...(shell ? { shell } : {}), yield_time_ms: 100 });
-    assert.equal(result.cwd, 'C:\\Users\\111'); assert.equal(result.platform, 'windows');
+    assert.equal(result.cwd, 'C:\\Users\\fixture'); assert.equal(result.platform, 'windows');
     assert.equal(result.shell, shell ?? 'powershell');
     assert.equal(result.executionEnvironment.workspaceDir, f.uri);
     assert.equal(result.exitCode, 0);
@@ -204,14 +204,14 @@ test('Windows SSH preserves quoted paths, edit revisions and search/Git argument
   const f = await fixture(t, { windows: true }); await f.trust(); const execute = runtimeTools(f);
   const current = await execute('read_file', { path: 'file.txt' });
   await execute('edit_file', { path: '.\\file.txt', start_line: 2, end_line: 2, expected_sha256: current.sha256, new_text: '修改\n' });
-  assert.equal(f.files.get('/C:/Users/111/file.txt').toString(), 'first\n修改\nlast');
-  await execute('terminal_exec', { cwd: "C:\\Users\\111\\项目 O'Brien & 测试", command: 'echo fixture', yield_time_ms: 100 });
-  assert.match(f.launches.at(-1).script, /C:\\Users\\111\\项目 O''Brien & 测试/);
+  assert.equal(f.files.get('/C:/Users/fixture/file.txt').toString(), 'first\n修改\nlast');
+  await execute('terminal_exec', { cwd: "C:\\Users\\fixture\\项目 O'Brien & 测试", command: 'echo fixture', yield_time_ms: 100 });
+  assert.match(f.launches.at(-1).script, /C:\\Users\\fixture\\项目 O''Brien & 测试/);
   const searched = await execute('search_file_content', { path: '.', query: "a'b & 中文" });
   assert.match(searched.output, /first/); assert.match(searched.output, /last/);
   assert.match(f.launches.at(-1).command, /& 'rg'/);
   assert.match(f.launches.at(-1).command, /'a''b & 中文'/);
-  assert.match(f.launches.at(-1).command, /'C:\\Users\\111'/);
+  assert.match(f.launches.at(-1).command, /'C:\\Users\\fixture'/);
   const info = await f.manager.git(f.uri, 'info');
   assert.equal(info.branch, 'main'); assert.equal(info.changedFiles.length, 2);
   assert.ok(f.launches.some(item => item.command.includes("$env:GIT_TERMINAL_PROMPT='0'; & 'git'")));
@@ -258,7 +258,7 @@ test('SSH platform detection fails closed and rejects Windows paths on a POSIX s
   await assert.rejects(f.manager.execute(f.uri, 'owner', 'terminal_exec', { command: 'must-not-run', shell: 'posix' }), /Cannot verify/);
   assert.equal(f.commands.length, 0);
   const linux = await fixture(t); await linux.trust();
-  await assert.rejects(linux.manager.execute(linux.uri, 'owner', 'terminal_exec', { cwd: 'C:\\Users\\111', command: 'must-not-run', shell: 'posix' }), /POSIX/);
+  await assert.rejects(linux.manager.execute(linux.uri, 'owner', 'terminal_exec', { cwd: 'C:\\Users\\fixture', command: 'must-not-run', shell: 'posix' }), /POSIX/);
   assert.equal(linux.commands.length, 0);
 });
 

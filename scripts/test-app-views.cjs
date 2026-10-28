@@ -114,7 +114,7 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-reference-sizing' ? [
       'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
     ] : []),
-    ...(['team-composer', 'composer-input'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
+    ...(!process.env.CARDBUSH_APP_VIEWS_CASE || ['team-composer', 'composer-input', 'queue'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
       'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerPromptInput.tsx',
       'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
@@ -279,7 +279,17 @@ app.whenReady().then(async () => {
       if (await run(condition)) return;
       await pause(25);
     }
-    throw new Error('Timed out: ' + label + '\n' + await run('document.body.innerText') + '\nRenderer errors: ' + await run('JSON.stringify(window.failures ?? [])'));
+    const diagnostics = await run(`JSON.stringify({
+      text: document.body.innerText,
+      failures: window.failures ?? [],
+      chat: window.chatProps && { activeConversationId: chatProps.activeConversationId, sending: chatProps.sending,
+        messages: chatProps.messages, pendingInteraction: chatProps.pendingInteraction },
+      panel: document.querySelector('.chat-panel')?.outerHTML,
+    }, null, 2)`);
+    fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    const diagnosticPath = path.join(root, 'tmp', `app-views-${process.env.CARDBUSH_APP_VIEWS_CASE || 'all'}-failure.json`);
+    fs.writeFileSync(diagnosticPath, diagnostics);
+    throw new Error('Timed out: ' + label + '\n' + await run('document.body.innerText') + '\nRenderer errors: ' + await run('JSON.stringify(window.failures ?? [])') + '\nDiagnostics: ' + diagnosticPath);
   };
   try {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal') {
@@ -993,6 +1003,7 @@ app.whenReady().then(async () => {
       return;
     }
     await require('./helpers/queue-interaction.cjs')({ run, until, pause, window, root });
+    await require('./helpers/queue-images.cjs')({ run, until, pause, window, root });
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'queue') {
       assert.deepEqual(await run('failures'), [], 'no queue renderer errors');
       assert.deepEqual(errors, []);

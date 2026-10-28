@@ -1,6 +1,7 @@
 import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
+import { assertUiMessage } from './helpers/ui-message-contract.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -130,9 +131,9 @@ assert.match(app, /useInspectorTabStrip\(activeInspectorTabIdentity, displayedIn
 assert.match(app, /className="right-inspector-tab-manager"/);
 assert.match(app, /className="right-inspector-tab-menu" role="menu"/);
 assert.match(app, /openInspectorTabContextMenu\(event, tab\.id\)/);
-assert.match(app, /关闭其他标签页/);
-assert.match(app, /关闭右侧标签页/);
-assert.match(app, /关闭全部标签页/);
+assertUiMessage(app, 'app.closeOtherTabs', { zh: '关闭其他标签页', en: 'Close other tabs' });
+assertUiMessage(app, 'app.closeTabsToTheRight', { zh: '关闭右侧标签页', en: 'Close tabs to the right' });
+assertUiMessage(app, 'app.closeAllTabs', { zh: '关闭全部标签页', en: 'Close all tabs' });
 assert.match(
   app,
   /const inspectorActionProps = \{[\s\S]*?pickAttachments[\s\S]*?openShadowInspectorTab/,
@@ -251,7 +252,7 @@ assert.match(app, /<WorkSummaryInspector/);
 assert.match(css, /\.work-summary-inspector\s*\{/);
 assert.match(
   sidebar,
-  /\{!embedded && \([\s\S]*?会话修改[\s\S]*?conversation\.title[\s\S]*?onClick=\{onClose\}/,
+  /\{!embedded && \([\s\S]*?chatSidebar\.chatChanges[\s\S]*?conversation\.title[\s\S]*?onClick=\{onClose\}/,
   'Embedded review must rely on the unified outer inspector title and close control',
 );
 assert.match(

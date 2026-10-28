@@ -116,6 +116,18 @@ async function fixture(t, handler) {
   return { calls, store, config, provider: new OpenAIResponsesProvider(config) };
 }
 
+async function isolatedRuntimeHost(t, options) {
+  // Even an InMemoryRuntimeHost persists personalization and conversation
+  // journals. Shared cwd defaults let parallel suites rewrite the same sessions.
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-tool-search-runtime-'));
+  const host = new InMemoryRuntimeHost({ ...options, dataRoot: root });
+  t.after(async () => {
+    await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    await rm(root, { recursive: true, force: true });
+  });
+  return host;
+}
+
 test('native search discovers names and schemas arrive only through get_tool_schema', async t => {
   const f = await fixture(t, () => ({ output: [searchItem()] }));
   const first = request(), round = await executeModelRound(f.provider, first);
@@ -451,8 +463,7 @@ test('overlapping parallel searches pass a strict provider and execute the disco
     manifest: { effect_kind: 'observation', operation: 'test.read', risk: 'low', owner: 'test', dispatch_scope: 'parent_session', mutating: false },
     decodeInput: value => value, execute: () => { executed++; return { value: 'docs' }; },
     mcpHook: { server: 'docs', tool: 'read', call: async () => ({}) } });
-  const host = new InMemoryRuntimeHost({ toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
-  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const host = await isolatedRuntimeHost(t, { toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
   const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'overlap',
     sessionId: 's', turnId: 'overlap', model, tools: tools.definitions(), prefixMessages: [],
     inputMessages: [{ messageId: 'human', message: { role: 'user', content: 'Read docs' } }] });
@@ -511,12 +522,13 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
     manifest: { effect_kind: 'observation', operation: 'test.read', risk: 'low', owner: 'test', dispatch_scope: 'parent_session', mutating: false },
     decodeInput: value => value, execute: ({ input }) => { assert.deepEqual(input, {}); executed++; return { found: true }; },
     mcpHook: { server: 'docs', tool: 'document_lookup', call: async () => ({}) } });
-  const host = new InMemoryRuntimeHost({ toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
-  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const host = await isolatedRuntimeHost(t, { toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
   const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'progressive',
     sessionId: 's', turnId: 'progressive', model, tools: tools.definitions(), prefixMessages: [],
     inputMessages: [{ messageId: 'human', message: { role: 'user', content: 'Read project documents' } }] });
-  assert.equal(terminal.payload.status, 'completed'); assert.equal(round, 4); assert.equal(executed, 1);
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify({ terminal: terminal.payload,
+    failures: host.events('s', 'progressive').filter(event => /failed|error/.test(event.kind)) }));
+  assert.equal(round, 4); assert.equal(executed, 1);
   assert.equal(host.events('s', 'progressive').find(event => event.kind === 'tool_returned' && event.payload.toolCallId === 'use').payload.display.title, '查阅项目文档');
   const observations = host.events('s', 'progressive').filter(event => event.kind === 'provider_input_observed');
   assert.ok(observations.every(event => !event.payload.frozenPrefixBreak));

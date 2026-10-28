@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { Edit3, FolderOpen, LoaderCircle, MessageSquare, Search } from 'lucide-react';
 import { memo, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -26,7 +27,7 @@ export const ConversationSearchDialog = memo(function ConversationSearchDialog({
   onAddProject?: () => void;
   onOpenFiles?: () => void;
 }) {
-  const zh = language === 'zh';
+
   const shortcuts = useKeyboardShortcuts();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -37,7 +38,7 @@ export const ConversationSearchDialog = memo(function ConversationSearchDialog({
   const [query, setQuery] = useState('');
   const [selectedKey, setSelectedKey] = useState('');
   const entries = useMemo(() => conversations.map(conversation => {
-    const title = conversationDisplayTitle(conversation.title) || (zh ? '未命名会话' : 'Untitled chat');
+    const title = conversationDisplayTitle(conversation.title) || (uiText(language)('conversationSearchDialog.untitledChat'));
     const projectDir = conversationProjectDir(conversation);
     const projectId = conversationProjectId(conversation);
     const project = projects.find(item => item.id === projectId || Boolean(projectDir && samePath(item.rootPath, projectDir)));
@@ -45,16 +46,16 @@ export const ConversationSearchDialog = memo(function ConversationSearchDialog({
     return { conversation, title, projectTitle, projectDir,
       text: normalize(`${title} ${conversation.preview} ${projectTitle} ${projectDir}`),
       updated: Date.parse(conversation.updatedAt) || 0 };
-  }).sort((a, b) => b.updated - a.updated), [conversations, projects, zh]);
+  }).sort((a, b) => b.updated - a.updated), [conversations, projects, language]);
   const matches = useMemo(() => {
     const terms = normalize(query).trim().split(/\s+/).filter(Boolean);
     return terms.length ? entries.filter(entry => terms.every(term => entry.text.includes(term))) : entries;
   }, [entries, query]);
   const results = matches.slice(0, query.trim() ? 50 : 9);
   const actions = [
-    { key: 'new', title: zh ? '新会话' : 'New chat', icon: <Edit3 size={15} />, run: onCreateConversation },
-    ...(onAddProject ? [{ key: 'project', title: zh ? '打开文件夹' : 'Open folder', icon: <FolderOpen size={15} />, run: onAddProject }] : []),
-    ...(onOpenFiles ? [{ key: 'files', title: zh ? '打开文件' : 'Open files', icon: <Search size={15} />, run: onOpenFiles,
+    { key: 'new', title: uiText(language)('conversationSearchDialog.newChat'), icon: <Edit3 size={15} />, run: onCreateConversation },
+    ...(onAddProject ? [{ key: 'project', title: uiText(language)('conversationSearchDialog.openFolder'), icon: <FolderOpen size={15} />, run: onAddProject }] : []),
+    ...(onOpenFiles ? [{ key: 'files', title: uiText(language)('conversationSearchDialog.openFiles'), icon: <Search size={15} />, run: onOpenFiles,
       shortcut: shortcuts.label('openFiles').replaceAll(' + ', '+') }] : []),
   ];
   const keys = [...results.map(item => `chat:${item.conversation.id}`), ...actions.map(item => item.key)];
@@ -151,7 +152,7 @@ export const ConversationSearchDialog = memo(function ConversationSearchDialog({
   }
 
   return <dialog ref={dialogRef} className="conversation-search-dialog" data-conversation-search role="dialog" aria-modal="true"
-    aria-label={zh ? '搜索会话' : 'Search chats'} onKeyDown={onKeyDown}
+    aria-label={uiText(language)('conversationSearchDialog.searchChats')} onKeyDown={onKeyDown}
     onCancel={dialogEventHandler(event => { event.preventDefault(); finish(); })}
     onPointerDown={event => { pointerStartedOutside.current = event.target === event.currentTarget && outside(event); }}
     onClick={event => { if (pointerStartedOutside.current && event.target === event.currentTarget && outside(event)) finish(); }}>
@@ -159,30 +160,30 @@ export const ConversationSearchDialog = memo(function ConversationSearchDialog({
       <Search size={17} aria-hidden="true" />
       <input ref={inputRef} role="combobox" aria-autocomplete="list" aria-expanded="true"
         aria-controls={`${id}-list`} aria-activedescendant={activeOptionId}
-        aria-label={zh ? '搜索会话' : 'Search chats'} placeholder={zh ? '搜索会话' : 'Search chats'}
+        aria-label={uiText(language)('conversationSearchDialog.searchChats')} placeholder={uiText(language)('conversationSearchDialog.searchChats')}
         value={query} onChange={event => { setQuery(event.target.value); setSelectedKey(''); }} />
-      <button type="button" className="conversation-search-close" aria-label={zh ? '关闭搜索' : 'Close search'} onClick={() => finish()}><kbd>Esc</kbd></button>
+      <button type="button" className="conversation-search-close" aria-label={uiText(language)('conversationSearchDialog.closeSearch')} onClick={() => finish()}><kbd>{uiText(language)('conversationSearchDialog.esc')}</kbd></button>
     </header>
-    <div className="conversation-search-list" ref={listRef} id={`${id}-list`} role="listbox" aria-label={zh ? '会话和快捷操作' : 'Chats and quick actions'}>
-      <div role="group" aria-label={zh ? '会话' : 'Chats'}>
-        <div className="conversation-search-label" aria-hidden="true">{query.trim() ? (zh ? '会话' : 'Chats') : (zh ? '最近会话' : 'Recent chats')}</div>
+    <div className="conversation-search-list" ref={listRef} id={`${id}-list`} role="listbox" aria-label={uiText(language)('conversationSearchDialog.chatsAndQuickActions')}>
+      <div role="group" aria-label={uiText(language)('conversationSearchDialog.chats')}>
+        <div className="conversation-search-label" aria-hidden="true">{query.trim() ? (uiText(language)('conversationSearchDialog.chats')) : (uiText(language)('conversationSearchDialog.recentChats'))}</div>
         {results.map((item, index) => <button type="button" role="option" tabIndex={-1}
           id={`${id}-option-${index}`} key={item.conversation.id} data-search-conversation={item.conversation.id}
           className="conversation-search-option" aria-selected={selectedIndex === index}
           title={item.title} onPointerMove={() => setSelectedKey(`chat:${item.conversation.id}`)}
           onMouseDown={event => event.preventDefault()} onClick={() => activate(index)}>
           <span className="conversation-search-icon">{runningConversationIds?.has(item.conversation.id)
-            ? <LoaderCircle size={14} className="spin" aria-label={zh ? '运行中' : 'Running'} /> : <MessageSquare size={14} aria-hidden="true" />}</span>
+            ? <LoaderCircle size={14} className="spin" aria-label={uiText(language)('cardlingWindow.running')} /> : <MessageSquare size={14} aria-hidden="true" />}</span>
           <span className="conversation-search-title">{item.title}</span>
           {item.projectTitle && <span className="conversation-search-project" title={item.projectDir || item.projectTitle}>{item.projectTitle}</span>}
-          {index < 9 && <kbd aria-hidden="true">Ctrl+{index + 1}</kbd>}
+          {index < 9 && <kbd aria-hidden="true">{uiText(language)('conversationSearchDialog.ctrl')}{index + 1}</kbd>}
         </button>)}
         {!results.length && <p className="conversation-search-empty" role="status">{query.trim()
-          ? (zh ? '没有匹配的会话' : 'No matching chats') : (zh ? '还没有会话' : 'No chats yet')}</p>}
-        {query.trim() && matches.length > results.length && <p className="conversation-search-empty" role="status">{zh ? '显示前 50 个结果，继续输入以缩小范围' : 'Showing 50 results. Keep typing to narrow your search.'}</p>}
+          ? (uiText(language)('conversationSearchDialog.noMatchingChats')) : (uiText(language)('conversationSearchDialog.noChatsYet'))}</p>}
+        {query.trim() && matches.length > results.length && <p className="conversation-search-empty" role="status">{uiText(language)('conversationSearchDialog.showing50ResultsKeepTypingToNarrow')}</p>}
       </div>
-      <div role="group" aria-label={zh ? '快捷操作' : 'Quick actions'}>
-        <div className="conversation-search-label" aria-hidden="true">{zh ? '快捷操作' : 'Quick actions'}</div>
+      <div role="group" aria-label={uiText(language)('conversationSearchDialog.quickActions')}>
+        <div className="conversation-search-label" aria-hidden="true">{uiText(language)('conversationSearchDialog.quickActions')}</div>
         {actions.map((action, index) => <button type="button" role="option" tabIndex={-1}
           id={`${id}-option-${results.length + index}`} key={action.key} data-search-action={action.key}
           className="conversation-search-option" aria-selected={activeKey === action.key}

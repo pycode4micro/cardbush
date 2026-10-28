@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
+import { uiText } from '@cardbush/platform/i18n';
 
 const api = await loadChatTranscript({ source: [
   ['src/backend/runtimeTranscriptEvents.ts', 'toolLifecycle'],
@@ -47,12 +48,13 @@ test('terminal outcomes remain distinct from returned lifecycle in full and comp
     [{ state: 'disconnected', exitCode: null }, 'failed', '执行失败', 'Command failed'],
   ]) {
     const terminal = { ...record, toolCall: { ...record.toolCall, name: 'terminal_exec' } };
-    const full = api.runtimeHistoryToolExecution({ ...terminal, protocol: 'bush.tool.execution_record.v2', result });
-    const compact = api.runtimeHistoryToolExecution({ ...terminal, terminalOutcome: outcome });
+    const full = api.runtimeHistoryToolExecution({ ...terminal, protocol: 'bush.tool_execution_record.v1', result });
+    const compact = api.runtimeHistoryToolExecution({ ...terminal, terminalOutcome: outcome, resultError: full.metadata.error });
     for (const row of [full, compact]) {
-      assert.equal(row.state, 'completed'); assert.equal(row.success, true, 'the tool still returned normally');
-      assert.equal(api.toolActivityStatus(row, 'zh', false), zh);
-      assert.equal(api.toolActivityStatus(row, 'en', false), en);
+      assert.equal(row.state, outcome === 'failed' ? 'failed' : 'completed');
+      assert.equal(row.success, outcome !== 'failed', 'a returned tool can declare a native command failure');
+      assert.equal(api.toolActivityStatus(row, 'zh', false), outcome === 'failed' ? '失败' : zh);
+      assert.equal(api.toolActivityStatus(row, 'en', false), outcome === 'failed' ? 'Failed' : en);
     }
     const plugin = api.runtimeHistoryToolExecution({ ...record, result });
     assert.equal(api.toolActivityStatus(plugin, 'zh', false), '已返回', 'external result fields are not interpreted as a terminal receipt');
@@ -73,6 +75,11 @@ test('fallbacks avoid raw command/error text and never describe tool counts', ()
   row.name = 'terminal_exec'; row.summary = 'secret command --token=private';
   assert.equal(api.toolActionTitle(row, 'zh'), '执行命令');
   assert.equal(api.toolActionTitle(row, 'en'), 'Run command');
+});
+
+test('waiting for child tasks has a localized action in live and archived receipts', () => {
+  const row = api.runtimeHistoryToolExecution({ ...record, display: undefined, toolCall: { ...record.toolCall, name: 'await_subagents' } });
+  for (const language of ['zh', 'en', 'zh']) assert.equal(api.toolActionTitle(row, language), uiText(language)('toolExecutionState.wait_task_results'));
 });
 
 test('specific descriptions follow the UI language through live updates and archived receipts', () => {

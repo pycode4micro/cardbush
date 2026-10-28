@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { HtmlComponentContext } from './HtmlComponentContext';
 import { componentDocument } from './componentDocument';
@@ -94,5 +95,5 @@ export function HtmlComponentSurface({ component, active = true }: { component: 
   if (error) return <div className="html-component-error" role="alert">{error}</div>;
   return <iframe ref={frame} className="html-component-frame" title={component.title} srcDoc={document} sandbox="allow-scripts"
     referrerPolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'"
-    onLoad={() => { if (++loads.current > 1) { setError(host?.language === 'zh' ? '组件已离开受控页面，请重新载入组件。' : 'Component navigated away from its sandbox document. Reload it.'); return; } publish.current(); }} />;
+    onLoad={() => { if (++loads.current > 1) { setError(uiText(host?.language)('htmlComponentSurface.componentNavigatedAwayFromItsSandboxDocument')); return; } publish.current(); }} />;
 }

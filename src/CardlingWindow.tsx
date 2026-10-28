@@ -1,3 +1,5 @@
+import type { MessageKey } from './i18n';
+import { uiText } from './i18n';
 import {
   AlertCircle,
   ArrowUp,
@@ -91,7 +93,7 @@ export function CardlingWindow() {
   useEffect(() => {
     return window.cardbushDesktop?.onCardlingState?.((payload) => {
       setState(payload);
-      document.documentElement.lang = payload.language === 'zh' ? 'zh-CN' : 'en';
+      document.documentElement.lang = payload.language;
     });
   }, []);
 
@@ -232,7 +234,7 @@ export function CardlingWindow() {
       <button
         className="cardling-badge cardling-desktop-badge"
         type="button"
-        aria-label={state.language === 'zh' ? '卡布状态' : 'Kabu status'}
+        aria-label={uiText(state.language)('cardlingWindow.kabuStatus')}
         title={labels.title}
         onPointerDown={(event) => {
           event.preventDefault();
@@ -312,12 +314,10 @@ function CardlingStatusPanel({
   const labels = companionLabels(state.status, state.language);
   const miniTitle =
     state.miniChat.title ||
-    (state.language === 'zh' ? '轻量对话' : 'Light chat');
+    (uiText(state.language)('cardlingWindow.lightChat'));
   const assistantPreview =
     state.miniChat.lastAssistant ||
-    (state.language === 'zh'
-      ? '点一下卡布就能在这里追问，不用切回主窗口。'
-      : 'Ask Kabu here without switching back to the main window.');
+    (uiText(state.language)('cardlingWindow.askKabuHereWithoutSwitchingBackTo'));
 
   const submitText = useCallback(
     (text: string) => {
@@ -328,9 +328,7 @@ function CardlingStatusPanel({
       onAction({ type: 'miniChatSend', text: trimmed });
       setDraft('');
       setNotice(
-        state.language === 'zh'
-          ? '已发送到当前会话。'
-          : 'Sent to the current session.',
+        uiText(state.language)('cardlingWindow.sentToTheCurrentSession'),
       );
     },
     [onAction, state.language],
@@ -346,30 +344,22 @@ function CardlingStatusPanel({
 
   const queueText =
     state.queuedMessageCount > 0
-      ? state.language === 'zh'
-        ? `${state.queuedMessageCount} 条`
-        : `${state.queuedMessageCount}`
-      : state.language === 'zh'
-        ? '无'
-        : 'None';
+      ? uiText(state.language)('cardlingWindow.message', { value1: state.queuedMessageCount })
+      : uiText(state.language)('cardlingWindow.none');
   const changeText =
     state.activeChangeFileCount > 0
-      ? state.language === 'zh'
-        ? `${state.activeChangeFileCount} 个文件`
-        : `${state.activeChangeFileCount} file(s)`
-      : state.language === 'zh'
-        ? '无'
-        : 'None';
+      ? uiText(state.language)('cardlingWindow.fileS', { value1: state.activeChangeFileCount })
+      : uiText(state.language)('cardlingWindow.none');
 
   return (
     <section
       className="cardling-panel cardling-desktop-panel"
-      aria-label={state.language === 'zh' ? '卡布状态' : 'Kabu status'}
+      aria-label={uiText(state.language)('cardlingWindow.kabuStatus')}
     >
       <header>
         <strong>
-          {state.language === 'zh' ? '卡布' : 'Kabu'}
-          <em>{state.language === 'zh' ? '实验' : 'Lab'}</em>
+          {uiText(state.language)('cardlingWindow.kabu')}
+          <em>{uiText(state.language)('cardlingWindow.lab')}</em>
         </strong>
         <span>{miniTitle}</span>
       </header>
@@ -384,7 +374,7 @@ function CardlingStatusPanel({
         </div>
         {state.miniChat.lastUser && (
           <p className="cardling-mini-user">
-            {state.language === 'zh' ? '刚才问：' : 'Asked: '}
+            {uiText(state.language)('cardlingWindow.asked')}
             {state.miniChat.lastUser}
           </p>
         )}
@@ -393,9 +383,7 @@ function CardlingStatusPanel({
             value={draft}
             rows={2}
             placeholder={
-              state.language === 'zh'
-                ? '继续问卡布，不切回应用...'
-                : 'Ask Kabu without switching back...'
+              uiText(state.language)('cardlingWindow.askKabuWithoutSwitchingBack')
             }
             onChange={(event) => {
               setDraft(event.currentTarget.value);
@@ -410,14 +398,14 @@ function CardlingStatusPanel({
               }
             }}
           />
-          <button type="submit" disabled={!draft.trim()} title={state.language === 'zh' ? '发送' : 'Send'}>
+          <button type="submit" disabled={!draft.trim()} title={uiText(state.language)('cardlingWindow.send')}>
             <ArrowUp size={14} />
           </button>
         </form>
         <div className="cardling-mini-actions">
           <button type="button" onClick={() => onAction('openMain')}>
             <ExternalLink size={13} />
-            <span>{state.language === 'zh' ? '回主窗' : 'Open app'}</span>
+            <span>{uiText(state.language)('cardlingWindow.openApp')}</span>
           </button>
         </div>
         {notice && <p className="cardling-mini-notice">{notice}</p>}
@@ -425,38 +413,30 @@ function CardlingStatusPanel({
       <div className="cardling-panel-grid">
         <CompanionMetric
           icon={<Sparkles size={14} />}
-          label={state.language === 'zh' ? '回复' : 'Reply'}
+          label={uiText(state.language)('cardlingWindow.reply')}
           value={
             state.sending
-              ? state.language === 'zh'
-                ? '运行中'
-                : 'Running'
-              : state.language === 'zh'
-                ? '空闲'
-                : 'Idle'
+              ? uiText(state.language)('cardlingWindow.running')
+              : uiText(state.language)('cardlingWindow.idle')
           }
         />
         <CompanionMetric
           icon={<Clock3 size={14} />}
-          label={state.language === 'zh' ? '队列' : 'Queue'}
+          label={uiText(state.language)('cardlingWindow.queue')}
           value={queueText}
         />
         <CompanionMetric
           icon={<AlertCircle size={14} />}
-          label={state.language === 'zh' ? '交互' : 'Input'}
+          label={uiText(state.language)('cardlingWindow.input')}
           value={
             state.pendingInteraction
-              ? state.language === 'zh'
-                ? '等待'
-                : 'Waiting'
-              : state.language === 'zh'
-                ? '无'
-                : 'None'
+              ? uiText(state.language)('cardlingWindow.waiting')
+              : uiText(state.language)('cardlingWindow.none')
           }
         />
         <CompanionMetric
           icon={<Code2 size={14} />}
-          label={state.language === 'zh' ? '修改' : 'Changes'}
+          label={uiText(state.language)('cardlingWindow.changes')}
           value={changeText}
         />
       </div>
@@ -469,7 +449,7 @@ function CardlingStatusPanel({
           onClick={() => onAction('changes')}
         >
           <Code2 size={13} />
-          <span>{state.language === 'zh' ? '查看 Diff' : 'View diff'}</span>
+          <span>{uiText(state.language)('cardlingWindow.viewDiff')}</span>
         </button>
         <button
           className="cardling-action"
@@ -478,11 +458,11 @@ function CardlingStatusPanel({
           onClick={() => onAction('revertChanges')}
         >
           <RotateCcw size={13} />
-          <span>{state.language === 'zh' ? '撤回全部' : 'Revert all'}</span>
+          <span>{uiText(state.language)('cardlingWindow.revertAll')}</span>
         </button>
         <button className="cardling-action" type="button" onClick={() => onAction('settings')}>
           <Settings size={13} />
-          <span>{state.language === 'zh' ? '设置' : 'Settings'}</span>
+          <span>{uiText(state.language)('cardlingWindow.settings')}</span>
         </button>
       </div>
     </section>
@@ -508,37 +488,16 @@ function CompanionMetric({
 }
 
 function companionLabels(status: CompanionStatus, language: AppLanguage) {
-  const labels: Record<CompanionStatus, { zh: [string, string]; en: [string, string] }> = {
-    idle: {
-      zh: ['准备就绪', '安静待命'],
-      en: ['Ready', 'Standing by'],
-    },
-    thinking: {
-      zh: ['正在思考', '正在生成回复'],
-      en: ['Thinking', 'Generating a reply'],
-    },
-    tool: {
-      zh: ['工具运行中', '正在处理任务'],
-      en: ['Tool running', 'Working on the task'],
-    },
-    waiting: {
-      zh: ['等待输入', '需要你的选择'],
-      en: ['Waiting', 'Needs your input'],
-    },
-    queued: {
-      zh: ['消息已排队', '稍后自动发送'],
-      en: ['Queued', 'Will send next'],
-    },
-    complete: {
-      zh: ['已完成', '这一轮处理结束'],
-      en: ['Complete', 'This turn finished'],
-    },
-    error: {
-      zh: ['需要关注', '出现了错误'],
-      en: ['Needs attention', 'Something failed'],
-    },
+  const labels: Record<CompanionStatus, [MessageKey, MessageKey]> = {
+    idle: (['cardlingWindow.ready', 'cardlingWindow.standing_by'] as const),
+    thinking: (['cardlingWindow.thinking', 'cardlingWindow.generating_a_reply'] as const),
+    tool: (['cardlingWindow.tool_running', 'cardlingWindow.working_on_the_task'] as const),
+    waiting: (['cardlingWindow.waiting_533f583', 'cardlingWindow.needs_your_input'] as const),
+    queued: (['cardlingWindow.queued', 'cardlingWindow.will_send_next'] as const),
+    complete: (['turnRuntimeDetails.complete', 'cardlingWindow.this_turn_finished'] as const),
+    error: (['cardlingWindow.needs_attention', 'cardlingWindow.something_failed'] as const),
   };
-  const [title, detail] = labels[status][language];
+  const [title, detail] = labels[status].map(key => uiText(language)(key));
   return { title, detail };
 }
 

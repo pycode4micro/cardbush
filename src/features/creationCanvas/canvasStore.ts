@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useSyncExternalStore } from 'react';
 import { emptyCanvas, type CanvasSnapshot, type CreationCanvas } from '@cardbush/bush-protocol';
 import { bushItPageName, getBushItPages, type BushItPage } from '../mdPresentation/bushItPageStore';
@@ -24,7 +25,7 @@ export function getCanvases(): Library {
 }
 function persist() {
   try { localStorage.setItem(key, JSON.stringify(state)); if (state) state = { ...state, error: '' }; }
-  catch { if (state) state = { ...state, error: '无法保存画板列表，请导出到文件夹。 / Could not save the canvas library. Export your canvas.' }; }
+  catch { if (state) state = { ...state, error: uiText()('canvasStore.could_not_save_the_canvas_library_export') }; }
 }
 function publish(value: Library) { state = value; persist(); listeners.forEach(listener => listener()); }
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
@@ -55,13 +56,13 @@ export async function prepareCanvas(id: string): Promise<CanvasSnapshot> {
   const existing = pending.get(id); if (existing) return existing;
   const task = (async () => {
     const item = getCanvases().canvases.find(item => item.id === id);
-    if (!item) throw Error('Canvas is unavailable.');
+    if (!item) throw Error(uiText()('canvasStore.canvas_is_unavailable'));
     const desktop = window.cardbushDesktop;
-    if (!desktop?.creationCanvas) throw Error('请重新启动更新后的 CardBush。 / Restart the updated CardBush app.');
+    if (!desktop?.creationCanvas) throw Error(uiText()('canvasStore.restart_the_updated_cardbush_app'));
     const root = item.root || await desktop.ensureTaskWorkspace(item.sessionId);
     const legacy = item.legacyPageId ? getBushItPages().pages.find(page => page.id === item.legacyPageId) : undefined;
     const result = await desktop.creationCanvas(item.path ? { action: 'read', path: item.path } : { action: 'create', root, document: legacy ? legacyDocument(legacy) : item.seed });
-    if (!result || !('document' in result)) throw Error('Could not load the canvas.');
+    if (!result || !('document' in result)) throw Error(uiText()('canvasStore.could_not_load_the_canvas'));
     updateCanvasEntry(id, { root, path: result.path, seed: undefined, legacyPageId: undefined, title: result.document.title });
     return result;
   })();

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useId, useRef, useState } from 'react';
 import { ArrowRight, ArrowUp, ChevronLeft, ChevronRight, Lightbulb, LoaderCircle, X } from 'lucide-react';
 import type { AppLanguage, InteractionReplyAnswer, PendingInteraction } from '../../types';
@@ -10,7 +11,7 @@ export function SolutionSelectionCard({ language, interaction, onReply, onCancel
   language: AppLanguage; interaction: PendingInteraction;
   onReply: (answers: InteractionReplyAnswer[]) => Promise<void>; onCancel: () => Promise<void>;
 }) {
-  const zh = language === 'zh';
+
   const questions = interaction.questions ?? [];
   const multi = questions.length > 1;
   const promptId = useId();
@@ -52,15 +53,15 @@ export function SolutionSelectionCard({ language, interaction, onReply, onCancel
   };
   return <section className="interaction-dialog interaction-card solution-selection-card" data-no-floating-input="true"
     role="group" aria-labelledby={promptId} aria-busy={busy}>
-    <header><Lightbulb size={15} aria-hidden="true"/><span>Solution Selection</span>
-      {multi && <nav className="solution-selection-steps" aria-label={zh ? '切换问题' : 'Question navigation'}>
-        <button type="button" disabled={busy || draft.index === 0} aria-label={zh ? '上一题' : 'Previous question'}
+    <header><Lightbulb size={15} aria-hidden="true"/><span>{uiText(language)('solutionSelectionCard.solution_selection')}</span>
+      {multi && <nav className="solution-selection-steps" aria-label={uiText(language)('solutionSelectionCard.questionNavigation')}>
+        <button type="button" disabled={busy || draft.index === 0} aria-label={uiText(language)('solutionSelectionCard.previousQuestion')}
           onClick={() => save({ ...draft, index: draft.index - 1 })}><ChevronLeft size={15}/></button>
         <span aria-live="polite">{draft.index + 1} / {questions.length}</span>
-        <button type="button" disabled={busy || last} aria-label={zh ? '下一题' : 'Next question'}
+        <button type="button" disabled={busy || last} aria-label={uiText(language)('solutionSelectionCard.nextQuestion')}
           onClick={() => save({ ...draft, index: draft.index + 1 })}><ChevronRight size={15}/></button>
       </nav>}
-      <button type="button" aria-label={zh ? '取消方案选择' : 'Dismiss solution selection'} title={zh ? '取消方案选择' : 'Dismiss solution selection'} disabled={busy} onClick={() => void submit()}><X size={15}/></button>
+      <button type="button" aria-label={uiText(language)('solutionSelectionCard.dismissSolutionSelection')} title={uiText(language)('solutionSelectionCard.dismissSolutionSelection')} disabled={busy} onClick={() => void submit()}><X size={15}/></button>
     </header>
     <p className="solution-selection-prompt" id={promptId}>{question?.question}</p>
     <div className="solution-selection-options">
@@ -71,15 +72,15 @@ export function SolutionSelectionCard({ language, interaction, onReply, onCancel
       </button>)}
     </div>
     <form className="solution-selection-custom" onSubmit={event => { event.preventDefault(); advance(); }}>
-      <textarea rows={1} maxLength={8000} value={text} disabled={busy} aria-label={zh ? '填写其他方案' : 'Write another solution'} placeholder={zh ? '或填写其他方案…' : 'Or write another solution…'}
+      <textarea rows={1} maxLength={8000} value={text} disabled={busy} aria-label={uiText(language)('solutionSelectionCard.writeAnotherSolution')} placeholder={uiText(language)('solutionSelectionCard.orWriteAnotherSolution')}
         onChange={event => { if (question) choose({ questionId: question.id, text: event.target.value }); }}
         onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); advance(); } }}/>
-      {!multi && <button type="submit" disabled={busy || !text.trim()} aria-label={zh ? '提交方案' : 'Submit solution'}>{busy ? <LoaderCircle size={16} className="spin"/> : <ArrowUp size={16}/>}</button>}
+      {!multi && <button type="submit" disabled={busy || !text.trim()} aria-label={uiText(language)('solutionSelectionCard.submitSolution')}>{busy ? <LoaderCircle size={16} className="spin"/> : <ArrowUp size={16}/>}</button>}
     </form>
     {multi && <footer className="solution-selection-actions">
-      <span>{zh ? `已回答 ${questions.filter(question => answered(question.id)).length} / ${questions.length}` : `${questions.filter(question => answered(question.id)).length} / ${questions.length} answered`}</span>
+      <span>{uiText(language)('solutionSelectionCard.answered', { value1: questions.filter(question => answered(question.id)).length, value2: questions.length })}</span>
       <button type="button" disabled={busy || !question || !answered(question.id) || (last && !complete)} onClick={advance}>
-        {busy && <LoaderCircle size={14} className="spin"/>}{last ? (zh ? '提交全部' : 'Submit all') : (zh ? '下一步' : 'Next')}
+        {busy && <LoaderCircle size={14} className="spin"/>}{last ? (uiText(language)('solutionSelectionCard.submitAll')) : (uiText(language)('solutionSelectionCard.next'))}
       </button>
     </footer>}
     {error && <p className="solution-selection-error" role="alert">{error}</p>}

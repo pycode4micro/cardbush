@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 /** Decode the browser recording on this device for the Windows dictation engine. */
 export async function prepareVoiceRecording(blob: Blob, engine: 'system' | 'sensevoice' | 'cloud') {
   const audio = await blob.arrayBuffer();
@@ -5,7 +6,7 @@ export async function prepareVoiceRecording(blob: Blob, engine: 'system' | 'sens
   const context = new AudioContext();
   try {
     const decoded = await context.decodeAudioData(audio);
-    if (!decoded.length || decoded.duration > 121) throw Error('录音过长，请缩短到两分钟以内。');
+    if (!decoded.length || decoded.duration > 121) throw Error(uiText()('voiceRecording.the_recording_is_too_long_keep_it'));
     const rendering = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16000), 16000);
     const source = rendering.createBufferSource(); source.buffer = decoded; source.connect(rendering.destination); source.start();
     const converted = await rendering.startRendering();

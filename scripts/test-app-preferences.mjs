@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -17,7 +17,7 @@ function load(file) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   new Function('require', 'module', 'exports', source)(
-    id => id.startsWith('.') ? load(path.resolve(path.dirname(file), id + '.ts'))
+    id => id.startsWith('.') ? load([path.resolve(path.dirname(file), id + '.ts'), path.resolve(path.dirname(file), id, 'index.ts')].find(existsSync) ?? path.resolve(path.dirname(file), id))
       : id === '@cardbush/bush-product-agent' ? productAgent
       : id === '@cardbush/bush-protocol' ? protocol : require(id), module, module.exports);
   return module.exports;

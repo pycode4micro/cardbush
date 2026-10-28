@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { uiText } from '@cardbush/platform/i18n';
 
 const source = fs.readFileSync('electron/main.ts', 'utf8');
 const parsed = ts.createSourceFile('main.ts', source, ts.ScriptTarget.Latest, true);
@@ -16,11 +17,18 @@ const code = ts.transpileModule(
 
 const dialogs = [];
 const logs = [];
+const protectedContents = [];
+const popupContents = [], browserContents = [], sandboxedContents = [];
 let resolveDialog;
 let rejectDialog;
 let reloads = 0;
 let timers = 0;
 const context = {
+  nativeText: (language = 'zh') => uiText(language),
+  installPreviewResourceProtection: contents => protectedContents.push(contents),
+  installInspectorWindowOpen: contents => popupContents.push(contents),
+  browserUi: { attach: contents => browserContents.push(contents) },
+  installSandboxFrameNavigationGuard: contents => sandboxedContents.push(contents),
   process: { versions: { electron: 'fixture', chrome: 'fixture' } },
   app: { getPath: () => 'fixture-crash-dumps' },
   isQuitting: false,
@@ -73,6 +81,8 @@ assert.equal(dialogs.length, 3, 'normal shutdown does not prompt');
 context.isQuitting = false;
 
 context.installMainWindowNavigationGuard(target);
+assert.deepEqual(protectedContents, [target.webContents], 'main navigation retains preview resource protection');
+for (const contents of [popupContents, browserContents, sandboxedContents]) assert.deepEqual(contents, [target.webContents]);
 let prevented = 0;
 target.webContents.emit('will-navigate', { preventDefault: () => { prevented++; } }, 'file:///fixture/index.html');
 assert.equal(prevented, 1, 'an empty link cannot reload the app through main-frame navigation');

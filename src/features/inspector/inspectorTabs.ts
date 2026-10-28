@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { ShadowConversationContext } from '../../ShadowWindow';
 import type { AppLanguage } from '../../types';
 import type { WorkSummaryInspectorDetail } from '../subagents/subagentObservabilityEvents';
@@ -33,13 +34,13 @@ export function workSummaryInspectorTab(detail: WorkSummaryInspectorDetail, lang
   if (detail.kind === 'turn-history') {
     return {
       id: `history:${detail.sessionId}`, kind: 'history', detail,
-      title: language === 'zh' ? '历史记录' : 'History',
+      title: uiText(language)('browserMenu.history'),
     };
   }
   return {
     id: `subagent:${detail.sessionId}:${detail.task.remote?.connectionId ?? ''}:${detail.task.childSessionId || detail.task.taskId || detail.task.toolCallId || detail.task.childTurnId}`,
     kind: 'subagent', detail,
-    title: detail.title || (language === 'zh' ? '子任务详情' : 'Subagent task'),
+    title: detail.title || (uiText(language)('inspectorTabs.subagentTask')),
   };
 }
 

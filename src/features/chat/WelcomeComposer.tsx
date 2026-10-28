@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { WorkspaceLocationButton } from '../ssh/WorkspaceLocationPicker';
 import { type ReactNode, type RefObject, useRef } from 'react';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
@@ -190,10 +191,8 @@ export function WelcomeComposer({
     <WelcomePage language={language} collection={collection} layout={collection.welcomeLayout} canvasRef={welcomeRef} slots={{
       greeting: <h2>
           {selectedProjectDir
-            ? language === 'zh'
-              ? `你想在 ${selectedProjectTitle} 中做些什么？`
-              : `What would you like to do in ${selectedProjectTitle}?`
-            : language === 'zh' ? '你想做些什么？' : 'What would you like to do?'}
+            ? uiText(language)('welcomeComposer.whatWouldYouLikeToDoIn', { selectedProjectTitle })
+            : uiText(language)('welcomeComposer.whatWouldYouLikeToDo')}
         </h2>,
       suggestions: <WelcomeSuggestions language={language} disabled={sending} hasDraft={Boolean(draft.trim())} onSelect={selectSuggestion} />,
       input: <>

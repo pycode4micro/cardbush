@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Folder, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { basename } from '../../shared/localPaths';
@@ -91,22 +92,22 @@ export function ProjectRenameDialog({
           <Folder size={17} aria-hidden="true" />
           <div>
             <strong id="project-rename-title">
-              {language === 'zh' ? '重命名项目' : 'Rename project'}
+              {uiText(language)('chatSidebar.renameProject')}
             </strong>
-            <span>{language === 'zh' ? '可同时重命名真实项目文件夹' : 'You can also rename the real project folder'}</span>
+            <span>{uiText(language)('projectRenameDialog.youCanAlsoRenameTheRealProject')}</span>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={busy}
-            title={language === 'zh' ? '关闭' : 'Close'}
-            aria-label={language === 'zh' ? '关闭重命名' : 'Close rename dialog'}
+            title={uiText(language)('common.close')}
+            aria-label={uiText(language)('projectRenameDialog.closeRenameDialog')}
           >
             <X size={15} />
           </button>
         </header>
         <label>
-          <span>{language === 'zh' ? '项目名称' : 'Project name'}</span>
+          <span>{uiText(language)('agentDataSettings.projectName')}</span>
           <input
             ref={inputRef}
             value={title}
@@ -120,7 +121,7 @@ export function ProjectRenameDialog({
           />
           {invalid && (
             <small role="alert">
-              {language === 'zh' ? '项目名称不能为空' : 'Project name cannot be empty'}
+              {uiText(language)('projectRenameDialog.projectNameCannotBeEmpty')}
             </small>
           )}
         </label>
@@ -139,20 +140,18 @@ export function ProjectRenameDialog({
             }}
           />
           <span>
-            {language === 'zh'
-              ? '同时重命名项目文件夹（同一父目录）'
-              : 'Also rename the project folder (same parent directory)'}
+            {uiText(language)('projectRenameDialog.alsoRenameTheProjectFolderSameParent')}
           </span>
         </label>
         {error ? <p className="project-rename-error" role="alert">{error}</p> : null}
         <footer>
           <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>
-            {language === 'zh' ? '取消' : 'Cancel'}
+            {uiText(language)('agentConnectionForm.cancel')}
           </button>
           <button type="submit" className="primary-button" disabled={!title.trim() || busy}>
             {busy
-              ? language === 'zh' ? '处理中…' : 'Renaming…'
-              : language === 'zh' ? '重命名' : 'Rename'}
+              ? uiText(language)('projectRenameDialog.renaming')
+              : uiText(language)('useAssistantActions.rename')}
           </button>
         </footer>
       </form>

@@ -58,8 +58,8 @@ export interface ImportedThemeStyle {
   colors: Partial<Record<ImportedThemeColorKey, string>>;
   sourcePath: string;
 }
-export type AppLanguage = 'zh' | 'en';
-export type AppLanguageMode = 'system' | 'zh' | 'en';
+export type AppLanguage = string;
+export type AppLanguageMode = 'system' | AppLanguage;
 export type ReferencePlanMode = 'off' | 'auto';
 export type TaskPlanStatus = 'pending' | 'in_progress' | 'waiting' | 'completed';
 type ProxyMode = 'none' | 'system' | 'manual';

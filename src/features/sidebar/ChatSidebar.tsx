@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
 import { AppCenterDock } from '../appCenter/AppCenter';
@@ -276,7 +277,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       value: performance.now() - sidebarRenderStartedAt,
     });
   });
-  const searchLabel = language === 'zh' ? '搜索会话' : 'Search chats';
+  const searchLabel = uiText(language)('conversationSearchDialog.searchChats');
   const unreadAutomations = useAutomationUnreadCount();
   const archivedConversationIds = useConversationArchives();
   const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
@@ -316,7 +317,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       if (project) setExpandedProjectIds(current => new Set([...current, project.id]));
       setExpandedSections(current => new Set([...current, project ? (project.pinned ? 'pinned' : 'projects') : 'recent']));
     } catch (error) {
-      void showUiError(language === 'zh' ? '切换工作区失败' : 'Workspace switch failed', String(error));
+      void showUiError(uiText(language)('app.workspaceSwitchFailed'), String(error));
     } finally {
       workspaceMovesRef.current.delete(conversationId);
       setMovingConversations(new Set(workspaceMovesRef.current));
@@ -554,7 +555,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     try {
       setConversationsArchived([conversationId], !archivedConversationIds.has(conversationId));
     } catch (error) {
-      void showUiError(language === 'zh' ? '归档失败' : 'Archive failed', String(error));
+      void showUiError(uiText(language)('chatSidebar.archiveFailed'), String(error));
     }
   }
 
@@ -588,27 +589,23 @@ export const ChatSidebar = memo(function ChatSidebar({
         key: 'pin',
         icon: <Pin size={15} />,
         label: project.pinned
-          ? language === 'zh'
-            ? '取消置顶'
-            : 'Unpin'
-          : language === 'zh'
-            ? '置顶项目'
-            : 'Pin project',
+          ? uiText(language)('chatSidebar.unpin')
+          : uiText(language)('chatSidebar.pinProject'),
         onClick: () => onProjectAction('pin', project),
       },
       {
         key: 'open',
         icon: <FolderOpen size={15} />,
         label: project.rootPath.startsWith('ssh://')
-          ? language === 'zh' ? '选择远程目录…' : 'Choose remote directory…'
-          : language === 'zh' ? '在资源管理器中打开' : 'Open in Explorer',
+          ? uiText(language)('chatSidebar.chooseRemoteDirectory')
+          : uiText(language)('chatSidebar.openInExplorer'),
         disabled: project.missing,
         onClick: () => onProjectAction('open', project),
       },
       {
         key: 'refresh',
         icon: <RefreshCw size={15} />,
-        label: language === 'zh' ? '刷新 Git 状态' : 'Refresh Git status',
+        label: uiText(language)('chatSidebar.refreshGitStatus'),
         disabled: project.missing,
         onClick: () => onProjectAction('refreshGit', project),
       },
@@ -616,27 +613,27 @@ export const ChatSidebar = memo(function ChatSidebar({
         key: 'new-chat',
         separatorBefore: true,
         icon: <Edit3 size={15} />,
-        label: language === 'zh' ? '新建项目会话' : 'New project chat',
+        label: uiText(language)('chatSidebar.newProjectChat'),
         disabled: project.missing,
         onClick: () => onProjectAction('newChat', project),
       },
       {
         key: 'rename',
         icon: <Edit3 size={15} />,
-        label: language === 'zh' ? '重命名项目' : 'Rename project',
+        label: uiText(language)('chatSidebar.renameProject'),
         onClick: () => onProjectAction('rename', project),
       },
       {
         key: 'archive',
         separatorBefore: true,
         icon: <Archive size={15} />,
-        label: language === 'zh' ? '归档项目' : 'Archive project',
+        label: uiText(language)('chatSidebar.archiveProject'),
         onClick: () => onProjectAction('archive', project),
       },
       {
         key: 'remove',
         icon: <X size={15} />,
-        label: language === 'zh' ? '移除' : 'Remove',
+        label: uiText(language)('appCenter.remove'),
         danger: true,
         onClick: () => onProjectAction('remove', project),
       },
@@ -651,23 +648,23 @@ export const ChatSidebar = memo(function ChatSidebar({
       {
         key: 'open',
         icon: <MessageSquare size={15} />,
-        label: language === 'zh' ? '打开对话' : 'Open chat',
+        label: uiText(language)('chatSidebar.openChat'),
         onClick: () => onConversationChange(conversation.id),
       },
       {
         key: 'pin',
         icon: <Pin size={15} />,
         label: options.pinned
-          ? language === 'zh' ? '取消置顶' : 'Unpin chat'
-          : language === 'zh' ? '置顶对话' : 'Pin chat',
+          ? uiText(language)('chatSidebar.unpinChat')
+          : uiText(language)('chatSidebar.pinChat'),
         onClick: options.onTogglePin,
       },
       {
         key: options.unread ? 'mark-read' : 'mark-unread',
         icon: options.unread ? <MailOpen size={15} /> : <Mail size={15} />,
         label: options.unread
-          ? language === 'zh' ? '标记为已读' : 'Mark as read'
-          : language === 'zh' ? '标记为未读' : 'Mark as unread',
+          ? uiText(language)('chatSidebar.markAsRead')
+          : uiText(language)('chatSidebar.markAsUnread'),
         onClick: options.onToggleRead,
       },
     ];
@@ -675,12 +672,12 @@ export const ChatSidebar = memo(function ChatSidebar({
       items.push({
         key: 'diff',
         icon: <Code2 size={15} />,
-        label: language === 'zh' ? '查看 Diff' : 'View diff',
+        label: uiText(language)('cardlingWindow.viewDiff'),
         onClick: options.onOpenChanges,
       });
     }
     if (onConversationWorkspaceChange) items.push({
-      key: 'workspace', icon: <FolderOpen size={15} />, label: language === 'zh' ? '切换工作区' : 'Switch workspace',
+      key: 'workspace', icon: <FolderOpen size={15} />, label: uiText(language)('chatSidebar.switchWorkspace'),
       disabled: Boolean(runningConversationIds?.has(conversation.id) || movingConversations.has(conversation.id)),
       children: [
         ...visibleProjects.filter(project => !project.missing).map(project => ({
@@ -688,44 +685,44 @@ export const ChatSidebar = memo(function ChatSidebar({
           disabled: conversationMatchesScope(conversation, { mode: 'project' as const, projectId: project.id, projectDir: project.rootPath }),
           onClick: () => { void moveConversation(conversation.id, project); },
         })),
-        { key: 'workspace:none', icon: <MessageSquare size={15} />, label: language === 'zh' ? '独立工作区（不关联项目）' : 'Task workspace (no project)',
+        { key: 'workspace:none', icon: <MessageSquare size={15} />, label: uiText(language)('chatSidebar.taskWorkspaceNoProject'),
           disabled: !conversationProjectDir(conversation), onClick: () => { void moveConversation(conversation.id, null); } },
       ],
     });
     items.push(
       {
         separatorBefore: true,
-        key: 'extract', icon: <ExtractionMenuIcon />, label: language === 'zh' ? '提取对话' : 'Extract conversation', shortcut: extractionShortcuts.label('extractConversation'),
+        key: 'extract', icon: <ExtractionMenuIcon />, label: uiText(language)('conversationExtraction.extractConversation'), shortcut: extractionShortcuts.label('extractConversation'),
         disabled: !extraction, onClick: () => extraction?.open(conversation.id),
       },
       {
-        key: 'fork', icon: <ExtractionMenuIcon fork />, label: language === 'zh' ? 'Fork 会话' : 'Fork conversation',
+        key: 'fork', icon: <ExtractionMenuIcon fork />, label: uiText(language)('chatSidebar.forkConversation'),
         disabled: !extraction, onClick: () => extraction?.fork(conversation.id),
       },
       {
         key: 'rename',
         separatorBefore: true,
         icon: <Edit3 size={15} />,
-        label: language === 'zh' ? '重命名对话' : 'Rename chat',
+        label: uiText(language)('chatSidebar.renameChat'),
         onClick: options.onRename,
       },
       {
         key: 'copy-id',
         icon: <Copy size={15} />,
-        label: language === 'zh' ? '复制会话 ID' : 'Copy session ID',
+        label: uiText(language)('chatSidebar.copySessionId'),
         onClick: () => void copyText(conversation.id),
       },
       {
         key: 'archive',
         separatorBefore: true,
         icon: <Archive size={15} />,
-        label: language === 'zh' ? '归档对话' : 'Archive chat',
+        label: uiText(language)('chatSidebar.archiveChat'),
         onClick: options.onArchive,
       },
       {
         key: 'delete',
         icon: <Trash2 size={15} />,
-        label: language === 'zh' ? '删除对话' : 'Delete chat',
+        label: uiText(language)('chatSidebar.deleteChat'),
         danger: true,
         onClick: options.onDelete,
       },
@@ -834,7 +831,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       <nav className="sidebar-nav">
         <NavRow
           icon={<Edit3 size={14} />}
-          label={language === 'zh' ? '新会话' : 'New chat'}
+          label={uiText(language)('conversationSearchDialog.newChat')}
           shortcut="newConversation"
           onClick={onCreateConversation}
           onContextMenu={(event) =>
@@ -842,7 +839,7 @@ export const ChatSidebar = memo(function ChatSidebar({
               {
                 key: 'new-chat',
                 icon: <Edit3 size={15} />,
-                label: language === 'zh' ? '新建普通对话' : 'New chat',
+                label: uiText(language)('chatSidebar.newChat'),
                 onClick: onCreateConversation,
               },
             ])
@@ -852,17 +849,17 @@ export const ChatSidebar = memo(function ChatSidebar({
           onContextMenu={event => openContextMenu(event, 'nav:assistant', assistantActions.items)}
           trailing={<span className="assistant-muted-indicators">
             {assistantActions.resetting && <LoaderCircle className="spin" size={12}/>}
-            {assistantProfile.microphoneMuted && <MicOff size={12} aria-label={language === 'zh' ? '麦克风已静音' : 'Microphone muted'}/>}
-            {assistantProfile.outputMuted && <VolumeX size={12} aria-label={language === 'zh' ? '播报已静音' : 'Speech muted'}/>}
+            {assistantProfile.microphoneMuted && <MicOff size={12} aria-label={uiText(language)('chatSidebar.microphoneMuted')}/>}
+            {assistantProfile.outputMuted && <VolumeX size={12} aria-label={uiText(language)('chatSidebar.speechMuted')}/>}
           </span>}/>
       </nav>
 
       <div className="sidebar-scroll">
         <div className="sidebar-sections">
               <SectionHeader
-                title={language === 'zh' ? '置顶' : 'Pinned'}
+                title={uiText(language)('chatSidebar.pinned')}
                 action={<Pin size={14} />}
-                actionLabel={language === 'zh' ? '置顶内容' : 'Pinned items'}
+                actionLabel={uiText(language)('chatSidebar.pinnedItems')}
                 expanded={expandedSections.has('pinned')}
                 onToggle={() => toggleSection('pinned')}
               />
@@ -871,13 +868,13 @@ export const ChatSidebar = memo(function ChatSidebar({
                   ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(renderStandaloneConversation)}</>
                   : (
                     <div className="sidebar-pinned-empty">
-                      {language === 'zh' ? '右键项目或对话即可置顶' : 'Right-click a project or chat to pin it'}
+                      {uiText(language)('chatSidebar.rightClickAProjectOrChatTo')}
                     </div>
                   )
                 }
               </SectionBody>
 
-              <SectionHeader title="Agents" action={<Plus size={14}/>} actionLabel={language === 'zh' ? '管理 Agents' : 'Manage Agents'} expanded={expandedSections.has('agents')} onToggle={() => toggleSection('agents')} onAction={() => onAgentSelect ? onAgentSelect('') : onSectionChange('agents')} />
+              <SectionHeader title={uiText(language)('appSections.agents')} action={<Plus size={14}/>} actionLabel={uiText(language)('chatSidebar.manageAgents')} expanded={expandedSections.has('agents')} onToggle={() => toggleSection('agents')} onAction={() => onAgentSelect ? onAgentSelect('') : onSectionChange('agents')} />
               <SectionBody expanded={expandedSections.has('agents')}>
               <div className="sidebar-agent-list">
                 {agents.map(agent => {
@@ -886,7 +883,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                   const reconnecting = agent.connectionState === 'reconnecting';
                   const visibleSessions = list?.sessions.filter(session => !session.metadata?.archived) ?? [];
                   const active = section === 'agents' && activeAgentId === agent.id;
-                  const create = () => { onAgentSelect?.(agent.id, ''); void agentSessions?.createSession(agent.id, language === 'zh' ? '新对话' : 'New conversation'); };
+                  const create = () => { onAgentSelect?.(agent.id, ''); void agentSessions?.createSession(agent.id, uiText(language)('agentsView.newConversation')); };
                   const manage = () => onAgentSelect?.(agent.id, undefined, 'settings');
                   const toggle = () => {
                     setExpandedAgentIds(current => { const next = new Set(current); if (expanded) next.delete(agent.id); else next.add(agent.id); return next; });
@@ -896,12 +893,12 @@ export const ChatSidebar = memo(function ChatSidebar({
                     <div className={`project-row agent-sidebar-row${active ? ' active' : ''}`} role="button" tabIndex={0} aria-expanded={expanded} onClick={toggle}
                       onKeyDown={event => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); toggle(); } }}
                       onContextMenu={event => openContextMenu(event, `agent:${agent.id}`, [
-                        { key: 'new', icon: <Plus size={15}/>, label: language === 'zh' ? '新建会话' : 'New chat', disabled: list?.creating, onClick: create },
-                        { key: 'manage', icon: <Settings size={15}/>, label: language === 'zh' ? '管理此 Agent' : 'Manage Agent', onClick: manage },
+                        { key: 'new', icon: <Plus size={15}/>, label: uiText(language)('agentsView.newChat'), disabled: list?.creating, onClick: create },
+                        { key: 'manage', icon: <Settings size={15}/>, label: uiText(language)('chatSidebar.manageAgent'), onClick: manage },
                       ])}>
                       <div className="project-title"><span>{agent.name}</span></div>
-                      <button className="row-new-chat" type="button" disabled={list?.creating} aria-label={language === 'zh' ? `在 ${agent.name} 新建会话` : `New chat in ${agent.name}`} onClick={event => { event.stopPropagation(); create(); }}><Plus size={14}/></button>
-                      <button className="row-archive" type="button" aria-label={language === 'zh' ? `管理 ${agent.name}` : `Manage ${agent.name}`} onClick={event => { event.stopPropagation(); manage(); }}><Settings size={14}/></button>
+                      <button className="row-new-chat" type="button" disabled={list?.creating} aria-label={uiText(language)('chatSidebar.newChatIn', { value1: agent.name })} onClick={event => { event.stopPropagation(); create(); }}><Plus size={14}/></button>
+                      <button className="row-archive" type="button" aria-label={uiText(language)('chatSidebar.manage', { value1: agent.name })} onClick={event => { event.stopPropagation(); manage(); }}><Settings size={14}/></button>
                       <ChevronRight size={14} className={`agent-tree-chevron${expanded ? ' expanded' : ''}`} aria-hidden="true"/>
                     </div>
                     {expanded && <>
@@ -913,7 +910,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                         const update = (patch: Record<string, unknown>) => { if (list?.management) void agentSessions?.updateSession(agent.id, session.sessionId, patch); };
                         const open = () => { onAgentSelect?.(agent.id, session.sessionId); update({ readAt: new Date().toISOString(), forcedUnread: false }); };
                         return <ConversationRow key={session.sessionId}
-                        conversation={{ id: session.sessionId, title: String(session.metadata?.title || (language === 'zh' ? '新对话' : 'Conversation')), preview: '', updatedAt: session.updatedAt ?? '' }}
+                        conversation={{ id: session.sessionId, title: String(session.metadata?.title || (uiText(language)('agentArchivesPanel.conversation'))), preview: '', updatedAt: session.updatedAt ?? '' }}
                         active={active && agentSessions?.views[agent.id] !== 'settings' && agentSessions?.selectedSessions[agent.id] === session.sessionId}
                         nested remote unread={unread} pinned={pinned} language={language} quickActionsAvailable={list?.management === true}
                         hostLabel={agent.name} projectLabel={(list?.projects ?? []).find(project => project.id === session.metadata?.projectId)?.name}
@@ -922,27 +919,27 @@ export const ChatSidebar = memo(function ChatSidebar({
                         onDelete={() => void agentSessions?.deleteSession(agent.id, session.sessionId)}
                         onClick={open}
                         onContextMenu={(event, options) => openContextMenu(event, `agent:${agent.id}:${session.sessionId}`, [
-                          { key: 'open', icon: <MessageSquare size={15}/>, label: language === 'zh' ? '打开对话' : 'Open chat', onClick: open },
+                          { key: 'open', icon: <MessageSquare size={15}/>, label: uiText(language)('chatSidebar.openChat'), onClick: open },
                           ...(list?.management ? [
-                            { key: 'pin', icon: <Pin size={15}/>, label: pinned ? (language === 'zh' ? '取消置顶' : 'Unpin chat') : (language === 'zh' ? '置顶对话' : 'Pin chat'), onClick: options.onTogglePin },
-                            { key: 'read', icon: unread ? <MailOpen size={15}/> : <Mail size={15}/>, label: unread ? (language === 'zh' ? '标记为已读' : 'Mark as read') : (language === 'zh' ? '标记为未读' : 'Mark as unread'), onClick: options.onToggleRead },
-                            { key: 'workspace', icon: <FolderOpen size={15}/>, label: language === 'zh' ? '切换工作区' : 'Switch workspace', children: [
+                            { key: 'pin', icon: <Pin size={15}/>, label: pinned ? (uiText(language)('chatSidebar.unpinChat')) : (uiText(language)('chatSidebar.pinChat')), onClick: options.onTogglePin },
+                            { key: 'read', icon: unread ? <MailOpen size={15}/> : <Mail size={15}/>, label: unread ? (uiText(language)('chatSidebar.markAsRead')) : (uiText(language)('chatSidebar.markAsUnread')), onClick: options.onToggleRead },
+                            { key: 'workspace', icon: <FolderOpen size={15}/>, label: uiText(language)('chatSidebar.switchWorkspace'), children: [
                               ...(list.projects ?? []).map(project => ({ key: project.id, label: project.name, icon: <Folder size={15}/>, disabled: session.metadata?.projectId === project.id, onClick: () => void agentSessions?.bindSession(agent.id, session.sessionId, project.id) })),
-                              { key: 'none', icon: <MessageSquare size={15}/>, label: language === 'zh' ? '独立工作区（不关联项目）' : 'Task workspace (no project)', disabled: !session.metadata?.projectId, onClick: () => void agentSessions?.bindSession(agent.id, session.sessionId, null) },
+                              { key: 'none', icon: <MessageSquare size={15}/>, label: uiText(language)('chatSidebar.taskWorkspaceNoProject'), disabled: !session.metadata?.projectId, onClick: () => void agentSessions?.bindSession(agent.id, session.sessionId, null) },
                             ] },
-                            { key: 'fork', icon: <ExtractionMenuIcon fork/>, label: language === 'zh' ? 'Fork 会话' : 'Fork conversation', onClick: () => void agentSessions?.forkSession(agent.id, session.sessionId) },
+                            { key: 'fork', icon: <ExtractionMenuIcon fork/>, label: uiText(language)('chatSidebar.forkConversation'), onClick: () => void agentSessions?.forkSession(agent.id, session.sessionId) },
                           ] : []),
-                          { key: 'rename', icon: <Edit3 size={15}/>, label: language === 'zh' ? '重命名对话' : 'Rename chat', onClick: options.onRename },
-                          { key: 'copy', icon: <Copy size={15}/>, label: language === 'zh' ? '复制会话 ID' : 'Copy chat ID', onClick: () => void copyText(session.sessionId) },
-                          { key: 'copy-chat', icon: <Copy size={15}/>, label: language === 'zh' ? '复制对话' : 'Copy conversation', onClick: () => void agentSessions?.copySession(agent.id, session.sessionId) },
-                          ...(list?.management ? [{ key: 'archive', icon: <Archive size={15}/>, label: language === 'zh' ? '归档对话' : 'Archive chat', separatorBefore: true, onClick: options.onArchive }] : []),
-                          { key: 'delete', icon: <Trash2 size={15}/>, label: language === 'zh' ? '删除对话' : 'Delete chat', separatorBefore: true, danger: true, onClick: options.onDelete },
+                          { key: 'rename', icon: <Edit3 size={15}/>, label: uiText(language)('chatSidebar.renameChat'), onClick: options.onRename },
+                          { key: 'copy', icon: <Copy size={15}/>, label: uiText(language)('chatSidebar.copyChatId'), onClick: () => void copyText(session.sessionId) },
+                          { key: 'copy-chat', icon: <Copy size={15}/>, label: uiText(language)('chatSidebar.copyConversation'), onClick: () => void agentSessions?.copySession(agent.id, session.sessionId) },
+                          ...(list?.management ? [{ key: 'archive', icon: <Archive size={15}/>, label: uiText(language)('chatSidebar.archiveChat'), separatorBefore: true, onClick: options.onArchive }] : []),
+                          { key: 'delete', icon: <Trash2 size={15}/>, label: uiText(language)('chatSidebar.deleteChat'), separatorBefore: true, danger: true, onClick: options.onDelete },
                         ])}
                       />; })}
-                      {reconnecting && <div className="agent-sidebar-notice" role="status">{language === 'zh' ? '正在重新连接…' : 'Reconnecting…'}</div>}
-                      {!reconnecting && list?.loading && !visibleSessions.length && <div className="agent-sidebar-notice" role="status">{language === 'zh' ? '正在加载会话…' : 'Loading chats…'}</div>}
-                      {!reconnecting && !list?.loading && !list?.error && !visibleSessions.length && <button className="conversation-row nested agent-sidebar-empty" onClick={create} disabled={list?.creating}>{language === 'zh' ? '新建会话' : 'New chat'}</button>}
-                      {!reconnecting && list?.error && <div className="agent-sidebar-notice" role="alert"><span>{list.error}</span><button onClick={() => void agentSessions?.refreshSessions(agent.id).catch(() => undefined)}>{language === 'zh' ? '重试' : 'Retry'}</button></div>}
+                      {reconnecting && <div className="agent-sidebar-notice" role="status">{uiText(language)('chatSidebar.reconnecting')}</div>}
+                      {!reconnecting && list?.loading && !visibleSessions.length && <div className="agent-sidebar-notice" role="status">{uiText(language)('chatSidebar.loadingChats')}</div>}
+                      {!reconnecting && !list?.loading && !list?.error && !visibleSessions.length && <button className="conversation-row nested agent-sidebar-empty" onClick={create} disabled={list?.creating}>{uiText(language)('agentsView.newChat')}</button>}
+                      {!reconnecting && list?.error && <div className="agent-sidebar-notice" role="alert"><span>{list.error}</span><button onClick={() => void agentSessions?.refreshSessions(agent.id).catch(() => undefined)}>{uiText(language)('common.retry')}</button></div>}
                     </>}
                   </div>;
                 })}
@@ -950,9 +947,9 @@ export const ChatSidebar = memo(function ChatSidebar({
               </SectionBody>
 
               <SectionHeader
-                title={language === 'zh' ? '项目' : 'Projects'}
+                title={uiText(language)('archivedItemsPanel.projects')}
                 action={<FolderOpen size={14} />}
-                actionLabel={language === 'zh' ? '添加项目' : 'Add project'}
+                actionLabel={uiText(language)('agentDataSettings.addProject')}
                 actionShortcut="openProject"
                 expanded={expandedSections.has('projects')}
                 onToggle={() => toggleSection('projects')}
@@ -963,24 +960,20 @@ export const ChatSidebar = memo(function ChatSidebar({
                       key: 'toggle',
                       icon: <ChevronDown size={15} />,
                       label: expandedSections.has('projects')
-                        ? language === 'zh'
-                          ? '收起项目'
-                          : 'Collapse projects'
-                        : language === 'zh'
-                          ? '展开项目'
-                          : 'Expand projects',
+                        ? uiText(language)('chatSidebar.collapseProjects')
+                        : uiText(language)('chatSidebar.expandProjects'),
                       onClick: () => toggleSection('projects'),
                     },
                     {
                       key: 'add-project',
                       icon: <FolderOpen size={15} />,
-                      label: language === 'zh' ? '添加项目' : 'Add project',
+                      label: uiText(language)('agentDataSettings.addProject'),
                       onClick: onAddProject,
                     },
                     {
                       key: 'restore-conversations',
                       icon: <Archive size={15} />,
-                      label: language === 'zh' ? '管理归档' : 'Manage archives',
+                      label: uiText(language)('chatSidebar.manageArchives'),
                       onClick: onOpenArchives ?? onOpenSettings,
                     },
                   ])
@@ -992,7 +985,7 @@ export const ChatSidebar = memo(function ChatSidebar({
               <div data-workspace-drop="recent" className={`workspace-drop-target${workspaceDropTarget === 'recent' ? ' workspace-drop-active' : ''}`}
                 {...workspaceDropHandlers(null)}>
               <SectionHeader
-                title={language === 'zh' ? '最近' : 'Recent'}
+                title={uiText(language)('chatSidebar.recent')}
                 action={<Search size={14} />}
                 actionLabel={searchLabel}
                 actionShortcut="searchConversations"
@@ -1008,7 +1001,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                   </div>
                 ) : (
                   <div className="sidebar-conversation-empty">
-                    {language === 'zh' ? '点击上方“新会话”开始' : 'Use New chat above to begin.'}
+                    {uiText(language)('chatSidebar.useNewChatAboveToBegin')}
                   </div>
                 )}
               </SectionBody>
@@ -1223,7 +1216,7 @@ function ProjectBlock({
         </span>
         <div className="project-title">
           <span title={project.missing
-            ? language === 'zh' ? '项目文件夹不存在' : 'Project folder is missing'
+            ? uiText(language)('chatSidebar.projectFolderIsMissing')
             : undefined}
           >
             {project.title}
@@ -1234,8 +1227,8 @@ function ProjectBlock({
           data-sidebar-menu-trigger="true"
           type="button"
           disabled={project.missing}
-          aria-label={language === 'zh' ? '新建项目会话' : 'New project chat'}
-          title={language === 'zh' ? '新建项目会话' : 'New project chat'}
+          aria-label={uiText(language)('chatSidebar.newProjectChat')}
+          title={uiText(language)('chatSidebar.newProjectChat')}
           onClick={(event) => {
             event.stopPropagation();
             event.currentTarget.blur();
@@ -1251,8 +1244,8 @@ function ProjectBlock({
         <button
           className="row-archive"
           type="button"
-          aria-label={language === 'zh' ? '归档项目' : 'Archive project'}
-          title={language === 'zh' ? '归档项目' : 'Archive project'}
+          aria-label={uiText(language)('chatSidebar.archiveProject')}
+          title={uiText(language)('chatSidebar.archiveProject')}
           onClick={(event) => {
             event.stopPropagation();
             event.currentTarget.blur();
@@ -1465,10 +1458,10 @@ function ConversationRow({
             value={renameDraft}
             maxLength={160}
             readOnly={renamePending}
-            aria-label={language === 'zh' ? '对话标题' : 'Chat title'}
+            aria-label={uiText(language)('chatSidebar.chatTitle')}
             aria-invalid={renameFailed}
             title={renameFailed
-              ? language === 'zh' ? '标题不能为空或保存失败，请重试' : 'Title is empty or could not be saved'
+              ? uiText(language)('chatSidebar.titleIsEmptyOrCouldNotBe')
               : undefined}
             onChange={(event) => {
               setRenameDraft(event.target.value);
@@ -1478,16 +1471,16 @@ function ConversationRow({
           <button
             type="submit"
             disabled={renamePending || !renameDraft.trim()}
-            aria-label={language === 'zh' ? '保存标题' : 'Save title'}
-            title={language === 'zh' ? '保存' : 'Save'}
+            aria-label={uiText(language)('chatSidebar.saveTitle')}
+            title={uiText(language)('appCenter.save')}
           >
             {renamePending ? <LoaderCircle className="spin" size={12} /> : <CircleCheck size={12} />}
           </button>
           <button
             type="button"
             disabled={renamePending}
-            aria-label={language === 'zh' ? '取消重命名' : 'Cancel rename'}
-            title={language === 'zh' ? '取消' : 'Cancel'}
+            aria-label={uiText(language)('chatSidebar.cancelRename')}
+            title={uiText(language)('agentConnectionForm.cancel')}
             onClick={cancelRename}
           >
             <X size={12} />
@@ -1500,7 +1493,7 @@ function ConversationRow({
         <span
           className="conversation-running-indicator"
           role="status"
-          aria-label={language === 'zh' ? '会话运行中' : 'Session running'}
+          aria-label={uiText(language)('chatSidebar.sessionRunning')}
         >
           <LoaderCircle size={14} aria-hidden="true" />
         </span>
@@ -1522,11 +1515,11 @@ function ConversationRow({
         className={`conversation-pin${pinned ? ' is-pinned' : ''}`}
         type="button"
         aria-label={pinned
-          ? language === 'zh' ? '取消置顶对话' : 'Unpin chat'
-          : language === 'zh' ? '置顶对话' : 'Pin chat'}
+          ? uiText(language)('chatSidebar.unpinChat_3999855')
+          : uiText(language)('chatSidebar.pinChat')}
         title={pinned
-          ? language === 'zh' ? '取消置顶' : 'Unpin'
-          : language === 'zh' ? '置顶' : 'Pin'}
+          ? uiText(language)('chatSidebar.unpin')
+          : uiText(language)('chatSidebar.pin')}
         aria-pressed={pinned}
         onClick={(event) => {
           event.stopPropagation();
@@ -1541,8 +1534,8 @@ function ConversationRow({
       {quickActionsAvailable && !editingTitle && <button
         className="conversation-archive"
         type="button"
-        aria-label={language === 'zh' ? '归档对话' : 'Archive chat'}
-        title={language === 'zh' ? '归档对话' : 'Archive chat'}
+        aria-label={uiText(language)('chatSidebar.archiveChat')}
+        title={uiText(language)('chatSidebar.archiveChat')}
         onClick={(event) => {
           event.stopPropagation();
           onArchive();
@@ -1847,8 +1840,8 @@ export function ConversationChangeDialog({
   const fileNavId = useId();
   const fileNavToggleRef = useRef<HTMLButtonElement>(null);
   const fileNavToggleLabel = fileNav.collapsed
-    ? (language === 'zh' ? '展开文件列表' : 'Show file list')
-    : (language === 'zh' ? '收起文件列表' : 'Hide file list');
+    ? (uiText(language)('chatSidebar.showFileList'))
+    : (uiText(language)('chatSidebar.hideFileList'));
   const selectedItem = reviewItems.find(item => reviewPathKey(item.file.path) === reviewPathKey(selectedPath)) ?? null;
   const selectedAdapter = resolveFilePreview(selectedPath);
   const nativeFilePreview = !!selectedAdapter && selectedAdapter.renderer !== 'text'
@@ -1985,7 +1978,7 @@ export function ConversationChangeDialog({
         {!embedded && (
           <header>
             <div>
-              <strong>{language === 'zh' ? '会话修改' : 'Chat changes'}</strong>
+              <strong>{uiText(language)('chatSidebar.chatChanges')}</strong>
               <span>{conversation.title}</span>
             </div>
             <button type="button" onClick={onClose}>
@@ -1996,31 +1989,31 @@ export function ConversationChangeDialog({
         <div className="change-review-summary change-review-file-heading">
           <div className="change-review-file-heading-copy">
             <strong title={selectedPath} onContextMenu={host ? undefined : event => selectedPath && openFileContextMenu(event, selectedPath, { language })}>
-              {selectedPath ? <><FileTypeIcon path={selectedPath} /><span>{basename(selectedPath)}</span></> : (language === 'zh' ? '文件' : 'Files')}
+              {selectedPath ? <><FileTypeIcon path={selectedPath} /><span>{basename(selectedPath)}</span></> : (uiText(language)('inspectorActions.files'))}
             </strong>
           </div>
           {recentTurns.length > 0 && <div className="change-review-version-picker" title={selectedTurn?.prompt}>
-            <SettingsDropdown label={language === 'zh' ? '审查轮次' : 'Review turn'} value={selectedTurnId} onChange={setChosenTurn} minMenuWidth={144}
+            <SettingsDropdown label={uiText(language)('chatSidebar.reviewTurn')} value={selectedTurnId} onChange={setChosenTurn} minMenuWidth={144}
               options={recentTurns.map((turn, index) => ({ value: turn.id,
-                label: index === 0 ? (language === 'zh' ? '本轮' : 'Current turn') : (language === 'zh' ? '上一轮' : 'Previous turn') }))} />
+                label: index === 0 ? (uiText(language)('chatSidebar.currentTurn')) : (uiText(language)('chatSidebar.previousTurn')) }))} />
           </div>}
           {selectedItem && selectedAdapter && !nativeFilePreview && <button
             className="change-review-preview-toggle" type="button" aria-pressed={showCurrentContents}
-            title={showCurrentContents ? (language === 'zh' ? '查看改动' : 'Show changes') : (language === 'zh' ? '预览当前文件' : 'Preview current file')}
-            aria-label={showCurrentContents ? (language === 'zh' ? '查看改动' : 'Show changes') : (language === 'zh' ? '预览当前文件' : 'Preview current file')}
+            title={showCurrentContents ? (uiText(language)('chatSidebar.showChanges')) : (uiText(language)('chatSidebar.previewCurrentFile'))}
+            aria-label={showCurrentContents ? (uiText(language)('chatSidebar.showChanges')) : (uiText(language)('chatSidebar.previewCurrentFile'))}
             onClick={() => setPreviewPath(showCurrentContents ? '' : selectedPath)}>
             {showCurrentContents ? <Code2 size={15} /> : <Eye size={15} />}
           </button>}
           <button className="secondary-button change-review-revert" type="button"
             disabled={!canRevert} onClick={() => { if (canRevert && selectedReport) void onRevert(selectedReport); }}
-            title={!selectedReport || !selectedReport.fileCount ? (language === 'zh' ? '所选轮次没有可撤回的修改' : 'No changes to revert in this turn')
-              : !revertAvailable || revertingChangeId ? (language === 'zh' ? '正在处理，请稍后撤回' : 'Busy; revert will be available when processing finishes')
-              : selectedReverted ? (language === 'zh' ? '取消撤回所选轮次' : 'Undo revert of selected turn')
-              : selectedTurnIsLatest ? (language === 'zh' ? '撤回本轮' : 'Revert current turn') : (language === 'zh' ? '撤回上一轮' : 'Revert previous turn')}>
+            title={!selectedReport || !selectedReport.fileCount ? (uiText(language)('chatSidebar.noChangesToRevertInThisTurn'))
+              : !revertAvailable || revertingChangeId ? (uiText(language)('chatSidebar.busyRevertWillBeAvailableWhenProcessing'))
+              : selectedReverted ? (uiText(language)('chatSidebar.undoRevertOfSelectedTurn'))
+              : selectedTurnIsLatest ? (uiText(language)('chatSidebar.revertCurrentTurn')) : (uiText(language)('chatSidebar.revertPreviousTurn'))}>
             {selectedReport && revertingChangeId === selectedReport.id ? <LoaderCircle size={14} /> : selectedReverted ? <RotateCw size={14} /> : <RotateCcw size={14} />}
             <span>{selectedReverted
-              ? (language === 'zh' ? '取消撤回' : 'Undo revert')
-              : (language === 'zh' ? '撤回' : 'Revert')}</span>
+              ? (uiText(language)('app.undoRevert'))
+              : (uiText(language)('app.revert'))}</span>
           </button>
           <button className="change-review-nav-toggle" ref={fileNavToggleRef} type="button"
             aria-label={fileNavToggleLabel} aria-expanded={!fileNav.collapsed}
@@ -2041,16 +2034,16 @@ export function ConversationChangeDialog({
               <DeferredResizePreview className="change-review-diff-content">
                 {selectedDetailStatus === 'failed' && selectedItem.file.lines.length === 0 ? (
                   <div className="tool-change-details-failed" role="alert">
-                    <span>{language === 'zh' ? '改动详情加载失败' : 'Unable to load change details'}</span>
+                    <span>{uiText(language)('chatSidebar.unableToLoadChangeDetails')}</span>
                     <button type="button" onClick={retrySelectedDetails}>
                       <RefreshCw size={13} />
-                      <span>{language === 'zh' ? '重试' : 'Retry'}</span>
+                      <span>{uiText(language)('common.retry')}</span>
                     </button>
                   </div>
                 ) : selectedDetailStatus === 'loading' && selectedItem.file.lines.length === 0 ? (
                   <p className="tool-change-details-loading">
                     <LoaderCircle size={14} />
-                    <span>{language === 'zh' ? '正在加载改动详情' : 'Loading change details'}</span>
+                    <span>{uiText(language)('chatSidebar.loadingChangeDetails')}</span>
                   </p>
                 ) : (
                   <ReviewCommentsScope language={language} path={selectedItem.file.path} turnId={selectedTurnId}
@@ -2063,7 +2056,7 @@ export function ConversationChangeDialog({
               <ReviewFilePreview key={selectedPath} path={selectedPath} language={language} changed={!!selectedItem} />
             ) : (
               <div className="change-review-empty">
-                {language === 'zh' ? '选择文件查看内容或本轮修改。' : 'Select a file to view its contents or changes.'}
+                {uiText(language)('chatSidebar.selectAFileToViewItsContents')}
               </div>
             )}
           </section>
@@ -2080,7 +2073,7 @@ export function ConversationChangeDialog({
               hidden={fileNav.collapsed}
               tabIndex={fileNav.collapsed ? -1 : 0}
               aria-orientation="vertical"
-              aria-label={language === 'zh' ? '调整文件列表宽度' : 'Resize file list'}
+              aria-label={uiText(language)('chatSidebar.resizeFileList')}
               aria-controls={fileNavId}
               aria-valuemin={0} aria-valuemax={420} aria-valuenow={fileNav.collapsed ? 0 : fileNav.width}
               onPointerDown={fileNav.beginResize}

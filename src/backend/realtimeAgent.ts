@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { REALTIME_AGENT_TOOL_COMMAND, type RealtimeAgentToolRequest } from '@cardbush/bush-protocol';
 import { REALTIME_CONTEXT_COMPACTION_COMMAND, realtimeContextResultSchema } from '@cardbush/bush-protocol';
 import { REALTIME_TASK_SUMMARY_COMMAND, realtimeTaskSummaryResultSchema } from '@cardbush/bush-protocol';
@@ -18,7 +19,7 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
     async prepareConversation() { return (await configForCall()).sessionId; },
     async record(entry) { await appendConversationEntry((await configForCall()).sessionId, entry, options.conversationGeneration); },
     async pageWrite(id, content) {
-      if (!options.assistant) throw Error('page_write is only available in assistant.');
+      if (!options.assistant) throw Error(uiText()('realtimeAgent.page_write_is_only_available_in_assistant'));
       // Vendor call IDs may repeat in the next call; retries within this call keep one journal entry.
       const entryId = pageIds.get(id) ?? `page-${crypto.randomUUID()}`;
       pageIds.set(id, entryId);
@@ -27,9 +28,9 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
     async compact(job, signal) {
       const runtime=createDesktopRuntimeSession();
       try {
-        if (sessionId()!==job.sessionId && preparedVoice?.sessionId!==job.sessionId) throw Error('Voice conversation changed.');
+        if (sessionId()!==job.sessionId && preparedVoice?.sessionId!==job.sessionId) throw Error(uiText()('realtimeAgent.voice_conversation_changed'));
         const config=preparedVoice?.sessionId===job.sessionId ? preparedVoice : await prepare();
-        if (config.sessionId!==job.sessionId) throw Error('Voice conversation changed.');
+        if (config.sessionId!==job.sessionId) throw Error(uiText()('realtimeAgent.voice_conversation_changed'));
         const {runtimeRequest:parent}=await prepareRuntimeAgentRequest({...config,userInput:'Voice context maintenance'},runtime,
           {turnId:`voice_memory_${job.jobId}`,signal});
         const model={model:parent.model,providerBinding:parent.providerBinding,reasoningEffort:parent.reasoningEffort,maxOutputTokens:parent.maxOutputTokens,metadata:parent.metadata};
@@ -53,7 +54,7 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
       try {
         const capabilities = await runtime.client.getCapabilities();
         if (!capabilities.supportedCommands.includes(REALTIME_AGENT_TOOL_COMMAND)) throw Object.assign(
-          new Error('当前运行的 Runtime 尚不支持语音子代理，请重新启动更新后的 CardBush。'),
+          new Error(uiText()('realtimeAgent.the_running_runtime_does_not_support_voice')),
           { code: 'realtime_runtime_outdated' });
         const config = await configForCall();
         const parent = action === 'read_subagent_conversation' ? undefined :

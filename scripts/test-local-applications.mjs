@@ -56,6 +56,7 @@ test('launch uses the exact selected path, reports OS errors and rejects missing
   assert.deepEqual(opened, [appPath, shortcutPath]);
   await assert.rejects(launchLocalApplication(appPath, async () => 'Application could not start'), /could not start/);
   await rm(appPath);
-  await assert.rejects(launchLocalApplication(appPath, open), /不存在/);
+  await assert.rejects(launchLocalApplication(appPath, open, process.platform, 'zh'), /不存在/);
+  await assert.rejects(launchLocalApplication(appPath, open, process.platform, 'en'), /no longer exists/);
   assert.equal(opened.length, 2);
 });

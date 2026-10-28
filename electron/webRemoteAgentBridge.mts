@@ -11,7 +11,7 @@ const common = { connectionId: id, agentId: id.optional(), parentSessionId: id, 
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('agents.list'), input: z.object({}).strict() }).strict(),
   z.object({ operation: z.literal('agents.delegate'), input: z.object({ ...common, taskId: id, turnId: id, parentTurnId: id,
-    prompt: z.string().min(1).max(100_000), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.enum(['zh', 'en']) }).strict() }).strict(),
+    prompt: z.string().min(1).max(100_000), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
   z.object({ operation: z.literal('agents.read-child'), input: z.object(common).strict() }).strict(),
   z.object({ operation: z.literal('agents.guide-child'), input: z.object({ ...common, turnId: id, messageId: id, content: z.string().min(1).max(100_000) }).strict() }).strict(),
 ]);

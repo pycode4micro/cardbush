@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { SpeakerLockStatus, SpeakerSampleInput } from '../../../electron/voiceTypes';
 import { VoiceCapture } from './voiceAudio';
@@ -27,7 +28,7 @@ export function useSpeakerRecording(microphoneId: string, onNeedModel: () => voi
     try {
       const model = await api.modelStatus('speaker');
       if (current !== epoch.current) return;
-      if (model.state !== 'installed') { onNeedModel(); throw Error('请先展开「本地模型」，下载并安装 CAMPPlus。'); }
+      if (model.state !== 'installed') { onNeedModel(); throw Error(uiText()('useSpeakerRecording.open_local_models_then_download_and_install')); }
       endVoiceForEnrollment();
       const recorder = new VoiceCapture('recording', {
         level: value => { if (current === epoch.current) setLevel(value); }, speech: () => {},
@@ -38,7 +39,7 @@ export function useSpeakerRecording(microphoneId: string, onNeedModel: () => voi
           void prepareVoiceRecording(blob, 'system').then(prepared => {
             if (current !== epoch.current) return;
             audio.current = prepared.audio; url.current = URL.createObjectURL(blob); setPreviewUrl(url.current); setPhase('preview');
-          }).catch(error => { if (current === epoch.current) { setPhase('idle'); setError(voiceError(error, '无法处理本段录音，请重录。')); } });
+          }).catch(error => { if (current === epoch.current) { setPhase('idle'); setError(voiceError(error, uiText()('useSpeakerRecording.could_not_process_this_recording_record_it'))); } });
         },
       }, microphoneId);
       capture.current = recorder; await recorder.start();
@@ -49,7 +50,7 @@ export function useSpeakerRecording(microphoneId: string, onNeedModel: () => voi
         const elapsed = Math.floor((Date.now() - started) / 1000); setSeconds(Math.min(12, elapsed));
         if (elapsed >= 12) finish();
       }, 200);
-    } catch (error) { if (current === epoch.current) { close(); setPhase('idle'); setError(voiceError(error, '无法开始录音。')); } }
+    } catch (error) { if (current === epoch.current) { close(); setPhase('idle'); setError(voiceError(error, uiText()('useSpeakerRecording.could_not_start_recording'))); } }
   };
   const save = async (input: Omit<SpeakerSampleInput, 'id' | 'audio'>): Promise<SpeakerLockStatus | undefined> => {
     if (!api || !audio.current || request.current) return;
@@ -58,7 +59,7 @@ export function useSpeakerRecording(microphoneId: string, onNeedModel: () => voi
       const result = await api.saveSpeakerSample({ ...input, id, audio: audio.current });
       if (current !== epoch.current) return;
       releasePreview(); setPreviewUrl(''); setPhase('idle'); return result;
-    } catch (error) { if (current === epoch.current) { setPhase('preview'); setError(voiceError(error, '本段未保存，可以重试或只重录这一段。')); } }
+    } catch (error) { if (current === epoch.current) { setPhase('preview'); setError(voiceError(error, uiText()('useSpeakerRecording.this_sample_was_not_saved_retry_or'))); } }
     finally { if (current === epoch.current) request.current = ''; }
   };
   return { phase, seconds, level, error, previewUrl, begin, finish, cancel, save };

@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { CheckCircle2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { COPY_FEEDBACK_EVENT } from '../features/messageFeedback';
@@ -26,7 +27,7 @@ export function CopyToastHost({ language }: { language: AppLanguage }) {
   return (
     <div className="copy-toast" role="status" aria-live="polite">
       <CheckCircle2 size={15} />
-      <span>{language === 'zh' ? '已复制到剪贴板' : 'Copied to clipboard'}</span>
+      <span>{uiText(language)('copyToastHost.copiedToClipboard')}</span>
     </div>
   );
 }

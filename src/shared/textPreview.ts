@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 // Bound parsing/DOM work without dropping the readable, already byte-bounded content.
 export function shouldUsePlainTextPreview(content: string): boolean {
   if (content.length > 200_000) return true;
@@ -23,15 +24,13 @@ export function textPreviewErrorCode(error: unknown): 'text_preview_binary' | 't
   return undefined;
 }
 
-export function textPreviewErrorMessage(error: unknown, language: 'zh' | 'en'): string {
+export function textPreviewErrorMessage(error: unknown, language: string): string {
   const code = textPreviewErrorCode(error);
   if (code === 'text_preview_binary') {
-    return language === 'zh' ? '这是二进制文件，无法作为文本预览。' : 'This is a binary file and cannot be previewed as text.';
+    return uiText(language)('textPreview.thisIsABinaryFileAndCannot');
   }
   if (code === 'text_preview_encoding') {
-    return language === 'zh'
-      ? '无法可靠识别文本编码，或文件含有损坏的字符。原文件未修改。'
-      : 'The text encoding is unsupported or contains invalid characters. The original file is unchanged.';
+    return uiText(language)('textPreview.theTextEncodingIsUnsupportedOrContains');
   }
   return error instanceof Error ? error.message : String(error);
 }

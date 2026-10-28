@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useMemo } from 'react';
 
 import {
@@ -44,11 +45,9 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
     <div className="chat-panel loop-history-pre-test">
       <header className="loop-history-pre-test-header">
         <span>
-          <strong>{language === 'zh' ? 'Loop 历史合并 · Pre Test' : 'Loop history merge · Pre Test'}</strong>
+          <strong>{uiText(language)('loopHistoryPreTest.loopHistoryMergePreTest')}</strong>
           <small>
-            {language === 'zh'
-              ? '本地测试数据：Runtime 历史重载 + 流式临时消息 → 最终快照'
-              : 'Local fixture: Runtime history reload + streaming draft → final snapshot'}
+            {uiText(language)('loopHistoryPreTest.localFixtureRuntimeHistoryReloadStreamingDraft')}
           </small>
         </span>
         <output className={passed ? 'passed' : 'failed'} data-testid="loop-history-result">
@@ -59,14 +58,10 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
       <main className="loop-history-pre-test-stage">
         <div className="loop-history-pre-test-notice">
           <strong>
-            {language === 'zh'
-              ? '点击执行记录的动作标题展开验证'
-              : 'Expand the activity title to verify execution details'}
+            {uiText(language)('loopHistoryPreTest.expandTheActivityTitleToVerifyExecution')}
           </strong>
           <span>
-            {language === 'zh'
-              ? '完成后的 Plan 应位于历史详情顶部；第 1 段前不应出现多余分隔线。'
-              : 'The completed Plan should be archived above the steps without an extra first divider.'}
+            {uiText(language)('loopHistoryPreTest.theCompletedPlanShouldBeArchivedAbove')}
           </span>
         </div>
         <MessageFileReferenceScope workspaceRoot="C:\\workspace\\cardbush">

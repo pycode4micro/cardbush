@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { computerUseAppearance as appearance } from '@cardbush/bush-protocol';
@@ -6,7 +7,7 @@ import './aiEditingCursor.css';
 export type AiEditPosition = { left: number; top: number; bottom: number };
 export function AiEditingCursor({ locate, surface, revision, state, language }: {
   locate: () => AiEditPosition | undefined; surface: () => HTMLElement | null; revision: string;
-  state: 'streaming' | 'ready'; language: 'zh' | 'en';
+  state: 'streaming' | 'ready'; language: string;
 }) {
   const [point, setPoint] = useState<(AiEditPosition & { labelLeft: number; labelTop: number })>();
   const following = useRef(true);
@@ -42,12 +43,12 @@ export function AiEditingCursor({ locate, surface, revision, state, language }: 
     return () => { cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener('scroll', schedule, true); window.removeEventListener('resize', schedule); scroller?.removeEventListener('wheel', pause); scroller?.removeEventListener('pointerdown', pause); };
   }, [revision, locate, surface]);
   if (!point) return null;
-  return createPortal(<div className="ai-editing-cursor" data-state={state} role="img" aria-label={language === 'zh' ? 'CardBush 正在编辑' : 'CardBush is editing'}>
+  return createPortal(<div className="ai-editing-cursor" data-state={state} role="img" aria-label={uiText(language)('aiEditingCursor.cardbushIsEditing')}>
     <span className="ai-editing-caret" style={{ left: point.left, top: point.top, height: Math.max(16, point.bottom - point.top), background: `rgb(${appearance.pointer.join(',')})` }}/>
     <svg width="24" height="25" viewBox="-2 -2 24 25" style={{ left: point.left + 2, top: point.bottom - 6 }} aria-hidden="true">
       <polygon points={appearance.points.map(point => point.join(',')).join(' ')} fill={`rgb(${appearance.pointer.join(',')})`} stroke={`rgb(${appearance.outline.join(',')})`} strokeWidth="1.4"/>
     </svg>
-    <span className="ai-editing-label" style={{ left: point.labelLeft, top: point.labelTop, background: `rgb(${appearance.label.join(',')})` }}>CardBush</span>
+    <span className="ai-editing-label" style={{ left: point.labelLeft, top: point.labelTop, background: `rgb(${appearance.label.join(',')})` }}>{uiText(language)('aiEditingCursor.cardbush')}</span>
   </div>, document.body);
 }
 

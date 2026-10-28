@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { dump, load, JSON_SCHEMA } from 'js-yaml';
 
 export type MdPosition = { x: number; y: number };
@@ -10,12 +11,12 @@ export const MAX_GRAPH_COORDINATE = 100000;
 function attributes(source: string): Record<string, unknown> {
   const value = load(source, { schema: JSON_SCHEMA });
   if (value == null) return {};
-  if (typeof value !== 'object' || Array.isArray(value)) throw Error('Markdown metadata must be a mapping.');
+  if (typeof value !== 'object' || Array.isArray(value)) throw Error(uiText()('markdownGraph.markdown_metadata_must_be_a_mapping'));
   let count = 0; const seen = new Set<object>();
   const visit = (item: unknown, depth: number) => {
-    if (++count > 2000 || depth > 8) throw Error('Markdown metadata is too complex.');
+    if (++count > 2000 || depth > 8) throw Error(uiText()('markdownGraph.markdown_metadata_is_too_complex'));
     if (item && typeof item === 'object') {
-      if (seen.has(item)) throw Error('Markdown metadata must not contain YAML aliases.');
+      if (seen.has(item)) throw Error(uiText()('markdownGraph.markdown_metadata_must_not_contain_yaml_aliases'));
       seen.add(item); Object.values(item).forEach(child => visit(child, depth + 1));
     }
   };
@@ -26,16 +27,16 @@ function attributes(source: string): Record<string, unknown> {
 /** Ordinary Markdown stays intact. Explicit md-node blocks delimit editable nodes,
  * so headings and fenced code inside an assignment never split it into new nodes. */
 export function parseMarkdownGraph(source: string): MdDocument {
-  if (source.length > MAX_MARKDOWN_LENGTH) throw Error('Markdown exceeds 2 MB.');
+  if (source.length > MAX_MARKDOWN_LENGTH) throw Error(uiText()('markdownGraph.markdown_exceeds_2_mb'));
   const lines = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
   const document: MdDocument = { attributes: {}, introduction: '', nodes: [] };
   let start = 0, introduction = '';
   if (lines[0] === '---') {
     const end = lines.indexOf('---', 1);
-    if (end < 0) throw Error('Unclosed Markdown metadata (---).');
+    if (end < 0) throw Error(uiText()('markdownGraph.unclosed_markdown_metadata'));
     document.attributes = attributes(lines.slice(1, end).join('\n')); start = end + 1;
     if ('introduction' in document.attributes) {
-      if (typeof document.attributes.introduction !== 'string') throw Error('Invalid literal Markdown introduction.');
+      if (typeof document.attributes.introduction !== 'string') throw Error(uiText()('markdownGraph.invalid_literal_markdown_introduction'));
       introduction = document.attributes.introduction; delete document.attributes.introduction;
     }
   }
@@ -62,7 +63,7 @@ export function parseMarkdownGraph(source: string): MdDocument {
         if (field in current.attributes && (!Array.isArray(links) || links.length > 128 || links.some(link => typeof link !== 'string' || !identifier.test(link)))) throw Error(`Invalid node ${field}: ${id}`);
       }
       document.nodes.push(current); index = end;
-      if (document.nodes.length > 128) throw Error('A document supports at most 128 nodes.');
+      if (document.nodes.length > 128) throw Error(uiText()('markdownGraph.a_document_supports_at_most_128_nodes'));
       continue;
     }
     const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
@@ -140,7 +141,7 @@ export function setNodeLink(node: MdNode, target: string, enabled: boolean): MdN
   return { ...node, attributes, body: mapWikiLinks(node.body, (id, _label, original) => id === target ? '' : original).trim() };
 }
 export function renameNode(document: MdDocument, before: string, after: string): MdDocument {
-  if (!identifier.test(after) || document.nodes.some(node => node.id === after && node.id !== before)) throw Error('Node IDs must be unique and contain only letters, numbers, spaces, dots, underscores or hyphens.');
+  if (!identifier.test(after) || document.nodes.some(node => node.id === after && node.id !== before)) throw Error(uiText()('markdownGraph.node_ids_must_be_unique_and_contain'));
   return { ...document, introduction: mapWikiLinks(document.introduction, (id, label, original) => id === before ? `[[#${after}${label === id ? '' : `|${label}`}]]` : original), nodes: document.nodes.map(node => ({ ...node, id: node.id === before ? after : node.id,
     attributes: { ...node.attributes, ...(Array.isArray(node.attributes.links) ? { links: node.attributes.links.map(id => id === before ? after : id) } : {}),
       ...(Array.isArray(node.attributes.depends_on) ? { depends_on: node.attributes.depends_on.map(id => id === before ? after : id) } : {}) },

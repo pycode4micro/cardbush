@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ChevronLeft, ChevronRight, Maximize, Minus, Plus, X } from 'lucide-react';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import {
@@ -71,6 +72,7 @@ export function ImagePreviewDialog({
   language: AppLanguage;
   onClose: () => void;
 }) {
+  const t = uiText(language);
   const gallery = useImageGallery(initialImage, { images, initialScope, onClose });
   const { image } = gallery;
   const host = useContext(ConversationHostContext);
@@ -260,29 +262,24 @@ export function ImagePreviewDialog({
         className="image-preview-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={language === 'zh' ? `图片预览：${image.name}` : `Image preview: ${image.name}`}
+        aria-label={t('image.preview', { name: image.name })}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
           <strong title={image.path ?? image.name}>{image.name}</strong>
           {gallery.scopes.length > 0 && <select className="image-preview-scope" value={gallery.scope}
-            aria-label={language === 'zh' ? '图片范围' : 'Image scope'}
+            aria-label={t('image.scope')}
             onChange={event => gallery.changeScope(event.target.value as ImageGalleryScope)}>
-            {gallery.scopes.map(scope => <option key={scope} value={scope}>{({
-              session: language === 'zh' ? '会话' : 'Conversation',
-              attachments: language === 'zh' ? '附件' : 'Attachments',
-              directory: language === 'zh' ? '目录' : 'Folder',
-              workspace: language === 'zh' ? '工作区' : 'Workspace',
-            })[scope]}</option>)}
+            {gallery.scopes.map(scope => <option key={scope} value={scope}>{t(`image.scope.${scope}`)}</option>)}
           </select>}
           <span className="image-preview-position" aria-live="polite">{gallery.index + 1} / {gallery.images.length}{gallery.loading || gallery.more ? '+' : ''}</span>
-          <div className="image-preview-zoom-controls" aria-label={language === 'zh' ? '图片缩放' : 'Image zoom'}>
+          <div className="image-preview-zoom-controls" aria-label={t('image.zoom')}>
             <button
               type="button"
               onClick={() => applyZoom(viewRef.current.zoom - zoomStep)}
               disabled={!ready || zoom <= Math.min(minimumZoom, fitScale)}
-              aria-label={language === 'zh' ? '缩小图片' : 'Zoom out'}
-              title={[language === 'zh' ? '缩小' : 'Zoom out', keyboardShortcuts.label('imageZoomOut')].filter(Boolean).join(' · ')}
+              aria-label={t('image.zoomOut')}
+              title={[t('image.zoomOutHint'), keyboardShortcuts.label('imageZoomOut')].filter(Boolean).join(' · ')}
               aria-keyshortcuts={keyboardShortcuts.aria('imageZoomOut')}
             >
               <Minus size={15} />
@@ -292,7 +289,7 @@ export function ImagePreviewDialog({
               type="button"
               onClick={() => applyZoom(1)}
               disabled={!ready}
-              aria-label={language === 'zh' ? '原始尺寸（100%）' : 'Actual size (100%)'}
+              aria-label={t('image.actualSize')}
             >
               {percentage}%
             </button>
@@ -300,8 +297,8 @@ export function ImagePreviewDialog({
               type="button"
               onClick={() => applyZoom(viewRef.current.zoom + zoomStep)}
               disabled={!ready || zoom >= maximumZoom}
-              aria-label={language === 'zh' ? '放大图片' : 'Zoom in'}
-              title={[language === 'zh' ? '放大' : 'Zoom in', keyboardShortcuts.label('imageZoomIn')].filter(Boolean).join(' · ')}
+              aria-label={t('image.zoomIn')}
+              title={[t('image.zoomInHint'), keyboardShortcuts.label('imageZoomIn')].filter(Boolean).join(' · ')}
               aria-keyshortcuts={keyboardShortcuts.aria('imageZoomIn')}
             >
               <Plus size={15} />
@@ -310,9 +307,9 @@ export function ImagePreviewDialog({
               type="button"
               onClick={fitToWindow}
               disabled={!ready}
-              aria-label={language === 'zh' ? '恢复适应窗口' : 'Fit to window'}
+              aria-label={t('image.reset')}
               aria-pressed={view.fitted}
-              title={[language === 'zh' ? '适应窗口' : 'Fit to window', keyboardShortcuts.label('imageReset')].filter(Boolean).join(' · ')}
+              title={[t('image.resetHint'), keyboardShortcuts.label('imageReset')].filter(Boolean).join(' · ')}
               aria-keyshortcuts={keyboardShortcuts.aria('imageReset')}
             >
               <Maximize size={15} />
@@ -322,23 +319,23 @@ export function ImagePreviewDialog({
             className="image-preview-close"
             type="button"
             onClick={onClose}
-            aria-label={language === 'zh' ? '关闭预览' : 'Close preview'}
+            aria-label={t('image.close')}
             aria-keyshortcuts="Escape"
           >
             <X size={16} />
           </button>
         </header>
         {(gallery.loading || gallery.error || gallery.skipped > 0 || gallery.more) && <div className="image-preview-gallery-status" role="status">
-          <span>{gallery.error ? (language === 'zh' ? '无法读取图片列表，可继续查看已有图片。' : 'Unable to read the image list. Available images can still be viewed.')
-            : gallery.loading ? (language === 'zh' ? '正在查找图片…' : 'Finding images…')
-            : gallery.skipped ? (language === 'zh' ? '部分目录无法读取。' : 'Some folders could not be read.') : ''}</span>
-          {gallery.more && <button type="button" onClick={gallery.loadMore}>{language === 'zh' ? '加载更多' : 'Load more'}</button>}
-          {gallery.error && <button type="button" onClick={gallery.retry}>{language === 'zh' ? '重试' : 'Retry'}</button>}
+          <span>{gallery.error ? (t('image.listError'))
+            : gallery.loading ? (t('image.finding'))
+            : gallery.skipped ? (t('image.skippedFolders')) : ''}</span>
+          {gallery.more && <button type="button" onClick={gallery.loadMore}>{t('image.loadMore')}</button>}
+          {gallery.error && <button type="button" onClick={gallery.retry}>{t('common.retry')}</button>}
         </div>}
         <div
           ref={stageRef}
-          className={`image-preview-stage${dragging ? ' is-dragging' : ''}`}
-          aria-description={language === 'zh' ? '滚轮缩放 · 拖动查看' : 'Scroll to zoom · Drag to pan'}
+          className="image-preview-stage" data-dragging={dragging}
+          aria-description={t('image.controls')}
           aria-busy={!ready && !unavailable}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -360,16 +357,17 @@ export function ImagePreviewDialog({
           {gallery.images.length > 1 && <div className="image-preview-navigation"
             onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
             <button type="button" disabled={gallery.index === 0} onClick={() => gallery.move(-1)}
-              aria-label={language === 'zh' ? '上一张图片' : 'Previous image'} aria-keyshortcuts="ArrowLeft"><ChevronLeft size={22} /></button>
+              aria-label={t('image.previous')} aria-keyshortcuts="ArrowLeft"><ChevronLeft size={22} /></button>
             <button type="button" disabled={gallery.index === gallery.images.length - 1} onClick={() => gallery.move(1)}
-              aria-label={language === 'zh' ? '下一张图片' : 'Next image'} aria-keyshortcuts="ArrowRight"><ChevronRight size={22} /></button>
+              aria-label={t('image.next')} aria-keyshortcuts="ArrowRight"><ChevronRight size={22} /></button>
           </div>}
           {!ready && <p className="image-preview-status" role="status">{unavailable
-            ? language === 'zh' ? '图片无法预览' : 'Image preview unavailable'
-            : language === 'zh' ? '正在加载图片…' : 'Loading image…'}</p>}
+            ? t('image.previewUnavailable')
+            : t('image.loading')}</p>}
           <div
             className="image-preview-canvas"
-            style={{ width: canvasWidth, height: canvasHeight, visibility: ready ? 'visible' : 'hidden',
+            data-ready={ready}
+            style={{ width: canvasWidth, height: canvasHeight,
               transform: `translate3d(${(stageSize.width - canvasWidth * zoom) / 2 + view.x}px, ${(stageSize.height - canvasHeight * zoom) / 2 + view.y}px, 0) scale(${zoom})` }}
           >
             {source && <img

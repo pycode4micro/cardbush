@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import * as api from '../../backend/api';
 import { localConversationBackend, type ConversationBackend } from '../../backend/conversationBackend';
 import type { ConversationRuntime } from '../../backend/conversationRuntime';
@@ -18,7 +19,7 @@ export function subagentConversationBackend({ base = localConversationBackend, r
 }): ConversationBackend {
   const requireContinuation = async (signal?: AbortSignal) => {
     const capabilities = await runtime.client.getCapabilities(signal);
-    if (!capabilities.features.includes('subagent_conversations')) throw new Error('请更新并重启执行此子代理的 CardBush，再继续对话。Update and restart the CardBush host running this subagent to continue.');
+    if (!capabilities.features.includes('subagent_conversations')) throw new Error(uiText()('subagentConversationBackend.update_and_restart_the_cardbush_host_running'));
   };
   return {
     ...base,

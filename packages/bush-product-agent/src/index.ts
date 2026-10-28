@@ -102,7 +102,7 @@ export interface ProductAgentTurnInput {
   userMessageMetadata?: Record<string, unknown>;
   userMessageName?: string;
   /** UI locale is a fallback, never an override of the user's language. */
-  uiLanguage?: "zh" | "en";
+  uiLanguage?: string;
   conversationStyle?: ConversationStyleSettings;
   sourceEnabled?: boolean;
   individuation?: IndividuationSettings;
@@ -366,8 +366,10 @@ function stableRuntimeContext(input: ProductAgentTurnInput, workspaceDir: string
 }
 
 function languageFallback(input: ProductAgentTurnInput): string {
-  if (input.uiLanguage === "zh") return "ui_language_fallback: zh-CN";
-  if (input.uiLanguage === "en") return "ui_language_fallback: en";
+  if (input.uiLanguage) {
+    try { return `ui_language_fallback: ${new Intl.Locale(input.uiLanguage).baseName}`; }
+    catch { return ""; }
+  }
   return "";
 }
 

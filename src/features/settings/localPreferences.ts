@@ -1,4 +1,5 @@
 import { type AppLanguage, type AppLanguageMode } from '../../types';
+import { resolveUiLanguage, uiLanguages } from '../../i18n';
 
 const defaultSidebarWidth = 272;
 
@@ -23,22 +24,22 @@ export function clampSidebarWidth(value: number) {
 
 export function readInitialLanguageMode(): AppLanguageMode {
   const stored = window.localStorage.getItem('cardbush_language_mode');
-  if (stored === 'system' || stored === 'zh' || stored === 'en') {
-    return stored;
+  if (stored === 'system' || uiLanguages.some(pack => pack.locale === stored)) {
+    return stored!;
   }
   const legacy = window.localStorage.getItem('cardbush.language');
-  if (legacy === 'zh' || legacy === 'en') {
-    return legacy;
+  if (uiLanguages.some(pack => pack.locale === legacy)) {
+    return legacy!;
   }
   return 'system';
 }
 
 export function readSystemLanguage(): AppLanguage {
-  return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  return resolveUiLanguage(navigator.language);
 }
 
 export function resolveAppLanguage(mode: AppLanguageMode, systemLanguage: AppLanguage) {
-  return mode === 'system' ? systemLanguage : mode;
+  return resolveUiLanguage(mode === 'system' ? systemLanguage : mode);
 }
 
 export function readDisabledSkillNames() {

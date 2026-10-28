@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Check, MonitorDown, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -10,7 +11,7 @@ import { BrowserSiteIcon } from './BrowserSiteIcon';
 import './browserInstall.css';
 
 function InstallDialog({ language, navigation, onClose }: { language: AppLanguage; navigation: InspectorNavigationState; onClose: () => void }) {
-  const zh = language === 'zh', prefs = useAppCenterPreferences(), dialog = useRef<HTMLDialogElement>(null);
+  const prefs = useAppCenterPreferences(), dialog = useRef<HTMLDialogElement>(null);
   const [info, setInfo] = useState<WebApplicationInfo>(() => websiteApplication(navigation.url, navigation.title, { icon: navigation.faviconUrl })!);
   const [name, setName] = useState<string | null>(null), [busy, setBusy] = useState(true), [pin, setPin] = useState(false), [error, setError] = useState('');
   useEffect(() => { const node = dialog.current; node?.showModal(); return () => node?.close(); }, []);
@@ -28,16 +29,16 @@ function InstallDialog({ language, navigation, onClose }: { language: AppLanguag
       try { installWebApplication({ ...info, title: name?.trim() || info.title }, pin); onClose(); requestAppCenter(); }
       catch (cause) { setError(String(cause)); }
     }}>
-      <header><h2 id="browser-install-title">{zh ? '安装网页应用' : 'Install web app'}</h2><button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={onClose}><X size={18}/></button></header>
+      <header><h2 id="browser-install-title">{uiText(language)('browserInstallButton.installWebApp')}</h2><button type="button" aria-label={uiText(language)('common.close')} onClick={onClose}><X size={18}/></button></header>
       <div className="browser-install-identity"><BrowserSiteIcon url={info.url} icon={info.icon} size={40}/>
-        <label>{zh ? '应用名称' : 'App name'}<input autoFocus required maxLength={80} value={name ?? info.title} onChange={event => setName(event.target.value)} aria-label={zh ? '应用名称' : 'App name'}/></label></div>
+        <label>{uiText(language)('appCenter.appName')}<input autoFocus required maxLength={80} value={name ?? info.title} onChange={event => setName(event.target.value)} aria-label={uiText(language)('appCenter.appName')}/></label></div>
       <p className="browser-install-url" title={info.url}>{info.url}</p>
-      <p>{zh ? '添加到应用中心，之后可直接在 CardBush 中打开。' : 'Add to the app center and open directly in CardBush.'}</p>
+      <p>{uiText(language)('browserInstallButton.addToTheAppCenterAndOpen')}</p>
       <label className="browser-install-pin"><input type="checkbox" checked={pin} disabled={prefs.shortcuts.length >= 4} onChange={event => setPin(event.target.checked)}/>
-        {zh ? '固定到侧栏快捷方式' : 'Pin to sidebar shortcuts'}{prefs.shortcuts.length >= 4 && <small>{zh ? '（已满）' : ' (full)'}</small>}</label>
+        {uiText(language)('browserInstallButton.pinToSidebarShortcuts')}{prefs.shortcuts.length >= 4 && <small>{uiText(language)('browserInstallButton.full')}</small>}</label>
       {error && <p role="alert">{error}</p>}
-      <footer><span role="status">{busy ? (zh ? '正在读取网站信息…' : 'Reading site information…') : ''}</span>
-        <button type="button" onClick={onClose}>{zh ? '取消' : 'Cancel'}</button><button type="submit" disabled={busy || Boolean(error) || name !== null && !name.trim()}>{zh ? '安装' : 'Install'}</button></footer>
+      <footer><span role="status">{busy ? (uiText(language)('browserInstallButton.readingSiteInformation')) : ''}</span>
+        <button type="button" onClick={onClose}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit" disabled={busy || Boolean(error) || name !== null && !name.trim()}>{uiText(language)('browserInstallButton.install')}</button></footer>
     </form>
   </dialog>, document.querySelector('.app') ?? document.body);
 }
@@ -48,7 +49,7 @@ export function BrowserInstallButton({ language, navigation }: { language: AppLa
   useEffect(() => { setOpen(false); }, [url, guestId]);
   if (!guestId || !websiteApplication(url, '') || !window.cardbushDesktop?.browser?.webApplication) return null;
   const installed = prefs.webApps?.some(app => webApplicationMatches(app, url));
-  const label = installed ? (language === 'zh' ? '已安装 · 查看应用中心' : 'Installed · View app center') : (language === 'zh' ? '安装为网页应用' : 'Install as web app');
+  const label = installed ? (uiText(language)('browserInstallButton.installedViewAppCenter')) : (uiText(language)('browserInstallButton.installAsWebApp'));
   return <><button type="button" className={`browser-install-button${installed ? ' installed' : ''}`} title={label} aria-label={label} aria-haspopup="dialog"
     onClick={() => installed ? requestAppCenter() : setOpen(true)}>{installed ? <Check size={15}/> : <MonitorDown size={16}/>}</button>
     {open && navigation && <InstallDialog key={`${guestId}:${url}`} language={language} navigation={navigation} onClose={() => setOpen(false)}/>}</>;

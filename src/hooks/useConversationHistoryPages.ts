@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { fetchSessionMessages, SessionMessagesResult } from '../backend/api';
 import type { ChatMessage } from '../types';
@@ -45,7 +46,7 @@ export function useConversationHistoryPages(input: {
       }
       const result = await current.current.read(id, { includeSuperseded: true, page: { cursor: page.nextCursor }, signal: controller.signal });
       if (controller.signal.aborted || epochs.current.get(id) !== epoch || !current.current.messages[id]) return;
-      if (!result.historyPage || result.historyPage.historyRevision !== page.historyRevision) throw Error('Session history changed. Refresh the conversation.');
+      if (!result.historyPage || result.historyPage.historyRevision !== page.historyRevision) throw Error(uiText()('useConversationHistoryPages.session_history_changed_refresh_the_conversation'));
       if (current.current.messages[id]?.[0] !== baseline[0]) return;
       if (current.current.activeId === id) beforeApply?.();
       current.current.setMessages(value => {

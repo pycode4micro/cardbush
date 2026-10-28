@@ -1,5 +1,6 @@
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
+import { assertUiMessage } from './helpers/ui-message-contract.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
@@ -89,8 +90,8 @@ const bubbleSource = fs.readFileSync(
 const guidanceActivitySource = fs.readFileSync(path.join(process.cwd(), 'src/features/chatMessages/GuidanceActivity.tsx'), 'utf8');
 assert.doesNotMatch(bubbleSource, /guidance-delivery-status|已作为引导发送/);
 assert.doesNotMatch(bubbleSource, /发送中/);
-assert.match(guidanceActivitySource, /等待当前步骤完成/);
-assert.match(guidanceActivitySource, /引导发送失败/);
+assertUiMessage(guidanceActivitySource, 'guidanceActivity.waitingForTheCurrentStep', { zh: '等待当前步骤完成', en: 'Waiting for the current step' });
+assertUiMessage(guidanceActivitySource, 'guidanceActivity.guidanceFailedToSend', { zh: '引导发送失败', en: 'Guidance failed to send' });
 assert.match(guidanceActivitySource, /guidance-retry-button/);
 assert.match(bubbleSource, /isGuidanceBoundaryAssistantMessage\(message\)/);
 assert.match(bubbleSource, /guidanceBoundaryRound \? \([\s\S]*?assistantBody/);

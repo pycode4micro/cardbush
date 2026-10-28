@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import type { RuntimeEvent } from '@cardbush/bush-protocol';
 import { resolveConversationStyle } from '../features/settings/conversationStyle';
 import { readIndividuation } from '../features/settings/individuation';
@@ -36,7 +37,7 @@ export async function createRuntimeShadowConversation(input: {
   const runtimeSessionId = `shadow:${crypto.randomUUID()}`;
   try {
     const source = await runtime.client.getSession(input.sessionId);
-    if (!source) throw new Error('The source conversation does not exist.');
+    if (!source) throw new Error(uiText()('shadowRuntime.the_source_conversation_does_not_exist'));
     const requestedTurnId = input.sourceTurnId?.trim() ?? '';
     const requestedTurnIndex = requestedTurnId
       ? source.turns.findIndex((turn) => turn.turnId === requestedTurnId)
@@ -79,7 +80,7 @@ export async function createRuntimeShadowConversation(input: {
       sessionId: input.sessionId,
       sourceTurnId,
       workspaceDir: String(source.metadata?.projectDir ?? ''),
-      agentName: input.mode === 'fork' ? 'Shadow Fork' : 'Shadow',
+      agentName: input.mode === 'fork' ? uiText()('shadowRuntime.shadow_fork') : uiText()('shadowRuntime.shadow'),
       mode: input.mode,
       status: 'active',
       createdAt: now,
@@ -127,18 +128,18 @@ export async function updateRuntimeShadowConversationMode(
   const runtime = createDesktopRuntimeSession();
   try {
     const state = await resolveShadowState(conversationId, runtime.client);
-    if (!state) throw new Error('The Shadow conversation is closed or unavailable.');
+    if (!state) throw new Error(uiText()('shadowRuntime.the_shadow_conversation_is_closed_or_unavailable'));
     if (state.mode === mode) return publicRecord(state);
     if (activeStreams.has(conversationId)) {
-      throw new Error('Shadow mode cannot change while a Turn is running.');
+      throw new Error(uiText()('shadowRuntime.shadow_mode_cannot_change_while_a_turn'));
     }
     if (modeTransitions.has(conversationId)) {
-      throw new Error('Shadow mode is already changing.');
+      throw new Error(uiText()('shadowRuntime.shadow_mode_is_already_changing'));
     }
     modeTransitions.add(conversationId);
     try {
       const session = await runtime.client.getSession(state.runtimeSessionId);
-      if (!session) throw new Error('The Shadow runtime session is unavailable.');
+      if (!session) throw new Error(uiText()('shadowRuntime.the_shadow_runtime_session_is_unavailable'));
       await runtime.client.updateSessionMetadata({
         sessionId: state.runtimeSessionId,
         expectedRevision: session.revision,
@@ -148,7 +149,7 @@ export async function updateRuntimeShadowConversationMode(
         },
       });
       state.mode = mode;
-      state.agentName = mode === 'fork' ? 'Shadow Fork' : 'Shadow';
+      state.agentName = mode === 'fork' ? uiText()('shadowRuntime.shadow_fork') : uiText()('shadowRuntime.shadow');
       state.updatedAt = new Date().toISOString();
       state.raw = { ...state.raw, mode };
       return publicRecord(state);
@@ -175,12 +176,12 @@ export async function streamRuntimeShadowConversationMessage(
   let streamLease: ReturnType<typeof activeStreams.get>;
   try {
     const state = await resolveShadowState(request.conversationId, runtime.client);
-    if (!state) throw new Error('The Shadow conversation is closed or unavailable.');
+    if (!state) throw new Error(uiText()('shadowRuntime.the_shadow_conversation_is_closed_or_unavailable'));
     if (modeTransitions.has(request.conversationId)) {
-      throw new Error('Shadow mode is changing. Try again after it settles.');
+      throw new Error(uiText()('shadowRuntime.shadow_mode_is_changing_try_again_after'));
     }
     if (activeStreams.has(request.conversationId)) {
-      throw new Error('This Shadow already has an active Turn.');
+      throw new Error(uiText()('shadowRuntime.this_shadow_already_has_an_active_turn'));
     }
     let resolveSettled: () => void = () => undefined;
     const settled = new Promise<void>((resolve) => {
@@ -197,11 +198,11 @@ export async function streamRuntimeShadowConversationMessage(
     // A newly opened window can load newer assets while the host is still old.
     // Never expose unrestricted Shadow tools against a host missing admission.
     if (!capabilities.features.includes('shadow_execution_policy')) {
-      throw Object.assign(new Error('Restart CardBush to use the updated Shadow execution policy.'), {
+      throw Object.assign(new Error(uiText()('shadowRuntime.restart_cardbush_to_use_the_updated_shadow')), {
         code: 'shadow_runtime_update_required',
       });
     }
-    if (!source) throw new Error('The source conversation is no longer available.');
+    if (!source) throw new Error(uiText()('shadowRuntime.the_source_conversation_is_no_longer_available'));
     const frozenTurnSequence = Number(state.raw.sourceThroughTurnSequence);
     const sourceTurns = Number.isSafeInteger(frozenTurnSequence) && frozenTurnSequence >= 0
       ? source.turns.filter((turn) => turn.turnSequence <= frozenTurnSequence)
@@ -214,7 +215,7 @@ export async function streamRuntimeShadowConversationMessage(
     if (state.sourceTurnId && !sourceTurns.some((turn) => turn.turnId === state.sourceTurnId)) {
       state.status = 'stale';
       state.updatedAt = new Date().toISOString();
-      throw new Error('The source Turn used by this Shadow is no longer available.');
+      throw new Error(uiText()('shadowRuntime.the_source_turn_used_by_this_shadow'));
     }
     const frozenSuperseded = new Set(
       Array.isArray(state.raw.sourceSupersededMessageIds)
@@ -314,13 +315,13 @@ export async function streamRuntimeShadowConversationMessage(
     if (streamResult.status === 'rejected') throw streamResult.reason;
     if (commandResult.status === 'rejected' && !terminal) throw commandResult.reason;
     terminal ??= commandResult.status === 'fulfilled' ? commandResult.value : undefined;
-    if (!terminal) throw new Error('Shadow Turn ended without a terminal fact.');
+    if (!terminal) throw new Error(uiText()('shadowRuntime.shadow_turn_ended_without_a_terminal_fact'));
     const snapshot = await runtime.client.getSession(state.runtimeSessionId, controller.signal);
     const finalId = terminal.payload.finalMessageId || assistantMessageId;
     const final = snapshot?.turns.flatMap((turn) => turn.messages)
       .find((item) => item.messageId === finalId);
     const content = final?.message.role === 'assistant' ? final.message.content : '';
-    if (!content) throw new Error('Shadow Turn returned no assistant response.');
+    if (!content) throw new Error(uiText()('shadowRuntime.shadow_turn_returned_no_assistant_response'));
     state.updatedAt = terminal.createdAt;
     request.onDone?.({ id: finalId, content, createdAt: terminal.createdAt });
   } finally {
@@ -356,7 +357,7 @@ async function resolveShadowState(
     sessionId: sourceSessionId,
     sourceTurnId: String(session.metadata?.sourceTurnId ?? ''),
     workspaceDir: String(session.metadata?.projectDir ?? ''),
-    agentName: session.metadata?.shadowMode === 'fork' ? 'Shadow Fork' : 'Shadow',
+    agentName: session.metadata?.shadowMode === 'fork' ? uiText()('shadowRuntime.shadow_fork') : uiText()('shadowRuntime.shadow'),
     mode: session.metadata?.shadowMode === 'fork' ? 'fork' : 'readonly',
     status: 'active',
     createdAt: session.createdAt,

@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import {
   BUSH_MCP_SNAPSHOT_PROTOCOL,
   mcpSnapshotSchema,
@@ -168,14 +169,14 @@ async function productHostMcp(
   config?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const execute = window.cardbushDesktop?.productHostCommand;
-  if (!execute) throw new Error('CardBush Product Host is unavailable.');
+  if (!execute) throw new Error(uiText()('productMcp.cardbush_product_host_is_unavailable'));
   const response = await execute({
     protocol: 'cardbush.product_host_ipc.v1',
     kind,
     ...(config ? { config } : {}),
   });
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
-    throw new Error('CardBush Product Host returned an invalid MCP response.');
+    throw new Error(uiText()('productMcp.cardbush_product_host_returned_an_invalid_mcp'));
   }
   const envelope = response as Record<string, unknown>;
   if (envelope.ok !== true) {
@@ -184,7 +185,7 @@ async function productHostMcp(
     throw new Error(String(error.message ?? 'Product MCP configuration failed.'));
   }
   if (!envelope.value || typeof envelope.value !== 'object' || Array.isArray(envelope.value)) {
-    throw new Error('Product MCP configuration payload is invalid.');
+    throw new Error(uiText()('productMcp.product_mcp_configuration_payload_is_invalid'));
   }
   return envelope.value as Record<string, unknown>;
 }

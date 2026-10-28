@@ -12,7 +12,12 @@ export function VoiceCallButton({ callEnabled, children, onClick, disabled, ...p
   const clear = () => { clearTimeout(timer.current); timer.current = undefined; setPressing(false); };
   useLayoutEffect(() => {
     setPressing(false);
-    return () => { clearTimeout(timer.current); timer.current = undefined; origin.current = null; held.current = true; };
+    return () => {
+      // Suppress a release only when a gesture was actually in progress. An
+      // idle scope change (or StrictMode cleanup) must not eat the next click.
+      if (timer.current !== undefined || origin.current) held.current = true;
+      clearTimeout(timer.current); timer.current = undefined; origin.current = null;
+    };
   }, [context?.session, context?.target.environment, context?.target.sessionId]);
   useLayoutEffect(() => { if (disabled || !callEnabled || !context) { if (timer.current) held.current = true; clear(); } }, [disabled, callEnabled, context === null]);
   const begin = () => {

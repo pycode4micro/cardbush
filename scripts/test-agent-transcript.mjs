@@ -422,6 +422,33 @@ test('vision input is opt-in and requires the remote capability, including on en
   }
 });
 
+test('remote queue restores image and file references for previews and editing without rewriting the job', { timeout: 5000 }, async () => {
+  const jobs = [{ id: 'queued-images', sessionId, status: 'queued', createdAt: now, text: '查看这些图片',
+    attachments: [
+      { id: 'a', type: 'image', name: '参考.png', path: 'C:/远程目录/参考.png' },
+      { id: 'b', type: 'image', name: '参考.png', path: 'C:/远程目录/参考.png' },
+      { id: 'c', type: 'document', name: '说明.pdf', path: '/srv/说明.pdf' },
+    ] }, { id: 'already-referenced', sessionId, status: 'queued', createdAt: now, text: '@/srv/only.png\n保留正文',
+    attachments: [{ id: 'd', type: 'image', path: '/srv/only.png', name: 'only.png' }] }];
+  const before = structuredClone(jobs);
+  const call = async (operation, input) => {
+    if (operation === 'chat.queue') return { jobs, locked: false, revision: 1 };
+    assert.equal(operation, 'runtime.command'); assert.equal(input.kind, 'runtime.get_capabilities');
+    return { protocol: 'bush.runtime_capabilities.v1', hostId: 'queue-images', runtimeVersion: 'test',
+      eventProtocol: 'bush.runtime_event.v1', supportedEvents: [], supportedCommands: [], features: [] };
+  };
+  const remote = api.createAgentConversationBackend(call, 'queue-images', watch);
+  let dispose;
+  try {
+    const state = await new Promise((resolve, reject) => { dispose = remote.backend.watchSession(sessionId, resolve, reject); });
+    assert.deepEqual(plain(state.queued.map(item => ({ id: item.id, text: item.text }))), [
+      { id: 'queued-images', text: '@C:/远程目录/参考.png\n@/srv/说明.pdf\n查看这些图片' },
+      { id: 'already-referenced', text: '@/srv/only.png\n保留正文' },
+    ]);
+    assert.deepEqual(jobs, before, 'the durable payload used by Guide is unchanged');
+  } finally { dispose?.(); }
+});
+
 test('changing vision affects new submissions but preserves an unconfirmed request exactly', async () => {
   const received = [];
   const call = async (operation, input) => {

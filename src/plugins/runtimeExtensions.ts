@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { RuntimeRendererExtension, RuntimeRendererHost, RuntimeRendererSnapshot } from '@cardbush/bush-runtime';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
@@ -17,7 +18,7 @@ function dispose(entry: Entry) {
 function snapshot(entry: Entry) {
   try {
     const value = entry.extension!.getSnapshot();
-    if (!value || typeof value.title !== 'string' || typeof value.selectedId !== 'string' || !Array.isArray(value.choices) || value.choices.some(choice => !choice || typeof choice.id !== 'string' || typeof choice.name !== 'string' || typeof choice.description !== 'string')) throw new Error('Invalid plugin selection state.');
+    if (!value || typeof value.title !== 'string' || typeof value.selectedId !== 'string' || !Array.isArray(value.choices) || value.choices.some(choice => !choice || typeof choice.id !== 'string' || typeof choice.name !== 'string' || typeof choice.description !== 'string')) throw new Error(uiText()('runtimeExtensions.invalid_plugin_selection_state'));
     entry.snapshot = value;
   } catch (error) { entry.snapshot = undefined; entry.error = error instanceof Error ? error.message : String(error); }
 }
@@ -55,9 +56,9 @@ export function refreshRuntimeRendererPlugins(): Promise<void> {
         const url = URL.createObjectURL(new Blob([pkg.source], { type: 'text/javascript' }));
         let module;
         try { module = await import(/* @vite-ignore */ url); } finally { URL.revokeObjectURL(url); }
-        if (module.apiVersion !== 1 || typeof module.default !== 'function') throw new Error('Unsupported plugin UI API.');
+        if (module.apiVersion !== 1 || typeof module.default !== 'function') throw new Error(uiText()('runtimeExtensions.unsupported_plugin_ui_api'));
         const extension: RuntimeRendererExtension<HTMLElement> = module.default(hostFor(pkg.id));
-        if (extension?.apiVersion !== 1 || ['mount', 'subscribe', 'getSnapshot', 'load', 'select', 'dispose'].some(key => typeof (extension as unknown as Record<string, unknown>)[key] !== 'function')) throw new Error('Invalid plugin UI contribution.');
+        if (extension?.apiVersion !== 1 || ['mount', 'subscribe', 'getSnapshot', 'load', 'select', 'dispose'].some(key => typeof (extension as unknown as Record<string, unknown>)[key] !== 'function')) throw new Error(uiText()('runtimeExtensions.invalid_plugin_ui_contribution'));
         next.extension = extension;
         snapshot(next);
         if (next.error) throw new Error(next.error);

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 /** PCM16/16 kHz capture with browser AEC. AudioWorklet avoids main-thread sampling drift. */
 export class RealtimeVoiceAudio {
   private input?: AudioContext;
@@ -17,12 +18,12 @@ export class RealtimeVoiceAudio {
       this.output = new AudioContext({ sampleRate: 24000 });
       this.outputGain = this.output.createGain(); this.outputGain.gain.value = this.outputMuted ? 0 : 1;
       this.outputGain.connect(this.output.destination);
-      if (this.input.sampleRate !== 16000) throw Error('当前音频设备不支持 16 kHz 实时采集。');
+      if (this.input.sampleRate !== 16000) throw Error(uiText()('realtimeVoiceAudio.this_audio_device_does_not_support_16'));
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true,
         autoGainControl: true, channelCount: 1, ...(microphoneId ? { deviceId: { exact: microphoneId } } : {}) }, video: false });
       if (this.closed) { stream.getTracks().forEach(track => track.stop()); return; }
       this.stream = stream;
-      for (const track of stream.getAudioTracks()) track.onended = () => { if (!this.closed) this.failed(Error('麦克风已断开，请重新开始通话。')); };
+      for (const track of stream.getAudioTracks()) track.onended = () => { if (!this.closed) this.failed(Error(uiText()('realtimeVoiceAudio.the_microphone_was_disconnected_start_the_call'))); };
       await this.input.audioWorklet.addModule(new URL('voice/realtime-capture-worklet.js', document.baseURI).href);
       if (this.closed) return;
       this.node = new AudioWorkletNode(this.input, 'cardbush-realtime-capture');
@@ -50,11 +51,11 @@ export class RealtimeVoiceAudio {
     const context = this.output; if (!context || this.closed) return;
     const bytes = atob(pcm), view = new DataView(new ArrayBuffer(bytes.length));
     for (let i=0;i<bytes.length;i++) view.setUint8(i,bytes.charCodeAt(i));
-    if (bytes.length%2 || rate!==24000) throw Error('不支持的实时语音格式。');
+    if (bytes.length%2 || rate!==24000) throw Error(uiText()('realtimeVoiceAudio.unsupported_realtime_audio_format'));
     if (!bytes.length) return;
     // Synthesis may run much faster than playback, especially for long replies. Ten seconds
     // of scheduled speech is normal, not a transport failure. Bound PCM to about 6 MiB instead.
-    if (Math.max(0,this.cursor-context.currentTime)+bytes.length/2/rate>120) throw Error('实时语音播放积压超过两分钟，请重新开始通话。');
+    if (Math.max(0,this.cursor-context.currentTime)+bytes.length/2/rate>120) throw Error(uiText()('realtimeVoiceAudio.realtime_audio_playback_is_more_than_two'));
     const buffer=context.createBuffer(1,bytes.length/2,rate), channel=buffer.getChannelData(0);
     for (let i=0;i<channel.length;i++) channel[i]=view.getInt16(i*2,true)/32768;
     const source=context.createBufferSource(); source.buffer=buffer; source.connect(this.outputGain ?? context.destination);

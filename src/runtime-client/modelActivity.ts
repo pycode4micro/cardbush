@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { providerStreamActivity, providerActivityLabel, type ProviderActivity, type RuntimeEvent } from '@cardbush/bush-protocol';
 
 type Activity = ProviderActivity | 'compacting' | 'retrying' | '';
@@ -29,10 +30,10 @@ export function publishModelActivity(event: RuntimeEvent): void {
 }
 
 export function subscribeModelActivity(listener: () => void): () => void { listeners.add(listener); return () => { listeners.delete(listener); }; }
-export function modelActivityLabel(turnId: string | undefined, language: 'zh' | 'en'): string {
+export function modelActivityLabel(turnId: string | undefined, language: string): string {
   const activity = turnId ? turns.get(turnId)?.activity : undefined;
   if (!activity) return '';
-  if (activity === 'compacting') return language === 'zh' ? '整理上下文' : 'Compacting context';
-  if (activity === 'retrying') return language === 'zh' ? '等待重试' : 'Waiting to retry';
+  if (activity === 'compacting') return uiText(language)('modelActivity.compactingContext');
+  if (activity === 'retrying') return uiText(language)('modelActivity.waitingToRetry');
   return providerActivityLabel(activity, language);
 }

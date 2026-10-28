@@ -629,3 +629,8 @@
 .file-memo-reference-error > small { font-size: 0.85em; }
 .file-memo-retry { border: 0; padding: 0 2px; color: var(--accent, #3984f5); background: transparent; font: inherit; font-size: 0.85em; cursor: pointer; }
 .file-memo-retry:hover { text-decoration: underline; }
+
+.runtime-plugin-surface { display: contents; }
+.runtime-plugin-surface[hidden] { display: none; }
+.shadow-maximize-icon { --shadow-maximize-icon-size: 13px; width: var(--shadow-maximize-icon-size); height: var(--shadow-maximize-icon-size); }
+.shadow-maximize-icon[data-maximized="true"] { --shadow-maximize-icon-size: 12px; }

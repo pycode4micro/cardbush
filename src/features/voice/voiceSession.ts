@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { VoiceDesktopApi, VoiceSettings } from '../../../electron/voiceTypes';
 import type { ChatMessage } from '../../types';
 import { SpokenTranscript } from './speechText';
@@ -18,7 +19,7 @@ export interface VoiceTarget {
   onMicrophoneMuteChange?(muted: boolean): void;
   agent?: import('./realtimeAgentBridge').RealtimeAgentExecutor;
   environment: string; sessionId: string; messages: ChatMessage[]; sending: boolean; stopping?: boolean; activeTurnId?: string | null;
-  language?: 'zh' | 'en'; waiting?: boolean;
+  language?: string; waiting?: boolean;
   send(text: string, options?: { immediate?: boolean }): Promise<void | boolean>;
 }
 export interface VoiceState {
@@ -81,8 +82,11 @@ export class VoiceSession {
     capture: (mode, callbacks, microphoneId) => new VoiceCapture(mode, callbacks, microphoneId), playback: api => new VoicePlayback(api),
   }) {}
   snapshot = () => this.state;
+  matchesTarget(target: Pick<VoiceTarget, 'environment' | 'sessionId'>) {
+    return this.target?.environment === target.environment && this.target?.sessionId === target.sessionId;
+  }
   ownsVoice(target: Pick<VoiceTarget, 'environment' | 'sessionId'>) {
-    return this.state.mode !== 'idle' && this.target?.environment === target.environment && this.target?.sessionId === target.sessionId;
+    return this.state.mode !== 'idle' && this.matchesTarget(target);
   }
   ownsCall(target: Pick<VoiceTarget, 'environment' | 'sessionId'>) {
     return this.state.mode === 'call' && this.ownsVoice(target);
@@ -115,13 +119,13 @@ export class VoiceSession {
     const phrases = this.spoken.update(target.messages, target.activeTurnId, target.sending);
     if (phrases.length) {
       // Bound queued speech; very long outputs remain fully available as text.
-      if (this.speechQueue.length + phrases.length > 80) { this.interrupt(); this.patch({ error: '回复较长，已暂停朗读，完整内容保留在对话中。' }); return; }
+      if (this.speechQueue.length + phrases.length > 80) { this.interrupt(); this.patch({ error: uiText()('voiceSession.speech_was_paused_because_the_reply_is') }); return; }
       this.speechQueue.push(...phrases); void this.drain(this.playbackEpoch);
     }
   }
   /** Leaving a recording view cancels its capture/ASR, while calls live at app scope. */
   releaseRecording(target: Pick<VoiceTarget, 'environment' | 'sessionId'>) {
-    if (this.state.mode === 'recording' && this.target?.environment === target.environment && this.target?.sessionId === target.sessionId) this.end();
+    if ((this.state.mode === 'recording' || this.state.mode === 'idle' && this.state.error) && this.matchesTarget(target)) this.end();
   }
   async start(mode: 'recording' | 'call', insertTranscript?: (text: string) => void) {
     if (this.state.mode !== 'idle') return;
@@ -132,7 +136,7 @@ export class VoiceSession {
     this.spoken.reset(this.target?.messages ?? []);
     this.patch({ ...initial, mode, phase: 'connecting', sessionId: this.target?.sessionId, assistant: Boolean(this.target?.assistant), startedAt: Date.now(), agentWorking: Boolean(this.target?.sending), agentWaiting: Boolean(this.target?.waiting) });
     try {
-      if (!this.api) throw Error('语音功能需要在 CardBush 桌面应用中使用。');
+      if (!this.api) throw Error(uiText()('voiceSession.voice_features_require_the_cardbush_desktop_app'));
       if (mode === 'call' && this.target?.agent?.pin) {
         const pinned = await this.target.agent.pin(this.target);
         if (epoch !== this.epoch) return;
@@ -152,8 +156,8 @@ export class VoiceSession {
         if (epoch !== this.epoch) return;
         if (config.mode === 'realtime') {
           this.patch({ realtime: true, voice: this.settings.voice });
-          if (this.settings.speakerLockEnabled) throw Error('实时通话不支持声纹锁定，请关闭锁定或选择「转写 + Agent + 朗读」模式。');
-          if (!config.hasApiKey) throw Error('请在语音设置中填写火山实时语音 API Key，或选择「转写 + Agent + 朗读」通话模式。');
+          if (this.settings.speakerLockEnabled) throw Error(uiText()('voiceSession.realtime_calls_do_not_support_voice_lock'));
+          if (!config.hasApiKey) throw Error(uiText()('voiceSession.enter_a_volcengine_realtime_voice_api_key'));
           this.realtime = new RealtimeVoiceCall(this.api.realtime,
             patch => { if (epoch === this.epoch) this.patch(patch); },
             submitting => { if (epoch === this.epoch && submitting && !this.target?.sessionId) this.sendingFirst = true; });
@@ -166,31 +170,31 @@ export class VoiceSession {
       if (this.settings.speakerLockEnabled) {
         const model = await this.api.modelStatus('speaker');
         if (epoch !== this.epoch) return;
-        if (model.state !== 'installed') throw Error('声纹锁定已开启，请安装声纹模型或在语音设置中关闭锁定。');
+        if (model.state !== 'installed') throw Error(uiText()('voiceSession.voice_lock_is_enabled_install_the_voiceprint'));
         const status = await this.api.speakerStatus();
         if (epoch !== this.epoch) return;
-        if (status.enabled && !status.enrolled) throw Error('当前声纹尚未录入完整，请在语音设置中完成录入。');
+        if (status.enabled && !status.enrolled) throw Error(uiText()('voiceSession.the_voiceprint_profile_is_incomplete_finish_enrollment'));
         this.settings.speakerLockEnabled = status.enabled;
       }
       const recognition = this.settings.recognitionEngine ?? this.settings.engine;
-      if ((recognition === 'cloud' || mode === 'call' && this.settings.engine === 'cloud') && !this.settings.hasApiKey) throw Error('请配置云端语音 API Key，或在设置中选择本地语音。');
+      if ((recognition === 'cloud' || mode === 'call' && this.settings.engine === 'cloud') && !this.settings.hasApiKey) throw Error(uiText()('voiceSession.configure_a_cloud_voice_api_key_or'));
       if (recognition === 'sensevoice') {
         const model = await this.api.modelStatus();
         if (epoch !== this.epoch) return;
-        if (model.state !== 'installed') throw Error('请在「语音设置」中安装本地识别模型，或选择其他识别方式。');
+        if (model.state !== 'installed') throw Error(uiText()('voiceSession.install_a_local_recognition_model_in_voice'));
       }
       if (mode === 'call' && this.settings.engine === 'kokoro') {
         const model = await this.api.modelStatus('speech');
         if (epoch !== this.epoch) return;
-        if (model.state !== 'installed') throw Error('请在「语音设置」中安装本地自然音色，或选择其他朗读方式。');
+        if (model.state !== 'installed') throw Error(uiText()('voiceSession.install_a_local_natural_voice_in_voice'));
       }
       if (recognition === 'system' || mode === 'call' && this.settings.engine === 'system') {
         const capabilities = await this.api.capabilities();
         if (epoch !== this.epoch) return;
-        if (!capabilities.available) throw Error(capabilities.error || '本地语音组件不可用。');
-        if (recognition === 'system' && !capabilities.recognizers.some(item => item.language === this.settings!.language)) throw Error('未安装该语言的本地语音识别引擎，请在 Windows 语言设置中安装语音识别组件。');
+        if (!capabilities.available) throw Error(capabilities.error || uiText()('voiceSession.local_voice_components_are_unavailable'));
+        if (recognition === 'system' && !capabilities.recognizers.some(item => item.language === this.settings!.language)) throw Error(uiText()('voiceSession.no_local_recognizer_is_installed_for_this'));
         const selectedId = this.settings.voice === 'female' ? this.settings.systemFemaleVoice : this.settings.systemMaleVoice;
-        if (mode === 'call' && this.settings.engine === 'system' && !capabilities.voices.some(item => item.language === this.settings!.language && item.gender === this.settings!.voice && (!selectedId || item.id === selectedId))) throw Error('未安装所选语言的男声或女声，请在语音设置中选择已有音色或安装 Windows 语音包。');
+        if (mode === 'call' && this.settings.engine === 'system' && !capabilities.voices.some(item => item.language === this.settings!.language && item.gender === this.settings!.voice && (!selectedId || item.id === selectedId))) throw Error(uiText()('voiceSession.the_selected_voice_is_not_installed_for'));
       }
       this.patch({ voice: this.settings.voice, speakerLocked: Boolean(this.settings.speakerLockEnabled) });
       if (mode === 'call') this.input = new VoiceTurnBuffer(
@@ -213,15 +217,23 @@ export class VoiceSession {
           if (mode === 'recording' && !this.manualSend) { this.patch({ phase: 'recorded' }); return; }
           this.queueClip(blob, epoch, '', timing);
         },
-        error: message => { if (epoch === this.epoch) { this.capture?.close(); this.capture = undefined; this.interrupt(); this.patch({ error: message, muted: true, phase: 'idle' }); this.syncCapture(); } },
+        error: message => {
+          if (epoch !== this.epoch) return;
+          if (mode === 'recording') { this.end(message); return; }
+          this.capture?.close(); this.capture = undefined; this.interrupt(); this.patch({ error: message, muted: true, phase: 'idle' }); this.syncCapture();
+        },
       }, this.settings.microphoneId);
       await this.capture.start();
       if (epoch === this.epoch) { this.patch({ phase: mode === 'recording' ? 'recording' : 'listening' }); this.syncCapture(); }
     } catch (error) {
       if (epoch !== this.epoch) return;
+      const message = voiceError(error, uiText()('voiceSession.could_not_start_voice'));
+      // A device/startup failure has no recording to retry. Release ownership;
+      // keep only the notice, so the next click starts a fresh attempt.
+      if (mode === 'recording') { this.end(message); return; }
       this.realtime?.close();
       this.capture?.close(); this.capture = undefined; this.player?.close();
-      this.patch({ error: voiceError(error, '无法启动语音。'), phase: 'idle' });
+      this.patch({ error: message, phase: 'idle' });
     }
   }
   finishRecording() {
@@ -248,13 +260,13 @@ export class VoiceSession {
   private async commitTurn(draft: VoiceTurnDraft, epoch: number) {
     if (isAmbiguousVoiceFragment(draft.text)) {
       this.finishingInput = false; this.lastClip = undefined;
-      this.patch({ speakerNotice: this.target?.language === 'en' ? 'Unclear speech ignored; keep talking' : '已忽略模糊语音，可以继续说' });
+      this.patch({ speakerNotice: uiText(this.target?.language)('voiceSession.unclearSpeechIgnoredKeepTalking') });
       this.syncCapture(); return;
     }
     try { await this.sendInput(draft.text, epoch); }
     catch (error) {
       if (epoch !== this.epoch) return;
-      this.patch({ error: voiceError(error, '消息未发送，识别内容已保留。'), retryAvailable: true, muted: true }); this.syncCapture();
+      this.patch({ error: voiceError(error, uiText()('voiceSession.the_message_was_not_sent_recognized_text')), retryAvailable: true, muted: true }); this.syncCapture();
     }
   }
   private async sendInput(text: string, epoch: number) {
@@ -264,7 +276,7 @@ export class VoiceSession {
       // The callback belongs to the composer that started capture; navigation cancels it.
       this.failedText = text;
       this.patch({ transcript: text });
-      if (!this.insertTranscript) throw Error('输入框已不可用，转写内容已保留。');
+      if (!this.insertTranscript) throw Error(uiText()('voiceSession.the_composer_is_unavailable_the_transcript_was'));
       this.insertTranscript(text);
       this.end();
       return;
@@ -276,7 +288,7 @@ export class VoiceSession {
     try {
       const accepted = await this.target?.send(text, this.state.mode === 'call' ? { immediate: true } : undefined);
       if (epoch !== this.epoch) return;
-      if (accepted === false) throw Error('消息未发送，转写已保留，可重试。');
+      if (accepted === false) throw Error(uiText()('voiceSession.the_message_was_not_sent_the_transcript'));
       this.failedText = ''; this.lastClip = undefined;
     } finally {
       if (epoch === this.epoch) {
@@ -305,22 +317,22 @@ export class VoiceSession {
         if (epoch !== this.epoch) return;
         if (result.speaker) {
           this.lastClip = undefined; this.failedText = '';
-          if (this.state.mode === 'recording') throw Error('声纹未通过，请由录入者说完整一句后重新录音。');
-          this.patch({ speakerNotice: this.target?.language === 'en' ? 'Unverified voice ignored' : result.speaker === 'uncertain' ? '语音不足，未打断播报' : '已忽略未匹配的人声' });
+          if (this.state.mode === 'recording') throw Error(uiText()('voiceSession.voice_verification_failed_ask_the_enrolled_speaker'));
+          this.patch({ speakerNotice: uiText(this.target?.language)(result.speaker === 'uncertain' ? 'voice.uncertainIgnored' : 'voice.unmatchedIgnored') });
           return;
         }
-        if (!result.text.trim()) { if (this.state.mode === 'recording') throw Error('没有识别到语音，请取消后重新录音。'); return; }
+        if (!result.text.trim()) { if (this.state.mode === 'recording') throw Error(uiText()('voiceSession.no_speech_was_recognized_cancel_and_record')); return; }
         // A configured lock still requires proof for THIS clip. Removing the
         // confirmation UI must not turn a missing verification into permission.
         if (!retryText && this.state.mode === 'call' && this.settings?.speakerLockEnabled && result.speakerVerified !== true) {
           this.lastClip = undefined; this.failedText = '';
-          this.patch({ speakerNotice: this.target?.language === 'en' ? 'Unverified voice ignored' : '已忽略未经声纹验证的人声' });
+          this.patch({ speakerNotice: uiText(this.target?.language)('voiceSession.unverifiedVoiceIgnored') });
           return;
         }
         if (buffered) {
           if (isVoicePlaybackEcho(result.text, this.recentSpeech.filter(item => Date.now() - item.at < 20_000).map(item => item.text))) {
             this.lastClip = undefined; this.failedText = '';
-            this.patch({ speakerNotice: this.target?.language === 'en' ? 'Playback echo ignored; keep talking' : '已忽略疑似播报回声，可以继续说' });
+            this.patch({ speakerNotice: uiText(this.target?.language)('voiceSession.playbackEchoIgnoredKeepTalking') });
             return;
           }
           this.input?.append(result.text, result.speakerVerified === true);
@@ -332,7 +344,7 @@ export class VoiceSession {
           this.inputEpoch++; this.lastClip = blob;
           // Pause a failed call instead of silently losing utterances or auto-retrying sends.
           if (this.state.mode === 'call') { this.finishingInput = false; this.patch({ muted: true }); }
-          this.patch({ error: voiceError(error, '语音转写失败。'), retryAvailable: true });
+          this.patch({ error: voiceError(error, uiText()('voiceSession.voice_transcription_failed')), retryAvailable: true });
           this.syncCapture();
         }
       } finally {
@@ -414,7 +426,7 @@ export class VoiceSession {
         await this.player.speak(phrase, this.state.voice);
         spoken.at = Date.now();
       }
-    } catch (error) { if (epoch === this.playbackEpoch) { this.speechQueue = []; this.patch({ error: voiceError(error, '语音播放失败，文字回复仍会正常显示。请检查语音设置。') }); } }
+    } catch (error) { if (epoch === this.playbackEpoch) { this.speechQueue = []; this.patch({ error: voiceError(error, uiText()('voiceSession.speech_playback_failed_text_replies_remain_available')) }); } }
     finally { if (epoch === this.playbackEpoch) this.patch({ speaking: false }); }
   }
   async setVoice(voice: 'female' | 'male') {
@@ -424,13 +436,13 @@ export class VoiceSession {
       if (this.settings.engine === 'system' && !this.realtime) {
         const capabilities = await this.api.capabilities();
         if (epoch !== this.epoch) return;
-        if (!capabilities.voices.some(item => item.language === this.settings!.language && item.gender === voice)) throw Error('未安装该语言的所选系统音色，请先安装 Windows 语音包。');
+        if (!capabilities.voices.some(item => item.language === this.settings!.language && item.gender === voice)) throw Error(uiText()('voiceSession.the_selected_system_voice_is_not_installed'));
       }
       const settings = await this.api.saveSettings({ ...this.settings, voice });
       if (epoch === this.epoch) { this.settings = settings; this.patch({ voice }); await this.realtime?.setVoice(voice); }
-    } catch (error) { if (epoch === this.epoch) this.patch({ error: voiceError(error, '音色保存失败。') }); }
+    } catch (error) { if (epoch === this.epoch) this.patch({ error: voiceError(error, uiText()('voiceSession.could_not_save_the_voice')) }); }
   }
-  end() {
+  end(error = '') {
     clearInterval(this.refreshTimer); this.refreshTimer = undefined;
     void this.api?.setCallActive?.(false).catch(() => {});
     this.realtime?.close(); this.realtime = undefined;
@@ -441,7 +453,7 @@ export class VoiceSession {
     this.requests.clear(); this.pending = 0; this.serial = Promise.resolve(); this.lastClip = undefined; this.failedText = '';
     this.spoken.reset([]); this.recentSpeech = []; this.settingsOpen = false;
     this.sendingFirst = false; this.insertTranscript = undefined; if (active === this) active = undefined;
-    this.patch({ ...initial });
+    this.patch({ ...initial, error });
   }
 }
 

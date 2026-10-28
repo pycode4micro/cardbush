@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { uiText } = require('@cardbush/platform/i18n');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
@@ -102,7 +103,7 @@ module.exports = async ({run, until, pause, window, root}) => {
   `);
   await until("document.querySelectorAll('.loop-subagent-preview').length===2 && document.querySelectorAll('.tool-image-thumbnail img').length===4", 'only dispatched children and images appear in preview groups');
   assert.equal(await run("document.querySelectorAll('.loop-subagent-preview[data-execution-id=wait]').length"), 0, 'await never creates child cards, even when its result contains task IDs');
-  assert.match(await run("document.querySelector('.tool-execution-block').textContent"), /等待任务结果/, 'await remains in the ordinary activity list');
+  assert.ok((await run("document.querySelector('.tool-execution-block').textContent")).includes(uiText('zh')('toolExecutionState.wait_task_results')), 'await remains in the ordinary activity list with its language-pack action');
   await until("[...document.querySelectorAll('.tool-image-thumbnail img')].every(img=>img.complete&&img.naturalWidth===240)", 'all thumbnails decode');
   assert.match(await run("document.querySelector('.loop-image-previews .loop-preview-summary').textContent"), /已查看 4 张图像/);
   assert.match(await run("document.querySelector('.loop-subagent-previews .loop-preview-summary').textContent"), /2 个子 Agent/);

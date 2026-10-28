@@ -24,7 +24,7 @@ export function mcpAppDocument(view: McpAppView, language: string, theme = mcpAp
   const legacy = view.meta['openai/widgetCSP'] ?? {};
   const resources = origins(csp.resourceDomains ?? legacy.resource_domains);
   const policy = `default-src 'none'; script-src 'unsafe-inline' ${resources}; style-src 'unsafe-inline' ${resources}; img-src data: blob: ${resources}; font-src data: ${resources}; media-src blob: ${resources}; connect-src ${origins(csp.connectDomains ?? legacy.connect_domains) || "'none'"}; frame-src ${origins(csp.frameDomains ?? legacy.frame_domains) || "'none'"}; base-uri ${origins(csp.baseUriDomains) || "'none'"}; form-action 'none'; object-src 'none'`;
-  const initial = JSON.stringify({ toolInput: view.input, toolOutput: view.result?.structuredContent ?? view.result, toolResponseMetadata: view.result?._meta ?? {}, widgetState: null, locale: language === 'zh' ? 'zh-CN' : 'en-US', theme, styles: { variables }, displayMode: 'inline', maxHeight: 900 }).replaceAll('<', '\\u003c');
+  const initial = JSON.stringify({ toolInput: view.input, toolOutput: view.result?.structuredContent ?? view.result, toolResponseMetadata: view.result?._meta ?? {}, widgetState: null, locale: language, theme, styles: { variables }, displayMode: 'inline', maxHeight: 900 }).replaceAll('<', '\\u003c');
   const shim = `(() => {
     // Host canvas defaults stay below provider CSS in the cascade. Matching the
     // host color scheme prevents Chromium painting white behind rounded widgets.

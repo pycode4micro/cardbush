@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useRef, useState } from 'react';
 
 type OpenFile = { path: string; text: string; revision: string };
@@ -11,7 +12,7 @@ export function useMarkdownFile() {
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { lock.current = false; setBusy(false); }
   };
-  const api = () => { const value = window.cardbushDesktop?.markdownFile; if (!value) throw Error('请在 CardBush 桌面端打开 Markdown 文件。'); return value; };
+  const api = () => { const value = window.cardbushDesktop?.markdownFile; if (!value) throw Error(uiText()('useMarkdownFile.open_markdown_files_in_the_cardbush_desktop')); return value; };
   return { file, busy, error, accept: setFile, clear: () => { setFile(null); setError(''); },
     open: () => perform(() => api()({ action: 'open' })),
     reload: () => perform(() => api()({ action: 'reload', path: file?.path })),

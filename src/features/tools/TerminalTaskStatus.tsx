@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { RefreshCw, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { terminalCommandOutcome, type RuntimeTerminalStatus } from '@cardbush/bush-protocol';
@@ -61,20 +62,20 @@ export function TerminalTaskStatus({ sessionId, terminalSessionId, runtime, lang
     } catch { if (alive.current) { stopRequested.current = false; setError(true); } }
     finally { if (alive.current) setStopping(false); }
   };
-  const zh = language === 'zh';
+
   const elapsed = Math.max(0, now - observedAt);
   const duration = Math.floor(((status?.durationMs ?? 0) + (finished ? 0 : elapsed)) / 1000);
   const idle = Math.floor(((status?.outputIdleMs ?? 0) + (finished ? 0 : elapsed)) / 1000);
   const outcome = terminalCommandOutcome(status);
-  const label = outcome === 'running' ? zh ? '后台运行' : 'Running in background'
-    : outcome === 'stopped' ? zh ? '已停止' : 'Stopped'
-    : outcome === 'failed' ? zh ? '执行失败' : 'Failed'
-    : zh ? '已结束' : 'Finished';
+  const label = outcome === 'running' ? uiText(language)('terminalTaskStatus.runningInBackground')
+    : outcome === 'stopped' ? uiText(language)('automationPanel.stopped')
+    : outcome === 'failed' ? uiText(language)('loopExecutionPreviews.failed')
+    : uiText(language)('terminalTaskStatus.finished');
   return <div className="terminal-task-status" ref={container} aria-live="off">
-    <span>{error ? zh ? '无法读取当前终端状态' : 'Terminal status unavailable'
-      : !status ? zh ? '正在读取终端状态…' : 'Loading terminal status…'
-      : `${label}${status.durationMs !== undefined ? ` · ${duration}s` : ''}${!finished && status.outputIdleMs !== undefined && idle >= 10 ? ` · ${zh ? `${idle} 秒无新输出` : `${idle}s without output`}` : ''}`}</span>
-    {error && <button type="button" onClick={() => setRevision(value => value + 1)}><RefreshCw size={12} />{zh ? '刷新' : 'Refresh'}</button>}
-    {status?.state === 'running' && <button type="button" disabled={stopping} onClick={() => { void stop(); }}><Square size={11} />{stopping ? zh ? '正在停止…' : 'Stopping…' : zh ? '停止进程' : 'Stop process'}</button>}
+    <span>{error ? uiText(language)('terminalTaskStatus.terminalStatusUnavailable')
+      : !status ? uiText(language)('terminalTaskStatus.loadingTerminalStatus')
+      : `${label}${status.durationMs !== undefined ? ` · ${duration}s` : ''}${!finished && status.outputIdleMs !== undefined && idle >= 10 ? ` · ${uiText(language)('terminalTaskStatus.sWithoutOutput', { idle })}` : ''}`}</span>
+    {error && <button type="button" onClick={() => setRevision(value => value + 1)}><RefreshCw size={12} />{uiText(language)('automationPanel.refresh')}</button>}
+    {status?.state === 'running' && <button type="button" disabled={stopping} onClick={() => { void stop(); }}><Square size={11} />{stopping ? uiText(language)('terminalTaskStatus.stopping') : uiText(language)('terminalTaskStatus.stopProcess')}</button>}
   </div>;
 }

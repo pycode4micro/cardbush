@@ -94,7 +94,7 @@ app.on('window-all-closed', () => {});
     const registry = new ToolRegistry();
     registry.register({ definition: { name: 'mcp__fixture__capture', description: 'capture fixture', inputSchema: { type: 'object' } },
       manifest: { effect_kind: 'observation', operation: 'mcp.call', risk: 'low', owner: 'test', dispatch_scope: 'process', mutating: false },
-      decodeInput: value => value, execute: () => ({ mcp: { name: 'mcp__chrome_devtools__evaluate_script' }, result: automatic }),
+      decodeInput: value => value, execute: () => automatic,
       renderModelResult: value => JSON.stringify(value) });
     const loop = new RuntimeToolLoop({ eventLog: new InMemoryRuntimeEventLog(), identity: { requestId: 'r', sessionId: 's', turnId: 't' },
       registry, executionStore: new ToolExecutionStore(), modelImages: new ModelImageStore(path.join(root, 'model')) });

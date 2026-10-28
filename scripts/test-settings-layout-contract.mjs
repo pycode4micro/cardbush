@@ -1,6 +1,7 @@
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import { readSourceFile } from './helpers/read-source-file.cjs';
 import assert from 'node:assert/strict';
+import { assertUiMessage } from './helpers/ui-message-contract.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -72,11 +73,12 @@ assert.match(controls, /className="settings-card-body"/);
 assert.doesNotMatch(settings, /settings\.thinking\.accentColor|思考颜色|Thinking color/);
 assert.doesNotMatch(app, /defaultThinkingAccentColor|cardbush_thinking_accent_color'\s*,\s*normalizeHexColor/);
 assert.match(generalPanel, /name="guidance-delivery-mode"/);
-assert.match(generalPanel, /'加入队列' : 'Add to queue'/);
-assert.match(generalPanel, /'马上发送' : 'Send immediately'/);
+assertUiMessage(generalPanel, 'settingsGeneralPanel.addToQueue', { zh: '加入队列', en: 'Add to queue' });
+assertUiMessage(generalPanel, 'settingsGeneralPanel.sendImmediately', { zh: '马上发送', en: 'Send immediately' });
 assert.match(app, /cardbush_guidance_delivery_mode/);
 assert.match(app, /settings\.guidance\?\.deliveryMode === 'immediate'/);
-assert.match(navigation, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
+assert.match(navigation, /profile: 'settingsNavigation.personalization'/);
+assertUiMessage(navigation, 'settingsNavigation.personalization', { zh: '个性化', en: 'Personalization' });
 assert.match(settings, /profile: SlidersHorizontal/);
 const runtimePanel = settings.match(
   /if \(effectiveSection === 'runtime'\)[\s\S]*?if \(effectiveSection === 'proxy'\)/,

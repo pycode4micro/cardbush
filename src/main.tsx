@@ -1,3 +1,4 @@
+import { resolveUiLanguage } from './i18n';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 
@@ -44,7 +45,7 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 const rendererWindow = new URLSearchParams(window.location.search).get('window');
-const language = navigator.language.startsWith('zh') ? 'zh' : 'en';
+const language = resolveUiLanguage(navigator.language);
 // Select the window before importing its state owners. Companion and shadow
 // windows must not initialize or download the main workspace just to render.
 const RootWindow = recoverableLazy('window', async () => {

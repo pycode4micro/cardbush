@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { UserPromptInput } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
@@ -106,12 +107,12 @@ export function CreationConversation({ sessionId, root, language, visible, befor
       refresh, revert, appendDraft, send: sendFromInspector });
   }, [onInspectorContext, sessionId, workspaceRoot, chat.activeConversation, messages, reports, busy, error, chat.error, reverting, chat.selectedModel, chat.activeTurnId, chat.reasoningLevel, refresh, revert, appendDraft, sendFromInspector, language, chat.sending, chat.stopping, pending, chat.pendingInteraction, chat.activeConnectionRecovery, chat.queuedMessageCount]);
   useEffect(() => () => onInspectorContext?.(null), [onInspectorContext]);
-  const model = models.find(item => item.id === chat.selectedModel), zh = language === 'zh';
+  const model = models.find(item => item.id === chat.selectedModel);
   return <ConversationHostContext.Provider value={undefined}><ConversationMessageTargetContext.Provider value={`${scope}:${sessionId}`}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || !!reverting }}>
-    <section className="creation-conversation" hidden aria-label={contextLabel || (zh ? '创作对话' : 'Writing conversation')}>
+    <section className="creation-conversation" hidden aria-label={contextLabel || (uiText(language)('creationConversation.writingConversation'))}>
       <ComposerPortalContext.Provider value={composerPortalTarget ?? null}>
-      <ChatPanel embedded progressive browserTabs={browserTabs} welcomeEnabled={false} workSummaryAvailable={false} language={language} theme={theme} title={scope === 'team' ? (zh ? '协作流程' : 'Workflows') : (zh ? '创作' : 'Create')}
+      <ChatPanel embedded progressive browserTabs={browserTabs} welcomeEnabled={false} workSummaryAvailable={false} language={language} theme={theme} title={scope === 'team' ? (uiText(language)('appCenterModel.workflows')) : (uiText(language)('appCenterModel.create'))}
         sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => setReview({ path: '' })}
         activeConversationId={sessionId} activeProjectDir={workspaceRoot || undefined} projectPathAliases={[]} selectedProjectDir={conversationProjectDir(chat.activeConversation)} availableProjects={[]} onWelcomeProjectChange={async () => {}}
         messages={chat.activeMessages} changeReports={reports} activeTurnId={chat.activeTurnId} loading={chat.loading || chat.messagesLoading} historyLoading={chat.messagesLoading} historyPages={chat.historyPages} sending={chat.sending} stopping={chat.stopping}

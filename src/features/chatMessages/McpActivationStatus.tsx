@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useState } from 'react';
 import type { McpSnapshotResult } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../../runtime-client/ElectronRuntimeSession';
@@ -43,24 +44,12 @@ export function McpActivationStatus({ target, isActive, language }: {
     void check();
     return () => { disposed = true; controller.abort(); clearTimeout(timer); runtime?.dispose(); };
   }, [isActive, target.serverId, target.snapshotId, target.revision, refresh]);
-  const labels = language === 'zh' ? {
-    pending: '配置已保存，正在后台连接或等待工具生效',
-    connected: '已连接，工具列表已获取',
-    failed: '连接未就绪，请查看 MCP 设置',
-    superseded: '此配置已有后续更新，请查看 MCP 设置',
-    unknown: '尚未确认连接状态',
-  } : {
-    pending: 'Configuration saved; connecting in the background or awaiting tool activation',
-    connected: 'Connected; tool list received',
-    failed: 'Connection not ready; check MCP settings',
-    superseded: 'Configuration has changed; check MCP settings',
-    unknown: 'Connection status not confirmed',
-  };
+  const labels = ({ pending: uiText(language)('mcpActivationStatus.configurationSavedConnectingInTheBackgroundOr'), connected: uiText(language)('mcpActivationStatus.connectedToolListReceived'), failed: uiText(language)('mcpActivationStatus.connectionNotReadyCheckMcpSettings'), superseded: uiText(language)('mcpActivationStatus.configurationHasChangedCheckMcpSettings'), unknown: uiText(language)('mcpActivationStatus.connectionStatusNotConfirmed') });
   return <div className={`mcp-activation-status ${state}`} role="status">
-    <span>MCP · {target.serverId}：{labels[state]}</span>
+    <span>{uiText(language)('mcpActivationStatus.mcp')}{target.serverId}：{labels[state]}</span>
     {!isActive && state !== 'connected' && <button type="button" disabled={checking}
       onClick={() => setRefresh(value => value + 1)}>
-      {language === 'zh' ? '检查连接' : 'Check connection'}
+      {uiText(language)('mcpActivationStatus.checkConnection')}
     </button>}
   </div>;
 }

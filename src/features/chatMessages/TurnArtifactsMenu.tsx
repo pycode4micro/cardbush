@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Archive, Download, LoaderCircle, Redo2, Undo2 } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import type { AppLanguage } from '../../types';
@@ -38,8 +39,8 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const label = language === 'zh' ? '本轮产物' : 'Turn artifacts';
-  const actionLabel = reverted ? (language === 'zh' ? '撤销撤回' : 'Undo revert') : (language === 'zh' ? '撤回' : 'Revert');
+  const label = uiText(language)('turnArtifactsMenu.turnArtifacts');
+  const actionLabel = reverted ? (uiText(language)('turnArtifactsMenu.undoRevert')) : (uiText(language)('app.revert'));
   useEffect(() => {
     if (!open || !loadItems || loadedItems) return;
     let current = true;
@@ -95,7 +96,7 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
       title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={menuId}
       onClick={() => open ? close() : setOpen(true)} onKeyDown={event => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); }
-      }}><Archive size={14} /><span>{language === 'zh' ? '产物' : 'Artifacts'}</span>{items.length > 0 && <small>{items.length}</small>}</button>
+      }}><Archive size={14} /><span>{uiText(language)('turnArtifactsMenu.artifacts')}</span>{items.length > 0 && <small>{items.length}</small>}</button>
     <div ref={menu} id={menuId} popover="auto" role="menu" aria-label={label} className="turn-artifacts-popover"
       onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return; }
@@ -123,11 +124,11 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
             finally { setBatch(null); }
           }}>
           {batch ? <LoaderCircle size={15} className="spin"/> : <Download size={15}/>}
-          <span>{batch ? (language === 'zh' ? `正在下载 ${batch.completed}/${batch.total}…` : `Downloading ${batch.completed}/${batch.total}…`) : language === 'zh' ? '下载全部' : 'Download all'}</span>
+          <span>{batch ? (uiText(language)('turnArtifactsMenu.downloading', { value1: batch.completed, value2: batch.total })) : uiText(language)('turnArtifactsMenu.downloadAll')}</span>
         </button><div className="turn-artifacts-divider" role="separator"/></>}
-        {loading && <p className="turn-artifacts-notice" role="status">{language === 'zh' ? '正在读取产物…' : 'Loading artifacts…'}</p>}
-        {loadError && <div className="turn-artifacts-error" role="alert">{loadError}<button type="button" role="menuitem" onClick={() => setRetry(value => value + 1)}>{language === 'zh' ? '重试' : 'Retry'}</button></div>}
-        {!loading && !loadError && items.length === 0 && <p className="turn-artifacts-notice">{language === 'zh' ? '本轮暂无可下载产物' : 'No downloadable artifacts in this turn'}</p>}
+        {loading && <p className="turn-artifacts-notice" role="status">{uiText(language)('turnArtifactsMenu.loadingArtifacts')}</p>}
+        {loadError && <div className="turn-artifacts-error" role="alert">{loadError}<button type="button" role="menuitem" onClick={() => setRetry(value => value + 1)}>{uiText(language)('common.retry')}</button></div>}
+        {!loading && !loadError && items.length === 0 && <p className="turn-artifacts-notice">{uiText(language)('turnArtifactsMenu.noDownloadableArtifactsInThisTurn')}</p>}
         {onRevert && <>
           <button className={`turn-artifacts-revert${reverted ? ' is-restoring' : ''}`} type="button" role="menuitem"
             disabled={working || busy} onClick={async () => {
@@ -144,7 +145,7 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
         {error && <p className="turn-artifacts-error" role="alert">{error}</p>}
         {items.map(item => onDownload ? <div key={item.path} className="turn-artifacts-download-file" title={item.name}>
           <FileTypeIcon path={item.path} fileName={item.name} mediaType={item.mediaType}/><span>{item.name}</span>
-          <button type="button" role="menuitem" className="turn-artifacts-download" aria-label={`${language === 'zh' ? '下载' : 'Download'} ${item.name}`}
+          <button type="button" role="menuitem" className="turn-artifacts-download" aria-label={`${uiText(language)('turnArtifactsMenu.download')} ${item.name}`}
             disabled={Boolean(batch) || downloads.has(item.path)} onClick={async () => {
               setDownloads(previous => new Set(previous).add(item.path)); setError('');
               try { await onDownload(item); }
@@ -152,7 +153,7 @@ export function TurnArtifactsMenu({ items: initialItems, language, reverted, bus
               finally { setDownloads(previous => { const next = new Set(previous); next.delete(item.path); return next; }); }
             }}>
             {downloads.has(item.path) ? <LoaderCircle size={14} className="spin"/> : <Download size={14}/>}
-            <span>{language === 'zh' ? '下载' : 'Download'}</span>
+            <span>{uiText(language)('turnArtifactsMenu.download')}</span>
           </button>
         </div> : <button key={item.path} className="turn-artifacts-file" type="button" role="menuitem"
           title={item.path} onContextMenu={onContextMenu ? event => onContextMenu(event, item) : undefined}

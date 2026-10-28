@@ -31,7 +31,7 @@ internal static partial class CardBushProcessHost
     {
         if (args.Length == 1 && args[0] == "--capabilities")
         {
-            Console.WriteLine("{\"protocol\":\"cardbush.process-host.v1\",\"sandboxVersion\":1,\"sandboxScopeVersion\":3,\"sandboxFileVersion\":2}");
+            Console.WriteLine("{\"protocol\":\"cardbush.process-host.v1\",\"sandboxVersion\":1,\"sandboxScopeVersion\":4,\"sandboxFileVersion\":3}");
             return 0;
         }
         if (args.Length == 2 && args[0] == "--observe") return Observe(args[1]);

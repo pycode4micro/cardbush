@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import {
   ChevronDown,
   Copy,
@@ -287,14 +288,12 @@ export function ToolExecutionBlock({
     />
   ) : null;
 
-  const runSummary = activity ? toolActionTitle(activity, language) : language === 'zh' ? '执行记录' : 'Activity';
+  const runSummary = activity ? toolActionTitle(activity, language) : uiText(language)('toolExecutionBlock.activity');
   const status = activity ? toolActivityStatus(activity, language, active) : '';
   const showStatus = active &&
     (activity?.state === 'awaiting_permission' || activity?.state === 'awaiting_solution');
   const historySummary = historyLabel && !running
-    ? language === 'zh'
-      ? `历史执行记录 · ${runSummary} · ${status}`
-      : `Execution history · ${runSummary} · ${status}`
+    ? uiText(language)('toolExecutionBlock.executionHistory', { runSummary, status })
     : `${runSummary} · ${status}`;
   const summary = runSummary;
   const logoExecution = activity;
@@ -363,12 +362,12 @@ function RuntimeContextCompactionBlock({
   const cancelled = execution.state === 'cancelled' ||
     (!active && isToolRunning(execution));
   const label = running
-    ? language === 'zh' ? '正在压缩上下文' : 'Compacting context'
+    ? uiText(language)('toolExecutionBlock.compactingContext')
     : failed
-      ? language === 'zh' ? '上下文压缩失败' : 'Context compaction failed'
+      ? uiText(language)('toolExecutionBlock.contextCompactionFailed')
       : cancelled
-        ? language === 'zh' ? '上下文压缩已中止' : 'Context compaction stopped'
-        : language === 'zh' ? '已压缩上下文' : 'Context compacted';
+        ? uiText(language)('toolExecutionBlock.contextCompactionStopped')
+        : uiText(language)('toolExecutionBlock.contextCompacted');
 
   return (
     <div
@@ -438,23 +437,21 @@ function RuntimeContextCompactionDetail({
     metadata.activeTurnCheckpointed === true || metadata.activeTurnIncluded === true;
   const scope = [
     precedingTurnCount != null && precedingTurnCount > 0
-      ? language === 'zh'
-        ? `${precedingTurnCount} 个前置轮次`
-        : `${precedingTurnCount} preceding turn${precedingTurnCount === 1 ? '' : 's'}`
+      ? uiText(language)('tools.precedingTurns', { count: precedingTurnCount })
       : '',
     activeTurnIncluded
-      ? language === 'zh' ? '当前轮次已完成部分' : 'completed active-turn work'
+      ? uiText(language)('toolExecutionBlock.completedActiveTurnWork')
       : '',
-  ].filter(Boolean).join(language === 'zh' ? '与' : ' and ');
+  ].filter(Boolean).join(uiText(language)('toolExecutionBlock.and'));
   const status = running
     ? attempt && attempt > 1
-      ? language === 'zh' ? `重试中 · 第 ${attempt} 次` : `Retrying · attempt ${attempt}`
-      : language === 'zh' ? '压缩中' : 'Compacting'
+      ? uiText(language)('toolExecutionBlock.retryingAttempt', { attempt })
+      : uiText(language)('toolExecutionBlock.compacting')
     : failed
-      ? language === 'zh' ? '失败' : 'Failed'
+      ? uiText(language)('automationPanel.failed')
       : cancelled
-        ? language === 'zh' ? '已中止' : 'Stopped'
-        : language === 'zh' ? '完成' : 'Done';
+        ? uiText(language)('toolExecutionBlock.stopped')
+        : uiText(language)('composerLayoutSettings.done');
   const pressure = estimatedInputTokens != null && conversationTokens != null && conversationTokens > 0
     ? `${(estimatedInputTokens / conversationTokens * 100).toFixed(1)}%`
     : '';
@@ -472,28 +469,24 @@ function RuntimeContextCompactionDetail({
     <section className={`${embedded ? '' : 'tool-execution-detail '}runtime-context-compaction-detail`} data-execution-id={embedded ? undefined : execution.id}>
       {!embedded && <header>
         <ToolLogo name={execution.name} size={16} />
-        <strong>{language === 'zh' ? '上下文维护' : 'Context maintenance'}</strong>
+        <strong>{uiText(language)('toolExecutionBlock.contextMaintenance')}</strong>
         <span>
           {duration ? `${status} · ${duration}` : status}
         </span>
       </header>}
       <p>
         {scope
-          ? language === 'zh'
-            ? `已将${scope}转换为可续跑的事实摘要；原始会话与工具记录保持不变。`
-            : `Converted ${scope} into resumable facts; the original conversation and Tool history remain unchanged.`
-          : language === 'zh'
-            ? '正在把已完成上下文转换为可续跑的事实摘要。'
-            : 'Converting completed context into resumable facts.'}
+          ? uiText(language)('toolExecutionBlock.convertedIntoResumableFactsTheOriginalConversation', { scope })
+          : uiText(language)('toolExecutionBlock.convertingCompletedContextIntoResumableFacts')}
       </p>
       {(pressure || tokenUsage) && (
         <p className="runtime-context-compaction-metrics" title={exactUsage}>
           {[
             tokenUsage
-              ? language === 'zh' ? `对话上下文 ${tokenUsage}` : `Conversation context ${tokenUsage}`
+              ? uiText(language)('toolExecutionBlock.conversationContext', { tokenUsage })
               : '',
             pressure
-              ? language === 'zh' ? `触发占用 ${pressure}` : `Triggered at ${pressure}`
+              ? uiText(language)('toolExecutionBlock.triggeredAt', { pressure })
               : '',
           ].filter(Boolean).join(' · ')}
         </p>
@@ -731,8 +724,8 @@ function ToolExecutionRow({
   const status = toolActivityStatus(execution, language, active);
   const terminalOutcome = toolTerminalOutcome(execution);
   const name = isContextCompactionPresentationExecution(execution)
-    ? language === 'zh' ? '上下文压缩' : 'Context compaction'
-    : displayToolName(execution.name);
+    ? uiText(language)('toolExecutionBlock.contextCompaction')
+    : displayToolName(execution.name, language);
   const label = toolActionTitle(execution, language);
   return (
     <section ref={rowRef} className={`tool-execution-detail ${expanded ? 'expanded' : ''}`} data-execution-id={execution.id}>
@@ -751,9 +744,9 @@ function ToolExecutionRow({
           {detailsDeferred ? (
             <div className="tool-execution-detail-status" role="status">
               {detailsStatus === 'failed' || detailsStatus === 'loaded' ? <>
-                <span>{language === 'zh' ? '暂时无法读取执行详情' : 'Execution details are unavailable'}</span>
-                <button type="button" onClick={onRetryDetails}><RefreshCw size={13} />{language === 'zh' ? '重试' : 'Retry'}</button>
-              </> : <><LoaderCircle size={13} /><span>{language === 'zh' ? '正在读取详情…' : 'Loading details…'}</span></>}
+                <span>{uiText(language)('toolExecutionBlock.executionDetailsAreUnavailable')}</span>
+                <button type="button" onClick={onRetryDetails}><RefreshCw size={13} />{uiText(language)('common.retry')}</button>
+              </> : <><LoaderCircle size={13} /><span>{uiText(language)('toolExecutionBlock.loadingDetails')}</span></>}
             </div>
           ) : isContextCompactionPresentationExecution(execution) ? (
             <RuntimeContextCompactionDetail execution={execution} active={active} language={language} embedded />
@@ -783,7 +776,7 @@ function ToolExecutionDetail({
   const [outputWrapped, setOutputWrapped] = useState(false);
   const scene = cardlingSceneFromToolExecution(execution, message);
   const summary = execution.summary.trim();
-  const hasSummary = summary && summary !== execution.name && summary !== displayToolName(execution.name);
+  const hasSummary = summary && summary !== execution.name && summary !== displayToolName(execution.name, language);
   const error = asRecord(execution.metadata.error);
   const failureMessage = typeof error.message === 'string' ? error.message : '';
   const goalUpdate = goalToolUpdateFromExecution(execution);
@@ -796,7 +789,7 @@ function ToolExecutionDetail({
   const terminal = asRecord(execution.metadata.nativeResult);
   const terminalSessionId = typeof terminal.terminalSessionId === 'string' && terminal.state === 'running' ? terminal.terminalSessionId : '';
   const sessionId = host?.sessionId ?? message.conversationId;
-  const environmentLabel = environment.kind === 'local' ? (host ? language === 'zh' ? '执行位置：服务器 Agent' : 'Execution host: server Agent' : language === 'zh' ? '执行位置：本机' : 'Execution host: local')
+  const environmentLabel = environment.kind === 'local' ? (host ? uiText(language)('toolExecutionBlock.executionHostServerAgent') : uiText(language)('toolExecutionBlock.executionHostLocal'))
     : environment.kind === 'ssh' ? `SSH · ${String(environment.workspaceDir || environment.connectionId)}` : '';
   const hookDecision = toolHookDecisionFromExecution(execution);
   const planningAssessment = planningAssessmentFromExecution(execution);
@@ -813,8 +806,8 @@ function ToolExecutionDetail({
             <button
               className="tool-output-toggle"
               type="button"
-              title={outputWrapped ? (language === 'zh' ? '取消换行' : 'No wrap') : (language === 'zh' ? '换行' : 'Wrap')}
-              aria-label={outputWrapped ? (language === 'zh' ? '取消换行' : 'No wrap') : (language === 'zh' ? '换行' : 'Wrap')}
+              title={outputWrapped ? (uiText(language)('toolExecutionBlock.noWrap')) : (uiText(language)('messageBubble.wrap'))}
+              aria-label={outputWrapped ? (uiText(language)('toolExecutionBlock.noWrap')) : (uiText(language)('messageBubble.wrap'))}
               aria-pressed={outputWrapped}
               onClick={() => setOutputWrapped(value => !value)}
             >
@@ -823,8 +816,8 @@ function ToolExecutionDetail({
             <button
               className="tool-output-toggle"
               type="button"
-              title={language === 'zh' ? '复制输出' : 'Copy output'}
-              aria-label={language === 'zh' ? '复制输出' : 'Copy output'}
+              title={uiText(language)('toolExecutionBlock.copyOutput')}
+              aria-label={uiText(language)('toolExecutionBlock.copyOutput')}
               onClick={() => void copyText(output).catch(() => undefined)}
             >
               <Copy size={14} />
@@ -833,7 +826,7 @@ function ToolExecutionDetail({
         </div>
       )}
       {failureMessage && failureMessage !== output && <p className="tool-execution-error">{failureMessage}</p>}
-      {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{language === 'zh' ? '服务器已返回结果，但客户端解析失败；这不代表服务端操作失败。原始结果保留在详情中。' : 'The server returned a result, but client validation failed. This does not establish server-side failure. The original result is retained in the details.'}</p>}
+      {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{uiText(language)('toolExecutionBlock.theServerReturnedAResultButClient')}</p>}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
       <WorkerProfileBadge info={environmentLabel} />
@@ -860,7 +853,7 @@ function ToolExecutionDetail({
           onClick={() => onOpenScene(scene)}
         >
           <Sparkles size={14} />
-          <span>{language === 'zh' ? '打开交互场景' : 'Open interactive scene'}</span>
+          <span>{uiText(language)('toolExecutionBlock.openInteractiveScene')}</span>
         </button>
       )}
       <SubagentChildTools
@@ -873,7 +866,7 @@ function ToolExecutionDetail({
       />}
       {showOutput && (
         <pre className={`tool-execution-output ${outputWrapped ? 'wrapped' : ''}`} tabIndex={0}
-          aria-label={language === 'zh' ? '工具输出' : 'Tool output'}>
+          aria-label={uiText(language)('toolExecutionBlock.toolOutput')}>
           {output}
         </pre>
       )}
@@ -981,86 +974,74 @@ function WorkerDispatchRecommendationCard({
       ? result.writeScope
       : dispatch.writeScope;
   const rows = [
-    [language === 'zh' ? 'Agent' : 'Agent', dispatch.agentName],
-    [language === 'zh' ? '决策' : 'Decision', dispatch.dispatchDecision],
+    [uiText(language)('toolExecutionBlock.agent'), dispatch.agentName],
+    [uiText(language)('toolExecutionBlock.decision'), dispatch.dispatchDecision],
     [
-      language === 'zh' ? '就绪' : 'Ready',
+      uiText(language)('toolExecutionBlock.ready'),
       dispatch.dispatchReady == null
         ? ''
         : dispatch.dispatchReady
-          ? language === 'zh'
-            ? '是'
-            : 'Yes'
-          : language === 'zh'
-            ? '否'
-            : 'No',
+          ? uiText(language)('subagentAuditSignalsPanel.yes')
+          : uiText(language)('subagentAuditSignalsPanel.no'),
     ],
     [
-      language === 'zh' ? '审批' : 'Approval',
+      uiText(language)('toolExecutionBlock.approval'),
       dispatch.requiresUserApproval == null
         ? ''
         : dispatch.requiresUserApproval
-          ? language === 'zh'
-            ? '需要用户确认'
-            : 'User approval required'
-          : language === 'zh'
-            ? '不需要'
-            : 'Not required',
+          ? uiText(language)('toolExecutionBlock.userApprovalRequired')
+          : uiText(language)('toolExecutionBlock.notRequired'),
     ],
     [
-      language === 'zh' ? '自动派发' : 'Auto dispatch',
+      uiText(language)('toolExecutionBlock.autoDispatch'),
       dispatch.parentAutoDispatchExpected == null
         ? ''
         : dispatch.parentAutoDispatchExpected
-          ? language === 'zh'
-            ? '父 Agent 可自动执行'
-            : 'Parent agent can dispatch'
-          : language === 'zh'
-            ? '不预期'
-            : 'Not expected',
+          ? uiText(language)('toolExecutionBlock.parentAgentCanDispatch')
+          : uiText(language)('toolExecutionBlock.notExpected'),
     ],
     [
-      language === 'zh' ? '自动策略' : 'Auto policy',
+      uiText(language)('toolExecutionBlock.autoPolicy'),
       dispatch.parentAutoDispatchPolicy,
     ],
-    [language === 'zh' ? '通道' : 'Channel', dispatch.executionChannel],
-    [language === 'zh' ? 'Profile' : 'Profile', dispatch.runtimeProfile],
+    [uiText(language)('toolExecutionBlock.channel'), dispatch.executionChannel],
+    [uiText(language)('toolExecutionBlock.profile'), dispatch.runtimeProfile],
     [
-      language === 'zh' ? '解析 Profile' : 'Resolved',
+      uiText(language)('toolExecutionBlock.resolved'),
       result?.resolvedRuntimeProfile ?? dispatch.resolvedRuntimeProfile,
     ],
     [
-      language === 'zh' ? 'Hook set' : 'Hook set',
+      uiText(language)('toolExecutionBlock.hookSet'),
       result?.resolvedHookSet ?? dispatch.expectedHookSet,
     ],
     [
-      language === 'zh' ? '契约策略' : 'Contract',
+      uiText(language)('toolExecutionBlock.contract'),
       dispatch.workerContractPolicy,
     ],
     [
-      language === 'zh' ? '默认推断' : 'Defaults',
+      uiText(language)('toolExecutionBlock.defaults'),
       summarizeWorkerContractDefaults(dispatch.workerContractDefaults),
     ],
-    [language === 'zh' ? '组' : 'Group', dispatch.dispatchGroupId],
+    [uiText(language)('toolExecutionBlock.group'), dispatch.dispatchGroupId],
     [
-      language === 'zh' ? '组节点' : 'Group nodes',
+      uiText(language)('toolExecutionBlock.groupNodes'),
       dispatch.dispatchGroupNodeIds.join(', '),
     ],
-    [language === 'zh' ? '写入范围' : 'Write scope', summarizeWriteScope(activeWriteScope)],
-    [language === 'zh' ? '范围置信' : 'Scope confidence', dispatch.writeScopeConfidence],
-    [language === 'zh' ? 'Lane' : 'Lane', dispatch.lane],
-    [language === 'zh' ? 'Plan node' : 'Plan node', dispatch.planNodeId],
-    [language === 'zh' ? '退出条件' : 'Exit', dispatch.exitCondition],
+    [uiText(language)('toolExecutionBlock.writeScope'), summarizeWriteScope(activeWriteScope)],
+    [uiText(language)('toolExecutionBlock.scopeConfidence'), dispatch.writeScopeConfidence],
+    [uiText(language)('toolExecutionBlock.lane'), dispatch.lane],
+    [uiText(language)('toolExecutionBlock.planNode'), dispatch.planNodeId],
+    [uiText(language)('toolExecutionBlock.exit'), dispatch.exitCondition],
     [
-      language === 'zh' ? '非父级原因' : 'Not parent',
+      uiText(language)('toolExecutionBlock.notParent'),
       dispatch.whyNotParentDirect,
     ],
     [
-      language === 'zh' ? '非工具并发' : 'Not tools',
+      uiText(language)('toolExecutionBlock.notTools'),
       dispatch.whyNotRunTools,
     ],
     [
-      language === 'zh' ? '非子 Agent' : 'Not subagent',
+      uiText(language)('toolExecutionBlock.notSubagent'),
       dispatch.whyNotSubagent,
     ],
   ].filter(([, value]) => value);
@@ -1122,12 +1103,8 @@ function WorkerDispatchRecommendationCard({
         <Network size={14} />
         <strong>
           {autoDispatchExpected
-            ? language === 'zh'
-              ? '父 Agent 可自动派发'
-              : 'Parent auto-dispatch ready'
-            : language === 'zh'
-              ? '建议派发子 Agent'
-              : 'Recommended worker dispatch'}
+            ? uiText(language)('toolExecutionBlock.parentAutoDispatchReady')
+            : uiText(language)('toolExecutionBlock.recommendedWorkerDispatch')}
         </strong>
         <button
           className={autoDispatchExpected ? 'manual' : 'primary'}
@@ -1144,28 +1121,10 @@ function WorkerDispatchRecommendationCard({
           )}
           <span>
             {dispatching
-              ? language === 'zh'
-                ? '派发中'
-                : 'Dispatching'
+              ? uiText(language)('toolExecutionBlock.dispatching')
               : accepted
-                ? language === 'zh'
-                  ? result?.reason === 'already_running'
-                    ? '已复用'
-                    : autoDispatchExpected
-                      ? '调试复用'
-                      : '复用检查'
-                  : result?.reason === 'already_running'
-                    ? 'Reused'
-                    : autoDispatchExpected
-                      ? 'Debug reuse'
-                      : 'Check reuse'
-                : language === 'zh'
-                  ? autoDispatchExpected
-                    ? '手动派发'
-                    : '派发'
-                  : autoDispatchExpected
-                    ? 'Manual dispatch'
-                    : 'Dispatch'}
+                ? (result?.reason === 'already_running' ? uiText(language)('toolExecutionBlock.reused') : (autoDispatchExpected ? uiText(language)('toolExecutionBlock.debugReuse') : uiText(language)('toolExecutionBlock.checkReuse')))
+                : (autoDispatchExpected ? uiText(language)('toolExecutionBlock.manualDispatch') : uiText(language)('toolExecutionBlock.dispatch'))}
           </span>
         </button>
         <button
@@ -1175,22 +1134,18 @@ function WorkerDispatchRecommendationCard({
           }
         >
           <Copy size={13} />
-          <span>{language === 'zh' ? '复制参数' : 'Copy'}</span>
+          <span>{uiText(language)('toolExecutionBlock.copy')}</span>
         </button>
       </header>
       {autoDispatchExpected && (
         <p className="worker-dispatch-status auto">
-          {language === 'zh'
-            ? '无需用户审批；正常情况下父 Agent 会根据 plan 证据自行派发。这个按钮仅作为手动/调试兜底。'
-            : 'No user approval is required; the parent agent should dispatch from plan evidence. This button is only a manual/debug fallback.'}
+          {uiText(language)('toolExecutionBlock.noUserApprovalIsRequiredTheParent')}
         </p>
       )}
       {dispatch.task && <p>{dispatch.task}</p>}
       {!canDispatch && (
         <p className="worker-dispatch-status rejected">
-          {language === 'zh'
-            ? '缺少 session、agent 或 prompt，暂不能派发。'
-            : 'Missing session, agent, or prompt; cannot dispatch yet.'}
+          {uiText(language)('toolExecutionBlock.missingSessionAgentOrPromptCannotDispatch')}
         </p>
       )}
       {(result || error) && (
@@ -1210,10 +1165,10 @@ function WorkerDispatchRecommendationCard({
         <p className="worker-dispatch-status rejected">
           {[
             result.supervisor.counts
-              ? `${language === 'zh' ? '运行数' : 'Counts'}: ${summarizeRecord(result.supervisor.counts as unknown as Record<string, unknown>)}`
+              ? `${uiText(language)('toolExecutionBlock.counts')}: ${summarizeRecord(result.supervisor.counts as unknown as Record<string, unknown>)}`
               : '',
             result.supervisor.limits
-              ? `${language === 'zh' ? '限制' : 'Limits'}: ${summarizeRecord(result.supervisor.limits as unknown as Record<string, unknown>)}`
+              ? `${uiText(language)('toolExecutionBlock.limits')}: ${summarizeRecord(result.supervisor.limits as unknown as Record<string, unknown>)}`
               : '',
           ].filter(Boolean).join(' · ')}
         </p>
@@ -1231,30 +1186,30 @@ function WorkerDispatchRecommendationCard({
       {hasExecutionEvidence && (
         <details className="worker-dispatch-evidence">
           <summary>
-            {language === 'zh' ? '输入输出与验收' : 'IO and verification'}
+            {uiText(language)('toolExecutionBlock.ioAndVerification')}
           </summary>
           <dl>
             {dispatch.verificationLevel && (
               <div>
-                <dt>{language === 'zh' ? '验证级别' : 'Verification'}</dt>
+                <dt>{uiText(language)('toolExecutionBlock.verification')}</dt>
                 <dd>{dispatch.verificationLevel}</dd>
               </div>
             )}
             {Object.keys(dispatch.ioManifest).length > 0 && (
               <div>
-                <dt>{language === 'zh' ? 'IO' : 'IO'}</dt>
+                <dt>{uiText(language)('toolExecutionBlock.io')}</dt>
                 <dd>{summarizeIoManifest(dispatch.ioManifest)}</dd>
               </div>
             )}
             {dispatch.successAssertions.length > 0 && (
               <div>
-                <dt>{language === 'zh' ? '验收条件' : 'Assertions'}</dt>
+                <dt>{uiText(language)('toolExecutionBlock.assertions')}</dt>
                 <dd>{dispatch.successAssertions.join(' · ')}</dd>
               </div>
             )}
             {dispatch.assertionResults.length > 0 && (
               <div>
-                <dt>{language === 'zh' ? '验收结果' : 'Results'}</dt>
+                <dt>{uiText(language)('toolExecutionBlock.results')}</dt>
                 <dd>{summarizeAssertionResults(dispatch.assertionResults)}</dd>
               </div>
             )}
@@ -1289,19 +1244,15 @@ function workerDispatchResultText(
   }
   if (!result.accepted || result.status === 'rejected') {
     if (result.reason === 'write_lease_conflict') {
-      return result.message || (language === 'zh' ? '写租约冲突，未派发' : 'Write lease conflict');
+      return result.message || (uiText(language)('toolExecutionBlock.writeLeaseConflict'));
     }
-    return result.message || result.reason || (language === 'zh' ? '派发被拒绝' : 'Dispatch rejected');
+    return result.message || result.reason || (uiText(language)('toolExecutionBlock.dispatchRejected'));
   }
   const task = result.taskId ? ` · ${result.taskId}` : '';
   if (result.reason === 'already_running') {
-    return language === 'zh'
-      ? `已有运行中的子 Agent，已复用${task}`
-      : `Already running; reused${task}`;
+    return uiText(language)('toolExecutionBlock.alreadyRunningReused', { task });
   }
-  return language === 'zh'
-    ? `子 Agent 已派发${task}`
-    : `Subagent dispatched${task}`;
+  return uiText(language)('toolExecutionBlock.subagentDispatched', { task });
 }
 
 function planDispatchInfoFromExecution(
@@ -1436,19 +1387,17 @@ function summarizeDispatchAdvisor(
   );
   const parts = [
     currentNodeText
-      ? `${language === 'zh' ? '当前节点' : 'Node'}: ${currentNodeText}`
+      ? `${uiText(language)('toolExecutionBlock.node')}: ${currentNodeText}`
       : '',
     recommendedExecution
-      ? `${language === 'zh' ? '推荐' : 'Recommended'}: ${recommendedExecution}`
+      ? `${uiText(language)('toolExecutionBlock.recommended')}: ${recommendedExecution}`
       : '',
-    decision ? `${language === 'zh' ? '决策' : 'Decision'}: ${decision}` : '',
+    decision ? `${uiText(language)('toolExecutionBlock.decision')}: ${decision}` : '',
     requiresApproval === false
-      ? language === 'zh'
-        ? '无需用户审批'
-        : 'No user approval'
+      ? uiText(language)('toolExecutionBlock.noUserApproval')
       : '',
     autoPolicy
-      ? `${language === 'zh' ? '自动策略' : 'Auto policy'}: ${autoPolicy}`
+      ? `${uiText(language)('toolExecutionBlock.autoPolicy')}: ${autoPolicy}`
       : '',
   ].filter(Boolean);
   return parts.join(' · ');

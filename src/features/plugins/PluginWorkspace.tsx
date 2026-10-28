@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Suspense, useEffect, useLayoutEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import type { AppLanguage, BackendCapabilities } from '../../types';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
@@ -7,8 +8,8 @@ import { SettingsFormDialog } from '../settings/SettingsFormDialog';
 
 function McpEditorNotice({ language, onClose, children }: { language: AppLanguage; onClose?: () => void; children: ReactNode }) {
   if (!onClose) return children;
-  return <SettingsFormDialog className="mcp-server-dialog" language={language} title={language === 'zh' ? 'MCP 服务器' : 'MCP servers'}
-    onCancel={onClose} onSubmit={() => {}} footer={<button className="secondary-button" type="button" onClick={onClose}>{language === 'zh' ? '关闭' : 'Close'}</button>}>
+  return <SettingsFormDialog className="mcp-server-dialog" language={language} title={uiText(language)('pluginWorkspace.mcpServers')}
+    onCancel={onClose} onSubmit={() => {}} footer={<button className="secondary-button" type="button" onClick={onClose}>{uiText(language)('common.close')}</button>}>
     {children}
   </SettingsFormDialog>;
 }
@@ -43,7 +44,7 @@ export function PluginWorkspace({ capabilities, ...props }: Props) {
   return <div className="feature-content plugin-workspace-scroll" data-plugin-scroll-container>
     <PluginManagementPanel {...props} initialTab="plugins" onNotify={setNotice} requestedPlugin={requestedPlugin}
       renderMcp={(serverId, dialog) => <Suspense fallback={<McpEditorNotice language={props.language} onClose={dialog?.onClose}>
-        <p role="status">{props.language === 'zh' ? '正在加载 MCP 设置…' : 'Loading MCP settings…'}</p>
+        <p role="status">{uiText(props.language)('pluginWorkspace.loadingMcpSettings')}</p>
       </McpEditorNotice>}>
         <McpEditor initialServerId={serverId} initialCreate={!serverId} {...dialog} language={props.language} capabilities={capabilities} onNotify={setNotice} />
       </Suspense>} />

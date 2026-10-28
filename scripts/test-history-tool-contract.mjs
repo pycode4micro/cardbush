@@ -1,12 +1,14 @@
 import { readSourceFile } from './helpers/read-source-file.cjs';
 import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
+import { assertUiMessage } from './helpers/ui-message-contract.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 
 import ts from 'typescript';
 import { isInternalSessionMessage } from '@cardbush/bush-protocol';
+import * as i18n from '@cardbush/platform/i18n';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const modulePath = path.join(
@@ -501,6 +503,7 @@ const historyProjectionTranspiled = ts.transpileModule(historyProjectionSource, 
 });
 const historyProjectionModule = { exports: {} };
 vm.runInNewContext(historyProjectionTranspiled.outputText, {
+  require: name => { assert.equal(name, '../../i18n'); return i18n; },
   module: historyProjectionModule,
   exports: historyProjectionModule.exports,
   Date,
@@ -949,14 +952,17 @@ const styleSource = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );
-assert.match(toolBlockSource, /历史执行记录 · \$\{runSummary\}/);
+assert.match(toolBlockSource, /uiText\(language\)\('toolExecutionBlock.executionHistory', \{ runSummary, status \}\)/);
+assertUiMessage(toolBlockSource, 'toolExecutionBlock.executionHistory', {
+  zh: '历史执行记录 · Build · Done', en: 'Execution history · Build · Done',
+}, { runSummary: 'Build', status: 'Done' });
 assert.match(
   toolBlockSource,
   /historyLabel = !active[\s\S]*?historyLabel && !running/,
   'Execution activity and historical labeling must remain independent presentation facts.',
 );
-assert.match(toolBlockSource, /正在压缩上下文/);
-assert.match(toolBlockSource, /已压缩上下文/);
+assertUiMessage(toolBlockSource, 'toolExecutionBlock.compactingContext', { zh: '正在压缩上下文', en: 'Compacting context' });
+assertUiMessage(toolBlockSource, 'toolExecutionBlock.contextCompacted', { zh: '已压缩上下文', en: 'Context compacted' });
 assert.match(
   bubbleSource,
   /previous\.offset === offset/,
@@ -964,11 +970,10 @@ assert.match(
 );
 assert.match(toolBlockSource, /isContextCompactionPresentationExecution\(execution\) \? \([\s\S]*?<RuntimeContextCompactionDetail/,
   'A mixed execution package preserves dedicated context-maintenance details.');
-assert.match(
-  toolBlockSource,
-  /原始会话与工具记录保持不变/,
-  'Context maintenance must explain that canonical history remains intact',
-);
+assertUiMessage(toolBlockSource, 'toolExecutionBlock.convertedIntoResumableFactsTheOriginalConversation', {
+  zh: '已将fixture转换为可续跑的事实摘要；原始会话与工具记录保持不变。',
+  en: 'Converted fixture into resumable facts; the original conversation and Tool history remain unchanged.',
+}, { scope: 'fixture' });
 assert.match(
   bubbleSource,
   /return presentTranscript\(transcript\)/,

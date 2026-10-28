@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { Square } from 'lucide-react';
 import type { VoiceSession } from './voiceSession';
@@ -29,17 +30,17 @@ function VoiceWave({ level, speaking, quiet }: { level: number; speaking: boolea
   return <svg className="voice-call-wave" viewBox="0 0 600 32" preserveAspectRatio="none" aria-hidden="true"><path ref={path} d="M0,16 L600,16" vectorEffect="non-scaling-stroke"/></svg>;
 }
 
-export function VoiceComposerPanel({ session, language }: { session: VoiceSession; language: 'zh' | 'en' }) {
-  const state = useSyncExternalStore(session.subscribe, session.snapshot), zh = language === 'zh';
+export function VoiceComposerPanel({ session, language }: { session: VoiceSession; language: string }) {
+  const state = useSyncExternalStore(session.subscribe, session.snapshot);
   const error = state.error || state.agentError;
   const connecting = state.phase === 'connecting' || state.reconnecting;
   const audible = state.speaking && !state.outputMuted;
-  const label = error || (connecting ? zh ? '正在接通' : 'Connecting' : state.speaking && !state.outputMuted ? zh ? '正在回应' : 'Speaking' : state.muted ? zh ? '麦克风已静音' : 'Microphone muted' : state.capturePaused ? zh ? '正在处理语音' : 'Processing speech' : zh ? '正在聆听' : 'Listening');
+  const label = error || (connecting ? uiText(language)('voiceComposerPanel.connecting') : state.speaking && !state.outputMuted ? uiText(language)('voiceComposerPanel.speaking') : state.muted ? uiText(language)('chatSidebar.microphoneMuted') : state.capturePaused ? uiText(language)('voiceComposerPanel.processingSpeech') : uiText(language)('voiceComposerPanel.listening'));
   return <div className="voice-composer-call" data-connecting={Boolean(connecting)} data-error={Boolean(error)} title={label}>
     <div className="voice-call-signal">
       <VoiceWave level={state.muted || state.capturePaused ? 0 : state.level} speaking={audible} quiet={Boolean(error || connecting || state.muted && !audible)}/>
       {error ? <span className="voice-call-error" role="alert">{error}</span> : <span className="voice-call-status" role="status">{label}</span>}
     </div>
-    <button type="button" className="send-button voice-composer-end" aria-label={zh ? '结束通话' : 'End call'} title={zh ? '结束通话' : 'End call'} onClick={() => session.end()}><Square size={11} fill="currentColor"/></button>
+    <button type="button" className="send-button voice-composer-end" aria-label={uiText(language)('voiceComposerPanel.endCall')} title={uiText(language)('voiceComposerPanel.endCall')} onClick={() => session.end()}><Square size={11} fill="currentColor"/></button>
   </div>;
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import childProcess, { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, renameSync, statSync } from 'node:fs';
+import { linkSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
@@ -58,6 +58,25 @@ test('native authorization rejects a directory replaced after JavaScript prepara
     assert.equal(swapped, true);
     assert.equal(f.acl(f.work), before); assert.equal(f.acl(old), before);
     await assert.rejects(readFile(join(f.work, 'unexpected')), { code: 'ENOENT' });
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
+
+test('a reused directory capability rejects a new hard-link alias at native startup', { skip: !windows }, async t => {
+  const f = await fixture(t), secret = join(f.outside, 'private.txt'), path = join(f.work, 'allowed.txt');
+  await writeFile(secret, 'outside secret'); await writeFile(path, 'allowed');
+  const sandbox = { readableRoots: [f.tools], writableRoots: [f.work], network: 'disabled' };
+  const first = await runResourceManagedCommand({ executable: f.executable, args: ['read-private', path], cwd: f.work,
+    sandbox, sandboxScopePool: f.pool });
+  assert.equal(first.exitCode, 0, first.stderr);
+  const original = childProcess.spawn; let injected = false;
+  t.mock.method(childProcess, 'spawn', (executable, args, options) => {
+    if (args.includes('--sandbox')) { linkSync(secret, join(f.work, 'late-alias.txt')); injected = true; }
+    return original(executable, args, options);
+  }); syncBuiltinESMExports();
+  try {
+    await assert.rejects(runResourceManagedCommand({ executable: f.executable, args: ['read-private', secret], cwd: f.work,
+      sandbox, sandboxScopePool: f.pool }), error => error.code === 'resource_protection_failed' && /multiple hard links/.test(error.message));
+    assert.equal(injected, true); assert.equal(await readFile(secret, 'utf8'), 'outside secret');
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 

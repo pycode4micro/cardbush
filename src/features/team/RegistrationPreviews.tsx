@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useContext } from 'react';
 import { ChevronRight, UsersRound } from 'lucide-react';
 import type { AppLanguage, ChatToolExecution } from '../../types';
@@ -12,7 +13,7 @@ export function RegistrationPreviews({ executions, sessionId, language }: {
 }) {
   const host = useContext(ConversationHostContext);
   const open = host?.openWorkSummary ?? openWorkSummaryInspector;
-  const zh = language === 'zh';
+
   return <>{(['employee', 'team'] as const).map(kind => {
     const rows = executions.flatMap(execution => {
       const activity = toolAgentActivity(execution);
@@ -20,12 +21,12 @@ export function RegistrationPreviews({ executions, sessionId, language }: {
     });
     if (!rows.length) return null;
     const Icon = kind === 'employee' ? EmployeeIcon : UsersRound;
-    const label = kind === 'employee' ? (zh ? '员工注册' : 'Employee registrations') : (zh ? 'Team 注册' : 'Team registrations');
+    const label = kind === 'employee' ? (uiText(language)('registrationPreviews.employeeRegistrations')) : (uiText(language)('registrationPreviews.teamRegistrations'));
     return <LoopPreviewGroup key={kind} kind={`${kind}-registration`} icon={<Icon size={15} />} label={`${label} · ${rows.length}`}>
       {rows.map(({ execution, activity }) => {
         const saved = execution.state === 'completed' && execution.success;
-        const status = saved ? (zh ? '已注册' : 'Registered') : execution.state === 'failed' ? (zh ? '注册失败' : 'Registration failed') :
-          execution.state === 'cancelled' ? (zh ? '已停止' : 'Stopped') : (zh ? '注册中' : 'Registering');
+        const status = saved ? (uiText(language)('registrationPreviews.registered')) : execution.state === 'failed' ? (uiText(language)('registrationPreviews.registrationFailed')) :
+          execution.state === 'cancelled' ? (uiText(language)('automationPanel.stopped')) : (uiText(language)('registrationPreviews.registering'));
         const title = activity.name || activity.id;
         return <button key={execution.id} type="button" className="tool-preview-card loop-registration-preview" data-execution-id={execution.id}
           title={`${title} · ${status}`} disabled={!saved} onClick={() => open({ kind: 'agent-definition', sessionId,

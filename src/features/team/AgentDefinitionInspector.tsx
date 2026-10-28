@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useContext, useEffect, useState } from 'react';
 import { ChevronRight, RefreshCw, UsersRound } from 'lucide-react';
 import { z } from 'zod';
@@ -25,7 +26,7 @@ export function AgentDefinitionInspector({ detail, language, active = true }: { 
   const [revision, refresh] = useState(0);
   const key = `${host?.id ?? 'local'}:${detail.entity}:${detail.entityId}:${revision}`;
   const current = loaded?.key === key ? loaded : undefined;
-  const zh = language === 'zh', t = (cn: string, en: string) => zh ? cn : en;
+
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
@@ -44,32 +45,32 @@ export function AgentDefinitionInspector({ detail, language, active = true }: { 
   const employee = value?.kind === 'employee' ? value.record.definition : undefined;
   const team = value?.kind === 'team' ? value.record.definition : undefined;
   const Icon = detail.entity === 'employee' ? EmployeeIcon : UsersRound;
-  return <section className="agent-definition-inspector" aria-label={detail.entity === 'employee' ? t('员工详情', 'Employee details') : t('Team 详情', 'Team details')}>
+  return <section className="agent-definition-inspector" aria-label={detail.entity === 'employee' ? uiText(language)('agentDefinitionInspector.employeeDetails') : uiText(language)('agentDefinitionInspector.teamDetails')}>
     <header><Icon size={21} aria-hidden="true" /><div><strong>{value?.record.definition.name || detail.title || detail.entityId}</strong>
-      <small>{detail.entity === 'employee' ? t('独立员工 · 注册信息', 'Independent employee · Registration') : t('Team · 注册流程', 'Team · Registered workflow')}</small></div>
-      <button type="button" title={t('刷新', 'Refresh')} aria-label={t('刷新', 'Refresh')} onClick={() => refresh(value => value + 1)}><RefreshCw size={16} /></button>
+      <small>{detail.entity === 'employee' ? uiText(language)('agentDefinitionInspector.independentEmployeeRegistration') : uiText(language)('agentDefinitionInspector.teamRegisteredWorkflow')}</small></div>
+      <button type="button" title={uiText(language)('automationPanel.refresh')} aria-label={uiText(language)('automationPanel.refresh')} onClick={() => refresh(value => value + 1)}><RefreshCw size={16} /></button>
     </header>
-    {!current && <p role="status">{t('正在读取注册信息…', 'Loading registration…')}</p>}
-    {current?.error && <div role="alert"><p>{t('暂时无法读取当前定义；它可能已被删除，或所在环境不可用。', 'Cannot read the current definition. It may have been deleted or its environment is unavailable.')}</p><details><summary>{t('错误详情', 'Error details')}</summary><pre>{current.error}</pre></details></div>}
+    {!current && <p role="status">{uiText(language)('agentDefinitionInspector.loadingRegistration')}</p>}
+    {current?.error && <div role="alert"><p>{uiText(language)('agentDefinitionInspector.cannotReadTheCurrentDefinitionItMay')}</p><details><summary>{uiText(language)('messageBubble.errorDetails')}</summary><pre>{current.error}</pre></details></div>}
     {value && <>
-      <p>{value.record.definition.description || t('未填写职责说明', 'No description provided')}</p>
-      <dl><dt>ID</dt><dd>{value.record.definition.id}</dd><dt>{t('当前版本', 'Current revision')}</dt><dd>{value.record.revision}</dd>
-        {employee && <><dt>{t('状态', 'Status')}</dt><dd>{employee.enabled ? t('已启用', 'Enabled') : t('已停用', 'Disabled')}</dd></>}
-        {team && <><dt>{t('最大并行数', 'Maximum parallel nodes')}</dt><dd>{team.max_parallel}</dd></>}
+      <p>{value.record.definition.description || uiText(language)('agentDefinitionInspector.noDescriptionProvided')}</p>
+      <dl><dt>{uiText(language)('agentDefinitionInspector.id')}</dt><dd>{value.record.definition.id}</dd><dt>{uiText(language)('agentDefinitionInspector.currentRevision')}</dt><dd>{value.record.revision}</dd>
+        {employee && <><dt>{uiText(language)('agentDefinitionInspector.status')}</dt><dd>{employee.enabled ? uiText(language)('featureContentPanel.enabled') : uiText(language)('pluginManagementPanel.disabled')}</dd></>}
+        {team && <><dt>{uiText(language)('agentDefinitionInspector.maximumParallelNodes')}</dt><dd>{team.max_parallel}</dd></>}
       </dl>
       {employee && <>
-        <details><summary>{t('岗位指令', 'System prompt')}</summary><pre>{employee.system_prompt}</pre></details>
-        <details><summary>{t('工具、Hooks 与 Guard', 'Tools, hooks and guards')}</summary>
-          <h4>{t('可用工具', 'Allowed tools')}</h4><pre>{employee.allowed_tools?.join('\n') || (employee.allowed_tools ? t('无', 'None') : t('继承当前允许的工具', 'Inherit available tools'))}</pre>
-          <h4>Hooks</h4><pre>{employee.hooks.join('\n') || t('无', 'None')}</pre>
-          <h4>Guard</h4><pre>{employee.guards.includes('read_only') ? t('只读', 'Read only') : t('无额外约束', 'No additional guards')}</pre>
+        <details><summary>{uiText(language)('agentDefinitionInspector.systemPrompt')}</summary><pre>{employee.system_prompt}</pre></details>
+        <details><summary>{uiText(language)('agentDefinitionInspector.toolsHooksAndGuards')}</summary>
+          <h4>{uiText(language)('agentDefinitionInspector.allowedTools')}</h4><pre>{employee.allowed_tools?.join('\n') || (employee.allowed_tools ? uiText(language)('cardlingWindow.none') : uiText(language)('agentDefinitionInspector.inheritAvailableTools'))}</pre>
+          <h4>{uiText(language)('agentDefinitionInspector.hooks')}</h4><pre>{employee.hooks.join('\n') || uiText(language)('cardlingWindow.none')}</pre>
+          <h4>{uiText(language)('agentDefinitionInspector.guard')}</h4><pre>{employee.guards.includes('read_only') ? uiText(language)('messageBubble.readOnly') : uiText(language)('agentDefinitionInspector.noAdditionalGuards')}</pre>
         </details>
-        {!!employee.settings && <details><summary>{t('执行配置', 'Execution settings')}</summary><pre>{JSON.stringify(employee.settings, null, 2)}</pre></details>}
+        {!!employee.settings && <details><summary>{uiText(language)('agentDefinitionInspector.executionSettings')}</summary><pre>{JSON.stringify(employee.settings, null, 2)}</pre></details>}
       </>}
-      {team && <div className="agent-definition-nodes"><h3>{t('协作文档', 'Collaboration document')}</h3>
+      {team && <div className="agent-definition-nodes"><h3>{uiText(language)('agentDefinitionInspector.collaborationDocument')}</h3>
         <div className="team-inspector-document"><MdPresentation source={teamToMarkdown(team)} onChange={() => {}} language={language} flow readOnly
           icon={() => <EmployeeIcon size={16}/>} subtitle={node => String(node.attributes.agent_id || '')}/></div>
-        <details><summary>{t('员工详情', 'Agent details')}</summary>{[...new Set(team.nodes.map(node => node.agent_id))].map(id => <button type="button" key={id}
+        <details><summary>{uiText(language)('agentDefinitionInspector.agentDetails')}</summary>{[...new Set(team.nodes.map(node => node.agent_id))].map(id => <button type="button" key={id}
           onClick={() => (host?.openWorkSummary ?? openWorkSummaryInspector)({ kind: 'agent-definition', sessionId: detail.sessionId, entity: 'employee', entityId: id, title: id })}>
           <EmployeeIcon size={17}/><span>{id}</span><ChevronRight size={14}/></button>)}</details>
       </div>}

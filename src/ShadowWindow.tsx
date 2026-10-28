@@ -1,3 +1,4 @@
+import { uiText } from './i18n';
 import {
   ArrowDown,
   ArrowUp,
@@ -139,7 +140,7 @@ export function ShadowWindow({
       setMode(payload.initialMode);
       const background = themeBackgroundColor(payload.theme);
       document.documentElement.dataset.startTheme = payload.theme;
-      document.documentElement.lang = payload.language === 'zh' ? 'zh-CN' : 'en';
+      document.documentElement.lang = payload.language;
       document.documentElement.style.backgroundColor = background;
       document.documentElement.style.setProperty('--cardbush-window-bg', background);
       document.documentElement.style.setProperty('--shadow-accent', payload.accentColor);
@@ -367,8 +368,8 @@ export function ShadowWindow({
       });
     } catch (reason) {
       if (!controller.signal.aborted) {
-        setError(context.language === 'zh' && (reason as { code?: string })?.code === 'shadow_runtime_update_required'
-          ? 'Shadow 的执行规则已更新，请重启 CardBush 后继续。'
+        setError((reason as { code?: string })?.code === 'shadow_runtime_update_required'
+          ? uiText(context.language)('shadow.runtimeUpdate')
           : reason instanceof Error ? reason.message : String(reason));
       }
     } finally {
@@ -414,40 +415,39 @@ export function ShadowWindow({
       <header className={`shadow-window-titlebar${embedded ? ' shadow-inspector-titlebar' : ''}`}>
         <div className={`shadow-window-title${embedded ? '' : ' window-drag'}`}>
           <ShadowCloneIcon size={15} />
-          <strong>{context ? `Shadow · ${context.title}` : 'Shadow'}</strong>
+          <strong>{context ? uiText(language)('reference.shadowTitle', { title: context.title }) : uiText(language)('shadowRuntime.shadow')}</strong>
         </div>
-        <div className={`shadow-window-mode-switch mode-${mode}`} role="group" aria-label="Shadow mode">
+        <div className={`shadow-window-mode-switch mode-${mode}`} role="group" aria-label={uiText(language)('shadowWindow.shadow_mode')}>
           <span className="shadow-window-mode-indicator" aria-hidden="true" />
           <button
             type="button"
             className={mode === 'readonly' ? 'active' : ''}
             disabled={busy || initializing || modeSwitching}
             onClick={() => void switchMode('readonly')}
-            title={language === 'zh' ? '只读分析，不允许修改' : 'Analysis only; no changes'}
+            title={uiText(language)('shadowWindow.analysisOnlyNoChanges')}
           >
             <Lock size={13} />
-            {language === 'zh' ? '只读' : 'Read only'}
+            {uiText(language)('messageBubble.readOnly')}
           </button>
           <button
             type="button"
             className={mode === 'fork' ? 'active' : ''}
             disabled={busy || initializing || modeSwitching}
             onClick={() => void switchMode('fork')}
-            title={language === 'zh' ? '在 Shadow 会话中继续修改当前工作区' : 'Continue working on the attached workspace in this Shadow'}
+            title={uiText(language)('shadowWindow.continueWorkingOnTheAttachedWorkspaceIn')}
           >
             <GitFork size={13} />
-            Fork
-          </button>
+            {uiText(language)('shadowWindow.fork')}</button>
         </div>
         {!embedded && (
           <div className="shadow-window-caption-actions">
-            <button type="button" onClick={() => window.cardbushDesktop?.minimizeShadowWindow?.()} aria-label="Minimize">
+            <button type="button" onClick={() => window.cardbushDesktop?.minimizeShadowWindow?.()} aria-label={uiText(language)('shadowWindow.minimize')}>
               <Minus size={15} />
             </button>
-            <button type="button" onClick={() => void window.cardbushDesktop?.toggleMaximizeShadowWindow?.()} aria-label="Maximize">
-              <Square size={maximized ? 12 : 13} />
+            <button type="button" onClick={() => void window.cardbushDesktop?.toggleMaximizeShadowWindow?.()} aria-label={uiText(language)('shadowWindow.maximize')}>
+              <Square className="shadow-maximize-icon" data-maximized={maximized} />
             </button>
-            <button type="button" className="close" onClick={() => void requestClose()} aria-label="Close">
+            <button type="button" className="close" onClick={() => void requestClose()} aria-label={uiText(language)('shadowWindow.close')}>
               <X size={15} />
             </button>
           </div>
@@ -456,8 +456,8 @@ export function ShadowWindow({
 
       <section className="shadow-window-context-bar">
         <span>{mode === 'readonly'
-          ? (language === 'zh' ? '冻结历史 · 只读分析' : 'Frozen history · analysis only')
-          : (language === 'zh' ? '冻结历史 · 可修改当前工作区' : 'Frozen history · attached workspace changes allowed')}</span>
+          ? (uiText(language)('shadowWindow.frozenHistoryAnalysisOnly'))
+          : (uiText(language)('shadowWindow.frozenHistoryAttachedWorkspaceChangesAllowed'))}</span>
       </section>
 
       <div className="shadow-window-transcript-frame">
@@ -478,7 +478,7 @@ export function ShadowWindow({
                 >
                   {index === renderedSourceMessages.length && renderedSourceMessages.length > 0 && (
                     <div className="shadow-window-history-divider">
-                      <span>{language === 'zh' ? 'Shadow 对话' : 'Shadow conversation'}</span>
+                      <span>{uiText(language)('shadowWindow.shadowConversation')}</span>
                     </div>
                   )}
                   <MessageBubble
@@ -498,7 +498,7 @@ export function ShadowWindow({
                   />
                 </div>
               ))}
-              {initializing && <div className="shadow-window-loading">{language === 'zh' ? '正在冻结会话历史…' : 'Freezing conversation history…'}</div>}
+              {initializing && <div className="shadow-window-loading">{uiText(language)('shadowWindow.freezingConversationHistory')}</div>}
               {error && <div className="shadow-window-error">{error}</div>}
             </div>
           </MessageFileReferenceScope>
@@ -507,7 +507,7 @@ export function ShadowWindow({
         <button
           className={`scroll-bottom shadow-window-scroll-bottom${busy ? ' loop-running' : ''}${scrollBottomVisible ? '' : ' hidden'}`}
           type="button"
-          aria-label={language === 'zh' ? '回到底部' : 'Scroll to bottom'}
+          aria-label={uiText(language)('shadowWindow.scrollToBottom')}
           aria-hidden={!scrollBottomVisible}
           tabIndex={scrollBottomVisible ? 0 : -1}
           onClick={scrollTranscriptToBottom}
@@ -521,8 +521,8 @@ export function ShadowWindow({
           value={draft}
           disabled={!conversation || initializing || closing}
           placeholder={mode === 'readonly'
-            ? (language === 'zh' ? '询问这段会话，不会修改工作区' : 'Ask about this conversation without changing the workspace')
-            : (language === 'zh' ? '在 Fork 中继续，可修改工作区' : 'Continue in the Fork with workspace changes')}
+            ? (uiText(language)('shadowWindow.askAboutThisConversationWithoutChangingThe'))
+            : (uiText(language)('shadowWindow.continueInTheForkWithWorkspaceChanges'))}
           rows={1}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -535,11 +535,11 @@ export function ShadowWindow({
         <div className="shadow-window-composer-footer composer-footer">
           <span>{context?.modelConfig.modelName ?? ''}</span>
           {busy ? (
-            <button type="button" className="shadow-window-send send-button stop" onClick={stop} aria-label="Stop">
+            <button type="button" className="shadow-window-send send-button stop" onClick={stop} aria-label={uiText(language)('shadowWindow.stop')}>
               <Octagon size={15} fill="currentColor" />
             </button>
           ) : (
-            <button type="button" className="shadow-window-send send-button" disabled={!draft.trim() || !conversation || initializing || modeSwitching} onClick={() => void send()} aria-label="Send">
+            <button type="button" className="shadow-window-send send-button" disabled={!draft.trim() || !conversation || initializing || modeSwitching} onClick={() => void send()} aria-label={uiText(language)('shadowWindow.send')}>
               <ArrowUp size={17} />
             </button>
           )}

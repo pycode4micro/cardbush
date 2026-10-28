@@ -52,7 +52,7 @@ function fixture(t) {
     },
   };
   const build = (allowUnavailable = false) => buildProcessResourceHost({ ...options, allowUnavailable });
-  const ready = () => { state.probe = { status: 0, stdout: JSON.stringify({ protocol: 'cardbush.process-host.v1', sandboxVersion: 1, sandboxFileVersion: 2, sandboxScopeVersion: 3 }) }; };
+  const ready = () => { state.probe = { status: 0, stdout: JSON.stringify({ protocol: 'cardbush.process-host.v1', sandboxVersion: 1, sandboxFileVersion: 3, sandboxScopeVersion: 4 }) }; };
   return { root, write, manifest, receipt, state, options, build, ready, compiler };
 }
 
@@ -105,8 +105,8 @@ test('successful retry verifies the existing executable and publishes it atomica
   assert.deepEqual(f.build(), { available: true });
   const manifest = JSON.parse(fs.readFileSync(f.manifest, 'utf8'));
   assert.equal(manifest.sandboxVersion, 1);
-  assert.equal(manifest.sandboxFileVersion, 2);
-  assert.equal(manifest.sandboxScopeVersion, 3);
+  assert.equal(manifest.sandboxFileVersion, 3);
+  assert.equal(manifest.sandboxScopeVersion, 4);
   assert.match(manifest.fileName, /^CardBushProcessHost-[a-f0-9]{16}\.exe$/);
   assert.equal(fs.existsSync(f.receipt), false);
   assert.equal(guiBuildState(f.root, 'win32').current, true);
@@ -115,7 +115,7 @@ test('successful retry verifies the existing executable and publishes it atomica
 });
 
 test('development mode does not swallow compiler or capability/protocol failures', async t => {
-  for (const failure of ['compiler', 'invalid-json', 'wrong-protocol', 'wrong-version', 'missing-file-support', 'old-scope-support', 'nonzero-exit']) {
+  for (const failure of ['compiler', 'invalid-json', 'wrong-protocol', 'wrong-version', 'missing-file-support', 'old-file-support', 'old-scope-support', 'nonzero-exit']) {
     await t.test(failure, t => {
       const f = fixture(t);
       if (failure === 'compiler') f.state.compileError = true;
@@ -125,7 +125,8 @@ test('development mode does not swallow compiler or capability/protocol failures
         if (failure === 'wrong-protocol') f.state.probe.stdout = '{"protocol":"other","sandboxVersion":1}';
         if (failure === 'wrong-version') f.state.probe.stdout = '{"protocol":"cardbush.process-host.v1","sandboxVersion":2}';
         if (failure === 'missing-file-support') f.state.probe.stdout = '{"protocol":"cardbush.process-host.v1","sandboxVersion":1}';
-        if (failure === 'old-scope-support') f.state.probe.stdout = '{"protocol":"cardbush.process-host.v1","sandboxVersion":1,"sandboxFileVersion":2,"sandboxScopeVersion":2}';
+        if (failure === 'old-file-support') f.state.probe.stdout = '{"protocol":"cardbush.process-host.v1","sandboxVersion":1,"sandboxFileVersion":2,"sandboxScopeVersion":4}';
+        if (failure === 'old-scope-support') f.state.probe.stdout = '{"protocol":"cardbush.process-host.v1","sandboxVersion":1,"sandboxFileVersion":3,"sandboxScopeVersion":3}';
         if (failure === 'nonzero-exit') f.state.probe.status = 1;
       }
       assert.throws(() => f.build(true), failure === 'compiler' ? /compilation failed/ : /startup check/);

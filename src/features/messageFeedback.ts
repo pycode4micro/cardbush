@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import type { ChatMessage } from '../types';
 import { recordPersonalizationFeedback } from '../backend/personalization';
 import { readIndividuation } from './settings/individuation';
@@ -34,7 +35,7 @@ export async function copyText(value: string) {
   const copied = document.execCommand('copy');
   textarea.remove();
   if (!copied) {
-    throw new Error('Copy failed');
+    throw new Error(uiText()('messageFeedback.copy_failed'));
   }
   window.dispatchEvent(new CustomEvent(COPY_FEEDBACK_EVENT));
 }

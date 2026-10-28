@@ -1,6 +1,8 @@
+import type { MessageKey } from '../../i18n';
+import { uiText } from '../../i18n';
 export type ShortcutBinding = { key: string; ctrl?: boolean; alt?: boolean; shift?: boolean };
 type ShortcutContext = 'composer' | 'queue' | 'transcript' | 'edit' | 'sidebar' | 'image';
-type Text = { zh: string; en: string };
+type Text = MessageKey;
 type ShortcutDefinition = {
   id: string; group: 'application' | 'conversation' | 'inspector' | 'image'; contexts: ShortcutContext[];
   title: Text; description: Text; defaultBinding: ShortcutBinding;
@@ -9,84 +11,84 @@ const appContexts: ShortcutContext[] = ['composer', 'queue', 'transcript', 'edit
 
 export const shortcutDefinitions = [
   { id: 'openAppCenter', group: 'application', contexts: appContexts, defaultBinding: { key: 'a', ctrl: true, shift: true },
-    title: { zh: '应用中心', en: 'App center' }, description: { zh: '打开应用与快捷方式抽屉。', en: 'Open applications and shortcuts.' } },
+    title: 'appCenter.appCenter', description: 'keyboardShortcuts.openApplicationsAndShortcuts' },
   { id: 'openPlugins', group: 'application', contexts: appContexts, defaultBinding: { key: 'p', ctrl: true, alt: true },
-    title: { zh: '插件', en: 'Plugins' }, description: { zh: '打开插件管理。', en: 'Open plugin management.' } },
+    title: 'appCenterModel.plugins', description: 'keyboardShortcuts.openPluginManagement' },
   { id: 'openAutomations', group: 'application', contexts: appContexts, defaultBinding: { key: 't', ctrl: true, alt: true },
-    title: { zh: '定时与自动化', en: 'Automations' }, description: { zh: '打开日历和定时任务。', en: 'Open the calendar and scheduled tasks.' } },
+    title: 'appCenterModel.automations', description: 'keyboardShortcuts.openTheCalendarAndScheduledTasks' },
   { id: 'extractConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'e', ctrl: true, shift: true },
-    title: { zh: '提取对话', en: 'Extract conversation' }, description: { zh: '打开当前会话的提取弹窗。', en: 'Extract the current conversation as Markdown.' } },
+    title: 'conversationExtraction.extractConversation', description: 'keyboardShortcuts.extractTheCurrentConversationAsMarkdown' },
   { id: 'newConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'n', ctrl: true },
-    title: { zh: '新会话', en: 'New chat' }, description: { zh: '开始一个新会话。', en: 'Start a new conversation.' } },
+    title: 'conversationSearchDialog.newChat', description: 'keyboardShortcuts.startANewConversation' },
   { id: 'openProject', group: 'application', contexts: appContexts, defaultBinding: { key: 'o', ctrl: true },
-    title: { zh: '打开文件夹', en: 'Open folder' }, description: { zh: '选择文件夹并添加为项目。', en: 'Choose a folder to add as a project.' } },
+    title: 'conversationSearchDialog.openFolder', description: 'keyboardShortcuts.chooseAFolderToAddAsA' },
   { id: 'openSettings', group: 'application', contexts: appContexts, defaultBinding: { key: ',', ctrl: true },
-    title: { zh: '设置', en: 'Settings' }, description: { zh: '打开应用设置。', en: 'Open application settings.' } },
+    title: 'cardlingWindow.settings', description: 'keyboardShortcuts.openApplicationSettings' },
   { id: 'showShortcuts', group: 'application', contexts: appContexts, defaultBinding: { key: '/', ctrl: true },
-    title: { zh: '显示键盘快捷键', en: 'Show keyboard shortcuts' }, description: { zh: '查看和修改快捷键。', en: 'View and customize keyboard shortcuts.' } },
+    title: 'keyboardShortcuts.showKeyboardShortcuts', description: 'keyboardShortcuts.viewAndCustomizeKeyboardShortcuts' },
   { id: 'toggleSidebar', group: 'application', contexts: appContexts, defaultBinding: { key: 'b', ctrl: true },
-    title: { zh: '切换侧边栏', en: 'Toggle sidebar' }, description: { zh: '展开或收起左侧栏。', en: 'Show or hide the left sidebar.' } },
+    title: 'keyboardShortcuts.toggleSidebar', description: 'keyboardShortcuts.showOrHideTheLeftSidebar' },
   { id: 'toggleInspector', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'b', ctrl: true, alt: true },
-    title: { zh: '切换右侧栏', en: 'Toggle right sidebar' }, description: { zh: '展开或收起文件与浏览器预览。', en: 'Show or hide the file and browser preview.' } },
+    title: 'keyboardShortcuts.toggleRightSidebar', description: 'keyboardShortcuts.showOrHideTheFileAndBrowser' },
   { id: 'navigateBack', group: 'application', contexts: appContexts, defaultBinding: { key: '[', ctrl: true },
-    title: { zh: '返回', en: 'Back' }, description: { zh: '返回访问过的页面或会话。', en: 'Go back through visited pages and conversations.' } },
+    title: 'windowFrame.back', description: 'keyboardShortcuts.goBackThroughVisitedPagesAndConversations' },
   { id: 'navigateForward', group: 'application', contexts: appContexts, defaultBinding: { key: ']', ctrl: true },
-    title: { zh: '前进', en: 'Forward' }, description: { zh: '前进到返回前的页面或会话。', en: 'Go forward through page and conversation history.' } },
+    title: 'app.forward', description: 'keyboardShortcuts.goForwardThroughPageAndConversationHistory' },
   { id: 'focusBrowserAddress', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'l', ctrl: true },
-    title: { zh: '聚焦浏览器地址栏', en: 'Focus browser address' }, description: { zh: '编辑当前浏览器标签页的网址。', en: 'Edit the address of the current browser tab.' } },
+    title: 'keyboardShortcuts.focusBrowserAddress', description: 'keyboardShortcuts.editTheAddressOfTheCurrentBrowser' },
   { id: 'reloadBrowser', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'r', ctrl: true },
-    title: { zh: '重新加载页面', en: 'Reload page' }, description: { zh: '刷新当前预览页面。', en: 'Reload the current preview page.' } },
+    title: 'keyboardShortcuts.reloadPage', description: 'keyboardShortcuts.reloadTheCurrentPreviewPage' },
   { id: 'appZoomIn', group: 'application', contexts: appContexts, defaultBinding: { key: 'Plus', ctrl: true },
-    title: { zh: '放大界面', en: 'Zoom interface in' }, description: { zh: '放大整个应用界面；图片预览中优先缩放图片。', en: 'Zoom the app; image previews keep their own zoom controls.' } },
+    title: 'keyboardShortcuts.zoomInterfaceIn', description: 'keyboardShortcuts.zoomTheAppImagePreviewsKeepTheir' },
   { id: 'appZoomOut', group: 'application', contexts: appContexts, defaultBinding: { key: 'Minus', ctrl: true },
-    title: { zh: '缩小界面', en: 'Zoom interface out' }, description: { zh: '缩小整个应用界面。', en: 'Zoom the application interface out.' } },
+    title: 'keyboardShortcuts.zoomInterfaceOut', description: 'keyboardShortcuts.zoomTheApplicationInterfaceOut' },
   { id: 'appZoomReset', group: 'application', contexts: appContexts, defaultBinding: { key: '0', ctrl: true },
-    title: { zh: '界面实际大小', en: 'Actual interface size' }, description: { zh: '恢复应用默认缩放。', en: 'Restore the default interface scale.' } },
+    title: 'keyboardShortcuts.actualInterfaceSize', description: 'keyboardShortcuts.restoreTheDefaultInterfaceScale' },
   { id: 'toggleFullscreen', group: 'application', contexts: appContexts, defaultBinding: { key: 'F11' },
-    title: { zh: '切换全屏', en: 'Toggle full screen' }, description: { zh: '进入或退出全屏。', en: 'Enter or leave full screen.' } },
+    title: 'keyboardShortcuts.toggleFullScreen', description: 'keyboardShortcuts.enterOrLeaveFullScreen' },
   { id: 'closeWindow', group: 'application', contexts: appContexts, defaultBinding: { key: 'w', ctrl: true },
-    title: { zh: '关闭窗口', en: 'Close window' }, description: { zh: '隐藏主窗口，应用继续在托盘运行。', en: 'Hide the main window and keep the app running in the tray.' } },
+    title: 'keyboardShortcuts.closeWindow', description: 'keyboardShortcuts.hideTheMainWindowAndKeepThe' },
   { id: 'quitApp', group: 'application', contexts: appContexts, defaultBinding: { key: 'q', ctrl: true },
-    title: { zh: '退出 CardBush', en: 'Quit CardBush' }, description: { zh: '退出应用。', en: 'Quit the application.' } },
+    title: 'keyboardShortcuts.quitCardbush', description: 'keyboardShortcuts.quitTheApplication' },
   { id: 'searchConversations', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'f', ctrl: true },
-    title: { zh: '搜索会话', en: 'Search chats' },
-    description: { zh: '打开会话搜索，侧栏收起时也可使用。', en: 'Open chat search, including when the sidebar is collapsed.' } },
+    title: 'conversationSearchDialog.searchChats',
+    description: 'keyboardShortcuts.openChatSearchIncludingWhenTheSidebar' },
   { id: 'previousConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'Tab', ctrl: true },
-    title: { zh: '切回上个会话', en: 'Switch to previous chat' },
-    description: { zh: '切回上一个访问的会话，再按一次可切回来。', en: 'Switch to the last visited chat. Press again to switch back.' } },
+    title: 'keyboardShortcuts.switchToPreviousChat',
+    description: 'keyboardShortcuts.switchToTheLastVisitedChatPress' },
   { id: 'sendMessage', group: 'conversation', contexts: ['composer'], defaultBinding: { key: 'Enter' },
-    title: { zh: '发送消息', en: 'Send message' },
-    description: { zh: '任务运行时，遵循个性化中的发送方式。', en: 'During a task, use the delivery preference in Personalization.' } },
+    title: 'keyboardShortcuts.sendMessage',
+    description: 'keyboardShortcuts.duringATaskUseTheDeliveryPreference' },
   { id: 'guideNow', group: 'conversation', contexts: ['composer', 'queue', 'transcript'], defaultBinding: { key: 'Enter', ctrl: true },
-    title: { zh: '立即引导', en: 'Send guidance now' },
-    description: { zh: '将草稿加入当前回合；草稿为空或焦点在队列中时，发送队列第一条。', en: 'Add the draft to the current turn. Use the first queued message when the draft is empty or the queue is focused.' } },
+    title: 'keyboardShortcuts.sendGuidanceNow',
+    description: 'keyboardShortcuts.addTheDraftToTheCurrentTurn' },
   { id: 'toggleQueueLock', group: 'conversation', contexts: ['composer', 'queue', 'transcript'], defaultBinding: { key: 'l', ctrl: true, shift: true },
-    title: { zh: '锁定 / 解锁引导队列', en: 'Lock / unlock guidance queue' },
-    description: { zh: '暂停或恢复当前会话的自动发送；锁定时仍可手动发送单条消息。', en: 'Pause or resume automatic delivery in this chat. Individual messages can still be sent manually.' } },
+    title: 'keyboardShortcuts.lockUnlockGuidanceQueue',
+    description: 'keyboardShortcuts.pauseOrResumeAutomaticDeliveryInThis' },
   { id: 'submitEdit', group: 'conversation', contexts: ['edit'], defaultBinding: { key: 'Enter', ctrl: true },
-    title: { zh: '提交消息修改', en: 'Submit message edit' },
-    description: { zh: '编辑已有提问时生效。', en: 'While editing an existing message.' } },
+    title: 'keyboardShortcuts.submitMessageEdit',
+    description: 'keyboardShortcuts.whileEditingAnExistingMessage' },
   { id: 'renameConversation', group: 'conversation', contexts: ['sidebar'], defaultBinding: { key: 'F2' },
-    title: { zh: '重命名会话', en: 'Rename conversation' },
-    description: { zh: '左侧会话条目获得焦点时生效。', en: 'When a conversation in the sidebar is focused.' } },
+    title: 'keyboardShortcuts.renameConversation',
+    description: 'keyboardShortcuts.whenAConversationInTheSidebarIs' },
   { id: 'openReview', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'g', ctrl: true, shift: true },
-    title: { zh: '打开审查', en: 'Open review' },
-    description: { zh: '查看当前会话的文件修改。', en: 'Review file changes in the current conversation.' } },
+    title: 'keyboardShortcuts.openReview',
+    description: 'keyboardShortcuts.reviewFileChangesInTheCurrentConversation' },
   { id: 'openFiles', group: 'inspector', contexts: appContexts, defaultBinding: { key: 'p', ctrl: true },
-    title: { zh: '打开文件', en: 'Open files' },
-    description: { zh: '选择文件并在右侧栏打开。', en: 'Choose files to open in the right sidebar.' } },
+    title: 'conversationSearchDialog.openFiles',
+    description: 'keyboardShortcuts.chooseFilesToOpenInTheRight' },
   { id: 'openBrowser', group: 'inspector', contexts: appContexts, defaultBinding: { key: 't', ctrl: true },
-    title: { zh: '新建浏览器标签', en: 'New browser tab' },
-    description: { zh: '在右侧栏打开新的浏览器标签。', en: 'Open a new browser tab in the right sidebar.' } },
+    title: 'keyboardShortcuts.newBrowserTab',
+    description: 'keyboardShortcuts.openANewBrowserTabInThe' },
   { id: 'openShadow', group: 'inspector', contexts: appContexts, defaultBinding: { key: 's', ctrl: true, alt: true },
-    title: { zh: '打开 Shadow 对话', en: 'Open Shadow chat' },
-    description: { zh: '在当前会话支持 Shadow 时生效。', en: 'Available when the current conversation supports Shadow.' } },
+    title: 'keyboardShortcuts.openShadowChat',
+    description: 'keyboardShortcuts.availableWhenTheCurrentConversationSupportsShadow' },
   { id: 'imageZoomIn', group: 'image', contexts: ['image'], defaultBinding: { key: 'Plus', ctrl: true },
-    title: { zh: '放大图片', en: 'Zoom image in' }, description: { zh: '图片预览打开时生效。', en: 'While an image preview is open.' } },
+    title: 'keyboardShortcuts.zoomImageIn', description: 'keyboardShortcuts.whileAnImagePreviewIsOpen' },
   { id: 'imageZoomOut', group: 'image', contexts: ['image'], defaultBinding: { key: 'Minus', ctrl: true },
-    title: { zh: '缩小图片', en: 'Zoom image out' }, description: { zh: '图片预览打开时生效。', en: 'While an image preview is open.' } },
+    title: 'keyboardShortcuts.zoomImageOut', description: 'keyboardShortcuts.whileAnImagePreviewIsOpen' },
   { id: 'imageReset', group: 'image', contexts: ['image'], defaultBinding: { key: '0', ctrl: true },
-    title: { zh: '重置图片比例', en: 'Reset image zoom' }, description: { zh: '恢复图片的初始显示比例。', en: 'Restore the initial image scale.' } },
+    title: 'keyboardShortcuts.resetImageZoom', description: 'keyboardShortcuts.restoreTheInitialImageScale' },
 ] as const satisfies readonly ShortcutDefinition[];
 
 export type ShortcutId = typeof shortcutDefinitions[number]['id'];
@@ -127,15 +129,15 @@ export function shortcutAria(binding: ShortcutBinding | null) {
   return binding ? formatShortcut(binding).replaceAll(' + ', '+').replace('Ctrl', 'Control') : undefined;
 }
 
-export function bindingError(id: ShortcutId, binding: ShortcutBinding, language: 'zh' | 'en'): string {
-  const zh = language === 'zh';
+export function bindingError(id: ShortcutId, binding: ShortcutBinding, language: string): string {
+
   if (binding.key === 'Escape' || binding.key === 'Tab' && (!binding.ctrl || binding.alt) || binding.key === 'F5' ||
       binding.ctrl && ['a', 'c', 'v', 'x', 'z', 'y', 'r'].includes(binding.key) && !(id === 'reloadBrowser' && binding.key === 'r') ||
       binding.alt && binding.key === 'F4' || binding.key === 'Enter' && binding.shift && !binding.ctrl && !binding.alt) {
-    return zh ? '这个按键保留给换行、取消或系统操作，请换一个组合。' : 'This key is reserved for editing, dismissal, or system actions. Choose another combination.';
+    return uiText(language)('keyboardShortcuts.thisKeyIsReservedForEditingDismissal');
   }
   if (!binding.ctrl && !binding.alt && !/^F(?:[1-9]|1[0-2])$/.test(binding.key) && !(id === 'sendMessage' && binding.key === 'Enter' && !binding.shift)) {
-    return zh ? '请搭配 Ctrl 或 Alt，或使用功能键 F1–F12。' : 'Use Ctrl or Alt, or a function key from F1 to F12.';
+    return uiText(language)('keyboardShortcuts.useCtrlOrAltOrAFunction');
   }
   return '';
 }

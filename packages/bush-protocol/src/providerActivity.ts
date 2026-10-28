@@ -1,3 +1,4 @@
+import { uiText } from '@cardbush/platform/i18n';
 import type { ProviderStreamDiagnostic } from './model.js';
 
 export type ProviderActivity = 'waiting' | 'thinking' | 'private_thinking' | 'responding' | 'preparing_tool';
@@ -13,13 +14,13 @@ export function providerStreamActivity(event: ProviderStreamDiagnostic): Provide
   return 'waiting';
 }
 
-export function providerActivityLabel(activity: ProviderActivity, language: 'zh' | 'en' = 'en'): string {
+export function providerActivityLabel(activity: ProviderActivity, language: string = 'en'): string {
   const labels = {
-    waiting: ['准备开始聊天', 'Preparing to chat'],
-    thinking: ['模型思考中', 'Thinking'],
-    private_thinking: ['等待模型思考结果', 'Thinking (no public output)'],
-    responding: ['正在生成回复', 'Responding'],
-    preparing_tool: ['正在准备工具调用', 'Preparing tool call'],
+    waiting: 'providerActivity.preparing_to_chat' as const,
+    thinking: 'providerActivity.thinking' as const,
+    private_thinking: 'providerActivity.thinking_no_public_output' as const,
+    responding: 'providerActivity.responding' as const,
+    preparing_tool: 'providerActivity.preparing_tool_call' as const,
   };
-  return labels[activity][language === 'zh' ? 0 : 1]!;
+  return uiText(language)(labels[activity]);
 }

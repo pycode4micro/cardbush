@@ -6,7 +6,7 @@ import type { TerminalRuntime } from '@cardbush/platform' with { 'resolution-mod
 
 type CardlingDesktopState = {
   enabled: boolean;
-  language: 'zh' | 'en';
+  language: string;
   theme: 'bright' | 'dark';
   settings: {
     size: 'compact' | 'normal' | 'large';
@@ -87,7 +87,7 @@ type ShadowWindowPayload = {
   sessionId: string;
   sourceTurnId: string;
   title: string;
-  language: 'zh' | 'en';
+  language: string;
   theme: 'bright' | 'dark';
   accentColor: string;
   themeVariables?: Record<string, string>;
@@ -328,6 +328,7 @@ const desktopApi = {
   },
   showErrorDialog: (error: { title: string; message: string }) =>
     ipcRenderer.invoke('app:show-error', error) as Promise<void>,
+  setUiLanguage: (language: string) => ipcRenderer.invoke('app:set-ui-language', language) as Promise<void>,
   restoreEditorFocus: (state: import('./rendererFocus').EditorFocusRequest) =>
     ipcRenderer.invoke('window:restore-editor-focus', state) as Promise<boolean>,
   wallpaperAccent: () =>
@@ -599,9 +600,9 @@ const desktopApi = {
     return () => ipcRenderer.removeListener('cardling:collapse', listener);
   },
   localApplications: {
-    pick: (language: 'zh' | 'en') => ipcRenderer.invoke('app-center:pick-local', language) as Promise<import('./localApplications').LocalApplication | null>,
+    pick: (language: string) => ipcRenderer.invoke('app-center:pick-local', language) as Promise<import('./localApplications').LocalApplication | null>,
     refreshIcons: (paths: string[]) => ipcRenderer.invoke('app-center:refresh-local-icons', paths) as Promise<Record<string, string>>,
-    open: (targetPath: string) => ipcRenderer.invoke('app-center:open-local', targetPath) as Promise<void>,
+    open: (targetPath: string, language: string) => ipcRenderer.invoke('app-center:open-local', targetPath, language) as Promise<void>,
   },
   openPath: (targetPath: string) =>
     ipcRenderer.invoke('shell:open-path', targetPath) as Promise<string>,

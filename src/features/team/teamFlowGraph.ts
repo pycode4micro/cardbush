@@ -1,3 +1,5 @@
+import { uiText } from '../../i18n';
+import type { MessageKey } from '../../i18n';
 import type { RegisteredAgent, TeamWorkflow } from '@cardbush/bush-protocol';
 import type { MdDocument } from '../mdPresentation/markdownGraph';
 
@@ -13,8 +15,8 @@ export function teamGraphDocument(workflow: TeamWorkflow, agents: RegisteredAgen
   })) };
 }
 
-export function teamStatusLabel(status: string, language: 'zh' | 'en') {
-  const labels: Record<string, [string, string]> = { idle: ['未运行', 'Not run'], pending: ['等待', 'Waiting'], running: ['运行中', 'Running'],
-    completed: ['已完成', 'Completed'], failed: ['失败', 'Failed'], stopped: ['已停止', 'Stopped'], interrupted: ['已中断', 'Interrupted'] };
-  return labels[status]?.[language === 'zh' ? 0 : 1] ?? status;
+export function teamStatusLabel(status: string, language: string) {
+  const labels: Record<string, MessageKey> = { idle: 'teamWorkflowLibrary.notRun' as const, pending: 'cardlingWindow.waiting' as const, running: 'cardlingWindow.running' as const,
+    completed: 'automationPanel.completed' as const, failed: 'automationPanel.failed' as const, stopped: 'automationPanel.stopped' as const, interrupted: 'browserLibraryDialog.interrupted' as const };
+  return (labels[status] && uiText(language)(labels[status])) ?? status;
 }

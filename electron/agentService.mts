@@ -53,7 +53,9 @@ const sendSchema = z.object({
   turnId: id.optional(), supersession: sessionSupersessionSchema.extend({ expectedRevision: z.number().int().nonnegative() }).optional(), files: z.array(z.string()).optional(), images: z.array(z.string()).optional(), goalObjective: z.string().trim().min(1).optional(),
   requestId: id, sessionId: id, text: z.string().trim().min(1).max(1_000_000), modelId: id,
   permissionMode: z.enum(['task_free', 'user_free', 'all_free']).default('task_free'),
-  language: z.enum(['zh', 'en']).default('zh'),
+  language: z.string().trim().min(1).max(64).refine(value => {
+    try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; }
+  }, 'Invalid language tag').default('zh'),
   reasoningEffort: reasoningEffortSchema.nullish(), planEnabled: z.boolean().optional(), disabledSkills: z.array(z.string()).optional(), subagentPermissionRouting: z.enum(['user', 'parent']).optional(),
 }).strict();
 type SessionPresentation = { title?: string; pinned?: boolean; archived?: boolean; readAt?: string; forcedUnread?: boolean; queueLocked?: boolean; individuation?: IndividuationSettings };

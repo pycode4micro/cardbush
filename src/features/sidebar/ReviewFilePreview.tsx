@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ConversationHostPreview } from '../inspector/ConversationHostPreview';
 import { memo, useContext, useState } from 'react';
 import { ConversationHostContext } from '../conversationHost';
@@ -24,16 +25,16 @@ export const ReviewFilePreview = memo(function ReviewFilePreview({ path, languag
   const host = useContext(ConversationHostContext);
   const adapter = resolveFilePreview(path);
   const canShowSource = adapter?.id === 'html' || adapter?.id === 'markdown' || /\.svg$/i.test(path);
-  const zh = language === 'zh';
+
   return <div className="change-review-source-preview">
     <div className="change-review-preview-toolbar">
-      <p className="change-review-source-note">{changed ? (zh ? '当前文件内容' : 'Current file contents')
-        : (zh ? '所选轮次未修改此文件 · 当前内容' : 'Unchanged in this turn · Current contents')}</p>
-      {canShowSource && <div className="review-preview-modes" role="group" aria-label={zh ? '文件显示方式' : 'File view'}>
-        <button type="button" aria-pressed={!sourceMode} title={zh ? '预览' : 'Preview'} onClick={() => setSourceMode(false)}><Eye size={13} /><span>{zh ? '预览' : 'Preview'}</span></button>
-        <button type="button" aria-pressed={sourceMode} title={zh ? '源码' : 'Source'} onClick={() => setSourceMode(true)}><Code size={13} /><span>{zh ? '源码' : 'Source'}</span></button>
+      <p className="change-review-source-note">{changed ? (uiText(language)('reviewFilePreview.currentFileContents'))
+        : (uiText(language)('reviewFilePreview.unchangedInThisTurnCurrentContents'))}</p>
+      {canShowSource && <div className="review-preview-modes" role="group" aria-label={uiText(language)('reviewFilePreview.fileView')}>
+        <button type="button" aria-pressed={!sourceMode} title={uiText(language)('inlineHtmlPreview.preview')} onClick={() => setSourceMode(false)}><Eye size={13} /><span>{uiText(language)('inlineHtmlPreview.preview')}</span></button>
+        <button type="button" aria-pressed={sourceMode} title={uiText(language)('reviewFilePreview.source')} onClick={() => setSourceMode(true)}><Code size={13} /><span>{uiText(language)('reviewFilePreview.source')}</span></button>
       </div>}
-      <button className="review-preview-reload" type="button" title={zh ? '刷新文件预览' : 'Reload file preview'} aria-label={zh ? '刷新文件预览' : 'Reload file preview'} onClick={() => setRevision(value => value + 1)}><RefreshCw size={13} /></button>
+      <button className="review-preview-reload" type="button" title={uiText(language)('reviewFilePreview.reloadFilePreview')} aria-label={uiText(language)('reviewFilePreview.reloadFilePreview')} onClick={() => setRevision(value => value + 1)}><RefreshCw size={13} /></button>
     </div>
     {host ? <ConversationHostPreview key={`${path}:${revision}`} path={path} language={language} sourceMode={sourceMode}/> : sourceMode ? <DeferredResizePreview key={`source:${path}:${revision}`}>
       <SourceInspectorPreview path={path} language={language} onLoadingChange={ignoreLoading} />

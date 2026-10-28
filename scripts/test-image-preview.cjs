@@ -27,12 +27,13 @@ app.whenReady().then(async () => {
       const {flushSync}=require(${JSON.stringify(require.resolve('react-dom'))});
       const {createRoot}=require(${JSON.stringify(require.resolve('react-dom/client'))});
       const sourceRequire=require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))});
+      const uiRequire=id=>id.endsWith('/i18n')?sourceRequire('@cardbush/platform/i18n'):sourceRequire(id);
       const sharedSources=${JSON.stringify(shared)},sharedModules={};
       const shortcutSources=${JSON.stringify(shortcuts)},shortcutModules={};
       const preferences = new Map();
       Object.defineProperty(window,'localStorage',{value:{getItem:key=>preferences.get(key)??null,setItem:(key,value)=>preferences.set(key,String(value))}});
-      function loadShortcut(name){if(shortcutModules[name])return shortcutModules[name].exports;const mod=shortcutModules[name]={exports:{}};new Function('require','module','exports',shortcutSources[name])(id=>id.startsWith('./')?loadShortcut(id.slice(2)):sourceRequire(id),mod,mod.exports);return mod.exports;}
-      function loadShared(name){if(sharedModules[name])return sharedModules[name].exports;const mod=sharedModules[name]={exports:{}};new Function('require','module','exports',sharedSources[name])(id=>loadShared(id.slice(2)),mod,mod.exports);return mod.exports;}
+      function loadShortcut(name){if(shortcutModules[name])return shortcutModules[name].exports;const mod=shortcutModules[name]={exports:{}};new Function('require','module','exports',shortcutSources[name])(id=>id.startsWith('./')?loadShortcut(id.slice(2)):uiRequire(id),mod,mod.exports);return mod.exports;}
+      function loadShared(name){if(sharedModules[name])return sharedModules[name].exports;const mod=sharedModules[name]={exports:{}};new Function('require','module','exports',sharedSources[name])(id=>id.endsWith('/i18n')?uiRequire(id):loadShared(id.slice(2)),mod,mod.exports);return mod.exports;}
       const module={exports:{}};
       new Function('require','module','exports',${JSON.stringify(code)})(id=>id==='../../shared/fileContextMenu'?loadShared('fileContextMenu'):id==='../shortcuts/useKeyboardShortcuts'?loadShortcut('useKeyboardShortcuts'):sourceRequire(id),module,module.exports);
       window.previewShortcuts=loadShortcut('useKeyboardShortcuts');

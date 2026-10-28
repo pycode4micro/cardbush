@@ -28,7 +28,7 @@ If CardBush is useful to you, **[give it a star](https://github.com/pycode4micro
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-This README describes source version **1.0.11**; see the [version notes](docs/releases/1.0.11.md). The Store listing and Releases page show the versions actually available; their feature sets may lag behind the main branch. The corresponding MSIX package version is **1.0.11.0**. There are currently no macOS, ARM64 or 32-bit packages.
+This README describes source version **1.0.12**; the [previous version notes](docs/releases/1.0.11.md) cover 1.0.11. The Store listing and Releases page show the versions actually available; their feature sets may lag behind the main branch. The corresponding MSIX package version is **1.0.12.0**. There are currently no macOS, ARM64 or 32-bit packages.
 
 ### Install and start
 

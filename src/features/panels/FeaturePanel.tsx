@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { LoaderCircle } from 'lucide-react';
 import { Suspense } from 'react';
 import { TopBar } from '../../components/TopBar';
@@ -15,7 +16,7 @@ export function FeaturePanelLoading({ language }: { language: AppLanguage }) {
   return (
     <div className="feature-content feature-loading">
       <LoaderCircle size={18} />
-      <span>{language === 'zh' ? '正在加载...' : 'Loading...'}</span>
+      <span>{uiText(language)('featureContentPanel.loading')}</span>
     </div>
   );
 }
@@ -55,7 +56,7 @@ export function FeaturePanel({
   onOpenConversation: (conversationId: string) => void;
   creationChatOptions?: CreationChatOptions;
 }) {
-  const label = sectionLabels[section][language];
+  const label = uiText(language)(sectionLabels[section]);
   return (
     <div className="feature-panel">
       {section !== 'md-presentation' && <TopBar

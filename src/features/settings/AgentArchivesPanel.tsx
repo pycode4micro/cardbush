@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useState } from 'react';
 import type { AgentProject } from '../../../electron/agentTypes';
 import type { AppLanguage, ConversationSummary } from '../../types';
@@ -14,7 +15,7 @@ export function AgentArchivesPanel({ call, connectionId, language, onNotify }: {
   const [data, setData] = useState<{ sessions: AgentSessionItem[]; projects: AgentProject[] }>();
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
-  const zh = language === 'zh';
+
   useEffect(() => {
     const updated = (event: Event) => {
       if ((event as CustomEvent<string>).detail === connectionId) setRetry(value => value + 1);
@@ -43,13 +44,13 @@ export function AgentArchivesPanel({ call, connectionId, language, onNotify }: {
     }
   }
 
-  if (!data) return <SettingsCard title={zh ? '归档管理' : 'Archived items'}>
-    {error ? <p role="alert" className="settings-inline-error">{error}<button className="secondary-button" onClick={() => setRetry(value => value + 1)}>{zh ? '重试' : 'Retry'}</button></p>
-      : <p role="status">{zh ? '正在加载归档…' : 'Loading archives…'}</p>}
+  if (!data) return <SettingsCard title={uiText(language)('agentArchivesPanel.archivedItems')}>
+    {error ? <p role="alert" className="settings-inline-error">{error}<button className="secondary-button" onClick={() => setRetry(value => value + 1)}>{uiText(language)('common.retry')}</button></p>
+      : <p role="status">{uiText(language)('agentArchivesPanel.loadingArchives')}</p>}
   </SettingsCard>;
   const conversations: ConversationSummary[] = data.sessions.filter(session => isVisibleConversationSession(session) && session.metadata?.archived === true)
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
-    .map(session => ({ id: session.sessionId, title: String(session.metadata?.title || (zh ? '新对话' : 'Conversation')), preview: '', updatedAt: session.updatedAt ?? '',
+    .map(session => ({ id: session.sessionId, title: String(session.metadata?.title || (uiText(language)('agentArchivesPanel.conversation'))), preview: '', updatedAt: session.updatedAt ?? '',
       projectId: typeof session.metadata?.projectId === 'string' ? session.metadata.projectId : undefined }));
   return <ArchivedItemsManager language={language} conversations={conversations}
     projects={data.projects.map(project => ({ id: project.id, title: project.name, rootPath: project.path }))}

@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Monitor, Hand, Send } from 'lucide-react';
 import type { AgentDesktopFrame, AgentDesktopInput, AgentDesktopStatus } from '../../../electron/agentDesktopTypes';
@@ -7,7 +8,7 @@ import './agentDesktop.css';
 
 type Call = <T = unknown>(operation: AgentOperation, input?: Record<string, unknown>) => Promise<T>;
 export function AgentDesktopView({ call, language, active, name }: { call: Call; language: string; active: boolean; name: string }) {
-  const zh = language === 'zh';
+
   const [frame, setFrame] = useState<AgentDesktopFrame>();
   const [status, setStatus] = useState<AgentDesktopStatus>();
   const [error, setError] = useState('');
@@ -71,7 +72,7 @@ export function AgentDesktopView({ call, language, active, name }: { call: Call;
   };
   const send = async (event: AgentDesktopInput, frameId = frameRef.current?.frameId) => {
     if (!token.current || !frameId) return false;
-    if (pendingInputs.current >= 12) { setError(zh ? '操作过快，请稍候。' : 'Please wait for pending input.'); return false; }
+    if (pendingInputs.current >= 12) { setError(uiText(language)('agentDesktopView.pleaseWaitForPendingInput')); return false; }
     const currentToken = token.current;
     pendingInputs.current++;
     const task = inputQueue.current.then(async () => {
@@ -86,11 +87,11 @@ export function AgentDesktopView({ call, language, active, name }: { call: Call;
   };
   const point = (x: number, y: number) => frameRef.current && surface.current
     ? desktopPoint(x, y, surface.current.getBoundingClientRect(), frameRef.current) : null;
-  return <section className="agent-desktop-view" aria-label={zh ? `${name} 的电脑` : `${name}’s computer`}>
-    <header><Monitor size={16}/><strong>{zh ? `${name} 的电脑` : `${name}’s computer`}</strong><span>Linux</span></header>
+  return <section className="agent-desktop-view" aria-label={uiText(language)('agentDesktopView.sComputer', { name })}>
+    <header><Monitor size={16}/><strong>{uiText(language)('agentDesktopView.sComputer', { name })}</strong><span>{uiText(language)('agentDesktopView.linux')}</span></header>
     <div className="agent-desktop-screen">
-      <img ref={surface} src={frame ? `data:${frame.mimeType};base64,${frame.data}` : undefined} alt={zh ? '远程 Linux 桌面' : 'Remote Linux desktop'} draggable={false}
-        tabIndex={owned ? 0 : -1} data-controlling={owned} style={!frame ? { opacity: 0 } : undefined}
+      <img ref={surface} src={frame ? `data:${frame.mimeType};base64,${frame.data}` : undefined} alt={uiText(language)('agentDesktopView.remoteLinuxDesktop')} draggable={false}
+        tabIndex={owned ? 0 : -1} data-controlling={owned} data-has-frame={Boolean(frame)}
         onContextMenu={event => { if (owned) event.preventDefault(); }}
         onPointerDown={event => {
           if (!owned || busy || !frame || ![0, 1, 2].includes(event.button)) return;
@@ -116,18 +117,18 @@ export function AgentDesktopView({ call, language, active, name }: { call: Call;
           event.preventDefault();
           void send({ action: 'key', key: [event.ctrlKey || event.metaKey ? 'ctrl' : '', event.altKey ? 'alt' : '', event.shiftKey ? 'shift' : '', key].filter(Boolean).join('+') });
         }}/>
-      {!frame && <p className="agent-desktop-placeholder">{error || (zh ? '正在获取桌面…' : 'Loading desktop…')}</p>}
+      {!frame && <p className="agent-desktop-placeholder">{error || (uiText(language)('agentDesktopView.loadingDesktop'))}</p>}
     </div>
-    <footer><span role="status">{owned ? (zh ? '你正在控制' : 'You have control') : status?.control === 'user' ? (zh ? '其他窗口正在控制' : 'Another viewer has control') : (zh ? 'Agent 拥有控制权' : 'Agent has control')}</span>
-      <button disabled={busy || !frame || (!owned && status?.control === 'user')} onClick={() => { if (owned) void release(); else void take(); }}><Hand size={14}/>{owned ? (zh ? '交还 Agent' : 'Return control') : (zh ? '接管' : 'Take control')}</button></footer>
+    <footer><span role="status">{owned ? (uiText(language)('agentDesktopView.youHaveControl')) : status?.control === 'user' ? (uiText(language)('agentDesktopView.anotherViewerHasControl')) : (uiText(language)('agentDesktopView.agentHasControl'))}</span>
+      <button disabled={busy || !frame || (!owned && status?.control === 'user')} onClick={() => { if (owned) void release(); else void take(); }}><Hand size={14}/>{owned ? (uiText(language)('agentDesktopView.returnControl')) : (uiText(language)('agentDesktopView.takeControl'))}</button></footer>
     {owned && <form className="agent-desktop-text" onSubmit={event => {
       event.preventDefault(); if (!text || typing) return;
       const submitted = text; setTyping(true);
       void send({ action: 'type', text: submitted }).then(accepted => { if (alive.current && accepted) setText(current => current === submitted ? '' : current); })
         .finally(() => { if (alive.current) setTyping(false); });
     }}>
-      <input aria-label={zh ? '输入到远程桌面' : 'Type into remote desktop'} placeholder={zh ? '输入文字到远程桌面' : 'Type into remote desktop'} value={text} maxLength={16000} onChange={event => setText(event.target.value)}/>
-      <button aria-label={zh ? '发送文字' : 'Send text'} disabled={!text || typing}><Send size={15}/></button>
+      <input aria-label={uiText(language)('agentDesktopView.typeIntoRemoteDesktop')} placeholder={uiText(language)('agentDesktopView.typeIntoRemoteDesktop_24d8e58')} value={text} maxLength={16000} onChange={event => setText(event.target.value)}/>
+      <button aria-label={uiText(language)('agentDesktopView.sendText')} disabled={!text || typing}><Send size={15}/></button>
     </form>}
     {error && frame && <p className="agents-error" role="alert">{error}</p>}
   </section>;

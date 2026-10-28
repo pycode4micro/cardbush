@@ -1,3 +1,5 @@
+import { htmlText } from './i18n/htmlText';
+import { uiText, resolveUiLanguage } from './i18n';
 import {
   findFileViewerZoomProvider,
   type FileRenderContext,
@@ -16,8 +18,10 @@ import './styles/officePreview.css';
 type OfficePreviewKind = 'spreadsheet' | 'presentation';
 
 const parameters = new URLSearchParams(window.location.search);
+const language = resolveUiLanguage(parameters.get('lang') ?? navigator.language);
+document.documentElement.lang = language;
 const filePath = parameters.get('path')?.trim() ?? '';
-const fileName = filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Office 文件';
+const fileName = filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? uiText(language)('officePreviewMain.office_file');
 const extension = fileName.includes('.')
   ? `.${fileName.split('.').at(-1)?.toLowerCase()}`
   : '';
@@ -33,28 +37,28 @@ if (root == null) {
   throw new Error('Office preview root is missing.');
 }
 
-document.title = `${fileName} · 只读预览`;
+document.title = uiText(language)('officePreviewMain.value1_read_only_preview', { value1: fileName });
 document.documentElement.dataset.officePreviewKind = previewKind ?? 'unsupported';
 
 root.innerHTML = `
   <div class="office-preview-shell">
-    <div class="office-preview-toolbar" role="toolbar" aria-label="Office 只读预览工具">
+    <div class="office-preview-toolbar" role="toolbar" aria-label="${htmlText(uiText(language)('officePreviewMain.office_read_only_preview_tools'))}">
       <span class="office-preview-app-mark" aria-hidden="true">${previewKind === 'spreadsheet' ? 'X' : 'P'}</span>
-      <span class="office-preview-readonly">只读</span>
-      <span class="office-preview-progress" role="status" aria-live="polite">正在读取文件…</span>
+      <span class="office-preview-readonly">${htmlText(uiText(language)('messageBubble.readOnly'))}</span>
+      <span class="office-preview-progress" role="status" aria-live="polite">${htmlText(uiText(language)('officePreviewMain.reading_file'))}</span>
       <span class="office-preview-toolbar-spacer"></span>
-      <div class="office-preview-zoom" aria-label="缩放">
-        <button type="button" data-office-action="zoom-out" aria-label="缩小" disabled>−</button>
-        <button type="button" class="office-preview-zoom-value" data-office-action="zoom-reset" aria-label="重置缩放" disabled>100%</button>
-        <button type="button" data-office-action="zoom-in" aria-label="放大" disabled>＋</button>
+      <div class="office-preview-zoom" aria-label="${htmlText(uiText(language)('browserMenu.zoom'))}">
+        <button type="button" data-office-action="zoom-out" aria-label="${htmlText(uiText(language)('image.zoomOutHint'))}" disabled>−</button>
+        <button type="button" class="office-preview-zoom-value" data-office-action="zoom-reset" aria-label="${htmlText(uiText(language)('officePreviewMain.reset_zoom'))}" disabled>100%</button>
+        <button type="button" data-office-action="zoom-in" aria-label="${htmlText(uiText(language)('image.zoomInHint'))}" disabled>＋</button>
       </div>
-      <button type="button" data-office-action="fit" disabled>适应窗口</button>
+      <button type="button" data-office-action="fit" disabled>${htmlText(uiText(language)('image.resetHint'))}</button>
     </div>
-    <main id="office-render-surface" class="office-preview-surface" aria-label="Office 只读内容"></main>
+    <main id="office-render-surface" class="office-preview-surface" aria-label="${htmlText(uiText(language)('officePreviewMain.read_only_office_content'))}"></main>
     <section class="office-preview-error" hidden aria-live="assertive">
-      <strong>完整预览加载失败</strong>
+      <strong>${htmlText(uiText(language)('officePreviewMain.could_not_load_the_full_preview'))}</strong>
       <p data-office-error-message></p>
-      ${extension === '.pptx' ? '' : '<button type="button" data-office-action="compat">使用兼容预览</button>'}
+      ${extension === '.pptx' ? '' : `<button type="button" data-office-action="compat">${htmlText(uiText(language)('officePreviewMain.use_compatibility_preview'))}</button>`}
     </section>
   </div>`;
 
@@ -148,12 +152,12 @@ function describeError(error: unknown) {
     }
   }
   const value = String(error ?? '').trim();
-  return value && value !== '[object Object]' ? value : '文件内容无法解析。';
+  return value && value !== '[object Object]' ? value : uiText(language)('officePreviewMain.could_not_parse_the_file_contents');
 }
 
 function showError(error: unknown) {
   const message = describeError(error);
-  setProgress('完整预览不可用');
+  setProgress(uiText(language)('officePreviewMain.full_preview_unavailable'));
   if (errorMessage) errorMessage.textContent = message;
   if (errorPanel) errorPanel.hidden = false;
   zoomControls.forEach((control) => { control.disabled = true; });
@@ -169,7 +173,7 @@ async function waitForSpreadsheetReady() {
       }
       const spreadsheetError = surface.querySelector<HTMLElement>('.excel-wrapper .error:not(.hidden)');
       if (spreadsheetError) {
-        reject(new Error(spreadsheetError.textContent?.trim() || 'Excel 工作簿解析失败。'));
+        reject(new Error(spreadsheetError.textContent?.trim() || uiText(language)('officePreviewMain.could_not_parse_the_excel_workbook')));
         return;
       }
       const loading = surface.querySelector<HTMLElement>('.excel-wrapper .loading');
@@ -179,7 +183,7 @@ async function waitForSpreadsheetReady() {
         return;
       }
       if (performance.now() - startedAt >= 60_000) {
-        reject(new Error('工作簿加载超时，可改用兼容预览。'));
+        reject(new Error(uiText(language)('officePreviewMain.the_workbook_took_too_long_to_load')));
         return;
       }
       window.setTimeout(inspect, 60);
@@ -190,7 +194,7 @@ async function waitForSpreadsheetReady() {
 
 async function renderOfficeFile() {
   if (!filePath || previewKind == null) {
-    throw new Error('仅 .xlsx、.pptx 和 .ppt 文件支持完整视觉预览。');
+    throw new Error(uiText(language)('officePreviewMain.full_visual_previews_are_supported_for_xlsx'));
   }
   const sourceUrl = new URL('cardbush-file://office-source/');
   sourceUrl.searchParams.set('path', filePath);
@@ -200,7 +204,7 @@ async function renderOfficeFile() {
   });
   if (!response.ok) {
     if (response.status === 413) throw new Error(await response.text());
-    throw new Error(`无法读取本地文件（${response.status}）。`);
+    throw new Error(uiText(language)('officePreviewMain.could_not_read_the_local_file_value1', { value1: response.status }));
   }
   const buffer = await response.arrayBuffer();
   if (extension === '.xlsx') {
@@ -208,17 +212,17 @@ async function renderOfficeFile() {
     // corrupt XLSX must not silently turn into a plausible-looking worksheet.
     const { default: JSZip } = await import('jszip');
     const archive = await JSZip.loadAsync(buffer).catch(() => {
-      throw new Error('XLSX 文件不是有效的 OpenXML 压缩包。');
+      throw new Error(uiText(language)('officePreviewMain.the_xlsx_file_is_not_a_valid'));
     });
     if (!archive.file('[Content_Types].xml') || !archive.file('xl/workbook.xml')) {
-      throw new Error('XLSX 文件缺少工作簿结构，无法预览。');
+      throw new Error(uiText(language)('officePreviewMain.the_xlsx_file_has_no_workbook_structure'));
     }
   }
   if (buffer.byteLength === 0) {
-    throw new Error('文件为空。');
+    throw new Error(uiText(language)('officePreviewMain.the_file_is_empty'));
   }
 
-  setProgress(previewKind === 'spreadsheet' ? '正在还原工作簿…' : '正在还原幻灯片…');
+  setProgress(previewKind === 'spreadsheet' ? uiText(language)('officePreviewMain.restoring_workbook') : uiText(language)('officePreviewMain.restoring_slides'));
   const context: FileRenderContext = {
     registerExportAdapter: adapter => { exportAdapter = adapter; },
     filename: fileName,
@@ -226,7 +230,7 @@ async function renderOfficeFile() {
     signal: abortController.signal,
     options: {
       theme: 'light',
-      locale: 'zh-CN',
+      locale: language,
       ui: { density: 'comfortable', surfaceBackground: '#eef1f4' },
       fit: { mode: 'contain', resize: 'until-interaction', padding: 12 },
       spreadsheet: {
@@ -245,7 +249,7 @@ async function renderOfficeFile() {
       },
     },
     onProgressiveRender: () => {
-      if (!previewReady) setProgress('正在完成剩余内容…');
+      if (!previewReady) setProgress(uiText(language)('officePreviewMain.loading_remaining_content'));
     },
   };
 
@@ -269,7 +273,7 @@ async function renderOfficeFile() {
       presentationSnapshot(exportAdapter);
   }
   connectZoomProvider();
-  setProgress(previewKind === 'spreadsheet' ? '工作簿已完整加载' : '幻灯片已完整加载', true);
+  setProgress(previewKind === 'spreadsheet' ? uiText(language)('officePreviewMain.workbook_fully_loaded') : uiText(language)('officePreviewMain.slides_fully_loaded'), true);
 }
 
 root.addEventListener('click', (event) => {

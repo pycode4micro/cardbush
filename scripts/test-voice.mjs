@@ -4,17 +4,20 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import ts from 'typescript';
 import { createRequire } from 'node:module';
+import * as i18n from '@cardbush/platform/i18n';
 import * as realtimeConversation from '@cardbush/bush-runtime/realtime-conversation';
 import { turnClock } from './voice-turn-fixtures.mjs';
 import { VoiceService, validateVoiceSettings } from '../dist-electron/voiceService.js';
 import { defaultVoiceSettings as systemVoiceSettings } from '../dist-electron/voiceTypes.js';
 const defaultVoiceSettings = { ...systemVoiceSettings, engine: 'cloud', recognitionEngine: 'cloud' };
 const require = createRequire(import.meta.url);
+// Renderer voice errors follow the current document language, as in the App.
+globalThis.document = { documentElement: { lang: 'zh' } };
 
 const compile = file => {
   const exports = {};
   const source = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  new Function('exports', 'require', source)(exports, spec => spec === '@cardbush/bush-runtime/realtime-conversation' ? realtimeConversation : spec.startsWith('.') ? compile(resolve(dirname(file), spec + '.ts')) : require(spec));
+  new Function('exports', 'require', source)(exports, spec => spec.endsWith('/i18n') ? i18n : spec === '@cardbush/bush-runtime/realtime-conversation' ? realtimeConversation : spec.startsWith('.') ? compile(resolve(dirname(file), spec + '.ts')) : require(spec));
   return exports;
 };
 const { SpeechPhrases, SpokenTranscript } = await compile('src/features/voice/speechText.ts');
@@ -244,6 +247,51 @@ test('recording failures retain the session and allow one retry', async () => {
   assert.equal(f.session.snapshot().mode, 'recording'); assert.equal(f.session.snapshot().retryAvailable, true);
   assert.equal(f.sent.length, 0); f.session.retry(); f.session.retry(); await pause(); await pause();
   assert.equal(attempts, 2); assert.deepEqual(f.dictated, ['录音已保留']); assert.equal(f.sent.length, 0);
+});
+test('failed dictation startup releases ownership and can acquire the microphone again', async () => {
+  let attempts = 0;
+  const f = sessionFixture({}, {}, undefined, { start: async () => { if (++attempts === 1) throw Error('microphone unavailable'); } });
+  try {
+    await f.session.start('recording', text => f.dictated.push(text));
+    assert.equal(f.session.snapshot().mode, 'idle');
+    assert.equal(f.session.snapshot().phase, 'idle');
+    assert.equal(f.session.snapshot().error, 'microphone unavailable');
+    assert.equal(f.session.ownsVoice(f.target), false);
+    assert.equal(f.closed, 1);
+    await f.session.start('recording', text => f.dictated.push(text));
+    assert.equal(f.session.snapshot().error, '');
+    assert.equal(f.session.snapshot().phase, 'recording');
+    f.session.finishRecording(); await pause(); await pause();
+    assert.deepEqual(f.dictated, ['请继续']); assert.deepEqual(f.sent, []);
+  } finally { f.session.end(); }
+});
+test('microphone loss ends dictation and stale callbacks cannot revive its error', async () => {
+  const f = sessionFixture();
+  try {
+    await f.session.start('recording', text => f.dictated.push(text));
+    const lostCapture = f.callbacks;
+    lostCapture.error('microphone disconnected');
+    assert.equal(f.session.snapshot().mode, 'idle');
+    assert.equal(f.session.snapshot().error, 'microphone disconnected');
+    assert.equal(f.closed, 1);
+    f.session.releaseRecording({ ...f.target, sessionId: 'other' });
+    assert.equal(f.session.snapshot().error, 'microphone disconnected', 'another view cannot dismiss the owner error');
+    f.session.releaseRecording(f.target);
+    assert.equal(f.session.snapshot().error, '');
+    await f.session.start('recording', text => f.dictated.push(text));
+    lostCapture.error('late microphone error');
+    assert.equal(f.session.snapshot().phase, 'recording');
+    assert.equal(f.session.snapshot().error, '');
+    assert.deepEqual(f.dictated, []);
+  } finally { f.session.end(); }
+});
+test('cancelling microphone startup ignores a late device rejection', async () => {
+  const device = deferred(), f = sessionFixture({}, {}, undefined, { start: () => device.promise });
+  const startup = f.session.start('recording', text => f.dictated.push(text));
+  await pause(); f.session.end();
+  device.reject(Error('late microphone denial')); await startup;
+  assert.equal(f.session.snapshot().mode, 'idle'); assert.equal(f.session.snapshot().error, '');
+  assert.equal(f.closed, 1); assert.deepEqual(f.dictated, []);
 });
 test('cancel or conversation switch during background transcription cannot submit late text', async () => {
   for (const switchConversation of [false, true]) {

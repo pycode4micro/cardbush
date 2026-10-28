@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useCallback } from 'react';
 import { PERSONAL_ASSISTANT_SESSION, resolveModelReasoningEffort, type ReasoningEffort } from '@cardbush/bush-protocol';
 import type { AppLanguage, ManagedModelConfig, ReasoningLevel } from '../../types';
@@ -18,7 +19,7 @@ export function useAssistantModel(models: ManagedModelConfig[], defaultModelId: 
     if (!config) return;
     const effort = resolveModelReasoningEffort(config, level) ?? null;
     void Promise.resolve().then(() => saveReasoning(config.id, effort)).catch(error => {
-      void showUiError(language === 'zh' ? '思考强度保存失败' : 'Unable to save reasoning effort', String(error instanceof Error ? error.message : error));
+      void showUiError(uiText(language)('useAssistantModel.unableToSaveReasoningEffort'), String(error instanceof Error ? error.message : error));
     });
   }, [config, saveReasoning, language]);
   return { selectedModel, onModelChange, reasoningLevel, onReasoningLevelChange };

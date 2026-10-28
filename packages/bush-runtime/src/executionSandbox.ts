@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'n
 import { promisify } from 'node:util';
 import { createPlatformContext, findExecutable } from '@cardbush/platform';
 import { sandboxPowerShellArgs, type WindowsSandboxScopePool } from './windowsSandboxScope.js';
+import { checkSandboxTree } from './sandboxTreeCheck.js';
 
 const execFileAsync = promisify(execFile);
 const windowsCapabilities = new Map<string, Promise<{ scopes: boolean; files: boolean }>>();
@@ -32,7 +33,17 @@ try {
     const info = fs.lstatSync(grant.path, { bigint: true });
     if (info.isSymbolicLink() || info.isDirectory() !== grant.directory ||
         String(info.dev) + ':' + String(info.ino) !== grant.identity ||
-        grant.write && info.isFile() && info.nlink !== 1n) throw Error('identity mismatch');
+        info.isFile() && info.nlink !== 1n) throw Error('identity mismatch');
+    if (grant.directory) {
+      const pending = [grant.path];
+      while (pending.length) {
+        const path = pending.pop();
+        const entry = fs.lstatSync(path, { bigint: true });
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isFile() && entry.nlink !== 1n) throw Error('hard-link alias');
+        if (entry.isDirectory()) for (const name of fs.readdirSync(path)) pending.push(require('node:path').join(path, name));
+      }
+    }
   }
 } catch { process.stderr.write('sandbox_approval_changed: a mounted object differs from the authorized object\\n'); process.exit(78); }
 const child = require('node:child_process').spawn(process.argv[2], process.argv.slice(3), { stdio: 'inherit' });
@@ -96,8 +107,8 @@ async function requireWindowsSandbox(host: string) {
         const result = await execFileAsync(host, ['--capabilities'], { windowsHide: true, timeout: 10_000, maxBuffer: 4096 });
         const capabilities = JSON.parse(result.stdout);
         if (capabilities.protocol !== 'cardbush.process-host.v1' || capabilities.sandboxVersion !== 1) throw Error('Unsupported sandbox host.');
-        if (capabilities.sandboxFileVersion !== 2) throw Error('Sandbox object guards require the current native host.');
-        if (capabilities.sandboxScopeVersion !== 3) throw Error('Concurrent sandbox object guards require the current native host.');
+        if (capabilities.sandboxFileVersion !== 3) throw Error('Sandbox object guards require the current native host.');
+        if (capabilities.sandboxScopeVersion !== 4) throw Error('Concurrent sandbox object guards require the current native host.');
         return { scopes: true, files: true };
       } catch {
         throw sandboxError('sandbox_unavailable', 'The Windows command sandbox is missing, incompatible, or blocked by application control. No command was started.');
@@ -213,7 +224,7 @@ export async function prepareExecutionSandbox(input: {
   const writableFileInput = [...(input.policy.writableFiles ?? [])];
   const privateWorkingDirectory = input.policy.privateWorkingDirectory === true;
   const expectedIdentities = { ...input.policy.expectedIdentities };
-  const linuxExecutable = input.policy.linuxExecutable;
+  const linuxExecutable = input.policy.linuxExecutable ?? process.env.CARDBUSH_BWRAP_PATH?.trim();
   const requireCanonicalRoots = input.policy.requireCanonicalRoots === true;
   const [writableRoots, readableRoots, cwd] = await Promise.all([canonicalSandboxRoots(writableInput), canonicalSandboxRoots(readableInput), realpath(input.cwd)]);
   const [readableFiles, writableFiles] = await Promise.all([canonicalSandboxFiles(readableFileInput), canonicalSandboxFiles(writableFileInput)]);
@@ -250,6 +261,7 @@ export async function prepareExecutionSandbox(input: {
     if (!privateWorkingDirectory && ![...readableRoots, ...writableRoots].some(root => within(root, cwd))) {
       throw sandboxError('sandbox_policy_invalid', 'The working directory is outside the authorized sandbox roots.');
     }
+    await checkSandboxTree([...readableRoots, ...writableRoots, ...readableFiles, ...writableFiles], input.signal);
     await mkdir(privateRoot);
     await Promise.all(['config', 'local', 'cache', 'tmp'].map(name => mkdir(join(privateRoot, name))));
     const env = sandboxEnvironment(input.env ?? process.env, privateRoot);
@@ -272,7 +284,7 @@ export async function prepareExecutionSandbox(input: {
         ...(network === 'enabled' ? ['/etc/resolv.conf', '/etc/hosts'] : [])]) {
         try { await stat(path); args.push('--ro-bind', path, path); } catch { /* Distribution-specific optional path. */ }
       }
-      const verifyObjects = readableFiles.length > 0 || writableFiles.length > 0 || Object.keys(expectedIdentities).length > 0;
+      const verifyObjects = true;
       const verifier = verifyObjects ? await realpath(process.execPath) : undefined;
       if (verifier && (writableRoots.some(root => within(root, verifier)) || writableFiles.includes(verifier)))
         throw sandboxError('sandbox_policy_invalid', 'A writable grant cannot include the trusted sandbox runtime.');
@@ -288,14 +300,19 @@ export async function prepareExecutionSandbox(input: {
             boundHandles.push(handle);
             const metadata = await handle.stat({ bigint: true });
             if (metadata.isSymbolicLink() || expectedIdentities[path] && expectedIdentities[path] !== `${metadata.dev}:${metadata.ino}` ||
-                writable && metadata.isFile() && metadata.nlink !== 1n)
+                metadata.isFile() && metadata.nlink !== 1n)
               throw sandboxError('sandbox_approval_changed', 'An authorized filesystem object changed before sandbox setup.');
             mounts.push({ path, identity: `${metadata.dev}:${metadata.ino}`, directory: metadata.isDirectory(), write: writable });
           }
           args.push(writable ? '--bind' : '--ro-bind', path, path);
         }
       }
-      args.push('--bind', privateRoot, privateRoot, '--chdir', privateWorkingDirectory ? privateRoot : cwd, '--');
+      // Synthetic mount-point parents are not part of an exact-file grant.
+      // Keep them read-only; writable binds (including the private temp root)
+      // remain separate mounts with their explicitly authorized access.
+      args.push('--bind', privateRoot, privateRoot, '--remount-ro', '/',
+        ...(privateWorkingDirectory ? ['--remount-ro', '/tmp'] : []),
+        '--chdir', privateWorkingDirectory ? privateRoot : cwd, '--');
       if (verifier) args.push(verifier, '--input-type=commonjs', '-e', linuxSandboxVerifier, JSON.stringify(mounts), input.executable, ...input.args);
       else args.push(input.executable, ...input.args);
     }

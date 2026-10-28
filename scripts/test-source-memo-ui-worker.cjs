@@ -97,7 +97,7 @@ app.whenReady().then(async()=>{
     assert.equal(await read(`document.querySelector('${localLink}').title`),'C:/workspace/runtime.ts');
     assert.ok(await read(`!document.querySelector('.source-memo-card').innerText.includes('C:/workspace')`),'full paths are not visible captions');
     await read(`document.querySelector('${localLink}').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))`);await pause();
-    assert.deepEqual(await read('window.menuRequests'),[{path:'C:/workspace/runtime.ts',options:{image:undefined,language:'zh'}}],'right-click uses the existing desktop file menu');
+    assert.deepEqual(await read('window.menuRequests'),[{path:'C:/workspace/runtime.ts',options:{language:'zh'}}],'right-click uses the existing desktop file menu');
     await read(`document.querySelector('.source-memo-excerpt-trigger').click()`);await pause();
     await read(`document.querySelector('.source-memo-excerpt .source-memo-evidence-link').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))`);await pause();
     assert.equal(await read('window.menuRequests.length'),2,'the excerpt filename has the same file menu');

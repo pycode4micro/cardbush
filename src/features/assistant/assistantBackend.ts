@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { PERSONAL_ASSISTANT_SESSION as sessionId, type ConversationEntry } from '@cardbush/bush-protocol';
 import { createConversation, type ChatStreamRequest } from '../../backend/api';
@@ -21,18 +22,18 @@ export const assistantBackend = {
     await conversationJournalCommand({ action: 'stop', sessionId, generation });
   },
   async retry(config: ChatStreamRequest) {
-    if (resetting) throw Error('正在重置上下文，请稍后重试。');
+    if (resetting) throw Error(uiText()('assistantBackend.context_is_being_reset_try_again_shortly'));
     const version = contextVersion;
     const { generation, entries } = await assistantBackend.read();
     const entry = entries.filter(item => item.role === 'user' && ['text', 'voice'].includes(item.source)).at(-1);
-    if (!entry) throw Error('没有可重试的消息。');
+    if (!entry) throw Error(uiText()('assistantBackend.there_is_no_message_to_retry'));
     const runtime = createDesktopRuntimeSession();
     try {
       const profile = readAssistantProfile();
       const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, sessionId, userInput: entry.content }, runtime,
         { turnId: `assistant_${crypto.randomUUID()}` });
       parent.metadata.assistantOutputMode = entry.source === 'voice' ? 'voice' : 'text';
-      if (resetting || version !== contextVersion) throw Error('上下文已重置，请重新发送。');
+      if (resetting || version !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
       // Resume the authoritative model history and tool receipts; do not append
       // another user message or replay an already accepted execution task.
       await conversationJournalCommand({ action: 'retry', sessionId, parent, profile, generation });
@@ -49,10 +50,10 @@ export const assistantBackend = {
     })().finally(() => { resetting = undefined; });
   },
   async send(text: UserPromptInput, config: ChatStreamRequest, spoken: boolean, expectedVersion = contextVersion) {
-    if (resetting) throw Error('正在重置上下文，请稍后发送。');
-    if (expectedVersion !== contextVersion) throw Error('上下文已重置，请重新发送。');
+    if (resetting) throw Error(uiText()('assistantBackend.context_is_being_reset_send_the_message'));
+    if (expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
     const { generation } = await assistantBackend.read();
-    if (resetting || expectedVersion !== contextVersion) throw Error('上下文已重置，请重新发送。');
+    if (resetting || expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
     const runtime = createDesktopRuntimeSession();
     try {
       const prompt = readUserPrompt(text);

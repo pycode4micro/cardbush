@@ -1,3 +1,5 @@
+import type { MessageKey } from '../../i18n';
+import { uiText } from '../../i18n';
 import { PluginMarketCard } from './PluginMarketCard';
 import { ArrowLeft, Check, Download, FolderOpen, LoaderCircle, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -18,7 +20,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   onNotify: (message: string) => void;
   onOpenNetwork?: () => void;
 }) {
-  const zh = language === 'zh';
+  const uiLanguage = language;
   const host = useSettingsHost();
   const bridge = host.marketplace;
   const [sources, setSources] = useState<PluginMarketSource[]>([]);
@@ -73,12 +75,12 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   useEffect(() => {
     let active = true;
     if (!bridge?.pluginMarketSources) {
-      setError(host.remote ? (zh ? '请更新此 Agent 服务以启用插件市场。' : 'Update this Agent service to enable plugin marketplaces.') : (zh ? '请重启 CardBush 以启用插件市场。' : 'Restart CardBush to enable plugin marketplaces.')); setBusy(''); return;
+      setError(host.remote ? (uiText(language)('pluginMarketplacePanel.updateThisAgentServiceToEnablePlugin')) : (uiText(language)('pluginMarketplacePanel.restartCardbushToEnablePluginMarketplaces'))); setBusy(''); return;
     }
     void bridge.pluginMarketSources().then(value => { if (active) setSources(value); })
       .catch(caught => { if (active) setError(message(caught)); });
     return () => { active = false; generation.current++; };
-  }, [bridge, host.remote, zh]);
+  }, [bridge, host.remote, uiLanguage]);
 
   const loadCatalog = useCallback(async (refresh = false) => {
     if (!bridge?.pluginMarketCatalog) return;
@@ -110,7 +112,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     try {
       await bridge.removePluginMarket(sourceId);
       setSources(await bridge.pluginMarketSources()); setSourceId('builtin');
-      onNotify(zh ? '市场来源已移除，已安装插件仍保留。' : 'Source removed. Installed plugins are retained.');
+      onNotify(uiText(language)('pluginMarketplacePanel.sourceRemovedInstalledPluginsAreRetained'));
     } catch (caught) { setError(message(caught)); }
     finally { setBusy(value => value === 'source' ? '' : value); }
   };
@@ -151,11 +153,11 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
       }
       await onInstalled(id, !configurationNeeded); setActivated(true);
       if (preview.authentication === 'ON_INSTALL') onOpenBundled(id);
-      onNotify(configurationNeeded ? (zh ? '插件已安装，配置所需环境变量后可启用。' : 'Plugin installed. Configure the required environment variables before enabling it.')
-        : (zh ? '插件已安装，可在已添加列表查看状态。' : 'Plugin installed. Check its status in Added.'));
+      onNotify(configurationNeeded ? (uiText(language)('pluginMarketplacePanel.pluginInstalledConfigureTheRequiredEnvironmentVariables'))
+        : (uiText(language)('pluginMarketplacePanel.pluginInstalledCheckItsStatusInAdded')));
     } catch (caught) {
-      if (message(caught).includes('[market-cancelled]')) onNotify(zh ? '安装已取消。' : 'Installation cancelled.');
-      else setError(`${id ? (configurationNeeded ? (zh ? '插件文件已安装，状态保存未完成：' : 'Plugin files installed; saving state incomplete: ') : (zh ? '插件文件已安装，启用未完成：' : 'Plugin files installed; activation incomplete: ')) : ''}${message(caught)}`);
+      if (message(caught).includes('[market-cancelled]')) onNotify(uiText(language)('pluginMarketplacePanel.installationCancelled'));
+      else setError(`${id ? (configurationNeeded ? (uiText(language)('pluginMarketplacePanel.pluginFilesInstalledSavingStateIncomplete')) : (uiText(language)('pluginMarketplacePanel.pluginFilesInstalledActivationIncomplete'))) : ''}${message(caught)}`);
     } finally { setBusy(''); setCancelling(false); }
   };
   const cancelInstall = async () => {
@@ -166,95 +168,95 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   };
   const entries = catalog?.entries.filter(entry => [entry.name, entry.description, entry.category].join(' ').toLowerCase().includes(query.trim().toLowerCase())) ?? [];
   const closeSource = () => { if (!sourcePending.current) { setAddOpen(false); setSourceError(''); } };
-  const renderError = (failure: string, source = false) => <div className="plugin-market-error" role="alert"><p>{marketError(failure, zh, now)}</p>
+  const renderError = (failure: string, source = false) => <div className="plugin-market-error" role="alert"><p>{marketError(failure, uiLanguage, now)}</p>
     {!source && retryPreview?.sourceId === sourceId && <button className="plugin-back" type="button" disabled={Boolean(busy)} onClick={() => void openPlugin(retryPreview.name)}>
-      <RefreshCw size={15}/>{zh ? '重试获取插件' : 'Retry download'}</button>}
-    {(networkError(failure) || marketRateLimited(failure)) && onOpenNetwork && <button className="plugin-back" type="button" onClick={onOpenNetwork}><Settings size={15}/>{zh ? '代理设置' : 'Proxy settings'}</button>}
-    <details><summary>{zh ? '错误详情' : 'Error details'}</summary><code>{failure}</code></details></div>;
+      <RefreshCw size={15}/>{uiText(language)('pluginMarketplacePanel.retryDownload')}</button>}
+    {(networkError(failure) || marketRateLimited(failure)) && onOpenNetwork && <button className="plugin-back" type="button" onClick={onOpenNetwork}><Settings size={15}/>{uiText(language)('pluginMarketplacePanel.proxySettings')}</button>}
+    <details><summary>{uiText(language)('messageBubble.errorDetails')}</summary><code>{failure}</code></details></div>;
   return <div className="plugin-market-page plugin-catalog-page">
     <button className="plugin-back" type="button" disabled={busy === 'install'} onClick={() => {
       generation.current++;
       setError(''); navigateBack();
-    }}><ArrowLeft size={17} />{previewTarget ? (zh ? '返回市场' : 'Back to marketplace') : (zh ? '返回插件' : 'Back to plugins')}</button>
-    <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (zh ? '插件市场' : 'Plugin marketplaces')}</h2>
-      <p>{preview ? preview.description : (zh ? '从自定义市场安装插件，为任务添加技能、工具和自动化。' : 'Install skills, tools and automations from custom plugin marketplaces.')}</p></div>
-      {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy) || !bridge} onClick={() => { setSourceError(''); setAddOpen(true); }} aria-haspopup="dialog"><Plus size={16} />{zh ? '添加来源' : 'Add source'}</button>}</header>
-    {host.remote && <p className="plugin-market-hint">{zh ? '插件安装到当前 Agent；市场来源、运行依赖和网络设置均使用该 Agent 的环境。' : 'Plugins install on the selected Agent, using its marketplace sources, dependencies and network settings.'}</p>}
+    }}><ArrowLeft size={17} />{previewTarget ? (uiText(language)('pluginManagementPanel.backToMarketplace')) : (uiText(language)('pluginManagementPanel.backToPlugins'))}</button>
+    <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (uiText(language)('pluginMarketplacePanel.pluginMarketplaces'))}</h2>
+      <p>{preview ? preview.description : (uiText(language)('pluginMarketplacePanel.installSkillsToolsAndAutomationsFromCustom'))}</p></div>
+      {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy) || !bridge} onClick={() => { setSourceError(''); setAddOpen(true); }} aria-haspopup="dialog"><Plus size={16} />{uiText(language)('pluginMarketplacePanel.addSource')}</button>}</header>
+    {host.remote && <p className="plugin-market-hint">{uiText(language)('pluginMarketplacePanel.pluginsInstallOnTheSelectedAgentUsing')}</p>}
     {error && renderError(error)}
     {preview ? <div className="plugin-market-detail">
-      <dl><dt>{zh ? '来源' : 'Source'}</dt><dd>{preview.source}</dd>
-        <dt>{zh ? '包格式' : 'Package format'}</dt><dd>{preview.format === 'agent-plugins' ? 'Agent Plugins' : preview.format === 'claude' ? (zh ? 'Claude（兼容模式）' : 'Claude (compatibility mode)') : (zh ? 'Codex 兼容格式' : 'Codex compatibility format')}</dd>
-        <dt>{zh ? '版本' : 'Version'}</dt><dd>{preview.version}</dd>
-        <dt>{zh ? '开发者' : 'Developer'}</dt><dd>{preview.developerName}</dd>
-        <dt>{zh ? '内容版本' : 'Content revision'}</dt><dd>{preview.revision === 'local' ? (zh ? '本地快照' : 'Local snapshot') : preview.revision.slice(0, 12)}</dd></dl>
-      <h3>{preview.validation === 'metadata' ? (zh ? '清单声明的能力' : 'Declared capabilities') : (zh ? '包含的能力' : 'Included capabilities')}</h3>
+      <dl><dt>{uiText(language)('pluginManagementPanel.source')}</dt><dd>{preview.source}</dd>
+        <dt>{uiText(language)('pluginMarketplacePanel.packageFormat')}</dt><dd>{preview.format === 'agent-plugins' ? 'Agent Plugins' : preview.format === 'claude' ? (uiText(language)('pluginMarketplacePanel.claudeCompatibilityMode')) : (uiText(language)('pluginMarketplacePanel.codexCompatibilityFormat'))}</dd>
+        <dt>{uiText(language)('pluginManagementPanel.version')}</dt><dd>{preview.version}</dd>
+        <dt>{uiText(language)('pluginManagementPanel.developer')}</dt><dd>{preview.developerName}</dd>
+        <dt>{uiText(language)('pluginMarketplacePanel.contentRevision')}</dt><dd>{preview.revision === 'local' ? (uiText(language)('pluginMarketplacePanel.localSnapshot')) : preview.revision.slice(0, 12)}</dd></dl>
+      <h3>{preview.validation === 'metadata' ? (uiText(language)('pluginMarketplacePanel.declaredCapabilities')) : (uiText(language)('pluginMarketplacePanel.includedCapabilities'))}</h3>
       {preview.components.map((component, index) => <div className="plugin-component-row" key={`${component.kind}:${index}`}><span className={`plugin-component-kind kind-${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'agent' ? 'A' : component.kind === 'hook' ? 'H' : 'M'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div></div>)}
-      {!preview.components.length && <p>{preview.validation === 'metadata' ? (zh ? '安装时将检查插件目录中的能力。' : 'Capabilities in the package will be checked during installation.') : (zh ? '未发现可加载的能力。' : 'No loadable capabilities found.')}</p>}
-      {preview.components.some(component => component.kind === 'command') && <p className="plugin-market-hint">{zh ? 'Commands 原生加载，启用后可在输入框通过 /插件名:命令名 调用。参数和动态上下文由宿主处理，执行遵循当前权限设置。' : 'Commands load natively. Invoke /plugin:command from the composer; the host handles arguments and dynamic context under the current permissions.'}</p>}
-      {preview.components.some(component => component.kind === 'hook') && <p className="plugin-market-hint">{zh ? 'Hooks 可运行命令和 MCP 工具；Claude 格式还支持 HTTP、提示词评估和只读 Agent 验证。安装后需在插件详情中审核并信任具体定义。' : 'Hooks run commands and MCP tools. Claude plugins also support HTTP, prompt evaluation and read-only Agent verification. Review and trust each definition after installation.'}</p>}
-      {preview.notes?.length ? <div className="plugin-market-notes"><strong>{zh ? '适配说明' : 'Adaptation notes'}</strong><ul>{preview.notes.map((note, index) => <li key={index}>{adaptationNote(note, zh)}</li>)}</ul></div> : null}
-      {preview.requirements.length > 0 && <p className="plugin-market-hint">{host.remote ? (zh ? '需要 Agent 主机可运行：' : 'Requires executables on the Agent host: ') : (zh ? '需要本机可运行：' : 'Requires local executables: ')}{preview.requirements.join(', ')}</p>}
-      {preview.issues.length > 0 ? <div className="plugin-market-issues" role="status"><strong>{zh ? '当前暂不能完整加载' : 'Not fully supported yet'}</strong><ul>{preview.issues.map((issue, index) => <li key={index}>{issueText(issue.code, zh)}{issue.detail && `：${issue.detail}`}</li>)}</ul></div>
+      {!preview.components.length && <p>{preview.validation === 'metadata' ? (uiText(language)('pluginMarketplacePanel.capabilitiesInThePackageWillBeChecked')) : (uiText(language)('pluginMarketplacePanel.noLoadableCapabilitiesFound'))}</p>}
+      {preview.components.some(component => component.kind === 'command') && <p className="plugin-market-hint">{uiText(language)('pluginMarketplacePanel.commandsLoadNativelyInvokePluginCommandFrom')}</p>}
+      {preview.components.some(component => component.kind === 'hook') && <p className="plugin-market-hint">{uiText(language)('pluginMarketplacePanel.hooksRunCommandsAndMcpToolsClaude')}</p>}
+      {preview.notes?.length ? <div className="plugin-market-notes"><strong>{uiText(language)('pluginMarketplacePanel.adaptationNotes')}</strong><ul>{preview.notes.map((note, index) => <li key={index}>{adaptationNote(note, uiLanguage)}</li>)}</ul></div> : null}
+      {preview.requirements.length > 0 && <p className="plugin-market-hint">{host.remote ? (uiText(language)('pluginMarketplacePanel.requiresExecutablesOnTheAgentHost')) : (uiText(language)('pluginMarketplacePanel.requiresLocalExecutables'))}{preview.requirements.join(', ')}</p>}
+      {preview.issues.length > 0 ? <div className="plugin-market-issues" role="status"><strong>{uiText(language)('pluginMarketplacePanel.notFullySupportedYet')}</strong><ul>{preview.issues.map((issue, index) => <li key={index}>{issueText(issue.code, uiLanguage)}{issue.detail && `：${issue.detail}`}</li>)}</ul></div>
         : <p className="plugin-market-hint">{preview.validation === 'metadata'
-          ? (zh ? '当前仅加载插件清单。点击安装后下载此版本，并检查完整插件；下载支持取消。' : 'Only plugin metadata has been loaded. Install downloads this revision and validates the full package. Downloads can be cancelled.')
-          : (zh ? '结构检查通过。安装后启用插件；MCP 是否连接成功以运行状态为准。' : 'Structure checks passed. Installation enables the plugin; MCP connection health is shown separately.')}</p>}
-      {!!preview.warnings?.length && <div className="plugin-market-notes" role="status"><strong>{zh ? '可安装，使用前需配置' : 'Ready to install; configuration needed before use'}</strong>
-        <ul>{preview.warnings.map((warning, index) => <li key={index}>{issueText(warning.code, zh)}{warning.detail && `：${warning.detail}`}</li>)}</ul>
-        <p>{zh ? '可以先安装文件，补齐配置后再启用插件。' : 'Install the files now, then enable the plugin after configuration.'}</p></div>}
+          ? (uiText(language)('pluginMarketplacePanel.onlyPluginMetadataHasBeenLoadedInstall'))
+          : (uiText(language)('pluginMarketplacePanel.structureChecksPassedInstallationEnablesThePlugin'))}</p>}
+      {!!preview.warnings?.length && <div className="plugin-market-notes" role="status"><strong>{uiText(language)('pluginMarketplacePanel.readyToInstallConfigurationNeededBeforeUse')}</strong>
+        <ul>{preview.warnings.map((warning, index) => <li key={index}>{issueText(warning.code, uiLanguage)}{warning.detail && `：${warning.detail}`}</li>)}</ul>
+        <p>{uiText(language)('pluginMarketplacePanel.installTheFilesNowThenEnableThe')}</p></div>}
       <button className="plugin-detail-primary" type="button" disabled={Boolean(busy) || preview.issues.length > 0 || activated} onClick={() => void install()}>
         {busy === 'install' ? <LoaderCircle className="spin" size={16} /> : activated ? <Check size={16} /> : <Download size={16} />}
-        {busy === 'install' ? (zh ? '正在安装…' : 'Installing…') : activated ? (zh ? '已安装' : 'Installed') : needsConfiguration ? (installedId ? (zh ? '重试保存状态' : 'Retry saving state') : preview.updating ? (zh ? '更新，稍后配置' : 'Update, configure later') : (zh ? '安装，稍后配置' : 'Install, configure later')) : installedId ? (zh ? '重试启用' : 'Retry activation') : preview.updating ? (zh ? '更新并启用' : 'Update and enable') : (zh ? '安装并启用' : 'Install and enable')}
+        {busy === 'install' ? (uiText(language)('pluginMarketplacePanel.installing')) : activated ? (uiText(language)('pluginManagementPanel.installed_7bf4259')) : needsConfiguration ? (installedId ? (uiText(language)('pluginMarketplacePanel.retrySavingState')) : preview.updating ? (uiText(language)('pluginMarketplacePanel.updateConfigureLater')) : (uiText(language)('pluginMarketplacePanel.installConfigureLater'))) : installedId ? (uiText(language)('pluginMarketplacePanel.retryActivation')) : preview.updating ? (uiText(language)('pluginMarketplacePanel.updateAndEnable')) : (uiText(language)('pluginMarketplacePanel.installAndEnable'))}
       </button>
       {busy === 'install' && <div className="plugin-market-install-progress" role="status">
-        <p>{installPhase(installProgress?.phase, zh)}{installProgress?.phase === 'downloading' && ` · ${downloadSize(installProgress.downloadedBytes)}${installProgress.totalBytes ? ` / ${downloadSize(installProgress.totalBytes)}` : ''}`}</p>
-        {installProgress?.phase === 'downloading' && <progress aria-label={zh ? '下载进度' : 'Download progress'}
+        <p>{installPhase(installProgress?.phase, uiLanguage)}{installProgress?.phase === 'downloading' && ` · ${downloadSize(installProgress.downloadedBytes)}${installProgress.totalBytes ? ` / ${downloadSize(installProgress.totalBytes)}` : ''}`}</p>
+        {installProgress?.phase === 'downloading' && <progress aria-label={uiText(language)('pluginMarketplacePanel.downloadProgress')}
           max={installProgress.totalBytes || 1} value={installProgress.totalBytes ? installProgress.downloadedBytes : undefined} />}
         {installProgress?.cancellable && bridge?.cancelMarketPluginInstall && <button className="plugin-back" type="button" disabled={cancelling} onClick={() => void cancelInstall()}>
-          <X size={15} />{cancelling ? (zh ? '正在取消…' : 'Cancelling…') : (zh ? '取消安装' : 'Cancel installation')}
+          <X size={15} />{cancelling ? (uiText(language)('accountsPanel.cancelling')) : (uiText(language)('pluginMarketplacePanel.cancelInstallation'))}
         </button>}
       </div>}
-      {activated && <button className="plugin-back" type="button" onClick={() => onOpenBundled(installedId)}>{zh ? '配置连接与权限' : 'Configure connections and approval'}</button>}
+      {activated && <button className="plugin-back" type="button" onClick={() => onOpenBundled(installedId)}>{uiText(language)('pluginMarketplacePanel.configureConnectionsAndApproval')}</button>}
     </div> : <>
       {addOpen && <SettingsFormDialog className="plugin-market-source-dialog" language={language} busy={Boolean(busy)}
-        title={zh ? '添加市场来源' : 'Add a marketplace source'}
-        description={zh ? '连接插件市场，浏览和安装其中的插件。' : 'Connect a marketplace to browse and install its plugins.'}
+        title={uiText(language)('pluginMarketplacePanel.addAMarketplaceSource')}
+        description={uiText(language)('pluginMarketplacePanel.connectAMarketplaceToBrowseAndInstall')}
         onCancel={closeSource} onSubmit={() => addSource(sourceKind === 'local')}
         footer={<>
-          <button className="secondary-button" type="button" disabled={Boolean(busy)} onClick={closeSource}>{zh ? '取消' : 'Cancel'}</button>
+          <button className="secondary-button" type="button" disabled={Boolean(busy)} onClick={closeSource}>{uiText(language)('agentConnectionForm.cancel')}</button>
           <button className="primary-button" type="submit" disabled={Boolean(busy) || (sourceKind === 'git' ? !sourceInput.trim() : host.remote && !directoryInput.trim())}>
             {busy === 'source' ? <LoaderCircle className="spin" size={15}/> : sourceKind === 'local' && !host.remote ? <FolderOpen size={15}/> : <Plus size={15}/>}
-            {busy === 'source' ? (zh ? '正在添加…' : 'Adding…') : sourceKind === 'local' && !host.remote ? (zh ? '选择文件夹并添加' : 'Choose folder and add') : (zh ? '添加市场' : 'Add marketplace')}
+            {busy === 'source' ? (uiText(language)('pluginMarketplacePanel.adding')) : sourceKind === 'local' && !host.remote ? (uiText(language)('pluginMarketplacePanel.chooseFolderAndAdd')) : (uiText(language)('pluginMarketplacePanel.addMarketplace'))}
           </button>
         </>}>
         <fieldset className="settings-dialog-fields" disabled={Boolean(busy)}>
-          <label className="settings-field"><span>{zh ? '来源类型' : 'Source type'}</span>
-            <SettingsDropdown label={zh ? '来源类型' : 'Source type'} value={sourceKind} onChange={value => { setSourceKind(value as 'git' | 'local'); setSourceError(''); }}
-              options={[{ value: 'git', label: zh ? 'Git 仓库' : 'Git repository' }, { value: 'local', label: host.remote ? (zh ? 'Agent 主机目录' : 'Agent host directory') : (zh ? '本地文件夹' : 'Local folder') }]}/>
+          <label className="settings-field"><span>{uiText(language)('pluginMarketplacePanel.sourceType')}</span>
+            <SettingsDropdown label={uiText(language)('pluginMarketplacePanel.sourceType')} value={sourceKind} onChange={value => { setSourceKind(value as 'git' | 'local'); setSourceError(''); }}
+              options={[{ value: 'git', label: uiText(language)('pluginMarketplacePanel.gitRepository') }, { value: 'local', label: host.remote ? (uiText(language)('pluginMarketplacePanel.agentHostDirectory')) : (uiText(language)('pluginMarketplacePanel.localFolder')) }]}/>
           </label>
           {sourceKind === 'git' ? <>
-            <SettingsInput label={zh ? '市场仓库地址' : 'Marketplace repository'} value={sourceInput} onChange={value => { setSourceInput(value); setSourceError(''); }} placeholder="https://github.com/owner/repo"/>
-            <details className="plugin-market-source-help"><summary>{zh ? '地址格式与版本' : 'Address formats and versions'}</summary>
-              <p className="plugin-market-hint">{zh ? '支持 HTTP(S)、SSH Git 地址或 owner/repo。用 owner/repo@ref 或地址#ref 指定分支、标签或提交。' : 'Supports HTTP(S), SSH Git URLs or owner/repo. Pin a branch, tag or commit with owner/repo@ref or URL#ref.'}</p>
-              <p className="plugin-market-hint">{host.remote ? (zh ? 'Git 认证使用 Agent 主机配置。' : 'Git uses authentication configured on the Agent host.') : (zh ? 'Git 认证沿用本机配置。' : 'Git uses your local authentication.')}</p>
+            <SettingsInput label={uiText(language)('pluginMarketplacePanel.marketplaceRepository')} value={sourceInput} onChange={value => { setSourceInput(value); setSourceError(''); }} placeholder={uiText(language)('pluginMarketplacePanel.https_github_com_owner_repo')}/>
+            <details className="plugin-market-source-help"><summary>{uiText(language)('pluginMarketplacePanel.addressFormatsAndVersions')}</summary>
+              <p className="plugin-market-hint">{uiText(language)('pluginMarketplacePanel.supportsHttpSSshGitUrlsOr')}</p>
+              <p className="plugin-market-hint">{host.remote ? (uiText(language)('pluginMarketplacePanel.gitUsesAuthenticationConfiguredOnTheAgent')) : (uiText(language)('pluginMarketplacePanel.gitUsesYourLocalAuthentication'))}</p>
             </details>
-          </> : host.remote ? <SettingsInput label={zh ? 'Agent 主机上的市场目录' : 'Marketplace directory on the Agent host'} value={directoryInput} onChange={value => { setDirectoryInput(value); setSourceError(''); }} placeholder="/srv/plugins/marketplace"/>
-            : <p className="plugin-market-hint">{zh ? '选择包含市场清单的文件夹，将它添加为本地插件市场。' : 'Choose a folder containing a marketplace manifest to add it as a local marketplace.'}</p>}
+          </> : host.remote ? <SettingsInput label={uiText(language)('pluginMarketplacePanel.marketplaceDirectoryOnTheAgentHost')} value={directoryInput} onChange={value => { setDirectoryInput(value); setSourceError(''); }} placeholder={uiText(language)('pluginMarketplacePanel.srv_plugins_marketplace')}/>
+            : <p className="plugin-market-hint">{uiText(language)('pluginMarketplacePanel.chooseAFolderContainingAMarketplaceManifest')}</p>}
           {sourceError && renderError(sourceError, true)}
         </fieldset>
       </SettingsFormDialog>}
       <div className="plugin-market-toolbar"><div className="plugin-market-controls">
-        <select aria-label={zh ? '选择插件市场' : 'Select marketplace'} value={sourceId} onChange={event => { setSourceId(event.currentTarget.value); setQuery(''); }} disabled={Boolean(busy)}>
-          {sources.map(source => <option key={source.id} value={source.id}>{source.builtin ? (zh ? 'CardBush 精选' : 'CardBush featured') : `${source.location}${source.ref && source.ref !== 'HEAD' ? `@${source.ref}` : ''}`}</option>)}
+        <select aria-label={uiText(language)('pluginMarketplacePanel.selectMarketplace')} value={sourceId} onChange={event => { setSourceId(event.currentTarget.value); setQuery(''); }} disabled={Boolean(busy)}>
+          {sources.map(source => <option key={source.id} value={source.id}>{source.builtin ? (uiText(language)('pluginManagementPanel.cardbushFeatured')) : `${source.location}${source.ref && source.ref !== 'HEAD' ? `@${source.ref}` : ''}`}</option>)}
         </select>
-        <button className="plugin-back plugin-market-icon-button" type="button" disabled={Boolean(busy)} title={zh ? '刷新市场' : 'Refresh marketplace'} aria-label={zh ? '刷新市场' : 'Refresh marketplace'} onClick={() => void loadCatalog(true)}><RefreshCw size={16} className={busy === 'catalog' ? 'spin' : undefined} /><span className="sr-only">{zh ? '刷新市场' : 'Refresh marketplace'}</span></button>
-        {selectedSource && !selectedSource.builtin && <button className="plugin-back" type="button" title={zh ? '移除来源，保留已安装插件' : 'Remove source; keep installed plugins'} disabled={Boolean(busy)} onClick={() => void removeSource()}><Trash2 size={16} /></button>}
-      </div><label className="plugin-search"><Search size={18} /><input aria-label={zh ? '搜索市场插件' : 'Search marketplace plugins'} placeholder={zh ? '搜索插件名称或功能' : 'Search plugins or capabilities'} value={query} onChange={event => setQuery(event.currentTarget.value)} /></label></div>
-      {catalog?.cached && <p className="plugin-market-hint" role="status">{zh ? '当前显示缓存目录，刷新未成功：' : 'Showing cached catalog; refresh failed: '}{marketError(catalog.error ?? '', zh, now)}</p>}
-      {busy && busy !== 'source' && <p className="plugin-market-progress" role="status"><LoaderCircle className="spin" size={16} />{busy.startsWith('preview:') ? (zh ? '正在读取插件信息…' : 'Loading plugin details…') : (zh ? '正在读取市场…' : 'Loading marketplace…')}</p>}
-      {catalog && <div className="plugin-section-title"><h3>{catalog.source.builtin ? (zh ? 'CardBush 精选' : 'CardBush featured') : catalog.displayName}</h3><span>{zh ? `${entries.length} 个插件` : `${entries.length} plugins`}</span></div>}
+        <button className="plugin-back plugin-market-icon-button" type="button" disabled={Boolean(busy)} title={uiText(language)('pluginMarketplacePanel.refreshMarketplace')} aria-label={uiText(language)('pluginMarketplacePanel.refreshMarketplace')} onClick={() => void loadCatalog(true)}><RefreshCw size={16} className={busy === 'catalog' ? 'spin' : undefined} /><span className="sr-only">{uiText(language)('pluginMarketplacePanel.refreshMarketplace')}</span></button>
+        {selectedSource && !selectedSource.builtin && <button className="plugin-back" type="button" title={uiText(language)('pluginMarketplacePanel.removeSourceKeepInstalledPlugins')} disabled={Boolean(busy)} onClick={() => void removeSource()}><Trash2 size={16} /></button>}
+      </div><label className="plugin-search"><Search size={18} /><input aria-label={uiText(language)('pluginMarketplacePanel.searchMarketplacePlugins')} placeholder={uiText(language)('pluginMarketplacePanel.searchPluginsOrCapabilities')} value={query} onChange={event => setQuery(event.currentTarget.value)} /></label></div>
+      {catalog?.cached && <p className="plugin-market-hint" role="status">{uiText(language)('pluginMarketplacePanel.showingCachedCatalogRefreshFailed')}{marketError(catalog.error ?? '', uiLanguage, now)}</p>}
+      {busy && busy !== 'source' && <p className="plugin-market-progress" role="status"><LoaderCircle className="spin" size={16} />{busy.startsWith('preview:') ? (uiText(language)('pluginMarketplacePanel.loadingPluginDetails')) : (uiText(language)('pluginMarketplacePanel.loadingMarketplace'))}</p>}
+      {catalog && <div className="plugin-section-title"><h3>{catalog.source.builtin ? (uiText(language)('pluginManagementPanel.cardbushFeatured')) : catalog.displayName}</h3><span>{uiText(language)('pluginMarketplacePanel.plugins', { value1: entries.length })}</span></div>}
       <div className="plugin-market-grid">
-        {bridge && entries.map(entry => <PluginMarketCard bridge={bridge} key={`${sourceId}:${catalog?.fetchedAt}:${entry.name}`} entry={entry} sourceId={sourceId} busy={Boolean(busy)} zh={zh} onOpen={() => void openPlugin(entry.name)} />)}
-        {catalog && !entries.length && !busy && <p className="plugin-catalog-empty">{zh ? '没有匹配的插件' : 'No matching plugins'}</p>}
+        {bridge && entries.map(entry => <PluginMarketCard bridge={bridge} key={`${sourceId}:${catalog?.fetchedAt}:${entry.name}`} entry={entry} sourceId={sourceId} busy={Boolean(busy)} uiLanguage={uiLanguage} onOpen={() => void openPlugin(entry.name)} />)}
+        {catalog && !entries.length && !busy && <p className="plugin-catalog-empty">{uiText(language)('pluginMarketplacePanel.noMatchingPlugins')}</p>}
       </div>
     </>}
   </div>;
@@ -262,27 +264,27 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
 
 function message(value: unknown) { return value instanceof Error ? value.message : String(value); }
 function downloadSize(value: number) { return `${(value / 1024 / 1024).toFixed(1)} MiB`; }
-function installPhase(phase: PluginMarketInstallProgress['phase'] | undefined, zh: boolean) {
-  const labels = { queued: ['等待安装…', 'Waiting to install…'], downloading: ['正在下载', 'Downloading'], extracting: ['正在提取插件文件…', 'Extracting plugin files…'],
-    validating: ['正在检查插件…', 'Validating plugin…'], installing: ['正在完成安装…', 'Finishing installation…'], completed: ['安装完成', 'Installation completed'], cancelled: ['已取消', 'Cancelled'], failed: ['安装失败', 'Installation failed'] };
-  return labels[phase ?? 'queued'][zh ? 0 : 1];
+function installPhase(phase: PluginMarketInstallProgress['phase'] | undefined, uiLanguage: string) {
+  const labels = { queued: 'pluginMarketplacePanel.waiting_to_install' as const, downloading: 'voiceModelPanel.downloading' as const, extracting: 'pluginMarketplacePanel.extracting_plugin_files' as const,
+    validating: 'pluginMarketplacePanel.validating_plugin' as const, installing: 'pluginMarketplacePanel.finishing_installation' as const, completed: 'pluginMarketplacePanel.installation_completed' as const, cancelled: 'browserLibraryDialog.cancelled' as const, failed: 'pluginMarketplacePanel.installation_failed' as const };
+  return uiText(uiLanguage)(labels[phase ?? 'queued']);
 }
-function adaptationNote(note: string, zh: boolean) {
-  if (!zh) return note;
-  if (note.startsWith('Command ') && note.includes('model inherits')) return `${note.split(':')[0]}：模型沿用当前会话配置。`;
-  if (note.includes('declared tool preapprovals')) return `${note.split(':')[0]}：命令声明的工具预授权不能覆盖 CardBush 当前权限设置。`;
-  if (note.includes('model inherits')) return `${note.split(':')[0]}：模型沿用 CardBush 的子代理配置，不切换到 Claude 专属模型。`;
-  if (note.includes('reasoning effort')) return `${note.split(':')[0]}：思考强度沿用当前会话。`;
+function adaptationNote(note: string, uiLanguage: string) {
+  const prefix = note.split(':')[0];
+  if (note.startsWith('Command ') && note.includes('model inherits')) return uiText(uiLanguage)('plugin.note.commandModel', { prefix });
+  if (note.includes('declared tool preapprovals')) return uiText(uiLanguage)('plugin.note.preapproval', { prefix });
+  if (note.includes('model inherits')) return uiText(uiLanguage)('plugin.note.subagentModel', { prefix });
+  if (note.includes('reasoning effort')) return uiText(uiLanguage)('plugin.note.reasoning', { prefix });
   return note;
 }
-function issueText(code: string, zh: boolean) {
-  const labels: Record<string, [string, string]> = {
-    components: ['尚未支持的组件', 'Unsupported components'], variables: ['需要配置的环境变量', 'Environment variables require configuration'],
-    authentication: ['需要额外认证支持', 'Additional authentication support required'], transport: ['尚未支持的连接方式', 'Unsupported transport'],
-    reserved: ['与 CardBush 内置插件重名', 'Name reserved by a bundled plugin'], collision: ['与其他来源的已安装插件重名', 'Installed plugin from another source uses this name'],
-    conflicting: ['市场清单与插件定义不一致', 'Marketplace and plugin definitions conflict'],
-    empty: ['未发现可加载的能力', 'No loadable capabilities found'], configuration: ['MCP 缺少有效的启动命令或地址', 'MCP requires a valid command or URL'],
-    extension: ['此组件的部分功能尚未支持', 'This component uses unsupported features'],
+function issueText(code: string, uiLanguage: string) {
+  const labels: Record<string, MessageKey> = {
+    components: 'pluginMarketplacePanel.unsupported_components' as const, variables: 'pluginMarketplacePanel.environment_variables_require_configuration' as const,
+    authentication: 'pluginMarketplacePanel.additional_authentication_support_required' as const, transport: 'pluginMarketplacePanel.unsupported_transport' as const,
+    reserved: 'pluginMarketplacePanel.name_reserved_by_a_bundled_plugin' as const, collision: 'pluginMarketplacePanel.installed_plugin_from_another_source_uses_this' as const,
+    conflicting: 'pluginMarketplacePanel.marketplace_and_plugin_definitions_conflict' as const,
+    empty: 'pluginMarketplacePanel.no_loadable_capabilities_found' as const, configuration: 'pluginMarketplacePanel.mcp_requires_a_valid_command_or_url' as const,
+    extension: 'pluginMarketplacePanel.this_component_uses_unsupported_features' as const,
   };
-  return labels[code]?.[zh ? 0 : 1] ?? code;
+  return (labels[code] && uiText(uiLanguage)(labels[code])) ?? code;
 }

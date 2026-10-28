@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as i18n from '@cardbush/platform/i18n';
 import { InMemoryRuntimeHost, ToolRegistry, registerWorkspaceTools } from '@cardbush/bush-runtime';
 import { createProductAgentTurnRequest } from '@cardbush/bush-product-agent';
 import { toResponsesCreateParams } from '@cardbush/bush-provider-openai';
@@ -15,7 +16,10 @@ function sourceModule(path) {
   const exports = {};
   vm.runInNewContext(ts.transpileModule(readFileSync(path, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { exports });
+  }).outputText, { exports, require: specifier => {
+    if (specifier === '../i18n') return i18n;
+    throw new Error(`Unexpected source dependency: ${specifier}`);
+  } });
   return exports;
 }
 const { normalizePermissionMode, permissionModeOptions } = sourceModule('src/shared/permissionModes.ts');
@@ -58,7 +62,8 @@ for (const compatibilityMode of [false, true]) test(`approval switches and rejec
   const tools = structuredClone(selectRuntimeToolDefinitions(catalog, {
     interactiveRequests: true, vision: false, goalAvailable: false, referencePlanMode: 'off',
   }));
-  assert.ok(tools.some(tool => tool.name === 'request_permission'));
+  assert.ok(tools.some(tool => tool.name === 'approval_fixture'));
+  assert.ok(!tools.some(tool => tool.name === 'request_permission'), 'runtime authorization does not expose a second approval tool');
   let firstTurn;
   for (const [index, permissionMode] of ['all_free', 'task_free', 'all_free'].entries()) {
     const turnId = `mode-${index}`;

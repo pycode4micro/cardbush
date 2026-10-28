@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Editor } from '@tiptap/core';
@@ -12,11 +13,11 @@ export type PageEditorHandle = { focus: () => void; insertMenu: (anchor?: HTMLEl
 type Menu = { x: number; y: number; from: number; to: number; query: string; slash: boolean; bookmark: SelectionBookmark; anchor?: HTMLElement };
 const popupEvent = 'cardbush-page-editor-popup';
 export function PageEditor({ source, onChange, language, onNavigate, onActive, onReady, onSection, onTask, label, aiEdit, previewing, onBeforeEdit }: {
-  source: string; onChange: (source: string) => void; language: 'zh' | 'en'; onNavigate: (id: string) => void;
+  source: string; onChange: (source: string) => void; language: string; onNavigate: (id: string) => void;
   onActive: () => void; onReady: (handle: PageEditorHandle | null) => void; onSection: () => void; onTask?: () => void; label: string;
   aiEdit?: { cursor: number; state: 'streaming' | 'ready' }; previewing?: boolean; onBeforeEdit?: () => boolean;
 }) {
-  const t = (cn: string, en: string) => language === 'zh' ? cn : en;
+
   const host = useRef<HTMLDivElement>(null), instance = useRef<Editor>(null), menuRef = useRef<HTMLDivElement>(null), formatRef = useRef<HTMLDivElement>(null);
   const callbacks = useRef({ onChange, onNavigate, onActive, onReady, onSection, onTask, onBeforeEdit, previewing }); callbacks.current = { onChange, onNavigate, onActive, onReady, onSection, onTask, onBeforeEdit, previewing };
   const accepted = useRef(source), lastEmitted = useRef(source), composing = useRef(false);
@@ -50,18 +51,18 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
       editor.chain().focus().insertContentAt(editor.state.selection.to, { type: 'image', attrs: { src: '', alt: '' } }).run();
     } });
   const choices = (editor: Editor) => [
-    { id: 'text', label: t('正文', 'Text'), keywords: 'text paragraph zhengwen', icon: Type, run: () => editor.chain().focus().setParagraph().run() },
-    ...([1, 2, 3] as const).map((level, index) => ({ id: `heading-${level}`, label: t(`标题 ${level}`, `Heading ${level}`), keywords: `heading h${level} biaoti`, icon: [Heading1, Heading2, Heading3][index], run: () => editor.chain().focus().setHeading({ level }).run() })),
-    { id: 'bullet', label: t('无序列表', 'Bullet list'), keywords: 'list bullet wuxuliebiao', icon: List, run: () => editor.chain().focus().toggleBulletList().run() },
-    { id: 'ordered', label: t('有序列表', 'Numbered list'), keywords: 'list ordered youxuliebiao', icon: ListOrdered, run: () => editor.chain().focus().toggleOrderedList().run() },
-    { id: 'check', label: t('任务清单', 'Checklist'), keywords: 'task todo checklist renwu', icon: ListChecks, run: () => editor.chain().focus().toggleTaskList().run() },
-    { id: 'quote', label: t('引用', 'Quote'), keywords: 'quote blockquote yinyong', icon: Quote, run: () => editor.chain().focus().toggleBlockquote().run() },
-    { id: 'code', label: t('代码块', 'Code block'), keywords: 'code daima', icon: Code, run: () => editor.chain().focus().toggleCodeBlock().run() },
-    { id: 'table', label: t('插入表格', 'Table'), keywords: 'table biaoge', icon: Table2, run: () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-    { id: 'rule', label: t('水平分隔线', 'Divider'), keywords: 'divider line rule fengexian', icon: Minus, run: () => editor.chain().focus().setHorizontalRule().run() },
-    { id: 'image', label: t('图像', 'Image'), keywords: 'image photo tuxiang tupian', icon: ImagePlus, run: () => handle(editor).image() },
-    { id: 'section', label: t('可引用章节', 'Linked section'), keywords: 'section note zhangjie', icon: Link, run: () => callbacks.current.onSection() },
-    ...(callbacks.current.onTask ? [{ id: 'team', label: t('Team 任务', 'Team task'), keywords: 'team agent task renwu', icon: UsersRound, run: () => callbacks.current.onTask?.() }] : []),
+    { id: 'text', label: uiText(language)('pageEditor.text'), keywords: 'text paragraph zhengwen', icon: Type, run: () => editor.chain().focus().setParagraph().run() },
+    ...([1, 2, 3] as const).map((level, index) => ({ id: `heading-${level}`, label: uiText(language)('pageEditor.heading', { level }), keywords: `heading h${level} biaoti`, icon: [Heading1, Heading2, Heading3][index], run: () => editor.chain().focus().setHeading({ level }).run() })),
+    { id: 'bullet', label: uiText(language)('pageEditor.bulletList'), keywords: 'list bullet wuxuliebiao', icon: List, run: () => editor.chain().focus().toggleBulletList().run() },
+    { id: 'ordered', label: uiText(language)('pageEditor.numberedList'), keywords: 'list ordered youxuliebiao', icon: ListOrdered, run: () => editor.chain().focus().toggleOrderedList().run() },
+    { id: 'check', label: uiText(language)('pageEditor.checklist'), keywords: 'task todo checklist renwu', icon: ListChecks, run: () => editor.chain().focus().toggleTaskList().run() },
+    { id: 'quote', label: uiText(language)('pageEditor.quote'), keywords: 'quote blockquote yinyong', icon: Quote, run: () => editor.chain().focus().toggleBlockquote().run() },
+    { id: 'code', label: uiText(language)('pageEditor.codeBlock'), keywords: 'code daima', icon: Code, run: () => editor.chain().focus().toggleCodeBlock().run() },
+    { id: 'table', label: uiText(language)('pageEditor.table'), keywords: 'table biaoge', icon: Table2, run: () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+    { id: 'rule', label: uiText(language)('pageEditor.divider'), keywords: 'divider line rule fengexian', icon: Minus, run: () => editor.chain().focus().setHorizontalRule().run() },
+    { id: 'image', label: uiText(language)('pageEditor.image'), keywords: 'image photo tuxiang tupian', icon: ImagePlus, run: () => handle(editor).image() },
+    { id: 'section', label: uiText(language)('pageEditor.linkedSection'), keywords: 'section note zhangjie', icon: Link, run: () => callbacks.current.onSection() },
+    ...(callbacks.current.onTask ? [{ id: 'team', label: uiText(language)('pageEditor.teamTask'), keywords: 'team agent task renwu', icon: UsersRound, run: () => callbacks.current.onTask?.() }] : []),
   ];
   const filtered = (editor: Editor, query: string) => choices(editor).filter(item => `${item.label} ${item.keywords}`.toLowerCase().includes(query.toLowerCase()));
   const execute = (index: number) => {
@@ -165,25 +166,25 @@ export function PageEditor({ source, onChange, language, onNavigate, onActive, o
   const editor = instance.current, items = editor && menu ? filtered(editor, menu.query) : [];
   const colors = host.current && getComputedStyle(host.current);
   const palette = { ...Object.fromEntries(['--surface-raised', '--text', '--border', '--accent'].map(name => [name, colors?.getPropertyValue(name)])), colorScheme: colors?.colorScheme } as CSSProperties;
-  return <div className="bush-page-editor"><button type="button" className="bush-block-insert" aria-label={t('插入内容块', 'Insert block')} onMouseDown={event => event.preventDefault()} onClick={event => instance.current && handle(instance.current).insertMenu(event.currentTarget)}><Plus size={16}/></button>
+  return <div className="bush-page-editor"><button type="button" className="bush-block-insert" aria-label={uiText(language)('pageEditor.insertBlock')} onMouseDown={event => event.preventDefault()} onClick={event => instance.current && handle(instance.current).insertMenu(event.currentTarget)}><Plus size={16}/></button>
     <div ref={host}/>{error && <p className="md-error" role="alert">{error}</p>}
     {aiEdit && <AiEditingCursor language={language} state={aiEdit.state} revision={source} surface={() => host.current}
       locate={() => { const editor = instance.current; if (!editor || editor.isDestroyed) return; try { return pageEditorCaret(editor, source, aiEdit.cursor); } catch { return; } }}/>}
-    {menu && createPortal(<div ref={menuRef} className="bush-insert-menu" role="dialog" aria-label={t('插入内容', 'Insert content')} style={{ ...palette, left: menu.x, top: menu.y }} onKeyDown={event => {
+    {menu && createPortal(<div ref={menuRef} className="bush-insert-menu" role="dialog" aria-label={uiText(language)('mdPresentation.insertContent')} style={{ ...palette, left: menu.x, top: menu.y }} onKeyDown={event => {
       if (event.nativeEvent.isComposing) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); editor?.commands.focus(); }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setActive(index => items.length ? (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length : 0); }
       if (event.key === 'Enter' && items.length) { event.preventDefault(); execute(active); }
     }}>
-      {!menu.slash && <input autoFocus aria-label={t('查找内容块', 'Find block')} placeholder={t('查找内容块…', 'Find a block…')} value={menu.query} onChange={event => { setCurrentMenu({ ...menu, query: event.target.value }); setActive(0); }}/>}<small>{t('插入到当前位置', 'Insert at cursor')}</small>
-      <div role="listbox">{items.map((item, index) => <button key={item.id} type="button" role="option" aria-selected={index === active} onMouseDown={event => event.preventDefault()} onClick={() => execute(index)}><item.icon size={17}/>{item.label}</button>)}{!items.length && <p>{t('没有匹配的内容块', 'No matching blocks')}</p>}</div>
+      {!menu.slash && <input autoFocus aria-label={uiText(language)('pageEditor.findBlock')} placeholder={uiText(language)('pageEditor.findABlock')} value={menu.query} onChange={event => { setCurrentMenu({ ...menu, query: event.target.value }); setActive(0); }}/>}<small>{uiText(language)('pageEditor.insertAtCursor')}</small>
+      <div role="listbox">{items.map((item, index) => <button key={item.id} type="button" role="option" aria-selected={index === active} onMouseDown={event => event.preventDefault()} onClick={() => execute(index)}><item.icon size={17}/>{item.label}</button>)}{!items.length && <p>{uiText(language)('pageEditor.noMatchingBlocks')}</p>}</div>
     </div>, document.body)}
     {selection && editor && createPortal(<div ref={formatRef} className="bush-format-menu" style={{ ...palette, left: selection.x, top: selection.y }} onMouseDown={event => event.preventDefault()}>
-      {([{ icon: Bold, title: t('粗体', 'Bold'), run: () => editor.chain().focus().toggleBold().run() }, { icon: Italic, title: t('斜体', 'Italic'), run: () => editor.chain().focus().toggleItalic().run() },
-        { icon: Strikethrough, title: t('删除线', 'Strike'), run: () => editor.chain().focus().toggleStrike().run() }, { icon: Code, title: t('行内代码', 'Inline code'), run: () => editor.chain().focus().toggleCode().run() },
-        { icon: Link, title: t('链接', 'Link'), run: () => setLink(String(editor.getAttributes('link').href || '')), inspect: true }]).map(item => <button type="button" key={item.title} aria-label={item.title} onClick={() => { if (!item.inspect) callbacks.current.onBeforeEdit?.(); item.run(); }}><item.icon size={16}/></button>)}
+      {([{ icon: Bold, title: uiText(language)('pageEditor.bold'), run: () => editor.chain().focus().toggleBold().run() }, { icon: Italic, title: uiText(language)('settingsAppearancePanel.italic'), run: () => editor.chain().focus().toggleItalic().run() },
+        { icon: Strikethrough, title: uiText(language)('pageEditor.strike'), run: () => editor.chain().focus().toggleStrike().run() }, { icon: Code, title: uiText(language)('pageEditor.inlineCode'), run: () => editor.chain().focus().toggleCode().run() },
+        { icon: Link, title: uiText(language)('pageEditor.link'), run: () => setLink(String(editor.getAttributes('link').href || '')), inspect: true }]).map(item => <button type="button" key={item.title} aria-label={item.title} onClick={() => { if (!item.inspect) callbacks.current.onBeforeEdit?.(); item.run(); }}><item.icon size={16}/></button>)}
       {link !== undefined && <form onSubmit={event => { event.preventDefault(); callbacks.current.onBeforeEdit?.(); if (!link) editor.chain().focus().unsetLink().run(); else if (/^(https?:\/\/|mailto:|#)/i.test(link)) editor.chain().focus().setLink({ href: link }).run(); setLink(undefined); }}>
-        <input aria-label={t('链接地址', 'Link URL')} value={link} onMouseDown={event => event.stopPropagation()} onChange={event => setLink(event.target.value)} placeholder="https://"/><button type="submit">{t('确定', 'Apply')}</button><button type="button" aria-label={t('关闭', 'Close')} onClick={() => setLink(undefined)}><X size={14}/></button>
+        <input aria-label={uiText(language)('pageEditor.linkUrl')} value={link} onMouseDown={event => event.stopPropagation()} onChange={event => setLink(event.target.value)} placeholder={uiText(language)('inspectorPageDialog.https')}/><button type="submit">{uiText(language)('pageEditor.apply')}</button><button type="button" aria-label={uiText(language)('common.close')} onClick={() => setLink(undefined)}><X size={14}/></button>
       </form>}
     </div>, document.body)}
   </div>;

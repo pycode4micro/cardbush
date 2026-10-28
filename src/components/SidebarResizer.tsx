@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import type * as React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
@@ -150,7 +151,7 @@ export function SidebarResizer({
       className={`sidebar-resizer soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       role="separator"
       aria-orientation="vertical"
-      aria-label={language === 'zh' ? '调整侧边栏宽度' : 'Resize sidebar'}
+      aria-label={uiText(language)('sidebarResizer.resizeSidebar')}
       onPointerDown={beginResize}
       onLostPointerCapture={() => cancelRef.current?.()}
     />

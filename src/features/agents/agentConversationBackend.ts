@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { authoredPromptContent, readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import { resolveConversationStyle } from '../settings/conversationStyle';
 import { readIndividuation } from '../settings/individuation';
@@ -14,8 +15,21 @@ import { ProtocolRuntimeClient } from '../../runtime-client/ProtocolRuntimeClien
 import { createRuntimeInteractions } from '../../runtime-client/RuntimeInteractionBridge';
 import type { RuntimeStreamRequest } from '../../runtime-client/RuntimeClient';
 import type { ChatMessage, SkillDetail, SkillSummary } from '../../types';
+import { splitExplicitAttachmentMentions } from '../../shared/localPaths';
 
-type Job = Omit<AgentJob, 'input'> & { text: string; modelId: string; userMessageMetadata?: Record<string, unknown> };
+type Job = Omit<AgentJob, 'input'> & { text: string; modelId: string; userMessageMetadata?: Record<string, unknown>; attachments?: ChatMessage['attachments'] };
+
+function queuedJobText(job: Job) {
+  const text = authoredPromptContent(job.text, job.userMessageMetadata);
+  const paths = new Set(splitExplicitAttachmentMentions(text).paths);
+  const mentions: string[] = [];
+  for (const attachment of job.attachments ?? []) {
+    const path = typeof attachment?.path === 'string' ? attachment.path.trim() : '';
+    if (!path || paths.has(path)) continue;
+    paths.add(path); mentions.push(`@${path}`);
+  }
+  return [...mentions, text].filter(Boolean).join('\n');
+}
 export type AgentCall = <T = unknown>(operation: AgentOperation, input?: Record<string, unknown>) => Promise<T>;
 type Watch = (request: Parameters<AgentDesktopApi['watchEvents']>[1], listener: Parameters<AgentDesktopApi['watchEvents']>[2]) => () => void;
 
@@ -152,7 +166,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
   const submit = async (request: shared.ChatStreamRequest, options?: { turnId?: string; supersession?: AgentSendInput['supersession']; queueOnly?: boolean }) => {
     const prior = uncertain.get(request.sessionId);
     if (prior && (authoredPromptContent(prior.text, prior.userMessageMetadata) !== request.userInput ||
-      JSON.stringify(readUserPrompt(prior.text, prior.userMessageMetadata).context ?? []) !== JSON.stringify(request.promptContext ?? []))) throw new Error('上一条消息尚未确认，请先重试原消息。The previous submission is unconfirmed; retry it first.');
+      JSON.stringify(readUserPrompt(prior.text, prior.userMessageMetadata).context ?? []) !== JSON.stringify(request.promptContext ?? []))) throw new Error(uiText()('agentConversationBackend.the_previous_submission_is_unconfirmed_retry_it'));
     const input = prior ?? toInput(request, options);
     if (!prior && options?.queueOnly) input.queueOnly = true;
     if (!prior) {
@@ -240,7 +254,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
       const job = (await getJobs()).find(job => job.turnId === turnId);
       if (!job) {
         const sessionId = observedHostTurns.get(turnId);
-        if (!sessionId) throw new Error('Unknown Agent turn.');
+        if (!sessionId) throw new Error(uiText()('agentConversationBackend.unknown_agent_turn'));
         const result = await client.stopTurn({ sessionId, turnId });
         return { ...result, turnId, alreadyInactive: !result.accepted, raw: result };
       }
@@ -250,7 +264,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
     fetchSkills: async () => (await call<{ skills: SkillSummary[] }>('conversation.catalog')).skills,
     fetchSkillDetail: async name => call<SkillDetail>('conversation.catalog', { action: 'read', name }),
     fetchTeamFlow: async () => null,
-    sendTeamFlowAction: async () => { throw new Error('This host does not expose team workflow actions.'); },
+    sendTeamFlowAction: async () => { throw new Error(uiText()('agentConversationBackend.this_host_does_not_expose_team_workflow')); },
     createConversation: async request => shared.runtimeConversation(await call<SessionSnapshot>('sessions.create', request)),
     updateConversation: async request => {
       if (request.title !== undefined) await call('sessions.rename', { sessionId: request.sessionId, title: request.title });
@@ -278,7 +292,7 @@ export function createAgentConversationBackend(call: AgentCall, connectionId: st
           const running = jobs.find(job => job.status === 'running');
           if (hostStatus.activeTurnId && hostStatus.activeTurnId !== running?.turnId) observedHostTurns.set(hostStatus.activeTurnId, sessionId);
           listener({ activeTurnId: running?.turnId ?? hostStatus.activeTurnId, queueState: { locked, revision }, revision: `${locked}|${jobs.map(job => `${job.id}:${job.status}`).join('|')}|${hostStatus.revision}`,
-            queued: jobs.filter(job => job.status === 'queued' && !job.goalContinuation).map(job => ({ id: job.id, text: authoredPromptContent(job.text, job.userMessageMetadata),
+            queued: jobs.filter(job => job.status === 'queued' && !job.goalContinuation).map(job => ({ id: job.id, text: queuedJobText(job),
               promptContext: readUserPrompt(job.text, job.userMessageMetadata).context, createdAt: job.createdAt,
               conversation: { id: sessionId, title: '', preview: '', updatedAt: job.createdAt } })) });
         } catch (error) { if (alive) onError(error); }

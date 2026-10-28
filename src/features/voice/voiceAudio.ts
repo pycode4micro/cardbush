@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import type { VoiceDesktopApi } from '../../../electron/voiceTypes';
 import { VoiceActivity } from './voiceActivity';
 
@@ -79,17 +80,17 @@ export class VoiceCapture {
   private lastSpeechAt = 0;
   constructor(private mode: 'recording' | 'call', private callbacks: CaptureCallbacks, private microphoneId = '') {}
   async start() {
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw Error('当前环境不支持录音。');
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw Error(uiText()('voiceAudio.recording_is_not_supported_in_this_environment'));
     let stream: MediaStream;
     try { stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true,
       ...(this.microphoneId ? { deviceId: { exact: this.microphoneId } } : {}) } }); }
     catch (error) {
-      if (error instanceof DOMException && ['NotFoundError', 'OverconstrainedError'].includes(error.name)) throw Error('所选麦克风不可用，请在语音设置中重新选择。');
+      if (error instanceof DOMException && ['NotFoundError', 'OverconstrainedError'].includes(error.name)) throw Error(uiText()('voiceAudio.the_selected_microphone_is_unavailable_choose_another'));
       throw error;
     }
     if (this.closed) { stream.getTracks().forEach(track => track.stop()); return; }
     this.stream = stream;
-    stream.getAudioTracks().forEach(track => track.addEventListener('ended', () => { if (!this.closed) this.callbacks.error('麦克风已断开，请重新连接后开始录音。'); }));
+    stream.getAudioTracks().forEach(track => track.addEventListener('ended', () => { if (!this.closed) this.callbacks.error(uiText()('voiceAudio.the_microphone_was_disconnected_reconnect_it_before')); }));
     this.context = new AudioContext(); await this.context.resume();
     if (this.closed) return;
     const analyser = this.context.createAnalyser(); analyser.fftSize = 2048;
@@ -120,7 +121,7 @@ export class VoiceCapture {
     const recorder = new MediaRecorder(this.stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 128_000 });
     this.recorder = recorder;
     recorder.ondataavailable = event => { if (event.data.size) this.chunks.push(event.data); };
-    recorder.onerror = () => this.callbacks.error('录音失败，请检查麦克风。');
+    recorder.onerror = () => this.callbacks.error(uiText()('voiceAudio.recording_failed_check_the_microphone'));
     recorder.start(250);
   }
   private rotate(deliver: boolean, reason: VoiceClipTiming['reason'] = 'manual'): boolean {

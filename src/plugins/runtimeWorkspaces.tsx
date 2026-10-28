@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { RuntimeRendererExtension } from '@cardbush/bush-runtime';
 import type { AppLanguage } from '../types';
@@ -19,7 +20,7 @@ export function RuntimePluginWorkspace({ id, language, slot = 'workspace', ...pr
     return () => { try { mounted.current?.dispose(); } catch (error) { console.warn('Plugin view cleanup failed', error); } mounted.current = null; };
   }, [entry?.extension, slot]);
   useEffect(() => { try { mounted.current?.update(currentProps.current); } catch (error) { setError(error instanceof Error ? error.message : String(error)); } });
-  if (entry?.error) return <div><p role="alert">{entry.error}</p><button type="button" onClick={() => void refreshRuntimeRendererPlugins()}>{language === 'zh' ? '重试' : 'Retry'}</button></div>;
-  if (!entry) return <p>{language === 'zh' ? '插件未启用或尚未加载。' : 'Plugin is disabled or not loaded.'}</p>;
-  return <>{error && <p role="alert">{error}</p>}<div className="runtime-plugin-surface" ref={container} style={{ display: error ? 'none' : 'contents' }} /></>;
+  if (entry?.error) return <div><p role="alert">{entry.error}</p><button type="button" onClick={() => void refreshRuntimeRendererPlugins()}>{uiText(language)('common.retry')}</button></div>;
+  if (!entry) return <p>{uiText(language)('runtimeWorkspaces.pluginIsDisabledOrNotLoaded')}</p>;
+  return <>{error && <p role="alert">{error}</p>}<div className="runtime-plugin-surface" ref={container} hidden={Boolean(error)} /></>;
 }

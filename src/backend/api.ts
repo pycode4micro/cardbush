@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { readUserPrompt, type PromptContext } from '@cardbush/bush-protocol';
 import { runtimeHistoryToolExecution } from './runtimeHistoryToolExecution';
 import { GET_RUNTIME_SESSION_HISTORY_COMMAND, SESSION_HISTORY_PAGE_SIZE, summarizeSession,
@@ -105,15 +106,7 @@ import {
 
 export const RUNTIME_ASSET_RESET_PROTOCOL = 'cardbush.runtime_asset_reset.v1';
 
-function localizedClientMessage(zh: string, en: string): string {
-  if (
-    typeof document !== 'undefined' &&
-    document.documentElement.lang.toLowerCase().startsWith('en')
-  ) {
-    return en;
-  }
-  return zh;
-}
+
 
 export interface BackendModelConfigsResult {
   defaultModelId: string;
@@ -669,7 +662,7 @@ export async function updateExperimentalGoal(request: {
     }
     if (!current) {
       throw new Error(
-        localizedClientMessage('目标不存在', 'Goal does not exist'),
+        uiText(undefined)('api.goalDoesNotExist'),
       );
     }
     return runtimeExperimentalGoal(
@@ -780,10 +773,7 @@ export async function saveCardbushAppsConfiguration(configuration: CardbushAppsC
   try {
     await synchronizeProductMcpSnapshot(runtime.client);
   } catch (error) {
-    throw new Error(localizedClientMessage(
-      `插件配置已保存，但 MCP 加载失败：${error instanceof Error ? error.message : String(error)}`,
-      `Plugin configuration was saved, but MCP loading failed: ${error instanceof Error ? error.message : String(error)}`,
-    ));
+    throw new Error(uiText(undefined)('api.pluginConfigurationWasSavedButMcpLoading', { value1: error instanceof Error ? error.message : String(error) }));
   } finally {
     runtime.dispose();
   }
@@ -794,7 +784,7 @@ export async function saveCardbushAppsConfiguration(configuration: CardbushAppsC
 export async function uninstallCardbushPlugin(pluginId: string): Promise<{
   configuration: CardbushAppsConfiguration;
 }> {
-  if (!window.cardbushDesktop?.uninstallPlugin) throw new Error(localizedClientMessage('请重启应用后使用完整卸载。', 'Restart the app to use complete uninstall.'));
+  if (!window.cardbushDesktop?.uninstallPlugin) throw new Error(uiText(undefined)('api.restartTheAppToUseCompleteUninstall'));
   return { configuration: cardbushAppsConfigurationFromPayload(await window.cardbushDesktop.uninstallPlugin(pluginId)) };
 }
 
@@ -883,10 +873,7 @@ export async function validateMcpServerConfig(
       tools: [],
       messages: [{
         path: 'id',
-        message: localizedClientMessage(
-          'cardbush_apps 是内置插件服务的保留 ID',
-          'cardbush_apps is reserved for the bundled plugin server',
-        ),
+        message: uiText(undefined)('api.cardbushAppsIsReservedForTheBundled'),
         severity: 'error',
       }],
       raw: { source: 'cardbush_product', reserved: true },
@@ -916,15 +903,12 @@ export async function saveMcpServerConfig(
   const normalized = input.id.trim();
   if (!normalized) {
     throw new Error(
-      localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'),
+      uiText(undefined)('api.mcpServerIdIsEmpty'),
     );
   }
   if (normalized === CARDBUSH_APPS_MCP_SERVER_ID) {
     throw new Error(
-      localizedClientMessage(
-        'cardbush_apps 是内置插件服务的保留 ID',
-        'cardbush_apps is reserved for the bundled plugin server',
-      ),
+      uiText(undefined)('api.cardbushAppsIsReservedForTheBundled'),
     );
   }
   const candidate = mcpServerFromPayload(mcpServerRequestBody(input));
@@ -955,14 +939,14 @@ export async function setMcpServerEnabled(
   const normalized = serverId.trim();
   if (!normalized) {
     throw new Error(
-      localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'),
+      uiText(undefined)('api.mcpServerIdIsEmpty'),
     );
   }
   const { servers, revision } = await readProductMcpConfiguration();
   const index = servers.findIndex((server) => server.id === normalized);
   if (index < 0) {
     throw new Error(
-      localizedClientMessage('MCP 服务不存在', 'MCP server does not exist'),
+      uiText(undefined)('api.mcpServerDoesNotExist'),
     );
   }
   servers[index] = { ...servers[index], enabled };
@@ -985,7 +969,7 @@ export async function setMcpServerEnabled(
 export async function setMcpServerProxy(serverId: string, proxy?: import('@cardbush/bush-protocol').PluginProxySettings): Promise<void> {
   const { servers, revision } = await readProductMcpConfiguration();
   const index = servers.findIndex(server => server.id === serverId);
-  if (index < 0) throw new Error(localizedClientMessage('MCP 服务不存在', 'MCP server does not exist'));
+  if (index < 0) throw new Error(uiText(undefined)('api.mcpServerDoesNotExist'));
   servers[index] = { ...servers[index], proxy: proxy === undefined ? undefined : pluginProxySchema.parse(proxy) };
   const runtime = createDesktopRuntimeSession();
   try { await replaceProductMcpServers(runtime.client, servers, revision); }
@@ -1006,7 +990,7 @@ export async function deleteMcpServerConfig(
   const normalized = serverId.trim();
   if (!normalized) {
     throw new Error(
-      localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'),
+      uiText(undefined)('api.mcpServerIdIsEmpty'),
     );
   }
   const { servers, revision } = await readProductMcpConfiguration();
@@ -1484,7 +1468,7 @@ function runtimeDetailAbortError(signal: AbortSignal) {
 }
 
 export async function createConversation({
-  title = '新会话',
+  title = uiText()('conversationSearchDialog.newChat'),
   projectId,
   projectDir,
   sessionId,
@@ -1540,7 +1524,7 @@ export async function forkConversation(sourceSessionId: string): Promise<Convers
   let target: ConversationSummary | undefined;
   try {
     const source = await runtime.client.getSession(sourceSessionId);
-    if (!source) throw new Error(localizedClientMessage('来源会话不存在。', 'Source conversation does not exist.'));
+    if (!source) throw new Error(uiText(undefined)('api.sourceConversationDoesNotExist'));
     const summary = runtimeConversation(source);
     target = await createConversation({ title: `${summary.title} · Fork`, projectId: summary.projectId, projectDir: summary.projectDir });
     const snapshot = await runtime.client.command({ kind: FORK_RUNTIME_SESSION_COMMAND,
@@ -1556,7 +1540,7 @@ export async function switchConversationWorkspace(sessionId: string, projectDir:
   const runtime = createDesktopRuntimeSession();
   try {
     const current = await runtime.client.getSession(sessionId);
-    if (!current) throw new Error(localizedClientMessage('会话不存在', 'Conversation does not exist'));
+    if (!current) throw new Error(uiText(undefined)('api.conversationDoesNotExist'));
     const taskDir = projectDir ? undefined : await window.cardbushDesktop?.ensureTaskWorkspace?.(sessionId);
     const snapshot = await runtime.client.command({ kind: SWITCH_RUNTIME_WORKSPACE_COMMAND, payload: {
       sessionId, expectedRevision: current.revision, projectDir, projectId, taskDir,
@@ -1581,7 +1565,7 @@ export async function updateConversation({
   const normalized = sessionId.trim();
   if (!normalized) {
     throw new Error(
-      localizedClientMessage('会话 ID 为空', 'Conversation ID is empty'),
+      uiText(undefined)('api.conversationIdIsEmpty'),
     );
   }
   const normalizedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
@@ -1607,7 +1591,7 @@ export async function updateConversation({
     const current = await runtime.client.getSession(normalized);
     if (!current) {
       throw new Error(
-        localizedClientMessage('会话不存在', 'Conversation does not exist'),
+        uiText(undefined)('api.conversationDoesNotExist'),
       );
     }
     const nextMetadata: Record<string, unknown> = {
@@ -1740,10 +1724,7 @@ async function productHostValue(
   const execute = window.cardbushDesktop?.productHostCommand;
   if (execute == null) {
     throw new Error(
-      localizedClientMessage(
-        'CardBush 产品宿主仅在桌面客户端中可用。',
-        'The CardBush Product Host is only available in the desktop client.',
-      ),
+      uiText(undefined)('api.theCardbushProductHostIsOnlyAvailable'),
     );
   }
   const payload = asRecord(
@@ -1751,7 +1732,7 @@ async function productHostValue(
   );
   if (payload.protocol !== productHostProtocol) {
     throw new Error(
-      'CardBush Product Host returned an incompatible protocol response.',
+      uiText()('api.cardbush_product_host_returned_an_incompatible_protocol'),
     );
   }
   if (payload.ok !== true) {
@@ -1795,10 +1776,7 @@ export async function resetRuntimeAssets(
   if (selected.some(category => category !== 'prompts' && category !== 'skills')) {
     throw new ProductHostCommandError(
       'invalid_runtime_asset_category',
-      localizedClientMessage(
-        '这里只支持恢复内置 Prompts 和 Skills。',
-        'Only bundled Prompts and Skills can be restored here.',
-      ),
+      uiText(undefined)('api.onlyBundledPromptsAndSkillsCanBe'),
     );
   }
   const result = runtimeAssetResetResultFromPayload(
@@ -1837,10 +1815,7 @@ export async function createShadowConversation({
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
     throw new Error(
-      localizedClientMessage(
-        'Shadow 需要一个已建立的会话',
-        'Shadow requires an existing conversation',
-      ),
+      uiText(undefined)('api.shadowRequiresAnExistingConversation'),
     );
   }
   return createRuntimeShadowConversation({
@@ -1866,10 +1841,7 @@ export async function updateShadowConversationMode(
   const normalizedConversationId = conversationId.trim();
   if (!normalizedConversationId) {
     throw new Error(
-      localizedClientMessage(
-        'Shadow 会话不存在',
-        'The Shadow conversation does not exist',
-      ),
+      uiText(undefined)('api.theShadowConversationDoesNotExist'),
     );
   }
   return updateRuntimeShadowConversationMode(normalizedConversationId, mode);
@@ -1907,7 +1879,7 @@ export async function fetchSessionTurnMessages({
     );
     if (!turn) {
       throw new Error(
-        localizedClientMessage('消息不存在', 'Message does not exist'),
+        uiText(undefined)('api.messageDoesNotExist'),
       );
     }
     const restored = restoreRuntimeTurnAttachmentMetadata(turn);
@@ -1927,7 +1899,7 @@ export async function fetchSessionContextWindowUsage(
 ): Promise<RuntimeContextWindowUsage> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
-    throw new Error('session_id is required');
+    throw new Error(uiText()('api.session_id_is_required'));
   }
   const runtime = conversationRuntime(runtimeOverride);
   try {
@@ -1959,7 +1931,7 @@ export async function fetchSessionTokenUsage(
 ): Promise<SessionTokenUsage> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
-    throw new Error('session_id is required');
+    throw new Error(uiText()('api.session_id_is_required'));
   }
   const runtime = conversationRuntime(runtimeOverride);
   try {
@@ -2060,7 +2032,7 @@ export async function revertSessionWorkspaceChanges(
     ...new Set(turnIds.map((value) => value.trim()).filter(Boolean)),
   ];
   if (!normalizedSession || normalizedTurns.length === 0) {
-    throw new Error('session_id and turn_ids are required');
+    throw new Error(uiText()('api.session_id_and_turn_ids_are_required'));
   }
   const runtime = createDesktopRuntimeSession();
   try {
@@ -2093,10 +2065,7 @@ export async function fetchTeamFlow(
   const normalized = sessionId.trim();
   if (!normalized) {
     throw new Error(
-      localizedClientMessage(
-        'Team Flow session_id 为空',
-        'Team Flow session_id is empty',
-      ),
+      uiText(undefined)('api.teamFlowSessionIdIsEmpty'),
     );
   }
   return null;
@@ -2108,14 +2077,11 @@ export async function sendTeamFlowAction(
   const flowId = request.flowId.trim();
   if (!flowId) {
     throw new Error(
-      localizedClientMessage('Team Flow ID 为空', 'Team Flow ID is empty'),
+      uiText(undefined)('api.teamFlowIdIsEmpty'),
     );
   }
   throw new Error(
-    localizedClientMessage(
-      '旧 Team Flow 动作协议已停用；请通过内置 Team 管理或 team 工具操作流程。',
-      'Legacy Team Flow actions are retired; use native Team management or the team tool.',
-    ),
+    uiText(undefined)('api.legacyTeamFlowActionsAreRetiredUse'),
   );
 }
 
@@ -2183,7 +2149,7 @@ export async function fetchSubagentTask(
   const normalizedTaskId = taskId.trim();
   if (!normalizedTaskId) {
     throw new Error(
-      localizedClientMessage('子任务 ID 为空', 'Subagent task ID is empty'),
+      uiText(undefined)('api.subagentTaskIdIsEmpty'),
     );
   }
   const runtime = conversationRuntime(runtimeOverride);
@@ -2204,7 +2170,7 @@ export async function fetchSubagentTask(
       if (task) return runtimeSubagentTask(task);
     }
     throw new Error(
-      localizedClientMessage('子任务不存在', 'Subagent task does not exist'),
+      uiText(undefined)('api.subagentTaskDoesNotExist'),
     );
   } finally {
     runtime.dispose();
@@ -2218,7 +2184,7 @@ export async function fetchTurnSnapshot(
 ): Promise<Record<string, unknown> | null> {
   const normalizedTurnId = turnId.trim();
   if (!normalizedTurnId) {
-    throw new Error(localizedClientMessage('Turn ID 为空', 'Turn ID is empty'));
+    throw new Error(uiText(undefined)('api.turnIdIsEmpty'));
   }
     if (options.connectionId && !runtimeOverride) {
     options.signal?.throwIfAborted();
@@ -2243,16 +2209,13 @@ export async function dispatchSubagent(
   _request: SubagentDispatchRequest,
 ): Promise<SubagentDispatchResult> {
   throw new Error(
-    localizedClientMessage(
-      '子 Agent 由运行中的主 Agent 通过 subagent 工具派发，产品层不再伪造独立派发上下文。',
-      'Subagents are dispatched by the active parent Agent through the subagent tool.',
-    ),
+    uiText(undefined)('api.subagentsAreDispatchedByTheActiveParent'),
   );
 }
 
 export async function fetchSkills(): Promise<SkillSummary[]> {
   const listSkills = window.cardbushDesktop?.listSkills;
-  if (!listSkills) throw new Error('CardBush Skill catalog is unavailable.');
+  if (!listSkills) throw new Error(uiText()('api.cardbush_skill_catalog_is_unavailable'));
   const items = await listSkills();
   return items.map((item) => {
     const value = asRecord(item);
@@ -2276,11 +2239,11 @@ export async function fetchSkillDetail(
   const normalized = skillName.trim();
   if (!normalized) {
     throw new Error(
-      localizedClientMessage('Skill 名称为空', 'Skill name is empty'),
+      uiText(undefined)('api.skillNameIsEmpty'),
     );
   }
   const readSkill = window.cardbushDesktop?.readSkill;
-  if (!readSkill) throw new Error('CardBush Skill catalog is unavailable.');
+  if (!readSkill) throw new Error(uiText()('api.cardbush_skill_catalog_is_unavailable'));
   return skillDetailFromPayload(await readSkill(normalized));
 }
 
@@ -2318,7 +2281,7 @@ export async function replyInteraction({
   const normalized = interactionId.trim();
   if (!normalized) {
     throw new Error(
-      localizedClientMessage('交互 ID 为空', 'Interaction ID is empty'),
+      uiText(undefined)('api.interactionIdIsEmpty'),
     );
   }
   const solution = runtimeSolution(normalized);
@@ -2345,7 +2308,7 @@ export async function replyInteraction({
     );
   if (normalizedAnswers.length === 0) {
     throw new Error(
-      localizedClientMessage('交互回答为空', 'Interaction reply is empty'),
+      uiText(undefined)('api.interactionReplyIsEmpty'),
     );
   }
   if (hasRuntimeInteraction(normalized)) {
@@ -2355,10 +2318,7 @@ export async function replyInteraction({
     ).trim();
     if (!['allow_once', 'allow_session', 'deny'].includes(candidate)) {
       throw new Error(
-        localizedClientMessage(
-          '权限回答必须是允许一次、本会话允许或拒绝',
-          'Runtime permission reply must be allow_once, allow_session, or deny',
-        ),
+        uiText(undefined)('api.runtimePermissionReplyMustBeAllowOnce'),
       );
     }
     await answerRuntimeInteraction(
@@ -2368,10 +2328,7 @@ export async function replyInteraction({
     return;
   }
   throw new Error(
-    localizedClientMessage(
-      '当前 Runtime 中不存在这个待处理交互。',
-      'This interaction is not pending in the current Runtime.',
-    ),
+    uiText(undefined)('api.thisInteractionIsNotPendingInThe'),
   );
 }
 
@@ -2460,7 +2417,7 @@ export async function streamChat(request: ChatStreamRequest) {
 export async function streamTurnEvents(request: TurnEventStreamRequest) {
   const turnId = request.turnId.trim();
   if (!turnId) {
-    throw new Error(localizedClientMessage('turn_id 为空', 'turn_id is empty'));
+    throw new Error(uiText(undefined)('api.turnIdIsEmpty_f9f2923'));
   }
   return streamRuntimeTurnEvents(request);
 }
@@ -2471,15 +2428,12 @@ export async function editMessage(request: EditMessageRequest, runtimeOverride?:
   const content = request.content.trim();
   if (!sessionId || !messageId) {
     throw new Error(
-      localizedClientMessage(
-        '会话或 message_id 为空',
-        'Conversation ID or message_id is empty',
-      ),
+      uiText(undefined)('api.conversationIdOrMessageIdIsEmpty'),
     );
   }
   if (!content) {
     throw new Error(
-      localizedClientMessage('消息内容为空', 'Message content is empty'),
+      uiText(undefined)('api.messageContentIsEmpty'),
     );
   }
   const replacementTurnId = `turn_${crypto.randomUUID()}`;
@@ -2490,7 +2444,7 @@ export async function editMessage(request: EditMessageRequest, runtimeOverride?:
     const snapshot = await runtime.client.getSession(sessionId, request.signal);
     if (!snapshot) {
       throw new Error(
-        localizedClientMessage('会话不存在', 'Conversation does not exist'),
+        uiText(undefined)('api.conversationDoesNotExist'),
       );
     }
     const superseded = new Set(snapshot.supersededMessageIds);
@@ -2502,20 +2456,17 @@ export async function editMessage(request: EditMessageRequest, runtimeOverride?:
     );
     if (index < 0) {
       throw new Error(
-        localizedClientMessage('消息不存在', 'Message does not exist'),
+        uiText(undefined)('api.messageDoesNotExist'),
       );
     }
     if (messages[index].message.role !== 'user' || isInternalRuntimeMessage(messages[index])) {
-      throw new Error(localizedClientMessage('只能重跑用户消息', 'Only user messages can be rerun'));
+      throw new Error(uiText(undefined)('api.onlyUserMessagesCanBeRerun'));
     }
     // Editing/replaying authored text must retain the original selection, not whichever file is open now.
     promptContext = readUserPrompt(messages[index].message.content, messages[index].metadata).context;
     if (request.expectedTurnId !== undefined &&
       messages[index].turnId !== request.expectedTurnId.trim()) {
-      throw new Error(localizedClientMessage(
-        '回复与原始用户消息不属于同一轮，已取消重新生成，请刷新后重试。',
-        'The response and original user message belong to different Turns. Regeneration was cancelled; refresh and retry.',
-      ));
+      throw new Error(uiText(undefined)('api.theResponseAndOriginalUserMessageBelong'));
     }
     let supersedeFrom = index;
     while (supersedeFrom > 0 && messages[supersedeFrom - 1]?.turnId === messages[index]?.turnId &&
@@ -2544,10 +2495,7 @@ export async function sendGuidance(request: SendGuidanceRequest,
   const guidance = request.guidance.trim();
   if (!sessionId || !turnId || !guidance) {
     throw new Error(
-      localizedClientMessage(
-        '会话、turn_id 或引导内容为空',
-        'Conversation ID, turn_id, or guidance is empty',
-      ),
+      uiText(undefined)('api.conversationIdTurnIdOrGuidanceIs'),
     );
   }
   const trace = (stage: string, details: Record<string, unknown> = {}) => {
@@ -2613,7 +2561,7 @@ export function isPendingInteractionConflictError(
 }
 
 function defaultConversationTitle(_sessionId: string) {
-  return '新会话';
+  return uiText()('conversationSearchDialog.newChat');
 }
 
 function arrayFrom(value: unknown) {
@@ -2700,10 +2648,7 @@ function runtimeAssetCategories(value: unknown): RuntimeAssetCategory[] {
 
 function assertRuntimeAssetResetProtocol(protocol: string) {
   if (protocol === RUNTIME_ASSET_RESET_PROTOCOL) return;
-  throw new Error(localizedClientMessage(
-    `配置重置协议不兼容：${protocol || 'missing'}`,
-    `Incompatible runtime asset reset protocol: ${protocol || 'missing'}`,
-  ));
+  throw new Error(uiText(undefined)('api.incompatibleRuntimeAssetResetProtocol', { value1: protocol || 'missing' }));
 }
 
 function finiteNumber(value: unknown) {

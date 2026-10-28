@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { forwardRef, useContext, useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
 import type { AppLanguage, CardbushAppPlugin, PluginCommandSummary, SkillSummary } from '../../types';
 import { fileUrl } from '../../shared/localPaths';
@@ -112,7 +113,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
         chip.classList.add('composer-team-token');
         chip.tabIndex = 0;
         chip.setAttribute('role', 'link');
-        chip.setAttribute('aria-label', `${language === 'zh' ? '查看 Team' : 'View team'} ${title}`);
+        chip.setAttribute('aria-label', `${uiText(language)('composerPromptInput.viewTeam')} ${title}`);
       }
       const logo = richReferences === 'applications' ? undefined
         : part.plugin?.logoPath || part.plugin?.logoDarkPath || part.skill?.logoPath || part.skill?.logoDarkPath;
@@ -126,7 +127,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       const label = document.createElement('span'); label.textContent = title; chip.append(label);
       const remove = document.createElement('button');
       remove.type = 'button'; remove.tabIndex = -1; remove.textContent = '×';
-      remove.setAttribute('aria-label', `${language === 'zh' ? part.plugin ? '移除插件引用' : part.skillReference ? '移除技能引用' : '移除引用' : part.plugin ? 'Remove plugin reference' : part.skillReference ? 'Remove skill reference' : 'Remove reference'} ${title}`);
+      remove.setAttribute('aria-label', `${(part.plugin ? uiText(language)('composerPromptInput.removePluginReference') : (part.skillReference ? uiText(language)('composerPromptInput.removeSkillReference') : uiText(language)('composerPromptInput.removeReference')))} ${title}`);
       remove.onmousedown = event => event.preventDefault();
       remove.onclick = () => removeReference(node, chip);
       chip.append(remove); fragment.append(chip);
@@ -208,7 +209,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   };
   return rich ? <div ref={editor} className="composer-prompt-editor" data-composer-input
     aria-describedby={ariaDescribedBy}
-    role="textbox" aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')} aria-multiline="true" aria-readonly={readOnly}
+    role="textbox" aria-label={ariaLabel ?? (uiText(language)('composerPromptInput.message'))} aria-multiline="true" aria-readonly={readOnly}
     contentEditable={!readOnly} suppressContentEditableWarning data-placeholder={placeholder}
     onBlur={() => { composing.current = false; }}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent, event.currentTarget)}
@@ -248,7 +249,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
     }}
   /> : <textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2} readOnly={readOnly}
     aria-describedby={ariaDescribedBy}
-    aria-label={ariaLabel ?? (language === 'zh' ? '消息' : 'Message')}
+    aria-label={ariaLabel ?? (uiText(language)('composerPromptInput.message'))}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent, event.currentTarget)}
     onChange={event => { lastCaret.current = event.currentTarget.selectionStart; onChange(event.target.value, lastCaret.current); }}
     onClick={select} onKeyUp={select} onKeyDown={keyDown} />;

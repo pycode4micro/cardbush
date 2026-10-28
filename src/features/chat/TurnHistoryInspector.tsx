@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { ChevronDown, Clock3, FileText } from 'lucide-react';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { prefersReducedMotion } from '../../shared/motionPreference';
@@ -78,23 +79,23 @@ export function TurnHistoryInspector({
         <Clock3 size={17} />
         <div>
           <strong>{detail.title || (requestedTurnId
-            ? language === 'zh' ? '回合执行详情' : 'Turn execution details'
-            : language === 'zh' ? '全部回合详情' : 'All turn details')}</strong>
+            ? uiText(language)('turnHistoryInspector.turnExecutionDetails')
+            : uiText(language)('turnHistoryInspector.allTurnDetails'))}</strong>
           <small>
-            {language === 'zh' ? '完整消息、计划与工具记录' : 'Messages, plans, and tool activity'}
+            {uiText(language)('turnHistoryInspector.messagesPlansAndToolActivity')}
           </small>
         </div>
         {groups.length > 1 && (
           <div className="work-summary-turn-selector" ref={turnSelectorRef}>
             <button type="button" ref={triggerRef}
-              title={language === 'zh' ? '快速选择回合' : 'Quickly select a turn'}
+              title={uiText(language)('turnHistoryInspector.quicklySelectATurn')}
               aria-expanded={selectorOpen} aria-haspopup="menu" aria-controls={selectorId}
               onClick={() => setSelectorOpen(open => !open)}>
-              <span>{language === 'zh' ? '选择回合' : 'Select turn'}</span>
+              <span>{uiText(language)('turnHistoryInspector.selectTurn')}</span>
               <ChevronDown size={13} />
             </button>
             {selectorOpen && <div className="work-summary-turn-selector-menu" id={selectorId}
-              role="menu" aria-label={language === 'zh' ? '选择回合' : 'Select turn'}>
+              role="menu" aria-label={uiText(language)('turnHistoryInspector.selectTurn')}>
               {groups.map((group) => (
                 <button
                   type="button"
@@ -150,7 +151,7 @@ export function TurnHistoryInspector({
       ) : (
         <div className="work-summary-inspector-empty">
           <FileText size={18} />
-          <span>{language === 'zh' ? '该回合没有可恢复的执行详情' : 'No recoverable execution details for this turn'}</span>
+          <span>{uiText(language)('turnHistoryInspector.noRecoverableExecutionDetailsForThisTurn')}</span>
         </div>
       )}
     </section>

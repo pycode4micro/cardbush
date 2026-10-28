@@ -104,7 +104,7 @@ declare global {
         sessionId: string;
         sourceTurnId: string;
         title: string;
-        language: 'zh' | 'en';
+        language: string;
         theme: ThemeMode;
         accentColor: string;
         themeVariables?: Record<string, string>;
@@ -118,7 +118,7 @@ declare global {
         sessionId: string;
         sourceTurnId: string;
         title: string;
-        language: 'zh' | 'en';
+        language: string;
         theme: ThemeMode;
         accentColor: string;
         themeVariables?: Record<string, string>;
@@ -152,6 +152,7 @@ declare global {
       windowScrollDiagnosticConfig?: () => Promise<import('../../electron/windowScrollDiagnostics').WindowScrollDiagnosticConfig | undefined>;
       onWindowScrollDiagnosticEvent?: (callback: (event: Record<string, unknown>) => void) => () => void;
       showErrorDialog: (error: { title: string; message: string }) => Promise<void>;
+      setUiLanguage?: (language: string) => Promise<void>;
       restoreEditorFocus?: (state: import('../../electron/rendererFocus').EditorFocusRequest) => Promise<boolean>;
       wallpaperAccent: () => Promise<{
         r: number;
@@ -401,8 +402,8 @@ declare global {
       onCardlingCollapse: (callback: () => void) => () => void;
       localApplications?: {
         refreshIcons: (paths: string[]) => Promise<Record<string, string>>;
-        pick: (language: 'zh' | 'en') => Promise<import('../shared/localApplications').LocalApplication | null>;
-        open: (targetPath: string) => Promise<void>;
+        pick: (language: string) => Promise<import('../shared/localApplications').LocalApplication | null>;
+        open: (targetPath: string, language: string) => Promise<void>;
       };
       openPath: (targetPath: string) => Promise<string>;
       openFileInCardbush: (targetPath: string) => Promise<string>;

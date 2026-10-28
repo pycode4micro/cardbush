@@ -1,3 +1,4 @@
+import { uiText } from '../i18n';
 import { ArrowLeft, ArrowRight, Check, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { AppLanguage } from '../types';
@@ -15,7 +16,7 @@ type Props = {
 
 export function WindowFrame(props: Props) {
   const { language, sidebarCollapsed, onToggleSidebar, menus, onBack, onForward } = props;
-  const zh = language === 'zh';
+
   const nativeControls = window.cardbushDesktop?.platform === 'win32';
   const shortcuts = useKeyboardShortcuts();
   const [maximized, setMaximized] = useState(false);
@@ -179,13 +180,13 @@ export function WindowFrame(props: Props) {
     }}>
     <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
     <div className="window-history-controls no-drag">
-      {([{ id: 'back', label: zh ? '返回' : 'Back', action: onBack, icon: ArrowLeft, shortcut: 'navigateBack' },
-        { id: 'forward', label: zh ? '前进' : 'Forward', action: onForward, icon: ArrowRight, shortcut: 'navigateForward' }] as const).map(item =>
+      {([{ id: 'back', label: uiText(language)('windowFrame.back'), action: onBack, icon: ArrowLeft, shortcut: 'navigateBack' },
+        { id: 'forward', label: uiText(language)('app.forward'), action: onForward, icon: ArrowRight, shortcut: 'navigateForward' }] as const).map(item =>
         <button key={item.id} type="button" className="frame-chip" data-history-action={item.id} disabled={!item.action}
           aria-label={item.label} title={item.label} data-shortcut={item.shortcut}
           onClick={() => { close(); item.action?.(); }}><item.icon size={15} /></button>)}
     </div>
-    <div className="window-frame-menu-group no-drag" role="menubar" aria-label={zh ? '应用菜单' : 'Application menu'}>
+    <div className="window-frame-menu-group no-drag" role="menubar" aria-label={uiText(language)('windowFrame.applicationMenu')}>
       {menus.map(menu => <div className="window-frame-menu" key={menu.id}>
         <button className="frame-chip window-frame-menu-trigger no-drag" type="button" role="menuitem"
           data-menu-trigger={menu.id} aria-haspopup="menu" aria-expanded={open?.id === menu.id}
@@ -207,10 +208,10 @@ export function WindowFrame(props: Props) {
     {submenu && activeSubmenu?.children && popup(activeSubmenu.children, submenu, true, activeSubmenu.label)}
     <div className="window-spacer window-drag" aria-hidden="true" />
     {!nativeControls && <>
-      <WindowButton label={zh ? '最小化' : 'Minimize'} glyph="minimize" onClick={() => window.cardbushDesktop?.minimize()} />
-      <WindowButton label={maximized ? (zh ? '还原窗口' : 'Restore') : (zh ? '最大化' : 'Maximize')}
+      <WindowButton label={uiText(language)('windowFrame.minimize')} glyph="minimize" onClick={() => window.cardbushDesktop?.minimize()} />
+      <WindowButton label={maximized ? (uiText(language)('windowFrame.restore')) : (uiText(language)('windowFrame.maximize'))}
         glyph={maximized ? 'restore' : 'maximize'} onClick={async () => { await window.cardbushDesktop?.toggleMaximize(); syncMaximized(); }} />
-      <WindowButton label={zh ? '关闭' : 'Close'} glyph="close" danger onClick={() => window.cardbushDesktop?.closeToTray()} />
+      <WindowButton label={uiText(language)('common.close')} glyph="close" danger onClick={() => window.cardbushDesktop?.closeToTray()} />
     </>}
   </header>;
 }

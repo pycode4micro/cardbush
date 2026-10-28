@@ -1,3 +1,4 @@
+import { uiText } from '../../i18n';
 import { Target } from 'lucide-react';
 
 import type { AppLanguage } from '../../types';
@@ -25,15 +26,15 @@ export function GoalUpdateNotice({
 function goalUpdatePresentation(update: GoalToolUpdate, language: AppLanguage) {
   if (update.decision === 'complete') {
     return {
-      title: language === 'zh' ? '目标已完成' : 'Goal complete',
+      title: uiText(language)('goalUpdateNotice.goalComplete'),
     };
   }
   if (update.decision === 'blocked') {
     return {
-      title: language === 'zh' ? '目标已阻塞' : 'Goal blocked',
+      title: uiText(language)('goalUpdateNotice.goalBlocked'),
     };
   }
   return {
-    title: language === 'zh' ? '目标未完成，继续执行' : 'Goal incomplete, continuing',
+    title: uiText(language)('goalUpdateNotice.goalIncompleteContinuing'),
   };
 }

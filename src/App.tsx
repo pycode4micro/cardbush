@@ -1,3 +1,5 @@
+import { UiLanguageProvider } from './i18n/react';
+import { uiText } from './i18n';
 import { ApplicationVoiceHost } from './features/voice/VoiceConversation';
 import { AssistantView } from './features/assistant/AssistantView';
 import { useAssistantModel } from './features/assistant/useAssistantModel';
@@ -243,7 +245,7 @@ function SettingsModuleFallback({ active, onReady, onBack, language, retry }: {
   return <main className={`settings-shell${active ? '' : ' settings-inactive'}`} aria-hidden={!active} inert={!active}>
     <section className="settings-content">
       <button type="button" className="settings-module-back" onClick={onBack}>
-        {language === 'zh' ? '返回应用' : 'Back to app'}
+        {uiText(language)('app.backToApp')}
       </button>
       <DeferredModuleNotice language={language} retry={retry} />
     </section>
@@ -365,7 +367,8 @@ function CardbushApp() {
   useVisualThemeContext(theme, themePreference);
 
   useEffect(() => {
-    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+    document.documentElement.lang = language;
+    void window.cardbushDesktop?.setUiLanguage?.(language).catch(error => console.warn('Native UI language update failed', error));
   }, [language]);
 
   useEffect(() => {
@@ -551,9 +554,7 @@ function CardbushApp() {
     const readiness = await fetchBackendReadiness();
     if (readiness.ready !== true) {
       throw new Error(
-        language === 'zh'
-          ? 'CardBush Runtime 尚未就绪，请完成重启后再验证。'
-          : 'CardBush Runtime is not ready. Finish restarting it before verification.',
+        uiText(language)('app.cardbushRuntimeIsNotReadyFinishRestarting'),
       );
     }
     const [capabilities] = await Promise.all([
@@ -744,8 +745,8 @@ function CardbushApp() {
     if (!target) return;
     if (detail.sourceTabId) {
       void openBrowserTabReference({ connectionId: 'cardbush', tabId: detail.sourceTabId, url: target, title: detail.title || target })
-        .then(result => { if (result.status !== 'opened') void showUiError(language === 'zh' ? '标签不可用' : 'Tab unavailable',
-          result.status === 'missing' ? language === 'zh' ? '原标签已关闭，请通过原网址明确重新打开。' : 'The original tab is closed. Reopen its website explicitly.' : result.message || 'Browser tab unavailable.'); });
+        .then(result => { if (result.status !== 'opened') void showUiError(uiText(language)('app.tabUnavailable'),
+          result.status === 'missing' ? uiText(language)('app.theOriginalTabIsClosedReopenIts') : result.message || 'Browser tab unavailable.'); });
       return;
     }
     const normalizedDetail: InspectorOpenDetail = {
@@ -781,7 +782,7 @@ function CardbushApp() {
       conversationId: normalizedConversationId,
       initialFilePath: initialFilePath.trim(),
       selectionRequestId: crypto.randomUUID(),
-      title: language === 'zh' ? '审查' : 'Review',
+      title: uiText(language)('app.review'),
     };
     openInspectorTab(nextTab);
     setInspectorOpen(true);
@@ -875,7 +876,7 @@ function CardbushApp() {
       if (reports.length === 0) continue;
       byId.set(id, {
         id,
-        title: language === 'zh' ? '当前会话修改' : 'Current conversation changes',
+        title: uiText(language)('app.currentConversationChanges'),
         preview: '',
         updatedAt: reports.at(-1)?.createdAt ?? '',
       });
@@ -1063,12 +1064,12 @@ function CardbushApp() {
     inspectorMessages.some((message) => message.role === 'user');
   const inspectorShadowUnavailableReason = inspectorShadowAvailable ? ''
     : !backendCapabilities.shadowConversationActivation
-      ? language === 'zh' ? '当前运行环境不支持 Shadow 对话' : 'Shadow chat is unavailable in this runtime'
+      ? uiText(language)('app.shadowChatIsUnavailableInThisRuntime')
       : inspectorBusy
-        ? language === 'zh' ? '当前任务结束后可创建 Shadow 对话' : 'Shadow chat is available after the current task finishes'
+        ? uiText(language)('app.shadowChatIsAvailableAfterTheCurrent')
         : !selectedInspectorModelConfig
-          ? language === 'zh' ? '请先选择可用模型' : 'Select an available model first'
-          : language === 'zh' ? '完成一轮会话后可创建 Shadow 对话' : 'Complete a conversation turn to create a Shadow chat';
+          ? uiText(language)('app.selectAnAvailableModelFirst')
+          : uiText(language)('app.completeAConversationTurnToCreateA');
   const openInspectorFiles = useCallback(async () => {
     const paths = await window.cardbushDesktop?.pickAttachments?.().catch(() => []);
     if (!paths?.length) return;
@@ -1082,7 +1083,7 @@ function CardbushApp() {
     ) return;
     const id = `shadow:${crypto.randomUUID()}`;
     const title = inspectorConversation?.title?.trim() || (
-      language === 'zh' ? '当前会话' : 'Current conversation'
+      uiText(language)('app.currentConversation')
     );
     const context: ShadowConversationContext = {
       windowId: id,
@@ -1612,7 +1613,7 @@ function CardbushApp() {
     renameFolder: boolean,
   ): Promise<string | null> => {
     const nextTitle = title.trim();
-    if (!nextTitle) return language === 'zh' ? '项目名称不能为空' : 'Project name is required';
+    if (!nextTitle) return uiText(language)('app.projectNameIsRequired');
     if (!renameFolder || basename(project.rootPath) === nextTitle) {
       setProjectItems((current) => current.map((item) =>
         item.id === project.id ? { ...item, title: nextTitle } : item,
@@ -1620,18 +1621,14 @@ function CardbushApp() {
       return null;
     }
     if (project.missing) {
-      return language === 'zh'
-        ? '项目文件夹不存在，请先重新添加或定位项目'
-        : 'The project folder is missing. Locate or add it again first.';
+      return uiText(language)('app.theProjectFolderIsMissingLocateOr');
     }
     if (Object.keys(chat.runningByConversation).length > 0) {
-      return language === 'zh'
-        ? '有会话仍在运行，完成或停止后才能重命名文件夹'
-        : 'A conversation is still running. Stop or finish it before renaming the folder.';
+      return uiText(language)('app.aConversationIsStillRunningStopOr');
     }
     const renameDirectory = window.cardbushDesktop?.renameProjectDirectory;
     if (!renameDirectory) {
-      return language === 'zh' ? '当前运行环境不支持重命名文件夹' : 'Folder rename is unavailable.';
+      return uiText(language)('app.folderRenameIsUnavailable');
     }
 
     let moved: Awaited<ReturnType<typeof renameDirectory>>;
@@ -1660,18 +1657,14 @@ function CardbushApp() {
         name: rollbackName,
       }).then(() => true).catch(() => false);
       if (rolledBack) {
-        return language === 'zh'
-          ? `会话路径迁移失败，文件夹已恢复原名：${caught instanceof Error ? caught.message : String(caught)}`
-          : `Session migration failed and the folder name was restored: ${caught instanceof Error ? caught.message : String(caught)}`;
+        return uiText(language)('app.sessionMigrationFailedAndTheFolderName', { value1: caught instanceof Error ? caught.message : String(caught) });
       }
       setProjectItems((current) => current.map((item) =>
         item.id === project.id
           ? { ...item, title: nextTitle, rootPath: moved.nextPath, missing: false }
           : item,
       ));
-      return language === 'zh'
-        ? '文件夹已改名，但部分会话路径迁移失败且无法自动回滚；项目已保留在真实的新路径'
-        : 'The folder was renamed, but some session paths could not be migrated or rolled back. The project now points to the real new path.';
+      return uiText(language)('app.theFolderWasRenamedButSomeSession');
     }
 
     setProjectItems((current) => {
@@ -1696,7 +1689,7 @@ function CardbushApp() {
           const selected = await pickWorkspace({ language, initialPath: project.rootPath, projects: projectItems });
           if (selected) {
             try { await changeWelcomeProject(selected, undefined, targetId); }
-            catch (error) { void showUiError(language === 'zh' ? '切换工作区失败' : 'Workspace switch failed', error instanceof Error ? error.message : String(error)); }
+            catch (error) { void showUiError(uiText(language)('app.workspaceSwitchFailed'), error instanceof Error ? error.message : String(error)); }
           }
           return;
         }
@@ -1807,17 +1800,13 @@ function CardbushApp() {
     async (conversationId: string, reports: ConversationChangeReport[], reverted: boolean, busyId: string) => {
       if (workspaceChangeBusyRef.current || reports.length === 0) return;
       if (chat.processingConversationIds.has(conversationId)) {
-        setChangeReviewNotice(language === 'zh'
-          ? '当前回合仍在运行，完成或停止后才能撤回或恢复修改。'
-          : 'Wait for this turn to complete or stop before reverting or restoring changes.');
+        setChangeReviewNotice(uiText(language)('app.waitForThisTurnToCompleteOr'));
         return;
       }
       const conversation = chat.conversations.find(item => item.id === conversationId);
       const root = changeRootForConversation(conversation) || '';
-      const action = language === 'zh' ? (reverted ? '撤回' : '取消撤回') : (reverted ? 'Revert' : 'Undo revert');
-      if (reverted && !window.confirm(language === 'zh'
-        ? '确定撤回这些修改吗？会先校验文件版本，撤回后可以取消撤回。'
-        : 'Revert these changes? File versions will be checked first. You can undo this revert.')) return;
+      const action = (reverted ? uiText(language)('app.revert') : uiText(language)('app.undoRevert'));
+      if (reverted && !window.confirm(uiText(language)('app.revertTheseChangesFileVersionsWillBe'))) return;
       workspaceChangeBusyRef.current = true;
       setRevertingChangeId(busyId);
       setChangeReviewNotice('');
@@ -1840,7 +1829,7 @@ function CardbushApp() {
         const desktop = window.cardbushDesktop;
         const changes = group.map(report => ({ report, files: serializeToolChangeReport(report) }));
         if (!root || changes.some(item => !item.files.length) || !desktop?.revertFileChanges || !desktop.restoreFileChanges) {
-          throw new Error(language === 'zh' ? '缺少可用的文件快照或桌面恢复接口。' : 'No usable file snapshot or desktop restore API is available.');
+          throw new Error(uiText(language)('app.noUsableFileSnapshotOrDesktopRestore'));
         }
         const write = async (item: typeof changes[number], reverse: boolean) => reverse
           ? (await desktop.revertFileChanges(root, item.files)).revertedFiles
@@ -1861,8 +1850,7 @@ function CardbushApp() {
               failures.push(errorMessage(rollbackError));
             }
           }
-          if (failures.length) throw new Error(errorMessage(caught) + '\n' + (language === 'zh'
-            ? '部分文件无法回滚，请审查当前内容：' : 'Some files could not be rolled back; review their current contents: ') + failures.join('\n'));
+          if (failures.length) throw new Error(errorMessage(caught) + '\n' + (uiText(language)('app.someFilesCouldNotBeRolledBack')) + failures.join('\n'));
           throw caught;
         }
         markCompleted(group, true);
@@ -1906,12 +1894,10 @@ function CardbushApp() {
             completedKeys.add(key);
           }
         }
-        setChangeReviewNotice(language === 'zh'
-          ? (reverted ? '已撤回 ' : '已取消撤回，恢复 ') + changedFiles + ' 个文件的修改。'
-          : action + ' completed for ' + changedFiles + ' file(s).');
+        setChangeReviewNotice(uiText(language)(reverted ? 'changes.reverted' : 'changes.restored', { count: changedFiles }));
         if (root) await refreshProjectGitStatus(root);
       } catch (caught) {
-        const message = action + (language === 'zh' ? '失败：' : ' failed: ') + workspaceRevertErrorMessage(caught, language);
+        const message = action + (uiText(language)('app.failed')) + workspaceRevertErrorMessage(caught, language);
         setChangeReviewNotice(message);
         window.alert(message);
       } finally {
@@ -2114,6 +2100,7 @@ function CardbushApp() {
     native: Boolean(window.cardbushDesktop?.executeWindowMenuAction), externalLinks: Boolean(window.cardbushDesktop?.openExternal) });
 
   return (
+    <UiLanguageProvider language={language}>
     <PageNavigationContext.Provider value={pageNavigation}>
     <WorkspaceChangeStateContext.Provider value={workspaceChangeState}>
     <ConversationExtractionProvider activeSessionId={chat.activeConversationId} language={language}
@@ -2152,7 +2139,7 @@ function CardbushApp() {
         menus={windowMenus}
         onBack={pageNavigation.canGoBack ? pageNavigation.back : undefined}
         onForward={pageNavigation.canGoForward ? pageNavigation.forward : undefined}
-        onError={error => { void showUiError(language === 'zh' ? '操作失败' : 'Action failed', errorMessage(error)); }}
+        onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
       />
       {conversationSearch.open && <ConversationSearchDialog
         language={language}
@@ -2299,7 +2286,7 @@ function CardbushApp() {
                 selectSuggestion: suggestion => { if (suggestion.sessionId) openConversation(suggestion.sessionId); else setActiveDraft(suggestion.text); },
                 fill: text => { setActiveDraft(text); setSection('chat'); },
                 send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
-                  onError: error => { void showUiError(language === 'zh' ? '组件消息发送失败' : 'Component message failed', error instanceof Error ? error.message : String(error)); } }),
+                  onError: error => { void showUiError(uiText(language)('app.componentMessageFailed'), error instanceof Error ? error.message : String(error)); } }),
                 openBrowser: url => openInspectorTarget({ target: url }) }}>
             {section === 'agents' || section === 'assistant' ? null : section === 'chat' ? (
               <ComposerPortalContext.Provider value={quickInputOpen ? quickInputTarget : null}>
@@ -2434,7 +2421,7 @@ function CardbushApp() {
             <aside
               id="right-inspector"
               className={`right-inspector soft-panel-motion ${inspectorPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
-              aria-label={language === 'zh' ? '右侧检查器' : 'Inspector'}
+              aria-label={uiText(language)('app.inspector')}
               aria-hidden={!inspectorPresence.visible}
               inert={!inspectorPresence.visible || ((compactLayout || inspectorCover) && !sidebarCollapsed) ? true : undefined}
               style={{ '--right-inspector-width': `${inspectorWidth}px` } as CSSProperties}
@@ -2446,7 +2433,7 @@ function CardbushApp() {
                 onCollapse={closeInspector}
                 onExpand={enterInspectorCover}
                 softVisible={inspectorPresence.visible}
-                label={language === 'zh' ? '拖动调整宽度，向最左覆盖内容区，向右收起' : 'Drag left to cover content, or right to collapse'}
+                label={uiText(language)('app.dragLeftToCoverContentOrRight')}
               />
               <div className="right-inspector-viewport">
               <div className="right-inspector-content">
@@ -2510,8 +2497,8 @@ function CardbushApp() {
                               <button
                                 type="button"
                                 className="right-inspector-tab-close"
-                                title={language === 'zh' ? '关闭标签页' : 'Close tab'}
-                                aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
+                                title={uiText(language)('app.closeTab')}
+                                aria-label={`${uiText(language)('common.close')} ${label}`}
                                 onClick={() => closeInspectorTab(tab.id)}
                               >
                                 <X size={12} aria-hidden="true" />
@@ -2524,12 +2511,10 @@ function CardbushApp() {
                       <button
                         type="button"
                         className={inspectorTabsMenuOpen ? 'active' : ''}
-                        aria-label={language === 'zh' ? '管理全部标签页' : 'Manage all tabs'}
+                        aria-label={uiText(language)('app.manageAllTabs')}
                         aria-haspopup="menu"
                         aria-expanded={inspectorTabsMenuOpen}
-                        title={language === 'zh'
-                          ? `管理全部标签页（${displayedInspectorTabs.length}）`
-                          : `Manage all tabs (${displayedInspectorTabs.length})`}
+                        title={uiText(language)('app.manageAllTabs_197a89f', { value1: displayedInspectorTabs.length })}
                         onClick={() => {
                           setInspectorTabsMenuOpen((open) => !open);
                           setInspectorTabContextMenu(null);
@@ -2541,7 +2526,7 @@ function CardbushApp() {
                       {inspectorTabsMenuOpen && (
                         <div className="right-inspector-tab-menu" role="menu">
                           <div className="right-inspector-tab-menu-heading">
-                            <strong>{language === 'zh' ? '全部标签页' : 'All tabs'}</strong>
+                            <strong>{uiText(language)('app.allTabs')}</strong>
                             <span>{displayedInspectorTabs.length}</span>
                           </div>
                           <div className="right-inspector-tab-menu-list">
@@ -2586,8 +2571,8 @@ function CardbushApp() {
                                   <button
                                     type="button"
                                     role="menuitem"
-                                    title={language === 'zh' ? '关闭标签页' : 'Close tab'}
-                                    aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
+                                    title={uiText(language)('app.closeTab')}
+                                    aria-label={`${uiText(language)('common.close')} ${label}`}
                                     onClick={() => closeInspectorTab(tab.id)}
                                   >
                                     <X size={12} aria-hidden="true" />
@@ -2603,7 +2588,7 @@ function CardbushApp() {
                             onClick={() => closeInspectorTabs(new Set(inspectorTabs.map((tab) => tab.id)))}
                           >
                             <X size={13} aria-hidden="true" />
-                            {language === 'zh' ? '关闭全部标签页' : 'Close all tabs'}
+                            {uiText(language)('app.closeAllTabs')}
                           </button>
                         </div>
                       )}
@@ -2623,18 +2608,18 @@ function CardbushApp() {
                     onClick={() => void window.cardbushDesktop?.openExternal?.(
                       activeInspectorAddress || displayedInspectorTarget.target,
                     )}
-                    title={language === 'zh' ? '在系统浏览器或应用中打开' : 'Open in system browser or app'}
+                    title={uiText(language)('app.openInSystemBrowserOrApp')}
                   >
                     <ExternalLink size={15} />
                   </button>
                 )}
                 {inspectorLayout && <button type="button" data-inspector-save-layout onClick={saveCurrentInspectorLayout}
-                  aria-label={language === 'zh' ? '保存当前多页面到工具区' : 'Save current layout to Tools'}><Save size={16}/></button>}
+                  aria-label={uiText(language)('app.saveCurrentLayoutToTools')}><Save size={16}/></button>}
                 <button
                   type="button"
                   onClick={closeInspector}
                   data-shortcut="toggleInspector"
-                  aria-label={language === 'zh' ? '关闭右侧栏' : 'Close inspector'}
+                  aria-label={uiText(language)('app.closeInspector')}
                 >
                   <PanelRightClose size={16} />
                 </button>
@@ -2660,7 +2645,7 @@ function CardbushApp() {
                     role="menuitem"
                     onClick={() => closeInspectorTab(inspectorTabContextTarget.id)}
                   >
-                    {language === 'zh' ? '关闭标签页' : 'Close tab'}
+                    {uiText(language)('app.closeTab')}
                   </button>
                   <button
                     type="button"
@@ -2668,7 +2653,7 @@ function CardbushApp() {
                     disabled={inspectorTabs.length <= 1}
                     onClick={() => closeOtherInspectorTabs(inspectorTabContextTarget.id)}
                   >
-                    {language === 'zh' ? '关闭其他标签页' : 'Close other tabs'}
+                    {uiText(language)('app.closeOtherTabs')}
                   </button>
                   <button
                     type="button"
@@ -2676,14 +2661,14 @@ function CardbushApp() {
                     disabled={inspectorTabContextTargetIndex >= inspectorTabs.length - 1}
                     onClick={() => closeInspectorTabsToRight(inspectorTabContextTarget.id)}
                   >
-                    {language === 'zh' ? '关闭右侧标签页' : 'Close tabs to the right'}
+                    {uiText(language)('app.closeTabsToTheRight')}
                   </button>
                   <button
                     type="button"
                     role="menuitem"
                     onClick={() => closeInspectorTabs(new Set(inspectorTabs.map((tab) => tab.id)))}
                   >
-                    {language === 'zh' ? '关闭全部标签页' : 'Close all tabs'}
+                    {uiText(language)('app.closeAllTabs')}
                   </button>
                 </div>,
                 document.querySelector('.app') ?? document.body,
@@ -2693,8 +2678,8 @@ function CardbushApp() {
                   <button
                     type="button"
                     disabled={!activeInspectorNavigation?.canGoBack}
-                    title={language === 'zh' ? '后退' : 'Back'}
-                    aria-label={language === 'zh' ? '后退' : 'Back'}
+                    title={uiText(language)('app.back')}
+                    aria-label={uiText(language)('app.back')}
                     onClick={() => inspectorWebviewRefs.current
                       .get(activeInspectorTabIdentity)?.goBack()}
                   >
@@ -2703,8 +2688,8 @@ function CardbushApp() {
                   <button
                     type="button"
                     disabled={!activeInspectorNavigation?.canGoForward}
-                    title={language === 'zh' ? '前进' : 'Forward'}
-                    aria-label={language === 'zh' ? '前进' : 'Forward'}
+                    title={uiText(language)('app.forward')}
+                    aria-label={uiText(language)('app.forward')}
                     onClick={() => inspectorWebviewRefs.current
                       .get(activeInspectorTabIdentity)?.goForward()}
                   >
@@ -2712,8 +2697,8 @@ function CardbushApp() {
                   </button>
                   <button
                     type="button"
-                    title={language === 'zh' ? '刷新当前页面' : 'Reload current page'}
-                    aria-label={language === 'zh' ? '刷新当前页面' : 'Reload current page'}
+                    title={uiText(language)('app.reloadCurrentPage')}
+                    aria-label={uiText(language)('app.reloadCurrentPage')}
                     data-shortcut="reloadBrowser"
                     onClick={() => inspectorWebviewRefs.current
                       .get(activeInspectorTabIdentity)?.reload()}
@@ -2727,7 +2712,7 @@ function CardbushApp() {
                   {isInspectorBrowserTarget(displayedInspectorTarget.target, displayedInspectorTarget.mediaType) ? (
                     <form
                       className="right-inspector-address editable"
-                      title={language === 'zh' ? '编辑网址' : 'Edit address'}
+                      title={uiText(language)('app.editAddress')}
                       data-shortcut="focusBrowserAddress"
                       onSubmit={(event) => {
                         event.preventDefault();
@@ -2740,8 +2725,8 @@ function CardbushApp() {
                       <input
                         ref={inspectorAddressRef}
                         value={inspectorAddressDraft}
-                        aria-label={language === 'zh' ? '网址' : 'Address'}
-                        placeholder={language === 'zh' ? '搜索或输入网址' : 'Search or enter address'}
+                        aria-label={uiText(language)('app.address')}
+                        placeholder={uiText(language)('app.searchOrEnterAddress')}
                         spellCheck={false}
                         onChange={(event) => setInspectorAddressDraft(event.target.value)}
                       />
@@ -2754,7 +2739,7 @@ function CardbushApp() {
                       <span>{activeInspectorAddress}</span>
                     </div>
                   )}
-                  <button type="button" aria-label={language === 'zh' ? '框选区域与 AI 对话' : 'Select a region for AI'} title={language === 'zh' ? '点击内容块或拖动框选区域' : 'Click a block or drag to select a region'} aria-pressed={regionSelectionId === activeInspectorTabIdentity}
+                  <button type="button" aria-label={uiText(language)('app.selectARegionForAi')} title={uiText(language)('app.clickABlockOrDragToSelect')} aria-pressed={regionSelectionId === activeInspectorTabIdentity}
                     onClick={() => setRegionSelectionId(id => id === activeInspectorTabIdentity ? '' : activeInspectorTabIdentity)}><ScanLine size={16}/></button>
                 </div>
               )}
@@ -2933,6 +2918,7 @@ function CardbushApp() {
     </ConversationExtractionProvider>
     </WorkspaceChangeStateContext.Provider>
     </PageNavigationContext.Provider>
+    </UiLanguageProvider>
   );
 }
 
@@ -2943,12 +2929,10 @@ function errorMessage(error: unknown) {
 function workspaceRevertErrorMessage(error: unknown, language: AppLanguage) {
   const detail = errorMessage(error);
   if (/current revision no longer matches|changed after this (?:Turn|revert)/i.test(detail)) {
-    return language === 'zh' ? '文件有后续修改，已保留当前内容。请先审查差异后再试。' : 'Files have later edits. Your current content was preserved; review the differences before retrying.';
+    return uiText(language)('app.filesHaveLaterEditsYourCurrentContent');
   }
   if (isRuntimeWorkspaceSnapshotUnavailableError(error)) {
-    return language === 'zh'
-      ? 'Runtime 尚无完整恢复快照，已尝试使用桌面 diff 安全撤回。'
-      : 'Runtime has no complete recovery snapshot; the desktop diff fallback was attempted.';
+    return uiText(language)('app.runtimeHasNoCompleteRecoverySnapshotThe');
   }
   return errorMessage(error);
 }
