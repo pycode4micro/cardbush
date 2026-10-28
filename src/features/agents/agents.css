@@ -66,7 +66,7 @@
   .agents-overview { padding: 24px; }
 }
 
-.agent-project-picker { width: min(100%, var(--chat-track-width)); margin: 0 auto 6px; pointer-events: auto; }
+.agent-project-picker { width: calc(min(100%, var(--chat-track-width)) - 24px); margin: 0 auto -10px; padding: 4px 6px 14px; min-height: 46px; border-radius: 18px 18px 0 0; background: color-mix(in srgb, var(--surface-strong) 97%, var(--text) 3%); pointer-events: auto; }
 .agent-project-picker .settings-dropdown { width: fit-content; max-width: 100%; }
-.agent-project-picker .settings-dropdown-trigger { min-height: 28px; padding: 0 8px; border: 0; background: var(--surface); font-size: 12px; }
+.agent-project-picker .settings-dropdown-trigger { min-height: 28px; padding: 0 9px; border: 0; border-radius: 18px; background: color-mix(in srgb, var(--text) 6%, transparent); font-size: 12px; }
 .agent-chat .agent-job, .agent-chat .agent-job-status, .agent-chat .agent-subagents { width: min(100%, var(--chat-track-width)); margin-left: auto; margin-right: auto; }

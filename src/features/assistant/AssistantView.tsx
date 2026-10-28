@@ -1,6 +1,6 @@
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { Monitor, Server, Settings2, X, PhoneOff, Link } from 'lucide-react';
+import { Monitor, Server, Settings2, X, Link } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
 import { journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
@@ -90,8 +90,8 @@ export function AssistantView({ active, language, connections, prepare, onManage
   const [arriving, setArriving] = useState<Set<string>>(() => new Set());
   useEffect(() => () => animationTimers.current.forEach(clearTimeout), []);
   useEffect(() => { if (!active) setArriving(new Set()); }, [active]);
-  const voice = applicationVoiceSession(), voiceState = useSyncExternalStore(voice.subscribe, voice.snapshot);
-  const callHere = voiceState.mode === 'call' && voiceState.assistant;
+  const voice = applicationVoiceSession();
+  const callHere = useSyncExternalStore(voice.subscribe, () => voice.snapshot().mode === 'call' && Boolean(voice.snapshot().assistant));
   const host = connections.find(item => item.id === profile.targetAgent);
   const initialize = useRef<Promise<unknown> | undefined>(undefined);
   const ensure = useCallback(() => initialize.current ??= assistantBackend.ensure(profile.name)
@@ -188,7 +188,6 @@ export function AssistantView({ active, language, connections, prepare, onManage
     <SettingsDropdown value={profile.targetAgent} onChange={targetAgent => { saveAssistantProfile({ ...profile, targetAgent }); setDesktop(false); }}
       label={zh ? '执行主机' : 'Execution host'} options={[{ value: '', label: zh ? '本地' : 'Local', icon: <Monitor size={14}/> }, ...connections.map(item => ({ value: item.id, label: `${item.name}${item.sshTunnel ? ' · SSH' : ''}`, icon: <Server size={14}/> }))]}/>
     <div className="assistant-composer-tools">
-      {callHere && <button type="button" className="assistant-hangup" title={zh ? '结束通话' : 'End call'} onClick={() => voice.end()}><PhoneOff size={17}/></button>}
       <button type="button" title={zh ? '连接 SSH / 管理主机' : 'Connect SSH / manage hosts'} onClick={onManageHosts}><Link size={17}/></button>
       {host && <button type="button" aria-pressed={desktop} title={zh ? '云端电脑' : 'Remote computer'} onClick={() => setDesktop(value => !value)}><Monitor size={18}/></button>}
       <button type="button" title={zh ? '助手设置' : 'Assistant settings'} onClick={() => setSettings(true)}><Settings2 size={18}/></button>

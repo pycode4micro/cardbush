@@ -5,6 +5,7 @@ import { realtimeVoiceCatalog } from './realtimeVoiceCatalog';
 /** Seeduplex JSON protocol, not the legacy binary O/SC protocol. */
 export const volcengineRealtimeVoice: RealtimeVoiceProvider = {
   ...realtimeVoiceMessages,
+  serverAssignedContextIds: true,
   endpoint: realtimeVoiceCatalog.volcengine.defaults.endpoint,
   headers: key => ({ 'X-Api-Key': key }),
   start: (settings, voice, assistant) => ({ type: 'session.create', session: {

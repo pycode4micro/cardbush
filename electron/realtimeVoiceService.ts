@@ -17,10 +17,17 @@ export interface RealtimeSocket {
   addEventListener(type: string, listener: (event: any) => void): void;
 }
 export interface RealtimeConnection { socket: RealtimeSocket; dispose(): void }
+type ConnectionStage = 'preparing_history' | 'connecting' | 'creating_session' | 'restoring_history' | 'ready';
+export interface RealtimeVoiceDiagnostic {
+  event: string; callId: string; sessionId?: string; provider: RealtimeVoiceSettings['provider'];
+  stage: ConnectionStage; elapsedMs: number; generation: number;
+  reason?: string; contextItems?: number; contextBytes?: number;
+}
 interface Dependencies {
   encrypt(value: string): string;
   decrypt(value: string): string;
   connect(url: string, headers: Record<string, string>): Promise<RealtimeConnection>;
+  diagnostic?(entry: RealtimeVoiceDiagnostic): void;
 }
 interface LiveCall {
   assistant?: { name: string; persona: string };
@@ -37,7 +44,8 @@ interface LiveCall {
   playback?: boolean; transitioning?: boolean; bufferedFrames: string[];
   userText?: string; userItemId?: string; assistantText?: string;
   partials: Map<string,string>;
-  restoring?: { eventId:string; context:VoiceContextMessage[] };
+  restoring?: { eventId:string; context:VoiceContextMessage[]; ignoredReceipt?: boolean };
+  stage: ConnectionStage; startedAt: number;
   generation:number; retryCount:number; everReady?:boolean; retryTimer?:NodeJS.Timeout;
   recovery?:Promise<void>; recoveryDeadline?:number; capturePaused?:boolean;
   deferredContext:VoiceContextMessage[]; orphanedBatches:Set<string>;
@@ -74,12 +82,13 @@ export class RealtimeVoiceService {
     const started = new Promise<void>((yes,no) => { resolve = yes; reject = no; });
     // Attach immediately: cancellation may happen while the proxy is resolving.
     void started.catch(() => {});
-    const call: LiveCall = { id: input.id, owner, settings: saved.settings, secret: saved.secret, provider: providers[saved.settings.provider], emit, ready: false, closing: false, resolve, reject, batches: new Map(), seen: new Set(), notifications: [], notified: new Set(), voice:input.voice, bufferedFrames:[], partials:new Map(), generation:0, retryCount:0, deferredContext:[], orphanedBatches:new Set() };
+    const call: LiveCall = { id: input.id, owner, settings: saved.settings, secret: saved.secret, provider: providers[saved.settings.provider], emit, ready: false, closing: false, resolve, reject, batches: new Map(), seen: new Set(), notifications: [], notified: new Set(), voice:input.voice, bufferedFrames:[], partials:new Map(), generation:0, retryCount:0, deferredContext:[], orphanedBatches:new Set(), stage:'preparing_history', startedAt:Date.now() };
     call.assistant = input.assistant;
     {
       call.history=new RealtimeVoiceHistory(input.sessionId ? path.join(path.dirname(this.file),'voice-history') : undefined,input.sessionId ?? `voice-${call.id}`,this.deps);
       call.history.seed(input.context);
       call.memory=new RealtimeVoiceContext(call.history,Buffer.byteLength(JSON.stringify(call.provider.start(saved.settings,input.voice,call.assistant)))/2,{
+        serverAssignedContextIds: call.provider.serverAssignedContextIds,
         send:event=>this.send(call,event), create:items=>call.provider.context(items),
         request:job=>call.emit({id:call.id,type:'context-compact',job}),
         status:message=>{call.emit({id:call.id,type:'context-status',message});if (!message) this.scheduleNotification(call);},
@@ -97,20 +106,22 @@ export class RealtimeVoiceService {
     const owner=call.owner, generation=++call.generation;
     const current=()=>this.calls.get(owner)===call && !call.closing && generation===call.generation;
     let context:VoiceContextMessage[];
+    call.stage='preparing_history'; this.diagnostic(call,'stage');
     try {
       const sessionBytes=Buffer.byteLength(JSON.stringify(call.provider.start(call.settings,call.voice,call.assistant)));
       context=await call.memory!.prepareInitial(Math.max(3000,16000-sessionBytes));
     } catch { if(current())this.fail(call,'通话记忆暂未恢复，原始记录和后台任务已保留，请稍后重试。');return; }
     if (!current()) return;
     call.deferredContext=[];
-    clearTimeout(call.timeout);
-    call.timeout=setTimeout(()=>this.connectionLost(call,'实时语音连接或上下文确认超时。'),Math.max(1,Math.min(20_000,(call.recoveryDeadline??Date.now()+20_000)-Date.now())));
+    this.diagnostic(call,'history_prepared',{contextItems:context.length,contextBytes:Buffer.byteLength(JSON.stringify(call.provider.context(context)))});
+    this.waitForConnection(call,'connecting');
     try {
       const connection = await this.deps.connect(typeof call.provider.endpoint === 'function' ? call.provider.endpoint(call.settings) : call.provider.endpoint, call.provider.headers(call.secret ? this.deps.decrypt(call.secret) : ''));
       if (!current()) { connection.socket.close(); connection.dispose(); return; }
       call.connection = connection;
       connection.socket.addEventListener('open', () => {
         if(!current() || call.connection!==connection)return;
+        this.waitForConnection(call,'creating_session');
         try { this.send(call,call.provider.start(call.settings,call.voice,call.assistant)); }
         catch { this.connectionLost(call,'实时语音启动连接失败。'); }
       });
@@ -122,12 +133,15 @@ export class RealtimeVoiceService {
           if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw Error('Invalid event');
           const raw = call.provider.normalize?.(decoded) ?? decoded;
           if (call.restoring && raw.type==='conversation.item.added') {
-            const matches=Array.isArray(raw.items) && call.restoring.context.every(message=>(raw.items as any[]).some((item:any)=>
-              item?.id===message.id && item.role===message.role && Array.isArray(item.content) && item.content.every((part:any)=>typeof part?.text==='string') &&
-              item.content.map((part:any)=>part.text).join('')===message.text));
-            // Some providers assign a new event_id to the ACK. Full stable item
-            // identity and content, scoped to this socket generation, prove restore.
-            if(!matches){if(!raw.event_id || raw.event_id===call.restoring.eventId)throw Error('Restored memory was not acknowledged.');return;}
+            // Only this batch can be created while startup capture is muted.
+            // Providers may replace both event and item IDs: bind their receipt
+            // after verifying the entire ordered batch, never by text alone.
+            const matches=call.memory!.acknowledge(call.restoring.context,raw);
+            if(!matches){
+              if(!call.restoring.ignoredReceipt){this.diagnostic(call,'context_receipt_rejected');call.restoring.ignoredReceipt=true;}
+              if(!raw.event_id || raw.event_id===call.restoring.eventId)throw Error('Restored memory was not acknowledged.');return;
+            }
+            this.diagnostic(call,'history_acknowledged',{contextItems:call.restoring.context.length});
             call.restoring=undefined;this.restoreOrReady(call);return;
           }
           if (call.memory?.event(raw)) return;
@@ -148,6 +162,7 @@ export class RealtimeVoiceService {
               // The provider requires mute keepalive while context ACKs are pending.
               this.send(call,call.provider.control('mute'));
               if (context.length) {
+                this.waitForConnection(call,'restoring_history');
                 const eventId=this.send(call,call.provider.context(context));
                 call.restoring={eventId,context};continue;
               }
@@ -192,11 +207,25 @@ export class RealtimeVoiceService {
   }
   private restoreOrReady(call:LiveCall) {
     const context=call.deferredContext.splice(0);
-    if(context.length){call.restoring={eventId:this.send(call,call.provider.context(context)),context};return;}
+    if(context.length){this.waitForConnection(call,'restoring_history');call.restoring={eventId:this.send(call,call.provider.context(context)),context};return;}
     this.ready(call);
+  }
+  private diagnostic(call:LiveCall,event:string,detail:Pick<RealtimeVoiceDiagnostic,'reason'|'contextItems'|'contextBytes'>={}) {
+    // Never include audio, transcripts, prompts, headers or provider error bodies.
+    try { this.deps.diagnostic?.({event,callId:call.id,sessionId:call.history?.sessionId,provider:call.settings.provider,
+      stage:call.stage,elapsedMs:Date.now()-call.startedAt,generation:call.generation,...detail}); } catch { /* Best effort. */ }
+  }
+  private waitForConnection(call:LiveCall,stage:'connecting'|'creating_session'|'restoring_history') {
+    call.stage=stage;this.diagnostic(call,'stage');clearTimeout(call.timeout);
+    const messages={connecting:'实时语音网络连接超时，请检查网络与代理设置。',
+      creating_session:'语音服务未及时确认会话，请稍后重试。',
+      restoring_history:'语音服务未及时确认历史恢复，原始记录已保留，请重新接通。'};
+    const deadline=call.recoveryDeadline??call.startedAt+90_000;
+    call.timeout=setTimeout(()=>this.connectionLost(call,messages[stage]),Math.max(1,Math.min(20_000,deadline-Date.now())));
   }
   private owned(owner: number | string,id: string,preparing=false) { const call=this.calls.get(owner); if (!call || call.id!==id || call.closing || !preparing && !call.ready && !call.transitioning) throw Error('语音通话已结束。'); return call; }
   private ready(call:LiveCall) {
+    call.stage='ready';this.diagnostic(call,'connected');
     call.ready=true;call.everReady=true;clearTimeout(call.timeout);clearTimeout(call.retryTimer);call.resolve();call.recovery=undefined;call.retryCount=0;call.recoveryDeadline=undefined;
     call.transitioning=false;
     if(!call.muted)this.send(call,call.provider.control('unmute'));
@@ -367,11 +396,13 @@ export class RealtimeVoiceService {
   }
   private fail(call:LiveCall,message:string) {
     if (this.calls.get(call.owner)!==call) return;
+    this.diagnostic(call,'failed',{reason:message});
     call.reject(Error(message)); if (!call.closing) call.emit({id:call.id,type:'error',message});
     this.finish(call);
   }
   private finish(call:LiveCall) {
     if (this.calls.get(call.owner)!==call) return;
+    this.diagnostic(call,'closed');
     call.memory?.close();
     try { this.archive(call,true); } catch { call.emit({id:call.id,type:'context-status',message:'本次通话记录保存失败，请检查本地磁盘。'}); }
     clearTimeout(call.timeout);clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer); this.calls.delete(call.owner);call.generation++; call.reject(Error('语音通话已结束。'));

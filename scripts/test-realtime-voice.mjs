@@ -286,6 +286,18 @@ test('voice context contains bounded complete visible QA only',()=>{
   const context=realtimeConversationContext(target([{id:'u',role:'user',content:'问题'},terminal('t','回答'),{id:'secret',role:'assistant',content:'internal',metadata:{visibility:'internal'}},{id:'dangling',role:'user',content:'未完成'}]));
   assert.deepEqual(context,[{role:'user',text:'问题'},{role:'assistant',text:'回答'}]);
 });
+test('reconnecting does not import archived voice transcripts again or pair them with text-chat answers',()=>{
+  const voice=(id,role,content)=>({id,role,content,status:'completed',metadata:{voice_transcript:true,cardbush_terminal_snapshot:role==='assistant'}});
+  const context=realtimeConversationContext(target([
+    {id:'u',role:'user',content:'typed question'},terminal('a','typed answer'),
+    voice('vu','user','spoken question'),voice('va','assistant','spoken answer'),
+    {id:'u2',role:'user',content:'unanswered typed question'},voice('vu2','user','another spoken question'),
+    terminal('unpaired','not a reply to the earlier typed question'),
+    {id:'u3',role:'user',content:'new typed question'},terminal('a3','new typed answer'),
+  ]));
+  assert.deepEqual(context,[{role:'user',text:'typed question'},{role:'assistant',text:'typed answer'},
+    {role:'user',text:'new typed question'},{role:'assistant',text:'new typed answer'}]);
+});
 test('audio and dialogue continue during concurrent dispatch and await batches',async()=>{
   const f=agentFixture();let callback,frames,uploaded=0,played=0,closed=0;const results=[],patches=[];
   const api={onEvent:fn=>(callback=fn,()=>{}),start:async()=>{},audio:async()=>uploaded++,control:async()=>{},close:async()=>closed++,results:async(id,r)=>results.push(r),notify:async()=>{}};

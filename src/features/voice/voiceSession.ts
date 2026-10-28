@@ -67,6 +67,7 @@ export class VoiceSession {
   private inputEpoch = 0;
   private lastClip?: Blob;
   private manualSend = false;
+  private insertTranscript?: (text: string) => void;
   private failedText = '';
   private settings?: VoiceSettings;
   private recentSpeech: { text: string; at: number }[] = [];
@@ -122,11 +123,12 @@ export class VoiceSession {
   releaseRecording(target: Pick<VoiceTarget, 'environment' | 'sessionId'>) {
     if (this.state.mode === 'recording' && this.target?.environment === target.environment && this.target?.sessionId === target.sessionId) this.end();
   }
-  async start(mode: 'recording' | 'call') {
+  async start(mode: 'recording' | 'call', insertTranscript?: (text: string) => void) {
     if (this.state.mode !== 'idle') return;
     active?.end(); active = this;
     const epoch = ++this.epoch;
     this.manualSend = false; this.failedText = ''; this.lastClip = undefined;
+    this.insertTranscript = insertTranscript;
     this.spoken.reset(this.target?.messages ?? []);
     this.patch({ ...initial, mode, phase: 'connecting', sessionId: this.target?.sessionId, assistant: Boolean(this.target?.assistant), startedAt: Date.now(), agentWorking: Boolean(this.target?.sending), agentWaiting: Boolean(this.target?.waiting) });
     try {
@@ -225,7 +227,7 @@ export class VoiceSession {
   finishRecording() {
     if (this.state.mode !== 'recording' || !['recording', 'recorded'].includes(this.state.phase)) return;
     this.manualSend = true;
-    // Keep the current recording surface until transcription and send are accepted.
+    // Keep capture ownership until transcription has been inserted into its draft.
     this.patch({ phase: 'transcribing', error: '', retryAvailable: false });
     if (this.lastClip) this.queueClip(this.lastClip, this.epoch, this.failedText);
     else this.capture?.finish();
@@ -256,6 +258,17 @@ export class VoiceSession {
     }
   }
   private async sendInput(text: string, epoch: number) {
+    if (epoch !== this.epoch) return;
+    if (this.state.mode === 'recording') {
+      // Dictation is draft editing, never Agent input, including during a running turn.
+      // The callback belongs to the composer that started capture; navigation cancels it.
+      this.failedText = text;
+      this.patch({ transcript: text });
+      if (!this.insertTranscript) throw Error('输入框已不可用，转写内容已保留。');
+      this.insertTranscript(text);
+      this.end();
+      return;
+    }
     if (this.state.mode === 'call') this.interrupt();
     this.submitting = true; this.failedText = text;
     this.patch({ transcript: text, phase: 'submitting' }); this.syncCapture();
@@ -265,7 +278,6 @@ export class VoiceSession {
       if (epoch !== this.epoch) return;
       if (accepted === false) throw Error('消息未发送，转写已保留，可重试。');
       this.failedText = ''; this.lastClip = undefined;
-      if (this.state.mode === 'recording') this.end();
     } finally {
       if (epoch === this.epoch) {
         this.submitting = false; this.finishingInput = false;
@@ -348,7 +360,7 @@ export class VoiceSession {
       this.syncCapture(); this.input?.force();
     }
   }
-  restart() { const mode = this.state.mode; this.end(); if (mode !== 'idle') void this.start(mode); }
+  restart() { const mode = this.state.mode, insert = this.insertTranscript; this.end(); if (mode !== 'idle') void this.start(mode, insert); }
   setSettingsOpen(open: boolean) {
     this.settingsOpen = open;
     if (open) {
@@ -428,7 +440,7 @@ export class VoiceSession {
     for (const id of this.requests) void this.api?.cancel(id).catch(() => {});
     this.requests.clear(); this.pending = 0; this.serial = Promise.resolve(); this.lastClip = undefined; this.failedText = '';
     this.spoken.reset([]); this.recentSpeech = []; this.settingsOpen = false;
-    this.sendingFirst = false; if (active === this) active = undefined;
+    this.sendingFirst = false; this.insertTranscript = undefined; if (active === this) active = undefined;
     this.patch({ ...initial });
   }
 }

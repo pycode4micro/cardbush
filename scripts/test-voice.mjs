@@ -3,15 +3,18 @@ import test from 'node:test';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import ts from 'typescript';
+import { createRequire } from 'node:module';
+import * as realtimeConversation from '@cardbush/bush-runtime/realtime-conversation';
 import { turnClock } from './voice-turn-fixtures.mjs';
 import { VoiceService, validateVoiceSettings } from '../dist-electron/voiceService.js';
 import { defaultVoiceSettings as systemVoiceSettings } from '../dist-electron/voiceTypes.js';
 const defaultVoiceSettings = { ...systemVoiceSettings, engine: 'cloud', recognitionEngine: 'cloud' };
+const require = createRequire(import.meta.url);
 
 const compile = file => {
   const exports = {};
   const source = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  new Function('exports', 'require', source)(exports, spec => compile(resolve(dirname(file), spec + '.ts')));
+  new Function('exports', 'require', source)(exports, spec => spec === '@cardbush/bush-runtime/realtime-conversation' ? realtimeConversation : spec.startsWith('.') ? compile(resolve(dirname(file), spec + '.ts')) : require(spec));
   return exports;
 };
 const { SpeechPhrases, SpokenTranscript } = await compile('src/features/voice/speechText.ts');
@@ -115,7 +118,7 @@ test('history, internal messages, superseded text and duplicate updates are not 
 });
 
 function sessionFixture(overrides = {}, playback = {}, clock, captureOverrides = {}) {
-  let callbacks; const sent = [], spoken = [], cancelled = [], mutes = []; let stopped = 0, closed = 0;
+  let callbacks; const sent = [], dictated = [], spoken = [], cancelled = [], mutes = []; let stopped = 0, closed = 0;
   const api = { settings: async () => ({ ...defaultVoiceSettings, hasApiKey: true }), saveSettings: async value => value,
     transcribe: async () => ({ text: '请继续', speakerVerified: true }), cancel: async id => { cancelled.push(id); }, ...overrides };
   const session = new VoiceSession(api, {
@@ -125,7 +128,7 @@ function sessionFixture(overrides = {}, playback = {}, clock, captureOverrides =
   });
   const target = { environment: 'local', sessionId: 'chat', messages: [], sending: false, activeTurnId: null, send: async (...args) => { sent.push(args); return true; } };
   session.update(target);
-  return { session, target, sent, spoken, cancelled, mutes, get callbacks() { return callbacks; }, get stopped() { return stopped; }, get closed() { return closed; } };
+  return { session, target, sent, dictated, spoken, cancelled, mutes, get callbacks() { return callbacks; }, get stopped() { return stopped; }, get closed() { return closed; } };
 }
 
 test('unlocked calls merge pending clips and send automatically without a confirmation', async () => {
@@ -201,50 +204,58 @@ test('optional local recognition checks availability without downloading and wor
   let installs = 0;
   const config = { ...systemVoiceSettings, recognitionEngine: 'sensevoice', hasApiKey: false };
   const unavailable = sessionFixture({ settings: async () => config, modelStatus: async () => ({ state: 'not-installed' }), installModel: () => { installs++; } });
-  await unavailable.session.start('recording');
+  await unavailable.session.start('recording', text => unavailable.dictated.push(text));
   assert.match(unavailable.session.snapshot().error, /安装本地识别模型/); assert.equal(unavailable.callbacks, undefined); assert.equal(installs, 0); unavailable.session.end();
   const available = sessionFixture({ settings: async () => config, modelStatus: async () => ({ state: 'installed' }),
     capabilities: async () => ({ available: true, recognizers: [], voices: [{ language: 'zh-CN', gender: 'female', id: 'local-female' }] }) });
   await available.session.start('call'); assert.equal(available.session.snapshot().phase, 'listening'); assert.equal(available.session.snapshot().error, '');
   available.session.end();
 });
-test('single recording sends ordinary text and never speaks the reply', async () => {
-  const f = sessionFixture(); await f.session.start('recording'); assert.equal(f.sent.length, 0);
+test('dictation inserts draft text without sending or speaking, even during an Agent turn', async () => {
+  const f = sessionFixture(); f.session.update({ ...f.target, sending: true }); await f.session.start('recording', text => f.dictated.push(text)); assert.equal(f.sent.length, 0);
   f.session.finishRecording(); await pause(); await pause();
-  assert.deepEqual(f.sent, [['请继续', undefined]]); assert.equal(f.session.snapshot().mode, 'idle');
+  assert.deepEqual(f.dictated, ['请继续']); assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().mode, 'idle');
   f.session.update({ ...f.target, messages: [{ id: 'reply', role: 'assistant', content: '好的。' }] });
   assert.equal(f.spoken.length, 0); assert.ok(f.closed); f.session.end();
 });
-test('recording Send retains its session, releases capture and submits once after delayed transcription', async () => {
+test('dictation retains its session, releases capture and inserts once after delayed transcription', async () => {
   const response = deferred(); let transcriptions = 0;
   const f = sessionFixture({ transcribe: () => { transcriptions++; return response.promise; } });
-  await f.session.start('recording'); f.session.finishRecording();
+  await f.session.start('recording', text => f.dictated.push(text)); f.session.finishRecording();
   assert.equal(f.session.snapshot().mode, 'recording'); assert.equal(f.session.snapshot().phase, 'transcribing');
   assert.ok(f.closed); assert.equal(f.sent.length, 0);
   f.session.finishRecording(); f.session.retry(); await pause();
   assert.equal(transcriptions, 1); assert.equal(f.cancelled.length, 0);
   response.resolve({ text: '后台发送' }); await pause(); await pause();
-  assert.deepEqual(f.sent, [['后台发送', undefined]]); assert.equal(f.session.snapshot().mode, 'idle');
+  assert.deepEqual(f.dictated, ['后台发送']); assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().mode, 'idle');
+});
+test('dictation without an input callback never falls back to sending an Agent message', async () => {
+  const f = sessionFixture(); await f.session.start('recording');
+  f.session.finishRecording(); await pause(); await pause();
+  assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().transcript, '请继续');
+  assert.match(f.session.snapshot().error, /输入框已不可用/);
+  f.session.retry(); await pause(); await pause(); assert.equal(f.sent.length, 0);
+  f.session.end();
 });
 test('recording failures retain the session and allow one retry', async () => {
   let attempts = 0;
   const f = sessionFixture({ transcribe: async () => { if (++attempts === 1) throw Error('暂时失败'); return { text: '录音已保留' }; } });
-  await f.session.start('recording'); f.session.finishRecording(); await pause(); await pause();
+  await f.session.start('recording', text => f.dictated.push(text)); f.session.finishRecording(); await pause(); await pause();
   assert.equal(f.session.snapshot().mode, 'recording'); assert.equal(f.session.snapshot().retryAvailable, true);
   assert.equal(f.sent.length, 0); f.session.retry(); f.session.retry(); await pause(); await pause();
-  assert.equal(attempts, 2); assert.deepEqual(f.sent, [['录音已保留', undefined]]);
+  assert.equal(attempts, 2); assert.deepEqual(f.dictated, ['录音已保留']); assert.equal(f.sent.length, 0);
 });
 test('cancel or conversation switch during background transcription cannot submit late text', async () => {
   for (const switchConversation of [false, true]) {
     const response = deferred(); const f = sessionFixture({ transcribe: () => response.promise });
-    await f.session.start('recording'); f.session.finishRecording(); await pause();
+    await f.session.start('recording', text => f.dictated.push(text)); f.session.finishRecording(); await pause();
     if (switchConversation) f.session.update({ ...f.target, sessionId: 'another' }); else f.session.end();
     response.resolve({ text: '不能发送' }); await pause(); await pause();
-    assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().mode, 'idle'); assert.ok(f.cancelled.length);
+    assert.equal(f.sent.length, 0); assert.equal(f.dictated.length, 0); assert.equal(f.session.snapshot().mode, 'idle'); assert.ok(f.cancelled.length);
   }
 });
 test('detaching a view only releases its own recording, not another session or host', async () => {
-  const f = sessionFixture(); await f.session.start('recording');
+  const f = sessionFixture(); await f.session.start('recording', text => f.dictated.push(text));
   f.session.releaseRecording({ ...f.target, sessionId: 'hidden-assistant' });
   f.session.releaseRecording({ ...f.target, environment: 'remote' });
   assert.equal(f.session.snapshot().phase, 'recording'); assert.equal(f.closed, 0);
@@ -253,12 +264,12 @@ test('detaching a view only releases its own recording, not another session or h
 });
 test('detaching the recording owner cancels pending startup and late transcription', async () => {
   const settings = deferred(), starting = sessionFixture({ settings: () => settings.promise });
-  const startup = starting.session.start('recording');
+  const startup = starting.session.start('recording', text => starting.dictated.push(text));
   starting.session.releaseRecording(starting.target);
   settings.resolve({ ...defaultVoiceSettings, hasApiKey: true }); await startup;
   assert.equal(starting.session.snapshot().mode, 'idle'); assert.equal(starting.callbacks, undefined);
   const response = deferred(), f = sessionFixture({ transcribe: () => response.promise });
-  await f.session.start('recording'); f.session.finishRecording(); await pause();
+  await f.session.start('recording', text => f.dictated.push(text)); f.session.finishRecording(); await pause();
   f.session.releaseRecording(f.target); response.resolve({ text: '不能迟到发送' }); await pause(); await pause();
   assert.equal(f.session.snapshot().mode, 'idle'); assert.equal(f.sent.length, 0); assert.ok(f.cancelled.length);
 });
@@ -318,7 +329,7 @@ test('foreign and uncertain speakers never interrupt, enter review, retry text o
 test('rejected dictation cannot bypass identity verification through retry', async () => {
   let attempts = 0;
   const f = sessionFixture({ transcribe: async () => { attempts++; return { text: '', speaker: 'rejected' }; } });
-  await f.session.start('recording'); f.session.finishRecording(); await pause(); await pause();
+  await f.session.start('recording', text => f.dictated.push(text)); f.session.finishRecording(); await pause(); await pause();
   assert.equal(f.sent.length, 0); assert.ok(f.session.snapshot().error.includes('声纹'));
   f.session.retry(); await pause(); await pause(); assert.equal(attempts, 2); assert.equal(f.sent.length, 0); f.session.end();
 });

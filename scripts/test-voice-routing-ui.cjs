@@ -20,8 +20,9 @@ app.whenReady().then(async()=>{
     load:id=>id==='\0voice-routing-fixture.tsx'?`
       import React,{useState,useEffect,useSyncExternalStore} from 'react';import {createRoot} from 'react-dom/client';
       import {ApplicationVoiceHost,VoiceConversation,VoiceButton,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
+      import {VoiceCallButton} from ${file('src/features/voice/VoiceCallButton.tsx')};
       import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
-      window.fixture={sent:[],tracks:[],started:[],closed:[],frames:0,spoken:0};
+      window.fixture={sent:[],dictated:[],tracks:[],started:[],closed:[],frames:0,spoken:0};
       const settings=${JSON.stringify({...defaultVoiceSettings,engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,speakerLockEnabled:false})};
       window.cardbushDesktop={voice:{settings:async()=>{await new Promise(r=>setTimeout(r,60));return settings;},
         setCallActive:async()=>{},cancel:async()=>{},
@@ -39,7 +40,7 @@ app.whenReady().then(async()=>{
         const [,tick]=useState(0);useEffect(()=>{const timer=setInterval(()=>tick(i=>i+1),40);return()=>clearInterval(timer);},[]);
         return <section hidden={!active} data-view="assistant"><VoiceConversation active={active} language="zh"
           target={{...target('personal-assistant'),assistant:{name:'assistant',persona:''},audioPreferences:()=>({microphoneMuted:true,outputMuted:true})}}>
-          <VoiceButton language="zh"/><VoiceButton language="zh" callOnly/>
+          <VoiceButton language="zh" onTranscript={text=>fixture.dictated.push({owner:'personal-assistant',text})}/><VoiceCallButton callEnabled className="send-button">Call</VoiceCallButton>
         </VoiceConversation></section>;
       }
       function Fixture(){const [view,setView]=useState('assistant'),[mounted,setMounted]=useState(true),[chat,setChat]=useState('chat-a');
@@ -47,10 +48,10 @@ app.whenReady().then(async()=>{
         return <div className="app theme-dark" style={{padding:40}}><ApplicationVoiceHost language="zh">
           <BackgroundAssistant active={view==='assistant'}/>
           {mounted&&<section hidden={view!=='chat'} data-view="chat"><VoiceConversation active={view==='chat'} language="zh" target={target(chat)}>
-            <VoiceButton language="zh"/><VoiceButton language="zh" callOnly/>
+            <VoiceButton language="zh" onTranscript={text=>fixture.dictated.push({owner:chat,text})}/><VoiceCallButton callEnabled className="send-button">Call</VoiceCallButton>
           </VoiceConversation></section>}
           <section hidden={view!=='agent'} data-view="agent"><VoiceConversation active={view==='agent'} language="zh" target={target('remote-chat','ssh-host')}>
-            <VoiceButton language="zh"/>
+            <VoiceButton language="zh" onTranscript={text=>fixture.dictated.push({owner:'remote-chat',text})}/>
           </VoiceConversation></section>
         </ApplicationVoiceHost></div>;
       }createRoot(document.getElementById('root')).render(<Fixture/>);
@@ -68,19 +69,19 @@ app.whenReady().then(async()=>{
   const read=code=>win.webContents.executeJavaScript(code);
   const until=async code=>{for(let i=0;i<160;i++){if(await read(code))return;await pause(25);}throw Error('Timed out: '+code+'\n'+await read('JSON.stringify(fixture.state())')+'\n'+errors.join('\n'));};
   const click=label=>read(`Array.from(document.querySelectorAll('button')).find(button=>button.getAttribute('aria-label')===${JSON.stringify(label)}).click();void 0`);
-  const pointer=async(view,hold=0)=>{const point=await read(`(()=>{const rect=document.querySelector('[data-view="${view}"] .send-button').getBoundingClientRect();return{x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)};})()`);
-    win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});if(hold)await pause(hold);win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});};
+  const pointer=async(view,hold=0)=>{const point=await read(`(()=>{const rect=document.querySelector('[data-view="${view}"] ${hold?'.voice-call-trigger':'.voice-dictation-button'}').getBoundingClientRect();return{x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)};})()`);
+    win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});if(hold){await pause(hold);await until('fixture.state().mode==="call"');}win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});};
   const navigate=async view=>{await read(`fixture.navigate(${JSON.stringify(view)});void 0`);await until(`!document.querySelector('[data-view="${view}"]').hidden`);};
   try{
     await win.loadFile(path.join(directory,'index.html'));await until('typeof fixture.navigate==="function"');
     await navigate('chat');await pointer('chat');await until('fixture.state().phase==="recording"');
     await pause(250);assert.equal(await read('fixture.state().mode'),'recording','hidden assistant polling must not cancel recording');
     assert.equal(await read('fixture.state().muted'),false,'assistant mute must not leak into ordinary chats');
-    await click('发送录音');await until('fixture.sent.length===1 && fixture.state().mode==="idle"');
-    assert.deepEqual(await read('fixture.sent'),[{owner:'chat-a',text:'这是录音测试'}]);assert.equal(await read('fixture.spoken'),0);
+    await click('结束录音并转写');await until('fixture.dictated.length===1 && fixture.state().mode==="idle"');
+    assert.deepEqual(await read('fixture.dictated'),[{owner:'chat-a',text:'这是录音测试'}]);assert.equal(await read('fixture.spoken'),0);
     await navigate('agent');await pointer('agent');await until('fixture.state().phase==="recording"');await pause(250);
-    await click('发送录音');await until('fixture.sent.length===2 && fixture.state().mode==="idle"');
-    assert.equal(await read('fixture.sent[1].owner'),'remote-chat');
+    await click('结束录音并转写');await until('fixture.dictated.length===2 && fixture.state().mode==="idle"');
+    assert.equal(await read('fixture.dictated[1].owner'),'remote-chat');
     await navigate('chat');await pointer('chat',650);await until('fixture.state().mode==="call" && fixture.state().phase==="listening"');
     const callFrames=await read('fixture.frames');await navigate('assistant');await until('fixture.frames>'+callFrames+'+5');
     assert.equal(await read('fixture.state().sessionId'),'chat-a');assert.equal(await read('fixture.state().assistant'),false);
@@ -92,10 +93,10 @@ app.whenReady().then(async()=>{
     await pointer('chat');await until('fixture.state().phase==="recording"');await read('fixture.mountChat(false);void 0');await until('fixture.state().mode==="idle"');
     await read('fixture.mountChat(true);void 0');await until('document.querySelector(\'[data-view="chat"]\')');
     await pointer('chat');await until('fixture.state().phase==="recording"');await pause(200);
-    await read('fixture.holdTranscription=true;void 0');await click('发送录音');await until('typeof fixture.releaseTranscription==="function"');
+    await read('fixture.holdTranscription=true;void 0');await click('结束录音并转写');await until('typeof fixture.releaseTranscription==="function"');
     await navigate('assistant');await until('fixture.state().mode==="idle"');await read('fixture.releaseTranscription();void 0');await pause(100);
-    assert.equal(await read('fixture.sent.length'),2,'leaving a recording never sends late text to another chat');
-    assert.ok(await read('fixture.tracks.every(track=>track.readyState==="ended")'));assert.deepEqual(errors,[]);
+    assert.equal(await read('fixture.dictated.length'),2,'leaving a recording never sends late text to another chat');
+    assert.equal(await read('fixture.sent.length'),0);assert.ok(await read('fixture.tracks.every(track=>track.readyState==="ended")'));assert.deepEqual(errors,[]);
     console.log('Voice routing UI passed: real click/hold, hidden assistant/Agent views, local/remote recording, call continuity, microphone preferences, navigation and late-transcript cancellation.');
   }finally{win.destroy();clearTimeout(deadline);}
   app.exit(0);

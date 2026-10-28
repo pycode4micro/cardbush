@@ -8,7 +8,7 @@ export function useQuickInputDismiss(enabled: boolean, onDismiss: () => void, es
   useEffect(() => {
     if (!enabled) return;
     const inside = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest(
-      '.inspector-cover-controls, .inspector-region-conversation, .composer-popover, .composer-command-portal, .turn-change-preview, .modal-backdrop, dialog[open], [role="dialog"][aria-modal="true"], .voice-dialog, .voice-mini, .voice-floating-composer',
+      '.inspector-cover-controls, .inspector-region-conversation, .composer-popover, .composer-command-portal, .turn-change-preview, .modal-backdrop, dialog[open], [role="dialog"][aria-modal="true"], .voice-call-undocked',
     ));
     const outsidePointer = (event: PointerEvent) => {
       if (!hasOpenModal() && !inside(event.target)) onDismiss();

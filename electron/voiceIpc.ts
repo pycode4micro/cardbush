@@ -10,14 +10,14 @@ import { speakerDefinition } from './speakerManifest';
 import { SpeakerEmbedding } from './speakerEmbedding';
 import { SpeakerLock } from './speakerLock';
 import { CustomSpeech } from './customSpeech';
-import { RealtimeVoiceService, connectRealtimeVoice } from './realtimeVoiceService';
+import { RealtimeVoiceService, connectRealtimeVoice, type RealtimeVoiceDiagnostic } from './realtimeVoiceService';
 
 async function completeOrCancel<T>(operation: Promise<T>, cancelled: T): Promise<T> {
   try { return await operation; }
   catch (error) { if (error instanceof Error && error.name === 'VoiceCancelledError') return cancelled; throw error; }
 }
 
-export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime: { packaged: boolean; appPath: string; resourcesPath: string }, network: { download: typeof fetch; speech: typeof fetch; realtimeProxy: () => Promise<string> }) {
+export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime: { packaged: boolean; appPath: string; resourcesPath: string }, network: { download: typeof fetch; speech: typeof fetch; realtimeProxy: () => Promise<string>; realtimeDiagnostic?: (entry: RealtimeVoiceDiagnostic) => void }) {
   let service: VoiceService | undefined;
   const models = new VoiceModelStore(path.join(app.getPath('userData'), 'voice-models'), network.download);
   const recognition = new SenseVoice(models, path.join(app.getPath('temp'), 'cardbush-voice'));
@@ -37,6 +37,7 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
     () => speakerModels.status().state === 'installed');
   const realtime = new RealtimeVoiceService(path.join(app.getPath('userData'), 'voice-realtime-settings.json'), {
     ...crypto, connect: async (url, headers) => connectRealtimeVoice(await network.realtimeProxy(), url, headers),
+    diagnostic: network.realtimeDiagnostic,
   });
   const model = (kind: unknown) => { if (kind === 'speaker') return speakerModels; if (kind === 'speech') return speechModels; if (kind === undefined || kind === 'recognition') return models; throw Error('Invalid voice model kind.'); };
   app.once('before-quit', () => {

@@ -433,8 +433,8 @@
   width: min(100%, var(--chat-track-width));
   flex: 0 0 auto;
   margin: 0 auto;
-  border-radius: 16px;
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--shadow) 82%, transparent);
+  border-radius: 24px;
+  box-shadow: none;
 }
 
 .welcome-input-stack > .composer-stack {
@@ -444,7 +444,7 @@
 .welcome-input-stack .composer-surface,
 .theme-dark .welcome-input-stack .composer-surface {
   border-top-color: color-mix(in srgb, var(--border) 48%, transparent);
-  border-radius: 16px;
+  border-radius: 24px;
   box-shadow: none;
 }
 

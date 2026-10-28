@@ -53,7 +53,7 @@ export class RealtimeVoiceCall {
     if (typeof window==='undefined') return;
     try {
       void window.cardbushDesktop?.writeDebugLog?.('realtime-voice',{
-        event,callId:this.id,reason,pendingFrames:this.pendingFrames,queuedFrames:this.queuedFrames.length,
+        event,callId:this.id,sessionId:this.ownerSessionId||this.target?.sessionId,reason,pendingFrames:this.pendingFrames,queuedFrames:this.queuedFrames.length,
       }).catch(()=>{});
     } catch { /* Logging must not affect the audio lifecycle. */ }
   }

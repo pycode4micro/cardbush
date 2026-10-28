@@ -2026,6 +2026,7 @@ const desktopVoiceHost = registerVoiceIpc(() => mainWindow, {
   download: async (input, init) => (await pluginNetworking()).fetch(input, init),
   speech: (input, init) => modelFetch(input, init),
   realtimeProxy: async () => { const network = await pluginNetworking(); return network.endpoint(network.modelConfiguration()); },
+  realtimeDiagnostic: entry => appendDebugLog('realtime-voice',entry),
 });
 
 ipcMain.handle('window:minimize', () => {

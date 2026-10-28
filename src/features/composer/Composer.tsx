@@ -1,5 +1,6 @@
 import { useConversationSource } from '../settings/conversationSource';
 import { VoiceButton } from '../voice/VoiceConversation';
+import { VoiceCallButton } from '../voice/VoiceCallButton';
 import { useVoiceComposer, VoiceComposerPanel } from '../voice/VoiceComposer';
 import { useIndividuation } from '../settings/useIndividuation';
 import { useConversationStyle } from '../settings/useConversationStyle';
@@ -38,6 +39,7 @@ import { ComposerRuntimeRail } from './ComposerRuntimeRail';
 import {
   ArrowRight,
   ArrowUp,
+  AudioLines,
   Box,
   Brain,
   Check,
@@ -56,7 +58,8 @@ import {
   Globe,
   ListChecks,
   LoaderCircle,
-  Lock,
+  Shield,
+  ShieldCheck,
   MessageSquare,
   Paperclip,
   Quote,
@@ -68,7 +71,6 @@ import {
   SlidersHorizontal,
   Square,
   Target,
-  Unlock,
   UsersRound,
   X,
 } from 'lucide-react';
@@ -462,7 +464,7 @@ export function Composer({
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
-  const voiceComposer = useVoiceComposer(!presentation?.preview, composerSurfaceRef);
+  const voiceComposer = useVoiceComposer(!presentation?.preview);
   const textareaRef = useRef<ComposerPromptInputHandle>(null);
   const commandSelection = useRef<{ draft: string; caret: number } | null>(null);
   useLayoutEffect(() => {
@@ -499,6 +501,12 @@ export function Composer({
   const extraction = useContext(ConversationExtractionContext);
   const draftForExtraction = useRef({ draft, onDraftChange });
   draftForExtraction.current = { draft, onDraftChange };
+  const insertDictation = (text: string) => {
+    const current = draftForExtraction.current;
+    const next = `${current.draft}${current.draft && !/\s$/.test(current.draft) ? ' ' : ''}${text}`;
+    current.onDraftChange(next);
+    commandSelection.current = { draft: next, caret: next.length };
+  };
   const insertExtraction = (text: string) => {
     const current = draftForExtraction.current;
     current.onDraftChange(`${current.draft}${current.draft && !/\s$/.test(current.draft) ? ' ' : ''}${text} `);
@@ -1400,10 +1408,9 @@ export function Composer({
         onReorderQueuedMessage={onReorderQueuedMessage} />
       <div
         ref={composerSurfaceRef}
-        style={voiceComposer.style}
         className={`composer-surface${multilineInput || prediction ? ' is-multiline' : ''}${prediction ? ' has-next-step' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
         onPointerDown={(event) => {
-          if (event.button !== 0 || voiceComposer.visible) return;
+          if (event.button !== 0) return;
           const target = event.target;
           if (
             target instanceof Element &&
@@ -1419,8 +1426,6 @@ export function Composer({
         onPasteCapture={capturePastedText}
         onPaste={(event) => void pasteAttachments(event).catch(error => showUiError(language === 'zh' ? '无法添加附件' : 'Unable to add attachments', String(error)))}
       >
-        {voiceComposer.visible && voiceComposer.session && <VoiceComposerPanel session={voiceComposer.session} language={language}
-          onReturnText={() => requestAnimationFrame(() => textareaRef.current?.focus())}/>}
         {fileDragActive && dropTargetRef.current && createPortal(
           <div className="composer-file-drop-overlay" role="status">
             <Paperclip size={20} />
@@ -1636,7 +1641,8 @@ export function Composer({
                 : 'Message cardbush...'
           }
         />
-        <div className="composer-footer">
+        <div className={`composer-footer${voiceComposer.visible ? ' is-voice-call' : ''}`}>
+          {voiceComposer.visible && voiceComposer.session && <VoiceComposerPanel session={voiceComposer.session} language={language}/>}
           <div className="composer-tools">
             <ToolChip
               icon={<Plus size={15} />}
@@ -1707,15 +1713,15 @@ export function Composer({
               <span>{modelLabel}</span>
               <ChevronDown size={15} />
             </button>
-            {(hasContent || sending || submissionPending) && !presentation?.preview && <VoiceButton language={language} callOnly className="voice-call-entry" disabled={!runtimeReady || inputReadOnly || submissionPending} />}
-            {!sending && !submissionPending && !hasContent && runtimeReady && !presentation?.preview ? <VoiceButton language={language} disabled={inputReadOnly || attachmentUploads > 0} /> : <button
+            <VoiceButton language={language} onTranscript={insertDictation} disabled={inputReadOnly || submissionPending || Boolean(presentation?.preview)} />
+            <VoiceCallButton callEnabled={!sending && !submissionPending && !inputReadOnly && !presentation?.preview && runtimeReady}
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
               disabled={submissionPending || attachmentUploads > 0 || (!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
-              title={[sendButtonLabel, hasContent ? keyboardShortcuts.label('sendMessage') : '', sending && hasContent && keyboardShortcuts.label('guideNow') ? keyboardShortcuts.label('guideNow') + (language === 'zh' ? ' 立即引导' : ' Send guidance now') : ''].filter(Boolean).join(' · ')}
-              aria-label={sendButtonLabel}
+              title={[!sending && runtimeReady && !submissionPending ? (hasContent ? sendButtonLabel + ' · ' : '') + (language === 'zh' ? '长按语音通话' : 'Hold for a voice call') : sendButtonLabel, hasContent ? keyboardShortcuts.label('sendMessage') : '', sending && hasContent && keyboardShortcuts.label('guideNow') ? keyboardShortcuts.label('guideNow') + (language === 'zh' ? ' 立即引导' : ' Send guidance now') : ''].filter(Boolean).join(' · ')}
+              aria-label={!hasContent && !sending && runtimeReady && !submissionPending ? language === 'zh' ? '长按语音通话' : 'Hold for a voice call' : sendButtonLabel}
               aria-keyshortcuts={hasContent ? keyboardShortcuts.aria('sendMessage') : undefined}
-              onClick={() => void (runtimeReady && sending && !hasContent ? stopGeneration() : submit())}
+              onClick={() => { if (!runtimeReady || hasContent || sending) void (runtimeReady && sending && !hasContent ? stopGeneration() : submit()); }}
             >
               {submissionPending ? <LoaderCircle size={14} className="spin" /> : !runtimeReady ? (
                 runtimeStartupFailed
@@ -1725,10 +1731,10 @@ export function Composer({
                 cancelReady && !stopping
                   ? <Square size={10} fill="currentColor" />
                   : <LoaderCircle size={14} className="spin" />
-              ) : (
+              ) : !hasContent ? <AudioLines size={17} strokeWidth={1.8}/> : (
                 <ArrowUp size={15} />
               )}
-            </button>}
+            </VoiceCallButton>
           </div>
         </div>
       </div>
@@ -2535,9 +2541,9 @@ function ModelLogoMark({
 
 function permissionIcon(mode: PermissionMode, size = 15) {
   if (mode === 'all_free') {
-    return <Unlock size={size} />;
+    return <ShieldCheck size={size} strokeWidth={1.7} />;
   }
-  return <Lock size={size} />;
+  return <Shield size={size} strokeWidth={1.7} />;
 }
 
 function permissionModeLabel(mode: PermissionMode, language: AppLanguage) {

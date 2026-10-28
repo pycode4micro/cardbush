@@ -2,13 +2,13 @@
 
 /* Project choices share the flat rows and full-width dividers of application menus. */
 .ssh-dialog.workspace-picker {
-  width: 380px;
+  width: 320px;
   max-width: calc(100vw - 16px);
   max-height: min(600px, calc(100vh - 32px));
   gap: 0;
   padding: 8px 0;
   border: 1px solid var(--menu-border, #343434);
-  border-radius: var(--menu-radius, 10px);
+  border-radius: 18px;
   color: var(--text, #eee);
   background: var(--menu-surface, #202020);
   box-shadow: var(--menu-shadow, 0 12px 32px #0005);
@@ -163,3 +163,14 @@
   background: var(--menu-surface, #202020);
 }
 .ssh-settings-compact .ssh-form-actions > button { min-width: 76px; }
+
+.workspace-location-control { gap:2px; margin:0 12px -10px; padding:4px 6px 14px; min-height:46px; border-radius:18px 18px 0 0; background:color-mix(in srgb,var(--surface-strong) 97%,var(--text) 3%); }
+.workspace-location-control > button { height:28px; padding:0 9px; border-radius:18px; gap:6px; color:var(--text-mid); font-weight:500; }
+.workspace-location-control > .workspace-project-chip { background:color-mix(in srgb,var(--text) 6%,transparent); }
+.workspace-location-control .workspace-location-name { max-width:200px; }
+.workspace-picker .workspace-picker-search { display:flex; flex-direction:row; align-items:center; gap:7px; margin:0 10px 7px; padding:0 8px; height:32px; color:var(--text-soft); border-bottom:1px solid var(--menu-separator,var(--border)); }
+.workspace-picker .workspace-picker-search input { border:0; border-radius:0; padding:0; background:transparent; font-size:12px; outline:none; }
+.workspace-picker-search svg { flex:none; }
+.workspace-picker-empty { margin:8px 18px; font-size:12px; color:var(--text-soft); }
+.workspace-picker .workspace-picker-row { margin:0 6px; width:calc(100% - 12px); border-radius:9px; padding:7px 12px; }
+.workspace-picker .workspace-picker-row[aria-current=true] { background:var(--menu-hover,#8882); }

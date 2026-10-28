@@ -7,6 +7,9 @@ export function realtimeConversationContext(target?: VoiceTarget) {
   const pairs: {role:'user'|'assistant';text:string}[][]=[];
   let question='';
   for (const message of target?.historyMessages ?? target?.messages ?? []) {
+    // Realtime transcripts already live in the encrypted voice journal. Import
+    // only text-chat pairs, otherwise every reconnect appends the speech twice.
+    if (message.metadata?.voice_transcript) { question=''; continue; }
     if (message.metadata?.visibility==='internal' || message.metadata?.__bush_superseded) continue;
     if (message.role==='user') question=message.content.trim();
     if (question && message.role==='assistant' && message.content.trim() && message.metadata?.cardbush_terminal_snapshot && message.status==='completed') {

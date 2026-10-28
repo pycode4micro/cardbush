@@ -1,25 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { RealtimeContextJob, RealtimeContextResult } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 import { RealtimeVoiceHistory, type VoiceContextMessage } from './realtimeVoiceHistory';
+import { matchContextReceipt, remoteContextItems } from './realtimeVoiceContextReceipt';
 
 interface ContextHooks {
+  serverAssignedContextIds?: boolean;
   send(event: object): string;
   create(items: VoiceContextMessage[]): object;
   request(job: RealtimeContextJob): void;
   status(message: string): void;
   idle(): boolean;
   restart(): Promise<void>;
-}
-type RemoteItem = { id: string; role: 'user' | 'assistant'; text: string };
-function remoteItems(raw: Record<string, unknown>): RemoteItem[] | undefined {
-  if (!Array.isArray(raw.items) || raw.items.length > 200) return;
-  const items: RemoteItem[]=[];
-  for (const item of raw.items) {
-    if (!item || typeof item.id !== 'string' || !item.id || item.id.length > 200 || !['user','assistant'].includes(item.role) || !Array.isArray(item.content)) return;
-    if (item.content.some((part: any)=>!part || typeof part.text!=='string')) return;
-    items.push({ id: item.id, role: item.role, text: item.content.map((part: any)=>part.text).join('') });
-  }
-  return new Set(items.map(item=>item.id)).size===items.length ? items : undefined;
 }
 interface Replacement {
   old: VoiceContextMessage[]; summary: VoiceContextMessage[];
@@ -40,6 +31,7 @@ export class RealtimeVoiceContext {
   private failedThrough = 0;
   private auxiliaryTokens = 0;
   private remoteIds = new Map<string,string>();
+  private seenRemoteIds = new Set<string>();
   private pendingOld?: VoiceContextMessage[];
   private catchups=0;
   private detached = false;
@@ -49,7 +41,7 @@ export class RealtimeVoiceContext {
 
   /** Stop editing the lost connection. Keep the journal and in-flight model job. */
   detach() {
-    this.detached=true; this.remoteIds.clear(); this.replacement=undefined; this.pendingOld=undefined;
+    this.detached=true; this.remoteIds.clear(); this.seenRemoteIds.clear(); this.replacement=undefined; this.pendingOld=undefined;
     clearTimeout(this.ackTimer); clearTimeout(this.gapTimer);
   }
   prepareInitial(bytes:number):Promise<VoiceContextMessage[]> {
@@ -73,11 +65,20 @@ export class RealtimeVoiceContext {
     }
     if (Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))>maxBytes) throw Error('Voice memory cannot fit the initial context.');
     if (pairs.length<this.history.pairs.length) this.hooks.status('正在整理较早的对话，当前先保留摘要和最近交流。');
-    this.remoteIds.clear();
-    for (const message of messages) if (message.id) this.remoteIds.set(message.id,message.id);
+    this.remoteIds.clear(); this.seenRemoteIds.clear();
+    for (const message of messages) if (message.id) { this.remoteIds.set(message.id,message.id); this.seenRemoteIds.add(message.id); }
     return messages;
   }
-  bind(sequence: number, userItemId: string) { if (userItemId) this.remoteIds.set(`history_${sequence}_u`,userItemId); }
+  bind(sequence: number, userItemId: string) {
+    if (userItemId) { this.remoteIds.set(`history_${sequence}_u`,userItemId); this.seenRemoteIds.add(userItemId); }
+  }
+  acknowledge(context: VoiceContextMessage[], raw: Record<string, unknown>): boolean {
+    const items = matchContextReceipt(context, raw, this.hooks.serverAssignedContextIds);
+    if (!items || items.some((item,index) => !context[index].id ||
+      this.seenRemoteIds.has(item.id) && this.remoteIds.get(context[index].id!) !== item.id)) return false;
+    for (let i=0;i<items.length;i++) { this.remoteIds.set(context[i].id!,items[i].id); this.seenRemoteIds.add(items[i].id); }
+    return true;
+  }
   /** Tool receipts also consume the remote context, even when not spoken. */
   account(text: string) { this.auxiliaryTokens+=Buffer.byteLength(text)/2; this.tick(); }
   tick() {
@@ -167,8 +168,8 @@ export class RealtimeVoiceContext {
     if (!work?.eventId || work.stage==='restart') return false;
     if (raw.type==='error' && raw.event_id===work.eventId) { this.fallback(); return true; }
     const expected={retrieve:'conversation.item.retrieved',add:'conversation.item.added',delete:'conversation.item.deleted'}[work.stage];
-    if (raw.type!==expected || typeof raw.event_id==='string' && raw.event_id!==work.eventId) return false;
-    const items=remoteItems(raw);
+    if (raw.type!==expected || !this.hooks.serverAssignedContextIds && typeof raw.event_id==='string' && raw.event_id!==work.eventId) return false;
+    const items=remoteContextItems(raw);
     if (!items) { this.fallback(); return true; }
     if (work.stage==='retrieve') {
       const ids:string[]=[];
@@ -184,8 +185,7 @@ export class RealtimeVoiceContext {
       }
       work.deleteIds=ids; work.stage='add';
     } else if (work.stage==='add') {
-      if (!work.summary.every(message=>items.some(item=>item.id===message.id && item.role===message.role && item.text===message.text))) { this.fallback(); return true; }
-      for (const message of work.summary) this.remoteIds.set(message.id!,message.id!);
+      if (!this.acknowledge(work.summary,raw)) { this.fallback(); return true; }
       work.stage='delete';
     } else {
       if (!work.deleteIds!.every(id=>items.some(item=>item.id===id))) { this.fallback(); return true; }

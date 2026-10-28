@@ -12,12 +12,13 @@ const root=()=>fs.mkdtempSync(path.resolve('tmp/voice-memory-test-'));
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
 const pair=i=>({user:`问题 ${i} `+'需要记住的条件。'.repeat(100),assistant:`回答 ${i} `+'已核对的结果。'.repeat(100)});
 const items=messages=>messages.map(({id,role,text})=>({id,role,content:[{type:'input_text',text}]}));
-function fixture(t) {
+function fixture(t, serverAssignedContextIds=false) {
   t.mock.timers.enable({apis:['setTimeout','Date']});
   const history=new RealtimeVoiceHistory(root(),'conversation',crypto), sent=[], jobs=[], status=[];
   for (let i=1;i<=5;i++) history.append(pair(i).user,pair(i).assistant);
   let idle=true,restarts=0;
   const memory=new RealtimeVoiceContext(history,0,{
+    serverAssignedContextIds,
     send:event=>{const id=`event${sent.length}`;sent.push({...event,event_id:id});return id;},
     create:provider.context,request:job=>jobs.push(job),status:s=>status.push(s),idle:()=>idle,
     restart:async()=>{restarts++;},
@@ -107,6 +108,34 @@ test('no delete is sent on lost summary ACK, mismatched ACK, active playback, or
     assert.equal(f.restarts,0);assert.ok(f.sent.every(e=>e.type!=='conversation.item.delete'));
   } finally {f.memory.close();}
 });
+test('provider-assigned receipts bind actual IDs before compaction and delete only the verified old pairs',t=>{
+  const f=fixture(t,true);
+  try {
+    const original=f.history.messages(),remote=items(original).map((item,index)=>({...item,id:`server-${index}`}));
+    assert.equal(f.memory.acknowledge(original,{items:remote}),true);
+    f.memory.tick();const job=f.jobs[0];
+    const newest=f.history.append(pair(1).user,pair(1).assistant);
+    f.memory.bind(newest,'newer-identical-question');
+    f.memory.complete(job.jobId,{...job,summary:'保留旧条件和真实任务状态。'});
+    t.mock.timers.tick(751);
+    assert.equal(f.sent.at(-1).type,'conversation.item.retrieve');
+    const newer=items(f.history.messages(f.history.pairs.filter(p=>p.sequence===newest)))
+      .slice(-2).map((item,index)=>({...item,id:index?'newer-identical-answer':'newer-identical-question'}));
+    assert.equal(f.memory.event({type:'conversation.item.retrieved',event_id:'server-retrieve',items:[...remote,...newer]}),true);
+    t.mock.timers.tick(751);
+    const summary=f.sent.at(-1);assert.equal(summary.type,'conversation.item.create');
+    const summaryReceipt=summary.items.map((item,index)=>({...item,id:`server-summary-${index}`}));
+    f.memory.event({type:'conversation.item.added',event_id:'server-add',items:summaryReceipt});t.mock.timers.tick(751);
+    const deletion=f.sent.at(-1);assert.equal(deletion.type,'conversation.item.delete');
+    assert.deepEqual(deletion.items.map(item=>item.id),['server-0','server-2','server-4']);
+    f.memory.event({type:'conversation.item.deleted',event_id:'server-delete',items:remote.slice(0,6)});
+    assert.equal(f.restarts,0);assert.equal(f.memory.busy,false);
+    assert.equal(f.history.pairs.at(-1).sequence,newest);
+    // Even an otherwise matching receipt cannot reassign a known remote ID to a new logical item.
+    const other=[{id:'another-u',role:'user',text:'new summary'},{id:'another-a',role:'assistant',text:'confirmed'}];
+    assert.equal(f.memory.acknowledge(other,{items:items(other).map((item,index)=>({...item,id:`server-${index}`}))}),false);
+  } finally {f.memory.close();}
+});
 class Socket {
   readyState=0;bufferedAmount=0;listeners=new Map();sent=[];
   addEventListener(type,fn){const list=this.listeners.get(type)??[];list.push(fn);this.listeners.set(type,list);}
@@ -116,6 +145,70 @@ class Socket {
   open(){this.readyState=1;this.fire('open');}
   event(event){this.fire('message',{data:JSON.stringify(event)});}
 }
+
+test('startup accepts the full server-assigned receipt only; partial, duplicate, reordered and altered history stays muted',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','Date']});
+  const socket=new Socket(),events=[],diagnostics=[],service=new RealtimeVoiceService(path.join(root(),'settings.json'),{
+    ...crypto,diagnostic:entry=>diagnostics.push(entry),connect:async()=>({socket,dispose(){}}),
+  });
+  service.save({...defaultRealtimeVoiceSettings,apiKey:'fixture-not-a-key'});
+  const context=[{role:'user',text:'private-history-needle'},{role:'assistant',text:'saved response'}];
+  const pending=service.start(1,{id:'startup',sessionId:'original-session',voice:'female',context},e=>events.push(e));
+  try {
+    await pause();socket.open();socket.event({type:'session.created'});
+    const request=socket.sent.find(event=>event.type==='conversation.item.create');
+    const receipt=request.items.map((item,index)=>({...item,id:`remote-${index}`}));
+    const invalid=[receipt.slice(0,1),[receipt[0],receipt[0]],[...receipt].reverse(),
+      receipt.map((item,index)=>index?{...item,content:[{type:'input_text',text:'changed'}]}:item)];
+    for(const value of invalid){
+      socket.event({type:'conversation.item.added',event_id:'unrelated-server-event',items:value});
+      assert.equal(socket.sent.some(e=>e.type==='input_audio_unmute.commit'),false);
+      assert.equal(events.some(e=>e.type==='connection-state'&&e.state==='connected'),false);
+    }
+    socket.event({type:'conversation.item.added',event_id:'server-assigned-event',items:receipt});
+    await pending;
+    assert.ok(socket.sent.some(e=>e.type==='input_audio_unmute.commit'));
+    assert.ok(diagnostics.some(e=>e.event==='history_acknowledged'&&e.contextItems===2));
+    assert.deepEqual(diagnostics.filter(e=>e.event==='stage').map(e=>e.stage),['preparing_history','connecting','creating_session','restoring_history']);
+    assert.ok(diagnostics.every(e=>e.sessionId==='original-session'));
+    assert.ok(!JSON.stringify(diagnostics).includes('private-history-needle'));
+    assert.ok(!JSON.stringify(diagnostics).includes('fixture-not-a-key'));
+  }finally{service.close(1);socket.event({type:'session.closed'});}
+});
+
+test('the compatible bridge still requires client-assigned item identities',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','Date']});
+  const socket=new Socket(),events=[],service=new RealtimeVoiceService(path.join(root(),'settings.json'),{
+    ...crypto,connect:async()=>({socket,dispose(){}}),
+  });
+  service.save({...defaultRealtimeVoiceSettings,provider:'cardbush',model:'voice/demo',endpoint:'ws://127.0.0.1:8765/realtime'});
+  const pending=service.start(1,{id:'strict',voice:'female',context:[{role:'user',text:'question'},{role:'assistant',text:'answer'}]},e=>events.push(e));
+  try {
+    await pause();socket.open();socket.event({type:'session.created',protocol:'cardbush.realtime.v1'});
+    const request=socket.sent.find(event=>event.type==='conversation.item.create');
+    socket.event({type:'conversation.item.added',event_id:'other',items:request.items.map((item,index)=>({...item,id:`rewritten-${index}`}))});
+    assert.equal(events.some(e=>e.type==='connection-state'),false);
+    socket.event({type:'conversation.item.added',event_id:request.event_id,items:request.items});await pending;
+    assert.ok(events.some(e=>e.type==='connection-state'&&e.state==='connected'));
+  }finally{service.close(1);socket.event({type:'session.closed'});}
+});
+
+test('connection deadlines identify transport, session creation and history acknowledgement separately',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','Date']});
+  for(const [stage,pattern] of [['connecting',/网络连接超时/],['creating_session',/确认会话/],['restoring_history',/确认历史恢复/]]){
+    const socket=new Socket(),diagnostics=[],service=new RealtimeVoiceService(path.join(root(),'settings.json'),{
+      ...crypto,diagnostic:entry=>diagnostics.push(entry),connect:async()=>({socket,dispose(){}}),
+    });
+    service.save({...defaultRealtimeVoiceSettings,apiKey:'fixture-not-a-key'});
+    const pending=service.start(1,{id:'deadline',voice:'female',context:[{role:'user',text:'question'},{role:'assistant',text:'answer'}]},()=>{});
+    const rejected=assert.rejects(pending,pattern);await pause();
+    if(stage!=='connecting')socket.open();
+    if(stage==='restoring_history')socket.event({type:'session.created'});
+    t.mock.timers.tick(20_001);await rejected;
+    assert.equal(diagnostics.find(e=>e.event==='failed').stage,stage);
+    assert.equal(socket.sent.some(e=>e.type==='input_audio_unmute.commit'),false);
+  }
+});
 
 async function recoveryFixture(t){
   t.mock.timers.enable({apis:['setTimeout','Date']});
@@ -166,7 +259,11 @@ test('short reconnect replays captured frames at 20 ms pacing after acknowledged
     f.sockets[0].bufferedAmount=300000;f.service.audio(1,'recover',new ArrayBuffer(640));
     t.mock.timers.tick(1);await pause();
     for(let i=0;i<3;i++)f.service.audio(1,'recover',new Uint8Array(640).fill(i+1).buffer);
-    const socket=f.sockets[1],context=f.handshake(socket);f.ack(socket,context);
+    const socket=f.sockets[1],context=f.handshake(socket);
+    const receipt={type:'conversation.item.added',event_id:'server-reconnect',items:context.items.map((item,index)=>({...item,id:`new-socket-${index}`}))};
+    f.sockets[0].event(receipt);
+    assert.equal(socket.sent.some(e=>e.type==='input_audio_unmute.commit'),false,'obsolete socket cannot acknowledge current history');
+    socket.event(receipt);
     const audio=()=>socket.sent.filter(e=>e.type==='input_audio_buffer.append');
     assert.equal(audio().length,0);t.mock.timers.tick(20);assert.equal(audio().length,1);t.mock.timers.tick(20);assert.equal(audio().length,2);
     t.mock.timers.tick(20);t.mock.timers.tick(20);assert.deepEqual(audio().map(e=>Buffer.from(e.audio,'base64')[0]),[1,2,3]);

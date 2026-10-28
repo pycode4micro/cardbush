@@ -4,6 +4,8 @@ import { conversationalSubagentTools } from '@cardbush/bush-protocol/conversatio
 export type ProviderEvent = RealtimeVoiceEvent extends infer E ? E extends { id: string } ? Omit<E, 'id'> : never : never;
 export interface RealtimeVoiceProvider {
   endpoint: string | ((settings: RealtimeVoiceSettings) => string);
+  /** This provider replaces client event/item IDs in context receipts. */
+  serverAssignedContextIds?: boolean;
   /** Convert vendor events to the canonical conversation lifecycle/ACK protocol. */
   normalize?(event: Record<string, unknown>): Record<string, unknown>;
   /** Translate canonical maintenance requests too (retrieve/delete/restore). */

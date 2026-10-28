@@ -23,7 +23,7 @@ app.whenReady().then(async () => {
     load: id => id === '\0voice-settings-render.tsx' ? `
       import React, { useState } from 'react';import { createRoot } from 'react-dom/client';
       import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};import ${file('src/styles/appearance.css')};
-      import { VoiceConversation, VoiceButton } from ${file('src/features/voice/VoiceConversation.tsx')};
+      import { VoiceSettingsPanel } from ${file('src/features/voice/VoiceSettingsPanel.tsx')};
       import { SettingsDropdown } from ${file('src/features/settings/SettingsDropdown.tsx')};
       import { defaultVoiceSettings } from ${file('electron/voiceTypes.ts')};
       import { defaultRealtimeVoiceSettings } from ${file('electron/realtimeVoiceTypes.ts')};
@@ -37,13 +37,14 @@ app.whenReady().then(async () => {
         capabilities:async()=>({available:false,voices:[],recognizers:[],error:'UI test: no microphone or speech engine is used.'}),
         modelStatus:async()=>({supported:true,state:'not-installed',totalBytes:0,downloadedBytes:0,sources:[]}),
         speakerStatus:async()=>({enabled:false,mode:'strict',enrolled:false,profiles:[]}),cancel:async()=>{},onAudio:()=>()=>{}}};
-      function Fixture(){const [theme,setTheme]=useState('dark'),[font,setFont]=useState(1),[custom,setCustom]=useState(false);
+      function Fixture(){const [theme,setTheme]=useState('dark'),[font,setFont]=useState(1),[custom,setCustom]=useState(false),[open,setOpen]=useState(true);
         window.fixture={theme:setTheme,font:setFont,custom:setCustom};
         return <div className={'app theme-'+theme} style={{'--ui-font-scale':font,...(custom?{'--surface':'#203442','--surface-strong':'#284557','--text':'#fff2cc','--accent':'#a7e8bd'}:{})}}>
-          <VoiceConversation language="zh" target={{environment:'local',sessionId:'render-test',messages:[],sending:false,submit:async()=>{}}}>
-            <VoiceButton language="zh" callOnly/>
+          <button onClick={()=>setOpen(true)}>语音设置</button>
+          {open && <section className="settings-shell voice-settings-test" style={{position:'fixed',inset:16,padding:20,overflow:'auto',background:'var(--surface-strong)'}}>
+            <button onClick={()=>setOpen(false)}>关闭</button><VoiceSettingsPanel language="zh"/>
+          </section>}
             <div className="settings-shell" style={{position:'fixed',right:16,bottom:16,width:210}}><SettingsDropdown label="Long choices" value="59" onChange={()=>{}} options={Array.from({length:60},(_,i)=>({value:String(i),label:'Local voice '+i+' — 中英文自然音色与语音识别模型（需要安装）'}))}/></div>
-          </VoiceConversation>
         </div>;
       }
       createRoot(document.getElementById('root')).render(<Fixture/>);
@@ -62,13 +63,10 @@ app.whenReady().then(async () => {
   const key = async keyCode => { win.webContents.sendInputEvent({type:'keyDown',keyCode});win.webContents.sendInputEvent({type:'keyUp',keyCode});await pause(40); };
   const openChoice = async label => {await read(`(()=>{const b=document.querySelector('[role=combobox][aria-label="${label}"]');b.scrollIntoView({block:'center'});b.focus();})()`);await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await click(label);await until(`document.querySelector('[role=listbox][aria-label="${label}"]').matches(':popover-open')`);await pause(160);};
   const snapshot = async name => {await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await pause(150);fs.writeFileSync(path.resolve('tmp/'+name+'.png'),(await win.webContents.capturePage(undefined,{stayHidden:true})).toPNG());};
-  const geometry = () => read(`(()=>{const m=document.querySelector('.settings-dropdown-popover:popover-open'),r=m.getBoundingClientRect();const rows=[...m.children].map(n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,display:s.display,border:s.borderTopWidth};});return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight,scroll:m.scrollWidth>m.clientWidth,rows,bg:getComputedStyle(m).backgroundColor,color:getComputedStyle(m).color,scheme:getComputedStyle(m).colorScheme};})()`);
+  const geometry = () => read(`(()=>{const m=document.querySelector('.settings-dropdown-popover:popover-open'),r=m.getBoundingClientRect();const rows=[...m.querySelectorAll("[role=option]")].map(n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,display:s.display,border:s.borderTopWidth};});return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight,scroll:m.scrollWidth>m.clientWidth,rows,bg:getComputedStyle(m).backgroundColor,color:getComputedStyle(m).color,scheme:getComputedStyle(m).colorScheme};})()`);
   try {
-    await win.loadFile(path.join(directory,'index.html'));await until('document.querySelector(".voice-call-entry,button[aria-label=语音通话]")');
-    await click('语音通话');await until('document.querySelector(".voice-mini")');
-    assert.equal(await read('!!document.querySelector(".app .voice-mini")'),true,'floating control inherits application theme');
-    await click('展开语音通话');await click('语音设置');await until('document.querySelector(".voice-settings-dialog")');
-    assert.equal(await read('!!document.querySelector(".app .voice-settings-dialog")'),true,'dialog inherits application theme');
+    await win.loadFile(path.join(directory,'index.html'));await until('document.querySelector(".voice-settings")');
+    assert.equal(await read('!!document.querySelector(".app .voice-settings")'),true,'settings inherit application theme');
     assert.equal(await read('document.querySelector("[role=combobox][aria-label=通话模式]").value'),'realtime');
     assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').type`),'password');
     await read(`(()=>{const el=document.querySelector('input[aria-label="API Key"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,'fixture-credential');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
@@ -83,7 +81,7 @@ app.whenReady().then(async () => {
     await click('保存通话设置');await until('(async()=> (await cardbushDesktop.voice.realtime.settings()).provider==="cardbush")()');
     assert.equal((await read('cardbushDesktop.voice.realtime.settings()')).model,'fixture-voice');
     win.setSize(500,850);await pause(80);
-    assert.equal(await read('document.querySelector(".voice-settings-dialog").scrollWidth<=document.querySelector(".voice-settings-dialog").clientWidth'),true,'realtime provider settings fit a narrow window');
+    assert.equal(await read('document.querySelector(".voice-settings-test").scrollWidth<=document.querySelector(".voice-settings-test").clientWidth'),true,'realtime provider settings fit a narrow window');
     await snapshot('realtime-voice-settings');win.setSize(920,850);
     await openChoice('通话模式');await key('END');await key('ENTER');await click('保存通话设置');
     assert.equal((await read('cardbushDesktop.voice.realtime.settings()')).mode,'chained');
@@ -97,13 +95,13 @@ app.whenReady().then(async () => {
       assert.equal(g.scheme,theme==='dark'?'dark':'light');assert.notEqual(g.bg,'rgba(0, 0, 0, 0)','opaque menu hides controls behind it');
       await snapshot('voice-dropdown-'+theme+'-'+scale);
       await key('ESCAPE');await until('!document.querySelector(".settings-dropdown-popover:popover-open")');
-      assert.equal(await read('!!document.querySelector(".voice-settings-dialog")'),true,'Escape closes only the list');
+      assert.equal(await read('!!document.querySelector(".voice-settings-test")'),true,'Escape closes only the list');
       await openChoice('音色');await key('END');await key('ENTER');
       assert.equal(await read('document.querySelector("[role=combobox][aria-label=音色]").value'),'male');
       await openChoice('音色');await key('TAB');
       assert.equal(await read('document.activeElement.getAttribute("role")'), 'combobox');
       assert.equal(await read('document.activeElement.getAttribute("aria-label")'),'语速','Tab skips hidden options and hidden input');
-      assert.equal(await read('document.querySelector(".voice-settings-dialog").scrollWidth<=document.querySelector(".voice-settings-dialog").clientWidth'),true);
+      assert.equal(await read('document.querySelector(".voice-settings-test").scrollWidth<=document.querySelector(".voice-settings-test").clientWidth'),true);
     }
     await openChoice('声纹严格程度');const match=await geometry();assert.ok(match.rows.every(row=>row.border==='0px'&&row.display==='flex'),'speaker panel does not restyle its options');await key('ESCAPE');
     await openChoice('音色');await read('fixture.custom(true);void 0');await pause(100);
@@ -136,14 +134,14 @@ app.whenReady().then(async () => {
     await click('保存');
     const imported=await read('cardbushDesktop.voice.settings()');assert.equal(imported.engine,'qwen');assert.equal(imported.speed,1);assert.equal(imported.customSpeech.maleVoice,'ryan');assert.equal(imported.customSpeech.pythonPath,'/models/.venv/bin/python');
     assert.ok(!await read('document.querySelector(".voice-settings").textContent.includes("Kokoro v1.1")'),'Qwen does not display the legacy installer');
-    assert.equal(await read('document.querySelector(".voice-settings-dialog").scrollWidth<=document.querySelector(".voice-settings-dialog").clientWidth'),true,'custom settings fit narrow scaled windows');
+    assert.equal(await read('document.querySelector(".voice-settings-test").scrollWidth<=document.querySelector(".voice-settings-test").clientWidth'),true,'custom settings fit narrow scaled windows');
     await read('document.querySelector(".voice-custom-model").scrollIntoView({block:"start"});void 0');await snapshot('voice-custom-model');
-    await click('关闭');await until('!document.querySelector(".voice-settings-dialog")');
+    await click('关闭');await until('!document.querySelector(".voice-settings-test")');
     await click('语音设置');await until('document.querySelector("[role=combobox][aria-label=男声使用的音色]")');
     assert.equal(await read('document.querySelector("input[aria-label=模型目录]").value'),'/models/Qwen3-TTS-CustomVoice');
     assert.equal(await read('document.querySelector("[role=combobox][aria-label=男声使用的音色]").value'),'ryan');
     assert.equal(await read('document.querySelector("[role=combobox][aria-label=通话停顿等待]").value'),'patient');
-    await click('关闭');await until('!document.querySelector(".voice-settings-dialog")');
+    await click('关闭');await until('!document.querySelector(".voice-settings-test")');
     await openChoice('Long choices');const long=await geometry();assert.equal(long.scroll,false);assert.ok(long.top>=0&&long.bottom<=long.height);assert.ok(long.rows[0].bottom-long.rows[0].top>40,'long names wrap');
     assert.equal(await read('(()=>{const m=document.querySelector(".settings-dropdown-popover:popover-open"),o=m.querySelector("[aria-selected=true]");return o.offsetTop>=m.scrollTop&&o.offsetTop+o.offsetHeight<=m.scrollTop+m.clientHeight;})()'),true,'selected item in a long list is scrolled into view');
     await key('HOME');await key('ARROWDOWN');await key('END');await key('ESCAPE');

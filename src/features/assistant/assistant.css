@@ -67,7 +67,6 @@
 .assistant-bulb[data-state=error] { color:var(--danger,#dd6b6b); }
 @keyframes assistant-breathe { 50% { filter:drop-shadow(0 0 7px currentColor); opacity:.55; } }
 @keyframes assistant-speak { to { transform:scale(1.12) rotate(5deg); filter:drop-shadow(0 0 9px currentColor); } }
-.assistant-hangup { border:0; color:var(--danger,#dd6b6b); background:transparent; cursor:pointer; padding:9px; }
 .assistant-settings-dialog { box-sizing:border-box; width:min(480px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); margin:auto; padding:26px; overflow:auto; border:1px solid var(--border); border-radius:22px; background:var(--surface-strong); color:var(--text); box-shadow:0 24px 80px #0005; }
 .assistant-settings-dialog[open] { animation:assistant-settings-enter .2s ease-out; }
 .assistant-settings-dialog::backdrop { background:#0006; backdrop-filter:blur(3px); }

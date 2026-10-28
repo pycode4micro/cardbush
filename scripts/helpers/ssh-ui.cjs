@@ -34,6 +34,9 @@ module.exports = async ({run,until,pause,window,root}) => {
     await until("!!document.querySelector('.workspace-picker-anchored')",'anchored project menu');
     assert.equal(await run("document.querySelector('.workspace-picker').textContent.includes('Archived hidden')"),false);
     assert.equal(await run("document.querySelector('.workspace-location-control > button').getAttribute('aria-expanded')"),'true');
+    await run("fill('.workspace-picker-search input','服务端')");
+    assert.equal(await run("document.querySelectorAll('.ssh-project-list .workspace-picker-row').length"),1,'project search filters the current location');
+    await run("fill('.workspace-picker-search input','')");
     await pause(80);
     const rect=await run(`(()=>{const n=document.querySelector('.workspace-picker'),r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom,viewportWidth:innerWidth,viewportHeight:innerHeight,overflow:n.scrollWidth>n.clientWidth}})()`);
     assert.ok(rect.x>=8&&rect.y>=8&&rect.right<=rect.viewportWidth-8&&rect.bottom<=rect.viewportHeight-8,JSON.stringify(rect));
@@ -42,10 +45,14 @@ module.exports = async ({run,until,pause,window,root}) => {
     await run("document.querySelector('.workspace-picker').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));undefined;");
     await until("!document.querySelector('.workspace-picker')",'Escape dismisses project menu');
     assert.equal(await run("document.querySelector('.workspace-location-control > button').getAttribute('aria-expanded')"),'false');
+    fs.writeFileSync(path.join(root,'tmp','composer-workspace-'+theme+'.png'),(await window.capturePage()).toPNG());
   }
-  await run("document.querySelector('.workspace-location-control > button').click()");await until("!!document.querySelector('.ssh-dialog')",'location picker');
+  await run("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').click()");await until("!!document.querySelector('.ssh-dialog')",'location picker');
   const surface=await run("getComputedStyle(document.querySelector('.ssh-dialog')).backgroundColor");assert.equal(surface,'rgb(255, 255, 255)','portal inherits bright theme');
-  await run("clickText('SSH')");await until("!!document.querySelector('.ssh-dialog select option[value=\"test-server\"]')",'remote connections');
+  assert.equal(await run("!!document.querySelector('.workspace-picker-search')"),false,'location menu is distinct from project search');
+  await run("offline=true;clickText('开发服务器')");await until("!!document.querySelector('.ssh-error')",'location connection failure');assert.deepEqual(await run('selected'),[]);
+  await run("offline=false;clickText('开发服务器')");await until('selected.length===1','remote work location');
+  await run("selected=[];document.querySelector('.workspace-project-chip').click()");await until("!!document.querySelector('.ssh-dialog select option[value=\"test-server\"]')",'remote projects');
   await run("clickText('浏览')");await until("document.body.textContent.includes('service-api')",'StrictMode remote directory response');
   await run("clickText('service-api')");await until("document.querySelector('input[aria-label=\"远程目录\"]').value.endsWith('/service-api')",'open child directory');
   window.setContentSize(480,640);await pause(100);fs.writeFileSync(path.join(root,'tmp/ssh-picker-narrow.png'),(await window.capturePage()).toPNG());
@@ -56,10 +63,11 @@ module.exports = async ({run,until,pause,window,root}) => {
   assert.equal(await run("document.body.textContent.includes('独立工作区')"),false,'removed workspace badge');
   assert.equal(await run("!!document.querySelector('.composer-dock .workspace-location-control')"),false,'active conversation has no permanent workspace row');
   await run("updateChat({sending:true,activeTurnId:'ssh-layout-turn',queuedMessageCount:1,queuedMessages:[{id:'ssh-queued',text:'等待远程检查完成',createdAt:new Date().toISOString()}]})");
-  await until("!!document.querySelector('.composer-runtime-screen')",'queued remote conversation');
+  await until("!!document.querySelector('.composer-runtime-rail')",'queued remote conversation');
   await pause(100);
-  const composerGap=await run("document.querySelector('.composer-surface').getBoundingClientRect().top-document.querySelector('.composer-runtime-screen').getBoundingClientRect().bottom");
-  assert.ok(Math.abs(composerGap)<=1,'queue rail joins the composer: '+composerGap);
+  const composerGap=await run("document.querySelector('.composer-surface').getBoundingClientRect().top-document.querySelector('.composer-runtime-rail').getBoundingClientRect().bottom");
+  assert.ok(composerGap<=1,'queue rail joins the composer: '+composerGap);
+  assert.ok(await run("document.querySelector('.runtime-queue-item').getBoundingClientRect().bottom<=document.querySelector('.composer-surface').getBoundingClientRect().top+1"),'joined corners must not cover the queued message');
   fs.writeFileSync(path.join(root,'tmp/ssh-active-composer.png'),(await window.capturePage()).toPNG());
   await run("updateChat({sending:false,activeTurnId:'',queuedMessageCount:0,queuedMessages:[]})");
   window.setContentSize(1050,800);
@@ -71,7 +79,8 @@ module.exports = async ({run,until,pause,window,root}) => {
   await until("chatProps.draft.includes('cardbush-reference://ssh')",'@ switches actual workspace and inserts reference');
   assert.equal(await run('selected.length'),2);
   await run("updateChat({messages:[],draft:''})");await until("!!document.querySelector('.welcome-input-stack .workspace-location-control > button')",'welcome keeps workspace selection');
-  await run("document.querySelector('.workspace-location-control > button').click()");await until("!!document.querySelector('.ssh-dialog')",'switch back');await run("clickText('本地')");await until("document.body.textContent.includes('选择本地文件夹')",'local tab');await run("clickText('选择本地文件夹')");await until("selected.at(-1)==='D:/local-project'",'local selection');
+  await run("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').click()");await until("!!document.querySelector('.ssh-dialog')",'switch back');await run("clickText('此计算机')");await until("!document.querySelector('.workspace-picker')",'local location');
+  await run("document.querySelector('.workspace-project-chip').click()");await until("document.body.textContent.includes('选择本地文件夹')",'local projects');await run("clickText('选择本地文件夹')");await until("selected.at(-1)==='D:/local-project'",'local selection');
   window.setContentSize(480, 640);
   for (const theme of ['dark', 'bright']) {
     await run(`saved=[];viewTheme='theme-${theme}';renderView(h(views.WorkspaceLocationPicker,{key:'compact-'+viewTheme,language:'zh',remote:true,onSelect:()=>{}}));undefined;`);
