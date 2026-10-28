@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultTerminalRuntime, normalizeTerminalRuntime, type TerminalRuntime, type CommandShell } from './contracts.js';
 export * from './contracts.js';
+export * from './windowsSupport.js';
 
 /** Decode file URLs using the target host's path rules, preserving plain paths. */
 export function localPath(value: string, platform: string = process.platform): string {

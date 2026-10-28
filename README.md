@@ -23,8 +23,10 @@ If CardBush is useful to you, **[give it a star](https://github.com/pycode4micro
 
 | System | Download | Suitable computers |
 | --- | --- | --- |
-| **Windows 11** | **[Get CardBush from Microsoft Store (MSIX)](https://apps.microsoft.com/detail/9N7XNDD5WRGS)** | Intel / AMD x64; build 22000 or later |
+| **Windows Store** | **[Get CardBush from Microsoft Store (MSIX)](https://apps.microsoft.com/detail/9N7XNDD5WRGS)** | Published Store package: Windows 11 x64; see listing for current requirements |
 | Linux | [Get the AppImage from Releases](https://github.com/pycode4micro/cardbush/releases) | x86-64 desktop Linux; CI validates Ubuntu 22.04 |
+
+Current source builds and the internal EXE target **Windows 10 1809+ and Windows 11, x64**. The Store listing keeps its published package requirements until a compatible MSIX is submitted and released. Windows 10 uses the ordinary window background; Mica remains available only on supported Windows 11 builds.
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
@@ -97,7 +99,7 @@ Team is a native workflow manager: register reusable clean agents, then assemble
 | Native process CPU / memory enforcement | Windows Job Objects | Not yet implemented |
 | Managed process admission and owned-process cleanup | Yes | Yes |
 
-On Windows 11, Browser Use also controls CardBush's integrated tabs: select a tab with **@ → CardBush browser** to bind its exact page, without extension pairing. Closing that tab never redirects control to Chrome/Edge with the same URL. For local Chrome/Edge, enable Browser Use, install its extension and approve the first connection once in the CardBush extension window; no pairing code is needed. The local App and CLI share connections and reconnect automatically after disconnects or restarts. Chrome/Edge work without the desktop App; integrated CardBush tabs require it. `/browser status` checks connections; `/browser pair chrome` and `/browser pair edge` are for manual connection or remote Agent pairing. Remote Agents keep separate connections. The Windows Browser Use connector and the optional remote Linux desktop use different integrations. The Docker desktop profile supplies Linux Computer Use / Browser Use on the server; it does not make Windows-only plugins portable. Local voice platform limits are listed in the [voice guide](docs/LOCAL_VOICE_MODELS.md).
+On Windows 10 / 11, Browser Use also controls CardBush's integrated tabs: select a tab with **@ → CardBush browser** to bind its exact page, without extension pairing. Closing that tab never redirects control to Chrome/Edge with the same URL. For local Chrome/Edge, enable Browser Use, install its extension and approve the first connection once in the CardBush extension window; no pairing code is needed. The local App and CLI share connections and reconnect automatically after disconnects or restarts. Chrome/Edge work without the desktop App; integrated CardBush tabs require it. `/browser status` checks connections; `/browser pair chrome` and `/browser pair edge` are for manual connection or remote Agent pairing. Remote Agents keep separate connections. The Windows Browser Use connector and the optional remote Linux desktop use different integrations. The Docker desktop profile supplies Linux Computer Use / Browser Use on the server; it does not make Windows-only plugins portable. Local voice platform limits are listed in the [voice guide](docs/LOCAL_VOICE_MODELS.md).
 
 Linux does not claim the same CPU/memory enforcement as Windows. External plugins remain separate programs with their own platform requirements. A remote service exposes its own capabilities, not those of the desktop connecting to it.
 

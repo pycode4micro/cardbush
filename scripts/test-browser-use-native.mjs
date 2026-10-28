@@ -10,7 +10,7 @@ import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js
 import { createCardbushChromeServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
 import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 
-if (process.platform !== 'win32') throw new Error('This regression targets Windows 11.');
+if (process.platform !== 'win32') throw new Error('This regression requires Windows.');
 const workspaceTmp = path.resolve('tmp');
 await fs.mkdir(workspaceTmp, { recursive: true });
 const root = await fs.mkdtemp(path.join(workspaceTmp, 'browser-use-native-'));

@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-28",
+  "applicationVersion": "1.0.12",
+  "architecture": "x64",
+  "minimumWindowsVersion": "10.0.17763.0",
+  "windows10": {
+    "edition": "Windows 10 IoT Enterprise LTSC 2021",
+    "build": 19044,
+    "execution": "isolated unpacked production application over SSH with GPU disabled",
+    "exitCode": 0,
+    "rendererReady": true,
+    "runtimeReady": true,
+    "productHostReady": true,
+    "terminalReady": true,
+    "searchReady": true,
+    "cleanShutdown": true,
+    "nativeProcessHostCapabilities": true,
+    "pluginManifestsVerified": 16,
+    "isolatedPluginExecutablesVerified": 12,
+    "ffmpegExecution": true,
+    "offlineAsrInference": true,
+    "faceEngineImports": true,
+    "openVinoCpu": true,
+    "packagedPdfCreationAndRendering": true
+  },
+  "windows11": {
+    "build": 26200,
+    "isolatedPackagedAppSmoke": true,
+    "fullAppViews": true,
+    "settingsContextUi": true,
+    "nativeWindowMenus": true
+  },
+  "regressions": {
+    "windowsCompatibilityPackagingAppearanceAndReleaseSigning": 19,
+    "uiLocalization": 8,
+    "browserLifecyclePairingApprovalConnectionsAndRestart": 42,
+    "platform": 12,
+    "browserConnectorContract": true,
+    "appHostContract": true,
+    "typecheck": true,
+    "productionBuild": true
+  },
+  "notEstablishedByThisRecord": [
+    "Microsoft Store certification, publication or Win10 MSIX system installation",
+    "Real-machine coverage of Windows 10 1809/LTSC 2019 or 22H2; these versions have policy regression coverage",
+    "Every GPU, driver, microphone, browser account or authenticated business operation"
+  ]
+}

@@ -1,16 +1,16 @@
 # 本次商店介绍同步内容
 
-供发布者更新 Partner Center 已有介绍和隐私说明的对应段落。保留真实的支持联系方式和隐私政策 URL；这些材料不会自动修改商店页面。
+供发布者更新 Partner Center 已有介绍和隐私说明的对应段落。保留真实的支持联系方式和隐私政策 URL；这些材料不会自动修改商店页面。以下系统要求用于新版兼容包，须在对应 MSIX 完成验证并发布后同步；不是对当前线上包的兼容声明。
 
 ## 系统要求
 
 简体中文：
 
-> 需要 Windows 11 x64（版本 21H2 / build 22000 或更高）。当前包不支持 Windows 10、ARM64、32 位 Windows 或 S 模式。可选 Browser Use 功能支持 Windows 上的 Google Chrome 和 Microsoft Edge，需要安装随应用提供的扩展并主动配对。AI 功能需要用户配置可用的模型服务，服务费用按所选提供商的规则计收。
+> 需要 Windows 10 1809 或更高版本（x64 / build 17763+），支持 Windows 11。当前包不支持 ARM64、32 位 Windows 或 S 模式。可选 Browser Use 功能支持 Windows 上的 Google Chrome 和 Microsoft Edge，需要安装随应用提供的扩展并主动配对。AI 功能需要用户配置可用的模型服务，服务费用按所选提供商的规则计收。
 
 English:
 
-> Requires Windows 11 x64, build 22000 or later. This package does not support Windows 10, ARM64, 32-bit Windows or S mode. Optional Browser Use supports Google Chrome and Microsoft Edge on Windows and requires the bundled extension and explicit pairing. AI features require a configured model service; provider usage charges may apply.
+> Requires Windows 10 version 1809 or later, x64 (build 17763+), including Windows 11. This package does not support ARM64, 32-bit Windows or S mode. Optional Browser Use supports Google Chrome and Microsoft Edge on Windows and requires the bundled extension and explicit pairing. AI features require a configured model service; provider usage charges may apply.
 
 ## 浏览器功能
 

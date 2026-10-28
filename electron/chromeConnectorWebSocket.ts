@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import type { Socket } from 'node:net';
 import path from 'node:path';
+import { uiText } from '@cardbush/platform/i18n';
 import { WebSocket, WebSocketServer } from 'ws';
 import { chromeConnectorDiscoveryPorts, chromeConnectorExtensionId, chromeConnectorProtocol } from './chromeConnectorConstants';
 import { assertConnectorFile, writeConnectorFile } from './chromeConnectorFiles';
@@ -12,6 +13,7 @@ export type BrowserConnection = { id: string; browser: ConnectorBrowser; label: 
 export type ConnectorPortRecovery = { previousPort: number; port: number; reason: 'EADDRINUSE' | 'EACCES' | 'discovery_migration' };
 export type ConnectorConnectionAttempt = { at: string; stage: 'rejected' | 'authenticating' | 'awaiting_browser_approval' | 'connected'; reason?: string; connectionId?: string };
 export type BrowserApprovalOptions = {
+  uiLanguage?: () => string;
   // Only the enabled local App/CLI exposes enrollment. Recheck before commit
   // so a preference change while the browser dialog is open cannot grant access.
   allowLocalPairing?: () => boolean;
@@ -181,7 +183,7 @@ export class ChromeConnectorWebSocket {
   createPairing(input: { browser?: ConnectorBrowser; label?: string } = {}): { code: string; expiresAt: string; id: string; browser: ConnectorBrowser } {
     if (!this.#running) throw new Error('Enable the connector before pairing.');
     const browser = input.browser ?? 'chrome';
-    if (browser !== 'chrome' && browser !== 'edge') throw new Error('Browser Use supports Chrome and Edge on Windows 11.');
+    if (browser !== 'chrome' && browser !== 'edge') throw new Error(uiText(this.options.uiLanguage?.())('browserConnector.supportedBrowsers'));
     if (this.#credentials.size >= 8) throw new Error('Remove an unused browser pairing before adding another (maximum 8).');
     if (input.label !== undefined && (typeof input.label !== 'string' || input.label.length > 80)) throw new Error('Connection name must be at most 80 characters.');
     const label = input.label?.trim() || (browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome');

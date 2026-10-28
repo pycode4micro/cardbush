@@ -13,6 +13,7 @@ test('native backdrop requires OS, compositor, theme and accessibility support',
   assert.equal(resolveWindowAppearance({ ...input, theme: 'bright' }).material, 'mica');
   for (const patch of [
     { platform: 'linux' }, { platform: 'darwin' }, { release: '10.0.22000' },
+    { release: '10.0.17763' }, { release: '10.0.19044' }, { release: '10.0.19045' },
     { release: 'unknown' }, { preference: 'solid' }, { customTheme: true },
     { reducedTransparency: true },
     { highContrast: true }, { gpuCompositing: 'disabled_software' },

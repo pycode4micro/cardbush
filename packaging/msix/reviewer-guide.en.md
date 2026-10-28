@@ -1,3 +1,5 @@
+Historical Windows 11 submission/evidence. Current Windows 10+ build requirements are documented in docs/MSIX_STORE_RELEASE.md; these old results do not certify the newer package.
+
 # CardBush reviewer guide
 
 For the current Windows 11 x64 MSIX with Browser Use extension 1.2.0. See the accompanying evidence for the exact package version, SHA-256 and completed tests. This guide is a procedure, not a claim that an unbuilt package passed it.

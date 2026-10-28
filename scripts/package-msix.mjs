@@ -75,7 +75,7 @@ export function createManifest(identity) {
     <Logo>assets\\StoreLogo.png</Logo>
   </Properties>
   <Resources><Resource Language="zh-CN" /><Resource Language="en-US" /></Resources>
-  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
     <DeviceCapability Name="microphone" />

@@ -81,7 +81,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     version: '0.1.0',
   }, {
     instructions: [
-      "Browser Use supports CardBush's integrated browser and the user's authorized Chrome or Edge on Windows 11. Tool discovery does not establish a live browser connection. Call list_browsers first; follow its setup guidance if the bridge is unavailable.",
+      "Browser Use supports CardBush's integrated browser and the user's authorized Chrome or Edge on Windows 10 / 11. Tool discovery does not establish a live browser connection. Call list_browsers first; follow its setup guidance if the bridge is unavailable.",
       browserConnectionGuidance,
       'An @ CardBush browser reference identifies an exact integrated tab, not an interchangeable URL. The desktop binds that conversation to CardBush. Use list_pages, then a fresh snapshot; never substitute a Chrome/Edge page with the same URL. If the referenced tab is unavailable, report it and ask the user to select it again.',
       'Use list_browsers and select_browser when the user names a browser or profile. Otherwise use the conversation binding, including integrated pages returned by local child agents; if no binding exists, the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',

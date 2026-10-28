@@ -3493,7 +3493,7 @@
     "assistantBackend.context_is_being_reset_send_the_message": "正在重置上下文，请稍后发送。",
     "assistantView.select_an_execution_host_first": "请先选择执行主机。",
     "calendarDataControls.restart_cardbush_to_load_the_calendar_import": "请重启 CardBush 以加载日历导入服务。",
-    "browserConnectionSettings.browser_use_windows_11": "Browser Use · Windows 11",
+    "browserConnectionSettings.browser_use_windows": "Browser Use · Windows 10 / 11",
     "conversationExtraction.the_selection_has_reached_one_quarter_of": "已达到当前模型上下文窗口的 1/4 上限。",
     "conversationExtraction.conversation_excerpts_are_unavailable": "对话提取不可用。",
     "conversationExtraction.could_not_fork_the_conversation": "Fork 会话失败",
@@ -3947,6 +3947,8 @@
     "main.copy_image_address": "复制图片地址",
     "main.copy_link_address": "复制链接地址",
     "main.file_operation_failed": "文件操作失败",
-    "main.cardbush_requires_windows_11_or_later": "CardBush 需要 Windows 11 或更高版本。"
+    "main.windows_version_required": "CardBush 需要 Windows 10 1809 或更高版本。",
+    "browserConnector.windowsVersionRequired": "Browser Use 需要 Windows 10 1809 或更高版本。",
+    "browserConnector.supportedBrowsers": "Browser Use 支持 Chrome 和 Edge。"
   }
 }

@@ -1,3 +1,5 @@
+Historical Windows 11 submission/evidence. Current Windows 10+ build requirements are documented in docs/MSIX_STORE_RELEASE.md; these old results do not certify the newer package.
+
 # Windows 11 Store 复审材料
 
 更新：2026-09-29。适用当前 Browser Use / 扩展 1.2.0，支持 Windows 11 x64 上的 Chrome 和 Edge。本文回应上次认证的八项问题；上传与点击「提交认证」由发布者自行完成。

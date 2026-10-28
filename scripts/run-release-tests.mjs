@@ -27,7 +27,7 @@ if (process.platform === 'win32') {
 const scopeTests = tests.filter(file => file.endsWith('/windowsSandboxScope.test.mjs'));
 run(['--test', '--test-concurrency=3', '--test-timeout=300000', ...tests.filter(file => !scopeTests.includes(file))]);
 run(['--test', '--test-concurrency=1', '--test-timeout=300000', ...scopeTests]);
-run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs']);
+run(['--test', 'scripts/test-windows-app-identity.mjs', 'scripts/test-windows-release-signatures.mjs', 'scripts/test-windows-compatibility.mjs']);
 run(['--test', 'scripts/test-release-privacy.mjs', 'scripts/test-repository-privacy.mjs']);
 run(['--test', 'scripts/test-process-host-build.mjs']);
 run(['--test', 'scripts/test-resource-coordination.mjs']);

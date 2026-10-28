@@ -1,5 +1,5 @@
 import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
-import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, type TerminalRuntime } from '@cardbush/platform';
+import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, windowsReleaseSupported, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { readWorkspaceDirectory } from './workspaceFiles';
 import { inspectLocalApplication, launchLocalApplication, localApplicationDialog, validateLocalApplication } from './localApplications';
@@ -3850,8 +3850,8 @@ app.on('child-process-gone', (_event, details) => {
 app.whenReady().then(async () => {
   if (!applicationInstance.primary) return;
   trustedGitSync = (await import('@cardbush/bush-runtime/processes')).trustedGitSync;
-  if (process.platform === 'win32' && Number(os.release().split('.')[2]) < 22000) {
-    dialog.showErrorBox('CardBush', nativeText()('main.cardbush_requires_windows_11_or_later'));
+  if (process.platform === 'win32' && !windowsReleaseSupported(os.release())) {
+    dialog.showErrorBox('CardBush', nativeText()('main.windows_version_required'));
     app.quit();
     return;
   }
@@ -4576,6 +4576,7 @@ function connectorLifecycle(): ChromeConnectorLifecycle {
     userDataPath: chromeConnectorDataRoot(), legacyUserDataPath: app.getPath('userData'),
     nativeHostPath: chromeConnectorNativeHostPath(), msixPackage: process.windowsStore === true,
     shared: true, appsConfigPath: productAppsConfigPath(),
+    uiLanguage: () => nativeUiLanguage ?? app.getLocale(),
   }, () => {
     chromeConnectorBroker = chromeConnectorLifecycle?.broker ?? null;
     const status = chromeConnectorBroker?.status();
@@ -4618,7 +4619,7 @@ function chromeConnectorDataRoot(): string {
 }
 
 function currentChromeConnectorRegistrationStatus() {
-  const state = chromeConnectorLifecycle?.state ?? 'disabled';
+  const state = `${chromeConnectorLifecycle?.state ?? 'disabled'}:${nativeUiLanguage ?? app.getLocale()}`;
   if (chromeConnectorRegistrationCache?.state === state) return chromeConnectorRegistrationCache.value;
   const value = chromeConnectorRegistrationStatus({
     userDataPath: app.getPath('userData'),
@@ -4626,6 +4627,7 @@ function currentChromeConnectorRegistrationStatus() {
     resourcesPath: process.resourcesPath,
     nativeHostPath: chromeConnectorNativeHostPath(),
     packaged: cardbushRuntimeIsPackaged,
+    uiLanguage: () => nativeUiLanguage ?? app.getLocale(),
   });
   chromeConnectorRegistrationCache = { state, value };
   return value;

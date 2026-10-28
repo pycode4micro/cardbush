@@ -6,7 +6,7 @@ CardBush can be packaged for the **MSIX or PWA app** submission path. This path
 uploads a package to Microsoft; the Store hosts, signs and distributes updates.
 The existing NSIS/EXE and Linux commands remain separate.
 
-The current submission target is **Windows 11 x64 only** (minimum build 22000),
+The current submission target is **Windows 10 version 1809 or later, x64** (minimum build 17763),
 with Browser Use for Chrome and Edge. This preparation does not build or publish
 Linux/macOS packages, an EXE release, or an extension-store listing. A Store MSIX
 does not require obtaining an independent public EXE signing certificate first.
@@ -123,7 +123,7 @@ In particular verify:
   and the separately installed Chrome/Edge extensions.
 - runFullTrust certification notes explaining user-directed file, terminal and
   plugin operations. It does not grant administrator privileges.
-- Windows 11 build 22000 or newer, x64, Simplified Chinese and English.
+- Windows 10 build 17763 or newer and Windows 11, x64, Simplified Chinese and English. Validate both OS families; historical Windows 11 results do not certify Windows 10.
 
 Record exact tested OS and browser versions. The extension's declared Chromium
 116 API minimum is not proof of a tested minimum-version matrix. Keep second-user

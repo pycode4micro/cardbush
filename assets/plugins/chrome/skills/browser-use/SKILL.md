@@ -1,11 +1,11 @@
 ---
 name: browser-use
-description: 在 Windows 11 上通过 Browser Use 操作 CardBush 内置标签或已授权的 Chrome、Edge。本机首次确认后自动重连，配对码用于手动连接或远程 Agent 配对。尊重 @ 标签页的真实身份，支持网页读取、点击、表单、本地文件上传和截图；外部浏览器另支持跟踪下载，原生窗口与特殊控件可衔接 Computer Use。
+description: 在 Windows 10 / 11 上通过 Browser Use 操作 CardBush 内置标签或已授权的 Chrome、Edge。本机首次确认后自动重连，配对码用于手动连接或远程 Agent 配对。尊重 @ 标签页的真实身份，支持网页读取、点击、表单、本地文件上传和截图；外部浏览器另支持跟踪下载，原生窗口与特殊控件可衔接 Computer Use。
 ---
 
 # Browser Use
 
-使用宿主暴露的 `browser_use` MCP 工具。支持 CardBush 内置浏览器，以及 Windows 11 上通过扩展分别配对的 Chrome、Edge 和用户配置。
+使用宿主暴露的 `browser_use` MCP 工具。支持 CardBush 内置浏览器，以及 Windows 10 / 11 上通过扩展分别配对的 Chrome、Edge 和用户配置。
 
 ## 选择连接
 

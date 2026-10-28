@@ -3533,7 +3533,7 @@
     "assistantBackend.context_is_being_reset_send_the_message": "Context is being reset. Send the message shortly.",
     "assistantView.select_an_execution_host_first": "Select an execution host first.",
     "calendarDataControls.restart_cardbush_to_load_the_calendar_import": "Restart CardBush to load the calendar import service.",
-    "browserConnectionSettings.browser_use_windows_11": "Browser Use · Windows 11",
+    "browserConnectionSettings.browser_use_windows": "Browser Use · Windows 10 / 11",
     "conversationExtraction.the_selection_has_reached_one_quarter_of": "The selection has reached one quarter of the model context window.",
     "conversationExtraction.conversation_excerpts_are_unavailable": "Conversation excerpts are unavailable.",
     "conversationExtraction.could_not_fork_the_conversation": "Could not fork the conversation",
@@ -3989,6 +3989,8 @@
     "main.copy_image_address": "Copy image address",
     "main.copy_link_address": "Copy link address",
     "main.file_operation_failed": "File operation failed",
-    "main.cardbush_requires_windows_11_or_later": "CardBush requires Windows 11 or later."
+    "main.windows_version_required": "CardBush requires Windows 10 version 1809 or later.",
+    "browserConnector.windowsVersionRequired": "Browser Use requires Windows 10 version 1809 or later.",
+    "browserConnector.supportedBrowsers": "Browser Use supports Chrome and Edge."
   }
 }

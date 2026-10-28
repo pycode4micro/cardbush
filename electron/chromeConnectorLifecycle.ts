@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
+import { uiText } from '@cardbush/platform/i18n';
 import { ChromeConnectorBroker } from './chromeConnectorBroker';
 import { SharedBrowserConnector, type BrowserConnectorHandle } from './sharedBrowserConnector';
 import { ChromeConnectorRegistration, chromeConnectorPlatformSupported, type ConnectorRegistry, type ConnectorRegistrationInput } from './chromeConnectorRegistration';
@@ -76,7 +77,7 @@ export class ChromeConnectorLifecycle {
   setEnabled(enabled: boolean, remove = false): Promise<void> {
     const operation = this.#queue.catch(() => {}).then(async () => {
       if (this.#disposed) throw new Error('Connector is shutting down.');
-      if (!(this.dependencies.supported ?? chromeConnectorPlatformSupported)()) throw new Error('Browser Use requires Windows 11.');
+      if (!(this.dependencies.supported ?? chromeConnectorPlatformSupported)()) throw new Error(uiText(this.input.uiLanguage?.())('browserConnector.windowsVersionRequired'));
       const previousIntent = this.enabled;
       this.error = '';
       this.state = enabled ? 'enabling' : 'disabling'; this.changed();

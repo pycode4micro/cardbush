@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
+import { windowsReleaseSupported } from '@cardbush/platform';
+import { uiText } from '@cardbush/platform/i18n';
 import { chromeConnectorExtensionOrigin, chromeConnectorNativeHostName } from './chromeConnectorConstants';
 import { assertConnectorFile, connectorDirectory } from './chromeConnectorFiles';
 
@@ -39,9 +41,10 @@ export interface ConnectorRegistrationInput {
   userDataPath: string;
   nativeHostPath: string;
   msixPackage?: boolean;
+  uiLanguage?: () => string;
 }
-export function chromeConnectorPlatformSupported(): boolean {
-  return process.platform === 'win32' && Number(os.release().split('.')[2]) >= 22000;
+export function chromeConnectorPlatformSupported(platform: string = process.platform, release = os.release()): boolean {
+  return platform === 'win32' && windowsReleaseSupported(release);
 }
 export function chromeConnectorLaunchPath(nativeHostPath: string, msixPackage = process.windowsStore === true,
   localAppData = process.env.LOCALAPPDATA): string {
@@ -122,6 +125,6 @@ export function chromeConnectorRegistrationStatus(input: ConnectorRegistrationIn
       : path.join(input.appPath, 'assets', 'plugins', 'chrome', 'extension'),
     extensionId: chromeConnectorExtensionOrigin.slice('chrome-extension://'.length, -1),
     ...(storeUrl?.startsWith('https://') ? { storeUrl } : {}),
-    ...(!platformSupported ? { setupMessage: 'Browser Use requires Windows 11.' } : {}),
+    ...(!platformSupported ? { setupMessage: uiText(input.uiLanguage?.())('browserConnector.windowsVersionRequired') } : {}),
   };
 }

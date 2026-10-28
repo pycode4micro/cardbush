@@ -1,6 +1,6 @@
 # CardBush Browser Use
 
-This Manifest V3 extension connects Chrome and Microsoft Edge profiles on Windows 11 to
+This Manifest V3 extension connects Chrome and Microsoft Edge profiles on Windows 10 / 11 to
 the CardBush Broker through authenticated loopback WebSockets (Chromium 116+ APIs).
 The default local App and CLI profile share one broker and one set of browser
 connections. A surviving client takes over when the owning process exits. It never
@@ -8,7 +8,7 @@ replays an interrupted browser command or starts a replacement browser profile.
 
 Development installation:
 
-1. Run CardBush App or the local CLI on Windows 11 and install/enable Browser Use.
+1. Run CardBush App or the local CLI on Windows 10 / 11 and install/enable Browser Use.
 2. Open `chrome://extensions` or `edge://extensions` in that browser, enable Developer mode, and choose **Load unpacked**.
 3. Select this directory and approve the first connection in the CardBush system
    dialog, then confirm in the extension's own window. No pairing code is needed. Page access still requires authorization. Start a browser task in CardBush. New tabs are

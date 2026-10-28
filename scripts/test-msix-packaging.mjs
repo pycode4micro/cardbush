@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { createManifest, msixVersionConfiguration, validateIdentity } from './package-msix.mjs';
 import { verifySdkArchive } from './msix-sdk.mjs';
 import { chromeConnectorLaunchPath } from '../dist-electron/chromeConnectorRegistration.js';
+import { minimumWindowsVersion } from '@cardbush/platform';
 
 test('rejects an unverified Windows SDK download before running tools', () => {
   assert.throws(() => verifySdkArchive(Buffer.from('incomplete or modified SDK archive')), /SHA-256 mismatch/);
@@ -53,7 +54,7 @@ test('browser connection needs no registry virtualization exemption or extra res
   const manifest = createManifest(identity);
   assert.doesNotMatch(manifest, /RegistryWriteVirtualization|ExcludedKey|unvirtualizedResources|NativeMessaging/);
   assert.doesNotMatch(manifest, /FileSystemWriteVirtualization|ExcludedDirector/);
-  assert.match(manifest, /MinVersion="10\.0\.22000\.0"/);
+  assert.equal(/MinVersion="([^"]+)"/.exec(manifest)?.[1], minimumWindowsVersion);
 });
 
 test('MSIX no longer exposes a Native Messaging execution alias; legacy paths remain identifiable', () => {

@@ -78,7 +78,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
     <SettingsCard title={uiText(language)('browserConnectionSettings.browserConnection')}>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
-          <span><strong>{uiText(language)('browserConnectionSettings.browser_use_windows_11')}</strong><small>{uiText(language)('browserConnectionSettings.enableThePluginInstallTheBrowserExtension')}</small></span>
+          <span><strong>{uiText(language)('browserConnectionSettings.browser_use_windows')}</strong><small>{uiText(language)('browserConnectionSettings.enableThePluginInstallTheBrowserExtension')}</small></span>
       </label>
       <label className="chrome-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />

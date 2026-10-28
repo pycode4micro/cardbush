@@ -1,4 +1,4 @@
-# Browser Use（Windows 11）
+# Browser Use（Windows 10 / 11）
 
 Browser Use 的打开、导航、选中和列表结果会返回可直接用于 Markdown 的 `reference`。点击它按标签身份定位 CardBush 或对应 Chrome / Edge 配置中的现有页面，页面已导航也不会回退到旧网址。点击仅改变显示，不切换 Agent 的操作目标或浏览器绑定；已关闭标签显示状态和独立的重新打开按钮。
 
@@ -44,4 +44,4 @@ Browser Use 的 `upload_file` 可直接将本机绝对路径的文件交给内�
 
 `uid` 必须替换为当前快照中的实际节点。也支持 `visible`、`enabled`、`expanded/checked/selected` 状态和 URL 的 `equals/includes` 条件；`text` 参数可用于简单等待文字出现，与 `conditions` 二选一。所有条件在同一轮轮询中逐一检查，并非原子页面快照。`visible` 表示节点存在、样式可见且有区域，不代表无遮挡或已在视口内。缺失的 ARIA 状态为未知，不能当作 `false`；首次无法解析节点也不能证明已消失。页面或子 frame 导航会使定向等待失效，需要新快照。超时返回最后观察，取消后停止轮询，不留下页面定时器或观察器。
 
-本次面向 Windows 11。高级远程调试仍只用于主动开启调试的 Chrome；操作内置标签请使用普通 Browser Use 模式，不自动切换模式。
+本次面向 Windows 10 / 11。高级远程调试仍只用于主动开启调试的 Chrome；操作内置标签请使用普通 Browser Use 模式，不自动切换模式。

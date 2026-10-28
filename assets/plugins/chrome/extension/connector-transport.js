@@ -15,7 +15,7 @@ function connectorBrowser() {
   const brands = globalThis.navigator?.userAgentData?.brands ?? [];
   if (brands.some(value => value.brand === 'Microsoft Edge') || /Edg\//.test(globalThis.navigator?.userAgent ?? '')) return 'edge';
   if (brands.some(value => value.brand === 'Google Chrome') || /Chrome\//.test(globalThis.navigator?.userAgent ?? '')) return 'chrome';
-  throw new Error('Browser Use 目前支持 Windows 11 上的 Chrome 和 Edge。');
+  throw new Error('Browser Use 目前支持 Windows 10 / 11 上的 Chrome 和 Edge。');
 }
 async function connectorHmac(secret, text) {
   const bytes = new Uint8Array(secret.match(/../g).map(value => parseInt(value, 16)));
