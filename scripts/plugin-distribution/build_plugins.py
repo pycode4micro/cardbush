@@ -21,7 +21,7 @@ def private_file(path: Path):
             or name in {'credentials.json', 'connections.json', 'direct_url.json', 'mcp-oauth.bin'})
 
 def copy_source(source: Path, target: Path):
-    if source.is_symlink():
+    if source.is_symlink() or source.is_junction():
         raise ValueError(f'Source must not contain symlinks: {source.name}')
     if source.is_dir():
         if source.name in EXCLUDED or source.name.endswith('.egg-info'):

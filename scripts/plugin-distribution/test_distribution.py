@@ -1,6 +1,7 @@
 import http.client
 import ipaddress
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -25,6 +26,15 @@ class DistributionTests(unittest.TestCase):
             (source/'.venv').mkdir(); (source/'.venv'/'private').write_text('skip')
             copy_source(source, root/'output')
             self.assertEqual([p.name for p in (root/'output').iterdir()], ['server.py'])
+
+    def test_source_links_cannot_copy_files_from_outside_the_plugin(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name); outside=root/'outside'; outside.mkdir()
+            (outside/'private.txt').write_text('not part of the plugin')
+            source=root/'source';source.mkdir()
+            os.symlink(outside,source/'linked',target_is_directory=True)
+            with self.assertRaises(ValueError): copy_source(source,root/'output')
+            self.assertFalse((root/'output/linked/private.txt').exists())
 
     def test_http_client_rejects_public_plaintext_and_redirects(self):
         with tempfile.TemporaryDirectory() as directory:
