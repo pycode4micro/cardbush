@@ -15,8 +15,8 @@ const settings = read('src', 'features', 'SettingsView.tsx');
 const pluginPanel = read('src', 'features', 'plugins', 'PluginManagementPanel.tsx');
 const chromeSettings = read('src', 'features', 'browser', 'BrowserConnectionSettings.tsx');
 const productAgent = read('packages', 'bush-product-agent', 'src', 'index.ts');
-const chromeMcp = read('assets', 'plugins', 'chrome', '.mcp.json');
-const chromeExtensionPopup = read('assets', 'plugins', 'chrome', 'extension', 'popup.html');
+const chromeMcp = read('assets', 'plugins', 'browser', '.mcp.json');
+const chromeExtensionPopup = read('assets', 'plugins', 'browser', 'extension', 'popup.html');
 
 assert.equal(fs.existsSync(path.join(root, 'cardbush_app', 'pyproject.toml')), false);
 assert.equal(fs.existsSync(path.join(root, 'electron', 'cardbushAppService.ts')), false);
@@ -42,14 +42,14 @@ assert.match(runtimeWorker, /reason: remoteDebugging \? 'advanced_remote_debuggi
 assert.doesNotMatch(runtimeWorker, /ensureBrowserLaunched|managed_requested|existing_chrome_remote_debugging_unavailable|DevToolsActivePort/);
 assert.doesNotMatch(chromeMcp, /--auto-connect/);
 assert.match(chromeMcp, /cardbush-chrome-mcp/);
-assert.match(read('assets', 'plugins', 'chrome', '.mcp.remote-debugging.json'), /--auto-connect/);
+assert.match(read('assets', 'plugins', 'browser', '.mcp.remote-debugging.json'), /--auto-connect/);
 assert.match(runtimeWorker, /CARDBUSH_APPS_CONFIG_PATH/);
 assert.match(runtimeWorker, /CARDBUSH_RUNTIME_PLUGIN_ROOTS/);
 assert.match(runtimeWorker, /loadEnabledProductPluginSkillRoots/);
 assert.match(runtimeWorker, /appsConfig\.serviceEnabled/);
 assert.equal(fs.existsSync(path.join(root, 'packages', 'cardbush-apps-mcp', 'src', 'index.ts')), true);
 assert.equal(fs.existsSync(path.join(root, 'packages', 'cardbush-chrome-mcp', 'src', 'index.ts')), true);
-assert.equal(fs.existsSync(path.join(root, 'assets', 'plugins', 'chrome', 'extension', 'manifest.json')), true);
+assert.equal(fs.existsSync(path.join(root, 'assets', 'plugins', 'browser', 'extension', 'manifest.json')), true);
 assert.match(main, /BrowserConnectorLifecycle/);
 assert.match(read('electron', 'browserConnectorLifecycle.ts'), /BrowserConnectorBroker/);
 assert.match(main, /chrome-connector:setup/);

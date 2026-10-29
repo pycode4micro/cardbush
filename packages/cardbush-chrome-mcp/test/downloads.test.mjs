@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('../../../assets/plugins/chrome/extension/downloads.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../../../assets/plugins/browser/extension/downloads.js', import.meta.url), 'utf8');
 const scope = { id: 'session-a' }, other = { id: 'session-b' };
 
 function fixture() {

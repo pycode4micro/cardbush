@@ -826,7 +826,7 @@ app.whenReady().then(async()=>{
     window.referenceUser={id:'ui-source',messageId:'source-user',turnId:'source-turn',conversationId:'current',role:'user',content:'只分析科技走势，不执行修改'};
     setFixtureSources({sessionId:'current',browserTabs:[referenceBrowser],messages:[referenceUser,{...referenceUser,id:'assistant',messageId:'assistant',role:'assistant',content:'助手消息不应列出'},{...referenceUser,id:'other',conversationId:'other',content:'其他对话不应列出'}]});
     fixtureCommands=[{id:'chrome:debug',pluginId:'chrome',name:'debug',description:'浏览器调试技能',argumentHint:'',kind:'skill'},{id:'chrome:review',pluginId:'chrome',name:'review',description:'审查命令',argumentHint:'',kind:'command'}];
-    fixtureApps.plugins=fixtureApps.plugins.map(plugin=>plugin.id==='chrome'?{...plugin,logoPath:${JSON.stringify(resolve('assets/plugins/chrome/assets/logo.svg').replaceAll('\\','/'))}}:plugin);refreshFixture();
+    fixtureApps.plugins=fixtureApps.plugins.map(plugin=>plugin.id==='chrome'?{...plugin,logoPath:${JSON.stringify(resolve('assets/plugins/browser/assets/logo.svg').replaceAll('\\','/'))}}:plugin);refreshFixture();
     document.querySelector('main').style.paddingTop='390px';`);
   await draft('/');await until('document.body.innerText.includes("浏览器调试技能")');
   assert.deepEqual(await read('Array.from(document.querySelectorAll(".composer-command-category"),el=>el.textContent)'),['快捷操作','插件','技能','插件命令']);

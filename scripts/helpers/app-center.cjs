@@ -6,7 +6,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.webContents.focus();
   for (const file of ['src/features/appCenter/app-center.css', 'src/components/global-tooltip.css']) await window.webContents.insertCSS(fs.readFileSync(path.join(root, file), 'utf8'));
   await window.webContents.insertCSS('.app { width: 100% !important; } .test-center-layout{display:flex;height:calc(100vh - 36px)}.test-center-layout>.chat-panel{flex:1;min-width:0}');
-  const localAppIcon = 'data:image/png;base64,' + fs.readFileSync(path.join(root, 'assets/plugins/chrome/extension/icons/cardbush-32.png')).toString('base64');
+  const localAppIcon = 'data:image/png;base64,' + fs.readFileSync(path.join(root, 'assets/plugins/browser/extension/icons/cardbush-32.png')).toString('base64');
   await run(`
     window.centerEvents=[]; window.centerSent=[];
     window.cardbushDesktop.openExternal = async url => { centerEvents.push(['external',url]); };

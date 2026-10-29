@@ -10,7 +10,7 @@ export const agentBundledRoot = fileURLToPath(new URL('../assets', import.meta.u
 const bundledMcpEntries = {
   CARDBUSH_APPS_MCP_ENTRY: 'packages/cardbush-apps-mcp/dist/index.js',
   CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY: 'packages/cardbush-chrome-mcp/dist/index.js',
-  CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY: 'assets/plugins/chrome/runtime/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js',
+  CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY: 'assets/plugins/browser/runtime/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js',
 };
 
 /** Register installed transports without assuming that a service has no display.

@@ -62,7 +62,7 @@ try {
   const pairing = await app.broker.createPairing({ browser: browserKind, label: 'Isolated restart regression' });
   const port = Number(pairing.code.split('.')[1]);
   const extensionPath = path.join(root, 'extension');
-  await fs.cp(path.resolve('assets/plugins/chrome/extension'), extensionPath, { recursive: true });
+  await fs.cp(path.resolve('assets/plugins/browser/extension'), extensionPath, { recursive: true });
   // No discovery request from this fixture may contact a user's local broker.
   const transportPath = path.join(extensionPath, 'connector-transport.js');
   const transport = await fs.readFile(transportPath, 'utf8');

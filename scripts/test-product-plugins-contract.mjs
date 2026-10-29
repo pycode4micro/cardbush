@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { CardbushAppsConfigStore } from '@cardbush/product-host';
+import { uiText } from '@cardbush/platform/i18n';
 
 import {
   installProductPlugin,
@@ -52,25 +53,25 @@ assert.deepEqual(
 );
 assert.equal(chromePlugin?.skillRoots?.length, 1);
 const chromePackage = JSON.parse(readFileSync(resolve(
-  'assets', 'plugins', 'chrome', 'runtime', 'chrome-devtools-mcp', 'package.json',
+  'assets', 'plugins', 'browser', 'runtime', 'chrome-devtools-mcp', 'package.json',
 ), 'utf8'));
 assert.equal(chromePackage.name, 'chrome-devtools-mcp');
 assert.equal(chromePackage.version, '1.8.0');
 assert.equal(chromePackage.author, 'Google LLC');
 assert.equal(chromePackage.license, 'Apache-2.0');
-assert.ok(readFileSync(resolve('assets', 'plugins', 'chrome', '.mcp.json'), 'utf8').includes('cardbush-chrome-mcp'));
-assert.ok(readFileSync(resolve('assets', 'plugins', 'chrome', '.mcp.remote-debugging.json'), 'utf8').includes('chrome-devtools-mcp.js'));
+assert.ok(readFileSync(resolve('assets', 'plugins', 'browser', '.mcp.json'), 'utf8').includes('cardbush-chrome-mcp'));
+assert.ok(readFileSync(resolve('assets', 'plugins', 'browser', '.mcp.remote-debugging.json'), 'utf8').includes('chrome-devtools-mcp.js'));
 const chromeExtension = JSON.parse(readFileSync(resolve(
-  'assets', 'plugins', 'chrome', 'extension', 'manifest.json',
+  'assets', 'plugins', 'browser', 'extension', 'manifest.json',
 ), 'utf8'));
 assert.equal(chromeExtension.manifest_version, 3);
 assert.ok(chromeExtension.permissions.includes('debugger'));
 assert.equal(chromeExtension.permissions.includes('nativeMessaging'), false);
 const chromeVendorMetadata = JSON.parse(readFileSync(resolve(
-  'assets', 'plugins', 'chrome', 'vendor', 'OFFICIAL_PACKAGE.json',
+  'assets', 'plugins', 'browser', 'vendor', 'OFFICIAL_PACKAGE.json',
 ), 'utf8'));
 const chromeTarball = readFileSync(resolve(
-  'assets', 'plugins', 'chrome', 'vendor', 'chrome-devtools-mcp-1.8.0.tgz',
+  'assets', 'plugins', 'browser', 'vendor', 'chrome-devtools-mcp-1.8.0.tgz',
 ));
 assert.equal(
   `sha512-${createHash('sha512').update(chromeTarball).digest('base64')}`,
@@ -131,7 +132,7 @@ try {
     catalog.filter(plugin => plugin.id !== 'chrome').flatMap(plugin => plugin.skillRoots ?? []),
   );
 
-  await assert.rejects(installProductPlugin(join(bundledRoot, 'chrome'), temporary), /core capability/);
+  await assert.rejects(installProductPlugin(join(bundledRoot, 'browser'), temporary), /core capability/);
   // Old user installs with reserved names cannot shadow product-owned capabilities.
   for (const name of ['chrome', 'browser-use', 'Browser_Use', 'computer-use', 'computer_use', 'Chrome']) {
     const collision = join(temporary, 'source', name);
@@ -223,12 +224,16 @@ assert.match(managementSource, /import \{ usePluginNavigation, type PluginPage a
 assert.match(managementSource, /document\.addEventListener\('pointerdown', closeFromOutside, true\)/);
 assert.match(managementSource, /activeTab === 'apps'/);
 assert.match(managementSource, /activeTab === 'mcp'/);
-assert.match(managementSource, /返回插件/);
+assert.match(managementSource, /uiText\(language\)\('pluginManagementPanel\.backToPlugins'\)/);
+assert.equal(uiText('zh')('pluginManagementPanel.backToPlugins'), '返回插件');
+assert.equal(uiText('en')('pluginManagementPanel.backToPlugins'), 'Back to plugins');
 assert.match(managementSource, /scope === 'public' \? plugin\.source === 'bundled' : plugin\.source === 'user'/);
 assert.match(managementSource, /setScope\('personal'\)/);
 assert.match(managementSource, /skill\.sourceLabel/);
 assert.match(managementSource, /skill-plugin-group/);
-assert.match(managementSource, /来自 \$\{plugin\}/);
+assert.match(managementSource, /uiText\(language\)\('pluginManagementPanel\.from', \{ plugin \}\)/);
+assert.equal(uiText('zh')('pluginManagementPanel.from', { plugin: 'Fixture' }), '来自 Fixture');
+assert.equal(uiText('en')('pluginManagementPanel.from', { plugin: 'Fixture' }), 'From Fixture');
 assert.doesNotMatch(managementSource, /'插件' : 'Plugins'\}<ChevronRight[^>]*\/>\{plugin\.name\}/);
 
 const managementStyles = readFileSync(resolve('src', 'features', 'plugins', 'plugin-management.css'), 'utf8');

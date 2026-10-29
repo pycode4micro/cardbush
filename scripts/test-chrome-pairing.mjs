@@ -101,7 +101,7 @@ test('saved transport tolerates browser-delayed handshake delivery without repla
   }
   const sandbox = vm.createContext({ WebSocket: DelayedBrowserSocket, navigator: { userAgent: 'Chrome/156' },
     crypto: webcrypto, TextEncoder, Uint8Array, setTimeout, clearTimeout, setInterval, clearInterval });
-  vm.runInContext(fs.readFileSync('assets/plugins/chrome/extension/connector-transport.js', 'utf8'), sandbox);
+  vm.runInContext(fs.readFileSync('assets/plugins/browser/extension/connector-transport.js', 'utf8'), sandbox);
   const port = vm.runInContext(`createConnectorPort(parseConnectorPairing(${JSON.stringify(code)}))`, sandbox);
   t.after(() => { port.disconnect(); for (const timer of timers) clearTimeout(timer); });
   await new Promise((resolve, reject) => {
@@ -119,7 +119,7 @@ test('saved transport tolerates browser-delayed handshake delivery without repla
 test('actual extension transport verifies the broker before enabling browser commands', async t => {
   const f = fixture(t), broker = f.create(); await broker.start();
   const code = broker.createPairing().code;
-  const source = fs.readFileSync('assets/plugins/chrome/extension/connector-transport.js', 'utf8');
+  const source = fs.readFileSync('assets/plugins/browser/extension/connector-transport.js', 'utf8');
   class BrowserSocket extends WebSocket { constructor(url, protocols) { super(url, protocols, { origin: extensionOrigin }); } }
   const sandbox = vm.createContext({ WebSocket: BrowserSocket, navigator: { userAgent: 'Chrome/153.0.0.0' }, crypto: webcrypto, TextEncoder, Uint8Array, setTimeout, clearTimeout, setInterval, clearInterval });
   vm.runInContext(source, sandbox);

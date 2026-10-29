@@ -9,7 +9,7 @@ import { McpClientManager } from '@cardbush/bush-mcp-client';
 const entry = resolve(
   'assets',
   'plugins',
-  'chrome',
+  'browser',
   'runtime',
   'chrome-devtools-mcp',
   'build',
@@ -25,7 +25,7 @@ const manager = new McpClientManager({ registry });
 const skillsRoot = resolve(
   'assets',
   'plugins',
-  'chrome',
+  'browser',
   'runtime',
   'chrome-devtools-mcp',
   'skills',

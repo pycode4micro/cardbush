@@ -9,7 +9,7 @@ import { BrowserUseRouter } from '../dist-electron/browserUseHost.mjs';
 
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, emit(value) { this.listeners.forEach(fn => fn(value)); } });
 function worker(session, tabs) {
-  const calls = [], root = path.resolve('assets/plugins/chrome/extension');
+  const calls = [], root = path.resolve('assets/plugins/browser/extension');
   const storage = data => ({ get: async keys => Object.fromEntries(keys.map(key => [key, data[key]])), set: async values => Object.assign(data, structuredClone(values)) });
   const chrome = {
     runtime: { onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'test' }) },

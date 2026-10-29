@@ -4,12 +4,17 @@ The connector serves Chrome and Edge. Shared implementation modules, types,
 functions, renderer APIs and CSS use `BrowserConnector` / `browserConnector` /
 `browser-connector`. Chrome-specific APIs and product names stay unchanged.
 
+The source assets now live in `assets/plugins/browser`; packaged desktop
+extensions live in `browser-extension`. The former source directory is not kept
+as an alias. After removing an extension loaded from the old checkout path, load
+`assets/plugins/browser/extension` in Chrome or Edge's extension manager.
+
 Compatibility boundaries retained deliberately:
 
-- The plugin ID `chrome`, asset directory `assets/plugins/chrome`, workspace
-  package `@cardbush/chrome-mcp`, native-host build paths and executable names are
-  installation identities. Moving an unpacked extension's directory would break
-  the browser's existing registration.
+- The plugin ID `chrome`, workspace package `@cardbush/chrome-mcp`, native-host
+  build paths and executable names retain their installation identities. The
+  marketplace maps the plugin ID to the new asset directory, so existing App
+  settings still identify the same core capability.
 - `cardbush.chrome_connector.v1`, legacy IPC channels, environment variable names,
   extension ID/key, pairing format and storage keys remain stable. No credential
   or grant migration is required.

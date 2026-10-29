@@ -115,7 +115,7 @@ export class AgentBrowserConnector {
   }
   status() {
     return { state: this.#error ? 'unavailable' : this.#broker ? 'running' : 'disabled', enabled: this.#enabled,
-      shared: this.shared, extensionPath: join(this.bundledRoot, 'plugins', 'chrome', 'extension'),
+      shared: this.shared, extensionPath: join(this.bundledRoot, 'plugins', 'browser', 'extension'),
       recoveryPaused: this.#failureCount >= 3 || this.#broker?.status().recoveryPaused === true,
       ...(this.#error ? { error: this.#error, errorCode: this.#failure?.code, nextStep: this.#failure?.nextStep } : {}),
       ...(this.#broker ? { connector: this.#broker.status() } : {}) };

@@ -3741,7 +3741,7 @@ async function runPackagedApplicationSmoke(): Promise<void> {
       )),
       browserConnectorExtension: fs.existsSync(path.join(
         process.resourcesPath,
-        'chrome-extension',
+        'browser-extension',
         'manifest.json',
       )),
       chromeNativeHost: !platformFeatures(process.platform, process.arch).browserNativeConnector || fs.existsSync(path.join(
@@ -3753,7 +3753,7 @@ async function runPackagedApplicationSmoke(): Promise<void> {
         app.getAppPath(),
         'assets',
         'plugins',
-        'chrome',
+        'browser',
         'runtime',
         'chrome-devtools-mcp',
         'build',
@@ -4297,7 +4297,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
           app.getAppPath(),
           'assets',
           'plugins',
-          'chrome',
+          'browser',
           'runtime',
           'chrome-devtools-mcp',
           'build',

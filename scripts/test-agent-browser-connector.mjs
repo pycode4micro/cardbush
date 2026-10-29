@@ -126,7 +126,7 @@ test('local Runtime connects without the App and then shares the same browsers w
   for (const browser of ['chrome', 'edge']) {
     const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'local-' + browser } } };
     const pair = await service.call('browser.connector', { action: 'pair', browser, label: 'CLI ' + browser }); codes.push(pair.code);
-    assert.equal(pair.extensionPath, resolve('assets/plugins/chrome/extension'));
+    assert.equal(pair.extensionPath, resolve('assets/plugins/browser/extension'));
     const peer = await pairedClient(pair.code, { browser }); f.close.push(() => peer.destroy());
     peer.on('data', data => {
       const message = JSON.parse(String(data));

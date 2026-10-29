@@ -10,7 +10,7 @@ their respective assets. Installing an external plugin does not change its licen
 
 Browser Use's default connector is CardBush-authored. Its optional Chrome
 DevTools MCP bundle retains Google's Apache-2.0 license and dependency notices.
-See assets/plugins/chrome/THIRD_PARTY_NOTICES.md for exact source references,
+See assets/plugins/browser/THIRD_PARTY_NOTICES.md for exact source references,
 including the MPL-2.0-covered axe-core dependency.
 
 The CardBush-authored cardbush-docs skill (including the former

@@ -86,7 +86,7 @@ assert.equal(
 assert.equal(
   skillIconKind({
     ...skill('a11y-debugging'),
-    path: 'assets/plugins/chrome/runtime/chrome-devtools-mcp/skills/a11y-debugging/SKILL.md',
+    path: 'assets/plugins/browser/runtime/chrome-devtools-mcp/skills/a11y-debugging/SKILL.md',
   }),
   'web',
 );

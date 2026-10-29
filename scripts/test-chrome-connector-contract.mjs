@@ -11,7 +11,7 @@ import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.
 import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 import { pairedClient } from './helpers/chrome-paired-client.mjs';
 
-const extensionRoot = path.resolve('assets', 'plugins', 'chrome', 'extension');
+const extensionRoot = path.resolve('assets', 'plugins', 'browser', 'extension');
 const packagedRoot = process.argv[2]?.trim() ? path.resolve(process.argv[2]) : '';
 const manifest = JSON.parse(await readFile(path.join(extensionRoot, 'manifest.json'), 'utf8'));
 const extensionId = extensionIdFromKey(manifest.key);

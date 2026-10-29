@@ -39,7 +39,7 @@ Browser Use 在 Windows 11 上统一控制 CardBush 内置浏览器和分别配�
 - 应用按用户资料单实例运行：关闭到托盘后再次启动唤回原窗口。桥启动失败保留之前保存的启用意图、配对与路由；重新打开窗口或点击“重试连接”可重试。设置页区分启动失败和首次连接，仍允许明确关闭。
 - 工具仅对桥确认的 `not_dispatched` 离线请求等待重连，最多 8 秒且不超过请求预算的一半；等待期间固定原连接，明确切换浏览器后取消原操作。超时、执行中断线和已发出的命令不自动重放。诊断记录等待次数；轮转日志仅记连接状态变化，不写配对码或网页内容。
 - 默认加载 Browser Use 自有 skill。原厂 Chrome DevTools MCP 和资源保留为用户主动选择的高级远程调试模式，此路径仍仅面向 Chrome，不作为连接器失败时的自动回退。
-- 许可按来源区分：CardBush 自有连接器、适配层与技能遵循仓库 Apache-2.0；高级模式的 Google MCP 及其依赖保留上游许可。分发说明与 axe-core 对应源码入口见 `assets/plugins/chrome/THIRD_PARTY_NOTICES.md`。
+- 许可按来源区分：CardBush 自有连接器、适配层与技能遵循仓库 Apache-2.0；高级模式的 Google MCP 及其依赖保留上游许可。分发说明与 axe-core 对应源码入口见 `assets/plugins/browser/THIRD_PARTY_NOTICES.md`。
 - 本次不增加 Linux/macOS 支持，也不改变 Windows Computer Use 的实现。
 
 ## Browser Use 点击与渐进快照

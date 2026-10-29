@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 
-const root = new URL('../../../assets/plugins/chrome/extension/', import.meta.url);
+const root = new URL('../../../assets/plugins/browser/extension/', import.meta.url);
 const source = await readFile(new URL('downloads.js', root), 'utf8') + '\n' + await readFile(new URL('background.js', root), 'utf8');
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, removeListener(fn) { this.listeners = this.listeners.filter(value => value !== fn); }, emit(...args) { this.listeners.forEach(fn => fn(...args)); } });
 const flush = () => new Promise(resolve => setImmediate(resolve));

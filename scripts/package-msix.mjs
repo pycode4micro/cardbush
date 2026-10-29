@@ -110,7 +110,7 @@ export async function verifyMsix(file, expectedManifest) {
   const required = ['AppxBlockMap.xml', '[Content_Types].xml', 'app/CardBush.exe',
     'app/resources/app.asar', 'app/resources/process-guard/current.json',
     'app/resources/chrome-native-host/CardBushBrowserHost.exe',
-    'app/resources/chrome-extension/connector-transport.js',
+    'app/resources/browser-extension/connector-transport.js',
     'app/resources/connector-maintenance/cleanup-legacy.ps1',
     'app/resources/runtime-tools/ripgrep/win32-x64/rg.exe',
     'assets/StoreLogo.png', 'assets/Square150x150Logo.png',

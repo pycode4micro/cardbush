@@ -134,7 +134,7 @@ function transport(t, mode = 'silent', options = {}) {
     setTimeout: (fn, ms) => { const timer = setTimeout(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); return timer; },
     clearTimeout: timer => { timers.delete(timer); clearTimeout(timer); },
   });
-  vm.runInContext(fs.readFileSync('assets/plugins/chrome/extension/connector-transport.js', 'utf8'), sandbox);
+  vm.runInContext(fs.readFileSync('assets/plugins/browser/extension/connector-transport.js', 'utf8'), sandbox);
   assert.deepEqual(Array.from(vm.runInContext('CONNECTOR_DISCOVERY_PORTS', sandbox)), browserConnectorDiscoveryPorts);
   const pairing = { port: 60123, id: '1'.repeat(32), secret: '2'.repeat(64) };
   const port = vm.runInContext(`createConnectorPort(${JSON.stringify(pairing)}, ${JSON.stringify({attemptTimeoutMs:30,...options})})`, sandbox);

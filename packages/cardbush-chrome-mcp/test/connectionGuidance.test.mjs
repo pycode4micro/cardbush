@@ -33,15 +33,15 @@ test('MCP discovery explains local consent and reconnection before manual or rem
 
 test('shipped skills, plugin metadata and setup help agree about local and remote connections', async () => {
   const read = file => readFile(new URL('../../../' + file, import.meta.url), 'utf8');
-  const plugin = JSON.parse(await read('assets/plugins/chrome/.codex-plugin/plugin.json'));
+  const plugin = JSON.parse(await read('assets/plugins/browser/.codex-plugin/plugin.json'));
   for (const description of [plugin.description, plugin.interface.longDescription]) {
     assert.match(description, /first-use approval|one confirmation in the CardBush extension window/);
     assert.doesNotMatch(description, /system dialog|both dialogs/);
     assert.match(description, /automatic reconnection|reconnect automatically/);
     assert.match(description, /manual connection or remote Agent pairing/);
   }
-  for (const file of ['assets/plugins/chrome/skills/browser-use/SKILL.md', 'assets/skills/cardbush-docs/references/browser-use.md',
-    'docs/CORE_BROWSER_COMPUTER_USE.md', 'assets/plugins/chrome/extension/popup.html']) {
+  for (const file of ['assets/plugins/browser/skills/browser-use/SKILL.md', 'assets/skills/cardbush-docs/references/browser-use.md',
+    'docs/CORE_BROWSER_COMPUTER_USE.md', 'assets/plugins/browser/extension/popup.html']) {
     let content = await read(file);
     if (file.endsWith('popup.html')) {
       assert.match(content, /id="connection-help"/);
@@ -61,7 +61,7 @@ test('shipped skills, plugin metadata and setup help agree about local and remot
     assert.doesNotMatch(content, /桌面 App 的连接与 CLI 分开管理|CLI 与桌面 App 的配对分别管理|首次使用[^。\n]*生成配对码/, file);
   }
   assert.match(plugin.cardbush.localizations.zh.longDescription, /首次.*无需输入配对码.*共用连接.*自动重连.*仅用于手动连接或远程 Agent 配对/);
-  for (const file of ['docs/CORE_BROWSER_COMPUTER_USE.en.md', 'assets/plugins/chrome/extension/README.md']) {
+  for (const file of ['docs/CORE_BROWSER_COMPUTER_USE.en.md', 'assets/plugins/browser/extension/README.md']) {
     const content = await read(file);
     assert.match(content, /(?:no|No)(?: system dialog or)? pairing code is needed/, file);
     assert.match(content, /(?:manual connection or remote Agent pairing)/, file);

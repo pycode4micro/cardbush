@@ -121,8 +121,8 @@ export function browserConnectorRegistrationStatus(input: ConnectorRegistrationI
     platformSupported, packagedApplication: input.packaged, ...registration,
     nativeHostAvailable: fs.existsSync(input.nativeHostPath),
     nativeHostPath: input.nativeHostPath,
-    extensionDirectory: input.packaged ? path.join(input.resourcesPath, 'chrome-extension')
-      : path.join(input.appPath, 'assets', 'plugins', 'chrome', 'extension'),
+    extensionDirectory: input.packaged ? path.join(input.resourcesPath, 'browser-extension')
+      : path.join(input.appPath, 'assets', 'plugins', 'browser', 'extension'),
     extensionId: browserConnectorExtensionOrigin.slice('chrome-extension://'.length, -1),
     ...(storeUrl?.startsWith('https://') ? { storeUrl } : {}),
     ...(!platformSupported ? { setupMessage: uiText(input.uiLanguage?.())('browserConnector.windowsVersionRequired') } : {}),

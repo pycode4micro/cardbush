@@ -29,7 +29,7 @@ async function fixture(t) {
     await writeFile(join(source, 'packages', name, 'package.json'), '{}');
     await writeFile(join(source, 'packages', name, 'dist/index.js'), '');
   }
-  const browserEntry = join(source, 'assets/plugins/chrome/runtime/chrome-devtools-mcp/build/src/bin');
+  const browserEntry = join(source, 'assets/plugins/browser/runtime/chrome-devtools-mcp/build/src/bin');
   await mkdir(browserEntry, { recursive: true }); await writeFile(join(browserEntry, 'chrome-devtools-mcp.js'), '');
   await mkdir(join(source,'assets/skills'),{recursive:true});
   await mkdir(join(source,'assets/plugins/fixture/.codex-plugin'),{recursive:true});

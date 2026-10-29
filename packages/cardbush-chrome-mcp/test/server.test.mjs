@@ -113,7 +113,7 @@ test('hidden CardBush pages keep visibility guidance after repeated screenshot f
 });
 
 test('ships a stable MV3 extension using debugger and paired loopback WebSocket', async () => {
-  const extensionPath = path.resolve(import.meta.dirname, '../../../assets/plugins/chrome/extension');
+  const extensionPath = path.resolve(import.meta.dirname, '../../../assets/plugins/browser/extension');
   const manifestPath = path.join(extensionPath, 'manifest.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   assert.equal(manifest.manifest_version, 3);

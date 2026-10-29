@@ -32,7 +32,7 @@ files:
   - packages/*/package.json
   - packages/cardbush-document-tools/THIRD_PARTY_NOTICES.md
   - assets/**/*
-  - '!assets/plugins/chrome/extension/**/*'
+  - '!assets/plugins/browser/extension/**/*'
   - '!assets/skills/**/*'
   - '!assets/runtime-tools/**/*'
   - package.json
@@ -60,8 +60,8 @@ extraResources:
   - from: assets/connector-maintenance
     to: connector-maintenance
     filter: ['*.ps1']
-  - from: assets/plugins/chrome/extension
-    to: chrome-extension
+  - from: assets/plugins/browser/extension
+    to: browser-extension
     filter:
       - '**/*'
   - from: assets/skills

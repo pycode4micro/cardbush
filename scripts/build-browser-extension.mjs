@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
-export const extensionRoot = fileURLToPath(new URL('../assets/plugins/chrome/extension/', import.meta.url));
+export const extensionRoot = fileURLToPath(new URL('../assets/plugins/browser/extension/', import.meta.url));
 const outputName = 'build-info.js';
 
 function buildExtensionMessages(directory, check) {

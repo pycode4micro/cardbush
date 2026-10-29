@@ -39,7 +39,7 @@ app.whenReady().then(async () => {
     webPreferences: { preload, contextIsolation: false, sandbox: false, backgroundThrottling: false } });
   const errors = [];
   window.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
-  const load = query => window.loadFile(path.join(root, 'assets/plugins/chrome/extension/connection.html'), { query, hash: 'fixture-request' });
+  const load = query => window.loadFile(path.join(root, 'assets/plugins/browser/extension/connection.html'), { query, hash: 'fixture-request' });
   await load({ browser: 'chrome' });
   await until('!document.querySelector("#allow").disabled');
   assert.equal(await run('document.querySelector("#browser-name").textContent.trim()'), 'Google Chrome');

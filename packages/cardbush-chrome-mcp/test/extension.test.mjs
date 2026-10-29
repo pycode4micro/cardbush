@@ -11,7 +11,7 @@ const SCOPE_B = { scopeId: 'session-b', scopeTitle: 'Billing check' };
 test('MV3 worker isolates sessions and recovers screenshot timeouts without overlapping captures', async (t) => {
   const workerPath = path.resolve(
     import.meta.dirname,
-    '../../../assets/plugins/chrome/extension/background.js',
+    '../../../assets/plugins/browser/extension/background.js',
   );
   const source = await readFile(path.join(path.dirname(workerPath), 'downloads.js'), 'utf8') + '\n' + await readFile(workerPath, 'utf8');
   const nativeMessages = event();
@@ -416,7 +416,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
 test('MV3 worker restores a live scope lease and session tab grant', async () => {
   const workerPath = path.resolve(
     import.meta.dirname,
-    '../../../assets/plugins/chrome/extension/background.js',
+    '../../../assets/plugins/browser/extension/background.js',
   );
   const source = await readFile(path.join(path.dirname(workerPath), 'downloads.js'), 'utf8') + '\n' + await readFile(workerPath, 'utf8');
   const nativeMessages = event();

@@ -59,7 +59,7 @@ async function startBrowser(browser, executable, existingId = '') {
     child.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
   });
   const version = await send('Browser.getVersion');
-  const extension = await send('Extensions.loadUnpacked', { path: path.resolve('assets/plugins/chrome/extension') });
+  const extension = await send('Extensions.loadUnpacked', { path: path.resolve('assets/plugins/browser/extension') });
   assert.equal(extension.id, 'iibaamkfgackofhhpadgnmgcjkhckeln');
   if (existingId) await until(() => broker.status().connections.some(connection => connection.id === existingId && connection.connected), `${browser} restart auto-connect before opening popup`);
   const target = await send('Target.createTarget', { url: `chrome-extension://${extension.id}/popup.html` });

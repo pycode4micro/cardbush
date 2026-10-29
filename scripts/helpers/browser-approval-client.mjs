@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { WebSocket } from 'ws';
 import { extensionOrigin } from './chrome-paired-client.mjs';
 
-const source = await readFile(new URL('../../assets/plugins/chrome/extension/connector-transport.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../../assets/plugins/browser/extension/connector-transport.js', import.meta.url), 'utf8');
 export async function approvalClient(port, identity, options = {}) {
   const { origin = extensionOrigin, browser = 'chrome', reachablePorts, ...rest } = options;
   const context = vm.createContext({ crypto: webcrypto, Uint8Array, TextEncoder, AbortController, setTimeout, clearTimeout,

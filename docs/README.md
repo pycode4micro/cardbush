@@ -60,7 +60,7 @@ Historical investigations, benchmark results and licensing records retain their 
 | Progressive tool discovery | [English](PROGRESSIVE_TOOL_DISCOVERY.en.md) | [简体中文](PROGRESSIVE_TOOL_DISCOVERY.md) |
 | Scheduled-task inbox | [English](AUTOMATION_INBOX.md) | [简体中文](AUTOMATION_INBOX.zh-CN.md) |
 | Bundled display calendars | [English](../assets/calendars/README.md) | [简体中文](../assets/calendars/README.zh-CN.md) |
-| CardBush Browser Use | [English](../assets/plugins/chrome/extension/README.md) | [简体中文](../assets/plugins/chrome/extension/README.zh-CN.md) |
+| CardBush Browser Use | [English](../assets/plugins/browser/extension/README.md) | [简体中文](../assets/plugins/browser/extension/README.zh-CN.md) |
 | Conversation extraction and Fork | [English](host/CONVERSATION_EXTRACTION.en.md) | [简体中文](host/CONVERSATION_EXTRACTION.md) |
 | Independent Bot MCP boundary | [English](host/CARDBUSH_APP_HOST.md) | [简体中文](host/CARDBUSH_APP_HOST.zh-CN.md) |
 | CardBush Apps MCP boundary | [English](host/CARDBUSH_APPS_MCP.md) | [简体中文](host/CARDBUSH_APPS_MCP.zh-CN.md) |
