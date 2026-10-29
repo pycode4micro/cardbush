@@ -1,5 +1,7 @@
 # Scheduled-task inbox
 
+[English](AUTOMATION_INBOX.md) · [简体中文](AUTOMATION_INBOX.zh-CN.md)
+
 CardBush's existing runtime scheduler owns both plans and execution results. The app must be running. There is no separate service; missed intervals coalesce into one execution when the runtime resumes.
 
 ## Results and acknowledgment

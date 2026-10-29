@@ -1,13 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, realpath } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { realpath } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { decodeRuntimeEvent, solutionSelectionQuestions, taskPlanSchema, type TaskPlan, type RuntimeEvent, type SolutionQuestionAnswer } from '@cardbush/bush-protocol';
-import { AgentHttpClient, AgentNetworkError, agentBaseUrl } from './agentHttpClient.mjs';
-import { writePrivateJson } from './atomicJsonFile.mjs';
+import { AgentHttpClient, AgentNetworkError } from './agentHttpClient.mjs';
 import type { AgentJob, AgentProject, AgentSendInput } from './agentTypes.js';
 import type { ChatClient } from './agentLocalChat.mjs';
 import { chatEffortLabel, readChatModels, selectChatModel, waitForChatConfiguration, type ChatModelSelection } from './agentChatModels.mjs';
@@ -110,28 +108,6 @@ async function stopCliJobs(client: Client, sessionId: string, submitted: Readonl
     if (target.id === observed?.id) result = settled;
   }
   return result;
-}
-
-type SavedConnection = { url: string; tokenFile: string; agentId: string };
-async function readConnection(file: string): Promise<SavedConnection | undefined> {
-  let text: string;
-  try { text = await readFile(file, 'utf8'); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-  const value = JSON.parse(text) as SavedConnection;
-  if (!value || typeof value.url !== 'string' || typeof value.tokenFile !== 'string' || typeof value.agentId !== 'string') {
-    throw new Error(`Invalid CLI connection configuration: ${file}`);
-  }
-  return value;
-}
-
-async function readConnectionToken(file: string, savedConnectionFile?: string): Promise<string> {
-  try { return await readFile(file, 'utf8'); }
-  catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? 'read failed';
-    throw new Error(`Cannot read ${savedConnectionFile ? 'saved ' : ''}Agent token file: ${file} (${code}). `
-      + (savedConnectionFile ? `Saved CLI connection: ${savedConnectionFile}. ` : '')
-      + 'Reconnect with --url <Agent-URL> --token-file <existing-token-file>, or use cardbush --local to run locally.', { cause: error });
-  }
 }
 
 async function interactionPending(client: Client, event: Interaction, signal: AbortSignal, cursor: { sequence: number }) {
@@ -345,7 +321,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
   } finally { lineBreak(); }
 }
 
-const help = `CardBush CLI (runs locally by default, or connects to an existing Agent)
+const help = `CardBush CLI (local conversations and remote subagent workers)
 Usage: cardbush [options]
        cardbush --resume [session-id] [options]
        cardbush serve --data-dir <directory> [service-options]
@@ -359,12 +335,10 @@ ChatGPT account models reuse App sign-in; keep the App running. API-key models
 can run independently.
 If no model is configured, the CLI shows the config path and an annotated example.
 Edit and save the file, then press Enter to continue.
-First remote connection: cardbush --url <url> --token-file <path>.
-Successful connections are remembered.
+Remote services are registered as workers and delegated to through subagents.
+For server maintenance, run this CLI on that server.
 
-  --local           Use the local runtime; ignore saved and environment connections
-  --url URL         Agent URL; reuse the last connection (default: http://127.0.0.1:4780)
-  --token-file PATH Access token file; or set CARDBUSH_AGENT_TOKEN / CARDBUSH_AGENT_URL
+  --local           Compatibility alias; conversations always use the local runtime
   --resume [ID]     Resume a session; omit ID to choose from saved sessions
   --project ID      Use an existing server project instead of the current directory
   --model ID        Use a configured model; otherwise use the Agent's default
@@ -430,7 +404,7 @@ Approvals start on Deny; select Allow once and press Enter to allow.
 Workspace paths and menu choices support Tab completion without submitting.
 Enter on a file suggestion inserts it into the draft before sending.
 In /settings or model setup, type vim FILE (or another command) to edit in place.
-Shell commands run locally as the CLI user, even when connected to a remote Agent.
+Shell commands run locally as the CLI user.
 Use /shell to enter the native shell for command and path completion; exit returns to chat.
 Finish or stop the current task before /model, /settings, /habit, /prediction, /session, /new or shell commands.
 Long or multiline pastes are folded; Enter submits the complete text.
@@ -442,7 +416,7 @@ Local diagnostic logs rotate in logs/runtime.log under the CLI data directory.
 Local CLI windows share one background Runtime. Each new window gets its own session;
 --resume ID attaches to that session, whose turns remain queued in order.
 Closing a window leaves other windows and their tasks running. The host exits when idle.
-For remote Agents, use HTTPS or an existing SSH tunnel. Local mode needs no HTTP
+Worker connections use HTTPS or authenticated SSH. Local chat needs no HTTP
 service setup and does not copy model credentials.
 `;
 
@@ -452,7 +426,7 @@ function validatePrompt(text: string) {
   if (Buffer.byteLength(JSON.stringify(text)) > 2 * 1024 * 1024 - 16 * 1024) throw new Error('Prompt too large. Reference a file on the Agent instead.');
 }
 
-export async function main(args = process.argv.slice(2), options: { openArtifact?: typeof openChatArtifact; shell?: typeof runChatShell } = {}): Promise<number> {
+export async function main(args = process.argv.slice(2), options: { openArtifact?: typeof openChatArtifact; shell?: typeof runChatShell; openClient?: () => Promise<ChatClient> } = {}): Promise<number> {
   const normalized = optionalResumeArgs(args);
   const { values, positionals, tokens } = parseArgs({ args: normalized.args, allowPositionals: true, tokens: true, options: {
     help: { type: 'boolean' }, url: { type: 'string' }, 'token-file': { type: 'string' }, session: { type: 'string' }, resume: { type: 'string' },
@@ -475,18 +449,10 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
   if (values['full-access'] && values.permission && values.permission !== 'all_free') throw new Error('--full-access conflicts with --permission.');
   if (!['task_free', 'user_free', 'all_free'].includes(permissionMode)) throw new Error('Invalid --permission. Use task_free, user_free or all_free.');
   if (resumeId !== undefined && values.project) throw new Error('--project applies only to new sessions; resumed sessions keep their workspace.');
-  if (values.local && (values.url || values['token-file'])) throw new Error('--local cannot be combined with --url or --token-file.');
-  const connectionFile = resolve(process.env.CARDBUSH_CLI_CONFIG || join(homedir(), '.cardbush', 'cli.json'));
-  const saved = values.local ? undefined : await readConnection(connectionFile);
-  const local = values.local || !(values.url || values['token-file'] || process.env.CARDBUSH_AGENT_URL || process.env.CARDBUSH_AGENT_TOKEN?.trim() || saved);
-  const url = local ? undefined : agentBaseUrl(values.url ?? (process.env.CARDBUSH_AGENT_URL || saved?.url || 'http://127.0.0.1:4780'));
-  // Never reuse a saved credential for a different explicitly selected server.
-  const savedForUrl = saved && agentBaseUrl(saved.url) === url ? saved : undefined;
-  const tokenFile = values['token-file'] ? resolve(values['token-file']) : !process.env.CARDBUSH_AGENT_TOKEN?.trim() ? savedForUrl?.tokenFile : undefined;
-  const token = local ? '' : (tokenFile ? await readConnectionToken(tokenFile, values['token-file'] ? undefined : connectionFile) : process.env.CARDBUSH_AGENT_TOKEN ?? '').trim();
-  if (!local && !token) throw new Error('Remote connections require --token-file <Agent-data-dir>/access-token or CARDBUSH_AGENT_TOKEN. Use cardbush --local to run locally.');
-  const client: ChatClient = local ? await (await import('./agentLocalChat.mjs')).openLocalChatClient()
-    : new AgentHttpClient(url!, token, !values['token-file'] && tokenFile ? savedForUrl?.agentId : undefined);
+  if (values.url || values['token-file']) throw new Error('Remote chat has been removed. Register this service as a remote subagent worker instead. Run cardbush on the server for local maintenance.');
+  // Saved remote selections and deployment credentials must never redirect a local CLI.
+  const local = true;
+  const client: ChatClient = await (options.openClient ?? (await import('./agentLocalChat.mjs')).openLocalChatClient)();
   const lifetime = new AbortController(); let turn: AbortController | undefined, active: Job | undefined, stopping: Promise<AgentJob | undefined> | undefined;
   const queued = new Set<string>();
   const submitted = new Set<string>();
@@ -517,7 +483,6 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
   process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
   try {
     const info = await client.info(lifetime.signal);
-    if (values['token-file']) await writePrivateJson(connectionFile, { url, tokenFile, agentId: info.id });
     if (values.sessions || values.projects) {
       const result = await client.call(values.sessions ? 'sessions.list' : 'projects.list', values.sessions ? { projection: 'summary' } : {}, lifetime.signal);
       const items = (values.sessions ? result : (result as { projects: AgentProject[] }).projects) as Array<{ sessionId?: string; id?: string; name?: string; path?: string; metadata?: { title?: string } }>;

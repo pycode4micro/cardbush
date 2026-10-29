@@ -1,5 +1,7 @@
 # Built-in tool execution
 
+[English](builtin-tool-execution.md) · [简体中文](builtin-tool-execution.zh-CN.md)
+
 The registry remains the authoritative capability catalog. Provider definitions are a presentation of that catalog, not a permission grant. Every nested invocation still passes through `ToolExecutionCoordinator`, including scope, child policy, MCP discovery, authorization, hooks, result validation and the execution journal.
 
 ## Default interfaces

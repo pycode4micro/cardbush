@@ -1,5 +1,7 @@
 # 持续使用的创作桌面
 
+[English](CREATION_DESK.en.md) · [简体中文](CREATION_DESK.md)
+
 创作仍使用现有 `space.canvas.json`、文件预览、区域对话和 Team，不新增项目类型或执行系统。
 
 ## 使用

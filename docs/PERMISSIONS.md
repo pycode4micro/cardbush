@@ -1,6 +1,8 @@
 # Permissions
 
-The composer exposes two choices on both desktop and connected Agents:
+[English](PERMISSIONS.md) · [简体中文](PERMISSIONS.zh-CN.md)
+
+The local conversation composer exposes two approval choices. Remote workers additionally enforce their own host policy:
 
 - **Ask for approval / 申请批准**: ordinary file operations can use the authorized
   workspace. Access outside that scope, unsandboxed commands, and other tools
@@ -65,11 +67,9 @@ Historical session messages and tool definitions are not rewritten.
 
 Permissions are requested by the concrete invocation after validating its
 arguments and canonical scope. The legacy `request_permission` pre-approval
-tool is no longer offered in new model catalogs. Frozen sessions can still call
-its compatibility handler, which returns `granted: false` without prompting or
-granting access, and directs the model to the actual operation. Its former
-`allow_once` applied only to the pre-approval itself and could not authorize a
-later write or command. Decisions still happen during actual execution.
+tool and its compatibility handler have been removed. Invoke the actual operation;
+its execution boundary requests any necessary approval. Old tool contracts are
+not migrated or replayed; see [tool interaction](TOOL_INTERACTION.en.md).
 
 The new command-approval behavior is implemented in the shared Runtime. A
 connected Agent must be updated to this version to enforce it; updating only

@@ -8,6 +8,8 @@ team:
 
 # 订单核验
 
+[English](team-order-review.en.md) · [简体中文](team-order-review.md)
+
 ## 为什么这样协作
 
 库存与订单来自不同来源，分别检查可避免仅凭单方信息下结论。汇总时保留依据和缺失项，随后交付结果。

@@ -1,5 +1,9 @@
 import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
-import { readUserPrompt, promptContextMetadata, collectTurnAttachments, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
+import { remoteControlSchema, validateRemoteResponse, SUBAGENT_INTERACTION_OPERATIONS, type RemoteControl } from '@cardbush/bush-protocol';
+import { workerObservation } from './remoteWorkerObservation.mjs';
+import { openHeadlessWorkers } from './headlessWorkerStore.mjs';
+import { callRemoteWorker } from './remoteWorkers.mjs';
+import { readUserPrompt, remoteWorkerSchema, promptContextMetadata, collectTurnAttachments, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
 import { ModelImageStore } from '@cardbush/bush-runtime';
 import { sessionSummarySchema, sessionHistoryPageSchema } from '@cardbush/bush-protocol';
 import { webToolAllowed, webToolDefinition } from '@cardbush/bush-runtime/web-policy';
@@ -11,7 +15,7 @@ import { individuationSettingsSchema, normalizeIndividuation, type Individuation
 import { AgentSharedConfiguration, recoverSharedConfiguration } from './agentSharedConfiguration.mjs';
 import { AgentBusyError } from './agentErrors.mjs';
 import { normalizeHostEnvironment, verifyProcessResourceHost } from '@cardbush/bush-runtime/processes';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -59,7 +63,8 @@ const sendSchema = z.object({
   reasoningEffort: reasoningEffortSchema.nullish(), planEnabled: z.boolean().optional(), disabledSkills: z.array(z.string()).optional(), subagentPermissionRouting: z.enum(['user', 'parent']).optional(),
 }).strict();
 type SessionPresentation = { title?: string; pinned?: boolean; archived?: boolean; readAt?: string; forcedUnread?: boolean; queueLocked?: boolean; individuation?: IndividuationSettings };
-type AgentState = { version: 1; id: string; name: string; revision: number; projects: AgentProject[]; defaultProjectId: string | null; jobs: AgentJob[]; sessions?: Record<string, SessionPresentation> };
+type AgentState = { version: 1; id: string; name: string; revision: number; projects: AgentProject[]; defaultProjectId: string | null; jobs: AgentJob[]; sessions?: Record<string, SessionPresentation>;
+  workerReceipts?: Record<string, { input: string; state: 'pending' | 'applied' | 'rejected'; result?: unknown; error?: string }> };
 
 type AgentServiceOptions = { dataRoot: string; name?: string; env?: NodeJS.ProcessEnv; bundledRoot?: string; desktop?: boolean; toolsEnabled?: boolean; webRestricted?: boolean;
   /** Local CLI only: share this user's settings/extensions, never their Runtime state. */
@@ -76,6 +81,9 @@ export class AgentService {
   readonly #configurationRoot: string;
   readonly #extensionRoot: string;
   readonly #local: boolean;
+  #workers?: ReturnType<typeof openHeadlessWorkers>;
+  readonly #remotePermissionAuthority: 'parent_delegate' | 'human_required';
+  readonly #remotePermissionCeiling: 'task_free' | 'user_free' | 'all_free';
   readonly bundledRoot: string;
   readonly runtime: AgentRuntimeHost;
   readonly product: ElectronProductHostController;
@@ -111,6 +119,9 @@ export class AgentService {
     const configurationRoot = this.#configurationRoot = options.localProfileRoot ? join(options.localProfileRoot, 'product-host') : root;
     const extensionRoot = this.#extensionRoot = options.localProfileRoot ?? root;
     this.#local = options.local === true;
+    // Only the remote administrator may delegate approval authority; never read it from a request.
+    this.#remotePermissionAuthority = (options.env?.CARDBUSH_REMOTE_PARENT_APPROVAL ?? process.env.CARDBUSH_REMOTE_PARENT_APPROVAL) === '1' ? 'parent_delegate' : 'human_required';
+    this.#remotePermissionCeiling = z.enum(['task_free', 'user_free', 'all_free']).parse(options.env?.CARDBUSH_REMOTE_PERMISSION_MODE ?? process.env.CARDBUSH_REMOTE_PERMISSION_MODE ?? 'task_free');
     this.#desktop = desktop;
     const runtimeRoot = join(root, 'runtime-state');
     this.#modelImages = new ModelImageStore(runtimeRoot);
@@ -152,6 +163,8 @@ export class AgentService {
     // Capability comes only from the explicit in-process local host. A service
     // must not acquire desktop account access from inherited/deployment env.
     delete env.CARDBUSH_LOCAL_ACCOUNT_ACCESS;
+    delete env.CARDBUSH_LOCAL_WORKERS;
+    if (options.local && !this.#webRestricted) env.CARDBUSH_LOCAL_WORKERS = '1';
     if (options.local && options.localProfileRoot && options.localModelAccess) env.CARDBUSH_LOCAL_ACCOUNT_ACCESS = '1';
     if (this.#webRestricted) env.CARDBUSH_WEB_REMOTE_AGENTS = '1';
     if (desktop) env.CARDBUSH_AGENT_DESKTOP = '1';
@@ -161,8 +174,10 @@ export class AgentService {
     this.#network = new PluginNetwork(join(configurationRoot, 'config', 'apps.json'), () => createHeadlessProxySession(env));
     this.runtime = new AgentRuntimeHost(env, async (operation, payload, signal) => {
       const data = payload as Record<string, unknown>;
-      if (this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child'].includes(operation))
+      if (this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
         return callWebRemoteAgent(this.#webPolicy?.remoteAgents, operation, payload, signal);
+      if (this.#local && !this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
+        return callRemoteWorker(await (this.#workers ??= openHeadlessWorkers(root)), operation, payload, signal);
       if (operation === 'agent.desktop.tool' && this.#desktop) return this.#desktop.tool(payload, signal);
       if (operation === 'network.configuration') {
         const model = networkProxySchema.parse(await readFile(join(configurationRoot, 'config', 'network.json'), 'utf8').then(text => JSON.parse(text), (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return { mode: 'system' }; }));
@@ -341,7 +356,7 @@ export class AgentService {
   }
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
     ...(this.#desktopSetup ? { desktopSetup: this.#desktopSetup } : {}),
-    capabilities: { webRemoteAgents: this.#webRestricted, webRestricted: this.#webRestricted, desktop: this.#desktop?.status().available === true, computerUse: this.#desktop?.status().available === true, browserUi: this.#desktop?.status().available === true, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: this.#toolsEnabled, tools: this.#toolsEnabled, delegation: this.#toolsEnabled, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sharedConfiguration: this.#toolsEnabled, sharedConfigurationVersion: 2, sandboxSettings: this.#toolsEnabled, pluginMarketplace: this.#toolsEnabled } }; }
+    capabilities: { ...(this.#toolsEnabled && !this.#webRestricted ? { workerInteraction: { profile: 'subagent-remote-proton' as const, version: '0.1' as const, binding: 'cardbush-http' as const, operations: [...SUBAGENT_INTERACTION_OPERATIONS], permissions: this.#remotePermissionAuthority } } : {}), webRemoteAgents: this.#webRestricted, webRestricted: this.#webRestricted, desktop: this.#desktop?.status().available === true, computerUse: this.#desktop?.status().available === true, browserUi: this.#desktop?.status().available === true, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: this.#toolsEnabled, tools: this.#toolsEnabled, delegation: this.#toolsEnabled, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sharedConfiguration: this.#toolsEnabled, sharedConfigurationVersion: 2, sandboxSettings: this.#toolsEnabled, pluginMarketplace: this.#toolsEnabled } }; }
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; firstUserText?: string; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
@@ -377,6 +392,12 @@ export class AgentService {
   #idle(sessionId?: string) { if (sessionId ? this.#active(sessionId) : this.#state.jobs.some(job => ['queued', 'running'].includes(job.status))) throw new AgentBusyError(); }
 
   call(operation: AgentOperation, input: unknown = {}, readSignal?: AbortSignal): Promise<unknown> {
+    if (operation === 'delegation.control') {
+      const value = z.object({ parentSessionId: id, control: remoteControlSchema }).strict().parse(input);
+      if (value.control.operation === 'observe') return this.#controlWorker(value.parentSessionId, value.control, readSignal);
+      const result = this.#mutations.then(() => this.#controlWorker(value.parentSessionId, value.control));
+      this.#mutations = result.catch(() => undefined); return result;
+    }
     const serialized = ['devices.command', 'web.configure', 'configuration.sync', 'product.command', 'conversation.catalog', 'instructions.get', 'instructions.save', 'plugins.install', 'plugins.uninstall', 'plugins.connections.save', 'plugins.configure', 'mcp.configure', 'mcp.remove', 'mcp.reconnect', 'files.upload', 'files.pasted-text', 'delegation.submit', 'chat.send', 'chat.queue', 'chat.stop', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind', 'projects.save', 'projects.remove', 'projects.default'];
     const workspaceMutation = operation === 'runtime.command' && /(?:revert|restore|update)_workspace|delete_session|clear_sessions|switch_workspace/.test(String((input as { kind?: string })?.kind));
     if (!serialized.includes(operation) && !workspaceMutation) return this.#call(operation, input, readSignal);
@@ -419,6 +440,17 @@ export class AgentService {
       }
     }
     switch (operation) {
+      case 'workers.command': {
+        if (!this.#local || this.#webRestricted) throw new Error('Worker registrations can only be managed by the local host.');
+        const workers = await (this.#workers ??= openHeadlessWorkers(this.root));
+        switch (data.action) {
+          case 'list': return workers.list();
+          case 'save': return workers.save(data.connection as import('./agentTypes.js').AgentConnectionInput);
+          case 'verify': return workers.connect(id.parse(data.id));
+          case 'remove': return workers.remove(id.parse(data.id));
+          default: throw new Error('Unknown worker registration command.');
+        }
+      }
       case 'browser.connector': {
         if (!this.#browserConnector) throw Error('Browser connector is unavailable on this service.');
         return this.#browserConnector.call(data);
@@ -563,10 +595,15 @@ export class AgentService {
       }
       case 'delegation.submit': {
         const value = z.object({ taskId: id, sessionId: id, turnId: id, parentSessionId: id, parentTurnId: id,
-          prompt: z.string().trim().min(1).max(1_000_000), permissionMode: sendSchema.shape.permissionMode, language: sendSchema.shape.language }).strict().parse(data);
+          prompt: z.string().trim().min(1).max(1_000_000), permissionMode: sendSchema.shape.permissionMode, language: sendSchema.shape.language,
+          worker: remoteWorkerSchema.optional(), queue: z.boolean().optional() }).strict().parse(data);
+        const levels = ['task_free', 'user_free', 'all_free'] as const;
+        value.permissionMode = levels[Math.min(levels.indexOf(value.permissionMode), levels.indexOf(this.#remotePermissionCeiling))]!;
         if (value.turnId !== `turn-${value.taskId}` || !value.sessionId.startsWith('delegated-')) throw new Error('Invalid delegated task identity.');
         const existing = this.#state.jobs.find(job => job.id === value.taskId);
         if (existing) {
+          if (Boolean(existing.delegation?.queue) !== Boolean(value.queue)) throw new Error('Delegation ID was already used with different queue delivery.');
+          if (JSON.stringify(existing.delegation?.worker) !== JSON.stringify(value.worker)) throw new Error('Delegation ID was already used for a different worker role.');
           if (existing.sessionId !== value.sessionId || existing.turnId !== value.turnId || existing.input.text !== value.prompt || existing.input.permissionMode !== value.permissionMode || existing.input.language !== value.language || existing.delegation?.parentSessionId !== value.parentSessionId || existing.delegation?.parentTurnId !== value.parentTurnId) throw new Error('Delegation ID was already used for different content.');
           return publicJob(existing);
         }
@@ -578,12 +615,14 @@ export class AgentService {
           const path = project?.path ?? join(this.root, 'workspaces', randomUUID());
           await mkdir(path, { recursive: true });
           await this.#command('runtime.create_session', { sessionId: value.sessionId,
-            metadata: { title: value.prompt.slice(0, 60), agentId: this.#state.id, projectId: project?.id ?? null, projectDir: project?.path ?? null, delegationOwner: value.parentSessionId, agentRole: 'child', parentSessionId: value.parentSessionId, parentTurnId: value.parentTurnId },
+            metadata: { title: value.worker?.name ?? value.prompt.slice(0, 60), agentId: this.#state.id, projectId: project?.id ?? null, projectDir: project?.path ?? null, delegationOwner: value.parentSessionId, remoteWorker: value.worker, agentRole: 'child', parentSessionId: value.parentSessionId, parentTurnId: value.parentTurnId },
             workspace: { mode: 'direct', sourceDir: path } });
         } else if (decodeSessionSnapshot(snapshot).metadata?.delegationOwner !== value.parentSessionId) throw new Error('This remote conversation belongs to another parent.');
+        if (snapshot && JSON.stringify(decodeSessionSnapshot(snapshot).metadata?.remoteWorker) !== JSON.stringify(value.worker)) throw new Error('A remote child continuation must retain its original registered role.');
+        if (!value.queue && this.#state.jobs.some(job => job.sessionId === value.sessionId && ['running', 'queued'].includes(job.status))) throw new Error('The original remote task is still active. Inspect or stop it before starting replacement work; use queue explicitly for a later message.');
         await this.#write(state => state.jobs.push({ id: value.taskId, sessionId: value.sessionId, turnId: value.turnId,
           input: { requestId: value.taskId, sessionId: value.sessionId, text: value.prompt, modelId: models.defaultModelId, permissionMode: value.permissionMode, language: value.language },
-          delegation: { parentSessionId: value.parentSessionId, parentTurnId: value.parentTurnId }, createdAt: new Date().toISOString(), status: 'queued' }));
+          delegation: { parentSessionId: value.parentSessionId, parentTurnId: value.parentTurnId, queue: value.queue === true, ...(value.worker ? { worker: value.worker } : {}) }, createdAt: new Date().toISOString(), status: 'queued' }));
         this.#pump(); return publicJob(this.#state.jobs.find(job => job.id === value.taskId)!);
       }
       case 'chat.send': {
@@ -871,6 +910,7 @@ export class AgentService {
       }
       if (job.input.supersession) request.supersession = job.input.supersession;
       if (job.delegation) {
+        if (job.delegation.worker) request.prefixMessages.push({ role: 'developer', content: job.delegation.worker.instructions });
         request.metadata = { ...request.metadata, agentRole: 'child', disabledTools: [...DEFAULT_CHILD_AGENT_DISABLED_TOOLS],
           parentSessionId: job.delegation.parentSessionId, parentTurnId: job.delegation.parentTurnId, remoteDelegation: job.delegation };
         request.sessionMetadata = { ...request.sessionMetadata, agentRole: 'child', parentSessionId: job.delegation.parentSessionId, parentTurnId: job.delegation.parentTurnId };
@@ -909,6 +949,87 @@ export class AgentService {
       await this.#write(state => { const current = state.jobs.find(item => item.id === jobId)!; current.status = signal.aborted ? 'stopped' : 'failed'; current.completedAt = new Date().toISOString(); current.error = error instanceof Error ? error.message : String(error); });
     }
   }
+  async #controlWorker(parentSessionId: string, control: RemoteControl, signal?: AbortSignal): Promise<unknown> {
+    if (this.#closing || !this.#toolsEnabled || this.#webRestricted) throw new Error('Worker interaction is unavailable.');
+    if (this.#storageFailure) throw new Error(this.#storageFailure);
+    signal?.throwIfAborted();
+    const owned = () => {
+      const job = this.#state.jobs.find(item => item.id === control.taskId);
+      if (!job || job.sessionId !== control.contextId || job.delegation?.parentSessionId !== parentSessionId) throw new Error('This worker task belongs to another parent.');
+      return job;
+    };
+    const job = owned();
+    const events = async () => await this.#command('runtime.list_turn_events', { sessionId: job.sessionId, turnId: job.turnId }) as RuntimeEvent[];
+    const observe = async () => workerObservation(owned(), await events(), this.#remotePermissionAuthority);
+    if (control.operation === 'observe') {
+      let snapshot = await observe();
+      if (control.after !== undefined && control.after > snapshot.cursor) throw new Error('invalid_cursor');
+      if (control.waitMs && control.after === snapshot.cursor && ['queued', 'working', 'input_required'].includes(snapshot.state)) {
+        await this.#events({ sessionId: job.sessionId, turnId: job.turnId, afterSequence: snapshot.cursor, waitMs: control.waitMs, limit: 100 }, signal);
+        snapshot = await observe();
+      }
+      return snapshot;
+    }
+    const key = JSON.stringify([parentSessionId, control.contextId, control.messageId]);
+    const encoded = JSON.stringify(control), previous = this.#state.workerReceipts?.[key];
+    if (previous && previous.input !== encoded) throw new Error('idempotency_conflict');
+    if (control.operation === 'cancel') {
+      // Cancellation is inherently idempotent and always reconciles live state.
+      // A full receipt journal or an earlier uncertain stop must not prevent stopping.
+      if (['running', 'queued'].includes(job.status)) await this.#call('chat.stop', { id: job.id });
+      const result = { accepted: true, cancelRequested: true, confirmed: !['running', 'queued'].includes(owned().status), state: owned().status };
+      if (previous || Object.keys(this.#state.workerReceipts ?? {}).length < 10_000)
+        await this.#write(state => { (state.workerReceipts ??= {})[key] = { input: encoded, state: 'applied', result }; });
+      return result;
+    }
+    if (previous) {
+      if (previous.state === 'rejected') throw new Error(previous.error);
+      if (previous.state !== 'applied') throw new Error('outcome_unknown: reconcile the original task; do not issue a new message ID.');
+      return previous.result;
+    }
+    if (Object.keys(this.#state.workerReceipts ?? {}).length >= 10_000) throw new Error('Worker receipt capacity reached; archive the service before admitting more mutations.');
+    const active = ['running', 'queued'].includes(job.status);
+    if (!active && !(control.operation === 'message' && control.delivery === 'queue')) throw new Error('stale_target');
+    const before = await events();
+    if (control.operation === 'respond') {
+      const interaction = workerObservation(job, before, this.#remotePermissionAuthority).interactions.find(item => item.interactionId === control.response.interactionId);
+      if (!interaction) throw new Error('interaction_not_pending');
+      validateRemoteResponse(interaction, control.response, 'parent_delegate');
+    }
+    await this.#write(state => { (state.workerReceipts ??= {})[key] = { input: encoded, state: 'pending' }; });
+    try {
+      let result: unknown;
+      if (control.operation === 'message') {
+        if (control.delivery === 'insert') {
+          // The exact running turn is mandatory; the Runtime rejects a completed target.
+          result = await this.#command('runtime.enqueue_guidance', { protocol: 'bush.runtime_guidance.v1',
+            sessionId: job.sessionId, turnId: job.turnId, messageId: control.messageId, content: control.text,
+            createdAt: new Date().toISOString(), mode: 'append_context', metadata: { subagentAuthor: 'parent', realtimeParent: true } });
+          result = { accepted: true, applied: false, receipt: result };
+        } else {
+          const taskId = `queued-${createHash('sha256').update(key).digest('hex').slice(0, 40)}`;
+          result = await this.#call('delegation.submit', { taskId, turnId: `turn-${taskId}`, sessionId: job.sessionId,
+            parentSessionId, parentTurnId: job.delegation!.parentTurnId, prompt: control.text, queue: true,
+            permissionMode: job.input.permissionMode, language: job.input.language, worker: job.delegation!.worker });
+        }
+      } else if (control.response.kind === 'answer') {
+        result = await this.#command('runtime.answer_solution_selection', { sessionId: job.sessionId, turnId: job.turnId,
+          selectionId: control.response.interactionId, kind: 'text', text: control.response.text });
+      } else {
+        const request = before.find(event => event.kind === 'permission_requested' && event.payload.permissionId === control.response.interactionId);
+        if (!request || request.kind !== 'permission_requested') throw new Error('interaction_not_pending');
+        result = await this.#command('runtime.answer_permission', { protocol: 'bush.runtime_permission_answer.v1',
+          permissionId: request.payload.permissionId, answerId: control.messageId, decision: control.response.decision,
+          grantedCapabilityIds: control.response.decision === 'allow_once' ? request.payload.requestedCapabilityIds : [] });
+      }
+      await this.#write(state => { state.workerReceipts![key] = { input: encoded, state: 'applied', result }; });
+      return result;
+    } catch (error) {
+      // A host failure may happen after an effect. Retain pending instead of authorizing a retry.
+      throw error;
+    }
+  }
+
   eventStream(input: unknown, signal: AbortSignal): AsyncIterable<RuntimeEvent> {
     if (this.#closing) throw new Error('Agent is shutting down.');
     const request = z.object({ sessionId: id, turnId: id, afterSequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() }).strict().parse(input);
@@ -970,6 +1091,7 @@ export class AgentService {
       // A failed disposer must not skip process termination or lock release.
       // Every caller awaits this same cleanup, including its final diagnostics.
       await attempt('Model access', () => this.#disposeModelAccess?.());
+      await attempt('Worker connections', async () => { if (this.#workers) await (await this.#workers).close(); });
       await attempt('Pending mutations', () => this.#mutations);
       await attempt('Embodied host', () => this.#embodied?.close());
       await attempt('Voice sessions', () => this.#embodied?.voice.closeAll());
@@ -990,7 +1112,7 @@ export class AgentService {
 }
 function publicJob({ input, ...job }: AgentJob) {
   const prompt = readUserPrompt(input.text, input.userMessageMetadata);
-  return { ...job, text: prompt.text, modelId: input.modelId,
+  return { ...job, text: prompt.text, modelId: input.modelId, permissionMode: input.permissionMode, language: input.language,
     ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
     ...(prompt.context ? { userMessageMetadata: promptContextMetadata(prompt) } : {}),
     ...(Array.isArray(input.userMessageMetadata?.attachments) ? { attachments: input.userMessageMetadata.attachments.slice(0, 8) } : {}) };

@@ -23,7 +23,7 @@ test('one subagent entry guides the current child and rejects stale names and fo
   tasks.start({ taskId: 'current', parentSessionId: 'parent', parentTurnId: 'previous', childSessionId: 'child', childTurnId: 'second', prompt: 'next', inheritContext: true, inheritedMessageCount: 0 });
   const receipt = await invoke('subagent', { task_id: 'old', prompt: 'Keep it read only' });
   assert.equal(receipt.result.status, 'message_queued'); assert.equal(receipt.result.taskId, 'current');
-  assert.equal(guidance[0].turnId, 'second'); assert.equal(guidance[0].mode, 'interrupt_and_continue');
+  assert.equal(guidance[0].turnId, 'second'); assert.equal(guidance[0].mode, 'append_context');
   assert.equal((await invoke('subagent', { task_id: 'old', prompt: 'x' }, 'foreign')).kind, 'failed');
   assert.equal((await invoke('subagent', { task_id: 'unknown', prompt: 'x' })).kind, 'failed');
   assert.equal((await invoke('subagent', { resume_task_id: 'old', prompt: 'x' })).kind, 'failed');
@@ -44,6 +44,46 @@ function* respond(request, name, args, text = 'parent done') {
   else yield { ...base, sequence: 1, kind: 'text_delta', delta: text };
   yield { ...base, sequence: 2, kind: 'response_completed', finishReason: name ? 'tool_calls' : 'stop' };
 }
+
+for (const remote of [false, true]) test(`a ${remote ? 'remote' : 'local'} child question wakes a waiting parent and resumes the original child`, { timeout: 8000 }, async () => {
+  const tasks = new SubagentTaskStore(), registry = new ToolRegistry();
+  let parentRound = 0, childRound = 0, childRequest, answered = false;
+  const pending = Promise.withResolvers();
+  const provider = { async *stream(request) {
+    if (request.metadata.agentRole === 'child') {
+      if (++childRound === 1) { await new Promise(resolve => setTimeout(resolve, 80)); yield* respond(request, 'ask_parent', { text: 'Which date should I use?' }); }
+      else { assert.match(JSON.stringify(request.messages), /October 30/); yield* respond(request, undefined, undefined, 'child finished'); }
+      return;
+    }
+    parentRound++;
+    if (parentRound === 1) yield* respond(request, 'subagent', { prompt: 'Prepare the release', ...(remote ? { target_agent: 'worker' } : {}) });
+    else if (parentRound === 2) yield* respond(request, 'tasks', { action: 'wait', mode: 'all' });
+    else if (!answered) {
+      const notice = request.messages.find(m => typeof m.content === 'string' && /Your child task .* (asks:|needs a response)/.test(m.content));
+      assert.ok(notice, JSON.stringify(request.messages.slice(-4)));
+      const task = tasks.list('parent')[0];
+      const interactionId = remote ? 'question' : JSON.parse(notice.content.split('\n').at(-1)).interactionId;
+      answered = true;
+      yield* respond(request, 'subagent', { task_id: task.taskId, response: { kind: 'answer', interactionId, text: 'October 30' } });
+    } else yield* respond(request);
+  } };
+  const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, subagentTaskStore: tasks, ...(remote ? { remoteAgents: {
+    list: async () => [{ id: 'worker', name: 'Worker', agentId: 'instance' }],
+    run: async request => { childRequest = request; await pending.promise; return { status: 'completed', finalResponse: 'child finished', errorMessage: '', usage: {} }; },
+    control: async ({ control }) => {
+      assert.equal(control.taskId, childRequest.taskId);
+      if (control.operation === 'respond') { assert.equal(control.response.text, 'October 30'); pending.resolve(); return { accepted: true }; }
+      return { contextId: control.contextId, taskId: control.taskId, cursor: 1, state: answered ? 'completed' : 'input_required', progress: { phase: 'waiting', text: '', completedActions: 0, failedActions: 0 },
+        interactions: answered ? [] : [{ kind: 'question', contextId: control.contextId, taskId: control.taskId, interactionId: 'question', text: 'Which date should I use?', suggestions: [], blocking: true, createdAt: new Date().toISOString() }] };
+    },
+  } } : {}) });
+  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'parent-request', sessionId: 'parent', turnId: 'parent-turn', model: 'fixture',
+    prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Prepare the release.' } }], tools: registry.definitions(), permissionMode: 'all_free', metadata: { individuation: { habits: false, predictions: false } } }, { signal: AbortSignal.timeout(6000) });
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
+  assert.equal(answered, true); assert.equal(tasks.list('parent').length, 1);
+  assert.equal(tasks.list('parent')[0].status, 'completed');
+  assert.ok(parentRound <= 5, 'answering must not create a polling model loop');
+});
 test('resumes original fork history after host recreation with the current parent model configuration', async t => {
   const dataRoot = await mkdtemp(join(tmpdir(), 'subagent-resume-'));
   t.after(() => rm(dataRoot, { recursive: true, force: true }));
@@ -148,9 +188,10 @@ test('resume preserves clean configuration while intersecting current permission
   assert.equal(requests[2].metadata.subagentMode, 'clean', 'repeated continuations retain the original explicit mode');
 });
 
-test('tasks wait any returns the first result while its sibling stays running', async () => {
+test('tasks wait any returns the first result while its sibling stays running', async t => {
   let releaseB, parentRound = 0;
   const gateB = new Promise(resolve => { releaseB = resolve; });
+  t.after(() => releaseB());
   const registry = new ToolRegistry();
   registry.register({ definition: { name: 'release_b', inputSchema: { type: 'object' } },
     manifest: { effect_kind: 'observation', operation: 'test', risk: 'low', owner: 'test', dispatch_scope: 'turn', mutating: false }, decodeInput: value => value,

@@ -1,5 +1,7 @@
 # ChatGPT plan access (SIWC)
 
+[English](SIWC_INTEGRATION.md) · [简体中文](SIWC_INTEGRATION.zh-CN.md)
+
 CardBush supports the official Sign in with ChatGPT flow for desktop and local CLI Agent models. In **Settings → Models → Add model**, choose **ChatGPT · SIWC**, select **Continue with ChatGPT**, grant plan access in the system browser, then choose a model from that account’s catalog. The account center also supports adding accounts, signing in again, opening usage settings and signing out.
 
 This integration is separate from the existing OpenAI connector/MCP account. A connector login does not grant inference access. API-key model configurations continue to use their existing adapters and credentials.
@@ -35,7 +37,7 @@ Model discovery calls the public `/v1/models` endpoint with the selected account
 
 ## Current boundary
 
-SIWC registrations and refresh tokens stay in the local desktop vault. They are not copied to the CLI, remote Agent services or obtained from Codex/ChatGPT credential files. Account access is granted only to the explicitly constructed local CLI host, never by inherited environment flags. A remote Agent requires its own supported credentials; resolving a local SIWC account there produces an explicit error. The remote model editor does not offer local ChatGPT sign-in.
+SIWC registrations and refresh tokens stay in the local desktop vault. They are not copied to the CLI, remote Agent services or obtained from Codex/ChatGPT credential files. Account access is granted only to the explicitly constructed local CLI host, never by inherited environment flags. A remote Agent requires its own supported credentials; resolving a local SIWC account there produces an explicit error. Worker registration does not import a local ChatGPT sign-in.
 
 An eligible ChatGPT account must complete the official browser authorization before real plan-backed requests can be verified. Automated tests use isolated accounts, signed JWT fixtures, real loopback callbacks and mocked OpenAI HTTP responses; they do not establish production entitlement or consume a user’s plan.
 

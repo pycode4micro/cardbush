@@ -1,5 +1,7 @@
 # Local storage maintenance
 
+[English](cache-maintenance.md) · [简体中文](cache-maintenance.zh-CN.md)
+
 Settings exposes three operations. None removes project files, task workspaces, installed plugins/Skills, credentials, drafts, cumulative usage or provider-side caches. Browser localStorage/IndexedDB are not cleared wholesale; history deletion prunes only its conversation presentation caches.
 
 | Operation | Owner and retention policy |

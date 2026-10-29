@@ -1,5 +1,7 @@
 # Bush Runtime Electron transport
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 This package owns the renderer-side transport for the Electron Runtime Host. It
 implements the same structural `RuntimeTransport` boundary consumed by the
 CardBush product client, but it does not project events into React state.

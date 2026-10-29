@@ -1,5 +1,7 @@
 # AGENTS.md 与设置入口
 
+[English](AGENT_INSTRUCTIONS.en.md) · [简体中文](AGENT_INSTRUCTIONS.md)
+
 设置 → 全局约束编辑应用用户目录中的 `AGENTS.md`。这是全局规则唯一的持久化来源；设置不再维护按项目区分的提示词，也不再从旧项目上下文 localStorage 读取内容。
 
 每次开始新的根任务轮次时，客户端读取文件正文，并以 `user` 角色加入请求前缀：

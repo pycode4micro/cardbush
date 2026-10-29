@@ -1,8 +1,10 @@
 # CardBush appearance style configuration
 
+[English](APPEARANCE_STYLE_CONFIG.md) · [简体中文](APPEARANCE_STYLE_CONFIG.zh-CN.md)
+
 CardBush can import a small, declarative JSON palette from **Settings → Personalization → Appearance**. Imported files do not execute CSS or JavaScript; they only override an allowlisted set of theme colors.
 
-可直接复制并修改仓库中的 [`cardbush-theme-example.json`](examples/cardbush-theme-example.json)，再从 **设置 → 个性化 → 外观** 导入。导入只读取受控颜色字段，不执行 CSS 或 JavaScript。
+Copy and edit [`cardbush-theme-example.json`](examples/cardbush-theme-example.json), then import it through **Settings → Personalization → Appearance**. Only controlled color fields are read; CSS and JavaScript are not executed.
 
 ```json
 {

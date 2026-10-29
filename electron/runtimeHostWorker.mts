@@ -888,11 +888,12 @@ host = new InMemoryRuntimeHost({
   durableCoordination: Boolean(runtimeStateRoot),
   durableSubagentTasks: Boolean(runtimeStateRoot),
   subagentPermissionPolicy,
-  remoteAgents: process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_WEB_REMOTE_AGENTS !== '1' ? undefined : {
+  remoteAgents: process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_WEB_REMOTE_AGENTS !== '1' && process.env.CARDBUSH_LOCAL_WORKERS !== '1' ? undefined : {
     list: signal => mcpHost.request('agents.list', {}, signal),
     run: (input, signal) => mcpHost.request('agents.delegate', input, signal, true),
     read: (input, signal) => mcpHost.request('agents.read-child', input, signal),
     guide: (input, signal) => mcpHost.request('agents.guide-child', input, signal),
+    control: (input, signal) => mcpHost.request('agents.control', input, signal, true),
   },
   ...(!process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && process.env.CARDBUSH_BROWSER_USE_URL?.trim() ? {
     inheritBrowserScope: async (parentSessionId: string, childSessionId: string, signal?: AbortSignal) => {

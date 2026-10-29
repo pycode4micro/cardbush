@@ -1,5 +1,7 @@
 # Windows compatibility
 
+[English](WINDOWS_COMPATIBILITY.md) · [简体中文](WINDOWS_COMPATIBILITY.zh-CN.md)
+
 Current source builds target **Windows 10 version 1809 (build 17763) or later,
 x64**, including Windows 10 LTSC 2019/2021, Windows 10 22H2 and Windows 11.
 This is the shared desktop and MSIX baseline. The published Microsoft Store

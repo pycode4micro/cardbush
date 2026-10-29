@@ -20,7 +20,8 @@ export type ConversationEntry = z.infer<typeof conversationEntrySchema>;
 export const assistantProfileSchema = z.object({
   name: z.string().trim().min(1).max(60).default('assistant'),
   persona: z.string().max(2000).default('温和、可靠、自然地交流。尊重用户的停顿和思考时间。'),
-  targetAgent: z.string().max(200).default(''),
+  // Read old profiles without silently restoring a retired remote assistant host.
+  targetAgent: z.string().max(200).default('').transform(() => ''),
   microphoneMuted: z.boolean().default(false),
   outputMuted: z.boolean().default(false),
 }).strict();

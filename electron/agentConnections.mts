@@ -160,6 +160,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
     }
     if (!this.#closing && this.#desired.has(id) && this.#managed.has(id)) {
       const attempts = this.#attempts.get(id) ?? 0; this.#attempts.set(id, attempts + 1);
+      if (attempts >= 3) { this.#desired.delete(id); return; }
       this.#timer(id, Math.min(30_000, (this.options.reconnectDelayMs ?? 1_000) * 2 ** Math.min(attempts, 5)), () => {
         void closed.then(() => {
           if (!this.#closing && this.#desired.has(id)) return this.#connection(id);
@@ -167,7 +168,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
       });
     }
   }
-  async connect(id: string) { if (this.#closing) throw Error('Agent connections are closing.'); this.#desired.add(id); return (await this.#connection(id)).info; }
+  async connect(id: string) { if (this.#closing) throw Error('Agent connections are closing.'); if (!this.#desired.has(id)) this.#attempts.delete(id); this.#desired.add(id); return (await this.#connection(id)).info; }
   async disconnect(id: string) {
     this.#desired.delete(id); this.#managed.delete(id); this.#clearTimer(id); this.#attempts.delete(id); this.#errors.delete(id);
     this.#cancelDeferredConfiguration(id); this.#configuration.delete(id);
@@ -266,7 +267,8 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
     }).finally(() => { if (this.#configuration.get(id) === entry) this.#configuration.delete(id); });
     return entry.promise;
   }
-  async call(id: string, operation: AgentOperation, input: Record<string, unknown> = {}) {
+  async call(id: string, operation: AgentOperation, input: Record<string, unknown> = {}, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     this.#desired.add(id);
     const live = await this.#connection(id), { client } = live;
     try {
@@ -283,7 +285,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
         }
       }
       // Never replay a failed mutation. Task submissions have their own durable identity.
-      return await client.call(operation, input);
+      return await client.call(operation, input, signal);
     }
     catch (error) { const entry = this.#clients.get(id); if (error instanceof AgentNetworkError && entry?.client === client) this.#failed(id, entry, error); throw error; }
   }

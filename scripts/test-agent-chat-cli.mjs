@@ -599,7 +599,7 @@ async function until(read, predicate, timeout = 15000) {
 function cli(t, args, { env = {}, input = '', interactive = false, cwd = resolve('.'), executable = entry } = {}) {
   // Exercise Node's actual readline through pipes with TTY flags; no UI framework
   // or real model. Signals are delivered as native readline key sequences.
-  const child = spawn(process.execPath, [interactive ? resolve('scripts/helpers/agent-chat-cli-terminal.mjs') : executable, ...args],
+  const child = spawn(process.execPath, [interactive ? resolve('scripts/helpers/agent-chat-cli-terminal.mjs') : env.CARDBUSH_TEST_AGENT_URL && executable === entry ? resolve('scripts/helpers/agent-chat-cli-fixture.mjs') : executable, ...args],
     { cwd, env: { ...process.env, CARDBUSH_AGENT_TOKEN: '', CARDBUSH_AGENT_URL: '', CARDBUSH_CLI_CONFIG: join(tempRoot, 'unconfigured.json'), ...env }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const state = { child, stdout: '', stderr: '', combined: '', result: undefined };
   if (env.CARDBUSH_CLI_DATA_DIR) localChildren.set(child, env.CARDBUSH_CLI_DATA_DIR);
@@ -612,31 +612,21 @@ function cli(t, args, { env = {}, input = '', interactive = false, cwd = resolve
   return state;
 }
 
-test('missing saved tokens explain the remembered connection without switching servers or starting a local Runtime', async t => {
-  await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, "saved O'Brien "));
-  t.after(async () => { assert.ok(resolve(root).startsWith(tempRoot + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
-  let requests = 0;
-  const server = createServer((_req, res) => { requests++; res.end('{}'); });
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  t.after(() => new Promise(done => server.close(done)));
-  const url = `http://127.0.0.1:${server.address().port}/`, tokenFile = join(root, 'removed-token');
+test('retired remote CLI options fail before connections and saved endpoints do not redirect local chat', async t => {
+  await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, "retired-remote-"));
   const env = { CARDBUSH_CLI_CONFIG: join(root, 'cli.json'), CARDBUSH_CLI_DATA_DIR: join(root, 'local-data'), CARDBUSH_CLI_PROFILE_DIR: join(root, 'profile') };
-  const saved = JSON.stringify({ url, tokenFile, agentId: 'saved-agent' });
-  await writeFile(env.CARDBUSH_CLI_CONFIG, saved);
-  for (const args of [[], ['--resume'], ['--resume', 'saved-session']]) {
-    const result = await cli(t, args, { env, interactive: true }).result;
-    assert.equal(result.code, 1, result.stderr);
-    assert.match(result.stderr, /Cannot read saved Agent token file:/);
-    assert.ok(result.stderr.includes(tokenFile)); assert.ok(result.stderr.includes(env.CARDBUSH_CLI_CONFIG));
-    assert.match(result.stderr, /ENOENT/); assert.match(result.stderr, /--url <Agent-URL> --token-file/);
-    assert.match(result.stderr, /cardbush --local/);
+  t.after(async () => { await localStopped(env.CARDBUSH_CLI_DATA_DIR); assert.ok(resolve(root).startsWith(tempRoot + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
+  let requests = 0; const server = createServer((_req, res) => { requests++; res.end('{}'); });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => new Promise(done => server.close(done)));
+  const url = `http://127.0.0.1:${server.address().port}/`, tokenFile = join(root, 'removed-token');
+  const saved = JSON.stringify({ url, tokenFile, agentId: 'saved-agent' }); await writeFile(env.CARDBUSH_CLI_CONFIG, saved);
+  for (const args of [['--url', url, '--sessions'], ['--token-file', tokenFile, '--sessions']]) {
+    const result = await cli(t, args, { env }).result;
+    assert.equal(result.code, 1); assert.match(result.stderr, /Remote chat has been removed/);
   }
-  const explicit = await cli(t, ['--url', url, '--token-file', tokenFile, '--sessions'], { env }).result;
-  assert.equal(explicit.code, 1); assert.match(explicit.stderr, /Cannot read Agent token file:/);
-  assert.doesNotMatch(explicit.stderr, /Saved CLI connection:/);
-  assert.equal(requests, 0, 'unreadable credentials must fail before any connection');
-  assert.equal(await readFile(env.CARDBUSH_CLI_CONFIG, 'utf8'), saved, 'failure preserves the selected connection');
-  await assert.rejects(readFile(join(env.CARDBUSH_CLI_DATA_DIR, 'agent.json')), { code: 'ENOENT' });
+  const local = await cli(t, ['--sessions'], { env: { ...env, CARDBUSH_AGENT_URL: url, CARDBUSH_AGENT_TOKEN: 'not-for-chat' } }).result;
+  assert.equal(local.code, 0, local.stderr); assert.equal(local.stdout, '');
+  assert.equal(requests, 0); assert.equal(await readFile(env.CARDBUSH_CLI_CONFIG, 'utf8'), saved);
 });
 
 test('CLI help and argument errors do not need a server or credentials', async t => {
@@ -659,7 +649,7 @@ test('CLI help and argument errors do not need a server or credentials', async t
   const invalid = await cli(t, ['--permission', 'invalid']).result;
   assert.equal(invalid.code, 1); assert.match(invalid.stderr, /Invalid --permission/);
   const missing = await cli(t, ['--url', 'http://127.0.0.1:1', '--prompt', 'test']).result;
-  assert.equal(missing.code, 1); assert.match(missing.stderr, /--token-file/);
+  assert.equal(missing.code, 1); assert.match(missing.stderr, /Remote chat has been removed/);
   for (const args of [['resume'], ['--resume'], ['--resume', ''], ['--resume', 's', 'extra'], ['unknown'], ['--resume', 's', '--session', 's'], ['resume', 's', '--resume', 's'],
     ['--resume', 's', '--project', 'p'], ['--full-access', '--permission', 'task_free'], ['--local', '--url', 'http://127.0.0.1:1'], ['--local', '--token-file', 'token']]) {
     assert.equal((await cli(t, args).result).code, 1, JSON.stringify(args));
@@ -756,7 +746,7 @@ async function fixture(t) {
   ] } });
   const token = 'fixture-cli-token-'.repeat(3), tokenFile = join(root, 'access-token'); await writeFile(tokenFile, token + '\n');
   http = await serveAgentHttp(service, { host: '127.0.0.1', port: 0, token });
-  const env = { CARDBUSH_AGENT_URL: `http://127.0.0.1:${http.port}`, CARDBUSH_AGENT_TOKEN: token, CARDBUSH_CLI_CONFIG: join(root, 'cli.json') };
+  const env = { CARDBUSH_TEST_AGENT_URL: `http://127.0.0.1:${http.port}`, CARDBUSH_TEST_AGENT_TOKEN: token, CARDBUSH_CLI_CONFIG: join(root, 'cli.json') };
   const cwd = join(root, '当前工作区 with spaces'); await mkdir(cwd);
   return { root, cwd, service, calls, env, tokenFile, release, setText: text => { nextText = text; }, setTool: tool => { nextTool = tool; }, tools: (...tools) => toolQueue.push(...tools), block: value => { blocked = value; }, failNext: message => { nextFailure = message; },
     stopService: async () => { await http.close(); http = undefined; await service.close(); } };
@@ -1086,7 +1076,7 @@ test('queued CLI prompts appear once in turn order after the preceding completio
   assert.equal(f.calls.at(-1).reasoning?.effort, 'high', 'resume keeps explicit effort');
 });
 
-test('real CLI /artifact lists turn files, Tab selects and Enter downloads/opens once without another model request', async t => {
+test('real CLI /artifact lists turn files, Tab selects and Enter opens the local file once without another model request', async t => {
   let process, resumed, finished = false, stage = 'setup';
   t.after(() => {
     if (!finished) t.diagnostic(stage + '\n' + stripVTControlCharacters((resumed ?? process)?.stderr ?? '').slice(-7000));
@@ -1119,12 +1109,11 @@ test('real CLI /artifact lists turn files, Tab selects and Enter downloads/opens
   const opened = await until(() => readFile(log, 'utf8').catch(() => ''), text => text.trim().length > 0);
   const entries = opened.trim().split('\n').map(line => JSON.parse(line));
   assert.equal(entries.length, 1); assert.equal(entries[0].content, 'value\nsecond file'); assert.equal(entries[0].kind, 'file');
-  assert.equal(downloads, 1); assert.equal(f.calls.length, 1);
-  await until(() => process.stderr, text => text.includes('Opened downloaded copy: Table'));
+  assert.equal(downloads, 0); assert.equal(f.calls.length, 1);
+  await until(() => process.stderr, text => text.includes('Opened: Table'));
   stage = 'quit';
   process.child.stdin.write('/q\r'); assert.equal((await process.result).code, 0);
-  const directory = resolve(dirname(entries[0].path)); assert.ok(directory.startsWith(resolve(tmpdir()) + sep + 'cardbush-artifact-'));
-  await rm(directory, { recursive: true, force: true });
+  assert.equal(resolve(entries[0].path), resolve(second), 'local chat opens the original file instead of copying it');
   const sessions = await original('sessions.list', { projection: 'summary' });
   stage = 'resume';
   resumed = cli(t, ['--resume', sessions[0].sessionId], { env: f.env, cwd: f.cwd, interactive: true });
@@ -1205,7 +1194,7 @@ test('real Agent HTTP: one-shot, piped multiline, continuation, project and mode
   const project = await f.service.call('projects.save', { name: 'CLI project', path: projectDir });
   const models = await cli(t, ['--models'], { env: f.env }).result;
   assert.equal(models.code, 0); assert.equal(models.stdout, 'fixture\tfixture-model (default)\n');
-  const one = await cli(t, ['--token-file', f.tokenFile, '--project', project.id, '--prompt', 'first instruction'], { env: f.env }).result;
+  const one = await cli(t, ['--project', project.id, '--prompt', 'first instruction'], { env: f.env }).result;
   assert.equal(one.code, 0, one.stderr); assert.equal(one.stdout, 'fixture-answer-1\n');
   const sessions = await f.service.call('sessions.list', { projection: 'summary' }); assert.equal(sessions.length, 1);
   assert.equal(sessions[0].metadata.projectId, project.id);
@@ -1618,36 +1607,43 @@ test('real Agent pipe mode stops at permission instead of hanging or granting it
   assert.doesNotMatch(result.stdout, /NOT_APPROVED/);
 });
 
-test('cardbush entry trusts cwd, remembers the connection and resumes without rebinding or copying secrets', async t => {
-  const f = await fixture(t), executable = resolve('bin/cardbush.mjs');
-  const first = await cli(t, ['--token-file', f.tokenFile, '--prompt', 'current folder'], { env: f.env, cwd: f.cwd, executable }).result;
+test('CLI wrapper uses the local host and preserves the resumed workspace across directories', async t => {
+  const f = await fixture(t); await f.stopService(); const env = await sharedCliEnv(f), client = await localClient(env);
+  const executable = resolve('bin/cardbush.mjs');
+  const first = await cli(t, ['--prompt', 'current folder'], { env, cwd: f.cwd, executable }).result;
   assert.equal(first.code, 0, first.stderr);
-  const session = (await f.service.call('sessions.list', { projection: 'summary' }))[0];
-  const saved = await f.service.call('sessions.get', { sessionId: session.sessionId });
+  const session = (await client.call('sessions.list', { projection: 'summary' }))[0];
+  const saved = await client.call('sessions.get', { sessionId: session.sessionId });
   assert.equal(saved.metadata.runtimeWorkspace.workspaceDir, await realpath(f.cwd));
-  assert.equal(JSON.parse(await readFile(join(f.service.root, 'agent.json'), 'utf8')).jobs[0].input.permissionMode,
-    'task_free', 'directory trust does not grant full tool access');
-  const configText = await readFile(f.env.CARDBUSH_CLI_CONFIG, 'utf8');
-  const config = JSON.parse(configText);
-  assert.equal(config.tokenFile, f.tokenFile); assert.equal(config.agentId, f.service.info().id);
-  assert.doesNotMatch(configText, /fixture-cli-token|fixture-model-secret/);
-  assert.doesNotMatch(first.stdout + first.stderr, /\x1b\[/, 'redirected output contains no ANSI');
-  const savedEnv = { CARDBUSH_CLI_CONFIG: f.env.CARDBUSH_CLI_CONFIG };
-  const other = join(f.root, 'another directory'); await mkdir(other);
-  const resumed = await cli(t, ['--resume', session.sessionId, '--prompt', 'continue'], { env: savedEnv, cwd: other, executable }).result;
+  const other = join(f.root, 'other folder'); await mkdir(other);
+  const resumed = await cli(t, ['--resume', session.sessionId, '--prompt', 'continue'], { env, cwd: other, executable }).result;
   assert.equal(resumed.code, 0, resumed.stderr);
-  assert.equal((await f.service.call('sessions.get', { sessionId: session.sessionId })).metadata.runtimeWorkspace.workspaceDir, await realpath(f.cwd));
-  assert.match(JSON.stringify(f.calls[1].input), /current folder/);
-  const next = await cli(t, ['--prompt', 'new cwd'], { env: savedEnv, cwd: other, executable }).result;
-  assert.equal(next.code, 0, next.stderr);
-  const projects = await f.service.call('projects.list'); assert.equal(projects.projects.length, 2);
-  const current = (await f.service.call('sessions.list', { projection: 'summary' })).find(item => item.sessionId !== session.sessionId);
-  assert.equal((await f.service.call('sessions.get', { sessionId: current.sessionId })).metadata.runtimeWorkspace.workspaceDir, await realpath(other));
-  const listed = await cli(t, ['--projects'], { env: savedEnv, cwd: other, executable }).result;
-  assert.equal(listed.code, 0, listed.stderr); assert.match(listed.stdout, /another directory/);
-  const denied = await cli(t, ['--url', 'http://127.0.0.1:1', '--models'], { env: savedEnv, executable }).result;
-  assert.equal(denied.code, 1); assert.match(denied.stderr, /--token-file/, 'saved token is never reused for another URL');
-  assert.equal(await readFile(f.env.CARDBUSH_CLI_CONFIG, 'utf8'), configText, 'ephemeral URL overrides do not overwrite the saved connection');
+  assert.equal((await client.call('sessions.get', { sessionId: session.sessionId })).metadata.runtimeWorkspace.workspaceDir, await realpath(f.cwd));
+  const fresh = await cli(t, ['--prompt', 'new folder'], { env, cwd: other, executable }).result;
+  assert.equal(fresh.code, 0, fresh.stderr);
+  const current = (await client.call('sessions.list', { projection: 'summary' })).find(item => item.sessionId !== session.sessionId);
+  assert.equal((await client.call('sessions.get', { sessionId: current.sessionId })).metadata.runtimeWorkspace.workspaceDir, await realpath(other));
+  await assert.rejects(readFile(f.env.CARDBUSH_CLI_CONFIG), { code: 'ENOENT' });
+  const denied = await cli(t, ['--url', 'http://127.0.0.1:1', '--models'], { env, executable }).result;
+  assert.equal(denied.code, 1); assert.match(denied.stderr, /Remote chat has been removed/);
+  await client.close();
+});
+
+test('worker CLI registers a protected connection, verifies identity and never opens remote chat', async t => {
+  const f = await fixture(t), dataRoot = join(f.root, 'worker-local');
+  const env = { CARDBUSH_CLI_DATA_DIR: dataRoot, CARDBUSH_CLI_PROFILE_DIR: join(f.root, 'worker-profile') };
+  const call = args => cli(t, ['worker', ...args], { env, cwd: f.cwd, executable: resolve('bin/cardbush.mjs') }).result;
+  const added = await call(['add', '--name', 'Release worker', '--url', f.env.CARDBUSH_TEST_AGENT_URL, '--token-file', f.tokenFile]);
+  assert.equal(added.code, 0, added.stderr); assert.match(added.stdout, /Verified/);
+  const id = added.stdout.split('\t')[0].trim(); assert.ok(id);
+  assert.doesNotMatch(added.stdout + added.stderr, /fixture-cli-token|fixture-model-secret/);
+  assert.doesNotMatch(await readFile(join(dataRoot, 'workers', 'connections.json'), 'utf8'), /fixture-cli-token/);
+  assert.equal((await readFile(join(dataRoot, 'workers', 'credentials.key'))).length, 32);
+  const listed = await call(['list']); assert.equal(listed.code, 0, listed.stderr); assert.ok(listed.stdout.includes(id));
+  const verified = await call(['verify', id]); assert.equal(verified.code, 0, verified.stderr);
+  assert.deepEqual(await f.service.call('chat.jobs'), []); assert.equal(f.calls.length, 0);
+  const removed = await call(['remove', id]); assert.equal(removed.code, 0, removed.stderr);
+  assert.equal((await call(['list'])).stdout, '');
 });
 
 test('local CLI starts without a service or token, owns cwd, resumes and preserves approval modes', async t => {

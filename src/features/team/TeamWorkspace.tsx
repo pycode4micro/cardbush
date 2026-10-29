@@ -12,9 +12,11 @@ import { teamNodeTitle } from './teamFlowGraph';
 import { requestTeamDocument, useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
 import type { CreationChatOptions } from '../mdPresentation/CreationConversation';
 import './team-workspace.css';
+import { canRegisterWorker, RemoteWorkers, useWorkerConnections } from './RemoteWorkers';
 
 export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { language: AppLanguage; chatOptions?: CreationChatOptions; onOpenConversation?: (id: string) => void }) {
   const state = useTeamWorkspace();
+  const workers = useWorkerConnections();
 
   const { tab } = useTeamWorkspaceNavigation();
   const [agent, setAgent] = useState<DefinitionReceipt<RegisteredAgent> | null>(null);
@@ -39,7 +41,7 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
   const newAgent = () => setAgent({ revision: 0, updatedAt: '', definition: registeredAgentSchema.parse({ id: `agent-${crypto.randomUUID()}`, name: uiText(language)('teamWorkspace.newAgent'), system_prompt: uiText(language)('teamWorkspace.defineResponsibilitiesPrinciplesAndDeliverables') }) });
   const names = (value: string) => value.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
   return <div className="native-team-workspace">
-    {(error || state.error) && <p role="alert">{error || state.error}</p>}
+    {(error || state.error || workers.error) && <p role="alert">{error || state.error || workers.error}</p>}
     {tab === 'library' && <TeamWorkflowLibrary teams={state.teams} runs={state.runs} language={language}/>}
     {tab === 'agents' && <section className="native-team-management"><h1>{uiText(language)('teamWorkspace.agents')}</h1><div className="native-team-columns">
       <div className="native-team-list"><button type="button" onClick={newAgent}><Plus size={16} />{uiText(language)('teamWorkspace.registerAgent')}</button>
@@ -53,19 +55,31 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
         <label>{uiText(language)('agentConnectionForm.name')}<input required value={agent.definition.name} onChange={event => changeAgent({ name: event.target.value })} /></label>
         <label>{uiText(language)('agentDefinitionInspector.id')}<input required disabled={agent.revision > 0} value={agent.definition.id} onChange={event => changeAgent({ id: event.target.value })} /></label>
         <label>{uiText(language)('teamWorkspace.description')}<textarea value={agent.definition.description} onChange={event => changeAgent({ description: event.target.value })} /></label>
+        <label>{uiText(language)('remoteWorkers.execution')}<select value={agent.definition.remote?.connection_id ?? ''} onChange={event => {
+          const target = workers.connections.find(item => item.id === event.target.value);
+          changeAgent({ remote: target?.agentId ? { connection_id: target.id, agent_id: target.agentId } : undefined,
+            ...(target ? { allowed_tools: undefined, settings: undefined, hooks: [], guards: [] } : {}) });
+        }}><option value="">{uiText(language)('remoteWorkers.local')}</option>
+          {agent.definition.remote && !workers.connections.some(item => item.id === agent.definition.remote?.connection_id) && <option value={agent.definition.remote.connection_id} disabled>{uiText(language)('remoteWorkers.unavailable')}</option>}
+          {workers.connections.map(item => <option key={item.id} value={item.id} disabled={!canRegisterWorker(item)}>{item.name}</option>)}
+        </select></label>
         <label>{uiText(language)('agentDefinitionInspector.systemPrompt')}<textarea required rows={8} value={agent.definition.system_prompt} onChange={event => changeAgent({ system_prompt: event.target.value })} /></label>
         <label className="native-team-check"><input type="checkbox" checked={agent.definition.enabled} onChange={event => changeAgent({ enabled: event.target.checked })} />{uiText(language)('teamWorkspace.enabled')}</label>
-        <label className="native-team-check"><input type="checkbox" checked={agent.definition.guards.includes('read_only')} onChange={event => changeAgent({ guards: event.target.checked ? ['read_only'] : [] })} />{uiText(language)('teamWorkspace.readOnlyGuard')}</label>
+        {!agent.definition.remote && <><label className="native-team-check"><input type="checkbox" checked={agent.definition.guards.includes('read_only')} onChange={event => changeAgent({ guards: event.target.checked ? ['read_only'] : [] })} />{uiText(language)('teamWorkspace.readOnlyGuard')}</label>
         <details><summary>{uiText(language)('teamWorkspace.toolsAndHooks')}</summary>
           <label className="native-team-check"><input type="checkbox" checked={agent.definition.allowed_tools !== undefined} onChange={event => changeAgent({ allowed_tools: event.target.checked ? [] : undefined })} />{uiText(language)('teamWorkspace.restrictAvailableTools')}</label>
           {agent.definition.allowed_tools && <label>{uiText(language)('teamWorkspace.toolNamesOnePerLine')}<textarea value={agent.definition.allowed_tools.join('\n')} onChange={event => changeAgent({ allowed_tools: names(event.target.value) })} /></label>}
           <label>{uiText(language)('teamWorkspace.installedTrustedHookIdsOnePerLine')}<textarea value={agent.definition.hooks.join('\n')} onChange={event => changeAgent({ hooks: names(event.target.value) })} /></label>
-        </details>
+        </details></>}
+        {agent.definition.remote && <p>{uiText(language)('remoteWorkers.description')}</p>}
         <div className="native-team-actions"><button type="submit" disabled={busy}><Save size={16} />{uiText(language)('teamWorkspace.saveAgent')}</button>
           {agent.revision > 0 && <button type="button" disabled={busy} onClick={() => void perform(async () => { await teamCommand(AGENT_REGISTRY_COMMAND, { action: 'delete', agent_id: agent.definition.id, expected_revision: agent.revision }); setAgent(null); })}><Trash2 size={16} />{uiText(language)('teamWorkspace.deleteDefinition')}</button>}
         </div>
       </form>}
-    </div></section>}
+    </div><RemoteWorkers language={language} connections={workers.connections} refresh={workers.refresh} onRegister={connection => {
+      setAgent({ revision: 0, updatedAt: '', definition: registeredAgentSchema.parse({ id: `worker-${crypto.randomUUID()}`, name: connection.name,
+        system_prompt: uiText(language)('teamWorkspace.defineResponsibilitiesPrinciplesAndDeliverables'), remote: { connection_id: connection.id, agent_id: connection.agentId } }) });
+    }}/></section>}
     <div className="team-graph-tab" hidden={tab !== 'teams'}><TeamGraphWorkspace language={language} chatOptions={chatOptions} onOpenConversation={onOpenConversation} visible={tab === 'teams'}/></div>
     {tab === 'runs' && <section className="native-team-management"><h1>{uiText(language)('teamSidebar.runs')}</h1><div className="native-team-runs">{!state.runs.length && <p>{uiText(language)('teamWorkspace.noRunsYet')}</p>}
       {[...state.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(run => <article key={run.id}><strong>{run.workflow.name}</strong><span>{statusLabel(run.status)}</span><p>{run.input}</p>

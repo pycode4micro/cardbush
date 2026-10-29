@@ -1,6 +1,8 @@
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { ModelRequest } from '@cardbush/bush-protocol';
+import { remoteResponseSchema } from '@cardbush/bush-protocol';
+import { z } from 'zod';
 import sharp from 'sharp';
 
 export async function normalizeWebImage(bytes: Buffer) {
@@ -21,11 +23,13 @@ export function webToolDefinition<T extends ModelRequest['tools'][number]>(tool:
   if (tool.name === 'list_subagent_options') return { ...tool, description: 'List only administrator-registered remote Agents authorized for this account. Use an exact returned id as subagent.target_agent. No local Agents, roles, auto-assembly, model or plugin synchronization is available.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false } };
   if (tool.name !== 'subagent') return tool;
-  return { ...tool, description: 'Asynchronously delegate to an authorized remote Agent. For new work provide prompt and target_agent from list_subagent_options. Follow up with prompt and task_id from a previous dispatch in this conversation. Never create local Agents or inherit/copy parent history, credentials, files or configuration. Continue independent work, then tasks to inspect results. The remote service uses its own model, instructions and tools.',
-    inputSchema: { type: 'object', additionalProperties: false, required: ['prompt'], properties: {
-      prompt: { type: 'string', minLength: 1, maxLength: 100000, description: 'Self-contained assignment, necessary facts and expected output. No credentials or personal file paths.' },
+  return { ...tool, description: 'Asynchronously delegate to an authorized remote worker. For new work provide prompt and target_agent from list_subagent_options. Follow up with task_id and prompt, optionally delivery queue/insert; answer a pending interaction with task_id and response. Inspect pending questions/permissions with tasks. Never create local Agents or copy parent history, credentials, files or configuration. The worker retains its own model, tools and authority; human-required approvals cannot be granted by the parent model.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {
+      prompt: { type: 'string', minLength: 1, maxLength: 100000, description: 'Self-contained assignment or message. Required unless response supplies the complete reply. No credentials or personal file paths.' },
       target_agent: { type: 'string', minLength: 1, description: 'Authorized remote Agent id; required for new work.' },
       task_id: { type: 'string', minLength: 1, description: 'Owned remote task id for a follow-up; do not combine with target_agent.' },
+      delivery: { type: 'string', enum: ['queue', 'insert'], description: 'task_id and prompt only: queue a later run, or insert guidance into the exact active run. Do not combine with response.' },
+      response: { ...z.toJSONSchema(remoteResponseSchema), description: 'task_id only: answer an observed question or submit an exact structured permission decision. Authority is validated on the worker, never supplied here.' },
     } } };
 }
 const inside = (root: string, path: string) => { const rel = relative(root, path); return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith('../') && !rel.startsWith('..\\')); };
@@ -40,11 +44,14 @@ export async function webToolDenial(request: ModelRequest | undefined, name: str
   const { _display_title: _displayTitle, ...input } = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   if (name === 'list_subagent_options' && Object.keys(input).length) return 'Only the authorized remote Agent list is available.';
   if (name === 'subagent') {
-    if (Object.keys(input).some(key => !['prompt', 'target_agent', 'task_id'].includes(key)) ||
-        typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 100000 ||
+    const replying = input.response !== undefined;
+    if (Object.keys(input).some(key => !['prompt', 'target_agent', 'task_id', 'delivery', 'response'].includes(key)) ||
+        ((!replying || input.prompt !== undefined) && (typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 100000)) ||
         Boolean(input.target_agent) === Boolean(input.task_id) ||
+        (input.delivery !== undefined && (!input.task_id || !['queue', 'insert'].includes(String(input.delivery)) || replying)) ||
+        (replying && (!input.task_id || !remoteResponseSchema.safeParse(input.response).success)) ||
         [input.target_agent, input.task_id].some(value => value !== undefined && (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(value))))
-      return 'Only remote delegation is allowed: provide prompt and either an authorized target_agent or an owned remote task_id. Local Agents and configuration overrides are forbidden.';
+      return 'Only authorized remote delegation or owned task messages/responses are allowed. Local Agents, configuration overrides and caller-supplied approval authority are forbidden.';
   }
   if (input.environment !== undefined && input.environment !== 'local') return 'Only the account-local environment is available.';
   const conversion = name === WEB_IMAGE_PREFIX + 'image_convert';

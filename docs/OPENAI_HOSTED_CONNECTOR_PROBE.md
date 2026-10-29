@@ -1,5 +1,7 @@
 # OpenAI 托管连接器接入与独立验证
 
+[English](OPENAI_HOSTED_CONNECTOR_PROBE.en.md) · [简体中文](OPENAI_HOSTED_CONNECTOR_PROBE.md)
+
 已作为实验性能力接入 CardBush 的插件设置与现有 MCP 客户端。CardBush 自行登录、保存和刷新凭据，不启动 Codex，也不读取 Codex 的配置、会话或登录文件。
 独立验证脚本继续保留；它与桌面共用 OAuth 和结果校验代码，但仅在进程内存中保留凭据。
 

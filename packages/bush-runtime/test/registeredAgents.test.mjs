@@ -12,6 +12,31 @@ async function temporary(t) {
   return root;
 }
 const role = (id = 'warehouse') => ({ id, name: 'Warehouse', system_prompt: 'Work from verified inventory data. Report evidence.', allowed_tools: [] });
+
+test('registered remote roles pin identity and revision without copying local tools or parent history', async t => {
+  const root = await temporary(t), agents = new RegisteredAgentStore(join(root, 'roles')), tasks = new SubagentTaskStore(), registry = new ToolRegistry();
+  const requests = []; let identity = 'instance';
+  registerSubagentTool(registry, tasks, () => assert.fail('A remote role must not create a local child'), { agents, asyncDispatch: false,
+    remoteAgents: { list: async () => [{ id: 'worker', name: 'Worker', agentId: identity }], run: async request => { requests.push(request); return { status: 'completed', finalResponse: 'reviewed', errorMessage: '', usage: {} }; } } });
+  const parent = { requestId: 'r', sessionId: 'parent', turnId: 'turn', model: 'private-model', tools: registry.definitions(), metadata: {}, permissionMode: 'all_free' };
+  const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: () => assert.fail('Unexpected approval') } });
+  const invoke = input => coordinator.execute({ protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name: 'subagent', argumentsText: JSON.stringify(input) },
+    { requestId: 'r', sessionId: 'parent', turnId: 'turn', round: 1, ordinal: 0 }, undefined, { request: parent, contextMessages: [{ role: 'system', content: 'PRIVATE HISTORY' }] });
+  const role = { id: 'reviewer', name: 'Release reviewer', system_prompt: 'Review the release', remote: { connection_id: 'worker', agent_id: 'instance' } };
+  assert.equal((await invoke({ action: 'save', expected_revision: 0, agent: { ...role, allowed_tools: ['terminal_exec'] } })).kind, 'failed');
+  assert.equal((await invoke({ action: 'save', expected_revision: 0, agent: role })).kind, 'returned');
+  const first = await invoke({ agent_id: 'reviewer', prompt: 'Review today' }); assert.equal(first.kind, 'returned', JSON.stringify(first));
+  const original = tasks.list('parent')[0]; assert.equal(original.agentName, 'Release reviewer');
+  assert.equal(requests[0].worker.revision, 1); assert.doesNotMatch(JSON.stringify(requests[0]), /PRIVATE HISTORY|private-model|terminal_exec/);
+  await agents.put({ ...role, system_prompt: 'Changed instructions' }, 1);
+  assert.equal((await invoke({ task_id: original.taskId, prompt: 'Continue' })).kind, 'returned');
+  assert.equal(requests[1].worker.revision, 1); assert.equal(requests[1].sessionId, requests[0].sessionId);
+  identity = 'different-instance';
+  assert.equal((await invoke({ agent_id: 'reviewer', prompt: 'New task' })).kind, 'failed');
+  identity = 'instance'; await agents.put({ ...role, enabled: false }, 2);
+  assert.equal((await invoke({ task_id: original.taskId, prompt: 'Continue disabled' })).kind, 'failed');
+  assert.equal(requests.length, 2);
+});
 const result = request => ({ terminal: { kind: 'turn_terminal', payload: { status: 'completed', finalMessageId: 'answer' } }, session: { turns: [{ turnId: request.turnId, usage: {}, messages: [{ messageId: 'answer', message: { role: 'assistant', content: 'Verified result' } }] }] } });
 let serial = 0;
 function fixture(agents, root) {

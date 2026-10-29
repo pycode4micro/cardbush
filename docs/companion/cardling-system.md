@@ -1,5 +1,7 @@
 # Cardling Companion System
 
+[English](cardling-system.md) · [简体中文](cardling-system.zh-CN.md)
+
 Reference sheet: `cardling-concepts.png`
 
 ## Direction

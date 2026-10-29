@@ -1,7 +1,9 @@
 # Platform boundaries and releases
 
+[English](CROSS_PLATFORM_RELEASE.md) · [简体中文](CROSS_PLATFORM_RELEASE.zh-CN.md)
+
 For the shared Runtime, Product Host, desktop/Agent adapters and data ownership,
-see [current architecture](ARCHITECTURE.md). Desktop installation and an independent
+see [current architecture](ARCHITECTURE.en.md). Desktop installation and an independent
 Agent service are separate deployment targets; updating one does not update the other.
 
 `@cardbush/platform/contracts` contains browser-safe types and pure capability
@@ -31,7 +33,7 @@ meaningful differences rather than improve portability.
 
 ## Release gate
 
-For the current **Windows 11 Store MSIX** submission, use [the MSIX release
+For the current **Windows Store MSIX** submission, use [the MSIX release
 procedure](MSIX_STORE_RELEASE.md) and its exact-package validation. The signed
 NSIS/AppImage publishing steps below describe those separate release channels;
 they are not prerequisites for preparing a Windows-only Store submission.

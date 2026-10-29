@@ -1,5 +1,7 @@
 # Bundled display calendars
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 The two JSON calendars cover 2020–2050 and ship offline. Both start disabled.
 Enabling the Chinese calendar also enables lunar date labels. Calendar data
 does not create schedules, reminders or automation jobs.

@@ -1,5 +1,7 @@
 # Microsoft Store MSIX release
 
+[English](MSIX_STORE_RELEASE.md) · [简体中文](MSIX_STORE_RELEASE.zh-CN.md)
+
 To install CardBush on Windows, use the public [Microsoft Store listing](https://apps.microsoft.com/detail/9N7XNDD5WRGS). The listing shows the version currently available. This document is for maintainers building and submitting packages; installation does not require the private identity or signing files below.
 
 CardBush can be packaged for the **MSIX or PWA app** submission path. This path
@@ -105,15 +107,15 @@ In particular verify:
   browser, update and uninstall behavior under the MSIX package identity.
 - Notifications, taskbar identity and shortcut handling, which currently use the
   desktop application's AppUserModelID.
-- Browser Use: pair real Chrome and Edge with bundled extension **1.2.1** over
+- Browser Use: pair real Chrome and Edge with the extension bundled in this build over
   authenticated loopback WebSocket. Reload old loaded extension copies first.
   Validate simultaneous independent pairings, default selection, explicit switching,
-  session isolation and individual revocation. Configuration belongs to the current
+  session isolation and individual revocation. Record the tested manifest version. Configuration belongs to the current
   package's LocalState/browser-connector directory. No Native Messaging
   registration, execution alias or virtualization exclusion is declared.
 - Check `preference.json`, `pairing.json`, `routes.json` and active `bridge.json`.
-  Ordinary exit preserves pairings/bindings; Disable revokes all credentials while
-  retaining bindings; Remove configuration also removes `routes.json`. No revoked
+  Ordinary exit preserves pairings/bindings; temporary Disable stops control while
+  retaining pairings; Remove configuration revokes credentials; the shared local broker retains invalid route bindings, while legacy isolated connectors remove their routes file. No revoked
   or offline session may silently use another browser or replay an uncertain action.
 - Test explicit disable, credential revocation, app/browser restarts, occupied
   ports, upgrade and migration of any old external registration. The bundled

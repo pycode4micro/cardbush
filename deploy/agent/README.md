@@ -1,84 +1,37 @@
-# 独立 Agent：服务模式与可选桌面
+# 独立 worker：服务部署与可选桌面
+
+[English](README.en.md) · [简体中文](README.md)
 
 默认是纯 Node 服务，不主动启动内置桌面或浏览器。插件可以通过自己的 MCP 连接提供桌面和浏览器能力；是否可用由实际连接和观测决定。
 
 ## 默认服务
 
-### 原生终端对话
+### 本机 CLI 与远程 worker
 
-服务与 CLI 由同一份版本交付。使用 [npm 发布包](../../docs/NPM_AGENT.md) 部署时，一次安装同时注册 `cardbush` 与 `cardbush-agent`：
-
-```sh
-npm install --global /absolute/path/cardbush-1.0.12.tgz
-cardbush serve --data-dir /srv/cardbush/agent-a --name Agent-A
-```
-
-发布到 npm 后可将 tarball 路径换为 `cardbush@版本号`。源码或目录包部署时，在程序目录注册一次命令：
+当前源码已取消 App Agents 独立对话和 CLI 远程聊天；已发布 npm 包可能早于此迁移，使用新协议需更新两端。服务与 CLI 由同一 npm 包交付，部署会同时提供 `cardbush` 和 `cardbush-agent`，不需要桌面 App。源码目录可在构建后 `npm link --ignore-scripts` 注册命令；Docker 镜像也包含两入口。
 
 ```sh
-npm link --ignore-scripts
-```
-
-Docker 的普通服务、可选桌面和 Web 镜像也包含这两个命令。进入容器后可用 `cardbush --url http://127.0.0.1:4780 --token-file /data/access-token` 连接对应实例，沿用实例鉴权；按实际服务端口与数据目录调整。更新部署时两个命令一起更新，无需安装桌面 App。
-
-之后进入要工作的文件夹，直接启动本地 CLI，无需预先启动 HTTP 服务或提供服务令牌：
-
-```sh
+npm install -g cardbush
 cd /path/to/project
-cardbush                         # 当前目录，默认申请审批
-cardbush --full-access           # 当前目录，本次启动使用完全访问
-cardbush --resume <会话ID>          # 继续原会话，保留原工作区
-cardbush --local                 # 已保存远程连接时，明确改用本机
+cardbush
+cardbush --full-access
+cardbush --resume
+cardbush --resume SESSION_ID
 ```
 
-CLI 使用 Node 自带 readline 和普通标准输入输出，保留终端滚动记录、复制和重定向，不使用全屏 TUI、浏览器或额外绘制层。新会话默认信任当前目录，复用 Agent 的项目登记和路径校验，将其作为直接工作区；不会弹出额外的目录信任确认。目录信任与工具审批分开，默认仍为申请审批，完全访问也保留宿主强制限制、沙盒策略和进程保护。本地执行使用当前系统账号；连接服务时使用服务账号。
+本地 CLI 不需 HTTP 服务或 token，经私有 IPC 共用本机 Runtime，在 `~/.cardbush/cli-agent` 保存自己的会话，独立于 HTTP 服务。共享当前用户的 App 模型/插件/MCP/网络/沙箱配置，但不共享桌面会话数据库。服务端运行 CLI 也属于该服务器的本机执行，不附着 HTTP 实例数据库。
 
-CLI 自身的启动、帮助、补全、状态、审批操作提示和配置示例统一使用英文。模型回复及模型生成的问题继续遵循用户的语言，文件路径、插件描述和用户输入保留原文；英文 UI 只作为缺少用户语言证据时的兜底，不覆盖对话语言。
+CLI 的命令、引导、模型配置、Ctrl+Enter 插入引导、队列、恢复、`/session`、`/tools`、`/artifact`、文件引用、本机 Shell、习惯开关、日志及退出码统一维护在[CLI 使用指南](../../docs/CLI.zh-CN.md)，不在部署指南重复另一套说明。API key 模型无需 App；ChatGPT 账号模型仍需本地桌面授权桥，不能把本机 OAuth 注册复制给远程服务。
 
-本地模式复用同一套 Agent 运行时、工具和审批。多个 CLI 窗口通过仅本机可用的私有管道共用一个后台 Runtime，不监听网络端口，无需用户提供令牌。每次正常启动创建独立会话；`--resume ID` 连接指定会话，同一会话的任务仍顺序执行。不同会话可并行使用同一项目目录，保留文件版本检查、资源互斥和 AgentChatroom 沟通。窗口退出只断开自身连接，其他窗口和任务继续运行；所有窗口断开且任务空闲后后台自动退出。会话数据独立保存在 `~/.cardbush/cli-agent`，不会读写桌面版的会话数据库。CLI 与 App 直接共用当前用户配置根目录下的 `product-host/config/*.json`：模型、插件、MCP、网络及沙盒设置只有一份，并使用相同的配置存储和校验。插件和 Skill 也共用该用户目录；浏览器使用已有的认证连接，不重新注册桌面浏览器连接器。没有桌面配置时，CLI 也在同一位置创建配置，之后 App 可以直接使用。
-
-没有模型或配置文件无效时，CLI 会显示配置文件的完整路径、带字段说明的示例，并等待用户编辑保存后按回车重新读取。可在此直接输入 `vim "文件路径"` 等编辑命令，在同一个终端完成配置；退出编辑器后单独按回车才会重新加载。不打开桌面设置，不发送模型测试请求；`/quit`、`/exit` 或 Ctrl+C 可退出。Windows 默认模型配置位于 `%APPDATA%/cardbush/product-host/config/models.json`，同目录保存 `models.example.json`。示例使用合法 JSON 的 `_comment` 字段解释参数，说明字段可保留或删除，必填的 `model` 初始为空；支持多个模型与 `defaultModelId`。已有文件不会被示例覆盖，格式错误也不会回显配置中的密钥。管道模式未配置模型时显示路径并退出（退出码 2），不会等待输入或提交提示。
-
-`CARDBUSH_CLI_DATA_DIR` 仅指定 CLI 会话、任务和日志目录，不再另选一份模型设置。旧 CLI 数据目录内的配置原样保留，但不覆盖 App 设置。`CARDBUSH_CLI_PROFILE_DIR` 可显式指定另一套 App 配置根目录（例如服务器上独立的用户配置）。默认目录为 Windows 的 `%APPDATA%/cardbush`、macOS 的 `~/Library/Application Support/cardbush`、Linux 的 `$XDG_CONFIG_HOME/cardbush`（未设置时为 `~/.config/cardbush`）。数据目录的锁由共享后台持有，客户端不再独占它；运行中不能把同一数据目录切换到另一套配置或程序安装。升级前已打开的旧版 CLI 需要正常退出一次，再启动新版以启用共享后台。Fork 生成新的会话 ID，历史从源会话复制，后续执行独立；项目目录中的文件仍是共享资源。
-
-- 直接输入并回车开始一轮；任务运行时输入区仍可编辑，回车将消息保存到下一轮队列，`/steer 内容` 引导当前任务。任务完成后自动接续队列；未提交的草稿和光标位置保留。引导显示已排队，收到宿主实际应用事件后才显示已应用。提交回执丢失时按原请求 ID 查询，手动重试同一内容复用原请求，避免重复执行。
-- `/new` 新建会话，`/quit`、`/exit` 退出并显示恢复命令，`/help` 查看选项，`/logs` 显示本地后台诊断日志位置。`/q` 不再是独立命令；交互输入 `/q` 后回车确认匹配出的 `/quit`。运行中的 `/model`、`/settings`、`/session`、`/new`、`/shell` 和 `!命令` 提示先完成或停止当前任务。
-- 启动信息显示实际模型、推理强度、工作目录、权限和会话；`/model` 先选择模型，再选择 reasoning effort，`/model ID` 直接进入该模型的强度选择。方向键选择、回车确认，Tab 只补全，Esc 从强度页返回模型页、从模型页返回对话；也支持输入编号或名称，`/cancel` 放弃整次修改。选项复用 App 的协议规则，可选择 `Model setting` 跟随共享配置、`Provider default` 不指定强度，或显式选择可用等级。两步确认后才生效，不改 App 默认项；普通发送和队列消息均使用所选强度，`--resume` 和 `/session [ID]` 恢复目标会话最近一次提交的模型和强度，保留显式的 `Provider default`；空会话或原模型已不可用时使用当前默认模型及其配置强度，不沿用上一会话的选择。启动时显式 `--model ID` 优先，使用该模型自身的配置强度。`/settings` 显示共用配置的位置，文件保存后按回车重新读取模型并刷新工具配置。默认模型通过同一份 `models.json` 或 App 设置修改。
-- 对话按 App 的 Runtime 消息分段追加显示，支持标题、粗体、代码块和链接；思考与正在运行的工具共用一条临时状态行，完成后留下简短工具记录。工具失败与 App 共用结构化状态判断；计时从实际执行开始，排队等待不计入执行时长。
-- 终端中的回复按窗口宽度排版，宽窗口限制阅读行长；标题、段落、列表项和完成状态之间留出间距，列表续行缩进对齐，工具名称和英文单词尽量保持完整。代码块保留原有空白，超长行由终端自然折行；重定向到文件或管道时保留原始 Markdown。
-- Markdown 表格按显示宽度对齐列和边框，支持单元格换行、左右/居中对齐、行内代码和转义竖线。流式输出按完整行追加，窄窗口放不下多列时按字段展开，不截掉内容；代码块中的表格示例和重定向输出保留原文。
-- 用户输入使用灰色背景，提交后保留，回复使用默认背景；底部输入区最多显示光标附近 4 行，其上显示当前活动，其下显示操作或补全提示。流式回复在上方追加，仅重绘未完成的输出行和小型输入区，不清空历史或切换全屏缓冲区。设置 `NO_COLOR` 时保留无配色输出，纯文本终端继续使用顺序问答。
-- 输入 `/` 即时提示内置命令与当前 Agent 的可调用技能、插件命令；完整匹配和命令名前缀优先，例如 `/e` 只匹配以 `/e` 开头的命令，无前缀匹配时才按字符顺序模糊匹配，例如 `/qt` 匹配 `/quit`。输入 `@` 浏览当前会话工作区的文件和目录，可在一句话中引用多个文件。含空格的路径使用 `@"目录/文件 名.txt"`。文件引用复用现有附件机制，不预读内容或放宽权限；目录引用保留在正文，模型按需读取。普通 Skill 按文件引用传递，插件命令保留原来的调用和审批机制。
-- 命令候选默认选中第一项，`↑/↓` 切换候选；`Enter` 确认当前命令，`Tab` 只填入，不执行。审批、提问、会话、模型与强度菜单也用方向键和回车确认，不必再输入字母或编号。审批默认选中 `Deny`，选中 `Allow once` 后按回车即提交本次允许；直接回车保持拒绝。配置重载等文本提示仍保留空回车默认操作，主动用方向键选择候选后，回车提交该候选。文件或路径候选按回车先填入草稿，再次回车发送。无候选时上下键回看输入历史。提示只占输入框下方几行，本地候选同步更新，输入时不切回通用操作提示；远程查询按会话隔离，迟到的结果不会改写新草稿。审批答案不进入对话历史。
-- `/shell vim "文件路径"` 或 `!vim "文件路径"` 在当前终端执行本机命令；输入 `/sh` 可补全 `/shell`；单独 `/shell` 打开原生 Shell，使用其命令和路径补全，输入 `exit` 返回 CLI。聊天输入框中的 Shell 参数不查询远程 Agent 文件列表，避免误填远程路径。`/settings` 和首次模型配置提示中也可直接输入 `vim "文件路径"` 等命令。复用平台 Shell 发现及 `CARDBUSH_TERMINAL_SHELL` 配置，交互程序直接接管标准输入输出；退出后恢复 CLI 草稿、光标及终端输入模式，不另开窗口。聊天中普通文本不会被猜测为系统命令，命令及输出不提交模型。连接远程 Agent 时，这个入口仍在本机执行，使用 CLI 启动目录；本地会话使用会话工作目录。原生程序使用当前系统账号；模型工具仍经过原来的审批、沙盒及资源保护。任务运行中先完成或停止任务，再使用该入口。
-- `/habit on|off` 开关用户习惯记忆，`/prediction on|off` 开关下一步预测；不带参数或使用 `status` 查看当前状态，参数支持 Tab 补全。两个开关按会话独立保存，`--resume`、`/session` 恢复设置，`/new` 默认关闭，fork 继承后独立修改。同一会话的多个窗口在下次提交时读取最新设置；已提交和排队的消息保留提交时的设置。任务执行中先完成或停止，再修改开关。命令本身不调用模型，不修改 App 全局设置，也不删除已有记忆。
-- 多行或超过 1000 字符的粘贴折叠为字数/行数标记，按回车后恢复完整文本作为一条消息提交，粘贴中的换行和 Tab 不会执行命令或接受候选。单次最多 1,000,000 字符，超大文本请引用文件。
-- 计划更新只显示进度和当前步骤，`/plan` 查看完整计划。模型请求失败后回到输入提示，可修改设置再发送，不自动重提失败请求。管道和单轮命令仍用错误退出码报告失败。
-- `--sessions` 列出会话；`cardbush --resume ID` 恢复会话，兼容原有 `--session ID`。正在执行的任务继续读取原任务事件，不重复派发。
-- 正常退出、Ctrl+C 退出或任务报错后，只要已经有会话，都会显示 `cardbush --resume ID`；终端中的 ID 使用蓝色，重定向或设置 `NO_COLOR` 时输出纯文本。
-- `--models`、`--projects` 列出可选项；`--model ID` 选择模型，`--project ID` 为新会话指定已有服务器项目。跨机器连接时用 `--project` 指定服务器目录，CLI 不上传或映射本地目录。
-- Ctrl+C 在执行时停止当前任务，空闲时退出；菜单内 Esc 拒绝当前审批或取消当前选择，菜单外 Esc 在执行时停止且保留草稿，空闲时清空草稿。审批和提问临时接管输入，完成后恢复原草稿；未完成的粘贴不会串入审批答案。默认权限为 `task_free`，`--full-access` 对应 `all_free`。恢复会话默认申请审批，需要完全访问时重新传入 `--full-access`。
-- 提问支持单题或最多 3 题一组。CLI 按顺序询问，方向键选择、回车确认，也可直接输入自己的答案，收齐后统一提交；按 Esc 或输入 `/cancel` 取消整组，已填写的部分不会发送。桌面和 Web 卡片支持前后切换、保留答案并在最后提交全部。
-- `--prompt "问题"` 执行一轮后退出；管道或输入重定向将整个标准输入作为一条提示，适合多行内容。回复写到 stdout，状态和提示写到 stderr。
-- 本地 Runtime 和 MCP 后台日志单独写入 CLI 数据目录的 `logs/runtime.log`，不会覆盖正在编辑的输入行。复用诊断脱敏及轮转：每份最多 8 MiB，保留当前文件与 3 份历史文件，跨日也轮转。任务状态、工具失败及启动失败仍正常提示；远程服务原有日志输出保持不变。
-- 管道模式遇到审批或提问会停止本次任务，退出码为 2；用终端恢复会话后继续。成功为 0，错误为 1，停止为 130。
-
-例如：
+远程实例在本地 App 的 Team 员工中注册，或：
 
 ```sh
-cardbush --prompt "检查当前项目" > reply.md
-cardbush --resume <会话ID> --full-access
+cardbush worker add --name Worker-A --url https://agent.example.com --token-file /private/access-token
+cardbush worker verify CONNECTION_ID
+cardbush worker list
 ```
 
-也可以连接已经启动并配置模型的 Agent 服务：
-
-```sh
-cardbush --url "<服务地址>" --token-file "<令牌文件>"
-```
-
-首次显式使用 `--token-file` 连接成功后，将地址、Agent 身份和令牌文件的绝对位置保存到 `~/.cardbush/cli.json`，不复制令牌或模型密钥。之后无需再次传参；使用 `--local` 可忽略保存的服务连接与连接环境变量。`CARDBUSH_CLI_CONFIG` 可指定独立的 CLI 连接配置文件。
-
-原有 `CARDBUSH_AGENT_TOKEN`、`CARDBUSH_AGENT_URL` 仍可使用；选择服务模式而未指定地址时默认 `http://127.0.0.1:4780`。切换到其他服务地址不会自动复用已保存的令牌，也不会静默切回本地运行。连接远端使用 HTTPS 或已有 SSH 隧道。未注册命令时仍可使用 `node <程序目录>/bin/cardbush.mjs` 或 `npm run agent:chat -- ...`；直接运行 `cardbush` / Node 时保留终端当前目录。
+再让本地 Agent 将已验证连接/实例绑定到子 Agent 角色。连接不复制模型密钥、插件配置、主会话历史或个人文件。`--url/--token-file` 仅用于 worker 注册，不再是聊天选项。服务按自己的默认模型/工作区、权限上限执行；详见[服务架构](../../docs/AGENT_SERVICES.md)及[交互协议](../../docs/SUBAGENT_REMOTE_PROTOCOL.zh-CN.md)。当前令牌仍为受信任宿主保存的管理凭据，不是可发给任意第三方的受限委派 token。
 
 ### 部署与检查
 
@@ -99,10 +52,9 @@ Windows 终端工具要求 PowerShell 7（pwsh），不回退 Windows PowerShell
 
 源码构建完整核心目录包使用 `npm run package:agent -- --out <新目录>`；包内含服务、CLI、必要资源与部署 Skill。`DEPLOY.txt` 提供入口，实际安装通过发布版本或目标平台依赖安装完成。
 
+## 可选 worker 桌面
 
-## 可选 Personal Agent 桌面
-
-仅在需要可视化操作的独立 Personal Agent 上使用覆盖配置：
+仅在需要可视化操作的独立 worker 上使用覆盖配置：
 
 ```sh
 docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml up --build -d
@@ -112,13 +64,13 @@ docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml
 
 Docker 需要支持用户命名空间、Buildx 和 Compose v2；Chromium 使用普通用户和 sandbox。seccomp 配置基于 [Playwright v1.63.0](https://github.com/microsoft/playwright/blob/v1.63.0/utils/docker/seccomp_profile.json)，另外允许 Chromium 在其用户命名空间内使用 `chroot`，以兼容 `cap_drop: ALL`；没有给容器增加 capability。[Chromium 沙盒实现](https://chromium.googlesource.com/chromium/src/sandbox/+/refs/heads/main/linux/services/credentials.cc)使用这个调用，Docker 的原配置会按容器 capability 筛选规则。参见 [Docker 说明](https://docs.docker.com/engine/containers/run/)和 [Playwright 容器说明](https://playwright.dev/python/docs/docker)。不要用 privileged、host IPC、Docker socket、宿主 X socket 或 `--no-sandbox` 解决启动失败。主机禁用用户命名空间时应调整该独立部署的运行条件，不能绕过限制。
 
-两个配置默认都只映射宿主回环地址 4780，通过 CardBush 的 HTTPS/SSH Agent 连接访问。服务首次启动在独立卷内生成 `/data/access-token`；按现有 Agent 接入流程安全取得令牌，不把令牌写到仓库、日志或截图。所有桌面操作复用已有 Agent API 鉴权；没有公开 VNC/CDP/X11 端口。
+两个配置默认都只映射宿主回环地址 4780，通过 HTTPS/SSH worker 注册访问。服务首次启动在独立卷内生成 `/data/access-token`；按现有 Agent 接入流程安全取得令牌，不把令牌写到仓库、日志或截图。所有桌面操作复用已有 Agent API 鉴权；没有公开 VNC/CDP/X11 端口。
 
 卷名由 Compose 项目确定。不同 Agent 用不同 `--project-name`，不要共享数据卷。首次创建时确认卷的 UID 与所选镜像用户匹配；两个镜像都使用 UID 1100。升级保留卷，不执行 `down -v`。浏览器配置位于 `/data/desktop/browser`，包含登录数据，应按凭据保护备份；不会从客户端复制浏览器登录状态。
 
 ## 使用与边界
 
-- 成功启用后，CardBush Agent 会话标题栏出现“查看电脑”，在现有右侧面板显示 Linux 桌面。默认服务没有该入口。
+- 桌面能力由 worker 的能力快照及已鉴权管理接口提供。App 不再有独立 Agents 会话入口；当前子任务检查仍复用已有会话后端，不能把服务的桌面能力声明当作已提供新的用户接管入口。默认服务不启动桌面。
 - 首版通过已鉴权 RPC 按需获取 JPEG 画面（约每 700ms 一帧，取决于网络/操作耗时），适合桌面与网页操作，不是音视频流或低延迟远程游戏协议。预览隐藏时停止取帧。分辨率由 `CARDBUSH_DESKTOP_SIZE` 配置，默认 1600×900。
 - “接管”获取服务端独占控制权，Computer Use 与 Browser Use 共用仲裁。只有持有租约的窗口可输入；租约 20 秒未续期自动失效，关闭预览主动释放。已派发操作完成后才确认接管，排队操作不会越过接管。接管失败/断线时不能宣称获得控制。
 - 点击、拖动、滚动和快捷键作用于同一远程桌面，输入栏支持中文等 Unicode。图片按原尺寸映射坐标，留白不可点击；旧尺寸与过期画面拒绝输入。
@@ -126,7 +78,7 @@ Docker 需要支持用户命名空间、Buildx 和 Compose v2；Chromium 使用�
 - 需要模型读取截图时，当前对话需开启已有的视觉输入选项。桌面部署不会覆盖用户关闭视觉的设置；关闭时仍可预览桌面和使用 DOM 文本，但截图不会进入模型上下文。
 - 模型观察绑定会话和 turn，操作后必须重新观察；另一会话或用户操作会使旧状态失效。Computer Use 还会检查截图是否变化，动态页面可能需要重新观察。终端完整访问不属于强制桌面隔离边界，不能授予不受信任的 Agent 任意终端权限后依赖接管锁限制它。
 - 关闭面板、断开客户端、停止 turn 均不关闭浏览器。停止容器时才关闭桌面和浏览器；保留卷会保留浏览器配置，但不承诺恢复所有临时网页状态。超时且执行结果不明时停止继续控制，不自动重放点击。
-- 桌面是每个 Personal Agent 共享的一台电脑，不是每个会话独立桌面。需要不同用户/账户隔离时部署不同容器和卷。
+- 桌面是每个 worker 共享的一台电脑，不是每个会话独立桌面。需要不同用户/账户隔离时部署不同容器和卷。
 
 ## 验证
 
@@ -148,6 +100,6 @@ docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml
 
 该检查使用临时浏览器配置和本机测试网页，不调用模型、不读取真实账号。还需通过桌面客户端验证预览、接管/交还、关闭预览保持页面、容器重启保留登录配置，以及普通镜像不启动 X/浏览器。不要把单元测试或构建成功记作这些实机验收已通过。
 
-真实客户端检查使用 `scripts/run-agents-ui-test.mjs --desktop-live`：将测试实例经 SSH 转发到本机回环地址，设置 `CARDBUSH_TEST_DESKTOP_URL` 和 `CARDBUSH_TEST_DESKTOP_TOKEN_FILE`。令牌只在测试主进程读取，不注入渲染器。可在测试容器中单独启动 `node scripts/agent-desktop/ui-fixture.mjs`，打开容器内 `http://127.0.0.1:7890/`，验证页面实际收到中文输入；该测试网页不随正常服务启动。
+旧版独立 Agents UI 的历史客户端检查使用 `scripts/run-agents-ui-test.mjs --desktop-live`（当前该脚本已改为 worker 注册界面回归，不再代表这条历史流程）：将测试实例经 SSH 转发到本机回环地址，设置 `CARDBUSH_TEST_DESKTOP_URL` 和 `CARDBUSH_TEST_DESKTOP_TOKEN_FILE`。令牌只在测试主进程读取，不注入渲染器。可在测试容器中单独启动 `node scripts/agent-desktop/ui-fixture.mjs`，打开容器内 `http://127.0.0.1:7890/`，验证页面实际收到中文输入；该测试网页不随正常服务启动。
 
 验证记录（2026-10-03）：Ubuntu 24.04 x64、约 2 GB 内存的独立服务器完成了真实 Docker 构建和运行。默认服务没有图形进程，桌面能力关闭；可选镜像以 UID 1100、零有效/边界 capabilities、no-new-privileges、seccomp 和 docker-default AppArmor 运行，Chromium 沙盒开启。真实 DOM、X11 中文输入、1600×900 截图、越界拒绝、用户独占接管、跨会话旧观察拒绝、worker 重启保留浏览器配置，以及 HTTP Bearer/Origin 检查通过。重建容器后实例 ID、访问令牌与浏览器 localStorage 保留。真实 Agent 循环通过私有桥调用两个 Linux 工具，截图进入本地确定性模型的请求。Windows Electron 的实际组件经 SSH 隧道加载真实 Linux 画面，完成点击、中文输入、关闭面板释放控制且保持浏览器运行。全程使用临时测试网页和数据，没有调用真实模型或验证第三方网站登录策略。这是功能验收，不代表多任务压力测试。

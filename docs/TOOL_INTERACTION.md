@@ -1,5 +1,7 @@
 # 工具交互与结果定位
 
+[English](TOOL_INTERACTION.en.md) · [简体中文](TOOL_INTERACTION.md)
+
 这些能力实现在共享 Runtime。本机和云 Agent 使用相同的工具协议；直接 SSH 的文件、搜索和终端路径也支持对应参数。
 
 ## 统一调用

@@ -2,6 +2,8 @@
 
 部署同一个 `cardbush` npm 包，其中包含 Agent 核心服务和 CLI，无需 CardBush GUI。部署步骤由 Agent 或用户按本文执行；核心不负责创建系统账户、注册系统服务、安排开机启动或安装第三方插件依赖。
 
+本文跟随当前源码；新的 worker 注册与交互协议尚未包含在已发布的 npm 1.0.13 中。需要这些能力时，在两端部署匹配的新构建；先核对实际帮助和服务能力，不把旧包当作已支持。
+
 ## 安装和启动
 
 目标主机安装 Node.js 24 和 npm 10+。用户指定版本时安装该版本，否则使用当前发布版本：
@@ -76,15 +78,16 @@ Linux 的文件工具及已启用的命令隔离依赖 bubblewrap。由主机管
 连接令牌和模型 API 密钥用途不同：
 
 - `DATA_DIR/access-token` 由服务首次启动生成，用于连接这个 Agent；通过受保护的配置入口使用，不贴进聊天或日志。
-- `DATA_DIR/config/models.json` 保存该 Agent 的模型配置。连接后的设置使用现有模型配置流程；保留已有配置，不从部署机器复制私人密钥。
+- `DATA_DIR/config/models.json` 保存该 Agent 的模型配置。由服务所有者在该主机配置并重启加载；保留已有配置，不从部署机器复制私人密钥。
 
-同机 CLI 可连接服务：
+本机 CLI 将服务添加为远程 worker：
 
 ```sh
-cardbush --url http://127.0.0.1:4780 --token-file /path/to/agent-a/access-token
+cardbush worker add --name Worker-A --url http://127.0.0.1:4780 --token-file /path/to/agent-a/access-token
+cardbush worker list
 ```
 
-CardBush App 在「Agents → 添加 Agent」使用服务地址和令牌。跨机器使用已有 SSH 隧道或 HTTPS 反向代理，步骤见 [网络接入](agent-network-security.md)；默认不开放公网端口。CLI 不连接服务时，直接运行 `cardbush`，继续使用原来的本地共享 Runtime。
+CardBush App 在「Team → 员工 → 远程 worker」添加连接并注册角色。CLI 与 App 目前各自保管连接；在执行父任务的宿主上注册，不跨宿主复制凭据。跨机器使用已有 SSH 隧道或 HTTPS 反向代理，步骤见 [网络接入](agent-network-security.md)；默认不开放公网端口。直接运行 `cardbush` 始终使用所在主机的本机 Runtime，与独立 HTTP 服务的会话库分开；不再通过聊天参数 `--url` / `--token-file` 切换主助手。角色注册与消息交互见[远程 worker](remote-workers.md)。
 
 默认不安装、同步或修复第三方插件。用户单独要求插件操作时才阅读 [插件管理](plugin-management.md)，按插件自己的说明处理依赖。第三方插件是否全部就绪，不是核心安装的前置条件。
 

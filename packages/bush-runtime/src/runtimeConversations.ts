@@ -105,7 +105,7 @@ export class RuntimeConversations {
       delete request.supersession;
       request.metadata = { ...request.metadata, peerMessageWake: true };
       request.inputMessages = [{ messageId: `peer_wake_${randomUUID()}`, message: { role: 'user', name: 'agent_peer_wake', visibility: 'internal',
-        content: 'A joined collaboration room has unread messages. Read the room and respond only as needed for your existing assignment. This bounded wake does not authorize new work. If a user decision is needed, agree which agent will ask it. Finish when coordination is complete; do not keep the room alive with acknowledgements.' } }];
+        content: 'An owned child or joined collaboration room has a pending message. Read the supplied observations and respond only as needed for your existing assignment. This bounded wake does not authorize new work or permission escalation. Ask the user when the decision belongs to them. Finish when coordination is complete; do not keep the exchange alive with acknowledgements.' } }];
       void this.host.run(request).catch(error => {
         const current = this.entries.get(entry.fact.agentId);
         // A newer human turn wins admission; a failed wake cannot stop that newer turn.

@@ -1,5 +1,7 @@
 # Windows 应用控制与发布验收
 
+[English](WINDOWS_APPLICATION_CONTROL.en.md) · [简体中文](WINDOWS_APPLICATION_CONTROL.md)
+
 2026-09-28 的本机复现、三个组件的原因、历史证据边界及推荐分发方案见 [拦截调查报告](WINDOWS_BLOCKING_INVESTIGATION_2026-09-28.md)。
 
 ## 本次 10 项测试失败的原因

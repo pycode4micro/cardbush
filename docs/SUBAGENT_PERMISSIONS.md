@@ -1,5 +1,7 @@
 # Child Agent baseline configuration
 
+[English](SUBAGENT_PERMISSIONS.md) · [简体中文](SUBAGENT_PERMISSIONS.zh-CN.md)
+
 CardBush freezes one explicit child-Agent baseline into every new root Turn. Both
 ordinary fork Subagents and Team member children reuse that baseline. A Team/Profile
 may narrow the exposed tools and add role instructions, skills, hooks and guards,
@@ -24,9 +26,8 @@ Default configuration:
   },
   "disabledTools": [
     "subagent",
-    "await_subagents",
     "team_delegate",
-    "request_permission",
+    "request_user_input_async",
     "update_goal",
     "schedule_task"
   ]
@@ -81,14 +82,14 @@ may still narrow the catalog. Restricted calls return `child_agent_tool_unavaila
 before hooks, permission requests or execution. A Profile cannot re-enable a
 baseline-disabled tool.
 
-`subagent`, `await_subagents` and `team_delegate` remain visible but are always
+`subagent` dispatch and the internal `team_delegate` guard are always
 unavailable when `agentRole` is `child`, even with an empty `disabledTools` list
 or `all_free` permission mode. Calls return `child_agent_dispatch_unavailable`
 and explain that the child should finish its assignment and report dependencies
 to the parent. The same restriction covers plugin Skill/Command `context: fork`;
 ordinary inline Skills remain available under the existing task policy.
 
-The native `team` tool schedules registered clean employees through the same subagent dispatcher and permission boundary. Children cannot invoke it. The former Team plugin is no longer loaded; see [native Team workflows](TEAM_NATIVE_WORKFLOWS.md).
+The native `team` tool schedules registered clean employees through the same subagent dispatcher and permission boundary. Children cannot invoke it. The former Team plugin is no longer loaded; see [native Team workflows](TEAM_NATIVE_WORKFLOWS.en.md).
 
 ## Fork and clean dispatch
 
@@ -149,10 +150,10 @@ Example after the user requests independent configuration:
 }
 ```
 
-Already-issued legacy `inherit_context` calls remain decodable. Legacy `false`
-keeps its prior shared fallback prompt unless a custom system prompt was supplied;
-this compatibility path is not advertised. New calls use only `mode`, and cannot
-combine both switches.
+Calls use `mode`; the obsolete `inherit_context` switch is not accepted by the
+current tool contract. Follow-ups supply `task_id` and `prompt` (optionally
+`run_in_background`) without name, mode or configuration overrides. Existing
+children retain their identity and original execution scope.
 
 The policy encourages identifying useful parallel preparation early. Assignments
 explain the child's work, the parent's concurrent next steps, pending dependencies

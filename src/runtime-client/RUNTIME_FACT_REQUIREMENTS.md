@@ -1,5 +1,7 @@
 # Runtime facts required by the CardBush product layer
 
+[English](RUNTIME_FACT_REQUIREMENTS.md) · [简体中文](RUNTIME_FACT_REQUIREMENTS.zh-CN.md)
+
 This is a product requirement list, not a protocol schema. The Runtime owner
 defines and validates the corresponding values in `bush-protocol`; CardBush only
 consumes the resulting decoded types.

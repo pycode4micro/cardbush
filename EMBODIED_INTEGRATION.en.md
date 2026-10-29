@@ -1,6 +1,6 @@
 # CardBush embodied voice integration
 
-[简体中文](EMBODIED_INTEGRATION.zh-CN.md)
+[English](EMBODIED_INTEGRATION.en.md) · [简体中文](EMBODIED_INTEGRATION.zh-CN.md)
 
 The first supported device is the **M5Stack AtomS3R AI Chatbot Kit (AtomS3R + Atomic Voice Base)**. This implementation includes compiled firmware and an installer. Software and simulated integration tests are available; **physical USB flashing, microphone/speaker operation, acoustic echo cancellation, and public-network latency have not been verified on hardware**.
 
@@ -73,7 +73,7 @@ Restore checks the companion JSON receipt, MAC, size and SHA-256 before overwrit
 
 ## Independent / cloud Agent
 
-Reuse the [existing Agent deployment](deploy/agent/README.md), with a separate data directory and service account per instance. Devices are unavailable on text-only (`--disable-tools`) and restricted Web deployments.
+Reuse the [existing Agent deployment](deploy/agent/README.en.md), with a separate data directory and service account per instance. Devices are unavailable on text-only (`--disable-tools`) and restricted Web deployments.
 
 ```sh
 node dist-electron/agentServiceCli.mjs --data-dir /srv/cardbush/agent-a --host 127.0.0.1 --port 4780

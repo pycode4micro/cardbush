@@ -1,5 +1,7 @@
 # CardBush Apps MCP boundary
 
+[English](CARDBUSH_APPS_MCP.md) · [简体中文](CARDBUSH_APPS_MCP.zh-CN.md)
+
 `cardbush_apps` is a standalone MCP 2.x stdio server bundled with the CardBush
 desktop distribution. Electron launches it as a child process and the Runtime
 connects through the same MCP client and Tool Registry used for user-installed

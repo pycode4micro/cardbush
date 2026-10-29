@@ -2,178 +2,97 @@
   <img src="docs/assets/readme-hero.svg" width="100%" alt="CardBush — 你的工作区，你的 Agent。从桌面到云端，用对话完成工作。" />
 </p>
 
-<p align="center">
-  <a href="https://apps.microsoft.com/detail/9N7XNDD5WRGS"><img src="https://img.shields.io/badge/Windows-Microsoft_Store-7868D8?style=for-the-badge&amp;logo=windows&amp;logoColor=white" alt="从 Microsoft Store 下载 Windows 版" /></a>
-  <a href="https://github.com/pycode4micro/cardbush/releases"><img src="https://img.shields.io/badge/Linux-AppImage-303342?style=for-the-badge&amp;logo=linux&amp;logoColor=white" alt="Linux AppImage 发行版" /></a>
-  <a href="https://github.com/pycode4micro/cardbush/stargazers"><img src="https://img.shields.io/github/stars/pycode4micro/cardbush?style=for-the-badge&amp;label=Star&amp;color=303342" alt="在 GitHub 为 CardBush 点 Star" /></a>
-  <a href="https://github.com/pycode4micro"><img src="https://img.shields.io/badge/Follow-%40pycode4micro-303342?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="在 GitHub 关注 pycode4micro" /></a>
-</p>
+<p align="center"><a href="https://apps.microsoft.com/detail/9N7XNDD5WRGS">Microsoft Store</a> · <a href="https://www.npmjs.com/package/cardbush">npm：Agent + CLI</a> · <a href="https://github.com/pycode4micro/cardbush/releases">桌面发行版</a></p>
 
-<p align="center"><a href="README.md">English</a> · <strong>简体中文</strong> · <a href="#文档导航">文档导航</a> · <a href="https://github.com/pycode4micro/cardbush/issues">问题反馈</a></p>
+<p align="center"><a href="README.md">English</a> · <strong>简体中文</strong> · <a href="docs/README.zh-CN.md">文档导航</a> · <a href="SECURITY.zh-CN.md">安全说明</a></p>
 
 # CardBush
 
-**让对话变成行动的个人 AI 工作区。** 用文字或语音交流，处理文件和浏览器任务，编排自己的初始桌面，在本机或独立 Agent 服务上持续工作。
+**让对话变成行动的个人 AI 工作区。** 使用你选择的模型处理文件、制作文档、操作浏览器、布置持续使用的画板，在本机或自己的 Agent 服务上执行任务。
 
-选择适合自己的模型，通过 MCP 和技能接入工具，在同一界面管理本地与远端任务。核心本地对话和命令工具不需要额外启动服务器或安装 Python。
-
-如果 CardBush 对你有帮助，欢迎 **[点一个 Star](https://github.com/pycode4micro/cardbush/stargazers)**，或 **[关注 @pycode4micro](https://github.com/pycode4micro)** 了解开发进展。也欢迎提交问题、想法和代码。
-
-## 下载
-
-| 系统 | 下载 | 适用电脑 |
-| --- | --- | --- |
-| **Windows 11** | **[从 Microsoft Store 下载 CardBush（MSIX）](https://apps.microsoft.com/detail/9N7XNDD5WRGS)** | Intel / AMD x64；build 22000 起 |
-| Linux | [从 Releases 下载 AppImage](https://github.com/pycode4micro/cardbush/releases) | x86-64 桌面 Linux；CI 使用 Ubuntu 22.04 验证 |
-
-[全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
-
-本文介绍源码版本 **1.0.12** 的能力，[上一版本说明](docs/releases/1.0.11.md)记录了 1.0.11 的改动。实际可下载的版本以商店和 Releases 页面为准，可能尚未包含主分支的全部更新。对应的 MSIX 包版本为 **1.0.12.0**。目前不提供 macOS、ARM64 或 32 位安装包。
-
-### 安装与开始使用
-
-**Windows：** 打开 [Microsoft Store 商店页](https://apps.microsoft.com/detail/9N7XNDD5WRGS)，安装后从开始菜单启动 CardBush。Windows 负责管理 MSIX 包及更新。卸载前请备份需要保留的对话和设置；正常 MSIX 卸载会清理包所属数据。
-
-**Linux：** 下载已发布的 x86-64 AppImage，重命名为 `CardBush.AppImage`，赋予执行权限后启动：
-
-```sh
-chmod +x CardBush.AppImage
-./CardBush.AppImage
-```
-
-AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）。没有 FUSE 时可使用 `APPIMAGE_EXTRACT_AND_RUN=1` 启动。Chromium 需要正常的沙箱环境，不建议通过关闭沙箱解决安装问题。
-
-首次启动后，打开 **应用中心 → 设置 → 模型管理 → 添加模型**：
-
-- **API Key 接入：** 配置服务商，选择 OpenAI Responses、Chat Completions 或 Anthropic Messages；支持 OpenRouter、OpenCode Go。详见[模型接入说明](docs/MODEL_CONNECTIONS.md)。
-- **ChatGPT 账号接入：** 在本机选择 **ChatGPT · SIWC → Continue with ChatGPT**，在系统浏览器完成授权，再从账号返回的列表中选模型。能否使用取决于账号与服务端权限；本机账号凭据不会同步到远端 Agent。详见 [SIWC 接入与限制](docs/SIWC_INTEGRATION.md)。
-
-设置页顶部可选择本机或已连接的 Agent。模型用量按所选服务商或已授权套餐计算，插件可能需要单独的依赖或凭证。
-
-每个会话在所属环境中独立记住模型选择。模型列表共用，模型管理中的默认值用于新会话；会话内切换模型从下一次请求生效。
+桌面应用提供可视化工作空间；通过 npm 安装 Agent 和 CLI，则可以直接在终端工作。API Key 模型可独立于桌面应用运行。这些入口复用同一个 Runtime，以及工具、插件、技能和权限能力。
 
 ## 主要功能
 
-| 方向 | 可以做什么 |
+| 能力 | 可以做什么 |
 | --- | --- |
-| **文字与语音** | 流式回复、文件与图片附件、消息排队与运行中引导。输入框为空时，单击麦克风录音转文字，长按进入通话；切换页面或最小化后，通话仍归属原会话。 |
-| **个人助手** | 「新会话」下方的灯泡打开一个持续会话，可修改名称、头像和角色。任务交给本机或已连接的 Agent（包括 SSH 接入），执行期间继续交流，点击任务气泡查看详情。 |
-| **自己的初始桌面** | 编排时钟、日历、对话引导及两种输入框；导入自定义 HTML 组件，拖拽、缩放、辅助线吸附，通过事件和已授权动作交互，并自动跟随主题。 |
-| **浏览器工作区** | 收藏常用页面，使用多页面 Beta，展开右侧内容区并通过浮动的返回／输入胶囊继续交流。 |
-| **执行任务的工具** | 搜索和编辑文件、执行命令、调度子 Agent、安装 MCP 插件与技能、安排自动化；支持申请批准与完全访问。 |
-| **文档插件** | 内置 XLSX、PPTX、Word、PDF 四个插件，包含技能、制作工具库、渐进式读取和校验；Office 转 PDF、XLSX 公式重算可使用本机 LibreOffice。 |
-| **本地与远端** | 内置 Agent、SSH 项目、独立 Agent 服务；个人 Linux Agent 可选独立图形桌面、Computer Use 和 Browser Use。 |
-| **连续的工作上下文** | 会话持久化、上下文恢复、归档工具结果检索和使用记录；习惯记忆与下一步预测可选，默认关闭。 |
+| 对话与文件 | 流式回复、添加文件与图片、查看工具执行、恢复会话，在长对话中继续工作。 |
+| 创作画板 | 组合 Markdown、HTML、Office 文档、PDF、图片和音视频。更新内容时保留布局，固定某一版本，选中区域继续讨论。 |
+| Team 与子 Agent | 向具名 Agent 分工，组织带依赖关系的可复用任务，沿用已有子 Agent 执行与权限体系。 |
+| 浏览器与工具 | 操作内置标签页或已授权的 Chrome / Edge；通过 MCP 插件与技能扩展能力。 |
+| 语音与个人助手 | 将语音转写进草稿，长按主操作按钮开始通话，或通过持续会话的助手派发任务。语音服务与可选本地语音模型分别配置。 |
+| 本地与远端 | 使用本机 CLI、部署 worker 服务、连接 SSH 工作区，或为 worker 增加可选 Linux 桌面。 |
 
-点击 **「新会话」下方的灯泡** 打开个人助手。标题栏提供执行主机选择、连接管理和助手设置；页面显示文字消息、发布的 Markdown 和任务气泡，通话转写保留在内部上下文。右键侧栏入口可重命名、重置上下文，以及分别控制麦克风静音和播报静音。附件、远程执行和重置行为见[个人助手指南](docs/PERSONAL_ASSISTANT.md)。
+## 下载与安装
 
-语音分为三种入口：**单击空输入框的麦克风**录音并发送转写文字；**长按麦克风**进入通话，通话方式在 **设置 → 语音 → 语音通话** 中选择：
-
-- **实时语音（默认）：** 独立语音服务负责听说，后台子 Agent 执行任务。默认火山适配器需要已开通全双工服务的豆包语音 API Key，音频、近期上下文和任务结果会发送给该服务；也可配置 CardBush Realtime 兼容服务。普通通话在本机派发，个人助手可选择已连接的 Agent。详见[实时通话配置、断线恢复与当前限制](docs/REALTIME_VOICE.md)。
-- **转写 + Agent + 朗读：** 语音识别、所选文字 Agent 与语音合成串联。**SenseVoice 和 Qwen3-TTS CustomVoice** 是推荐的本地选项，模型可选安装、不会预装；Qwen 通过所选模型目录和 Python 环境接入，Windows 语音及旧版 Kokoro 仍可使用。可选的 Windows x64 声纹锁定用于录音与此通话模式；进入实时通话前须关闭。详见[本地语音安装与平台限制](docs/LOCAL_VOICE_MODELS.md)。
-
-返回文字输入、打开设置或最小化都保留通话。普通会话显示已保存的通话转写，个人助手仅展示发布内容和任务气泡。挂断释放音频资源，不取消已接收任务；本地执行仍依赖桌面运行，独立 Agent 服务则拥有已接收的远程任务。
-
-通过 **应用中心 → 组件** 编辑新会话页面。系统内置组件定义始终保留；自定义 HTML 在隔离框架中运行，动作需明确授权。日历通过悬浮展示节日和自动化详情。详见[组件、布局与多页面说明](docs/HTML_COMPONENTS_V1_2026-09-30.md)。
-
-通过 **Agents → +** 接入独立服务。服务拥有自己的模型配置、凭据、项目、插件和任务队列，桌面断开后已接收的任务仍可继续。**SSH 项目**则由桌面运行 Agent，将支持的文件和命令操作交给指定 SSH 主机。详见[独立 Agent 服务](docs/AGENT_SERVICES.md)与 [SSH 工作区](docs/SSH_WORKSPACES.md)。
-
-远端部署**默认无图形桌面**。可选的 [Docker 桌面配置](deploy/agent/README.md)为个人 Agent 增加独立 Linux 桌面、可见 Chromium 浏览器、桌面预览与用户接管；普通服务化部署无需开启。
-
-应用中心只显示实际可打开的页面和用户选择的应用；普通 MCP 连接仍在插件设置中管理。`@` 引用向 Agent 提供应用上下文，不代表已经执行或授予权限。详见[应用中心说明](assets/skills/cardbush-docs/references/app-center.md)。
-
-Team 是内置工作流管理器：注册可复用的 clean Agent，再使用已有会话和记忆框架装配串行、并行任务。详见[内置 Team 工作流](docs/TEAM_NATIVE_WORKFLOWS.md)。
-
-### 平台能力
-
-| 桌面应用能力 | Windows x64 | Linux x64 |
+| 入口 | 获取方式 | 要求 |
 | --- | --- | --- |
-| 对话、文件、预览、MCP、内置浏览器 | 支持 | 支持 |
-| 终端命令 | PowerShell / cmd | POSIX Shell |
-| 随包文件搜索 | Windows ripgrep | Linux ripgrep |
-| 命令沙盒 | AppContainer | bubblewrap，需宿主环境支持 |
-| Windows 电脑操控插件 | 支持 | 不可用 |
-| Browser Use（Chrome / Edge） | 支持 | 不可用，仍可使用内置浏览器 |
-| 进程 CPU / 内存原生限制 | Windows Job Objects | 尚未实现 |
-| 托管进程准入与所属进程清理 | 支持 | 支持 |
+| Windows 桌面应用 | [Microsoft Store](https://apps.microsoft.com/detail/9N7XNDD5WRGS) | 以商店当前上架包的系统要求为准。 |
+| Agent + CLI | [npm 包](https://www.npmjs.com/package/cardbush) | Node.js 24、npm 10 或更高版本；支持 Windows 与 Linux。API Key 模型不需要 Electron。 |
+| 桌面安装包 | [GitHub Releases](https://github.com/pycode4micro/cardbush/releases) | 选择发行页实际附带、与系统和架构匹配的产物。 |
+| 当前源码 | [开发指南](CONTRIBUTING.zh-CN.md) | 在目标操作系统上构建。 |
 
-Windows 11 上的 Browser Use 也支持内置标签：通过 **@ → CardBush 浏览器** 绑定真实页面，无需扩展配对。标签关闭后不会转去控制 Chrome / Edge 的同网址页面。Windows Browser Use 连接器与远端 Linux 桌面使用不同实现。Docker 桌面配置提供的是服务器上的 Linux Computer Use / Browser Use，不会使 Windows 专属插件变成跨平台插件。本地语音的平台范围见[语音指南](docs/LOCAL_VOICE_MODELS.md)。
+这些渠道分别发布。截至 2026 年 10 月 28 日，npm 已提供 **1.0.13**，GitHub 上的公开桌面产物仍为 **1.0.0-beta.3** 预发布版本。仓库中存在某个版本的说明，不代表相应安装包已经发布。商店当前可用版本以商店页面为准。
 
-Linux 的 CPU／内存限制尚未与 Windows 完全一致。外部插件是独立程序，各自的平台要求仍需满足。远端服务提供自身主机的能力，不继承连接它的桌面能力。
+当前桌面源码支持 **Windows 10 1809+ / Windows 11 x64** 和 **Linux x64**；兼容更新上架前，商店包可能仍有不同的最低系统要求。目前没有发布 macOS、ARM64 或 32 位桌面包。详见[安装与平台支持](docs/INSTALLATION.zh-CN.md)。
 
-沙盒设置先检测环境，需要安装依赖时由用户点击。已安装且可用的沙盒默认启用，用户或管理员显式关闭的设置会保留。通常的 `auto` 策略下，**申请批准**隔离命令并在需要时申请额外权限，**完全访问**使用普通进程；管理员设定的 `required` 策略在两档模式下均有效。命令沙盒不覆盖全部 MCP、插件和浏览器行为。详见[权限说明](docs/PERMISSIONS.md)及[沙盒范围与限制](docs/EXECUTION_SANDBOX.md)。
+### 从终端开始
+
+```sh
+npm install -g cardbush@latest
+cd /path/to/your/workspace
+cardbush
+```
+
+本机模式不需要连接令牌。尚未配置模型时，CLI 会展示配置文件路径与示例；编辑、保存后按 Enter 继续。本机 CLI 与应用共享受支持的模型、插件和网络设置。ChatGPT 账号模型复用应用的授权桥，因此使用这类模型时需要保持应用运行。
+
+```sh
+cardbush --resume           # 从已有会话中选择
+cardbush --resume SESSION   # 继续指定会话
+cardbush --help
+```
+
+执行过程中，**Enter** 将消息加入下一轮队列，**Ctrl+Enter** 立即发送指导。终端无法区分 Ctrl+Enter 时，使用 `/steer 文本`。`/artifact` 打开生成文件，`/tools` 查看执行详情，`/session` 切换会话。详见 [CLI 使用指南](docs/CLI.zh-CN.md)。
+
+### 从桌面应用开始
+
+1. 安装并启动 CardBush。
+2. 打开 **设置 → 模型管理**，添加 API Key 模型或授权受支持的本机账号，选择与服务商匹配的 API 协议。
+3. 新建会话，按需选择工作文件夹，描述任务；允许操作前查看申请的权限。
+4. 进入 **创作** 在画板中组织文件，进入 **Team** 管理可复用的员工与流程，或打开侧栏助手进行持续交流。
+
+麦克风常驻在主操作按钮旁：单击开始转写，再次单击后将识别结果插入草稿，不自动发送。长按主操作按钮开始通话，使用其停止按钮挂断。详见[语音配置](docs/REALTIME_VOICE.md)。
+
+### 部署自己的 Agent
+
+npm 安装同时提供 `cardbush` 与 `cardbush-agent`：
+
+```sh
+cardbush serve --background
+cardbush serve --status
+cardbush serve --stop
+```
+
+服务默认目录为 `~/.cardbush/service`。需要指定目录或使用进程管理器时，运行 `cardbush serve --data-dir /absolute/path/agent-data`。服务拥有自己的模型、凭据和会话。详见 [Agent 部署](docs/AGENT_SERVICES.md)和 [Docker 部署](deploy/agent/README.md)。
+
+**当前源码预览：**远程服务通过 Team 或 `cardbush worker` 注册为子 Agent，不再打开独立 Agents 会话。两端都需从更新后的源码重新构建。这次迁移与实验性的 [subagent-remote-proton 协议](docs/SUBAGENT_REMOTE_PROTOCOL.zh-CN.md)尚未包含在已发布的 npm 1.0.13 中。本机 CLI 仍可对话，包括在服务器上使用 CLI。
 
 ## 文档导航
 
-| 想了解什么 | 文档 |
+[完整文档索引](docs/README.zh-CN.md)列出当前指南对应的中英文版本。历史排查与 benchmark 报告保留为带日期的记录。
+
+| 主题 | 文档 |
 | --- | --- |
-| 接入模型 | [服务商、协议与 OpenRouter](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
-| 使用个人助手 | [持续对话、任务、附件与重置](docs/PERSONAL_ASSISTANT.md) |
-| 处理办公文档 | [内置 XLSX、PPTX、Word、PDF 插件](docs/DOCUMENT_PLUGINS.md) |
-| 配置语音 | [实时通话](docs/REALTIME_VOICE.md) · [本地识别与朗读模型](docs/LOCAL_VOICE_MODELS.md) |
-| 自定义工作区 | [HTML 组件、布局与多页面](docs/HTML_COMPONENTS_V1_2026-09-30.md) · [应用中心](assets/skills/cardbush-docs/references/app-center.md) |
-| 部署远端 Agent | [服务部署](docs/AGENT_SERVICES.md) · [Docker 与可选 Linux 桌面](deploy/agent/README.md) · [SSH 项目](docs/SSH_WORKSPACES.md) |
-| 了解权限 | [权限说明](docs/PERMISSIONS.md) · [命令沙盒](docs/EXECUTION_SANDBOX.md) · [Computer Use / Browser Use](docs/CORE_BROWSER_COMPUTER_USE.md) |
-| 参与开发与发布 | [架构](docs/ARCHITECTURE.md) · [跨平台发布](docs/CROSS_PLATFORM_RELEASE.md) · [MSIX 维护指南](docs/MSIX_STORE_RELEASE.md) |
+| 安装、更新与排错 | [安装](docs/INSTALLATION.zh-CN.md) · [CLI](docs/CLI.zh-CN.md) · [npm 分发](docs/NPM_AGENT.md) |
+| 模型与账号 | [模型接入](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.zh-CN.md) |
+| 创作与文档 | [画板](docs/creation-canvas.md) · [持续桌面](docs/CREATION_DESK.md) · [文档插件](docs/DOCUMENT_PLUGINS.md) |
+| Team 与助手 | [Team 工作流](docs/TEAM_NATIVE_WORKFLOWS.md) · [个人助手](docs/PERSONAL_ASSISTANT.md) |
+| 浏览器、语音与自动化 | [Browser / Computer Use](docs/CORE_BROWSER_COMPUTER_USE.md) · [语音](docs/REALTIME_VOICE.md) · [自动化](docs/AUTOMATIONS.md) |
+| 远程工作 | [Agent 服务](docs/AGENT_SERVICES.md) · [SSH 工作区](docs/SSH_WORKSPACES.md) |
+| 开发与发布 | [参与开发](CONTRIBUTING.zh-CN.md) · [架构](docs/ARCHITECTURE.md) · [发布渠道](docs/CROSS_PLATFORM_RELEASE.zh-CN.md) |
 
-## 开发与打包
+漏洞报告、数据处理与执行边界单独放在 [SECURITY.zh-CN.md](SECURITY.zh-CN.md)。普通问题与功能建议请使用 [GitHub Issues](https://github.com/pycode4micro/cardbush/issues)。
 
-需要 Node.js **24 LTS**、npm **>=10**。项目版本约束、`.nvmrc`、CI 与 Agent Docker 镜像统一采用 Node.js 24，不支持 Node.js 25；安装依赖前请在本机版本管理器中切换到 Node.js 24。安装程序在对应操作系统上构建。安全依赖覆盖与验证方法见[依赖维护说明](docs/DEPENDENCY_SECURITY.md)。
+## 许可
 
-```sh
-npm ci
-npm run runtime-tools:install
-npm run dev
-```
-
-```sh
-npm run build
-npm run typecheck
-npm run test:release
-npm run package:msix    # 在 Windows 生成商店包，需先按 MSIX 维护指南配置
-npm run package:win     # 在 Windows 生成签名 NSIS 安装程序，需要发布者证书
-npm run package:linux   # 在 Linux 生成 AppImage
-npm run smoke:packaged
-```
-
-无桌面的 Linux 可使用 `xvfb-run -a npm run test:release`。产物位于 `release/`。运行 `test:release` 前先构建；它覆盖包测试、对抗场景、平台约束和 Electron 界面测试，避免为每个测试重复构建。更广的功能专项检查可运行 `npm run test:all`。模型协议测试使用本地模拟 HTTP 服务，不需要真实 API 密钥。
-
-修改助手或语音时，按范围运行 `npm run test:assistant`、`npm run test:voice-realtime` 和 `npm run test:voice`。这些检查覆盖 Runtime 与隔离的桌面测试环境；真实服务的听感和远程部署仍需单独验证。
-
-无图形界面的 Agent 服务使用 `npm ci --ignore-scripts`、`npm run build:agent` 构建，然后运行 `node dist-electron/agentServiceCli.mjs --data-dir /absolute/path/agent-data`。服务由 Node.js 运行，不启动 Electron。使用独立数据目录，并按[部署指南](docs/AGENT_SERVICES.md)配置鉴权及 SSH / HTTPS 接入；容器和可选图形桌面见 [Docker 指南](deploy/agent/README.md)。更新桌面安装包不会部署或更新这个服务。
-
-Electron 默认从官方源下载，网络需要时可设置 `ELECTRON_MIRROR`。下载不完整时运行 `npm run fix:electron` 修复。
-
-## 架构与维护
-
-| 目录 | 职责 |
-| --- | --- |
-| `packages/cardbush-platform` | 平台能力、Shell 解析、可执行文件查找、原生资源路径 |
-| `packages/bush-runtime` | 与模型厂商无关的 Agent 循环、工具、权限和状态 |
-| `packages/bush-product-agent` | 共用的产品指令与回合请求构造 |
-| `packages/cardbush-product-host` | 模型、插件、MCP、沙盒和维护的共享命令约定及配置 |
-| `packages/bush-protocol` | 命令、事件与 IPC 类型约定 |
-| `packages/bush-provider-openai` | Responses、Chat Completions 和 Anthropic Messages 模型传输 |
-| `packages/bush-mcp-client` | MCP 传输及工具／资源接入 |
-| `packages/bush-runtime-electron` | 桌面与 Node 宿主共用的类型化 Runtime 传输和客户端 |
-| `electron` | 桌面生命周期、Utility Runtime 宿主、无界面 Agent 服务与宿主适配 |
-| `src` | 共用的 React 对话／设置界面及本地／远端适配 |
-| `scripts` | 开发、回归测试、打包和启动检查 |
-
-平台选择集中在 `@cardbush/platform`，浏览器可用的类型约定与 Node 适配分别导出。桌面在 Electron utility process 中托管 Runtime，独立服务由 Node.js 托管同一个 worker。Product Host 与后端适配决定配置和操作所属的环境，对话界面消费共用的 Runtime 事件，不再维护另一套云端消息投影。
-
-详见[当前架构](docs/ARCHITECTURE.md)、[跨平台维护与发布指南](docs/CROSS_PLATFORM_RELEASE.md)、[工具交互约定](docs/TOOL_INTERACTION.md)和 [内置 Apps MCP](docs/host/CARDBUSH_APPS_MCP.md)。
-
-## 数据与安全
-
-本地对话、使用记录和设置保存在 Electron 用户数据目录。每个独立 Agent 将自身数据和凭据保存在服务器的数据目录，切换环境不会自动复制到另一台主机。本地自动化依赖桌面应用运行；独立 Agent 的队列及其支持的自动化在服务运行期间执行。清理临时缓存不会重置已经记录的使用量。
-
-个人助手切换执行主机时，对话仍保存在桌面；远程附件会上传至目标主机，子任务保留其原执行主机。Agent 连接可显式同步受支持的模型配置和凭据，插件同步由各连接单独选择；ChatGPT / SIWC 的 OAuth 凭据保留在本机。实时通话的已完成转写和摘要保存在加密语音历史中，不归档原始通话音频。详见 [Agent 配置同步](docs/AGENT_SERVICES.md)和[助手上下文与重置](docs/PERSONAL_ASSISTANT.md#上下文与重置)。
-
-界面启用上下文隔离，不直接访问 Node.js。远端接入需鉴权，访问令牌代表整个实例的访问权限，当前不是多租户账号系统。模型服务和外部插件会接收完成所请求操作需要的数据。文件／工具权限与操作系统命令隔离属于不同控制层。
-
-提交公开问题时，请移除密钥、原始对话数据和日志中的敏感信息。
-
-## 开源协议
-
-CardBush 原创代码使用 [Apache License 2.0](LICENSE)，另见 [NOTICE](NOTICE) 与[内置技能许可证](docs/BUNDLED_SKILL_LICENSES.md)。随包依赖、技能及外部插件保留各自的许可证。
+CardBush 原创代码采用 [Apache License 2.0](LICENSE)。第三方声明与范围见 [NOTICE](NOTICE) 和[内置许可说明](docs/BUNDLED_SKILL_LICENSES.md)。依赖与外部插件保留各自的许可。

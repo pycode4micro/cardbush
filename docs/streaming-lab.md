@@ -1,5 +1,7 @@
 # 流式显示与历史对照
 
+[English](streaming-lab.en.md) · [简体中文](streaming-lab.md)
+
 实验入口：`npm run preview:streaming-lab`。命令打印仅绑定本机的预览地址。
 自动验证：`npm run test:streaming-lab`。
 

@@ -1,5 +1,7 @@
 # MCP 官方 Conformance
 
+[English](MCP_CONFORMANCE.en.md) · [简体中文](MCP_CONFORMANCE.md)
+
 CardBush 运行官方客户端测试套件，驱动 `McpClientManager`、`McpOAuthCoordinator` 和 Runtime 工具注册表的生产实现。18 项核心场景保持官方原版；扩展运行的旧协议场景包含一项明确记录的本地夹具修正。没有另写 MCP 客户端，也没有修改官方判分规则。
 
 测试依赖固定为 `@modelcontextprotocol/conformance@0.1.16`。覆盖范围依据 [官方 v0.1.16 源码](https://github.com/modelcontextprotocol/conformance/tree/v0.1.16)，对应提交 `21a9a2febd7100d7c17ac1021ee7f2ed9f66a1e0`。升级套件时需要重新核对场景，运行器会拒绝未经核对的版本。

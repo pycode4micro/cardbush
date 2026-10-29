@@ -1,5 +1,7 @@
 # SSH 项目
 
+[English](SSH_WORKSPACES.en.md) · [简体中文](SSH_WORKSPACES.md)
+
 SSH 是 CardBush 桌面端的工作区能力，不需要安装插件或远程 CardBush 服务。
 
 ## 使用入口
@@ -14,13 +16,13 @@ SSH 是 CardBush 桌面端的工作区能力，不需要安装插件或远程 Ca
 
 ## 执行范围
 
-首版支持 **Linux/POSIX SSH 主机**。服务器需提供 SFTP、`/bin/sh`、支持 `--wait` 的 `setsid`（util-linux）；文件搜索需要 `rg`，Git 功能需要 Git，替换现有文件需要 OpenSSH SFTP 的原子重命名扩展。不会自动在远程安装这些依赖。跳板机、SSH config 导入、交互式 MFA、Windows 远程 Shell 和远程插件运行不在此版本范围内。
+当前支持 Linux/POSIX 与 Windows OpenSSH 主机。POSIX 终端需要 `/bin/sh` 和支持 `--wait` 的 `setsid`（util-linux）；Windows 终端必须有可通过 `pwsh` 启动的 PowerShell 7，不支持 Windows PowerShell 5。两者都需要 SFTP；内容搜索需要 `rg`，Git 功能需要 Git，替换已有文件需要服务端原子重命名能力。依赖不会自动安装。执行前探测实际系统和 Shell，不匹配时拒绝发送用户命令；SFTP-only 账号仍可使用不依赖终端的文件操作。跳板机、SSH config 导入、交互式 MFA 和远程插件运行仍不属于此入口。
 
 工作区使用 `ssh://连接ID/目录` 身份保存在项目和会话中，远程路径大小写保持不变。Agent 循环在桌面端运行，SSH 是额外执行环境，不会移除本机能力。内置文件、搜索和终端工具支持可选 `environment` 参数：
 
 - 省略或填写 `workspace`：使用会话默认工作区。
 - `local`：在当前 Runtime 所在主机执行。SSH 工作区下访问本机时填写绝对路径，终端使用本机支持的 Shell。
-- `ssh://连接ID/目录`：明确选择已保存的 SSH 连接及工作目录，不改变会话项目归属。远程终端使用 `shell="posix"`。
+- `ssh://连接ID/目录`：明确选择已保存的 SSH 连接及工作目录，不改变会话项目归属。省略 Shell 时使用探测到的默认值；POSIX 支持 `shell="posix"`，Windows 支持 `powershell` 和 `cmd`。Windows 路径支持 `C:\Users\name` 或 `/C:/Users/name`，`/` 仅是 SFTP 浏览根，不是可执行工作目录。
 
 例如在同一会话中，可先用 `read_file { path: "C:/项目/文件", environment: "local" }` 读取本机文件，再用指定 SSH 环境的 `write_file` 写入远端。执行目标本身不授予权限；额外环境仍经过对应路径的权限判断。工具结果中的 `executionEnvironment` 标明实际主机。项目的 Git 状态、分支、提交和推送继续跟随所选项目。
 
@@ -34,7 +36,7 @@ SSH 是 CardBush 桌面端的工作区能力，不需要安装插件或远程 Ca
 - `@` 选择远程文件后保留 SSH 路径。远程图片作为文件引用交给 Agent，不伪装成本机视觉附件。SSH 会话中的 Markdown 相对路径和 POSIX 绝对路径按当前 SSH 工作区打开，Windows 绝对路径仍指本机。
 - 引用可在侧栏打开文本、代码和 Markdown；文本预览最多读取前 2 MiB。通用图片/媒体资源读取上限为 8 MiB，不将远程文件无限量下载到桌面内存。Office、模型等依赖本机专用转换器的格式尚未接入 SSH 转换。
 - Source 对不超过 2 MiB 的文件保存版本哈希及可选行摘录，较大文件只记录元数据。历史注释保持原始证据版本，重新查看时提示文件已变更或不可用。
-- 远程 `write_file` / `edit_file` 返回真实修改记录，审查显示具体文件、增删行和差异。内部差异进入执行记录，不重复塞进模型的简短结果。远程路径保持大小写区分。
+- 远程 `write_file` / `edit_file` 返回真实修改记录，审查显示具体文件、增删行和差异。内部差异进入执行记录，不重复塞进模型的简短结果。路径保留原始大小写；权限与并发写入身份按远端系统的路径语义比较。
 - 读取 `git diff`、`git diff --stat` 或历史差异不会生成新的修改记录。没有 Git 的目录也可审查文件工具的修改；分支界面显示普通提示，不再请求不存在的分支列表。
 - SSH 暂不支持任务撤回，也不会自动捕获远程终端/脚本产生的修改；撤回入口禁用，运行时也拒绝误发的撤回请求。旧执行中未记录的真实差异无法凭统计数字补造。
 
@@ -43,7 +45,7 @@ SSH 是 CardBush 桌面端的工作区能力，不需要安装插件或远程 Ca
 - 切换执行位置保留聊天记录和草稿，不搬动项目文件；运行中的回合、后台工具或远程终端会阻止切换。
 - SSH 连接失败不会回退本地，断线不会自动重放命令。终端标记为 `disconnected` 时，远程进程可能仍存在，应重连后核对。
 - 文件编辑要求当前会话先读取该文件的最新 SHA-256 版本。桌面进程内的同文件写入互斥，写前再次核对版本；其他客户端不受此锁约束。
-- 终端按会话和连接隔离，发起命令与轮询输出分离。`terminal_list` 默认列出本会话在各环境中的终端，也可按 `environment` 筛选；`terminal_poll/write/stop` 按终端句柄绑定的原主机执行，无需再次传环境，显式指定冲突主机会被拒绝。停止时向远程进程组发送 TERM，必要时 KILL；无法确认停止时返回错误。
+- 终端按会话和连接隔离，发起命令与轮询输出分离。`terminal_list` 默认列出本会话在各环境中的终端，也可按 `environment` 筛选；`terminal_poll/write/stop` 按终端句柄绑定的原主机执行，无需再次传环境，显式指定冲突主机会被拒绝。POSIX 停止向远程进程组发送 TERM，必要时 KILL；Windows 使用所属 Job Object 管理子进程。无法确认停止时返回错误。进程归属管理不等于沙箱或权限提升。
 - 退出应用时尝试停止已知远程终端并关闭 SSH 连接；外部启动或主动脱离进程组的服务不属于 CardBush 托管任务。
 
 ## 验证

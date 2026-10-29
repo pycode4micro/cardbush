@@ -1,7 +1,7 @@
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { Monitor, Server, Settings2, X, Link } from 'lucide-react';
+import { Settings2, UsersRound } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
 import { journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
@@ -10,9 +10,6 @@ import { VoiceConversation, applicationVoiceSession } from '../voice/VoiceConver
 import type { VoiceTarget } from '../voice/voiceSession';
 import { MarkdownContent, MessageFileAttachmentStrip, MessageImageStrip } from '../chatMessages/MessageBubble';
 import { AssistantComposer, type AssistantComposerControls } from './AssistantComposer';
-import { SettingsDropdown } from '../settings/SettingsDropdown';
-import { AgentDesktopPanel as AgentDesktopView } from '../agents/AgentDesktopPanel';
-import type { AgentConnection, AgentOperation } from '../../../electron/agentTypes';
 import { AssistantBulb } from './AssistantBulb';
 import { AssistantSettingsDialog } from './AssistantSettingsDialog';
 import { readAssistantProfile, saveAssistantProfile, useAssistantProfile, setAssistantWorking } from './assistantProfile';
@@ -36,9 +33,9 @@ import { localInspectorWorkspace } from '../inspector/inspectorSessions';
 const sessionId = PERSONAL_ASSISTANT_SESSION;
 // Also hide transcripts saved by older versions, without deleting conversational memory.
 const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
-export function AssistantView({ active, language, connections, prepare, onManageHosts, composerControls,
+export function AssistantView({ active, language, prepare, onManageHosts, composerControls,
   inspectorOpen = false, onToggleInspector, browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
-  active: boolean; language: string; connections: AgentConnection[];
+  active: boolean; language: string;
   prepare(): Promise<ChatStreamRequest>; onManageHosts(): void;
   composerControls: AssistantComposerControls;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
@@ -63,7 +60,7 @@ export function AssistantView({ active, language, connections, prepare, onManage
   const [nextStepPrediction, setNextStepPrediction] = useState<ConversationJournalSnapshot['nextStepPrediction']>();
   const replying = (busy || submitting) && !error && !runtimeError;
   const [retry, setRetry] = useState<ConversationJournalSnapshot['retry']>(null);
-  const [settings, setSettings] = useState(false), [desktop, setDesktop] = useState(false);
+  const [settings, setSettings] = useState(false);
   useEffect(() => { if (!active) setSettings(false); }, [active]);
   const prepareRef = useRef(prepare); prepareRef.current = prepare;
   useEffect(() => {
@@ -93,7 +90,6 @@ export function AssistantView({ active, language, connections, prepare, onManage
   useEffect(() => { if (!active) setArriving(new Set()); }, [active]);
   const voice = applicationVoiceSession();
   const callHere = useSyncExternalStore(voice.subscribe, () => voice.snapshot().mode === 'call' && Boolean(voice.snapshot().assistant));
-  const host = connections.find(item => item.id === profile.targetAgent);
   const initialize = useRef<Promise<unknown> | undefined>(undefined);
   const ensure = useCallback(() => initialize.current ??= assistantBackend.ensure(profile.name)
     .catch(error => { initialize.current = undefined; throw error; }), [profile.name]);
@@ -179,18 +175,9 @@ export function AssistantView({ active, language, connections, prepare, onManage
     send: text => voice.snapshot().mode === 'call' ? submit(text, true) : send(text) };
   target.refresh = () => ({ ...target, contextGeneration: generation.current, messages: speechMessages(entriesRef.current),
     historyMessages: journalMessages(entriesRef.current.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busyRef.current });
-  const remoteCall = useCallback(async <T,>(operation: AgentOperation, input?: Record<string, unknown>) => {
-    const api = window.cardbushDesktop?.agents;
-    if (!api || !profile.targetAgent) throw Error(uiText(language)('assistantView.select_an_execution_host_first'));
-    await api.connect(profile.targetAgent);
-    return api.call(profile.targetAgent, operation, input) as Promise<T>;
-  }, [profile.targetAgent]);
   const headerControls = <div className="assistant-actions">
-    <SettingsDropdown value={profile.targetAgent} onChange={targetAgent => { saveAssistantProfile({ ...profile, targetAgent }); setDesktop(false); }}
-      label={uiText(language)('assistantView.executionHost')} options={[{ value: '', label: uiText(language)('workspace.local'), icon: <Monitor size={14}/> }, ...connections.map(item => ({ value: item.id, label: `${item.name}${item.sshTunnel ? ' · SSH' : ''}`, icon: <Server size={14}/> }))]}/>
     <div className="assistant-composer-tools">
-      <button type="button" title={uiText(language)('assistantView.connectSshManageHosts')} onClick={onManageHosts}><Link size={17}/></button>
-      {host && <button type="button" aria-pressed={desktop} title={uiText(language)('assistantView.remoteComputer')} onClick={() => setDesktop(value => !value)}><Monitor size={18}/></button>}
+      <button type="button" title={uiText(language)('teamSidebar.manageAgents')} onClick={onManageHosts}><UsersRound size={17}/></button>
       <button type="button" title={uiText(language)('assistantSettingsDialog.assistantSettings')} onClick={() => setSettings(true)}><Settings2 size={18}/></button>
     </div>
   </div>;
@@ -253,6 +240,6 @@ export function AssistantView({ active, language, connections, prepare, onManage
         </div>
       </VoiceConversation>
       </div><ScrollBottomButton language={language} visible={viewport.scrollBottomVisible} running={busy} onClick={viewport.scrollToBottom}/>
-    </div>{desktop && host && <aside className="assistant-desktop"><button className="assistant-desktop-close" type="button" onClick={() => setDesktop(false)} aria-label={uiText(language)('assistantView.closeRemoteComputer')}><X size={18}/></button><AgentDesktopView call={remoteCall} active={active} name={host.name} language={language}/></aside>}</div>
+    </div></div>
   </section>;
 }

@@ -1,5 +1,7 @@
 # 浏览器与 Computer Use：CardBush 内置能力边界
 
+[English](CORE_BROWSER_COMPUTER_USE.en.md) · [简体中文](CORE_BROWSER_COMPUTER_USE.md)
+
 Browser Use 在 Windows 11 上统一控制 CardBush 内置浏览器和分别配对的 Chrome / Microsoft Edge。外部浏览器保留各自的扩展、登录状态和个人配置；内置浏览器操作应用中正在展示的真实标签页。这些能力与 Computer Use 一起随应用交付和维护。
 
 ## 内置标签页控制

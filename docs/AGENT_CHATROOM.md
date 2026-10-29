@@ -1,5 +1,7 @@
 # Project agent coordination
 
+[English](AGENT_CHATROOM.md) · [简体中文](AGENT_CHATROOM.zh-CN.md)
+
 AgentChatroom is an installed-by-default **bundled native plugin**, loaded by the ordinary plugin catalog and Runtime extension loader. It can be disabled in plugin settings. It exposes one deferred tool, `agentchatroom`: `get_tool_schema` loads its definition and `call_tool` invokes it. No peer messaging tools are added to the default provider tool declarations.
 
 ## Ownership and tool boundaries
@@ -10,7 +12,7 @@ AgentChatroom is an installed-by-default **bundled native plugin**, loaded by th
 | `tasks` | List/inspect/wait/stop existing tasks; `action=conversation` reads one child's inputs and terminal replies | One `task_ids` entry and optional `cursor` for conversation reads |
 | `agentchatroom` | `discover`, `join`, `invite`, `send`, `read`, `leave` for independent conversations and explicitly user-authorized children | Host-bound `agent_id` and joined `room_id` |
 
-Child conversations stay out of rooms by default; explicit user authorization permits joining and communication. Room messages never dispatch/resume child tasks or read another conversation's transcript. Both child-conversation entry points use the same ownership check and local/remote reader. Intermediate reasoning and tool activity remain private. The former seven chatroom names and `read_subagent_conversation` remain compatibility handlers for saved conversations; the current catalog advertises only their replacements. Hot refresh preserves already-exposed legacy schemas without adding legacy names to new conversations.
+Child conversations stay out of rooms by default; explicit user authorization permits joining and communication. Room messages never dispatch/resume child tasks or read another conversation's transcript. Child-conversation reads share the ownership check and local/remote reader. Intermediate reasoning and tool activity remain private. The former seven chatroom names retain compatibility handlers; the current catalog advertises the unified entry point. Child transcript reads use `tasks`, not a separately registered `read_subagent_conversation` tool. Hot refresh preserves already-exposed legacy chatroom schemas without adding those names to new conversations.
 
 The Runtime's `RuntimeTurnSignals` owns turn-scoped waits, timeouts, cancellation and typed user/peer wake reasons. Subagents, tasks, background tool observers and room waits share it. Executors still own their task lifecycles; AgentChatroom owns room journals, membership and cursors; `RuntimeConversations` owns session presence and bounded idle admission for independent sessions. No second agent loop or generic cross-agent message tool is introduced.
 

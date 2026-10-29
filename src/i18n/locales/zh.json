@@ -3949,6 +3949,19 @@
     "main.file_operation_failed": "文件操作失败",
     "main.windows_version_required": "CardBush 需要 Windows 10 1809 或更高版本。",
     "browserConnector.windowsVersionRequired": "Browser Use 需要 Windows 10 1809 或更高版本。",
-    "browserConnector.supportedBrowsers": "Browser Use 支持 Chrome 和 Edge。"
+    "browserConnector.supportedBrowsers": "Browser Use 支持 Chrome 和 Edge。",
+    "remoteWorkers.title": "远程 Worker",
+    "remoteWorkers.add": "添加 Worker 连接",
+    "remoteWorkers.description": "Worker 使用自己的模型、工作区、工具和权限上限。注册为子 Agent 后委派任务；连接不会复制本机配置。",
+    "remoteWorkers.empty": "尚未添加 Worker 连接。",
+    "remoteWorkers.unavailable": "Worker 不可用，请先验证实例身份和委派能力。",
+    "remoteWorkers.verified": "已验证服务身份",
+    "remoteWorkers.notVerified": "需要验证",
+    "remoteWorkers.registerRole": "注册为子 Agent",
+    "remoteWorkers.test": "验证连接",
+    "remoteWorkers.configure": "Worker 连接",
+    "remoteWorkers.execution": "执行位置",
+    "remoteWorkers.local": "此计算机",
+    "remoteWorkers.statusUnavailable": "状态待确认"
   }
 }

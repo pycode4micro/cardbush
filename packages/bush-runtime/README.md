@@ -1,5 +1,7 @@
 # Bush TypeScript Runtime
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 This package owns the provider-independent Agent loop. It does not render UI,
 manage product settings, or infer task semantics from text, tool names,
 languages, frameworks, or combinations of lifecycle states.
@@ -51,8 +53,8 @@ subagent tool and durable Session loop, using the configured workspace and
 permission policy. Task reads and follow-ups keep the child's original host;
 resetting the conversational parent does not cancel already dispatched children.
 Conversation summaries retain original journal entries and are separate from
-cross-session habit memory. See the [assistant guide](../../docs/PERSONAL_ASSISTANT.md)
-and [realtime voice boundary](../../docs/REALTIME_VOICE.md).
+cross-session habit memory. See the [assistant guide](../../docs/PERSONAL_ASSISTANT.en.md)
+and [realtime voice boundary](../../docs/REALTIME_VOICE.en.md).
 
 `SessionStore` is an append-only fact journal. A Turn is committed atomically
 with stable Turn/message identity, ordered indexes, terminal status, reason and
@@ -103,7 +105,7 @@ memory is disabled or there is nothing new to record. Conversation without tool
 work needs no call. This signal neither ends the loop nor prepares compaction;
 the host does not insert a missing call or block completion without it.
 
-Product policy v4 migrates bound v2/v3 conversations once at the next Turn boundary,
+The recorded-compaction migration introduced in product policy v4 upgraded bound v2/v3 conversations at the next Turn boundary,
 refreshing the system policy and `summary_for_user` presentation only. The change
 is recorded as `model_contract_updated`; other tools and original conversation
 facts remain unchanged. Running loops retain their snapshot. This one-time
@@ -179,7 +181,7 @@ messages remain in the append-only journal; there is no unrecorded fallback that
 silently drops older summaries. All three API adapters use a default JSON-body
 budget of 40,000,000 bytes, with maintenance starting at 35,000,000 bytes.
 `maxRequestBodyBytes` can override the default for a known transport limit.
-See [image and request budgets](../../docs/MODEL_IMAGE_BUDGET.md).
+See [image and request budgets](../../docs/MODEL_IMAGE_BUDGET.en.md).
 
 Every completed Tool round receives one aggregate context-ingress budget derived from
 the latest measured input, actual model output and checkpoint reserve. Parallel Tool
@@ -276,9 +278,10 @@ owning broker even when presented to the parent. Unselected histories are not lo
 Remote tasks without this evidence do not claim local progress.
 Parent follow-ups retain their `parent` author metadata while running and after
 restart. Only messages marked as human input produce direct-user reminders.
-For `subagent` follow-ups send `task_id`, `prompt` and optionally
-`run_in_background`; omit `name`, `mode` and configuration. The existing name and
-execution scope are retained. The portable object schema documents these
+For `subagent` follow-ups use the original `task_id`, text and optional
+`delivery` (`queue` or `insert`), or a structured pending-interaction `response`.
+Do not replace the name, mode or configuration. Original identity and execution
+scope remain pinned; see [remote interaction](../../docs/SUBAGENT_REMOTE_PROTOCOL.md). The portable object schema documents these
 cross-field rules; the shared decoder enforces them before execution.
 Tool registrations explicitly declare child visibility and parallel safety;
 Runtime does not derive either property. Subagent lifecycle facts are stored in a

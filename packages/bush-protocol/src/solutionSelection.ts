@@ -8,7 +8,7 @@ const briefText = (limit: number) => z.string().trim().min(1).refine(value => Ar
   `Use at most ${limit} characters.`).refine(value => !/[\r\n]/u.test(value), 'Use one line of plain text.');
 const questionFields = {
   prompt: briefText(500),
-  options: z.array(briefText(120)).min(1).max(3).refine(options => new Set(options).size === options.length,
+  options: z.array(briefText(120)).max(3).refine(options => new Set(options).size === options.length,
     'Offer distinct solutions.'),
 };
 export const solutionQuestionSchema = z.object({ id: briefText(80), ...questionFields }).strict();

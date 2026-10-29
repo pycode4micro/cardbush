@@ -22,12 +22,25 @@ export class SubagentTaskStore {
   readonly #now: () => string;
   readonly #events = new Map<string, SubagentEvent[]>();
   readonly #listeners = new Set<() => void>();
+  readonly #startedHere = new Set<string>();
+
+  startedHere(parentSessionId: string, taskId: string): boolean {
+    return this.#startedHere.has(JSON.stringify([parentSessionId, taskId]));
+  }
 
   waitForCompletion(parentSessionId: string, taskId: string, signal: AbortSignal): Promise<void> {
+    return this.#wait(parentSessionId, taskId, task => task?.status !== 'running', signal);
+  }
+
+  waitForChange(parentSessionId: string, taskId: string, revision: number, signal: AbortSignal): Promise<void> {
+    return this.#wait(parentSessionId, taskId, task => task?.revision !== revision, signal);
+  }
+
+  #wait(parentSessionId: string, taskId: string, done: (task: SubagentTask | undefined) => boolean, signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
       const cleanup = () => { this.#listeners.delete(check); signal.removeEventListener('abort', abort); };
       const abort = () => { cleanup(); reject(signal.reason ?? new DOMException('Wait stopped', 'AbortError')); };
-      const check = () => { if (this.get(parentSessionId, taskId)?.status !== 'running') { cleanup(); resolve(); } };
+      const check = () => { if (done(this.get(parentSessionId, taskId))) { cleanup(); resolve(); } };
       if (signal.aborted) { abort(); return; }
       this.#listeners.add(check); signal.addEventListener('abort', abort, { once: true }); check();
     });
@@ -64,12 +77,18 @@ export class SubagentTaskStore {
     agentProfileId?: string;
     agentName?: string;
     resumedFromTaskId?: string;
+    queuedAfterTaskId?: string;
     remote?: SubagentTask['remote'];
     phase?: "discussion" | "execution";
   }): SubagentTask {
     const existing = this.get(input.parentSessionId, input.taskId);
     if (existing) throw new Error(`Subagent task ${input.taskId} already exists.`);
     const now = this.#now();
+    if (input.queuedAfterTaskId) {
+      const predecessor = this.get(input.parentSessionId, input.queuedAfterTaskId);
+      if (!predecessor || predecessor.childSessionId !== input.childSessionId || predecessor.remote || input.remote)
+        throw new Error('A local queued turn must follow an owned task in the same child conversation.');
+    }
     const task = subagentTaskSchema.parse({
       protocol: BUSH_SUBAGENT_TASK_PROTOCOL,
       ...input,
@@ -84,13 +103,23 @@ export class SubagentTaskStore {
       updatedAt: now,
     });
     this.#append(input.parentSessionId, task);
+    this.#startedHere.add(JSON.stringify([input.parentSessionId, input.taskId]));
     return structuredClone(task);
+  }
+
+  beginExecution(parentSessionId: string, taskId: string): void {
+    const task = this.get(parentSessionId, taskId);
+    if (!task || task.status !== 'running') throw new Error('stale_target');
+    if (!task.queuedAfterTaskId || task.executionStartedAt) return;
+    if (this.get(parentSessionId, task.queuedAfterTaskId)?.status === 'running') throw new Error('The preceding child turn is still running.');
+    const now = this.#now();
+    this.#append(parentSessionId, subagentTaskSchema.parse({ ...task, executionStartedAt: now, updatedAt: now, revision: task.revision + 1 }));
   }
 
   finish(input: {
     parentSessionId: string;
     taskId: string;
-    status: "completed" | "failed" | "stopped";
+    status: "completed" | "failed" | "stopped" | "unavailable";
     finalResponse: string;
     errorMessage: string;
     usage: SubagentTask["usage"];
@@ -121,7 +150,18 @@ export class SubagentTaskStore {
       completedAt: now,
     });
     this.#append(input.parentSessionId, task);
+    this.#startedHere.delete(JSON.stringify([input.parentSessionId, input.taskId]));
     return structuredClone(task);
+  }
+
+  observe(parentSessionId: string, taskId: string, observation: SubagentTask['observation'], error?: string): void {
+    const before = this.get(parentSessionId, taskId);
+    if (!before || before.status !== 'running') return;
+    if (observation && (observation.contextId !== before.childSessionId || observation.taskId !== taskId)) throw new Error('Child observation identity mismatch.');
+    if (observation && before.observation && observation.cursor < before.observation.cursor) throw new Error('Child observation cursor moved backwards.');
+    if (JSON.stringify(before.observation) === JSON.stringify(observation) && before.observationError === error) return;
+    this.#append(parentSessionId, subagentTaskSchema.parse({ ...before, observation, observationError: error,
+      updatedAt: this.#now(), revision: before.revision + 1 }));
   }
 
   get(parentSessionId: string, taskId: string): SubagentTask | undefined {
@@ -187,6 +227,7 @@ export function projectSubagentTasks(
       if (event.task.revision !== before.revision + 1) {
         throw new Error("Subagent task revision is not contiguous.");
       }
+      if (JSON.stringify(event.task.remote) !== JSON.stringify(before.remote)) throw new Error('Subagent remote binding changed.');
       for (const key of [
         "parentTurnId",
         "childSessionId",
@@ -200,6 +241,7 @@ export function projectSubagentTasks(
         "agentProfileId",
         "agentName",
         "resumedFromTaskId",
+        "queuedAfterTaskId",
         "phase",
         "createdAt",
       ] as const) {
@@ -208,6 +250,7 @@ export function projectSubagentTasks(
         }
       }
       if (before.status !== "running") throw new Error("Subagent terminal task was updated.");
+      if (before.executionStartedAt && event.task.executionStartedAt !== before.executionStartedAt) throw new Error('Child execution admission changed.');
     }
     tasks.set(event.taskId, event.task);
   }

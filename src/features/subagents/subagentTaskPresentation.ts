@@ -7,6 +7,7 @@ const taskStates = {
   completed: { tone: 'complete', labelKey: 'automationPanel.completed' as const },
   failed: { tone: 'failed', labelKey: 'loopExecutionPreviews.failed' as const },
   stopped: { tone: 'stopped', labelKey: 'automationPanel.stopped' as const },
+  unavailable: { tone: 'stopped', labelKey: 'remoteWorkers.statusUnavailable' as const },
 } as const satisfies Record<SubagentTaskStatus, { tone: string; labelKey: MessageKey }>;
 
 // Execution status comes from the Runtime. Finishing does not imply either

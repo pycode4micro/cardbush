@@ -7,6 +7,10 @@ export const REGISTERED_AGENT_SCHEMA = {
   type: 'object', additionalProperties: false, required: ['id', 'name', 'system_prompt'], properties: {
     id: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$' }, name: { type: 'string' }, description: { type: 'string' },
     system_prompt: { type: 'string', description: 'Persistent role, principles, task boundaries and output requirements.' },
+    remote: { type: 'object', additionalProperties: false, required: ['connection_id', 'agent_id'], properties: {
+      connection_id: { type: 'string', description: 'Saved worker connection ID from list_subagent_options.remote_agents. Credentials are managed by the host, never included here.' },
+      agent_id: { type: 'string', description: 'Verified service instance ID from that connection. A different instance requires a new registration.' },
+    }, description: 'Register a remote worker as a reusable subagent. Its own model, workspace and tools execute the role. Omit local allowed_tools, settings, hooks and guards.' },
     allowed_tools: { type: 'array', items: { type: 'string' }, description: 'Exact available tools. Omit to inherit the host catalog, [] to run without tools.' },
     settings: CLEAN_AGENT_SETTINGS_SCHEMA,
     hooks: { type: 'array', items: { type: 'string' }, description: 'Exact trusted hook IDs from list_subagent_options section=settings. Host hooks always remain enforced.' },

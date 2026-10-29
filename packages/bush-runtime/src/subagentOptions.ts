@@ -1,4 +1,4 @@
-import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS } from '@cardbush/bush-protocol';
+import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, type SubagentInteractionCapabilities } from '@cardbush/bush-protocol';
 import type { SubagentPermissionPolicy } from './childTurn.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import type { SubagentModelCatalog } from './cleanAgentSettings.js';
@@ -15,6 +15,7 @@ interface OptionsInput extends CatalogQuery {
 }
 
 interface OptionsSources {
+  localInteractions?: SubagentInteractionCapabilities;
   agents?: RegisteredAgentStore;
   models?: SubagentModelCatalog;
   permissionPolicy?: SubagentPermissionPolicy;
@@ -83,9 +84,9 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
         ]);
         const needle = context.input.query?.toLowerCase();
         const entries = [
-          ...registered.map(({ definition: { id, name, description, enabled } }) => ({ kind: 'registered_agents' as const, id, name, description: briefText(description), enabled, search: `${id} ${name} ${description}` })),
+          ...registered.map(({ definition: { id, name, description, enabled, remote } }) => ({ kind: 'registered_agents' as const, id, name, description: briefText(description), enabled, ...(remote ? { execution: 'remote', worker: remote } : {}), search: `${id} ${name} ${description}` })),
           ...roles.map(({ id, description }) => ({ kind: 'agent_roles' as const, id, description: briefText(description), search: `${id} ${description}` })),
-          ...remote.map(({ id, name }) => ({ kind: 'remote_agents' as const, id, name: briefText(name, 160), search: `${id} ${name}` })),
+          ...remote.map(({ id, name, agentId, interactionCapabilities }) => ({ kind: 'remote_agents' as const, id, agentId, name: briefText(name, 160), ...(interactionCapabilities ? { interactionCapabilities } : {}), search: `${id} ${name}` })),
         ].filter(item => !needle || item.search.toLowerCase().includes(needle))
           .sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))
           .map(({ search: _search, ...item }) => item);
@@ -96,6 +97,7 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
           remote_agents: items.filter(item => item.kind === 'remote_agents').map(({ kind: _kind, ...item }) => item),
           ...page,
           default_mode: 'fork',
+          ...(options.localInteractions ? { interaction_capabilities: options.localInteractions } : {}),
           clean_usage: 'Use agent_id for registered clean employees and Team nodes; agent_type selects a plugin role. If the requested employee is missing, register it with subagent action=save before saving a Team. New tasks have separate conversations; task_id continues an existing task.',
         };
       }

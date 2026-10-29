@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
-import type { RemoteSubagentRequest, SessionSnapshot } from '@cardbush/bush-protocol';
+import { remoteControlSchema, remoteObservationSchema, remoteWorkerSchema, supportsRemoteInteraction, type RemoteSubagentRequest, type SessionSnapshot } from '@cardbush/bush-protocol';
+import type { AgentJob } from './agentTypes.js';
 import type { WebStore } from './webStore.mjs';
 import { equalSecret, json, readJson, WebError } from './webCommon.mjs';
 import { remoteAgentToken, remoteIdentity, WebRemoteAgents } from './webRemoteAgents.mjs';
@@ -11,11 +12,13 @@ const common = { connectionId: id, agentId: id.optional(), parentSessionId: id, 
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('agents.list'), input: z.object({}).strict() }).strict(),
   z.object({ operation: z.literal('agents.delegate'), input: z.object({ ...common, taskId: id, turnId: id, parentTurnId: id,
-    prompt: z.string().min(1).max(100_000), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
+    prompt: z.string().min(1).max(100_000), queue: z.boolean().optional(), worker: remoteWorkerSchema.optional(), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
+  z.object({ operation: z.literal('agents.control'), input: z.object({ connectionId: id, agentId: id, parentSessionId: id,
+    worker: remoteWorkerSchema.optional(), control: remoteControlSchema }).strict().transform(value => ({ ...value, sessionId: value.control.contextId })) }).strict(),
   z.object({ operation: z.literal('agents.read-child'), input: z.object(common).strict() }).strict(),
   z.object({ operation: z.literal('agents.guide-child'), input: z.object({ ...common, turnId: id, messageId: id, content: z.string().min(1).max(100_000) }).strict() }).strict(),
 ]);
-/** The tenant can request these four operations only. It never receives a remote
+/** The tenant can request only the listed delegation operations. It never receives a remote
  * credential, arbitrary RPC, configuration sync, shell or provisioning endpoint. */
 export class WebRemoteAgentBridge {
   readonly #active = new Map<string, number>();
@@ -52,6 +55,35 @@ export class WebRemoteAgentBridge {
         if (session?.metadata?.delegationOwner !== parentSessionId) throw new WebError(403, '远程子会话不属于当前账号和会话。');
         return session;
       };
+      if (operation === 'agents.control') {
+        if (!supportsRemoteInteraction(info.capabilities.workerInteraction)) throw new WebError(409, 'Update the remote worker to support interaction.');
+        const session = await readOwned(), control = input.control;
+        const taskId = taskIdFor(id.parse(control.taskId));
+        if (control.operation === 'message' && control.delivery === 'queue') {
+          // Allocate a tenant-visible handle that can be observed after reconnecting.
+          const jobs = await client.call('chat.jobs', { sessionId }) as Array<AgentJob & { permissionMode?: string; language?: string }>;
+          const original = jobs.find(job => job.id === taskId && job.delegation?.parentSessionId === parentSessionId);
+          if (!original) throw new WebError(404, 'Unknown owned worker task.');
+          const nextId = 'queued-' + remoteIdentity(secret, userId, input.parentSessionId, connection.id, control.messageId);
+          const nextTaskId = taskIdFor(nextId);
+          const queued = await client.call('delegation.submit', { taskId: nextTaskId, sessionId, turnId: `turn-${nextTaskId}`,
+            parentSessionId, parentTurnId: original.delegation!.parentTurnId, prompt: control.text, queue: true,
+            permissionMode: original.permissionMode ?? 'task_free', language: original.language ?? 'en', worker: session.metadata?.remoteWorker }) as AgentJob;
+          json(response, 200, { accepted: true, contextId: input.sessionId, taskId: nextId, state: queued.status }); return;
+        }
+        const mapped = { ...control, contextId: sessionId, taskId, ...('messageId' in control ? {
+          messageId: 'webcontrol_' + remoteIdentity(secret, userId, input.parentSessionId, connection.id, control.messageId) } : {}) };
+        const result = await client.call('delegation.control', { parentSessionId, control: mapped }, combined);
+        await this.registry.authorized(userId, input.connectionId);
+        if (!(await this.store.user(userId))?.is_active) throw new WebError(401, 'Account is inactive.');
+        if (control.operation === 'observe') {
+          const observation = remoteObservationSchema.parse(result);
+          if (observation.contextId !== sessionId || observation.taskId !== taskId) throw new WebError(502, 'Remote worker identity changed.');
+          json(response, 200, { ...observation, contextId: input.sessionId, taskId: control.taskId,
+            interactions: observation.interactions.map(item => ({ ...item, contextId: input.sessionId, taskId: control.taskId })) });
+        } else json(response, 200, result);
+        return;
+      }
       if (operation === 'agents.read-child') {
         const session = await readOwned();
         // Parent conversation readers need only inputs and final replies.
@@ -76,7 +108,7 @@ export class WebRemoteAgentBridge {
         if (!session.turns.some(turn => turn.turnId === turnId)) throw new WebError(404, '远程子任务不存在。');
         json(response, 200, await client.call('runtime.command', { kind: 'runtime.enqueue_guidance', payload: {
           protocol: 'bush.runtime_guidance.v1', sessionId, turnId, messageId: 'webguide_' + remoteIdentity(secret, userId, input.parentSessionId, input.messageId),
-          content: input.content, createdAt: new Date().toISOString(), mode: 'interrupt_and_continue',
+          content: input.content, createdAt: new Date().toISOString(), mode: 'append_context',
           metadata: { subagentAuthor: 'parent', realtimeParent: true },
         } })); return;
       }
@@ -84,9 +116,8 @@ export class WebRemoteAgentBridge {
       const taskId = taskIdFor(input.taskId);
       const delegated: RemoteSubagentRequest = { ...input, agentId: connection.agentId, taskId, sessionId,
         turnId: `turn-${taskId}`, parentSessionId, parentTurnId: 'webturn_' + remoteIdentity(secret, userId, input.parentTurnId),
-        // Administrator-approved policy for registered remote workers. The web
-        // parent remains restricted; only the independently hosted child gets full access.
-        permissionMode: 'all_free' };
+        // The receiver intersects this request with its own host ceiling.
+        permissionMode: input.permissionMode };
       response.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' }); response.flushHeaders();
       timer = setInterval(() => {
         if (!response.destroyed) response.write('{"type":"heartbeat"}\n');
@@ -103,7 +134,7 @@ export class WebRemoteAgentBridge {
       const remote = client;
       const result = await runRemoteSubagent({
         connect: async () => info,
-        call: (_id, operation, value) => remote.call(operation, value),
+        call: (_id, operation, value, signal) => remote.call(operation, value, signal),
         events: (_id, input, signal) => remote.events(input, signal),
       }, delegated, combined);
       response.end(JSON.stringify({ type: 'result', value: result }) + '\n');

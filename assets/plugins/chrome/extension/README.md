@@ -1,5 +1,7 @@
 # CardBush Browser Use
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 This Manifest V3 extension connects Chrome and Microsoft Edge profiles on Windows 10 / 11 to
 the CardBush Broker through authenticated loopback WebSockets (Chromium 116+ APIs).
 The default local App and CLI profile share one broker and one set of browser
@@ -10,12 +12,16 @@ Development installation:
 
 1. Run CardBush App or the local CLI on Windows 10 / 11 and install/enable Browser Use.
 2. Open `chrome://extensions` or `edge://extensions` in that browser, enable Developer mode, and choose **Load unpacked**.
-3. Select this directory and approve the first connection in the CardBush system
-   dialog, then confirm in the extension's own window. No pairing code is needed. Page access still requires authorization. Start a browser task in CardBush. New tabs are
+3. Select this directory and approve the first connection once in the CardBush-styled
+   extension window. No system dialog or pairing code is needed. Page access still requires authorization. Start a browser task in CardBush. New tabs are
    placed in a cyan group named for that CardBush session. The connector only
    lists and controls tabs in that session's groups.
 4. To use an existing personal tab, open the extension popup and explicitly
    copy it into the active CardBush group. The original tab remains untouched.
+
+Agent-created tabs open in the background by default. Selecting an automation target
+does not activate the user's visible tab. Foreground creation or focusing requires
+an explicit request (`background: false` or `bringToFront: true`).
 
 Version 1.2.4 recovers when a saved loopback port is occupied or denied by Windows. The app tries the saved endpoint, then a bounded set of 32 spread-out ports below the default Windows dynamic client range. The extension tries its saved endpoint first, then discovers the same paired broker in that set with up to four concurrent, deadline-limited handshakes. It saves a replacement endpoint only after mutual authentication; existing pairing, session routing and site permissions remain unchanged. Discovery failure uses the existing reconnect backoff, and disabling cancels pending discovery.
 
@@ -76,10 +82,10 @@ one dialog is allowed at a time and a persisted cooldown limits repeated request
 Cancelling or disconnecting aborts the dialog. Pairing protocol v2 replaces the
 two-dialog enrollment flow; upgrade the App/CLI and reload the extension together
 for new requests. Existing CB2 pairings continue to reconnect without new consent.
-Remote Agents retain manual pairing
+Remote workers retain manual pairing
 and never open a dialog on the server or inherit the desktop's connection.
 For manual connection or remote Agent pairing, run `/browser pair chrome` or
-`/browser pair edge` in the CLI connected to the intended Agent, keep that CLI
+`/browser pair edge` in a local CLI running on the intended worker machine, keep that CLI
 open and paste the code directly into the intended browser extension. Desktop
 settings can also generate a code for manual local pairing. Codes must not be
 sent to the model; `/browser status` checks connection health without creating one.
@@ -96,9 +102,9 @@ Desktop disable stops the listener and active control while retaining pairings
 and session bindings. Re-enabling the desktop connector allows automatic
 reconnection. Explicit extension disable stays off across browser/worker restarts
 until Connect is clicked, retaining its pairing. Removing a connection revokes
-only that credential; removing connector configuration revokes all pairings and
-retains invalid route bindings so old sessions cannot silently adopt another
-browser. Ordinary app exit preserves enabled intent and pairing data.
+only that credential; removing connector configuration revokes all pairings. The shared local broker
+retains invalid route bindings so old sessions cannot silently adopt another browser;
+legacy isolated connectors clear their routes file. Ordinary app exit preserves enabled intent and pairing data.
 
 Per-site and all-site grants survive ordinary app/browser restarts and temporary
 disable; use Revoke access in the extension to clear them. This consent only
@@ -114,11 +120,9 @@ MSIX connector configuration resides in the package's LocalState. Older
 Native Messaging registrations require an ownership-checked migration; see
 CardBush settings if a legacy registration warning appears.
 
-System consent is displayed by the bundled native helper for either the App or
-CLI. The extension independently confirms first use in its own window, so an
-untrusted local service cannot open browser control just by claiming approval.
-Only both approvals commit the credential; an interrupted final reply can resume
-with the stored proof without asking twice. Closing or timing out denies the request; the default button is No. It does
-not elevate privileges or request UAC. MSIX keeps registry and filesystem
+The single extension-owned consent window is shared by local App and CLI enrollment.
+An untrusted local service cannot authorize itself by claiming approval. Closing,
+rejecting or timing out denies the request; no UAC or privilege elevation is involved.
+MSIX keeps registry and filesystem
 virtualization enabled and adds no `unvirtualizedResources` capability or execution
 alias. Website authorization remains separate from connection consent.

@@ -1,5 +1,7 @@
 # 会话缓存路由与图片诊断
 
+[English](PROMPT_CACHE_ROUTING.en.md) · [简体中文](PROMPT_CACHE_ROUTING.md)
+
 ## 适用范围
 
 Responses 和 Chat Completions 适配器向已确认支持的 HTTPS 接口发送 `prompt_cache_key`：

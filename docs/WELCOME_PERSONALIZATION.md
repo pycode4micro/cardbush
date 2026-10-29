@@ -1,5 +1,7 @@
 # Welcome suggestions and star wordmark
 
+[English](WELCOME_PERSONALIZATION.md) · [简体中文](WELCOME_PERSONALIZATION.zh-CN.md)
+
 The empty conversation view displays a canvas `cardbush` wordmark and three
 editable starting prompts. Selecting a suggestion fills and focuses the composer;
 it never sends a message or replaces a nonempty draft.

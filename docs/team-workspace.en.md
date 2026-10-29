@@ -1,0 +1,21 @@
+# Workflow workspace
+
+[English](team-workspace.en.md) · [简体中文](team-workspace.md)
+
+[中文](team-workspace.en.md) | [Documentation](README.md)
+
+The desktop Team entry centers on a workflow graph and conversation. A new workflow first keeps a draft; its session and workspace are created on the first submission. The user describes a goal, and the Agent uses existing `subagent` and `team` tools to register employees, nodes and dependencies. Users do not have to write Markdown or fill configuration forms first.
+
+- Graph nodes and edges come from `TeamWorkflow.nodes` and `depends_on`. A run view uses the frozen `TeamRun.workflow` and actual node statuses. Document links, canvas coordinates and model prose are not execution dependencies.
+- Each workflow reuses its own conversation with model selection, permissions, queuing, questions, stop and connection recovery. Creation's `InspectorCoverControls` initially shows Input and a drag handle; expanding a compact conversation leaves the graph size unchanged. Creation/workflows need no Back button. Conversation and Inspector behavior reuse `ChatPanel` and the normal right panel.
+- Creation and workflows use ordinary session ownership: no selected project means Recents, while an explicit project selection assigns that project. Automatic task directories are execution storage, not projects. Opening the composer, editing a temporary document or restarting a conversation does not prematurely create history. First send reuses draft persistence, deduplication and retry. Historical empty sessions are retained but hidden; old automatic directories incorrectly marked as projects display as task directories.
+- Request acceptance and execution completion refresh conversation lists. Opening from Recents/a project continues the same session. Returning to the editor retains it; switching views reloads saved history. First-send sessions carry `conversation_started`, so a pending first turn appears before history is committed.
+- Input reuses `Composer` and the component settings for standard/compact layouts, including welcome overrides. The workflow overlay preserves the selected style. Changing style or collapsing input keeps drafts, attachments, model and permissions. The Inspector's shortcut input retains its existing compact mode; returning restores the workflow style. Canvas click/Escape collapses input; run, new conversation and AI step adjustment expand it.
+- Each submitted request fixes workflow ID, revision, selected nodes and run ID. Navigation cannot retarget queued requests. Agents still reread and validate the latest revision before saving.
+- `MdGraphCanvas` provides zoom, pan, draggable nodes, auto arrangement and dependency ports. Readable step names take precedence. Dragging/edge changes autosave with revision checks, preserving the viewport. Failure/conflict restores the latest definition. Cycles and duplicate edges are rejected.
+- Node details show responsibilities, upstream inputs, outputs/errors. The current workflow permits dependency removal and AI editing. Historical runs use separate read-only snapshots with a return-to-edit action. Configuration changes do not rewrite started runs.
+- `SettingsDropdown` groups current workflow and historical runs, displaying time, status, revision, progress and input. It supports keyboard selection, scrolling and narrow windows. A selected historical run is not replaced by a new background run.
+- Run submits through the current conversation. Stop stops the actual execution. Failed runs owned by another conversation offer continuation in that original conversation, retaining ownership/recovery rules.
+- More retains employee management and Markdown import. Import previews before revision-checked writes. Export/edit in Creation preserves the article. Existing workflows/runs need no migration.
+
+Verification: `npm run test:md-presentation`. UI tests use a mock conversation service, not paid models. Coverage includes first-send creation, default/project ownership, workspace/project directory separation, retry/drafts, creation synchronization, snapshots, submission targets, session reuse, drag/edge saving, cycles, revision conflicts, grouped keyboard navigation, themes and narrow windows.

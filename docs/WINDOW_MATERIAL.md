@@ -1,5 +1,7 @@
 # Window material
 
+[English](WINDOW_MATERIAL.md) · [简体中文](WINDOW_MATERIAL.zh-CN.md)
+
 CardBush uses Windows' native Mica backdrop for the main window in its standard
 light and dark themes. The default is enabled; **Settings → Personalization →
 Window glass effect** switches between native material and an opaque surface

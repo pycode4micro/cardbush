@@ -2667,14 +2667,7 @@ function agentConnections() {
       return safeStorage.encryptString(value).toString('base64');
     },
     decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
-    }, { ssh: await sshConnections(), sharedConfiguration: async () => {
-      const controller = await ensureRuntimeServicesReady();
-      const { packSharedConfiguration } = await import('./agentSharedConfiguration.mjs');
-      const dataRoot = app.getPath('userData');
-      return packSharedConfiguration({ ...await controller.exportSharedConfiguration(), network: sharedModelProxy, instructions: (await getGlobalInstructionsStore().read()).content,
-      }, dataRoot);
-    } });
-    await manager.restore();
+    }, { ssh: await sshConnections() });
     return manager;
   });
 }
@@ -4346,31 +4339,9 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
           if (!productHostController) throw new Error('Product Host is not ready.');
           return productHostController.resolveAutomationModel(String((payload as { modelId?: unknown })?.modelId ?? ''));
         }
-        if (operation === 'agents.list') return (await (await agentConnections()).list()).filter(item => item.hasToken && !item.migrationIssue).map(({ id, name, agentId }) => ({ id, name, agentId }));
-        if (operation === 'agents.delegate') {
-          const { runRemoteSubagent } = await import('./remoteSubagent.mjs');
-          return runRemoteSubagent(await agentConnections(), payload as import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).RemoteSubagentRequest, signal);
-        }
-        if (operation === 'agents.guide-child') {
-          const input = payload as { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string; turnId: string; messageId: string; content: string };
-          const manager = await agentConnections(), info = await manager.connect(input.connectionId);
-          if (input.agentId && info.id !== input.agentId) throw new Error('Remote Agent identity changed.');
-          const session = await manager.call(input.connectionId, 'sessions.get', { sessionId: input.sessionId }) as { metadata?: Record<string, unknown> } | undefined;
-          if (!session || session.metadata?.delegationOwner !== input.parentSessionId) throw new Error('This child conversation belongs to another parent.');
-          return manager.call(input.connectionId, 'runtime.command', { kind: 'runtime.enqueue_guidance', payload: {
-            protocol: 'bush.runtime_guidance.v1', sessionId: input.sessionId, turnId: input.turnId,
-            messageId: input.messageId, content: input.content, createdAt: new Date().toISOString(),
-            mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent', realtimeParent: true },
-          } });
-        }
-        if (operation === 'agents.read-child') {
-          const input = payload as { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string };
-          const manager = await agentConnections();
-          const info = await manager.connect(input.connectionId);
-          if (input.agentId && info.id !== input.agentId) throw new Error('Remote Agent identity changed.');
-          const session = await manager.call(input.connectionId, 'sessions.get', { sessionId: input.sessionId }) as import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).SessionSnapshot | undefined;
-          if (session && session.metadata?.delegationOwner !== input.parentSessionId) throw new Error('This child conversation belongs to another parent.');
-          return session;
+        if (['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation)) {
+          const { callRemoteWorker } = await import('./remoteWorkers.mjs');
+          return callRemoteWorker(await agentConnections(), operation, payload, signal);
         }
         if (operation === 'subagent.models' || operation === 'subagent.prepare-model') {
           if (!productHostController) throw new Error('Product Host is not ready.');
@@ -5219,7 +5190,6 @@ function isAllowedAppNavigation(targetUrl: string) {
   return false;
 }
 
-let sharedModelProxy: { mode: 'none' | 'system' | 'manual'; httpProxy: string; httpsProxy: string; noProxy: string } = { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' };
 let proxyUpdate: Promise<void> = Promise.resolve();
 function applyProxySettings(proxy: {
   mode: 'none' | 'system' | 'manual';
@@ -5242,7 +5212,6 @@ function applyProxySettings(proxy: {
       await productHostController?.refreshMcp().catch(() => undefined);
       throw error;
     }
-    sharedModelProxy = network.modelConfiguration();
   });
   proxyUpdate = pending.catch(() => undefined);
   return pending;

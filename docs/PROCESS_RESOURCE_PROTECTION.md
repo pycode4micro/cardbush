@@ -1,5 +1,7 @@
 # Process resource protection
 
+[English](PROCESS_RESOURCE_PROTECTION.md) · [简体中文](PROCESS_RESOURCE_PROTECTION.zh-CN.md)
+
 Windows managed command execution runs through the bundled `CardBushProcessHost` supervisor.
 The shell is created suspended, attached to a shared Windows Job Object and a task
 Job Object, then resumed. Failure to establish protection refuses execution; it
@@ -129,7 +131,7 @@ completion. Startup cancellation and late SDK completions cannot leave a process
 behind. The native parent-handle/job cleanup also applies if Runtime crashes.
 No process-name/port search or per-tool process scan is performed.
 
-An owned service replacement waits for the active-turn boundary, reserves startup
+An owned service replacement waits for that service's dispatched calls to settle, reserves startup
 resources, closes its old tree, and only then starts its replacement. Resource
 shortages publish `waiting_for_resources`, not a failed update. The current
 connection remains usable while waiting. Admission is retried after two seconds,
@@ -142,7 +144,7 @@ process alive as an atomic rollback. HTTP/SSE connections retain their existing
 connection-only behavior and never terminate an external server.
 
 New optional services can publish their tools while a turn is active. Existing
-connections are retained until idle for replacements/removals; required-service
+connections are retained for dispatched calls during replacements/removals; required-service
 transactions remain atomic. Ordinary product conversations opt into additive MCP
 scope refresh at model round boundaries. Discovery can load those new schemas
 without altering the frozen provider tool list or bypassing normal tool approvals.

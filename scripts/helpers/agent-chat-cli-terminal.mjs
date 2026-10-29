@@ -3,6 +3,7 @@
 process.stdin.isTTY = process.stdout.isTTY = process.stderr.isTTY = true;
 process.env.TERM = 'xterm';
 const { main } = await import('../../dist-electron/agentChatCli.mjs');
+const { openClient } = await import('./agent-chat-fixture-client.mjs');
 const { appendFile, readFile } = await import('node:fs/promises');
 if (process.env.CARDBUSH_TEST_CHAT_READY) {
   const { NativeChatTerminal } = await import('../../dist-electron/agentChatTerminal.mjs');
@@ -37,5 +38,5 @@ const shell = process.env.CARDBUSH_TEST_SHELL_LOG ? async (command, cwd) => {
   process.emit('SIGINT');
   return 0;
 } : undefined;
-try { process.exitCode = await main(process.argv.slice(2), { openArtifact, shell }); }
+try { process.exitCode = await main(process.argv.slice(2), { openArtifact, shell, openClient }); }
 catch (error) { console.error(error.message); process.exitCode = error.exitCode ?? 1; }

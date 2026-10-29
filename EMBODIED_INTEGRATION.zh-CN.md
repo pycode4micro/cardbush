@@ -1,6 +1,6 @@
 # CardBush 具身语音接入
 
-[English](EMBODIED_INTEGRATION.en.md)
+[English](EMBODIED_INTEGRATION.en.md) · [简体中文](EMBODIED_INTEGRATION.zh-CN.md)
 
 首款适配 **M5Stack AtomS3R AI Chatbot Kit（AtomS3R + Atomic Voice Base）**。这是可构建、可安装的首版接入；已完成软件与模拟互联验证，**尚未进行真实 USB 烧录、麦克风、扬声器、声学回声消除和公网延迟验收**。
 

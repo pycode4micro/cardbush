@@ -3991,6 +3991,19 @@
     "main.file_operation_failed": "File operation failed",
     "main.windows_version_required": "CardBush requires Windows 10 version 1809 or later.",
     "browserConnector.windowsVersionRequired": "Browser Use requires Windows 10 version 1809 or later.",
-    "browserConnector.supportedBrowsers": "Browser Use supports Chrome and Edge."
+    "browserConnector.supportedBrowsers": "Browser Use supports Chrome and Edge.",
+    "remoteWorkers.title": "Remote workers",
+    "remoteWorkers.add": "Add worker connection",
+    "remoteWorkers.description": "Workers use their own model, workspace, tools and permission limits. Register a subagent role to delegate work; connecting does not copy local configuration.",
+    "remoteWorkers.empty": "No worker connections yet.",
+    "remoteWorkers.unavailable": "Worker unavailable. Verify its identity and delegation capability first.",
+    "remoteWorkers.verified": "Service identity verified",
+    "remoteWorkers.notVerified": "Verification required",
+    "remoteWorkers.registerRole": "Register subagent",
+    "remoteWorkers.test": "Verify connection",
+    "remoteWorkers.configure": "Worker connection",
+    "remoteWorkers.execution": "Execution host",
+    "remoteWorkers.local": "This computer",
+    "remoteWorkers.statusUnavailable": "Status unavailable"
   }
 }

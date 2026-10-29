@@ -1,5 +1,7 @@
 # CardBush Runtime Client boundary
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 This directory belongs to the CardBush product layer. It adapts structured
 Runtime protocol values for React features without implementing Agent Runtime
 semantics.

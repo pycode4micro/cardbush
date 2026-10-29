@@ -1,5 +1,7 @@
 # MCP 图片回传与 Chrome 截图诊断
 
+[English](MCP_IMAGE_DELIVERY.en.md) · [简体中文](MCP_IMAGE_DELIVERY.md)
+
 MCP 原生返回保存在执行记录中。模型收到的工具文本移除标准图片块、嵌入图片资源及图片 Data URI 中的二进制数据，图片走已有的模型视觉通道。
 
 ## 图片路径

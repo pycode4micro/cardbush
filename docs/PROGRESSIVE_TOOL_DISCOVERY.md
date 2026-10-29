@@ -1,5 +1,7 @@
 # 工具按需返回
 
+[English](PROGRESSIVE_TOOL_DISCOVERY.en.md) · [简体中文](PROGRESSIVE_TOOL_DISCOVERY.md)
+
 发现能力时只返回可用对象的标识、简短用途和必要状态。已注册员工、团队与定时任务直接使用保存的配置；只有检查或修改配置时才读取详情。保存成功返回 ID、revision 等回执，不重复回显刚提交的长指令。
 
 | 入口 | 默认发现或状态 | 按需展开 |

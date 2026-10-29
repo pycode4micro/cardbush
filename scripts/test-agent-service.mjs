@@ -7,12 +7,14 @@ import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { AgentHttpClient, AgentHttpError } from '../dist-electron/agentHttpClient.mjs';
+import { AgentHttpClient, AgentHttpError, AgentNetworkError } from '../dist-electron/agentHttpClient.mjs';
 import { packSharedConfiguration } from '../dist-electron/agentSharedConfiguration.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
 import { AgentConnectionManager } from '../dist-electron/agentConnections.mjs';
 import { runRemoteSubagent } from '../dist-electron/remoteSubagent.mjs';
+import { callRemoteWorker } from '../dist-electron/remoteWorkers.mjs';
+import { InMemoryRuntimeHost, ToolRegistry, SubagentTaskStore } from '../packages/bush-runtime/dist/index.js';
 import { createProductAgentTurnRequest, createTurnTimeContext } from '../packages/bush-product-agent/dist/index.js';
 
 const tempRoot = resolve('tmp/agent-service-tests');
@@ -93,6 +95,211 @@ async function openService(t, name = 'fixture', delay = 80, tool, compatibility 
   return { root, model, service };
 }
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+
+const workerInput = (taskId, extra = {}) => ({ taskId, sessionId: `delegated-${taskId}`, turnId: `turn-${taskId}`, parentSessionId: 'parent',
+  parentTurnId: 'parent-turn', prompt: 'Review the release.', permissionMode: 'task_free', language: 'en', ...extra });
+const workerControl = (service, request, control, parentSessionId = request.parentSessionId) => service.call('delegation.control', {
+  parentSessionId, control: { profile: 'subagent-remote-proton', version: '0.1', contextId: request.sessionId, taskId: request.taskId, ...control } });
+
+for (const remote of [false, true]) test(`unified child lifecycle through ${remote ? 'real HTTP worker' : 'local Runtime'}: queue, cancel, insert, question, resume`, { timeout: 40000 }, async t => {
+  const f = remote ? await openService(t, 'unified-worker', 20, { name: 'ask_parent', arguments: { text: 'Which date?' } }) : undefined;
+  let http, manager, connection;
+  if (f) {
+    const token = 'isolated-unified-worker-token-123456789';
+    http = await serveAgentHttp(f.service, { port: 0, token });
+    manager = new AgentConnectionManager(join(f.root, 'connections.json'), { encrypt: value => value, decrypt: value => value });
+    [connection] = await manager.save({ name: 'Worker', transport: 'http', url: `http://127.0.0.1:${http.port}`, token });
+    await manager.connect(connection.id);
+  }
+  const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), childCalls = [];
+  let stage = 0, question, initial, canceled, queued;
+  function* response(request, name, args, text = 'done') {
+    const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+    yield { ...base, sequence: 0, kind: 'response_started' };
+    yield name ? { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: randomUUID(), nameDelta: name, argumentsDelta: JSON.stringify(args) }
+      : { ...base, sequence: 1, kind: 'text_delta', delta: text };
+    yield { ...base, sequence: 2, kind: 'response_completed', finishReason: name ? 'tool_calls' : 'stop' };
+  }
+  const provider = { async *stream(request) {
+    if (request.metadata.agentRole === 'child') {
+      childCalls.push(request);
+      yield* response(request, childCalls.length === 1 ? 'ask_parent' : undefined, { text: 'Which date?' }); return;
+    }
+    switch (++stage) {
+      case 1: yield* response(request, 'subagent', { prompt: 'Prepare the release', name: 'Release reviewer', ...(remote ? { target_agent: connection.id } : {}) }); return;
+      case 2:
+        initial = await until(() => tasks.list('parent')[0], task => task?.observation?.interactions.length > 0);
+        question = initial.observation.interactions[0];
+        yield* response(request, 'tasks', { action: 'inspect', task_ids: [initial.taskId] }); return;
+      case 3:
+        assert.match(request.messages.filter(message => message.role === 'tool').at(-1).content, /input_required/, 'tasks inspect exposes the same observation shape');
+        yield* response(request, 'subagent', { task_id: initial.taskId, prompt: 'Canceled review', delivery: 'queue' }); return;
+      case 4:
+        canceled = tasks.list('parent')[1]; assert.ok(canceled, 'queue must reserve a task immediately');
+        yield* response(request, 'subagent', { task_id: initial.taskId, prompt: 'Final review', delivery: 'queue' }); return;
+      case 5:
+        queued = tasks.list('parent')[2]; assert.ok(queued);
+        if (remote) await until(() => f.service.call('chat.jobs'), jobs => jobs.length === 3);
+        yield* response(request, 'tasks', { action: 'stop', task_ids: [canceled.taskId] }); return;
+      case 6:
+        assert.equal(tasks.get('parent', canceled.taskId).status, 'stopped');
+        assert.equal(tasks.get('parent', initial.taskId).status, 'running', 'canceling a queue entry cannot stop its active predecessor');
+        await pause(80);
+        assert.equal(remote ? f.model.calls.length : childCalls.length, 1, 'later queue entry cannot overtake a canceled predecessor');
+        yield* response(request, 'subagent', { task_id: initial.taskId, prompt: 'Keep the layout stable', delivery: 'insert' }); return;
+      case 7: yield* response(request, 'subagent', { task_id: initial.taskId, response: { kind: 'answer', interactionId: question.interactionId, text: 'October 30' } }); return;
+      default:
+        assert.ok(stage < 14, 'no model polling loop');
+        if (tasks.list('parent').some(task => task.status === 'running')) yield* response(request, 'tasks', { action: 'wait', mode: 'all' });
+        else yield* response(request);
+    }
+  } };
+  const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, subagentTaskStore: tasks,
+    ...(remote ? { remoteAgents: {
+      list: signal => callRemoteWorker(manager, 'agents.list', {}, signal),
+      run: (input, signal) => callRemoteWorker(manager, 'agents.delegate', input, signal),
+      control: (input, signal) => callRemoteWorker(manager, 'agents.control', input, signal),
+    } } : {}) });
+  try {
+    const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'parent-request', sessionId: 'parent', turnId: 'parent-turn', model: 'fixture',
+      prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Prepare a release.' } }], tools: registry.definitions(), permissionMode: 'task_free',
+      metadata: { individuation: { habits: false, predictions: false } } }, { signal: AbortSignal.timeout(30000) });
+    assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
+    assert.deepEqual(tasks.list('parent').map(task => task.status), ['completed', 'stopped', 'completed']);
+    assert.equal(queued.childSessionId, initial.childSessionId);
+    const calls = remote ? f.model.calls : childCalls;
+    assert.equal(calls.length, 3);
+    assert.match(JSON.stringify(calls[1]), /October 30/);
+    assert.match(JSON.stringify(calls[1]), /Keep the layout stable/);
+    const events = host.events('parent', 'parent-turn');
+    assert.deepEqual(events.filter(event => event.kind === 'tool_failed').map(event => event.payload.error), []);
+  } finally { if (manager) await manager.close(); if (http) await http.close(); if (f) await f.service.close(); }
+});
+
+test('worker capability restrictions reject unsupported controls and queue admission before dispatch', async () => {
+  let calls = 0;
+  const manager = { connect: async () => ({ id: 'instance', capabilities: { delegation: true,
+    workerInteraction: { profile: 'subagent-remote-proton', version: '0.1', operations: ['observe'] } } }),
+    call: async () => { calls++; }, async *events() {} };
+  const request = { ...workerInput('capabilities'), connectionId: 'worker', agentId: 'instance' };
+  await assert.rejects(callRemoteWorker(manager, 'agents.control', { connectionId: 'worker', agentId: 'instance', parentSessionId: 'parent',
+    control: { profile: 'subagent-remote-proton', version: '0.1', contextId: request.sessionId, taskId: request.taskId,
+      operation: 'message', delivery: 'insert', messageId: 'insert', text: 'Change it' } }), /unsupported_operation/);
+  await assert.rejects(runRemoteSubagent(manager, { ...request, queue: true }), /queue capability/);
+  assert.equal(calls, 0);
+});
+
+test('worker interaction asks the parent in words, resumes the same run and deduplicates answers', async t => {
+  const f = await openService(t, 'worker-question', 20, { name: 'ask_parent', arguments: { text: 'Which release date should I use?' } });
+  const request = workerInput('question', { worker: { id: 'reviewer', revision: 3, name: 'Release reviewer', instructions: 'Review release readiness; ask about missing dates.' } });
+  try {
+    assert.equal(f.service.info().capabilities.workerInteraction.profile, 'subagent-remote-proton');
+    await f.service.call('delegation.submit', request);
+    const waiting = await until(() => workerControl(f.service, request, { operation: 'observe' }), state => state.interactions.length > 0);
+    assert.equal(waiting.state, 'input_required'); assert.equal(waiting.interactions[0].kind, 'question');
+    assert.deepEqual(waiting.interactions[0].suggestions, []);
+    assert.equal((await f.service.call('chat.jobs'))[0].status, 'running');
+    assert.match(JSON.stringify(f.model.calls[0]), /Review release readiness/);
+    await assert.rejects(workerControl(f.service, request, { operation: 'observe' }, 'another-parent'), /another parent/);
+    const answer = { operation: 'respond', messageId: 'answer-1', response: { kind: 'answer', interactionId: waiting.interactions[0].interactionId, text: 'Use October 30.' } };
+    const receipt = await workerControl(f.service, request, answer);
+    assert.deepEqual(await workerControl(f.service, request, answer), receipt);
+    await assert.rejects(workerControl(f.service, request, { ...answer, response: { ...answer.response, text: 'Changed answer' } }), /idempotency_conflict/);
+    await until(() => f.service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
+    assert.equal(f.model.calls.length, 2);
+    assert.match(JSON.stringify(f.model.calls[1]), /Use October 30/);
+    assert.equal((await workerControl(f.service, request, { operation: 'observe' })).interactions.length, 0);
+  } finally { await f.service.close(); }
+});
+
+test('worker queue and insert retain order, exact run identity and role revision', async t => {
+  const gate = Promise.withResolvers(); let calls = 0;
+  const f = await openService(t, 'worker-queue', () => ++calls === 1 ? gate.promise : Promise.resolve());
+  const request = workerInput('queue', { worker: { id: 'writer', revision: 2, name: 'Writer', instructions: 'Keep the original layout.' } });
+  try {
+    await f.service.call('delegation.submit', request);
+    await until(() => f.model.calls.length, n => n === 1);
+    await assert.rejects(f.service.call('delegation.submit', { ...request, queue: true }), /different queue delivery/);
+    await assert.rejects(f.service.call('delegation.submit', { ...request, taskId: 'replacement', turnId: 'turn-replacement' }), /still active/);
+    const insert = { operation: 'message', delivery: 'insert', messageId: 'insert-1', text: 'Keep the chart labels too.' };
+    const receipt = await workerControl(f.service, request, insert);
+    assert.equal(receipt.accepted, true); assert.equal(receipt.applied, false);
+    assert.deepEqual(await workerControl(f.service, request, insert), receipt);
+    const queued = await workerControl(f.service, request, { operation: 'message', delivery: 'queue', messageId: 'queue-1', text: 'Now review the result.' });
+    assert.equal(queued.status, 'queued');
+    assert.equal((await f.service.call('chat.jobs')).length, 2); assert.equal(f.model.calls.length, 1);
+    gate.resolve();
+    await until(() => f.service.call('chat.jobs'), jobs => jobs.every(job => job.status === 'completed'));
+    await assert.rejects(workerControl(f.service, request, { ...insert, messageId: 'late-insert' }), /stale_target/);
+    const snapshot = await f.service.call('sessions.get', { sessionId: request.sessionId });
+    assert.equal(snapshot.metadata.remoteWorker.revision, 2);
+    assert.match(JSON.stringify(f.model.calls), /Keep the chart labels/);
+    await assert.rejects(f.service.call('delegation.submit', { ...request, taskId: 'changed-role', turnId: 'turn-changed-role', worker: { ...request.worker, revision: 4 } }), /original registered role/);
+  } finally { gate.resolve(); await f.service.close(); }
+});
+
+test('unavailable observation and unconfirmed cancellation never report a remote task as stopped', async () => {
+  const request = { ...workerInput('network'), connectionId: 'worker', agentId: 'instance' };
+  let attempts = 0;
+  const manager = {
+    connect: async () => ({ id: 'instance', capabilities: { delegation: true } }),
+    call: async () => { attempts++; throw new AgentNetworkError('offline'); },
+    async *events() { throw Error('unreachable'); },
+  };
+  const result = await runRemoteSubagent(manager, request, undefined, { attempts: 2, delayMs: 1 });
+  assert.equal(result.status, 'unavailable'); assert.equal(attempts, 3);
+  const abort = new AbortController();
+  manager.call = async () => { abort.abort(); throw new AgentNetworkError('lost ack'); };
+  const canceled = await runRemoteSubagent(manager, request, abort.signal);
+  assert.equal(canceled.status, 'unavailable'); assert.match(canceled.errorMessage, /could not be confirmed/);
+  let permanentCalls = 0;
+  manager.call = async (_id, operation) => { permanentCalls++; if (operation === 'delegation.submit') return {}; throw new Error('access revoked'); };
+  const revoked = await runRemoteSubagent(manager, request);
+  assert.equal(revoked.status, 'unavailable'); assert.equal(permanentCalls, 2, 'a permanent read failure after acceptance must not retry or report remote failure');
+});
+
+test('a full worker receipt journal still permits stop and repeated cancellation reconciles state', async t => {
+  const f = await openService(t, 'worker-full-journal', 20, { name: 'ask_parent', arguments: { text: 'Wait for the parent?' } });
+  const request = workerInput('full-journal');
+  await f.service.close();
+  const path = join(f.root, 'agent.json'), state = JSON.parse(await readFile(path, 'utf8'));
+  state.workerReceipts = Object.fromEntries(Array.from({ length: 10000 }, (_, index) => ['old-' + index, { input: '{}', state: 'applied', result: {} }]));
+  await writeFile(path, JSON.stringify(state));
+  const service = await AgentService.open({ dataRoot: f.root });
+  try {
+    await service.call('delegation.submit', request);
+    await until(() => workerControl(service, request, { operation: 'observe' }), value => value.state === 'input_required');
+    const cancel = { operation: 'cancel', messageId: 'stop' };
+    await workerControl(service, request, cancel);
+    const stopped = await until(() => workerControl(service, request, cancel), value => value.confirmed);
+    assert.equal(stopped.state, 'stopped');
+  } finally { await service.close(); }
+});
+
+for (const delegateApproval of [false, true]) test(`worker permissions respect the remote ceiling and ${delegateApproval ? 'delegated' : 'human-only'} authority`, async t => {
+  const root = await directory(t), outside = join(root, 'protected.txt'); await writeFile(outside, 'protected contents');
+  const model = await modelFixture(t, 20, outside);
+  const service = await AgentService.open({ dataRoot: join(root, 'worker'), env: { CARDBUSH_REMOTE_PARENT_APPROVAL: delegateApproval ? '1' : '0', CARDBUSH_REMOTE_PERMISSION_MODE: 'task_free' } });
+  const request = workerInput('permission', { permissionMode: 'all_free' });
+  try {
+    await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture', baseURL: model.url }] } });
+    await service.call('delegation.submit', request);
+    const waiting = await until(() => workerControl(service, request, { operation: 'observe' }), state => state.interactions.length > 0);
+    const permission = waiting.interactions[0]; assert.equal(permission.kind, 'permission');
+    assert.equal(JSON.parse(await readFile(join(root, 'worker', 'agent.json'), 'utf8')).jobs[0].input.permissionMode, 'task_free', 'parent full access cannot raise the remote ceiling');
+    const response = { operation: 'respond', messageId: 'permission-1', response: { kind: 'permission', interactionId: permission.interactionId, actionDigest: permission.actionDigest, decision: 'allow_once' } };
+    await assert.rejects(workerControl(service, request, { ...response, response: { ...response.response, actionDigest: 'sha256:' + '0'.repeat(64) } }), /action_changed/);
+    await assert.rejects(workerControl(service, request, { ...response, response: { kind: 'answer', interactionId: permission.interactionId, text: 'Approved' } }), /structured_permission/);
+    if (delegateApproval) await workerControl(service, request, response);
+    else {
+      await assert.rejects(workerControl(service, request, response), /human_authority/);
+      await workerControl(service, request, { ...response, response: { ...response.response, decision: 'deny' } });
+    }
+    await until(() => service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
+    if (delegateApproval) assert.match(JSON.stringify(model.calls[1]), /protected contents/);
+    else assert.doesNotMatch(JSON.stringify(model.calls[1]), /protected contents/);
+  } finally { await service.close(); }
+});
 
 for (const guide of [false, true]) test(`Runtime-owned collaboration turns retain the service queue and accept ${guide ? 'guidance' : 'subsequent human turns'}`, async t => {
   const gate = Promise.withResolvers(); let dispatches = 0;
@@ -490,7 +697,7 @@ test('remote subagent HTTP bridge deduplicates uncertain acknowledgement, return
   try {
     const [connection] = await manager.save({ name: 'Server', transport: 'http', url: `http://127.0.0.1:${http.port}`, token });
     const realCall = manager.call.bind(manager); let loseAck = true;
-    manager.call = async (...args) => { const value = await realCall(...args); if (args[1] === 'delegation.submit' && loseAck) { loseAck = false; throw new TypeError('lost acknowledgement'); } return value; };
+    manager.call = async (...args) => { const value = await realCall(...args); if (args[1] === 'delegation.submit' && loseAck) { loseAck = false; throw new AgentNetworkError('lost acknowledgement'); } return value; };
     const request = { connectionId: connection.id, agentId: f.service.info().id, taskId: 'test-remote-1', sessionId: 'delegated-test-remote-1', turnId: 'turn-test-remote-1', parentSessionId: 'parent', parentTurnId: 'parent-turn', prompt: 'Review this server', permissionMode: 'task_free', language: 'en' };
     const result = await runRemoteSubagent(manager, request);
     assert.equal(result.status, 'completed'); assert.match(result.finalResponse, /answer-2/);

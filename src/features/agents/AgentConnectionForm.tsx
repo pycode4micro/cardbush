@@ -23,7 +23,7 @@ export function AgentConnectionForm({ language, initial, onClose, onSave, onRemo
   const [confirmRemove, setConfirmRemove] = useState(false);
   const connections = useSshConnections();
   useEffect(() => { if (!initial && connections.length === 1) setConnectionId(current => current || connections[0].id); }, [connections, initial]);
-  const title = initial ? uiText(language)('agentConnectionForm.connectionSettings') : uiText(language)('agentConnectionForm.addAgent');
+  const title = initial ? uiText(language)('remoteWorkers.configure') : uiText(language)('remoteWorkers.add');
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
     try { await onSave({ id: initial?.id, name, transport: 'http', url: tunneled ? undefined : url, token: token || undefined,
@@ -52,7 +52,7 @@ export function AgentConnectionForm({ language, initial, onClose, onSave, onRemo
     </>}
     {!tunneled && <label>{uiText(language)('agentConnectionForm.serviceAddress')}<input required type="url" disabled={Boolean(initial) && !initial?.sshTunnel} value={url} onChange={event => setUrl(event.target.value)} placeholder={uiText(language)('agentConnectionForm.https_agent_example_com')}/></label>}
     <label>{initial ? uiText(language)('agentConnectionForm.accessTokenLeaveEmptyToKeep') : uiText(language)('agentConnectionForm.accessToken')}<input type="password" required={!initial?.hasToken} autoComplete="off" value={token} onChange={event => setToken(event.target.value)}/></label>
-    <p>{uiText(language)('agentConnectionForm.toInstallOrUpdatePluginsAndTheir')}</p>
+    <p>{uiText(language)('remoteWorkers.description')}</p>
     <p>{tunneled
       ? uiText(language)('agentConnectionForm.connectDirectlyToTheAgentThroughSsh')
       : uiText(language)('agentConnectionForm.enterTheAgentHttpSAddressAnd')}</p>

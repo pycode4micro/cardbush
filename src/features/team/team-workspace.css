@@ -138,3 +138,8 @@
 @media(max-width:800px){.team-run-results{margin:6px 16px}.team-flow-viewport .md-node-detail{font-size:12px}}
 .team-flow-viewport{container-name:team-graph;container-type:inline-size}
 @container team-graph (max-width:600px){.md-graph-controls{bottom:68px}}
+.remote-workers { display: grid; gap: 12px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.remote-workers > header, .remote-workers > article { display: flex; align-items: center; gap: 12px; }
+.remote-workers > header h2, .remote-workers > article > div { flex: 1; min-width: 0; }
+.remote-workers small { display: block; color: var(--text-soft); }
+.remote-workers p { color: var(--text-soft); }

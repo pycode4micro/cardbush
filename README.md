@@ -2,182 +2,97 @@
   <img src="docs/assets/readme-hero.svg" width="100%" alt="CardBush — your workspace, your agent. Talk, build and automate from desktop to cloud." />
 </p>
 
-<p align="center">
-  <a href="https://apps.microsoft.com/detail/9N7XNDD5WRGS"><img src="https://img.shields.io/badge/Windows-Microsoft_Store-7868D8?style=for-the-badge&amp;logo=windows&amp;logoColor=white" alt="Download for Windows from Microsoft Store" /></a>
-  <a href="https://github.com/pycode4micro/cardbush/releases"><img src="https://img.shields.io/badge/Linux-AppImage-303342?style=for-the-badge&amp;logo=linux&amp;logoColor=white" alt="Linux AppImage releases" /></a>
-  <a href="https://github.com/pycode4micro/cardbush/stargazers"><img src="https://img.shields.io/github/stars/pycode4micro/cardbush?style=for-the-badge&amp;label=Star&amp;color=303342" alt="Star CardBush on GitHub" /></a>
-  <a href="https://github.com/pycode4micro"><img src="https://img.shields.io/badge/Follow-%40pycode4micro-303342?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Follow pycode4micro on GitHub" /></a>
-</p>
+<p align="center"><a href="https://apps.microsoft.com/detail/9N7XNDD5WRGS">Microsoft Store</a> · <a href="https://www.npmjs.com/package/cardbush">npm: Agent + CLI</a> · <a href="https://github.com/pycode4micro/cardbush/releases">Desktop releases</a></p>
 
-<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="#documentation">Documentation</a> · <a href="https://github.com/pycode4micro/cardbush/issues">Feedback</a></p>
+<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/README.md">Documentation</a> · <a href="SECURITY.md">Security</a></p>
 
 # CardBush
 
-**A personal AI workspace that turns conversations into action.** Chat by text or voice, work with files and browsers, arrange your own start page, and run tasks on your computer or an independent Agent service.
+**A personal AI workspace that turns conversations into action.** Use your preferred model to work with files, create documents, operate browsers, arrange a persistent canvas, and run tasks locally or on your own Agent service.
 
-Bring your preferred model, connect tools through MCP and skills, and keep local and remote work in one interface. Core local chat and command tools need no separate server or Python installation.
+Use the desktop app for a visual workspace, or install the Agent and CLI from npm to work in a terminal. API-key models can run without the desktop app. These entry points share the same Runtime, tools, plugins, skills and permission system.
 
-If CardBush is useful to you, **[give it a star](https://github.com/pycode4micro/cardbush/stargazers)** or **[follow @pycode4micro](https://github.com/pycode4micro)** for development updates. Bug reports, ideas and contributions are welcome.
+## What you can do
 
-## Download
+| Capability | Use it for |
+| --- | --- |
+| Conversations and files | Stream responses, attach files and images, inspect tool activity, resume sessions, and continue work across long conversations. |
+| Creation canvas | Combine Markdown, HTML, Office documents, PDFs, images, audio and video. Update content while retaining layout, pin a version, and discuss a selected region. |
+| Team and subagents | Delegate work to named agents and assemble reusable tasks with dependencies, using the existing subagent execution and permission system. |
+| Browsers and tools | Work with integrated browser tabs or authorized Chrome/Edge connections; extend capabilities with MCP plugins and skills. |
+| Voice and personal assistant | Dictate into the draft, hold the main action button to call, or use a persistent assistant that delegates tasks. Voice services and optional local speech models are configured separately. |
+| Local and remote work | Use the local CLI, deploy a worker service, connect an SSH workspace, or add an optional Linux desktop to a worker. |
 
-| System | Download | Suitable computers |
+## Download and install
+
+| Entry point | Get it | Requirements |
 | --- | --- | --- |
-| **Windows Store** | **[Get CardBush from Microsoft Store (MSIX)](https://apps.microsoft.com/detail/9N7XNDD5WRGS)** | Published Store package: Windows 11 x64; see listing for current requirements |
-| Linux | [Get the AppImage from Releases](https://github.com/pycode4micro/cardbush/releases) | x86-64 desktop Linux; CI validates Ubuntu 22.04 |
+| Windows desktop | [Microsoft Store](https://apps.microsoft.com/detail/9N7XNDD5WRGS) | Follow the requirements of the package currently listed in the Store. |
+| Agent + CLI | [npm package](https://www.npmjs.com/package/cardbush) | Node.js 24 and npm 10 or later; Windows and Linux. API-key models do not require Electron. |
+| Desktop installers | [GitHub Releases](https://github.com/pycode4micro/cardbush/releases) | Choose assets actually attached to a release, for the matching OS and architecture. |
+| Current source | [Development guide](CONTRIBUTING.md) | Build on the target operating system. |
 
-Current source builds and the internal EXE target **Windows 10 1809+ and Windows 11, x64**. The Store listing keeps its published package requirements until a compatible MSIX is submitted and released. Windows 10 uses the ordinary window background; Mica remains available only on supported Windows 11 builds.
+These channels have separate release schedules. As of October 28, 2026, npm provides **1.0.13**, while GitHub's public desktop assets are still the **1.0.0-beta.3** prerelease. A release note in this repository does not mean a corresponding installer has been published. The Store listing is the authority for its available version.
 
-[All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
+Current desktop source targets **Windows 10 1809+ / Windows 11 x64** and **Linux x64**. The Store package can have a different minimum version until a compatible update is released. There are no published macOS, ARM64 or 32-bit desktop packages. See [installation and platform support](docs/INSTALLATION.md).
 
-This README describes source version **1.0.12**; the [previous version notes](docs/releases/1.0.11.md) cover 1.0.11. The Store listing and Releases page show the versions actually available; their feature sets may lag behind the main branch. The corresponding MSIX package version is **1.0.12.0**. There are currently no macOS, ARM64 or 32-bit packages.
-
-### Install and start
-
-**Windows:** open the [Microsoft Store listing](https://apps.microsoft.com/detail/9N7XNDD5WRGS), install CardBush, then launch it from Start. Windows manages the MSIX package and its updates. Before uninstalling, back up any conversations or settings you want to keep; normal MSIX uninstall removes package-owned data.
-
-**Linux:** download a published x86-64 AppImage, rename it to `CardBush.AppImage`, allow it to execute, then run it:
+### Start in a terminal
 
 ```sh
-chmod +x CardBush.AppImage
-./CardBush.AppImage
+npm install -g cardbush@latest
+cd /path/to/your/workspace
+cardbush
 ```
 
-AppImage needs FUSE 2 (on Ubuntu 22.04: `sudo apt install libfuse2`). If FUSE is unavailable, run with `APPIMAGE_EXTRACT_AND_RUN=1`. Chromium also requires a working sandbox; do not disable it as an installation workaround.
+Local mode needs no connection token. If no model is configured, the CLI shows the configuration file and an example; edit it, save, and press Enter. The local CLI shares supported model, plugin and network settings with the app. ChatGPT account models reuse the app's authorization bridge and require the app to remain running.
 
-On first launch, open **App Center → Settings → Models → Add model**:
+```sh
+cardbush --resume           # Choose a saved session
+cardbush --resume SESSION   # Continue a specific session
+cardbush --help
+```
 
-- **API key:** configure your provider and choose OpenAI Responses, Chat Completions or Anthropic Messages. OpenRouter and OpenCode Go are supported. See [model connections](docs/MODEL_CONNECTIONS.md).
-- **ChatGPT account:** on the local desktop, choose **ChatGPT · SIWC → Continue with ChatGPT**, authorize in the system browser, then select a model from your account's catalog. Availability depends on the account and service; local account credentials are not synced to remote Agents. See [SIWC setup and limits](docs/SIWC_INTEGRATION.md).
+During a task, **Enter** queues the next message; **Ctrl+Enter** sends guidance immediately. Use `/steer TEXT` when the terminal cannot distinguish Ctrl+Enter. `/artifact` opens generated files, `/tools` shows execution details, and `/session` switches sessions. See the [CLI guide](docs/CLI.md).
 
-The settings environment selector chooses the local host or a connected Agent. Model usage follows your provider or authorized plan. Plugins may require separate dependencies or credentials.
+### Start in the desktop app
 
-Each conversation remembers its own model selection within its environment. The model catalog is shared; the default in Models applies to new conversations. Switching a conversation's model takes effect on its next request.
+1. Install and launch CardBush.
+2. Open **Settings → Models** and add an API-key model or authorize a supported local account. Choose the API protocol that matches your provider.
+3. Start a conversation, choose a working folder when needed, and describe the task. Review requested permissions before allowing an operation.
+4. Open **Creation** to arrange files on a canvas, **Team** to manage reusable agents and workflows, or the sidebar assistant for a persistent conversation.
 
-## What is included?
+The microphone remains beside the main action button: click it to start dictation and click again to insert the transcript into your draft. It does not automatically send the text. Hold the main action button to call; use its stop control to hang up. See [voice setup](docs/REALTIME_VOICE.en.md).
 
-| Make it yours | What you can do |
-| --- | --- |
-| **Text and voice** | Stream replies, attach files and images, queue messages and guide a running task. Click the empty composer's microphone to dictate; hold it to call. Calls continue across navigation and minimization, and keep their original conversation. |
-| **Personal assistant** | Open the lightbulb below New chat for one persistent conversation. Customize its name, avatar and persona; delegate tasks locally or to a connected Agent, including over SSH. Keep talking while tasks run and open task bubbles for execution details. |
-| **Your start page** | Arrange clocks, a calendar, conversation starters and either composer style. Import custom HTML components, drag and resize with alignment guides, and use theme-aware events and permitted actions. |
-| **A browser workspace** | Save favorite pages, use multiple panes in Beta, and expand the right panel with a floating return/input capsule. |
-| **Tools that act** | Search and edit files, run commands, use subagents, add MCP plugins and skills, and schedule automations. Choose Ask for approval or Full access. |
-| **Document plugins** | Built-in XLSX, PPTX, Word and PDF plugins combine skills with bundled authoring libraries, progressive reading and validation. LibreOffice is optional for Office-to-PDF conversion and XLSX formula recalculation. |
-| **Local or remote** | Use the built-in Agent, an SSH project or an independent Agent service. Optionally give a personal Linux Agent its own graphical desktop, Computer Use and Browser Use. |
-| **Continuity** | Persistent conversations, context recovery, searchable archived tool results and usage records. Habit memory and next-step predictions are optional and off by default. |
+### Run your own Agent
 
-Open the **lightbulb below New chat** to use the personal assistant. Its header contains the execution host selector, connection management and assistant settings. Text messages, published Markdown and task bubbles appear on the page; call transcripts stay in its internal conversation context. Right-click the sidebar entry to rename it, reset context, or mute the microphone and speech independently. See the [personal assistant guide](docs/PERSONAL_ASSISTANT.md) for attachments, remote execution and reset behavior.
+The npm installation includes both `cardbush` and `cardbush-agent`:
 
-Voice has three entry paths. **Click the empty composer's microphone** to record and send transcribed text. **Hold it to call** using the mode saved in **Settings → Voice → Voice calls**:
+```sh
+cardbush serve --background
+cardbush serve --status
+cardbush serve --stop
+```
 
-- **Realtime voice (default):** a separate provider handles listening and speaking while background subagents execute tasks. The default Volcengine adapter requires a Doubao Voice API Key with full-duplex service access; audio, recent context and task results are sent to that service. CardBush Realtime compatible services can also be configured. Ordinary calls delegate locally; the personal assistant can select a connected Agent. See [realtime setup, reconnect behavior and current limits](docs/REALTIME_VOICE.md).
-- **Transcription + Agent + speech:** recognition, the configured text Agent and speech synthesis run in sequence. **SenseVoice and Qwen3-TTS CustomVoice** are the recommended local options; models are optional and not preinstalled. Qwen uses your selected local model folder and Python environment. Windows speech and legacy Kokoro remain available. Optional Windows x64 voice lock applies to recording and this mode; disable it before starting a realtime call. See [local voice setup and platform limits](docs/LOCAL_VOICE_MODELS.md).
+The default service directory is `~/.cardbush/service`. For an explicit directory or a service manager, use `cardbush serve --data-dir /absolute/path/agent-data`. The service owns its own models, credentials and sessions. See [Agent deployment](docs/AGENT_SERVICES.en.md) and [Docker deployment](deploy/agent/README.en.md).
 
-Returning to text input, opening settings or minimizing keeps a call connected. Ordinary chats show saved call transcripts; the assistant shows only published content and task bubbles. Hanging up releases audio without cancelling accepted tasks. Local execution still depends on the desktop running; an independent Agent service owns its accepted remote tasks.
-
-Open **App Center → Components** to edit the new-conversation layout. Built-in component definitions stay available; custom HTML uses an isolated frame and explicitly granted actions. The calendar shows holidays and automation details on hover. See [components, layout and browser panes](docs/HTML_COMPONENTS_V1_2026-09-30.md).
-
-Open **Agents → +** to connect an independent service. The service owns its model configuration, credentials, projects, plugins and task queue; accepted tasks continue when the desktop disconnects. An **SSH project** instead keeps the Agent on the desktop and runs supported file/command operations on the selected SSH host. See [Agent services](docs/AGENT_SERVICES.md) and [SSH workspaces](docs/SSH_WORKSPACES.md).
-
-Remote deployment is **headless by default**. The optional [Docker desktop profile](deploy/agent/README.md) adds an isolated Linux desktop with a visible Chromium browser, desktop preview and user takeover. It is intended for personal Agents; ordinary service deployments do not need it.
-
-App Center entries open actual pages or user-selected applications. Ordinary MCP connectors remain in plugin settings. An `@` reference supplies context to the Agent; it does not execute an application or grant permissions. See [App Center behavior](assets/skills/cardbush-docs/references/app-center.md).
-
-Team is a native workflow manager: register reusable clean agents, then assemble serial/parallel tasks using their existing session and memory runtime. See [native Team workflows](docs/TEAM_NATIVE_WORKFLOWS.md).
-
-### Platform support
-
-| Desktop app capability | Windows x64 | Linux x64 |
-| --- | --- | --- |
-| Chat, files, previews, MCP and integrated browser | Yes | Yes |
-| Terminal commands | PowerShell / cmd | POSIX Shell |
-| Bundled search | Native ripgrep | Native ripgrep |
-| Command sandbox | AppContainer | bubblewrap, when supported by the host |
-| Windows computer-use plugin | Yes | Unavailable |
-| Browser Use connector (Chrome / Edge) | Yes | Unavailable; integrated browser remains available |
-| Native process CPU / memory enforcement | Windows Job Objects | Not yet implemented |
-| Managed process admission and owned-process cleanup | Yes | Yes |
-
-On Windows 10 / 11, Browser Use also controls CardBush's integrated tabs: select a tab with **@ → CardBush browser** to bind its exact page, without extension pairing. Closing that tab never redirects control to Chrome/Edge with the same URL. For local Chrome/Edge, enable Browser Use, install its extension and approve the first connection once in the CardBush extension window; no pairing code is needed. The local App and CLI share connections and reconnect automatically after disconnects or restarts. Chrome/Edge work without the desktop App; integrated CardBush tabs require it. `/browser status` checks connections; `/browser pair chrome` and `/browser pair edge` are for manual connection or remote Agent pairing. Remote Agents keep separate connections. The Windows Browser Use connector and the optional remote Linux desktop use different integrations. The Docker desktop profile supplies Linux Computer Use / Browser Use on the server; it does not make Windows-only plugins portable. Local voice platform limits are listed in the [voice guide](docs/LOCAL_VOICE_MODELS.md).
-
-Linux does not claim the same CPU/memory enforcement as Windows. External plugins remain separate programs with their own platform requirements. A remote service exposes its own capabilities, not those of the desktop connecting to it.
-
-Sandbox settings detect the host environment; dependency installation requires a user click. An installed, available sandbox is enabled by default unless the user or administrator has disabled it. With the normal `auto` policy, **Ask for approval** isolates commands and requests additional access when needed; **Full access** uses ordinary processes. An administrator's `required` policy remains binding in either mode. The command sandbox does not cover every MCP, plugin or browser action. See [permissions](docs/PERMISSIONS.md) and [sandbox scope and limits](docs/EXECUTION_SANDBOX.md).
+**Current source preview:** remote services are registered as subagent workers through Team or `cardbush worker`, rather than opened as standalone Agents chats. Both ends must be rebuilt from the updated source. This migration and the experimental [subagent-remote-proton protocol](docs/SUBAGENT_REMOTE_PROTOCOL.md) are not included in the already published npm 1.0.13. Local CLI chat remains available, including on a server.
 
 ## Documentation
 
-| Start here | Guide |
+The [documentation index](docs/README.md) pairs current English and Chinese guides. Historical investigations and benchmark reports remain dated records.
+
+| Topic | Guide |
 | --- | --- |
-| Connect a model | [Providers, protocols and OpenRouter](docs/MODEL_CONNECTIONS.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
-| Use the personal assistant | [Conversation, tasks, attachments and reset](docs/PERSONAL_ASSISTANT.md) |
-| Work with documents | [Built-in XLSX, PPTX, Word and PDF plugins](docs/DOCUMENT_PLUGINS.md) |
-| Set up voice | [Realtime calls](docs/REALTIME_VOICE.md) · [Local speech recognition and voices](docs/LOCAL_VOICE_MODELS.md) |
-| Customize your workspace | [HTML components, layout and browser panes](docs/HTML_COMPONENTS_V1_2026-09-30.md) · [App Center](assets/skills/cardbush-docs/references/app-center.md) |
-| Run an Agent remotely | [Service deployment](docs/AGENT_SERVICES.md) · [Docker and optional Linux desktop](deploy/agent/README.md) · [SSH projects](docs/SSH_WORKSPACES.md) |
-| Understand access | [Permissions](docs/PERMISSIONS.md) · [Command sandbox](docs/EXECUTION_SANDBOX.md) · [Computer Use / Browser Use](docs/CORE_BROWSER_COMPUTER_USE.md) |
-| Contribute and release | [Architecture](docs/ARCHITECTURE.md) · [Cross-platform releases](docs/CROSS_PLATFORM_RELEASE.md) · [MSIX maintainer guide](docs/MSIX_STORE_RELEASE.md) |
+| Installation, updates and troubleshooting | [Installation](docs/INSTALLATION.md) · [CLI](docs/CLI.md) · [npm distribution](docs/NPM_AGENT.en.md) |
+| Models and accounts | [Model connections](docs/MODEL_CONNECTIONS.en.md) · [ChatGPT / SIWC](docs/SIWC_INTEGRATION.md) |
+| Creation and documents | [Canvas](docs/creation-canvas.en.md) · [Persistent desk](docs/CREATION_DESK.en.md) · [Document plugins](docs/DOCUMENT_PLUGINS.en.md) |
+| Team and assistant | [Team workflows](docs/TEAM_NATIVE_WORKFLOWS.en.md) · [Personal assistant](docs/PERSONAL_ASSISTANT.en.md) |
+| Browsers, voice and automation | [Browser / Computer Use](docs/CORE_BROWSER_COMPUTER_USE.en.md) · [Voice](docs/REALTIME_VOICE.en.md) · [Automations](docs/AUTOMATIONS.en.md) |
+| Remote operation | [Agent services](docs/AGENT_SERVICES.en.md) · [SSH workspaces](docs/SSH_WORKSPACES.en.md) |
+| Development and releases | [Contributing](CONTRIBUTING.md) · [Architecture](docs/ARCHITECTURE.en.md) · [Release channels](docs/CROSS_PLATFORM_RELEASE.md) |
 
-Some detailed guides are currently in Chinese; both READMEs link to the same implementation references.
-
-## Develop
-
-Node.js **24 LTS** and npm **>=10** are required. The project engine range, `.nvmrc`, CI and Agent Docker images use Node.js 24; Node.js 25 is not supported. Select Node.js 24 in your local version manager before installing dependencies. Build installers on their target operating system. See [dependency maintenance](docs/DEPENDENCY_SECURITY.md) for security overrides and validation.
-
-```sh
-npm ci
-npm run runtime-tools:install
-npm run dev
-```
-
-```sh
-npm run build
-npm run typecheck
-npm run test:release
-npm run package:msix    # Windows: Store package; follow the MSIX maintainer guide
-npm run package:win     # Windows: signed NSIS installer; publisher certificate required
-npm run package:linux   # Linux: AppImage
-npm run smoke:packaged
-```
-
-On headless Linux, run desktop tests with `xvfb-run -a npm run test:release`. Outputs are in `release/`. `npm run test:release` requires a preceding build; it runs package tests, adversarial cases, platform contracts and Electron UI checks without repeatedly rebuilding each package. `npm run test:all` also runs the wider feature-specific checks. Provider tests use local mock HTTP servers; no live API key is needed.
-
-For assistant or voice changes, use `npm run test:assistant`, `npm run test:voice-realtime` and `npm run test:voice` as appropriate. These cover Runtime and isolated desktop fixtures; live provider audio quality and a real remote deployment need separate validation.
-
-For a headless Agent service, use `npm ci --ignore-scripts`, `npm run build:agent`, then `node dist-electron/agentServiceCli.mjs --data-dir /absolute/path/agent-data`. It runs under Node.js without launching Electron. Use a dedicated data directory and configure authentication and SSH/HTTPS access as described in the [deployment guide](docs/AGENT_SERVICES.md). For containers and the optional graphical desktop, follow the [Docker guide](deploy/agent/README.md). Desktop installers do not deploy or update this service.
-
-Electron downloads use the official source by default. An optional `ELECTRON_MIRROR` can be configured for your network. Repair an incomplete download with `npm run fix:electron`.
-
-## Architecture and maintenance
-
-| Directory | Responsibility |
-| --- | --- |
-| `packages/cardbush-platform` | Host capabilities, Shell resolution, executable discovery and native resource paths |
-| `packages/bush-runtime` | Provider-independent Agent loop, tools, permissions and state |
-| `packages/bush-product-agent` | Shared product instructions and turn-request construction |
-| `packages/cardbush-product-host` | Shared model, plugin, MCP, sandbox and maintenance command contracts/configuration |
-| `packages/bush-protocol` | Typed commands, events and IPC contracts |
-| `packages/bush-provider-openai` | Responses, Chat Completions and Anthropic Messages transport |
-| `packages/bush-mcp-client` | MCP transports and tool/resource integration |
-| `packages/bush-runtime-electron` | Typed Runtime transport/client reused by desktop and Node hosts |
-| `electron` | Desktop lifecycle, Utility Runtime host, headless Agent service and host adapters |
-| `src` | Shared React conversation/settings UI and local/remote backend adapters |
-| `scripts` | Development, regression tests, packaging and smoke checks |
-
-Platform selection is centralized in `@cardbush/platform`; its browser-safe contracts and Node adapters are separate exports. The desktop hosts Runtime in an Electron utility process; the independent service hosts the same worker with Node.js. Product Host and backend adapters select the owner of configuration and operations. The conversation UI consumes shared Runtime events rather than maintaining a separate cloud transcript.
-
-See the [architecture overview](docs/ARCHITECTURE.md), [cross-platform maintenance and release guide](docs/CROSS_PLATFORM_RELEASE.md), [tool interaction contracts](docs/TOOL_INTERACTION.md) and [bundled apps MCP](docs/host/CARDBUSH_APPS_MCP.md).
-
-## Data and security
-
-Local conversations, usage records and settings live under Electron's user-data directory. Each independent Agent stores its own data and credentials in its server data directory; switching environments does not copy them to another host. Local automation requires the desktop to be running; independent Agent queues and supported automation run while that service is running. Clearing transient caches does not reset recorded usage.
-
-The assistant conversation remains on the desktop when its execution host changes. Remote attachments are uploaded to that host, and each child task retains its original host. Agent connections can explicitly synchronize supported model configuration and credentials, with plugin synchronization controlled per connection; ChatGPT / SIWC OAuth credentials remain local. Completed realtime transcripts and summaries are kept in encrypted voice history; raw call audio is not archived. See [Agent configuration sync](docs/AGENT_SERVICES.md) and [assistant data and reset](docs/PERSONAL_ASSISTANT.md#上下文与重置).
-
-The renderer uses context isolation and no Node.js integration. Remote Agent access is authenticated and represents access to that instance, not a multi-tenant account system. Model providers and external plugins receive the data needed for their requested operations. File/tool permissions and OS command isolation are separate controls.
-
-Do not attach credentials, raw conversation stores or unredacted logs to public issues.
+Security reporting, data handling and execution boundaries are documented separately in [SECURITY.md](SECURITY.md). For ordinary bugs and feature requests, use [GitHub Issues](https://github.com/pycode4micro/cardbush/issues).
 
 ## License
 
-Original CardBush code is licensed under [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) and [bundled skill licensing](docs/BUNDLED_SKILL_LICENSES.md). Bundled dependencies and external plugins retain their respective licenses.
+Original CardBush code is licensed under [Apache License 2.0](LICENSE). [NOTICE](NOTICE) and the [bundled licensing history](docs/BUNDLED_SKILL_LICENSES.md) describe third-party notices and boundaries. Dependencies and external plugins retain their own licenses.

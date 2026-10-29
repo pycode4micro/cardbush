@@ -1,5 +1,7 @@
 # 依赖与 Node 版本维护
 
+[English](DEPENDENCY_SECURITY.en.md) · [简体中文](DEPENDENCY_SECURITY.md)
+
 开发、CI 与 Agent Docker 镜像统一使用 Node 24 LTS。`.nvmrc` 指定主版本，`package.json` 的 `engines` 为 `^24.0.0`，Node 类型定义也采用 24 系列。已安装 Node 25 的终端需要切换到 Node 24 后再运行 `npm install`；修改仓库配置不会更换系统 Node。
 
 本轮更新 Electron 42、MCP SDK 2 与 sharp 的安全修订版本，并通过锁文件更新其余受影响的传递依赖。Electron 虽列在 `devDependencies`，仍是发布产品的运行时，因此不能只看 `npm audit --omit=dev`。

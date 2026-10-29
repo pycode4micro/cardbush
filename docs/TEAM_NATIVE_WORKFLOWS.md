@@ -1,5 +1,7 @@
 # 内置 Team 与注册员工
 
+[English](TEAM_NATIVE_WORKFLOWS.en.md) · [简体中文](TEAM_NATIVE_WORKFLOWS.md)
+
 Team 是 Runtime 内置能力，入口位于原 Team 页面和输入框的 `/team` 选择器，无需安装插件。主 Agent 和本地文本 assistant 都能管理员工和发起团队任务；通话继续使用原有轻量委派接口。
 
 ## 三个边界
@@ -34,7 +36,7 @@ Hooks 只引用已安装且已受信任的 Hook ID；注册不能写任意可执
 
 ## Team 工具
 
-支持 `list`、`get`、`save`、`delete`、`run`、`status`、`wait`、`stop`、`resume`。`list` 默认只列流程概要；`section: "runs"` 按需列当前会话的运行摘要。`get` 读取完整定义；`save` 返回 ID、revision 等简短回执。
+支持 `list`、`get`、`save`、`delete`、`run`、`resume`。进度、等待、结果及停止统一由 `tasks` 提供，不再通过 `team status/wait/stop` 调用。`list` 默认只列流程概要；`section: "runs"` 按需列当前会话的运行摘要。`get` 读取完整定义；`save` 返回 ID、revision 等简短回执。
 
 ```json
 {"action":"save","expected_revision":0,"definition":{"id":"order-check","name":"订单核验","max_parallel":2,"nodes":[{"id":"stock","agent_id":"warehouse","prompt":"核对订单中的库存"},{"id":"review","agent_id":"reviewer","prompt":"根据库存结果检查出库条件","depends_on":["stock"]}]}}
@@ -46,11 +48,11 @@ Hooks 只引用已安装且已受信任的 Hook ID；注册不能写任意可执
 {"action":"run","team_id":"order-check","input":"检查订单 42，说明是否满足出库条件。"}
 ```
 
-运行返回 `run_id`。团队拥有独立的取消信号，父轮结束或等待取消不会中止团队。`status` 只返回进度；需要结果时直接用 `wait`，无需先轮询 `status`，已完成的运行会立即返回；想停止团队时用 `stop`。
+运行返回 `run_id` 及同一执行的 `task_id`。团队拥有独立的取消信号，父轮结束或取消等待不会中止团队。使用 `tasks` 的 `inspect` 读取状态和已有结果、`wait` 等待、`stop` 停止；均通过 `task_ids` 传入运行句柄，不使用流程定义 `team_id` 或节点 ID。已完成的任务直接返回，不必先轮询。
 
-`wait` 默认只返回最终节点（没有后续依赖者的节点）的完整输出，同时保留所有节点的状态、任务身份和 `has_output`。有多个最终分支时全部返回。`result_node_ids` 标明最终节点；追溯中间证据使用 `{"action":"wait","run_id":"…","node_ids":["stock"]}`，指定节点的输出不截断。完整运行结果继续保存在存储及管理界面中。
+`tasks inspect/wait` 默认只返回最终节点（没有后续依赖者的节点）的完整输出，同时保留所有节点的状态、任务身份和 `has_output`。有多个最终分支时全部返回。`result_node_ids` 标明最终节点；追溯中间证据使用 `tasks({"action":"inspect","task_ids":["返回的运行句柄"],"node_ids":["stock"]})`。指定节点的输出不截断。完整运行结果继续保存在存储及管理界面中。
 
-主会话仍在运行时收到完成通知；文本 assistant 也能在后台完成后继续回复。通知只携带最终节点产出及各节点状态，不附带中间长文，也不需要模型再调用一次工具才能拿到最终成果。如果同一版本的最终结果已经由 `wait` 读取，通知不会再次进入模型上下文或引发 assistant 额外回复；仅查看中间证据不会吞掉最终交付。恢复运行产生新结果版本，仍会正常通知。普通主会话已经结束时，结果可在后续轮通过 `wait` 读取。
+主会话仍在运行时收到完成通知；文本 assistant 也能在后台完成后继续回复。通知只携带最终节点产出及各节点状态，不附带中间长文，也不需要模型再调用一次工具才能拿到最终成果。如果同一版本的最终结果已经由 `tasks inspect/wait` 读取，通知不会再次进入模型上下文或引发 assistant 额外回复；仅查看中间证据不会吞掉最终交付。恢复运行产生新结果版本，仍会正常通知。普通主会话已经结束时，结果可在后续轮通过 `tasks` 读取。
 
 `completed` 只表示节点执行结束，不代表内容经过独立核验。流程作者应在节点任务里说明交付物和验收条件；员工依据任务和上游证据工作，汇总时核对结论、指出缺失依据。主 Agent 交付有效成果，并区分已验证事实与员工建议；耗时原因需要实际证据，不能仅根据运行时间推断模型负载。
 

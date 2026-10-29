@@ -2,8 +2,6 @@ import { uiText } from '../../i18n';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
 import { AppCenterDock } from '../appCenter/AppCenter';
-import type { AgentConnectionsController } from '../agents/useAgentConnections';
-import type { AgentConnection } from '../../../electron/agentTypes';
 import { setConversationsArchived, useConversationArchives } from './conversationArchives';
 import { showUiError } from '../../shared/showUiError';
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionMenuIcon } from '../chat/ConversationExtraction';
@@ -36,7 +34,6 @@ import {
   RotateCcw,
   RotateCw,
   Search,
-  Settings,
   Trash2,
   X,
 } from 'lucide-react';
@@ -238,15 +235,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenArchives,
   onOpenSearch,
   softVisible = true,
-  agents = [],
-  activeAgentId,
-  onAgentSelect,
-  agentSessions,
 }: {
-  agents?: Array<Pick<AgentConnection, 'id' | 'name' | 'connectionState'>>;
-  activeAgentId?: string;
-  onAgentSelect?: (id: string, sessionId?: string, view?: 'chat' | 'settings') => void;
-  agentSessions?: AgentConnectionsController;
   language: AppLanguage;
   section: AppSection;
   activeConversationId: string;
@@ -284,12 +273,8 @@ export const ChatSidebar = memo(function ChatSidebar({
   const extraction = useContext(ConversationExtractionContext);
   const extractionShortcuts = useKeyboardShortcuts();
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    () => new Set(['agents', 'pinned', 'projects', 'recent']),
+    () => new Set(['pinned', 'projects', 'recent']),
   );
-  const [expandedAgentIds, setExpandedAgentIds] = useState<Set<string>>(() => new Set());
-  useEffect(() => {
-    if (activeAgentId) setExpandedAgentIds(current => new Set([...current, activeAgentId]));
-  }, [activeAgentId]);
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -872,78 +857,6 @@ export const ChatSidebar = memo(function ChatSidebar({
                     </div>
                   )
                 }
-              </SectionBody>
-
-              <SectionHeader title={uiText(language)('appSections.agents')} action={<Plus size={14}/>} actionLabel={uiText(language)('chatSidebar.manageAgents')} expanded={expandedSections.has('agents')} onToggle={() => toggleSection('agents')} onAction={() => onAgentSelect ? onAgentSelect('') : onSectionChange('agents')} />
-              <SectionBody expanded={expandedSections.has('agents')}>
-              <div className="sidebar-agent-list">
-                {agents.map(agent => {
-                  const expanded = expandedAgentIds.has(agent.id);
-                  const list = agentSessions?.sessionsByAgent[agent.id];
-                  const reconnecting = agent.connectionState === 'reconnecting';
-                  const visibleSessions = list?.sessions.filter(session => !session.metadata?.archived) ?? [];
-                  const active = section === 'agents' && activeAgentId === agent.id;
-                  const create = () => { onAgentSelect?.(agent.id, ''); void agentSessions?.createSession(agent.id, uiText(language)('agentsView.newConversation')); };
-                  const manage = () => onAgentSelect?.(agent.id, undefined, 'settings');
-                  const toggle = () => {
-                    setExpandedAgentIds(current => { const next = new Set(current); if (expanded) next.delete(agent.id); else next.add(agent.id); return next; });
-                    if (!expanded) { onAgentSelect?.(agent.id); void agentSessions?.refreshSessions(agent.id).catch(() => undefined); }
-                  };
-                  return <div key={agent.id} className="project-block agent-sidebar-group" data-agent-id={agent.id}>
-                    <div className={`project-row agent-sidebar-row${active ? ' active' : ''}`} role="button" tabIndex={0} aria-expanded={expanded} onClick={toggle}
-                      onKeyDown={event => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); toggle(); } }}
-                      onContextMenu={event => openContextMenu(event, `agent:${agent.id}`, [
-                        { key: 'new', icon: <Plus size={15}/>, label: uiText(language)('agentsView.newChat'), disabled: list?.creating, onClick: create },
-                        { key: 'manage', icon: <Settings size={15}/>, label: uiText(language)('chatSidebar.manageAgent'), onClick: manage },
-                      ])}>
-                      <div className="project-title"><span>{agent.name}</span></div>
-                      <button className="row-new-chat" type="button" disabled={list?.creating} aria-label={uiText(language)('chatSidebar.newChatIn', { value1: agent.name })} onClick={event => { event.stopPropagation(); create(); }}><Plus size={14}/></button>
-                      <button className="row-archive" type="button" aria-label={uiText(language)('chatSidebar.manage', { value1: agent.name })} onClick={event => { event.stopPropagation(); manage(); }}><Settings size={14}/></button>
-                      <ChevronRight size={14} className={`agent-tree-chevron${expanded ? ' expanded' : ''}`} aria-hidden="true"/>
-                    </div>
-                    {expanded && <>
-                      {visibleSessions
-                        .sort((a, b) => Number(Boolean(b.metadata?.pinned)) - Number(Boolean(a.metadata?.pinned)) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
-                        .map(session => {
-                        const pinned = session.metadata?.pinned === true;
-                        const unread = session.metadata?.forcedUnread === true || (typeof session.metadata?.readAt === 'string' && String(session.updatedAt) > session.metadata.readAt);
-                        const update = (patch: Record<string, unknown>) => { if (list?.management) void agentSessions?.updateSession(agent.id, session.sessionId, patch); };
-                        const open = () => { onAgentSelect?.(agent.id, session.sessionId); update({ readAt: new Date().toISOString(), forcedUnread: false }); };
-                        return <ConversationRow key={session.sessionId}
-                        conversation={{ id: session.sessionId, title: String(session.metadata?.title || (uiText(language)('agentArchivesPanel.conversation'))), preview: '', updatedAt: session.updatedAt ?? '' }}
-                        active={active && agentSessions?.views[agent.id] !== 'settings' && agentSessions?.selectedSessions[agent.id] === session.sessionId}
-                        nested remote unread={unread} pinned={pinned} language={language} quickActionsAvailable={list?.management === true}
-                        hostLabel={agent.name} projectLabel={(list?.projects ?? []).find(project => project.id === session.metadata?.projectId)?.name}
-                        onTogglePin={() => update({ pinned: !pinned })} onToggleRead={() => update({ forcedUnread: !unread, ...(!unread ? {} : { readAt: new Date().toISOString() }) })} onArchive={() => update({ archived: true })}
-                        onRename={title => agentSessions!.renameSession(agent.id, session.sessionId, title)}
-                        onDelete={() => void agentSessions?.deleteSession(agent.id, session.sessionId)}
-                        onClick={open}
-                        onContextMenu={(event, options) => openContextMenu(event, `agent:${agent.id}:${session.sessionId}`, [
-                          { key: 'open', icon: <MessageSquare size={15}/>, label: uiText(language)('chatSidebar.openChat'), onClick: open },
-                          ...(list?.management ? [
-                            { key: 'pin', icon: <Pin size={15}/>, label: pinned ? (uiText(language)('chatSidebar.unpinChat')) : (uiText(language)('chatSidebar.pinChat')), onClick: options.onTogglePin },
-                            { key: 'read', icon: unread ? <MailOpen size={15}/> : <Mail size={15}/>, label: unread ? (uiText(language)('chatSidebar.markAsRead')) : (uiText(language)('chatSidebar.markAsUnread')), onClick: options.onToggleRead },
-                            { key: 'workspace', icon: <FolderOpen size={15}/>, label: uiText(language)('chatSidebar.switchWorkspace'), children: [
-                              ...(list.projects ?? []).map(project => ({ key: project.id, label: project.name, icon: <Folder size={15}/>, disabled: session.metadata?.projectId === project.id, onClick: () => void agentSessions?.bindSession(agent.id, session.sessionId, project.id) })),
-                              { key: 'none', icon: <MessageSquare size={15}/>, label: uiText(language)('chatSidebar.taskWorkspaceNoProject'), disabled: !session.metadata?.projectId, onClick: () => void agentSessions?.bindSession(agent.id, session.sessionId, null) },
-                            ] },
-                            { key: 'fork', icon: <ExtractionMenuIcon fork/>, label: uiText(language)('chatSidebar.forkConversation'), onClick: () => void agentSessions?.forkSession(agent.id, session.sessionId) },
-                          ] : []),
-                          { key: 'rename', icon: <Edit3 size={15}/>, label: uiText(language)('chatSidebar.renameChat'), onClick: options.onRename },
-                          { key: 'copy', icon: <Copy size={15}/>, label: uiText(language)('chatSidebar.copyChatId'), onClick: () => void copyText(session.sessionId) },
-                          { key: 'copy-chat', icon: <Copy size={15}/>, label: uiText(language)('chatSidebar.copyConversation'), onClick: () => void agentSessions?.copySession(agent.id, session.sessionId) },
-                          ...(list?.management ? [{ key: 'archive', icon: <Archive size={15}/>, label: uiText(language)('chatSidebar.archiveChat'), separatorBefore: true, onClick: options.onArchive }] : []),
-                          { key: 'delete', icon: <Trash2 size={15}/>, label: uiText(language)('chatSidebar.deleteChat'), separatorBefore: true, danger: true, onClick: options.onDelete },
-                        ])}
-                      />; })}
-                      {reconnecting && <div className="agent-sidebar-notice" role="status">{uiText(language)('chatSidebar.reconnecting')}</div>}
-                      {!reconnecting && list?.loading && !visibleSessions.length && <div className="agent-sidebar-notice" role="status">{uiText(language)('chatSidebar.loadingChats')}</div>}
-                      {!reconnecting && !list?.loading && !list?.error && !visibleSessions.length && <button className="conversation-row nested agent-sidebar-empty" onClick={create} disabled={list?.creating}>{uiText(language)('agentsView.newChat')}</button>}
-                      {!reconnecting && list?.error && <div className="agent-sidebar-notice" role="alert"><span>{list.error}</span><button onClick={() => void agentSessions?.refreshSessions(agent.id).catch(() => undefined)}>{uiText(language)('common.retry')}</button></div>}
-                    </>}
-                  </div>;
-                })}
-              </div>
               </SectionBody>
 
               <SectionHeader

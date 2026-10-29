@@ -4,7 +4,7 @@ import type { AgentProject } from '../../../electron/agentTypes';
 import type { AppLanguage, ConversationSummary } from '../../types';
 import { isVisibleConversationSession } from '../../backend/runtimeSessionVisibility';
 import type { AgentCall } from '../agents/agentConversationBackend';
-import type { AgentSessionItem } from '../agents/useAgentConnections';
+import type { AgentSessionItem } from '../../../electron/agentTypes';
 import { agentErrorText } from '../agents/agentErrorText';
 import { ArchivedItemsManager } from './ArchivedItemsPanel';
 import { SettingsCard } from './SettingsControls';

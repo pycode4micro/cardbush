@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "const": "subagent-remote-proton"
+        },
+        "version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "operation": {
+          "type": "string",
+          "const": "observe"
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "waitMs": {
+          "default": 0,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
+        }
+      },
+      "required": [
+        "profile",
+        "version",
+        "contextId",
+        "taskId",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "const": "subagent-remote-proton"
+        },
+        "version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "operation": {
+          "type": "string",
+          "const": "message"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "delivery": {
+          "type": "string",
+          "enum": [
+            "queue",
+            "insert"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "profile",
+        "version",
+        "contextId",
+        "taskId",
+        "operation",
+        "messageId",
+        "delivery",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "const": "subagent-remote-proton"
+        },
+        "version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "operation": {
+          "type": "string",
+          "const": "respond"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "response": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "answer"
+                },
+                "interactionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16000
+                }
+              },
+              "required": [
+                "kind",
+                "interactionId",
+                "text"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "permission"
+                },
+                "interactionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "actionDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "decision": {
+                  "type": "string",
+                  "enum": [
+                    "allow_once",
+                    "deny"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "interactionId",
+                "actionDigest",
+                "decision"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "profile",
+        "version",
+        "contextId",
+        "taskId",
+        "operation",
+        "messageId",
+        "response"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "const": "subagent-remote-proton"
+        },
+        "version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "contextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "operation": {
+          "type": "string",
+          "const": "cancel"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "profile",
+        "version",
+        "contextId",
+        "taskId",
+        "operation",
+        "messageId"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

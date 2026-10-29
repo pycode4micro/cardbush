@@ -1,5 +1,7 @@
 # Model failures and Responses compatibility
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 Responses, Chat Completions and Anthropic Messages normalize HTTP exceptions and streamed errors through `providerErrorPayload` / `providerFailureEvent`. They preserve the provider code (or typed error), status and request ID. Runtime's `modelFailurePolicy` owns the shared retry classification; adapters decode protocol-specific facts and never execute tools. See the [Runtime policy](../bush-runtime/README.md#model-failure-boundary).
 
 The Responses adapter shares a compatibility profile through `ProviderCapabilityStore`, scoped to the endpoint configuration, credentials and model. Only an explicit rejection of a feature actually present on the wire selects this profile. Authentication, quota exhaustion, temporary service faults and unrelated input validation never change capabilities.

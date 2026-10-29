@@ -1,65 +1,69 @@
-# CardBush Agent + CLI
+# CardBush Agent + CLI npm 包
 
-CardBush 的 npm 包同时提供独立 Agent 服务与终端对话客户端，不需要安装桌面 App。需要 Node.js 24；Windows 与 Linux 使用同一份发布包。
+[English](NPM_AGENT.en.md) · [简体中文](NPM_AGENT.md)
 
-## 安装与使用
+官方 [cardbush npm 包](https://www.npmjs.com/package/cardbush)同时提供独立 Agent 服务与终端客户端。Windows 和 Linux 使用同一份发布包，需要 Node.js 24、npm 10 或更高版本。API Key 模型不需要桌面 App。
 
-发布到 npm 后可执行：
+本页与当前源码同步。已发布的 **1.0.13** 不包含新的 `cardbush worker` 注册与远程聊天入口迁移；使用下述 worker 功能时，需要在两端重新构建当前源码。发布范围见 [1.0.13 说明](https://github.com/pycode4micro/cardbush/blob/main/docs/releases/1.0.13.zh-CN.md)。
+
+## 安装与开始使用
 
 ```sh
-npm install --global cardbush
+npm install -g cardbush@latest
 cardbush --version
 cardbush --help
-```
-
-进入工作目录后运行 `cardbush`，即可使用本机 Agent。首次未配置模型时，CLI 会显示配置文件路径和示例；配置 API-key 模型后可独立运行。ChatGPT 账号模型继续遵守现有本机 App 授权桥要求。
-
-```sh
 cd /path/to/workspace
 cardbush
-cardbush --resume
 ```
 
-部署独立服务时，CLI 与服务从同一包安装：
+本机模式不需要访问令牌。没有模型时按 CLI 展示的路径与示例编辑配置文件，保存后按 Enter。`/settings` 展示配置位置，`/model` 选择模型与思考强度。ChatGPT 账号模型复用本机 App 授权桥，需保持 App 登录并运行；API Key 模型可独立执行。
+
+`cardbush --resume` 打开会话选择器，`cardbush --resume ID` 恢复指定会话，`/session` 在终端中切换。执行中 Enter 排队，Ctrl+Enter 或 `/steer 文本` 立即指导当前任务。`/artifact` 查看并打开文件，`/tools` 查看执行详情。完整交互见 [CLI 指南](https://github.com/pycode4micro/cardbush/blob/main/docs/CLI.zh-CN.md)。
+
+## 服务与远端连接
+
+一次安装同时注册 `cardbush` 与 `cardbush-agent`：
 
 ```sh
-cardbush serve --data-dir /srv/cardbush/agent-a --name Agent-A
-# 等价命令
-cardbush-agent --data-dir /srv/cardbush/agent-a --name Agent-A
+cardbush serve --background
+cardbush serve --status
+cardbush serve --stop
+cardbush serve --data-dir /absolute/path/agent-data --name Agent-A
+# 等价的前台服务入口
+cardbush-agent --data-dir /absolute/path/agent-data --name Agent-A
 ```
 
-Windows 使用 Windows 绝对路径。服务不会因客户端退出而关闭；使用独立数据目录，并通过已有服务管理器托管。数据与安装目录分开，更新程序不替换会话、插件配置或令牌。
-
-在服务器终端连接已经运行的服务：
+默认后台服务目录为 `~/.cardbush/service`。Windows 使用 Windows 绝对路径。程序和数据分开；服务不会因普通远端客户端退出而关闭。不同实例使用不同数据目录。
 
 ```sh
-cardbush --url http://127.0.0.1:4780 --token-file /srv/cardbush/agent-a/access-token
+cardbush worker add --name Worker --url https://agent.example.com --token-file /private/access-token
+cardbush worker list
 ```
 
-首次连接后保存服务地址与令牌文件位置，之后可直接运行 `cardbush`。`--local` 明确切回当前系统用户的本机 Runtime。连接其他机器时使用 HTTPS 或已有 SSH 隧道；保留原有身份、令牌及权限检查。
+本机聊天不再支持远程直连；旧连接配置不会重定向 CLI。远程连接仅供注册子 Agent，连接后让本地 Agent 保存对应角色。服务保有自己的模型、插件和权限，不自动复制本机配置。CLI 会话默认位于 `~/.cardbush/cli-agent`，独立服务为 `~/.cardbush/service`，两者会话不合并。远程使用 HTTPS 或认证 SSH。详见 [worker 协议](https://github.com/pycode4micro/cardbush/blob/main/docs/SUBAGENT_REMOTE_PROTOCOL.zh-CN.md)。
 
-## 发布前的本地包
-
-源码仓库仍为 private，不能直接发布仓库根目录。维护者运行 `npm run package:npm` 构建独立发布目录和 `.tgz`，命令打印产物路径及摘要，不自动发布。然后运行隔离安装验证：
+## 更新与卸载
 
 ```sh
-npm run verify:npm-package -- --tarball /absolute/path/cardbush-1.0.12.tgz
-```
-
-验证在仓库外创建临时安装目录，检查两个命令、原生资源、服务鉴权，并使用本地模拟模型分别完成服务与独立 CLI 对话；不覆盖用户全局安装、不读取用户配置、不发起付费模型调用。成功后将 `verification-report.json` 写到 tarball 旁边。确认发布名称和版本后，可将已验证的 tarball 提交 npm；无需分别发布内部工作区。
-
-也可以用该 tarball 安装到目标机器：
-
-```sh
-npm install --global /absolute/path/cardbush-1.0.12.tgz
+npm install -g cardbush@latest
 cardbush --version
-cardbush serve --help
+npm uninstall -g cardbush
 ```
 
-npm 包包含所需内部工作区模块和运行资源，第三方依赖由 npm 安装到目标平台；不要求分别发布私有 `@cardbush/*` 包，不下载 Electron，也不携带桌面安装包。构建时必须提供完整 Windows 原生进程保护组件，避免发布一个在 Windows 无法执行工具的包。
+更新后重新启动 CLI；服务先等待任务空闲，再以原数据目录和参数重启。更新 npm 不会更新桌面 App、其他机器或 Docker 镜像。卸载全局命令必须带 `-g`，且不会自动清除服务数据。若命令来自 `npm link`，源码变化后还需要重新构建；路径排查见[安装指南](https://github.com/pycode4micro/cardbush/blob/main/docs/INSTALLATION.zh-CN.md)。
 
-## 更新
+## 维护者打包与发布
 
-服务与 CLI 使用同一发布版本。部署新版本前按现有维护流程等待任务空闲，更新包并重启对应服务；新打开的 CLI 使用新版本。已有终端不会被强制中断。保留旧 tarball 或版本目录以便回滚。
+仓库根 `package.json` 标记为 `private: true`，不能直接发布根目录；这不代表 GitHub 仓库是私有的。`npm run package:npm` 构建独立发布目录和 tarball，不自动发布。包包含内部工作区模块与运行资源；第三方依赖由 npm 按目标平台安装，不下载 Electron，也不携带桌面安装包。Windows 原生进程保护组件必须完整。
 
-普通服务不要求图形桌面；Browser Use、Computer Use、Office 渲染等可选能力仍取决于目标主机的平台和依赖。需要独立 Linux 桌面时使用项目提供的 Docker desktop profile。
+```sh
+npm run package:npm
+npm run verify:npm-package -- --tarball /absolute/path/cardbush-1.0.13.tgz
+npm publish /absolute/path/cardbush-1.0.13.tgz --access public --tag latest
+```
+
+校验脚本在仓库外的临时目录安装，检查命令、原生组件、服务鉴权和内置 MCP，并通过本地模拟模型完成独立 CLI 与服务对话。不覆盖全局安装、不读取真实用户配置、不发起付费调用，结果写入 `verification-report.json`。
+
+仅发布已经验证的那份 tarball。npm 可能要求终端登录及本次发布的两步验证；不要把凭据或验证码写入仓库。收到“正在处理”时等待仓库扫描完成，不重复发布。最终核对 `latest`、版本元数据和匿名下载的完整性，不能只凭 publish 命令退出成功就宣布可安装。
+
+Browser Use、Computer Use、Office 转换等可选能力仍取决于目标平台和依赖。数据与执行边界见[安全说明](https://github.com/pycode4micro/cardbush/blob/main/SECURITY.zh-CN.md)。

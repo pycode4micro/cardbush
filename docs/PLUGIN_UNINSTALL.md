@@ -1,5 +1,7 @@
 # 插件卸载
 
+[English](PLUGIN_UNINSTALL.en.md) · [简体中文](PLUGIN_UNINSTALL.md)
+
 禁用只停止加载，保留安装文件、配置与数据。用户安装插件的卸载由主进程接收插件 ID，宿主读取当前安装记录，并完成以下操作后才报告成功：
 
 1. 在现有 Apps 配置锁内关闭加载，写入 `removalPending`。不另建安装记录或清理数据库。

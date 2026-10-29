@@ -1,8 +1,10 @@
 # CardBush 多账号对话网站
 
+[English](README.en.md) · [简体中文](README.md)
+
 网站直接使用 CardBush 的持久化 Agent 会话服务，替换旧 SOP 页面和执行入口。助手身份为“兆君服饰的招财”，开放经过服务端限制的个人文件读取、图片查看和按账号授权的图片插件。
 
-默认工具是 `read_file`、`inject_image_input`、`solution_selection`、`checkpoint_context`、`search_skills`、`run_skill`。使用 `--web-restricted` 固定部署策略，模型声明和执行协调器同时检查工具上限。文件读取在插件钩子前后检查 canonical realpath；原生读取授权使用相同的个人目录范围。终端、任意写文件、浏览器、其他账号文件、配置密钥、视频和自动任务不开放。
+默认工具是 `read_file`、`inject_image_input`、`request_user_input_async`、`checkpoint_context`、`search_skills`、`run_skill`。使用 `--web-restricted` 固定部署策略，模型声明和执行协调器同时检查工具上限。文件读取在插件钩子前后检查 canonical realpath；原生读取授权使用相同的个人目录范围。终端、任意写文件、浏览器、其他账号文件、配置密钥、本地视频和自动任务不开放；远程视频只通过已授权的 worker 网关委派。
 
 管理员在“管理中心 → 插件管理”安装/停用/卸载经过审核的火山图片插件，并逐账号授权。当前目录仅提供图片插件，不支持上传任意插件代码。未授权账号不会得到图片工具。撤权在图片网关每次派发时生效，已发出的图片请求继续完成，空闲后通过原生插件生命周期移除该账号的插件；生成结果和任务回执保留。
 

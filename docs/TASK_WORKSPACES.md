@@ -1,5 +1,7 @@
 # Local、Worktree 与文件版本
 
+[English](TASK_WORKSPACES.en.md) · [简体中文](TASK_WORKSPACES.md)
+
 CardBush 的工作区现在采用 Local / Worktree 两种执行模式，并使用 Git 对象保存 Git 工作区的文件版本。代码、文档、表格、图片和配置使用相同机制，文件类型不决定是否能够保存版本。
 
 本次借鉴的是 Codex 公开的执行模式及 Git 管理方式，不声称复刻其未公开的逐轮快照实现。参考：[执行环境](https://learn.chatgpt.com/docs/environments/modes)、[Git worktrees](https://learn.chatgpt.com/docs/environments/git-worktrees)、[审阅与撤销](https://learn.chatgpt.com/docs/code-review?surface=app)。

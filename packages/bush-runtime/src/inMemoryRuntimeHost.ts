@@ -206,6 +206,8 @@ import { BackgroundToolCalls } from './backgroundToolCalls.js';
 import { RuntimeTurnSignals } from './turnSignals.js';
 import { TerminalCompletionNotifications } from './terminalCompletionNotifications.js';
 import { asyncResultMessage } from './subagentTool.js';
+import { LocalSubagentInteractions } from './localSubagentInteractions.js';
+import { observationControl } from './subagentInteractions.js';
 import { childFinalMessageIds, childConversationReadHint, continueChildConversation, type ChildConversationSource } from './subagentConversation.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
 import { RuntimeConversations, type RuntimeConversation } from './runtimeConversations.js';
@@ -631,6 +633,12 @@ export class InMemoryRuntimeHost {
     this.#pluginBackground = new PluginBackgroundTasks(join(runtimeDataRoot, 'plugin-background'), this.#subagentTasks);
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
       DEFAULT_SUBAGENT_PERMISSION_POLICY;
+    const localChildren = new LocalSubagentInteractions(this.#subagentTasks, this.#eventLog, {
+      answerQuestion: (sessionId, turnId, selectionId, text) => this.#solutions.answer({ sessionId, turnId, selectionId, kind: 'text', text }),
+      answerPermission: answer => this.#answerPermission(answer),
+      hasPermission: (session, turn, id) => [...this.#toolLoops].some(loop => loop.matches(session, turn) && loop.hasPendingPermission(id)),
+      stop: (sessionId, turnId) => this.sendCommand({ kind: STOP_RUNTIME_TURN_COMMAND, payload: { sessionId, turnId } }),
+    });
     const subagents = registerSubagentTool(
       this.#toolRegistry,
       this.#subagentTasks,
@@ -648,6 +656,21 @@ export class InMemoryRuntimeHost {
         remoteAgents: options.remoteAgents,
         inheritBrowserScope: options.inheritBrowserScope,
         guideChild: payload => this.sendCommand({ kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload }),
+        localControl: (task, control, signal) => localChildren.control(task, control, signal),
+        reconcileChild: task => {
+          if (this.#activeTurns.has(JSON.stringify([task.childSessionId, task.childTurnId]))) return;
+          const terminal = this.#eventLog.replay(task.childSessionId, task.childTurnId).at(-1);
+          const result = terminal?.kind === 'turn_terminal'
+            ? resolveChildTurn({ terminal, session: this.#sessions.snapshot(task.childSessionId) }, task.childTurnId)
+            : { status: 'stopped' as const, finalResponse: '', errorMessage: 'Local child was interrupted by a runtime restart; no work was replayed.', usage: task.usage };
+          this.#subagentTasks.finish({ parentSessionId: task.parentSessionId, taskId: task.taskId, ...result });
+        },
+        onInteraction: (parentSessionId, taskId, observation) => {
+          for (const interaction of observation.interactions) this.#conversations.notify(parentSessionId, {
+            key: `child:${taskId}:${interaction.interactionId}`.slice(0, 200), wake: true,
+            content: `Your child task ${taskId} needs a response. Read tasks inspect if the state has changed. Reply using subagent with this task_id and response. Question answers are text; a human_required permission cannot be approved by the model.\n${JSON.stringify(interaction)}`,
+          });
+        },
         readChildConversation: sessionId => this.#childConversation(sessionId),
         saveChildRequest: request => this.#subagentResume.save(request),
         loadChildRequest: session => this.#sessions.hasSession(session) ? this.#subagentResume.load(session) : Promise.resolve(undefined),
@@ -686,7 +709,7 @@ export class InMemoryRuntimeHost {
       this.#turnSignals.wait(context.sessionId, context.turnId, promises, mode, signal, duration));
     taskTools.addSource(this.#asyncJobs.source);
     taskTools.addSource(context => this.#teams.taskHandles(context.sessionId));
-    taskTools.addSource(context => this.#subagentTasks.list(context.sessionId).filter(task => task.origin !== 'team').map(task => ({
+    taskTools.addSource(context => { subagents?.reconcile(context.sessionId); return this.#subagentTasks.list(context.sessionId).filter(task => task.origin !== 'team').map(task => ({
       task_id: task.taskId, kind: 'subagent' as const, status: task.status, revision: String(task.revision), summary: task.agentName ?? task.prompt.slice(0, 160),
       ...(!task.remote ? { readProgress: () => {
         const progress = this.#eventLog.taskProgress(task.childSessionId, task.childTurnId);
@@ -697,11 +720,22 @@ export class InMemoryRuntimeHost {
         return progress;
       } } : {}),
       result: { session_id: task.childSessionId, turn_id: task.childTurnId, ...(task.status !== 'running' ? { output: task.finalResponse, error: task.errorMessage } : {}) },
+      readResult: async () => {
+        let observation = task.observation, observationError = task.observationError;
+        if (subagents && (!task.remote || options.remoteAgents?.control)) {
+          try { observation = await subagents.control(context, observationControl(task)) as typeof observation; observationError = undefined; }
+          catch (error) { observationError = error instanceof Error ? error.message : String(error); }
+        }
+        return { session_id: task.childSessionId, turn_id: task.childTurnId,
+          ...(observation ? { observation } : {}), ...(observationError ? { observation_error: observationError } : {}),
+          ...(task.status === 'unavailable' ? { note: 'Local observation ended; reconcile the owning host before replacement work.' } : {}),
+          ...(task.status !== 'running' ? { output: task.finalResponse, error: task.errorMessage } : {}) };
+      },
       ...(subagents?.readConversation ? { readConversation: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>, cursor?: string) => subagents.readConversation!(ctx, task.taskId, cursor) } : {}),
       wait: (signal: AbortSignal) => this.#subagentTasks.waitForCompletion(context.sessionId, task.taskId, signal),
-      ...(task.background ? { stop: () => this.#pluginBackground.stopTask(context.sessionId, task.taskId) }
-        : !task.remote ? { stop: async () => this.sendCommand({ kind: STOP_RUNTIME_TURN_COMMAND, payload: { sessionId: task.childSessionId, turnId: task.childTurnId } }) } : {}),
-    })));
+      ...(subagents && (!task.remote || options.remoteAgents?.control) ? { stop: async () => subagents.control(context,
+        { profile: 'subagent-remote-proton', version: '0.1', contextId: task.childSessionId, taskId: task.taskId, operation: 'cancel', messageId: `stop-${task.taskId}` }) } : {}),
+    })); });
     taskTools.addSource(context => this.#backgroundTools.taskHandles(context.sessionId, context.turnId));
     const terminalHandles = (context: import('./toolRegistry.js').ToolHandlerContext<unknown>, terminals: Array<Record<string, unknown>>, local: boolean) =>
       terminals.map(terminal => {
@@ -1097,6 +1131,10 @@ export class InMemoryRuntimeHost {
         if (input?.action === 'save') {
           const agent = registeredAgentSchema.parse(input.definition);
           validateRegisteredHooks(agent, (await this.#loadPluginExtensions?.())?.hooks ?? []);
+          if (agent.remote) {
+            const target = (await this.#remoteAgents?.list(signal) ?? []).find(item => item.id === agent.remote!.connection_id);
+            if (!target?.agentId || target.agentId !== agent.remote.agent_id) throw new Error('Verify the saved worker connection and its service identity before registering this remote subagent.');
+          }
           return this.#registeredAgents.put(agent, input.expected_revision!);
         }
         if (input?.action === 'delete' && typeof input.agent_id === 'string') { await this.#registeredAgents.remove(input.agent_id, input.expected_revision!); return { deleted: true }; }

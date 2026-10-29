@@ -1,5 +1,7 @@
 # App language packs and appearance states
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 The App's own text comes from `locales/*.json`: navigation, settings, conversations, composer and queue, permissions, tool status, voice controls, image viewers, Office/3D preview shells and native file/application menus. Renderer and Electron consumers share `@cardbush/platform/i18n`; React imports it through `src/i18n`.
 
 User-authored content, paths, protocol identifiers, file-type abbreviations, product names and raw third-party/tool receipts are data, not App translations. Plugin/server localization dictionaries use `localizedContent`. Model instructions and document contents are not UI copy. Translate an owned error message, but preserve machine-readable error codes.

@@ -1,5 +1,7 @@
 # 文件预览维护入口
 
+[English](FILE_PREVIEW_ADAPTERS.en.md) · [简体中文](FILE_PREVIEW_ADAPTERS.md)
+
 Inspector 根据已注册的预览能力选择显示方式。未注册的格式显示文件名、路径和“用系统默认应用打开”按钮，不读取内容、不尝试文本解码、不创建网页预览，也不会自动启动外部软件。无后缀文件只有注册过的文件名（例如 README、Makefile）才自动作为文本显示。
 
 ## 添加支持

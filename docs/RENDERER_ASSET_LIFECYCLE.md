@@ -1,5 +1,7 @@
 # Renderer resources and running windows
 
+[English](RENDERER_ASSET_LIFECYCLE.md) · [简体中文](RENDERER_ASSET_LIFECYCLE.zh-CN.md)
+
 A running window keeps the JavaScript module URLs from the build it opened. Opening review, source preview, Markdown or settings later can request a chunk for the first time. Deleting an older hashed chunk while that window is alive breaks this request even if a newer file implements the same component.
 
 The local Vite build therefore uses `emptyOutDir: false`. Builds replace the entry documents and retain older content-addressed resources. Do not clear `dist/assets` during a live application session. This policy retains all earlier resources; it does not currently implement automatic garbage collection. Produce release packages from a fresh build directory/checkout so development history is not included in the package.

@@ -1,5 +1,7 @@
 # Independent Bot MCP boundary
 
+[English](CARDBUSH_APP_HOST.md) · [简体中文](CARDBUSH_APP_HOST.zh-CN.md)
+
 CardBush does not own a Bot product, account store, login flow, channel adapter,
 management UI, process supervisor, or channel-specific configuration. A Bot is an
 independent project that users may install as an optional MCP server.

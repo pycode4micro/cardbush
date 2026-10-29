@@ -9,10 +9,15 @@ const names = z.array(z.string().trim().min(1)).max(512).refine(items => new Set
 export const registeredAgentSchema = z.object({
   id, name: z.string().trim().min(1).max(160), description: z.string().max(4000).default(''),
   system_prompt: z.string().trim().min(1).max(40000),
+  remote: z.object({ connection_id: z.string().trim().min(1), agent_id: z.string().trim().min(1) }).strict().optional(),
   allowed_tools: names.optional(), settings: z.record(z.string(), z.unknown()).optional(),
   hooks: names.default([]), guards: z.array(z.enum(['read_only'])).max(1).default([]),
   enabled: z.boolean().default(true),
-}).strict();
+}).strict().superRefine((agent, context) => {
+  if (agent.remote && (agent.allowed_tools !== undefined || agent.settings !== undefined || agent.hooks.length || agent.guards.length)) {
+    context.addIssue({ code: 'custom', message: 'Remote workers use the target host configuration. Local tools, settings, hooks and guards cannot be applied remotely.' });
+  }
+});
 export type RegisteredAgent = z.infer<typeof registeredAgentSchema>;
 
 export const teamWorkflowSchema = z.object({

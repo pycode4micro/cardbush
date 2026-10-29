@@ -9,13 +9,13 @@ export const useAssistantWorking = () => useSyncExternalStore(listener => { list
 let profile: AssistantProfile;
 export function readAssistantProfile(): AssistantProfile {
   if (!profile) {
-    try { profile = assistantProfileSchema.parse(JSON.parse(localStorage.getItem(key) ?? '{}')); }
+    try { profile = assistantProfileSchema.parse({ ...JSON.parse(localStorage.getItem(key) ?? '{}'), targetAgent: '' }); }
     catch { profile = assistantProfileSchema.parse({}); }
   }
   return profile;
 }
 export function saveAssistantProfile(input: AssistantProfile) {
-  const next = assistantProfileSchema.parse(input);
+  const next = assistantProfileSchema.parse({ ...input, targetAgent: '' });
   localStorage.setItem(key, JSON.stringify(next)); profile = next;
   listeners.forEach(listener => listener());
 }

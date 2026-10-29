@@ -1,5 +1,7 @@
 # 后台 MCP 等待与子代理续接
 
+[English](ASYNC_TOOL_AND_SUBAGENT_CONTINUATION.en.md) · [简体中文](ASYNC_TOOL_AND_SUBAGENT_CONTINUATION.md)
+
 这是 CardBush 宿主能力。插件仍提供普通 MCP 工具，不需要识别 CardBush 会话、主子关系或实现反向唤醒协议。
 
 ## 后台工具调用

@@ -108,27 +108,9 @@ promotions[1].reject(new Error('late promotion failure'));
 assert.equal(await hidden2, false);
 assert.equal(active, ''); assert.equal(error, null, 'a stale request cannot show an error in a new conversation');
 
-const agentSource = ts.createSourceFile('connections.ts', fs.readFileSync('src/features/agents/useAgentConnections.ts', 'utf8'), ts.ScriptTarget.Latest, true);
-const agentHook = agentSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useAgentConnections');
-const agentCallbacks = ['select', 'forkSession'].map(name => agentHook.body.statements.find(node => ts.isVariableStatement(node)
-  && node.declarationList.declarations.some(d => d.name.getText(agentSource) === name)).getText(agentSource)).join('\n');
-const forks = [];
-let selectedAgent = '', selectedSessions = {}, views = {};
-const agentContext = {
-  exports: {}, useCallback: fn => fn, navigationRevision: ref(0), selectionRevision: ref(new Map()), loads: ref(new Map()),
-  setSelectedId: id => { selectedAgent = id; }, setSelectedSessions: fn => { selectedSessions = fn(selectedSessions); },
-  setViews: fn => { views = fn(views); }, refreshSessions: async () => {}, updateList() {}, message: String,
-  api: () => ({ call: () => { const fork = defer(); forks.push(fork); return fork.promise; } }),
-};
-vm.runInNewContext(compile(agentCallbacks + '\nexports.select=select;exports.fork=forkSession;'), agentContext);
-const agentApi = agentContext.exports;
-agentApi.select('a', 'original');
-const oldFork = agentApi.fork('a', 'original');
-agentApi.select('b', 'latest');
-forks[0].resolve({ sessionId: 'late-fork' }); await oldFork;
-assert.equal(selectedAgent, 'b'); assert.equal(selectedSessions.b, 'latest', 'a late fork cannot navigate away from another host');
-const firstFork = agentApi.fork('b', 'latest'), lastFork = agentApi.fork('b', 'latest');
-forks[2].resolve({ sessionId: 'last-fork' }); await lastFork;
-forks[1].resolve({ sessionId: 'first-fork' }); await firstFork;
-assert.equal(selectedSessions.b, 'last-fork', 'latest fork intent wins even when responses arrive out of order');
-console.log('Conversation switching passed: bounded cache, protected live work, coalesced reads, slow supplements, stale snapshots, failed refresh, navigation, promotion and fork races.');
+// Standalone remote navigation was retired; connections now register Team workers.
+const appSource = fs.readFileSync('src/App.tsx', 'utf8');
+assert.doesNotMatch(appSource, /LazyAgentsView|useAgentConnections/);
+assert.equal(fs.existsSync('src/features/agents/AgentsView.tsx'), false);
+assert.match(fs.readFileSync('src/features/team/TeamWorkspace.tsx', 'utf8'), /RemoteWorkers/);
+console.log('Conversation switching passed: bounded cache, protected live work, coalesced reads, stale snapshots, navigation and retired remote entry.');

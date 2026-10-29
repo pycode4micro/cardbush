@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "operations": {
+      "maxItems": 5,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "observe",
+          "queue",
+          "insert",
+          "respond",
+          "cancel"
+        ]
+      }
+    }
+  },
+  "required": [
+    "operations"
+  ],
+  "additionalProperties": false
+}

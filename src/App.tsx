@@ -11,7 +11,7 @@ import {
 } from './features/appearance/appearancePreferences';
 import { useAppearanceRuntime } from './features/appearance/useAppearanceRuntime';
 import { pickWorkspace } from './features/ssh/WorkspaceLocationPicker';
-import { useAgentConnections } from './features/agents/useAgentConnections';
+import { showTeamWorkspaceTab } from './features/team/teamWorkspaceNavigation';
 import './features/agents/agents.css';
 import { withWorkspaceReference } from './shared/promptReferences';
 import { recentReviewTurns } from './features/sidebar/reviewModel';
@@ -91,7 +91,7 @@ import { ConversationInspectorContext, ConversationInspectorOutlet, useConversat
 import { useCanvasSessionId as useCreationSessionId } from './features/creationCanvas/canvasStore';
 import type { CreationInspectorContext } from './features/mdPresentation/CreationConversation';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
-import { agentInspectorWorkspace, localInspectorWorkspace } from './features/inspector/inspectorSessions';
+import { localInspectorWorkspace } from './features/inspector/inspectorSessions';
 import { inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
 import { useInspectorBrowserActions } from './features/inspector/useInspectorBrowserActions';
 import { ConversationExtractionProvider } from './features/chat/ConversationExtraction';
@@ -203,13 +203,12 @@ import {
 } from './features/inspector/InspectorWebview';
 import { DeferredModuleNotice, recoverableLazy } from './shared/recoverableLazy';
 import { TaskWorkspaceBar } from './features/chat/TaskWorkspaceBar';
-import { OPEN_AGENT_CONVERSATION, type AgentConversationTarget } from './features/agents/agentNavigation';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { CopyToastHost } from './components/CopyToastHost';
 import { readInitialThemePreference, resolveTheme, systemPrefersDark } from './features/appearance/themePreferences';
 import { useInspectorWorkspace } from './features/inspector/useInspectorWorkspace';
 import { InspectorCoverControls } from './features/inspector/InspectorCoverControls';
-import { FeaturePanel, FeaturePanelLoading } from './features/panels/FeaturePanel';
+import { FeaturePanel } from './features/panels/FeaturePanel';
 import { normalizeAppSettings, persistAppSettings } from './features/settings/appSettingsStore';
 import { useAppSettings } from './features/settings/useAppSettings';
 import { clampSidebarWidth, persistDisabledSkillNames, persistVisualInputEnabled, readDisabledSkillNames, readInitialLanguageMode, readInitialSidebarWidth, readSystemLanguage, readVisualInputEnabled, resolveAppLanguage } from './features/settings/localPreferences';
@@ -217,7 +216,6 @@ import { defaultModelConfigId, effectiveModels, mergeLegacyModelCredentials, mod
 import { ProjectRenameDialog } from './features/sidebar/ProjectRenameDialog';
 import { persistProjectItems, readProjectItems, stableProjectId } from './features/sidebar/projectStore';
 
-const LazyAgentsView = recoverableLazy('agents', async () => ({ default: (await import('./features/agents/AgentsView')).AgentsView }), (props, retry) => <DeferredModuleNotice language={props.language} retry={retry} />);
 
 let settingsViewModulePromise: Promise<typeof import('./features/SettingsView')> | null = null;
 
@@ -293,9 +291,6 @@ function CardbushApp() {
   );
   const [appSettings, setAppSettings] = useAppSettings();
   const [section, setSection] = useState<AppSection>('chat');
-  const agentsVisitedRef = useRef(false);
-  if (section === 'agents') agentsVisitedRef.current = true;
-  const agents = useAgentConnections();
   const { compactLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
@@ -650,7 +645,6 @@ function CardbushApp() {
   const [teamInspector, setTeamInspector] = useState<CreationInspectorContext | null>(null);
   const activeCreationInspector = section === 'team' ? teamInspector : section === 'md-presentation' && creationInspector?.sessionId === creationSessionId ? creationInspector : null;
   const inspectorWorkspaceId = section === 'assistant' ? localInspectorWorkspace('personal-assistant')
-    : section === 'agents' ? agentInspectorWorkspace(agents.selectedId, agents.selectedSessions[agents.selectedId] ?? '')
     : section === 'md-presentation' ? localInspectorWorkspace(creationSessionId || 'creation')
     : section === 'team' ? localInspectorWorkspace(teamInspector?.sessionId || 'team')
     : localInspectorWorkspace(chat.activeConversationId);
@@ -681,7 +675,7 @@ function CardbushApp() {
   useEffect(() => { setRegionSelectionId(''); }, [inspectorWorkspaceId]);
   const regionConversation: RegionConversation | undefined = activeCreationInspector ? {
     scope: inspectorWorkspaceId, busy: activeCreationInspector.busy, error: activeCreationInspector.error, messages: activeCreationInspector.messages, send: activeCreationInspector.send,
-  } : section === 'agents' || section === 'assistant' || section === 'md-presentation' || section === 'team' ? (hostRegionConversation?.scope === inspectorWorkspaceId ? hostRegionConversation : undefined) : {
+  } : section === 'assistant' || section === 'md-presentation' || section === 'team' ? (hostRegionConversation?.scope === inspectorWorkspaceId ? hostRegionConversation : undefined) : {
     scope: inspectorWorkspaceId, busy: chat.sending, error: chat.error, messages: chat.activeMessages,
     send: text => submissionReceipt(accepted => chat.sendMessage(text, chat.activeConversation ?? undefined, undefined, undefined, undefined, undefined, accepted)),
   };
@@ -699,10 +693,6 @@ function CardbushApp() {
         if (sessionId === 'personal-assistant') { setSection('assistant'); return true; }
         if (!await chat.openStoredConversation(sessionId)) return false;
         setSection('chat'); return true;
-      }
-      if (workspace.startsWith('agent:')) {
-        const [connectionId, sessionId] = JSON.parse(workspace.slice(6));
-        agents.select(connectionId, sessionId); setSection('agents'); return true;
       }
       return false;
     },
@@ -1964,20 +1954,9 @@ function CardbushApp() {
   // handlers used to be recreated by App on every message update, defeating
   // React.memo and making an unrelated stream interrupt title animations.
   const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
-    if (!['assistant', 'agents'].includes(section) && !['assistant', 'agents'].includes(nextSection)) revealConversation();
+    if (!['assistant'].includes(section) && !['assistant'].includes(nextSection)) revealConversation();
     setSection(nextSection);
   }, [section, revealConversation]);
-  const handleAgentSelect = useCallback((id: string, sessionId?: string, view?: 'chat' | 'settings') => {
-    agents.select(id, sessionId, view); setSection('agents'); if (compactLayout && (sessionId !== undefined || !id)) collapseSidebar();
-  }, [agents.select, compactLayout, collapseSidebar]);
-  useEffect(() => {
-    const open = (event: Event) => {
-      const target = (event as CustomEvent<AgentConversationTarget>).detail;
-      if (target && agents.connections.some(connection => connection.id === target.connectionId) && target.sessionId) handleAgentSelect(target.connectionId, target.sessionId);
-    };
-    window.addEventListener(OPEN_AGENT_CONVERSATION, open);
-    return () => window.removeEventListener(OPEN_AGENT_CONVERSATION, open);
-  }, [agents.connections, handleAgentSelect]);
   const handleSidebarConversationChange = useCallback((conversationId: string) => {
     if (section === 'chat' && conversationId === chat.activeConversationId) revealConversation();
     openConversation(conversationId);
@@ -2022,12 +2001,10 @@ function CardbushApp() {
   const currentPage: AppPage = settingsOpen
     ? { section: 'settings', agentId: '', settingsSection: settingsInitialSection, pluginTab: settingsPluginTab }
     : section === 'chat' ? { section, conversationId: chat.activeConversationId }
-    : section === 'agents' ? { section, agentId: agents.selectedId, sessionId: agents.selectedSessions[agents.selectedId] ?? '', view: agents.views[agents.selectedId] ?? 'chat' }
     : { section };
   const pageNavigation = usePageNavigation(currentPage, page => {
     if (page.section === 'settings') { openSettings(page.settingsSection, page.pluginTab); return; }
     const workspaceId = page.section === 'assistant' ? localInspectorWorkspace('personal-assistant')
-      : page.section === 'agents' ? agentInspectorWorkspace(page.agentId, page.sessionId)
       : page.section === 'md-presentation' ? localInspectorWorkspace(creationSessionId || 'creation')
       : page.section === 'team' ? localInspectorWorkspace(teamInspector?.sessionId || 'team')
       : localInspectorWorkspace(page.section === 'chat' ? page.conversationId : chat.activeConversationId);
@@ -2035,16 +2012,9 @@ function CardbushApp() {
     setSettingsOpen(false); setSection(page.section);
     if (page.section === 'chat') {
       if (page.conversationId) chat.openConversation(page.conversationId); else chat.clearConversationSelection();
-    } else if (page.section === 'agents') agents.select(page.agentId, page.sessionId, page.view);
+    }
   }, page => {
     if (page.section === 'chat') return !page.conversationId || [...chat.conversations, ...chat.preparedConversations].some(item => item.id === page.conversationId);
-    if (page.section === 'settings' || page.section === 'agents') {
-      if (page.agentId && !agents.connections.some(item => item.id === page.agentId)) return false;
-      if (page.section === 'agents' && page.sessionId) {
-        const list = agents.sessionsByAgent[page.agentId];
-        return !list || list.loading || Boolean(list.error) || list.sessions.some(item => item.sessionId === page.sessionId);
-      }
-    }
     return true;
   });
   const handleSearchCreateConversation = useCallback(() => {
@@ -2156,7 +2126,6 @@ function CardbushApp() {
         <PageNavigationScope.Provider value="settings:shared">
         <Suspense fallback={null}>
           <LazySettingsView
-            agentConnections={agents.connections}
             onOpenPluginPrompt={openPluginPrompt}
             active={settingsVisible}
             onReady={markSettingsReady}
@@ -2231,10 +2200,6 @@ function CardbushApp() {
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}/>
               ) : (
                 <ChatSidebar
-                  agents={agents.connections}
-                  activeAgentId={agents.selectedId}
-                  onAgentSelect={handleAgentSelect}
-                  agentSessions={agents}
                   language={language}
                   section={section}
                   activeConversationId={section === 'chat' ? chat.activeConversationId : ''}
@@ -2268,7 +2233,7 @@ function CardbushApp() {
             </>
           )}
           <section ref={mainStageRef} className="main-stage" inert={inspectorControlsVisible || compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
-            <AssistantView active={section === 'assistant'} language={language} connections={agents.connections} prepare={chat.prepareAssistantRequest}
+            <AssistantView active={section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
               inspectorOpen={inspectorOpen} onToggleInspector={toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
               composerPortalTarget={section === 'assistant' && quickInputOpen ? quickInputTarget : null}
               subagentObservabilityAvailable={backendCapabilities.subagentObservability && backendCapabilities.subagentObservabilityProtocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL}
@@ -2279,8 +2244,7 @@ function CardbushApp() {
                 reasoningLevelAvailable: backendCapabilities.reasoningLevelSelection,
                 reasoningLevels: backendCapabilities.reasoningLevels,
                 skills: chat.skills, disabledSkillNames, onToggleSkill: toggleSkillEnabled }}
-              onManageHosts={() => { agents.select('', undefined, 'settings'); setSection('agents'); }}/>
-            {agentsVisitedRef.current && <Suspense fallback={section === 'agents' ? <FeaturePanelLoading language={language} /> : null}><LazyAgentsView composerPortalTarget={section === 'agents' && quickInputOpen ? quickInputTarget : null} active={section === 'agents'} visualInputEnabled={visualInputEnabledSetting} disabledSkillNames={disabledSkillNames} onToggleSkill={toggleSkillEnabled} onOpenSettings={section => openSettings(section, 'plugins')} language={language} agents={agents} theme={theme} sidebarCollapsed={sidebarCollapsed} windowMaximized={windowMaximized} thinkingVisible={appSettings.thinking.visible} guidanceDeliveryMode={appSettings.guidance.deliveryMode} /></Suspense>}
+              onManageHosts={() => { showTeamWorkspaceTab('agents'); setSection('team'); }}/>
               <HtmlComponentContext.Provider value={{ revision: chat.activeConversationId || '__new__', sessionId: chat.activeConversationId, language, running: chat.sending,
                 draft: activeDraft, notice: chat.error || chat.notice || undefined,
                 selectSuggestion: suggestion => { if (suggestion.sessionId) openConversation(suggestion.sessionId); else setActiveDraft(suggestion.text); },
@@ -2288,7 +2252,7 @@ function CardbushApp() {
                 send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
                   onError: error => { void showUiError(uiText(language)('app.componentMessageFailed'), error instanceof Error ? error.message : String(error)); } }),
                 openBrowser: url => openInspectorTarget({ target: url }) }}>
-            {section === 'agents' || section === 'assistant' ? null : section === 'chat' ? (
+            {section === 'assistant' ? null : section === 'chat' ? (
               <ComposerPortalContext.Provider value={quickInputOpen ? quickInputTarget : null}>
               <ChatPanel
                 browserTabs={composerBrowserTabs}
@@ -2889,7 +2853,7 @@ function CardbushApp() {
             status={activeCreationInspector?.inputStatus}
             inert={(compactLayout || inspectorCover) && !sidebarCollapsed} onTargetChange={setQuickInputTarget}
             onBack={leaveInspectorCover} onToggleInput={() => {
-              if (!quickInputOpen && section !== 'agents' && section !== 'assistant' && section !== 'md-presentation' && section !== 'team') setSection('chat');
+              if (!quickInputOpen && section !== 'assistant' && section !== 'md-presentation' && section !== 'team') setSection('chat');
               setQuickInputOpen(open => !open);
             }} />}
       </main>

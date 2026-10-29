@@ -1,5 +1,7 @@
 # 协作流程
 
+[English](team-workspace.en.md) · [简体中文](team-workspace.md)
+
 Team 的桌面入口以流程图和对话为主。新建流程先保留输入草稿，首次发送时才创建会话和工作区；用户描述目标后，Agent 通过已有 `subagent` 和 `team` 工具注册员工、保存节点与依赖。界面不要求用户先写 Markdown 或填写配置表单。
 
 - 图中的节点、连接来自 `TeamWorkflow.nodes` 和 `depends_on`；运行视图使用 `TeamRun.workflow` 快照以及真实节点状态。文档链接、画布坐标和模型回复不会成为执行依赖。
