@@ -4,10 +4,10 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { AgentBrowserConnector } from '../dist-electron/agentBrowserConnector.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
-import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
+import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 import { pairedClient } from './helpers/chrome-paired-client.mjs';
-import { createCardbushChromeServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
+import { createCardbushBrowserServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 
 const parent = resolve('tmp/agent-browser-connector-tests');
 async function fixture(t) {
@@ -24,7 +24,7 @@ async function fixture(t) {
 
 test('host startup failures reach Browser Use and current logs, then recover automatically without re-pairing', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {
   const f = await fixture(t), logs = [];
-  const old = new ChromeConnectorBroker(f.root, { nativeHostPath: resolve('dist-native/chrome-connector/CardBushBrowserHost.exe') });
+  const old = new BrowserConnectorBroker(f.root, { nativeHostPath: resolve('dist-native/chrome-connector/CardBushBrowserHost.exe') });
   f.close.push(() => old.stop()); await old.start();
   const code = old.createPairing().code;
   const originalPeer = await pairedClient(code); f.close.push(() => originalPeer.destroy());
@@ -38,7 +38,7 @@ test('host startup failures reach Browser Use and current logs, then recover aut
   // connection failure while the current host's concrete error is still fresh.
   const descriptor = await readFile(old.configPath, 'utf8');
   old.stop(); await writeFile(old.configPath, descriptor);
-  const server = createCardbushChromeServer({ browserConfigPath: old.configPath, browserHealthPath: connector.healthPath });
+  const server = createCardbushBrowserServer({ browserConfigPath: old.configPath, browserHealthPath: connector.healthPath });
   const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'startup-recovery' } } };
   const failed = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
   assert.equal(failed.availability, 'host_unavailable');
@@ -56,7 +56,7 @@ test('host startup failures reach Browser Use and current logs, then recover aut
 });
 test('host recovery stops after three failures and status cannot restart it; retry can', { skip: process.platform !== 'win32', timeout: 15000 }, async t => {
   const f = await fixture(t);
-  const old = new ChromeConnectorBroker(f.root, { nativeHostPath: resolve('dist-native/chrome-connector/CardBushBrowserHost.exe') });
+  const old = new BrowserConnectorBroker(f.root, { nativeHostPath: resolve('dist-native/chrome-connector/CardBushBrowserHost.exe') });
   f.close.push(() => old.stop()); await old.start();
   const connector = new AgentBrowserConnector(f.root, resolve('assets'), f.root, true, undefined, () => {});
   f.close.push(() => connector.close());
@@ -75,7 +75,7 @@ test('Agent owns a paired connector across restarts, disabling and explicit mode
   let connector = new AgentBrowserConnector(f.root, resolve('assets'));
   f.close.push(() => connector.close());
   assert.equal((await connector.sync()).state, 'running');
-  const list = () => requestChromeConnector('browser.list', { scopeId: 'fixture-session' }, { configPath: f.configPath });
+  const list = () => requestBrowserConnector('browser.list', { scopeId: 'fixture-session' }, { configPath: f.configPath });
   assert.deepEqual((await list()).connections, []);
   const pair = await connector.call({ action: 'pair', browser: 'edge', label: 'Remote Edge' });
   const peer = await pairedClient(pair.code, { browser: 'edge' }); f.close.push(() => peer.destroy());
@@ -108,7 +108,7 @@ test('Agent starts the enabled connector and exposes management through its auth
   assert.equal((await service.call('browser.connector', { action: 'status' })).state, 'running');
   const pair = await service.call('browser.connector', { action: 'pair', browser: 'edge' });
   assert.equal(pair.browser, 'edge');
-  assert.deepEqual((await requestChromeConnector('browser.list', { scopeId: 'fixture' }, { configPath: f.configPath })).connections, []);
+  assert.deepEqual((await requestBrowserConnector('browser.list', { scopeId: 'fixture' }, { configPath: f.configPath })).connections, []);
 });
 
 test('local Runtime connects without the App and then shares the same browsers with it', { skip: process.platform !== 'win32' }, async t => {
@@ -121,7 +121,7 @@ test('local Runtime connects without the App and then shares the same browsers w
   assert.equal((await service.call('browser.connector', { action: 'status' })).state, 'running');
   await assert.rejects(readFile(join(dataRoot, 'browser-connector/bridge.json')), { code: 'ENOENT' }, 'no second CLI broker');
   const configPath = join(profile, 'browser-connector/bridge.json');
-  const server = createCardbushChromeServer({ browserConfigPath: configPath });
+  const server = createCardbushBrowserServer({ browserConfigPath: configPath });
   const codes = [];
   for (const browser of ['chrome', 'edge']) {
     const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'local-' + browser } } };
@@ -148,11 +148,11 @@ test('local Runtime connects without the App and then shares the same browsers w
   await service.close();
   await desktop.call({ action: 'status' });
   const appResumed = await pairedClient(appPair.code); f.close.push(() => appResumed.destroy());
-  assert.ok((await requestChromeConnector('browser.list', { scopeId: 'app-stays-alive' }, { configPath })).connections.some(connection => connection.id === appPair.id && connection.connected));
+  assert.ok((await requestBrowserConnector('browser.list', { scopeId: 'app-stays-alive' }, { configPath })).connections.some(connection => connection.id === appPair.id && connection.connected));
   const restarted = await AgentService.open({ dataRoot, local: true, localProfileRoot: profile, bundledRoot: resolve('assets') });
   f.close.push(() => restarted.close());
   const resumed = await pairedClient(codes[1], { browser: 'edge' }); f.close.push(() => resumed.destroy());
-  const restored = await requestChromeConnector('browser.list', { scopeId: 'local-edge' }, { configPath });
+  const restored = await requestBrowserConnector('browser.list', { scopeId: 'local-edge' }, { configPath });
   assert.equal(restored.selectedConnectionId, codes[1].split('.')[2]);
   assert.equal(restored.connections.find(item => item.browser === 'edge').connected, true, 'ordinary CLI restart retains the pairing and session route');
 });

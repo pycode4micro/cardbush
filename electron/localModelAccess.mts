@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, readFile, realpath, rm } from 'node:fs/promises';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { assertConnectorFile, secureConnectorResource, writeConnectorFile } from './chromeConnectorFiles.js';
+import { assertConnectorFile, secureConnectorResource, writeConnectorFile } from './browserConnectorFiles.js';
 import { handleMcpHostRequest } from './mcpHostBridge.js';
 import { SiwcError, safeSiwcError } from './siwcOAuth.mjs';
 

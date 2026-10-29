@@ -3,9 +3,9 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 import { pairedClient } from './helpers/chrome-paired-client.mjs';
-import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
+import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { for (let i = 0; i < 150; i++) { if (fn()) return; await delay(10); } assert.fail('Condition did not complete'); }
@@ -13,7 +13,7 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-browser-routing-'));
   const brokers = [], clients = [];
   const create = async () => {
-    const broker = new ChromeConnectorBroker(root, { nativeHostPath: path.resolve('dist-native/chrome-connector-validation/CardBushBrowserHost.exe') });
+    const broker = new BrowserConnectorBroker(root, { nativeHostPath: path.resolve('dist-native/chrome-connector-validation/CardBushBrowserHost.exe') });
     brokers.push(broker); await broker.start(); return broker;
   };
   const connect = async (broker, browser, code) => {
@@ -33,7 +33,7 @@ function fixture(t) {
   };
   t.after(async () => { for (const peer of clients) peer.destroy(); for (const broker of brokers) broker.stop(); await delay(50); fs.rmSync(root, { recursive: true, force: true }); });
   return { root, create, connect, call: (broker, scopeId, method = 'tabs.list', params = {}) =>
-    requestChromeConnector(method, { ...params, scopeId, scopeTitle: scopeId }, { configPath: broker.configPath, timeoutMs: 2500 }) };
+    requestBrowserConnector(method, { ...params, scopeId, scopeTitle: scopeId }, { configPath: broker.configPath, timeoutMs: 2500 }) };
 }
 
 test('clicking a reference targets its exact browser without changing the agent binding', async t => {
@@ -128,7 +128,7 @@ test('an offline command waits for the same paired browser and dispatches exactl
   const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge');
   chrome.socket.destroy(); await until(() => !broker.status().connections.find(c => c.id === chrome.id).connected);
   let diagnostics;
-  const pending = requestChromeConnector('debugger.command', { scopeId: 'waiting', command: 'Input.dispatchMouseEvent', tabId: 42 },
+  const pending = requestBrowserConnector('debugger.command', { scopeId: 'waiting', command: 'Input.dispatchMouseEvent', tabId: 42 },
     { configPath: broker.configPath, timeoutMs: 4000, onDiagnostics: value => { diagnostics = value; } });
   const routes = path.join(f.root, 'browser-connector/routes.json');
   await until(() => fs.existsSync(routes) && JSON.parse(fs.readFileSync(routes, 'utf8')).bindings.some(([scope]) => scope === 'waiting'));
@@ -155,11 +155,11 @@ test('waiting for reconnect honors cancellation and a finite deadline', async t 
   const f = fixture(t), broker = await f.create(), chrome = await f.connect(broker, 'chrome');
   chrome.socket.destroy(); await until(() => !broker.status().extensionConnected);
   const controller = new AbortController();
-  const pending = requestChromeConnector('tabs.list', { scopeId: 'a' }, { configPath: broker.configPath, timeoutMs: 4000, signal: controller.signal });
+  const pending = requestBrowserConnector('tabs.list', { scopeId: 'a' }, { configPath: broker.configPath, timeoutMs: 4000, signal: controller.signal });
   const rejected = assert.rejects(pending, error => error.name === 'AbortError');
   await delay(100); controller.abort(); await rejected;
   const start = Date.now();
-  await assert.rejects(requestChromeConnector('tabs.list', { scopeId: 'a' }, { configPath: broker.configPath, timeoutMs: 1000 }),
+  await assert.rejects(requestBrowserConnector('tabs.list', { scopeId: 'a' }, { configPath: broker.configPath, timeoutMs: 1000 }),
     error => error.code === 'browser_unavailable' && error.details.diagnostics.reconnectAttempts >= 1);
   assert.ok(Date.now() - start < 1500);
   const reconnected = await f.connect(broker, 'chrome', chrome.code);
@@ -169,7 +169,7 @@ test('waiting for reconnect honors cancellation and a finite deadline', async t 
 test('caller timeout does not unlock switching while the browser command is still unacknowledged', async t => {
   const f = fixture(t), broker = await f.create();
   const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge'); chrome.hold = true;
-  await assert.rejects(requestChromeConnector('debugger.command', { scopeId: 'a', tabId: 42, command: 'Input.dispatchMouseEvent' },
+  await assert.rejects(requestBrowserConnector('debugger.command', { scopeId: 'a', tabId: 42, command: 'Input.dispatchMouseEvent' },
     { configPath: broker.configPath, timeoutMs: 100 }), error => error.code === 'browser_connector_timeout');
   await assert.rejects(f.call(broker, 'a', 'browser.select', { connectionId: edge.id }), error => error.code === 'browser_session_busy');
   const pending = chrome.calls[0];

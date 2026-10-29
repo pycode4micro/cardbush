@@ -32,7 +32,7 @@ app.whenReady().then(async () => {
   };
   try {
     await win.loadFile(join(directory, 'index.html'));
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("浏览器已连接")');
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("浏览器已连接")');
     assert.equal(await read('document.querySelector(".core-capability-settings h3").textContent'), 'Browser Use');
     assert.equal(await read('document.querySelectorAll(".browser-connection-row").length'), 2);
     await read('document.querySelector(".browser-connections").scrollIntoView({block:"center"}); void 0');
@@ -44,39 +44,39 @@ app.whenReady().then(async () => {
     await until('document.querySelector("[role=option]") !== null');
     await read('[...document.querySelectorAll("[role=option]")].find(option=>option.textContent.includes("Microsoft Edge")).click(); void 0');
     await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='生成配对码').click(); void 0");
-    await until('document.querySelector(".chrome-connector-pairing input") !== null');
+    await until('document.querySelector(".browser-connector-pairing input") !== null');
     assert.equal(await read('lastPairInput.browser'), 'edge');
     assert.equal(await read('document.querySelectorAll(".browser-connection-row").length'), 2, 'new pairing code does not replace existing connections');
     await read('document.querySelectorAll(".browser-connection-row")[1].querySelectorAll("button")[1].click(); void 0');
     await until('document.querySelectorAll(".browser-connection-row").length===1');
     assert.equal(await read('fixtureConnector.connections[0].browser'), 'chrome');
     await read('connectorActions=[]; Object.assign(fixtureConnector,{connectorEnabled:true,bridgeRunning:false,extensionConnected:false,lifecycleState:"needs_repair",paired:true}); [...document.querySelectorAll("button")].find(button=>button.textContent==="刷新状态").click(); void 0');
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("启动失败不表示配对或网站授权已失效")');
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("启动失败不表示配对或网站授权已失效")');
     await read('[...document.querySelectorAll("button")].find(button=>button.textContent==="重试连接").click(); void 0');
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("等待扩展")');
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("等待扩展")');
     assert.deepEqual(await read('connectorActions'), ['enable'], 'retry must not disable, remove or re-pair');
     await read('Object.assign(fixtureConnector,{bridgeRunning:false,lifecycleState:"needs_repair"}); [...document.querySelectorAll("button")].find(button=>button.textContent==="刷新状态").click(); void 0');
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器需要处理")');
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("连接器需要处理")');
     await read('[...document.querySelectorAll("button")].find(button=>button.textContent==="关闭连接器").click(); void 0');
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器已关闭")');
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("连接器已关闭")');
     assert.deepEqual(await read('connectorActions'), ['enable', 'disable'], 'saved enable choice can still be explicitly disabled after a failure');
     await read('Object.assign(fixtureConnector,{connectorEnabled:true,bridgeRunning:true,extensionConnected:true,lifecycleState:"enabled"}); [...document.querySelectorAll("button")].find(button=>button.textContent==="刷新状态").click(); void 0');
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("浏览器已连接")');
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("浏览器已连接")');
     await read('connectorActions=[]; void 0');
-    assert.equal(await read('document.querySelector(".chrome-radio-setting input").checked'), true);
+    assert.equal(await read('document.querySelector(".browser-radio-setting input").checked'), true);
     assert.equal(await read('document.querySelector(".browser-import-controls select").value'), 'chrome:Default');
     await read('document.querySelector(".browser-import-controls button").click(); void 0');
     await until('document.querySelector(".browser-bookmark-import [role=status]")?.textContent.includes("已导入 1")');
     await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='关闭连接器').click(); void 0");
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器已关闭")');
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("连接器已关闭")');
     await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='开启连接器').click(); void 0");
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("等待扩展")');
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("等待扩展")');
     await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='生成配对码').click(); void 0");
-    await until('document.querySelector(".chrome-connector-pairing input")?.value === "CB2.45678.fixture-secret"');
-    assert.equal(await read('document.querySelector(".chrome-connector-pairing input").type'), 'password');
+    await until('document.querySelector(".browser-connector-pairing input")?.value === "CB2.45678.fixture-secret"');
+    assert.equal(await read('document.querySelector(".browser-connector-pairing input").type'), 'password');
     await read("[...document.querySelectorAll('button')].find(button=>button.textContent==='移除连接器配置').click(); void 0");
-    await until('document.querySelector(".chrome-connector-heading")?.textContent.includes("连接器已关闭")');
-    assert.equal(await read('document.querySelector(".chrome-connector-pairing")'), null);
+    await until('document.querySelector(".browser-connector-heading")?.textContent.includes("连接器已关闭")');
+    assert.equal(await read('document.querySelector(".browser-connector-pairing")'), null);
     assert.deepEqual(await read('connectorActions'), ['disable', 'enable', 'pair', 'remove']);
     await read('Object.assign(fixtureConnector,{connectorEnabled:true,bridgeRunning:true,extensionConnected:true,lifecycleState:"enabled",connections:structuredClone(fixtureConnections),defaultConnectionId:"a".repeat(32)}); [...document.querySelectorAll("button")].find(button=>button.textContent==="刷新状态").click(); void 0');
     await until('document.querySelectorAll(".browser-connection-row").length===2');
@@ -89,7 +89,7 @@ app.whenReady().then(async () => {
         const rect=content.getBoundingClientRect(), sample=document.createElement('span');sample.style.color='var(--accent)';card.appendChild(sample);
         const themeAccent=getComputedStyle(sample).color;sample.remove();
         return {theme:document.querySelector('.app').className, color:getComputedStyle(title).color, background:getComputedStyle(content).backgroundColor,
-          radioAccent:getComputedStyle(document.querySelector('.chrome-radio-setting input')).accentColor, themeAccent,
+          radioAccent:getComputedStyle(document.querySelector('.browser-radio-setting input')).accentColor, themeAccent,
           left:rect.left, top:rect.top, width:rect.width, overflow:content.scrollWidth>content.clientWidth+1, input:document.querySelector('.browser-import-controls select').value};
       })()`);
       assert.equal(state.overflow, false, theme + ' settings do not overflow horizontally');
@@ -103,9 +103,9 @@ app.whenReady().then(async () => {
     assert.equal(new Set(palettes.map(state=>state.background)).size, palettes.length, 'each theme reaches the settings cards');
     await read('coreTheme("bright"); void 0');
     await capture('browser-core-settings.png');
-    await read('document.querySelectorAll(".chrome-radio-setting input")[1].click(); void 0');
+    await read('document.querySelectorAll(".browser-radio-setting input")[1].click(); void 0');
     await until('fixtureApps.plugins[1].config.connectionMode==="remote_debugging"');
-    await read('document.querySelector(".chrome-radio-setting input").click(); void 0');
+    await read('document.querySelector(".browser-radio-setting input").click(); void 0');
     await until('fixtureApps.plugins[1].config.connectionMode==="connector"');
     await read('document.querySelector(".core-capability-settings .settings-switch input").click(); void 0');
     await until('fixtureApps.plugins[1].enabled===false');
@@ -117,14 +117,14 @@ app.whenReady().then(async () => {
     await until('fixtureApps.plugins[0].config.yieldToUser===false');
     assert.equal(await read('fixtureApps.plugins[1].enabled'), false, 'desktop setting preserves Chrome configuration');
     await read('coreSection("browser"); void 0');
-    await until('document.querySelector(".chrome-connector-card")!==null');
+    await until('document.querySelector(".browser-connector-card")!==null');
     assert.equal(await read('document.querySelector(".core-capability-settings .settings-switch input").checked'), false);
     // Conflicting saves are visible and reloadable; another surface retains its newer data.
     await read('fixtureApps.revision++; fixtureApps.plugins[1].config.connectionMode="remote_debugging"; document.querySelector(".core-capability-settings .settings-switch input").click(); void 0');
     await until('document.querySelector("[role=alert]")?.textContent.includes("revision conflict")');
     assert.equal(await read('fixtureApps.plugins[1].enabled'), false);
     await read('document.querySelector("[role=alert] button").click(); void 0');
-    await until('document.querySelectorAll(".chrome-radio-setting input")[1]?.checked===true');
+    await until('document.querySelectorAll(".browser-radio-setting input")[1]?.checked===true');
     win.setSize(650, 760);
     await until('document.documentElement.clientWidth<700');
     assert.equal(await read('document.querySelector(".settings-content").scrollWidth<=document.querySelector(".settings-content").clientWidth+1'), true);

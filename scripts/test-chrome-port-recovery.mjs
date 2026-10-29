@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import vm from 'node:vm';
-import { randomBytes, webcrypto } from 'node:crypto';
-import { ChromeConnectorWebSocket } from '../dist-electron/chromeConnectorWebSocket.js';
-import { chromeConnectorDiscoveryPorts } from '../dist-electron/chromeConnectorConstants.js';
+import { randomBytes, webcrypto, createHmac } from 'node:crypto';
+import { BrowserConnectorWebSocket } from '../dist-electron/browserConnectorWebSocket.js';
+import { browserConnectorDiscoveryPorts } from '../dist-electron/browserConnectorConstants.js';
 import { approvalClient } from './helpers/browser-approval-client.mjs';
 import { pairedClient } from './helpers/chrome-paired-client.mjs';
 
@@ -22,7 +22,7 @@ function fixture(t, options = {}) {
   const saved = { version: 3, port: 60123, credentials: [credential], defaultConnectionId: credential.id };
   const file = path.join(root, 'pairing.json');
   fs.writeFileSync(file, JSON.stringify(saved));
-  const server = new ChromeConnectorWebSocket(root, client => client.send(JSON.stringify({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' })), options);
+  const server = new BrowserConnectorWebSocket(root, client => client.send(JSON.stringify({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' })), options);
   t.after(async () => { server.stop(); await delay(20); fs.rmSync(root, { recursive: true, force: true }); });
   return { server, saved, file };
 }
@@ -31,7 +31,7 @@ test('local consent migrates an old port into the fresh extension discovery rang
   let approvals = 0;
   const f = fixture(t, { allowLocalPairing: () => true });
   await f.server.start();
-  assert.ok(chromeConnectorDiscoveryPorts.includes(f.server.port));
+  assert.ok(browserConnectorDiscoveryPorts.includes(f.server.port));
   assert.deepEqual(f.server.portRecovery, { previousPort: 60123, port: f.server.port, reason: 'discovery_migration' });
   const credential = f.saved.credentials[0];
   const previous = await pairedClient(`CB2.${f.server.port}.${credential.id}.${credential.secret}`);
@@ -54,7 +54,7 @@ for (const code of ['EACCES', 'EADDRINUSE']) test(`${code}: a saved endpoint rec
     const counts = { listening: this.listenerCount('listening'), error: this.listenerCount('error') };
     listenerCounts ??= counts;
     assert.deepEqual(counts, listenerCounts, 'each rejected listen must remove its callbacks');
-    if (port === f.saved.port || port === chromeConnectorDiscoveryPorts[0]) {
+    if (port === f.saved.port || port === browserConnectorDiscoveryPorts[0]) {
       process.nextTick(() => this.emit('error', Object.assign(new Error('fixture bind conflict'), { code })));
       return this;
     }
@@ -62,8 +62,8 @@ for (const code of ['EACCES', 'EADDRINUSE']) test(`${code}: a saved endpoint rec
   });
   await f.server.start();
   assert.equal(attempts[0], f.saved.port);
-  assert.equal(attempts[1], chromeConnectorDiscoveryPorts[0]);
-  assert.ok(chromeConnectorDiscoveryPorts.includes(f.server.port));
+  assert.equal(attempts[1], browserConnectorDiscoveryPorts[0]);
+  assert.ok(browserConnectorDiscoveryPorts.includes(f.server.port));
   assert.deepEqual(f.server.portRecovery, { previousPort: f.saved.port, port: f.server.port, reason: code });
   const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
   assert.deepEqual(saved.credentials, f.saved.credentials);
@@ -81,10 +81,10 @@ test('unavailable candidate set fails once with useful diagnostics and leaves sa
   await assert.rejects(f.server.start(), error => {
     assert.equal(error.code, 'connector_ports_unavailable');
     assert.equal(error.cause.code, 'EACCES');
-    assert.deepEqual(error.attemptedPorts, [f.saved.port, ...chromeConnectorDiscoveryPorts]);
+    assert.deepEqual(error.attemptedPorts, [f.saved.port, ...browserConnectorDiscoveryPorts]);
     return true;
   });
-  assert.equal(attempts.length, chromeConnectorDiscoveryPorts.length + 1);
+  assert.equal(attempts.length, browserConnectorDiscoveryPorts.length + 1);
   assert.equal(fs.readFileSync(f.file, 'utf8'), before);
 });
 
@@ -99,19 +99,34 @@ test('unrelated listener failures are not hidden or retried', async t => {
   assert.deepEqual(attempts, [f.saved.port]);
 });
 
-function transport(t, mode = 'silent') {
+function transport(t, mode = 'silent', options = {}) {
   const attempts = [], active = new Set(), messages = [], timers = new Set();
   let maximumActive = 0, disconnects = 0, sent = 0;
   class Candidate {
     static OPEN = 1;
-    constructor(url) {
+    constructor(url, protocols) {
       this.readyState = 1; attempts.push(url); active.add(this);
       maximumActive = Math.max(maximumActive, active.size);
       if (mode === 'untrusted') queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({
         type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1',
       }) }));
+      if (mode === 'opened') queueMicrotask(() => this.onopen?.());
+      if (mode === 'authenticated_stall' || mode === 'delayed_phases') {
+        const nonce = protocols[1].split('.')[2], serverNonce = '3'.repeat(64);
+        const proof = createHmac('sha256', Buffer.from('2'.repeat(64), 'hex'))
+          .update(`server:${'1'.repeat(32)}:${nonce}:${serverNonce}`).digest('hex');
+        setTimeout(() => {
+          this.onopen?.();
+          setTimeout(() => this.onmessage?.({data: JSON.stringify({type:'challenge', protocol:'cardbush.chrome_connector.v1', nonce:serverNonce, proof})}), 250);
+        }, 250);
+      }
     }
-    send() { sent++; }
+    send() {
+      sent++;
+      if (mode === 'delayed_phases') setTimeout(() => this.onmessage?.({data:JSON.stringify({
+        type:'connector_ready', protocol:'cardbush.chrome_connector.v1',
+      })}), 250);
+    }
     close() { this.readyState = 3; active.delete(this); }
   }
   const sandbox = vm.createContext({ WebSocket: Candidate, navigator: { userAgent: 'Chrome/153' },
@@ -120,26 +135,48 @@ function transport(t, mode = 'silent') {
     clearTimeout: timer => { timers.delete(timer); clearTimeout(timer); },
   });
   vm.runInContext(fs.readFileSync('assets/plugins/chrome/extension/connector-transport.js', 'utf8'), sandbox);
-  assert.deepEqual(Array.from(vm.runInContext('CONNECTOR_DISCOVERY_PORTS', sandbox)), chromeConnectorDiscoveryPorts);
+  assert.deepEqual(Array.from(vm.runInContext('CONNECTOR_DISCOVERY_PORTS', sandbox)), browserConnectorDiscoveryPorts);
   const pairing = { port: 60123, id: '1'.repeat(32), secret: '2'.repeat(64) };
-  const port = vm.runInContext(`createConnectorPort(${JSON.stringify(pairing)}, { attemptTimeoutMs: 30 })`, sandbox);
+  const port = vm.runInContext(`createConnectorPort(${JSON.stringify(pairing)}, ${JSON.stringify({attemptTimeoutMs:30,...options})})`, sandbox);
   port.onMessage.addListener(value => messages.push(value));
   port.onDisconnect.addListener(() => { disconnects++; });
   t.after(() => port.disconnect());
   return { port, attempts, active, messages, timers, state: () => ({ maximumActive, disconnects, sent }) };
 }
 
+for (const [mode, phase] of [['silent','opening'], ['opened','handshake'], ['authenticated_stall','authentication']]) {
+  test(`saved-endpoint ${phase} timeout is bounded and diagnosed without discovering or granting control`, async t => {
+    const f = transport(t, mode, {discover:false, attemptTimeoutMs:500});
+    await until(() => f.state().disconnects === 1);
+    assert.equal(f.attempts.length, 1);
+    assert.equal(f.port.diagnostics.phase, phase);
+    assert.equal(f.port.diagnostics.code, `connector_${phase}_timeout`);
+    assert.equal(f.messages.some(message => message.type === 'connector_ready'), false);
+    assert.equal(f.timers.size, 0);
+  });
+}
+
+test('queued opening, server challenge and ready confirmation receive independent phase budgets', async t => {
+  const f = transport(t, 'delayed_phases', {discover:false, attemptTimeoutMs:500});
+  await until(() => f.port.endpointPort !== null);
+  assert.equal(f.port.diagnostics.phase, 'ready');
+  assert.equal(f.state().disconnects, 0);
+  assert.equal(f.attempts.length, 1);
+  f.port.disconnect();
+  assert.equal(f.timers.size, 0);
+});
+
 for (const mode of ['silent', 'untrusted']) test(`${mode} endpoints cannot stall discovery or authorize browser control`, async t => {
   const f = transport(t, mode);
   await until(() => f.state().disconnects === 1);
   assert.ok(f.attempts.length > 1);
-  assert.ok(f.attempts.length <= chromeConnectorDiscoveryPorts.length + 1);
+  assert.ok(f.attempts.length <= browserConnectorDiscoveryPorts.length + 1);
   assert.ok(f.state().maximumActive <= 4);
   assert.equal(new Set(f.attempts).size, f.attempts.length);
   for (const endpoint of f.attempts) {
     const url = new URL(endpoint);
     assert.equal(url.hostname, '127.0.0.1');
-    assert.ok([60123, ...chromeConnectorDiscoveryPorts].includes(Number(url.port)));
+    assert.ok([60123, ...browserConnectorDiscoveryPorts].includes(Number(url.port)));
   }
   assert.equal(f.messages.length, 1, 'intermediate probe failures do not produce repeated user errors');
   assert.equal(f.messages[0].code, 'connector_unavailable');

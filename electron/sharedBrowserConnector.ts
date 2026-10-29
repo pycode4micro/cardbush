@@ -3,16 +3,16 @@ import net, { type Socket } from 'node:net';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ChromeConnectorBroker, type ChromeConnectorStatus } from './chromeConnectorBroker';
-import { assertConnectorFile, connectorDirectory } from './chromeConnectorFiles';
-import { chromeConnectorProtocol } from './chromeConnectorConstants';
+import { BrowserConnectorBroker, type BrowserConnectorStatus } from './browserConnectorBroker';
+import { assertConnectorFile, connectorDirectory } from './browserConnectorFiles';
+import { browserConnectorProtocol } from './browserConnectorConstants';
 
 /** A saved PID can be recycled, or fail signal 0 with EPERM on Windows after
  * exit. Only a missing endpoint proves the old bridge no longer owns it. A
  * listening, busy or inaccessible endpoint must never be taken over. */
 export async function assertLegacyBrowserConnectorStopped(config: { protocol?: unknown; endpoint?: unknown }, root: string): Promise<void> {
   const endpoint = config.endpoint;
-  if (config.protocol !== chromeConnectorProtocol || typeof endpoint !== 'string' || (process.platform === 'win32'
+  if (config.protocol !== browserConnectorProtocol || typeof endpoint !== 'string' || (process.platform === 'win32'
     ? !/^\\\\\.\\pipe\\cardbush-browser-connector-[a-f0-9]{24}$/.test(endpoint)
     : endpoint !== path.join(root, 'browser-connector', 'bridge.sock'))) {
     throw new Error('Invalid previous browser connector endpoint.');
@@ -34,9 +34,9 @@ export async function assertLegacyBrowserConnectorStopped(config: { protocol?: u
   });
 }
 
-export type BrowserConnectorHandle = Pick<ChromeConnectorBroker, 'configPath' | 'status' | 'onStatus' | 'stop'> & {
+export type BrowserConnectorHandle = Pick<BrowserConnectorBroker, 'configPath' | 'status' | 'onStatus' | 'stop'> & {
   start(): Promise<void>;
-  createPairing(input?: Parameters<ChromeConnectorBroker['createPairing']>[0]): ReturnType<ChromeConnectorBroker['createPairing']> | Promise<ReturnType<ChromeConnectorBroker['createPairing']>>;
+  createPairing(input?: Parameters<BrowserConnectorBroker['createPairing']>[0]): ReturnType<BrowserConnectorBroker['createPairing']> | Promise<ReturnType<BrowserConnectorBroker['createPairing']>>;
   setDefaultConnection(id: string): void | Promise<unknown>;
   revokeConnection(id: string): void | Promise<unknown>;
   disableExtension(forget?: boolean): Promise<void>;
@@ -48,7 +48,7 @@ export type BrowserConnectorHandle = Pick<ChromeConnectorBroker, 'configPath' | 
 export class SharedBrowserConnector implements BrowserConnectorHandle {
   readonly configPath: string;
   readonly #managerPath: string;
-  #owner?: ChromeConnectorBroker;
+  #owner?: BrowserConnectorBroker;
   #socket?: Socket;
   #stopped = true;
   #recovering?: Promise<void>;
@@ -56,10 +56,10 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
   #watcher?: ReturnType<typeof setInterval>;
   #recoveryFailures = 0;
   #wasPermitted = true;
-  #status: ChromeConnectorStatus = { protocol: chromeConnectorProtocol, bridgeRunning: false,
+  #status: BrowserConnectorStatus = { protocol: browserConnectorProtocol, bridgeRunning: false,
     extensionConnected: false, controlledTabCount: 0, paired: false, transport: 'loopback_websocket',
     defaultConnectionId: '', connections: [] };
-  readonly #listeners = new Set<(status: ChromeConnectorStatus) => void>();
+  readonly #listeners = new Set<(status: BrowserConnectorStatus) => void>();
   readonly #pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   constructor(readonly root: string, readonly nativeHostPath: string, readonly appsConfigPath?: string) {
     this.configPath = path.join(connectorDirectory(root), 'bridge.json');
@@ -68,7 +68,7 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
   status() { return this.#status; }
   async refresh(retry = false) {
     if (retry) { this.#recoveryFailures = 0; this.#status = { ...this.#status, recoveryPaused: false }; }
-    if (this.#permitted() && !this.#status.recoveryPaused) this.#publish(await this.#call('status') as ChromeConnectorStatus);
+    if (this.#permitted() && !this.#status.recoveryPaused) this.#publish(await this.#call('status') as BrowserConnectorStatus);
     return this.#status;
   }
   async importLegacy(root: string) {
@@ -83,8 +83,8 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
     const credentials = saved.version === 2 ? (saved.credential ? [{ ...saved.credential, browser: 'chrome', label: 'Google Chrome' }] : []) : saved.credentials;
     await this.#call('import', { credentials, defaultConnectionId: saved.version === 2 ? saved.credential?.id : saved.defaultConnectionId, bindings: routes.bindings });
   }
-  onStatus(listener: (status: ChromeConnectorStatus) => void) { this.#listeners.add(listener); return () => { this.#listeners.delete(listener); }; }
-  #publish(status: ChromeConnectorStatus) { this.#status = status; for (const listener of this.#listeners) listener(status); }
+  onStatus(listener: (status: BrowserConnectorStatus) => void) { this.#listeners.add(listener); return () => { this.#listeners.delete(listener); }; }
+  #publish(status: BrowserConnectorStatus) { this.#status = status; for (const listener of this.#listeners) listener(status); }
   async start() {
     this.#stopped = false;
     this.#recoveryFailures = 0;
@@ -128,7 +128,7 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
       try { await this.#attach(); this.#recoveryFailures = 0; return; } catch (error) { lastError = error; }
       if (this.#stopped) return;
       if (!this.#owner) {
-        const owner = new ChromeConnectorBroker(this.root, { nativeHostPath: this.nativeHostPath, shared: true,
+        const owner = new BrowserConnectorBroker(this.root, { nativeHostPath: this.nativeHostPath, shared: true,
           allowLocalPairing: () => !this.#stopped && this.#permitted() });
         try {
           assertConnectorFile(this.configPath);
@@ -151,7 +151,7 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
     connectorDirectory(this.root); assertConnectorFile(this.#managerPath);
     if (fs.statSync(this.#managerPath).size > 4096) throw new Error('Invalid browser manager configuration.');
     const config = JSON.parse(fs.readFileSync(this.#managerPath, 'utf8'));
-    if (config.protocol !== chromeConnectorProtocol || !/^[a-f0-9]{64}$/.test(config.token)
+    if (config.protocol !== browserConnectorProtocol || !/^[a-f0-9]{64}$/.test(config.token)
       || typeof config.endpoint !== 'string' || (process.platform === 'win32'
         ? !/^\\\\\.\\pipe\\cardbush-browser-connector-[a-f0-9]{24}$/.test(config.endpoint)
         : config.endpoint !== path.join(this.root, 'browser-connector', 'bridge.sock'))) throw new Error('Invalid browser manager endpoint.');
@@ -160,7 +160,7 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
       let ready = false, buffer = '';
       const timer = setTimeout(() => { socket.destroy(); reject(new Error('Browser manager handshake timed out.')); }, 1500);
       socket.setEncoding('utf8');
-      socket.on('connect', () => socket.write(JSON.stringify({ type: 'hello', role: 'manager', protocol: chromeConnectorProtocol, token: config.token }) + '\n'));
+      socket.on('connect', () => socket.write(JSON.stringify({ type: 'hello', role: 'manager', protocol: browserConnectorProtocol, token: config.token }) + '\n'));
       socket.on('error', error => { if (!ready) reject(error); });
       socket.on('data', chunk => {
         buffer += chunk;
@@ -171,7 +171,7 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
           try { message = JSON.parse(buffer.slice(0, end)); } catch { socket.destroy(); return; }
           buffer = buffer.slice(end + 1);
           if (!ready) {
-            if (message.type !== 'hello_ack' || message.protocol !== chromeConnectorProtocol || !message.status) { socket.destroy(); return; }
+            if (message.type !== 'hello_ack' || message.protocol !== browserConnectorProtocol || !message.status) { socket.destroy(); return; }
             if (this.#stopped) { socket.destroy(); resolve(); return; }
             ready = true; clearTimeout(timer); this.#socket = socket; this.#publish(message.status); resolve();
           } else if (message.type === 'status') this.#publish(message.status);
@@ -221,11 +221,11 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
       socket.write(JSON.stringify({ type: 'manage', id, action, input }) + '\n');
     });
   }
-  async createPairing(input: Parameters<ChromeConnectorBroker['createPairing']>[0] = {}) {
-    return await this.#call('pair', input) as ReturnType<ChromeConnectorBroker['createPairing']>;
+  async createPairing(input: Parameters<BrowserConnectorBroker['createPairing']>[0] = {}) {
+    return await this.#call('pair', input) as ReturnType<BrowserConnectorBroker['createPairing']>;
   }
-  async setDefaultConnection(id: string) { this.#publish(await this.#call('default', { id }) as ChromeConnectorStatus); }
-  async revokeConnection(id: string) { this.#publish(await this.#call('revoke', { id }) as ChromeConnectorStatus); }
+  async setDefaultConnection(id: string) { this.#publish(await this.#call('default', { id }) as BrowserConnectorStatus); }
+  async revokeConnection(id: string) { this.#publish(await this.#call('revoke', { id }) as BrowserConnectorStatus); }
   async disableExtension(forgetPairing = false) { await this.#call('disable', { forgetPairing }); }
   stop() {
     this.#stopped = true; clearTimeout(this.#timer); clearInterval(this.#watcher); this.#watcher = undefined;

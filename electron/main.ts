@@ -98,16 +98,16 @@ import {
   encodeSessionAttentionActivation,
 } from './sessionAttentionRouting';
 import {
-  type ChromeConnectorStatus,
-} from './chromeConnectorBroker';
+  type BrowserConnectorStatus,
+} from './browserConnectorBroker';
 import type { BrowserConnectorHandle } from './sharedBrowserConnector';
 import {
-  chromeConnectorRegistrationStatus,
-  chromeConnectorRegistryKey,
-} from './chromeConnectorRegistration';
-import { ChromeConnectorLifecycle } from './chromeConnectorLifecycle';
+  browserConnectorRegistrationStatus,
+  browserConnectorRegistryKey,
+} from './browserConnectorRegistration';
+import { BrowserConnectorLifecycle } from './browserConnectorLifecycle';
 import { installApplicationInstance } from './applicationInstance';
-import { connectorDataRoot } from './chromeConnectorFiles';
+import { connectorDataRoot } from './browserConnectorFiles';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -204,9 +204,9 @@ let sandboxSetup: SandboxSetupHost | undefined;
 let runtimeHostIpc: RuntimeHostIpcRegistration | null = null;
 let unregisterDesktopControlMonitor: (() => void) | null = null;
 type DesktopControlTurn = { sessionId: string; turnId: string; toolCallId: string };
-let chromeConnectorBroker: BrowserConnectorHandle | null = null;
-let chromeConnectorLifecycle: ChromeConnectorLifecycle | null = null;
-let chromeConnectorRegistrationCache: { state: string; value: ReturnType<typeof chromeConnectorRegistrationStatus> } | null = null;
+let browserConnectorBroker: BrowserConnectorHandle | null = null;
+let browserConnectorLifecycle: BrowserConnectorLifecycle | null = null;
+let browserConnectorRegistrationCache: { state: string; value: ReturnType<typeof browserConnectorRegistrationStatus> } | null = null;
 let productHostController: {
   exportSharedConfiguration: () => Promise<{ models: Record<string, unknown>; subagents: Record<string, unknown>; sandbox?: { version: 1; enabled: boolean } }>;
   execute: (command: unknown) => Promise<unknown>;
@@ -247,11 +247,11 @@ const integratedBrowser = new IntegratedBrowser({
 });
 function browserUseRouter() {
   return browserUseRouterPromise ??= (async () => {
-    const { BrowserUseRouter, requestChromeConnector } = await import(pathToFileURL(path.join(__dirname, 'browserUseHost.mjs')).href);
+    const { BrowserUseRouter, requestBrowserConnector } = await import(pathToFileURL(path.join(__dirname, 'browserUseHost.mjs')).href);
     return new BrowserUseRouter(integratedBrowser, {
       routesPath: path.join(app.getPath('userData'), 'product-host', 'browser-use-routes.json'),
-      external: (method: string, params: Record<string, unknown>, options: Record<string, unknown>) => requestChromeConnector(method, params, {
-        ...options, configPath: chromeConnectorBroker?.configPath ?? path.join(chromeConnectorDataRoot(), 'browser-connector', 'bridge.json'),
+      external: (method: string, params: Record<string, unknown>, options: Record<string, unknown>) => requestBrowserConnector(method, params, {
+        ...options, configPath: browserConnectorBroker?.configPath ?? path.join(browserConnectorDataRoot(), 'browser-connector', 'bridge.json'),
       }),
     });
   })();
@@ -2013,8 +2013,8 @@ function publishSessionAttentionOpenAvailable() {
 }
 
 function showMainWindow() {
-  if (chromeConnectorLifecycle?.enabled && chromeConnectorLifecycle.state === 'needs_repair') {
-    void chromeConnectorLifecycle.setEnabled(true).catch(error => console.warn('[chrome-connector] resume failed', error));
+  if (browserConnectorLifecycle?.enabled && browserConnectorLifecycle.state === 'needs_repair') {
+    void browserConnectorLifecycle.setEnabled(true).catch(error => console.warn('[chrome-connector] resume failed', error));
   }
   if (mainWindow == null || mainWindow.isDestroyed()) {
     createWindow();
@@ -2294,40 +2294,40 @@ ipcMain.handle('filesystem:locations', (event) => {
 
 ipcMain.handle('chrome-connector:status', (event) => {
   assertMainWindowSender(event.sender.id);
-  chromeConnectorRegistrationCache = null;
-  return currentChromeConnectorStatus();
+  browserConnectorRegistrationCache = null;
+  return currentBrowserConnectorStatus();
 });
 
 ipcMain.handle('chrome-connector:setup', async (event) => {
   assertMainWindowSender(event.sender.id);
   await connectorLifecycle().setEnabled(true);
-  return currentChromeConnectorStatus();
+  return currentBrowserConnectorStatus();
 });
 
 ipcMain.handle('chrome-connector:disable', async (event) => {
   assertMainWindowSender(event.sender.id);
   await connectorLifecycle().setEnabled(false);
-  return currentChromeConnectorStatus();
+  return currentBrowserConnectorStatus();
 });
 
 ipcMain.handle('chrome-connector:pair', (event, input: { browser?: 'chrome' | 'edge'; label?: string } = {}) => {
   assertMainWindowSender(event.sender.id);
-  const broker = chromeConnectorLifecycle?.broker;
+  const broker = browserConnectorLifecycle?.broker;
   if (!broker) throw new Error('Enable the connector before pairing.');
   return broker.createPairing(input);
 });
 
 ipcMain.handle('browser-connector:select-default', async (event, connectionId: string) => {
   assertMainWindowSender(event.sender.id);
-  if (!chromeConnectorLifecycle?.broker) throw new Error('Enable Browser Use first.');
-  await chromeConnectorLifecycle.broker.setDefaultConnection(connectionId);
-  return currentChromeConnectorStatus();
+  if (!browserConnectorLifecycle?.broker) throw new Error('Enable Browser Use first.');
+  await browserConnectorLifecycle.broker.setDefaultConnection(connectionId);
+  return currentBrowserConnectorStatus();
 });
 ipcMain.handle('browser-connector:revoke', async (event, connectionId: string) => {
   assertMainWindowSender(event.sender.id);
-  if (!chromeConnectorLifecycle?.broker) throw new Error('Enable Browser Use first.');
-  await chromeConnectorLifecycle.broker.revokeConnection(connectionId);
-  return currentChromeConnectorStatus();
+  if (!browserConnectorLifecycle?.broker) throw new Error('Enable Browser Use first.');
+  await browserConnectorLifecycle.broker.revokeConnection(connectionId);
+  return currentBrowserConnectorStatus();
 });
 
 ipcMain.handle('chrome-connector:copy-legacy-cleanup', (event) => {
@@ -2344,23 +2344,23 @@ ipcMain.handle('chrome-connector:copy-legacy-cleanup', (event) => {
 ipcMain.handle('chrome-connector:remove', async (event) => {
   assertMainWindowSender(event.sender.id);
   await connectorLifecycle().setEnabled(false, true);
-  return currentChromeConnectorStatus();
+  return currentBrowserConnectorStatus();
 });
 
 ipcMain.handle('chrome-connector:copy-diagnostics', (event) => {
   assertMainWindowSender(event.sender.id);
-  chromeConnectorRegistrationCache = null;
-  const status = currentChromeConnectorStatus();
+  browserConnectorRegistrationCache = null;
+  const status = currentBrowserConnectorStatus();
   const directory = path.join(app.getPath('userData'), 'browser-connector');
   const manifestPath = path.join(directory, 'com.cardbush.browser_connector.json');
   clipboard.writeText(JSON.stringify({
     collectedAt: new Date().toISOString(), appVersion: app.getVersion(), osVersion: os.release(),
     storePackage: process.windowsStore === true, transport: 'loopback_websocket',
-    connectorDataDirectory: path.join(chromeConnectorDataRoot(), 'browser-connector'),
-    legacyCleanup: chromeConnectorLifecycle?.cleanupWarning ?? '',
-    registryKey: chromeConnectorRegistryKey, registryView: '64 (legacy 32-bit view checked for conflicts)',
+    connectorDataDirectory: path.join(browserConnectorDataRoot(), 'browser-connector'),
+    legacyCleanup: browserConnectorLifecycle?.cleanupWarning ?? '',
+    registryKey: browserConnectorRegistryKey, registryView: '64 (legacy 32-bit view checked for conflicts)',
     manifestPath: fs.existsSync(manifestPath) ? fs.realpathSync.native(manifestPath) : manifestPath,
-    executablePath: chromeConnectorNativeHostPath(), launchPath: status.nativeHostPath,
+    executablePath: browserConnectorNativeHostPath(), launchPath: status.nativeHostPath,
     allowedOrigin: `chrome-extension://${status.extensionId}/`,
     enabled: status.connectorEnabled, state: status.lifecycleState,
     bridgeRegistered: status.bridgeRegistered, bridgeRunning: status.bridgeRunning,
@@ -2371,7 +2371,7 @@ ipcMain.handle('chrome-connector:copy-diagnostics', (event) => {
 
 ipcMain.handle('chrome-connector:open-installer', async (event) => {
   assertMainWindowSender(event.sender.id);
-  const status = currentChromeConnectorStatus();
+  const status = currentBrowserConnectorStatus();
   if (status.storeUrl) {
     await shell.openExternal(status.storeUrl);
     return { opened: true, method: 'store', target: status.storeUrl };
@@ -2387,7 +2387,7 @@ ipcMain.handle('chrome-connector:open-installer', async (event) => {
 
 ipcMain.handle('chrome-connector:reveal-extension', (event) => {
   assertMainWindowSender(event.sender.id);
-  const status = currentChromeConnectorStatus();
+  const status = currentBrowserConnectorStatus();
   const manifestPath = path.join(status.extensionDirectory, 'manifest.json');
   if (!fs.existsSync(manifestPath)) {
     throw new Error('The bundled CardBush Browser Connector extension is missing.');
@@ -3732,19 +3732,19 @@ async function runPackagedApplicationSmoke(): Promise<void> {
         'dist',
         'index.js',
       )),
-      chromeConnectorMcp: fs.existsSync(path.join(
+      browserConnectorMcp: fs.existsSync(path.join(
         app.getAppPath(),
         'packages',
         'cardbush-chrome-mcp',
         'dist',
         'index.js',
       )),
-      chromeConnectorExtension: fs.existsSync(path.join(
+      browserConnectorExtension: fs.existsSync(path.join(
         process.resourcesPath,
         'chrome-extension',
         'manifest.json',
       )),
-      chromeNativeHost: !platformFeatures(process.platform, process.arch).chromeNativeConnector || fs.existsSync(path.join(
+      chromeNativeHost: !platformFeatures(process.platform, process.arch).browserNativeConnector || fs.existsSync(path.join(
         process.resourcesPath,
         'chrome-native-host',
         'CardBushBrowserHost.exe',
@@ -3860,7 +3860,7 @@ app.whenReady().then(async () => {
   try {
     const { LocalModelAccessBroker } = await import('./localModelAccess.mjs');
     localModelAccessBroker = new LocalModelAccessBroker(async (payload, signal) => (await siwcDesktop()).accessPayload(payload, signal));
-    await localModelAccessBroker.start(app.getPath('userData'), chromeConnectorNativeHostPath());
+    await localModelAccessBroker.start(app.getPath('userData'), browserConnectorNativeHostPath());
   } catch { console.warn('[local-model-access] Desktop account bridge could not start.'); }
   if (process.platform === 'win32') {
     app.setAppUserModelId(cardbushAppUserModelId);
@@ -3881,7 +3881,7 @@ app.whenReady().then(async () => {
     (sender: Electron.WebContents) =>
       (mainWindow != null && sender.id === mainWindow.webContents.id) || shadowWindows.has(sender.id));
   try {
-    if (platformFeatures(process.platform, process.arch).chromeNativeConnector) await connectorLifecycle().restore();
+    if (platformFeatures(process.platform, process.arch).browserNativeConnector) await connectorLifecycle().restore();
   } catch (error) {
     console.error('[chrome-connector] bridge failed to start', error);
   }
@@ -4042,7 +4042,7 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
         }
       } else if (
         event.kind === 'tool_running' &&
-        isChromeRuntimeTool(event.payload.toolName)
+        isBrowserRuntimeTool(event.payload.toolName)
       ) {
         activeChromeTurns.add(turnKey);
         activeChromeTools.add(JSON.stringify([
@@ -4064,7 +4064,7 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
         (event.kind === 'tool_returned' ||
           event.kind === 'tool_failed' ||
           event.kind === 'tool_cancelled') &&
-        isChromeRuntimeTool(event.payload.toolName)
+        isBrowserRuntimeTool(event.payload.toolName)
       ) {
         activeChromeTools.delete(JSON.stringify([
           event.sessionId,
@@ -4116,9 +4116,9 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
 
 async function suspendBrowserSession(sessionId: string): Promise<void> {
   try {
-    const { requestChromeConnector } = await import('./browserUseHost.mjs');
-    await requestChromeConnector('debugger.suspendScope', { scopeId: sessionId }, {
-      configPath: chromeConnectorBroker?.configPath ?? path.join(chromeConnectorDataRoot(), 'browser-connector', 'bridge.json'), timeoutMs: 3000,
+    const { requestBrowserConnector } = await import('./browserUseHost.mjs');
+    await requestBrowserConnector('debugger.suspendScope', { scopeId: sessionId }, {
+      configPath: browserConnectorBroker?.configPath ?? path.join(browserConnectorDataRoot(), 'browser-connector', 'bridge.json'), timeoutMs: 3000,
     });
   } catch { /* A disconnected extension releases active control itself. */ }
 }
@@ -4280,7 +4280,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
           'dist',
           'index.js',
         ) : '',
-        CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY: platformFeatures(process.platform, process.arch).chromeNativeConnector ? path.join(
+        CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY: platformFeatures(process.platform, process.arch).browserNativeConnector ? path.join(
           app.getAppPath(),
           'packages',
           'cardbush-chrome-mcp',
@@ -4288,8 +4288,8 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
           'index.js',
         ) : '',
         CARDBUSH_CHROME_CONNECTOR_CONFIG:
-          chromeConnectorBroker?.configPath ?? path.join(
-            chromeConnectorDataRoot(),
+          browserConnectorBroker?.configPath ?? path.join(
+            browserConnectorDataRoot(),
             'browser-connector',
             'bridge.json',
           ),
@@ -4537,23 +4537,23 @@ function productAppsConfigPath(): string {
   return path.join(app.getPath('userData'), 'product-host', 'config', 'apps.json');
 }
 
-function isChromeRuntimeTool(toolName: string): boolean {
+function isBrowserRuntimeTool(toolName: string): boolean {
   return toolName.startsWith('mcp__browser_use__');
 }
 
 let lastConnectorLogState = '';
-function connectorLifecycle(): ChromeConnectorLifecycle {
-  chromeConnectorLifecycle ??= new ChromeConnectorLifecycle({
-    userDataPath: chromeConnectorDataRoot(), legacyUserDataPath: app.getPath('userData'),
-    nativeHostPath: chromeConnectorNativeHostPath(), msixPackage: process.windowsStore === true,
+function connectorLifecycle(): BrowserConnectorLifecycle {
+  browserConnectorLifecycle ??= new BrowserConnectorLifecycle({
+    userDataPath: browserConnectorDataRoot(), legacyUserDataPath: app.getPath('userData'),
+    nativeHostPath: browserConnectorNativeHostPath(), msixPackage: process.windowsStore === true,
     shared: true, appsConfigPath: productAppsConfigPath(),
     uiLanguage: () => nativeUiLanguage ?? app.getLocale(),
   }, () => {
-    chromeConnectorBroker = chromeConnectorLifecycle?.broker ?? null;
-    const status = chromeConnectorBroker?.status();
+    browserConnectorBroker = browserConnectorLifecycle?.broker ?? null;
+    const status = browserConnectorBroker?.status();
     const summary = {
-      state: chromeConnectorLifecycle?.state, enabled: chromeConnectorLifecycle?.enabled,
-      bridgeRunning: status?.bridgeRunning ?? false, hasError: Boolean(chromeConnectorLifecycle?.error),
+      state: browserConnectorLifecycle?.state, enabled: browserConnectorLifecycle?.enabled,
+      bridgeRunning: status?.bridgeRunning ?? false, hasError: Boolean(browserConnectorLifecycle?.error),
       connections: status?.connections.map(connection => ({ browser: connection.browser, connected: connection.connected })) ?? [],
     };
     const serialized = JSON.stringify(summary);
@@ -4563,21 +4563,21 @@ function connectorLifecycle(): ChromeConnectorLifecycle {
       try { appendDebugLog('chrome-connector', summary); } catch { /* Logging cannot interrupt reconnection. */ }
     }
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame()) {
-      sendToLiveRenderer(mainWindow, 'chrome-connector:status', currentChromeConnectorStatus());
+      sendToLiveRenderer(mainWindow, 'chrome-connector:status', currentBrowserConnectorStatus());
     }
   });
-  return chromeConnectorLifecycle;
+  return browserConnectorLifecycle;
 }
 
 async function syncBrowserConnectorPlugin(): Promise<void> {
-  if (!platformFeatures(process.platform, process.arch).chromeNativeConnector) return;
+  if (!platformFeatures(process.platform, process.arch).browserNativeConnector) return;
   try {
     const apps = JSON.parse(await fs.promises.readFile(productAppsConfigPath(), 'utf8'));
     const plugin = apps.plugins?.find((item: { id?: string }) => item.id === 'chrome');
     const enabled = apps.serviceEnabled === true && plugin?.installed === true && plugin.enabled === true && plugin.config?.connectionMode !== 'remote_debugging';
     const lifecycle = connectorLifecycle();
-    if (!enabled) { if (lifecycle.broker) lifecycle.dispose(); chromeConnectorLifecycle = null; chromeConnectorBroker = null; return; }
-    const preference = await fs.promises.readFile(path.join(chromeConnectorDataRoot(), 'browser-connector', 'preference.json'), 'utf8')
+    if (!enabled) { if (lifecycle.broker) lifecycle.dispose(); browserConnectorLifecycle = null; browserConnectorBroker = null; return; }
+    const preference = await fs.promises.readFile(path.join(browserConnectorDataRoot(), 'browser-connector', 'preference.json'), 'utf8')
       .then(JSON.parse, (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return null; });
     if (preference?.enabled === false) return;
     if (!lifecycle.broker) await lifecycle.setEnabled(true);
@@ -4585,36 +4585,36 @@ async function syncBrowserConnectorPlugin(): Promise<void> {
 }
 
 let resolvedConnectorDataRoot: string | undefined;
-function chromeConnectorDataRoot(): string {
-  return resolvedConnectorDataRoot ??= connectorDataRoot(app.getPath('userData'), chromeConnectorNativeHostPath(), process.windowsStore === true);
+function browserConnectorDataRoot(): string {
+  return resolvedConnectorDataRoot ??= connectorDataRoot(app.getPath('userData'), browserConnectorNativeHostPath(), process.windowsStore === true);
 }
 
-function currentChromeConnectorRegistrationStatus() {
-  const state = `${chromeConnectorLifecycle?.state ?? 'disabled'}:${nativeUiLanguage ?? app.getLocale()}`;
-  if (chromeConnectorRegistrationCache?.state === state) return chromeConnectorRegistrationCache.value;
-  const value = chromeConnectorRegistrationStatus({
+function currentBrowserConnectorRegistrationStatus() {
+  const state = `${browserConnectorLifecycle?.state ?? 'disabled'}:${nativeUiLanguage ?? app.getLocale()}`;
+  if (browserConnectorRegistrationCache?.state === state) return browserConnectorRegistrationCache.value;
+  const value = browserConnectorRegistrationStatus({
     userDataPath: app.getPath('userData'),
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
-    nativeHostPath: chromeConnectorNativeHostPath(),
+    nativeHostPath: browserConnectorNativeHostPath(),
     packaged: cardbushRuntimeIsPackaged,
     uiLanguage: () => nativeUiLanguage ?? app.getLocale(),
   });
-  chromeConnectorRegistrationCache = { state, value };
+  browserConnectorRegistrationCache = { state, value };
   return value;
 }
 
-function chromeConnectorNativeHostPath(): string {
+function browserConnectorNativeHostPath(): string {
   return cardbushRuntimeIsPackaged
     ? path.join(process.resourcesPath, 'chrome-native-host', 'CardBushBrowserHost.exe')
     : path.join(app.getAppPath(), 'dist-native', 'chrome-connector', 'CardBushBrowserHost.exe');
 }
 
-function currentChromeConnectorStatus():
-  ReturnType<typeof currentChromeConnectorRegistrationStatus> & ChromeConnectorStatus & {
+function currentBrowserConnectorStatus():
+  ReturnType<typeof currentBrowserConnectorRegistrationStatus> & BrowserConnectorStatus & {
     connectorEnabled: boolean; lifecycleState: string; cleanupWarning?: string;
   } {
-  const brokerStatus = chromeConnectorBroker?.status() ?? {
+  const brokerStatus = browserConnectorBroker?.status() ?? {
     protocol: 'cardbush.chrome_connector.v1' as const,
     bridgeRunning: false,
     extensionConnected: false,
@@ -4625,12 +4625,12 @@ function currentChromeConnectorStatus():
     connections: [],
   };
   return {
-    ...currentChromeConnectorRegistrationStatus(),
+    ...currentBrowserConnectorRegistrationStatus(),
     ...brokerStatus,
-    connectorEnabled: chromeConnectorLifecycle?.enabled ?? false,
-    lifecycleState: chromeConnectorLifecycle?.state ?? 'disabled',
-    cleanupWarning: chromeConnectorLifecycle?.cleanupWarning ?? '',
-    ...(chromeConnectorLifecycle?.error ? { lastError: chromeConnectorLifecycle.error } : {}),
+    connectorEnabled: browserConnectorLifecycle?.enabled ?? false,
+    lifecycleState: browserConnectorLifecycle?.state ?? 'disabled',
+    cleanupWarning: browserConnectorLifecycle?.cleanupWarning ?? '',
+    ...(browserConnectorLifecycle?.error ? { lastError: browserConnectorLifecycle.error } : {}),
   };
 }
 
@@ -4905,8 +4905,8 @@ app.on('before-quit', (event) => {
 app.on('will-quit', () => {
   runtimeServicesStopping = true;
   runtimeServicesAbort?.abort(new Error('CardBush Runtime is shutting down.'));
-  chromeConnectorLifecycle?.dispose();
-  chromeConnectorBroker = null;
+  browserConnectorLifecycle?.dispose();
+  browserConnectorBroker = null;
   disposeDesktopControlMonitor();
   runtimeHostIpc?.dispose();
   runtimeHostIpc = null;

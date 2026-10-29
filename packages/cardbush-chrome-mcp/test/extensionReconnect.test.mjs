@@ -28,7 +28,7 @@ async function worker(saved = { cardbushConnectorEnabled: true }, local = { card
       if (code !== pairing) throw new Error('Pairing is required.');
       return { port: 12345, id: 'fixture', secret: 'fixture' };
     },
-    createConnectorPort: () => Object.assign(chrome.runtime.connectNative(), portOptions),
+    createConnectorPort: (_pairing, options) => Object.assign(chrome.runtime.connectNative(), { options }, portOptions),
     setTimeout: (fn, ms) => { const id = Symbol(); timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) });
   vm.runInContext(source, context);
   await flush();
@@ -43,7 +43,7 @@ test('saved authorization reconnects after a long app outage without another con
   for (let attempt = 0; attempt < 3; attempt++) {
     await f.fail('App is closed.');
     if (attempt < 2) {
-      assert.equal(f.alarms.at(-1).delayInMinutes, 0.5);
+      assert.ok(Math.abs(f.alarms.at(-1).when - Date.now() - 30000) < 1000);
       assert.equal(f.alarms.at(-1).periodInMinutes, undefined, 'recovery alarms are one-shot');
       await f.retry();
     }
@@ -79,6 +79,42 @@ test('unpaired discovery still stops after three attempts and never starts new c
   await f.retry(); assert.equal(requests, 3);
   const restarted = await worker({}, f.local, async () => { requests++; throw new Error('Offline'); });
   await restarted.retry(); assert.equal(requests, 3);
+});
+
+test('saved endpoint is tried first and discovery cooldown survives worker restarts', async () => {
+  const f = await worker();
+  assert.equal(f.ports[0].options.discover, false);
+  await f.fail('Offline'); await f.retry();
+  assert.equal(f.ports[1].options.discover, true);
+  f.ports[1].options.onDiscovery(); await flush();
+  const cooldown = f.local.cardbushNativeReconnect.nextDiscoveryAt;
+  assert.ok(cooldown > Date.now());
+  await f.fail('Offline'); await f.retry();
+  assert.equal(f.ports[2].options.discover, false);
+  await f.fail('Offline');
+  const due = f.local.cardbushNativeReconnect.nextRetryAt;
+  const restarted = await worker({}, f.local);
+  assert.equal(restarted.alarms.at(-1).when, due, 'worker wake does not postpone the alarm');
+  await restarted.retry();
+  assert.equal(restarted.ports[0].options.discover, false);
+  assert.equal(f.local.cardbushNativeReconnect.nextDiscoveryAt, cooldown);
+  await restarted.fail('Offline');
+  vm.runInContext('nextDiscoveryAt = Date.now() - 1', restarted.context);
+  await restarted.retry();
+  assert.equal(restarted.ports.at(-1).options.discover, true);
+});
+
+test('expired alarms and backward clock changes recover without a retry storm or lost authorization', async () => {
+  const now = Date.now();
+  for (const due of [now - 600000, now + 3600000]) {
+    const f = await worker({}, { cardbushConnectorEnabled: true, [pairingKey]: pairing,
+      cardbushNativeReconnect: { failures: 3, nextRetryAt: due, nextDiscoveryAt: now + 3600000 } });
+    assert.ok(f.alarms.at(-1).when >= now && f.alarms.at(-1).when <= Date.now() + 30000);
+    assert.ok(f.local.cardbushNativeReconnect.nextDiscoveryAt <= Date.now() + 300000);
+    assert.equal(f.ports.length, 0);
+    await f.retry(); assert.equal(f.ports.length, 1);
+    assert.equal(f.local[pairingKey], pairing);
+  }
 });
 
 test('renderer cleanup cannot block reconnection or a new consent window until Chrome restarts', async () => {
@@ -261,7 +297,7 @@ test('a verified handshake resets consecutive failures and old ports cannot muta
   f.ports.at(-1).onMessage.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
   await flush(); assert.equal(f.state().connectionFailures, 0);
   oldPort.onDisconnect.emit(); await flush(); assert.equal(f.state().connectionFailures, 0);
-  await f.fail('Closed'); assert.equal(f.alarms.at(-1).delayInMinutes, 0.5);
+  await f.fail('Closed'); assert.ok(Math.abs(f.alarms.at(-1).when - Date.now() - 30000) < 1000);
 });
 
 test('a delayed enable write cannot outlive a later disable or revive a restarted worker', async () => {

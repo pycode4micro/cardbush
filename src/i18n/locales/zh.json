@@ -3964,6 +3964,25 @@
     "remoteWorkers.local": "此计算机",
     "remoteWorkers.statusUnavailable": "状态待确认",
     "browser.cli.savedConnectionRecovery": "打开原来的浏览器配置。扩展在三次快速尝试后，会每 30 秒继续重连已保存的连接，也可点击连接立即重试。临时断线不需要新配对码或再次授权；仅在确实需要替换已保存的连接身份时，重新申请本机连接。",
-    "browser.extension.connectionHelp": "本机首次在 CardBush 风格的扩展窗口确认一次连接，无需复制配对码。之后本机 App 和 CLI 共用连接。已保存的连接在 3 次快速尝试后，每 30 秒自动重连，无需再次授权；浏览器休眠可能延迟恢复。首次注册连续失败 3 轮后停止。远程 Agent 独立管理连接。个人标签仍需明确复制进会话隔离组；拒绝或移除连接后不会自动重新授权。"
+    "browser.extension.connectionHelp": "本机首次在 CardBush 风格的扩展窗口确认一次连接，无需复制配对码。之后本机 App 和 CLI 共用连接。已保存的连接在 3 次快速尝试后，每 30 秒自动重连，无需再次授权；浏览器休眠可能延迟恢复。首次注册连续失败 3 轮后停止。远程 Agent 独立管理连接。个人标签仍需明确复制进会话隔离组；拒绝或移除连接后不会自动重新授权。",
+    "browser.extension.retry": "重试已保存的连接",
+    "browser.extension.connect": "连接 CardBush",
+    "browser.extension.advanced": "高级连接 / 更换配对",
+    "browser.extension.repairHelp": "仅在需要更换本机连接时重新配对，并在扩展窗口确认。普通退出、重启或临时离线会自动恢复原连接，无需再次授权。",
+    "browser.extension.repair": "重新配对本机连接",
+    "browser.extension.stale": "扩展后台仍在运行旧版本，需要重新加载。",
+    "browser.extension.stopped": "本机连接申请已停止，原配对与网站授权已保留。准备好后点击「连接 CardBush」继续申请。",
+    "browser.extension.removed": "连接已移除。点击「连接 CardBush」重新连接本机，或在高级连接中配对其他 Agent。",
+    "browser.extension.disabled": "扩展连接已关闭，配对与网站授权已保留。点击连接即可恢复。",
+    "browser.extension.controlling": "正在控制 {count} 个标签页",
+    "browser.extension.connected": "已连接 CardBush，等待控制",
+    "browser.extension.opening": "正在使用已保存的授权连接 CardBush…",
+    "browser.extension.handshake": "已找到连接端点，正在校验 CardBush 身份…",
+    "browser.extension.authentication": "CardBush 身份已验证，正在恢复已授权连接…",
+    "browser.extension.enrolling": "正在申请本机连接，请在扩展弹窗中确认一次。",
+    "browser.extension.paused": "连接申请连续失败，已停止自动申请。准备好后点击连接重试。",
+    "browser.extension.waiting": "CardBush 暂时离线，将在约 {seconds} 秒后重试已保存的连接，无需再次授权。",
+    "browser.extension.retrying": "正在等待恢复已保存的连接。请确认 CardBush 已启动并启用 Browser Use，无需重新配对。",
+    "browser.extension.enrollmentRetry": "本机连接申请未完成，等待有限重试。请确认 CardBush 已启动并启用 Browser Use。"
   }
 }

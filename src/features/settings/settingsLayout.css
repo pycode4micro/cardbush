@@ -64,11 +64,11 @@
 .settings-shell .keyboard-settings-row { flex-direction: row; align-items: center; }
 .settings-shell .keyboard-reference-row { font-size: calc(12px * var(--ui-font-scale, 1)); }
 .settings-shell .keyboard-binding { min-width: 130px; min-height: 32px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-.settings-shell .chrome-radio-setting { margin: 0; padding: 14px 0; border: 0; border-radius: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-.settings-shell .chrome-radio-setting input { grid-column: 2; grid-row: 1; margin: 0; }
-.settings-shell .chrome-radio-setting span { grid-column: 1; grid-row: 1; }
-.settings-shell .chrome-radio-setting + .chrome-radio-setting { border-top: 1px solid var(--border); }
-.settings-shell .chrome-connector-card { margin-top: 6px; padding: 14px 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
+.settings-shell .browser-radio-setting { margin: 0; padding: 14px 0; border: 0; border-radius: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.settings-shell .browser-radio-setting input { grid-column: 2; grid-row: 1; margin: 0; }
+.settings-shell .browser-radio-setting span { grid-column: 1; grid-row: 1; }
+.settings-shell .browser-radio-setting + .browser-radio-setting { border-top: 1px solid var(--border); }
+.settings-shell .browser-connector-card { margin-top: 6px; padding: 14px 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
 .settings-shell .browser-setting-note { padding: 0; background: transparent; }
 .settings-shell .usage-stat-grid { padding-block: 12px; border: 0; border-radius: 0; }
 .settings-shell .usage-activity-card .settings-card-body { gap: 14px; }

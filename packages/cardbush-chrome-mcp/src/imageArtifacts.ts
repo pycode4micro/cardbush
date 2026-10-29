@@ -3,7 +3,7 @@ import { mkdir, writeFile, rename, rm, copyFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import sharp from 'sharp';
-import { ChromeConnectorError } from './bridgeClient.js';
+import { BrowserConnectorError } from './bridgeClient.js';
 
 const MAX_IMAGE_BYTES = 24 * 1024 * 1024;
 export type BrowserArtifact = { path: string; name: string; type: 'image' | 'document'; mimeType?: string; size: number; display: 'inline' | 'attachment' };
@@ -20,18 +20,18 @@ export class BrowserArtifacts {
   async image(scope: string, input: { data: string; mimeType: string }, signal?: AbortSignal) {
     const encoded = input.data.replace(/\s/g, '');
     if (encoded.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
-      throw new ChromeConnectorError('image_export_invalid', 'Image is invalid or exceeds 24 MiB. Capture a smaller region.');
+      throw new BrowserConnectorError('image_export_invalid', 'Image is invalid or exceeds 24 MiB. Capture a smaller region.');
     }
     const bytes = Buffer.from(encoded, 'base64');
-    if (!bytes.length || bytes.toString('base64') !== encoded) throw new ChromeConnectorError('image_export_invalid', 'Expected complete Base64 image bytes.');
+    if (!bytes.length || bytes.toString('base64') !== encoded) throw new BrowserConnectorError('image_export_invalid', 'Expected complete Base64 image bytes.');
     const decoded = sharp(bytes, { limitInputPixels: 40_000_000 });
-    const metadata = await decoded.metadata().catch(() => { throw new ChromeConnectorError('image_export_invalid', 'The returned image could not be decoded. Return a complete image.'); });
+    const metadata = await decoded.metadata().catch(() => { throw new BrowserConnectorError('image_export_invalid', 'The returned image could not be decoded. Return a complete image.'); });
     const extension = metadata.format === 'jpeg' ? 'jpg' : metadata.format;
     if (!['png', 'jpg', 'webp'].includes(extension ?? '') || !metadata.width || !metadata.height) {
-      throw new ChromeConnectorError('image_export_invalid', 'Expected a PNG, JPEG or WebP image.');
+      throw new BrowserConnectorError('image_export_invalid', 'Expected a PNG, JPEG or WebP image.');
     }
     // Decode, not only the file header: incomplete PNG data is not a finished image.
-    await decoded.stats().catch(() => { throw new ChromeConnectorError('image_export_invalid', 'The returned image is incomplete or corrupt.'); });
+    await decoded.stats().catch(() => { throw new BrowserConnectorError('image_export_invalid', 'The returned image is incomplete or corrupt.'); });
     signal?.throwIfAborted();
     const mimeType = `image/${metadata.format}`;
     const directory = this.directory(scope);
@@ -45,13 +45,13 @@ export class BrowserArtifacts {
   }
 
   async download(scope: string, taskId: string, source: string) {
-    if (!path.isAbsolute(source)) throw new ChromeConnectorError('download_path_invalid', 'Chrome did not return an absolute completed-file path.');
+    if (!path.isAbsolute(source)) throw new BrowserConnectorError('download_path_invalid', 'Chrome did not return an absolute completed-file path.');
     const directory = path.join(this.directory(scope), digest(taskId).slice(0, 24));
     const file = path.join(directory, path.basename(source));
     const cached = await stat(file).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return undefined; });
     if (cached?.isFile()) return { path: file, name: path.basename(file), type: 'document', size: cached.size, display: 'attachment' } satisfies BrowserArtifact;
     const sourceInfo = await stat(source);
-    if (!sourceInfo.isFile()) throw new ChromeConnectorError('download_path_invalid', 'The completed download is not a file.');
+    if (!sourceInfo.isFile()) throw new BrowserConnectorError('download_path_invalid', 'The completed download is not a file.');
     await mkdir(directory, { recursive: true });
     const temporary = `${file}.${randomUUID()}.tmp`;
     try { await copyFile(source, temporary); await rename(temporary, file); }
@@ -74,7 +74,7 @@ export function exportedImage(value: unknown): { data: string; mimeType: string 
     const match = /^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/.exec(value);
     if (match) return { mimeType: match[1]!, data: match[2]! };
   }
-  throw new ChromeConnectorError('image_export_invalid', 'Return a PNG/JPEG/WebP data URL or {data, mimeType}. Do not click a download link.');
+  throw new BrowserConnectorError('image_export_invalid', 'Return a PNG/JPEG/WebP data URL or {data, mimeType}. Do not click a download link.');
 }
 
 export function digest(value: string | Buffer) { return createHash('sha256').update(value).digest('hex'); }

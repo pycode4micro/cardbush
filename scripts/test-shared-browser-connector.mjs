@@ -7,9 +7,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { SharedBrowserConnector, assertLegacyBrowserConnectorStopped } from '../dist-electron/sharedBrowserConnector.js';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
-import { ChromeConnectorLifecycle } from '../dist-electron/chromeConnectorLifecycle.js';
-import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
+import { BrowserConnectorLifecycle } from '../dist-electron/browserConnectorLifecycle.js';
+import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 import { pairedClient } from './helpers/chrome-paired-client.mjs';
 import { approvalClient } from './helpers/browser-approval-client.mjs';
 
@@ -33,12 +33,12 @@ test('App and CLI share pairing, route by conversation and take over after owner
   await until(() => app.status().extensionConnected && cli.status().extensionConnected);
   assert.deepEqual(app.status(), cli.status());
   assert.ok(!JSON.stringify(app.status()).includes(pairing.code.split('.').at(-1)));
-  await requestChromeConnector('browser.select', { scopeId: 'cli-session', connectionId: pairing.id }, { configPath: cli.configPath });
-  assert.equal((await requestChromeConnector('browser.list', { scopeId: 'app-session' }, { configPath: app.configPath })).selectedConnectionId, null);
+  await requestBrowserConnector('browser.select', { scopeId: 'cli-session', connectionId: pairing.id }, { configPath: cli.configPath });
+  assert.equal((await requestBrowserConnector('browser.list', { scopeId: 'app-session' }, { configPath: app.configPath })).selectedConnectionId, null);
   app.stop(); await until(() => extension.destroyed);
   await until(async () => cli.status().bridgeRunning && await readFile(cli.configPath).then(bytes => JSON.parse(bytes).token !== old.token, () => false));
   const reconnected = await pairedClient(pairing.code, { browser: 'edge' }); f.peers.push(reconnected);
-  const result = await requestChromeConnector('browser.list', { scopeId: 'cli-session' }, { configPath: cli.configPath });
+  const result = await requestBrowserConnector('browser.list', { scopeId: 'cli-session' }, { configPath: cli.configPath });
   assert.equal(result.selectedConnectionId, pairing.id);
   assert.equal(result.connections[0].connected, true);
   await cli.revokeConnection(pairing.id);
@@ -71,7 +71,7 @@ test('simultaneous clients elect one endpoint and explicit disable is observed b
 
 test('consent pairs without a copied code and preserves revocation across shared owners', { skip: process.platform !== 'win32' }, async t => {
   const f = await fixture(t); let approvals = 0;
-  const broker = new ChromeConnectorBroker(f.root, { nativeHostPath, shared: true, allowLocalPairing: () => true });
+  const broker = new BrowserConnectorBroker(f.root, { nativeHostPath, shared: true, allowLocalPairing: () => true });
   t.after(() => broker.stop()); await broker.start();
   const app = f.create(); await app.start();
   const port = JSON.parse(await readFile(join(f.root, 'browser-connector/pairing.json'))).port;
@@ -92,14 +92,14 @@ test('consent pairs without a copied code and preserves revocation across shared
 
 test('existing CLI pairing and session route migrate without undoing a later revocation', { skip: process.platform !== 'win32' }, async t => {
   const legacy = await fixture(t), shared = await fixture(t);
-  const old = new ChromeConnectorBroker(legacy.root, { nativeHostPath });
+  const old = new BrowserConnectorBroker(legacy.root, { nativeHostPath });
   t.after(() => old.stop()); await old.start();
   const pairing = old.createPairing(); const peer = await pairedClient(pairing.code); legacy.peers.push(peer);
-  await requestChromeConnector('browser.select', { scopeId: 'existing-cli', connectionId: pairing.id }, { configPath: old.configPath });
+  await requestBrowserConnector('browser.select', { scopeId: 'existing-cli', connectionId: pairing.id }, { configPath: old.configPath });
   old.stop();
   const current = shared.create(); await current.start(); await current.importLegacy(legacy.root);
   const restored = await pairedClient(pairing.code); shared.peers.push(restored);
-  const state = await requestChromeConnector('browser.list', { scopeId: 'existing-cli' }, { configPath: current.configPath });
+  const state = await requestBrowserConnector('browser.list', { scopeId: 'existing-cli' }, { configPath: current.configPath });
   assert.equal(state.selectedConnectionId, pairing.id); assert.equal(state.connections[0].connected, true);
   await current.revokeConnection(pairing.id); await current.importLegacy(legacy.root);
   assert.equal((await current.refresh()).connections.length, 0, 'legacy data cannot restore revoked access');
@@ -109,7 +109,7 @@ test('removing configuration while offline revokes old pairings before re-enabli
   const f = await fixture(t), client = f.create(); await client.start();
   const code = (await client.createPairing()).code, peer = await pairedClient(code); f.peers.push(peer);
   await until(() => client.status().extensionConnected); client.stop(); await delay(100);
-  const lifecycle = new ChromeConnectorLifecycle({ userDataPath: f.root, nativeHostPath, shared: true }, () => {}, {
+  const lifecycle = new BrowserConnectorLifecycle({ userDataPath: f.root, nativeHostPath, shared: true }, () => {}, {
     registry: { read: () => null, remove() {} }, supported: () => true,
   });
   t.after(() => lifecycle.dispose());
@@ -121,7 +121,7 @@ test('removing configuration while offline revokes old pairings before re-enabli
 });
 
 test('an older running App is not overwritten during a partial upgrade', { skip: process.platform !== 'win32' }, async t => {
-  const f = await fixture(t), old = new ChromeConnectorBroker(f.root, { nativeHostPath });
+  const f = await fixture(t), old = new BrowserConnectorBroker(f.root, { nativeHostPath });
   t.after(() => old.stop()); await old.start();
   const original = await readFile(old.configPath, 'utf8');
   await assert.rejects(f.create().start(), /older CardBush process/);
@@ -129,7 +129,7 @@ test('an older running App is not overwritten during a partial upgrade', { skip:
 });
 
 test('session 19c2 replay: stale legacy endpoint recovers despite a recycled PID or Windows EPERM, retaining pairing', { skip: process.platform !== 'win32' }, async t => {
-  const f = await fixture(t), old = new ChromeConnectorBroker(f.root, { nativeHostPath });
+  const f = await fixture(t), old = new BrowserConnectorBroker(f.root, { nativeHostPath });
   t.after(() => old.stop()); await old.start();
   const code = old.createPairing().code, descriptor = await readFile(old.configPath, 'utf8');
   f.peers.push(await pairedClient(code));
@@ -144,7 +144,7 @@ test('session 19c2 replay: stale legacy endpoint recovers despite a recycled PID
   assert.equal(shared.status().bridgeRunning, true);
   assert.notEqual(JSON.parse(await readFile(shared.configPath)).endpoint, JSON.parse(descriptor).endpoint);
   const peer = await pairedClient(code); f.peers.push(peer);
-  const result = await requestChromeConnector('browser.list', { scopeId: 'recovered' }, { configPath: shared.configPath });
+  const result = await requestBrowserConnector('browser.list', { scopeId: 'recovered' }, { configPath: shared.configPath });
   assert.equal(result.connections[0].id, code.split('.')[2]);
   assert.equal(result.connections[0].connected, true);
 });

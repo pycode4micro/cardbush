@@ -14,11 +14,11 @@
         <p id="extension-update-message" class="hint" role="status"></p>
         <button id="reload-extension">重新加载扩展</button>
       </div>
+      <details id="pairing-details"><summary id="advanced-connection-label"></summary>
       <div id="local-connection-repair" hidden>
-        <p class="hint">旧连接持续失败时，可重新申请连接当前本机 App/CLI。需要在扩展窗口确认一次；成功前保留原配对，网站授权不会清除。</p>
-        <button data-action="request_local_connection">重新申请本机连接</button>
+        <p id="local-connection-repair-help" class="hint"></p>
+        <button data-action="request_local_connection"></button>
       </div>
-      <details id="pairing-details"><summary>手动连接 / 远程 Agent 配对</summary>
       <p class="hint">仅用于手动连接或远程 Agent 配对。从目标 Agent 的 CLI 运行 /browser pair chrome 或 /browser pair edge，或在 CardBush 设置中生成本机手动配对码；直接粘贴在此处，不发送给模型。</p>
       <label class="scope-picker"><span>目标 Agent 的配对码</span>
         <input id="pairing-code" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴目标 Agent 提供的配对码" />
@@ -41,7 +41,7 @@
         <button data-action="allow_all">复制并允许隔离组访问全部网站</button>
       </div>
       <footer>
-        <button class="quiet" data-action="reconnect">连接 CardBush</button>
+        <button class="retry-connection" data-action="reconnect"></button>
         <button class="quiet" data-action="disable_connector">关闭扩展连接</button>
         <button class="quiet" data-action="revoke">撤销授权</button>
         <button class="quiet" data-action="disconnect">停止控制</button>

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { AgentHttpClient } from './agentHttpClient.mjs';
-import { assertConnectorFile } from './chromeConnectorFiles.js';
+import { assertConnectorFile } from './browserConnectorFiles.js';
 
 export const serviceProcessSchema = z.object({
   protocol: z.literal('cardbush.service-process.v1'), instance: z.string().uuid(),

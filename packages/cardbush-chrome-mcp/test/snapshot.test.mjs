@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PageSnapshots, snapshotSchema } from '../dist/pageSnapshot.js';
-import { createCardbushChromeServer } from '../dist/index.js';
+import { createCardbushBrowserServer } from '../dist/index.js';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 
 function node(id, role, name = '', children = [], more = {}) {
@@ -180,7 +180,7 @@ test('geometry inspection is limited to first-page candidates and cached, with u
 
 test('the public MCP result delivers each page text once and releases cursors with the browser', async () => {
   const f = fixture(Array.from({ length: 100 }, (_, i) => node(i + 1, 'button', `UNIQUE-CONTENT-${i}`)));
-  const server = createCardbushChromeServer({ connector: async (method, params) => {
+  const server = createCardbushBrowserServer({ connector: async (method, params) => {
     if (method === 'tabs.list') return [{ id: 42, active: true }];
     if (method === 'debugger.detachScope') return {};
     return f.command(params.command);
@@ -198,7 +198,7 @@ test('the public MCP result delivers each page text once and releases cursors wi
 
 test('MCP negotiation publishes the paging schema and transports text, cursor and scope metadata intact', async () => {
   const f = fixture([node(1, 'button', 'Transport row one'), node(2, 'button', 'Transport row two')]);
-  const server = createCardbushChromeServer({ connector: async (method, params) => {
+  const server = createCardbushBrowserServer({ connector: async (method, params) => {
     assert.equal(params.scopeId, 'protocol-fixture');
     if (method === 'tabs.list') return [{ id: 42, active: true }];
     if (method === 'debugger.detachScope') return {};

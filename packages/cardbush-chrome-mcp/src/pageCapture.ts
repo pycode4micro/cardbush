@@ -1,4 +1,4 @@
-import { ChromeConnectorError } from './bridgeClient.js';
+import { BrowserConnectorError } from './bridgeClient.js';
 
 export type PageCommand = (command: string, params?: Record<string, unknown>) => Promise<unknown>;
 export type Viewport = { width: number; height: number; deviceScaleFactor?: number };
@@ -14,13 +14,13 @@ const pageZoom = (metrics: Record<string, unknown>) => {
 
 export async function evaluate(command: PageCommand, expression: string) {
   const result = object(await command('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: false }));
-  if (result.exceptionDetails) throw new ChromeConnectorError('javascript_exception', JSON.stringify(result.exceptionDetails));
+  if (result.exceptionDetails) throw new BrowserConnectorError('javascript_exception', JSON.stringify(result.exceptionDetails));
   return object(result.result).value;
 }
 
 export async function setViewport(command: PageCommand, viewport: Viewport) {
   if (viewport.width * viewport.height * (viewport.deviceScaleFactor ?? 1) ** 2 > 16_000_000) {
-    throw new ChromeConnectorError('viewport_too_large', 'Use a smaller viewport or deviceScaleFactor (maximum 16 megapixels).');
+    throw new BrowserConnectorError('viewport_too_large', 'Use a smaller viewport or deviceScaleFactor (maximum 16 megapixels).');
   }
   // CDP emulation uses device-independent pixels; innerWidth uses CSS pixels.
   // Preserve the user's page zoom and compensate in this target's override.
@@ -39,7 +39,7 @@ export async function setViewport(command: PageCommand, viewport: Viewport) {
   if (!(dimensions.width > 0 && dimensions.height > 0) ||
       Math.abs(dimensions.width - viewport.width) > tolerance || Math.abs(dimensions.height - viewport.height) > tolerance ||
       Math.abs(dimensions.deviceScaleFactor - deviceScaleFactor) > 0.001) {
-    throw new ChromeConnectorError('viewport_not_applied', 'Chrome did not apply the requested CSS viewport. Inspect the current page before trying another size.',
+    throw new BrowserConnectorError('viewport_not_applied', 'The browser did not apply the requested CSS viewport. Inspect the current page before trying another size.',
       { requested: viewport, dimensions, pageZoom: zoom });
   }
   return dimensions;
@@ -54,7 +54,7 @@ export async function prepareCapture(command: PageCommand, viewport?: Viewport, 
   if (adjusted) {
     dimensions = await setViewport(command, { width: 1280, height: 800, deviceScaleFactor: 1 });
   }
-  if (!(dimensions.width > 0 && dimensions.height > 0)) throw new ChromeConnectorError('viewport_unavailable', 'The page has no usable viewport. Navigate to a loaded page first.');
+  if (!(dimensions.width > 0 && dimensions.height > 0)) throw new BrowserConnectorError('viewport_unavailable', 'The page has no usable viewport. Navigate to a loaded page first.');
   await evaluate(command, `(async()=>{
     await Promise.race([Promise.all([document.fonts?.ready, ...Array.from(document.images).map(image=>image.decode().catch(()=>{}))]),new Promise(resolve=>setTimeout(resolve,2000))]);
     await Promise.race([new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))),new Promise(resolve=>setTimeout(resolve,250))]);
@@ -77,7 +77,7 @@ export async function captureClip(command: PageCommand, fullPage?: boolean, sele
   }
   if (!bounds) return undefined;
   const width = Number(bounds.width), height = Number(bounds.height);
-  if (!(width > 0 && height > 0 && Number.isFinite(width * height))) throw new ChromeConnectorError('screenshot_region_empty', 'The screenshot region is empty.');
+  if (!(width > 0 && height > 0 && Number.isFinite(width * height))) throw new BrowserConnectorError('screenshot_region_empty', 'The screenshot region is empty.');
   const scale = Math.min(1, 8192 / (Math.max(width, height) * deviceScaleFactor), Math.sqrt(16_000_000 / (width * height * deviceScaleFactor ** 2)));
   const cssClip = { x: Math.max(0, Number(bounds.x) || 0), y: Math.max(0, Number(bounds.y) || 0), width, height, scale };
   const zoom = pageZoom(metrics);

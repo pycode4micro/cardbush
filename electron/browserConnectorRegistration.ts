@@ -5,10 +5,10 @@ import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { windowsReleaseSupported } from '@cardbush/platform';
 import { uiText } from '@cardbush/platform/i18n';
-import { chromeConnectorExtensionOrigin, chromeConnectorNativeHostName } from './chromeConnectorConstants';
-import { assertConnectorFile, connectorDirectory } from './chromeConnectorFiles';
+import { browserConnectorExtensionOrigin, browserConnectorNativeHostName } from './browserConnectorConstants';
+import { assertConnectorFile, connectorDirectory } from './browserConnectorFiles';
 
-export const chromeConnectorRegistryKey = `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${chromeConnectorNativeHostName}`;
+export const browserConnectorRegistryKey = `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${browserConnectorNativeHostName}`;
 type RegistryView = '32' | '64';
 export interface ConnectorRegistry {
   read(view: RegistryView): string | null;
@@ -30,9 +30,9 @@ export function windowsConnectorRegistry(nativeHostPath: string): ConnectorRegis
     },
     remove(view, expectedPath) {
       if (!samePath(this.read(view), expectedPath)) throw new Error('Chrome host registration changed; cleanup was stopped.');
-      reg(['delete', chromeConnectorRegistryKey, '/ve', '/f', `/reg:${view}`]);
+      reg(['delete', browserConnectorRegistryKey, '/ve', '/f', `/reg:${view}`]);
       // Preserve any other values/subkeys. Never delete the parent registration tree.
-      if (inspect(view).empty) reg(['delete', chromeConnectorRegistryKey, '/f', `/reg:${view}`]);
+      if (inspect(view).empty) reg(['delete', browserConnectorRegistryKey, '/f', `/reg:${view}`]);
     },
   };
 }
@@ -43,24 +43,24 @@ export interface ConnectorRegistrationInput {
   msixPackage?: boolean;
   uiLanguage?: () => string;
 }
-export function chromeConnectorPlatformSupported(platform: string = process.platform, release = os.release()): boolean {
+export function browserConnectorPlatformSupported(platform: string = process.platform, release = os.release()): boolean {
   return platform === 'win32' && windowsReleaseSupported(release);
 }
-export function chromeConnectorLaunchPath(nativeHostPath: string, msixPackage = process.windowsStore === true,
+export function browserConnectorLaunchPath(nativeHostPath: string, msixPackage = process.windowsStore === true,
   localAppData = process.env.LOCALAPPDATA): string {
   if (!msixPackage) return nativeHostPath;
   if (!localAppData) throw new Error('LOCALAPPDATA is required to locate the browser bridge app execution alias.');
   return path.join(localAppData, 'Microsoft', 'WindowsApps', 'CardBushBrowserHost.exe');
 }
-export class ChromeConnectorRegistration {
+export class BrowserConnectorRegistration {
   readonly directory: string;
   readonly manifestPath: string;
   readonly launchPath: string;
   readonly owner: string;
   constructor(readonly input: ConnectorRegistrationInput, readonly registry: ConnectorRegistry = windowsConnectorRegistry(input.nativeHostPath)) {
     this.directory = connectorDirectory(input.userDataPath);
-    this.manifestPath = path.join(this.directory, `${chromeConnectorNativeHostName}.json`);
-    this.launchPath = chromeConnectorLaunchPath(input.nativeHostPath, input.msixPackage);
+    this.manifestPath = path.join(this.directory, `${browserConnectorNativeHostName}.json`);
+    this.launchPath = browserConnectorLaunchPath(input.nativeHostPath, input.msixPackage);
     // Stable across Store updates; independent installs/profiles have different roots.
     this.owner = createHash('sha256').update(fs.realpathSync.native(input.userDataPath).toLowerCase()).digest('hex');
   }
@@ -70,10 +70,10 @@ export class ChromeConnectorRegistration {
     return fs.existsSync(this.manifestPath) ? JSON.parse(fs.readFileSync(this.manifestPath, 'utf8')) : null;
   }
   #ownedManifest(manifest: Record<string, unknown> | null): boolean {
-    if (!manifest || manifest.name !== chromeConnectorNativeHostName || manifest.type !== 'stdio') return false;
+    if (!manifest || manifest.name !== browserConnectorNativeHostName || manifest.type !== 'stdio') return false;
     if (typeof manifest.path !== 'string' || !samePath(manifest.path, this.launchPath)) return false;
     const origins = manifest.allowed_origins;
-    if (!Array.isArray(origins) || origins.length !== 1 || origins[0] !== chromeConnectorExtensionOrigin) return false;
+    if (!Array.isArray(origins) || origins.length !== 1 || origins[0] !== browserConnectorExtensionOrigin) return false;
     if (manifest.cardbush_owner != null) return manifest.cardbush_owner === this.owner;
     // One-time migration of the exact previous manifest in our own data directory.
     return true;
@@ -107,13 +107,13 @@ export class ChromeConnectorRegistration {
   }
 }
 
-export function chromeConnectorRegistrationStatus(input: ConnectorRegistrationInput & {
+export function browserConnectorRegistrationStatus(input: ConnectorRegistrationInput & {
   appPath: string; resourcesPath: string; packaged: boolean;
 }) {
-  const platformSupported = chromeConnectorPlatformSupported();
+  const platformSupported = browserConnectorPlatformSupported();
   let registration: { bridgeRegistered: boolean; registrationConflict?: string } = { bridgeRegistered: false };
   if (platformSupported) {
-    try { registration = new ChromeConnectorRegistration(input).inspect(); }
+    try { registration = new BrowserConnectorRegistration(input).inspect(); }
     catch (error) { registration.registrationConflict = error instanceof Error ? error.message : String(error); }
   }
   const storeUrl = process.env.CARDBUSH_CHROME_CONNECTOR_STORE_URL?.trim();
@@ -123,7 +123,7 @@ export function chromeConnectorRegistrationStatus(input: ConnectorRegistrationIn
     nativeHostPath: input.nativeHostPath,
     extensionDirectory: input.packaged ? path.join(input.resourcesPath, 'chrome-extension')
       : path.join(input.appPath, 'assets', 'plugins', 'chrome', 'extension'),
-    extensionId: chromeConnectorExtensionOrigin.slice('chrome-extension://'.length, -1),
+    extensionId: browserConnectorExtensionOrigin.slice('chrome-extension://'.length, -1),
     ...(storeUrl?.startsWith('https://') ? { storeUrl } : {}),
     ...(!platformSupported ? { setupMessage: uiText(input.uiLanguage?.())('browserConnector.windowsVersionRequired') } : {}),
   };

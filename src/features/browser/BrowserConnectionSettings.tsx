@@ -6,8 +6,8 @@ import { SettingsCard } from '../settings/SettingsControls';
 import { SettingsDropdown } from '../settings/SettingsDropdown';
 import './browser-settings.css';
 
-type ChromeConnectorStatus = NonNullable<Window['cardbushDesktop']> extends infer Desktop
-  ? Desktop extends { chromeConnectorStatus: () => Promise<infer Status> } ? Status : never
+type BrowserConnectorStatus = NonNullable<Window['cardbushDesktop']> extends infer Desktop
+  ? Desktop extends { browserConnectorStatus: () => Promise<infer Status> } ? Status : never
   : never;
 
 export function BrowserConnectionSettings({ language, plugin, busy, onReplace, onPersist }: {
@@ -17,7 +17,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
   onReplace: (plugin: CardbushAppPlugin) => void;
   onPersist: (plugin: CardbushAppPlugin, message: string) => void;
 }) {
-  const [status, setStatus] = useState<ChromeConnectorStatus | null>(null);
+  const [status, setStatus] = useState<BrowserConnectorStatus | null>(null);
   const [working, setWorking] = useState('');
   const [error, setError] = useState('');
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
@@ -32,9 +32,9 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
     : 'connector';
 
   const refresh = useCallback(async () => {
-    if (!connector?.chromeConnectorStatus) return;
+    if (!connector?.browserConnectorStatus) return;
     try {
-      setStatus(await connector.chromeConnectorStatus());
+      setStatus(await connector.browserConnectorStatus());
       setError('');
     } catch (caught) {
       setError(errorMessage(caught));
@@ -43,7 +43,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
 
   useEffect(() => {
     void refresh();
-    return connector?.onChromeConnectorStatus?.((next) => setStatus(next));
+    return connector?.onBrowserConnectorStatus?.((next) => setStatus(next));
   }, [connector, refresh]);
 
   useEffect(() => {
@@ -76,18 +76,18 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
 
   return (
     <SettingsCard title={uiText(language)('browserConnectionSettings.browserConnection')}>
-      <label className="chrome-radio-setting">
-        <input type="radio" name="chrome-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
+      <label className="browser-radio-setting">
+        <input type="radio" name="browser-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
           <span><strong>{uiText(language)('browserConnectionSettings.browser_use_windows')}</strong><small>{uiText(language)('browserConnectionSettings.enableThePluginInstallTheBrowserExtension')}</small></span>
       </label>
-      <label className="chrome-radio-setting">
-        <input type="radio" name="chrome-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />
+      <label className="browser-radio-setting">
+        <input type="radio" name="browser-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />
         <span><strong>{uiText(language)('browserConnectionSettings.remoteDebuggingCompatibilityMode')}</strong><small>{uiText(language)('browserConnectionSettings.usesGoogleSChromeDevtoolsMcpFor')}</small></span>
       </label>
       {mode === 'connector' ? (
-        <div className="chrome-connector-card">
-          <div className="chrome-connector-heading">
-            <span className={`chrome-connector-indicator ${status?.extensionConnected ? 'online' : status?.bridgeRunning ? 'waiting' : ''}`} />
+        <div className="browser-connector-card">
+          <div className="browser-connector-heading">
+            <span className={`browser-connector-indicator ${status?.extensionConnected ? 'online' : status?.bridgeRunning ? 'waiting' : ''}`} />
             <div>
               <strong>{status?.lifecycleState === 'needs_repair'
                 ? (uiText(language)('browserConnectionSettings.connectorNeedsAttention'))
@@ -109,20 +109,20 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
                     : (uiText(language)('browserConnectionSettings.waitingForTheBrowserExtensionConfirmOnce'))}</small>
             </div>
           </div>
-          <div className="chrome-connector-actions">
-            <button className="primary-button compact" type="button" disabled={working !== '' || !status || !connector?.setupChromeConnector || (!status.connectorEnabled && (!status.platformSupported || !status.nativeHostAvailable))} title={status?.setupMessage} onClick={() => void run('bridge', async () => status?.connectorEnabled && status.lifecycleState !== 'needs_repair' ? connector?.disableChromeConnector() : connector?.setupChromeConnector())}>
+          <div className="browser-connector-actions">
+            <button className="primary-button compact" type="button" disabled={working !== '' || !status || !connector?.setupBrowserConnector || (!status.connectorEnabled && (!status.platformSupported || !status.nativeHostAvailable))} title={status?.setupMessage} onClick={() => void run('bridge', async () => status?.connectorEnabled && status.lifecycleState !== 'needs_repair' ? connector?.disableBrowserConnector() : connector?.setupBrowserConnector())}>
               {working === 'bridge' ? <LoaderCircle className="spin" size={14} /> : null}
               {status?.lifecycleState === 'needs_repair' ? (uiText(language)('browserConnectionSettings.retryConnection')) : status?.connectorEnabled ? (uiText(language)('browserConnectionSettings.disableConnector')) : (uiText(language)('browserConnectionSettings.enableConnector'))}
             </button>
-            {status?.connectorEnabled && status.lifecycleState === 'needs_repair' && <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.disableChromeConnector}
-              onClick={() => void run('disable', async () => connector?.disableChromeConnector())}>{uiText(language)('browserConnectionSettings.disableConnector')}</button>}
-            <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.removeChromeConnector || !status?.platformSupported} onClick={() => void run('remove', async () => connector?.removeChromeConnector())}>{uiText(language)('browserConnectionSettings.removeConnectorConfiguration')}</button>
-            <button className="primary-button compact" type="button" disabled={working !== '' || !connector?.openChromeConnectorInstaller} onClick={() => void run('extension', async () => connector?.openChromeConnectorInstaller())}>
+            {status?.connectorEnabled && status.lifecycleState === 'needs_repair' && <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.disableBrowserConnector}
+              onClick={() => void run('disable', async () => connector?.disableBrowserConnector())}>{uiText(language)('browserConnectionSettings.disableConnector')}</button>}
+            <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.removeBrowserConnector || !status?.platformSupported} onClick={() => void run('remove', async () => connector?.removeBrowserConnector())}>{uiText(language)('browserConnectionSettings.removeConnectorConfiguration')}</button>
+            <button className="primary-button compact" type="button" disabled={working !== '' || !connector?.openBrowserConnectorInstaller} onClick={() => void run('extension', async () => connector?.openBrowserConnectorInstaller())}>
               {working === 'extension' ? <LoaderCircle className="spin" size={14} /> : null}
               {status?.storeUrl ? (uiText(language)('browserConnectionSettings.installBrowserUseExtension')) : (uiText(language)('browserConnectionSettings.openExtensionFolder'))}
             </button>
             <button className="secondary-button compact" type="button" disabled={working !== ''} onClick={() => void refresh()}><RefreshCw size={14} />{uiText(language)('browserConnectionSettings.refresh')}</button>
-            <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.copyChromeConnectorDiagnostics} onClick={() => void run('diagnostics', async () => { await connector?.copyChromeConnectorDiagnostics(); setDiagnosticsCopied(true); })}>{diagnosticsCopied ? (uiText(language)('browserConnectionSettings.diagnosticsCopied')) : (uiText(language)('browserConnectionSettings.copyDiagnostics'))}</button>
+            <button className="secondary-button compact" type="button" disabled={working !== '' || !connector?.copyBrowserConnectorDiagnostics} onClick={() => void run('diagnostics', async () => { await connector?.copyBrowserConnectorDiagnostics(); setDiagnosticsCopied(true); })}>{diagnosticsCopied ? (uiText(language)('browserConnectionSettings.diagnosticsCopied')) : (uiText(language)('browserConnectionSettings.copyDiagnostics'))}</button>
           </div>
           {status?.connectorEnabled && <>
             <details><summary>{uiText(language)('browserConnectionSettings.manualPairing')}</summary>
@@ -136,7 +136,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
                 placeholder={uiText(language)('browserConnectionSettings.connectionNameOptionalEGWork')}
                 onChange={event => setConnectionLabel(event.target.value)} />
               <button className="secondary-button compact" type="button" disabled={working !== '' || !status.bridgeRunning}
-                onClick={() => void run('pair', async () => { setPairing(await connector!.pairChromeConnector({ browser, label: connectionLabel })); setPairingCopied(false); })}>
+                onClick={() => void run('pair', async () => { setPairing(await connector!.pairBrowserConnector({ browser, label: connectionLabel })); setPairingCopied(false); })}>
                 {uiText(language)('browserConnectionSettings.generatePairingCode')}
               </button>
             </div>
@@ -155,7 +155,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
               <p className="browser-setting-note">{uiText(language)('browserConnectionSettings.theDefaultAppliesToSessionsWithoutA')}</p>
             </div>}
           </>}
-          {pairing && <div className="chrome-connector-pairing">
+          {pairing && <div className="browser-connector-pairing">
             <label>{uiText(language)('browserConnectionSettings.pairingCodeValidFor5Minutes')}
               <input type="password" readOnly value={pairing.code} autoComplete="off" aria-label={uiText(language)('browserConnectionSettings.pairingCode')} />
             </label>
@@ -170,7 +170,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
               ? (uiText(language)('browserConnectionSettings.aLegacyExternalRegistrationRemainsExitAll'))
               : status.cleanupWarning}</p>
             {status.cleanupWarning === 'legacy_external_registration' && <button className="secondary-button compact" type="button"
-              onClick={() => void run('legacy-cleanup', async () => { await connector?.copyLegacyChromeConnectorCleanup(); setCleanupCopied(true); })}>
+              onClick={() => void run('legacy-cleanup', async () => { await connector?.copyLegacyBrowserConnectorCleanup(); setCleanupCopied(true); })}>
               {cleanupCopied ? (uiText(language)('browserConnectionSettings.copiedRunInPowershell')) : (uiText(language)('browserConnectionSettings.copyLegacyCleanupCommand'))}
             </button>}
           </div>}

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { WebSocket, createWebSocketStream } from 'ws';
-import { connectorProof } from '../../dist-electron/chromeConnectorWebSocket.js';
+import { connectorProof } from '../../dist-electron/browserConnectorWebSocket.js';
 
 export const extensionOrigin = 'chrome-extension://iibaamkfgackofhhpadgnmgcjkhckeln';
 export async function pairedClient(code, options = {}) {

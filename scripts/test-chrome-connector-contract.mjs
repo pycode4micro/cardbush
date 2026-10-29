@@ -7,8 +7,8 @@ import path from 'node:path';
 import { BUSH_MCP_SNAPSHOT_PROTOCOL } from '@cardbush/bush-protocol';
 import { McpClientManager } from '@cardbush/bush-mcp-client';
 import { ToolExecutionCoordinator, ToolRegistry } from '@cardbush/bush-runtime';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
-import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
+import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 import { pairedClient } from './helpers/chrome-paired-client.mjs';
 
 const extensionRoot = path.resolve('assets', 'plugins', 'chrome', 'extension');
@@ -39,22 +39,22 @@ assert.match(background, /PENDING_AUTHORIZATIONS_STORAGE_KEY/);
 assert.match(background, /chrome\.alarms\.create\(RECONNECT_ALARM/);
 assert.doesNotMatch(background, /DevToolsActivePort|--remote-debugging-port|launch\(/);
 
-const registration = await readFile(path.resolve('electron', 'chromeConnectorRegistration.ts'), 'utf8');
+const registration = await readFile(path.resolve('electron', 'browserConnectorRegistration.ts'), 'utf8');
 assert.match(registration, /HKCU\\\\Software\\\\Google\\\\Chrome\\\\NativeMessagingHosts/);
 assert.doesNotMatch(registration, /reg\(\['add'/);
 
 const runtimeWorker = await readFile(path.resolve('electron', 'runtimeHostWorker.mts'), 'utf8');
-assert.match(runtimeWorker, /appsConfig\.chromeConnectionMode === 'remote_debugging'/);
+assert.match(runtimeWorker, /appsConfig\.browserConnectionMode === 'remote_debugging'/);
 assert.match(runtimeWorker, /permission: remoteDebugging \? 'ask' : 'allow'/);
 
 const electronMain = await readFile(path.resolve('electron', 'main.ts'), 'utf8');
 assert.match(electronMain, /activeChromeTurns\.add\(turnKey\)/);
 assert.match(electronMain, /activeChromeTurns\.has\(turnKey\)/);
 assert.match(electronMain, /suspendBrowserSession\(event\.sessionId\)/);
-assert.doesNotMatch(electronMain, /chromeConnectorBroker\?\.suspendAll/);
+assert.doesNotMatch(electronMain, /browserConnectorBroker\?\.suspendAll/);
 
 const root = await mkdtemp(path.join(tmpdir(), 'cardbush-chrome-connector-'));
-const broker = new ChromeConnectorBroker(root, { nativeHostPath: packagedRoot
+const broker = new BrowserConnectorBroker(root, { nativeHostPath: packagedRoot
   ? path.join(packagedRoot, 'resources/chrome-native-host/CardBushBrowserHost.exe')
   : path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') });
 let extension;
@@ -82,7 +82,7 @@ try {
 
   const directScope = { scopeId: 'direct-contract', scopeTitle: 'Direct contract' };
   let timings;
-  const pending = requestChromeConnector('tabs.list', directScope, { configPath: broker.configPath, onDiagnostics: value => { timings = value; } });
+  const pending = requestBrowserConnector('tabs.list', directScope, { configPath: broker.configPath, onDiagnostics: value => { timings = value; } });
   const request = await messages.next();
   assert.equal(request.value.type, 'request');
   assert.equal(request.value.method, 'tabs.list');
@@ -102,7 +102,7 @@ try {
   assert.ok(timings.stages.some(item => item.stage === 'extension_received'));
   assert.ok(!JSON.stringify(timings).includes(config.token));
 
-  const stalled = requestChromeConnector('debugger.command', { ...directScope, tabId: 42, command: 'Page.captureScreenshot' },
+  const stalled = requestBrowserConnector('debugger.command', { ...directScope, tabId: 42, command: 'Page.captureScreenshot' },
     { configPath: broker.configPath, timeoutMs: 250 }).then(() => assert.fail('Expected a timeout'), error => error);
   const stalledRequest = (await messages.next()).value;
   extension.write(`${JSON.stringify({ type: 'progress', clientId: stalledRequest.clientId, id: stalledRequest.id, stage: 'command_pending' })}\n`);

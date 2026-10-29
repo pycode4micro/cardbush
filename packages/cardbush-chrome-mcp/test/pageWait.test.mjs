@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { waitForPage, waitSchema } from '../dist/pageWait.js';
-import { createCardbushChromeServer } from '../dist/index.js';
-import { ChromeConnectorError } from '../dist/bridgeClient.js';
+import { createCardbushBrowserServer } from '../dist/index.js';
+import { BrowserConnectorError } from '../dist/bridgeClient.js';
 
 test('one wait entry validates unambiguous bounded conditions and exact state types', () => {
   for (const input of [{}, {text:'x',conditions:[{kind:'text',text:'x'}]},
@@ -65,11 +65,11 @@ test('a missing initial target is not proof of disappearance, and child-frame na
 
 test('public wait propagates its remaining budget into CDP requests and keeps last evidence on connector timeout', async () => {
   const budgets=[];
-  const server=createCardbushChromeServer({connector:async(method,params,options)=>{
+  const server=createCardbushBrowserServer({connector:async(method,params,options)=>{
     if(method==='tabs.list')return [{id:42,active:true}];
     assert.equal(method,'debugger.command');budgets.push(options.timeoutMs);
     if(budgets.length===1)return {result:{value:false}};
-    throw new ChromeConnectorError('browser_connector_timeout','Delayed response', { stage: 'command_pending' });
+    throw new BrowserConnectorError('browser_connector_timeout','Delayed response', { stage: 'command_pending' });
   }});
   const context={mcpReq:{signal:new AbortController().signal,_meta:{cardbush_session_id:'bounded-wait'}}};
   try {
@@ -96,11 +96,11 @@ test('an elapsed deadline never sends another polling request, including within 
 
 test('waits preserve permission, offline and cancellation errors instead of relabelling them as timeouts', async () => {
   for (const code of ['site_permission_required', 'browser_unavailable']) {
-    const error = new ChromeConnectorError(code, 'Original cause');
+    const error = new BrowserConnectorError(code, 'Original cause');
     await assert.rejects(waitForPage(async () => { throw error; }, waitSchema.parse({text:'ready'})), value => value === error);
   }
   const abort = new AbortController();
   await assert.rejects(waitForPage(async () => {
-    abort.abort(); throw new ChromeConnectorError('browser_connector_timeout', 'Delayed abort');
+    abort.abort(); throw new BrowserConnectorError('browser_connector_timeout', 'Delayed abort');
   }, waitSchema.parse({text:'ready'}), abort.signal), {name:'AbortError'});
 });

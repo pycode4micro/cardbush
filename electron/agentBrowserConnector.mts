@@ -2,9 +2,9 @@ import { readFile, stat, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { ChromeConnectorBroker } from './chromeConnectorBroker.js';
+import { BrowserConnectorBroker } from './browserConnectorBroker.js';
 import { SharedBrowserConnector, type BrowserConnectorHandle } from './sharedBrowserConnector.js';
-import { connectorDirectory, assertConnectorFile } from './chromeConnectorFiles.js';
+import { connectorDirectory, assertConnectorFile } from './browserConnectorFiles.js';
 import { writePrivateJson } from './atomicJsonFile.mjs';
 import { redactTroubleshootingText } from './pluginTroubleshooting.mjs';
 
@@ -77,7 +77,7 @@ export class AgentBrowserConnector {
           : join(installation, 'dist-native', 'chrome-connector', 'CardBushBrowserHost.exe');
         if (process.platform === 'win32' && !await stat(nativeHostPath).then(file => file.isFile(), () => false))
           throw Error('Agent browser connector component is missing. Install the complete Agent package.');
-        const broker = this.shared ? new SharedBrowserConnector(this.root, nativeHostPath, join(this.configurationRoot, 'config', 'apps.json')) : new ChromeConnectorBroker(this.root, { nativeHostPath });
+        const broker = this.shared ? new SharedBrowserConnector(this.root, nativeHostPath, join(this.configurationRoot, 'config', 'apps.json')) : new BrowserConnectorBroker(this.root, { nativeHostPath });
         try { await broker.start();
           if (broker instanceof SharedBrowserConnector && this.legacyRoot) await broker.importLegacy(this.legacyRoot);
           this.#broker = broker; }

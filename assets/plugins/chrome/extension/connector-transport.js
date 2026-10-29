@@ -1,6 +1,6 @@
 // This transport deliberately exposes the small Port API used by browser
 // operations, keeping authorization and tab isolation independent of transport.
-// Shared with electron/chromeConnectorConstants.ts; only these loopback
+// Shared with electron/browserConnectorConstants.ts; only these loopback
 // endpoints and the saved pairing endpoint may be tried.
 const CONNECTOR_DISCOVERY_PORTS = Object.freeze(Array.from({ length: 32 }, (_, index) => 43120 + index * 137));
 // Chromium delays new WebSockets by up to 5 s after failed connections. A 1 s
@@ -122,20 +122,27 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
   }
   throw problem('connector_unavailable');
 }
-function createConnectorPort(pairing, { attemptTimeoutMs = CONNECTOR_ATTEMPT_TIMEOUT_MS } = {}) {
+function createConnectorPort(pairing, { attemptTimeoutMs,
+  openTimeoutMs = attemptTimeoutMs ?? CONNECTOR_ATTEMPT_TIMEOUT_MS,
+  handshakeTimeoutMs = attemptTimeoutMs ?? 3000,
+  authenticationTimeoutMs = attemptTimeoutMs ?? 3000,
+  discover = true, onDiscovery = () => {} } = {}) {
   const messages = new Set(), disconnects = new Set();
   const attempts = new Set();
   let socket = null, endpointPort = null, closed = false, ready = false, heartbeat;
   let lastHeartbeat = Date.now();
+  let diagnostic = { phase: 'opening', code: '', endpoint: pairing.port };
+  const endpointBudget = openTimeoutMs + handshakeTimeoutMs + authenticationTimeoutMs;
   const closeSocket = candidate => {
     if (!candidate) return;
-    candidate.onmessage = null; candidate.onclose = null; candidate.onerror = () => {};
+    candidate.onopen = null; candidate.onmessage = null; candidate.onclose = null; candidate.onerror = () => {};
     try { candidate.close(); } catch { /* Already closed or still connecting. */ }
   };
   const port = {
     // One saved endpoint, then at most four bounded discovery probes per round.
     // The worker's outer watchdog must not cancel this transport prematurely.
-    connectionTimeoutMs: (1 + Math.ceil(CONNECTOR_DISCOVERY_PORTS.length / 4)) * attemptTimeoutMs + 1000,
+    connectionTimeoutMs: (1 + (discover ? Math.ceil(CONNECTOR_DISCOVERY_PORTS.length / 4) : 0)) * endpointBudget + 1000,
+    get diagnostics() { return { ...diagnostic }; },
     onMessage: { addListener: callback => messages.add(callback) },
     onDisconnect: { addListener: callback => disconnects.add(callback) },
     get endpointPort() { return ready ? endpointPort : null; },
@@ -157,26 +164,35 @@ function createConnectorPort(pairing, { attemptTimeoutMs = CONNECTOR_ATTEMPT_TIM
   };
   const tryEndpoint = (candidatePort, browser) => new Promise(resolve => {
     if (closed || ready) { resolve(false); return; }
-    let candidate, finished = false, challengeSeen = false, serverVerified = false;
-    const finish = success => {
+    let candidate, timer, finished = false, challengeSeen = false, serverVerified = false;
+    let phase = 'opening';
+    const deadline = (nextPhase, ms) => {
+      phase = nextPhase;
+      diagnostic = { phase, code: '', endpoint: candidatePort };
+      clearTimeout(timer);
+      timer = setTimeout(() => finish(false, `connector_${phase}_timeout`), ms);
+    };
+    const finish = (success, code = '') => {
       if (finished) return;
       finished = true; clearTimeout(timer); attempts.delete(cancel);
+      if (!ready || success) diagnostic = { phase: success ? 'ready' : phase, code, endpoint: candidatePort };
       if (!success) closeSocket(candidate);
       resolve(success);
     };
     const cancel = () => finish(false);
-    const timer = setTimeout(cancel, attemptTimeoutMs);
+    deadline('opening', openTimeoutMs);
     attempts.add(cancel);
     void (async () => {
       const nonce = connectorHex(crypto.getRandomValues(new Uint8Array(32)));
       const proof = await connectorHmac(pairing.secret, `upgrade:${pairing.id}:${nonce}`);
       if (closed || ready || finished) { finish(false); return; }
       candidate = new WebSocket(`ws://127.0.0.1:${candidatePort}/connect`, ['cardbush-v2', `auth.${pairing.id}.${nonce}.${proof}`]);
+      candidate.onopen = () => { if (!finished && !closed) deadline('handshake', handshakeTimeoutMs); };
       // Unknown services and other CardBush users cannot authenticate with this
       // pairing. A failed candidate never receives browser data or commands.
       candidate.onerror = candidate.onclose = () => {
         if (ready && socket === candidate) fail('connector_disconnected', 'CardBush 连接已断开，等待自动重连。');
-        else finish(false);
+        else finish(false, `connector_${phase}_failed`);
       };
       candidate.onmessage = event => { void (async () => {
         if (closed || (finished && socket !== candidate)) return;
@@ -190,6 +206,7 @@ function createConnectorPort(pairing, { attemptTimeoutMs = CONNECTOR_ATTEMPT_TIM
           const proof = await connectorHmac(pairing.secret, `client:${transcript}:${browser}`);
           if (closed || ready || finished) return;
           serverVerified = true;
+          deadline('authentication', authenticationTimeoutMs);
           candidate.send(JSON.stringify({ type: 'authenticate', browser, proof }));
           return;
         }
@@ -209,14 +226,15 @@ function createConnectorPort(pairing, { attemptTimeoutMs = CONNECTOR_ATTEMPT_TIM
         for (const callback of messages) callback(message);
       })().catch(() => {
         if (ready && socket === candidate) fail('connector_handshake_failed', '连接校验未通过，未开放浏览器控制。请确认连接的是原来配对的 CardBush。');
-        else finish(false);
+        else finish(false, 'connector_authentication_failed');
       }); };
-    })().catch(() => finish(false));
+    })().catch(() => finish(false, `connector_${phase}_failed`));
   });
   void (async () => {
     const browser = connectorBrowser();
     if (await tryEndpoint(pairing.port, browser) || closed) return;
-    const candidates = CONNECTOR_DISCOVERY_PORTS.filter(value => value !== pairing.port);
+    const candidates = discover ? CONNECTOR_DISCOVERY_PORTS.filter(value => value !== pairing.port) : [];
+    if (candidates.length) onDiscovery();
     let next = 0;
     // At most four probes at once, each with a deadline. Reconnect backoff is
     // owned by the background worker, so unavailable services never spin.

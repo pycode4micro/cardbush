@@ -60,7 +60,7 @@ restarts in `chrome.storage.session`; unrelated downloads are not tracked.
 
 Production releases should publish reviewed extensions through the Chrome Web Store / Edge Add-ons.
 After the first store upload, copy the store public key into `manifest.json`
-and verify that its derived id matches `chromeConnectorExtensionId`; if the
+and verify that its derived id matches `browserConnectorExtensionId`; if the
 store id differs, update that constant and the exact WebSocket Origin check
 before shipping the desktop installer. Set
 `CARDBUSH_CHROME_CONNECTOR_STORE_URL` to the final listing URL so CardBush opens
@@ -99,13 +99,21 @@ still stops after three failures; opening the popup does not reset that limit.
 Connect explicitly retries the current target, including a pending local
 enrollment, without falling back to the old pairing. No browser action is replayed.
 Temporary disconnects do not require a new pairing code or another approval.
-Each connection attempt allows seven seconds, including Chromium's delayed
-WebSocket opening after earlier failures. The worker watchdog follows the bounded
-discovery budget; a healthy saved connection must not be cancelled by a shorter
-outer timeout. No extra retry timer or parallel discovery loop is added.
-`npm run test:chrome-reconnect-native` reproduces this with real Chrome in an
-isolated profile, exercising the GUI's connector lifecycle without restarting
-Chrome or asking for consent again. Chromium's delay calculation is defined in
+Version 1.5 separates socket opening (7 seconds), server identity verification
+(3 seconds), and authorization confirmation (3 seconds), with phase-specific
+diagnostics that contain no credentials. The watchdog covers the entire budget.
+Automatic recovery tries the saved address first; after a failure it may discover
+the same broker, at most once per five minutes across worker restarts. Discovery
+keeps its four-probe concurrency limit. A changed port during the cooldown can
+therefore take up to five minutes to find; explicit Retry bypasses that cooldown.
+One-shot alarm deadlines survive worker restarts, are clamped after clock changes,
+and are rearmed during a long handshake. The main popup action retries the saved
+connection; replacing a pairing is inside collapsed advanced settings.
+`npm run test:browser-reconnect-native` uses real Chrome and the full desktop
+process with isolated profiles. Add `-- --edge` for Edge. It covers normal exit,
+abrupt process termination, long outages, repeated restarts and a simulated OS
+resume notification, without reauthorizing. Physical suspend/resume still needs
+hardware testing. Chromium's delay calculation is defined in
 [websocket_throttler.cc](https://chromium.googlesource.com/chromium/src/+/main/services/network/websocket_throttler.cc).
 Debugger release does not wait for a stalled renderer command, so disconnect
 cleanup cannot prevent reconnection or an explicitly requested consent window.

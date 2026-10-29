@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 
 // Production has no arbitrary config injection. Exercise its actual boundary
 // without overwriting the user's registration or connecting to their browser.
@@ -28,7 +28,7 @@ assert.equal(rejected.status, 2);
 assert.equal(rejected.stdout.readUInt32LE(0), rejected.stdout.length - 4);
 assert.equal(JSON.parse(rejected.stdout.subarray(4)).code, 'extension_origin_rejected');
 const root = await mkdtemp(path.join(tmpdir(), 'cardbush-production-host-'));
-const broker = new ChromeConnectorBroker(root, { nativeHostPath: executable });
+const broker = new BrowserConnectorBroker(root, { nativeHostPath: executable });
 try {
   await broker.start(); // Sets and reads back real Windows directory/pipe ACLs.
   assert.equal(broker.status().bridgeRunning, true);

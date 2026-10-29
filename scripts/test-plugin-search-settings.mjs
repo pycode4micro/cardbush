@@ -5,7 +5,7 @@ import { join, resolve, sep } from 'node:path';
 import { CardbushAppsConfigStore, readCardbushSearchResultLimit } from '@cardbush/product-host';
 import { InMemoryRuntimeHost, modelToolDefinitions, registerMcpDiscovery, registerSkillTools, ToolRegistry } from '@cardbush/bush-runtime';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
-import { createCardbushChromeServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
+import { createCardbushBrowserServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
 
 test('the shipped Browser Use catalog can be discovered for web research without a search-specific plugin', async () => {
   const registry = new ToolRegistry(); registerMcpDiscovery(registry);
@@ -15,7 +15,7 @@ test('the shipped Browser Use catalog can be discovered for web research without
     decodeInput: input => input, execute: () => { throw Error('Discovery must not execute tools'); },
     mcpHook: { server, tool: name, call: async () => { throw Error('No network expected'); } },
   });
-  const browser = createCardbushChromeServer({ connector: async () => { throw Error('No browser connection expected'); } });
+  const browser = createCardbushBrowserServer({ connector: async () => { throw Error('No browser connection expected'); } });
   for (const [name, tool] of Object.entries(browser._registeredTools)) add('browser_use', name, tool.description);
   add('blender', 'search_api_docs', 'Full-text search over the bundled Blender Python API reference. Returns a ranked list of hits.');
   add('blender', 'get_object_summary', 'Return the current object and its properties for the scene.');

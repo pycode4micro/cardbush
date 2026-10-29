@@ -123,14 +123,14 @@ if (coreSettings) {
     Object.assign(window.cardbushDesktop,{
       readBrowserConfiguration:async()=>structuredClone(fixtureBrowser),
       updateBrowserConfiguration:async input=>{fixtureBrowser={...fixtureBrowser,startPage:input.startPage,revision:fixtureBrowser.revision+1};return structuredClone(fixtureBrowser)},
-      chromeConnectorStatus:async()=>structuredClone(window.fixtureConnector),
-      setupChromeConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:true,lifecycleState:'enabled',bridgeRegistered:false,bridgeRunning:true});window.connectorActions.push('enable')},
-      pairChromeConnector:async input=>{window.connectorActions.push('pair');window.lastPairInput=input;return {code:'CB2.45678.fixture-secret',id:'c'.repeat(32),browser:input.browser,expiresAt:new Date(Date.now()+300000).toISOString()}},
+      browserConnectorStatus:async()=>structuredClone(window.fixtureConnector),
+      setupBrowserConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:true,lifecycleState:'enabled',bridgeRegistered:false,bridgeRunning:true});window.connectorActions.push('enable')},
+      pairBrowserConnector:async input=>{window.connectorActions.push('pair');window.lastPairInput=input;return {code:'CB2.45678.fixture-secret',id:'c'.repeat(32),browser:input.browser,expiresAt:new Date(Date.now()+300000).toISOString()}},
       selectDefaultBrowserConnection:async id=>{window.fixtureConnector.defaultConnectionId=id;window.connectorActions.push('default');return structuredClone(fixtureConnector)},
       revokeBrowserConnection:async id=>{window.fixtureConnector.connections=fixtureConnector.connections.filter(connection=>connection.id!==id);window.connectorActions.push('revoke');return structuredClone(fixtureConnector)},
-      copyLegacyChromeConnectorCleanup:async()=>{window.connectorActions.push('legacy-cleanup')},
-      disableChromeConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:false,lifecycleState:'disabled',bridgeRegistered:false,bridgeRunning:false,extensionConnected:false,connections:[],defaultConnectionId:''});window.connectorActions.push('disable')},
-      removeChromeConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:false,lifecycleState:'disabled',bridgeRegistered:false,bridgeRunning:false,extensionConnected:false,connections:[],defaultConnectionId:''});window.connectorActions.push('remove')},
+      copyLegacyBrowserConnectorCleanup:async()=>{window.connectorActions.push('legacy-cleanup')},
+      disableBrowserConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:false,lifecycleState:'disabled',bridgeRegistered:false,bridgeRunning:false,extensionConnected:false,connections:[],defaultConnectionId:''});window.connectorActions.push('disable')},
+      removeBrowserConnector:async()=>{Object.assign(window.fixtureConnector,{connectorEnabled:false,lifecycleState:'disabled',bridgeRegistered:false,bridgeRunning:false,extensionConnected:false,connections:[],defaultConnectionId:''});window.connectorActions.push('remove')},
     });
     window.fixtureConnector={connectorEnabled:true,lifecycleState:'enabled',platformSupported:true,nativeHostAvailable:true,extensionConnected:true,bridgeRegistered:true,bridgeRunning:true,activeTabTitle:'当前授权页面',controlledTabCount:1};
     window.fixtureConnections=[{id:'a'.repeat(32),browser:'chrome',label:'Chrome 工作账号',connected:true,controlledTabCount:1},{id:'b'.repeat(32),browser:'edge',label:'Edge 个人账号',connected:true,controlledTabCount:0}];

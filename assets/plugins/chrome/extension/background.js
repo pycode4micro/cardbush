@@ -12,6 +12,7 @@ const SCREENSHOT_TIMEOUT_MS = 25_000;
 const RECONNECT_ALARM = 'cardbush-native-reconnect';
 const RECONNECT_DELAY_MINUTES = 0.5;
 const MAX_CONNECTION_ATTEMPTS = 3;
+const DISCOVERY_COOLDOWN_MS = 5 * 60_000;
 const RECONNECT_STATE_KEY = 'cardbushNativeReconnect';
 const CONNECTOR_ENABLED_KEY = 'cardbushConnectorEnabled';
 let connectorEnabled = false;
@@ -39,6 +40,9 @@ let connectionFailures = 0;
 let fastReconnectTimer = null;
 let reconnectPaused = false;
 let reconnectWaiting = false;
+let nextRetryAt = 0;
+let nextDiscoveryAt = 0;
+let connectionDiagnostic = null;
 let hasReconnectPairing = false;
 let pairingRequired = false;
 let activeScope = null;
@@ -64,7 +68,13 @@ chrome.runtime.onInstalled.addListener(() => { void reconnectReady.then(() => co
 chrome.runtime.onStartup.addListener(() => { void reconnectReady.then(() => connectNative()); });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === RECONNECT_ALARM) void reconnectReady.then(() => {
+    if (nativePort && !nativeReady) {
+      armReconnectAlarm();
+      void persistReconnectState();
+      return;
+    }
     reconnectWaiting = false;
+    nextRetryAt = 0;
     return connectNative();
   });
 });
@@ -135,6 +145,7 @@ async function connectNative(manual = false, requestLocal) {
     connectionFailures = 0;
     reconnectPaused = false;
     reconnectWaiting = false;
+    nextRetryAt = 0;
     pairingRequired = false;
     void persistReconnectState();
   }
@@ -157,8 +168,17 @@ async function connectNative(manual = false, requestLocal) {
     }
     else pairing = await automaticConnectorPairing(epoch);
     if (epoch !== connectionEpoch || !connectorEnabled || nativePort) return;
-    void chrome.alarms.create(RECONNECT_ALARM, { delayInMinutes: RECONNECT_DELAY_MINUTES });
-    const port = createConnectorPort(pairing);
+    armReconnectAlarm();
+    // Ordinary restarts only need the remembered endpoint. Discover after one
+    // failure, then at most once per five minutes across worker restarts.
+    const port = createConnectorPort(pairing, {
+      discover: manual || (connectionFailures > 0 && Date.now() >= nextDiscoveryAt),
+      onDiscovery() {
+        if (epoch !== connectionEpoch || !connectorEnabled) return;
+        nextDiscoveryAt = Date.now() + DISCOVERY_COOLDOWN_MS;
+        void persistReconnectState();
+      },
+    });
     nativePort = port;
     nativeReady = false;
     lastError = '';
@@ -180,6 +200,8 @@ async function connectNative(manual = false, requestLocal) {
         connectionFailures = 0;
         reconnectPaused = false;
         reconnectWaiting = false;
+        nextRetryAt = 0;
+        connectionDiagnostic = null;
         void chrome.alarms.clear(RECONNECT_ALARM);
         pairingRequired = false;
         void persistConnectorEndpoint(pairing, port, epoch).catch(() => {
@@ -190,6 +212,7 @@ async function connectNative(manual = false, requestLocal) {
         return;
       }
       if (message?.type === 'connector_error') {
+        connectionDiagnostic = port.diagnostics ?? null;
         if (nativeReady && message.code === 'cardbush_command_too_large') {
           // A rejected command does not close the authenticated native bridge.
           lastError = String(message.message || message.code);
@@ -222,6 +245,7 @@ async function connectNative(manual = false, requestLocal) {
       clearTimeout(handshakeTimer);
       if (nativePort !== port) return;
       lastError = connectionError || disconnectError || 'CardBush 暂时离线，等待自动重连。';
+      connectionDiagnostic = port.diagnostics ?? connectionDiagnostic;
       nativePort = null;
       nativeReady = false;
       suspendDisconnectedControl();
@@ -331,16 +355,22 @@ function scheduleReconnect() {
   const exhausted = connectionFailures >= MAX_CONNECTION_ATTEMPTS;
   reconnectWaiting = exhausted && hasReconnectPairing && !localConnectionRequested;
   reconnectPaused = exhausted && !reconnectWaiting;
+  if (reconnectPaused) {
+    nextRetryAt = 0; void persistReconnectState();
+    void chrome.alarms.clear(RECONNECT_ALARM); return;
+  }
+  armReconnectAlarm();
   void persistReconnectState();
-  if (reconnectPaused) { void chrome.alarms.clear(RECONNECT_ALARM); return; }
-  void chrome.alarms.create(RECONNECT_ALARM, {
-    delayInMinutes: RECONNECT_DELAY_MINUTES,
-  });
   if (reconnectWaiting) return;
   // Timers make a quick app restart responsive while the worker is alive. The
   // persisted alarm remains armed if Chrome suspends the worker or a timer.
   const delayMs = 1000 * 2 ** (connectionFailures - 1);
   fastReconnectTimer = setTimeout(() => { fastReconnectTimer = null; void connectNative(); }, delayMs);
+}
+
+function armReconnectAlarm(when = Date.now() + RECONNECT_DELAY_MINUTES * 60_000) {
+  nextRetryAt = when;
+  void chrome.alarms.create(RECONNECT_ALARM, { when });
 }
 
 function suspendDisconnectedControl() {
@@ -361,6 +391,12 @@ async function restoreReconnectState() {
   connectorEnabled = preference[CONNECTOR_ENABLED_KEY] !== false;
   pairingRequired = !connectorEnabled && !preference[PAIRING_KEY];
   const state = preference[RECONNECT_STATE_KEY] ?? saved[RECONNECT_STATE_KEY];
+  // Clamp clocks moved backwards and malformed persisted data. Waking a worker
+  // must not repeatedly postpone an already scheduled recovery.
+  const now = Date.now();
+  nextDiscoveryAt = Number.isFinite(state?.nextDiscoveryAt)
+    ? Math.min(state.nextDiscoveryAt, now + DISCOVERY_COOLDOWN_MS) : 0;
+  connectionDiagnostic = state?.diagnostic ?? null;
   localConnectionRequested = state?.localConnectionRequested === true;
   try { hasReconnectPairing = Boolean(preference[PAIRING_KEY] && parseConnectorPairing(preference[PAIRING_KEY])); }
   catch { hasReconnectPairing = false; }
@@ -375,13 +411,18 @@ async function restoreReconnectState() {
   reconnectPaused = exhausted && !reconnectWaiting;
   if (typeof state.lastError === 'string') lastError = state.lastError.slice(0, 1600);
   if (reconnectPaused) await chrome.alarms.clear(RECONNECT_ALARM);
-  else if (reconnectWaiting) await chrome.alarms.create(RECONNECT_ALARM, { delayInMinutes: RECONNECT_DELAY_MINUTES });
+  else if (reconnectWaiting) {
+    const due = Number.isFinite(state.nextRetryAt) ? state.nextRetryAt : now + RECONNECT_DELAY_MINUTES * 60_000;
+    armReconnectAlarm(Math.max(now, Math.min(due, now + RECONNECT_DELAY_MINUTES * 60_000)));
+    await persistReconnectState();
+  }
 }
 
 async function disableConnector(forgetPairing = false) {
   await reconnectReady;
   connectorEnabled = false;
   reconnectWaiting = false;
+  nextRetryAt = 0;
   connectionEpoch++;
   pairingController?.abort();
   clearTimeout(fastReconnectTimer); fastReconnectTimer = null;
@@ -438,6 +479,7 @@ function persistReconnectState() {
   const epoch = connectionEpoch;
   const state = {
     failures: connectionFailures, lastError: lastError.slice(0, 1600), localConnectionRequested,
+    nextRetryAt, nextDiscoveryAt, diagnostic: connectionDiagnostic,
   };
   const operation = connectorPreferenceQueue.catch(() => {}).then(async () => {
     if (epoch === connectionEpoch) await chrome.storage.local.set({ [RECONNECT_STATE_KEY]: state });
@@ -1144,6 +1186,9 @@ async function popupState(preferredScopeId = '') {
     localConnectionRequested,
     requestingLocalConnection: localConnectionRequestEpoch === connectionEpoch,
     reconnectPaused,
+    reconnectWaiting,
+    nextRetryAt,
+    connectionDiagnostic: nativePort?.diagnostics ?? connectionDiagnostic,
     allowAllSites: stored.allowAllSites === true,
     allowedSiteCount: allowedOrigins.length,
     nativeConnecting: (nativePort != null || connectingEpoch === connectionEpoch) && !nativeReady && !lastError,

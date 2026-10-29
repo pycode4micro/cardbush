@@ -5,8 +5,8 @@ import type { Socket } from 'node:net';
 import path from 'node:path';
 import { uiText } from '@cardbush/platform/i18n';
 import { WebSocket, WebSocketServer } from 'ws';
-import { chromeConnectorDiscoveryPorts, chromeConnectorExtensionId, chromeConnectorProtocol } from './chromeConnectorConstants';
-import { assertConnectorFile, writeConnectorFile } from './chromeConnectorFiles';
+import { browserConnectorDiscoveryPorts, browserConnectorExtensionId, browserConnectorProtocol } from './browserConnectorConstants';
+import { assertConnectorFile, writeConnectorFile } from './browserConnectorFiles';
 
 export type ConnectorBrowser = 'chrome' | 'edge';
 export type BrowserConnection = { id: string; browser: ConnectorBrowser; label: string };
@@ -33,7 +33,7 @@ function matches(proof: string, expected: string): boolean {
 
 /** Authenticated extension transport. First connection uses browser-owned consent
  * and key agreement; existing credentials never travel over the wire. */
-export class ChromeConnectorWebSocket {
+export class BrowserConnectorWebSocket {
   readonly #file: string;
   readonly #server = http.createServer({ maxHeaderSize: 8192 }, (_request, response) => {
     response.writeHead(404, { Connection: 'close' }); response.end();
@@ -80,7 +80,7 @@ export class ChromeConnectorWebSocket {
       if (!this.#running || request.method !== 'GET'
         || request.headers.host !== `127.0.0.1:${this.#port}`
         || request.socket.remoteAddress !== '127.0.0.1') return reject('invalid_endpoint');
-      if (request.headers.origin !== `chrome-extension://${chromeConnectorExtensionId}`) return reject('extension_origin_mismatch');
+      if (request.headers.origin !== `chrome-extension://${browserConnectorExtensionId}`) return reject('extension_origin_mismatch');
       if (this.#ws.clients.size >= 16) return reject('connection_limit');
       const protocols = request.headers['sec-websocket-protocol']?.split(',').map(value => value.trim());
       if (request.url === '/request-connection' && this.options.allowLocalPairing && protocols?.length === 1
@@ -145,8 +145,8 @@ export class ChromeConnectorWebSocket {
     // broker must migrate old arbitrary ports into it; paired extensions can
     // authenticate discovery with the same credentials. Remote/manual-only
     // brokers retain their saved endpoint.
-    const migratePort = Boolean(this.options.allowLocalPairing && savedPort && !chromeConnectorDiscoveryPorts.includes(savedPort));
-    const candidates = [...new Set([...(savedPort && !migratePort ? [savedPort] : []), ...chromeConnectorDiscoveryPorts])];
+    const migratePort = Boolean(this.options.allowLocalPairing && savedPort && !browserConnectorDiscoveryPorts.includes(savedPort));
+    const candidates = [...new Set([...(savedPort && !migratePort ? [savedPort] : []), ...browserConnectorDiscoveryPorts])];
     let savedPortError: ConnectorPortRecovery['reason'] | undefined = migratePort ? 'discovery_migration' : undefined;
     let lastError: unknown;
     for (const port of candidates) {
@@ -352,7 +352,7 @@ export class ChromeConnectorWebSocket {
       } catch { this.#observe('rejected', 'handshake_failed', candidate.id); client.terminate(); }
     };
     client.on('message', authenticate);
-    client.send(JSON.stringify({ type: 'challenge', protocol: chromeConnectorProtocol, nonce: serverNonce,
+    client.send(JSON.stringify({ type: 'challenge', protocol: browserConnectorProtocol, nonce: serverNonce,
       proof: connectorProof(candidate.secret, `server:${transcript}`) }));
   }
 }

@@ -24,7 +24,7 @@ async function popup(initialState) {
     });
     return nodes.get(id);
   };
-  const actions = ['pair', 'reconnect', 'allow_once', 'allow_site', 'allow_all', 'disconnect', 'disable_connector', 'revoke'];
+  const actions = ['pair', 'reconnect', 'request_local_connection', 'allow_once', 'allow_site', 'allow_all', 'disconnect', 'disable_connector', 'revoke'];
   const buttons = actions.map(action => Object.assign(element(action), { dataset: { action } }));
   let state = initialState, reloads = 0, tick;
   const messages = [];
@@ -67,7 +67,9 @@ test('old cached workers prompt reload instead of re-pairing or claiming auto-re
 test('matching builds retain normal reconnect and saved authorization display', async () => {
   const f = await popup({ ...offline, runtimeBuild: 'current-build', allowAllSites: true });
   assert.equal(f.element('#extension-update').hidden, true);
-  assert.match(f.element('#connection').textContent, /有限重试/);
+  assert.match(f.element('#connection').textContent, /恢复已保存的连接/);
+  assert.equal(f.element('reconnect').textContent, '重试已保存的连接');
+  assert.equal(f.element('#pairing-details').open, false);
   assert.match(f.element('#site-access').textContent, /已保存：允许/);
   await f.reload();
   assert.equal(f.reloads, 0);
@@ -89,6 +91,25 @@ test('reload rechecks live connection state instead of interrupting a newly esta
   f.setState({ ...offline, controlledTabCount: 1 });
   await f.refresh();
   assert.equal(f.element('#reload-extension').disabled, true);
+});
+
+test('offline recovery describes the saved connection and leaves re-pairing in collapsed advanced settings', async () => {
+  const f = await popup({ ...offline, runtimeBuild:'current-build', reconnectWaiting:true, nextRetryAt:Date.now()+30000 });
+  assert.match(f.element('#connection').textContent, /无需再次授权/);
+  assert.equal(f.element('#pairing-details').open, false);
+  assert.equal(f.element('request_local_connection').textContent, '重新配对本机连接');
+  assert.match(f.element('#local-connection-repair-help').textContent, /普通退出、重启/);
+  for (const [phase, text] of [['opening','已保存'],['handshake','校验'],['authentication','身份已验证']]) {
+    f.setState({ ...offline, runtimeBuild:'current-build', nativeConnecting:true, connectionDiagnostic:{phase} });
+    await f.refresh();
+    assert.match(f.element('#connection').textContent, new RegExp(text));
+    assert.equal(f.element('reconnect').disabled, true);
+    assert.equal(f.element('request_local_connection').disabled, true);
+  }
+  f.context.document.documentElement.lang='en-US';
+  await f.refresh();
+  assert.match(f.element('#connection').textContent, /identity verified/);
+  assert.match(f.element('reconnect').textContent, /Retry saved connection/);
 });
 
 test('failed status checks never reload blindly', async () => {

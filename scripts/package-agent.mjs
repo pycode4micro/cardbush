@@ -14,7 +14,7 @@ const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/
   'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
   'dist-electron/agentService.mjs', 'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs',
   'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs',
-  'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectorProfile.js', 'dist-electron/chromeConnectorBroker.js', 'dist-electron/chromeConnectorFiles.js', 'dist-electron/chromeConnectorWebSocket.js', 'dist-electron/chromeConnectorConstants.js',
+  'dist-electron/agentBrowserConnector.mjs', 'dist-electron/sharedBrowserConnector.js', 'dist-electron/browserConnectorProfile.js', 'dist-electron/browserConnectorBroker.js', 'dist-electron/browserConnectorFiles.js', 'dist-electron/browserConnectorWebSocket.js', 'dist-electron/browserConnectorConstants.js',
   'deploy/agent/install-windows-desktop.ps1',
   'deploy/agent/README.md', 'assets/skills/cardbush-docs/SKILL.md',
   'assets/skills/cardbush-docs/references/agent-deploy.md', 'assets/skills/cardbush-docs/references/agent-deployment.md',

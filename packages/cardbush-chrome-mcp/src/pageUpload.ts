@@ -1,7 +1,7 @@
 import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
-import { ChromeConnectorError } from './bridgeClient.js';
+import { BrowserConnectorError } from './bridgeClient.js';
 import type { PageCommand } from './pageCapture.js';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -10,7 +10,7 @@ const object = (value: unknown): Record<string, unknown> => value && typeof valu
 export async function uploadFiles(command: PageCommand, input: { uid?: string; selector?: string; filePaths: string[] }, signal?: AbortSignal) {
   const files = await Promise.all(input.filePaths.map(async filePath => {
     if (!path.isAbsolute(filePath) || filePath.includes('\0')) {
-      throw new ChromeConnectorError('invalid_upload_path', 'Use absolute paths to existing files on this browser host.');
+      throw new BrowserConnectorError('invalid_upload_path', 'Use absolute paths to existing files on this browser host.');
     }
     const absolute = path.normalize(filePath);
     try {
@@ -19,7 +19,7 @@ export async function uploadFiles(command: PageCommand, input: { uid?: string; s
       await access(absolute, constants.R_OK);
       return { path: absolute, name: path.basename(absolute), size: info.size };
     } catch {
-      throw new ChromeConnectorError('upload_file_unavailable', `The upload file is not a readable regular file: ${absolute}`);
+      throw new BrowserConnectorError('upload_file_unavailable', `The upload file is not a readable regular file: ${absolute}`);
     }
   }));
   signal?.throwIfAborted();
@@ -35,7 +35,7 @@ export async function uploadFiles(command: PageCommand, input: { uid?: string; s
     const remote = object(input.uid ? resolved.object : resolved.result);
     if (typeof remote.objectId === 'string') objectId = remote.objectId;
     if (resolved.exceptionDetails || !objectId) {
-      throw new ChromeConnectorError('upload_target_missing', 'The upload target is missing or ambiguous. Inspect the page and choose one file input; hidden inputs can be selected with an observed CSS selector.');
+      throw new BrowserConnectorError('upload_target_missing', 'The upload target is missing or ambiguous. Inspect the page and choose one file input; hidden inputs can be selected with an observed CSS selector.');
     }
     const inspected = object(await command('Runtime.callFunctionOn', { objectId, returnByValue: true,
       functionDeclaration: `function() { return {
@@ -44,10 +44,10 @@ export async function uploadFiles(command: PageCommand, input: { uid?: string; s
       }; }` }));
     const control = object(object(inspected.result).value);
     if (inspected.exceptionDetails || !control.fileInput || !control.connected || control.disabled || control.directory) {
-      throw new ChromeConnectorError('upload_target_invalid', 'Choose a connected, enabled input[type=file]. Directory selection is not supported. For a native file dialog or custom control, use Computer Use on the same browser window, then verify the page.');
+      throw new BrowserConnectorError('upload_target_invalid', 'Choose a connected, enabled input[type=file]. Directory selection is not supported. For a native file dialog or custom control, use Computer Use on the same browser window, then verify the page.');
     }
     if (files.length > 1 && !control.multiple) {
-      throw new ChromeConnectorError('upload_multiple_not_allowed', 'This file input accepts one file. Select a single file or inspect a multiple-file input.');
+      throw new BrowserConnectorError('upload_multiple_not_allowed', 'This file input accepts one file. Select a single file or inspect a multiple-file input.');
     }
     signal?.throwIfAborted();
     try {
@@ -55,7 +55,7 @@ export async function uploadFiles(command: PageCommand, input: { uid?: string; s
       await command('DOM.setFileInputFiles', { objectId, files: files.map(file => file.path) });
     } catch (error) {
       if (signal?.aborted) throw error;
-      throw new ChromeConnectorError('upload_selection_unconfirmed',
+      throw new BrowserConnectorError('upload_selection_unconfirmed',
         'File selection could not be confirmed. It may already have reached the page; inspect its upload status before retrying or using Computer Use.',
         { execution: 'unknown', cause: error instanceof Error ? error.message : String(error) });
     }

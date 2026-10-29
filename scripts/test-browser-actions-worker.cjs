@@ -7,7 +7,7 @@ const directory = path.resolve(process.argv[2]);
 app.setPath('userData', path.join(directory, 'profile'));
 
 app.whenReady().then(async () => {
-  const { createCardbushChromeServer } = await import(pathToFileURL(path.resolve('packages/cardbush-chrome-mcp/dist/index.js')).href);
+  const { createCardbushBrowserServer } = await import(pathToFileURL(path.resolve('packages/cardbush-chrome-mcp/dist/index.js')).href);
   const window = new BrowserWindow({ show: false, width: 1000, height: 800, useContentSize: true,
     webPreferences: { contextIsolation: true, backgroundThrottling: false, offscreen: true } });
   let tests = 0;
@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
     await command('Emulation.setFocusEmulationEnabled', {enabled:true});
     const events = [], released = [];
     let failRelease = false;
-    const server = createCardbushChromeServer({ artifactsDirectory: path.join(directory, 'artifacts'), browserConfigPath: path.join(directory, 'browser.json'),
+    const server = createCardbushBrowserServer({ artifactsDirectory: path.join(directory, 'artifacts'), browserConfigPath: path.join(directory, 'browser.json'),
       connector: async (method, params) => {
         if (method === 'tabs.list') return [{ id: wc.id, active: true, title: 'Local fixture', url: wc.getURL() }];
         if (method === 'tabs.activate') return { id: wc.id, active: false, title: 'Local fixture', url: wc.getURL() };

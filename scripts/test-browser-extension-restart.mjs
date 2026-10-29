@@ -7,7 +7,7 @@ import net from 'node:net';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { WebSocket } from 'ws';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 import { extensionRoot } from './build-browser-extension.mjs';
 import { extensionOrigin } from './helpers/chrome-paired-client.mjs';
 
@@ -19,6 +19,7 @@ async function until(condition) {
 }
 
 function worker(local, browser, beforeLocalWrite = async () => {}, options = {}) {
+  let clockOffset = 0;
   assert.equal(typeof options.reachablePorts, 'function', 'fixture probes must never reach a user connector');
   const session = {}, timers = new Map(), alarms = new Map(), sockets = new Set(), attempts = [], consentWindows = [];
   const storage = data => ({
@@ -45,6 +46,7 @@ function worker(local, browser, beforeLocalWrite = async () => {}, options = {})
   // Only Chrome APIs and alarm scheduling are substituted. Execute the shipped
   // transport and background against a real loopback broker/HMAC handshake.
   const context = vm.createContext({ chrome, console, URL, TextEncoder, AbortController, crypto: webcrypto, structuredClone,
+    Date: class extends Date { static now() { return Date.now() + clockOffset; } },
     navigator: { userAgentData: { brands: [{ brand: browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome' }] } },
     WebSocket: class extends WebSocket {
       constructor(url, protocols) {
@@ -62,6 +64,7 @@ function worker(local, browser, beforeLocalWrite = async () => {}, options = {})
   vm.runInContext(fs.readFileSync(path.join(extensionRoot, 'background.js'), 'utf8'), context);
   const message = (value, sender) => new Promise(resolve => chrome.runtime.onMessage.listeners[0](value, sender, resolve));
   return { alarms, timers, local, attempts, consentWindows, message,
+    advanceClock(ms) { clockOffset += ms; },
     closeConsent() { chrome.windows.onRemoved.emit(1); },
     state: () => vm.runInContext('({ nativeReady, connected: nativePort !== null, connectorEnabled, connectionFailures, reconnectPaused, reconnectWaiting, runtimeBuild })', context),
     status: () => vm.runInContext('popupState()', context),
@@ -79,7 +82,7 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
     workers.forEach(w => w.stop()); brokers.forEach(b => b.stop()); await delay(40);
     fs.rmSync(root, { recursive: true, force: true });
   });
-  async function start() { const b = new ChromeConnectorBroker(root, { nativeHostPath }); brokers.push(b); await b.start(); return b; }
+  async function start() { const b = new BrowserConnectorBroker(root, { nativeHostPath }); brokers.push(b); await b.start(); return b; }
   let broker = await start();
   const pairing = broker.createPairing({ browser }).code;
   const local = { cardbushConnectorEnabled: true, cardbushConnectorPairingV2: pairing, allowAllSites: true, allowedOrigins: ['https://example.test'] };
@@ -97,7 +100,7 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
     }
     assert.equal(w.state().reconnectPaused, false);
     assert.equal(w.state().reconnectWaiting, true);
-    assert.equal(w.alarms.get('cardbush-native-reconnect').delayInMinutes, 0.5);
+    assert.ok(w.alarms.get('cardbush-native-reconnect').when >= Date.now());
     if (cycle === 2) {
       w.stop();
       w = worker(local, browser, undefined, options); workers.push(w);
@@ -119,6 +122,12 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
     await w.action({ action: 'status', reconnect: true });
     assert.equal(w.attempts.length, requests, 'popup polling does not bypass the recovery delay');
     w.retry();
+    if (occupant) {
+      await until(() => !w.state().connected);
+      assert.equal(w.state().nativeReady, false, 'recent discovery stays in cooldown even after another port change');
+      w.advanceClock(5 * 60_000);
+      w.retry();
+    }
     await until(() => w.state().nativeReady && broker.status().extensionConnected);
     assert.equal(broker.status().connections.length, 1);
     assert.equal(broker.status().connections[0].id, pairing.split('.')[2]);
@@ -151,7 +160,7 @@ test('saved recovery never enrolls an unknown identity; explicit local repair re
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-worker-repair-'));
   const nativeHostPath = process.platform === 'win32' ? path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') : process.execPath;
   let approvals = 0, settle;
-  const broker = new ChromeConnectorBroker(root, { nativeHostPath, approvalCooldownMs: 0,
+  const broker = new BrowserConnectorBroker(root, { nativeHostPath, approvalCooldownMs: 0,
     allowLocalPairing: () => true });
   const workers = [];
   t.after(async () => { settle?.(false); workers.forEach(w => w.stop()); broker.stop(); await delay(40); fs.rmSync(root, { recursive: true, force: true }); });
@@ -207,7 +216,7 @@ test('revoking a pairing during endpoint persistence cannot restore it after rem
     releaseWrite(); w?.stop(); brokers.forEach(b => b.stop()); occupant?.close(); await delay(40);
     fs.rmSync(root, { recursive: true, force: true });
   });
-  const start = async () => { const b = new ChromeConnectorBroker(root, { nativeHostPath }); brokers.push(b); await b.start(); return b; };
+  const start = async () => { const b = new BrowserConnectorBroker(root, { nativeHostPath }); brokers.push(b); await b.start(); return b; };
   let broker = await start();
   const pairing = broker.createPairing().code;
   const local = { cardbushConnectorEnabled: true, cardbushConnectorPairingV2: pairing, allowedOrigins: ['https://example.test'] };
@@ -272,7 +281,7 @@ test('declined local enrollment stays stopped after restart until an explicit us
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-worker-consent-retry-'));
   const nativeHostPath = process.platform === 'win32' ? path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') : process.execPath;
   let approvals = 0;
-  const broker = new ChromeConnectorBroker(root, { nativeHostPath, approvalCooldownMs: 0, allowLocalPairing: () => true });
+  const broker = new BrowserConnectorBroker(root, { nativeHostPath, approvalCooldownMs: 0, allowLocalPairing: () => true });
   const workers = [];
   t.after(async () => { workers.forEach(w => w.stop()); broker.stop(); await delay(40); fs.rmSync(root, { recursive: true, force: true }); });
   await broker.start();
@@ -306,7 +315,7 @@ test('declined local enrollment stays stopped after restart until an explicit us
 test('only the current extension confirmation window can approve its own request', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-worker-consent-origin-'));
   const nativeHostPath = process.platform === 'win32' ? path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') : process.execPath;
-  const broker = new ChromeConnectorBroker(root, { nativeHostPath, allowLocalPairing: () => true });
+  const broker = new BrowserConnectorBroker(root, { nativeHostPath, allowLocalPairing: () => true });
   let w, settle;
   t.after(async () => { settle?.(false); w?.stop(); broker.stop(); await delay(40); fs.rmSync(root, { recursive: true, force: true }); });
   await broker.start();
@@ -332,7 +341,7 @@ test('only the current extension confirmation window can approve its own request
 test('closing the one confirmation window denies access and stops automatic requests', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-worker-consent-close-'));
   const nativeHostPath = process.platform === 'win32' ? path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') : process.execPath;
-  const broker = new ChromeConnectorBroker(root, { nativeHostPath, allowLocalPairing: () => true });
+  const broker = new BrowserConnectorBroker(root, { nativeHostPath, allowLocalPairing: () => true });
   let w, settle;
   t.after(async () => { settle?.(true); w?.stop(); broker.stop(); await delay(40); fs.rmSync(root, { recursive: true, force: true }); });
   await broker.start();

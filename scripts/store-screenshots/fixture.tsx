@@ -85,15 +85,15 @@ const automations = { available: true, sessions: conversations.map(item => ({ ..
 
 (window as any).cardbushDesktop = {
   platform: 'win32', isMaximized: async () => false, writeDebugLog: asyncNoop,
-  onChromeConnectorStatus: unsubscribe, onCapabilityCatalogChanged: unsubscribe,
+  onBrowserConnectorStatus: unsubscribe, onCapabilityCatalogChanged: unsubscribe,
   onAutomationChanged: unsubscribe, onCalendarChanged: unsubscribe,
   automationCommand: async () => structuredClone(automations),
   calendarCommand: async () => ({ state: { datasets: [], chineseLunar: false } }),
   readBrowserConfiguration: async () => ({ protocol: 'cardbush.browser_config.v1', revision: 1, startPage: 'https://www.google.com/' }),
-  chromeConnectorStatus: async () => structuredClone(browserStatus),
-  setupChromeConnector: asyncNoop, removeChromeConnector: asyncNoop, disableChromeConnector: asyncNoop,
-  openChromeConnectorInstaller: asyncNoop, copyChromeConnectorDiagnostics: asyncNoop,
-  pairChromeConnector: asyncNoop, revokeBrowserConnection: asyncNoop, selectDefaultBrowserConnection: asyncNoop,
+  browserConnectorStatus: async () => structuredClone(browserStatus),
+  setupBrowserConnector: asyncNoop, removeBrowserConnector: asyncNoop, disableBrowserConnector: asyncNoop,
+  openBrowserConnectorInstaller: asyncNoop, copyBrowserConnectorDiagnostics: asyncNoop,
+  pairBrowserConnector: asyncNoop, revokeBrowserConnection: asyncNoop, selectDefaultBrowserConnection: asyncNoop,
   pluginCommands: async () => [],
   localApplications: { pick: async () => null, open: asyncNoop },
   productHostCommand: async ({ kind }: { kind: string }) => {

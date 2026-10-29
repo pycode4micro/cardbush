@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
+import * as browserApi from '../dist/index.js';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import sharp from 'sharp';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createCardbushChromeServer } from '../dist/index.js';
-import { ChromeConnectorError } from '../dist/bridgeClient.js';
+import { createCardbushBrowserServer } from '../dist/index.js';
+import { BrowserConnectorError } from '../dist/bridgeClient.js';
+
+test('existing MCP consumers keep the same factory and error identity through legacy exports', () => {
+  assert.equal(browserApi.createCardbushChromeServer, browserApi.createCardbushBrowserServer);
+  assert.equal(browserApi.requestChromeConnector, browserApi.requestBrowserConnector);
+  assert.equal(browserApi.ChromeConnectorError, browserApi.BrowserConnectorError);
+  assert.ok(new browserApi.ChromeConnectorError('fixture', 'fixture') instanceof BrowserConnectorError);
+});
 
 test('keeps the established Chrome DevTools tool vocabulary', () => {
-  const tools = Object.keys(createCardbushChromeServer()._registeredTools);
+  const tools = Object.keys(createCardbushBrowserServer()._registeredTools);
   assert.deepEqual(tools, [
     'list_browsers',
     'select_browser',
@@ -35,8 +43,8 @@ test('keeps the established Chrome DevTools tool vocabulary', () => {
     'wait_for',
     'release_browser',
   ]);
-  assert.equal(createCardbushChromeServer()._registeredTools.list_pages.annotations.readOnlyHint, true);
-  assert.equal(createCardbushChromeServer()._registeredTools.close_page.annotations.destructiveHint, true);
+  assert.equal(createCardbushBrowserServer()._registeredTools.list_pages.annotations.readOnlyHint, true);
+  assert.equal(createCardbushBrowserServer()._registeredTools.close_page.annotations.destructiveHint, true);
 });
 
 test('screenshot failure feedback is scoped, preserves native images, and resets after recovery', async t => {
@@ -54,10 +62,10 @@ test('screenshot failure feedback is scoped, preserves native images, and resets
     const diagnostics = { requestId: 'sample', method, command: params.command, tabId: 42,
       elapsedMs: 25_000, stage: 'command_pending', stages: [{ stage: 'command_pending', elapsedMs: 1 }] };
     options.onDiagnostics?.(diagnostics);
-    if (!succeeds) throw new ChromeConnectorError('screenshot_timeout', 'capture timed out', { diagnostics });
+    if (!succeeds) throw new BrowserConnectorError('screenshot_timeout', 'capture timed out', { diagnostics });
     return { data: png.toString('base64') };
   };
-  const server = createCardbushChromeServer({ connector, artifactsDirectory });
+  const server = createCardbushBrowserServer({ connector, artifactsDirectory });
   const context = id => ({ mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: id } } });
   const capture = (id, format = 'png') => server._registeredTools.take_screenshot.handler({ format }, context(id));
   const first = await capture('a');
@@ -87,9 +95,9 @@ test('hidden CardBush pages keep visibility guidance after repeated screenshot f
     if (method === 'tabs.list') return [{ id: 42, active: false, selected: true, visible: false, browser: 'cardbush', title: 'Background' }];
     if (params.command === 'Runtime.evaluate') return { result: { value: { width: 1280, height: 800, deviceScaleFactor: 1 } } };
     assert.equal(params.command, 'Page.captureScreenshot');
-    throw new ChromeConnectorError('cardbush_page_not_visible', 'Show the original tab.', { inputDispatched: false });
+    throw new BrowserConnectorError('cardbush_page_not_visible', 'Show the original tab.', { inputDispatched: false });
   };
-  const server = createCardbushChromeServer({ connector });
+  const server = createCardbushBrowserServer({ connector });
   const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'background' } } };
   const listed = await server._registeredTools.list_pages.handler({}, context);
   assert.equal(listed.structuredContent.pages[0].visible, false);

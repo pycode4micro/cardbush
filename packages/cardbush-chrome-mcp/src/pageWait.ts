@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
-import { ChromeConnectorError } from './bridgeClient.js';
+import { BrowserConnectorError } from './bridgeClient.js';
 import { evaluate, type PageCommand } from './pageCapture.js';
 import { inspectElement, readElement, record } from './pageInspection.js';
 
@@ -35,7 +35,7 @@ const checkElement = `function(condition) {
 export async function waitForPage(command: PageCommand, input: z.infer<typeof waitSchema>, signal?: AbortSignal, deadline = Date.now() + input.timeout) {
   const conditions: z.infer<typeof condition>[] = input.conditions ?? [{ kind: 'text', text: input.text!, present: true }];
   const start = Date.now(); const observations: Record<string, unknown>[] = [];
-  const timeout = (cause?: ChromeConnectorError) => new ChromeConnectorError('wait_for_timeout', 'The requested page conditions were not observed before the timeout.', {
+  const timeout = (cause?: BrowserConnectorError) => new BrowserConnectorError('wait_for_timeout', 'The requested page conditions were not observed before the timeout.', {
     conditions, observations, elapsedMs: Date.now() - start,
     ...(cause ? { lastRequestError: { code: cause.code, message: cause.message, details: cause.details } } : {}),
   });
@@ -46,7 +46,7 @@ export async function waitForPage(command: PageCommand, input: z.infer<typeof wa
     try { return await send(name, params); }
     catch (error) {
       signal?.throwIfAborted();
-      if (error instanceof ChromeConnectorError && ['bridge_timeout', 'browser_connector_timeout', 'cardbush_browser_timeout'].includes(error.code)) throw timeout(error);
+      if (error instanceof BrowserConnectorError && ['bridge_timeout', 'browser_connector_timeout', 'cardbush_browser_timeout'].includes(error.code)) throw timeout(error);
       throw error;
     }
   };
@@ -56,7 +56,7 @@ export async function waitForPage(command: PageCommand, input: z.infer<typeof wa
     const root = record(record(await command('Page.getFrameTree')).frameTree);
     const frames = (tree: Record<string, unknown>): unknown[] => {
       const frame = record(tree.frame);
-      if (!frame.id || !frame.loaderId) throw new ChromeConnectorError('wait_document_unavailable', 'The document identity is unavailable. Take a fresh snapshot once the page loads.');
+      if (!frame.id || !frame.loaderId) throw new BrowserConnectorError('wait_document_unavailable', 'The document identity is unavailable. Take a fresh snapshot once the page loads.');
       return [[frame.id, frame.loaderId], ...(Array.isArray(tree.childFrames) ? tree.childFrames.flatMap(child => frames(record(child))) : [])];
     };
     return JSON.stringify(frames(root));
@@ -65,7 +65,7 @@ export async function waitForPage(command: PageCommand, input: z.infer<typeof wa
   const document = targeted ? await identity() : undefined;
   while (true) {
     checkBudget();
-    if (targeted && document !== await identity()) throw new ChromeConnectorError('wait_document_changed', 'The document changed; take a fresh snapshot for new uids. No action was retried.');
+    if (targeted && document !== await identity()) throw new BrowserConnectorError('wait_document_changed', 'The document changed; take a fresh snapshot for new uids. No action was retried.');
     for (const [index, item] of conditions.entries()) {
       signal?.throwIfAborted();
       let observation: Record<string, unknown>;
@@ -73,7 +73,7 @@ export async function waitForPage(command: PageCommand, input: z.infer<typeof wa
         try { observation = await readElement(command, item.uid, checkElement, [item]); seen.add(item.uid); }
         catch (error) {
           if (!(error instanceof Error) || !/No node with given id|Could not find node with given id|element_not_found/.test(error.message + ' ' + ('code' in error ? error.code : ''))) throw error;
-          if (!seen.has(item.uid)) throw new ChromeConnectorError('wait_target_missing', `${item.uid} could not be resolved. Its disappearance cannot be confirmed; take a fresh snapshot.`);
+          if (!seen.has(item.uid)) throw new BrowserConnectorError('wait_target_missing', `${item.uid} could not be resolved. Its disappearance cannot be confirmed; take a fresh snapshot.`);
           observation = { connected: false, matched: item.kind === 'visible' && item.value === false };
         }
       } else if (item.kind === 'text') {
@@ -82,11 +82,11 @@ export async function waitForPage(command: PageCommand, input: z.infer<typeof wa
       } else if (item.kind === 'url') {
         const value = String(await evaluate(command, 'location.href'));
         observation = { matched: item.match === 'includes' ? value.includes(item.value) : value === item.value, url: value.slice(0,2000) };
-      } else throw new ChromeConnectorError('invalid_wait_condition', 'This condition requires a uid.');
+      } else throw new BrowserConnectorError('invalid_wait_condition', 'This condition requires a uid.');
       observations[index] = observation;
     }
     // A navigation between reads must not turn a stale uid into a successful wait.
-    if (targeted && document !== await identity()) throw new ChromeConnectorError('wait_document_changed', 'The document changed while checking conditions. Take a fresh snapshot.');
+    if (targeted && document !== await identity()) throw new BrowserConnectorError('wait_document_changed', 'The document changed while checking conditions. Take a fresh snapshot.');
     signal?.throwIfAborted();
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw timeout();

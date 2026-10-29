@@ -5,8 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import sharp from 'sharp';
 import { BrowserArtifacts, exportedImage } from '../dist/imageArtifacts.js';
-import { createCardbushChromeServer } from '../dist/index.js';
-import { ChromeConnectorError } from '../dist/bridgeClient.js';
+import { createCardbushBrowserServer } from '../dist/index.js';
+import { BrowserConnectorError } from '../dist/bridgeClient.js';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'cardbush-artifact-test-'));
@@ -45,7 +45,7 @@ test('MCP download tools deduplicate request keys and publish artifacts only on 
   const { root } = await fixture(t);
   const source = path.join(root, 'saved.pdf'); await writeFile(source, 'complete');
   const calls = []; let complete = false;
-  const server = createCardbushChromeServer({ artifactsDirectory: root, connector: async (method, params) => {
+  const server = createCardbushBrowserServer({ artifactsDirectory: root, connector: async (method, params) => {
     if (method === 'tabs.list') return [{ id: 7, active: true }];
     calls.push({ method, ...params });
     return { taskId: 'task-one', state: complete ? 'complete' : 'starting', filename: source };
@@ -66,8 +66,8 @@ test('MCP download tools deduplicate request keys and publish artifacts only on 
 test('old extensions and missing completed files give actionable errors without restarting a download', async t => {
   const { root } = await fixture(t);
   let outdated = true;
-  const server = createCardbushChromeServer({ artifactsDirectory: root, connector: async () => {
-    if (outdated) throw new ChromeConnectorError('unsupported_method', 'Unsupported connector method: downloads.status');
+  const server = createCardbushBrowserServer({ artifactsDirectory: root, connector: async () => {
+    if (outdated) throw new BrowserConnectorError('unsupported_method', 'Unsupported connector method: downloads.status');
     return { taskId: 'done', state: 'complete', filename: path.join(root, 'removed.pdf') };
   } });
   const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'a' } } };

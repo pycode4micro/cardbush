@@ -11,7 +11,7 @@ app.on('window-all-closed', () => {});
   let window;
   try {
     await app.whenReady();
-    const { createCardbushChromeServer } = await import('../packages/cardbush-chrome-mcp/dist/index.js');
+    const { createCardbushBrowserServer } = await import('../packages/cardbush-chrome-mcp/dist/index.js');
     const { RuntimeToolLoop, ToolRegistry, ToolExecutionStore, InMemoryRuntimeEventLog, ModelImageStore } = await import('@cardbush/bush-runtime');
     window = new BrowserWindow({ show: false, width: 1000, height: 800,
       webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false, offscreen: true } });
@@ -34,7 +34,7 @@ app.on('window-all-closed', () => {});
       }
       throw new Error('Unexpected connector method ' + method);
     };
-    const server = createCardbushChromeServer({ connector, artifactsDirectory: path.join(root, 'artifacts') });
+    const server = createCardbushBrowserServer({ connector, artifactsDirectory: path.join(root, 'artifacts') });
     const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'capture-fixture' } } };
     const call = async (name, args) => {
       const result = await server._registeredTools[name].handler(args, context);

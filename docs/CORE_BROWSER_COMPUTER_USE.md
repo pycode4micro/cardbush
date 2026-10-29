@@ -89,7 +89,7 @@ Browser Use 在 Windows 11 上统一控制 CardBush 内置浏览器和分别配�
 | 浏览器本地数据与操作 | `electron/browserImport.ts`、`browserLibrary.ts`、`browserUi.ts` | 读取用户选择的收藏夹配置/文件、保存历史和下载元数据、校验当前网页操作与站点清理 |
 | 桌面操控设置 | `src/features/computerUse/` | 截图目录、让行、恢复指针、启动应用与关闭窗口开关 |
 | 旧配置适配 | `src/features/capabilities/CoreCapabilitySettings.tsx` | 复用现有配置版本与运行时同步机制，不依赖插件管理页面 |
-| Browser Use 执行 | `packages/cardbush-chrome-mcp/`、`electron/chromeConnector*`、随应用提供的 Browser Use 扩展 | 工具协议、本地桥、会话标签组、站点授权、截图及下载 |
+| Browser Use 执行 | `packages/cardbush-chrome-mcp/`、`electron/browserConnector*`、随应用提供的 Browser Use 扩展 | 工具协议、本地桥、会话标签组、站点授权、截图及下载 |
 | 核心身份保护 | `electron/coreCapabilities.ts`、`productPlugins.ts` | 防止外部目录覆盖核心能力 |
 
 插件页面只复用核心设置组件和展示目录信息，核心组件没有反向导入插件管理页面或其样式。配置仍兼容现有 `apps.json` 中的 Chrome / Computer Use 条目，避免迁移时丢失用户设置；工具服务总开关暂时仍沿用现有逻辑，关闭时独立设置页会说明原因。

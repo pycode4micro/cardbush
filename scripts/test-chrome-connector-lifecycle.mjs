@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { ChromeConnectorLifecycle, acquireConnectorLease } from '../dist-electron/chromeConnectorLifecycle.js';
-import { ChromeConnectorRegistration } from '../dist-electron/chromeConnectorRegistration.js';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
+import { BrowserConnectorLifecycle, acquireConnectorLease } from '../dist-electron/browserConnectorLifecycle.js';
+import { BrowserConnectorRegistration } from '../dist-electron/browserConnectorRegistration.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 import { pairedClient } from './helpers/chrome-paired-client.mjs';
 
 const nativeHostPath = process.platform === 'win32' ? path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') : process.execPath;
@@ -24,9 +24,9 @@ function fixture(t) {
   const input = { userDataPath: root, nativeHostPath, msixPackage: false };
   const instances = [];
   const create = (extra = {}) => {
-    const lifecycle = new ChromeConnectorLifecycle(input, () => {}, {
+    const lifecycle = new BrowserConnectorLifecycle(input, () => {}, {
       registry, acquireLease: async () => () => {}, supported: () => true,
-      createBroker: () => new ChromeConnectorBroker(root, { nativeHostPath }), ...extra,
+      createBroker: () => new BrowserConnectorBroker(root, { nativeHostPath }), ...extra,
     });
     instances.push(lifecycle); return lifecycle;
   };
@@ -146,7 +146,7 @@ test('restoring a saved connection survives startup and lease failures without l
 });
 
 function legacy(f) {
-  const registration = new ChromeConnectorRegistration(f.input, f.registry);
+  const registration = new BrowserConnectorRegistration(f.input, f.registry);
   fs.mkdirSync(registration.directory, { recursive: true });
   fs.writeFileSync(registration.manifestPath, JSON.stringify({ name: 'com.cardbush.browser_connector',
     type: 'stdio', path: registration.launchPath, allowed_origins: ['chrome-extension://iibaamkfgackofhhpadgnmgcjkhckeln/'],
@@ -196,7 +196,7 @@ test('per-user OS lease excludes a second instance and is reusable after release
 });
 
 test('broker expires silent handshakes, caps connections and closes unauthenticated peers on stop', async t => {
-  const f = fixture(t); const broker = new ChromeConnectorBroker(f.root, { nativeHostPath, handshakeTimeoutMs: 100, maximumPeers: 1 });
+  const f = fixture(t); const broker = new BrowserConnectorBroker(f.root, { nativeHostPath, handshakeTimeoutMs: 100, maximumPeers: 1 });
   t.after(() => broker.stop()); await broker.start();
   const connect = async () => {
     const socket = net.createConnection(broker.endpoint); socket.on('error', () => {});
@@ -209,9 +209,9 @@ test('broker expires silent handshakes, caps connections and closes unauthentica
 });
 
 test('old broker shutdown cannot delete a replacement config and its token cannot authenticate there', async t => {
-  const f = fixture(t); const old = new ChromeConnectorBroker(f.root, { nativeHostPath });
+  const f = fixture(t); const old = new BrowserConnectorBroker(f.root, { nativeHostPath });
   const nextRoot = path.join(f.root, 'replacement'); fs.mkdirSync(nextRoot);
-  const next = new ChromeConnectorBroker(nextRoot, { nativeHostPath });
+  const next = new BrowserConnectorBroker(nextRoot, { nativeHostPath });
   t.after(() => { old.stop(); next.stop(); });
   await old.start(); const oldConfig = JSON.parse(fs.readFileSync(old.configPath, 'utf8'));
   await next.start(); const nextConfig = JSON.parse(fs.readFileSync(next.configPath, 'utf8'));

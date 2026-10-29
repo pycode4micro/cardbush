@@ -28,7 +28,8 @@ button:hover { border-color: #12ddd0; background: #153033; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button:disabled:hover { border-color: #1c4b4c; background: #10191b; }
 button.active { color: #071010; border-color: #d9f700; background: #d9f700; }
-footer { display: flex; justify-content: space-between; margin-top: 12px; }
+footer { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; margin-top: 12px; }
+footer .retry-connection { flex-basis: 100%; }
 button.quiet { min-height: 28px; padding: 0; border: 0; color: #829493; background: transparent; }
 button.quiet:hover { color: #edf9f8; }
 #pairing-code { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; border: 1px solid #555; border-radius: 6px; color: inherit; background: transparent; }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { uploadFiles } from '../dist/pageUpload.js';
-import { createCardbushChromeServer } from '../dist/index.js';
+import { createCardbushBrowserServer } from '../dist/index.js';
 
 test('validates upload files before page input and never repeats an uncertain selection', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'cardbush-upload-'));
@@ -43,7 +43,7 @@ test('validates upload files before page input and never repeats an uncertain se
 });
 
 test('upload tool is a mutation, requires one observed target and scoped browser access', async () => {
-  const server = createCardbushChromeServer({ connector: async () => { throw Error('unbound request'); } });
+  const server = createCardbushBrowserServer({ connector: async () => { throw Error('unbound request'); } });
   const tool = server._registeredTools.upload_file;
   assert.equal(tool.annotations.readOnlyHint, false);
   assert.equal(tool.annotations.idempotentHint, false);

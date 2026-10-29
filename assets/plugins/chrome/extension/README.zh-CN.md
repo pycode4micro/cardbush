@@ -29,9 +29,9 @@ Agent 新建标签默认在后台；选择操作目标不切换用户当前标�
 
 暂时禁用桌面连接器停止监听/控制，保留配对及绑定，再启用可自动重连。扩展明确禁用也保留配对，直到点击连接。移除一个连接仅撤销它；移除连接器配置撤销全部凭据；共享本机 broker 保留无效路由以防旧会话误用其他浏览器，旧独立连接器则清理 routes 文件。普通退出保留启用意图和数据。主动重新配对同一配置后可移除旧离线项；撤销后明确连接会创建新配置身份，后台重试不能撤销“撤销”。
 
-每个连接端点最多等待 7 秒，覆盖 Chromium 在之前握手失败后施加的连接延迟。worker 的总看门狗按端点发现预算计算，避免提前取消仍在浏览器队列中的正常重连。仍只允许一轮连接、最多 4 个并发发现探测，失败后沿用低频重试，不增加后台轮询。
+1.5 把连接建立（7 秒）、服务端身份验证（3 秒）和授权确认（3 秒）分开计时，诊断记录阶段及错误码，不记录凭据。总看门狗覆盖完整预算。自动恢复先尝试保存的地址，失败后才允许发现同一 broker；全端口发现最多每 5 分钟一次，冷却跨 worker 重启保留，仍最多 4 个并发探测。冷却期间端口再次变化可能需要等待最多 5 分钟，主动点击重试可立即查找。一次性闹钟保留原截止时间，时钟变化会限幅，长握手期间会重新安排唤醒。主按钮重试已保存连接，更换配对放入默认折叠的高级连接。
 
-`npm run test:chrome-reconnect-native` 使用独立配置的真实 Chrome，复现 GUI 连接器退出/恢复及浏览器握手限流，断言不重启 Chrome、不点击授权也能恢复相同凭据与网站授权。
+`npm run test:browser-reconnect-native` 使用独立配置的真实 Chrome 和完整 CardBush GUI 进程；附加 `-- --edge` 测试 Edge。覆盖正常退出、进程强制终止、长时间离线、重复启动及模拟系统恢复通知，断言不重启浏览器、不点击授权也能恢复相同凭据与网站授权。真实硬件睡眠/唤醒仍需实机验收。
 
 ## 页面访问与生命周期
 
@@ -47,6 +47,6 @@ turn 结束挂起 debugger 并折叠管理组，但保留会话标签授权。�
 
 ## 分发、MSIX 与迁移
 
-生产应发布经审查的 Chrome Web Store/Edge Add-ons 扩展。首次上传后将商店公钥写入 `manifest.json`，核对派生 ID 与 `chromeConnectorExtensionId`；不同则更新常量及精确 Origin 检查后再发桌面包。`CARDBUSH_CHROME_CONNECTOR_STORE_URL` 指向最终商店页，代替 unpacked 目录。
+生产应发布经审查的 Chrome Web Store/Edge Add-ons 扩展。首次上传后将商店公钥写入 `manifest.json`，核对派生 ID 与 `browserConnectorExtensionId`；不同则更新常量及精确 Origin 检查后再发桌面包。`CARDBUSH_CHROME_CONNECTOR_STORE_URL` 指向最终商店页，代替 unpacked 目录。
 
 MSIX 配置在 LocalState；旧 Native Messaging 注册通过归属校验迁移，出现旧注册提示时按设置页处理。单一扩展确认不提权、不请求 UAC，关闭/拒绝/超时均拒绝。MSIX 保持注册表/文件虚拟化，不声明 `unvirtualizedResources` 或执行别名。网站授权与连接同意始终分离。实现与许可见 [第三方说明](../THIRD_PARTY_NOTICES.md)。

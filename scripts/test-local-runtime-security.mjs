@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { secureConnectorResourceAsync } from '../dist-electron/chromeConnectorFiles.js';
+import { secureConnectorResourceAsync } from '../dist-electron/browserConnectorFiles.js';
 
 const windows = process.platform === 'win32';
 async function directory(t) {

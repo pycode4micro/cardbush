@@ -77,7 +77,7 @@ async function appStart() {
     assert.equal(report.processDpiAwareness, 2, 'Application should be per-monitor DPI aware');
   }
   const invoke = (name, args = []) => cdp.evaluate(`window.cardbushDesktop[${JSON.stringify(name)}](...${JSON.stringify(args)})`, session);
-  return { process, cdp, invoke, status: () => invoke('chromeConnectorStatus') };
+  return { process, cdp, invoke, status: () => invoke('browserConnectorStatus') };
 }
 async function chromeStart(extensionDirectory, browser = 'chrome') {
   const executable = browser === 'edge' ? config.edgeExecutable : config.chromeExecutable;
@@ -146,7 +146,7 @@ try {
     await checkpoint('upgrade reports existing external legacy registration');
   }
   if (config.prepareLegacy) {
-    status = await app.invoke('setupChromeConnector');
+    status = await app.invoke('setupBrowserConnector');
     assert.equal(status.bridgeRegistered, true);
     assert.equal(status.bridgeRunning, true);
     await close(app);
@@ -155,10 +155,10 @@ try {
   } else {
   assert.equal(status.connectorEnabled, false); assert.equal(status.bridgeRunning, false);
   await checkpoint('default connector disabled');
-  status = await app.invoke('setupChromeConnector');
+  status = await app.invoke('setupBrowserConnector');
   assert.equal(status.lifecycleState, 'enabled'); assert.equal(status.bridgeRunning, true);
   report.extensionVersion = JSON.parse(await readFile(path.join(status.extensionDirectory, 'manifest.json'), 'utf8')).version;
-  const pair = await app.invoke('pairChromeConnector');
+  const pair = await app.invoke('pairBrowserConnector');
   chrome = await chromeStart(status.extensionDirectory);
   assert.equal((await chrome.action('pair', { code: pair.code })).ok, true);
   await until(async () => (await app.status()).extensionConnected, 'real Chrome pairing');
@@ -174,7 +174,7 @@ try {
   await bridgeRequest('tabs.close', { ...scope, tabId: tab.id });
   await checkpoint('named pipe -> broker -> Chrome: create, list, debug, close');
   if (config.edgeExecutable) {
-    const edgePair = await app.invoke('pairChromeConnector', [{ browser: 'edge', label: 'Isolated Edge validation' }]);
+    const edgePair = await app.invoke('pairBrowserConnector', [{ browser: 'edge', label: 'Isolated Edge validation' }]);
     edge = await chromeStart(status.extensionDirectory, 'edge');
     assert.equal((await edge.action('pair', { code: edgePair.code })).ok, true);
     await until(async () => (await app.status()).connections.filter(connection => connection.connected).length === 2, 'simultaneous Chrome and Edge pairing');
@@ -241,7 +241,7 @@ try {
   await until(async () => (await app.status()).bridgeRunning, 'enabled preference restored');
   await until(async () => (await app.status()).extensionConnected, 'pairing survives ordinary application restart', 40000);
   await checkpoint('ordinary application restart preserves explicit enable and pairing');
-  status = await app.invoke('disableChromeConnector');
+  status = await app.invoke('disableBrowserConnector');
   assert.equal(status.connectorEnabled, false); assert.equal(status.bridgeRunning, false);
   assert.equal(await exists(path.join(config.connectorDirectory, 'pairing.json')), true);
   assert.equal(await exists(path.join(config.connectorDirectory, 'bridge.json')), false);
@@ -249,10 +249,10 @@ try {
   await close(app); app = await appStart();
   assert.equal((await app.status()).connectorEnabled, false);
   await checkpoint('application disable preserves credentials and stays disabled after restart');
-  await app.invoke('setupChromeConnector');
+  await app.invoke('setupBrowserConnector');
   await until(async () => (await app.status()).extensionConnected, 'automatic reconnect after re-enabling the desktop connector', 150000);
   await checkpoint('temporary desktop disable requires neither a new pairing nor another grant');
-  await app.invoke('removeChromeConnector');
+  await app.invoke('removeBrowserConnector');
   assert.equal(await exists(path.join(config.connectorDirectory, 'pairing.json')), false);
   assert.equal(await exists(path.join(config.connectorDirectory, 'bridge.json')), false);
   assert.equal(JSON.parse(await readFile(path.join(config.connectorDirectory, 'preference.json'), 'utf8')).removed, true);

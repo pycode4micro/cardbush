@@ -1,4 +1,4 @@
-import { ChromeConnectorError } from './bridgeClient.js';
+import { BrowserConnectorError } from './bridgeClient.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { PageCommand } from './pageCapture.js';
 import { callElement, inspectElement, obstructionReason } from './pageInspection.js';
@@ -148,21 +148,21 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
   const resolve = async (backendNodeId: number) => {
     const result = object(await command('DOM.resolveNode', { backendNodeId }));
     const id = object(result.object).objectId;
-    if (typeof id !== 'string') throw new ChromeConnectorError('element_not_found', `${uid} is no longer available. Take a fresh snapshot.`);
+    if (typeof id !== 'string') throw new BrowserConnectorError('element_not_found', `${uid} is no longer available. Take a fresh snapshot.`);
     handles.add(id); return id;
   };
   const call = async (objectId: string, functionDeclaration: string, args: Record<string, unknown>[], returnByValue = true) => {
     const result = object(await command('Runtime.callFunctionOn', { objectId, functionDeclaration, arguments: args, returnByValue, awaitPromise: true }));
     if (result.exceptionDetails) {
       const exception = object(object(result.exceptionDetails).exception);
-      throw new ChromeConnectorError('element_not_actionable', String(exception.description ?? 'The element is no longer actionable.').split('\n')[0].slice(0, 400));
+      throw new BrowserConnectorError('element_not_actionable', String(exception.description ?? 'The element is no longer actionable.').split('\n')[0].slice(0, 400));
     }
     return object(result.result);
   };
   try {
     sourceId = await resolve(Number(uid.slice(3)));
     const chosen = await call(sourceId, chooseTarget, [{ value: action === 'click' }], false);
-    if (typeof chosen.objectId !== 'string') throw new ChromeConnectorError('element_not_actionable', `${uid} has no visible pointer target.`);
+    if (typeof chosen.objectId !== 'string') throw new BrowserConnectorError('element_not_actionable', `${uid} has no visible pointer target.`);
     targetId = chosen.objectId;
     handles.add(targetId);
     const beforeScroll = object(object(await command('Page.getLayoutMetrics')).cssVisualViewport);
@@ -178,7 +178,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     const ensureStable = async () => {
       stability = await callElement(command, targetId!, stableTarget);
       if (stability.reason === 'frames_unavailable') stability = await stableBackgroundTarget(command, targetId!, stability.frames);
-      if (stability.stable !== true) throw new ChromeConnectorError(
+      if (stability.stable !== true) throw new BrowserConnectorError(
         stability.reason === 'layout_unavailable' ? 'page_rendering_unavailable' : 'element_unstable',
         `${uid} did not provide stable layout observations. Inspect the current page before retrying.`,
         { reason: stability.reason === 'detached' || stability.reason === 'layout_unavailable' ? stability.reason : 'unstable', stability });
@@ -191,9 +191,9 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     const metrics = object(await command('Page.getLayoutMetrics'));
     const viewport = object(metrics.cssVisualViewport);
     const width = Number(viewport.clientWidth), height = Number(viewport.clientHeight);
-    if (!(width > 0 && height > 0)) throw new ChromeConnectorError('viewport_unavailable', 'No usable page viewport. Take a fresh snapshot.');
+    if (!(width > 0 && height > 0)) throw new BrowserConnectorError('viewport_unavailable', 'No usable page viewport. Take a fresh snapshot.');
     const candidates = pointsInViewport(model.quads, width, height);
-    if (!candidates.length) throw new ChromeConnectorError('element_no_area', `${uid} has no clickable area in the viewport.`, { uid });
+    if (!candidates.length) throw new BrowserConnectorError('element_no_area', `${uid} has no clickable area in the viewport.`, { uid });
     const frameTree = object(await command('Page.getFrameTree')).frameTree;
     const ancestors = (value: unknown, id: unknown, owners: string[] = []): string[] | undefined => {
       const tree = object(value), frameId = object(tree.frame).id;
@@ -228,7 +228,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
       const current = object(object(await command('Page.getLayoutMetrics')).cssVisualViewport);
       const scroll = { x: Number(current.pageX), y: Number(current.pageY) };
       if (!Number.isFinite(scroll.x) || !Number.isFinite(scroll.y)) {
-        throw new ChromeConnectorError('viewport_unavailable', 'No usable page scroll position. Take a fresh snapshot.');
+        throw new BrowserConnectorError('viewport_unavailable', 'No usable page scroll position. Take a fresh snapshot.');
       }
       const documentPoint = { x: Math.round(point.x + scroll.x), y: Math.round(point.y + scroll.y) };
       hitTest = { viewport: point, document: documentPoint, scroll };
@@ -264,7 +264,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     };
     let point: Point | undefined;
     for (const candidate of candidates) if (await hitsTarget(candidate)) { point = candidate; break; }
-    if (!point) throw new ChromeConnectorError('element_obscured', `${uid} is covered, clipped, or does not receive pointer events. Inspect the page before retrying.`, { uid, hitUid: lastHitUid });
+    if (!point) throw new BrowserConnectorError('element_obscured', `${uid} is covered, clipped, or does not receive pointer events. Inspect the page before retrying.`, { uid, hitUid: lastHitUid });
     mouseMoveAttempted = true;
     await command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
     mouseMoved = true;
@@ -273,7 +273,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
       for (let clickCount = 1; clickCount <= clicks; clickCount++) {
         // Hover handlers and the first click of a double-click may change layout.
         await ensureStable();
-        if (!await hitsTarget(point)) throw new ChromeConnectorError('element_changed', `${uid} changed or became covered before the click. Take a fresh snapshot.`, { uid, hitUid: lastHitUid });
+        if (!await hitsTarget(point)) throw new BrowserConnectorError('element_changed', `${uid} changed or became covered before the click. Take a fresh snapshot.`, { uid, hitUid: lastHitUid });
         attemptedPresses++;
         await command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount });
         await command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount });
@@ -286,7 +286,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
       clicks: completedClicks, status: 'input_dispatched', inputDispatched: true, hitTargetVerified: true, outcomeVerified: false };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    const normalized = error instanceof ChromeConnectorError ? error : new ChromeConnectorError('pointer_action_failed', error instanceof Error ? error.message : String(error));
+    const normalized = error instanceof BrowserConnectorError ? error : new BrowserConnectorError('pointer_action_failed', error instanceof Error ? error.message : String(error));
     const facts = targetId || sourceId ? await callElement(command, (targetId || sourceId)!).catch(() => ({})) : {};
     const sourceFacts = sourceId && sourceId !== targetId ? await callElement(command, sourceId).catch(() => ({})) : facts;
     let occluder: Record<string, unknown> | undefined, covered = false;
@@ -305,7 +305,7 @@ export async function dispatchPointer(command: PageCommand, uid: string, action:
     const sourceReason = obstructionReason(sourceFacts);
     const reason = normalized.details?.reason ?? (sourceReason && ['detached','disabled','inert'].includes(sourceReason) ? sourceReason : undefined)
       ?? obstructionReason(facts) ?? (covered ? 'covered' : 'unknown');
-    throw new ChromeConnectorError(normalized.code, `${normalized.message}${attemptedPresses ? ' A click may have taken effect; observe before retrying.' : ' No click was sent.'}`, {
+    throw new BrowserConnectorError(normalized.code, `${normalized.message}${attemptedPresses ? ' A click may have taken effect; observe before retrying.' : ' No click was sent.'}`, {
       ...normalized.details, uid, reason, targetState: facts, ...(sourceFacts !== facts ? { sourceState: sourceFacts } : {}), ...(occluder ? { hitElement: occluder } : {}),
       autoScrolled, mouseMoved, mouseMoveAttempted, stability, attemptedPresses, completedClicks, ...(hitTest ? { hitTest } : {}),
       inputDispatched: attemptedPresses ? 'possibly' : false, outcomeVerified: false,

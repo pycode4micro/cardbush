@@ -3,7 +3,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { createManifest, msixVersionConfiguration, validateIdentity } from './package-msix.mjs';
 import { verifySdkArchive } from './msix-sdk.mjs';
-import { chromeConnectorLaunchPath } from '../dist-electron/chromeConnectorRegistration.js';
+import { browserConnectorLaunchPath } from '../dist-electron/browserConnectorRegistration.js';
 import { minimumWindowsVersion } from '@cardbush/platform';
 
 test('rejects an unverified Windows SDK download before running tools', () => {
@@ -63,8 +63,8 @@ test('MSIX no longer exposes a Native Messaging execution alias; legacy paths re
   assert.match(manifest, /<Application [^>]*desktop4:SupportsMultipleInstances="true"/);
   assert.doesNotMatch(manifest, /ExecutionAlias/);
   const executable = 'C:\\Program Files\\WindowsApps\\test\\app\\resources\\chrome-native-host\\CardBushBrowserHost.exe';
-  assert.equal(chromeConnectorLaunchPath(executable, false), executable, 'non-MSIX installs retain direct execution');
-  assert.equal(chromeConnectorLaunchPath(executable, true, 'C:\\Users\\Test\\AppData\\Local'),
+  assert.equal(browserConnectorLaunchPath(executable, false), executable, 'non-MSIX installs retain direct execution');
+  assert.equal(browserConnectorLaunchPath(executable, true, 'C:\\Users\\Test\\AppData\\Local'),
     path.join('C:\\Users\\Test\\AppData\\Local', 'Microsoft', 'WindowsApps', 'CardBushBrowserHost.exe'));
-  assert.throws(() => chromeConnectorLaunchPath(executable, true, ''), /LOCALAPPDATA/);
+  assert.throws(() => browserConnectorLaunchPath(executable, true, ''), /LOCALAPPDATA/);
 });

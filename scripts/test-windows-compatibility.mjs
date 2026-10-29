@@ -5,21 +5,21 @@ import path from 'node:path';
 import test from 'node:test';
 import { minimumWindowsVersion, windowsReleaseSupported } from '@cardbush/platform';
 import { uiText } from '@cardbush/platform/i18n';
-import { chromeConnectorPlatformSupported } from '../dist-electron/chromeConnectorRegistration.js';
-import { ChromeConnectorLifecycle } from '../dist-electron/chromeConnectorLifecycle.js';
+import { browserConnectorPlatformSupported } from '../dist-electron/browserConnectorRegistration.js';
+import { BrowserConnectorLifecycle } from '../dist-electron/browserConnectorLifecycle.js';
 import { resolveWindowAppearance } from '../dist-electron/windowAppearance.js';
 import { createManifest } from './package-msix.mjs';
 
 test('desktop and browser admit Windows 10 LTSC/22H2 and Windows 11, rejecting older or unknown versions', () => {
   for (const release of ['10.0.17763', '10.0.17763.0', '10.0.19044', '10.0.19045', '10.0.22000', '10.0.26200', '11.0.1']) {
     assert.equal(windowsReleaseSupported(release), true, release);
-    assert.equal(chromeConnectorPlatformSupported('win32', release), true, release);
+    assert.equal(browserConnectorPlatformSupported('win32', release), true, release);
   }
   for (const release of ['6.1.7601', '6.3.9600', '6.3.99999', '10.0.10240', '10.0.17762', '', 'unknown', '10.0', '10.0.NaN', '10.0.19044x']) {
     assert.equal(windowsReleaseSupported(release), false, release);
-    assert.equal(chromeConnectorPlatformSupported('win32', release), false, release);
+    assert.equal(browserConnectorPlatformSupported('win32', release), false, release);
   }
-  for (const platform of ['linux', 'darwin']) assert.equal(chromeConnectorPlatformSupported(platform, '10.0.19044'), false);
+  for (const platform of ['linux', 'darwin']) assert.equal(browserConnectorPlatformSupported(platform, '10.0.19044'), false);
 });
 
 test('desktop startup and MSIX installation enforce the same minimum version', async () => {
@@ -43,7 +43,7 @@ test('Windows 10 retains an opaque usable window in both themes without requesti
 test('unsupported browser lifecycle follows language changes and performs no setup', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'cardbush-windows-compatibility-'));
   let language = 'en';
-  const lifecycle = new ChromeConnectorLifecycle({ userDataPath: root, nativeHostPath: process.execPath,
+  const lifecycle = new BrowserConnectorLifecycle({ userDataPath: root, nativeHostPath: process.execPath,
     uiLanguage: () => language }, () => {}, { supported: () => false,
     registry: { read: () => null, remove: () => assert.fail('No registry writes on unsupported Windows') },
     acquireLease: () => assert.fail('No connector starts on unsupported Windows') });

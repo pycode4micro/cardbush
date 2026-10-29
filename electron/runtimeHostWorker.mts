@@ -429,11 +429,11 @@ function withBundledAppsServer(input: unknown): unknown {
   const appsEntry = process.env.CARDBUSH_APPS_MCP_ENTRY?.trim();
   const desktopBridge = process.env.CARDBUSH_SERVICE_ID
     ? readAgentDesktopBridge(process.env.CARDBUSH_AGENT_DESKTOP_BRIDGE, process.env.CARDBUSH_SERVICE_ID) : undefined;
-  const chromeConnectorEntry = process.env.CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY?.trim();
+  const browserConnectorEntry = process.env.CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY?.trim();
   const browserUseUrl = !process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1'
     ? process.env.CARDBUSH_BROWSER_USE_URL?.trim() : undefined;
   const chromeRemoteDebuggingEntry = process.env.CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY?.trim();
-  if (!managementUrl && !appsEntry && !chromeConnectorEntry && !chromeRemoteDebuggingEntry && !browserUseUrl) return input;
+  if (!managementUrl && !appsEntry && !browserConnectorEntry && !chromeRemoteDebuggingEntry && !browserUseUrl) return input;
   const snapshot = object(input, 'MCP snapshot must be an object.');
   const configured = Array.isArray(snapshot.servers) ? snapshot.servers : [];
   const reservedIds = new Set(['cardbush_apps', 'browser_use', 'chrome_devtools', 'cardbush_management']);
@@ -499,11 +499,11 @@ function withBundledAppsServer(input: unknown): unknown {
       toolPolicies: {},
     });
   }
-  const chromeEntry = appsConfig.chromeConnectionMode === 'remote_debugging'
+  const browserEntry = appsConfig.browserConnectionMode === 'remote_debugging'
     ? chromeRemoteDebuggingEntry
-    : chromeConnectorEntry;
-  if ((chromeEntry || browserUseUrl && appsConfig.chromeConnectionMode !== 'remote_debugging') && appsConfig.enabledPluginIds.has('chrome')) {
-    const remoteDebugging = appsConfig.chromeConnectionMode === 'remote_debugging';
+    : browserConnectorEntry;
+  if ((browserEntry || browserUseUrl && appsConfig.browserConnectionMode !== 'remote_debugging') && appsConfig.enabledPluginIds.has('chrome')) {
+    const remoteDebugging = appsConfig.browserConnectionMode === 'remote_debugging';
     const integrated = Boolean(browserUseUrl && !remoteDebugging);
     if (integrated && !process.env.CARDBUSH_BROWSER_USE_TOKEN) throw new Error('CardBush Browser Use authentication is missing.');
     bundled.push({
@@ -515,14 +515,14 @@ function withBundledAppsServer(input: unknown): unknown {
         command: process.execPath,
         args: remoteDebugging
           ? [
-              chromeEntry,
+              browserEntry,
               '--no-usage-statistics',
               '--no-performance-crux',
               // Advanced compatibility mode only. It never launches a
               // separate profile and only attaches to an opted-in Chrome.
               '--auto-connect',
             ]
-          : [chromeEntry],
+          : [browserEntry],
         env: runtimeChildEnvironment({
           ELECTRON_RUN_AS_NODE: '1',
           ...(remoteDebugging ? {
@@ -549,8 +549,8 @@ function withBundledAppsServer(input: unknown): unknown {
     });
     console.error(JSON.stringify({
       type: 'runtime_browser_connection',
-      requestedMode: appsConfig.chromeConnectionMode,
-      effectiveMode: appsConfig.chromeConnectionMode,
+      requestedMode: appsConfig.browserConnectionMode,
+      effectiveMode: appsConfig.browserConnectionMode,
       reason: remoteDebugging ? 'advanced_remote_debugging' : integrated ? 'desktop_browser_router' : 'configured_loopback_websocket',
       connectionStatus: 'unverified',
     }));
@@ -566,7 +566,7 @@ function readBundledAppsConfig(path: string | undefined): {
   serviceEnabled: boolean;
   revision: number;
   enabledPluginIds: Set<string>;
-  chromeConnectionMode: 'connector' | 'remote_debugging';
+  browserConnectionMode: 'connector' | 'remote_debugging';
   fingerprint: string;
 } {
   if (!path) {
@@ -574,7 +574,7 @@ function readBundledAppsConfig(path: string | undefined): {
       serviceEnabled: true,
       revision: 1,
       enabledPluginIds: new Set(),
-      chromeConnectionMode: 'connector',
+      browserConnectionMode: 'connector',
       fingerprint: '',
     };
   }
@@ -595,22 +595,22 @@ function readBundledAppsConfig(path: string | undefined): {
       const id = String(plugin.id ?? '').trim().replaceAll('_', '-');
       return id && plugin.installed === true && plugin.enabled === true ? [id] : [];
     }));
-    const chromePlugin = plugins.find((candidate) => {
+    const browserPlugin = plugins.find((candidate) => {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
       return String((candidate as Record<string, unknown>).id ?? '').replaceAll('_', '-') === 'chrome';
     }) as Record<string, unknown> | undefined;
-    const chromeConfig = chromePlugin?.config && typeof chromePlugin.config === 'object' &&
-      !Array.isArray(chromePlugin.config)
-      ? chromePlugin.config as Record<string, unknown>
+    const browserConfig = browserPlugin?.config && typeof browserPlugin.config === 'object' &&
+      !Array.isArray(browserPlugin.config)
+      ? browserPlugin.config as Record<string, unknown>
       : {};
-    const chromeConnectionMode = chromeConfig.connectionMode === 'remote_debugging'
+    const browserConnectionMode = browserConfig.connectionMode === 'remote_debugging'
       ? 'remote_debugging' as const
       : 'connector' as const;
     return {
       serviceEnabled: value.serviceEnabled,
       revision,
       enabledPluginIds,
-      chromeConnectionMode,
+      browserConnectionMode,
       fingerprint: createHash('sha256').update(JSON.stringify({
         serviceEnabled: value.serviceEnabled,
         plugins: plugins.filter((candidate) => candidate && typeof candidate === 'object' &&
@@ -623,7 +623,7 @@ function readBundledAppsConfig(path: string | undefined): {
         serviceEnabled: true,
         revision: 1,
         enabledPluginIds: new Set(),
-        chromeConnectionMode: 'connector',
+        browserConnectionMode: 'connector',
         fingerprint: '',
       };
     }

@@ -6,9 +6,9 @@ import path from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
-import { createCardbushChromeServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
-import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
+import { createCardbushBrowserServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
+import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 
 if (process.platform !== 'win32') throw new Error('This regression requires Windows.');
 const workspaceTmp = path.resolve('tmp');
@@ -19,7 +19,7 @@ const chromeOnly = process.argv.includes('--chrome-only');
 const quietTabs = process.argv.includes('--quiet-tabs');
 report.scope = chromeOnly ? 'chrome-only' : 'chrome-and-edge';
 const children = [];
-const createBroker = () => new ChromeConnectorBroker(root, { nativeHostPath: path.resolve('dist-native/chrome-connector-validation/CardBushBrowserHost.exe') });
+const createBroker = () => new BrowserConnectorBroker(root, { nativeHostPath: path.resolve('dist-native/chrome-connector-validation/CardBushBrowserHost.exe') });
 let broker = createBroker();
 let portOccupant;
 const pageServer = http.createServer((request, response) => {
@@ -89,8 +89,8 @@ try {
   const edge = chromeOnly ? null : await startBrowser('edge', process.env.CARDBUSH_TEST_EDGE ?? 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe');
   assert.equal(broker.status().connections.filter(connection => connection.connected).length, edge ? 2 : 1);
   report.checks.push(edge ? 'Chrome and Edge paired simultaneously with the same signed extension identity' : 'Chrome paired with the stable extension identity');
-  const mcp = createCardbushChromeServer({ artifactsDirectory: path.join(root, 'artifacts'),
-    connector: (method, params, options) => requestChromeConnector(method, params, { ...options, configPath: broker.configPath }) });
+  const mcp = createCardbushBrowserServer({ artifactsDirectory: path.join(root, 'artifacts'),
+    connector: (method, params, options) => requestBrowserConnector(method, params, { ...options, configPath: broker.configPath }) });
   async function call(scope, name, input = {}) {
     const result = await mcp._registeredTools[name].handler(input, {
       mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: scope, cardbush_session_title: scope } },

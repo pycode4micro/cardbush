@@ -10,7 +10,7 @@ import type {
   ThemeMode,
 } from '../types';
 
-interface ChromeConnectorStatus {
+interface BrowserConnectorStatus {
   defaultConnectionId: string;
   connections: Array<{ id: string; browser: 'chrome' | 'edge'; label: string; connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
   paired: boolean;
@@ -53,7 +53,7 @@ declare global {
       agents?: import('../../electron/agentTypes').AgentDesktopApi;
       conversationExtracts?: import('@cardbush/bush-protocol').ConversationExtractDesktopApi;
       platform: string;
-      hostCapabilities: () => Promise<{ platform: string; arch: string; terminalRuntimes: import('../types').TerminalRuntime[]; defaultTerminalRuntime: import('../types').TerminalRuntime; computerUse: boolean; chromeNativeConnector: boolean; nativeProcessLimits: boolean }>;
+      hostCapabilities: () => Promise<{ platform: string; arch: string; terminalRuntimes: import('../types').TerminalRuntime[]; defaultTerminalRuntime: import('../types').TerminalRuntime; computerUse: boolean; browserNativeConnector: boolean; chromeNativeConnector: boolean; nativeProcessLimits: boolean }>;
       runtime: {
         command: (message: unknown) => Promise<unknown>;
         startStream: (message: unknown) => Promise<void>;
@@ -69,23 +69,23 @@ declare global {
       ensureTaskWorkspace: (sessionId: string) => Promise<string>;
       runtimeStartupStatus: () => Promise<RuntimeStartupStatus>;
       retryRuntimeStartup: () => Promise<RuntimeStartupStatus>;
-      chromeConnectorStatus: () => Promise<ChromeConnectorStatus>;
-      setupChromeConnector: () => Promise<ChromeConnectorStatus>;
-      pairChromeConnector: (input?: { browser?: 'chrome' | 'edge'; label?: string }) => Promise<{ code: string; expiresAt: string; id: string; browser: 'chrome' | 'edge' }>;
-      selectDefaultBrowserConnection: (id: string) => Promise<ChromeConnectorStatus>;
-      revokeBrowserConnection: (id: string) => Promise<ChromeConnectorStatus>;
-      copyLegacyChromeConnectorCleanup: () => Promise<void>;
-      disableChromeConnector: () => Promise<ChromeConnectorStatus>;
-      removeChromeConnector: () => Promise<ChromeConnectorStatus>;
-      copyChromeConnectorDiagnostics: () => Promise<void>;
-      openChromeConnectorInstaller: () => Promise<{
+      browserConnectorStatus: () => Promise<BrowserConnectorStatus>;
+      setupBrowserConnector: () => Promise<BrowserConnectorStatus>;
+      pairBrowserConnector: (input?: { browser?: 'chrome' | 'edge'; label?: string }) => Promise<{ code: string; expiresAt: string; id: string; browser: 'chrome' | 'edge' }>;
+      selectDefaultBrowserConnection: (id: string) => Promise<BrowserConnectorStatus>;
+      revokeBrowserConnection: (id: string) => Promise<BrowserConnectorStatus>;
+      copyLegacyBrowserConnectorCleanup: () => Promise<void>;
+      disableBrowserConnector: () => Promise<BrowserConnectorStatus>;
+      removeBrowserConnector: () => Promise<BrowserConnectorStatus>;
+      copyBrowserConnectorDiagnostics: () => Promise<void>;
+      openBrowserConnectorInstaller: () => Promise<{
         opened: boolean;
         method: 'store' | 'unpacked';
         target: string;
       }>;
-      revealChromeConnectorExtension: () => Promise<string>;
-      onChromeConnectorStatus: (
-        callback: (status: ChromeConnectorStatus) => void,
+      revealBrowserConnectorExtension: () => Promise<string>;
+      onBrowserConnectorStatus: (
+        callback: (status: BrowserConnectorStatus) => void,
       ) => () => void;
       onRuntimeStartupStatus: (
         callback: (status: RuntimeStartupStatus) => void,

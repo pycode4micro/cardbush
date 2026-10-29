@@ -10,6 +10,7 @@ export function normalizeTerminalRuntime(value: unknown, platform: string): Term
   return defaultTerminalRuntime(platform);
 }
 export function platformFeatures(platform: string, arch: string) {
-  return { computerUse: platform === 'win32', chromeNativeConnector: platform === 'win32',
+  return { computerUse: platform === 'win32', browserNativeConnector: platform === 'win32',
+    chromeNativeConnector: platform === 'win32', // Compatibility with older desktop clients.
     nativeProcessLimits: platform === 'win32' && arch === 'x64' };
 }

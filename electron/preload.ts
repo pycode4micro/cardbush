@@ -52,7 +52,7 @@ type RuntimeStartupStatus = {
   error?: string;
 };
 
-type ChromeConnectorStatus = {
+type BrowserConnectorStatus = {
   defaultConnectionId: string;
   connections: Array<{ id: string; browser: 'chrome' | 'edge'; label: string; connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
   paired: boolean;
@@ -233,27 +233,27 @@ const desktopApi = {
     ipcRenderer.on('app:runtime-startup-status', listener);
     return () => ipcRenderer.removeListener('app:runtime-startup-status', listener);
   },
-  chromeConnectorStatus: () =>
-    ipcRenderer.invoke('chrome-connector:status') as Promise<ChromeConnectorStatus>,
-  setupChromeConnector: () =>
-    ipcRenderer.invoke('chrome-connector:setup') as Promise<ChromeConnectorStatus>,
-  pairChromeConnector: (input?: { browser?: 'chrome' | 'edge'; label?: string }) => ipcRenderer.invoke('chrome-connector:pair', input) as Promise<{ code: string; expiresAt: string; id: string; browser: 'chrome' | 'edge' }>,
-  selectDefaultBrowserConnection: (id: string) => ipcRenderer.invoke('browser-connector:select-default', id) as Promise<ChromeConnectorStatus>,
-  revokeBrowserConnection: (id: string) => ipcRenderer.invoke('browser-connector:revoke', id) as Promise<ChromeConnectorStatus>,
-  copyLegacyChromeConnectorCleanup: () => ipcRenderer.invoke('chrome-connector:copy-legacy-cleanup') as Promise<void>,
-  disableChromeConnector: () => ipcRenderer.invoke('chrome-connector:disable') as Promise<ChromeConnectorStatus>,
-  removeChromeConnector: () => ipcRenderer.invoke('chrome-connector:remove') as Promise<ChromeConnectorStatus>,
-  copyChromeConnectorDiagnostics: () => ipcRenderer.invoke('chrome-connector:copy-diagnostics') as Promise<void>,
-  openChromeConnectorInstaller: () =>
+  browserConnectorStatus: () =>
+    ipcRenderer.invoke('chrome-connector:status') as Promise<BrowserConnectorStatus>,
+  setupBrowserConnector: () =>
+    ipcRenderer.invoke('chrome-connector:setup') as Promise<BrowserConnectorStatus>,
+  pairBrowserConnector: (input?: { browser?: 'chrome' | 'edge'; label?: string }) => ipcRenderer.invoke('chrome-connector:pair', input) as Promise<{ code: string; expiresAt: string; id: string; browser: 'chrome' | 'edge' }>,
+  selectDefaultBrowserConnection: (id: string) => ipcRenderer.invoke('browser-connector:select-default', id) as Promise<BrowserConnectorStatus>,
+  revokeBrowserConnection: (id: string) => ipcRenderer.invoke('browser-connector:revoke', id) as Promise<BrowserConnectorStatus>,
+  copyLegacyBrowserConnectorCleanup: () => ipcRenderer.invoke('chrome-connector:copy-legacy-cleanup') as Promise<void>,
+  disableBrowserConnector: () => ipcRenderer.invoke('chrome-connector:disable') as Promise<BrowserConnectorStatus>,
+  removeBrowserConnector: () => ipcRenderer.invoke('chrome-connector:remove') as Promise<BrowserConnectorStatus>,
+  copyBrowserConnectorDiagnostics: () => ipcRenderer.invoke('chrome-connector:copy-diagnostics') as Promise<void>,
+  openBrowserConnectorInstaller: () =>
     ipcRenderer.invoke('chrome-connector:open-installer') as Promise<{
       opened: boolean;
       method: 'store' | 'unpacked';
       target: string;
     }>,
-  revealChromeConnectorExtension: () =>
+  revealBrowserConnectorExtension: () =>
     ipcRenderer.invoke('chrome-connector:reveal-extension') as Promise<string>,
-  onChromeConnectorStatus: (callback: (status: ChromeConnectorStatus) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, status: ChromeConnectorStatus) => callback(status);
+  onBrowserConnectorStatus: (callback: (status: BrowserConnectorStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: BrowserConnectorStatus) => callback(status);
     ipcRenderer.on('chrome-connector:status', listener);
     return () => ipcRenderer.removeListener('chrome-connector:status', listener);
   },
@@ -694,4 +694,18 @@ const desktopApi = {
     ipcRenderer.invoke('shell:open-external', targetUrl) as Promise<void>,
 };
 
-contextBridge.exposeInMainWorld('cardbushDesktop', desktopApi);
+// Compatibility for integrations built against the original Chrome-only API.
+// New code uses Browser names; IPC channels remain stable across upgrades.
+const legacyBrowserApi = {
+  chromeConnectorStatus: desktopApi.browserConnectorStatus,
+  setupChromeConnector: desktopApi.setupBrowserConnector,
+  pairChromeConnector: desktopApi.pairBrowserConnector,
+  copyLegacyChromeConnectorCleanup: desktopApi.copyLegacyBrowserConnectorCleanup,
+  disableChromeConnector: desktopApi.disableBrowserConnector,
+  removeChromeConnector: desktopApi.removeBrowserConnector,
+  copyChromeConnectorDiagnostics: desktopApi.copyBrowserConnectorDiagnostics,
+  openChromeConnectorInstaller: desktopApi.openBrowserConnectorInstaller,
+  revealChromeConnectorExtension: desktopApi.revealBrowserConnectorExtension,
+  onChromeConnectorStatus: desktopApi.onBrowserConnectorStatus,
+};
+contextBridge.exposeInMainWorld('cardbushDesktop', { ...desktopApi, ...legacyBrowserApi });

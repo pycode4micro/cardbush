@@ -4,14 +4,14 @@ import net, { type Socket } from 'node:net';
 import path from 'node:path';
 import { createWebSocketStream, type WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
-import { ChromeConnectorWebSocket, type BrowserConnection, type ConnectorBrowser, type ConnectorPortRecovery, type ConnectorConnectionAttempt, type BrowserApprovalOptions } from './chromeConnectorWebSocket';
-import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './chromeConnectorFiles';
+import { BrowserConnectorWebSocket, type BrowserConnection, type ConnectorBrowser, type ConnectorPortRecovery, type ConnectorConnectionAttempt, type BrowserApprovalOptions } from './browserConnectorWebSocket';
+import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './browserConnectorFiles';
 
 import {
-  chromeConnectorConfigDirectoryName,
-  chromeConnectorConfigFileName,
-  chromeConnectorProtocol,
-} from './chromeConnectorConstants';
+  browserConnectorConfigDirectoryName,
+  browserConnectorConfigFileName,
+  browserConnectorProtocol,
+} from './browserConnectorConstants';
 
 type PeerRole = 'extension' | 'mcp' | 'manager';
 
@@ -24,13 +24,13 @@ type Peer = {
   socket: Duplex;
   buffer: string;
   connection?: BrowserConnection;
-  status?: Partial<ChromeConnectorStatus>;
+  status?: Partial<BrowserConnectorStatus>;
 };
 
 type Pending = { client: Peer; extension: Peer; id: string; scopeId: string; method: string; switchTo?: string };
 
-export interface ChromeConnectorStatus {
-  protocol: typeof chromeConnectorProtocol;
+export interface BrowserConnectorStatus {
+  protocol: typeof browserConnectorProtocol;
   bridgeRunning: boolean;
   extensionConnected: boolean;
   extensionVersion?: string;
@@ -49,7 +49,7 @@ export interface ChromeConnectorStatus {
   connections: Array<BrowserConnection & { connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
 }
 
-export class ChromeConnectorBroker {
+export class BrowserConnectorBroker {
   readonly configPath: string;
   readonly endpoint: string;
   readonly #token = randomBytes(32).toString('hex');
@@ -58,8 +58,8 @@ export class ChromeConnectorBroker {
   readonly #server = net.createServer();
   readonly #peers = new Map<string, Peer>();
   readonly #sockets = new Set<Duplex>();
-  readonly #webSocket: ChromeConnectorWebSocket;
-  readonly #listeners = new Set<(status: ChromeConnectorStatus) => void>();
+  readonly #webSocket: BrowserConnectorWebSocket;
+  readonly #listeners = new Set<(status: BrowserConnectorStatus) => void>();
   readonly #extensions = new Map<string, Peer>();
   readonly #pending = new Map<string, Pending>();
   readonly #scopeBindings = new Map<string, string>();
@@ -71,18 +71,18 @@ export class ChromeConnectorBroker {
     nativeHostPath?: string; handshakeTimeoutMs?: number; maximumPeers?: number; shared?: boolean;
   } & BrowserApprovalOptions = {}) {
     this.#routesPath = path.join(connectorDirectory(userDataPath), 'routes.json');
-    this.#webSocket = new ChromeConnectorWebSocket(connectorDirectory(userDataPath), (socket, connection) => this.#acceptExtension(socket, connection),
+    this.#webSocket = new BrowserConnectorWebSocket(connectorDirectory(userDataPath), (socket, connection) => this.#acceptExtension(socket, connection),
       { ...options, onConnectionAttempt: () => this.#publish() });
     const identity = createHash('sha256').update(options.shared ? fs.realpathSync.native(userDataPath).toLowerCase() : userDataPath + randomUUID()).digest('hex').slice(0, 24);
     this.endpoint = process.platform === 'win32'
       ? `\\\\.\\pipe\\cardbush-browser-connector-${identity}`
-      : path.join(userDataPath, chromeConnectorConfigDirectoryName, 'bridge.sock');
+      : path.join(userDataPath, browserConnectorConfigDirectoryName, 'bridge.sock');
     this.configPath = path.join(
       userDataPath,
-      chromeConnectorConfigDirectoryName,
-      chromeConnectorConfigFileName,
+      browserConnectorConfigDirectoryName,
+      browserConnectorConfigFileName,
     );
-    this.managerPath = path.join(userDataPath, chromeConnectorConfigDirectoryName, 'manager.json');
+    this.managerPath = path.join(userDataPath, browserConnectorConfigDirectoryName, 'manager.json');
   }
 
   async start(): Promise<void> {
@@ -138,14 +138,14 @@ export class ChromeConnectorBroker {
         }
       }
       writeConnectorFile(this.configPath, JSON.stringify({
-        protocol: chromeConnectorProtocol,
+        protocol: browserConnectorProtocol,
         endpoint: this.endpoint,
         token: this.#token,
         pid: process.pid,
         updatedAt: new Date().toISOString(),
       }, null, 2));
       if (this.options.shared) writeConnectorFile(this.managerPath, JSON.stringify({
-        protocol: chromeConnectorProtocol, endpoint: this.endpoint, token: this.#managerToken, pid: process.pid,
+        protocol: browserConnectorProtocol, endpoint: this.endpoint, token: this.#managerToken, pid: process.pid,
       }));
     } catch (error) {
       this.#webSocket.stop();
@@ -191,10 +191,10 @@ export class ChromeConnectorBroker {
     this.#publish();
   }
 
-  status(): ChromeConnectorStatus {
+  status(): BrowserConnectorStatus {
     const preferred = this.#extensions.get(this.#webSocket.defaultConnectionId)?.status;
     return {
-      protocol: chromeConnectorProtocol,
+      protocol: browserConnectorProtocol,
       bridgeRunning: this.#started,
       ...preferred,
       extensionConnected: this.#extensions.size > 0,
@@ -211,7 +211,7 @@ export class ChromeConnectorBroker {
     };
   }
 
-  onStatus(listener: (status: ChromeConnectorStatus) => void): () => void {
+  onStatus(listener: (status: BrowserConnectorStatus) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
@@ -286,7 +286,7 @@ export class ChromeConnectorBroker {
             : this.options.shared && message.role === 'manager' ? 'manager' : null;
           if (
             message.type !== 'hello' ||
-            message.protocol !== chromeConnectorProtocol ||
+            message.protocol !== browserConnectorProtocol ||
             message.token !== (role === 'manager' ? this.#managerToken : this.#token) ||
             !role
           ) {
@@ -300,7 +300,7 @@ export class ChromeConnectorBroker {
           this.#peers.set(pending.id, pending);
           writeLine(socket, {
             type: 'hello_ack',
-            protocol: chromeConnectorProtocol,
+            protocol: browserConnectorProtocol,
             clientId: pending.id,
             ...(role === 'manager' ? { status: this.status() } : {}),
           });
@@ -338,7 +338,7 @@ export class ChromeConnectorBroker {
             || entry.length !== 2 || typeof entry[0] !== 'string' || !entry[0] || entry[0].length > 512 || !/^[a-f0-9]{32}$/.test(entry[1])))
             throw new Error('Invalid legacy browser routes.');
           if (new Set([...this.#scopeBindings.keys(), ...input.bindings.map(entry => entry[0])]).size > 4096) throw new Error('Browser session route limit reached.');
-          this.#webSocket.importPairings(input.credentials as Parameters<ChromeConnectorWebSocket['importPairings']>[0], string(input.defaultConnectionId));
+          this.#webSocket.importPairings(input.credentials as Parameters<BrowserConnectorWebSocket['importPairings']>[0], string(input.defaultConnectionId));
           for (const [scope, connection] of input.bindings) if (!this.#scopeBindings.has(scope)) this.#bind(scope, connection);
           result = this.status(); this.#publish(); break;
         case 'disable':
@@ -382,7 +382,7 @@ export class ChromeConnectorBroker {
       if (this.#extensions.get(connection.id) === peer) this.#extensions.delete(connection.id);
       this.#publish();
     });
-    writeLine(socket, { type: 'connector_ready', protocol: chromeConnectorProtocol });
+    writeLine(socket, { type: 'connector_ready', protocol: browserConnectorProtocol });
     this.#publish();
   }
 

@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { ChromeConnectorError } from './bridgeClient.js';
+import { BrowserConnectorError } from './bridgeClient.js';
 import type { PageCommand } from './pageCapture.js';
 import { readElement } from './pageInspection.js';
 
@@ -54,11 +54,11 @@ export class PageSnapshots {
       offset = Number(position);
       if (extra.length || !cached || !Number.isSafeInteger(offset) || offset < 0 || offset >= cached.rows.length
         || signature !== this.sign(id, position) || cached.scope !== scope || cached.pageId !== pageId) {
-        throw new ChromeConnectorError('snapshot_cursor_expired', 'This snapshot cursor is invalid, expired, or belongs to another session/page. Take a fresh snapshot.');
+        throw new BrowserConnectorError('snapshot_cursor_expired', 'This snapshot cursor is invalid, expired, or belongs to another session/page. Take a fresh snapshot.');
       }
       if (cached.document !== await documentIdentity(command)) {
         this.clear(scope, pageId);
-        throw new ChromeConnectorError('snapshot_document_changed', 'The page navigated since this snapshot. Take a fresh snapshot; old cursor and uids must not be reused.');
+        throw new BrowserConnectorError('snapshot_document_changed', 'The page navigated since this snapshot. Take a fresh snapshot; old cursor and uids must not be reused.');
       }
       capture = cached;
     } else {
@@ -66,7 +66,7 @@ export class PageSnapshots {
       await command('Accessibility.enable');
       const result = object(await command('Accessibility.getFullAXTree'));
       const nodes = (Array.isArray(result.nodes) ? result.nodes : []).map(object);
-      if (document !== await documentIdentity(command)) throw new ChromeConnectorError('snapshot_document_changed', 'The page navigated while reading its accessibility tree. Take a fresh snapshot.');
+      if (document !== await documentIdentity(command)) throw new BrowserConnectorError('snapshot_document_changed', 'The page navigated while reading its accessibility tree. Take a fresh snapshot.');
       const selected = subtree(nodes, input.rootUid);
       const query = input.query?.toLocaleLowerCase(), roles = input.roles?.map(role => role.toLowerCase());
       const rows: Row[] = [];
@@ -117,7 +117,7 @@ export class PageSnapshots {
         row.text = row.text.includes(' field=') ? row.text.replace(' field=', `${extra} field=`) : row.text + extra;
         capture.bytes += Buffer.byteLength(extra, 'utf8'); pageCost += JSON.stringify(extra).length;
       }
-      if (document !== await documentIdentity(command)) throw new ChromeConnectorError('snapshot_document_changed', 'The page navigated while inspecting candidates. Take a fresh snapshot.');
+      if (document !== await documentIdentity(command)) throw new BrowserConnectorError('snapshot_document_changed', 'The page navigated while inspecting candidates. Take a fresh snapshot.');
       this.clear(scope, pageId);
       this.captures.set(capture.id, capture);
       this.prune();
@@ -170,14 +170,14 @@ export class PageSnapshots {
 async function documentIdentity(command: PageCommand) {
   const result = object(await command('Page.getFrameTree'));
   const frame = object(object(result.frameTree).frame);
-  if (!frame.id || !frame.loaderId) throw new ChromeConnectorError('snapshot_document_unavailable', 'The page document is not ready. Wait for it to load before taking a snapshot.');
+  if (!frame.id || !frame.loaderId) throw new BrowserConnectorError('snapshot_document_unavailable', 'The page document is not ready. Wait for it to load before taking a snapshot.');
   return JSON.stringify([frame.id, frame.loaderId, frame.url]);
 }
 
 function subtree(nodes: Record<string, unknown>[], uid?: string) {
   if (!uid) return undefined;
   const root = nodes.find(node => Number(node.backendDOMNodeId) === Number(uid.slice(3)));
-  if (!root) throw new ChromeConnectorError('snapshot_root_missing', `${uid} is not present in the accessibility tree. Take a fresh snapshot.`);
+  if (!root) throw new BrowserConnectorError('snapshot_root_missing', `${uid} is not present in the accessibility tree. Take a fresh snapshot.`);
   const byId = new Map(nodes.map(node => [string(node.nodeId), node]));
   const selected = new Set<string>();
   const queue = [string(root.nodeId)];

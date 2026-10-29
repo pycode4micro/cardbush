@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCardbushChromeServer, createBrowserUseState } from '../dist/index.js';
+import { createCardbushBrowserServer, createBrowserUseState } from '../dist/index.js';
 import { projectMcpResult } from '../../bush-mcp-client/dist/modelResult.js';
-import { ChromeConnectorError } from '../dist/bridgeClient.js';
+import { BrowserConnectorError } from '../dist/bridgeClient.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -22,7 +22,7 @@ function assertSetupGuidance(text) {
 test('empty connector explains local consent while offline profiles reconnect without re-pairing', async () => {
   const id = '1'.repeat(32);
   let connections = [];
-  const server = createCardbushChromeServer({ connector: async method => {
+  const server = createCardbushBrowserServer({ connector: async method => {
     assert.equal(method, 'browser.list'); return { connections, selectedConnectionId: id };
   } });
   const empty = (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
@@ -43,7 +43,7 @@ test('recent rejected handshakes explain explicit recovery without changing conn
   const id = '1'.repeat(32);
   let at = new Date().toISOString();
   const calls = [];
-  const server = createCardbushChromeServer({ connector: async method => {
+  const server = createCardbushBrowserServer({ connector: async method => {
     calls.push(method); return { connections: [{ id, connected: false }], selectedConnectionId: id,
       connectionAttempt: { at, stage: 'rejected', reason: 'pairing_proof_mismatch', connectionId: id } };
   } });
@@ -59,7 +59,7 @@ test('recent rejected handshakes explain explicit recovery without changing conn
 test('session 095c replay: missing bridge is setup state, mutations stay blocked and recovery is live', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-browser-setup-')), config = join(root, 'bridge.json');
   t.after(async () => { assert.equal(dirname(root), tmpdir()); await rm(root, { recursive: true, force: true }); });
-  const server = createCardbushChromeServer({ browserConfigPath: config });
+  const server = createCardbushBrowserServer({ browserConfigPath: config });
   const listed = await server._registeredTools.list_browsers.handler({}, context);
   assert.equal(listed.isError, undefined); assert.equal(listed.structuredContent.availability, 'needs_setup');
   assert.deepEqual(listed.structuredContent.connections, []);
@@ -76,9 +76,9 @@ test('session 095c replay: missing bridge is setup state, mutations stay blocked
   assert.equal(invalid.structuredContent.availability, 'misconfigured'); assert.doesNotMatch(JSON.stringify(invalid), /must-not-be-printed/);
   assertSetupGuidance(invalid.structuredContent.nextStep);
   let connected = false; const calls = [];
-  const live = createCardbushChromeServer({ connector: async method => {
+  const live = createCardbushBrowserServer({ connector: async method => {
     calls.push(method);
-    if (!connected) throw new ChromeConnectorError('cardbush_bridge_unavailable', 'offline');
+    if (!connected) throw new BrowserConnectorError('cardbush_bridge_unavailable', 'offline');
     return { connections: [{ id: 'cardbush', connected: true }] };
   } });
   const disconnected = (await live._registeredTools.list_browsers.handler({}, context)).structuredContent;
@@ -89,8 +89,8 @@ test('session 095c replay: missing bridge is setup state, mutations stay blocked
 });
 
 test('availability guidance never rewrites uncertain dispatch into a safe-to-retry mutation', async () => {
-  const server = createCardbushChromeServer({ connector: async () => {
-    throw new ChromeConnectorError('cardbush_bridge_unavailable', 'disconnected', { execution: 'unknown' });
+  const server = createCardbushBrowserServer({ connector: async () => {
+    throw new BrowserConnectorError('cardbush_bridge_unavailable', 'disconnected', { execution: 'unknown' });
   } });
   const result = await server._registeredTools.new_page.handler({ url: 'https://example.invalid' }, context);
   assert.equal(result.isError, true); assert.equal(result.structuredContent.error.details.execution, 'unknown');
@@ -102,7 +102,7 @@ test('only fresh diagnostics for this host explain startup failure; disabled, ex
   const health = { protocol: 'cardbush.browser_connector_health.v1', configPath: config, updatedAt: new Date().toISOString(), state: 'unavailable',
     error: { code: 'browser_connector_component_missing', message: 'Agent browser connector component is missing.', nextStep: 'Run npm run build:agent and reopen the CLI.',
       token: 'unexpected-field-must-not-reach-the-model' } };
-  const server = createCardbushChromeServer({ browserConfigPath: config, browserHealthPath: healthPath });
+  const server = createCardbushBrowserServer({ browserConfigPath: config, browserHealthPath: healthPath });
   const list = async () => (await server._registeredTools.list_browsers.handler({}, context)).structuredContent;
   await writeFile(healthPath, JSON.stringify(health));
   const failed = await list();
@@ -122,7 +122,7 @@ test('only fresh diagnostics for this host explain startup failure; disabled, ex
 
 test('empty selection and invalid tab ids never become a phantom page zero', async () => {
   for (const listed of [{ pages: [], selectedPageId: null, selectionState: 'none' }, [{ id: null }, { id: false }, { id: '' }]]) {
-    const server = createCardbushChromeServer({ connector: async method => { assert.equal(method, 'tabs.list'); return listed; } });
+    const server = createCardbushBrowserServer({ connector: async method => { assert.equal(method, 'tabs.list'); return listed; } });
     const result = await server._registeredTools.list_pages.handler({}, context);
     assert.deepEqual(result.structuredContent.pages, []);
     assert.equal(result.structuredContent.selectionState, 'none');
@@ -133,7 +133,7 @@ test('empty selection and invalid tab ids never become a phantom page zero', asy
 
 test('a lost external selection can be listed but never falls back, including after release', async () => {
   let available = [{ id: 1, active: true }, { id: 2, active: false }], commands = 0;
-  const server = createCardbushChromeServer({ connector: async (method, params) => {
+  const server = createCardbushBrowserServer({ connector: async (method, params) => {
     if (method === 'tabs.list') return available;
     if (method === 'tabs.close') { available = available.filter(page => page.id !== params.tabId); return { closed: true }; }
     if (method === 'tabs.activate') return { id: params.tabId };
@@ -160,7 +160,7 @@ test('a lost external selection can be listed but never falls back, including af
 });
 
 test('an inherited missing CardBush target blocks implicit selection even without a local selection cache', async () => {
-  const server = createCardbushChromeServer({ connector: async method => {
+  const server = createCardbushBrowserServer({ connector: async method => {
     assert.equal(method, 'tabs.list');
     return { pages: [{ id: 2, active: true, browser: 'cardbush' }], selectedPageId: 1, selectionState: 'missing' };
   } });
@@ -172,7 +172,7 @@ test('an inherited missing CardBush target blocks implicit selection even withou
 
 test('browser evaluation preserves native data and presents its JSON once to the model', async () => {
   const value = { rows: Array.from({ length: 10 }, (_, i) => ({ id: i, label: `unique-row-${i}` })) };
-  const server = createCardbushChromeServer({ connector: async method => method === 'tabs.list'
+  const server = createCardbushBrowserServer({ connector: async method => method === 'tabs.list'
     ? [{ id: 42, active: true }] : { result: { value } } });
   const native = await server._registeredTools.evaluate_script.handler({ expression: 'readData()', resultType: 'json' }, context);
   const before = structuredClone(native);
@@ -186,7 +186,7 @@ test('browser evaluation preserves native data and presents its JSON once to the
 test('resize reports failure before caching a viewport the page did not apply', async () => {
   const state = createBrowserUseState();
   let writes = 0;
-  const server = createCardbushChromeServer({ state, connector: async (method, params) => {
+  const server = createCardbushBrowserServer({ state, connector: async (method, params) => {
     if (method === 'tabs.list') return [{ id: 42, active: true }];
     if (params.command === 'Page.getLayoutMetrics') return { cssVisualViewport: { zoom: 1 } };
     if (params.command === 'Emulation.setDeviceMetricsOverride') { writes++; return {}; }

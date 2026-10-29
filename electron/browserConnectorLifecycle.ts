@@ -4,10 +4,10 @@ import os from 'node:os';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
 import { uiText } from '@cardbush/platform/i18n';
-import { ChromeConnectorBroker } from './chromeConnectorBroker';
+import { BrowserConnectorBroker } from './browserConnectorBroker';
 import { SharedBrowserConnector, type BrowserConnectorHandle } from './sharedBrowserConnector';
-import { ChromeConnectorRegistration, chromeConnectorPlatformSupported, type ConnectorRegistry, type ConnectorRegistrationInput } from './chromeConnectorRegistration';
-import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './chromeConnectorFiles';
+import { BrowserConnectorRegistration, browserConnectorPlatformSupported, type ConnectorRegistry, type ConnectorRegistrationInput } from './browserConnectorRegistration';
+import { assertConnectorFile, connectorDirectory, secureConnectorResource, writeConnectorFile } from './browserConnectorFiles';
 
 export type ConnectorLifecycleState = 'disabled' | 'enabling' | 'enabled' | 'disabling' | 'needs_repair';
 
@@ -26,7 +26,7 @@ export async function acquireConnectorLease(identity = os.homedir().toLowerCase(
   return () => { if (!released) { released = true; server.close(); } };
 }
 
-export class ChromeConnectorLifecycle {
+export class BrowserConnectorLifecycle {
   broker: BrowserConnectorHandle | null = null;
   state: ConnectorLifecycleState = 'disabled';
   enabled = false;
@@ -36,17 +36,17 @@ export class ChromeConnectorLifecycle {
   #queue: Promise<unknown> = Promise.resolve();
   #disposed = false;
   #unsubscribe: (() => void) | null = null;
-  readonly #registration: ChromeConnectorRegistration;
+  readonly #registration: BrowserConnectorRegistration;
   readonly #statePath: string;
 
   constructor(readonly input: ConnectorRegistrationInput & { legacyUserDataPath?: string; shared?: boolean; appsConfigPath?: string }, readonly changed: () => void, readonly dependencies: {
     registry?: ConnectorRegistry;
     acquireLease?: () => Promise<() => void>;
-    createBroker?: () => ChromeConnectorBroker;
+    createBroker?: () => BrowserConnectorBroker;
     supported?: () => boolean;
     secureDirectory?: (directory: string) => void;
   } = {}) {
-    this.#registration = new ChromeConnectorRegistration({ ...input, userDataPath: input.legacyUserDataPath ?? input.userDataPath }, dependencies.registry);
+    this.#registration = new BrowserConnectorRegistration({ ...input, userDataPath: input.legacyUserDataPath ?? input.userDataPath }, dependencies.registry);
     this.#statePath = path.join(connectorDirectory(input.userDataPath), 'preference.json');
   }
   async restore(): Promise<void> {
@@ -70,14 +70,14 @@ export class ChromeConnectorLifecycle {
     }
     // Old installations had implicit registration, not an explicit enable choice.
     // Clean only a verified legacy registration and leave foreign installs alone.
-    if (fs.existsSync(this.#registration.manifestPath) && (this.dependencies.supported ?? chromeConnectorPlatformSupported)()) {
+    if (fs.existsSync(this.#registration.manifestPath) && (this.dependencies.supported ?? browserConnectorPlatformSupported)()) {
       await this.setEnabled(false);
     }
   }
   setEnabled(enabled: boolean, remove = false): Promise<void> {
     const operation = this.#queue.catch(() => {}).then(async () => {
       if (this.#disposed) throw new Error('Connector is shutting down.');
-      if (!(this.dependencies.supported ?? chromeConnectorPlatformSupported)()) throw new Error(uiText(this.input.uiLanguage?.())('browserConnector.windowsVersionRequired'));
+      if (!(this.dependencies.supported ?? browserConnectorPlatformSupported)()) throw new Error(uiText(this.input.uiLanguage?.())('browserConnector.windowsVersionRequired'));
       const previousIntent = this.enabled;
       this.error = '';
       this.state = enabled ? 'enabling' : 'disabling'; this.changed();
@@ -131,7 +131,7 @@ export class ChromeConnectorLifecycle {
     if (this.broker) { this.#persist(true); this.state = 'enabled'; return; }
     const broker = this.dependencies.createBroker?.() ?? (this.input.shared
       ? new SharedBrowserConnector(this.input.userDataPath, this.input.nativeHostPath, this.input.appsConfigPath)
-      : new ChromeConnectorBroker(this.input.userDataPath, { nativeHostPath: this.input.nativeHostPath }));
+      : new BrowserConnectorBroker(this.input.userDataPath, { nativeHostPath: this.input.nativeHostPath }));
     try {
       await broker.start();
       if (this.#disposed) throw new Error('Connector is shutting down.');

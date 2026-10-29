@@ -3,12 +3,12 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 
 // Legacy stdio callers must not bypass the new explicit pairing boundary.
 const executable = path.resolve(process.argv[2] || 'dist-native/chrome-connector-test/CardBushBrowserHost.exe');
 const root = await mkdtemp(path.join(tmpdir(), 'cardbush-native-host-'));
-const broker = new ChromeConnectorBroker(root, { nativeHostPath: executable });
+const broker = new BrowserConnectorBroker(root, { nativeHostPath: executable });
 async function nativeAttempt(origin, config) {
   const child = spawn(executable, [origin], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, CARDBUSH_CHROME_CONNECTOR_CONFIG: config } });

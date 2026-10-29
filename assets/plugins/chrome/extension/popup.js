@@ -81,7 +81,10 @@ buttons.forEach((button) => button.addEventListener('click', async () => {
 }));
 
 async function refresh(reconnect = false) {
-  connectionHelp.textContent = CardBushExtensionI18n.uiText(document.documentElement.lang)('browser.extension.connectionHelp');
+  const t = CardBushExtensionI18n.uiText(document.documentElement.lang);
+  connectionHelp.textContent = t('browser.extension.connectionHelp');
+  document.querySelector('#advanced-connection-label').textContent = t('browser.extension.advanced');
+  document.querySelector('#local-connection-repair-help').textContent = t('browser.extension.repairHelp');
   if (busy || refreshing) return;
   refreshing = true;
   const requestRevision = revision;
@@ -126,25 +129,23 @@ async function refresh(reconnect = false) {
       lastScopeOptions = scopeOptions;
     }
     scopePicker.hidden = candidates.length <= 1;
-    connection.textContent = actionError || (staleWorker
-      ? '扩展后台仍在运行旧版本，需要重新加载。'
-      : !state.connectorEnabled && state.localConnectionRequested
-      ? `本机连接申请已停止。点击「连接 CardBush」重新申请；原配对与网站授权已保留。${state.lastError ? `\n${state.lastError}` : ''}`
-      : state.pairingRequired
-      ? '连接已移除。点击「连接 CardBush」重新连接本机，或使用手动配对连接其他 Agent。'
-      : !state.connectorEnabled
-      ? '扩展连接已关闭，配对与网站授权已保留。点击「连接 CardBush」即可恢复。'
-      : state.nativeConnected
-      ? state.controlledTabCount > 0
-        ? `正在控制 ${state.controlledTabCount} 个标签页`
-        : '已连接 CardBush，等待控制'
-      : state.nativeConnecting
-        ? state.hasPairing && !state.localConnectionRequested ? '正在使用已保存的授权连接 CardBush…' : '正在申请本机连接…授权窗口出现后，请在 CardBush 风格的扩展窗口确认一次。'
-        : state.reconnectPaused
-        ? `${state.localConnectionRequested
-          ? '本机连接申请连续失败，已停止自动重试。准备好后点击「连接 CardBush」继续本机申请，原配对仍保留。'
-          : '连接连续失败，已停止自动重试。准备好后点击「连接 CardBush」重试原连接，或主动「重新申请本机连接」。'}${state.lastError ? `\n${state.lastError}` : ''}`
-        : `${state.localConnectionRequested ? '本机连接申请未完成，等待有限重试。' : '尚未连接 CardBush，等待有限重试。'}请确认目标 App/CLI 正在运行并已启用 Browser Use。${state.lastError ? `\n${state.lastError}` : ''}`);
+    const savedConnection = state.hasPairing && !state.localConnectionRequested;
+    const phaseKey = { handshake: 'browser.extension.handshake', authentication: 'browser.extension.authentication' }[state.connectionDiagnostic?.phase]
+      ?? 'browser.extension.opening';
+    const statusKey = staleWorker ? 'browser.extension.stale'
+      : !state.connectorEnabled && state.localConnectionRequested ? 'browser.extension.stopped'
+      : state.pairingRequired ? 'browser.extension.removed'
+      : !state.connectorEnabled ? 'browser.extension.disabled'
+      : state.nativeConnected ? state.controlledTabCount > 0 ? 'browser.extension.controlling' : 'browser.extension.connected'
+      : state.nativeConnecting ? savedConnection ? phaseKey : 'browser.extension.enrolling'
+      : state.reconnectPaused ? 'browser.extension.paused'
+      : savedConnection ? state.reconnectWaiting ? 'browser.extension.waiting' : 'browser.extension.retrying'
+      : 'browser.extension.enrollmentRetry';
+    connection.textContent = actionError || t(statusKey, {
+      count: state.controlledTabCount ?? 0,
+      seconds: Math.max(0, Math.ceil(((state.nextRetryAt || Date.now()) - Date.now()) / 1000)),
+    });
+    if (!actionError && !staleWorker && !state.nativeConnected && state.lastError) connection.textContent += `\n${state.lastError}`;
     connection.classList.toggle('offline', Boolean(actionError) || (!staleWorker && state.pairingRequired));
     connection.classList.toggle('waiting', staleWorker || (!state.nativeConnected && !state.pairingRequired && !actionError));
     siteAccess.textContent = staleWorker
@@ -165,8 +166,14 @@ async function refresh(reconnect = false) {
       const permissionAction = ['allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action);
       button.disabled = permissionAction && (!state.nativeConnected || !state.activeScope || !state.origin);
       if (button.dataset.action === 'disable_connector') button.disabled = !state.connectorEnabled;
-      if (button.dataset.action === 'reconnect') button.disabled = state.nativeConnected || state.nativeConnecting;
-      if (button.dataset.action === 'request_local_connection') button.disabled = state.nativeConnected || state.requestingLocalConnection;
+      if (button.dataset.action === 'reconnect') {
+        button.disabled = state.nativeConnected || state.nativeConnecting;
+        button.textContent = t(savedConnection ? 'browser.extension.retry' : 'browser.extension.connect');
+      }
+      if (button.dataset.action === 'request_local_connection') {
+        button.disabled = state.nativeConnected || state.nativeConnecting || state.requestingLocalConnection;
+        button.textContent = t('browser.extension.repair');
+      }
       if (staleWorker && ['pair', 'reconnect', 'request_local_connection', 'allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action)) button.disabled = true;
       if (button.dataset.action === 'allow_all') button.textContent = state.allowAllSites
         ? '复制当前页 · 已允许全部网站'

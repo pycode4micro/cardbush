@@ -4006,6 +4006,25 @@
     "remoteWorkers.local": "This computer",
     "remoteWorkers.statusUnavailable": "Status unavailable",
     "browser.cli.savedConnectionRecovery": "Open the original browser profile. After three fast attempts, the extension keeps retrying the saved connection every 30 seconds. You can click Connect to retry immediately. A temporary disconnect does not require a new pairing code or another approval. Request a new local connection only when deliberately replacing the saved identity.",
-    "browser.extension.connectionHelp": "Confirm the first local connection once in the CardBush extension window; no pairing code is needed. The local App and CLI then share this connection. After three fast attempts, saved connections retry every 30 seconds without another approval. Browser suspension can delay recovery. New enrollment stops after three failures. Remote Agents keep separate connections. Personal tabs still require copying into the session group; denial or removal never triggers automatic reauthorization."
+    "browser.extension.connectionHelp": "Confirm the first local connection once in the CardBush extension window; no pairing code is needed. The local App and CLI then share this connection. After three fast attempts, saved connections retry every 30 seconds without another approval. Browser suspension can delay recovery. New enrollment stops after three failures. Remote Agents keep separate connections. Personal tabs still require copying into the session group; denial or removal never triggers automatic reauthorization.",
+    "browser.extension.retry": "Retry saved connection",
+    "browser.extension.connect": "Connect CardBush",
+    "browser.extension.advanced": "Advanced connection / change pairing",
+    "browser.extension.repairHelp": "Pair again only to replace the local connection, then confirm in the extension window. Exiting, restarting or temporarily going offline restores the saved connection automatically without another approval.",
+    "browser.extension.repair": "Pair local connection again",
+    "browser.extension.stale": "The extension background is still running an older build. Reload the extension.",
+    "browser.extension.stopped": "Local enrollment has stopped. The original pairing and site permissions are saved. Click Connect CardBush when ready to continue.",
+    "browser.extension.removed": "The connection was removed. Click Connect CardBush to connect locally, or pair another Agent in advanced connection.",
+    "browser.extension.disabled": "The extension connection is disabled. Pairing and site permissions are saved. Click Connect to resume.",
+    "browser.extension.controlling": "Controlling {count} tabs",
+    "browser.extension.connected": "Connected to CardBush, waiting for control",
+    "browser.extension.opening": "Connecting to CardBush with saved authorization…",
+    "browser.extension.handshake": "Endpoint found; verifying CardBush identity…",
+    "browser.extension.authentication": "CardBush identity verified; restoring the authorized connection…",
+    "browser.extension.enrolling": "Requesting a local connection. Confirm once in the extension window.",
+    "browser.extension.paused": "Enrollment failed repeatedly and automatic requests have stopped. Click Connect when ready to retry.",
+    "browser.extension.waiting": "CardBush is temporarily offline. Retrying the saved connection in about {seconds} seconds; no new approval is needed.",
+    "browser.extension.retrying": "Waiting to restore the saved connection. Make sure CardBush is running with Browser Use enabled. Pairing again is unnecessary.",
+    "browser.extension.enrollmentRetry": "Local enrollment is incomplete; waiting for a limited retry. Make sure CardBush is running with Browser Use enabled."
   }
 }

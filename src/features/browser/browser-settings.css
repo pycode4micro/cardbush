@@ -1,24 +1,24 @@
-.chrome-radio-setting { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; margin: 12px 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-mid); }
-.chrome-radio-setting input { margin-top: 3px; accent-color: var(--accent); }
-.chrome-radio-setting span { display: grid; gap: 4px; }
-.chrome-radio-setting strong { color: var(--text); font-size: 13px; }
-.chrome-radio-setting small, .browser-setting-note { color: var(--text-soft); font-size: 12px; line-height: 1.55; }
+.browser-radio-setting { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; margin: 12px 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-mid); }
+.browser-radio-setting input { margin-top: 3px; accent-color: var(--accent); }
+.browser-radio-setting span { display: grid; gap: 4px; }
+.browser-radio-setting strong { color: var(--text); font-size: 13px; }
+.browser-radio-setting small, .browser-setting-note { color: var(--text-soft); font-size: 12px; line-height: 1.55; }
 .browser-setting-note { margin: 10px 0 0; padding: 10px 12px; background: color-mix(in srgb, var(--text) 4%, transparent); border-radius: 9px; }
-.chrome-connector-card { display: grid; gap: 12px; margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--text) 3%, transparent); }
-.chrome-connector-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
-.chrome-connector-heading > div { display: grid; gap: 4px; min-width: 0; }
-.chrome-connector-heading strong { color: var(--text); font-size: 13px; }
-.chrome-connector-heading small { overflow-wrap: anywhere; color: var(--text-soft); font-size: 12px; }
-.chrome-connector-indicator { width: 9px; height: 9px; border-radius: 50%; background: var(--text-soft); }
-.chrome-connector-indicator.waiting { background: var(--warning, #c49a56); }
-.chrome-connector-indicator.online { background: var(--success); }
-.chrome-connector-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.chrome-connector-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.browser-connector-card { display: grid; gap: 12px; margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--text) 3%, transparent); }
+.browser-connector-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.browser-connector-heading > div { display: grid; gap: 4px; min-width: 0; }
+.browser-connector-heading strong { color: var(--text); font-size: 13px; }
+.browser-connector-heading small { overflow-wrap: anywhere; color: var(--text-soft); font-size: 12px; }
+.browser-connector-indicator { width: 9px; height: 9px; border-radius: 50%; background: var(--text-soft); }
+.browser-connector-indicator.waiting { background: var(--warning, #c49a56); }
+.browser-connector-indicator.online { background: var(--success); }
+.browser-connector-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.browser-connector-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .browser-settings-panel > .settings-card p { font-size: 13px; line-height: 1.6; }
-.chrome-connector-pairing { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
-.chrome-connector-pairing label { display: grid; gap: 6px; flex: 1 1 220px; min-width: 0; }
-.chrome-connector-pairing input { width: 100%; min-width: 0; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
-.chrome-connector-pairing p { flex-basis: 100%; }
+.browser-connector-pairing { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.browser-connector-pairing label { display: grid; gap: 6px; flex: 1 1 220px; min-width: 0; }
+.browser-connector-pairing input { width: 100%; min-width: 0; color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.browser-connector-pairing p { flex-basis: 100%; }
 .browser-pairing-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .browser-connection-name { flex: 1 1 180px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface-raised); }
 .browser-connections { display: grid; gap: 8px; }

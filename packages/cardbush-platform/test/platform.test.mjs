@@ -93,6 +93,10 @@ test('resource paths and advertised native features are tied to platform and arc
   assert.equal(platformFeatures('linux','x64').nativeProcessLimits,false);
   assert.equal(platformFeatures('win32','x64').nativeProcessLimits,true);
   assert.equal(platformFeatures('win32','arm64').nativeProcessLimits,false);
+  for (const platform of ['win32','linux','darwin']) {
+    assert.equal(platformFeatures(platform,'x64').browserNativeConnector, platform === 'win32');
+    assert.equal(platformFeatures(platform,'x64').chromeNativeConnector, platformFeatures(platform,'x64').browserNativeConnector);
+  }
 });
 test('CommonJS desktop entry and ESM runtime entry expose the same contract', () => {
   const cjs=createRequire(import.meta.url)('../dist-cjs/index.js');

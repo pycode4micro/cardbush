@@ -1,4 +1,4 @@
-import { ChromeConnectorError } from './bridgeClient.js';
+import { BrowserConnectorError } from './bridgeClient.js';
 import type { PageCommand } from './pageCapture.js';
 
 export const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -47,14 +47,14 @@ export const inspectElement = `function() {
 export async function callElement(command: PageCommand, objectId: string, declaration = inspectElement, args: unknown[] = []) {
   const response = record(await command('Runtime.callFunctionOn', { objectId, functionDeclaration: declaration,
     arguments: args.map(value => ({ value })), returnByValue: true, awaitPromise: true }));
-  if (response.exceptionDetails) throw new ChromeConnectorError('element_inspection_failed', 'The element could not be inspected. Take a fresh snapshot.');
+  if (response.exceptionDetails) throw new BrowserConnectorError('element_inspection_failed', 'The element could not be inspected. Take a fresh snapshot.');
   return record(record(response.result).value);
 }
 
 export async function readElement(command: PageCommand, uid: string, declaration = inspectElement, args: unknown[] = []) {
   const response = record(await command('DOM.resolveNode', { backendNodeId: Number(uid.slice(3)) }));
   const objectId = record(response.object).objectId;
-  if (typeof objectId !== 'string') throw new ChromeConnectorError('element_not_found', `${uid} is no longer available. Take a fresh snapshot.`);
+  if (typeof objectId !== 'string') throw new BrowserConnectorError('element_not_found', `${uid} is no longer available. Take a fresh snapshot.`);
   try { return await callElement(command, objectId, declaration, args); }
   finally { await command('Runtime.releaseObject', { objectId }).catch(() => {}); }
 }

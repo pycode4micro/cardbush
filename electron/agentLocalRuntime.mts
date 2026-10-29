@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { AgentHttpClient } from './agentHttpClient.mjs';
-import { assertConnectorFile } from './chromeConnectorFiles.js';
+import { assertConnectorFile } from './browserConnectorFiles.js';
 
 export const localRuntimeProtocol = 'cardbush.local-runtime.v1';
 /** Reuse one OS-owned election for CLI and HTTP hosts before stale-lock recovery. */

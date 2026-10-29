@@ -13,9 +13,9 @@ import { PageSnapshots, snapshotSchema } from './pageSnapshot.js';
 import { waitForPage, waitSchema } from './pageWait.js';
 
 import {
-  ChromeConnectorError,
-  requestChromeConnector,
-  type ChromeConnectorDiagnostics,
+  BrowserConnectorError,
+  requestBrowserConnector,
+  type BrowserConnectorDiagnostics,
 } from './bridgeClient.js';
 
 type BrowserPage = {
@@ -75,7 +75,7 @@ export function createBrowserUseState(artifactsDirectory?: string) {
   };
 }
 
-export function createCardbushChromeServer(options: { connector?: typeof requestChromeConnector; artifactsDirectory?: string; browserConfigPath?: string; browserHealthPath?: string; state?: ReturnType<typeof createBrowserUseState> } = {}): McpServer {
+export function createCardbushBrowserServer(options: { connector?: typeof requestBrowserConnector; artifactsDirectory?: string; browserConfigPath?: string; browserHealthPath?: string; state?: ReturnType<typeof createBrowserUseState> } = {}): McpServer {
   const server = new McpServer({
     name: 'browser_use',
     version: '0.1.0',
@@ -108,10 +108,10 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     params: Record<string, unknown>,
     context: ToolContext,
     timeoutMs?: number,
-    onDiagnostics?: (diagnostics: ChromeConnectorDiagnostics) => void,
+    onDiagnostics?: (diagnostics: BrowserConnectorDiagnostics) => void,
   ) => {
     const scope = scopeFromContext(context);
-    const result = await (options.connector ?? requestChromeConnector)(method, {
+    const result = await (options.connector ?? requestBrowserConnector)(method, {
       ...params,
       ...(typeof params.tabId === 'number' && targetKeys.has(JSON.stringify([scope.id, params.tabId]))
         ? { expectedTargetKey: targetKeys.get(JSON.stringify([scope.id, params.tabId])) } : {}),
@@ -124,13 +124,13 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       ...(timeoutMs ? { timeoutMs } : {}),
       ...(onDiagnostics ? { onDiagnostics } : {}),
     }).catch(error => {
-      if (error instanceof ChromeConnectorError && bridgeAvailability(error.code)) {
+      if (error instanceof BrowserConnectorError && bridgeAvailability(error.code)) {
         const health = record(error.details.connector);
-        throw new ChromeConnectorError(error.code, typeof health.nextStep === 'string' ? `${error.message} ${health.nextStep}` : bridgeSetupGuidance, { ...error.details, availability: bridgeAvailability(error.code),
+        throw new BrowserConnectorError(error.code, typeof health.nextStep === 'string' ? `${error.message} ${health.nextStep}` : bridgeSetupGuidance, { ...error.details, availability: bridgeAvailability(error.code),
           ...(error.code.startsWith('bridge_config_') ? { execution: 'not_dispatched' } : {}) });
       }
-      if (method.startsWith('downloads.') && error instanceof ChromeConnectorError && error.code === 'unsupported_method') {
-        throw new ChromeConnectorError('extension_update_required',
+      if (method.startsWith('downloads.') && error instanceof BrowserConnectorError && error.code === 'unsupported_method') {
+        throw new BrowserConnectorError('extension_update_required',
           'Reload CardBush Browser Use 1.2.0 or later in chrome://extensions or edge://extensions to enable tracked downloads. Do not fall back to repeated download clicks. Screenshots and export_image do not require browser downloads.');
       }
       throw error;
@@ -146,7 +146,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
 
   const commandFor = (target: number, context: ToolContext, deadline?: number) => async (command: string, commandParams: Record<string, unknown> = {}) => {
     const remaining = deadline === undefined ? undefined : deadline - Date.now();
-    if (remaining !== undefined && remaining <= 0) throw new ChromeConnectorError('bridge_timeout', 'The observation deadline expired before dispatch.');
+    if (remaining !== undefined && remaining <= 0) throw new BrowserConnectorError('bridge_timeout', 'The observation deadline expired before dispatch.');
     return request('debugger.command', { tabId: target, command, commandParams }, context, remaining);
   };
   const imageResult = async (context: ToolContext, image: { data: string; mimeType: string }, details: Record<string, unknown> = {}) => {
@@ -192,7 +192,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
   const pageId = async (context: ToolContext): Promise<number> => {
     const { selectedPageId, selectionState } = await pages(context);
     if (selectionState !== 'selected' || selectedPageId == null) {
-      throw new ChromeConnectorError(
+      throw new BrowserConnectorError(
         'browser_page_missing',
         selectionState === 'missing'
           ? 'The selected browser tab is no longer available. Use list_pages, then explicitly select_page or new_page; no other tab has been selected automatically.'
@@ -225,7 +225,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       }
       return { text: JSON.stringify(result), structured: result };
     } catch (error) {
-      if (!(error instanceof ChromeConnectorError) || !bridgeAvailability(error.code)) throw error;
+      if (!(error instanceof BrowserConnectorError) || !bridgeAvailability(error.code)) throw error;
       const health = record(error.details.connector);
       const result = { connections: [], availability: bridgeAvailability(error.code), reason: error.code,
         ...(Object.keys(health).length ? { connector: health } : {}),
@@ -463,7 +463,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     const startedAt = Date.now();
     let target: number | undefined;
     let pageSelectionMs: number | undefined;
-    let connector: ChromeConnectorDiagnostics | undefined;
+    let connector: BrowserConnectorDiagnostics | undefined;
     try {
       target = await pageId(context);
       pageSelectionMs = Date.now() - startedAt;
@@ -483,7 +483,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
         },
       }, context, undefined, value => { connector = value; }));
       const data = string(result.data);
-      if (!data) throw new ChromeConnectorError('screenshot_empty', 'The browser returned an empty screenshot.');
+      if (!data) throw new BrowserConnectorError('screenshot_empty', 'The browser returned an empty screenshot.');
       clearScreenshotFailures(scope.id, target);
       screenshotFailures.delete(JSON.stringify([scope.id, 'page_selection']));
       return imageResult(context, { data, mimeType: input.format === 'jpeg' ? 'image/jpeg' : 'image/png' }, {
@@ -501,13 +501,13 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       screenshotFailures.set(key, failure);
       // Bound diagnostic history, never the number of permitted tool calls.
       if (screenshotFailures.size > 256) screenshotFailures.delete(screenshotFailures.keys().next().value!);
-      throw new ChromeConnectorError(error instanceof ChromeConnectorError ? error.code : 'browser_connector_failed',
+      throw new BrowserConnectorError(error instanceof BrowserConnectorError ? error.code : 'browser_connector_failed',
         errorMessage(error), {
-          ...(error instanceof ChromeConnectorError ? error.details : {}),
+          ...(error instanceof BrowserConnectorError ? error.details : {}),
           pageId: target, consecutiveFailures: failure.attempts, cumulativeAttemptMs: failure.elapsedMs,
           failureWindowMs: Date.now() - failure.firstFailureAt,
           timings: { elapsedMs: Date.now() - startedAt, pageSelectionMs, connector },
-          ...(error instanceof ChromeConnectorError && error.code === 'cardbush_page_not_visible'
+          ...(error instanceof BrowserConnectorError && error.code === 'cardbush_page_not_visible'
             ? { recovery: 'Show the owning CardBush conversation and select this existing tab before taking another screenshot. Reconnecting, changing image quality or opening a replacement does not make the original page visible.' }
             : failure.attempts >= 2 ? { recovery: 'Repeated screenshot failures on this page. Changing PNG/JPEG quality alone does not recover a pending command. Check the reported stage; release/reconnect if the debugger is stuck, or use a different preview route. Preserve the existing artifact; do not reconstruct image Base64 in tool arguments.' } : {}),
         });
@@ -554,7 +554,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
       },
     }, context));
     if (result.exceptionDetails) {
-      throw new ChromeConnectorError('javascript_exception', JSON.stringify(result.exceptionDetails));
+      throw new BrowserConnectorError('javascript_exception', JSON.stringify(result.exceptionDetails));
     }
     const remote = record(result.result);
     const value = 'value' in remote ? remote.value : remote.description;
@@ -572,7 +572,7 @@ export function createCardbushChromeServer(options: { connector?: typeof request
     if (result.state === 'complete' && typeof result.filename === 'string') {
       try { artifact = await artifacts.download(scopeFromContext(context).id, string(result.taskId), result.filename); }
       catch (error) {
-        throw new ChromeConnectorError('download_artifact_unavailable',
+        throw new BrowserConnectorError('download_artifact_unavailable',
           'The browser completed the download, but its local artifact could not be copied. Keep the existing taskId; do not start another download.',
           { taskId: result.taskId, state: 'complete', filename: result.filename, reason: errorMessage(error) });
       }
@@ -634,7 +634,7 @@ function scopeFromContext(context: ToolContext): BrowserScope {
   const metadata = context.mcpReq._meta ?? {};
   const id = string(metadata.cardbush_session_id).slice(0, 160);
   if (!id) {
-    throw new ChromeConnectorError(
+    throw new BrowserConnectorError(
       'browser_scope_missing',
       'CardBush did not provide a browser session scope. Browser control was denied to protect personal tabs.',
     );
@@ -683,7 +683,7 @@ async function withToolResult(operation: () => Promise<{
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    const normalized = error instanceof ChromeConnectorError
+    const normalized = error instanceof BrowserConnectorError
       ? { code: error.code, message: error.message, details: error.details }
       : { code: 'browser_connector_failed', message: errorMessage(error), details: {} };
     return {
@@ -707,7 +707,7 @@ async function resolveObjectId(
     commandParams: { backendNodeId },
   }, context));
   const objectId = string(record(result.object).objectId);
-  if (!objectId) throw new ChromeConnectorError('element_not_found', `The page element ${uid} is no longer available. Take a new snapshot.`);
+  if (!objectId) throw new BrowserConnectorError('element_not_found', `The page element ${uid} is no longer available. Take a new snapshot.`);
   return objectId;
 }
 
@@ -732,7 +732,7 @@ async function callOnNode(
       userGesture: true,
     },
   }, context));
-  if (result.exceptionDetails) throw new ChromeConnectorError('page_action_failed', JSON.stringify(result.exceptionDetails));
+  if (result.exceptionDetails) throw new BrowserConnectorError('page_action_failed', JSON.stringify(result.exceptionDetails));
   return record(result.result).value;
 }
 
@@ -773,9 +773,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export { ChromeConnectorError, requestChromeConnector } from './bridgeClient.js';
+export { BrowserConnectorError, requestBrowserConnector, ChromeConnectorError, requestChromeConnector } from './bridgeClient.js';
+export { createCardbushBrowserServer as createCardbushChromeServer };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  void serveStdio(() => createCardbushChromeServer());
+  void serveStdio(() => createCardbushBrowserServer());
   console.error('browser_use MCP server running on stdio');
 }

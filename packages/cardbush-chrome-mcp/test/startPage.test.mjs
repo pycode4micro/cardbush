@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import test from 'node:test';
 import { BrowserConfigStore } from '@cardbush/product-host';
-import { createCardbushChromeServer } from '../dist/index.js';
+import { createCardbushBrowserServer } from '../dist/index.js';
 
 test('new_page opens a blank tab independently of legacy home preferences and preserves explicit targets', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-chrome-start-page-'));
@@ -13,7 +13,7 @@ test('new_page opens a blank tab independently of legacy home preferences and pr
     await rm(root, { recursive: true, force: true });
   });
   const browserConfigPath = join(root, 'browser.json'), requests = [];
-  const server = createCardbushChromeServer({ browserConfigPath, connector: async (method, params) => {
+  const server = createCardbushBrowserServer({ browserConfigPath, connector: async (method, params) => {
     assert.equal(method, 'tabs.create'); requests.push(params.url);
     return { id: requests.length, url: params.url };
   } });
@@ -34,7 +34,7 @@ test('new_page opens a blank tab independently of legacy home preferences and pr
 
 test('new_page and select_page default to background control and forward explicit presentation requests', async t => {
   const calls = [];
-  const server = createCardbushChromeServer({connector: async (method, params) => {
+  const server = createCardbushBrowserServer({connector: async (method, params) => {
     calls.push({method, ...params}); return {id:42, active:false};
   }});
   t.after(() => server.close());

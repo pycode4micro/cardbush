@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { browserTabReferenceHref, parseBrowserTabReference } from '@cardbush/bush-protocol';
-import { createCardbushChromeServer } from '../dist/index.js';
+import { createCardbushBrowserServer } from '../dist/index.js';
 
 const context = { mcpReq: { signal: new AbortController().signal, _meta: { cardbush_session_id: 'references' } } };
 const external = { id: 42, browser: 'edge', connectionId: 'a'.repeat(32), targetKey: 'external:11111111-1111-4111-8111-111111111111:42', title: 'AA [榜单]', url: 'https://example.test/a?q=(榜单)#details', active: true };
@@ -20,7 +20,7 @@ test('tab references round trip and reject unsupported addresses or incomplete e
 for (const page of [external, { ...external, browser: 'cardbush', tabId: 'browser:aa', targetKey: 'cardbush:11111111-1111-4111-8111-111111111111' }]) {
   test(`${page.browser}: page tools return ready-to-cite identities, including the original internal tabId`, async () => {
     const calls = [];
-    const server = createCardbushChromeServer({ connector: async (method, params) => {
+    const server = createCardbushBrowserServer({ connector: async (method, params) => {
       calls.push({ method, params });
       return method === 'tabs.list' ? [page] : { ...page };
     } });

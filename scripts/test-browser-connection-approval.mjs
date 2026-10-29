@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createECDH, createHash, randomBytes } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
-import { connectorProof } from '../dist-electron/chromeConnectorWebSocket.js';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
+import { connectorProof } from '../dist-electron/browserConnectorWebSocket.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 import { approvalClient } from './helpers/browser-approval-client.mjs';
 import { pairedClient, extensionOrigin } from './helpers/chrome-paired-client.mjs';
 
@@ -16,7 +16,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(predicate) { for (let i = 0; i < 100; i++) { if (predicate()) return; await delay(20); } assert.fail('Timed out'); }
 async function fixture(t, options) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-browser-approval-'));
-  const broker = new ChromeConnectorBroker(root, { nativeHostPath, ...options });
+  const broker = new BrowserConnectorBroker(root, { nativeHostPath, ...options });
   t.after(async () => { broker.stop(); await delay(100); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
   await broker.start();
   const saved = () => readFile(join(root, 'browser-connector/pairing.json'), 'utf8').then(JSON.parse);
@@ -48,7 +48,7 @@ test('denial survives restart and background retries cannot reopen the dialog', 
   await assert.rejects(approvalClient(f.port, request, { confirm: approve }), error => error.code === 'connection_denied');
   assert.equal((await f.saved()).credentials.length, 0);
   f.broker.stop(); await delay(80);
-  const restarted = new ChromeConnectorBroker(f.root, { nativeHostPath, allowLocalPairing: () => true });
+  const restarted = new BrowserConnectorBroker(f.root, { nativeHostPath, allowLocalPairing: () => true });
   t.after(() => restarted.stop()); await restarted.start();
   await assert.rejects(approvalClient(f.port, request), error => error.code === 'connection_revoked');
   await assert.rejects(approvalClient(f.port, identity()), error => error.code === 'approval_busy');

@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import { createCardbushChromeServer } from '../dist/index.js';
+import { createCardbushBrowserServer } from '../dist/index.js';
 
 test('MCP discovery explains local consent and reconnection before manual or remote pairing', async t => {
-  const server = createCardbushChromeServer({ connector: async () => { assert.fail('Discovery must not connect or request consent'); } });
+  const server = createCardbushBrowserServer({ connector: async () => { assert.fail('Discovery must not connect or request consent'); } });
   const client = new Client({ name: 'browser-guidance-test', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   t.after(async () => { await client.close(); await server.close(); });

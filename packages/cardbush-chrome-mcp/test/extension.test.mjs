@@ -409,7 +409,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal(disconnected.nativeConnecting, false);
   assert.equal(disconnected.lastError, failed.lastError, 'disconnect must preserve the useful bridge error');
   assert.equal(alarms.at(-1).name, 'cardbush-native-reconnect');
-  assert.equal(alarms.at(-1).options.delayInMinutes, 0.5);
+  assert.ok(Math.abs(alarms.at(-1).options.when - Date.now() - 30000) < 1000);
   await popupRequest(runtimeMessages, 'disable_connector');
 });
 

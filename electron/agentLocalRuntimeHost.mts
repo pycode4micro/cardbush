@@ -6,7 +6,7 @@ import { serveAgentHttp } from './agentServer.mjs';
 import { AgentChatDiagnostics } from './agentChatDiagnostics.mjs';
 import { LocalModelAccessClient } from './localModelAccess.mjs';
 import { claimAgentDataDirectory, localRuntimeDirectory, localRuntimeEndpoint, localRuntimeProtocol } from './agentLocalRuntime.mjs';
-import { assertConnectorFile, secureConnectorResourceAsync } from './chromeConnectorFiles.js';
+import { assertConnectorFile, secureConnectorResourceAsync } from './browserConnectorFiles.js';
 import { writePrivateJson } from './atomicJsonFile.mjs';
 
 async function run() {

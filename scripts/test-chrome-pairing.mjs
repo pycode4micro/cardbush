@@ -7,10 +7,10 @@ import net from 'node:net';
 import vm from 'node:vm';
 import { webcrypto, randomBytes } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
-import { ChromeConnectorBroker } from '../dist-electron/chromeConnectorBroker.js';
-import { ChromeConnectorWebSocket, connectorProof } from '../dist-electron/chromeConnectorWebSocket.js';
+import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
+import { BrowserConnectorWebSocket, connectorProof } from '../dist-electron/browserConnectorWebSocket.js';
 import { pairedClient, extensionOrigin } from './helpers/chrome-paired-client.mjs';
-import { requestChromeConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
+import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 
 const nativeHostPath = path.resolve('dist-native/chrome-connector-validation/CardBushBrowserHost.exe');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -19,7 +19,7 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-pairing-'));
   const brokers = [];
   t.after(async () => { for (const broker of brokers) broker.stop(); await delay(30); fs.rmSync(root, { recursive: true, force: true }); });
-  return { root, create: () => { const broker = new ChromeConnectorBroker(root, { nativeHostPath }); brokers.push(broker); return broker; } };
+  return { root, create: () => { const broker = new BrowserConnectorBroker(root, { nativeHostPath }); brokers.push(broker); return broker; } };
 }
 
 test('real loopback pairing, MCP routing, restart and per-connection revocation preserve security boundaries', async t => {
@@ -32,7 +32,7 @@ test('real loopback pairing, MCP routing, restart and per-connection revocation 
   const extension = await pairedClient(firstCode);
   assert.equal(broker.status().paired, true); assert.equal(broker.status().extensionConnected, true);
   const gotRequest = new Promise(resolve => extension.once('data', value => resolve(JSON.parse(value))));
-  const result = requestChromeConnector('tabs.list', { scopeId: 'one' }, { configPath: broker.configPath });
+  const result = requestBrowserConnector('tabs.list', { scopeId: 'one' }, { configPath: broker.configPath });
   const request = await gotRequest;
   extension.write(JSON.stringify({ type: 'response', clientId: request.clientId, id: request.id, result: { tabs: [42] } }));
   assert.deepEqual(await result, { tabs: [42] });
@@ -60,7 +60,7 @@ test('real loopback pairing, MCP routing, restart and per-connection revocation 
 test('pairing expires, superseded offers fail, and incomplete challenge cannot authorize a browser', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-pair-expiry-'));
   let connected = 0;
-  const server = new ChromeConnectorWebSocket(directory, () => connected++, { pairingTtlMs: 50, handshakeTimeoutMs: 100 });
+  const server = new BrowserConnectorWebSocket(directory, () => connected++, { pairingTtlMs: 50, handshakeTimeoutMs: 100 });
   t.after(async () => { server.stop(); await delay(20); fs.rmSync(directory, { recursive: true, force: true }); });
   await server.start();
   const expired = server.createPairing().code;

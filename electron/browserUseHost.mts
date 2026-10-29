@@ -2,20 +2,20 @@ import { readFileSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { WebContents } from 'electron';
-import { createCardbushChromeServer, createBrowserUseState, ChromeConnectorError, requestChromeConnector } from '@cardbush/chrome-mcp';
+import { createCardbushBrowserServer, createBrowserUseState, BrowserConnectorError, requestBrowserConnector } from '@cardbush/chrome-mcp';
 import { startDesktopMcpServer } from './desktopMcpServer.mjs';
 import type { IntegratedBrowser } from './integratedBrowser.js';
 import { parseBrowserTabReference, type BrowserTabOpenResult } from '@cardbush/bush-protocol';
 
 type Params = Record<string, unknown>;
-type Options = NonNullable<Parameters<typeof requestChromeConnector>[2]>;
+type Options = NonNullable<Parameters<typeof requestBrowserConnector>[2]>;
 
 /** One Browser Use API, with an explicit per-conversation browser identity. No URL-based fallback. */
 export class BrowserUseRouter {
   private readonly routes = new Map<string, 'cardbush' | 'external'>();
   private readonly queues = new Map<string, Promise<unknown>>();
   constructor(private readonly integrated: IntegratedBrowser, private readonly options: {
-    routesPath?: string; external: typeof requestChromeConnector;
+    routesPath?: string; external: typeof requestBrowserConnector;
   }) {
     if (options.routesPath) {
       try {
@@ -109,10 +109,10 @@ export class BrowserUseRouter {
   }
   request = (method: string, params: Params = {}, options: Options = {}): Promise<unknown> => {
     const scope = String(params.scopeId ?? '');
-    if (!scope || scope.length > 160) return Promise.reject(new ChromeConnectorError('browser_scope_missing', 'A CardBush conversation is required.'));
+    if (!scope || scope.length > 160) return Promise.reject(new BrowserConnectorError('browser_scope_missing', 'A CardBush conversation is required.'));
     return this.serialized(scope, () => this.route(method, params, options)).catch(error => {
-      if (error instanceof ChromeConnectorError || error?.name === 'AbortError') throw error;
-      throw new ChromeConnectorError(String(error?.code ?? 'cardbush_browser_failed'), error instanceof Error ? error.message : String(error),
+      if (error instanceof BrowserConnectorError || error?.name === 'AbortError') throw error;
+      throw new BrowserConnectorError(String(error?.code ?? 'cardbush_browser_failed'), error instanceof Error ? error.message : String(error),
         error?.details && typeof error.details === 'object' ? error.details : undefined);
     });
   };
@@ -147,17 +147,17 @@ export class BrowserUseRouter {
       return selected;
     }
     if (route === 'cardbush') {
-      if (!this.integrated.hasScope(scope)) throw new ChromeConnectorError('cardbush_browser_reselect_required',
+      if (!this.integrated.hasScope(scope)) throw new BrowserConnectorError('cardbush_browser_reselect_required',
         'This conversation is bound to CardBush. After restart, select the intended tab again with @ (or explicitly select CardBush to create a new tab). Chrome/Edge was not used.');
-      if (typeof params.expectedTargetKey === 'string' && !params.expectedTargetKey.startsWith('cardbush:')) throw new ChromeConnectorError('browser_target_changed', 'The user selected a CardBush tab. Take a fresh snapshot; old browser element ids cannot be reused.');
+      if (typeof params.expectedTargetKey === 'string' && !params.expectedTargetKey.startsWith('cardbush:')) throw new BrowserConnectorError('browser_target_changed', 'The user selected a CardBush tab. Take a fresh snapshot; old browser element ids cannot be reused.');
       const deadline = new AbortController();
-      const timer = setTimeout(() => deadline.abort(new ChromeConnectorError('cardbush_browser_timeout',
+      const timer = setTimeout(() => deadline.abort(new BrowserConnectorError('cardbush_browser_timeout',
         'CardBush browser operation timed out. An action may already have executed; observe the page before retrying. No other browser was used.')), options.timeoutMs ?? 30_000);
       const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
       try { return await this.integrated.request(method, params, signal); }
       finally { clearTimeout(timer); }
     }
-    if (typeof params.expectedTargetKey === 'string' && params.expectedTargetKey.startsWith('cardbush:')) throw new ChromeConnectorError('browser_target_changed', 'The selected browser changed. Take a fresh snapshot before another action.');
+    if (typeof params.expectedTargetKey === 'string' && params.expectedTargetKey.startsWith('cardbush:')) throw new BrowserConnectorError('browser_target_changed', 'The selected browser changed. Take a fresh snapshot before another action.');
     const result = await this.options.external(method, params, options);
     if (!route) this.save(scope, 'external');
     return method === 'tabs.list' && Array.isArray(result)
@@ -167,7 +167,7 @@ export class BrowserUseRouter {
 
 export function startBrowserUseHost(router: BrowserUseRouter, options: { browserConfigPath: string; artifactsDirectory: string }) {
   const state = createBrowserUseState(options.artifactsDirectory);
-  return startDesktopMcpServer(() => createCardbushChromeServer({ ...options, state, connector: router.request }));
+  return startDesktopMcpServer(() => createCardbushBrowserServer({ ...options, state, connector: router.request }));
 }
 
-export { requestChromeConnector };
+export { requestBrowserConnector };
