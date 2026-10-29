@@ -170,7 +170,7 @@ async function connectNative(manual = false, requestLocal) {
       port.disconnect();
       suspendDisconnectedControl();
       scheduleReconnect();
-    }, 12_000);
+    }, port.connectionTimeoutMs ?? 12_000);
     port.onMessage.addListener((message) => {
       if (nativePort !== port) return;
       if (message?.type === 'connector_ready' && message.protocol === CONNECTOR_PROTOCOL) {

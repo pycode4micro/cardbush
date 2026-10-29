@@ -80,6 +80,42 @@ test('pairing expires, superseded offers fail, and incomplete challenge cannot a
   assert.equal(connected, 0);
 });
 
+test('saved transport tolerates browser-delayed handshake delivery without replacing its identity', async t => {
+  const f = fixture(t), broker = f.create(); await broker.start();
+  const code = broker.createPairing().code, endpoint = Number(code.split('.')[1]);
+  const timers = new Set();
+  class DelayedBrowserSocket extends WebSocket {
+    constructor(url, protocols) {
+      if (Number(new URL(url).port) !== endpoint) throw new Error('Outside this test fixture');
+      super(url, protocols, { origin: extensionOrigin });
+    }
+    addEventListener(type, listener, options) {
+      let first = true;
+      return super.addEventListener(type, type === 'message' ? event => {
+        if (!first) { listener(event); return; }
+        first = false;
+        const timer = setTimeout(() => { timers.delete(timer); listener(event); }, 2200);
+        timers.add(timer);
+      } : listener, options);
+    }
+  }
+  const sandbox = vm.createContext({ WebSocket: DelayedBrowserSocket, navigator: { userAgent: 'Chrome/156' },
+    crypto: webcrypto, TextEncoder, Uint8Array, setTimeout, clearTimeout, setInterval, clearInterval });
+  vm.runInContext(fs.readFileSync('assets/plugins/chrome/extension/connector-transport.js', 'utf8'), sandbox);
+  const port = vm.runInContext(`createConnectorPort(parseConnectorPairing(${JSON.stringify(code)}))`, sandbox);
+  t.after(() => { port.disconnect(); for (const timer of timers) clearTimeout(timer); });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Delayed authenticated handshake timed out')), 6000);
+    port.onMessage.addListener(message => {
+      if (message.type === 'connector_ready') { clearTimeout(timer); resolve(); }
+      if (message.type === 'connector_error') { clearTimeout(timer); reject(new Error(message.code)); }
+    });
+  });
+  assert.equal(broker.status().extensionConnected, true);
+  assert.equal(broker.status().connections.length, 1);
+  assert.equal(broker.status().connections[0].id, code.split('.')[2]);
+});
+
 test('actual extension transport verifies the broker before enabling browser commands', async t => {
   const f = fixture(t), broker = f.create(); await broker.start();
   const code = broker.createPairing().code;

@@ -10,7 +10,7 @@ const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const pairingKey = 'cardbushConnectorPairingV2';
 const pairing = 'CB2.12345.' + 'a'.repeat(32) + '.' + 'b'.repeat(64);
-async function worker(saved = { cardbushConnectorEnabled: true }, local = { cardbushConnectorEnabled: true, [pairingKey]: pairing }, requestPairing) {
+async function worker(saved = { cardbushConnectorEnabled: true }, local = { cardbushConnectorEnabled: true, [pairingKey]: pairing }, requestPairing, portOptions = {}) {
   const ports = [], alarms = [], timers = new Map(), activeAlarms = new Map();
   const storage = values => ({ get: async keys => Object.fromEntries(keys.map(key => [key, values[key]])), set: async value => Object.assign(values, structuredClone(value)), remove: async key => { delete values[key]; } });
   const chrome = {
@@ -28,7 +28,7 @@ async function worker(saved = { cardbushConnectorEnabled: true }, local = { card
       if (code !== pairing) throw new Error('Pairing is required.');
       return { port: 12345, id: 'fixture', secret: 'fixture' };
     },
-    createConnectorPort: () => chrome.runtime.connectNative(),
+    createConnectorPort: () => Object.assign(chrome.runtime.connectNative(), portOptions),
     setTimeout: (fn, ms) => { const id = Symbol(); timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) });
   vm.runInContext(source, context);
   await flush();
@@ -114,6 +114,17 @@ test('short outages retry after 1 and 2 seconds; successful handshake resets the
   await vm.runInContext('disableConnector()', f.context);
   assert.equal(f.timers.size, 0); assert.equal(f.activeAlarms.size, 0);
   const count = f.ports.length; await f.retry(); assert.equal(f.ports.length, count);
+});
+
+test('the worker watchdog honors the transport discovery budget instead of cancelling a queued handshake early', async () => {
+  const f = await worker(undefined, undefined, undefined, { connectionTimeoutMs: 64_000 });
+  assert.deepEqual([...f.timers.values()].map(timer => timer.ms), [64_000]);
+  for (let wake = 0; wake < 3; wake++) await f.retry();
+  assert.equal(f.ports.length, 1, 'alarm wake-ups do not start another discovery while one is pending');
+  f.ports[0].onMessage.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
+  await flush();
+  assert.equal(f.timers.size, 0);
+  assert.equal(f.activeAlarms.size, 0);
 });
 
 test('a delayed pairing read cannot connect after a newer disable', async () => {

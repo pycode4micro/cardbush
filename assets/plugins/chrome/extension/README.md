@@ -99,6 +99,14 @@ still stops after three failures; opening the popup does not reset that limit.
 Connect explicitly retries the current target, including a pending local
 enrollment, without falling back to the old pairing. No browser action is replayed.
 Temporary disconnects do not require a new pairing code or another approval.
+Each connection attempt allows seven seconds, including Chromium's delayed
+WebSocket opening after earlier failures. The worker watchdog follows the bounded
+discovery budget; a healthy saved connection must not be cancelled by a shorter
+outer timeout. No extra retry timer or parallel discovery loop is added.
+`npm run test:chrome-reconnect-native` reproduces this with real Chrome in an
+isolated profile, exercising the GUI's connector lifecycle without restarting
+Chrome or asking for consent again. Chromium's delay calculation is defined in
+[websocket_throttler.cc](https://chromium.googlesource.com/chromium/src/+/main/services/network/websocket_throttler.cc).
 Debugger release does not wait for a stalled renderer command, so disconnect
 cleanup cannot prevent reconnection or an explicitly requested consent window.
 

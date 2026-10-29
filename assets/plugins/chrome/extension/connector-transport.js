@@ -3,6 +3,10 @@
 // Shared with electron/chromeConnectorConstants.ts; only these loopback
 // endpoints and the saved pairing endpoint may be tried.
 const CONNECTOR_DISCOVERY_PORTS = Object.freeze(Array.from({ length: 32 }, (_, index) => 43120 + index * 137));
+// Chromium delays new WebSockets by up to 5 s after failed connections. A 1 s
+// deadline cancels healthy retries before the browser even sends the handshake.
+// Keep a bounded margin for that delay and the authenticated local round trip.
+const CONNECTOR_ATTEMPT_TIMEOUT_MS = 7_000;
 function parseConnectorPairing(code) {
   const match = /^CB2\.(\d{4,5})\.([a-f0-9]{32})\.([a-f0-9]{64})$/.exec(String(code || '').trim());
   if (!match || Number(match[1]) < 1024 || Number(match[1]) > 65535) {
@@ -26,7 +30,7 @@ async function connectorHmac(secret, text) {
 // confirmation window can accept it. Key agreement binds that confirmation to
 // this endpoint/request without exposing a reusable credential during discovery.
 async function requestConnectorPairing(identity, { signal, onPrepared, confirm, ports = CONNECTOR_DISCOVERY_PORTS,
-  attemptTimeoutMs = 750, approvalTimeoutMs = 95_000 } = {}) {
+  attemptTimeoutMs = CONNECTOR_ATTEMPT_TIMEOUT_MS, approvalTimeoutMs = 95_000 } = {}) {
   const browser = connectorBrowser();
   const keys = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
   const publicKey = connectorHex(new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey)));
@@ -118,7 +122,7 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
   }
   throw problem('connector_unavailable');
 }
-function createConnectorPort(pairing, { attemptTimeoutMs = 1000 } = {}) {
+function createConnectorPort(pairing, { attemptTimeoutMs = CONNECTOR_ATTEMPT_TIMEOUT_MS } = {}) {
   const messages = new Set(), disconnects = new Set();
   const attempts = new Set();
   let socket = null, endpointPort = null, closed = false, ready = false, heartbeat;
@@ -129,6 +133,9 @@ function createConnectorPort(pairing, { attemptTimeoutMs = 1000 } = {}) {
     try { candidate.close(); } catch { /* Already closed or still connecting. */ }
   };
   const port = {
+    // One saved endpoint, then at most four bounded discovery probes per round.
+    // The worker's outer watchdog must not cancel this transport prematurely.
+    connectionTimeoutMs: (1 + Math.ceil(CONNECTOR_DISCOVERY_PORTS.length / 4)) * attemptTimeoutMs + 1000,
     onMessage: { addListener: callback => messages.add(callback) },
     onDisconnect: { addListener: callback => disconnects.add(callback) },
     get endpointPort() { return ready ? endpointPort : null; },
