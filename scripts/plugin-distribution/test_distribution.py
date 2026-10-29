@@ -100,6 +100,22 @@ class DistributionTests(unittest.TestCase):
         with patch('lan_gateway.importlib.import_module',return_value=Module):
             with self.assertRaises(ValueError): load_routes({'routes':[{'path':'/mcp','module':'fixture','token':'x'*40,'allowed_tools':['write']}]})
 
+    def test_route_factory_receives_administrator_settings_and_preserves_allowlist(self):
+        from types import SimpleNamespace
+        configured = []
+        def create_handler(settings):
+            configured.append(settings)
+            return lambda request: {'jsonrpc': '2.0', 'id': request['id'], 'result': settings}
+        module = SimpleNamespace(TOOLS=[{'name': 'read', 'annotations': {'readOnlyHint': True}}],
+                                 create_handler=create_handler)
+        with patch('lan_gateway.importlib.import_module', return_value=module):
+            routes = load_routes({'routes': [{'path': '/mcp/fixture', 'module': 'fixture', 'token': 'x'*40,
+                'allowed_tools': ['read'], 'settings': {'dataset': 'fixture'}}]})
+        self.assertEqual(configured, [{'dataset': 'fixture'}])
+        route = routes['/mcp/fixture']
+        self.assertEqual(route['allowed_tools'], {'read'})
+        self.assertEqual(route['handler']({'id': 1})['result'], {'dataset': 'fixture'})
+
     def test_client_lists_tools_offline_and_blocks_unknown(self):
         descriptor={'id':'fixture','version':'1','tools':[{'name':'read'}]}
         base={'jsonrpc':'2.0','id':1}
