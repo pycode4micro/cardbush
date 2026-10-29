@@ -4004,6 +4004,8 @@
     "remoteWorkers.configure": "Worker connection",
     "remoteWorkers.execution": "Execution host",
     "remoteWorkers.local": "This computer",
-    "remoteWorkers.statusUnavailable": "Status unavailable"
+    "remoteWorkers.statusUnavailable": "Status unavailable",
+    "browser.cli.savedConnectionRecovery": "Open the original browser profile. After three fast attempts, the extension keeps retrying the saved connection every 30 seconds. You can click Connect to retry immediately. A temporary disconnect does not require a new pairing code or another approval. Request a new local connection only when deliberately replacing the saved identity.",
+    "browser.extension.connectionHelp": "Confirm the first local connection once in the CardBush extension window; no pairing code is needed. The local App and CLI then share this connection. After three fast attempts, saved connections retry every 30 seconds without another approval. Browser suspension can delay recovery. New enrollment stops after three failures. Remote Agents keep separate connections. Personal tabs still require copying into the session group; denial or removal never triggers automatic reauthorization."
   }
 }

@@ -42,23 +42,30 @@ test('shipped skills, plugin metadata and setup help agree about local and remot
   }
   for (const file of ['assets/plugins/chrome/skills/browser-use/SKILL.md', 'assets/skills/cardbush-docs/references/browser-use.md',
     'docs/CORE_BROWSER_COMPUTER_USE.md', 'assets/plugins/chrome/extension/popup.html']) {
-    const content = await read(file);
+    let content = await read(file);
+    if (file.endsWith('popup.html')) {
+      assert.match(content, /id="connection-help"/);
+      content += JSON.parse(await read('src/i18n/locales/zh.json')).messages['browser.extension.connectionHelp'];
+    }
     assert.match(content, /CardBush 风格的扩展窗口确认一次/, file);
     assert.doesNotMatch(content, /系统弹窗|双重确认/, file);
     assert.match(content, /无需(?:输入|复制)配对码/, file);
     assert.match(content, /本机 App 和 CLI 共用连接/, file);
     assert.match(content, /自动重连/, file);
-    if (file.endsWith('popup.html')) assert.match(content, /连续失败 3 轮后停止/);
+    if (file.endsWith('popup.html')) {
+      assert.match(content, /首次注册连续失败 3 轮后停止/);
+      assert.match(content, /已保存的连接.*每 30 秒自动重连/);
+    }
     assert.match(content, /仅用于手动连接或远程 Agent 配对/, file);
     assert.match(content, /远程 Agent 独立管理连接/, file);
     assert.doesNotMatch(content, /桌面 App 的连接与 CLI 分开管理|CLI 与桌面 App 的配对分别管理|首次使用[^。\n]*生成配对码/, file);
   }
   assert.match(plugin.cardbush.localizations.zh.longDescription, /首次.*无需输入配对码.*共用连接.*自动重连.*仅用于手动连接或远程 Agent 配对/);
-  for (const file of ['README.md', 'assets/plugins/chrome/extension/README.md']) {
+  for (const file of ['docs/CORE_BROWSER_COMPUTER_USE.en.md', 'assets/plugins/chrome/extension/README.md']) {
     const content = await read(file);
-    assert.match(content, /(?:no|No) pairing code is needed/, file);
+    assert.match(content, /(?:no|No)(?: system dialog or)? pairing code is needed/, file);
     assert.match(content, /(?:manual connection or remote Agent pairing)/, file);
     assert.match(content, /\/browser status/, file);
-    assert.match(content, /Remote Agents (?:keep separate connections|retain manual pairing)/, file);
+    assert.match(content, /Remote (?:Agents|workers) (?:keep separate connections|retain manual pairing)/, file);
   }
 });

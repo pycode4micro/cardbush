@@ -2,9 +2,30 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 export const extensionRoot = fileURLToPath(new URL('../assets/plugins/chrome/extension/', import.meta.url));
 const outputName = 'build-info.js';
+
+function buildExtensionMessages(directory, check) {
+  const locales = fileURLToPath(new URL('../src/i18n/locales/', import.meta.url));
+  const packs = fs.readdirSync(locales).filter(name => name.endsWith('.json')).sort().map(name => {
+    const pack = JSON.parse(fs.readFileSync(path.join(locales, name), 'utf8'));
+    return { ...pack, messages: Object.fromEntries(Object.entries(pack.messages).filter(([key]) => key.startsWith('browser.extension.'))) };
+  });
+  // Bundle the shared catalog with only extension messages, not the full App UI.
+  const catalog = fs.readFileSync(new URL('../packages/cardbush-platform/src/i18n/catalog.ts', import.meta.url), 'utf8');
+  const compiled = ts.transpileModule(catalog, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const expected = '// Generated from src/i18n/locales/*.json by scripts/build-browser-extension.mjs.\n'
+    + `globalThis.CardBushExtensionI18n = (() => {\nconst exports = {};\n${compiled}
+const catalog = exports.createMessageCatalog(${JSON.stringify(packs)});
+return { uiText: language => (key, variables) => catalog.text(language, key, variables) };
+})();\n`;
+  const output = path.join(directory, 'i18n.js');
+  if (fs.existsSync(output) && fs.readFileSync(output, 'utf8').replace(/\r\n/g, '\n') === expected) return;
+  if (check) throw new Error('Browser extension language pack is stale. Run node scripts/build-browser-extension.mjs.');
+  fs.writeFileSync(output, expected);
+}
 
 export function extensionBuildSource(directory = extensionRoot) {
   const hash = createHash('sha256');
@@ -21,6 +42,7 @@ export function extensionBuildSource(directory = extensionRoot) {
 }
 
 export function buildBrowserExtension(directory = extensionRoot, check = false) {
+  if (fs.existsSync(path.join(directory, 'popup.html'))) buildExtensionMessages(directory, check);
   const output = path.join(directory, outputName);
   const expected = extensionBuildSource(directory);
   const current = fs.existsSync(output) ? fs.readFileSync(output, 'utf8').replace(/\r\n/g, '\n') : '';

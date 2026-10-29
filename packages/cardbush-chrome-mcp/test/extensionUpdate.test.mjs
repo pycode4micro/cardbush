@@ -6,7 +6,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { buildBrowserExtension, extensionBuildSource, extensionRoot } from '../../../scripts/build-browser-extension.mjs';
 
-const popupSource = fs.readFileSync(path.join(extensionRoot, 'popup.js'), 'utf8');
+const popupSource = fs.readFileSync(path.join(extensionRoot, 'i18n.js'), 'utf8') + '\n' + fs.readFileSync(path.join(extensionRoot, 'popup.js'), 'utf8');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 async function popup(initialState) {
@@ -30,7 +30,7 @@ async function popup(initialState) {
   const messages = [];
   const context = vm.createContext({
     CARDBUSH_CONNECTOR_BUILD: 'current-build',
-    document: { querySelector: element, querySelectorAll: () => buttons },
+    document: { documentElement: { lang: 'zh-CN' }, querySelector: element, querySelectorAll: () => buttons },
     chrome: { runtime: {
       sendMessage: async message => { messages.push(message); return typeof state === 'function' ? state(message) : state; },
       reload() { reloads++; },
@@ -71,6 +71,12 @@ test('matching builds retain normal reconnect and saved authorization display', 
   assert.match(f.element('#site-access').textContent, /已保存：允许/);
   await f.reload();
   assert.equal(f.reloads, 0);
+  assert.match(f.element('#connection-help').textContent, /已保存的连接.*每 30 秒自动重连/);
+  assert.match(f.element('#connection-help').textContent, /首次注册连续失败 3 轮后停止/);
+  f.context.document.documentElement.lang = 'en-US'; await f.refresh();
+  assert.match(f.element('#connection-help').textContent, /saved connections retry every 30 seconds without another approval/);
+  f.context.document.documentElement.lang = 'xx'; await f.refresh();
+  assert.match(f.element('#connection-help').textContent, /saved connections retry every 30 seconds/);
 });
 
 test('reload rechecks live connection state instead of interrupting a newly established connection', async () => {

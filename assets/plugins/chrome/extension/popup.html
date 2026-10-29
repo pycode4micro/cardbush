@@ -46,9 +46,10 @@
         <button class="quiet" data-action="revoke">撤销授权</button>
         <button class="quiet" data-action="disconnect">停止控制</button>
       </footer>
-      <p class="hint">本机首次在 CardBush 风格的扩展窗口确认一次连接，无需复制配对码。之后本机 App 和 CLI 共用连接。自动重连连续失败 3 轮后停止，等待点击「连接 CardBush」；临时离线无需重新配对。远程 Agent 独立管理连接。个人标签仍需明确复制进会话隔离组；拒绝或移除连接后不会自动重新授权。</p>
+      <p id="connection-help" class="hint"></p>
     </main>
     <script src="build-info.js"></script>
+    <script src="i18n.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

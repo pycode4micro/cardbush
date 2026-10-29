@@ -38,7 +38,7 @@ async function worker(saved = { cardbushConnectorEnabled: true }, local = { card
     manual: async () => { vm.runInContext('connectNative(true)', context); await flush(); } };
 }
 
-test('offline apps stop after three attempts and keep the exhausted budget across restarts until Connect', async () => {
+test('saved authorization reconnects after a long app outage without another consent or manual retry', async () => {
   const f = await worker();
   for (let attempt = 0; attempt < 3; attempt++) {
     await f.fail('App is closed.');
@@ -49,14 +49,54 @@ test('offline apps stop after three attempts and keep the exhausted budget acros
     }
   }
   assert.equal(f.ports.length, 3);
-  assert.equal(f.activeAlarms.size, 0); assert.equal(f.timers.size, 0);
-  await f.retry(); assert.equal(f.ports.length, 3, 'a stale alarm cannot restart exhausted attempts');
+  assert.equal(f.activeAlarms.size, 1); assert.equal(f.timers.size, 0);
+  await vm.runInContext('handlePopupMessage({action: "status", reconnect: true})', f.context);
+  assert.equal(f.ports.length, 3, 'opening the popup does not bypass the background recovery delay');
+  await f.retry(); assert.equal(f.ports.length, 4, 'the alarm retries the same authorized target');
+  for (let alarm = 0; alarm < 5; alarm++) await f.retry();
+  assert.equal(f.ports.length, 4, 'repeated wake-ups cannot overlap an active handshake');
   assert.equal(f.local[pairingKey], pairing);
   assert.equal(f.state().connectorEnabled, true);
+  await f.fail('App is still closed.');
   const restarted = await worker({ cardbushNativeReconnect: { failures: 3, lastError: 'App is closed.' } }, f.local);
   assert.equal(restarted.ports.length, 0);
   assert.equal(restarted.state().pairingRequired, false);
-  await restarted.manual(); assert.equal(restarted.ports.length, 1);
+  assert.equal(restarted.activeAlarms.size, 1, 'worker restart retains a scheduled recovery');
+  await restarted.retry(); assert.equal(restarted.ports.length, 1);
+  restarted.ports[0].onMessage.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
+  await flush();
+  assert.equal(restarted.activeAlarms.size, 0);
+  assert.equal(restarted.local[pairingKey], pairing);
+  assert.equal(restarted.state().connectionFailures, 0);
+});
+
+test('unpaired discovery still stops after three attempts and never starts new consent on stale alarms', async () => {
+  let requests = 0;
+  const f = await worker({}, {}, async () => { requests++; throw new Error('Offline'); });
+  for (let attempt = 1; attempt < 3; attempt++) await f.retry();
+  assert.equal(requests, 3);
+  assert.equal(f.activeAlarms.size, 0);
+  await f.retry(); assert.equal(requests, 3);
+  const restarted = await worker({}, f.local, async () => { requests++; throw new Error('Offline'); });
+  await restarted.retry(); assert.equal(requests, 3);
+});
+
+test('renderer cleanup cannot block reconnection or a new consent window until Chrome restarts', async () => {
+  let detachCalls = 0;
+  const f = await worker();
+  f.chrome.debugger.sendCommand = async () => new Promise(() => {});
+  f.chrome.debugger.detach = async () => { detachCalls++; };
+  vm.runInContext('attachedTabs.set(42, "old-session"); viewportTabs.add(42)', f.context);
+  await f.fail('App restarted during capture');
+  await f.retry();
+  assert.equal(detachCalls, 1, 'detach does not wait for a stalled renderer command');
+  assert.equal(f.ports.length, 2);
+  f.context.signal = new AbortController().signal;
+  const consent = vm.runInContext('confirmLocalBrowserConnection(signal)', f.context);
+  await flush();
+  assert.ok(vm.runInContext('browserConnectionConsent?.tabId === 123', f.context));
+  vm.runInContext('browserConnectionConsent.finish(false)', f.context);
+  assert.equal(await consent, false);
 });
 
 test('short outages retry after 1 and 2 seconds; successful handshake resets the three-attempt budget', async () => {

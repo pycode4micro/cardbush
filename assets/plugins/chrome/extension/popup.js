@@ -1,4 +1,5 @@
 const connection = document.querySelector('#connection');
+const connectionHelp = document.querySelector('#connection-help');
 const scope = document.querySelector('#scope');
 const scopePicker = document.querySelector('#scope-picker');
 const scopeSelect = document.querySelector('#scope-select');
@@ -80,6 +81,7 @@ buttons.forEach((button) => button.addEventListener('click', async () => {
 }));
 
 async function refresh(reconnect = false) {
+  connectionHelp.textContent = CardBushExtensionI18n.uiText(document.documentElement.lang)('browser.extension.connectionHelp');
   if (busy || refreshing) return;
   refreshing = true;
   const requestRevision = revision;

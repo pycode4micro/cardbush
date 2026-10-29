@@ -63,7 +63,7 @@ function worker(local, browser, beforeLocalWrite = async () => {}, options = {})
   const message = (value, sender) => new Promise(resolve => chrome.runtime.onMessage.listeners[0](value, sender, resolve));
   return { alarms, timers, local, attempts, consentWindows, message,
     closeConsent() { chrome.windows.onRemoved.emit(1); },
-    state: () => vm.runInContext('({ nativeReady, connected: nativePort !== null, connectorEnabled, connectionFailures, reconnectPaused, runtimeBuild })', context),
+    state: () => vm.runInContext('({ nativeReady, connected: nativePort !== null, connectorEnabled, connectionFailures, reconnectPaused, reconnectWaiting, runtimeBuild })', context),
     status: () => vm.runInContext('popupState()', context),
     action: message => vm.runInContext('handlePopupMessage', context)(message),
     retry() { chrome.alarms.onAlarm.emit({ name: 'cardbush-native-reconnect' }); },
@@ -85,19 +85,25 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
   const local = { cardbushConnectorEnabled: true, cardbushConnectorPairingV2: pairing, allowAllSites: true, allowedOrigins: ['https://example.test'] };
   const options = { reachablePorts: () => [Number(local.cardbushConnectorPairingV2.split('.')[1]),
     JSON.parse(fs.readFileSync(path.join(root, 'browser-connector/pairing.json'), 'utf8')).port] };
-  const w = worker(local, browser, undefined, options); workers.push(w);
+  let w = worker(local, browser, undefined, options); workers.push(w);
   await until(() => w.state().nativeReady && broker.status().extensionConnected);
   assert.match(w.state().runtimeBuild, /^[a-f0-9]{64}$/);
 
   for (let cycle = 0; cycle < 3; cycle++) {
     broker.stop(); await until(() => !w.state().connected);
-    // Exhaust the retry budget before bringing the app back. Passive alarms or
-    // opening the popup must not start another attempt set.
+    // A long app outage exhausts fast retries but retains authenticated recovery.
     for (let attempt = 0; attempt < 6; attempt++) {
       w.retry(); await delay(25); await until(() => !w.state().connected);
     }
-    assert.equal(w.state().reconnectPaused, true);
-    assert.equal(w.alarms.has('cardbush-native-reconnect'), false);
+    assert.equal(w.state().reconnectPaused, false);
+    assert.equal(w.state().reconnectWaiting, true);
+    assert.equal(w.alarms.get('cardbush-native-reconnect').delayInMinutes, 0.5);
+    if (cycle === 2) {
+      w.stop();
+      w = worker(local, browser, undefined, options); workers.push(w);
+      await until(() => w.state().reconnectWaiting);
+      assert.equal(w.attempts.length, 0, 'worker restart preserves the slow recovery delay');
+    }
     const previousCode = local.cardbushConnectorPairingV2;
     let occupant;
     if (cycle === 1) {
@@ -110,9 +116,9 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
     }
     broker = await start();
     const requests = w.attempts.length;
-    w.retry(); await w.action({ action: 'status', reconnect: true }); await delay(50);
-    assert.equal(w.attempts.length, requests, 'paused retries require an explicit user action');
-    await w.action({ action: 'reconnect' });
+    await w.action({ action: 'status', reconnect: true });
+    assert.equal(w.attempts.length, requests, 'popup polling does not bypass the recovery delay');
+    w.retry();
     await until(() => w.state().nativeReady && broker.status().extensionConnected);
     assert.equal(broker.status().connections.length, 1);
     assert.equal(broker.status().connections[0].id, pairing.split('.')[2]);
@@ -128,6 +134,7 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
     assert.equal(local.cardbushConnectorPairingV2.split('.').slice(2).join('.'), pairing.split('.').slice(2).join('.'), 'recovery retains the exact credential');
     assert.equal(local.allowAllSites, true);
     assert.deepEqual(local.allowedOrigins, ['https://example.test']);
+    assert.equal(w.consentWindows.length, 0, 'ordinary recovery never asks for another authorization');
   }
   w.stop(); await until(() => !broker.status().extensionConnected);
   const restarted = worker(local, browser, undefined, options); workers.push(restarted);
@@ -140,7 +147,7 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
   assert.equal(local.cardbushConnectorPairingV2.split('.').slice(2).join('.'), pairing.split('.').slice(2).join('.'));
 });
 
-test('exhausted retries survive worker/browser restart and explicit local recovery requires one browser confirmation', async t => {
+test('saved recovery never enrolls an unknown identity; explicit local repair requires browser confirmation', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-worker-repair-'));
   const nativeHostPath = process.platform === 'win32' ? path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') : process.execPath;
   let approvals = 0, settle;
@@ -157,9 +164,13 @@ test('exhausted retries survive worker/browser restart and explicit local recove
   const options = { reachablePorts: () => reachable ? [port] : [],
     browserConsent: () => { approvals++; return new Promise(resolve => { settle = resolve; }); } };
   const w = worker(local, 'chrome', undefined, options); workers.push(w);
-  await until(() => w.state().reconnectPaused);
-  w.retry(); await w.action({ action: 'status', reconnect: true }); await delay(40);
+  await until(() => w.state().reconnectWaiting);
+  await w.action({ action: 'status', reconnect: true });
   assert.equal(w.attempts.length, 0); assert.equal(approvals, 0);
+  w.retry();
+  await until(() => w.state().reconnectWaiting && w.attempts.length > 0);
+  assert.equal(approvals, 0, 'background recovery cannot open enrollment for an unknown saved credential');
+  assert.ok(w.attempts.every(url => new URL(url).pathname === '/connect'));
   await w.action({ action: 'reconnect' });
   await until(() => w.state().connectionFailures === 1);
   assert.equal(approvals, 0, 'ordinary retry never changes the saved identity or starts consent');
@@ -229,7 +240,7 @@ test('manual retry after failed local enrollment keeps the local target across w
   const options = { reachablePorts: () => [] };
   const first = worker(local, 'chrome', undefined, options);
   const workers = [first]; t.after(() => workers.forEach(w => w.stop()));
-  await until(() => first.state().reconnectPaused);
+  await until(() => first.state().reconnectWaiting);
   await first.action({ action: 'request_local_connection' });
   await until(() => first.state().connectionFailures === 1);
   for (const failures of [2, 3]) { first.retry(); await until(() => first.state().connectionFailures === failures); }
@@ -271,7 +282,7 @@ test('declined local enrollment stays stopped after restart until an explicit us
     cardbushNativeReconnect: { failures: 3, lastError: 'offline' }, allowedOrigins: ['https://example.test'] };
   const options = { reachablePorts: () => [port], browserConsent: async () => ++approvals > 1 };
   const first = worker(local, 'chrome', undefined, options); workers.push(first);
-  await until(() => first.state().reconnectPaused);
+  await until(() => first.state().reconnectWaiting);
   await first.action({ action: 'request_local_connection' });
   await until(() => !first.state().connectorEnabled && local.cardbushNativeReconnect.lastError.includes('未获同意'));
   const declinedId = local.cardbushLocalBrowserIdentity.id;

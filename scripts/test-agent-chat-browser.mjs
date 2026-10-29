@@ -102,8 +102,8 @@ test('offline CLI profiles preserve identity and use saved connections instead o
     const text = output.join('');
     assert.deepEqual(calls, [{ action: 'status' }]);
     assert.ok(text.includes(id)); assert.match(text, /edge\s+Work\s+offline/);
-    assert.match(text, /original browser profile.*retries up to three times/);
-    assert.match(text, /waits for you to click Connect/);
+    assert.match(text, /original browser profile.*keeps retrying the saved connection every 30 seconds/);
+    assert.match(text, /click Connect to retry immediately/);
     assert.match(text, /temporary disconnect does not require a new pairing code/);
     assert.doesNotMatch(text, /approve the first local connection|No paired browsers/);
   }

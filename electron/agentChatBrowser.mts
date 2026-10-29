@@ -1,6 +1,7 @@
 import type { AgentHttpClient } from './agentHttpClient.mjs';
 import type { NativeChatTerminal } from './agentChatTerminal.mjs';
 import { terminalText } from './agentChatPresentation.mjs';
+import { uiText } from '@cardbush/platform/i18n';
 
 const usage = 'Browser Use: /browser status | /browser retry | /browser pair chrome [name] | /browser pair edge [name] | /browser default ID | /browser revoke ID\n';
 
@@ -46,7 +47,7 @@ export async function chatBrowserCommand(text: string, client: Pick<AgentHttpCli
       if (!connections.length) io.status(result.shared
         ? 'Waiting for Browser Use. Install or reload the Chrome/Edge extension, then approve the first local connection in the CardBush extension window; no pairing code is needed. For manual connection only: /browser pair chrome or /browser pair edge.\n'
         : 'No paired browsers on this Agent server. For manual connection or remote Agent pairing, use /browser pair chrome or /browser pair edge.\n');
-      else if (connections.some(connection => !connection.connected)) io.status('Open the original browser profile. The extension retries up to three times, then waits for you to click Connect. If the saved connection keeps failing and you want this local App/CLI, choose “重新申请本机连接” in the extension and confirm once in its CardBush window. A temporary disconnect does not require a new pairing code.\n');
+      else if (connections.some(connection => !connection.connected)) io.status(uiText()('browser.cli.savedConnectionRecovery') + '\n');
       io.status(usage);
     }
     if (result.extensionPath) io.status(`Extension folder: ${terminalText(result.extensionPath)}\nLoad it in chrome://extensions or edge://extensions if needed.\n`);

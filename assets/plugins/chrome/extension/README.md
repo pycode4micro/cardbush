@@ -91,12 +91,16 @@ settings can also generate a code for manual local pairing. Codes must not be
 sent to the model; `/browser status` checks connection health without creating one.
 The extension preserves its profile identity and automatic reconnection,
 including after a browser restart. Five minutes limits accepting a new pairing
-code, not the lifetime of an established pairing. Offline connections get at most
-three attempts, with short backoff and a one-shot 30-second alarm as a worker-sleep
-fallback. Exhaustion persists across restarts; opening the popup does not reset
-it. Connect explicitly retries the current target, including a pending local
+code, not the lifetime of an established pairing. After three fast attempts,
+saved connections continue authenticated recovery on a one-shot 30-second alarm,
+including after worker/browser restarts or an upgrade from the old paused state.
+This never starts enrollment or opens another consent window. New enrollment
+still stops after three failures; opening the popup does not reset that limit.
+Connect explicitly retries the current target, including a pending local
 enrollment, without falling back to the old pairing. No browser action is replayed.
 Temporary disconnects do not require a new pairing code or another approval.
+Debugger release does not wait for a stalled renderer command, so disconnect
+cleanup cannot prevent reconnection or an explicitly requested consent window.
 
 Desktop disable stops the listener and active control while retaining pairings
 and session bindings. Re-enabling the desktop connector allows automatic

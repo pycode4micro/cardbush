@@ -3962,6 +3962,8 @@
     "remoteWorkers.configure": "Worker 连接",
     "remoteWorkers.execution": "执行位置",
     "remoteWorkers.local": "此计算机",
-    "remoteWorkers.statusUnavailable": "状态待确认"
+    "remoteWorkers.statusUnavailable": "状态待确认",
+    "browser.cli.savedConnectionRecovery": "打开原来的浏览器配置。扩展在三次快速尝试后，会每 30 秒继续重连已保存的连接，也可点击连接立即重试。临时断线不需要新配对码或再次授权；仅在确实需要替换已保存的连接身份时，重新申请本机连接。",
+    "browser.extension.connectionHelp": "本机首次在 CardBush 风格的扩展窗口确认一次连接，无需复制配对码。之后本机 App 和 CLI 共用连接。已保存的连接在 3 次快速尝试后，每 30 秒自动重连，无需再次授权；浏览器休眠可能延迟恢复。首次注册连续失败 3 轮后停止。远程 Agent 独立管理连接。个人标签仍需明确复制进会话隔离组；拒绝或移除连接后不会自动重新授权。"
   }
 }
