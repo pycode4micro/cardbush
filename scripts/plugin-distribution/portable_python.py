@@ -10,6 +10,8 @@ from packaging.utils import canonicalize_name
 
 
 def distributions(site: Path, requirements: list[str]):
+    if not requirements:
+        return {}  # A stdlib-only plugin must not inspect unrelated installed packages.
     available = {canonicalize_name(d.metadata['Name']): d for d in metadata.distributions(path=[str(site)])}
     selected = {}
     queue = [(Requirement(value), {''}) for value in requirements]

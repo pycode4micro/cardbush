@@ -10,8 +10,13 @@ from unittest.mock import patch
 import lan_client
 from lan_gateway import BoundedServer, make_handler, load_routes
 from build_plugins import private_file, copy_source, build
+from portable_python import distributions
 
 class DistributionTests(unittest.TestCase):
+    def test_stdlib_plugin_does_not_inspect_unrelated_package_metadata(self):
+        with patch('portable_python.metadata.distributions', side_effect=AssertionError('unrelated packages')):
+            self.assertEqual(distributions(Path('unused-site-packages'), []), {})
+
     def test_private_files_not_distributed(self):
         for name in ['.env', '.env.production', 'credentials.json', 'oauth.key', 'database.sqlite3', 'settings.local.json', '.mcp.json.bak2-20261010']:
             self.assertTrue(private_file(Path(name)), name)

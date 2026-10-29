@@ -1,0 +1,13 @@
+{
+  "name": "zjfs-product-image-gallery",
+  "version": "1.0.0",
+  "description": "按货号精确查询公司商品图库，通过只读局域网服务返回图片。",
+  "author": {"name": "兆君服饰"},
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "商品图库",
+    "shortDescription": "按货号查商品图片",
+    "capabilities": ["Read"],
+    "defaultPrompt": ["帮我按货号查询商品图库并显示图片"]
+  }
+}

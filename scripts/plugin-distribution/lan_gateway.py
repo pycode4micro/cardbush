@@ -63,7 +63,9 @@ def load_routes(config):
         allowed = set(route['allowed_tools'])
         if not allowed or not allowed <= declared: raise ValueError('Invalid tool allowlist')
         # The administrator chooses the audited query-only modules and exact tool names.
-        routes[route['path']] = {**route, 'handler': module.handle, 'allowed_tools': allowed}
+        handler = (module.create_handler(route.get('settings', {}))
+                   if hasattr(module, 'create_handler') else module.handle)
+        routes[route['path']] = {**route, 'handler': handler, 'allowed_tools': allowed}
     return routes
 
 class BoundedServer(ThreadingHTTPServer):

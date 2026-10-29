@@ -1,0 +1,24 @@
+{
+  "id": "zjfs-product-image-gallery",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "lookup_product_images",
+      "description": "按货号精确查询公司聚水潭商品图库。product_codes 对应商品简称/原厂编码，每次 1 至 20 个；不自动改写编码或猜测近似款。返回逐项存在状态，取图片请调用 get_product_image。不提供图库同步、文件浏览或数据库写入。",
+      "inputSchema": {
+        "type": "object", "additionalProperties": false, "required": ["product_codes"],
+        "properties": {"product_codes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string", "minLength": 1, "maxLength": 100}}}
+      },
+      "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+    },
+    {
+      "name": "get_product_image",
+      "description": "按一个准确货号读取公司图库当前图片，直接返回可显示的图片。只能读取图库索引中的图片，不接受文件路径或 URL。not_found 表示无匹配，不要猜图；unavailable 或 image_changed 表示暂不可取，由管理员处理。",
+      "inputSchema": {
+        "type": "object", "additionalProperties": false, "required": ["product_code"],
+        "properties": {"product_code": {"type": "string", "minLength": 1, "maxLength": 100}}
+      },
+      "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+    }
+  ]
+}
