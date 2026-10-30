@@ -212,8 +212,8 @@ test('connection deadlines identify transport, session creation and history ackn
 
 async function recoveryFixture(t){
   t.mock.timers.enable({apis:['setTimeout','Date']});
-  const sockets=[],events=[],dir=root();
-  const service=new RealtimeVoiceService(path.join(dir,'settings.json'),{...crypto,connect:async()=>{const socket=new Socket();sockets.push(socket);return{socket,dispose(){}};}});
+  const sockets=[],events=[],diagnostics=[],dir=root();
+  const service=new RealtimeVoiceService(path.join(dir,'settings.json'),{...crypto,diagnostic:e=>diagnostics.push(e),connect:async()=>{const socket=new Socket();sockets.push(socket);return{socket,dispose(){}};}});
   service.save({...defaultRealtimeVoiceSettings,apiKey:'fixture-not-a-key'});
   const started=service.start(1,{id:'recover',sessionId:'remember-me',voice:'female',context:[]},e=>events.push(e));
   await pause();sockets[0].open();sockets[0].event({type:'session.created'});await started;
@@ -222,8 +222,19 @@ async function recoveryFixture(t){
   const handshake=socket=>{socket.open();socket.event({type:'session.created'});const context=socket.sent.find(e=>e.type==='conversation.item.create');return context;};
   const ack=(socket,context)=>socket.event({type:'conversation.item.added',event_id:'provider-assigned-ack',items:context.items});
   const dispose=()=>{service.closeAll();sockets.at(-1).event({type:'session.closed'});t.mock.timers.tick(2000);};
-  return{service,sockets,events,dir,handshake,ack,dispose};
+  return{service,sockets,events,diagnostics,dir,handshake,ack,dispose};
 }
+
+test('transport diagnostics distinguish abnormal socket closure from planned context maintenance',async t=>{
+  const f=await recoveryFixture(t);
+  try{
+    f.sockets[0].fire('close',{code:1006,wasClean:false,reason:'must-not-log-private-provider-text'});
+    assert.ok(f.diagnostics.some(e=>e.event==='websocket_closed'&&e.closeCode===1006&&e.wasClean===false));
+    assert.ok(f.diagnostics.some(e=>e.event==='connection_lost'&&e.reason==='websocket_closed'));
+    assert.ok(!f.diagnostics.some(e=>e.event==='context_restart'));
+    assert.ok(!JSON.stringify(f.diagnostics).includes('private-provider-text'));
+  }finally{f.dispose();}
+});
 
 test('more than five seconds of reconnect pauses capture without hanging up, then restores context and in-flight child receipts',async t=>{
   const f=await recoveryFixture(t);
@@ -289,6 +300,40 @@ test('retry budget is bounded, mute survives reconnection and invalid context AC
   }finally{f.dispose();}
 });
 
+test('64K provider restores more than forty messages in acknowledged batches without needless compaction',async t=>{
+  const dir=root(),socket=new Socket(),events=[],diagnostics=[];
+  const history=new RealtimeVoiceHistory(path.join(dir,'voice-history'),'many-rounds',crypto);
+  for(let i=0;i<32;i++)history.append(`Remember question ${i}`,`Verified answer ${i}`);
+  const service=new RealtimeVoiceService(path.join(dir,'settings.json'),{...crypto,diagnostic:e=>diagnostics.push(e),connect:async()=>({socket,dispose(){}})});
+  service.save({...defaultRealtimeVoiceSettings,apiKey:'fixture-only'});t.after(()=>service.closeAll());
+  const pending=service.start(1,{id:'many',sessionId:'many-rounds',voice:'female',context:[]},e=>events.push(e));
+  await pause();socket.open();socket.event({type:'session.created'});
+  const first=socket.sent.find(e=>e.type==='conversation.item.create');assert.equal(first.items.length,40);
+  const ack=batch=>socket.event({type:'conversation.item.added',items:batch.items.map(item=>({...item,id:`remote-${item.id}`}))});
+  ack(first);const second=socket.sent.filter(e=>e.type==='conversation.item.create').at(-1);assert.equal(second.items.length,24);
+  assert.ok(!socket.sent.some(e=>e.type==='input_audio_unmute.commit'),'capture stays muted until every batch is confirmed');
+  ack(second);await pending;
+  assert.ok(socket.sent.some(e=>e.type==='input_audio_unmute.commit'));assert.equal(events.filter(e=>e.type==='context-compact').length,0);
+  assert.equal(diagnostics.filter(e=>e.event==='history_acknowledged').length,2);
+  for(let i=32;i<70;i++){
+    socket.event({type:'conversation.item.input_audio_transcription.completed',item_id:`u${i}`,transcript:`Question ${i}`});
+    socket.event({type:'response.output_text.done',response_id:`r${i}`,text:`Answer ${i}`});socket.event({type:'response.done'});
+  }
+  assert.equal(events.filter(e=>e.type==='context-compact').length,0,'message count is not the model capacity');
+  assert.equal(diagnostics.filter(e=>e.event==='context_restart').length,0);
+  service.close(1);socket.event({type:'session.closed'});
+});
+
+test('compaction retrieves the exact old QA identities rather than the providers most recent twenty rounds',t=>{
+  const f=fixture(t,true);
+  try {
+    const initial=f.history.messages();assert.ok(f.memory.acknowledge(initial,{items:items(initial).map(item=>({...item,id:`remote-${item.id}`}))}));
+    f.memory.tick();const job=f.jobs[0];f.memory.complete(job.jobId,{...job,summary:'A compact verified memory.'});t.mock.timers.tick(751);
+    const retrieve=f.sent.at(-1);assert.equal(retrieve.type,'conversation.item.retrieve');
+    assert.deepEqual(retrieve.items,initial.filter(item=>item.role==='user'&&Number(item.id.split('_')[1])<=job.through).map(item=>({id:`remote-${item.id}`})));
+  }finally{f.memory.close();}
+});
+
 test('restoring an oversized saved conversation waits for a validated summary, preserving the newest unsummarized pair',async t=>{
   const f=fixture(t);
   try{
@@ -304,8 +349,8 @@ test('restoring an oversized saved conversation waits for a validated summary, p
 });
 test('service archives real transcripts, continues PCM during summarization and resumes a replacement without replaying child tools',async t=>{
   t.mock.timers.enable({apis:['setTimeout','Date']});
-  const sockets=[],events=[],dir=root();
-  const service=new RealtimeVoiceService(path.join(dir,'settings.json'),{...crypto,connect:async()=>{
+  const sockets=[],events=[],diagnostics=[],dir=root();
+  const service=new RealtimeVoiceService(path.join(dir,'settings.json'),{...crypto,diagnostic:e=>diagnostics.push(e),connect:async()=>{
     const socket=new Socket();sockets.push(socket);return{socket,dispose(){}};
   }});
   service.save({...defaultRealtimeVoiceSettings,apiKey:'fixture-not-a-key'});
@@ -314,7 +359,7 @@ test('service archives real transcripts, continues PCM during summarization and 
   try {
     socket.event({type:'response.function_call_arguments.done',items:[{call_id:'child1',name:'subagent',arguments:'{"prompt":"example"}'}]});
     service.results(1,'call',[{id:'child1',output:'{"taskId":"task1","status":"running"}'}]);
-    for(let i=0;i<7;i++) {
+    for(let i=0;i<25;i++) {
       socket.event({type:'conversation.item.input_audio_transcription.completed',item_id:`remote-u${i}`,transcript:pair(i).user});
       socket.event({type:'response.output_text.done',item_id:`remote-a${i}`,text:pair(i).assistant});
       socket.event({type:'response.done'});
@@ -330,8 +375,7 @@ test('service archives real transcripts, continues PCM during summarization and 
     }
     service.playback(1,'call',true);t.mock.timers.tick(751);assert.ok(!socket.sent.some(e=>e.type==='conversation.item.retrieve'));
     service.playback(1,'call',false);t.mock.timers.tick(751);
-    const retrieve=socket.sent.at(-1);assert.equal(retrieve.type,'conversation.item.retrieve');
-    socket.event({type:'conversation.item.retrieved',event_id:retrieve.event_id,items:[]});
+    assert.ok(diagnostics.some(e=>e.event==='context_fallback'&&e.reason==='unmapped_context'),'function-result history must not fabricate remote QA IDs');
     t.mock.timers.tick(751);await pause();
     // Reconnection now includes a bounded inference-facing history snapshot.
     // Budget any additional compaction before opening the replacement socket.
@@ -342,6 +386,8 @@ test('service archives real transcripts, continues PCM during summarization and 
       await pause();
     }
     assert.equal(sockets.length,2);
+    assert.ok(diagnostics.some(e=>e.event==='context_restart'));
+    assert.ok(!diagnostics.some(e=>e.event==='connection_lost'),'planned memory maintenance is not a network failure');
     service.audio(1,'call',new Uint8Array(640).fill(9).buffer);
     const replacement=sockets[1];replacement.open();replacement.event({type:'session.created'});await pause();
     assert.ok(!replacement.sent.some(e=>e.type==='input_audio_buffer.append'),'wait for restored context confirmation before buffered microphone audio');
@@ -357,7 +403,7 @@ test('service archives real transcripts, continues PCM during summarization and 
     const restored=new RealtimeVoiceHistory(path.join(dir,'voice-history'),'local-memory',crypto);
     assert.ok(restored.summary.includes('task1'));
     const original=fs.readFileSync(restored.file,'utf8').trim().split('\n').map(line=>JSON.parse(crypto.decrypt(JSON.parse(line)))).filter(item=>item.type==='pair');
-    assert.equal(original.length,8,'all seven spoken turns and the child receipt remain in the encrypted journal even after full compaction');
+    assert.equal(original.length,26,'all twenty-five spoken turns and the child receipt remain in the encrypted journal even after full compaction');
     assert.equal(events.filter(e=>e.type==='error').length,0);
   } finally {service.closeAll();t.mock.timers.tick(1600);}
 });

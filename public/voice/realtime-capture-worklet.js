@@ -2,7 +2,18 @@
 class CardBushRealtimeCapture extends AudioWorkletProcessor {
   constructor() {
     super(); this.frame = new Int16Array(320); this.offset = 0; this.enabled = false;
-    this.port.onmessage = ({ data }) => { this.enabled = data === true; this.offset = 0; };
+    this.port.onmessage = ({ data }) => {
+      if (data === 'flush') {
+        this.enabled = false;
+        if (this.offset) {
+          const tail = this.frame.slice(0, this.offset);
+          this.port.postMessage(tail.buffer, [tail.buffer]);
+        }
+        this.offset = 0; this.port.postMessage('flushed');
+        return;
+      }
+      this.enabled = data === true; this.offset = 0;
+    };
   }
   process(inputs) {
     const samples = inputs[0]?.[0];

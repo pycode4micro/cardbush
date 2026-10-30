@@ -2,12 +2,19 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),electron=require('electron');
 if(typeof electron==='string'){
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
-  const result=require('node:child_process').spawnSync(electron,[__filename],{env,windowsHide:true,stdio:'inherit',timeout:90000});
+  const result=require('node:child_process').spawnSync(electron,[__filename,...process.argv.slice(2)],{env,windowsHide:true,stdio:'inherit',timeout:90000});
   if(result.error)console.error(result.error);process.exit(result.status??1);
 }
 const {app,BrowserWindow}=electron,directory=fs.mkdtempSync(path.resolve('tmp/voice-composer-ui-'));
 app.setPath('userData',path.join(directory,'profile'));app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('use-fake-device-for-media-stream');app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+const liveDictation=process.argv.includes('--live-dictation');
+if(liveDictation){
+  const rate=48000,seconds=16,wave=Buffer.alloc(44+rate*seconds*2);
+  wave.write('RIFF');wave.writeUInt32LE(wave.length-8,4);wave.write('WAVEfmt ',8);wave.writeUInt32LE(16,16);wave.writeUInt16LE(1,20);wave.writeUInt16LE(1,22);wave.writeUInt32LE(rate,24);wave.writeUInt32LE(rate*2,28);wave.writeUInt16LE(2,32);wave.writeUInt16LE(16,34);wave.write('data',36);wave.writeUInt32LE(wave.length-44,40);
+  for(let i=0;i<rate*seconds;i++){const sample=[1,2,3,4,5,6,7].reduce((sum,h)=>sum+Math.sin(i*2*Math.PI*170*h/rate)/Math.sqrt(h),0)*2400;wave.writeInt16LE(Math.round(sample),44+i*2);}
+  const microphone=path.join(directory,'microphone.wav');fs.writeFileSync(microphone,wave);app.commandLine.appendSwitch('use-file-for-fake-audio-capture',microphone);
+}
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),deadline=setTimeout(()=>app.exit(1),85000);
 app.whenReady().then(async()=>{
   const {build}=await import('vite'),{default:react}=await import('@vitejs/plugin-react');
@@ -28,7 +35,7 @@ app.whenReady().then(async()=>{
       navigator.mediaDevices.getUserMedia=async options=>{fixture.captures++;if(fixture.failCapture)throw new DOMException('fixture missing microphone','NotFoundError');const stream=await getMedia(options);fixture.tracks.push(...stream.getTracks());return stream;};
       const settings=${JSON.stringify({...defaultVoiceSettings,engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,speakerLockEnabled:false})};
       window.cardbushDesktop={pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),voice:{settings:async()=>settings,setCallActive:async()=>{},cancel:async()=>{},
-        transcribe:async()=>{fixture.transcriptions++;if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);if(fixture.failTranscription){fixture.failTranscription=false;throw Error('fixture transcription failed');}return{text:'这是录音测试',speakerVerified:true};},speak:async()=>{},onAudio:()=>()=>{},
+        transcribe:async input=>{fixture.transcriptions++;fixture.audio=input;if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);if(fixture.failTranscription){fixture.failTranscription=false;throw Error('fixture transcription failed');}return{text:(fixture.state().phase==='transcribing'?fixture.finalText:fixture.previewText)||'这是录音测试',speakerVerified:true};},speak:async()=>{},onAudio:()=>()=>{},
         realtime:{settings:async()=>({mode:'realtime',hasApiKey:true}),start:async()=>{fixture.started++;if(fixture.holdStart)await new Promise(resolve=>fixture.releaseStart=resolve);if(fixture.failStart)throw Error('fixture connection failed');},audio:async()=>fixture.frames++,control:async()=>{},playback:async()=>{},close:async()=>fixture.closed++,onEvent:()=>()=>{}}}};
       fixture.state=()=>applicationVoiceSession().snapshot();
       const noop=()=>{},controls={selectedModel:'fixture',availableModels:[],onModelChange:noop,onConfigureModels:noop,referencePlanMode:'off',onReferencePlanModeChange:noop,permissionMode:'task_free',onPermissionModeChange:noop,subagentPermissionRouting:'inherit',onSubagentPermissionRoutingChange:noop,reasoningLevel:'medium',reasoningLevels:['medium'],reasoningLevelAvailable:false,onReasoningLevelChange:noop,skills:[],disabledSkillNames:new Set(),onToggleSkill:noop};
@@ -56,7 +63,7 @@ app.whenReady().then(async()=>{
   win.webContents.session.webRequest.onBeforeRequest((details,callback)=>callback({cancel:/^https?:/.test(details.url)}));
   const errors=[];win.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
   const read=code=>win.webContents.executeJavaScript(code);
-  const until=async code=>{for(let i=0;i<200;i++){if(await read(code))return;await pause(25);}throw Error('Timed out: '+code+'\n'+await read('document.body.innerText')+'\n'+errors.join('\n'));};
+  const until=async code=>{for(let i=0;i<200;i++){if(await read(code))return;await pause(25);}throw Error('Timed out: '+code+'\n'+await read('JSON.stringify({body:document.body.innerText,draft:document.querySelector(".composer-surface textarea")?.value,voice:fixture.state(),transcriptions:fixture.transcriptions})')+'\n'+errors.join('\n'));};
   const click=selector=>read(`document.querySelector(${JSON.stringify(selector)}).click();void 0`);
   const fill=value=>read(`(()=>{const n=document.querySelector('.composer-surface textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));})();`);
   const pointer=async(hold=false)=>{
@@ -68,6 +75,32 @@ app.whenReady().then(async()=>{
   const screenshot=async name=>{win.webContents.invalidate();await pause(300);fs.writeFileSync(path.join(directory,name+'.png'),(await win.webContents.capturePage()).toPNG());};
   try{
     await win.loadFile(path.join(directory,'index.html'));await until('document.querySelector(".voice-dictation-button")');
+    if(liveDictation){
+      await fill('原有草稿');await read('fixture.previewText="你好世";fixture.finalText="你好世界，实时听写。";void 0');
+      await click('.voice-dictation-button');await until('fixture.state().phase==="recording"');
+      await until('document.querySelector(".composer-surface textarea").value==="原有草稿 你好世"');
+      assert.equal(await read('fixture.tracks.some(track=>track.readyState==="live")'),true,'text appears before capture stops');
+      assert.equal(await read('fixture.audio.mimeType'),'audio/wav');
+      assert.equal(await read('new DataView(fixture.audio.audio).getUint32(24,true)'),16000);
+      await read('fixture.previewText="你好世界";void 0');
+      await until('document.querySelector(".composer-surface textarea").value==="原有草稿 你好世界"');
+      await click('.voice-dictation-button');await until('fixture.state().muted===true');
+      await pause(100);const pausedCalls=await read('fixture.transcriptions');await pause(1700);
+      assert.equal(await read('fixture.transcriptions'),pausedCalls,'muting pauses samples and preview requests');
+      for(const value of ['手改草稿 你好世界','手改草稿 你好地球','手改草稿 你好地球 手写补充']){
+        await fill(value);await until('document.querySelector(".composer-surface textarea").value==='+JSON.stringify(value));
+      }
+      await read('fixture.previewText="你好世界，实时";void 0');
+      await click('.voice-dictation-button');await until('fixture.state().muted===false');
+      await until('document.querySelector(".composer-surface textarea").value==="手改草稿 你好地球，实时 手写补充"');
+      await screenshot('live-dictation');
+      await click('.voice-dictation-stop');await until('fixture.state().mode==="idle"');
+      assert.equal(await read('document.querySelector(".composer-surface textarea").value'),'手改草稿 你好地球，实时听写。 手写补充');
+      assert.equal(await read('fixture.tracks.every(track=>track.readyState==="ended")'),true);
+      assert.deepEqual(await read('fixture.sent'),[],'live dictation never submits a conversation');
+      assert.deepEqual(errors,[]);console.log('Live dictation passed: real PCM capture, partial revisions, mute/resume, preserved user edits, final correction and no Agent submission.');
+      return;
+    }
     await fill('切换会话时不能误发送的草稿');
     await until('document.querySelector(".composer-surface textarea").value === "切换会话时不能误发送的草稿"');
     const rect=selector=>read('(()=>{const r=document.querySelector('+JSON.stringify(selector)+').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};})()');

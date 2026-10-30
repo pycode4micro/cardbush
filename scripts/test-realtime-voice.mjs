@@ -8,6 +8,7 @@ import { RealtimeVoiceService } from '../dist-electron/realtimeVoiceService.js';
 import { defaultRealtimeVoiceSettings as defaults } from '../dist-electron/realtimeVoiceTypes.js';
 import { volcengineRealtimeVoice as provider } from '../dist-electron/volcengineRealtimeVoice.js';
 import { realtimeVoiceNotification } from '../dist-electron/realtimeVoiceNotification.js';
+import { RealtimeVoiceHistory } from '../dist-electron/realtimeVoiceHistory.js';
 import { CARDBUSH_REALTIME_PROTOCOL } from '../dist-electron/cardbushRealtimeVoice.js';
 import * as protocol from '@cardbush/bush-protocol';
 import * as i18n from '@cardbush/platform/i18n';
@@ -20,6 +21,15 @@ const compile=file=>{const exports={};const source=ts.transpileModule(fs.readFil
 const { RealtimeAgentBridge, realtimeConversationContext }=compile('src/features/voice/realtimeAgentBridge.ts');
 const { RealtimeVoiceCall }=compile('src/features/voice/realtimeVoiceCall.ts');
 const { RealtimeVoiceAudio }=compile('src/features/voice/realtimeVoiceAudio.ts');
+const { RealtimeVoiceCaptions }=compile('src/features/voice/realtimeVoiceCaptions.ts');
+function playbackFixture() {
+  let active,progress;const tracks=new Map();
+  return {make:(_frame,playing,_level,_error,_output,played)=>{active=playing;progress=played;return {prepare:async()=>{},mute(){},
+    append(_pcm,_rate,id){const track=tracks.get(id)??{id,played:0,received:0,pending:true};track.received++;track.pending=true;tracks.set(id,track);active(true);progress({...track});},
+    stop(){active(false);tracks.clear();},close(){active(false);},release(id){tracks.delete(id);}};},
+    advance(id,played,pending=true){const track=tracks.get(id);assert.ok(track,`No audio for ${id}`);Object.assign(track,{played,pending});progress({...track});},
+    drain(){for(const track of [...tracks.values()]){Object.assign(track,{played:track.received,pending:false});progress({...track});}active(false);}};
+}
 class Socket {
   readyState=0;bufferedAmount=0;listeners=new Map();sent=[];
   addEventListener(type,fn){const list=this.listeners.get(type)??[];list.push(fn);this.listeners.set(type,list);}
@@ -114,14 +124,14 @@ test('an incompatible bridge handshake cannot silently start a voice session',as
   await assert.rejects(pending);assert.ok(f.events.some(e=>e.type==='error'));
 });
 
-test('notifications speak a semantic summary and never read raw paths when summarization fails',()=>{
+test('task notifications preserve factual results without generated speech or trusting supplied announcements',()=>{
   const task={taskId:'inventory',status:'completed',result:'桌面应用表格：C:\\Apps\\editor.exe https://example.com',language:'zh'};
   const fallback=realtimeVoiceNotification(JSON.stringify(task));
-  assert.ok(!fallback.speech.includes('editor'));assert.ok(!fallback.speech.includes('http'));assert.match(fallback.speech,/点击任务气泡/);
+  assert.equal(Object.hasOwn(fallback,'speech'),false);assert.equal(fallback.status,'completed');
   const summarized=realtimeVoiceNotification(JSON.stringify({...task,speech:'桌面共有十五个应用，主要是开发工具、浏览器和办公软件。'}));
-  assert.match(summarized.speech,/十五个应用/);assert.ok(summarized.context[0].text.includes('editor.exe'),'full facts remain contextual data');
-  assert.equal(realtimeVoiceNotification(JSON.stringify({...task,speech:'安装在 C:\\Apps\\editor.exe'})).speech,fallback.speech);
-  assert.match(realtimeVoiceNotification(JSON.stringify({...task,status:'failed'})).speech,/没能完成/);
+  assert.deepEqual(summarized,fallback);assert.ok(summarized.context[0].text.includes('editor.exe'),'full facts remain contextual data');
+  assert.match(summarized.context[1].text,/Ask whether to revisit/);
+  assert.equal(realtimeVoiceNotification(JSON.stringify({...task,status:'failed'})).status,'failed');
 });
 
 test('tool batches deduplicate dispatch and require complete paired results from the owning call',async()=>{
@@ -155,10 +165,28 @@ test('normalization handles official JSON text/audio/FC events and empty complet
   assert.throws(()=>provider.parse({type:'response.output_audio.delta',delta:'AA=='}));
   assert.deepEqual(provider.parse({type:'conversation.item.input_audio_transcription.failed',item_id:'noise',error:{code:'audio_unintelligible'}}),[{type:'input-discarded',itemId:'noise'}]);
 });
-test('large initial history is summarized before connecting instead of silently dropping older QA',async()=>{
-  const f=fixture();f.service.save({...defaults,instructions:'中'.repeat(2000)});
-  const context=Array.from({length:20},(_,i)=>({role:i%2?'assistant':'user',text:'中'.repeat(1000)}));
-  const pending=f.service.start(1,{id:'call-1',voice:'male',context},e=>f.events.push(e));
+
+test('audio and tool response identities survive provider normalization and the owner bridge',async()=>{
+  const f=fixture();await f.start();
+  try {
+    for(const event of [
+      {type:'response.output_audio.started'},
+      {type:'response.output_audio.delta',delta:Buffer.alloc(960).toString('base64')},
+      {type:'response.output_audio.done'},
+      {type:'response.function_call_arguments.done',items:[{call_id:'bye',name:'hang_up',arguments:'{}'}]},
+    ]) {
+      assert.equal(provider.parse({...event,response_id:'farewell'})[0].responseId,'farewell');
+      f.socket.event({...event,response_id:'farewell'});
+      assert.equal(f.events.at(-1).responseId,'1:farewell');
+    }
+  } finally {f.service.closeAll();}
+});
+test('oversized persisted history is summarized before connecting instead of silently dropping older QA',async t=>{
+  const f=fixture();t.after(()=>f.service.closeAll());f.service.save({...defaults,instructions:'中'.repeat(2000)});
+  const history=new RealtimeVoiceHistory(path.join(path.dirname(f.file),'voice-history'),'large-history',{
+    encrypt:key=>'encrypted:'+Buffer.from(key).toString('base64'),decrypt:key=>Buffer.from(key.slice(10),'base64').toString()});
+  for(let i=0;i<20;i++)history.append(`问题${i}`+'中'.repeat(1000),`回答${i}`+'中'.repeat(1000));
+  const pending=f.service.start(1,{id:'call-1',sessionId:'large-history',voice:'male',context:[]},e=>f.events.push(e));
   await pause();assert.equal(f.socket.sent.length,0);
   const job=f.events.find(e=>e.type==='context-compact').job;
   f.service.compacted(1,'call-1',job.jobId,{...job,summary:'保留全部已知对话条件与任务状态。'});
@@ -166,8 +194,8 @@ test('large initial history is summarized before connecting instead of silently 
   const restored=f.socket.sent.find(e=>e.type==='conversation.item.create');
   assert.ok(JSON.stringify(restored).includes('保留全部已知'));
   f.socket.event({type:'conversation.item.added',event_id:restored.event_id,items:restored.items});await pending;
-  assert.ok(f.socket.sent.reduce((n,e)=>n+Buffer.byteLength(JSON.stringify(e)),0)<16500);
-  const history=f.socket.sent.find(e=>e.type==='conversation.item.create');assert.ok(!history||history.items.length%2===0);
+  assert.ok(f.socket.sent.reduce((n,e)=>n+Buffer.byteLength(JSON.stringify(e)),0)<provider.contextPolicy.maxInputBytes);
+  assert.equal(restored.items.length%2,0);assert.ok(restored.items.length<=40);
   f.service.close(1);f.socket.event({type:'session.closed'});
 });
 const target=(messages=[])=>({environment:'local',sessionId:'chat',messages,sending:false,send:async()=>true});
@@ -301,20 +329,20 @@ test('reconnecting does not import archived voice transcripts again or pair them
     {role:'user',text:'new typed question'},{role:'assistant',text:'new typed answer'}]);
 });
 test('audio and dialogue continue during concurrent dispatch and await batches',async()=>{
-  const f=agentFixture();let callback,frames,uploaded=0,played=0,closed=0;const results=[],patches=[];
+  const f=agentFixture(),playback=playbackFixture();let callback,frames,uploaded=0,closed=0;const results=[],patches=[];
   const api={onEvent:fn=>(callback=fn,()=>{}),start:async()=>{},audio:async()=>uploaded++,control:async()=>{},close:async()=>closed++,results:async(id,r)=>results.push(r),notify:async()=>{}};
-  const audio={prepare:async()=>{},mute(){},append(){played++;},stop(){},close(){}};
-  const call=new RealtimeVoiceCall(api,p=>patches.push(p),()=>{},frame=>(frames=frame,audio));call.update({...target(),agent:f.agent,sending:true});await call.start('','female');
+  const call=new RealtimeVoiceCall(api,p=>patches.push(p),()=>{},(...args)=>(frames=args[0],playback.make(...args)));call.update({...target(),agent:f.agent,sending:true});await call.start('','female');
   callback({id:call.id,type:'tools',calls:[tool('1','subagent',{prompt:'one'}),tool('2','subagent',{prompt:'two'})]});await pause();
   assert.deepEqual(results[0].map(r=>JSON.parse(r.output).status),['running','running']);
   callback({id:call.id,type:'tools',calls:[tool('wait','tasks',{action:'inspect',task_ids:['1','2']})]});await pause();
   assert.equal(JSON.parse(results[1][0].output).status,'watching');
-  frames(new ArrayBuffer(640));callback({id:call.id,type:'audio',pcm:'AAA=',sampleRate:24000});
+  frames(new ArrayBuffer(640));callback({id:call.id,type:'audio',responseId:'a1',pcm:'AAA=',sampleRate:24000});
   callback({id:call.id,type:'transcript',role:'assistant',text:'我们继续聊',itemId:'a1',final:true});
-  assert.equal(uploaded,1);assert.equal(played,1);assert.ok(patches.some(p=>p.spokenText==='我们继续聊'));
+  callback({id:call.id,type:'audio-end',responseId:'a1'});playback.drain();
+  assert.equal(uploaded,1);assert.ok(patches.some(p=>p.spokenText==='我们继续聊'));
   call.close();await pause();assert.equal(closed,1);assert.equal(f.tasks.filter(t=>t.status==='running').length,2);
 });
-test('background notifications wait for a speech gap, use paired context and do not reuse tool call IDs',async t=>{
+test('background notifications wait for a speech gap and update model context without automatic speech',async t=>{
   const f=fixture();await f.start();
   t.mock.timers.enable({apis:['setTimeout']});
   const result=JSON.stringify({taskId:'t',status:'completed',result:'done'});
@@ -324,9 +352,12 @@ test('background notifications wait for a speech gap, use paired context and do 
   assert.ok(!f.socket.sent.some(e=>e.type==='speech_text_buffer.commit'));
   f.socket.event({type:'conversation.item.input_audio_transcription.completed',transcript:'still here'});
   t.mock.timers.tick(751);const message=f.socket.sent.find(e=>e.type==='conversation.item.create');
-  assert.equal(f.socket.sent.at(-1).type,'speech_text_buffer.commit');
+  assert.equal(f.socket.sent.at(-1).type,'session.update');assert.match(f.socket.sent.at(-1).session.instructions,/Available background task/);
   assert.equal(message.items.length,2);assert.equal(message.items[1].role,'assistant');
-  f.service.notify(1,'call-1',result);t.mock.timers.tick(1000);assert.equal(f.socket.sent.filter(e=>e.type==='speech_text_buffer.commit').length,1);
+  f.socket.event({type:'conversation.item.added',items:message.items.map((item,i)=>({...item,id:`server-notice-${i}`}))});
+  f.service.notify(1,'call-1',result);t.mock.timers.tick(1000);
+  assert.equal(f.socket.sent.filter(e=>e.type==='speech_text_buffer.commit').length,0);
+  assert.equal(f.socket.sent.filter(e=>e.type==='conversation.item.create').length,1);
   assert.equal(message.type,'conversation.item.create');assert.equal(message.items[0].role,'user');assert.equal(message.items[0].call_id,undefined);
   assert.match(message.items[0].content[0].text,/background task notification/);
   f.service.close(1);f.socket.event({type:'session.closed'});
@@ -341,6 +372,10 @@ test('AudioWorklet sends exact little-endian 20 ms frames and discards partial a
   assert.equal(frames.length,2);assert.equal(frames[0].byteLength,640);assert.equal(new DataView(frames[0]).getInt16(0,true),16383);
   processor.process([[new Float32Array(128)]]);processor.port.onmessage({data:false});processor.process([[new Float32Array(320)]]);assert.equal(frames.length,2);
   processor.port.onmessage({data:true});processor.process([[new Float32Array(320).fill(-1)]]);assert.equal(new DataView(frames[2]).getInt16(0,true),-32768);
+  processor.process([[new Float32Array(100).fill(.25)]]);processor.port.onmessage({data:'flush'});
+  assert.equal(frames[3].byteLength,200,'Stop preserves the last partial dictation frame');
+  assert.equal(new DataView(frames[3]).getInt16(0,true),8191);assert.equal(frames[4],'flushed');
+  processor.process([[new Float32Array(320)]]);assert.equal(frames.length,5,'flushing disables further capture');
 });
 
 test('renderer runs background compaction without blocking audio, persists an initial conversation ID, and aborts on hangup',async()=>{
@@ -362,18 +397,19 @@ test('renderer runs background compaction without blocking audio, persists an in
 
 test('final voice transcripts remain in the owning chat; both sides of assistant calls are internal and page_write is assistant-only', async()=>{
   for (const personal of [false,true]) {
-    let callback,started;const recorded=[],pages=[],results=[];
+    let callback,started;const recorded=[],pages=[],results=[],playback=playbackFixture();
     const api={onEvent:fn=>(callback=fn,()=>{}),start:async input=>{started=input;},audio:async()=>{},control:async()=>{},close:async()=>{},
       results:async(_,items)=>results.push(items),notify:async()=>{}};
-    const audio={prepare:async()=>{},mute(){},append(){},stop(){},close(){}};
     const agent={execute:async()=>({}),list:async()=>[],record:async e=>recorded.push(e),pageWrite:async(...args)=>pages.push(args)};
-    const call=new RealtimeVoiceCall(api,()=>{},()=>{},()=>audio);
+    const call=new RealtimeVoiceCall(api,()=>{},()=>{},playback.make);
     call.update({...target(),sessionId:'owner',agent,...(personal?{assistant:{name:'Lumi',persona:'可靠'}}:{})});
     await call.start('','female');
     call.update({...target(),sessionId:'another-chat',agent:{...agent,record:async()=>assert.fail('wrong conversation')}});
     callback({id:call.id,type:'transcript',role:'user',text:'我想',itemId:'u',final:false});
     callback({id:call.id,type:'transcript',role:'user',text:'我想了解方案',itemId:'u',final:true});
     callback({id:call.id,type:'transcript',role:'assistant',text:'可以，我们聊聊。',itemId:'a',final:true});
+    callback({id:call.id,type:'audio',responseId:'a',pcm:'AAA=',sampleRate:24000});
+    callback({id:call.id,type:'audio-end',responseId:'a'});playback.drain();
     callback({id:call.id,type:'tools',calls:[tool('page','page_write',{content:'## 方案'})]});await pause();
     call.close();
     assert.equal(started.sessionId,'owner');assert.equal(recorded.length,2);assert.equal(recorded[0].content,'我想了解方案');
@@ -452,33 +488,185 @@ test('a sustained microphone transport stall has a bounded buffer and releases t
   } finally {call.close();}
 });
 
-test('voice captions stream with stable identity, then finalize or retain an interrupted partial',async()=>{
-  let emit;const previews=[],saved=[],discarded=[];
+test('voice captions follow actual playback, preserve stable identity and save only the heard prefix on interruption',async()=>{
+  let emit;const previews=[],saved=[],discarded=[],playback=playbackFixture();
   const api={onEvent:fn=>(emit=fn,()=>{}),start:async()=>{},close:async()=>{},audio:async()=>{},notify:async()=>{}};
-  const call=new RealtimeVoiceCall(api,()=>{},()=>{},()=>({prepare:async()=>{},mute(){},append(){},stop(){},close(){}}));
+  const call=new RealtimeVoiceCall(api,()=>{},()=>{},playback.make);
   call.update({...target(),agent:{execute:async()=>{},list:async()=>[],preview:async e=>previews.push(e),record:async e=>saved.push(e),discard:async id=>discarded.push(id)}});
   await call.start('','female');
   const transcript=(role,text,itemId,final)=>emit({id:call.id,type:'transcript',role,text,itemId,final});
   transcript('assistant','Hello','a',false);transcript('assistant',' world','a',false);
-  assert.deepEqual(previews.map(e=>e.content),['Hello','Hello world']);assert.equal(saved.length,0);
   transcript('assistant','Hello world.','a',true);
+  assert.equal(previews.length,0);assert.equal(saved.length,0,'received text is not yet spoken');
+  emit({id:call.id,type:'audio',responseId:'a',pcm:'AAA=',sampleRate:24000});emit({id:call.id,type:'audio-end',responseId:'a'});
+  playback.advance('a',.4);const prefix=previews.at(-1).content;
+  assert.ok('Hello world.'.startsWith(prefix)&&prefix.length<'Hello world.'.length);assert.equal(saved.length,0);
+  await pause();assert.equal(previews.at(-1).content,prefix,'wall time alone cannot advance captions');
+  playback.drain();
   assert.equal(saved.length,1);assert.equal(saved[0].id,previews[0].id);assert.equal(saved[0].createdAt,previews[0].createdAt);
   transcript('user','noise','noise',false);emit({id:call.id,type:'input-discarded',itemId:'noise'});
   assert.equal(discarded[0],previews.at(-1).id);
-  transcript('assistant','Unfinished','b',false);call.close();
-  assert.equal(saved.length,2);assert.equal(saved[1].status,'interrupted');assert.equal(saved[1].content,'Unfinished');
+  transcript('assistant','Unfinished sentence that was never fully heard.','b',true);
+  emit({id:call.id,type:'audio',responseId:'b',pcm:'AAA=',sampleRate:24000});emit({id:call.id,type:'audio-end',responseId:'b'});playback.advance('b',.35);
+  const heard=previews.at(-1).content;assert.ok(heard.length>0&&heard.length<40);call.close();
+  assert.equal(saved.length,2);assert.equal(saved[1].status,'interrupted');assert.equal(saved[1].content,heard);
 });
 
-test('hang_up waits for audible playback to drain and leaves background work alone',async()=>{
-  let emit,playing,ended=0,results=[];
+test('caption completion waits for audio end, preserves Unicode and ignores duplicate terminals',()=>{
+  const events=[],captions=new RealtimeVoiceCaptions((...args)=>events.push(args));
+  const text='你好👋，语音播放时逐步显示。';captions.text('one',text,true);
+  captions.progress({id:'one',played:1,received:8,pending:true});
+  assert.ok(events.at(-1)[1].length<text.length);assert.ok(!events.some(e=>e[2]));
+  captions.end('one');captions.progress({id:'one',played:8,received:8,pending:false});
+  captions.end('one');captions.text('one',text,true);
+  assert.equal(events.filter(e=>e[2]).length,1);assert.equal(events.at(-1)[1],text);
+  assert.ok(events.every(e=>!/[\uD800-\uDBFF]$/.test(e[1])),'never split a Unicode code point');
+});
+
+test('user speech stops playback immediately, discards late old output and cannot cancel the new reply through a late ACK',async()=>{
+  const playback=playbackFixture(),controls=[],saved=[],previews=[];let emit;
   const api={onEvent:fn=>(emit=fn,()=>{}),start:async()=>{},close:async()=>{},audio:async()=>{},notify:async()=>{},
+    control:async(_,action)=>controls.push(action)};
+  const call=new RealtimeVoiceCall(api,()=>{},()=>{},playback.make);
+  call.update({...target(),agent:{execute:async()=>{},list:async()=>[],record:async e=>saved.push(e),preview:async e=>previews.push(e)}});
+  await call.start('','female');const event=e=>emit({id:call.id,...e});
+  try {
+    event({type:'transcript',role:'assistant',itemId:'old',responseId:'old',text:'这是一段没有播放完毕的长回答。',final:true});
+    event({type:'audio',responseId:'old',pcm:'AAA=',sampleRate:24000});event({type:'audio-end',responseId:'old'});playback.advance('old',.3);
+    const heard=previews.at(-1).content;
+    event({type:'input-start',itemId:'user'});assert.deepEqual(controls,['interrupt']);
+    assert.equal(saved[0].content,heard);assert.equal(saved[0].status,'interrupted');
+    event({type:'audio',responseId:'old',pcm:'AAA=',sampleRate:24000});
+    event({type:'transcript',role:'assistant',itemId:'old',responseId:'old',text:'迟到的旧回答',final:true});
+    assert.equal(previews.at(-1).content,heard);
+    event({type:'transcript',role:'user',itemId:'user',text:'等一下',final:true});
+    event({type:'transcript',role:'assistant',itemId:'new',responseId:'new',text:'好的，请说。',final:true});
+    event({type:'audio',responseId:'new',pcm:'AAA=',sampleRate:24000});
+    event({type:'interrupted',responseId:'old'});event({type:'audio-end',responseId:'new'});playback.drain();
+    assert.equal(saved.at(-1).content,'好的，请说。');assert.equal(saved.at(-1).status,'completed');
+    call.mute(true);event({type:'audio',responseId:'muted',pcm:'AAA=',sampleRate:24000});event({type:'input-start',itemId:'stale-mic'});
+    assert.equal(controls.filter(e=>e==='interrupt').length,1,'muted microphone cannot barge in');
+  } finally {call.close();}
+});
+
+function hangupFixture(t) {
+  t.mock.timers.enable({apis:['setTimeout']});
+  let emit,ended=0,closed=0;
+  const results=[],saved=[],playback=playbackFixture();
+  const api={onEvent:fn=>(emit=fn,()=>{}),start:async()=>{},close:async()=>closed++,audio:async()=>{},notify:async()=>{},
     results:async(_,value)=>results.push(value),playback:async()=>{}};
-  const call=new RealtimeVoiceCall(api,()=>{},()=>{},(_,active)=>(playing=active,{prepare:async()=>{},mute(){},append(){},stop(){},close(){}}),()=>{ended++;call.close();});
-  call.update({...target(),agent:{execute:async()=>assert.fail('hangup cannot invoke or stop a child task'),list:async()=>[]}});await call.start('','female');
-  playing(true);emit({id:call.id,type:'tools',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
-  assert.equal(JSON.parse(results[0][0].output).status,'ending');
-  emit({id:call.id,type:'audio-end'});assert.equal(ended,0);
-  playing(false);assert.equal(ended,1);
+  const call=new RealtimeVoiceCall(api,()=>{},()=>{},playback.make,()=>{ended++;call.close();});
+  call.update({...target(),agent:{execute:async()=>assert.fail('hangup cannot invoke or stop a child task'),list:async()=>[],record:async entry=>saved.push(entry)}});
+  t.after(()=>call.close());
+  return {call,api,results,saved,event:value=>emit({id:call.id,...value}),drain:()=>playback.drain(),
+    get ended(){return ended;},get closed(){return closed;}};
+}
+
+test('hang_up ignores an earlier reply ending while the goodbye audio is still arriving',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'audio',responseId:'previous',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'audio-end',responseId:'previous'});f.drain();
+  f.event({type:'tools',responseId:'goodbye',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  assert.equal(f.ended,0,'an earlier audio-end must not finish a new hangup');
+  f.event({type:'audio-start',responseId:'goodbye'});t.mock.timers.tick(1000);
+  assert.equal(f.ended,0,'audio-start is not completed playback');
+  f.event({type:'audio',responseId:'goodbye',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'audio-end',responseId:'previous'});f.drain();t.mock.timers.tick(1000);
+  assert.equal(f.ended,0,'an unrelated end and a gap in playback must not cut off the current response');
+  f.event({type:'audio',responseId:'goodbye',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'audio-end',responseId:'goodbye'});
+  f.event({type:'transcript',role:'assistant',itemId:'goodbye',text:'再见，下次聊。',final:true});
+  f.drain();t.mock.timers.tick(350);
+  assert.equal(f.ended,1);assert.equal(f.saved[0].content,'再见，下次聊。');
+});
+
+test('hang_up never cuts off buffered speech at the old 15 second deadline',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'tools',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  f.event({type:'audio',pcm:'AAA=',sampleRate:24000});f.event({type:'audio-end'});
+  t.mock.timers.tick(20000);assert.equal(f.ended,0,'speech is still playing');
+  f.drain();t.mock.timers.tick(350);assert.equal(f.ended,1);
+});
+
+test('hang_up adopts already playing speech from the same reply and leaves background work alone',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'audio',responseId:'bye',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'tools',responseId:'bye',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  assert.equal(JSON.parse(f.results[0][0].output).status,'ending');
+  f.event({type:'audio-end'});assert.equal(f.ended,0);
+  f.drain();t.mock.timers.tick(350);assert.equal(f.ended,1);
+});
+
+test('hang_up without a tool response ID cannot mistake the previous playing reply for the farewell',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'audio',responseId:'previous',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'tools',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  f.event({type:'audio',responseId:'previous',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'audio-end',responseId:'previous'});f.drain();t.mock.timers.tick(1000);
+  assert.equal(f.ended,0);
+  f.event({type:'audio',responseId:'bye',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'audio-end',responseId:'bye'});f.drain();t.mock.timers.tick(350);
+  assert.equal(f.ended,1);
+});
+
+test('hang_up adopts a fully played farewell from the same reply and preserves its final caption',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'transcript',role:'assistant',itemId:'bye',text:'下次聊，再见。',final:false});
+  f.event({type:'audio',responseId:'bye',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'audio-end',responseId:'bye'});f.drain();
+  f.event({type:'tools',responseId:'bye',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  t.mock.timers.tick(350);assert.equal(f.ended,1);
+  assert.equal(f.saved.length,1);assert.equal(f.saved[0].content,'下次聊，再见。');assert.equal(f.saved[0].status,'completed');
+});
+
+test('hang_up without response IDs waits for fresh audio instead of reusing a stale or empty terminal',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'audio',pcm:'AAA=',sampleRate:24000});f.event({type:'audio-end'});f.drain();
+  f.event({type:'tools',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  f.event({type:'audio-start'});f.event({type:'audio-end'});t.mock.timers.tick(1000);
+  assert.equal(f.ended,0);
+  f.event({type:'audio',pcm:'AAA=',sampleRate:24000});f.event({type:'audio-end'});f.drain();
+  t.mock.timers.tick(200);
+  f.event({type:'audio',pcm:'AAA=',sampleRate:24000});t.mock.timers.tick(500);
+  assert.equal(f.ended,0,'a late continuation cancels the pending close');
+  f.event({type:'audio-end'});f.drain();t.mock.timers.tick(350);assert.equal(f.ended,1);
+  t.mock.timers.tick(20000);assert.equal(f.ended,1,'close runs once');
+});
+
+test('hang_up times out only after silence, preserving partial text if the audio terminal is missing',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'tools',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  for(let i=0;i<3;i++) {
+    t.mock.timers.tick(14000);
+    f.event({type:'audio',pcm:'AAA=',sampleRate:24000});f.drain();
+    assert.equal(f.ended,0,'continued audio refreshes the inactivity timeout');
+  }
+  f.event({type:'transcript',role:'assistant',itemId:'bye',text:'再见。',final:false});
+  t.mock.timers.tick(15001);assert.equal(f.ended,1);
+  assert.ok('再见。'.startsWith(f.saved[0].content));assert.equal(f.saved[0].status,'interrupted');
+});
+
+test('hang_up with no speech closes after a bounded idle wait and invalid calls never schedule hangup',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'tools',calls:[{id:'invalid',name:'hang_up',arguments:'{"unexpected":true}'}]});await pause();
+  assert.equal(JSON.parse(f.results[0][0].output).status,'error');
+  t.mock.timers.tick(20000);assert.equal(f.ended,0);
+  f.event({type:'tools',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  t.mock.timers.tick(14999);assert.equal(f.ended,0);
+  t.mock.timers.tick(1);assert.equal(f.ended,1);
+});
+
+test('hang_up waits for the tool receipt and manual stop still releases audio immediately',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  let acknowledged;f.api.results=()=>new Promise(resolve=>{acknowledged=resolve;});
+  f.event({type:'audio',responseId:'bye',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'tools',responseId:'bye',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  f.event({type:'audio-end',responseId:'bye'});f.drain();t.mock.timers.tick(20000);
+  assert.equal(f.ended,0,'do not close before the tool receipt is delivered');
+  f.event({type:'audio',responseId:'bye',pcm:'AAA=',sampleRate:24000});
+  f.call.close();assert.equal(f.closed,1,'manual Stop does not wait for speech');
+  acknowledged();await pause();t.mock.timers.tick(20000);
+  assert.equal(f.ended,0);assert.equal(f.closed,1,'late receipt cannot restart the hangup lifecycle');
 });
 
 test('saved speech recall is scoped to its owner and never recursively archives its own tool result',async()=>{

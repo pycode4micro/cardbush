@@ -23,11 +23,12 @@ export const defaultRealtimeVoiceSettings: RealtimeVoiceSettings = {
 export type RealtimeVoiceSettingsInput = Omit<RealtimeVoiceSettings, 'hasApiKey' | 'profiles'> & { apiKey?: string };
 export interface RealtimeToolCall { id: string; name: string; arguments: string }
 export interface RealtimeToolResult { id: string; output: string }
-export type RealtimeVoiceEvent = { id: string } & (
+export type RealtimeVoiceEvent = { id: string; responseId?: string } & (
   | { type: 'ready' | 'closed' | 'interrupted' | 'audio-start' | 'audio-end' }
   | { type: 'audio'; pcm: string; sampleRate: number }
   | { type: 'transcript'; role: 'user' | 'assistant'; text: string; final: boolean; itemId: string }
   | { type: 'input-discarded'; itemId: string }
+  | { type: 'input-start'; itemId: string }
   | { type: 'tools'; calls: RealtimeToolCall[] }
   | { type: 'error'; message: string }
   | { type: 'context-status'; message: string }

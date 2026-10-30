@@ -11,6 +11,7 @@ interface ContextHooks {
   status(message: string): void;
   idle(): boolean;
   restart(): Promise<void>;
+  diagnostic?(event: string, detail: { reason?: string; estimatedTokens?: number; threshold?: number; contextItems?: number }): void;
 }
 interface Replacement {
   old: VoiceContextMessage[]; summary: VoiceContextMessage[];
@@ -37,7 +38,7 @@ export class RealtimeVoiceContext {
   private detached = false;
   private restore?: { bytes:number; resolve(messages:VoiceContextMessage[]):void; reject(error:Error):void };
   constructor(readonly history: RealtimeVoiceHistory, private fixedTokens: number, private hooks: ContextHooks,
-    private threshold = 6000) {}
+    private threshold = 6000, private maxInputBytes = 16000, private maxRestoreItems = 40) {}
   setFixedTokens(tokens: number) { this.fixedTokens = tokens; }
 
   /** Stop editing the lost connection. Keep the journal and in-flight model job. */
@@ -53,15 +54,15 @@ export class RealtimeVoiceContext {
     this.tick(); return pending;
   }
   resumed() { this.detached=false; this.auxiliaryTokens=0; this.tick(); }
-  private fits(bytes:number) { const messages=this.history.messages();return messages.length<=40 && Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))<=bytes; }
+  private fits(bytes:number) { const messages=this.history.messages();return messages.length<=this.maxRestoreItems && Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))<=bytes; }
 
   initialContext(maxBytes: number, strict=false): VoiceContextMessage[] {
-    if (strict && (this.history.messages().length>40 || Buffer.byteLength(JSON.stringify(this.hooks.create(this.history.messages())))>maxBytes)) {
+    if (strict && (this.history.messages().length>this.maxRestoreItems || Buffer.byteLength(JSON.stringify(this.hooks.create(this.history.messages())))>maxBytes)) {
       throw Error('Recent conversation changed too quickly to fit the replacement session.');
     }
-    const pairs=strict ? this.history.pairs.slice() : this.history.pairs.slice(-19);
+    const pairs=strict || !Number.isFinite(this.maxRestoreItems) ? this.history.pairs.slice() : this.history.pairs.slice(-Math.max(1,this.maxRestoreItems/2-1));
     let messages=this.history.messages(pairs);
-    while (pairs.length && (messages.length>40 || Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))>maxBytes)) {
+    while (pairs.length && (messages.length>this.maxRestoreItems || Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))>maxBytes)) {
       pairs.shift(); messages=this.history.messages(pairs);
     }
     if (Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))>maxBytes) throw Error('Voice memory cannot fit the initial context.');
@@ -91,11 +92,11 @@ export class RealtimeVoiceContext {
     if (this.detached && !this.restore) return;
     const pairs=this.history.pairs;
     const tokens=this.fixedTokens+Buffer.byteLength(JSON.stringify(this.history.messages()))/2+this.auxiliaryTokens;
-    const trigger=Math.max(this.threshold,Math.min(8000,this.fixedTokens+1500));
+    const trigger=Math.max(this.threshold,this.fixedTokens+1500);
     if (!this.job && !this.replacement && pairs.length && (this.restore || tokens>=trigger || this.pendingOld) && Date.now()>=this.retryAfter &&
         pairs.at(-1)!.sequence>this.failedThrough) {
       let count=Math.max(1,pairs.length-2);
-      const bytes=this.restore?.bytes ?? Math.max(3000,16000-this.fixedTokens*2);
+      const bytes=this.restore?.bytes ?? Math.max(3000,this.maxInputBytes-this.fixedTokens*2);
       let remaining=Buffer.byteLength(JSON.stringify(this.hooks.create(this.history.messages(pairs.slice(count)).slice(this.history.summaryMessages().length))));
       while (count<pairs.length && bytes-remaining<2000) {
         count++; remaining=Buffer.byteLength(JSON.stringify(this.hooks.create(this.history.messages(pairs.slice(count)).slice(this.history.summaryMessages().length))));
@@ -107,6 +108,7 @@ export class RealtimeVoiceContext {
         maxSummaryCharacters:Math.max(300,Math.min(2000,Math.floor((bytes-remaining-800)/3))),
         pairs:selected.map(({user,assistant})=>({user,assistant})) };
       this.jobTimer=setTimeout(()=>this.complete(this.job!.jobId),65_000);
+      this.hooks.diagnostic?.('context_compaction',{estimatedTokens:Math.ceil(tokens),threshold:trigger,contextItems:pairs.length*2});
       this.hooks.status('正在后台整理通话记忆，可继续交谈。');
       this.hooks.request(structuredClone(this.job));
     }
@@ -139,7 +141,7 @@ export class RealtimeVoiceContext {
     this.history.checkpoint(job.through,result.summary.trim());
     if (this.detached) { this.tick(); return; }
     const messages=this.history.messages();
-    if (messages.length>40 || Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))>Math.max(3000,16000-this.fixedTokens*2)) {
+    if (messages.length>this.maxRestoreItems || Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))>Math.max(3000,this.maxInputBytes-this.fixedTokens*2)) {
       this.pendingOld=old;
       if (++this.catchups>=3) {this.retryAfter=Date.now()+30_000;this.catchups=0;this.hooks.status('新增对话较多，继续保留原始上下文，稍后再整理。');}
       this.tick();return;
@@ -157,21 +159,23 @@ export class RealtimeVoiceContext {
       }); return;
     }
     try {
-      const event=work.stage==='retrieve' ? {type:'conversation.item.retrieve'} : work.stage==='add' ? this.hooks.create(work.summary)
+      const ids=work.old.filter(item=>item.role==='user').map(item=>this.remoteIds.get(item.id!));
+      if (work.stage==='retrieve' && ids.some(id=>!id)) { this.fallback('unmapped_context'); return; }
+      const event=work.stage==='retrieve' ? {type:'conversation.item.retrieve',items:ids.map(id=>({id}))} : work.stage==='add' ? this.hooks.create(work.summary)
         : {type:'conversation.item.delete',items:work.deleteIds!.map(id=>({id}))};
       work.eventId=this.hooks.send(event);
-      this.ackTimer=setTimeout(()=>this.fallback(),5000);
-    } catch { this.fallback(); }
+      this.ackTimer=setTimeout(()=>this.fallback('context_ack_timeout'),5000);
+    } catch { this.fallback('context_send_failed'); }
   }
   /** Only validated context ACKs are consumed; unrelated provider failures remain errors. */
   event(raw: Record<string, unknown>): boolean {
     const work=this.replacement;
     if (!work?.eventId || work.stage==='restart') return false;
-    if (raw.type==='error' && raw.event_id===work.eventId) { this.fallback(); return true; }
+    if (raw.type==='error' && raw.event_id===work.eventId) { this.fallback('context_request_rejected'); return true; }
     const expected={retrieve:'conversation.item.retrieved',add:'conversation.item.added',delete:'conversation.item.deleted'}[work.stage];
     if (raw.type!==expected || !this.hooks.serverAssignedContextIds && typeof raw.event_id==='string' && raw.event_id!==work.eventId) return false;
     const items=remoteContextItems(raw);
-    if (!items) { this.fallback(); return true; }
+    if (!items) { this.fallback('invalid_context_receipt'); return true; }
     if (work.stage==='retrieve') {
       const ids:string[]=[];
       for (let i=0;i<work.old.length;i+=2) {
@@ -181,21 +185,22 @@ export class RealtimeVoiceContext {
         const remoteId=this.remoteIds.get(user.id!);
         const matches=items.filter((item,index)=>remoteId && item.id===remoteId && item.role==='user' && item.text===user.text &&
           items[index+1]?.role==='assistant' && items[index+1].text===assistant.text);
-        if (matches.length!==1 || ids.includes(matches[0].id)) { this.fallback(); return true; }
+        if (matches.length!==1 || ids.includes(matches[0].id)) { this.fallback('context_identity_mismatch'); return true; }
         ids.push(matches[0].id);
       }
       work.deleteIds=ids; work.stage='add';
     } else if (work.stage==='add') {
-      if (!this.acknowledge(work.summary,raw)) { this.fallback(); return true; }
+      if (!this.acknowledge(work.summary,raw)) { this.fallback('context_add_mismatch'); return true; }
       work.stage='delete';
     } else {
-      if (!work.deleteIds!.every(id=>items.some(item=>item.id===id))) { this.fallback(); return true; }
+      if (!work.deleteIds!.every(id=>items.some(item=>item.id===id))) { this.fallback('context_delete_mismatch'); return true; }
       this.applied(); return true;
     }
     clearTimeout(this.ackTimer); work.eventId=undefined; this.tick(); return true;
   }
-  private fallback() {
+  private fallback(reason: string) {
     if (!this.replacement || this.closed) return;
+    this.hooks.diagnostic?.('context_fallback',{reason});
     clearTimeout(this.ackTimer); this.replacement.stage='restart'; this.replacement.eventId=undefined; this.tick();
   }
   private applied(restarted=false) {

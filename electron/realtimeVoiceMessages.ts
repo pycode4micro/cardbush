@@ -10,15 +10,17 @@ export const realtimeVoiceMessages: Pick<RealtimeVoiceProvider, 'context' | 'aud
   speak: text => ({ type: 'speech_text_buffer.commit', text }),
   parse: event => {
     const type = str(event.type), itemId = str(event.item_id) || str(event.response_id);
+    const response = str(event.response_id) ? { responseId: str(event.response_id) } : {};
     if (type === 'session.created') return [{ type: 'ready' }];
     if (type === 'session.closed') return [{ type: 'closed' }];
-    if (type === 'response.canceled') return [{ type: 'interrupted' }];
-    if (type === 'response.output_audio.started') return [{ type: 'audio-start' }];
-    if (type === 'response.output_audio.done') return [{ type: 'audio-end' }];
+    if (type === 'response.canceled') return [{ type: 'interrupted', ...response }];
+    if (type === 'conversation.item.input_audio_transcription.started' || type === 'input_audio_buffer.speech_started') return [{type:'input-start',itemId}];
+    if (type === 'response.output_audio.started') return [{ type: 'audio-start', ...response }];
+    if (type === 'response.output_audio.done') return [{ type: 'audio-end', ...response }];
     if (type === 'response.output_audio.delta') {
       const pcm = str(event.delta);
       if (!pcm || pcm.length > 700_000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(pcm) || Buffer.from(pcm, 'base64').length % 2) throw Error('Invalid realtime audio.');
-      return [{ type: 'audio', pcm, sampleRate: 24000 }];
+      return [{ type: 'audio', pcm, sampleRate: 24000, ...response }];
     }
     if (type === 'response.function_call_arguments.done') {
       if (!Array.isArray(event.items) || !event.items.length || event.items.length > 8) throw Error('Invalid realtime tool batch.');
@@ -27,7 +29,7 @@ export const realtimeVoiceMessages: Pick<RealtimeVoiceProvider, 'context' | 'aud
         return { id: item.call_id as string, name: str(item.name), arguments: item.arguments as string };
       });
       if (new Set(calls.map(call => call.id)).size !== calls.length) throw Error('Duplicate realtime call ID.');
-      return [{ type: 'tools', calls }];
+      return [{ type: 'tools', calls, ...response }];
     }
     if (type === 'conversation.item.input_audio_transcription.failed') return [{ type: 'input-discarded', itemId }];
     if (type === 'error') {
@@ -39,7 +41,7 @@ export const realtimeVoiceMessages: Pick<RealtimeVoiceProvider, 'context' | 'aud
     if (user || type.startsWith('response.output_text.')) {
       const final = type.endsWith('.completed') || type.endsWith('.done');
       const text = str(event.transcript) || str(event.text) || str(event.delta);
-      return text || final ? [{ type: 'transcript', role: user ? 'user' : 'assistant', text: text.slice(0,16000), final, itemId } as ProviderEvent] : [];
+      return text || final ? [{ type: 'transcript', role: user ? 'user' : 'assistant', text: text.slice(0,16000), final, itemId, ...response } as ProviderEvent] : [];
     }
     return [];
   },

@@ -9,6 +9,8 @@ import { voiceError } from './voiceError';
 import { VoiceProgress, isAmbiguousVoiceFragment } from './voiceProgress';
 import { isVoicePlaybackEcho } from './voiceActivity';
 import { RealtimeVoiceCall } from './realtimeVoiceCall';
+import { DictationCapture } from './dictationCapture';
+import { DictationPreview, type DictationUpdate } from './dictationPreview';
 
 export interface VoiceTarget {
   assistant?: { name: string; persona: string };
@@ -70,6 +72,9 @@ export class VoiceSession {
   private lastClip?: Blob;
   private manualSend = false;
   private insertTranscript?: (text: string) => void;
+  private updateTranscript?: (text: string, update: DictationUpdate) => void;
+  private dictationPreview?: DictationPreview;
+  private dictationId = '';
   private failedText = '';
   private settings?: VoiceSettings;
   private recentSpeech: { text: string; at: number }[] = [];
@@ -80,7 +85,9 @@ export class VoiceSession {
   private set finishingInput(value: boolean) { this.patch({ inputFinishing: value }); }
   private submitting = false;
   constructor(private api: VoiceDesktopApi | undefined, private deps: VoiceDependencies = {
-    capture: (mode, callbacks, microphoneId) => new VoiceCapture(mode, callbacks, microphoneId), playback: api => new VoicePlayback(api, outputLevel => this.patch({outputLevel})),
+    capture: (mode, callbacks, microphoneId) => mode === 'recording' && callbacks.preview
+      ? new DictationCapture(callbacks, microphoneId) : new VoiceCapture(mode, callbacks, microphoneId),
+    playback: api => new VoicePlayback(api, outputLevel => this.patch({outputLevel})),
   }) {}
   snapshot = () => this.state;
   matchesTarget(target: Pick<VoiceTarget, 'environment' | 'sessionId'>) {
@@ -128,12 +135,14 @@ export class VoiceSession {
   releaseRecording(target: Pick<VoiceTarget, 'environment' | 'sessionId'>) {
     if ((this.state.mode === 'recording' || this.state.mode === 'idle' && this.state.error) && this.matchesTarget(target)) this.end();
   }
-  async start(mode: 'recording' | 'call', insertTranscript?: (text: string) => void) {
+  async start(mode: 'recording' | 'call', insertTranscript?: (text: string) => void,
+    updateTranscript?: (text: string, update: DictationUpdate) => void) {
     if (this.state.mode !== 'idle') return;
     active?.end(); active = this;
     const epoch = ++this.epoch;
     this.manualSend = false; this.failedText = ''; this.lastClip = undefined;
     this.insertTranscript = insertTranscript;
+    this.updateTranscript = updateTranscript; this.dictationId = crypto.randomUUID();
     this.spoken.reset(this.target?.messages ?? []);
     this.patch({ ...initial, mode, phase: 'connecting', sessionId: this.target?.sessionId, assistant: Boolean(this.target?.assistant), startedAt: Date.now(), agentWorking: Boolean(this.target?.sending), agentWaiting: Boolean(this.target?.waiting) });
     try {
@@ -205,6 +214,13 @@ export class VoiceSession {
         (inputPending, draftTranscript) => { if (epoch === this.epoch) this.patch({ inputPending, draftTranscript }); }, this.deps.clock);
       if (mode === 'call') { this.player = this.deps.playback(this.api); this.player.setOutputMuted?.(this.state.outputMuted); await this.player.prepare(); }
       if (epoch !== this.epoch) return;
+      if (mode === 'recording' && updateTranscript) this.dictationPreview = new DictationPreview(
+        async (blob, id) => this.api!.transcribe({ id, audio: await blob.arrayBuffer(), mimeType: blob.type }),
+        text => {
+          if (epoch !== this.epoch) return;
+          this.patch({ transcript: text });
+          this.updateTranscript?.(text, { id: this.dictationId, final: false });
+        }, id => { void this.api!.cancel(id).catch(() => {}); }, Boolean(this.settings.speakerLockEnabled));
       this.capture = this.deps.capture(mode, {
         level: level => { if (epoch === this.epoch) this.patch({ level }); },
         // Activity alone may be a tap, cough or speaker echo. Keep playback and
@@ -212,9 +228,12 @@ export class VoiceSession {
         speech: () => { if (epoch === this.epoch) this.input?.speech(); },
         activity: at => { if (epoch === this.epoch) this.input?.activity(at); },
         discarded: () => { if (epoch === this.epoch) this.input?.discardCapture(); },
+        ...(this.dictationPreview ? { preview: (blob: Blob, segment: import('./dictationPreview').DictationSegment) => {
+          if (epoch === this.epoch) this.dictationPreview?.append(blob, segment);
+        } } : {}),
         clip: (blob, timing) => {
           if (epoch !== this.epoch) return;
-          if (mode === 'recording') { this.capture?.close(); this.capture = undefined; this.patch({ level: 0 }); }
+          if (mode === 'recording') { this.dictationPreview?.close(); this.capture?.close(); this.capture = undefined; this.patch({ level: 0 }); }
           this.lastClip = blob;
           if (mode === 'recording' && !this.manualSend) { this.patch({ phase: 'recorded' }); return; }
           this.queueClip(blob, epoch, '', timing);
@@ -241,6 +260,7 @@ export class VoiceSession {
   finishRecording() {
     if (this.state.mode !== 'recording' || !['recording', 'recorded'].includes(this.state.phase)) return;
     this.manualSend = true;
+    this.dictationPreview?.close();
     // Keep capture ownership until transcription has been inserted into its draft.
     this.patch({ phase: 'transcribing', error: '', retryAvailable: false });
     if (this.lastClip) this.queueClip(this.lastClip, this.epoch, this.failedText);
@@ -278,8 +298,9 @@ export class VoiceSession {
       // The callback belongs to the composer that started capture; navigation cancels it.
       this.failedText = text;
       this.patch({ transcript: text });
-      if (!this.insertTranscript) throw Error(uiText()('voiceSession.the_composer_is_unavailable_the_transcript_was'));
-      this.insertTranscript(text);
+      if (this.updateTranscript) this.updateTranscript(text, { id: this.dictationId, final: true });
+      else if (this.insertTranscript) this.insertTranscript(text);
+      else throw Error(uiText()('voiceSession.the_composer_is_unavailable_the_transcript_was'));
       this.end();
       return;
     }
@@ -374,7 +395,7 @@ export class VoiceSession {
       this.syncCapture(); this.input?.force();
     }
   }
-  restart() { const mode = this.state.mode, insert = this.insertTranscript; this.end(); if (mode !== 'idle') void this.start(mode, insert); }
+  restart() { const mode = this.state.mode, insert = this.insertTranscript, update = this.updateTranscript; this.end(); if (mode !== 'idle') void this.start(mode, insert, update); }
   setSettingsOpen(open: boolean) {
     this.settingsOpen = open;
     if (open) {
@@ -450,11 +471,12 @@ export class VoiceSession {
     this.realtime?.close(); this.realtime = undefined;
     this.input?.reset(); this.input = undefined; this.finishingInput = false; this.submitting = false;
     ++this.epoch; this.interrupt(); this.capture?.close(); this.capture = undefined;
+    this.dictationPreview?.close(); this.dictationPreview = undefined;
     this.player?.close(); this.player = undefined;
     for (const id of this.requests) void this.api?.cancel(id).catch(() => {});
     this.requests.clear(); this.pending = 0; this.serial = Promise.resolve(); this.lastClip = undefined; this.failedText = '';
     this.spoken.reset([]); this.recentSpeech = []; this.settingsOpen = false;
-    this.sendingFirst = false; this.insertTranscript = undefined; if (active === this) active = undefined;
+    this.sendingFirst = false; this.insertTranscript = undefined; this.updateTranscript = undefined; if (active === this) active = undefined;
     this.patch({ ...initial, error });
   }
 }

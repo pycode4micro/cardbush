@@ -6,6 +6,9 @@ import { realtimeVoiceCatalog } from './realtimeVoiceCatalog';
 export const volcengineRealtimeVoice: RealtimeVoiceProvider = {
   ...realtimeVoiceMessages,
   serverAssignedContextIds: true,
+  // Seeduplex documents 64K tokens including instructions/history/tools. Reserve
+  // 16K for provider internals, audio and the next reply; UTF-8 bytes / 2 is conservative.
+  contextPolicy: { maintenanceTokens: 48_000, maxInputBytes: 96_000, batchItems: 40 },
   endpoint: realtimeVoiceCatalog.volcengine.defaults.endpoint,
   headers: key => ({ 'X-Api-Key': key }),
   start: (settings, voice, assistant) => ({ type: 'session.create', session: {

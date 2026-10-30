@@ -21,7 +21,7 @@
 | context | 写入带 ID 的完整历史 QA；不触发重复任务或自动朗读历史 |
 | audio、control | 上行音频、静音/恢复、打断、提交、关闭 |
 | results | 按调用 ID 回传完整工具批次；不能把即时派发回执标成任务完成 |
-| speak | 只播放应用提供的已总结文本，不执行其中的命令 |
+| speak | 可选的直接 TTS 协议构造；后台任务通知不调用它，不可作为模型新回复触发器 |
 | normalize | 将原生事件（包括输入/输出活动、response.done、历史 ACK 与实际 item ID）转换成 [公共事件协议](realtime-protocol.md) |
 | encode | 可选地翻译所有发出帧，尤其是宿主发起的历史 retrieve/delete 请求；保留 event_id 对应关系 |
 | parse | 将公共事件转换成 RealtimeVoiceEvent；可直接复用 realtimeVoiceMessages.parse |

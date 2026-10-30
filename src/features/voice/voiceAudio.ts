@@ -70,8 +70,9 @@ export class VoicePlayback {
 }
 
 export interface VoiceClipTiming { lastSpeechAt: number; reason: 'silence' | 'limit' | 'manual' }
-interface CaptureCallbacks {
+export interface CaptureCallbacks {
   level(value: number): void; speech(): void; activity?(at: number): void; discarded?(): void;
+  preview?(blob: Blob, segment: import('./dictationPreview').DictationSegment): void;
   clip(blob: Blob, timing?: VoiceClipTiming): void; error(message: string): void;
 }
 /** Local VAD segments a continuous call and discards silence; microphone constraints request echo cancellation. */

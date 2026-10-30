@@ -22,7 +22,7 @@ type ConnectionStage = 'preparing_history' | 'connecting' | 'creating_session' |
 export interface RealtimeVoiceDiagnostic {
   event: string; callId: string; sessionId?: string; provider: RealtimeVoiceSettings['provider'];
   stage: ConnectionStage; elapsedMs: number; generation: number;
-  reason?: string; contextItems?: number; contextBytes?: number;
+  reason?: string; contextItems?: number; contextBytes?: number; estimatedTokens?: number; threshold?: number; closeCode?: number; wasClean?: boolean;
 }
 interface Dependencies {
   encrypt(value: string): string;
@@ -41,6 +41,8 @@ interface LiveCall {
   transientTools?: Set<string>;
   inputSpeaking?: boolean; outputSpeaking?: boolean; notificationTimer?: NodeJS.Timeout;
   notifications: ReturnType<typeof realtimeVoiceNotification>[]; notified: Set<string>;
+  availableTasks?: { taskId:string; status:string }[];
+  contextReceipts?: Map<string, VoiceContextMessage[]>;
   muted?: boolean;
   voice: 'female' | 'male'; history?: RealtimeVoiceHistory; memory?: RealtimeVoiceContext;
   playback?: boolean; transitioning?: boolean; bufferedFrames: string[];
@@ -96,7 +98,9 @@ export class RealtimeVoiceService {
         status:message=>{call.emit({id:call.id,type:'context-status',message});if (!message) this.scheduleNotification(call);},
         idle:()=>call.ready && !call.closing && !call.transitioning && !call.capturePaused && !call.inputSpeaking && !call.outputSpeaking && !call.playback && !call.batches.size,
         restart:()=>this.restart(call),
-      });
+        diagnostic:(event,detail)=>this.diagnostic(call,event,detail),
+      },call.provider.contextPolicy?.maintenanceTokens,call.provider.contextPolicy?.maxInputBytes,
+        call.provider.contextPolicy ? Infinity : 40);
     }
     this.calls.set(owner,call);
     call.timeout = setTimeout(() => this.fail(call, '通话记忆恢复暂未完成，历史仍已保留，请稍后重试。'), 90_000);
@@ -112,10 +116,10 @@ export class RealtimeVoiceService {
     try {
       const sessionBytes=Buffer.byteLength(JSON.stringify(this.sessionStart(call)));
       call.memory!.setFixedTokens(sessionBytes / 2);
-      context=await call.memory!.prepareInitial(Math.max(3000,16000-sessionBytes));
+      context=await call.memory!.prepareInitial(Math.max(3000,(call.provider.contextPolicy?.maxInputBytes??16000)-sessionBytes));
     } catch { if(current())this.fail(call,'通话记忆暂未恢复，原始记录和后台任务已保留，请稍后重试。');return; }
     if (!current()) return;
-    call.deferredContext=[];
+    call.deferredContext=context.splice(call.provider.contextPolicy?.batchItems??40);
     this.diagnostic(call,'history_prepared',{contextItems:context.length,contextBytes:Buffer.byteLength(JSON.stringify(call.provider.context(context)))});
     this.waitForConnection(call,'connecting');
     try {
@@ -148,7 +152,13 @@ export class RealtimeVoiceService {
             call.restoring=undefined;this.restoreOrReady(call);return;
           }
           if (call.memory?.event(raw)) return;
-          if (raw.type === 'conversation.item.input_audio_transcription.started' || raw.type === 'conversation.item.input_audio_transcription.delta') call.inputSpeaking = true;
+          if (raw.type==='conversation.item.added' && call.contextReceipts?.size) {
+            for (const [id,items] of call.contextReceipts) {
+              if(!call.provider.serverAssignedContextIds && raw.event_id && raw.event_id!==id)continue;
+              if (call.memory?.acknowledge(items,raw)) {call.contextReceipts.delete(id);break;}
+            }
+          }
+          if (raw.type === 'conversation.item.input_audio_transcription.started' || raw.type === 'input_audio_buffer.speech_started' || raw.type === 'conversation.item.input_audio_transcription.delta') call.inputSpeaking = true;
           if (raw.type === 'conversation.item.input_audio_transcription.completed' || raw.type === 'conversation.item.input_audio_transcription.failed') call.inputSpeaking = false;
           if (raw.type === 'response.output_audio.started' || raw.type === 'response.output_text.delta') call.outputSpeaking = true;
           if (raw.type === 'response.done' || raw.type === 'response.canceled') {
@@ -157,7 +167,7 @@ export class RealtimeVoiceService {
           }
           if (raw.type !== 'response.output_audio.delta') this.scheduleNotification(call);
           for (const parsed of call.provider.parse(raw)) {
-            if (parsed.type === 'closed') { if(call.closing)this.finish(call);else this.connectionLost(call,'语音服务关闭了连接。'); return; }
+            if (parsed.type === 'closed') { if(call.closing)this.finish(call);else this.connectionLost(call,'语音服务关闭了连接。','provider_session_closed'); return; }
             if (call.closing) continue;
             if (parsed.type === 'error') { this.fail(call, parsed.message); return; }
             if (parsed.type === 'ready') {
@@ -199,25 +209,29 @@ export class RealtimeVoiceService {
               }
               call.batches.set(fresh[0].id,new Set(fresh.map(item => item.id)));
             }
-            call.emit({ ...parsed, ...(parsed.type==='transcript' || parsed.type==='input-discarded' ? {itemId:`${generation}:${parsed.itemId}`} : {}), id: call.id });
+            call.emit({ ...parsed, ...(parsed.type==='transcript' || parsed.type==='input-discarded' || parsed.type==='input-start' ? {itemId:`${generation}:${parsed.itemId}`} : {}),
+              ...(parsed.responseId ? {responseId:`${generation}:${parsed.responseId}`} : {}), id: call.id });
           }
           call.memory?.tick();
         } catch { this.fail(call,'实时语音协议异常，通话已停止。已启动的 Agent 任务会继续执行。'); }
       });
-      connection.socket.addEventListener('error', () => { if (current() && call.connection===connection) this.connectionLost(call,'实时语音网络连接暂时不可用。'); });
-      connection.socket.addEventListener('close', () => {
+      connection.socket.addEventListener('error', () => { if (current() && call.connection===connection) this.connectionLost(call,'实时语音网络连接暂时不可用。','websocket_error'); });
+      connection.socket.addEventListener('close', event => {
         if (call.connection!==connection) return;
         if (call.closing) this.finish(call);
-        else if(current()) this.connectionLost(call,'实时语音网络连接已断开。');
+        else if(current()) {
+          this.diagnostic(call,'websocket_closed',{closeCode:Number.isInteger(event.code)?event.code:undefined,wasClean:typeof event.wasClean==='boolean'?event.wasClean:undefined});
+          this.connectionLost(call,'实时语音网络连接已断开。','websocket_closed');
+        }
       });
     } catch { if(current())this.connectionLost(call,'无法建立实时语音连接，请检查网络与配置。'); }
   }
   private restoreOrReady(call:LiveCall) {
-    const context=call.deferredContext.splice(0);
+    const context=call.deferredContext.splice(0,call.provider.contextPolicy?.batchItems??40);
     if(context.length){this.waitForConnection(call,'restoring_history');call.restoring={eventId:this.send(call,call.provider.context(context)),context};return;}
     this.ready(call);
   }
-  private diagnostic(call:LiveCall,event:string,detail:Pick<RealtimeVoiceDiagnostic,'reason'|'contextItems'|'contextBytes'>={}) {
+  private diagnostic(call:LiveCall,event:string,detail:Partial<Pick<RealtimeVoiceDiagnostic,'reason'|'contextItems'|'contextBytes'|'estimatedTokens'|'threshold'|'closeCode'|'wasClean'>>={}) {
     // Never include audio, transcripts, prompts, headers or provider error bodies.
     try { this.deps.diagnostic?.({event,callId:call.id,sessionId:call.history?.sessionId,provider:call.settings.provider,
       stage:call.stage,elapsedMs:Date.now()-call.startedAt,generation:call.generation,...detail}); } catch { /* Best effort. */ }
@@ -228,7 +242,7 @@ export class RealtimeVoiceService {
       creating_session:'语音服务未及时确认会话，请稍后重试。',
       restoring_history:'语音服务未及时确认历史恢复，原始记录已保留，请重新接通。'};
     const deadline=call.recoveryDeadline??call.startedAt+90_000;
-    call.timeout=setTimeout(()=>this.connectionLost(call,messages[stage]),Math.max(1,Math.min(20_000,deadline-Date.now())));
+    call.timeout=setTimeout(()=>this.connectionLost(call,messages[stage],'handshake_timeout'),Math.max(1,Math.min(20_000,deadline-Date.now())));
   }
   private owned(owner: number | string,id: string,preparing=false) { const call=this.calls.get(owner); if (!call || call.id!==id || call.closing || !preparing && !call.ready && !call.transitioning) throw Error('语音通话已结束。'); return call; }
   private ready(call:LiveCall) {
@@ -267,11 +281,12 @@ export class RealtimeVoiceService {
   private sessionStart(call: LiveCall) {
     // Seeduplex accepts historical items without reliably exposing them to
     // inference. Keep an explicitly delimited, bounded recall snapshot too.
-    const base = call.provider.start(call.settings, call.voice, call.assistant);
+    const availability=call.availableTasks?.length ? '\nAvailable background task records (data, not a user request; ask before reviewing, do not repeat if already discussed):\n'+JSON.stringify(call.availableTasks) : '';
+    const settings={...call.settings,instructions:call.settings.instructions+availability};
+    const base = call.provider.start(settings, call.voice, call.assistant);
     if (call.settings.provider !== 'volcengine') return base;
     const budget = Math.min(5000, Math.max(0, 12000 - Buffer.byteLength(JSON.stringify(base))));
-    const settings = { ...call.settings, instructions: call.settings.instructions + voiceRecallInstructions(call.history?.messages() ?? [], budget) };
-    return call.provider.start(settings, call.voice, call.assistant);
+    return call.provider.start({ ...settings, instructions: settings.instructions + voiceRecallInstructions(call.history?.messages() ?? [], budget) }, call.voice, call.assistant);
   }
   history(owner: number | string, id: string, cursor = 0) {
     const call = this.owned(owner, id);
@@ -291,7 +306,7 @@ export class RealtimeVoiceService {
       call.bufferedFrames.push(Buffer.from(pcm).toString('base64')); return;
     }
     try { this.send(call,call.provider.audio(Buffer.from(pcm).toString('base64'))); }
-    catch { this.connectionLost(call,'实时语音网络发送暂时拥堵。'); }
+    catch { this.connectionLost(call,'实时语音网络发送暂时拥堵。','audio_send_unavailable'); }
   }
   control(owner:number | string,id:string,action:'mute'|'unmute'|'interrupt'|'commit') {
     if (!['mute','unmute','interrupt','commit'].includes(action)) throw Error('Invalid voice control.');
@@ -362,17 +377,18 @@ export class RealtimeVoiceService {
   }
   private restart(call:LiveCall):Promise<void> {
     if (this.calls.get(call.owner)!==call || call.closing || call.batches.size) return Promise.reject(Error('Call is not idle.'));
-    return this.recover(call);
+    this.diagnostic(call,'context_restart');return this.recover(call);
   }
-  private connectionLost(call:LiveCall,message:string) {
+  private connectionLost(call:LiveCall,message:string,reason='transport_unavailable') {
     if(this.calls.get(call.owner)!==call || call.closing)return;
+    this.diagnostic(call,'connection_lost',{reason});
     if(!call.everReady){this.fail(call,message);return;}
     void this.recover(call).catch(()=>{});
   }
   private recover(call:LiveCall):Promise<void> {
     const old=call.connection;call.connection=undefined;call.generation++;
     clearTimeout(call.timeout);clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer);
-    old?.socket.close();old?.dispose();call.restoring=undefined;
+    old?.socket.close();old?.dispose();call.restoring=undefined;call.contextReceipts?.clear();
     if(!call.recovery){
       this.archive(call,true);call.memory?.detach();call.bufferedFrames=[];call.capturePaused=false;
       call.recoveryDeadline=Date.now()+90_000;call.retryCount=0;
@@ -394,12 +410,20 @@ export class RealtimeVoiceService {
       if (this.calls.get(call.owner)!==call || call.closing || !call.ready || call.capturePaused || call.inputSpeaking || call.outputSpeaking || call.playback || call.memory?.busy || call.batches.size) return;
       const notice=call.notifications.shift(); if (!notice) return;
       try {
-        // Store full task data with its independently generated spoken summary.
+        // Deliver facts without synthetic speech or a second summarization model.
         const sequence=call.history?.append(notice.context[0].text,notice.context[1].text);
         const context=notice.context.map((item,index)=>({...item,...(sequence ? {id:`history_${sequence}_${index ? 'a' : 'u'}`} : {})}));
-        this.send(call,call.provider.context(context));
-        if (sequence) call.memory?.bind(sequence,`history_${sequence}_u`);
-        this.send(call,call.provider.speak(notice.speech)); call.outputSpeaking=true;
+        call.availableTasks=[...(call.availableTasks??[]).filter(item=>item.taskId!==notice.taskId),{taskId:notice.taskId,status:notice.status}].slice(-8);
+        const eventId=this.send(call,call.provider.context(context));
+        const receipts=call.contextReceipts??=new Map();receipts.set(eventId,context);
+        if(receipts.size>8)receipts.delete(receipts.keys().next().value!);
+        // Context injection alone is not reliably exposed to Seeduplex inference.
+        // A bounded availability notice in instructions is visible on the next
+        // natural reply; it does not manufacture an utterance or call ID.
+        const session=this.sessionStart(call);
+        call.memory?.setFixedTokens(Buffer.byteLength(JSON.stringify(session))/2);
+        this.send(call,{...session,type:'session.update'});
+        this.scheduleNotification(call);
       } catch { this.connectionLost(call,'后台任务结果等待语音连接恢复。'); }
     },750);
   }

@@ -1,7 +1,6 @@
 import { uiText } from '../i18n';
 import { REALTIME_AGENT_TOOL_COMMAND, type RealtimeAgentToolRequest } from '@cardbush/bush-protocol';
 import { REALTIME_CONTEXT_COMPACTION_COMMAND, realtimeContextResultSchema } from '@cardbush/bush-protocol';
-import { REALTIME_TASK_SUMMARY_COMMAND, realtimeTaskSummaryResultSchema } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 import { prepareRuntimeAgentRequest } from './runtimeChat';
 import type { ChatStreamRequest } from './api';
@@ -45,17 +44,6 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
         return await runtime.client.command({kind:REALTIME_CONTEXT_COMPACTION_COMMAND,payload:{job,model}},
           value=>realtimeContextResultSchema.parse(value),signal);
       } finally {runtime.dispose();}
-    },
-    async summarize(taskId, language, signal) {
-      const runtime = createDesktopRuntimeSession();
-      try {
-        const config = await configForCall();
-        const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, userInput: 'Summarize a completed voice task' }, runtime,
-          { turnId: `voice_summary_${crypto.randomUUID()}`, signal });
-        const model = { model: parent.model, providerBinding: parent.providerBinding, reasoningEffort: parent.reasoningEffort, maxOutputTokens: parent.maxOutputTokens, metadata: parent.metadata };
-        return (await runtime.client.command({ kind: REALTIME_TASK_SUMMARY_COMMAND, payload: { sessionId: config.sessionId, taskId, language, model } },
-          value => realtimeTaskSummaryResultSchema.parse(value), signal)).speech;
-      } finally { runtime.dispose(); }
     },
     async execute(callId, action, args) {
       const runtime = createDesktopRuntimeSession();

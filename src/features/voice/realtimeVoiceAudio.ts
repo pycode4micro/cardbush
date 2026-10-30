@@ -1,4 +1,5 @@
 import { uiText } from '../../i18n';
+import type { VoicePlaybackProgress } from './realtimeVoiceCaptions';
 /** PCM16/16 kHz capture with browser AEC. AudioWorklet avoids main-thread sampling drift. */
 export class RealtimeVoiceAudio {
   private input?: AudioContext;
@@ -11,10 +12,11 @@ export class RealtimeVoiceAudio {
   private node?: AudioWorkletNode;
   private sources = new Set<AudioBufferSourceNode>();
   private cursor = 0;
+  private timelines = new Map<string,{received:number;completed:number;chunks:Map<AudioBufferSourceNode,{start:number;duration:number}>}>();
   private closed = false;
   constructor(private frame: (pcm: ArrayBuffer) => void, private playing: (active: boolean) => void,
     private level: (value: number) => void, private failed: (error: Error) => void,
-    private outputLevel: (value: number) => void = () => {}) {}
+    private outputLevel: (value: number) => void = () => {}, private progress:(value:VoicePlaybackProgress)=>void=()=>{}) {}
   async prepare(microphoneId: string) {
     try {
       this.input = new AudioContext({ sampleRate: 16000 });
@@ -25,6 +27,7 @@ export class RealtimeVoiceAudio {
       const samples = new Float32Array(this.outputAnalyser.fftSize);
       this.meter = setInterval(() => {
         if (!this.sources.size || this.closed) return;
+        this.reportProgress();
         this.outputAnalyser!.getFloatTimeDomainData(samples);
         this.outputLevel(Math.min(1, Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length) * 5));
       }, 50);
@@ -58,7 +61,7 @@ export class RealtimeVoiceAudio {
     if (this.outputGain) this.outputGain.gain.value = value ? 0 : 1;
     if (value) this.outputLevel(0);
   }
-  append(pcm: string, rate: number) {
+  append(pcm: string, rate: number, id?: string) {
     const context = this.output; if (!context || this.closed) return;
     const bytes = atob(pcm), view = new DataView(new ArrayBuffer(bytes.length));
     for (let i=0;i<bytes.length;i++) view.setUint8(i,bytes.charCodeAt(i));
@@ -70,11 +73,23 @@ export class RealtimeVoiceAudio {
     const buffer=context.createBuffer(1,bytes.length/2,rate), channel=buffer.getChannelData(0);
     for (let i=0;i<channel.length;i++) channel[i]=view.getInt16(i*2,true)/32768;
     const source=context.createBufferSource(); source.buffer=buffer; source.connect(this.outputGain ?? context.destination);
-    source.onended=()=>{ this.sources.delete(source); source.disconnect(); if (!this.sources.size) { this.playing(false); this.outputLevel(0); } };
     this.sources.add(source); this.cursor=Math.max(this.cursor,context.currentTime+.02);
+    if(id){const timeline=this.timelines.get(id)??{received:0,completed:0,chunks:new Map()};timeline.received+=buffer.duration;
+      timeline.chunks.set(source,{start:this.cursor,duration:buffer.duration});this.timelines.set(id,timeline);}
+    source.onended=()=>{ this.sources.delete(source); source.disconnect();
+      if(id){const timeline=this.timelines.get(id);if(timeline){timeline.completed+=buffer.duration;timeline.chunks.delete(source);this.reportProgress();}}
+      if (!this.sources.size) { this.playing(false); this.outputLevel(0); } };
     source.start(this.cursor); this.cursor+=buffer.duration; this.playing(true);
+    this.reportProgress();
   }
-  stop() { for (const source of this.sources) { source.onended=null; try { source.stop(); } catch {} source.disconnect(); } this.sources.clear(); this.cursor=0; this.playing(false); this.outputLevel(0); }
+  private reportProgress() {
+    if(!this.output)return;
+    for(const [id,timeline] of this.timelines){let played=timeline.completed;
+      for(const chunk of timeline.chunks.values())played+=Math.min(chunk.duration,Math.max(0,this.output.currentTime-chunk.start));
+      this.progress({id,played,received:timeline.received,pending:timeline.chunks.size>0});}
+  }
+  release(id:string){if(!this.timelines.get(id)?.chunks.size)this.timelines.delete(id);}
+  stop() { this.reportProgress(); for (const source of this.sources) { source.onended=null; try { source.stop(); } catch {} source.disconnect(); } this.sources.clear(); this.timelines.clear(); this.cursor=0; this.playing(false); this.outputLevel(0); }
   close() { this.closed=true; clearInterval(this.meter); this.stop(); this.node?.disconnect(); this.node?.port.close(); this.stream?.getTracks().forEach(track=>track.stop());
     void this.input?.close().catch(()=>{}); void this.output?.close().catch(()=>{}); }
 }

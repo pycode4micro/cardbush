@@ -73,7 +73,7 @@ app.whenReady().then(async()=>{
       import {VoiceConversation,ApplicationVoiceHost,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
       import {VoiceCallButton} from ${file('src/features/voice/VoiceCallButton.tsx')};
       import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
-      window.fixture={sent:[],tracks:[],tasks:[]};
+      window.fixture={sent:[],tracks:[],tasks:[],recorded:[],previews:[],summaries:0};
       fixture.voice=applicationVoiceSession;
       fixture.state=()=>applicationVoiceSession().snapshot();
       fixture.muteOutput=value=>applicationVoiceSession().setOutputMuted(value);
@@ -84,7 +84,7 @@ app.whenReady().then(async()=>{
         fixture.switch=()=>setSession('other');
         fixture.complete=()=>{for(const task of fixture.tasks){task.status='completed';task.finalResponse='测试任务完成';}};
         return <div className="app theme-dark"><ApplicationVoiceHost language="zh">{visible && <VoiceConversation language="zh" target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'own':null,
-          agent:{list:async()=>fixture.tasks,summarize:async taskId=>{fixture.summaries=(fixture.summaries??0)+1;await new Promise(resolve=>setTimeout(resolve,200));return '桌面共有十五个应用，主要是开发工具和办公软件。';},execute:async(id,name,args)=>{fixture.sent.push(args.prompt);const task={taskId:id,childSessionId:'child-'+id,parentTurnId:'voice_turn_'+id,status:'running',finalResponse:'',errorMessage:''};fixture.tasks.push(task);setTimeout(()=>setSession('created'),30);return task;}},
+          agent:{list:async()=>fixture.tasks,preview:async entry=>fixture.previews.push(entry),record:async entry=>fixture.recorded.push(entry),summarize:async()=>{fixture.summaries++;throw Error('Automatic speech summaries are disabled');},execute:async(id,name,args)=>{fixture.sent.push(args.prompt);const task={taskId:id,childSessionId:'child-'+id,parentTurnId:'voice_turn_'+id,status:'running',finalResponse:'',errorMessage:''};fixture.tasks.push(task);setTimeout(()=>setSession('created'),30);return task;}},
           send:async text=>{fixture.sent.push(text);setSending(true);setMessages([{id:'u',role:'user',turnId:'own',content:text}]);setTimeout(()=>setSession('created'),30);return true;}}}>
           <VoiceCallButton callEnabled className="send-button" aria-label="长按语音通话">Call</VoiceCallButton>
         </VoiceConversation>}</ApplicationVoiceHost></div>;}
@@ -118,7 +118,7 @@ app.whenReady().then(async()=>{
     assert.equal(heldAudio.length,4,'microphone IPC concurrency stays bounded');
     const beforeDrain=audioFrames;holdAudio=false;heldAudio.splice(0).forEach(resolve=>resolve());
     await until(()=>audioFrames>beforeDrain+20);
-    // Only native duplex cancellation changes playback; ASR and unintelligible sound do not.
+    // Unrecognized noise does not cancel playback. A confirmed speech-start does.
     const tone=Buffer.alloc(24000*2);for(let i=0;i<24000;i++)tone.writeInt16LE(Math.round(Math.sin(i/24000*440*Math.PI*2)*6000),i*2);
     for(let i=0;i<30;i++)event({type:'response.output_audio.delta',response_id:'r1',delta:(i?Buffer.alloc(24000*2):tone).toString('base64')});
     await dom('fixture.state().speaking');
@@ -132,7 +132,20 @@ app.whenReady().then(async()=>{
     event({type:'conversation.item.input_audio_transcription.failed',item_id:'noise',error:{code:'audio_unintelligible'}});
     await pause(100);assert.equal(await read('fixture.state().speaking'),true);
     assert.deepEqual(await read('fixture.sent'),[]);
-    await read('fixture.voice().interrupt();void 0');await dom('!fixture.state().speaking');
+    const interruptedText='这是一段应该在用户开口后停止的回答，剩下的内容不能继续播放或提前显示。';
+    event({type:'response.output_text.done',response_id:'r1',text:interruptedText});
+    event({type:'response.output_audio.done',response_id:'r1'});
+    await dom('fixture.previews.some(e=>e.role==="assistant")');
+    const heard=await read('fixture.previews.filter(e=>e.role==="assistant").at(-1).content');
+    assert.ok(heard.length<interruptedText.length);
+    event({type:'conversation.item.input_audio_transcription.started',item_id:'barge-in'});
+    await dom('!fixture.state().speaking');await until(()=>received.some(e=>e.type==='response.cancel'));
+    event({type:'response.output_audio.delta',response_id:'r1',delta:tone.toString('base64')});
+    event({type:'response.output_text.done',response_id:'r1',text:interruptedText});
+    await pause(100);assert.equal(await read('fixture.state().speaking'),false,'late cancelled audio stays silent');
+    assert.equal(await read('fixture.recorded.filter(e=>e.role==="assistant").at(-1).status'),'interrupted');
+    assert.ok(await read(`fixture.recorded.filter(e=>e.role==="assistant").at(-1).content.length<${interruptedText.length}`));
+    event({type:'conversation.item.input_audio_transcription.completed',item_id:'barge-in',transcript:'等一下'});
     await read('fixture.voice().mute();void 0');await until(()=>received.some(e=>e.type==='input_audio_mute.commit'));
     await pause(100);const count=audioFrames;await pause(150);assert.equal(audioFrames,count,'mute stops capture');
     await read('fixture.voice().mute();void 0');await until(()=>received.some(e=>e.type==='input_audio_unmute.commit')&&audioFrames>count);
@@ -143,7 +156,11 @@ app.whenReady().then(async()=>{
     const whileWorking=audioFrames;await until(()=>audioFrames>whileWorking+5);
     event({type:'response.output_audio.delta',response_id:'while-working',delta:Buffer.alloc(24000*2*2).toString('base64')});
     event({type:'response.output_text.done',response_id:'while-working',text:'任务还在执行，我们可以继续聊。'});
+    event({type:'response.output_audio.done',response_id:'while-working'});
     await dom('fixture.state().speaking');
+    await dom('fixture.previews.some(e=>e.id.includes("while-working"))');
+    assert.equal(await read('fixture.recorded.some(e=>e.id.includes("while-working"))'),false,'text completion is not playback completion');
+    assert.ok((await read('fixture.state().spokenText')).length<'任务还在执行，我们可以继续聊。'.length);
     await dom('fixture.state().spokenText.includes("我们可以继续聊")');
     tools('fc-busy');await until(()=>received.some(e=>e.items?.[0]?.call_id==='fc-busy'));
     assert.equal(JSON.parse(received.find(e=>e.items?.[0]?.call_id==='fc-busy').items[0].content[0].text).status,'running');
@@ -151,9 +168,10 @@ app.whenReady().then(async()=>{
     event({type:'response.function_call_arguments.done',items:[{call_id:'fc-2',name:'subagent',arguments:'{"prompt":"测试任务"}'}]});
     event({type:'response.done'});
     await read('fixture.complete();void 0');await until(()=>received.some(e=>e.items?.[0]?.role==='user' && e.items[0].content?.[0]?.text.includes('测试任务完成')));
-    await until(()=>received.some(e=>e.type==='speech_text_buffer.commit'&&e.text.includes('十五个应用')));
-    assert.equal(await read('fixture.summaries'),2,'each completed child gets one spoken summary');
-    assert.ok(received.filter(e=>e.type==='speech_text_buffer.commit').every(e=>!e.text.includes('测试任务完成')),'raw output is not read aloud');
+    await until(()=>received.filter(e=>e.items?.[0]?.role==='user'&&e.items[0].content?.[0]?.text.includes('测试任务完成')).length===2);
+    assert.equal(await read('fixture.summaries'),0,'task results do not invoke a separate summarization model');
+    assert.equal(received.filter(e=>e.type==='speech_text_buffer.commit').length,0,'no automatic announcement interrupts the conversation');
+    assert.ok(received.some(e=>e.type==='session.update'&&e.session.instructions.includes('Available background task records')),'the voice model sees availability in its next natural response');
     assert.equal(JSON.parse(received.find(e=>e.items?.[0]?.call_id==='fc-2').items[0].content[0].text).status,'running');
     assert.equal(await read('fixture.sent.length'),2,'replayed tool calls execute once');
     const beforeRecovery=received.length,oldPeer=peer;reconnectDelay=6000;oldPeer.terminate();
@@ -170,15 +188,34 @@ app.whenReady().then(async()=>{
     assert.equal(peer.readyState,1,'unmounting chat keeps the app-level call');
     const beforeMinimize=audioFrames;win.minimize();await until(()=>audioFrames>beforeMinimize+5);
     assert.ok(await read('fixture.tracks.some(t=>t.readyState==="live")'));
-    event({type:'response.function_call_arguments.done',items:[{call_id:'hang-up-test',name:'hang_up',arguments:'{}'}]});
-    event({type:'response.output_audio.done'});
+    // A previous reply has drained before hang_up arrives. The farewell comes
+    // later, with a real playback gap and a deliberately stale terminal event.
+    event({type:'response.output_audio.delta',response_id:'previous',delta:tone.subarray(0,12000).toString('base64')});
+    event({type:'response.output_audio.done',response_id:'previous'});
+    await dom('fixture.state().speaking');await dom('!fixture.state().speaking');
+    event({type:'response.function_call_arguments.done',response_id:'farewell',items:[{call_id:'hang-up-test',name:'hang_up',arguments:'{}'}]});
+    await until(()=>received.some(e=>e.items?.[0]?.call_id==='hang-up-test'));
+    await pause(150);assert.equal(peer.readyState,1,'old playback completion must not close the call');
+    event({type:'response.output_audio.started',response_id:'farewell'});
+    event({type:'response.output_audio.delta',response_id:'farewell',delta:tone.toString('base64')});
+    event({type:'response.output_text.delta',response_id:'farewell',delta:'再见，'});
+    event({type:'response.output_audio.done',response_id:'previous'});
+    await dom('fixture.state().speaking');await dom('!fixture.state().speaking');
+    await pause(400);assert.equal(peer.readyState,1,'a gap in actual playback is not the end of a reply');
+    const farewellPlayback=Date.now();
+    event({type:'response.output_audio.delta',response_id:'farewell',delta:tone.toString('base64')});
+    event({type:'response.output_audio.done',response_id:'farewell'});
+    event({type:'response.output_text.done',response_id:'farewell',text:'再见，我们下次再聊。'});
+    await dom('fixture.state().speaking');
     await dom('!document.querySelector(".voice-composer-call")');
+    assert.ok(Date.now()-farewellPlayback>=1000,'close waits for the real Web Audio queue to drain');
+    assert.equal(await read('fixture.recorded.filter(e=>e.content==="再见，我们下次再聊。").length'),1,'the farewell remains in the conversation');
     await until(()=>peer.readyState!==1);assert.ok(await read('fixture.tracks.every(t=>t.readyState==="ended")'));
     assert.deepEqual(errors,[]);
     assert.ok(diagnostics.some(item=>item.payload.event==='connected'));
     assert.equal(diagnostics.some(item=>item.payload.event==='failed'),false);
     for(const {scope,payload} of diagnostics){assert.equal(scope,'realtime-voice');assert.ok(Object.keys(payload).every(key=>['event','callId','sessionId','reason','pendingFrames','queuedFrames'].includes(key)));}
-    console.log('Realtime voice UI passed: real worklet/preload/WebSocket PCM and output amplitude, delegation, parallel task receipts, noise, independent mute, deduplication, background result notification, navigation/unmount/minimize continuity and model-tool hangup cleanup.');
+    console.log('Realtime voice UI passed: real worklet/preload/WebSocket PCM, playback-paced captions, speech-start interruption, stale audio rejection, no automatic task narration, delegation, independent mute, recovery, navigation/minimize continuity and farewell playback before hangup.');
   }finally{service.closeAll();win.destroy();for(const client of wss.clients)client.terminate();wss.close();clearTimeout(deadline);}
   app.exit(0);
 }).catch(error=>{console.error(error);clearTimeout(deadline);app.exit(1);});

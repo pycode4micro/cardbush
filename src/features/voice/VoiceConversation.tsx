@@ -6,6 +6,7 @@ import { VoiceSession, type VoiceState, type VoiceTarget } from './voiceSession'
 import { voiceComposerPresentation } from './voiceComposerPresentation';
 import { VoiceComposerPanel, VoiceWave } from './VoiceComposerPanel';
 import { playDictationCue } from './voiceCue';
+import type { DictationUpdate } from './dictationPreview';
 import './voice.css';
 import './voiceComposer.css';
 
@@ -61,15 +62,16 @@ function DictationErrorNotice({ message, language }: { message: string; language
   </span>;
 }
 /** The microphone has one job: insert recognized speech into this input. */
-export function VoiceButton({ language, disabled, onTranscript }: {
+export function VoiceButton({ language, disabled, onTranscript, onTranscriptUpdate }: {
   language: string; disabled?: boolean; onTranscript: (text: string) => void;
+  onTranscriptUpdate?: (text: string, update: DictationUpdate) => void;
 }) {
   const context = useVoiceContext(), session = context?.session;
   const state = useSyncExternalStore<Pick<VoiceState, 'mode' | 'phase' | 'error' | 'retryAvailable'> & Partial<Pick<VoiceState, 'muted' | 'level'>>>(session?.subscribe ?? noopSubscribe, session?.snapshot ?? (() => idle));
   const [starting, setStarting] = useState(false), sequence = useRef(0);
   const control = useRef<HTMLSpanElement>(null), travel = useRef(0);
-  const current = useRef({ context, disabled, onTranscript });
-  current.current = { context, disabled, onTranscript };
+  const current = useRef({ context, disabled, onTranscript, onTranscriptUpdate });
+  current.current = { context, disabled, onTranscript, onTranscriptUpdate };
   useLayoutEffect(() => {
     sequence.current++; setStarting(false);
     return () => { sequence.current++; };
@@ -103,7 +105,8 @@ export function VoiceButton({ language, disabled, onTranscript }: {
     await playDictationCue();
     if (attempt !== sequence.current || current.current.disabled || !current.current.context) return;
     session!.update(current.current.context.target);
-    void session!.start('recording', text => current.current.onTranscript(text));
+    void session!.start('recording', text => current.current.onTranscript(text),
+      current.current.onTranscriptUpdate ? (text, update) => current.current.onTranscriptUpdate?.(text, update) : undefined);
     setStarting(false);
   }
   const canMute = recording && state.phase === 'recording';

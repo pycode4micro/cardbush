@@ -2,6 +2,8 @@ import type { MessageKey } from '../../i18n';
 import { uiText, localizedContent } from '../../i18n';
 import { useConversationSource } from '../settings/conversationSource';
 import { VoiceButton } from '../voice/VoiceConversation';
+import type { DictationUpdate } from '../voice/dictationPreview';
+import { DictationDraft } from './dictationDraft';
 import { VoiceCallButton } from '../voice/VoiceCallButton';
 import { useVoiceComposer, VoiceComposerPanel } from '../voice/VoiceComposer';
 import { useIndividuation } from '../settings/useIndividuation';
@@ -504,11 +506,15 @@ export function Composer({
   const extraction = useContext(ConversationExtractionContext);
   const draftForExtraction = useRef({ draft, onDraftChange });
   draftForExtraction.current = { draft, onDraftChange };
-  const insertDictation = (text: string) => {
+  const dictationDraft = useRef(new DictationDraft());
+  useLayoutEffect(() => { dictationDraft.current.observe(draft); }, [draft]);
+  const insertDictation = (text: string, update?: DictationUpdate) => {
     const current = draftForExtraction.current;
-    const next = `${current.draft}${current.draft && !/\s$/.test(current.draft) ? ' ' : ''}${text}`;
-    current.onDraftChange(next);
-    commandSelection.current = { draft: next, caret: next.length };
+    const next = dictationDraft.current.update(current.draft, text, update?.id ?? crypto.randomUUID());
+    current.draft = next.draft;
+    current.onDraftChange(next.draft);
+    // Partial results must not steal focus from mute/stop or another editable field.
+    if (!update || update.final) commandSelection.current = next;
   };
   const insertExtraction = (text: string) => {
     const current = draftForExtraction.current;
@@ -1694,7 +1700,7 @@ export function Composer({
               <span>{modelLabel}</span>
               <ChevronDown size={15} />
             </button>
-            <VoiceButton language={language} onTranscript={insertDictation} disabled={inputReadOnly || submissionPending || Boolean(presentation?.preview)} />
+            <VoiceButton language={language} onTranscript={insertDictation} onTranscriptUpdate={insertDictation} disabled={inputReadOnly || submissionPending || Boolean(presentation?.preview)} />
             <VoiceCallButton callEnabled={!sending && !submissionPending && !inputReadOnly && !presentation?.preview && runtimeReady}
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"

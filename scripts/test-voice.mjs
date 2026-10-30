@@ -23,6 +23,8 @@ const compile = file => {
 const { SpeechPhrases, SpokenTranscript } = await compile('src/features/voice/speechText.ts');
 const { VoiceSession } = await compile('src/features/voice/voiceSession.ts');
 const { VoiceCapture } = await compile('src/features/voice/voiceAudio.ts');
+const { DictationPreview } = compile('src/features/voice/dictationPreview.ts');
+const { DictationDraft } = compile('src/features/composer/dictationDraft.ts');
 const { pcmWave } = await compile('src/features/voice/voiceRecording.ts');
 const { VoiceActivity, isVoicePlaybackEcho } = await compile('src/features/voice/voiceActivity.ts');
 const pause = () => new Promise(resolve => setImmediate(resolve));
@@ -235,6 +237,78 @@ test('dictation inserts draft text without sending or speaking, even during an A
   assert.deepEqual(f.dictated, ['请继续']); assert.equal(f.sent.length, 0); assert.equal(f.session.snapshot().mode, 'idle');
   f.session.update({ ...f.target, messages: [{ id: 'reply', role: 'assistant', content: '好的。' }] });
   assert.equal(f.spoken.length, 0); assert.ok(f.closed); f.session.end();
+});
+
+test('live dictation revises its draft while recording and Stop ignores late preview results', async () => {
+  const late = deferred(), updates = []; let count = 0;
+  const f = sessionFixture({ transcribe: async () => ++count === 1 ? { text: '你好世' } : count === 2 ? late.promise : { text: '你好世界。' } });
+  await f.session.start('recording', text => f.dictated.push(text), (text, update) => updates.push({ text, ...update }));
+  f.callbacks.preview(new Blob(['preview'], { type: 'audio/wav' }), { segment: 0, final: false });
+  await pause(); await pause();
+  assert.equal(updates[0].text, '你好世'); assert.equal(updates[0].final, false);
+  assert.equal(f.session.snapshot().phase, 'recording'); assert.equal(f.closed, 0);
+  f.callbacks.preview(new Blob(['later'], { type: 'audio/wav' }), { segment: 0, final: false }); await pause();
+  f.session.finishRecording(); await pause(); await pause();
+  assert.equal(updates.at(-1).text, '你好世界。'); assert.equal(updates.at(-1).final, true);
+  assert.equal(updates[0].id, updates.at(-1).id); assert.ok(f.cancelled.length);
+  late.resolve({ text: '迟到的中间结果' }); await pause(); await pause();
+  assert.equal(updates.length, 2); assert.equal(f.session.snapshot().mode, 'idle');
+  assert.deepEqual(f.sent, []); assert.deepEqual(f.dictated, []);
+});
+
+test('live dictation cancels queued previews when its owning conversation changes', async () => {
+  const late = deferred(), updates = [], f = sessionFixture({ transcribe: () => late.promise });
+  await f.session.start('recording', undefined, text => updates.push(text));
+  const callbacks = f.callbacks;
+  callbacks.preview(new Blob(['speech'], { type: 'audio/wav' }), { segment: 0, final: false }); await pause();
+  f.session.update({ ...f.target, sessionId: 'another' });
+  late.resolve({ text: '原会话' }); await pause();
+  callbacks.preview(new Blob(['stale']), { segment: 0, final: true }); await pause();
+  assert.deepEqual(updates, []); assert.ok(f.cancelled.length); assert.equal(f.session.snapshot().mode, 'idle');
+});
+
+test('preview snapshots coalesce, preserve completed phrases, and bound slow-engine work', async () => {
+  const first = deferred(), outputs = [], calls = [], cancelled = [];
+  const preview = new DictationPreview(async (blob, id) => { calls.push(await blob.text()); return calls.length === 1 ? first.promise : { text: calls.at(-1) }; },
+    text => outputs.push(text), id => cancelled.push(id));
+  preview.append(new Blob(['first']), { segment: 0, final: false }); await pause();
+  preview.append(new Blob(['stale']), { segment: 0, final: false });
+  preview.append(new Blob(['phrase one']), { segment: 0, final: true });
+  preview.append(new Blob(['phrase two']), { segment: 1, final: true });
+  first.resolve({ text: 'partial' }); await pause(); await pause();
+  assert.deepEqual(calls, ['first', 'phrase one', 'phrase two']);
+  assert.deepEqual(outputs, ['partial', 'phrase one', 'phrase one phrase two']); preview.close();
+  const slow = new DictationPreview(() => new Promise(() => {}), () => assert.fail('stale preview'), id => cancelled.push(id));
+  for (let segment = 0; segment < 6; segment++) slow.append(new Blob(['audio']), { segment, final: true });
+  assert.equal(slow.queue.length, 0); assert.equal(cancelled.length, 1); slow.close();
+});
+
+test('preview failures stop retries and unverified speech never reaches the draft', async () => {
+  let calls = 0; const outputs = [];
+  const failed = new DictationPreview(async () => { calls++; throw Error('offline'); }, text => outputs.push(text), () => {});
+  failed.append(new Blob(['audio']), { segment: 0, final: false }); await pause();
+  failed.append(new Blob(['audio']), { segment: 0, final: true }); await pause(); assert.equal(calls, 1);
+  const locked = new DictationPreview(async blob => JSON.parse(await blob.text()), text => outputs.push(text), () => {}, true);
+  for (const [segment, result] of [{ text: 'unverified' }, { text: 'rejected', speaker: 'rejected', speakerVerified: true }, { text: 'owner', speakerVerified: true }].entries()) {
+    locked.append(new Blob([JSON.stringify(result)]), { segment, final: true }); await pause(); await pause();
+  }
+  assert.deepEqual(outputs, ['owner']); locked.close();
+});
+
+test('streaming dictation replaces hypotheses without duplicating text or overwriting manual edits', () => {
+  const draft = new DictationDraft();
+  assert.equal(draft.update('备注', '你好世', 'one').draft, '备注 你好世');
+  assert.equal(draft.update('备注 你好世', '你好世界', 'one').draft, '备注 你好世界');
+  assert.equal(draft.update('手改备注 你好世界 手写后缀', '你好世界，继续', 'one').draft, '手改备注 你好世界，继续 手写后缀');
+  assert.equal(draft.update('手改备注 你好地球，继续 手写后缀', '你好世界，继续说话。', 'one').draft, '手改备注 你好地球，继续说话。 手写后缀');
+  assert.equal(draft.update('手改备注 你好地球，继续说话。 手写后缀', '下一段', 'two').draft, '手改备注 你好地球，继续说话。 手写后缀 下一段');
+  const cleared = new DictationDraft(); cleared.update('', '不要恢复', 'clear');
+  assert.equal(cleared.update('', '不要恢复新内容', 'clear').draft, '新内容');
+  const edited = new DictationDraft(); edited.update('备注', '你好世界', 'edit');
+  edited.observe('备注 你好地球'); edited.observe('备注 你好地球 手写后缀');
+  assert.equal(edited.update('备注 你好地球 手写后缀', '你好世界，继续', 'edit').draft, '备注 你好地球，继续 手写后缀');
+  const repeated = new DictationDraft(); repeated.update('你好', '你好', 'repeat');
+  assert.equal(repeated.update('你好 ', '你好世界', 'repeat').draft, '你好 世界', 'deleting dictation must not retarget matching text in the original draft');
 });
 test('dictation retains its session, releases capture and inserts once after delayed transcription', async () => {
   const response = deferred(); let transcriptions = 0;
