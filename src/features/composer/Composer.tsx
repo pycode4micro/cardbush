@@ -49,7 +49,6 @@ import {
   ChevronDown,
   ChevronLeft,
   Circle,
-  CornerDownLeft,
   Edit3,
   File as FileIcon,
   FileArchive,
@@ -491,7 +490,6 @@ export function Composer({
   const applications = useApplications(language);
   const pluginCommands = usePluginCommandCatalog();
   const memory = useIndividuation();
-  const predictionHintId = useId();
   const source = useConversationSource(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
   const conversationStyle = useConversationStyle(referenceContext.sessionId, host?.environmentId ?? host?.id ?? '');
   const styleAvailable = host?.conversationStyleAvailable !== false;
@@ -1528,7 +1526,6 @@ export function Composer({
           pluginCommands={pluginCommands}
           language={language}
           autoFocus={autoFocus && !presentation?.preview}
-          ariaDescribedBy={prediction ? predictionHintId : undefined}
           value={composerInputValue}
           onChange={(next, caret) => {
             if (goalDraft) {
@@ -1631,10 +1628,6 @@ export function Composer({
               menuTrigger
               onClick={(event) => toggleMenu('more', event)}
             />
-            {prediction && <button type="button" id={predictionHintId} className="composer-prediction-accept"
-              aria-keyshortcuts="Tab Enter"
-              aria-label={uiText(language)('composer.insertNextStepPredictionToEditBefore')}
-              onClick={acceptPrediction}><CornerDownLeft size={13}/>{uiText(language)('composer.tabEnterToInsert')}</button>}
             {shadowAvailable && onToggleShadow && (
               <ToolChip
                 icon={<ShadowCloneIcon size={15} />}

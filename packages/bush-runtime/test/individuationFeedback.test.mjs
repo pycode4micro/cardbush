@@ -182,4 +182,17 @@ test('runtime resolves the actual rated reply and user request; nonexistent and 
   const saved=await command(input('t1','up',reply.messageId));
   const event=await row(f.store,saved.id);assert.ok(event.text.includes(context.user)&&event.text.includes(context.assistant));
   assert.equal(calls,1,'clicking feedback does not issue a separate model request');
+  const append=entry=>host.sendCommand({kind:'runtime.assistant_conversation',payload:{action:'append',sessionId:'s1',entry}});
+  await append({id:'spoken-user',role:'user',content:'请讲个笑话。',source:'voice',createdAt:new Date().toISOString()});
+  await append({id:'spoken-reply',role:'assistant',content:'这是一个可以保存反馈的语音回复。',source:'voice',createdAt:new Date().toISOString()});
+  const vote={sessionId:'s1',messageId:'spoken-reply',rating:'up'};
+  const voice=await command(vote);assert.equal(voice.status,'ok');
+  assert.match((await row(f.store,voice.id)).text,/可以保存反馈的语音回复/);
+  assert.equal((await command({...vote,rating:'down'})).id,voice.id);
+  assert.equal((await command({...vote,rating:null})).status,'ok');
+  await assert.rejects(command({...vote,messageId:'spoken-user'}),/unavailable/);
+  await assert.rejects(command({...vote,sessionId:'another-session'}),/unavailable/);
+  await append({id:'private-note',role:'assistant',content:'internal',source:'voice',visibility:'internal',createdAt:new Date().toISOString()});
+  await assert.rejects(command({...vote,messageId:'private-note'}),/unavailable/);
+  assert.equal(calls,1,'voice feedback also uses persisted evidence without calling a model');
 });

@@ -66,7 +66,8 @@ export type MemoryChange = z.infer<typeof memoryChangeSchema>;
 
 export const assistantFeedbackInputSchema = z.object({
   sessionId:z.string().trim().min(1).max(300),
-  turnId:z.string().trim().min(1).max(300),
+  // Journal replies (voice and assistant pages) are messages, not model turns.
+  turnId:z.string().trim().min(1).max(300).optional(),
   messageId:z.string().trim().min(1).max(300),
   rating:z.enum(['up','down']).nullable(),
 }).strict();

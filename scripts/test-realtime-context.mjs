@@ -332,7 +332,16 @@ test('service archives real transcripts, continues PCM during summarization and 
     service.playback(1,'call',false);t.mock.timers.tick(751);
     const retrieve=socket.sent.at(-1);assert.equal(retrieve.type,'conversation.item.retrieve');
     socket.event({type:'conversation.item.retrieved',event_id:retrieve.event_id,items:[]});
-    t.mock.timers.tick(751);await pause();assert.equal(sockets.length,2);
+    t.mock.timers.tick(751);await pause();
+    // Reconnection now includes a bounded inference-facing history snapshot.
+    // Budget any additional compaction before opening the replacement socket.
+    for (let attempt=0;sockets.length<2 && attempt<3;attempt++) {
+      const next=events.filter(e=>e.type==='context-compact').at(-1).job;
+      assert.notEqual(next.jobId,catchup.jobId,'request a new bounded checkpoint, never drop the retained suffix');
+      service.compacted(1,'call',next.jobId,{jobId:next.jobId,revision:next.revision,through:next.through,summary:'任务 task1 仍在运行，保留所有用户条件。'});
+      await pause();
+    }
+    assert.equal(sockets.length,2);
     service.audio(1,'call',new Uint8Array(640).fill(9).buffer);
     const replacement=sockets[1];replacement.open();replacement.event({type:'session.created'});await pause();
     assert.ok(!replacement.sent.some(e=>e.type==='input_audio_buffer.append'),'wait for restored context confirmation before buffered microphone audio');
@@ -346,7 +355,9 @@ test('service archives real transcripts, continues PCM during summarization and 
     assert.equal(events.filter(e=>e.type==='tools').length,1,'old function call is not dispatched twice');
     service.close(1);replacement.event({type:'session.closed'});
     const restored=new RealtimeVoiceHistory(path.join(dir,'voice-history'),'local-memory',crypto);
-    assert.ok(restored.summary.includes('task1'));assert.ok(restored.pairs.length>=1);
+    assert.ok(restored.summary.includes('task1'));
+    const original=fs.readFileSync(restored.file,'utf8').trim().split('\n').map(line=>JSON.parse(crypto.decrypt(JSON.parse(line)))).filter(item=>item.type==='pair');
+    assert.equal(original.length,8,'all seven spoken turns and the child receipt remain in the encrypted journal even after full compaction');
     assert.equal(events.filter(e=>e.type==='error').length,0);
   } finally {service.closeAll();t.mock.timers.tick(1600);}
 });

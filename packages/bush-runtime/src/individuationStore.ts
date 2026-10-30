@@ -157,7 +157,7 @@ export class IndividuationStore {
     signal?.throwIfAborted();
     if(input.rating&&!settings.habits)return {status:'disabled'};
     if(!input.rating&&!existsSync(this.path))return {status:'ok'};
-    const owner={sessionId:input.sessionId,turnId:input.turnId,operationId};
+    const owner={sessionId:input.sessionId,turnId:input.turnId ?? `journal:${input.messageId}`,operationId};
     return this.transaction((db,now)=>this.withReceipt(db,owner,input,now,()=>{
       if(input.rating&&this.full(db)&&!getMemoryRow(db,feedbackRecordId(input)))return {status:'rejected',reason:'memory_capacity_reached'};
       return writeAssistantFeedback(db,now,input,context);

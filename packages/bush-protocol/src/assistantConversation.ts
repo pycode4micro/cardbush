@@ -7,6 +7,7 @@ export const conversationEntrySchema = z.object({
   id: z.string().min(1).max(220), role: z.enum(['user', 'assistant']),
   content: z.string().trim().min(1).max(64000), createdAt: z.string().datetime(),
   source: z.enum(['voice', 'page', 'text', 'task']),
+  status: z.enum(['completed', 'interrupted']).optional(),
   visibility: z.enum(['conversation', 'internal']).default('conversation'),
   promptContext: z.array(z.object({ kind: z.enum(['preview-selection', 'editing-location', 'plugin-diagnostics']),
     content: z.string().max(256000), requestId: z.string().optional() }).strict()).max(16).optional(),

@@ -19,10 +19,15 @@ export interface RealtimeVoiceProvider {
   speak(text: string): object;
   parse(event: Record<string, unknown>): ProviderEvent[];
 }
-export const realtimeAgentTools = conversationalSubagentTools.map(({ name, description, inputSchema }) => ({
+const hangUp = { type: 'function', name: 'hang_up', description: 'End this voice call when the user asks to hang up or clearly says goodbye. Say a brief goodbye before calling. Does not stop background Agent tasks.',
+  parameters: { type: 'object', additionalProperties: false, properties: {} } };
+const recallConversation = { type: 'function', name: 'recall_conversation', description: 'Read saved conversation history for this call when the user refers to earlier exchanges. Returns actual records, including earlier calls and text input; never invent missing memories.',
+  parameters: { type: 'object', additionalProperties: false, properties: { cursor: { type: 'integer', minimum: 0, description: 'Omit for the first page; use nextCursor to continue reading.' } } } };
+export const realtimeAgentTools = [...conversationalSubagentTools.map(({ name, description, inputSchema }) => ({
   type: 'function', name, description, parameters: inputSchema,
-}));
+})), hangUp, recallConversation];
 export const realtimeExecutionInstructions = `
+用户明确要求结束通话或告别时，简短道别并调用 hang_up 挂断；不要只口头答应，后台任务不因挂断而停止。
 通话期间保持互动，当前配置的 Agent 通过独立子会话在用户选定的本地或远程主机执行任务。需要查询实时信息、操作文件、浏览器或电脑时，自行调用 subagent，不要求用户在语音界面再次确认。任务必须来自用户的请求，沿用 Agent 的权限和工具边界。
 在本次通话中，为执行用户明确提出的任务而派发子代理已经获得授权，不需要用户开启额外的“派发权限”、说出确认口令或再次同意。你可以直接调用已提供的 subagent 工具。派发权限与子代理执行具体操作的权限是两回事；后者由本地 Runtime 按配置判断，不由你预先猜测。没有实际工具错误或权限请求时，不得声称“无法派发”“没有权限”或要求用户授权；应先调用工具。若工具确实失败，按返回的错误代码和原因解释：模型未配置、工具被禁用、Runtime 版本不匹配、网络失败都不是等待用户口头批准。不得用口头确认绕过实际的禁用、拒绝或权限边界。
 调用前先用一句自然的语音说明意图，随后同一轮立即调用，不等待用户回答，也不把意图说成确认问题。同批任务合并说明，已经说过的意图不重复。仅凭意图不能宣称已受理或已完成。

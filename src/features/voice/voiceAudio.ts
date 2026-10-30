@@ -6,19 +6,29 @@ export class VoicePlayback {
   private context?: AudioContext;
   private outputGain?: GainNode;
   private outputMuted = false;
+  private meter?: number;
   private sources = new Set<AudioBufferSourceNode>();
   private current?: { id: string; cancel(): void };
   private cursor = 0;
   private tail: number | undefined;
   private epoch = 0;
-  constructor(private api: VoiceDesktopApi) {}
+  constructor(private api: VoiceDesktopApi, private outputLevel: (value: number) => void = () => {}) {}
   async prepare() {
     this.context ??= new AudioContext({ sampleRate: 24_000 });
-    if (!this.outputGain) { this.outputGain = this.context.createGain(); this.outputGain.connect(this.context.destination); }
+    if (!this.outputGain) {
+      this.outputGain = this.context.createGain();
+      const analyser = this.context.createAnalyser(); analyser.fftSize = 256;
+      this.outputGain.connect(analyser); analyser.connect(this.context.destination);
+      const samples = new Float32Array(analyser.fftSize);
+      this.meter = window.setInterval(() => {
+        analyser.getFloatTimeDomainData(samples);
+        this.outputLevel(this.outputMuted || !this.sources.size ? 0 : Math.min(1, Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length) * 5));
+      }, 50);
+    }
     this.outputGain.gain.value = this.outputMuted ? 0 : 1;
     await this.context.resume();
   }
-  setOutputMuted(value: boolean) { this.outputMuted = value; if (this.outputGain) this.outputGain.gain.value = value ? 0 : 1; }
+  setOutputMuted(value: boolean) { this.outputMuted = value; if (this.outputGain) this.outputGain.gain.value = value ? 0 : 1; if (value) this.outputLevel(0); }
   async speak(text: string, voice?: 'male' | 'female') {
     const epoch = this.epoch;
     await this.prepare();
@@ -54,8 +64,9 @@ export class VoicePlayback {
     this.epoch++;
     if (this.current) { void this.api.cancel(this.current.id).catch(() => {}); this.current.cancel(); this.current = undefined; }
     for (const source of this.sources) { try { source.stop(); } catch {} source.disconnect(); } this.sources.clear();
+    this.outputLevel(0);
   }
-  close() { this.stop(); const context = this.context; this.context = undefined; this.outputGain = undefined; void context?.close().catch(() => {}); }
+  close() { this.stop(); window.clearInterval(this.meter); const context = this.context; this.context = undefined; this.outputGain = undefined; void context?.close().catch(() => {}); }
 }
 
 export interface VoiceClipTiming { lastSpeechAt: number; reason: 'silence' | 'limit' | 'manual' }
@@ -71,6 +82,7 @@ export class VoiceCapture {
   private timer?: number;
   private closed = false;
   private muted = false;
+  private pausedAt = 0;
   private chunks: Blob[] = [];
   private rotating = false;
   private started = 0;
@@ -126,7 +138,7 @@ export class VoiceCapture {
   }
   private rotate(deliver: boolean, reason: VoiceClipTiming['reason'] = 'manual'): boolean {
     const recorder = this.recorder;
-    if (!recorder || recorder.state !== 'recording') return this.rotating;
+    if (!recorder || recorder.state === 'inactive') return this.rotating;
     this.recorder = undefined;
     this.rotating = true;
     const timing = { lastSpeechAt: this.lastSpeechAt, reason };
@@ -151,13 +163,21 @@ export class VoiceCapture {
   }
   finish() { return this.rotate(this.mode === 'recording' || this.speaking); }
   mute(value: boolean) {
+    if (this.muted === value) return;
     this.muted = value; this.stream?.getAudioTracks().forEach(track => { track.enabled = !value; });
     if (value) this.callbacks.level(0);
+    // Dictation is one recording. Pausing must preserve its existing chunks and
+    // device; rotating here used to discard everything captured before mute.
+    if (this.mode === 'recording') {
+      if (value && this.recorder?.state === 'recording') { this.pausedAt = performance.now(); this.recorder.pause(); }
+      else if (!value && this.recorder?.state === 'paused') { this.started += performance.now() - this.pausedAt; this.recorder.resume(); }
+      return;
+    }
     if (value) this.rotate(false); else if (!this.recorder) this.begin();
   }
   close() {
     this.closed = true; window.clearInterval(this.timer);
-    if (this.recorder?.state === 'recording') this.recorder.stop();
+    if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
     this.stream?.getTracks().forEach(track => track.stop()); this.stream = undefined; this.chunks = [];
     void this.context?.close().catch(() => {}); this.context = undefined;
   }

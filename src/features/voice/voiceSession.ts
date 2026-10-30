@@ -31,6 +31,7 @@ export interface VoiceState {
   agentError?: string;
   realtime?: boolean;
   outputMuted: boolean;
+  outputLevel?: number;
   speakerNotice?: string;
   speakerLocked: boolean;
   mode: 'idle' | 'recording' | 'call';
@@ -79,7 +80,7 @@ export class VoiceSession {
   private set finishingInput(value: boolean) { this.patch({ inputFinishing: value }); }
   private submitting = false;
   constructor(private api: VoiceDesktopApi | undefined, private deps: VoiceDependencies = {
-    capture: (mode, callbacks, microphoneId) => new VoiceCapture(mode, callbacks, microphoneId), playback: api => new VoicePlayback(api),
+    capture: (mode, callbacks, microphoneId) => new VoiceCapture(mode, callbacks, microphoneId), playback: api => new VoicePlayback(api, outputLevel => this.patch({outputLevel})),
   }) {}
   snapshot = () => this.state;
   matchesTarget(target: Pick<VoiceTarget, 'environment' | 'sessionId'>) {
@@ -160,7 +161,8 @@ export class VoiceSession {
           if (!config.hasApiKey) throw Error(uiText()('voiceSession.enter_a_volcengine_realtime_voice_api_key'));
           this.realtime = new RealtimeVoiceCall(this.api.realtime,
             patch => { if (epoch === this.epoch) this.patch(patch); },
-            submitting => { if (epoch === this.epoch && submitting && !this.target?.sessionId) this.sendingFirst = true; });
+            submitting => { if (epoch === this.epoch && submitting && !this.target?.sessionId) this.sendingFirst = true; }, undefined,
+            () => { if (epoch === this.epoch) this.end(); });
           if (this.target) this.realtime.update(this.target);
           this.realtime.mute(this.state.muted); this.realtime.setOutputMuted(this.state.outputMuted);
           await this.realtime.start(this.settings.microphoneId, this.settings.voice);

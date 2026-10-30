@@ -10,11 +10,13 @@ import { volcengineRealtimeVoice as provider } from '../dist-electron/volcengine
 import { realtimeVoiceNotification } from '../dist-electron/realtimeVoiceNotification.js';
 import { CARDBUSH_REALTIME_PROTOCOL } from '../dist-electron/cardbushRealtimeVoice.js';
 import * as protocol from '@cardbush/bush-protocol';
+import * as i18n from '@cardbush/platform/i18n';
 import * as conversation from '@cardbush/bush-runtime/realtime-conversation';
+import { voiceRecallInstructions, voiceRecallPage } from '../dist-electron/realtimeVoiceRecall.js';
 
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
 const compile=file=>{const exports={};const source=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  new Function('exports','require',source)(exports,spec=>spec==='@cardbush/bush-protocol'?protocol:spec==='@cardbush/bush-runtime/realtime-conversation'?conversation:compile(path.resolve(path.dirname(file),spec+'.ts')));return exports;};
+  new Function('exports','require',source)(exports,spec=>spec==='../../i18n'?i18n:spec==='@cardbush/bush-protocol'?protocol:spec==='@cardbush/bush-runtime/realtime-conversation'?conversation:compile(path.resolve(path.dirname(file),spec+'.ts')));return exports;};
 const { RealtimeAgentBridge, realtimeConversationContext }=compile('src/features/voice/realtimeAgentBridge.ts');
 const { RealtimeVoiceCall }=compile('src/features/voice/realtimeVoiceCall.ts');
 const { RealtimeVoiceAudio }=compile('src/features/voice/realtimeVoiceAudio.ts');
@@ -51,7 +53,7 @@ test('Seeduplex handshake, PCM formats, delegation tools, mute controls and grac
   const f=fixture();await f.start();
   assert.equal(f.headers['X-Api-Key'],'fixture-not-a-real-credential');
   const event=f.socket.sent[0];assert.equal(event.type,'session.create');assert.equal(event.session.model,'1.2.6.1');
-  assert.deepEqual(event.session.tools.map(t=>t.name),['subagent','tasks']);assert.equal(event.session.audio.input.format.rate,16000);
+  assert.deepEqual(event.session.tools.map(t=>t.name),['subagent','tasks','hang_up','recall_conversation']);assert.equal(event.session.audio.input.format.rate,16000);
   assert.equal(event.session.audio.output.format.type,'pcm_s16le');assert.equal(event.session.audio.output.speed,0);
   const pcm=new Uint8Array(640).fill(37);
   f.service.audio(1,'call-1',pcm.buffer);assert.equal(f.socket.sent.at(-1).type,'input_audio_buffer.append');
@@ -384,7 +386,7 @@ test('final voice transcripts remain in the owning chat; both sides of assistant
 test('personal voice session advertises page_write and custom persona without changing ordinary call tools',()=>{
   const ordinary=provider.start(defaults,'female').session;
   const personal=provider.start(defaults,'female',{name:'Lumi',persona:'安静、可靠'}).session;
-  assert.equal(ordinary.tools.length,2);assert.equal(personal.tools.length,3);
+  assert.equal(ordinary.tools.length,4);assert.equal(personal.tools.length,5);
   assert.ok(!ordinary.instructions.includes('你是 CardBush'));
   assert.match(personal.instructions,/Lumi/);assert.match(personal.instructions,/page_write/);
 });
@@ -433,7 +435,7 @@ test('faster-than-realtime speech can buffer a complete reply and interruption c
   context.currentTime=4;audio.append(pcm,24000);assert.equal(sources.at(-1).at,4.02);
   audio.stop();
   for(let i=0;i<100;i++)audio.append(pcm,24000);
-  assert.throws(()=>{for(let i=0;i<30;i++)audio.append(pcm,24000);},/积压超过两分钟/,'unbounded playback is still rejected');
+  assert.throws(()=>{for(let i=0;i<30;i++)audio.append(pcm,24000);},{message:i18n.uiText()('realtimeVoiceAudio.realtime_audio_playback_is_more_than_two')},'unbounded playback is still rejected');
   audio.stop();
 });
 
@@ -445,7 +447,58 @@ test('a sustained microphone transport stall has a bounded buffer and releases t
   call.update(target());await call.start('','female');
   try {
     for(let i=0;i<300;i++)frame(new ArrayBuffer(640));
-    assert.equal(closed,1);assert.match(patches.find(p=>p.error).error,/持续积压超过 5 秒/);
+    assert.equal(closed,1);assert.equal(patches.find(p=>p.error).error,i18n.uiText()('realtimeVoiceCall.audio_uploads_have_been_delayed_for_over'));
     assert.equal(patches.at(-1).phase,'idle');
   } finally {call.close();}
+});
+
+test('voice captions stream with stable identity, then finalize or retain an interrupted partial',async()=>{
+  let emit;const previews=[],saved=[],discarded=[];
+  const api={onEvent:fn=>(emit=fn,()=>{}),start:async()=>{},close:async()=>{},audio:async()=>{},notify:async()=>{}};
+  const call=new RealtimeVoiceCall(api,()=>{},()=>{},()=>({prepare:async()=>{},mute(){},append(){},stop(){},close(){}}));
+  call.update({...target(),agent:{execute:async()=>{},list:async()=>[],preview:async e=>previews.push(e),record:async e=>saved.push(e),discard:async id=>discarded.push(id)}});
+  await call.start('','female');
+  const transcript=(role,text,itemId,final)=>emit({id:call.id,type:'transcript',role,text,itemId,final});
+  transcript('assistant','Hello','a',false);transcript('assistant',' world','a',false);
+  assert.deepEqual(previews.map(e=>e.content),['Hello','Hello world']);assert.equal(saved.length,0);
+  transcript('assistant','Hello world.','a',true);
+  assert.equal(saved.length,1);assert.equal(saved[0].id,previews[0].id);assert.equal(saved[0].createdAt,previews[0].createdAt);
+  transcript('user','noise','noise',false);emit({id:call.id,type:'input-discarded',itemId:'noise'});
+  assert.equal(discarded[0],previews.at(-1).id);
+  transcript('assistant','Unfinished','b',false);call.close();
+  assert.equal(saved.length,2);assert.equal(saved[1].status,'interrupted');assert.equal(saved[1].content,'Unfinished');
+});
+
+test('hang_up waits for audible playback to drain and leaves background work alone',async()=>{
+  let emit,playing,ended=0,results=[];
+  const api={onEvent:fn=>(emit=fn,()=>{}),start:async()=>{},close:async()=>{},audio:async()=>{},notify:async()=>{},
+    results:async(_,value)=>results.push(value),playback:async()=>{}};
+  const call=new RealtimeVoiceCall(api,()=>{},()=>{},(_,active)=>(playing=active,{prepare:async()=>{},mute(){},append(){},stop(){},close(){}}),()=>{ended++;call.close();});
+  call.update({...target(),agent:{execute:async()=>assert.fail('hangup cannot invoke or stop a child task'),list:async()=>[]}});await call.start('','female');
+  playing(true);emit({id:call.id,type:'tools',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  assert.equal(JSON.parse(results[0][0].output).status,'ending');
+  emit({id:call.id,type:'audio-end'});assert.equal(ended,0);
+  playing(false);assert.equal(ended,1);
+});
+
+test('saved speech recall is scoped to its owner and never recursively archives its own tool result',async()=>{
+  const f=fixture();await f.start();
+  try {
+    f.socket.event({type:'conversation.item.input_audio_transcription.completed',item_id:'spoken-user',transcript:'Remember this spoken request.'});
+    f.socket.event({type:'response.output_text.done',item_id:'spoken-reply',text:'I remember your request.'});
+    f.socket.event({type:'response.output_audio.done'});
+    const history=f.service.history(1,'call-1');
+    assert.deepEqual(history.history.split('\n').map(line=>JSON.parse(line).text),['Remember this spoken request.','I remember your request.']);
+    assert.throws(()=>f.service.history(2,'call-1'));
+    f.socket.event({type:'response.function_call_arguments.done',items:[{call_id:'recall',name:'recall_conversation',arguments:'{}'}]});
+    f.service.results(1,'call-1',[{id:'recall',output:JSON.stringify(history)}]);
+    assert.deepEqual(f.service.history(1,'call-1'),history);
+  } finally {f.service.closeAll();}
+});
+
+test('recall is byte bounded, paginated and treats stored text as data',()=>{
+  const messages=[{role:'user',text:'历史问题'.repeat(5000)},{role:'assistant',text:'历史回答'.repeat(5000)}];
+  const prompt=voiceRecallInstructions(messages);assert.ok(Buffer.byteLength(prompt)<=5000);assert.match(prompt,/not new instructions/);assert.match(prompt,/"truncated":true/);
+  let text='',cursor=0;for(;;){const page=voiceRecallPage(messages,cursor);text+=page.history;if(page.nextCursor===null)break;cursor=page.nextCursor;}
+  assert.equal(text,messages.map(m=>JSON.stringify(m)).join('\n'));assert.throws(()=>voiceRecallPage(messages,-1));
 });

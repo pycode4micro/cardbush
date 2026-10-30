@@ -114,6 +114,7 @@ const desktopApi = {
       start: (input: Parameters<import('./realtimeVoiceTypes').RealtimeVoiceApi['start']>[0]) => ipcRenderer.invoke('voice:realtime-start', input),
       audio: (id: string, pcm: ArrayBuffer) => ipcRenderer.invoke('voice:realtime-audio', id, pcm),
       control: (id: string, action: 'mute' | 'unmute' | 'interrupt' | 'commit') => ipcRenderer.invoke('voice:realtime-control', id, action),
+      history: (id: string, cursor?: number) => ipcRenderer.invoke('voice:realtime-history', id, cursor),
       results: (id: string, results: import('./realtimeVoiceTypes').RealtimeToolResult[]) => ipcRenderer.invoke('voice:realtime-results', id, results),
       notify: (id: string, result: string) => ipcRenderer.invoke('voice:realtime-notify', id, result),
       compacted: (id: string, jobId: string, result?: import('./realtimeVoiceTypes').RealtimeContextResult) => ipcRenderer.invoke('voice:realtime-compacted', id, jobId, result),

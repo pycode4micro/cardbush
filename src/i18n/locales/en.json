@@ -4025,6 +4025,8 @@
     "browser.extension.paused": "Enrollment failed repeatedly and automatic requests have stopped. Click Connect when ready to retry.",
     "browser.extension.waiting": "CardBush is temporarily offline. Retrying the saved connection in about {seconds} seconds; no new approval is needed.",
     "browser.extension.retrying": "Waiting to restore the saved connection. Make sure CardBush is running with Browser Use enabled. Pairing again is unnecessary.",
-    "browser.extension.enrollmentRetry": "Local enrollment is incomplete; waiting for a limited retry. Make sure CardBush is running with Browser Use enabled."
+    "browser.extension.enrollmentRetry": "Local enrollment is incomplete; waiting for a limited retry. Make sure CardBush is running with Browser Use enabled.",
+    "voiceComposerPanel.muteOutput": "Mute incoming audio",
+    "voiceComposerPanel.moveCall": "Move call bar"
   }
 }

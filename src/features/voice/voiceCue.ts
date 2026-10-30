@@ -19,3 +19,24 @@ export async function playDictationCue() {
   } catch { /* A missing output device must not prevent dictation. */ }
   finally { clearTimeout(timeout); void context?.close().catch(() => {}); }
 }
+
+/** Quiet local ringback, disposed immediately when connected, muted or cancelled. */
+export function startConnectingCue(): () => void {
+  let context: AudioContext | undefined, timer: ReturnType<typeof setInterval> | undefined, closed = false;
+  try {
+    context = new AudioContext();
+    const pulse = () => {
+      if (closed || !context || context.state !== 'running') return;
+      const tone = context.createOscillator(), gain = context.createGain(), now = context.currentTime;
+      tone.frequency.value = 440;
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(.025, now + .03);
+      gain.gain.linearRampToValueAtTime(0, now + .3);
+      tone.connect(gain).connect(context.destination);
+      tone.onended = () => { tone.disconnect(); gain.disconnect(); };
+      tone.start(now); tone.stop(now + .32);
+    };
+    void context.resume().then(() => { if (!closed) { pulse(); timer = setInterval(pulse, 2200); } }).catch(() => {});
+  } catch { /* Output failure must not prevent connection. */ }
+  return () => { closed = true; clearInterval(timer); void context?.close().catch(() => {}); };
+}

@@ -1,7 +1,11 @@
 import type { VoiceTarget } from './voiceSession';
 import type { RealtimeConversationExecutor } from '@cardbush/bush-runtime/realtime-conversation';
 export { RealtimeAgentBridge } from '@cardbush/bush-runtime/realtime-conversation';
-export interface RealtimeAgentExecutor extends RealtimeConversationExecutor { pin?(target: VoiceTarget): Promise<VoiceTarget> }
+export interface RealtimeAgentExecutor extends RealtimeConversationExecutor {
+  pin?(target: VoiceTarget): Promise<VoiceTarget>;
+  preview?(entry: import('@cardbush/bush-protocol').ConversationEntry): Promise<void>;
+  discard?(id: string): Promise<void>;
+}
 
 export function realtimeConversationContext(target?: VoiceTarget) {
   const pairs: {role:'user'|'assistant';text:string}[][]=[];

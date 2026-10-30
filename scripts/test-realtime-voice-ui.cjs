@@ -112,15 +112,17 @@ app.whenReady().then(async()=>{
     await win.loadFile(path.join(directory,'index.html'));await dom('document.querySelector("button[aria-label=长按语音通话]")');
     await holdCall();await dom('document.querySelector(".voice-call-status")?.textContent==="正在聆听"');
     await until(()=>audioFrames>=5);
-    assert.deepEqual(received[0].session.tools.map(tool=>tool.name).sort(), ['subagent','tasks']);
+    assert.deepEqual(received[0].session.tools.map(tool=>tool.name).sort(), ['hang_up','recall_conversation','subagent','tasks']);
     holdAudio=true;await pause(650);
     assert.equal(peer.readyState,1,'a brief IPC stall must not disconnect capture');
     assert.equal(heldAudio.length,4,'microphone IPC concurrency stays bounded');
     const beforeDrain=audioFrames;holdAudio=false;heldAudio.splice(0).forEach(resolve=>resolve());
     await until(()=>audioFrames>beforeDrain+20);
     // Only native duplex cancellation changes playback; ASR and unintelligible sound do not.
-    for(let i=0;i<30;i++)event({type:'response.output_audio.delta',response_id:'r1',delta:Buffer.alloc(24000*2).toString('base64')});
+    const tone=Buffer.alloc(24000*2);for(let i=0;i<24000;i++)tone.writeInt16LE(Math.round(Math.sin(i/24000*440*Math.PI*2)*6000),i*2);
+    for(let i=0;i<30;i++)event({type:'response.output_audio.delta',response_id:'r1',delta:(i?Buffer.alloc(24000*2):tone).toString('base64')});
     await dom('fixture.state().speaking');
+    await dom('fixture.state().outputLevel>0','waveform follows PCM actually being played');
     const beforeOutputMute=audioFrames;
     await read('fixture.muteOutput(true);void 0');assert.equal(await read('fixture.outputLevel()'),0);
     await until(()=>audioFrames>beforeOutputMute+5);
@@ -168,13 +170,15 @@ app.whenReady().then(async()=>{
     assert.equal(peer.readyState,1,'unmounting chat keeps the app-level call');
     const beforeMinimize=audioFrames;win.minimize();await until(()=>audioFrames>beforeMinimize+5);
     assert.ok(await read('fixture.tracks.some(t=>t.readyState==="live")'));
-    await click('结束通话');await dom('!document.querySelector(".voice-composer-call")');
+    event({type:'response.function_call_arguments.done',items:[{call_id:'hang-up-test',name:'hang_up',arguments:'{}'}]});
+    event({type:'response.output_audio.done'});
+    await dom('!document.querySelector(".voice-composer-call")');
     await until(()=>peer.readyState!==1);assert.ok(await read('fixture.tracks.every(t=>t.readyState==="ended")'));
     assert.deepEqual(errors,[]);
     assert.ok(diagnostics.some(item=>item.payload.event==='connected'));
     assert.equal(diagnostics.some(item=>item.payload.event==='failed'),false);
     for(const {scope,payload} of diagnostics){assert.equal(scope,'realtime-voice');assert.ok(Object.keys(payload).every(key=>['event','callId','sessionId','reason','pendingFrames','queuedFrames'].includes(key)));}
-    console.log('Realtime voice UI passed: real worklet/preload/WebSocket PCM, direct delegation, continuous capture/playback during execution, parallel task receipts, noise, mute, deduplication, first-chat adoption, background result notification, navigation/unmount/minimize continuity and explicit hangup cleanup.');
+    console.log('Realtime voice UI passed: real worklet/preload/WebSocket PCM and output amplitude, delegation, parallel task receipts, noise, independent mute, deduplication, background result notification, navigation/unmount/minimize continuity and model-tool hangup cleanup.');
   }finally{service.closeAll();win.destroy();for(const client of wss.clients)client.terminate();wss.close();clearTimeout(deadline);}
   app.exit(0);
 }).catch(error=>{console.error(error);clearTimeout(deadline);app.exit(1);});

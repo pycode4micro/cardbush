@@ -38,6 +38,7 @@ export class RealtimeVoiceContext {
   private restore?: { bytes:number; resolve(messages:VoiceContextMessage[]):void; reject(error:Error):void };
   constructor(readonly history: RealtimeVoiceHistory, private fixedTokens: number, private hooks: ContextHooks,
     private threshold = 6000) {}
+  setFixedTokens(tokens: number) { this.fixedTokens = tokens; }
 
   /** Stop editing the lost connection. Keep the journal and in-flight model job. */
   detach() {

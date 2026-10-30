@@ -17,6 +17,14 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
   const configForCall = async () => preparedVoice ??= await prepare();
   return {
     async prepareConversation() { return (await configForCall()).sessionId; },
+    async preview(entry) {
+      const sessionId = (await configForCall()).sessionId;
+      window.dispatchEvent(new CustomEvent('cardbush:conversation-entry', { detail: { sessionId, entry, streaming: true } }));
+    },
+    async discard(id) {
+      const sessionId = (await configForCall()).sessionId;
+      window.dispatchEvent(new CustomEvent('cardbush:conversation-entry', { detail: { sessionId, discarded: id } }));
+    },
     async record(entry) { await appendConversationEntry((await configForCall()).sessionId, entry, options.conversationGeneration); },
     async pageWrite(id, content) {
       if (!options.assistant) throw Error(uiText()('realtimeAgent.page_write_is_only_available_in_assistant'));

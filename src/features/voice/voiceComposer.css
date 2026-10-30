@@ -16,16 +16,36 @@
 .voice-dictation-error-close > svg { width:14px; height:14px; }
 .composer-footer { position:relative; }
 .composer-footer.is-voice-call > :is(.composer-tools,.composer-actions) { visibility:hidden; pointer-events:none; }
-.voice-composer-call { display:flex; align-items:center; gap:14px; min-width:0; height:36px; color:var(--text); }
+.voice-composer-call { display:flex; align-items:center; gap:8px; min-width:0; height:36px; color:var(--text); }
 .composer-footer > .voice-composer-call { position:absolute; inset:0; }
 .voice-call-signal { position:relative; display:flex; align-items:center; flex:1; min-width:0; height:32px; overflow:hidden; animation:voice-call-reveal .35s ease-out both; }
 .voice-call-wave { width:100%; height:32px; overflow:visible; color:var(--accent,#70b1ff); }
 .voice-call-wave path { fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
-.voice-composer-call[data-connecting=true] .voice-call-wave { animation:voice-call-connecting 1.3s ease-in-out infinite; }
+.voice-call-connecting { display:flex; align-items:center; justify-content:center; gap:5px; width:100%; color:var(--success,#44b77b); }
+.voice-call-connecting i { width:4px; height:4px; border-radius:50%; background:currentColor; animation:voice-call-connecting 1.3s ease-in-out infinite; }
+.voice-call-connecting i:nth-child(2) { animation-delay:.15s; }
+.voice-call-connecting i:nth-child(3) { animation-delay:.3s; }
+.voice-audio-toggle,.voice-call-drag { display:flex; flex:0 0 26px; width:26px; height:28px; padding:0; align-items:center; justify-content:center; border:0; border-radius:50%; color:var(--text-mid); background:transparent; cursor:pointer; }
+.voice-audio-toggle > svg,.voice-dictation-button > svg { width:17px; height:17px; }
+.voice-audio-toggle[aria-pressed=true] { color:var(--text-soft); background:var(--hover); }
+.voice-audio-toggle:hover,.voice-call-drag:hover { color:var(--text); background:var(--hover); }
+.voice-audio-toggle:focus-visible,.voice-call-drag:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .voice-call-status { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .voice-call-error { position:absolute; inset:0; display:flex; align-items:center; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; color:var(--danger,#d85c5c); background:var(--surface-strong); }
 .voice-composer-end { flex:0 0 28px; margin-left:2px; border:0; cursor:pointer; }
-.voice-call-undocked { position:fixed; right:24px; bottom:24px; z-index:1800; width:min(360px,calc(100vw - 32px)); padding:8px 12px; border-radius:24px; border:1px solid var(--border); background:var(--surface-strong); box-shadow:0 8px 24px #0002; }
+.voice-call-undocked { position:fixed; display:flex; align-items:center; right:24px; bottom:24px; z-index:1800; width:min(246px,calc(100vw - 16px)); box-sizing:border-box; padding:3px 7px 3px 3px; border-radius:24px; border:1px solid var(--border); background:var(--surface-strong); box-shadow:0 8px 24px #0002; }
+.voice-call-undocked > .voice-composer-call { flex:1; }
+.voice-call-drag { flex-basis:18px; width:18px; cursor:grab; touch-action:none; }
+.voice-call-drag:active { cursor:grabbing; }
+.voice-call-drag > svg { width:13px; height:16px; }
+.voice-dictation-control[data-engaged=true] { position:absolute; inset:0; width:auto; height:36px; align-items:center; gap:10px; z-index:2; }
+.voice-dictation-control[data-engaged=true] > .voice-dictation-button { flex:0 0 28px; color:var(--accent,#70b1ff); animation:voice-dictation-move .3s ease-out both; }
+.voice-dictation-control[data-muted=true] > .voice-dictation-button { background:var(--hover); }
+.voice-dictation-signal { flex:1; min-width:0; display:flex; align-items:center; }
+.voice-dictation-stop { flex:0 0 28px; }
+.composer-footer:has(.voice-dictation-control[data-engaged=true]) > .composer-tools,
+.composer-actions:has(.voice-dictation-control[data-engaged=true]) > :not(.voice-dictation-control) { visibility:hidden; pointer-events:none; }
+@keyframes voice-dictation-move { from { transform:translateX(var(--dictation-travel,0px)); } to { transform:translateX(0); } }
 .composer-stack.simple .composer-footer.is-voice-call { display:flex; grid-column:1 / -1; grid-row:auto; }
 .composer-stack.simple .composer-surface.voice-call-active { padding:10px 14px; }
 .composer-stack.simple .composer-footer.is-voice-call .composer-tools { display:none; }
@@ -34,4 +54,4 @@
 .composer-stack.input-only .composer-surface.voice-call-active { display:block; }
 @keyframes voice-call-reveal { from { clip-path:inset(0 100% 0 0); opacity:0; } to { clip-path:inset(0); opacity:1; } }
 @keyframes voice-call-connecting { 50% { opacity:.35; } }
-@media (prefers-reduced-motion:reduce) { .voice-hold-progress circle,.voice-call-signal,.voice-call-wave { animation:none!important; } }
+@media (prefers-reduced-motion:reduce) { .voice-hold-progress circle,.voice-call-signal,.voice-call-wave,.voice-call-connecting i,.voice-dictation-control[data-engaged=true] > .voice-dictation-button { animation:none!important; } }

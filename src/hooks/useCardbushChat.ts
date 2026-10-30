@@ -2940,10 +2940,20 @@ export function useCardbushChat(
   useEffect(() => {
     if (backend.scope) return;
     const append = (event: Event) => {
-      const { sessionId, entry } = (event as CustomEvent<{sessionId: string; entry: ConversationEntry}>).detail;
-      const additions = journalMessages([entry], sessionId);
+      const { sessionId, entry, streaming, discarded } = (event as CustomEvent<{sessionId: string; entry: ConversationEntry; streaming?: boolean; discarded?: string}>).detail;
+      if (discarded) {
+        setMessagesByConversation(current => ({...current, [sessionId]: (current[sessionId] ?? []).filter(item => item.id !== discarded || item.status !== 'streaming')}));
+        return;
+      }
+      const additions = journalMessages([entry], sessionId, streaming);
       if (!additions.length) return;
-      setMessagesByConversation(current => ({ ...current, [sessionId]: [...(current[sessionId] ?? []).filter(item => item.id !== entry.id), ...additions] }));
+      setMessagesByConversation(current => {
+        const previous = current[sessionId] ?? [], index = previous.findIndex(item => item.id === entry.id);
+        if (index >= 0 && streaming && previous[index].status !== 'streaming') return current;
+        const next = previous.slice();
+        if (index < 0) next.push(...additions); else next[index] = additions[0];
+        return { ...current, [sessionId]: next };
+      });
     };
     window.addEventListener('cardbush:conversation-entry', append);
     return () => window.removeEventListener('cardbush:conversation-entry', append);

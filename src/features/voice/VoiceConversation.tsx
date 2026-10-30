@@ -1,10 +1,10 @@
 import { uiText } from '../../i18n';
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Mic, X } from 'lucide-react';
+import { GripVertical, Mic, MicOff, Square, X } from 'lucide-react';
 import { VoiceSession, type VoiceState, type VoiceTarget } from './voiceSession';
 import { voiceComposerPresentation } from './voiceComposerPresentation';
-import { VoiceComposerPanel } from './VoiceComposerPanel';
+import { VoiceComposerPanel, VoiceWave } from './VoiceComposerPanel';
 import { playDictationCue } from './voiceCue';
 import './voice.css';
 import './voiceComposer.css';
@@ -65,8 +65,9 @@ export function VoiceButton({ language, disabled, onTranscript }: {
   language: string; disabled?: boolean; onTranscript: (text: string) => void;
 }) {
   const context = useVoiceContext(), session = context?.session;
-  const state = useSyncExternalStore<Pick<VoiceState, 'mode' | 'phase' | 'error' | 'retryAvailable'>>(session?.subscribe ?? noopSubscribe, session?.snapshot ?? (() => idle));
+  const state = useSyncExternalStore<Pick<VoiceState, 'mode' | 'phase' | 'error' | 'retryAvailable'> & Partial<Pick<VoiceState, 'muted' | 'level'>>>(session?.subscribe ?? noopSubscribe, session?.snapshot ?? (() => idle));
   const [starting, setStarting] = useState(false), sequence = useRef(0);
+  const control = useRef<HTMLSpanElement>(null), travel = useRef(0);
   const current = useRef({ context, disabled, onTranscript });
   current.current = { context, disabled, onTranscript };
   useLayoutEffect(() => {
@@ -95,6 +96,8 @@ export function VoiceButton({ language, disabled, onTranscript }: {
     if (state.mode !== 'idle') return;
     if (state.error) session!.end();
     const attempt = ++sequence.current;
+    const rect = control.current?.getBoundingClientRect(), footer = control.current?.closest('.composer-footer')?.getBoundingClientRect();
+    travel.current = rect && footer ? rect.left - footer.left : 0;
     setStarting(true);
     // Play before acquiring the microphone, so the cue cannot enter the transcript.
     await playDictationCue();
@@ -103,11 +106,19 @@ export function VoiceButton({ language, disabled, onTranscript }: {
     void session!.start('recording', text => current.current.onTranscript(text));
     setStarting(false);
   }
-  return <span className="voice-dictation-control">
+  const canMute = recording && state.phase === 'recording';
+  const micLabel = canMute ? uiText(language)(state.muted ? 'useAssistantActions.unmuteMicrophone' : 'useAssistantActions.muteMicrophone') : label;
+  return <span ref={control} className="voice-dictation-control" data-engaged={engaged} data-muted={Boolean(state.muted)} style={{ '--dictation-travel': `${travel.current}px` } as React.CSSProperties}>
     <button type="button" className={`voice-dictation-button${active ? ' is-active' : ''}`} aria-label={label} title={label}
-      aria-pressed={engaged} aria-busy={starting || recording && (state.phase === 'connecting' || state.phase === 'transcribing')} aria-keyshortcuts={engaged || recording ? 'Escape' : undefined} disabled={!context || disabled || state.mode !== 'idle' && !recording}
+      {...(canMute ? { 'aria-label': micLabel, title: micLabel } : {})}
+      aria-pressed={canMute ? Boolean(state.muted) : engaged} aria-busy={starting || recording && (state.phase === 'connecting' || state.phase === 'transcribing')} aria-keyshortcuts={engaged || recording ? 'Escape' : undefined} disabled={!context || disabled || state.mode !== 'idle' && !recording}
       onKeyDown={event => { if (event.key === 'Escape' && (engaged || recording)) { event.preventDefault(); event.stopPropagation(); sequence.current++; setStarting(false); if (recording) session?.end(); } }}
-      onClick={() => void toggle()}><Mic size={17} strokeWidth={1.7}/></button>
+      onClick={() => canMute ? session?.mute() : void toggle()}>{state.muted && engaged ? <MicOff/> : <Mic/>}</button>
+    {engaged && <>
+      <span className="voice-dictation-signal"><VoiceWave level={state.level ?? 0} quiet={!canMute || Boolean(state.muted)}/></span>
+      <button type="button" className="send-button voice-dictation-stop" aria-label={label} title={label}
+        onClick={() => void toggle()}><Square size={11} fill="currentColor"/></button>
+    </>}
     {error && !starting && <DictationErrorNotice key={error} message={error} language={language}/>}
   </span>;
 }
@@ -117,7 +128,24 @@ function UndockedVoiceCall({ session, language }: { session: VoiceSession; langu
   const mode = useSyncExternalStore(session.subscribe, () => session.snapshot().mode);
   const presentation = voiceComposerPresentation(session);
   const docked = useSyncExternalStore(presentation.subscribe, presentation.snapshot);
+  const box = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ x: number; y: number }>();
+  const drag = useRef<{ id: number; x: number; y: number; left: number; top: number } | undefined>(undefined);
+  const move = (x: number, y: number) => {
+    const rect = box.current?.getBoundingClientRect();
+    if (rect) setPosition({ x: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)), y: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)) });
+  };
+  useEffect(() => {
+    const resize = () => { const rect = box.current?.getBoundingClientRect(); if (rect) move(rect.left, rect.top); };
+    window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize);
+  }, []);
   if (mode !== 'call' || docked) return null;
-  return createPortal(<div className="voice-call-undocked"><VoiceComposerPanel session={session} language={language}/></div>,
+  return createPortal(<div ref={box} className="voice-call-undocked" style={position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto' } : undefined}>
+    <button type="button" className="voice-call-drag" aria-label={uiText(language)('voiceComposerPanel.moveCall')}
+      onPointerDown={event => { if (event.button !== 0) return; const rect = box.current!.getBoundingClientRect(); drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top }; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); }}
+      onPointerMove={event => { const start = drag.current; if (start?.id === event.pointerId) move(start.left + event.clientX - start.x, start.top + event.clientY - start.y); }}
+      onPointerUp={() => { drag.current = undefined; }} onLostPointerCapture={() => { drag.current = undefined; }} onPointerCancel={() => { drag.current = undefined; }}
+      onKeyDown={event => { const delta = { ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -16], ArrowDown: [0, 16] }[event.key]; const rect = box.current?.getBoundingClientRect(); if (delta && rect) { event.preventDefault(); move(rect.left + delta[0], rect.top + delta[1]); } }}><GripVertical/></button>
+    <VoiceComposerPanel session={session} language={language}/></div>,
     document.querySelector('.app, .cardling-desktop') ?? document.body);
 }

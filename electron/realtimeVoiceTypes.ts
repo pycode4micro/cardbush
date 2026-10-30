@@ -39,6 +39,7 @@ export interface RealtimeVoiceApi {
   saveSettings(input: RealtimeVoiceSettingsInput): Promise<RealtimeVoiceSettings>;
   start(input: { id: string; sessionId?: string; assistant?: { name: string; persona: string }; voice: 'female' | 'male'; context: { role: 'user' | 'assistant'; text: string }[] }): Promise<void>;
   audio(id: string, pcm: ArrayBuffer): Promise<void>;
+  history(id: string, cursor?: number): Promise<{ history: string; nextCursor: number | null; totalCharacters: number }>;
   control(id: string, action: 'mute' | 'unmute' | 'interrupt' | 'commit'): Promise<void>;
   results(id: string, results: RealtimeToolResult[]): Promise<void>;
   notify(id: string, result: string): Promise<void>;

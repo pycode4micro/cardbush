@@ -3983,6 +3983,8 @@
     "browser.extension.paused": "连接申请连续失败，已停止自动申请。准备好后点击连接重试。",
     "browser.extension.waiting": "CardBush 暂时离线，将在约 {seconds} 秒后重试已保存的连接，无需再次授权。",
     "browser.extension.retrying": "正在等待恢复已保存的连接。请确认 CardBush 已启动并启用 Browser Use，无需重新配对。",
-    "browser.extension.enrollmentRetry": "本机连接申请未完成，等待有限重试。请确认 CardBush 已启动并启用 Browser Use。"
+    "browser.extension.enrollmentRetry": "本机连接申请未完成，等待有限重试。请确认 CardBush 已启动并启用 Browser Use。",
+    "voiceComposerPanel.muteOutput": "静音对方声音",
+    "voiceComposerPanel.moveCall": "移动通话条"
   }
 }

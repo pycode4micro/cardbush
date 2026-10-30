@@ -4,6 +4,8 @@ export class RealtimeVoiceAudio {
   private input?: AudioContext;
   private output?: AudioContext;
   private outputGain?: GainNode;
+  private outputAnalyser?: AnalyserNode;
+  private meter?: ReturnType<typeof setInterval>;
   private outputMuted = false;
   private stream?: MediaStream;
   private node?: AudioWorkletNode;
@@ -11,13 +13,21 @@ export class RealtimeVoiceAudio {
   private cursor = 0;
   private closed = false;
   constructor(private frame: (pcm: ArrayBuffer) => void, private playing: (active: boolean) => void,
-    private level: (value: number) => void, private failed: (error: Error) => void) {}
+    private level: (value: number) => void, private failed: (error: Error) => void,
+    private outputLevel: (value: number) => void = () => {}) {}
   async prepare(microphoneId: string) {
     try {
       this.input = new AudioContext({ sampleRate: 16000 });
       this.output = new AudioContext({ sampleRate: 24000 });
       this.outputGain = this.output.createGain(); this.outputGain.gain.value = this.outputMuted ? 0 : 1;
-      this.outputGain.connect(this.output.destination);
+      this.outputAnalyser = this.output.createAnalyser(); this.outputAnalyser.fftSize = 256;
+      this.outputGain.connect(this.outputAnalyser).connect(this.output.destination);
+      const samples = new Float32Array(this.outputAnalyser.fftSize);
+      this.meter = setInterval(() => {
+        if (!this.sources.size || this.closed) return;
+        this.outputAnalyser!.getFloatTimeDomainData(samples);
+        this.outputLevel(Math.min(1, Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length) * 5));
+      }, 50);
       if (this.input.sampleRate !== 16000) throw Error(uiText()('realtimeVoiceAudio.this_audio_device_does_not_support_16'));
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true,
         autoGainControl: true, channelCount: 1, ...(microphoneId ? { deviceId: { exact: microphoneId } } : {}) }, video: false });
@@ -46,6 +56,7 @@ export class RealtimeVoiceAudio {
   setOutputMuted(value: boolean) {
     this.outputMuted = value;
     if (this.outputGain) this.outputGain.gain.value = value ? 0 : 1;
+    if (value) this.outputLevel(0);
   }
   append(pcm: string, rate: number) {
     const context = this.output; if (!context || this.closed) return;
@@ -59,11 +70,11 @@ export class RealtimeVoiceAudio {
     const buffer=context.createBuffer(1,bytes.length/2,rate), channel=buffer.getChannelData(0);
     for (let i=0;i<channel.length;i++) channel[i]=view.getInt16(i*2,true)/32768;
     const source=context.createBufferSource(); source.buffer=buffer; source.connect(this.outputGain ?? context.destination);
-    source.onended=()=>{ this.sources.delete(source); source.disconnect(); if (!this.sources.size) this.playing(false); };
+    source.onended=()=>{ this.sources.delete(source); source.disconnect(); if (!this.sources.size) { this.playing(false); this.outputLevel(0); } };
     this.sources.add(source); this.cursor=Math.max(this.cursor,context.currentTime+.02);
     source.start(this.cursor); this.cursor+=buffer.duration; this.playing(true);
   }
-  stop() { for (const source of this.sources) { source.onended=null; try { source.stop(); } catch {} source.disconnect(); } this.sources.clear(); this.cursor=0; this.playing(false); }
-  close() { this.closed=true; this.stop(); this.node?.disconnect(); this.node?.port.close(); this.stream?.getTracks().forEach(track=>track.stop());
+  stop() { for (const source of this.sources) { source.onended=null; try { source.stop(); } catch {} source.disconnect(); } this.sources.clear(); this.cursor=0; this.playing(false); this.outputLevel(0); }
+  close() { this.closed=true; clearInterval(this.meter); this.stop(); this.node?.disconnect(); this.node?.port.close(); this.stream?.getTracks().forEach(track=>track.stop());
     void this.input?.close().catch(()=>{}); void this.output?.close().catch(()=>{}); }
 }

@@ -88,7 +88,7 @@ export function recordAssistantFeedback(
     const settings=readIndividuation();
     let memorySaved=false;
     if(options.memoryAvailable!==false&&(settings.habits||previous?.memorySaved)) {
-      const result=await recordPersonalizationFeedback({sessionId:message.conversationId??'',turnId:message.turnId??'',
+      const result=await recordPersonalizationFeedback({sessionId:message.conversationId??'',turnId:message.turnId?.trim()||undefined,
         messageId:message.messageId||message.assistantMessageId||String(message.metadata?.message_id||'')||message.id,
         // Disabling habits does not prevent explicitly withdrawing a previously recorded vote.
         rating:settings.habits?rating:null},settings,crypto.randomUUID(),options.connectionId);

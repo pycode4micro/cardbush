@@ -27,21 +27,22 @@ module.exports = async ({ run, until, pause, window, root }) => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,text);input.dispatchEvent(new Event('input',{bubbles:true}));};
     renderPrediction();
   `);
-  await until('!!document.querySelector(".composer-prediction-accept")', 'forecast appears in the empty input');
+  await until('!!document.querySelector(".composer-surface.has-next-step")', 'forecast appears in the empty input');
+  assert.equal(await run('!!document.querySelector(".composer-prediction-accept")'),false,'keyboard hints do not appear on the toolbar');
   assert.equal(await run('document.querySelector("textarea").placeholder'), await run('prediction.text'));
   assert.equal(await run('document.querySelector("textarea").value'), '', 'suggestion is not an authored draft');
   assert.deepEqual(await run('predSends'), []);
   await run(`window.badPrediction={...prediction,id:'narrative',text:'用户可能接下来要求运行这个示例流程，或把其中的节点替换为自己注册的员工。'};`);
   for (const style of ['standard','simple']) for (const supplied of [false,true]) {
     await run(`predStyle='${style}';predContext={sessionId:'predict-session',browserTabs:[],messages:predMessages.map(message=>({...message,toolExecutions:message.toolExecutions?.map(tool=>({...tool,metadata:{nextStepPrediction:badPrediction}}))})),${supplied ? 'nextStepPrediction:badPrediction' : ''}};renderPrediction();`);
-    await until('!document.querySelector(".composer-prediction-accept")','narrative forecasts are hidden in all shared inputs');
+    await until('!document.querySelector(".composer-surface.has-next-step")','narrative forecasts are hidden in all shared inputs');
     assert.equal(await run('predKey("Tab")'),false,'rejected prediction leaves normal Tab navigation');
     await run('predKey()');
     assert.equal(await run('predProps.draft'),'','empty Enter does not insert a rejected prediction');
     assert.deepEqual(await run('predSends'),[]);
   }
   await run('predStyle="standard";predContext={sessionId:"predict-session",browserTabs:[],messages:predMessages};renderPrediction();');
-  await until('!!document.querySelector(".composer-prediction-accept")','valid suggestion remains usable');
+  await until('!!document.querySelector(".composer-surface.has-next-step")','valid suggestion remains usable');
   for (const key of ['Enter', 'Tab']) for (const options of [{isComposing:true}, {keyCode:229}, {shiftKey:true}, {ctrlKey:true}, {metaKey:true}, {altKey:true}, {repeat:true}]) {
     const prevented = await run(`predKey('${key}',${JSON.stringify(options)})`);
     if (key === 'Tab' && !options.repeat) assert.equal(prevented, false, 'IME and modified Tab retain their native behavior');
@@ -62,10 +63,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('predType(prediction.text+"，先检查改动");predKey()');
   await until('predSends.length===1', 'second Enter sends the edited draft');
   assert.equal(await run('predSends[0]'), await run('prediction.text+"，先检查改动"'));
-  await until('!document.querySelector(".composer-prediction-accept")', 'accepted suggestion stays dismissed');
+  await until('!document.querySelector(".composer-surface.has-next-step")', 'accepted suggestion stays dismissed');
 
   await run('predContext={...predContext,sessionId:"predict-tab",nextStepPrediction:{...prediction,id:"tab-standard"}};renderPrediction();');
-  await until('!!document.querySelector(".composer-prediction-accept")', 'Tab prediction in standard composer');
+  await until('!!document.querySelector(".composer-surface.has-next-step")', 'Tab prediction in standard composer');
   assert.equal(await run('predKey("Tab")'), true, 'Tab fills the draft instead of moving focus');
   await until('predProps.draft===prediction.text && document.querySelector("textarea").selectionStart===prediction.text.length', 'Tab inserts the exact editable text with the caret at the end');
   assert.equal(await run('predSends.length'), 1, 'Tab inserts without sending');
@@ -78,29 +79,29 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('predSends.length'), 1, 'empty Enter without a prediction has no effect');
   assert.equal(await run('predKey("Tab")'), false, 'empty input without a prediction keeps normal Tab navigation');
   await run('predContext={sessionId:"predict-session",browserTabs:[],messages:predMessages.map(m=>({...m,turnId:"new",toolExecutions:m.toolExecutions?.map(t=>({...t,turnId:"new"}))}))};renderPrediction();');
-  await until('!!document.querySelector(".composer-prediction-accept")', 'new turn may suggest the same need again');
+  await until('!!document.querySelector(".composer-surface.has-next-step")', 'new turn may suggest the same need again');
   await run('predType("我自己的消息")');
-  await until('!document.querySelector(".composer-prediction-accept")', 'typing keeps the user draft');
+  await until('!document.querySelector(".composer-surface.has-next-step")', 'typing keeps the user draft');
   await run('predKey()');
   await until('predSends.length===2', 'normal Enter still sends authored text');
   assert.equal(await run('predSends[1]'), '我自己的消息');
 
   for (const patch of [{sending:true},{submissionPending:true},{inputReadOnly:true},{queuedMessageCount:1}]) {
     await run(`Object.assign(predProps,${JSON.stringify(patch)});renderPrediction();`);
-    await until('!document.querySelector(".composer-prediction-accept")', 'busy/queued/readonly composer hides suggestions');
+    await until('!document.querySelector(".composer-surface.has-next-step")', 'busy/queued/readonly composer hides suggestions');
     assert.equal(await run('predKey("Tab")'), false, 'unavailable prediction does not intercept Tab');
     assert.equal(await run('predProps.draft'), '', 'Tab cannot insert an unavailable prediction');
     assert.equal(await run('predSends.length'), 2, 'Tab cannot submit while suggestions are unavailable');
     await run('Object.assign(predProps,{sending:false,submissionPending:false,inputReadOnly:false,queuedMessageCount:0});renderPrediction();');
-    await until('!!document.querySelector(".composer-prediction-accept")', 'idle composer restores unaccepted suggestion');
+    await until('!!document.querySelector(".composer-surface.has-next-step")', 'idle composer restores unaccepted suggestion');
   }
   await run('views.saveIndividuation({habits:true,predictions:false})');
-  await until('!document.querySelector(".composer-prediction-accept")', 'prediction switch disables suggestions immediately');
+  await until('!document.querySelector(".composer-surface.has-next-step")', 'prediction switch disables suggestions immediately');
   await run('views.saveIndividuation({habits:true,predictions:true})');
-  await until('!!document.querySelector(".composer-prediction-accept")', 'prediction switch restores suggestions');
+  await until('!!document.querySelector(".composer-surface.has-next-step")', 'prediction switch restores suggestions');
 
   await run('predProps.sending=true;renderPrediction();');
-  await until('!document.querySelector(".composer-prediction-accept")', 'loop start withdraws the idle prediction');
+  await until('!document.querySelector(".composer-surface.has-next-step")', 'loop start withdraws the idle prediction');
   await run('predKey()');
   assert.equal(await run('predCancels'), 0, 'empty Enter does not cancel while the loop starts');
   await until('!!document.querySelector(".send-button .lucide-square") && !document.querySelector(".send-button").disabled', 'explicit stop becomes available');
@@ -133,46 +134,46 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('predKey();document.querySelector(".send-button").click()');
   assert.equal(await run('predCancels'), 1, 'empty Enter cannot request another cancellation');
   await run('Object.assign(predProps,{sending:false,stopping:false});views.saveIndividuation({habits:true,predictions:true});renderPrediction();');
-  await until('!!document.querySelector(".composer-prediction-accept")', 'idle prediction remains available after loop ends');
+  await until('!!document.querySelector(".composer-surface.has-next-step")', 'idle prediction remains available after loop ends');
 
   await run(`window.cardbushDesktop.pickAttachments=async()=>['D:/fixture/report.md'];
     document.querySelector('.tool-chip[title=添加]').click();`);
   await until('!!document.querySelector(".composer-add-menu")', 'attachment menu');
   await run(`[...document.querySelectorAll('.composer-add-menu button')].find(button=>button.textContent.includes('文件')).click()`);
   await until('!!document.querySelector(".composer-file-attachment")', 'attachment mounted');
-  assert.equal(await run('!!document.querySelector(".composer-prediction-accept")'), false);
+  assert.equal(await run('!!document.querySelector(".composer-surface.has-next-step")'), false);
   await run('predKey()');
   await until('predSends.length===5', 'attachment-only request keeps normal Enter behavior');
   assert.match(await run('predSends[4]'), /report\.md/);
   assert.doesNotMatch(await run('predSends[4]'), /提交 push/);
 
   await run('predAssistant=true;renderPrediction();');
-  await until('!!document.querySelector(".composer-stack.simple .composer-prediction-accept")', 'assistant uses the shared prediction input');
+  await until('!!document.querySelector(".composer-stack.simple .composer-surface.has-next-step")', 'assistant uses the shared prediction input');
   await run('window.validPrediction=prediction;prediction=badPrediction;renderPrediction();');
-  await until('!document.querySelector(".composer-prediction-accept")','assistant also filters supplied narrative forecasts');
+  await until('!document.querySelector(".composer-surface.has-next-step")','assistant also filters supplied narrative forecasts');
   assert.equal(await run('predKey("Tab")'),false);
   await run('predKey()');
   assert.equal(await run('predProps.draft'),'');assert.equal(await run('predSends.length'),5);
   await run('prediction=validPrediction;renderPrediction();');
-  await until('!!document.querySelector(".composer-prediction-accept")','assistant restores a valid forecast');
-  assert.notEqual(await run('getComputedStyle(document.querySelector(".composer-prediction-accept")).display'), 'none');
+  await until('!!document.querySelector(".composer-surface.has-next-step")','assistant restores a valid forecast');
+  assert.notEqual(await run('getComputedStyle(document.querySelector(".composer-surface.has-next-step")).display'), 'none');
   window.setContentSize(430, 720); await pause(80);
   assert.equal(await run('(()=>{const a=document.querySelector("textarea").getBoundingClientRect(),b=document.querySelector(".composer-actions").getBoundingClientRect();return a.bottom<=b.top+1})()'), true,
     'narrow simple input keeps suggested text above the controls');
   await fs.writeFile(path.join(root, 'tmp', 'composer-prediction-assistant.png'), (await window.capturePage()).toPNG());
   await run('predContext.predictionPending=true;renderPrediction();');
-  await until('!document.querySelector(".composer-prediction-accept")', 'assistant busy state hides old suggestion');
+  await until('!document.querySelector(".composer-surface.has-next-step")', 'assistant busy state hides old suggestion');
   await run('predKey();predKey("Enter",{repeat:true});');
   assert.equal(await run('predKey("Tab")'), false, 'busy assistant retains normal Tab navigation');
   assert.equal(await run('predSends.length'), 5, 'busy assistant empty Enter/Tab does not send');
   assert.equal(await run('predProps.draft'), '', 'busy assistant does not accept the idle prediction');
   await run('predContext.predictionPending=false;renderPrediction();');
-  await until('!!document.querySelector(".composer-prediction-accept")', 'assistant idle');
-  await run('document.querySelector(".composer-prediction-accept").click()');
-  await until('predProps.draft===prediction.text', 'pointer confirmation also only inserts');
+  await until('!!document.querySelector(".composer-surface.has-next-step")', 'assistant idle');
+  await run('predKey("Enter")');
+  await until('predProps.draft===prediction.text', 'keyboard confirmation only inserts');
   assert.equal(await run('predSends.length'), 5);
   await run('prediction={...prediction,id:"tab-assistant"};predType("");renderPrediction();');
-  await until('!!document.querySelector(".composer-prediction-accept")', 'new prediction in the simple assistant composer');
+  await until('!!document.querySelector(".composer-surface.has-next-step")', 'new prediction in the simple assistant composer');
   assert.equal(await run('predKey("Tab")'), true);
   await until('predProps.draft===prediction.text', 'assistant Tab also inserts without sending');
   assert.equal(await run('predSends.length'), 5);

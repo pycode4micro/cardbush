@@ -22,10 +22,25 @@ const compile = file => {
 };
 const { SpeechPhrases, SpokenTranscript } = await compile('src/features/voice/speechText.ts');
 const { VoiceSession } = await compile('src/features/voice/voiceSession.ts');
+const { VoiceCapture } = await compile('src/features/voice/voiceAudio.ts');
 const { pcmWave } = await compile('src/features/voice/voiceRecording.ts');
 const { VoiceActivity, isVoicePlaybackEcho } = await compile('src/features/voice/voiceActivity.ts');
 const pause = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+
+test('pausing dictation keeps captured speech and Stop delivers it once even while muted',async()=>{
+  const previous=globalThis.window;globalThis.window={clearInterval};
+  try {
+    const clips=[],track={enabled:true,stop(){}};
+    const capture=new VoiceCapture('recording',{level(){},speech(){},error(){},clip:blob=>clips.push(blob)});
+    const recorder={state:'recording',mimeType:'audio/webm',pause(){this.state='paused';},resume(){this.state='recording';},stop(){this.state='inactive';queueMicrotask(()=>this.onstop?.());}};
+    capture.stream={getAudioTracks:()=>[track],getTracks:()=>[track]};capture.recorder=recorder;capture.chunks=[new Blob(['before'])];
+    capture.mute(true);assert.equal(track.enabled,false);assert.equal(recorder.state,'paused');assert.equal(clips.length,0);
+    capture.mute(false);assert.equal(track.enabled,true);assert.equal(recorder.state,'recording');capture.chunks.push(new Blob(['after']));
+    capture.mute(true);capture.finish();await pause();assert.equal(clips.length,1);assert.equal(await clips[0].text(),'beforeafter');
+    capture.close();
+  } finally {globalThis.window=previous;}
+});
 
 function service(fetcher) {
   const directory = mkdtempSync(resolve('tmp/voice-service-test-'));

@@ -1149,6 +1149,15 @@ export class InMemoryRuntimeHost {
           const input=assistantFeedbackInputSchema.parse(payload.feedback);
           if(!payload.operationId?.trim()||payload.operationId.length>120)throw new Error('A stable feedback operation ID is required.');
           if(!input.rating||!settings.habits)return this.#memory.store.feedback(input,settings,payload.operationId,undefined,signal);
+          if (!input.turnId) {
+            const entries = this.#assistant.journal.read(input.sessionId);
+            const index = entries.findIndex(entry => entry.id === input.messageId);
+            const reply = entries[index];
+            if (!reply || reply.role !== 'assistant' || reply.visibility === 'internal' || !reply.content.trim())
+              throw new Error('The rated reply is unavailable. Refresh the conversation before rating it.');
+            const user = entries.slice(0, index).filter(entry => entry.role === 'user').at(-1)?.content ?? '';
+            return this.#memory.store.feedback(input,settings,payload.operationId,{user,assistant:reply.content},signal);
+          }
           const snapshot=this.#sessions.snapshot(input.sessionId);
           const turn=snapshot?.turns.find(turn=>turn.turnId===input.turnId);
           const index=turn?.messages.findIndex(item=>item.messageId===input.messageId)??-1;

@@ -99,5 +99,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.ok(hold.every(frame=>frame.distance<=1), 'Shadow click lands at the actual bottom');
   assert.ok(hold.filter(frame=>frame.time<180).every(frame=>!frame.hidden), 'Shadow also holds for 200ms after arrival');
   assert.equal(hold.at(-1).hidden,true,'Shadow button eventually dismisses');
-  console.log('Shadow idle, sending, completed and mode-switch rendering passed');
+  const fs=require('node:fs'),path=require('node:path'),{webContents}=require('electron');
+  const directory=fs.mkdtempSync(path.join(root,'tmp','shadow-html-'));
+  const file=path.join(directory,'preview.html').replaceAll('\\','/');
+  fs.writeFileSync(file,'<!doctype html><title>Shadow HTML</title><p id="live">Loading</p><script>document.getElementById("live").textContent="Shadow HTML rendered"</script>');
+  await run(`
+    shadowFixture.fetchSessionMessages=async()=>({messages:[{id:'shadow-html',role:'assistant',turnId:'html-turn',status:'completed',metadata:{transcript_kind:'assistant_final'},content:${JSON.stringify('![Preview](<'+file+'>)')}}]});
+    renderView(h(views.ShadowWindow,{key:'html-shadow',context:{...shadowContext,sessionId:'html-shadow',projectDir:${JSON.stringify(directory)}},embedded:true}));void 0;
+  `);
+  await until("!!document.querySelector('.inline-html-viewport.is-ready')",'Shadow HTML guest renders');
+  const page=webContents.fromId(await run("document.querySelector('.inline-html-webview').getWebContentsId()"));
+  assert.equal(await page.executeJavaScript("document.getElementById('live').textContent"),'Shadow HTML rendered');
+  assert.deepEqual(await page.executeJavaScript('[typeof require,typeof window.cardbushDesktop]'),['undefined','undefined'],'HTML guest retains its sandbox');
+  console.log('Shadow idle, sending, completed, mode-switch and sandboxed HTML rendering passed');
 };

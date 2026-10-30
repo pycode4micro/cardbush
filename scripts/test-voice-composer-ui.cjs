@@ -29,7 +29,7 @@ app.whenReady().then(async()=>{
       const settings=${JSON.stringify({...defaultVoiceSettings,engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,speakerLockEnabled:false})};
       window.cardbushDesktop={pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),voice:{settings:async()=>settings,setCallActive:async()=>{},cancel:async()=>{},
         transcribe:async()=>{fixture.transcriptions++;if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);if(fixture.failTranscription){fixture.failTranscription=false;throw Error('fixture transcription failed');}return{text:'这是录音测试',speakerVerified:true};},speak:async()=>{},onAudio:()=>()=>{},
-        realtime:{settings:async()=>({mode:'realtime',hasApiKey:true}),start:async()=>{fixture.started++;if(fixture.failStart)throw Error('fixture connection failed');},audio:async()=>fixture.frames++,control:async()=>{},playback:async()=>{},close:async()=>fixture.closed++,onEvent:()=>()=>{}}}};
+        realtime:{settings:async()=>({mode:'realtime',hasApiKey:true}),start:async()=>{fixture.started++;if(fixture.holdStart)await new Promise(resolve=>fixture.releaseStart=resolve);if(fixture.failStart)throw Error('fixture connection failed');},audio:async()=>fixture.frames++,control:async()=>{},playback:async()=>{},close:async()=>fixture.closed++,onEvent:()=>()=>{}}}};
       fixture.state=()=>applicationVoiceSession().snapshot();
       const noop=()=>{},controls={selectedModel:'fixture',availableModels:[],onModelChange:noop,onConfigureModels:noop,referencePlanMode:'off',onReferencePlanModeChange:noop,permissionMode:'task_free',onPermissionModeChange:noop,subagentPermissionRouting:'inherit',onSubagentPermissionRoutingChange:noop,reasoningLevel:'medium',reasoningLevels:['medium'],reasoningLevelAvailable:false,onReasoningLevelChange:noop,skills:[],disabledSkillNames:new Set(),onToggleSkill:noop};
       function Fixture(){const [style,setStyle]=useState('standard'),[draft,setDraft]=useState(''),[view,setView]=useState('chat'),[theme,setTheme]=useState('dark'),[sending,setSending]=useState(false),[portal,setPortal]=useState(false),[portalTarget,setPortalTarget]=useState(null),[language,setLanguage]=useState('zh');
@@ -133,10 +133,14 @@ app.whenReady().then(async()=>{
       await click('.voice-dictation-button');await until('fixture.state().phase==="recording"');
       assert.ok(await read('document.querySelector(".voice-dictation-button").classList.contains("is-active")'));
       assert.equal(await read('!!document.querySelector(".voice-mini,.voice-dialog,.voice-composer-call")'),false);
-      assert.deepEqual(await rect('.voice-dictation-button'),mic);
+      await pause(350);
+      assert.ok((await rect('.voice-dictation-button')).x<mic.x-40,'dictation microphone moves to the left');
+      await click('.voice-dictation-button');assert.equal(await read('fixture.state().muted'),true);
+      assert.equal(await read('fixture.state().phase'),'recording','mute preserves dictation capture');
+      await click('.voice-dictation-button');assert.equal(await read('fixture.state().muted'),false);
       await screenshot(style+'-dictation');await pause(200);
       await read('fixture.holdTranscription=true;fixture.releaseTranscription=undefined;fixture.failTranscription=true;void 0');
-      await click('.voice-dictation-button');await until('typeof fixture.releaseTranscription==="function"');
+      await click('.voice-dictation-stop');await until('typeof fixture.releaseTranscription==="function"');
       await fill('识别期间继续编辑');assert.equal(await read('fixture.tracks.every(t=>t.readyState==="ended")'),true);
       await read('fixture.holdTranscription=false;fixture.releaseTranscription();void 0');await until('document.querySelector(".voice-dictation-error")');
       await click('.voice-dictation-error-close');await until('!document.querySelector(".voice-dictation-error")');
@@ -152,7 +156,10 @@ app.whenReady().then(async()=>{
       await read('Array.from(document.querySelectorAll(".composer-popover button")).find(n=>n.textContent.includes("文件和文件夹")).click();void 0');
       await until('document.querySelector(".composer-file-strip")');
       const beforeCall=await rect('.composer-surface .send-button'),beforeSent=await read('fixture.sent.length');
-      await pointer(true);await until('fixture.state().phase==="listening"&&document.querySelector(".voice-call-active")');
+      await read('fixture.holdStart=true;void 0');await pointer(true);await until('typeof fixture.releaseStart==="function"');
+      assert.ok(await read('document.querySelector(".voice-call-connecting")&&!document.querySelector(".voice-call-wave")'),'connecting uses its own indicator before the waveform');
+      await screenshot(style+'-connecting');await read('fixture.holdStart=false;fixture.releaseStart();fixture.releaseStart=undefined;void 0');
+      await until('fixture.state().phase==="listening"&&document.querySelector(".voice-call-active")');
       assert.equal(await read('fixture.started'),index+1,'one call per long press');
       assert.equal(await read('fixture.sent.length'),beforeSent,'releasing a call hold must not submit the draft');
       assert.equal(await read('document.querySelector(".composer-surface textarea").value'),'请保留这段草稿');
@@ -162,8 +169,21 @@ app.whenReady().then(async()=>{
       assert.ok(await read('getComputedStyle(document.querySelector(".composer-tools")).visibility==="hidden"'));
       assert.ok(await read('document.querySelector(".voice-call-wave path").getAttribute("d").startsWith("M")'));
       await screenshot(style+'-call');
+      assert.equal(await read('document.querySelectorAll(".voice-composer-call .voice-audio-toggle").length'),2,'call controls expose only microphone and output mute');
+      await click('.voice-composer-call .voice-audio-toggle');await until('fixture.state().muted===true');
+      await click('.voice-composer-call .voice-audio-toggle');await until('fixture.state().muted===false');
+      await click('.voice-composer-call .voice-audio-toggle:nth-of-type(2)');await until('fixture.state().outputMuted===true');
+      await click('.voice-composer-call .voice-audio-toggle:nth-of-type(2)');await until('fixture.state().outputMuted===false');
       const startedAt=await read('fixture.state().startedAt'),frames=await read('fixture.frames');
       await read('fixture.view("other");void 0');await until('document.querySelector(".voice-call-undocked")&&!document.querySelector(".voice-call-active")');
+      const floating=await rect('.voice-call-undocked'),handle=await rect('.voice-call-drag');
+      const x=Math.round(handle.x+handle.width/2),y=Math.round(handle.y+handle.height/2);
+      win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,x,y});
+      win.webContents.sendInputEvent({type:'mouseMove',x:x-80,y:y-50});
+      win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:x-80,y:y-50});await pause(80);
+      const moved=await rect('.voice-call-undocked');assert.ok(moved.x<floating.x-60&&moved.y<floating.y-35,'floating call moves freely');
+      assert.ok(moved.width<=246&&moved.height<55,'background controls remain compact');
+      await screenshot(style+'-floating');
       await until('fixture.frames>'+frames+'+4');assert.equal(await read('fixture.state().startedAt'),startedAt);
       await read('fixture.view('+JSON.stringify(index?'assistant':'chat')+');void 0');
       await until('document.querySelector(".voice-call-active")&&!document.querySelector(".voice-call-undocked")');
@@ -181,7 +201,7 @@ app.whenReady().then(async()=>{
       assert.ok(await read('fixture.sent.at(-1).includes("@C:/fixture/report.txt")'));
       await read('fixture.theme("dark");void 0');
       await click('.voice-dictation-button');await until('fixture.state().phase==="recording"');await pause(200);
-      await read('fixture.holdTranscription=true;fixture.releaseTranscription=undefined;void 0');await click('.voice-dictation-button');await until('typeof fixture.releaseTranscription==="function"');
+      await read('fixture.holdTranscription=true;fixture.releaseTranscription=undefined;void 0');await click('.voice-dictation-stop');await until('typeof fixture.releaseTranscription==="function"');
       await click('.voice-dictation-button');await until('fixture.state().mode==="idle"');
       await fill('取消后新草稿');await read('fixture.holdTranscription=false;fixture.releaseTranscription();void 0');await pause(100);
       assert.equal(await read('document.querySelector(".composer-surface textarea").value'),'取消后新草稿');

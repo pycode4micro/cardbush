@@ -247,7 +247,7 @@ app.whenReady().then(async () => {
     } : {}),
     webPreferences: {
       nodeIntegration: true, contextIsolation: false, backgroundThrottling: false,
-      webviewTag: ['agent-file-preview', 'html-references', 'html-lifecycle', 'html-diagnostics', 'html-wheel', 'media-reveal', 'review-preview', 'inspector-cover', 'inspector-sessions'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
+      webviewTag: ['shadow-state', 'agent-file-preview', 'html-references', 'html-lifecycle', 'html-diagnostics', 'html-wheel', 'media-reveal', 'review-preview', 'inspector-cover', 'inspector-sessions'].includes(process.env.CARDBUSH_APP_VIEWS_CASE),
       offscreen: true, partition: 'cardbush-app-view-test',
     },
   });
