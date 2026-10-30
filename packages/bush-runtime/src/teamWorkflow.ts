@@ -40,7 +40,9 @@ export class TeamWorkflowManager {
   private writes: Promise<unknown> = Promise.resolve();
   private closed = false;
   constructor(private readonly agents: RegisteredAgentStore, private readonly dispatch: Dispatch,
-    private readonly options: { directory?: string; onResult?: (run: TeamRun, result: Promise<TeamRun>) => void } = {}) {
+    private readonly options: { directory?: string; onResult?: (run: TeamRun, result: Promise<TeamRun>) => void;
+      readConversation?: SubagentDispatcher['readConversation'];
+      resolveNodeTaskId?: (run: TeamRun, node: TeamRun['nodes'][number]) => string | undefined } = {}) {
     this.definitions = new DefinitionStore(value => teamWorkflowSchema.parse(value), options.directory && join(options.directory, 'definitions'));
     this.runs = new DefinitionStore(value => teamRunSchema.parse(value), options.directory && join(options.directory, 'runs'));
   }
@@ -111,7 +113,17 @@ export class TeamWorkflowManager {
   }
   async listRuns(parentSessionId?: string) {
     const records = await this.runs.list();
-    return Promise.all(records.filter(record => !parentSessionId || record.definition.parentSessionId === parentSessionId).map(record => this.settleInterrupted(record.definition)));
+    return Promise.all(records.filter(record => !parentSessionId || record.definition.parentSessionId === parentSessionId).map(async record => this.restoreNodeTaskIds(await this.settleInterrupted(record.definition))));
+  }
+  private async restoreNodeTaskIds(run: TeamRun) {
+    if (this.active.has(run.id) || !this.options.resolveNodeTaskId) return run;
+    let changed = false;
+    for (const node of run.nodes) if (!node.taskId && node.sessionId) {
+      const taskId = this.options.resolveNodeTaskId(run, node);
+      if (taskId) { node.taskId = taskId; changed = true; }
+    }
+    if (changed) await this.persist(run);
+    return run;
   }
   async taskHandles(parentSessionId: string): Promise<RuntimeTaskHandle[]> {
     return (await this.listRuns(parentSessionId)).map(run => ({ task_id: run.id, kind: 'team', status: run.status,
@@ -121,6 +133,14 @@ export class TeamWorkflowManager {
         if (nodeIds?.some(id => !current.nodes.some(node => node.id === id))) throw new Error('Unknown Team node ID. Use tasks inspect to read this run first.');
         return this.result(current, nodeIds ?? teamResultNodeIds(current));
       },
+      ...(this.options.readConversation ? { readConversation: async (context: ToolHandlerContext<unknown>, cursor?: string, nodeIds?: string[]) => {
+        const current = await this.readRun(run.id, context.sessionId);
+        if (nodeIds?.length !== 1) throw new Error('Select exactly one Team node to read its conversation.');
+        const node = current.nodes.find(node => node.id === nodeIds[0]);
+        if (!node) throw new Error('Unknown Team node ID. Use tasks inspect to read this run first.');
+        if (!node.taskId) throw new Error('This Team node has no recorded child task. Inspect its status and output before starting replacement work.');
+        return this.options.readConversation!(context, node.taskId, cursor);
+      } } : {}),
       wait: async signal => { const pending = this.active.get(run.id)?.promise; if (pending) await settleAtAbort(pending, signal, 'Stopped waiting; Team continues.'); },
       stop: context => this.stopRun(run.id, context),
     }));
@@ -150,7 +170,7 @@ export class TeamWorkflowManager {
   private async readRun(id: string, parentSessionId?: string) {
     const record = await this.runs.get(id);
     if (!record || parentSessionId && record.definition.parentSessionId !== parentSessionId) throw new Error('Team run is unavailable in this conversation. Use run_id from team run or team list with section=runs; team_id, employee IDs and node IDs do not identify a run.');
-    return this.settleInterrupted(record.definition);
+    return this.restoreNodeTaskIds(await this.settleInterrupted(record.definition));
   }
   private result = teamRunResult;
   private async execute(context: Context): Promise<unknown> {

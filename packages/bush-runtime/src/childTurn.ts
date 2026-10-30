@@ -1,5 +1,7 @@
 import {
   BUSH_SESSION_TURN_REQUEST_PROTOCOL,
+  REPORT_DELIVERY_INSTRUCTIONS,
+  SOURCE_BINDING_INSTRUCTIONS,
   individuationPreferenceText,
   DEFAULT_CHILD_AGENT_DISABLED_TOOLS,
   modelMessageSchema,
@@ -156,6 +158,10 @@ export function buildChildTurnRequest(input: {
       ...(input.additionalPrefixMessages ?? []),
     ],
     inputMessages: [{
+      messageId: `${input.ids.messageId}:delivery-guidance`,
+      message: { role: 'user', name: 'delivery_guidance', visibility: 'internal',
+        content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') },
+    }, {
       messageId: `${input.ids.messageId}:individuation-preference`,
       message: { role: 'user', name: 'individuation_preference', visibility: 'internal',
         content: individuationPreferenceText(input.metadata.individuation ?? parentRequest.metadata.individuation) },

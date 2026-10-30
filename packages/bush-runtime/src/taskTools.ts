@@ -16,7 +16,7 @@ export interface RuntimeTaskHandle {
   readProgress?: () => RuntimeTaskProgress | undefined;
   result?: unknown;
   readResult?: (nodeIds?: string[]) => Promise<unknown>;
-  readConversation?: (context: ToolHandlerContext<unknown>, cursor?: string) => Promise<unknown>;
+  readConversation?: (context: ToolHandlerContext<unknown>, cursor?: string, nodeIds?: string[]) => Promise<unknown>;
   wait?: (signal: AbortSignal) => Promise<unknown>;
   stop?: (context: ToolHandlerContext<unknown>) => Promise<unknown>;
   cancelObservation?: () => void;
@@ -26,7 +26,7 @@ export const taskPending = (task: RuntimeTaskHandle) => ['running', 'pending', '
 const schema = z.object({
   action: z.enum(['list', 'inspect', 'conversation', 'wait', 'stop', 'cancel_observation']).default('list'),
   cursor: z.string().regex(/^\d+:\d+$/).optional(),
-  node_ids: z.array(z.string().trim().min(1)).min(1).max(TEAM_WORKFLOW_MAX_NODES).refine(ids => new Set(ids).size === ids.length, 'node_ids must be unique').optional().describe('Selected node outputs from one Team run; inspect or wait only. Omit for final outputs.'),
+  node_ids: z.array(z.string().trim().min(1)).min(1).max(TEAM_WORKFLOW_MAX_NODES).refine(ids => new Set(ids).size === ids.length, 'node_ids must be unique').optional().describe('Selected node outputs from one Team run for inspect/wait; omit for final outputs. conversation requires exactly one node ID from that run.'),
   task_ids: z.array(z.string().min(1)).min(1).max(TASK_BATCH_LIMIT).optional().describe('Existing task_id handles from tasks list or launch results (subagent taskId, team task_id/run_id). Employee IDs, workflow definition IDs, node IDs and chat session IDs are not task handles.'),
   mode: z.enum(['any', 'all']).default('any'),
   yield_time_ms: z.number().int().min(0).max(TASK_WAIT_MAX_MS).optional().describe('Omit to wait until completion or new guidance, without periodic model wakeups. 0 reads a snapshot; a positive value explicitly requests a timeout. Cancellation stops observation only.'),
@@ -59,7 +59,7 @@ export class RuntimeTaskTools {
   }
   register(registry: ToolRegistry) {
     registry.register({
-      definition: { name: 'tasks', description: 'Observe or control existing terminal, subagent, team, MCP, script and question tasks in this conversation. Creates no work: subagent dispatches/follows up on individual children; team starts/resumes saved dependency workflows. list returns task handles; inspect reads results; conversation reads one owned child’s ordered inputs and final answers (one task_ids entry; follow nextCursor). Private reasoning and tool contents are excluded. Local child progress reports phase, last activity and counts. wait defaults to staying asleep until any/all completion or user/peer guidance; omit yield_time_ms while blocked. Use 0 for a snapshot or a positive value only for an explicit timeout. Continue independent work first; do not poll or restart pending tasks. after revisions omit unchanged results. inspect/conversation/stop/cancel_observation require task_ids. stop uses normal permissions; cancel_observation only removes a completion subscription. Wait cancellation never stops tasks. Independent peers use an available collaboration plugin.', inputSchema: z.toJSONSchema(schema) },
+      definition: { name: 'tasks', description: 'Observe or control existing terminal, subagent, team, MCP, script and question tasks in this conversation. Creates no work: subagent dispatches/follows up on individual children; team starts/resumes saved dependency workflows. list returns task handles; inspect reads results; conversation reads one owned child’s ordered inputs and final answers (one task_ids entry; for Team runs also select exactly one node_ids entry; follow nextCursor). Private reasoning and tool contents are excluded. Local child progress reports phase, last activity and counts. wait defaults to staying asleep until any/all completion or user/peer guidance; omit yield_time_ms while blocked. Use 0 for a snapshot or a positive value only for an explicit timeout. Continue independent work first; do not poll or restart pending tasks. after revisions omit unchanged results. inspect/conversation/stop/cancel_observation require task_ids. stop uses normal permissions; cancel_observation only removes a completion subscription. Wait cancellation never stops tasks. Independent peers use an available collaboration plugin.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'delegation', operation: 'tasks.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,
@@ -80,11 +80,12 @@ export class RuntimeTaskTools {
           return matches[0]!;
         }))];
         let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'wait' ? all.filter(taskPending).slice(0, TASK_BATCH_LIMIT) : all.slice(input.offset, input.offset + input.limit);
-        if (input.node_ids && (!['inspect', 'wait'].includes(input.action) || selected.length !== 1 || selected[0]!.kind !== 'team' || !input.task_ids)) throw new Error('node_ids requires inspect or wait and one explicit Team task_id.');
+        if (input.node_ids && (!['inspect', 'wait', 'conversation'].includes(input.action) || selected.length !== 1 || selected[0]!.kind !== 'team' || !input.task_ids)) throw new Error('node_ids requires inspect, wait or conversation and one explicit Team task_id.');
         if (input.action === 'conversation') {
           const task = selected[0]!;
+          if (task.kind === 'team' && input.node_ids?.length !== 1) throw new Error('Team conversation requires exactly one node_ids entry. Use tasks inspect to find node IDs.');
           if (!task.readConversation) throw new Error('This task has no readable child conversation. Use inspect for its result.');
-          return { task_id: task.task_id, kind: task.kind, conversation: await task.readConversation(context, input.cursor) };
+          return { task_id: task.task_id, kind: task.kind, ...(input.node_ids ? { node_id: input.node_ids[0] } : {}), conversation: await task.readConversation(context, input.cursor, input.node_ids) };
         }
         // Validate the entire selection before dispatching any controls.
         if (input.action === 'stop' && selected.some(task => !task.stop)) throw new Error('One or more selected tasks do not support stopping. No stop was dispatched.');

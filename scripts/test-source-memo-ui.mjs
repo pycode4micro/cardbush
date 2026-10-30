@@ -11,6 +11,7 @@ const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {MarkdownContent} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import {SourceMemoReference} from '${local('src/features/chatMessages/SourceMemoReference.tsx')}';
+import {MarkdownReference,parseMarkdownReference} from '${local('src/features/chatMessages/MarkdownReference.tsx')}';
 import {FileMemoScope} from '${local('src/features/chatMessages/FileMemoScope.tsx')}';
 import {ImagePreviewDialog} from '${local('src/features/chatMessages/ImagePreviewDialog.tsx')}';
 import {InlineAudio,InlineVideo} from '${local('src/features/chatMessages/InlineMedia.tsx')}';
@@ -116,6 +117,20 @@ const scopedHost={...host,id:'scoped-reference-host',runtime:scopedRuntime};
 window.showScoped=session=>root.render(<div className="app theme-dark" style={{padding:30}}><ConversationHostContext.Provider value={scopedHost}>
   <FileMemoScope sessionId={session} turnId="same-turn" sourceReferences={true}><MarkdownContent language="zh"
     content={'当前会话：[1]'+String.fromCharCode(10,10)+'复制来的引用：[1]('+scopedReferences[session==='a'?'b':'a']+')'}/></FileMemoScope>
+</ConversationHostContext.Provider></div>);
+window.showDeliveryFallbacks=(language='zh',failedLookup=false)=>{
+  window.cardbushDesktop={inspectLocalReference:async path=>({path,name:path.split('/').pop(),kind:'file'}),runtime:{
+    command:async request=>({protocol:request.protocol,type:'command_response',operationId:request.operationId,ok:!failedLookup,
+      ...(failedLookup?{error:{message:'fixture unavailable'}}:{result:await shorthandRuntime.client.command(request.command,value=>value)})}),
+    onStreamFrame:()=>()=>{},cancelOperation:async()=>{},stopStream:async()=>{},
+  }};
+  const text='![计算脚本](C:/workspace/final60.mjs)\\n\\n![报告](C:/workspace/report.docx)\\n\\n![损坏图片](data:image/png;base64,AAAA)\\n\\n未绑定引用 [99]';
+  root.render(<div className="app theme-dark" style={{padding:30}}><FileMemoScope sessionId={failedLookup?'failed-lookup':'short-session'} turnId="short-turn" sourceReferences>
+    <MarkdownContent content={text} language={language}/>
+  </FileMemoScope></div>);
+};
+window.showLoopSource=()=>root.render(<div className="app theme-dark"><ConversationHostContext.Provider value={host}>
+  <MarkdownReference reference={parseMarkdownReference(memo.reference)} language="zh" rich={false}>[1]</MarkdownReference>
 </ConversationHostContext.Provider></div>);
 window.show();
 `;

@@ -54,3 +54,4 @@ export * from './userPrompt.js';
 export * from './creationCanvas.js';
 export * from './attachments.js';
 export * from './providerActivity.js';
+export * from './agentDeliveryInstructions.js';

@@ -8,7 +8,7 @@ function fixture(run) {
   const registry = new ToolRegistry(); const tasks = new SubagentTaskStore(); let serial = 0;
   const results = new Map(); const requests = [];
   const target = { id: 'saved-http-agent', name: 'Build server', agentId: 'pinned-agent' };
-  registerSubagentTool(registry, tasks, async () => { throw Error('Must not run locally'); }, {
+  const dispatcher = registerSubagentTool(registry, tasks, async () => { throw Error('Must not run locally'); }, {
     inheritBrowserScope: async () => { assert.fail('Remote tasks must not inherit local browser grants'); },
     createTaskId: () => `remote-${++serial}`, asyncDispatch: true,
     remoteAgents: { list: async () => [target], run: (input, signal) => { requests.push(input); return run(input, signal); } },
@@ -26,9 +26,22 @@ function fixture(run) {
   const invoke = (name, args, parent = request, signal) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `call-${++calls}`, name, argumentsText: JSON.stringify(args) },
     { requestId: parent.requestId, sessionId: parent.sessionId, turnId: parent.turnId, round: 1, ordinal: 0 }, signal,
     { request: parent, contextMessages: [{ role: 'system', content: 'private parent history' }] });
-  return { tasks, requests, results, target, request, invoke };
+  return { tasks, requests, results, target, request, invoke, dispatcher };
 }
 const completed = text => ({ status: 'completed', finalResponse: text, errorMessage: '', usage: { inputTokens: 3, outputTokens: 2 } });
+
+test('failed remote onStarted settles the journal without starting remote work', async () => {
+  const f = fixture(async () => assert.fail('must not dispatch after persistence failure'));
+  const result = await f.dispatcher.dispatch({ input: { prompt: 'Report', targetAgent: f.target.id },
+    sessionId: 'parent-session', turnId: 'parent-turn', turn: { request: f.request, contextMessages: [] } }, {
+    waitForResult: true, onStarted: async ({ taskId, sessionId }) => {
+      assert.equal(f.tasks.get('parent-session', taskId).childSessionId, sessionId);
+      throw Error('node persistence unavailable');
+    },
+  });
+  assert.equal(result.status, 'failed'); assert.match(result.errorMessage, /node persistence unavailable/);
+  assert.equal(f.requests.length, 0); assert.equal(f.tasks.list('parent-session')[0].status, 'failed');
+});
 
 test('remote subagents dispatch asynchronously, join any/all, and resume the same remote session', async () => {
   const pending = []; const f = fixture(input => new Promise(resolve => pending.push({ input, resolve })));

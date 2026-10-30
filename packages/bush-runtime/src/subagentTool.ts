@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 
 import {
+  REPORT_DELIVERY_INSTRUCTIONS,
   registeredAgentSchema,
   resolveSubagentName,
   SUBAGENT_NAME_MAX_LENGTH,
@@ -241,7 +242,7 @@ export function registerSubagentTool(
     decodeInput: decodeInput,
     execute: context => dispatch(context),
   });
-  return { dispatch, reconcile, control: (context, control) => { assertParentAgent(context.turn?.request); reconcile(context.sessionId); return interactions.control(context, control); }, ...(options.readChildConversation ? { readConversation } : {}) };
+  return { dispatch, reconcile, control: (context, control) => { assertParentAgent(context.turn?.request); reconcile(context.sessionId); return interactions.control(context, control); }, ...(options.readChildConversation || options.remoteAgents?.read ? { readConversation } : {}) };
 
   async function dispatch(context: ToolHandlerContext<SubagentInput>, execution: SubagentExecutionOptions = {}, queued = false): Promise<unknown> {
       if (!context.turn) throw new Error("Subagent dispatch requires the parent Turn context.");
@@ -274,7 +275,7 @@ export function registerSubagentTool(
       }
       const previous = context.input.taskId ? tasks.get(context.sessionId, context.input.taskId) : undefined;
       const employee = execution.agent ?? (context.input.agentId ? await options.agents?.get(context.input.agentId) : undefined);
-      if (context.input.agentId && !employee) throw new Error('The registered subagent does not exist.');
+      if (context.input.agentId && !employee) throw new Error('The registered Agent does not exist. Use agent_id from list_subagent_options.registered_agents[].id to start a new child, or task_id from a subagent result to continue an existing child.');
       const remoteEmployeeId = previous?.remote?.worker?.id ?? (employee?.definition.remote ? employee.definition.id : undefined);
       if (remoteEmployeeId && !(await options.agents?.get(remoteEmployeeId))?.definition.enabled) throw new Error('The registered remote subagent is unavailable or disabled.');
       if (context.turn.request.metadata.toolExecutionPolicy === 'web_restricted' &&
@@ -328,12 +329,18 @@ export function registerSubagentTool(
           ...(worker ? { agentProfileId: worker.id } : {}), ...(previous ? { resumedFromTaskId: previous.taskId } : {}) });
         const observer = new AbortController();
         const observationSignal = context.signal ? AbortSignal.any([observer.signal, context.signal]) : observer.signal;
-        if (options.remoteAgents.control) void watchChild(context, taskId, observationSignal);
-        const completion = options.remoteAgents.run({ ...remote, taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
-          sessionId: childSessionId, turnId: childTurnId, prompt: context.input.prompt,
-          ...(context.input.delivery === 'queue' ? { queue: true } : {}),
-          permissionMode, language: String(parent.metadata.uiLanguage || 'zh'),
-        }, context.signal).catch(error => ({ status: error instanceof Error && error.name === 'AbortError' ? 'stopped' as const : 'failed' as const, finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} }))
+        const completion = (async () => {
+          // Persist the owning Team node identity before a remote worker can start.
+          // Callback failures use the same terminal settlement as transport failures.
+          await execution.onStarted?.({ taskId, sessionId: childSessionId });
+          context.signal?.throwIfAborted();
+          if (options.remoteAgents!.control) void watchChild(context, taskId, observationSignal);
+          return options.remoteAgents!.run({ ...remote, taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
+            sessionId: childSessionId, turnId: childTurnId, prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${context.input.prompt}`,
+            ...(context.input.delivery === 'queue' ? { queue: true } : {}),
+            permissionMode, language: String(parent.metadata.uiLanguage || 'zh'),
+          }, context.signal);
+        })().catch(error => ({ status: error instanceof Error && error.name === 'AbortError' ? 'stopped' as const : 'failed' as const, finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} }))
           .then(result => tasks.finish({ parentSessionId: context.sessionId, taskId, ...result })).finally(() => observer.abort());
         if (options.asyncDispatch && !execution.waitForResult) {
           options.onAsyncResult?.({ parentSessionId: context.sessionId, parentTurnId: context.turnId, taskId, result: completion.then(asyncResultMessage) });

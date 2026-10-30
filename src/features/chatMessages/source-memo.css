@@ -5,6 +5,11 @@
   font-family: inherit; font-size: .68em; font-weight: 500; line-height: 1.5; cursor: pointer;
 }
 .source-memo-marker:hover, .source-memo-marker:focus-visible { color: var(--text); }
+.source-memo-unavailable {
+  color: var(--text-soft); cursor: help; text-decoration: underline dotted;
+  text-underline-offset: .2em;
+}
+.source-memo-unavailable:focus-visible { outline: 1px solid var(--border); outline-offset: 2px; }
 .source-memo-card {
   position: fixed; inset: auto; margin: 0; box-sizing: border-box; width: min(370px, calc(100vw - 16px));
   max-height: min(460px, calc(100vh - 16px)); overflow-y: auto; padding: 14px; border-radius: 12px;

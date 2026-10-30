@@ -112,6 +112,26 @@ test('the saved presentation survives changed client definitions, but never gran
   assert.deepEqual(f.observed.at(-1).tools, original.tools);
 });
 
+test('delivery and continuation guidance reaches an old session without rewriting its bound policy', async t => {
+  const f = fixture(t), { host, store, request } = f.open();
+  const old = request('old');
+  old.prefixMessages[0].content = 'Previously bound product policy.';
+  old.inputMessages = old.inputMessages.filter(item => item.message.name !== 'delivery_guidance');
+  await host.runSessionTurn(old);
+  const originalTurn = structuredClone(store.snapshot('policy').turns[0]);
+  await host.runSessionTurn(request('continued'));
+  const dispatched = f.observed.at(-1);
+  assert.equal(dispatched.messages[0].content, old.prefixMessages[0].content);
+  assert.deepEqual(store.snapshot('policy').turns[0], originalTurn);
+  const guidance = dispatched.messages.find(message => message.name === 'delivery_guidance');
+  assert.match(guidance.content, /verified files.*explicitly requests/);
+  assert.match(guidance.content, /same assignment.*existing subagent task_id/);
+  assert.match(guidance.content, /historical backtests must not inherit later evidence/);
+  assert.match(guidance.content, /node_ids=.*nextCursor/);
+  assert.match(guidance.content, /read_source_memos must bind/);
+  assert.equal(guidance.visibility, 'internal');
+});
+
 test('a fork destination with an existing contract cannot be overwritten', async t => {
   const f = fixture(t), { host, store, request } = f.open();
   await host.runSessionTurn(request('source'));

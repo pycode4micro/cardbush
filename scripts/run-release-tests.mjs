@@ -44,6 +44,7 @@ run(['--test', 'scripts/test-app-center.mjs', 'scripts/test-local-applications.m
 run(['scripts/test-local-applications-native.mjs']);
 run(['scripts/test-automation-calendar.mjs']);
 run(['--test', 'scripts/test-file-preview-registry.mjs']);
+run(['--test', 'scripts/test-source-memo-shorthand.mjs']);
 run(['--test', 'scripts/test-pasted-text-attachments.mjs']);
 run(['--test', 'scripts/test-code-rendering.mjs', 'scripts/test-diff-syntax-contract.mjs', 'scripts/test-markdown-format.mjs']);
 run(['--test', 'scripts/test-permission-modes.mjs']);

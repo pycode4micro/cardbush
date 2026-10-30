@@ -126,7 +126,10 @@ app.whenReady().then(async()=>{
     for(const remote of [false,true]) {
       await read(`window.showShorthand(${remote})`);
       await until(`document.querySelectorAll('.source-memo-marker').length===2`);
-      assert.match(await read('document.body.innerText'),/\[99\]/,'unresolved numbers remain ordinary text');
+      assert.match(await read('document.body.innerText'),/\[99\]/,'unresolved numbers keep their authored label');
+      assert.equal(await read(`document.querySelector('.source-memo-unavailable')?.textContent`),'[99]');
+      assert.match(await read(`document.querySelector('.source-memo-unavailable').title`),/未能验证/);
+      assert.equal(await read(`document.querySelector('.source-memo-unavailable').hasAttribute('href')`),false,'no old-turn source identity is invented');
       assert.match(await read('document.body.innerText'),/arr\[21\]/);
       assert.equal(await read(`document.querySelectorAll('code .source-memo-marker, a .source-memo-marker').length`),0,'code and existing links are never rewritten');
       assert.equal(await read(`Array.from(document.querySelectorAll('p')).find(p=>p.textContent.startsWith('转义：')).textContent`),'转义：[21]');
@@ -177,6 +180,25 @@ app.whenReady().then(async()=>{
       await until(`document.querySelector('.source-memo-card')?.textContent.includes('会话 ${session==='a'?'b':'a'} 的独立备注')`);
       await read(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);await pause();
     }
+    for(const language of ['zh','en']) {
+      await read(`window.showDeliveryFallbacks('${language}')`);
+      await until(`document.querySelectorAll('a.local-file-reference').length===2 && Boolean(document.querySelector('.file-memo-reference [role="status"]')) && Boolean(document.querySelector('.source-memo-unavailable'))`);
+      assert.equal(await read(`document.querySelectorAll('.markdown-content img').length`),0,'scripts/documents never mount as images, failed images have a usable fallback');
+      assert.equal(await read(`document.querySelectorAll('.message-image-gallery-thumbnail').length`),0,'document fallbacks are not trapped in an image gallery');
+      assert.match(await read(`document.querySelector('.source-memo-unavailable').title`),language==='zh'?/未能验证/:/could not be verified/);
+      assert.match(await read(`document.querySelector('.file-memo-reference [role="status"]').textContent`),language==='zh'?/无法预览|预览不可用/:/Preview unavailable/);
+      await read(`document.querySelector('a.local-file-reference').click()`);
+      assert.match(await read('window.opens.at(-1)'),/final60\.mjs$/,'malformed image markup still opens the actual script');
+      await read(`document.querySelector('.file-memo-reference button').click()`);
+      await until(`Boolean(document.querySelector('.file-memo-reference [role="status"]'))`);
+    }
+    await read('window.showDeliveryFallbacks("zh",true)');
+    await until(`Boolean(document.querySelector('.source-memo-unavailable'))`);
+    assert.match(await read(`document.querySelector('.source-memo-unavailable').title`),/未能验证/,'host lookup failures are explicit too');
+    await read('window.showLoopSource()');
+    await until(`Boolean(document.querySelector('.source-memo-marker'))`);
+    await read(`document.querySelector('.source-memo-marker').click()`);
+    await until(`document.querySelector('.source-memo-card')?.textContent.includes('保留已完成')`);
     assert.deepEqual(errors,[]);
     console.log('Source UI passed: file/web/memo links and source popovers; malformed image/audio/video/file references in local/remote conversations never read files or mount broken media.');
     win.destroy();app.exit(0);

@@ -11,14 +11,14 @@ import { teamCompletionAlreadyRead, teamCompletionNotice, teamRunResult } from '
 
 const gate = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const outcome = (request, text, failed = false) => ({ terminal: { kind: 'turn_terminal', payload: { status: failed ? 'failed' : 'completed', reason: failed ? 'fixture failure' : '', finalMessageId: 'answer' } }, session: { turns: [{ turnId: request.turnId, usage: {}, messages: [{ messageId: 'answer', message: { role: 'assistant', content: text } }] }] } });
-async function setup(t, run) {
+async function setup(t, run, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-team-workflow-'));
   t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-team-workflow-')); await rm(root, { recursive: true, force: true }); });
   const agents = new RegisteredAgentStore(join(root, 'agents'));
   for (const id of ['stock', 'shipping', 'review']) await agents.put({ id, name: id, system_prompt: `${id} role` }, 0);
   const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), saved = new Map();
-  const subagents = registerSubagentTool(registry, tasks, run, { agents, saveChildRequest: async request => { saved.set(request.sessionId, structuredClone(request)); }, loadChildRequest: async id => saved.get(id) });
-  const manager = new TeamWorkflowManager(agents, subagents.dispatch, { directory: join(root, 'teams') });
+  const subagents = registerSubagentTool(registry, tasks, run, { agents, saveChildRequest: async request => { saved.set(request.sessionId, structuredClone(request)); }, loadChildRequest: async id => saved.get(id), ...options });
+  const manager = new TeamWorkflowManager(agents, subagents.dispatch, { directory: join(root, 'teams'), readConversation: subagents.readConversation });
   manager.register(registry);
   const parent = new AbortController(); let serial = 0;
   const call = async (input, overrides = {}, signal = parent.signal, invokeTool = async () => { throw Error('unexpected nested tool'); }) => {
@@ -34,7 +34,7 @@ async function setup(t, run) {
     const tool = registry.resolve('tasks');
     const output = await tool.execute({ input: tool.decodeInput({ ...input, yield_time_ms: input.yield_time_ms ?? 10000 }), sessionId: 'parent', turnId: 'turn', signal,
       turn: { request: { metadata: {}, ...overrides } } });
-    return input.action === 'list' ? output.tasks[0] : output.tasks[0]?.result;
+    return input.action === 'conversation' ? output : input.action === 'list' ? output.tasks[0] : output.tasks[0]?.result;
   };
   t.after(() => manager.close());
   return { root, manager, call, observe, agents, parent, tasks, subagents };
@@ -44,6 +44,103 @@ const flow = { id: 'fulfil', name: 'Fulfilment', max_parallel: 2, nodes: [
   { id: 'shipping', agent_id: 'shipping', prompt: 'Check shipping' },
   { id: 'review', agent_id: 'review', prompt: 'Review evidence', depends_on: ['stock', 'shipping'] },
 ] };
+
+for (const remote of [false, true]) test(`${remote ? 'remote' : 'local'} Team nodes persist task identities and expose owned, paged conversations`, async t => {
+  const sessions = new Map(), answer = 'Verified report result '.repeat(2500), calls = [];
+  const record = (sessionId, turnId, prompt) => {
+    const entry = (messageId, message) => ({ messageId, turnId, turnSequence: 1, messageIndex: 0, createdAt: '2026-10-30T00:00:00Z', message });
+    sessions.set(sessionId, { sessionId, finalMessageIds: ['answer'], supersededMessageIds: [], messages: [
+      entry('private', { role: 'system', content: 'PRIVATE ROLE' }),
+      entry('input', { role: 'user', content: prompt }),
+      entry('loop', { role: 'assistant', content: 'PRIVATE LOOP' }),
+      entry('answer', { role: 'assistant', content: answer }),
+    ] });
+  };
+  const f = await setup(t, async request => {
+    assert.match(request.inputMessages.find(entry => entry.message.name === 'delivery_guidance').message.content, /report bodies and long tables out of Tool-loop messages/);
+    record(request.sessionId, request.turnId, 'Assigned task'); return outcome(request, answer);
+  }, remote ? { remoteAgents: {
+    list: async () => [{ id: 'remote', name: 'Remote', agentId: 'worker' }],
+    run: async input => {
+      calls.push(input);
+      assert.match(input.prompt, /report bodies and long tables out of Tool-loop messages/, 'remote workers receive the same delivery rule even before their host is upgraded');
+      const run = (await f.manager.listRuns('parent'))[0], node = run.nodes[0];
+      assert.equal(node.taskId, input.taskId, 'identity is durable before remote execution');
+      assert.equal(node.sessionId, input.sessionId);
+      record(input.sessionId, input.turnId, input.prompt);
+      return { status: 'completed', finalResponse: answer, errorMessage: '', usage: {} };
+    },
+    read: async input => { assert.equal(input.parentSessionId, 'parent'); return sessions.get(input.sessionId); },
+  } } : { readChildConversation: id => sessions.get(id) });
+  if (remote) await f.agents.put({ id: 'stock', name: 'stock', system_prompt: 'stock role', remote: { connection_id: 'remote', agent_id: 'worker' } }, 1);
+  await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0]] }, expected_revision: 0 });
+  const started = await f.call({ action: 'run', team_id: flow.id, input: 'Prepare report' });
+  const finished = await f.observe({ action: 'wait', task_ids: [started.run_id] });
+  assert.equal(finished.status, 'completed');
+  const task = f.tasks.list('parent')[0];
+  assert.equal(finished.nodes[0].taskId, task.taskId);
+  let cursor, collected = '', pages = 0;
+  do {
+    const result = await f.observe({ action: 'conversation', task_ids: [started.run_id], node_ids: ['stock'], ...(cursor ? { cursor } : {}) });
+    assert.equal(result.node_id, 'stock'); assert.equal(result.conversation.taskId, task.taskId);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE ROLE|PRIVATE LOOP/);
+    collected += result.conversation.messages.filter(message => message.role === 'assistant').map(message => message.content).join('');
+    cursor = result.conversation.nextCursor; pages++;
+  } while (cursor);
+  assert.equal(collected, answer); assert.ok(pages > 1);
+  for (const node_ids of [undefined, ['stock', 'shipping'], ['missing']]) {
+    await assert.rejects(f.observe({ action: 'conversation', task_ids: [started.run_id], ...(node_ids ? { node_ids } : {}) }), /node/i);
+  }
+  const handle = (await f.manager.taskHandles('parent'))[0];
+  await assert.rejects(handle.readConversation({ sessionId: 'other', turn: { request: { metadata: {} } } }, undefined, ['stock']), /unavailable/);
+  await assert.rejects(handle.readConversation({ sessionId: 'parent', turn: { request: { metadata: { agentRole: 'child' } } } }, undefined, ['stock']), /child|parent/i);
+  assert.equal(calls.length, remote ? 1 : 0, 'reading never dispatches replacement work');
+});
+
+test('remote Team resume retains the failed node session and replaces its attempt handle', async t => {
+  const calls = [];
+  const f = await setup(t, async () => assert.fail('remote only'), { remoteAgents: {
+    list: async () => [{ id: 'remote', name: 'Remote', agentId: 'worker' }],
+    run: async input => { calls.push(input); return { status: calls.length === 1 ? 'failed' : 'completed', finalResponse: 'Report file verified', errorMessage: '', usage: {} }; },
+  } });
+  await f.agents.put({ id: 'stock', name: 'stock', system_prompt: 'stock role', remote: { connection_id: 'remote', agent_id: 'worker' } }, 1);
+  await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0]] }, expected_revision: 0 });
+  const started = await f.call({ action: 'run', team_id: flow.id, input: 'Prepare report' });
+  assert.equal((await f.observe({ action: 'wait', task_ids: [started.run_id] })).status, 'failed');
+  await f.call({ action: 'resume', run_id: started.run_id });
+  const final = await f.observe({ action: 'wait', task_ids: [started.run_id] });
+  assert.equal(final.status, 'completed');
+  assert.equal(calls[1].sessionId, calls[0].sessionId);
+  assert.notEqual(calls[1].taskId, calls[0].taskId);
+  assert.equal(f.tasks.get('parent', calls[1].taskId).resumedFromTaskId, calls[0].taskId);
+  assert.equal(final.nodes[0].taskId, calls[1].taskId);
+});
+
+test('legacy Team nodes recover missing handles from matching journal identities without replay', async t => {
+  const f = await setup(t, async request => outcome(request, 'Saved report'));
+  await f.call({ action: 'save', definition: { ...flow, nodes: flow.nodes.slice(0, 2) }, expected_revision: 0 });
+  const started = await f.call({ action: 'run', team_id: flow.id, input: 'Prepare report' });
+  await f.observe({ action: 'wait', task_ids: [started.run_id] }); await f.manager.close();
+  const directory = join(f.root, 'teams', 'runs'), file = join(directory, (await readdir(directory)).find(name => name.endsWith('.json')));
+  const record = JSON.parse(await readFile(file, 'utf8'));
+  for (const node of record.definition.nodes) delete node.taskId;
+  record.definition.nodes[1].sessionId = 'unmatched-session';
+  await writeFile(file, JSON.stringify(record));
+  const resolveNodeTaskId = (run, node) => {
+    const matches = f.tasks.list(run.parentSessionId).filter(task => task.origin === 'team'
+      && task.teamId === run.teamId && task.teamMemberId === node.id && task.childSessionId === node.sessionId);
+    return matches.length === 1 ? matches[0].taskId : undefined;
+  };
+  const restored = new TeamWorkflowManager(f.agents, async () => assert.fail('reading never replays work'), {
+    directory: join(f.root, 'teams'), resolveNodeTaskId,
+  }); t.after(() => restored.close());
+  const run = await restored.configure({ action: 'status', run_id: started.run_id });
+  assert.equal(run.nodes[0].taskId, f.tasks.list('parent').find(task => task.teamMemberId === 'stock').taskId);
+  assert.equal(run.nodes[1].taskId, undefined, 'a missing or ambiguous journal is never guessed');
+  assert.equal(run.nodes[0].output, 'Saved report');
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).definition.nodes[0].taskId, run.nodes[0].taskId);
+  assert.deepEqual(await restored.taskHandles('foreign-parent'), []);
+});
 
 test('Team validates dependencies before execution', () => {
   assert.throws(() => teamWorkflowSchema.parse({ ...flow, nodes: [{ id: 'a', agent_id: 'stock', prompt: 'a', depends_on: ['missing'] }] }), /acyclic/);

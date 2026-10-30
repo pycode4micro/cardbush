@@ -163,9 +163,9 @@ test("time snapshots append as internal user inputs across midnight without chan
     'crossing midnight changes only the clock context, not preferences or the human request');
   assert.deepEqual(first, create("2026-08-29T15:59:59Z", "turn_before_midnight"), 'replaying the same input never refreshes its clock');
   for (const request of [first, second]) {
-    assert.equal(request.inputMessages.length, 4);
+    assert.equal(request.inputMessages.length, 5);
     assert.deepEqual(request.inputMessages.map(item => item.message.name),
-      ['turn_runtime_context', 'source_preference', 'individuation_preference', undefined]);
+      ['turn_runtime_context', 'source_preference', 'individuation_preference', 'delivery_guidance', undefined]);
     const { content: individuationContent, ...individuationMessage } = request.inputMessages[2].message;
     assert.deepEqual(individuationMessage, { role: 'user', name: 'individuation_preference', visibility: 'internal' });
     assert.match(individuationContent, /^Individuation for this turn: habits disabled; next-step prediction disabled\./);
@@ -247,11 +247,11 @@ test("product requests append attachment facts while keeping the prefix and tool
   assert.doesNotMatch(JSON.stringify(second.prefixMessages), /two\.png/);
   assert.equal(first.inputMessages[0].message.name, "turn_runtime_context");
   assert.equal(first.inputMessages[0].message.visibility, "internal");
-  assert.equal(first.inputMessages.length, 4);
+  assert.equal(first.inputMessages.length, 5);
   assert.deepEqual(first.inputMessages.at(-1).message.images, [
     { url: "C:\\images\\one.png" },
   ]);
-  assert.equal(second.inputMessages.length, 4);
+  assert.equal(second.inputMessages.length, 5);
   assert.equal(second.inputMessages.at(-1).message.name, undefined);
   assert.deepEqual(second.inputMessages.at(-1).message.images, [
     { url: "C:\\images\\two.png" },
@@ -265,7 +265,7 @@ test("product requests append attachment facts while keeping the prefix and tool
     files: ["C:\\work\\brief.md"],
   });
   assert.deepEqual(nextDay.prefixMessages, first.prefixMessages);
-  assert.equal(nextDay.inputMessages.length, 4);
+  assert.equal(nextDay.inputMessages.length, 5);
   assert.equal(nextDay.inputMessages[0].message.name, "turn_runtime_context");
   assert.match(nextDay.inputMessages[0].message.content, /brief\.md/);
   assert.doesNotMatch(nextDay.inputMessages[0].message.content, /Local date/);

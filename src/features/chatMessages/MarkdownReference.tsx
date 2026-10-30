@@ -39,9 +39,10 @@ export function MarkdownReference({ reference, children, language, rich, inline 
   if (reference.kind === 'invalid') return <UnavailableMarkdownReference language={language}>{children}</UnavailableMarkdownReference>;
   if (reference.kind === 'prompt') return <PromptReferenceLink reference={reference.value} />;
   if (reference.kind === 'browser-tab') return <BrowserTabReferenceLink key={browserTabReferenceHref(reference.value)} reference={reference.value} language={language}/>;
+  // Source annotations remain inspectable in collapsed-loop history as well.
+  if (reference.kind === 'source') return <SourceMemoReference reference={reference.value} language={language} />;
   if (!rich) return <span>{children}</span>;
   switch (reference.kind) {
-    case 'source': return <SourceMemoReference reference={reference.value} language={language} />;
     case 'file': return <FileMemoReference reference={reference.value} inline={inline} language={language}>{children}</FileMemoReference>;
     case 'app': return inline ? <span>{children}</span>
       : <McpAppReferenceLink reference={reference.value} language={language}>{children}</McpAppReferenceLink>;

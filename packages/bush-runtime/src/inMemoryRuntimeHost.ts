@@ -691,6 +691,12 @@ export class InMemoryRuntimeHost {
       if (!subagents) throw new Error('The native subagent dispatcher is unavailable.');
       return subagents.dispatch(context, input);
     }, { directory: options.dataRoot ? join(runtimeDataRoot, 'teams') : undefined,
+      readConversation: subagents?.readConversation,
+      resolveNodeTaskId: (run, node) => {
+        const matches = this.#subagentTasks.list(run.parentSessionId).filter(task => task.origin === 'team'
+          && task.teamId === run.teamId && task.teamMemberId === node.id && task.childSessionId === node.sessionId);
+        return matches.length === 1 ? matches[0]!.taskId : undefined;
+      },
       onResult: (run, promise) => {
         // Do not join an independent Team at the parent's terminal barrier.
         // Publish only a settled result to a still-active parent; idle parents can

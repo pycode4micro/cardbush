@@ -1,5 +1,6 @@
 type MarkdownNode = { type: string; value?: string; url?: string; children?: MarkdownNode[];
-  position?: { start: { offset?: number }; end: { offset?: number } }; data?: { originalLiteral?: string } };
+  position?: { start: { offset?: number }; end: { offset?: number } };
+  data?: { originalLiteral?: string; hName?: string; hProperties?: Record<string, unknown> } };
 
 function* sourceMemoMarkers(content: string) {
   // Check prose boundaries around the whole run, then resolve each source.
@@ -22,9 +23,11 @@ export function sourceMemoCandidates(content: string): number[] {
 
 /** Enrich prose from host-confirmed identities, without changing stored Markdown.
  * Code, explicit links, images and escaped text retain their original meaning. */
-export function remarkSourceMemoShorthand({ references }: { references: ReadonlyMap<number, string> }) {
+export function remarkSourceMemoShorthand({ references, unresolved, unavailableLabel }: {
+  references: ReadonlyMap<number, string>; unresolved?: ReadonlySet<number>; unavailableLabel?: (number: number) => string;
+}) {
   return (tree: MarkdownNode, file: { value: unknown }) => {
-    if (!references.size) return;
+    if (!references.size && !unresolved?.size) return;
     const source = String(file.value);
     const visit = (node: MarkdownNode) => {
       if (!node.children || ['link', 'linkReference', 'image', 'imageReference', 'code', 'inlineCode'].includes(node.type)) return;
@@ -37,10 +40,15 @@ export function remarkSourceMemoShorthand({ references }: { references: Readonly
         const pieces: MarkdownNode[] = []; let cursor = 0;
         for (const marker of sourceMemoMarkers(value)) {
           const reference = references.get(marker.number);
-          if (!reference) continue;
+          if (!reference && (!unresolved?.has(marker.number) || !unavailableLabel)) continue;
           const index = marker.index;
           if (index > cursor) pieces.push({ type: 'text', value: value.slice(cursor, index) });
-          pieces.push({ type: 'link', url: reference, children: [{ type: 'text', value: marker.label }] });
+          pieces.push(reference
+            ? { type: 'link', url: reference, children: [{ type: 'text', value: marker.label }] }
+            : { type: 'sourceUnavailable', data: { hName: 'span', hProperties: {
+              className: ['source-memo-unavailable'], title: unavailableLabel!(marker.number),
+              'aria-label': unavailableLabel!(marker.number), tabIndex: 0,
+            } }, children: [{ type: 'text', value: marker.label }] });
           cursor = index + marker.label.length;
         }
         if (!cursor) return [child];

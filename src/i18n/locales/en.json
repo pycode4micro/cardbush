@@ -923,6 +923,7 @@
     "sourceMemoReference.excerpt": "Excerpt",
     "sourceMemoReference.agentJudgmentNoSupportingMaterialsAttached": "Agent judgment · No supporting materials attached",
     "sourceMemoReference.thisSourceNoteIsUnavailable": "This source note is unavailable.",
+    "sourceMemoReference.unverifiedSource": "Source {number} could not be verified for this reply.",
     "sourceMemoReference.loadingSource": "Loading source…",
     "sourceMemoReference.originalExcerpt": "Original excerpt",
     "sourceMemoReference.savedWhenThisExplanationWasWritten": "Saved when this explanation was written",

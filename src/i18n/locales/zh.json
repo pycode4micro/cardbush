@@ -922,6 +922,7 @@
     "sourceMemoReference.excerpt": "原文",
     "sourceMemoReference.agentJudgmentNoSupportingMaterialsAttached": "Agent 的判断，未附引用材料",
     "sourceMemoReference.thisSourceNoteIsUnavailable": "此条依据暂时无法读取。",
+    "sourceMemoReference.unverifiedSource": "未能验证来源 {number} 与当前回复的关联。",
     "sourceMemoReference.loadingSource": "正在读取依据…",
     "sourceMemoReference.originalExcerpt": "引用原文",
     "sourceMemoReference.savedWhenThisExplanationWasWritten": "生成说明时保存的片段",

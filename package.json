@@ -190,7 +190,7 @@
     "test:assistant-timing": "node scripts/test-assistant-timing-contract.mjs",
     "test:run-status": "node scripts/test-run-status.mjs && node scripts/test-run-status-ui.mjs",
     "test:message-media": "node scripts/test-message-media-contract.mjs && node --test scripts/test-media-presentation.mjs",
-    "test:resource-references": "node scripts/test-resource-targets.mjs && node scripts/test-source-memo-ui.mjs",
+    "test:resource-references": "node --test scripts/test-source-memo-shorthand.mjs && node scripts/test-resource-targets.mjs && node scripts/test-source-memo-ui.mjs",
     "test:media-reveal": "node scripts/run-app-views-test.mjs media-reveal",
     "test:media-file-menu": "tsc -p tsconfig.node.json && node scripts/test-media-file-menu.mjs",
     "test:image-preview": "node scripts/run-image-preview-test.mjs",

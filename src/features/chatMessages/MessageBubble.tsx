@@ -411,13 +411,19 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     img: ({ src, alt, node: _node, ...props }) => {
       const host = useContext(ConversationHostContext);
       const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
+      const [failedSource, setFailedSource] = useState('');
       const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
       const richFileReferences = useContext(RichFileReferencesContext);
       const internalReference = parseMarkdownReference(src);
+      const reference = markdownLocalFileReference(src, workspaceRoot);
+      const resolvedPath = reference ? remapProjectPath(reference.path, pathAliases) : '';
+      const resolvedSource = mediaResourceUrl(resolvedPath || src || '');
+      const nonImageFile = Boolean(resolvedPath && !isImagePath(resolvedPath) && !/\.svg(?:[?#].*)?$/i.test(resolvedPath));
+      const imageFailed = Boolean(resolvedSource && failedSource === resolvedSource);
       useImageGalleryFallback(!richFileReferences && Boolean(internalReference)
-        || presentedMedia.has(mediaPresentationKey(src || '')));
+        || nonImageFile || imageFailed || presentedMedia.has(mediaPresentationKey(src || '')));
       if (internalReference) return <MarkdownReference reference={internalReference} language={language} rich={richFileReferences} inline>{alt}</MarkdownReference>;
       if (host?.fileReferencePath) {
         const path = host.fileReferencePath(src || '');
@@ -431,11 +437,6 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         return host && path && richFileReferences ? <ConversationFileReference path={path} inline language={language}>{alt}</ConversationFileReference> : <span>{alt}</span>;
       }
       if (referenceMode === 'remote' && !richFileReferences) return <span>{alt}</span>;
-      const reference = markdownLocalFileReference(src, workspaceRoot);
-      const resolvedPath = reference
-        ? remapProjectPath(reference.path, pathAliases)
-        : '';
-      const resolvedSource = mediaResourceUrl(resolvedPath || src || '');
       if (!resolvedSource) {
         return <UnavailableMarkdownReference language={language}>{alt}</UnavailableMarkdownReference>;
       }
@@ -452,12 +453,21 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         return <InlineAudio src={resolvedSource} language={language} aria-label={alt || undefined}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
       }
+      if (nonImageFile) return <LocalFileReferenceLink path={resolvedPath} language={language}>
+        {alt || basename(resolvedPath)}
+      </LocalFileReferenceLink>;
+      if (imageFailed) return <span className="file-memo-reference">
+        {resolvedPath ? <LocalFileReferenceLink path={resolvedPath} language={language}>{alt || basename(resolvedPath)}</LocalFileReferenceLink> : <span>{alt}</span>}
+        <small role="status">{uiText(language)('image.unavailable')}</small>
+        <button type="button" className="markdown-link-error" onClick={() => setFailedSource('')}>{uiText(language)('image.retry')}</button>
+      </span>;
       return (
         <>
         <MessageContentImage
           {...props}
           src={resolvedSource}
           alt={alt ?? ''}
+          onError={() => setFailedSource(resolvedSource)}
           onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })}
           role="button"
           tabIndex={0}
@@ -531,7 +541,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     const host = useContext(ConversationHostContext);
     const richFileReferences = useContext(RichFileReferencesContext);
     const presentedMedia = useContext(PresentedMediaContext);
-    const sourceReferences = useSourceMemoReferences(content, richFileReferences);
+    const sourceReferences = useSourceMemoReferences(content);
     const markdown = useMemo(() => skillMarkdownPresentation(normalizeMarkdownContentForDisplay(content), skillCommands), [content, skillCommands]);
     const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode, compactImages }), [workspaceRoot, pathAliases, language, referenceMode, compactImages]);
     const remarkPlugins = useMemo(() => {
@@ -541,7 +551,9 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       // URL boundary repair can reparse the document. Enrich references only
       // after it finishes so generated Skill tokens survive that replacement.
       if (markdown.invocation) plugins.push([remarkSkillCommands, { invocation: markdown.invocation }]);
-      if (sourceReferences.size) plugins.push([remarkSourceMemoShorthand, { references: sourceReferences }]);
+      if (sourceReferences.references.size || sourceReferences.unresolved.size) plugins.push([remarkSourceMemoShorthand, {
+        ...sourceReferences, unavailableLabel: (number: number) => uiText(language)('sourceMemoReference.unverifiedSource', { number }),
+      }]);
       if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
       if (compactImages && richFileReferences) plugins.push([remarkImageGroups, { eligible: (url: string) => {
         if (host?.fileReferencePath) return Boolean(host.fileReferencePath(url));
@@ -551,11 +563,12 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         if (referenceMode === 'remote' && kind !== 'url' && kind !== 'inline') return Boolean(remoteMarkdownPath(url, workspaceRoot));
         const reference = markdownLocalFileReference(url, workspaceRoot);
         const path = reference ? remapProjectPath(reference.path, pathAliases) : url;
+        if (reference && !isImagePath(path) && !/\.svg(?:[?#].*)?$/i.test(path)) return false;
         return Boolean(mediaResourceUrl(path)) && !isHtmlPreviewPath(path) && !isVideoPath(path) && !isAudioPath(path)
           && !/^data:(?:audio|video)\//i.test(path) && !presentedMedia.has(mediaPresentationKey(path));
       } }]);
       return plugins;
-    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, compactImages, presentedMedia, streaming, markdown.invocation, host?.fileReferencePath]);
+    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, compactImages, presentedMedia, streaming, markdown.invocation, host?.fileReferencePath, language]);
     const urlTransform = useCallback((url: string, key: string) => {
       if (host?.fileReferencePath) {
         if (key === 'src' || !/^(https?:\/\/|#)/i.test(url)) return host.fileReferencePath(url) ?? '';
