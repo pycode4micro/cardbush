@@ -4030,6 +4030,19 @@
     "browser.extension.retrying": "Waiting to restore the saved connection. Make sure CardBush is running with Browser Use enabled. Pairing again is unnecessary.",
     "browser.extension.enrollmentRetry": "Local enrollment is incomplete; waiting for a limited retry. Make sure CardBush is running with Browser Use enabled.",
     "voiceComposerPanel.muteOutput": "Mute incoming audio",
-    "voiceComposerPanel.moveCall": "Move call bar"
+    "voiceComposerPanel.moveCall": "Move call bar",
+    "canvasPresentation.start": "Present",
+    "canvasPresentation.mode": "Presentation mode",
+    "canvasPresentation.pages": "Pages",
+    "canvasPresentation.continuous": "Continuous",
+    "canvasPresentation.fullscreen": "Enter fullscreen",
+    "canvasPresentation.exitFullscreen": "Exit fullscreen",
+    "canvasPresentation.close": "Exit presentation",
+    "canvasPresentation.previous": "Previous page",
+    "canvasPresentation.next": "Next page",
+    "canvasPresentation.pageCount": "Page {page} of {count}",
+    "canvasPresentation.navigationHint": "Arrow keys / Page Up / Page Down to navigate · Esc to exit",
+    "canvasPresentation.empty": "No regions to present",
+    "canvasPresentation.fullscreenUnavailable": "Fullscreen is unavailable. You can continue presenting in this window."
   }
 }

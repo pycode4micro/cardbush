@@ -7,7 +7,7 @@ import { pdfPreviewAssetsPlugin } from './pdf-preview-assets-plugin.mjs';
 const require = createRequire(import.meta.url), local = file => resolve(file).replaceAll('\\', '/');
 await mkdir('tmp', { recursive: true }); const directory = await mkdtemp(resolve('tmp/creation-canvas-'));
 const fixture = `
-import React from 'react';import{createRoot}from'react-dom/client';
+import React,{useState}from 'react';import{createRoot}from'react-dom/client';
 import{CreationCanvasApp}from'${local('src/features/creationCanvas/CreationCanvasApp.tsx')}';
 import{CanvasSidebar}from'${local('src/features/creationCanvas/CanvasSidebar.tsx')}';
 import*as store from'${local('src/features/creationCanvas/canvasStore.ts')}';
@@ -25,7 +25,7 @@ window.cardbushDesktop={...window.testBridge,getPathForFile:()=>'',creationCanva
 window.canvasPages=pages;window.refreshCreationFile=refreshCreationFile;window.canvasOpenDocument=openBushItDocument;
 window.canvasTeamMarkdown=teamToMarkdown;
 if(!localStorage.getItem('fixture-seeded')){localStorage.setItem('fixture-seeded','true');localStorage.setItem('cardbush.bush-it.pages.v1',JSON.stringify({pages:[{id:'legacy',source:'# Legacy note\\n\\nPreserve my writing',updatedAt:1}],selectedId:'legacy'}));}
-function Fixture(){return <div className="app theme-dark" style={{height:'100vh',display:'flex'}}><CanvasSidebar language="zh" onBack={()=>{}}/><CreationCanvasApp language="zh"/></div>;}createRoot(document.getElementById('root')).render(<Fixture/>);
+function Fixture(){const[language,setLanguage]=useState("zh"),[theme,setTheme]=useState("dark");window.canvasAppearance=(language,theme)=>{setLanguage(language);setTheme(theme);};return <div className={"app theme-"+theme} style={{height:'100vh',display:'flex'}}><CanvasSidebar language={language} onBack={()=>{}}/><CreationCanvasApp language={language}/></div>;}createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 const chat = `import React,{useEffect,useRef}from'react';export function CreationConversation(props){const latest=useRef(props);latest.current=props;window.canvasSend=async input=>{const prompt=await latest.current.beforeSend(input);window.lastCanvasPrompt=prompt;latest.current.preparation?.onCreated?.({id:props.sessionId});return true;};useEffect(()=>{props.onInspectorContext?.({sessionId:props.sessionId,root:props.root,messages:[],busy:false,appendDraft:text=>{window.canvasDraft=text;},send:input=>window.canvasSend(input)});return()=>props.onInspectorContext?.(null);},[props.sessionId,props.onInspectorContext]);return null;}`;
 try {

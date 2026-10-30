@@ -3988,6 +3988,19 @@
     "browser.extension.retrying": "正在等待恢复已保存的连接。请确认 CardBush 已启动并启用 Browser Use，无需重新配对。",
     "browser.extension.enrollmentRetry": "本机连接申请未完成，等待有限重试。请确认 CardBush 已启动并启用 Browser Use。",
     "voiceComposerPanel.muteOutput": "静音对方声音",
-    "voiceComposerPanel.moveCall": "移动通话条"
+    "voiceComposerPanel.moveCall": "移动通话条",
+    "canvasPresentation.start": "演示",
+    "canvasPresentation.mode": "演示模式",
+    "canvasPresentation.pages": "分页",
+    "canvasPresentation.continuous": "连续整页",
+    "canvasPresentation.fullscreen": "进入全屏",
+    "canvasPresentation.exitFullscreen": "退出全屏",
+    "canvasPresentation.close": "退出演示",
+    "canvasPresentation.previous": "上一页",
+    "canvasPresentation.next": "下一页",
+    "canvasPresentation.pageCount": "第 {page} / {count} 页",
+    "canvasPresentation.navigationHint": "方向键 / Page Up / Page Down 翻页 · Esc 退出",
+    "canvasPresentation.empty": "没有可演示的区域",
+    "canvasPresentation.fullscreenUnavailable": "暂时无法进入全屏，可以继续在当前窗口演示。"
   }
 }

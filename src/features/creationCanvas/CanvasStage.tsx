@@ -36,12 +36,14 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
   const viewport = useRef<HTMLDivElement>(null), [size, setSize] = useState({ width: 1000, height: 700 });
   const [inset, setInset] = useState(14);
   const [zoomOverride, setZoomOverride] = useState<number>(), [pan, setPan] = useState({ x: 0, y: 0 });
+  const [manualFit, setManualFit] = useState<ReturnType<typeof fitCanvasViewport>>();
   const [draft, setDraft] = useState<ItemDraft>(), [guides, setGuides] = useState<AlignmentGuide[]>([]);
   const [dragging, setDragging] = useState(false), [panMode, setPanMode] = useState(false), [spaceHeld, setSpaceHeld] = useState(false);
   const liveFrame = useRef<ItemDraft | undefined>(undefined), gesture = useRef<Gesture | undefined>(undefined), saving = useRef(false);
   const document = snapshot.document;
-  const fit = fitCanvasViewport(size, document, inset);
-  const zoom = Math.max(.02, Math.min(2, zoomOverride ?? fit.zoom));
+  const fit = manualFit ?? fitCanvasViewport(size, document, inset);
+  const zoom = zoomOverride ?? fit.zoom;
+  const lockView = () => setManualFit(fit);
   const rgb = document.background.slice(1).match(/../g)!.map(value => parseInt(value, 16));
   const light = rgb[0] * .299 + rgb[1] * .587 + rgb[2] * .114 > 150;
   const panReady = panMode || spaceHeld;
@@ -56,7 +58,7 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
     const root = viewport.current;
     if (!root) return;
     const observer = new ResizeObserver(() => {
-      setSize({ width: root.clientWidth, height: root.clientHeight });
+      if (root.clientWidth && root.clientHeight) setSize({ width: root.clientWidth, height: root.clientHeight });
       setInset(parseFloat(getComputedStyle(root).getPropertyValue('--canvas-inset')) || 14);
     });
     observer.observe(root);
@@ -64,7 +66,7 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
   }, []);
   useEffect(() => onViewport({ ...size, zoom }), [size, zoom, onViewport]);
   useEffect(() => {
-    cancelRef.current(); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); setPanMode(false); setSpaceHeld(false);
+    cancelRef.current(); setManualFit(undefined); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); setPanMode(false); setSpaceHeld(false);
   }, [snapshot.path]);
   useEffect(() => {
     const reset = () => { cancelRef.current(); setSpaceHeld(false); };
@@ -79,6 +81,7 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
   }, []);
   const changeZoom = (next: number, anchor = { x: size.width / 2 - fit.origin.x, y: size.height / 2 - fit.origin.y }) => {
     if (gesture.current) return;
+    lockView();
     next = Math.max(.02, Math.min(2, next));
     setPan(value => zoomCanvasPan(value, zoom, next, anchor)); setZoomOverride(next);
   };
@@ -95,12 +98,13 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
         const rect = root.getBoundingClientRect();
         changeZoom(zoom * Math.exp(-event.deltaY * unit * .002), { x: event.clientX - rect.left - fit.origin.x, y: event.clientY - rect.top - fit.origin.y });
       } else {
+        lockView();
         setPan(value => ({ x: value.x - (event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX) * unit, y: value.y - (event.shiftKey && !event.deltaX ? 0 : event.deltaY) * unit }));
       }
     };
     root.addEventListener('wheel', wheel, { passive: false });
     return () => root.removeEventListener('wheel', wheel);
-  }, [zoom, size, panReady, inset]);
+  }, [zoom, size, panReady, inset, fit.origin.x, fit.origin.y]);
 
   const capture = (event: PointerEvent) => { event.preventDefault(); event.stopPropagation(); viewport.current?.setPointerCapture(event.pointerId); setDragging(true); };
   const start = (event: PointerEvent, item: CanvasItem, handle?: ResizeHandle) => {
@@ -122,8 +126,12 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
   const move = (event: PointerEvent) => {
     const g = gesture.current;
     if (!g || g.pointer !== event.pointerId) return;
-    if (g.kind === 'pan') { setPan({ x: g.pan.x + event.clientX - g.x, y: g.pan.y + event.clientY - g.y }); return; }
+    if (g.kind === 'pan') {
+      if (event.clientX !== g.x || event.clientY !== g.y) lockView();
+      setPan({ x: g.pan.x + event.clientX - g.x, y: g.pan.y + event.clientY - g.y }); return;
+    }
     if (Math.hypot(event.clientX - g.x, event.clientY - g.y) < 2 && liveFrame.current && equalCanvasFrames(liveFrame.current.frame, g.frame)) return;
+    lockView();
     const result = adjustCanvasFrame({ frame: g.frame, dx: (event.clientX - g.x) / g.zoom, dy: (event.clientY - g.y) / g.zoom, handle: g.handle,
       bounds: document, peers: document.items.filter(item => item.id !== g.id).map(item => item.frame), zoom: g.zoom, snap: !event.altKey });
     liveFrame.current = { id: g.id, frame: result.frame }; setDraft(liveFrame.current); setGuides(result.guides);
@@ -150,6 +158,7 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
     const amount = event.shiftKey ? 10 : 1;
     const result = adjustCanvasFrame({ frame: item.frame, dx: delta[0] * amount, dy: delta[1] * amount, handle, bounds: document, snap: false });
     if (equalCanvasFrames(item.frame, result.frame)) return;
+    lockView();
     saving.current = true;
     void onChange({ ...document, items: document.items.map(value => value.id === item.id ? { ...value, frame: result.frame } : value) }, snapshot.revision)
       .catch(() => {}).finally(() => { saving.current = false; });
@@ -180,9 +189,10 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
             const frame = draft?.id === item.id ? draft.frame : item.frame, active = selectedId === item.id;
             return <article key={item.id} data-canvas-item={item.id} data-canvas-source={item.kind === 'file' ? item.source : undefined}
               className={`canvas-item${active ? ' selected' : ''}${draft?.id === item.id && dragging ? ' adjusting' : ''}`}
-              style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
+              style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height,
+                '--canvas-item-screen-width': `${frame.width * zoom}px`, '--canvas-item-screen-height': `${frame.height * zoom}px` } as CSSProperties}
               onPointerDownCapture={() => onSelect(item.id)} onFocusCapture={() => onSelect(item.id)}>
-              <div className="canvas-item-tools" style={{ width: Math.max(72, frame.width * zoom) }}>
+              <div className="canvas-item-tools">
                 <button className="canvas-item-move" aria-label={uiText(language)('canvasStage.moveItem')}
                   title={uiText(language)('canvasStage.dragTitleToMoveArrowKeysTo')}
                   onPointerDown={event => start(event, item)} onKeyDown={event => keyboardAdjust(event, item)}>
@@ -219,13 +229,13 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
       <i aria-hidden="true"/>
       <button aria-label={uiText(language)('image.zoomOutHint')} onClick={() => changeZoom(zoom - .1)}><ZoomOut size={15}/></button><span>{Math.round(zoom * 100)}%</span>
       <button aria-label={uiText(language)('image.zoomInHint')} onClick={() => changeZoom(zoom + .1)}><ZoomIn size={15}/></button>
-      <button aria-label={uiText(language)('canvasStage.fitCanvas')} title={uiText(language)('canvasStage.fitAndAlignCanvas')} onClick={() => { cancel(); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); }}><Maximize2 size={15}/></button>
+      <button aria-label={uiText(language)('canvasStage.fitCanvas')} title={uiText(language)('canvasStage.fitAndAlignCanvas')} onClick={() => { cancel(); setManualFit(undefined); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); }}><Maximize2 size={15}/></button>
     </div>
   </div>;
 }
-const CanvasItemContent = memo(function CanvasItemContent({ item, manifest, language, resourceRevision, onActivate }: { item: CanvasItem; manifest: string; language: string; resourceRevision?: string; onActivate: (id: string) => void }) {
+export const CanvasItemContent = memo(function CanvasItemContent({ item, manifest, language, resourceRevision, onActivate, active = true }: { item: CanvasItem; manifest: string; language: string; resourceRevision?: string; onActivate: (id: string) => void; active?: boolean }) {
   const component = useMemo(() => item.kind === 'html' ? { id: item.id, title: item.title, html: item.html, width: 12, height: item.frame.height, order: 0, allowActions: false } : null, [item]);
-  if (component) return <HtmlComponentSurface component={component}/>;
+  if (component) return <HtmlComponentSurface component={component} active={active}/>;
   if (item.kind === 'markdown') return <MessageFileReferenceScope workspaceRoot={manifest.replace(/[\\/][^\\/]+$/, '')}><div className="canvas-markdown"><MarkdownContent content={item.markdown} language={language} compactImages={false}/></div></MessageFileReferenceScope>;
   if (item.kind !== 'file') return null;
   const target = canvasFileTarget(item.source, manifest);

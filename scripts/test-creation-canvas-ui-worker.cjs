@@ -49,7 +49,10 @@ app.whenReady().then(async () => {
     }
     return net.fetch(pathToFileURL(path || decodeURIComponent(url.pathname).replace(/^\/(?=[A-Za-z]:)/, '')).href);
   });
-  const run = value => win.webContents.executeJavaScript(value);
+  const run = async (value, userGesture = false) => {
+    try { return await win.webContents.executeJavaScript(value, userGesture); }
+    catch (cause) { throw new Error(`Renderer script failed: ${value.slice(0, 600)}`, { cause }); }
+  };
   const until = async (expression, timeout = 20000) => { const deadline = Date.now() + timeout; while (Date.now() < deadline) { if (await run(expression).catch(() => false)) return; await delay(60); } throw Error(`Timed out: ${expression}; UI: ${(await run('document.body.innerText')).slice(0, 1200)}`); };
   const clickText = text => run(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(text)}).click()`);
   const selected = () => run('canvasStore.getCanvases().canvases.find(c=>c.id===canvasStore.getCanvases().selectedId)');
@@ -58,6 +61,8 @@ app.whenReady().then(async () => {
     // Start the next gesture only after that reply and the resulting layout settle.
     await until('window.canvasPendingWrites===0');
     await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const hover = await run(`(()=>{const item=document.querySelector(${JSON.stringify(selector)}).closest('[data-canvas-item]');if(!item)return null;const r=item.getBoundingClientRect();return{x:Math.round(r.left+10),y:Math.round(r.top+10)}})()`);
+    if (hover) { pointer('mouseMove', hover); await delay(150); }
     return run(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
   };
   const pointer = (type, p, modifiers = []) => win.webContents.sendInputEvent({ type, x: p.x, y: p.y, button: 'left', clickCount: 1, modifiers });
@@ -88,13 +93,16 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".canvas-stage").textContent.includes("A real Markdown file")');
     assert.equal(await run('!!document.querySelector(".canvas-board-label")'), false, 'no extra canvas dimension label');
     assert.equal(await run('(()=>{const stage=getComputedStyle(document.querySelector(".canvas-stage")),board=getComputedStyle(document.querySelector(".canvas-size"));return stage.backgroundImage==="none"&&board.backgroundImage.includes("radial-gradient")&&board.outlineStyle==="solid"})()'), true, 'the visible boundary and grid identify the actual placement area');
+    const initialBlank = await run('(()=>{const r=document.querySelector(".canvas-stage").getBoundingClientRect();return{x:Math.round(r.left+5),y:Math.round(r.top+5)}})()');
+    pointer('mouseDown', initialBlank); pointer('mouseUp', initialBlank);
     const initialSize = win.getContentSize();
     for (const [width, height] of [[1440, 1020], [1000, 780], [680, 860], initialSize]) {
       win.setContentSize(width, height); await until(`window.innerWidth===${width} && window.innerHeight===${height}`);
       await delay(150); await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-      const edges = await run(`(()=>{const rect=selector=>document.querySelector(selector).getBoundingClientRect();return{title:rect('.topbar h1').left,name:rect('[aria-label=画板名称]').left,board:rect('.canvas-size').left,zoom:rect('.canvas-zoom').left,right:rect('.canvas-size').right,stageRight:rect('.canvas-stage').right}})()`);
-      for (const name of ['name','board','zoom']) assert.ok(Math.abs(edges.title - edges[name]) < .6, `${width}px viewport: ${name} shares the creation title edge: ${JSON.stringify(edges)}`);
-      assert.ok(edges.right < edges.stageRight, 'fitted board retains a small right gutter');
+      const edges = await run(`(()=>{const rect=selector=>document.querySelector(selector).getBoundingClientRect(),stage=rect('.canvas-stage'),items=[...document.querySelectorAll('[data-canvas-item]')].map(item=>item.getBoundingClientRect());return{title:rect('.topbar h1').left,name:rect('[aria-label=画板名称]').left,zoom:rect('.canvas-zoom').left,left:Math.min(...items.map(r=>r.left)),right:Math.max(...items.map(r=>r.right)),top:Math.min(...items.map(r=>r.top)),bottom:Math.max(...items.map(r=>r.bottom)),stageLeft:stage.left,stageRight:stage.right,stageTop:stage.top,stageBottom:stage.bottom}})()`);
+      for (const name of ['name','zoom']) assert.ok(Math.abs(edges.title - edges[name]) < .6, `${width}px viewport: ${name} shares the creation title edge: ${JSON.stringify(edges)}`);
+      assert.ok(edges.left >= edges.stageLeft && edges.right <= edges.stageRight && edges.top >= edges.stageTop && edges.bottom <= edges.stageBottom - 44, 'all content fits with room for controls');
+      assert.ok(Math.abs((edges.left + edges.right) / 2 - (edges.stageLeft + edges.stageRight) / 2) < 1, 'content is centred even on wide screens');
     }
     await writeFile(resolve('tmp/creation-canvas-boundaries.png'), (await win.webContents.capturePage()).toPNG());
     const entry = await selected(), current = await design({ action: 'inspect', path: entry.path });
@@ -216,6 +224,7 @@ app.whenReady().then(async () => {
     assert.equal(await childFrame().executeJavaScript(`document.elementFromPoint(${buttonInFrame.x},${buttonInFrame.y})?.tagName`), 'BUTTON');
     await childFrame().executeJavaScript(`document.elementFromPoint(${buttonInFrame.x},${buttonInFrame.y}).click()`);
     assert.equal(await childFrame().executeJavaScript('document.querySelector("button").textContent'), '2', 'interactive content stays reachable after panning and resizing');
+    await require('./helpers/canvas-presentation.cjs')({ run, until, win, delay, pointer, readCanvas, path: entry.path, childFrame });
     const afterGeometry = await readCanvas(entry.path);
     await design({ action: 'update', path: entry.path, expected_revision: afterGeometry.revision, layout: true, canvas: { title: beforeGeometry.document.title }, remove: ['alignment'], upsert: beforeGeometry.document.items });
     await until('document.querySelectorAll("[data-canvas-item]").length===3 && !document.querySelector("[data-canvas-item=alignment]")');
@@ -246,6 +255,14 @@ app.whenReady().then(async () => {
       else if (ext === 'xlsx') await until(`document.querySelector('[data-canvas-item=office] webview').executeJavaScript('document.querySelector("[data-region-grid]")?.cardbushRegionCells?.().some(c=>c.text==="Alpha")')`, 30000);
       else await until(`document.querySelector('[data-canvas-item=office] webview').executeJavaScript('document.body.innerText').then(text=>text.includes(${JSON.stringify(ext === 'docx' ? 'Real Word document' : 'Real slides')}))`, 30000);
       assert.equal(await run('document.querySelector(".canvas-notice.error")?.textContent||""'), '');
+      await run('document.querySelector(".canvas-present-button").click()');
+      await until('!!document.querySelector(".canvas-presentation [data-presentation-item=office] .right-inspector-preview.ready") && !document.querySelector(".canvas-presentation .inspector-preview-error")', 30000);
+      if (ext === 'pdf') await until('document.querySelector(".canvas-presentation").textContent.includes("Real PDF")');
+      else if (ext === 'xlsx') await until(`document.querySelector('.canvas-presentation webview').executeJavaScript('document.querySelector("[data-region-grid]")?.cardbushRegionCells?.().some(c=>c.text==="Alpha")')`, 30000);
+      else await until(`document.querySelector('.canvas-presentation webview').executeJavaScript('document.body.innerText').then(text=>text.includes(${JSON.stringify(ext === 'docx' ? 'Real Word document' : 'Real slides')}))`, 30000);
+      assert.equal(await run('document.querySelector(".canvas-presentation [aria-label=下一页]").disabled'), true);
+      await run('document.querySelector(".canvas-presentation [aria-label=退出演示]").click()');
+      await until('!document.querySelector(".canvas-presentation")');
     }
     const reloaded = new Promise(resolve => win.webContents.once('did-finish-load', resolve)); win.reload(); await reloaded; await until('!!document.querySelector("[data-canvas-item=office]")');
     assert.equal((await selected()).path, entry.path);

@@ -60,10 +60,17 @@ export function adjustCanvasFrame({ frame, dx, dy, handle, bounds, peers = [], z
   return { frame: { x: left, y: top, width: right - left, height: bottom - top }, guides };
 }
 
-/** Fit against the same left edge as the workspace title, leaving room for item handles. */
-export function fitCanvasViewport(view: Bounds, board: Bounds, inset: number) {
-  return { zoom: clamp(Math.min((view.width - inset * 2) / board.width, (view.height - 80) / board.height), .02, 2),
-    origin: { x: inset, y: 40 } };
+/** Fit the occupied area without changing saved frames; reserve the bottom controls. */
+export function fitCanvasViewport(view: Bounds, board: Bounds & { items?: { frame: CanvasFrame }[] }, inset: number) {
+  const frames = board.items?.map(item => item.frame) ?? [];
+  const left = frames.length ? Math.min(...frames.map(frame => frame.x)) : 0;
+  const top = frames.length ? Math.min(...frames.map(frame => frame.y)) : 0;
+  const right = frames.length ? Math.max(...frames.map(frame => frame.x + frame.width)) : board.width;
+  const bottom = frames.length ? Math.max(...frames.map(frame => frame.y + frame.height)) : board.height;
+  const width = Math.max(1, view.width - inset * 2), height = Math.max(1, view.height - inset * 2 - 44);
+  const zoom = Math.min(2, width / Math.max(1, right - left), height / Math.max(1, bottom - top));
+  return { zoom, origin: { x: inset + (width - (right - left) * zoom) / 2 - left * zoom,
+    y: inset + (height - (bottom - top) * zoom) / 2 - top * zoom } };
 }
 
 /** Keep the canvas point under the zoom anchor stationary. Coordinates are relative to the fitted origin. */

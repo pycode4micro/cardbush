@@ -9,14 +9,32 @@ const output = ts.transpileModule(source, { compilerOptions: { module: ts.Module
 const { adjustCanvasFrame: adjust, fitCanvasViewport, zoomCanvasPan } = await import('data:text/javascript;base64,' + Buffer.from(output).toString('base64'));
 const frame = { x: 100, y: 100, width: 200, height: 140 }, bounds = { width: 1000, height: 800 };
 
-test('fit shares a stable title edge across wide, tall and narrow viewports', () => {
+test('fit centres the empty board across wide, tall and narrow viewports', () => {
   const board = { width: 1440, height: 960 };
   for (const view of [{ width: 1200, height: 720 }, { width: 900, height: 1000 }, { width: 520, height: 550 }]) {
     const inset = view.width < 600 ? 10 : 14, fit = fitCanvasViewport(view, board, inset);
-    assert.deepEqual(fit.origin, { x: inset, y: 40 });
+    assert.ok(Math.abs(fit.origin.x + board.width * fit.zoom / 2 - view.width / 2) < 1e-9);
+    assert.ok(Math.abs(fit.origin.y + board.height * fit.zoom / 2 - (view.height - 44) / 2) < 1e-9);
     assert.ok(fit.origin.x + board.width * fit.zoom <= view.width - inset + 1e-9);
-    assert.ok(fit.origin.y + board.height * fit.zoom <= view.height - 40 + 1e-9);
+    assert.ok(fit.origin.y + board.height * fit.zoom <= view.height - inset - 44 + 1e-9);
   }
+});
+
+test('sparse content fills the viewport independently of unused board space without editing frames', () => {
+  const items = [{ frame: { x: 700, y: 900, width: 500, height: 300 } }, { frame: { x: 1250, y: 950, width: 600, height: 400 } }];
+  const before = JSON.stringify(items);
+  for (const view of [{ width: 1600, height: 800 }, { width: 390, height: 844 }]) {
+    const fit = fitCanvasViewport(view, { width: 50000, height: 50000, items }, 14);
+    const left = fit.origin.x + 700 * fit.zoom, right = fit.origin.x + 1850 * fit.zoom;
+    const top = fit.origin.y + 900 * fit.zoom, bottom = fit.origin.y + 1350 * fit.zoom;
+    assert.ok(left >= 14 - 1e-9 && right <= view.width - 14 + 1e-9);
+    assert.ok(top >= 14 - 1e-9 && bottom <= view.height - 58 + 1e-9);
+    assert.ok(Math.abs((left + right) / 2 - view.width / 2) < 1e-9);
+    assert.ok(Math.abs(right - left - (view.width - 28)) < 1e-9, 'use the available width');
+  }
+  assert.equal(JSON.stringify(items), before);
+  const extreme = fitCanvasViewport({ width: 200, height: 300 }, { width: 50000, height: 50000 }, 14);
+  assert.ok(extreme.zoom < .02 && extreme.zoom > 0, 'extreme documents still fit in narrow windows');
 });
 
 test('movement stays inside the board without changing size at either boundary', () => {

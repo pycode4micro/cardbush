@@ -1,6 +1,6 @@
 import { uiText } from '../../i18n';
 import { developmentDesktop, emptyCanvas, replaceCanvasContent, type CanvasItem, type CanvasSnapshot, type CreationCanvas, type UserPromptInput } from '@cardbush/bush-protocol';
-import { Copy, FilePlus2, FolderDown, LayoutTemplate, MoreHorizontal, Plus, RefreshCw, Scan, X } from 'lucide-react';
+import { Copy, FilePlus2, FolderDown, LayoutTemplate, MoreHorizontal, Play, Plus, RefreshCw, Scan, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { TopBar } from '../../components/TopBar';
 import type { CreationChatOptions, CreationInspectorContext } from '../mdPresentation/CreationConversation';
@@ -20,6 +20,7 @@ import { createCanvas, prepareCanvas, updateCanvasEntry, useCanvases } from './c
 import { canvasFileTarget, canvasRequest, placeCanvasItems } from './canvasModel';
 import { extractCanvasComponents } from './canvasComponents';
 import { CanvasStage } from './CanvasStage';
+import { CanvasPresentation } from './CanvasPresentation';
 import { canvasErrorMessage } from './canvasErrors';
 import { CanvasMarkdownWorkspace } from './CanvasMarkdownWorkspace';
 import { useTeamChoices } from '../team/teamWorkspaceStore';
@@ -35,7 +36,7 @@ export function CreationCanvasApp(props: Props) {
     const receive = () => { const request = takeBushItDocumentRequest(); if (!request) return; const { source, team } = request; const seed = emptyCanvas(source.match(/^# (.+)$/m)?.[1] || ''); seed.items = [{ id: 'document', title: seed.title, kind: 'markdown', markdown: source, frame: { x: 60, y: 60, width: 1000, height: 800 } }]; const id = createCanvas(seed); updateCanvasEntry(id, { editingId: 'document', team }); };
     receive(); return watchBushItDocument(receive);
   }, []);
-  useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); event.stopImmediatePropagation(); createCanvas(); } }; window.addEventListener('keydown', listener, true); return () => window.removeEventListener('keydown', listener, true); }, []);
+  useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); event.stopImmediatePropagation(); if (!document.querySelector('.canvas-presentation[open]')) createCanvas(); } }; window.addEventListener('keydown', listener, true); return () => window.removeEventListener('keydown', listener, true); }, []);
   if (!entry) return <div className="creation-canvas-app"><TopBar title={uiText(props.language)('appCenterModel.create')} language={props.language} inspectorOpen={!!props.inspectorOpen} onToggleInspector={props.onToggleInspector}/><div className="canvas-empty"><button onClick={() => createCanvas()}>{uiText(props.language)('creationCanvasApp.newCanvas')}</button></div></div>;
   return <CanvasSpace key={entry.id} {...props} entry={entry}/>;
 }
@@ -47,6 +48,7 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
   const [chatRegion, setChatRegion] = useState<string>();
   const [editor, setEditor] = useState<{ itemId: string; pageId: string }>();
   const [selection, setSelection] = useState<MarkdownSelection>();
+  const [presenting, setPresenting] = useState(false);
   const autoOpened = useRef('');
   const [menu, setMenu] = useState(false), [busy, setBusy] = useState(false), [chat, setChat] = useState<CreationInspectorContext | null>(null);
   const teamChoices = useTeamChoices(menu);
@@ -183,6 +185,7 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
         // Keep the request editable; submitting later uses the whole desk context.
         chat?.appendDraft(uiText(language)('creationCanvasApp.updateThisDevelopmentDeskFromChangesSince'));
       }}><RefreshCw size={15}/>{uiText(language)('creationCanvasApp.updateDesk')}</button>}
+      {!editor && <button className="canvas-present-button" disabled={busy || !snapshot?.document.items.length} onClick={() => { setMenu(false); setPresenting(true); }}><Play/>{uiText(language)('canvasPresentation.start')}</button>}
       <button disabled={busy || !snapshot} onClick={() => void newDocument()}><FilePlus2 size={16}/>{uiText(language)('creationCanvasApp.newDocument')}</button>
       <button disabled={busy || !snapshot} onClick={() => void add()}><Plus size={16}/>{uiText(language)('creationCanvasApp.addFiles')}</button>
       <div className="canvas-menu-wrap"><button aria-label={uiText(language)('creationCanvasApp.moreActions')} aria-expanded={menu} onClick={() => setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu && <><button className="canvas-menu-dismiss" aria-label={uiText(language)('creationCanvasApp.closeMenu')} onClick={() => setMenu(false)}/><div className="canvas-menu" role="menu">
@@ -215,6 +218,7 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
       {localControls && <InspectorCoverControls language={language} inputOpen={chatOpen} status={chat?.inputStatus} onTargetChange={setInputTarget} onToggleInput={() => setChatOpen(value => !value)}/>}
       {chatRegion && <div className="canvas-chat-region"><span>{uiText(language)('creationCanvasApp.discussing')} · {snapshot?.document.items.find(item => item.id === chatRegion)?.title || uiText(language)('creationCanvasApp.removedRegion')}</span><button aria-label={uiText(language)('creationCanvasApp.clearConversationRegion')} onClick={() => { setChatRegion(undefined); setSelectedId(undefined); }}><X size={13}/></button></div>}
     </div>
+    {snapshot && presenting && <CanvasPresentation snapshot={snapshot} language={language} initialId={selectedId} onClose={() => setPresenting(false)}/>}
     {snapshot && <Suspense fallback={null}><CreationConversation key={entry.sessionId} {...chatOptions} sessionId={entry.sessionId} root={entry.root || ''} language={language}
       preparation={!entry.sessionCreated ? { title: `${uiText(language)('appCenterModel.create')} · ${entry.title || uiText(language)('canvasSidebar.untitledCanvas')}`, metadata: { creation_workspace: true, creation_canvas: snapshot.path }, onCreated: () => updateCanvasEntry(entry.id, { sessionCreated: true }) } : undefined}
       visible={chatOpen && localControls} composerPortalTarget={composerPortalTarget ?? (localControls && chatOpen ? inputTarget : null)} onOpen={startChat} beforeSend={beforeSend} contextLabel={entry.title || uiText(language)('canvasMarkdownWorkspace.canvas')} onInspectorContext={inspect}/></Suspense>}
