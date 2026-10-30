@@ -2,6 +2,8 @@
   "locale": "zh",
   "name": "中文",
   "messages": {
+    "workspace.executionEnvironmentMismatch": "工具只能在当前会话选定的环境中执行。请先切换会话的工作位置，再使用其他主机。",
+    "workspace.sshPosixPathRequired": "此 SSH 主机要求使用 POSIX 路径。访问本机文件前，请先切换会话的工作位置。",
     "common.loading": "正在加载…",
     "common.loadingCompact": "…",
     "common.close": "关闭",

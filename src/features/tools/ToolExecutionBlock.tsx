@@ -785,12 +785,9 @@ function ToolExecutionDetail({
   const showOutput = Boolean(output.trim()) && !goalUpdate;
   const childExecutions = subagentChildToolExecutions(execution);
   const runtimeInfo = runtimeProfileInfoFromExecution(execution);
-  const environment = asRecord(asRecord(execution.metadata.nativeResult).executionEnvironment);
   const terminal = asRecord(execution.metadata.nativeResult);
   const terminalSessionId = typeof terminal.terminalSessionId === 'string' && terminal.state === 'running' ? terminal.terminalSessionId : '';
   const sessionId = host?.sessionId ?? message.conversationId;
-  const environmentLabel = environment.kind === 'local' ? (host ? uiText(language)('toolExecutionBlock.executionHostServerAgent') : uiText(language)('toolExecutionBlock.executionHostLocal'))
-    : environment.kind === 'ssh' ? `SSH · ${String(environment.workspaceDir || environment.connectionId)}` : '';
   const hookDecision = toolHookDecisionFromExecution(execution);
   const planningAssessment = planningAssessmentFromExecution(execution);
   const auditSignals = subagentAuditSignalsFromExecution(execution);
@@ -829,7 +826,6 @@ function ToolExecutionDetail({
       {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{uiText(language)('toolExecutionBlock.theServerReturnedAResultButClient')}</p>}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
-      <WorkerProfileBadge info={environmentLabel} />
       <WorkerProfileBadge info={workerInfo} />
       {planningAssessment && (
         <PlanningAssessmentNotice language={language} />

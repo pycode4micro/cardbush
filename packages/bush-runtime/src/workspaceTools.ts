@@ -510,7 +510,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "terminal_exec",
-      description: terminalToolDescription() + ' On Windows use PowerShell 7 (pwsh); shell="powershell" selects pwsh, never Windows PowerShell 5. If pwsh is missing, ask the user to install PowerShell 7 on the execution host before retrying; do not substitute powershell.exe.' + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. environment="local" uses this host and its native shell.' : ''),
+      description: terminalToolDescription() + ' On Windows use PowerShell 7 (pwsh); shell="powershell" selects pwsh, never Windows PowerShell 5. If pwsh is missing, ask the user to install PowerShell 7 on the execution host before retrying; do not substitute powershell.exe.' + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. All commands use the conversation\'s selected host.' : ''),
       inputSchema: objectSchema({
         command: { type: "string", minLength: 1 },
         cwd: {

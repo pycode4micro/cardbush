@@ -163,24 +163,26 @@ function seeded() {
   return { journal, store };
 }
 
-for (const failure of [false, true]) test(`Runtime token pressure stages incremental sources and preserves history (failure=${failure})`, async t => {
+for (const [failure, ssh] of [[false,false], [true,false], [false,true]]) test(`Runtime token pressure stages incremental sources and preserves history (failure=${failure}, ssh=${ssh})`, async t => {
   const { store } = seeded(), original = structuredClone(store.snapshot('s').turns), observed = [];
   const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: { countInputTokens: count,
     async *stream(input) {
       validateConversation(input.messages); observed.push(structuredClone(input));
       assert.ok(JSON.stringify(input.messages).length <= 60_000, 'no oversized model dispatch');
       if (maintenance(input)) {
+        if (ssh) assert.deepEqual(input.tools.map(tool=>tool.name), ['checkpoint_context'], 'SSH maintenance exposes only its authorized checkpoint schema');
         assert.deepEqual(store.snapshot('s').turns, original, 'no partial source replacement');
         if (failure && observed.length === 2) {
           yield event(input, 0, 'response_failed', { code: 'fixture_unavailable', message: 'Interrupted source.', retryable: false }); return;
         }
         yield* checkpoint(input, `stage-${observed.length}`);
       } else {
+        if (ssh) assert.deepEqual(input.tools, [], 'ordinary SSH rounds never inherit maintenance or local tool schemas');
         yield event(input, 0, 'text_delta', { delta: 'Checked.' }); yield event(input, 1, 'response_completed', { finishReason: 'stop' });
       }
     } } });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
-  const terminal = await host.runSessionTurn(request);
+  const terminal = await host.runSessionTurn(ssh ? {...request,metadata:{...request.metadata,workspaceDir:'ssh://fixture/work'}} : request);
   assert.equal(terminal.payload.status, failure ? 'failed' : 'completed', JSON.stringify(terminal.payload));
   assert.equal(observed.length, failure ? 2 : 3, 'Fitting individual sources need no extra consolidation call.');
   const session = store.snapshot('s');

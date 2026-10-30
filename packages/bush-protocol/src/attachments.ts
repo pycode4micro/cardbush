@@ -62,7 +62,7 @@ export function formatTurnAttachmentContext(timeContext: string, attachments: Ru
     files.length ? `Attached files:\n${files.map(locator).join('\n')}` : '',
     images.length ? `Attached images (in visual input order):\n${images.map(item => `${item.imageIndex! + 1}. ${locator(item)}`).join('\n')}` : '',
     attachments.length ? 'Attachment paths are for tools on the execution host. Image pixels supplied in the conversation do not open a document in an external application; use the corresponding file path when needed. Preserve originals and save edited results separately unless the user requests overwriting.' : '',
-    localEnvironment ? 'Local attachments remain on the Runtime host. Use environment="local" for built-in file and terminal tools with these local paths; SSH references still identify their own remote environment.' : '',
+    localEnvironment ? 'Local attachments remain on the Runtime host and are unavailable to SSH terminal tools. Image pixels supplied in the conversation are still visible. Files must be transferred to the selected SSH host before processing them there; do not treat local paths as remote files.' : '',
   ].filter(Boolean).join('\n');
   return content ? `<turn_runtime_context>\n${content}\n</turn_runtime_context>` : '';
 }

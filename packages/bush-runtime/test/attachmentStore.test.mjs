@@ -152,7 +152,8 @@ test('SSH workspaces keep local originals on the Runtime host and preserve remot
   const [saved, remote] = user(candidate).metadata.attachments;
   assert.deepEqual(await readFile(saved.path), png);
   assert.equal(remote.path, 'ssh://server/home/project/remote.csv');
-  assert.match(context(candidate).message.content, /environment="local"/);
+  assert.match(context(candidate).message.content, /unavailable to SSH terminal tools/);
+  assert.doesNotMatch(context(candidate).message.content, /environment="local"/);
   assert.equal(candidate.metadata.workspaceDir, 'ssh://server/home/project');
   assert.ok(candidate.metadata.taskRoots.some(path => saved.path.startsWith(path)));
   assert.ok(candidate.metadata.mcpContext.filesystemRoots.some(path => saved.path.startsWith(path)));

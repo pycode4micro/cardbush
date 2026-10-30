@@ -6,6 +6,9 @@ import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.j
 import { AssistantConversation } from './assistantConversation.js';
 import { ConversationJournal } from './conversationJournal.js';
 import { restoreSessionModelPolicy, systemPolicyIdentity } from './sessionModelPolicy.js';
+import { executionWorkspace, isSshExecution, sshExecutionTools, sshTerminalTools } from './workspaceExecutionMode.js';
+import { uiText } from '@cardbush/platform/i18n';
+import { withToolDisplayTitle } from './toolDisplay.js';
 import { REALTIME_AGENT_TOOL_COMMAND, realtimeAgentToolRequestSchema } from '@cardbush/bush-protocol';
 import { REALTIME_CONTEXT_COMPACTION_COMMAND, realtimeContextRequestSchema } from '@cardbush/bush-protocol';
 import { compactRealtimeContext } from './realtimeContextCompaction.js';
@@ -1195,18 +1198,19 @@ export class InMemoryRuntimeHost {
         return this.runModelTurn(modelRequestSchema.parse(command.payload), { signal });
       case RUNTIME_TERMINAL_CONTROL_COMMAND: {
         const { sessionId, terminalSessionId, action } = runtimeTerminalControlSchema.parse(command.payload);
-        try {
+        const workspace = await this.#taskWorkspaces?.descriptor(sessionId);
+        const selected = parseSshWorkspace(workspace?.workspaceDir ?? executionWorkspace(this.#sessions.snapshot(sessionId)?.metadata ?? {}));
+        if (!selected) {
           const current = this.#workspaceTerminals.status(sessionId, terminalSessionId);
           return action === 'stop' && current.state === 'running'
             ? await this.#workspaceTerminals.stop(sessionId, terminalSessionId) : current;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'terminal_session_not_found') throw error;
-          const listed = await this.#remoteWorkspace?.request('terminals', { owner: sessionId }, signal);
-          const remote = (listed?.sessions ?? []).find((item: Record<string, unknown>) => item.terminalSessionId === terminalSessionId);
-          if (!remote) throw error;
-          if (action === 'status' || remote.state !== 'running') return remote;
-          return this.#remoteWorkspace!.request('execute', { uri: remote.uri, owner: sessionId, name: 'terminal_stop', input: { sessionId: terminalSessionId } }, signal);
         }
+        const listed = await this.#remoteWorkspace?.request('terminals', { owner: sessionId }, signal);
+        const remote = (listed?.sessions ?? []).find((item: Record<string, unknown>) => item.terminalSessionId === terminalSessionId &&
+          parseSshWorkspace(typeof item.uri === 'string' ? item.uri : undefined)?.connectionId === selected.connectionId);
+        if (!remote) throw Object.assign(new Error(uiText()('workspace.executionEnvironmentMismatch')), { code: 'terminal_session_not_found' });
+        if (action === 'status' || remote.state !== 'running') return remote;
+        return this.#remoteWorkspace!.request('execute', { uri: remote.uri, owner: sessionId, name: 'terminal_stop', input: { sessionId: terminalSessionId } }, signal);
       }
       case GET_RUNTIME_USER_MESSAGE_COMMAND: {
         const { sessionId, turnId, messageId } = runtimeUserMessageIdentitySchema.parse(command.payload);
@@ -1821,8 +1825,9 @@ export class InMemoryRuntimeHost {
       });
       const remote = parseSshWorkspace(workspace.workspaceDir);
       if (remote) candidate.prefixMessages.push({ role: 'developer', name: 'ssh_workspace_binding', content:
-        `The user selected an SSH workspace as the default environment. Saved connection ID: ${remote.connectionId}. Remote project directory: ${remote.path}. SSH is an additional environment, not a replacement for the local Runtime host. Built-in file and terminal tools default to this remote directory; use environment="local" with absolute local paths for local skills, source files and local commands. To explicitly address another saved SSH environment use environment="ssh://connection-id/absolute/directory". Omit shell for the detected remote default, or explicitly use powershell/cmd on Windows and posix on Linux. Windows paths accept C:\\Users\\name or /C:/Users/name; / is only its SFTP browsing root. Match command syntax to the returned platform and shell; local commands use the local host's native shell. Each result identifies its executionEnvironment. Terminal handles stay on the host that created them; omit environment for terminal_poll/write/stop, and terminal_list lists this session's terminals across hosts. Connection failures never fall back to local execution. Remote tools do not provide local checkpoint/revert. Other tools and plugins retain their declared execution environments; do not assume they moved remotely. Read the relevant project's AGENTS.md before editing on either host.` });
+        `The user selected an SSH workspace. Saved connection ID: ${remote.connectionId}. Remote project directory: ${remote.path}. Only terminal_exec, terminal_poll, terminal_write, terminal_stop and terminal_list are available for work. All terminal operations run on this SSH host, including file inspection and editing through shell commands. Local files, skills, plugins and other hosts are unavailable. Only the user can switch the conversation workspace to change hosts. Omit shell for the detected remote default, or explicitly use powershell/cmd on Windows and posix on Linux. Windows paths accept C:\\Users\\name or /C:/Users/name; / is only its SFTP browsing root. Match command syntax to the returned platform and shell. Terminal handles and terminal_list are restricted to this host. Connection failures never fall back to local execution. Read the remote project's AGENTS.md through the terminal before editing.` });
     }
+    if (isSshExecution(candidate.metadata)) candidate.tools = sshExecutionTools(candidate.tools);
     await this.#attachments.prepare(candidate, this.#modelImages, options.signal);
     const automationContext = this.#automation ? structuredClone(candidate) : undefined;
     if (!candidate.metadata.pluginHookEvaluation &&
@@ -2078,6 +2083,19 @@ export class InMemoryRuntimeHost {
     internalTask?: Pick<RuntimeInternalTaskOptions, 'acceptResult'>;
   }): Promise<RuntimeEvent> {
     const { request, identity } = input;
+    // Apply the current binding again for direct requests and recovered turns.
+    // A saved schema snapshot or stale caller metadata cannot restore local tools.
+    const workspace = !input.internalTask && await this.#taskWorkspaces?.descriptor(request.sessionId);
+    if (workspace && workspace.workspaceDir !== executionWorkspace(request.metadata)) request.metadata = { ...request.metadata, workspaceDir: workspace.workspaceDir,
+      projectDir: workspace.sourceDir, taskRoots: [workspace.workspaceDir] };
+    const sshOnly = !input.internalTask && isSshExecution(request.metadata);
+    if (sshOnly) {
+      request.tools = sshExecutionTools(request.tools);
+      request.metadata.mcpToolDiscovery = false;
+      delete request.metadata.mcpModelToolSnapshot;
+      delete request.metadata.mcpDiscoveredToolNames;
+      delete request.metadata.mcpDiscoveredToolVersions;
+    }
     const turnKey = JSON.stringify([request.sessionId, request.turnId]);
     let pluginExtensions: PluginExtensions = { hooks: [], agents: [] };
     let hookOrdinal = 0;
@@ -2106,7 +2124,7 @@ export class InMemoryRuntimeHost {
       }
     };
     const runHook = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => {
-      if (input.internalTask || request.metadata.pluginHookEvaluation) return { messages: [] } as import('./pluginExtensions.js').PluginHookResult;
+      if (sshOnly || input.internalTask || request.metadata.pluginHookEvaluation) return { messages: [] } as import('./pluginExtensions.js').PluginHookResult;
       const current = await this.#loadPluginExtensions?.() ?? pluginExtensions;
       return this.#pluginHooks.run(await this.#pluginHookScopes.select(current.hooks, request), event, { ...context, request }, observeHook);
     };
@@ -2124,7 +2142,7 @@ export class InMemoryRuntimeHost {
         const allowed = await this.#requestBackgroundPermission({ ...permission, sessionId: request.sessionId, turnId: request.turnId }, signal);
         return { protocol: 'bush.runtime_permission_answer.v1' as const, permissionId: randomUUID(), answerId: randomUUID(), decision: allowed ? 'allow_once' as const : 'deny' as const, grantedCapabilityIds: allowed ? permission.capabilityIds : [] };
       } } } : {}),
-      ...(this.#loadPluginExtensions && !input.internalTask ? { hooks: this.#pluginTerminalHooks.forTurn(request.sessionId, runHook) } : {}),
+      ...(this.#loadPluginExtensions && !input.internalTask && !sshOnly ? { hooks: this.#pluginTerminalHooks.forTurn(request.sessionId, runHook) } : {}),
     });
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];
@@ -2444,9 +2462,9 @@ export class InMemoryRuntimeHost {
         details: {},
       });
     try {
-      if (!input.internalTask) await this.#mcpApps.remember(request);
+      if (!input.internalTask && !sshOnly) await this.#mcpApps.remember(request);
       delete request.metadata.builtinPluginCommandsAvailable;
-      if (this.#loadPluginExtensions && !input.internalTask && !request.metadata.pluginHookEvaluation) {
+      if (this.#loadPluginExtensions && !input.internalTask && !sshOnly && !request.metadata.pluginHookEvaluation) {
         this.#pluginHooks.openSession(request.sessionId);
         pluginExtensions = await this.#loadPluginExtensions();
         request.metadata.builtinPluginCommandsAvailable = Boolean(pluginExtensions.commands?.length);
@@ -2504,7 +2522,7 @@ export class InMemoryRuntimeHost {
       while (true) {
         // Capability changes become visible only between requests. Do not remove
         // native registrations: hooks, explicit commands and saved calls reuse them.
-        if (this.#loadPluginExtensions && !input.internalTask && !request.metadata.pluginHookEvaluation && round >= input.nextRound) {
+        if (this.#loadPluginExtensions && !input.internalTask && !sshOnly && !request.metadata.pluginHookEvaluation && round >= input.nextRound) {
           try {
             const current = await this.#loadPluginExtensions();
             request.metadata.builtinPluginCommandsAvailable = Boolean(current.commands?.length);
@@ -2514,7 +2532,7 @@ export class InMemoryRuntimeHost {
             this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error)));
           }
         }
-        const catalogUpdate = input.internalTask ? undefined : synchronizeMcpCatalog(this.#toolRegistry, request);
+        const catalogUpdate = input.internalTask || sshOnly ? undefined : synchronizeMcpCatalog(this.#toolRegistry, request);
         if (catalogUpdate) {
           messages.push(catalogUpdate);
           generatedMessages.push({ messageId: `plugin_catalog_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message: catalogUpdate });
@@ -3844,6 +3862,12 @@ export class InMemoryRuntimeHost {
   }
 
   #modelToolDefinitions(request: ModelRequest) {
+    if (isSshExecution(request.metadata) && request.metadata.runtimeTask !== 'internal') {
+      if (request.metadata.toolExecutionPolicy === 'none') return [];
+      const maintenance = this.#contextCompactionAuthorizations.has(JSON.stringify([request.sessionId, request.turnId]));
+      const tools = maintenance ? this.#sessions.modelContract(request.sessionId)?.tools ?? request.tools : request.tools;
+      return tools.filter(tool => maintenance ? tool.name === CHECKPOINT_CONTEXT_TOOL : sshTerminalTools.has(tool.name)).map(withToolDisplayTitle);
+    }
     const policy = systemPolicyIdentity(request.metadata.systemPolicy);
     if (!policy || request.metadata.runtimeTask === 'internal' || request.metadata.toolExecutionPolicy === 'none' || !this.#sessions.hasSession(request.sessionId)) {
       return modelToolDefinitions(this.#toolRegistry, request);
@@ -4548,7 +4572,8 @@ export class InMemoryRuntimeHost {
       const status = await this.#remoteWorkspace.request('execute', { uri: workspace.workspaceDir, owner: sessionId, name: 'workspace_busy', input: {} });
       if (status.running) throw Error('请先停止当前远程工作区的终端，再切换工作区。');
     }
-    if (workspace && this.#workspaceTerminals.hasRunningWithin(workspace.workspaceDir)) {
+    if (this.#workspaceTerminals.list(sessionId).some(terminal => terminal.state === 'running') ||
+      workspace && this.#workspaceTerminals.hasRunningWithin(workspace.workspaceDir)) {
       throw new Error("A terminal in this workspace is still running. Stop or wait for it before changing the workspace.");
     }
   }

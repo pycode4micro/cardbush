@@ -23,7 +23,7 @@ try {
     const execution = (id, extra={}) => ({id, name:'terminal_exec', summary:'terminal_exec', state:'completed',
       output:'{\\n  "terminalSessionId": "terminal_31",\\n  "pid": 468\\n}', success:true, durationMs:2100, createdAt:'2026-09-10T00:00:00Z',
       turnId:'turn', contentOffset:0, metadata:{}, ...extra});
-    window.executions = [execution('shell'), execution('search', {name:'search_file_content', summary:'查找端口与服务配置', durationMs:600,
+    window.executions = [execution('shell', {metadata:{nativeResult:{executionEnvironment:{kind:'ssh',connectionId:'fixture',workspaceDir:'ssh://fixture/work'}}}}), execution('search', {name:'search_file_content', summary:'查找端口与服务配置', durationMs:600,
       output:'原始结果😀'.repeat(50) + '\\r\\n' + '执行记录\\r\\n'.repeat(200) + '最后一行'}), execution('running', {summary:'Get-NetTCPConnection -LocalPort 8090,8091 -State Listen', state:'running', output:'', durationMs:0})];
     window.active = true; window.theme='theme-dark'; window.language='zh'; window.messageId = 'message'; window.fixtureSession = 'fixture';
     window.renderFixture = () => root.render(<div className={'app ' + window.theme} style={{height:'100vh',padding:'32px',boxSizing:'border-box'}}>

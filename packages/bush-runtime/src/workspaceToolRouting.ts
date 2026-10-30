@@ -6,6 +6,8 @@ import { protectedPosixTerminalDeletion, protectedTerminalDeletion, type Termina
 import { resolveToolPath, normalizeIdentity } from './workspaceAccessPolicy.js';
 import { sandboxError } from './executionSandbox.js';
 import { commandPermission, terminalInputPermission } from './commandPermission.js';
+import { uiText } from '@cardbush/platform/i18n';
+import { executionWorkspace } from './workspaceExecutionMode.js';
 
 type Context<T> = ToolAdmissionContext<T> | ToolHandlerContext<T>;
 type RoutedInput = Record<string, unknown> & { environment?: string };
@@ -13,22 +15,23 @@ const handleTools = new Set(['terminal_poll', 'terminal_write', 'terminal_stop']
 
 function environment(value: unknown): string | undefined {
   if (value === undefined) return;
-  if (typeof value !== 'string' || !value.trim()) throw Error('environment must be workspace, local, or an ssh://saved-connection-id/absolute/directory URI.');
+  if (typeof value !== 'string' || !value.trim()) throw Error(uiText()('workspace.executionEnvironmentMismatch'));
   const result = value.trim();
-  if (result !== 'workspace' && result !== 'local' && !parseSshWorkspace(result)) throw Error('Unknown execution environment. Use workspace, local, or an SSH workspace URI.');
+  if (result !== 'workspace' && result !== 'local' && !parseSshWorkspace(result)) throw Error(uiText()('workspace.executionEnvironmentMismatch'));
   return result;
 }
 
 function defaultRoot<T>(context: Context<T>): string | undefined {
-  const metadata = context.turn?.request.metadata;
-  const root = metadata?.workspaceDir || metadata?.projectDir || metadata?.sessionWorkspaceDir;
-  return typeof root === 'string' ? root : undefined;
+  return executionWorkspace(context.turn?.request.metadata ?? {});
 }
 
 function chosenRemote<T>(context: Context<T>): string | undefined {
   const selected = (context.input as RoutedInput).environment;
-  if (selected === 'local') return;
-  const root = !selected || selected === 'workspace' ? defaultRoot(context) : selected;
+  const workspace = defaultRoot(context);
+  const root = !selected || selected === 'workspace' ? workspace : selected;
+  if (parseSshWorkspace(root)?.connectionId !== parseSshWorkspace(workspace)?.connectionId) {
+    throw Object.assign(new Error(uiText()('workspace.executionEnvironmentMismatch')), { code: 'workspace_environment_mismatch' });
+  }
   return parseSshWorkspace(root) ? root : undefined;
 }
 
@@ -40,7 +43,7 @@ export async function workspaceFileResources<T>(context: Context<T>, mutating: b
   return [{ key, mode: mutating ? 'write' as const : 'read' as const }];
 }
 
-/** A local override cannot inherit a remote path as a local cwd or permission root. */
+/** Keep remote references out of local permission roots. */
 export function localContext<T, C extends Context<T>>(context: C): C {
   if (!context.turn) return context;
   const metadata = { ...context.turn.request.metadata };
@@ -63,7 +66,7 @@ function tagged(result: unknown, uri?: string): unknown {
     ? { ...result, executionEnvironment: tag(uri) } : result;
 }
 
-/** Route each call explicitly; process handles retain their original host. */
+/** The selected workspace determines the host, including access to old handles. */
 export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, terminals: TerminalSessionManager, remote?: RemoteWorkspaceBridge, requireCommandSandbox = false): ToolRegistration<T> {
   const name = registration.definition.name;
   function enforceRemoteSandbox() {
@@ -76,35 +79,30 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
   }
   async function route(context: Context<T>): Promise<string | undefined> {
     const input = context.input as RoutedInput;
+    const selected = chosenRemote(context);
     if (handleTools.has(name)) {
-      const local = terminals.list(context.sessionId).find(item => item.terminalSessionId === input.sessionId);
-      const terminal = local ?? (await remoteTerminals(context.sessionId, context.signal)).find(item => item.terminalSessionId === input.sessionId);
+      const connectionId = parseSshWorkspace(selected)?.connectionId;
+      const local = selected ? undefined : terminals.list(context.sessionId).find(item => item.terminalSessionId === input.sessionId);
+      const terminal = local ?? (selected ? (await remoteTerminals(context.sessionId, context.signal)).find(item =>
+        item.terminalSessionId === input.sessionId && parseSshWorkspace(item.uri)?.connectionId === connectionId) : undefined);
       if (!terminal) throw Error('Terminal session is not available in this Runtime session. Use terminal_list; do not restart the command.');
       const uri: string | undefined = local ? undefined : terminal.uri;
       if (!local && !parseSshWorkspace(uri)) throw Error('Remote terminal has no valid host identity.');
-      if (input.environment !== undefined) {
-        const requested = chosenRemote(context);
-        if (parseSshWorkspace(requested)?.connectionId !== parseSshWorkspace(uri)?.connectionId) throw Error('The terminal belongs to a different execution environment. Omit environment to use its original host.');
-      }
       return uri;
     }
-    const uri = chosenRemote(context);
+    const uri = selected;
     if (uri && name === 'terminal_exec' && (input.exclusiveResources as unknown[] | undefined)?.length) {
       throw Object.assign(new Error('Direct SSH does not support exclusive_resources. No command was sent. Use a CardBush Agent on that host for coordinated execution.'), { code: 'terminal_resource_coordination_unavailable' });
     }
     const path = input.path ?? input.cwd;
-    if (!uri && typeof path === 'string' && path.startsWith('ssh:')) throw Error('An SSH path requires an explicit SSH environment; it cannot be used as a local path.');
+    if (!uri && typeof path === 'string' && path.startsWith('ssh:')) throw Error(uiText()('workspace.executionEnvironmentMismatch'));
     return uri;
   }
   return {
     ...registration,
     definition: {
       ...registration.definition,
-      description: registration.definition.description + ' environment selects workspace (default), local (this Runtime host), or ssh://saved-connection-id/directory. Local access remains available in SSH workspaces; use absolute local paths there. Terminal handles always stay on their original host; terminal_list without environment lists all hosts.',
-      inputSchema: { ...registration.definition.inputSchema, properties: {
-        ...(registration.definition.inputSchema.properties as Record<string, unknown>),
-        environment: { type: 'string', description: 'workspace (default), local, or ssh://saved-connection-id/absolute/directory. Omit for polling/writing/stopping a terminal to follow its original host. Does not change the conversation workspace or grant permissions.' },
-      } },
+      description: registration.definition.description + ' Runs only in the conversation\'s selected workspace environment. Terminal handles and terminal_list are restricted to that host. To change hosts, the user must switch the conversation workspace.',
     },
     decodeInput(value) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Tool arguments must be an object.');
@@ -114,8 +112,8 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
         ...(name === 'terminal_exec' ? { shellSpecified: (value as Record<string, unknown>)?.shell !== undefined } : {}) };
     },
     authorize: async context => {
-      if (name === 'terminal_list') return { kind: 'allow' as const };
       const uri = await route(context);
+      if (name === 'terminal_list') return { kind: 'allow' as const };
       if (!uri) {
         if (name === 'terminal_exec') {
           const shells = process.platform === 'win32' ? ['powershell', 'cmd'] : ['posix'];
@@ -150,7 +148,7 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       const trusted = parseSshWorkspace(selectedRoot)?.connectionId === target.connectionId ? selectedRoot : undefined;
       const resolved = await remote.request('authorize', { uri: trusted ?? uri, path, write: name === 'write_file',
         ...(name === 'terminal_exec' ? { terminal: { ...(input.shellSpecified ? { shell: input.shell } : {}) } } : {}) }, context.signal);
-      if (resolved.platform !== 'windows' && /^[a-z]:/i.test(value)) throw Error('This SSH host requires POSIX paths. For local files use environment="local".');
+      if (resolved.platform !== 'windows' && /^[a-z]:/i.test(value)) throw Error(uiText()('workspace.sshPosixPathRequired'));
       const access = name === 'read_file' || name === 'search_file_content' ? 'read' : name === 'terminal_exec' ? 'execute' : 'write';
       if (name === 'terminal_exec') {
         const extra = input.additionalPermissions as { readRoots: string[]; writeRoots: string[]; readFiles?: string[]; writeFiles?: string[]; network: boolean } | undefined;
@@ -180,13 +178,12 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
     },
     execute: async context => {
       if (name === 'terminal_list') {
-        const selected = (context.input as RoutedInput).environment;
         const uri = chosenRemote(context);
-        if (selected !== undefined && uri && !remote) throw Error('SSH execution is unavailable in this host.');
-        const locals = selected === undefined || !uri ? terminals.list(context.sessionId).map(item => tagged(item)) : [];
-        const remotes = selected === 'local' || (selected !== undefined && !uri) ? [] : await remoteTerminals(context.sessionId, context.signal);
+        if (uri && !remote) throw Error('SSH execution is unavailable in this host.');
+        if (!uri) return { sessions: terminals.list(context.sessionId).map(item => tagged(item)) };
+        const remotes = await remoteTerminals(context.sessionId, context.signal);
         const connectionId = parseSshWorkspace(uri)?.connectionId;
-        return { sessions: [...locals, ...remotes.filter(item => selected === undefined || parseSshWorkspace(item.uri)?.connectionId === connectionId).map(item => tagged(item, item.uri))] };
+        return { sessions: remotes.filter(item => parseSshWorkspace(item.uri)?.connectionId === connectionId).map(item => tagged(item, item.uri)) };
       }
       const uri = await route(context);
       if (!uri) return tagged(await registration.execute(localContext(context)), undefined);

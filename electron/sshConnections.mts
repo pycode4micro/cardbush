@@ -230,7 +230,8 @@ export class SshConnectionManager {
     const target = parseSshWorkspace(uri); if (!target) throw Error('Expected SSH workspace');
     signal?.throwIfAborted();
     if (name === 'file_snapshot') return this.snapshot(sshWorkspace(target.connectionId, this.#path(target.connectionId, target.path, input.path, (await this.#host(target.connectionId, false)).platform)), input.maxBytes ?? 0, signal);
-    if (name === 'workspace_busy') return { running: [...this.#terminals.values()].some(item => item.root === uri && item.state === 'running') };
+    if (name === 'workspace_busy') return { running: [...this.#terminals.values()].some(item => item.state === 'running' &&
+      (item.root === uri || item.owner === owner && item.connectionId === target.connectionId)) };
     if (name === 'workspace_stop') { await Promise.all([...this.#terminals.values()].filter(item => item.root === uri).map(item => this.#stop(item))); return { stopped:true }; }
     if (name === 'terminal_list') return { sessions: [...this.#terminals.values()].filter(item => item.owner === owner && item.connectionId === target.connectionId).map(item => ({ terminalSessionId: item.id, state: item.state, command: item.command, cwd: item.cwd })) };
     if (['terminal_poll','terminal_write','terminal_stop','terminal_observe'].includes(name)) {

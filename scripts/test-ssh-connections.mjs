@@ -217,12 +217,17 @@ test('Windows SSH preserves quoted paths, edit revisions and search/Git argument
   assert.ok(f.launches.some(item => item.command.includes("$env:GIT_TERMINAL_PROMPT='0'; & 'git'")));
 });
 
-test('Windows SSH stops the owned job and retains terminal ownership across workspace changes', async t => {
+test('Windows SSH stops the owned job only from its selected host', async t => {
   const f = await fixture(t, { windows: true }); await f.trust(); const execute = runtimeTools(f);
   const started = await execute('terminal_exec', { command: 'fixture-sleep', yield_time_ms: 1 });
   assert.equal(started.state, 'running'); assert.ok(started.pid);
+  const anotherRoot = sshWorkspace(f.connection.id, '/C:/another-project');
+  assert.equal((await f.manager.execute(anotherRoot, 'runtime-test', 'workspace_busy', {})).running, true,
+    'running owned terminals block switching even when started under another directory on this connection');
+  assert.equal((await f.manager.execute(anotherRoot, 'other', 'workspace_busy', {})).running, false);
   await assert.rejects(f.manager.execute(f.uri, 'other', 'terminal_stop', { sessionId: started.terminalSessionId }), /不属于/);
-  const stopped = await execute('terminal_stop', { session_id: started.terminalSessionId }, f.directory);
+  await assert.rejects(execute('terminal_stop', { session_id: started.terminalSessionId }, f.directory), /not available/);
+  const stopped = await execute('terminal_stop', { session_id: started.terminalSessionId });
   assert.equal(stopped.state, 'stopped'); assert.equal(stopped.exitCode, 143);
   assert.ok(f.controls.some(command => command.includes('[CardBushSshJob]::Stop(')));
   assert.ok(!f.commands.some(command => command.startsWith('kill ')));
@@ -278,36 +283,39 @@ for (const windows of [false, true]) test(`SFTP file access needs no command cha
   assert.equal(f.controls.length, 0, 'file operations never attempt a shell probe');
 });
 
-test('one SSH conversation reads local source, uploads it, and routes both terminal hosts by handle', { timeout: 20_000 }, async t => {
-  const f = await fixture(t); await f.trust(); const execute = runtimeTools(f);
-  const source = join(f.directory, 'local-source.txt'); await writeFile(source, '本机源码');
-  const read = await execute('read_file', { path: source, environment: 'local' });
-  assert.equal(read.executionEnvironment.kind, 'local');
-  const uploaded = await execute('write_file', { path: 'uploaded.txt', content: read.content });
-  assert.equal(uploaded.executionEnvironment.connectionId, f.connection.id);
-  assert.equal(f.files.get('/work/uploaded.txt').toString(), '本机源码');
-  assert.equal((await execute('read_file', { path: 'uploaded.txt', environment: f.uri }, f.directory)).content, '本机源码');
-
-  const command = process.platform === 'win32'
+test('local and SSH terminal tools stay isolated across workspace bindings', {timeout:30000}, async t=>{
+  const f=await fixture(t);await f.trust();const execute=runtimeTools(f);
+  const source=join(f.directory,'local-source.txt');await writeFile(source,'local source');
+  await assert.rejects(execute('read_file',{path:source,environment:'local'}),/workspace_environment_mismatch/);
+  assert.equal((await execute('read_file',{path:source},f.directory)).content,'local source');
+  const command=process.platform==='win32'
     ? "[Console]::WriteLine('LOCAL-READY'); [Console]::Out.Flush(); [Console]::ReadLine() | Out-Null"
     : "printf 'LOCAL-READY\\n'; read answer";
-  let local = await execute('terminal_exec', { environment: 'local', cwd: f.directory, command, shell: process.platform === 'win32' ? 'powershell' : 'posix', yield_time_ms: 100 });
-  t.after(async () => { if (local.state === 'running') await execute('terminal_stop', { session_id: local.terminalSessionId }).catch(() => {}); });
-  const remote = await execute('terminal_exec', { cwd: '.', command: 'fixture-sleep', shell: 'posix', yield_time_ms: 100 });
-  const listed = await execute('terminal_list', {});
-  assert.ok(listed.sessions.some(item => item.terminalSessionId === local.terminalSessionId && item.executionEnvironment.kind === 'local'));
-  assert.ok(listed.sessions.some(item => item.terminalSessionId === remote.terminalSessionId && item.executionEnvironment.connectionId === f.connection.id));
-  assert.ok((await execute('terminal_list', { environment: 'local' })).sessions.every(item => item.executionEnvironment.kind === 'local'));
-  assert.ok((await execute('terminal_list', { environment: f.uri })).sessions.every(item => item.executionEnvironment.kind === 'ssh'));
-  local = await execute('terminal_write', { session_id: local.terminalSessionId, chars: 'finish\n', yield_time_ms: 100 });
-  let output = local.stdout;
-  for (let tries = 0; local.state === 'running' && tries < 30; tries++) {
-    local = await execute('terminal_poll', { session_id: local.terminalSessionId, yield_time_ms: 100 }); output += local.stdout;
+  let local=await execute('terminal_exec',{cwd:f.directory,command,shell:process.platform==='win32'?'powershell':'posix',yield_time_ms:100},f.directory);
+  t.after(async()=>{if(local.state==='running')await execute('terminal_stop',{session_id:local.terminalSessionId},f.directory).catch(()=>{});});
+  const remote=await execute('terminal_exec',{command:'fixture-sleep',yield_time_ms:1});
+  assert.deepEqual((await execute('terminal_list',{})).sessions.map(s=>s.terminalSessionId),[remote.terminalSessionId]);
+  assert.deepEqual((await execute('terminal_list',{},f.directory)).sessions.map(s=>s.terminalSessionId),[local.terminalSessionId]);
+  for(const name of ['terminal_poll','terminal_write','terminal_stop']){
+    await assert.rejects(execute(name,{session_id:local.terminalSessionId,chars:'blocked',yield_time_ms:1}),/not available/);
+    await assert.rejects(execute(name,{session_id:remote.terminalSessionId,chars:'blocked',yield_time_ms:1},f.directory),/not available/);
   }
-  assert.notEqual(local.state, 'running'); assert.match(output, /LOCAL-READY/);
-  const stopped = await execute('terminal_stop', { session_id: remote.terminalSessionId }, f.directory);
-  assert.equal(stopped.state, 'stopped'); assert.equal(stopped.executionEnvironment.connectionId, f.connection.id);
-  assert.ok(!f.commands.some(command => command.includes('LOCAL-READY')), 'local code must never reach SSH');
+  let readyOutput=local.stdout;
+  const readyDeadline=Date.now()+10000;
+  while(!readyOutput.includes('LOCAL-READY')){
+    assert.ok(Date.now()<readyDeadline,'local terminal did not become ready for input');
+    local=await execute('terminal_poll',{session_id:local.terminalSessionId,yield_time_ms:100},f.directory);
+    readyOutput+=local.stdout;
+  }
+  local=await execute('terminal_write',{session_id:local.terminalSessionId,chars:'finish\n',yield_time_ms:100},f.directory);
+  let output=readyOutput+local.stdout;
+  const exitDeadline=Date.now()+10000;
+  while(local.state==='running'&&Date.now()<exitDeadline){
+    local=await execute('terminal_poll',{session_id:local.terminalSessionId,yield_time_ms:100},f.directory);output+=local.stdout;
+  }
+  assert.notEqual(local.state,'running');assert.match(output,/LOCAL-READY/);
+  assert.equal((await execute('terminal_stop',{session_id:remote.terminalSessionId})).state,'stopped');
+  assert.ok(!f.commands.some(command=>command.includes('LOCAL-READY')));
 });
 
 test('SSH terminal results pass runtime validation before PID, while streaming and after nonzero exit',async t=>{

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, mkdir, rm, readFile, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
-import { InMemoryRuntimeHost, TaskWorkspaceManager, ToolExecutionCoordinator, ToolRegistry, registerWorkspaceTools, registerSkillTools } from '../dist/index.js';
+import { InMemoryRuntimeHost, TaskWorkspaceManager, ToolExecutionCoordinator, ToolRegistry, registerWorkspaceTools } from '../dist/index.js';
 import { parseSshWorkspace, sshWorkspace } from '@cardbush/bush-protocol';
 import { protectedPosixTerminalDeletion, protectedTerminalDeletion } from '../dist/terminalCommandSafety.js';
 
@@ -43,14 +43,14 @@ for (const [platform, next] of [
   const reads=[],modelRequests=[];let round=0;
   const host=new InMemoryRuntimeHost({dataRoot:root,remoteWorkspace:{async request(action,payload){
     if(action==='directory')return {uri:payload.uri};
-    if(action==='authorize')return {path:payload.uri+'/package.json',root:payload.uri,inside:true,platform,home:platform==='windows'?'/C:/Users/111':'/home/user'};
+    if(action==='authorize')return {path:payload.uri,root:payload.uri,inside:true,platform,home:platform==='windows'?'/C:/Users/111':'/home/user'};
     if(payload.name==='workspace_busy')return {running:false};
-    assert.equal(payload.name,'read_file');reads.push(payload);return {path:payload.uri+'/package.json',content:'{"name":"new-project"}'};
+    assert.equal(payload.name,'terminal_exec');reads.push(payload);return {terminalSessionId:'remote-command',state:'completed',exitCode:0,stdout:'new-project'};
   }},provider:{async *stream(request){
     modelRequests.push(request);
     const base={protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString()};
     if(round++===0){
-      yield {...base,sequence:0,kind:'tool_call_delta',index:0,toolCallId:'read-new-project',nameDelta:'read_file',argumentsDelta:'{"path":"package.json"}'};
+      yield {...base,sequence:0,kind:'tool_call_delta',index:0,toolCallId:'read-new-project',nameDelta:'terminal_exec',argumentsDelta:'{"command":"pwd","cwd":".","yield_time_ms":1}'};
       yield {...base,sequence:1,kind:'response_completed',finishReason:'tool_calls'};
     }else{
       yield {...base,sequence:0,kind:'text_delta',delta:'Read the new project.'};
@@ -62,11 +62,24 @@ for (const [platform, next] of [
   const before=await command('get_session',{sessionId:'chat'});
   const switched=await command('switch_workspace',{sessionId:'chat',expectedRevision:before.revision,projectDir:next,projectId:'new-project'});
   assert.equal(switched.metadata.project_id,'new-project');assert.equal(switched.metadata.project_dir,next);
-  const tools=(await command('get_tool_catalog',{})).filter(tool=>tool.name==='read_file');
-  await host.runSessionTurn({protocol:'bush.session_turn_request.v1',requestId:'request',sessionId:'chat',turnId:'after-switch',model:'fixture',tools,
+  const tools=await command('get_tool_catalog',{});
+  const permissions=(async()=>{
+    for await(const event of host.openEventStream({sessionId:'chat',turnId:'after-switch'})) {
+      if(event.kind==='permission_requested')await command('answer_permission',{
+        protocol:'bush.runtime_permission_answer.v1',permissionId:event.payload.permissionId,answerId:'fixture-answer',
+        decision:'allow_once',grantedCapabilityIds:event.payload.requestedCapabilityIds});
+    }
+  })();
+  await host.runSessionTurn({protocol:'bush.session_turn_request.v1',requestId:'request',sessionId:'chat',turnId:'after-switch',model:'fixture',tools,permissionMode:'task_free',
     metadata:{workspaceDir:remote,projectDir:remote},inputMessages:[{messageId:'user',message:{role:'user',content:'Read the selected project.'}}]});
+  await permissions;
   assert.equal(reads.length,1);assert.equal(reads[0].uri,next);
   assert.ok(modelRequests.length>0);assert.ok(modelRequests.every(request=>request.metadata.workspaceDir===next&&request.metadata.projectDir===next));
+  for (const request of modelRequests) {
+    assert.deepEqual(request.tools.map(tool=>tool.name).sort(), ['terminal_exec','terminal_list','terminal_poll','terminal_stop','terminal_write']);
+    assert.ok(request.tools.every(tool=>!Object.hasOwn(tool.inputSchema.properties,'environment')));
+    assert.ok(request.tools.every(tool=>Object.hasOwn(tool.inputSchema.properties,'_display_title')), 'terminal actions retain localized UI titles');
+  }
   const binding = modelRequests[0].messages.find(message => message.name === 'ssh_workspace_binding')?.content;
   assert.ok(binding?.includes(parseSshWorkspace(next).path));
   assert.match(binding, /Omit shell for the detected remote default/);
@@ -151,97 +164,160 @@ test('Windows SSH routes native paths, binds permissions and leaves tool schemas
   assert.equal(dispatched(), before, 'protected deletion, wrong shell and sandbox extensions never run');
 });
 
-test('SSH defaults coexist with local skill resources and observed local edits in one session', async t => {
-  const root = await storage(t), skill = join(root, 'deploy'), main = join(skill, 'SKILL.md');
-  await mkdir(join(skill, 'references'), { recursive: true });
-  await writeFile(main, '---\nname: deploy\ndescription: Deploy service\n---\nRead references/guide.md.');
-  await writeFile(join(skill, 'references/guide.md'), 'local reference');
-  const requests = [], bridge = { async request(action, payload) {
-    requests.push({ action, payload });
-    if (action === 'authorize') return { path: payload.path, root: payload.uri, inside: true, home: '/home/user' };
-    return { content: 'remote source', path: remote + '/file.txt' };
-  } };
-  const metadata = { workspaceDir: remote, projectDir: remote, taskRoots: [remote] }, setup = routedTools(bridge, metadata);
-  registerSkillTools(setup.registry, [root]);
-  const discovery = await setup.execute('search_skills', { query: 'deploy' });
-  const match = discovery.result.matches[0];
-  assert.equal(match.environment, 'local');
-  const loaded = await setup.execute('read_file', { path: match.mainResource, environment: match.environment });
-  assert.equal(loaded.kind, 'returned', JSON.stringify(loaded));
-  assert.match(loaded.result.content, /Read references/);
-  assert.equal(loaded.result.executionEnvironment.kind, 'local');
-  assert.equal((await setup.execute('read_file', { path: join(skill, 'references/guide.md'), environment: 'local' })).result.content, 'local reference');
-  assert.equal(requests.length, 0, 'local resources never reach the SSH bridge');
-  const edited = await setup.execute('edit_file', { path: join(skill, 'references/guide.md'), old_text: 'local', new_text: 'updated', environment: 'local' });
-  assert.equal(edited.kind, 'returned', JSON.stringify(edited));
-  assert.equal(await readFile(join(skill, 'references/guide.md'), 'utf8'), 'updated reference');
-  const readRemote = await setup.execute('read_file', { path: 'file.txt' });
-  assert.equal(readRemote.result.content, 'remote source');
-  assert.equal(readRemote.result.executionEnvironment.connectionId, 'test-connection');
-  assert.equal(metadata.workspaceDir, remote, 'per-call routing cannot rebind the conversation');
-  assert.ok(setup.permissions.every(p => p.scope.roots.every(value => !value.includes('ssh:'))), 'remote task roots never become local permissions');
-  assert.notEqual((await setup.execute('read_file', { path: 'SKILL.md', environment: 'local' })).kind, 'returned', 'local relative paths cannot inherit remote cwd');
-});
-
-test('explicit environments retain host permissions and never fall back on errors', async t => {
+test('SSH workspaces reject local and other-host overrides before permission or execution', async t => {
   const root = await storage(t), local = join(root, 'local.txt'); await writeFile(local, 'private');
   const calls = [], bridge = { async request(action, payload) {
     calls.push({ action, payload });
     if (action === 'authorize') return { path: payload.path, root: payload.uri, inside: true, home: '/home/user' };
     throw Error('SSH offline');
   } };
-  const setup = routedTools(bridge, { workspaceDir: remote, taskRoots: [remote] }, () => false);
-  assert.notEqual((await setup.execute('read_file', { path: local, environment: 'local' })).kind, 'returned');
-  assert.equal(calls.length, 0);
-  assert.match(setup.permissions[0].reason, /Local host/);
+  const setup = routedTools(bridge, { workspaceDir: remote, taskRoots: [remote] });
   const other = sshWorkspace('another-connection', '/srv/project');
-  assert.notEqual((await setup.execute('read_file', { path: 'secret', environment: other })).kind, 'returned');
-  assert.equal(calls.filter(c => c.action === 'execute').length, 0);
-  assert.deepEqual(setup.permissions.at(-1).scope.roots, [], 'a tool-selected remote root is not an implicit grant');
-  const allowed = routedTools(bridge, { workspaceDir: root });
-  const offline = await allowed.execute('read_file', { path: 'local.txt', environment: other });
-  assert.match(JSON.stringify(offline), /SSH offline/);
-  assert.equal(await readFile(local, 'utf8'), 'private');
-  for (const invalid of [false, '', 'remote', 'ssh://user@host/path']) {
-    assert.notEqual((await allowed.execute('read_file', { path: local, environment: invalid })).kind, 'returned');
+  for (const environment of ['local', other]) {
+    for (const [name, input] of [
+      ['read_file', {path:local}], ['edit_file', {path:local,old_text:'private',new_text:'changed'}],
+      ['terminal_exec', {command:'echo blocked',cwd:root,yield_time_ms:1}], ['terminal_list', {}],
+    ]) assert.notEqual((await setup.execute(name, {...input,environment})).kind, 'returned');
   }
-  assert.notEqual((await allowed.execute('read_file', { path: other + '/secret', environment: 'local' })).kind, 'returned');
-  assert.notEqual((await allowed.execute('terminal_exec', { environment: 'local', cwd: root, command: 'echo invalid-shell', shell: process.platform === 'win32' ? 'posix' : 'powershell', yield_time_ms: 1 })).kind, 'returned');
+  assert.equal(calls.length, 0); assert.equal(setup.permissions.length, 0);
+  assert.equal(await readFile(local, 'utf8'), 'private');
+  const offline = await setup.execute('terminal_exec', {command:'pwd',cwd:'.',yield_time_ms:1});
+  assert.match(JSON.stringify(offline), /SSH offline/);
+  const fromLocal = routedTools(bridge, {workspaceDir:root});
+  const before = calls.length;
+  assert.notEqual((await fromLocal.execute('terminal_exec', {command:'pwd',environment:other})).kind,'returned');
+  assert.equal(calls.length,before,'local workspace cannot select a remote host through arguments');
+  for (const invalid of [false, '', 'remote', 'ssh://user@host/path']) {
+    assert.notEqual((await fromLocal.execute('read_file', {path:local,environment:invalid})).kind,'returned');
+  }
 });
 
-test('explicit SSH subdirectories do not expand the selected project permission root', async t => {
-  const root = await storage(t), calls = [];
-  const bridge = { async request(action, payload) {
-    calls.push({ action, payload });
-    if (action === 'authorize') return { path: payload.path, root: payload.uri, inside: false, home: '/home/user' };
-    return { content: 'authorized remote file' };
+test('same-host SSH subdirectories do not expand the selected project permission root', async () => {
+  const calls = [], bridge = { async request(action,payload) {
+    calls.push({action,payload});
+    if(action==='authorize')return {path:payload.path,root:payload.uri,inside:false,home:'/home/user'};
+    return {state:'completed',exitCode:0};
   } };
-  const setup = routedTools(bridge, { workspaceDir: remote });
-  const outside = sshWorkspace('test-connection', '/outside');
-  assert.equal((await setup.execute('read_file', { path: 'file.txt', environment: outside })).kind, 'returned');
-  assert.equal(calls[0].payload.uri, remote);
-  assert.equal(parseSshWorkspace(calls[0].payload.path).path, '/outside/file.txt');
-  assert.deepEqual(setup.permissions[0].scope.roots, [remote]);
-  const fromLocal = routedTools(bridge, { workspaceDir: root });
-  await fromLocal.execute('read_file', { path: 'file.txt', environment: outside });
-  assert.deepEqual(fromLocal.permissions[0].scope.roots, []);
+  const setup=routedTools(bridge,{workspaceDir:remote}), outside=sshWorkspace('test-connection','/outside');
+  assert.equal((await setup.execute('terminal_exec',{command:'pwd',cwd:'.',environment:outside,yield_time_ms:1})).kind,'returned');
+  assert.equal(calls[0].payload.uri,remote);
+  assert.equal(parseSshWorkspace(calls[0].payload.path).path,'/outside');
+  assert.deepEqual(setup.permissions[0].scope.roots,[remote]);
 });
 
-test('terminal handles select their original host, reject host conflicts and remain owner scoped', async t => {
-  const root = await storage(t), calls = [], uri = sshWorkspace('other-host', '/work');
-  const bridge = { async request(action, payload) {
-    calls.push({ action, payload });
-    if (action === 'terminals') return { sessions: payload.owner === 'chat' ? [{ terminalSessionId: 'ssh-terminal-owned', uri, state: 'running' }] : [] };
-    assert.equal(payload.uri, uri);
-    return { terminalSessionId: payload.input.sessionId, state: 'running', stdout: 'remote output' };
-  } };
-  const setup = routedTools(bridge, { workspaceDir: root });
-  const polled = await setup.execute('terminal_poll', { session_id: 'ssh-terminal-owned', yield_time_ms: 1 });
-  assert.equal(polled.kind, 'returned'); assert.equal(polled.result.executionEnvironment.connectionId, 'other-host');
-  const before = calls.filter(c => c.action === 'execute').length;
-  assert.notEqual((await setup.execute('terminal_stop', { session_id: 'ssh-terminal-owned', environment: 'local' })).kind, 'returned');
-  assert.notEqual((await setup.execute('terminal_write', { session_id: 'ssh-terminal-owned', chars: 'x', yield_time_ms: 1 }, 'other-session')).kind, 'returned');
-  assert.equal(calls.filter(c => c.action === 'execute').length, before);
-  assert.equal((await setup.execute('terminal_list', {})).result.sessions[0].executionEnvironment.connectionId, 'other-host');
-  assert.deepEqual((await setup.execute('terminal_list', { environment: 'local' })).result.sessions, []);
+test('terminal handles and lists are restricted to the selected host and owner', async t => {
+  const root=await storage(t), calls=[], other=sshWorkspace('other-host','/work');
+  const bridge={async request(action,payload){
+    calls.push({action,payload});
+    if(action==='terminals')return {sessions:payload.owner==='chat'?[
+      {terminalSessionId:'current',uri:remote,state:'running'},
+      {terminalSessionId:'other',uri:other,state:'running'},
+    ]:[]};
+    assert.equal(payload.uri,remote);
+    return {terminalSessionId:payload.input.sessionId,state:'running',stdout:'remote output'};
+  }};
+  const local=routedTools(bridge,{workspaceDir:root});
+  assert.deepEqual((await local.execute('terminal_list',{})).result.sessions,[]);
+  assert.notEqual((await local.execute('terminal_poll',{session_id:'current',yield_time_ms:1})).kind,'returned');
+  assert.equal(calls.length,0,'local mode never queries remote handles');
+  const setup=routedTools(bridge,{workspaceDir:remote});
+  assert.equal((await setup.execute('terminal_poll',{session_id:'current',yield_time_ms:1})).kind,'returned');
+  const before=calls.filter(c=>c.action==='execute').length;
+  for(const name of ['terminal_poll','terminal_write','terminal_stop']) {
+    assert.notEqual((await setup.execute(name,{session_id:'other',chars:'x',yield_time_ms:1})).kind,'returned');
+    assert.notEqual((await setup.execute(name,{session_id:'current',chars:'x',yield_time_ms:1},'other-session')).kind,'returned');
+  }
+  assert.equal(calls.filter(c=>c.action==='execute').length,before);
+  assert.deepEqual((await setup.execute('terminal_list',{})).result.sessions.map(s=>s.terminalSessionId),['current']);
+});
+
+test('local to SSH to local changes actual provider schemas, blocks stale tools and suppresses local plugins', async t => {
+  const root=await storage(t), work=join(root,'work'); await mkdir(work);
+  const seen=[], remoteCalls=[]; let pluginLoads=0, sshRounds=0;
+  const host=new InMemoryRuntimeHost({dataRoot:join(root,'data'),
+    loadPluginExtensions:async()=>{pluginLoads++;return {hooks:[],agents:[],commands:[],skills:[]};},
+    remoteWorkspace:{async request(action,payload){remoteCalls.push({action,payload});
+      if(action==='directory')return {uri:payload.uri};
+      if(payload.name==='workspace_busy')return {running:false};
+      throw Error('Unexpected remote execution');
+    }},provider:{async *stream(request){
+      seen.push(structuredClone(request));
+      const base={protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString()};
+      if(request.turnId==='ssh'&&sshRounds++===0){
+        // An old conversation/tool snapshot must not authorize a local write.
+        yield {...base,sequence:0,kind:'tool_call_delta',index:0,toolCallId:'stale-local-write',nameDelta:'write_file',
+          argumentsDelta:JSON.stringify({path:join(work,'blocked.txt'),content:'must not exist',environment:'local'})};
+        yield {...base,sequence:1,kind:'response_completed',finishReason:'tool_calls'};
+      }else{
+        yield {...base,sequence:0,kind:'text_delta',delta:'Done.'};
+        yield {...base,sequence:1,kind:'response_completed',finishReason:'stop'};
+      }
+    }}});
+  const command=(kind,payload)=>host.sendCommand({kind:'runtime.'+kind,payload});
+  await command('create_session',{sessionId:'switching',workspace:{sourceDir:work,mode:'direct'}});
+  const tools=await command('get_tool_catalog',{});
+  const turn=turnId=>host.runSessionTurn({protocol:'bush.session_turn_request.v1',requestId:'r-'+turnId,
+    sessionId:'switching',turnId,model:'fixture',tools,
+    prefixMessages:[{role:'system',content:'Fixture system policy.'}],
+    metadata:{workspaceDir:work,systemPolicy:{id:'fixture',version:'1'},mcpCatalogUpdates:'additions'},
+    inputMessages:[{messageId:'u-'+turnId,message:{role:'user',content:'Continue.'}}]});
+  const switchTo=async projectDir=>command('switch_workspace',{sessionId:'switching',
+    expectedRevision:(await command('get_session',{sessionId:'switching'})).revision,projectDir,projectId:projectDir});
+  await turn('local-before');
+  const localNames=seen[0].tools.map(tool=>tool.name).sort();
+  assert.ok(localNames.includes('read_file'));
+  await switchTo(remote); const loadsBefore=pluginLoads;
+  await turn('ssh');
+  assert.equal(pluginLoads,loadsBefore,'SSH must not load or execute local plugin hooks/commands');
+  const sshRequests=seen.filter(request=>request.turnId==='ssh');
+  assert.equal(sshRequests.length,2);
+  for(const request of sshRequests)assert.deepEqual(request.tools.map(tool=>tool.name).sort(),
+    ['terminal_exec','terminal_list','terminal_poll','terminal_stop','terminal_write']);
+  assert.match(JSON.stringify(sshRequests[1].messages),/tool_not_exposed/);
+  await assert.rejects(readFile(join(work,'blocked.txt')), {code:'ENOENT'});
+  assert.ok(!remoteCalls.some(call=>call.action==='execute'));
+  await switchTo(work); await turn('local-after');
+  assert.deepEqual(seen.at(-1).tools.map(tool=>tool.name).sort(),localNames);
+  assert.ok(pluginLoads>loadsBefore,'local plugin behavior resumes after switching back');
+});
+
+test('direct model requests use the saved SSH binding and respect no-tool policies', async t=>{
+  const root=await storage(t), seen=[];
+  const host=new InMemoryRuntimeHost({dataRoot:root,
+    remoteWorkspace:{async request(action,payload){assert.equal(action,'directory');return {uri:payload.uri};}},
+    provider:{async *stream(request){seen.push(request);
+      const base={protocol:'bush.model_event.v1',requestId:request.requestId,createdAt:new Date().toISOString()};
+      yield {...base,sequence:0,kind:'text_delta',delta:'Done.'};
+      yield {...base,sequence:1,kind:'response_completed',finishReason:'stop'};
+    }}});
+  await host.sendCommand({kind:'runtime.create_session',payload:{sessionId:'direct',workspace:{sourceDir:remote,mode:'direct'}}});
+  const tools=await host.sendCommand({kind:'runtime.get_tool_catalog',payload:{}});
+  for(const policy of ['normal','none']){
+    const result=await host.runModelTurn({protocol:'bush.model_request.v1',requestId:policy,sessionId:'direct',turnId:policy,
+      model:'fixture',tools,messages:[{role:'user',content:'Continue.'}],metadata:{workspaceDir:root,toolExecutionPolicy:policy}});
+    assert.equal(result.payload.status,'completed');
+    assert.equal(seen.at(-1).metadata.workspaceDir,remote);
+    assert.deepEqual(seen.at(-1).tools.map(tool=>tool.name).sort(),policy==='none'?[]:
+      ['terminal_exec','terminal_list','terminal_poll','terminal_stop','terminal_write']);
+  }
+});
+
+test('human terminal controls cannot access handles on another selected host', async t=>{
+  const root=await storage(t), calls=[], other=sshWorkspace('other','/work');
+  const host=new InMemoryRuntimeHost({dataRoot:root,remoteWorkspace:{async request(action,payload){
+    calls.push({action,payload});
+    if(action==='directory')return {uri:payload.uri};
+    if(action==='terminals')return {sessions:[{terminalSessionId:'current',uri:remote,state:'running'},
+      {terminalSessionId:'other',uri:other,state:'running'}]};
+    assert.equal(payload.uri,remote);return {state:'stopped'};
+  }}});
+  await host.sendCommand({kind:'runtime.create_session',payload:{sessionId:'controls',workspace:{sourceDir:remote,mode:'direct'}}});
+  const control=(sessionId,terminalSessionId,action)=>host.sendCommand({kind:'runtime.terminal_control',payload:{sessionId,terminalSessionId,action}});
+  assert.equal((await control('controls','current','status')).state,'running');
+  for(const action of ['status','stop']){
+    await assert.rejects(control('controls','other',action),{code:'terminal_session_not_found'});
+    await assert.rejects(control('local','current',action),{code:'terminal_session_not_found'});
+  }
+  assert.ok(!calls.some(call=>call.action==='execute'));
+  assert.equal((await control('controls','current','stop')).state,'stopped');
 });

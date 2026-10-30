@@ -33,6 +33,15 @@ app.whenReady().then(async () => {
       await run('document.querySelector("[data-execution-id=shell] .tool-execution-row").click()');
       await until('Boolean(document.querySelector(".tool-execution-output"))');
       assert.equal(await run('document.querySelector(".tool-execution-input")'),null,'identical tool-name summaries are not repeated');
+      assert.ok(await run('!document.querySelector(".tool-execution-row-content").textContent.includes("SSH ·")'), 'terminal details do not add an execution-location badge');
+      for (const language of ['en','zh']) {
+        window.setSize(420,640);
+        await run(`language=${JSON.stringify(language)};renderFixture();`); await pause();
+        assert.ok(await run('!document.querySelector(".tool-execution-row-content").textContent.includes("SSH ·")'));
+        assert.ok(await run('document.documentElement.scrollWidth<=innerWidth'), 'narrow terminal details fit in both languages');
+        assert.ok(await run('Boolean(document.querySelector(".tool-output-toggle[aria-label]"))'), 'output controls retain translated accessibility labels');
+      }
+      window.setSize(780,640); await run('language="zh";renderFixture();'); await pause();
       await pause(); writeFileSync(resolve('tmp/tool-rows-detail-'+theme+'.png'),(await window.webContents.capturePage()).toPNG());
       await run('document.querySelector("[data-execution-id=search] .tool-execution-row").click()'); await pause();
       assert.equal(await run('document.querySelectorAll(".tool-execution-row-content").length'),1);
@@ -150,7 +159,7 @@ app.whenReady().then(async () => {
     assert.ok(await run('labels.every(label=>label==="核对产品资料")'),'no fallback frame while lifecycle or details change');
     await run('labelObserver.disconnect()');
     await run(`fixtureSession='other-session';executions=executions.map(e=>({...e,metadata:{nativeResultDeferred:true}}));renderFixture();`); await pause();
-    assert.equal(await run('document.querySelector(".tool-execution-label").textContent'),'调用插件','same call ID in another session cannot inherit a hydrated title');
+    assert.equal(await run('document.querySelector(".tool-execution-label").textContent'),require('../src/i18n/locales/zh.json').messages['toolExecutionState.call_tool'],'same call ID in another session must show the localized fallback, not a hydrated title');
     assert.equal(await run('document.body.textContent.includes("Exact native result")'),false,'session switching cannot expose stale details');
     // Keep a parallel title while another call starts/finishes, then advance once.
     await run(`messageId='parallel-title';executions=[{...executions[0],id:'first',state:'running',metadata:{displayTitle:'读取产品资料'}},

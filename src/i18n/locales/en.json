@@ -2,6 +2,8 @@
   "locale": "en",
   "name": "English",
   "messages": {
+    "workspace.executionEnvironmentMismatch": "Tools can only run in this conversation's selected environment. Switch the conversation workspace before using another host.",
+    "workspace.sshPosixPathRequired": "This SSH host requires POSIX paths. Switch the conversation workspace to access local files.",
     "common.loading": "Loading…",
     "common.loadingCompact": "…",
     "common.close": "Close",
