@@ -501,6 +501,32 @@ test('child sessions follow parent retention while independent conversations rem
   assert.deepEqual(f.toolExecutionStore.listTurn('child', 'child-turn'), []);
 });
 
+for (const registered of [false, true]) test(`remote child history survives collection and restart until explicit deletion (${registered ? 'registered' : 'legacy'} worker)`, async t => {
+  const f = await fixture(t);
+  f.sessionStore.ensureSession('remote-child', { agentRole: 'child', parentSessionId: 'external-parent', delegationOwner: 'external-parent',
+    ...(registered ? { remoteWorker: { id: 'reviewer', revision: 1, name: 'Reviewer', instructions: 'Review the assigned work.' } } : {}) });
+  await f.runtime.runSessionTurn({ ...request('remote-child'), metadata: { agentRole: 'child', parentSessionId: 'external-parent', parentTurnId: 'external-turn' } });
+  record(f.toolExecutionStore, 'remote-child');
+  // An absent local parent and an empty ownership marker still form an orphan.
+  f.sessionStore.ensureSession('local-orphan', { agentRole: 'child', parentSessionId: 'missing-local-parent', delegationOwner: '' });
+  record(f.toolExecutionStore, 'local-orphan');
+  const restarted = f.reopen();
+  const result = await restarted.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
+  assert.deepEqual(result.errors, []);
+  assert.equal(restarted.sessionStore.snapshot('remote-child')?.turns.length, 1);
+  assert.equal(restarted.toolExecutionStore.listTurn('remote-child', 'remote-child-turn').length, 1);
+  assert.ok(restarted.eventLog.replay('remote-child', 'remote-child-turn').length > 0);
+  assert.equal(restarted.sessionStore.snapshot('local-orphan'), undefined);
+  await restarted.runtime.runSessionTurn(request('remote-child', 'Continue the remote task.', 'remote-child-next'));
+  await restarted.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
+  assert.equal(restarted.sessionStore.snapshot('remote-child').turns.length, 2);
+  await restarted.runtime.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId: 'remote-child' } });
+  await restarted.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
+  assert.equal(restarted.sessionStore.snapshot('remote-child'), undefined);
+  assert.deepEqual(restarted.toolExecutionStore.listTurn('remote-child', 'remote-child-turn'), []);
+  assert.deepEqual(restarted.eventLog.replay('remote-child', 'remote-child-turn'), []);
+});
+
 test('large orphan journals are identified with bounded reads without materializing their contents', async t => {
   const f = await fixture(t); record(f.toolExecutionStore, 'large-orphan');
   const file = join(f.root, 'tool-executions', `${hash('large-orphan')}.jsonl`), size = 96 * 1024 * 1024;

@@ -8,6 +8,8 @@
 
 同一个 [npm 包](NPM_AGENT.md)包含服务与 CLI，不需要 Electron。Node.js 24、npm 10+ 与仓库 `.nvmrc`/CI 保持一致。服务器上运行的 `cardbush` 是该服务器的本机 CLI，不接管独立 HTTP 服务的会话数据库。
 
+首次云端部署按内置 cardbush-docs 的[部署流程](../assets/skills/cardbush-docs/references/agent-deploy.md)执行：选定版本与来源（npm/源码/已有包）→ 检查主机资源与沙箱 → 配置指定模型 → 回环服务与 SSH/HTTPS 接入 → 注册职责 → 真实任务与恢复验收。未发布能力可由 Agent 现场从源码构建，不要求用户提前准备压缩包；传输 tarball 时核对前后 SHA-256。`npm latest` 不保证包含当前源码能力。普通用户独立安装目录、Ubuntu AppArmor 和低内存处理见[具体步骤](../assets/skills/cardbush-docs/references/agent-deployment.md)。
+
 ```sh
 npm install -g cardbush
 cardbush serve --background
@@ -49,6 +51,8 @@ cardbush worker remove CONNECTION_ID
 ```
 
 让本地 Agent 将连接 ID 与已验证 agent ID 绑定到注册角色。模型通过既有 `subagent`、`tasks` 和 Team 使用它，不接收 token。同一本机配置目录的 App/CLI 共用受保护的 worker 连接；独立服务器账号继续使用自己的注册表。旧连接迁移一次并保留 ID，worker CLI 命令不启动整套 Agent Runtime。角色和会话仍由各自 Runtime 管理；不能把地址相同的另一个实例当原服务，身份变化后重新确认注册。
+
+部署时完成[分层验收](../assets/skills/cardbush-docs/references/remote-workers.md#分层验收)：连接与角色注册、真实模型委派、原 task_id 续接、沙箱读写与产物独立核验、空闲服务重启后的实例及历史保留。连接成功不等于模型和工具可用；隔离 CLI 的注册不等于日常 App 已配置；进程重启通过不等于开机自启通过。
 
 角色携带名称、指令和修订。远端使用自己的默认模型、默认项目；没有默认项目则创建工作区。父历史、本机路径、浏览器授权与凭据不自动传输。对子会话续做固定原角色和服务身份。远程角色不能配置声称在对端强制执行的本地 tools/settings/hooks/guards。
 

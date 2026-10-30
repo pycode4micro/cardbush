@@ -4516,6 +4516,13 @@ export class InMemoryRuntimeHost {
     const protectedChildren = [];
     for (const child of children) {
       signal?.throwIfAborted();
+      // A worker's parent belongs to another host, so a missing local parent
+      // is expected. Retain its history and caches until explicit deletion.
+      // delegationOwner also identifies workers predating registered roles.
+      if (typeof child.metadata?.delegationOwner === 'string' && child.metadata.delegationOwner.trim()) {
+        protectedChildren.push(child);
+        continue;
+      }
       const workspace = await this.#taskWorkspaces?.descriptor(child.sessionId);
       if (workspace?.mode === 'worktree' && workspace.status === 'ready') protectedChildren.push(child);
     }
@@ -4528,7 +4535,7 @@ export class InMemoryRuntimeHost {
     const automation = await this.#automation?.collectContexts(new Set(sessions.map(session => session.sessionId)));
     const checkpoints = this.#recovery.cacheRoots();
     const userSessions = sessions.filter(session => !childIds.has(session.sessionId));
-    const owners = [...userSessions.map(session => session.sessionId), ...checkpoints.map(checkpoint => checkpoint.request.sessionId)];
+    const owners = [...userSessions.map(session => session.sessionId), ...protectedChildren.map(session => session.sessionId), ...checkpoints.map(checkpoint => checkpoint.request.sessionId)];
     const entries = (await Promise.all([
       this.#eventLog.cacheEntries(), this.#toolExecutions.cacheEntries(), this.#coordination.cacheEntries(),
       this.#recovery.cacheEntries(), this.#automation?.cacheEntries() ?? [],

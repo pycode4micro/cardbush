@@ -8,6 +8,8 @@ This guide describes current source; published binaries may predate the worker m
 
 The [npm package](NPM_AGENT.en.md) includes service and CLI without Electron. Use Node.js 24 and npm 10+, matching `.nvmrc`/CI. A server-installed `cardbush` chats locally on that server with a separate session store; it does not attach to the HTTP service's database.
 
+For a new cloud worker, follow the bundled cardbush-docs [deployment workflow](../assets/skills/cardbush-docs/references/agent-deploy.md): select a version and source (npm, source code or an existing package), inspect host resources and sandbox readiness, configure the selected model, start a loopback service with SSH/HTTPS access, register a role, and verify real tasks and recovery. The Agent can build unreleased code during deployment; users need not prepare an archive. Compare SHA-256 when transferring a tarball; npm `latest` need not contain current-source capabilities. See the [detailed steps](../assets/skills/cardbush-docs/references/agent-deployment.md) for a separate user-owned installation, Ubuntu AppArmor and low-memory diagnosis.
+
 ```sh
 npm install -g cardbush
 cardbush serve --background
@@ -49,6 +51,8 @@ cardbush worker remove CONNECTION_ID
 ```
 
 Ask the local Agent to bind a role to the returned connection and verified instance. Existing subagent/tasks/Team tools use it without seeing the token. App and CLI using the same local profile share protected worker connections; standalone server accounts retain their own stores. Existing connection IDs migrate once, and worker CLI commands do not start the full Agent Runtime. Roles and conversations remain owned by their Runtime. An instance change at the same URL needs explicit new registration.
+
+Complete the [layered acceptance checks](../assets/skills/cardbush-docs/references/remote-workers.md#分层验收): connection and role registration, real model delegation, continuation with the original task_id, sandbox file operations with independently verified output, and identity/history preservation after an idle service restart. Connectivity does not prove model/tool readiness; an isolated CLI registration does not configure the daily App; a process restart does not verify boot startup.
 
 Role name, instructions and revision accompany work. The worker uses its default model/project, or creates a workspace without a default project. Parent history, local paths, browser grants and credentials are not copied. Continuations keep original role/service identity. Remote roles reject local tools/settings/hooks/guards that cannot be enforced on an independent host.
 

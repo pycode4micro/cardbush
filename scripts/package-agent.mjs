@@ -96,7 +96,8 @@ export async function packageAgent(root, output, platform = process.platform) {
     + 'Local chat: enter a working directory and run cardbush (approval) or cardbush --full-access; no service token needed.\n'
     + 'ChatGPT account models reuse the local App sign-in and require the App running. API-key models run independently.\n'
     + 'If no model is configured, edit the displayed models.json using its annotated example, then press Enter to reload.\n'
-    + 'Optional service connection: cardbush --url <Agent URL> --token-file <access-token file>\n'
+    + 'Register a remote worker: cardbush worker add --name <name> --url <Agent URL> --token-file <access-token file>\n'
+    + 'Verify the returned connection, then register a subagent role on the parent host; remote chat selection is not supported.\n'
     + 'Resume: cardbush --resume <session-id> (keeps its workspace); options: cardbush --help\n'
     + 'Deploy the whole directory, including dist-native on Windows. Never copy credentials or task data into this release.\n'
     + 'Deployment Skill: assets/skills/cardbush-docs/references/agent-deployment.md\n');

@@ -6,6 +6,8 @@
 
 本页与当前源码同步。已发布的 **1.0.13** 不包含新的 `cardbush worker` 注册与远程聊天入口迁移；使用下述 worker 功能时，需要在两端重新构建当前源码。发布范围见 [1.0.13 说明](https://github.com/pycode4micro/cardbush/blob/main/docs/releases/1.0.13.zh-CN.md)。
 
+无需用户提前准备部署压缩包：已有匹配发行版时，目标机直接安装固定版本；测试未发布代码时，Agent 可从可访问的完整源码现场构建独立目录或临时 tarball。已有验证过的 `cardbush-VERSION.tgz` 也可直接安装：`npm install --global /absolute/path/cardbush-VERSION.tgz`，无需先发布 npm。选择 tarball 时传输前后核对 SHA-256，并检查实际命令版本与服务能力；不能用 `@latest` 代替未发布候选包。
+
 ## 安装与开始使用
 
 ```sh
@@ -35,6 +37,8 @@ cardbush-agent --data-dir /absolute/path/agent-data --name Agent-A
 
 默认后台服务目录为 `~/.cardbush/service`。Windows 使用 Windows 绝对路径。程序和数据分开；服务不会因普通远端客户端退出而关闭。不同实例使用不同数据目录。
 
+云端部署优先使用普通用户、独立数据目录和回环监听，通过 CardBush 内置 SSH 连接或 HTTPS 接入。`--background` 不注册开机自启。Linux 安装 bubblewrap 后还需验证实际命名空间与沙箱文件操作；低内存主机按职责启用必要插件。版本选择、模型配置、Ubuntu AppArmor 和资源诊断见[内置部署指导](https://github.com/pycode4micro/cardbush/blob/main/assets/skills/cardbush-docs/references/agent-deployment.md)，注册、续接和重启验收见[远程 worker](https://github.com/pycode4micro/cardbush/blob/main/assets/skills/cardbush-docs/references/remote-workers.md#分层验收)。
+
 ```sh
 cardbush worker add --name Worker --url https://agent.example.com --token-file /private/access-token
 cardbush worker list
@@ -58,11 +62,11 @@ npm uninstall -g cardbush
 
 ```sh
 npm run package:npm
-npm run verify:npm-package -- --tarball /absolute/path/cardbush-1.0.13.tgz
-npm publish /absolute/path/cardbush-1.0.13.tgz --access public --tag latest
+npm run verify:npm-package -- --tarball /absolute/path/cardbush-VERSION.tgz
+npm publish /absolute/path/cardbush-VERSION.tgz --access public --tag latest
 ```
 
-校验脚本在仓库外的临时目录安装，检查命令、原生组件、服务鉴权和内置 MCP，并通过本地模拟模型完成独立 CLI 与服务对话。不覆盖全局安装、不读取真实用户配置、不发起付费调用，结果写入 `verification-report.json`。
+将示例中的 VERSION 替换为本次实际生成的版本。校验脚本在仓库外的临时目录安装，检查命令、原生组件、服务鉴权和内置 MCP，并通过本地模拟模型完成 worker 注册委派、缓存清理后的子会话历史保留和独立 CLI 对话。不覆盖全局安装、不读取真实用户配置、不发起付费调用，结果写入 `verification-report.json`。该脚本不能替代目标 OS 的安装验证、已授权的云端真实模型/沙箱任务，或 CardBush 内读取 docs 后完成部署的操作流程验收。
 
 仅发布已经验证的那份 tarball。npm 可能要求终端登录及本次发布的两步验证；不要把凭据或验证码写入仓库。收到“正在处理”时等待仓库扫描完成，不重复发布。最终核对 `latest`、版本元数据和匿名下载的完整性，不能只凭 publish 命令退出成功就宣布可安装。
 

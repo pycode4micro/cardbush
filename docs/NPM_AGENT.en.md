@@ -6,6 +6,8 @@ The official [cardbush npm package](https://www.npmjs.com/package/cardbush) incl
 
 This guide follows current source. Published **1.0.13** does not include the new `cardbush worker` registration or removal of remote chat selection. Rebuild both ends from current source to use the worker features below. See the [1.0.13 release scope](https://github.com/pycode4micro/cardbush/blob/main/docs/releases/1.0.13.md).
 
+Users need not prepare a deployment archive in advance. Install a matching published version directly on the target; for unreleased code, the Agent can build a standalone directory or temporary tarball from accessible complete source during deployment. An existing verified `cardbush-VERSION.tgz` can also be installed directly: `npm install --global /absolute/path/cardbush-VERSION.tgz`, without npm publication. For tarball transfer, compare SHA-256 before/after and check the installed command version and service capabilities; `@latest` cannot substitute for an unpublished candidate.
+
 ## Install and start
 
 ```sh
@@ -35,6 +37,8 @@ cardbush-agent --data-dir /absolute/path/agent-data --name Agent-A
 
 The default background-service directory is `~/.cardbush/service`. Use Windows absolute paths on Windows. Program files and data are separate; a normal remote client's exit does not stop the service. Give independent instances separate data directories.
 
+Prefer an ordinary user, separate data directory and loopback listener with CardBush's built-in SSH connection or HTTPS for cloud deployment. `--background` does not register boot startup. On Linux, installing bubblewrap must be followed by actual namespace and sandbox file-operation checks; enable only needed plugins on low-memory hosts. See the [bundled deployment guide](https://github.com/pycode4micro/cardbush/blob/main/assets/skills/cardbush-docs/references/agent-deployment.md) for version selection, model setup, Ubuntu AppArmor and resource diagnosis, and [remote worker acceptance](https://github.com/pycode4micro/cardbush/blob/main/assets/skills/cardbush-docs/references/remote-workers.md#分层验收) for registration, continuation and restart checks.
+
 ```sh
 cardbush worker add --name Worker --url https://agent.example.com --token-file /private/access-token
 cardbush worker list
@@ -58,11 +62,11 @@ The root `package.json` has `private: true`; do not publish the repository root.
 
 ```sh
 npm run package:npm
-npm run verify:npm-package -- --tarball /absolute/path/cardbush-1.0.13.tgz
-npm publish /absolute/path/cardbush-1.0.13.tgz --access public --tag latest
+npm run verify:npm-package -- --tarball /absolute/path/cardbush-VERSION.tgz
+npm publish /absolute/path/cardbush-VERSION.tgz --access public --tag latest
 ```
 
-Verification installs outside the checkout, checks commands, native assets, service authentication and bundled MCP discovery, and exercises independent CLI and service conversations using a local mock model. It does not replace the global installation, read real user configuration or make paid calls. Results are saved in `verification-report.json`.
+Replace VERSION with the version actually generated. Verification installs outside the checkout, checks commands, native assets, service authentication and bundled MCP discovery, and uses a local mock model to exercise registered-worker delegation, child history retention after cache collection, and independent CLI chat. It does not replace the global installation, read real user configuration or make paid calls. Results are saved in `verification-report.json`. This does not replace target-OS installation checks, authorized real cloud model/sandbox tasks, or a deployment performed inside CardBush after loading its docs.
 
 Publish the exact tested tarball. npm can require terminal sign-in and separate two-factor verification for publication; keep credentials and codes out of the repository. If npm reports processing, wait for scanning rather than republishing. Verify `latest`, version metadata and the integrity of an anonymous download before declaring the package installable.
 

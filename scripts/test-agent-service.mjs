@@ -711,6 +711,9 @@ test('remote subagent HTTP bridge deduplicates uncertain acknowledgement, return
     assert.equal(resumed.status, 'completed'); assert.equal(f.model.calls.length, 3);
     const continued = await realCall(connection.id, 'sessions.get', { sessionId: request.sessionId });
     assert.equal(continued.turns.length, 2);
+    await realCall(connection.id, 'runtime.command', { kind: 'runtime.collect_cache', payload: {} });
+    const retained = await realCall(connection.id, 'sessions.get', { sessionId: request.sessionId });
+    assert.equal(retained?.turns.length, 2, 'the remote parent is not a local orphan; cache collection must retain worker history');
     assert.equal(continued.turns[1].cacheChainState.requestOrdinal, continued.turns[0].cacheChainState.requestOrdinal + 1);
     const continuedEvents = await realCall(connection.id, 'chat.events', { sessionId: request.sessionId, turnId: 'turn-test-remote-2', waitMs: 1 });
     const observations = continuedEvents.events.filter(event => ['cache_chain_observed', 'provider_input_observed'].includes(event.kind));
