@@ -124,7 +124,7 @@ export class RuntimeUtilityProcessController {
             const abort = new AbortController();
             hostRequests.set(candidate.id, abort);
             void handleMcpHostRequest(candidate, abort.signal, (operation, payload, signal) => {
-              if (operation === 'resources.acquire' || operation === 'resources.release') return resources.handle(operation, payload, signal);
+              if (operation === 'resources.acquire' || operation === 'resources.release' || operation === 'resources.track' || operation === 'resources.ready') return resources.handle(operation, payload, signal);
               if (!this.#options.onMcpHostRequest) throw new Error('MCP desktop integration is unavailable.');
               return this.#options.onMcpHostRequest(operation, payload, signal);
             })

@@ -111,9 +111,17 @@ export class TerminalSessionManager {
   }
 
   async #start(input: Parameters<TerminalSessionManager['start']>[0], ready: () => void): Promise<Record<string, unknown>> {
-    if (input.signal?.aborted) throw abortReason(input.signal);
     const diagnosticToken = input.shell === 'powershell' ? randomUUID().replaceAll('-', '') : undefined;
-    const invocation = commandInvocation(input.shell, input.command, undefined, diagnosticToken);
+    let invocation: ReturnType<typeof commandInvocation>;
+    try {
+      if (input.signal?.aborted) throw abortReason(input.signal);
+      invocation = commandInvocation(input.shell, input.command, undefined, diagnosticToken);
+    } catch (error) {
+      // Shell discovery is host preflight: neither admission nor spawn has run.
+      throw withToolFailureFacts(error instanceof Error ? error : new Error(String(error)), {
+        dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input',
+      });
+    }
     const sessionId = `terminal_${randomUUID()}`;
     const exclusiveResources = decodeExclusiveResources(input.exclusiveResources);
     const releaseResources = runtimeExclusiveResources.acquire(sessionId, input.cwd, exclusiveResources);
@@ -378,6 +386,7 @@ export class TerminalSessionManager {
       ...(terminal.shellDiagnostic ? { shellDiagnostic: terminal.shellDiagnostic } : {}),
       ...(() => {
         const environmentDiagnostic = terminalEnvironmentDiagnostic({ state: terminal.state, exitCode: terminal.exitCode,
+          shellExecutable: terminal.shellExecutable, commandStarted: terminal.commandStarted, nativeErrorCode: terminal.nativeErrorCode,
           shellDiagnostic: terminal.shellDiagnostic, sandbox: terminal.guarded.sandbox }, terminal.hostCommandLookup);
         return environmentDiagnostic ? { environmentDiagnostic } : {};
       })(),

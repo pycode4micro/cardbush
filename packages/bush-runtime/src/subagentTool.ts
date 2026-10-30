@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
+import { withToolFailureFacts } from './toolFailureFacts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 
@@ -254,11 +255,19 @@ export function registerSubagentTool(
         const input = context.input.registration;
         if (input.action === 'delete') { await options.agents.remove(input.id!, input.revision); return { deleted: true, agent_id: input.id }; }
         // Validate hook references before publishing a new revision.
-        const agent = registeredAgentSchema.parse(input.agent);
-        validateRegisteredHooks(agent, await options.loadHooks?.() ?? []);
-        if (agent.remote) {
-          const target = (await options.remoteAgents?.list(context.signal) ?? []).find(item => item.id === agent.remote!.connection_id);
-          if (!target?.agentId || target.agentId !== agent.remote.agent_id) throw new Error('Verify the saved worker connection and its service identity before registering this remote subagent.');
+        let agent: RegisteredAgent;
+        try {
+          agent = registeredAgentSchema.parse(input.agent);
+          validateRegisteredHooks(agent, await options.loadHooks?.() ?? []);
+          if (agent.remote) {
+            const target = (await options.remoteAgents?.list(context.signal) ?? []).find(item => item.id === agent.remote!.connection_id);
+            if (!target?.agentId || target.agentId !== agent.remote.agent_id) throw new Error('Verify the saved worker connection and its service identity before registering this remote subagent.');
+          }
+        } catch (error) {
+          // Registration has not reached the store. Do not describe a rejected
+          // definition as a possibly running child or a partially written role.
+          throw withToolFailureFacts(error instanceof Error ? error : new Error(String(error)),
+            { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input' });
         }
         const saved = await options.agents.put(agent, input.revision);
         return { agent_id: saved.definition.id, name: saved.definition.name, revision: saved.revision, updatedAt: saved.updatedAt, enabled: saved.definition.enabled };

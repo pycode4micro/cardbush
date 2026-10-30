@@ -55,9 +55,15 @@ export class HostProcessResourceOwner {
   readonly #claims = new Map<string, { lease?: ProcessResourceLease; controller: AbortController }>();
   #closed = false;
 
-  async handle(operation: 'resources.acquire' | 'resources.release', payload: unknown, signal: AbortSignal): Promise<unknown> {
-    const input = payload as { id?: string; lifetime?: string; replace?: string };
+  async handle(operation: 'resources.acquire' | 'resources.release' | 'resources.track' | 'resources.ready', payload: unknown, signal: AbortSignal): Promise<unknown> {
+    const input = payload as { id?: string; lifetime?: string; replace?: string; pid?: number };
     if (!input || typeof input.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(input.id)) throw new Error('Invalid resource admission identity.');
+    if (operation === 'resources.ready') { await this.#claims.get(input.id)?.lease?.markReady?.(); return; }
+    if (operation === 'resources.track') {
+      if (!Number.isSafeInteger(input.pid) || input.pid! <= 0) throw new Error('Invalid managed process identity.');
+      await this.#claims.get(input.id)?.lease?.trackProcess?.(input.pid!);
+      return; // A short-lived process may already have released its claim.
+    }
     if (operation === 'resources.release') {
       this.#claims.get(input.id)?.controller.abort();
       this.#claims.get(input.id)?.lease?.release();
@@ -77,7 +83,7 @@ export class HostProcessResourceOwner {
       const lease = await module.getProcessResourceGovernor().acquireQueued(input.lifetime, AbortSignal.any([signal, claim.controller.signal]), replace);
       if (this.#closed || this.#claims.get(input.id) !== claim || signal.aborted) { lease.release(); throw new DOMException('Resource admission cancelled.', 'AbortError'); }
       claim.lease = lease;
-      const { release: _release, ...grant } = lease;
+      const { release: _release, trackProcess: _track, markReady: _ready, ...grant } = lease;
       return grant;
     } catch (error) { if (this.#claims.get(input.id) === claim) this.#claims.delete(input.id); throw error; }
   }

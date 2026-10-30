@@ -1239,7 +1239,7 @@ async function connectClient(client: Client, transport: Transport, options: Para
     if (connecting && error instanceof McpProcessError) rejectProcessError(error);
     previousError?.(error);
   };
-  try { await Promise.race([client.connect(transport, options), processFailed]); }
+  try { await Promise.race([client.connect(transport, options), processFailed]); await transport.markReady(); }
   finally { connecting = false; }
 }
 

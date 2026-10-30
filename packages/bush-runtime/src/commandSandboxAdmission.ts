@@ -7,6 +7,7 @@ import type { ToolAdmissionContext, ToolAdmissionDecision } from './toolRegistry
 import { commandSandboxPolicy, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
 import { canonicalSandboxRoots, canonicalSandboxFiles, sandboxError, windowsInterpreterRoots, type ExecutionSandboxPolicy } from './executionSandbox.js';
 import { commandPermission } from './commandPermission.js';
+import { withToolFailureFacts } from './toolFailureFacts.js';
 import { allowedRoots, isWithin, normalizeIdentity, permissionBoundaryMode, resolveToolPath, workspaceRoot } from './workspaceAccessPolicy.js';
 
 export interface AdditionalCommandPermissions {
@@ -49,7 +50,14 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
   }
   // The selected host interpreter must be readable, including user-installed
   // PowerShell. No model-supplied executable or PATH entry is trusted here.
-  const executable = commandInvocation(context.input.shell, context.input.command).executable;
+  let executable: string;
+  try { executable = commandInvocation(context.input.shell, context.input.command).executable; }
+  catch (error) {
+    // This also runs when revalidating an approved invocation, before start().
+    throw withToolFailureFacts(error instanceof Error ? error : new Error(String(error)), {
+      dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input',
+    });
+  }
   const interpreterRoots = configuration.mode === 'auto' ? windowsInterpreterRoots(executable) : [];
   const [baseWritableRoots, readableRoots, configuredWriteRoots, cwdRoots] = await Promise.all([
     canonicalSandboxRoots(base.writableRoots), canonicalSandboxRoots([...(base.readableRoots ?? []), ...interpreterRoots]),

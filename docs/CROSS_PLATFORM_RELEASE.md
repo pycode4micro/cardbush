@@ -20,7 +20,13 @@ the same sources. Do not import the Node entry into renderer code.
 - Explicit unavailable command languages fail; an unavailable saved interactive
   terminal preference may fall back to the host's native Shell.
 - `CARDBUSH_TERMINAL_SHELL` selects a single installed executable for the default
-  embedded terminal, not an arbitrary command with arguments.
+  embedded terminal, not an arbitrary command with arguments. On Windows,
+  PowerShell tool commands use the same override and require `pwsh.exe`.
+- Windows PowerShell discovery checks PATH, the standard MSI location and the
+  current user's Store alias. Store aliases resolve to a verified target binary;
+  a failed metadata check is not permission to launch an unchecked target.
+  Missing and inaccessible candidates have separate diagnostics. Discovery does
+  not launch probes, cache missing installations or change filesystem permissions.
 - IPC host capabilities drive the settings UI. Do not advertise Windows-only
   native services on Linux. A new supported platform needs native binaries,
   packaging rules and a real runner, not only a capability flag.

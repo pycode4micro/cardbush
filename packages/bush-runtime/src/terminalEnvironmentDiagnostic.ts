@@ -27,6 +27,21 @@ export function terminalEnvironmentDiagnostic(value: Record<string, unknown>, lo
   const missing = shell?.exceptionType === 'System.Management.Automation.CommandNotFoundException';
   const denied = shell?.permissionDenied === true;
   const failed = value.state === 'failed' || typeof value.exitCode === 'number' && value.exitCode !== 0;
+  const executable = typeof value.shellExecutable === 'string' ? value.shellExecutable : '';
+  const shellLaunchFailed = failed && value.commandStarted === false && win32.isAbsolute(executable) && /^pwsh\.exe$/i.test(win32.basename(executable));
+  if (shellLaunchFailed) {
+    const packaged = /[\\/]WindowsApps[\\/]Microsoft\.PowerShell_[^\\/]+[\\/]pwsh\.exe$/i.test(executable);
+    const packagedSandboxFailure = sandbox?.backend === 'windows-appcontainer' && packaged && value.nativeErrorCode === 87;
+    return {
+      execution_boundary: isolated ? 'sandbox' : 'host', availability: 'shell_launch_failed',
+      host_command: { command: 'pwsh', status: 'found', path: executable }, installation: 'executable_found_on_host',
+      command_started: false, access_granted: false,
+      ...(typeof value.nativeErrorCode === 'number' ? { native_error_code: value.nativeErrorCode } : {}),
+      next_step: packagedSandboxFailure
+        ? 'PowerShell was found, but Windows rejected this packaged executable in the current AppContainer (error 87). No command ran. Select an installed MSI or portable PowerShell 7 via the host CARDBUSH_TERMINAL_SHELL setting, or correct the host launch configuration. Keep isolation enabled; do not bypass it through cmd or an unsandboxed retry.'
+        : 'PowerShell was resolved on the host but could not be started. No command ran. Inspect the native launch error and host configuration; do not infer that PowerShell is absent or bypass the active sandbox.',
+    };
+  }
   if (!missing && !denied && !(isolated && failed)) return;
   return {
     execution_boundary: isolated ? 'sandbox' : 'host',

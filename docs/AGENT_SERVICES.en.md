@@ -48,7 +48,7 @@ cardbush worker verify CONNECTION_ID
 cardbush worker remove CONNECTION_ID
 ```
 
-Ask the local Agent to bind a role to the returned connection and verified instance. Existing subagent/tasks/Team tools use it without seeing the token. App and CLI currently have separate credential/connection stores, so the role must reference a connection on the executing parent host. Old endpoints remain candidates, and an instance change at the same URL needs explicit new registration.
+Ask the local Agent to bind a role to the returned connection and verified instance. Existing subagent/tasks/Team tools use it without seeing the token. App and CLI using the same local profile share protected worker connections; standalone server accounts retain their own stores. Existing connection IDs migrate once, and worker CLI commands do not start the full Agent Runtime. Roles and conversations remain owned by their Runtime. An instance change at the same URL needs explicit new registration.
 
 Role name, instructions and revision accompany work. The worker uses its default model/project, or creates a workspace without a default project. Parent history, local paths, browser grants and credentials are not copied. Continuations keep original role/service identity. Remote roles reject local tools/settings/hooks/guards that cannot be enforced on an independent host.
 

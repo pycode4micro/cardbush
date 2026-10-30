@@ -1,5 +1,6 @@
-import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { localDesktopProfile, localCliDataRoot } from './localProfilePaths.mjs';
+export { localDesktopProfile } from './localProfilePaths.mjs';
 import { mkdir, realpath } from 'node:fs/promises';
 import type { AgentHttpClient } from './agentHttpClient.mjs';
 import { AgentChatDiagnostics } from './agentChatDiagnostics.mjs';
@@ -16,16 +17,8 @@ export type ChatClient = Pick<AgentHttpClient, 'info' | 'call' | 'events'> & {
 
 /** Electron's default profile location; a caller may choose an explicit profile.
  * Session data stays in the CLI directory, never in the desktop Runtime. */
-export function localDesktopProfile(env = process.env, home = homedir(), platform = process.platform) {
-  if (env.CARDBUSH_CLI_PROFILE_DIR) return resolve(env.CARDBUSH_CLI_PROFILE_DIR);
-  if (platform === 'win32') return join(env.APPDATA || join(home, 'AppData', 'Roaming'), 'cardbush');
-  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'cardbush');
-  const xdg = env.XDG_CONFIG_HOME && isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : join(home, '.config');
-  return join(xdg, 'cardbush');
-}
-
 export async function openLocalChatClient(options: { dataRoot?: string; profileRoot?: string; bundledRoot?: string } = {}): Promise<ChatClient> {
-  const path = resolve(options.dataRoot ?? process.env.CARDBUSH_CLI_DATA_DIR ?? join(homedir(), '.cardbush', 'cli-agent'));
+  const path = resolve(options.dataRoot ?? localCliDataRoot());
   await mkdir(path, { recursive: true, mode: 0o700 });
   const dataRoot = await realpath(path);
   // One settings source, even before the App has been installed or configured.

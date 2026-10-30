@@ -48,3 +48,22 @@ test('installed but unresolved, denied and unverified native-interpreter failure
     }
   }
 });
+
+test('a verified PowerShell launch rejection is distinct from discovery and command failures', () => {
+  const executable = 'C:\\Program Files\\WindowsApps\\Microsoft.PowerShell_7.6.9.0_x64__fixture\\pwsh.exe';
+  const result = { state: 'failed', commandStarted: false, nativeErrorCode: 87, exitCode: null,
+    shellExecutable: executable, sandbox, stdout: '', stderr: '' };
+  const diagnostic = terminalEnvironmentDiagnostic(result);
+  assert.equal(diagnostic.availability, 'shell_launch_failed');
+  assert.equal(diagnostic.installation, 'executable_found_on_host');
+  assert.deepEqual(diagnostic.host_command, { command: 'pwsh', status: 'found', path: executable });
+  assert.equal(diagnostic.command_started, false);
+  assert.equal(diagnostic.access_granted, false);
+  assert.match(diagnostic.next_step, /MSI or portable PowerShell 7/);
+  assert.match(diagnostic.next_step, /Keep isolation enabled/);
+  assert.doesNotMatch(terminalEnvironmentDiagnostic({ ...result, nativeErrorCode: 5 }).next_step, /error 87|MSI/);
+  assert.doesNotMatch(terminalEnvironmentDiagnostic({ ...result, sandbox: null }).next_step, /error 87|MSI/);
+  assert.notEqual(terminalEnvironmentDiagnostic({ ...result, commandStarted: true }).availability, 'shell_launch_failed');
+  const text = projectTerminalResult({ ...result, environmentDiagnostic: diagnostic, stdout: 'large\n'.repeat(10000) }, 0);
+  assert.match(text, /shell_launch_failed/); assert.match(text, /executable_found_on_host/);
+});

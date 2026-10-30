@@ -2660,14 +2660,14 @@ function agentFilePreviews() {
 }
 const agentPreviewOwners = new Set<number>();
 function agentConnections() {
-  return agentConnectionsPromise ??= import('./agentConnections.mjs').then(async ({ AgentConnectionManager }) => {
-    const manager = new AgentConnectionManager(path.join(app.getPath('userData'), 'agents', 'connections.json'), {
+  return agentConnectionsPromise ??= import('./localWorkerStore.mjs').then(async ({ openLocalWorkers }) => {
+    const manager = await openLocalWorkers(app.getPath('userData'), { nativeHostPath: browserConnectorNativeHostPath(), desktopCipher: {
     encrypt: value => {
       if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')) throw new Error('Secure credential storage is unavailable.');
       return safeStorage.encryptString(value).toString('base64');
     },
     decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
-    }, { ssh: await sshConnections() });
+    }, manager: { ssh: await sshConnections() } });
     return manager;
   });
 }

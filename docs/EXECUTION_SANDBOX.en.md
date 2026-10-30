@@ -4,6 +4,8 @@
 
 Terminal, file-content I/O and local rg search share sandbox backends, resource admission and cleanup. Runtime owns authorization, version conflict detection and patch rollback; restricted processes do content I/O in the original project directory, without partitions, virtual disks or project copies.
 
+Linux admission samples the RSS of owned process trees and verifies PID start times. After an MCP initialization handshake, measured service memory replaces its startup reservation; missing measurements retain conservative reservations. System reserves and task/group limits stay unchanged. This accounting is not a new kernel isolation mechanism and does not grant filesystem or network access.
+
 Desktop/service enable an installed, successfully probed command sandbox by default; they do not download it automatically. This is not whole-application isolation or equivalent coverage to another product. Windows AppContainer and Linux bubblewrap have live tests; the documented Linux deployment used Ubuntu 24.04 and a real service account with NoNewPrivileges. Other distributions need acceptance. Detection is capability-based. macOS has no backend and rejects requested isolation.
 
 ## Setup and policy
@@ -45,6 +47,8 @@ Linux probes user/process/IPC/UTS/required-network namespaces as the service acc
 Plain SSH cannot be isolated by the client: required policy refuses SSH terminal_exec/terminal_write without a remote sandbox handshake, retaining query/stop. An independent worker can enforce its own server sandbox. HTTP/SSH is transport, not isolation, and local grants are not inherited. Terminal sandbox metadata describes requested backend/network, independently of resource limits.
 
 Windows requires PowerShell 7 without fallback to Windows PowerShell 5. Authorized cwd is initialized before user code; if drives are hidden, load only the selected shell's basic module and create CardBushWorkspace: without parent-directory grants. Native programs use `(Get-Location).ProviderPath`. Diagnostics reuse that path rather than reparsing unauthorized ancestors. Fail before user code if initialization fails. Phases are preparing_sandbox/executing/cleaning_up/finished, with setup/cleanup distinct from computation.
+
+PowerShell discovery distinguishes `powershell_not_found` from `powershell_lookup_failed`. Discovery and admission failures report `dispatch: not_started` and `effects: none`. Finding a Store executable does not prove it can run in AppContainer: a local Store 7.6.9 validation succeeded on the host but the sandbox launch was rejected with native error 87. That receipt reports `shell_launch_failed`, the discovered executable and `command_started: false`. Select an installed MSI/portable `pwsh.exe` through the host `CARDBUSH_TERMINAL_SHELL` setting or correct the launch configuration; Runtime never retries outside isolation, grants broader access or installs another shell automatically.
 
 ## Lifecycle and resource control
 

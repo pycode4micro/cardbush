@@ -1,18 +1,22 @@
 import { sendSharedConfiguration, type SharedConfigurationArchive, type SharedConfigurationReceipt } from './agentSharedConfiguration.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { AgentHttpClient, AgentHttpError, AgentIdentityError, AgentNetworkError, agentBaseUrl, isAgentBusyError } from './agentHttpClient.mjs';
 import { AgentBusyError } from './agentErrors.mjs';
+import { withWorkerStoreLock } from './workerStoreLock.mjs';
+import { assertConnectorFile } from './browserConnectorFiles.js';
 import type { AgentInfo, AgentJob, AgentOperation, AgentConnection, AgentConnectionInput, AgentDesktopApi, AgentEventRequest } from './agentTypes.js';
 import type { SshConnectionManager } from './sshConnections.mjs';
 import type { SshTunnel } from './sshTunnel.mjs';
 type Saved = Omit<AgentConnection, 'hasToken' | 'connected' | 'info' | 'connectionState' | 'connectionError'> & { token?: string; legacyLaunch?: Record<string, unknown> };
 type Live = { client: AgentHttpClient; info: AgentInfo };
-type Entry = { promise: Promise<Live>; abort: AbortController; client?: AgentHttpClient; tunnel?: SshTunnel };
+type Entry = { promise: Promise<Live>; abort: AbortController; fingerprint: string; client?: AgentHttpClient; tunnel?: SshTunnel };
 type DeferredConfiguration = { live: Live; error: Error; timer?: ReturnType<typeof setTimeout>; checking?: Promise<void> };
 const tunnelSchema = z.object({ connectionId: z.string().min(1), remoteHost: z.enum(['127.0.0.1', 'localhost', '::1']), remotePort: z.number().int().min(1).max(65535) }).strict();
+const connectionFingerprint = (item: Saved) => JSON.stringify([item.url, item.token, item.sshTunnel, item.migrationIssue, item.agentId]);
+const storeIdentity = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 function sshAgentUrl(tunnel: z.infer<typeof tunnelSchema>, previousUrl?: string) {
   const url = new URL(`http://${tunnel.remoteHost === '::1' ? '[::1]' : tunnel.remoteHost}:${tunnel.remotePort}/`);
   // Preserve an existing service path while discarding the obsolete local port.
@@ -44,9 +48,16 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
     for (const item of await this.#read()) if (item.sshTunnel && !item.migrationIssue && !this.#closing) void this.connect(item.id).catch(() => undefined);
   }
   async #read(): Promise<Saved[]> {
+    return (await this.#readStore()).connections;
+  }
+  async #readStore(): Promise<{ connections: Saved[]; imports: string[] }> {
+    assertConnectorFile(this.path);
     const raw = await readFile(this.path, 'utf8').catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return '[]'; throw error; });
-    const items = JSON.parse(raw); if (!Array.isArray(items)) throw new Error('Invalid Agent connection store.');
-    return items.map(item => {
+    const stored = JSON.parse(raw);
+    const items = Array.isArray(stored) ? stored : stored?.version === 1 ? stored.connections : undefined;
+    const imports: string[] = Array.isArray(stored) ? [] : stored?.imports;
+    if (!Array.isArray(items) || !Array.isArray(imports) || imports.some(id => typeof id !== 'string')) throw new Error('Invalid Agent connection store.');
+    return { imports, connections: items.map(item => {
       // Retired switches must not survive a reconnect or a subsequent store write.
       delete item.autoSyncPlugins; delete item.excludedPluginIds; delete item.syncSkills;
       if (item.transport === 'stdio') {
@@ -55,16 +66,38 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
           migrationIssue: '此连接原先使用 stdio。请先将 Agent 启动为 HTTP 服务，再重新添加连接；原服务数据保留。' };
       }
       return { ...item, transport: 'http', url: item.sshTunnel ? sshAgentUrl(tunnelSchema.parse(item.sshTunnel), item.url) : item.url ? agentBaseUrl(item.url) : '' };
-    });
+    }) };
   }
-  #change(change: (items: Saved[]) => Saved[]) {
+  #change(change: (items: Saved[]) => Saved[] | Promise<Saved[]>, importId?: string) {
     const next = this.#writes.then(async () => {
-      const items = change(await this.#read()); const temp = `${this.path}.${randomUUID()}.tmp`;
       await mkdir(dirname(this.path), { recursive: true });
-      try { await writeFile(temp, JSON.stringify(items), { mode: 0o600, flag: 'wx' }); await rename(temp, this.path); }
-      finally { await rm(temp, { force: true }); }
+      await withWorkerStoreLock(this.path, async () => {
+        const store = await this.#readStore();
+        if (importId && store.imports.some(id => storeIdentity(id) === storeIdentity(importId))) return;
+        const items = await change(store.connections), temp = `${this.path}.${randomUUID()}.tmp`;
+        const imports = importId ? [...store.imports, importId] : store.imports;
+        try {
+          await writeFile(temp, JSON.stringify(imports.length ? { version: 1, connections: items, imports } : items), { mode: 0o600, flag: 'wx' });
+          assertConnectorFile(this.path); await rename(temp, this.path);
+        } finally { await rm(temp, { force: true }); }
+      });
     });
     this.#writes = next.catch(() => undefined); return next;
+  }
+  /** Re-encrypt locally, preserve IDs/identity, and atomically remember imports.
+   * A removed shared registration must never reappear from an old installation. */
+  async importLegacy(source: AgentConnectionManager) {
+    if (storeIdentity(source.path) === storeIdentity(this.path)) return;
+    await this.#change(async items => {
+      for (const item of await source.#read()) {
+        if (items.some(current => current.id === item.id)) continue;
+        items.push({ ...item, token: item.token ? this.cipher.encrypt(source.cipher.decrypt(item.token)) : undefined });
+      }
+      return items;
+    }, source.path);
+  }
+  async hasImportedLegacy(path: string) {
+    return (await this.#readStore()).imports.some(id => storeIdentity(id) === storeIdentity(path));
   }
   async list(): Promise<AgentConnection[]> {
     return (await this.#read()).map(item => ({ id: item.id, name: item.name, transport: 'http', url: item.url,
@@ -98,15 +131,29 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   async remove(id: string) { await this.disconnect(id); await this.#change(items => items.filter(item => item.id !== id)); return this.list(); }
   async #connection(id: string): Promise<Live> {
     if (this.#closing) throw new Error('Agent connections are closing.');
-    const current = this.#clients.get(id); if (current) return current.promise;
+    // Another host may remove or rotate a registration while this host keeps a
+    // live client. Recheck persisted authority before reusing any credentials.
+    const saved = (await this.#read()).find(item => item.id === id);
+    if (this.#closing) throw new Error('Agent connections are closing.');
+    if (!saved) { await this.disconnect(id); throw new Error('Unknown Agent connection.'); }
+    const fingerprint = connectionFingerprint(saved);
+    const current = this.#clients.get(id);
+    if (current && current.fingerprint === fingerprint) return current.promise;
+    // Another process may finish the first identity pin while our own handshake
+    // is still in flight. Coalesce only when the route/credentials are unchanged.
+    if (current && saved.agentId && current.fingerprint === connectionFingerprint({ ...saved, agentId: undefined })) {
+      const live = await current.promise;
+      if (live.info.id !== saved.agentId) throw new AgentIdentityError('Agent identity changed.');
+      return live;
+    }
+    if (current) await this.disconnect(id);
+    this.#desired.add(id);
     this.#clearTimer(id);
-    const entry: Entry = { abort: new AbortController(), promise: undefined! };
+    const entry: Entry = { abort: new AbortController(), fingerprint, promise: undefined! };
     this.#clients.set(id, entry);
     const assertCurrent = () => { entry.abort.signal.throwIfAborted(); if (this.#clients.get(id) !== entry || this.#closing) throw Error('Agent connection was closed.'); };
     entry.promise = (async () => {
-      const saved = (await this.#read()).find(item => item.id === id);
       assertCurrent();
-      if (!saved) throw new Error('Unknown Agent connection.');
       if (saved.migrationIssue) throw new Error(saved.migrationIssue);
       if (!saved.token) throw new Error('Enter the Agent access token.');
       const endpoint = new URL(saved.url);
@@ -121,7 +168,13 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
       const client = entry.client = new AgentHttpClient(endpoint.href, this.cipher.decrypt(saved.token), saved.agentId, entry.tunnel?.connect);
       const info = await client.info();
       assertCurrent();
-      await this.#change(items => items.map(item => item.id === id ? { ...item, agentId: info.id } : item));
+      await this.#change(items => {
+        const current = items.find(item => item.id === id);
+        if (!current || connectionFingerprint({ ...current, agentId: saved.agentId }) !== fingerprint || current.agentId && current.agentId !== info.id)
+          throw new Error('Worker registration changed during verification. Retry the current registration.');
+        return items.map(item => item.id === id ? { ...item, agentId: info.id } : item);
+      });
+      entry.fingerprint = connectionFingerprint({ ...saved, agentId: info.id });
       assertCurrent();
       const live = { client, info }; this.#live.set(id, live); this.#errors.delete(id); this.#attempts.delete(id);
       this.#health(id, entry);

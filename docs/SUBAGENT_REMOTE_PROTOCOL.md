@@ -50,7 +50,9 @@ cardbush worker verify CONNECTION_ID
 cardbush worker remove CONNECTION_ID
 ```
 
-Then ask the local Agent to save a role bound to the returned connection and verified service ID. Team nodes use the same saved role. App and CLI currently keep separate connection/credential stores; register the connection on the host that executes the parent. A role referring to another host's connection must be rebound there. Credentials never appear in model-visible discovery. CLI credentials are encrypted with a private local key; protect and back up the whole service-account directory. Desktop credentials use its existing secure storage.
+Then ask the local Agent to save a role bound to the returned connection and verified service ID. Team nodes use the same saved role. App and local CLI share `<profile>/workers`; their conversation and role histories remain owned by their respective Runtime. Existing CLI and desktop connections migrate once, preserving IDs and verified identities. Removing a shared connection does not restore it from a legacy store. Cross-process writes are serialized, and cached clients recheck registration authority before dispatch.
+
+The CLI's worker management commands access this registry directly without starting a model, plugins or an Agent Runtime. Credentials never appear in discovery. Windows protects the encryption key with current-user DPAPI and a verified user/SYSTEM-only directory ACL; Unix uses a private service-account directory and key. Separate server deployments retain their own stores. This does not transfer model configuration, browser login state, or permissions to the worker. Registration validation failures before persistence report `not_started / none / known`; failures after a write remain potentially effectful.
 
 ## Vocabulary and wire contracts
 

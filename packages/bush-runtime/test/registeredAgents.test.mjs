@@ -23,6 +23,11 @@ test('registered remote roles pin identity and revision without copying local to
   const invoke = input => coordinator.execute({ protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name: 'subagent', argumentsText: JSON.stringify(input) },
     { requestId: 'r', sessionId: 'parent', turnId: 'turn', round: 1, ordinal: 0 }, undefined, { request: parent, contextMessages: [{ role: 'system', content: 'PRIVATE HISTORY' }] });
   const role = { id: 'reviewer', name: 'Release reviewer', system_prompt: 'Review the release', remote: { connection_id: 'worker', agent_id: 'instance' } };
+  const denied = await invoke({ action: 'save', expected_revision: 0, agent: { ...role, remote: { ...role.remote, connection_id: 'missing' } } });
+  assert.equal(denied.kind, 'failed');
+  assert.deepEqual(denied.execution, { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input' });
+  assert.equal(await agents.get('reviewer'), undefined);
+  assert.equal(tasks.list('parent').length, 0);
   assert.equal((await invoke({ action: 'save', expected_revision: 0, agent: { ...role, allowed_tools: ['terminal_exec'] } })).kind, 'failed');
   assert.equal((await invoke({ action: 'save', expected_revision: 0, agent: role })).kind, 'returned');
   const first = await invoke({ agent_id: 'reviewer', prompt: 'Review today' }); assert.equal(first.kind, 'returned', JSON.stringify(first));
@@ -36,6 +41,18 @@ test('registered remote roles pin identity and revision without copying local to
   identity = 'instance'; await agents.put({ ...role, enabled: false }, 2);
   assert.equal((await invoke({ task_id: original.taskId, prompt: 'Continue disabled' })).kind, 'failed');
   assert.equal(requests.length, 2);
+});
+
+test('registration store failures after mutation are not labeled as preflight rejection', async t => {
+  const root = await temporary(t), agents = new RegisteredAgentStore(join(root, 'roles'));
+  const put = agents.put.bind(agents);
+  agents.put = async (...args) => { await put(...args); throw Error('Receipt lost after writing'); };
+  const f = fixture(agents, root);
+  const result = await f.call('subagent', { action: 'save', expected_revision: 0, agent: role() });
+  assert.equal(result.kind, 'failed');
+  assert.equal(result.execution.dispatch, 'started');
+  assert.equal(result.execution.effects, 'possible');
+  assert.equal((await agents.get('warehouse')).definition.name, 'Warehouse');
 });
 const result = request => ({ terminal: { kind: 'turn_terminal', payload: { status: 'completed', finalMessageId: 'answer' } }, session: { turns: [{ turnId: request.turnId, usage: {}, messages: [{ messageId: 'answer', message: { role: 'assistant', content: 'Verified result' } }] }] } });
 let serial = 0;

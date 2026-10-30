@@ -11,7 +11,8 @@
 - 在 `contracts.ts` 增加能力判断和默认 Shell，在 `index.ts` 解析可执行文件，测试注入 `PlatformContext`。
 - 可执行路径、参数数组、工作目录分开传递，不把目录插入 Shell 命令文本。
 - 显式请求不可用命令语言应失败；保存的交互终端偏好不可用时可回退宿主原生 Shell。
-- `CARDBUSH_TERMINAL_SHELL` 只指定默认内嵌终端的一个已安装可执行文件，不能是一段带参数任意命令。
+- `CARDBUSH_TERMINAL_SHELL` 只指定默认内嵌终端的一个已安装可执行文件，不能是一段带参数任意命令。Windows 的 PowerShell 工具命令也使用同一个覆盖项，并要求选择 `pwsh.exe`。
+- Windows PowerShell 发现依次检查 PATH、MSI 标准位置和当前用户的 Store 别名。Store 别名解析到经过文件校验的实际二进制；元数据检查失败不代表可以启动未经验证的目标。不存在和检查受限分别诊断，发现过程不启动探测进程、不缓存“未安装”结果，也不修改文件权限。
 - 设置 UI 由 IPC 能力驱动，不在 Linux 展示 Windows 专属原生服务。新平台需要原生二进制、打包规则和真实 runner，不能只加能力标记。
 
 Agent loop、Provider 配置、用户路径、应用身份与偏好仍由原模块管理，重构不重命名用户目录或重置偏好。系统原生 API 留在各自适配层，无须为消除 `process.platform` 分支而隐藏真实平台差异。

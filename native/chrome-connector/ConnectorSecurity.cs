@@ -79,7 +79,7 @@ internal static class ConnectorSecurity
         bool directory = operation == "--secure-directory";
         if (directory)
         {
-            if (!Path.IsPathRooted(target) || (Path.GetFileName(target) != "browser-connector" && Path.GetFileName(target) != "model-access" && Path.GetFileName(target) != "local-runtime") ||
+            if (!Path.IsPathRooted(target) || (Path.GetFileName(target) != "browser-connector" && Path.GetFileName(target) != "model-access" && Path.GetFileName(target) != "local-runtime" && Path.GetFileName(target) != "workers") ||
                 (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Invalid private IPC directory.");
         }

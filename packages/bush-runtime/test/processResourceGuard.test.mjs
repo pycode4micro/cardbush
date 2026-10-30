@@ -112,6 +112,25 @@ test('admission includes application memory and commit headroom', () => {
   });
 });
 
+test('ready services release unused startup reservations only when measured, without raising any limits', () => {
+  const limits = defaultProcessResourceLimits(2 * 1024 ** 3);
+  const budget = new ProcessResourceGovernor({ limits, availableMemory: () => 950 * MiB });
+  const services = [budget.acquire('service'), budget.acquire('service'), budget.acquire('service')];
+  assert.throws(() => budget.acquire(), { code: 'resource_memory_pressure' });
+  services.forEach(lease => lease.markReady());
+  assert.throws(() => budget.acquire(), { code: 'resource_memory_pressure' }, 'unmeasured services retain their startup reservations');
+  budget.observe({ availableMemoryBytes: 950 * MiB, totalMemoryBytes: 150 * MiB,
+    jobs: services.map(lease => ({ id: lease.id, memoryBytes: 50 * MiB })) });
+  const task = budget.acquire();
+  assert.equal(task.totalMemoryBytes, limits.totalMemoryBytes);
+  assert.ok(task.taskMemoryBytes <= limits.taskMemoryBytes);
+  task.release();
+  budget.observe({ availableMemoryBytes: 950 * MiB, totalMemoryBytes: limits.totalMemoryBytes - 10 * MiB,
+    jobs: services.map(lease => ({ id: lease.id, memoryBytes: 50 * MiB })) });
+  assert.throws(() => budget.acquire(), error => error.code === 'resource_memory_pressure' && error.details.limitingBudget === 'managed_group');
+  services.forEach(lease => lease.release());
+});
+
 test('process resource host is built and included outside asar', { skip: process.platform !== 'win32' }, () => {
   const packaging = readFileSync(join(root, 'electron-builder.yml'), 'utf8');
   assert.match(packaging, /from: dist-native\/process-guard/);

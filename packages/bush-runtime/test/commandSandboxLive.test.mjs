@@ -3,8 +3,9 @@ import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
+import { commandInvocation } from '@cardbush/platform';
 import { InMemoryRuntimeCapabilityStore, TerminalSessionManager, ToolExecutionCoordinator, ToolRegistry, registerWorkspaceTools } from '../dist/index.js';
-import { prepareExecutionSandbox, resolveLinuxSandboxExecutable } from '../dist/executionSandbox.js';
+import { prepareExecutionSandbox, resolveLinuxSandboxExecutable, windowsInterpreterRoots } from '../dist/executionSandbox.js';
 
 const windows = process.platform === 'win32';
 const quote = value => windows ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`;
@@ -24,15 +25,16 @@ test('a command installed outside the sandbox is diagnosed without host executio
     if (original === undefined) delete process.env[key]; else process.env[key] = original;
     await terminals.close(); assert.equal(dirname(folder).toLowerCase(), base.toLowerCase()); await rm(folder, { recursive: true, force: true });
   });
+  const interpreterRoots = windowsInterpreterRoots(commandInvocation('powershell', name).executable);
   let result = await terminals.start({ ownerSessionId: 'diagnostic', command: name, cwd: work, shell: 'powershell', yieldTimeMs: 1000,
-    sandbox: { readableRoots: [], writableRoots: [work], network: 'disabled' } });
+    sandbox: { readableRoots: interpreterRoots, writableRoots: [work], network: 'disabled' } });
   if (result.state === 'running') result = await terminals.waitForCompletion('diagnostic', result.terminalSessionId, AbortSignal.timeout(45000));
   assert.equal(result.state, 'exited'); assert.notEqual(result.exitCode, 0);
   assert.equal(result.shellDiagnostic.commandName, name);
   assert.equal(result.environmentDiagnostic.host_command.status, 'found');
   assert.equal(result.environmentDiagnostic.installation, 'executable_found_on_host');
   assert.equal(result.environmentDiagnostic.access_granted, false);
-  assert.deepEqual(result.sandbox.readableRoots, []); assert.deepEqual(result.sandbox.writableRoots, [work]);
+  assert.deepEqual(result.sandbox.readableRoots, interpreterRoots); assert.deepEqual(result.sandbox.writableRoots, [work]);
   await assert.rejects(readFile(marker), { code: 'ENOENT' });
 });
 

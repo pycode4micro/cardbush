@@ -8,6 +8,7 @@ import { freemem, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { runtimeDistributionRoot } from './distributionRoot.js';
 import { ProcessResourceObserver, type ResourceSample } from './processResourceObserver.js';
+import { LinuxProcessMemory } from './linuxProcessMemory.js';
 import { windowsProcessFailure } from './windowsProcessFailure.js';
 import { prepareExecutionSandbox, type ExecutionSandboxPolicy, type ExecutionSandboxStatus, type PreparedExecutionSandbox } from './executionSandbox.js';
 import type { WindowsSandboxScopePool } from './windowsSandboxScope.js';
@@ -56,9 +57,10 @@ export class ProcessResourceGovernor {
   readonly groupName = `Local\\CardBush-Tasks-${process.pid}-${randomUUID()}`;
   readonly limits: ProcessResourceLimits;
   readonly #availableMemory: () => number;
-  readonly #leases = new Map<string, { lifetime: ProcessResourceKind; reservation: number; replaces?: string }>();
+  readonly #leases = new Map<string, { lifetime: ProcessResourceKind; reservation: number; replaces?: string; ready?: boolean }>();
   readonly #ioQueue: Array<() => void> = [];
   readonly #observer?: ProcessResourceObserver;
+  readonly #linuxMemory?: LinuxProcessMemory;
   #sample?: ResourceSample;
   #sampleAt = 0;
   #startedAt = 0;
@@ -80,13 +82,14 @@ export class ProcessResourceGovernor {
     if (process.platform === 'win32' && (options.observe ?? !options.availableMemory)) {
       this.#observer = new ProcessResourceObserver(this.groupName, resolveProcessResourceHost, sample => this.observe(sample));
     }
+    if (process.platform === 'linux' && (options.observe ?? !options.availableMemory)) this.#linuxMemory = new LinuxProcessMemory();
   }
 
   /** Native measurements are transient accounting, never a second plugin/configuration store. */
   observe(sample: ResourceSample): void {
     this.#sample = sample;
     this.#sampleAt = Date.now();
-    const critical = Math.min(this.#availableMemory(), sample.availableMemoryBytes, sample.availableCommitBytes) < this.limits.criticalMemoryBytes;
+    const critical = Math.min(this.#availableMemory(), sample.availableMemoryBytes, sample.availableCommitBytes ?? Infinity) < this.limits.criticalMemoryBytes;
     this.#pressureSamples = critical ? this.#pressureSamples + 1 : 0;
     if (this.#pressureSamples < 2 || Date.now() - this.#reliefAt < 6_000) return;
     if (this.#applicationRelief()) { this.#reliefAt = Date.now(); return; }
@@ -141,7 +144,12 @@ export class ProcessResourceGovernor {
     if (lifetime === 'io' && records.filter(lease => lease.lifetime === 'io').length >= (this.limits.maxConcurrentIo ?? 2)) {
       throw resourceError('resource_io_capacity_busy', 'The bounded file I/O budget is full. Wait for an existing file operation to finish.');
     }
-    const sample = Date.now() - this.#sampleAt < 5_000 ? this.#sample : undefined;
+    let sample = Date.now() - this.#sampleAt < 5_000 ? this.#sample : undefined;
+    if (this.#linuxMemory) {
+      const jobs = this.#linuxMemory.sample();
+      sample = jobs ? { jobs, totalMemoryBytes: jobs.reduce((sum, job) => sum + job.memoryBytes, 0),
+        availableMemoryBytes: this.#availableMemory() } : undefined;
+    }
     if (this.#observer && this.#leases.size > 0 && !sample && Date.now() - this.#startedAt > 5_000) {
       throw resourceError('resource_monitor_pending', 'Resource measurements are recovering. No command was started.');
     }
@@ -150,7 +158,10 @@ export class ProcessResourceGovernor {
         ? this.limits.ioStartupMemoryBytes ?? 64 * MiB : this.limits.startupMemoryBytes ?? 256 * MiB);
     let pendingMemory = 0;
     for (const [id, lease] of this.#leases) {
-      pendingMemory += Math.max(0, lease.reservation - (sample?.jobs.find(job => job.id === id)?.memoryBytes ?? 0));
+      const measured = sample?.jobs.find(job => job.id === id);
+      // After handshake, measured service memory still counts against the shared
+      // limit. Unused startup capacity is not a second permanent reservation.
+      pendingMemory += lease.ready && measured ? 0 : Math.max(0, lease.reservation - (measured?.memoryBytes ?? 0));
     }
     const availableMemoryBytes = this.#availableMemory();
     const applicationMemoryBytes = this.#applicationMemory();
@@ -184,10 +195,13 @@ export class ProcessResourceGovernor {
       // A persistent service cannot freeze the shared ceiling at yesterday's
       // free-memory low point. Admission uses live usage; Windows caps the group.
       totalMemoryBytes: this.limits.totalMemoryBytes,
+      ...(this.#linuxMemory ? { trackProcess: (pid: number) => this.#linuxMemory!.track(id, pid) } : {}),
+      markReady: () => { const lease = this.#leases.get(id); if (lease?.lifetime === 'service') lease.ready = true; },
       release: () => {
         if (released) return;
         released = true;
         this.#leases.delete(id);
+        this.#linuxMemory?.release(id);
         this.#observer?.track([...this.#leases.keys()]);
         if (!this.#leases.size) { this.#sample = undefined; this.#sampleAt = 0; }
         this.#drainIo();
@@ -203,8 +217,10 @@ export interface ProcessResourceLease {
   taskMemoryBytes: number;
   totalMemoryBytes: number;
   release: () => void;
+  trackProcess?: (pid: number) => void | Promise<void>;
+  markReady?: () => void | Promise<void>;
 }
-export type ProcessResourceGrant = Omit<ProcessResourceLease, 'release'>;
+export type ProcessResourceGrant = Omit<ProcessResourceLease, 'release' | 'trackProcess' | 'markReady'>;
 export interface ProcessResourceClient {
   acquire(lifetime: ProcessResourceKind, signal?: AbortSignal, replace?: string): Promise<ProcessResourceLease>;
 }
@@ -239,6 +255,7 @@ export interface ProcessResourceReport {
 }
 
 export interface GuardedProcess {
+  markReady?: () => void | Promise<void>;
   phase?: () => 'preparing_sandbox' | 'executing' | 'cleaning_up';
   resourceId: string;
   child: ChildProcessWithoutNullStreams;
@@ -359,9 +376,12 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
     }
     if (process.platform !== "win32") {
       const child = spawn(input.executable, input.args, { cwd: input.cwd, env: input.env, detached: true, stdio: "pipe" });
+      nativeStarted = Boolean(child.pid);
       const lifecycle = manageLifecycle(child, false, input.signal);
       const completion = lifecycle.exited.then(async () => { lease.release(); return cleanupSandbox(sandbox, lease); });
-      return { child, resourceId: lease.id, protected: false, sandbox: sandbox?.status, stop: lifecycle.stop, complete: () => completion };
+      try { if (child.pid) await lease.trackProcess?.(child.pid); }
+      catch (error) { lifecycle.stop(); await completion; throw error; }
+      return { child, resourceId: lease.id, protected: false, markReady: lease.markReady, sandbox: sandbox?.status, stop: lifecycle.stop, complete: () => completion };
     }
     reportDirectory = await mkdtemp(join(tmpdir(), "cardbush-process-"));
     // Cancellation can arrive while the receipt directory is being created.
@@ -425,7 +445,7 @@ export async function spawnResourceManagedProcess(input: ManagedProcessOptions):
       } catch { /* Supervisor has not published a phase, or already finished. */ }
       return observedPhase;
     };
-    return { child, resourceId: lease.id, protected: true, sandbox: sandbox?.status, stop: lifecycle.stop, complete, phase };
+    return { child, resourceId: lease.id, protected: true, markReady: lease.markReady, sandbox: sandbox?.status, stop: lifecycle.stop, complete, phase };
   } catch (error) {
     lease.release();
     await sandbox?.dispose(!nativeStarted);

@@ -38,6 +38,9 @@ test('main and independent Runtime owners share admission through private RPC, p
   const id = randomUUID();
   const grant = await bridges[0].request('resources.acquire', { id, lifetime: 'task' });
   assert.equal(grant.groupName, governor.groupName);
+  assert.doesNotThrow(() => structuredClone(grant), 'lease callbacks never cross the IPC boundary');
+  await bridges[1].request('resources.ready', { id });
+  await assert.rejects(bridges[0].request('resources.track', { id, pid: -1 }), /Invalid managed process identity/);
   assert.throws(() => governor.acquire(), { code: 'resource_capacity_busy' });
   await assert.rejects(bridges[1].request('resources.acquire', { id: randomUUID(), lifetime: 'task' }), { code: 'resource_capacity_busy' });
   await bridges[1].request('resources.release', { id });

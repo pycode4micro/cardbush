@@ -19,7 +19,7 @@
     "npm": ">=10"
   },
   "scripts": {
-    "test:remote-workers": "npm run build:agent && node --test packages/bush-protocol/test/remoteInteraction.test.mjs packages/bush-runtime/test/subagentInteractions.test.mjs packages/bush-runtime/test/subagentResume.test.mjs packages/bush-runtime/test/registeredAgents.test.mjs scripts/test-agent-service.mjs scripts/test-web-remote-agents.mjs && node scripts/run-agents-ui-test.mjs",
+    "test:remote-workers": "npm run build:agent && node --test packages/bush-protocol/test/remoteInteraction.test.mjs packages/bush-runtime/test/subagentInteractions.test.mjs packages/bush-runtime/test/subagentResume.test.mjs packages/bush-runtime/test/registeredAgents.test.mjs scripts/test-agent-service.mjs scripts/test-web-remote-agents.mjs scripts/test-local-workers.mjs && node scripts/run-agents-ui-test.mjs",
     "test:mcp-conformance": "npm run build:runtime && node scripts/run-mcp-conformance.mjs",
     "test:mcp-conformance:all": "npm run test:mcp-conformance -- --suite all",
     "test:voice": "node scripts/build-voice-native-host.mjs && tsc -p tsconfig.node.json && node --test scripts/test-voice.mjs scripts/test-voice-native.mjs scripts/test-voice-models.mjs scripts/test-speaker-lock.mjs scripts/test-custom-speech.mjs && node scripts/test-voice-ui.cjs && node scripts/test-voice-routing-ui.cjs && node scripts/test-voice-composer-ui.cjs && node scripts/test-voice-settings-rendering.cjs",
@@ -297,6 +297,7 @@
     "pg": "8.23.1",
     "prism-react-renderer": "^2.4.1",
     "prismjs": "^1.30.0",
+    "proper-lockfile": "4.1.2",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",

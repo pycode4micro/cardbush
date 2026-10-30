@@ -65,8 +65,10 @@ test('Windows requires pwsh and never substitutes Windows PowerShell 5', () => {
   assert.equal(commandInvocation('powershell','Write-Output ok',installed).executable,pwsh);
   const override=context('win32',[old,pwsh],{ProgramFiles:'C:\\Program Files',CARDBUSH_TERMINAL_SHELL:old});
   assert.throws(()=>terminalInvocation('powershell',undefined,'Write-Output ok',override),/PowerShell 5 is unsupported/);
+  assert.throws(()=>commandInvocation('powershell','Write-Output ok',override), { code: 'terminal_shell_override_invalid' });
   const portable=context('win32',['D:\\用户 安装\\pwsh.exe'],{CARDBUSH_TERMINAL_SHELL:'D:\\用户 安装\\pwsh.exe'});
   assert.equal(terminalInvocation('powershell',undefined,undefined,portable).command,'D:\\用户 安装\\pwsh.exe');
+  assert.equal(commandInvocation('powershell','Write-Output ok',portable).executable,'D:\\用户 安装\\pwsh.exe');
 });
 test('commands and paths remain separate arguments and keep literal metacharacters', () => {
   const command='printf "%s" "中文; $HOME && `whoami`"';

@@ -102,7 +102,9 @@ if (process.env.CARDBUSH_RESOURCE_COORDINATION === 'desktop') {
         const grant = await mcpHost.request<ProcessResourceGrant>('resources.acquire', { id, lifetime, replace }, signal);
         signal?.throwIfAborted();
         let released = false;
-        return { ...grant, release: () => { if (!released) { released = true; release(); } } };
+        return { ...grant, trackProcess: async pid => { if (!released) await mcpHost.request('resources.track', { id, pid }); },
+          markReady: async () => { if (!released) await mcpHost.request('resources.ready', { id }); },
+          release: () => { if (!released) { released = true; release(); } } };
       } catch (error) { release(); throw error; }
     },
   });

@@ -66,6 +66,8 @@ cardbush --version
 
 ## 注册远程子 Agent worker
 
+同一本机配置目录的 App 和 CLI 共用 worker 连接。`worker list/add/verify/remove` 直接使用受保护的注册表，不启动整套 Agent Runtime；旧连接迁移时保留 ID。校验成功表示远端服务身份与协议通过，不代表远端已经配置模型；派发真实任务前仍需配置 worker 自己的模型。
+
 ```sh
 cardbush worker add --name Renderer --url https://agent.example.com --token-file /private/access-token
 cardbush worker list

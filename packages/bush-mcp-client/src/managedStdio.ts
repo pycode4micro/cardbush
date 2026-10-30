@@ -55,6 +55,7 @@ export class ManagedStdioClientTransport implements Transport {
 
   /** Admission belongs before retiring an old service and outside handshake timeouts. */
   get resourceId(): string | undefined { return this.#process?.resourceId ?? this.#lease?.id; }
+  async markReady(): Promise<void> { if (!this.#closed) await this.#process?.markReady?.(); }
 
   prepare(signal?: AbortSignal, replace?: string): Promise<void> {
     if (this.#lease) return Promise.resolve();

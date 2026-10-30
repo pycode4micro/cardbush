@@ -75,6 +75,8 @@ cardbush worker remove CONNECTION_ID
 
 Ask your local Agent to save a subagent role for the returned connection and verified instance. It can then delegate, inspect, guide, answer or stop that child. The remote service keeps its own configuration and authority. See the [interaction protocol](SUBAGENT_REMOTE_PROTOCOL.md).
 
+App and CLI on the same local profile share worker connections. `worker list/add/verify/remove` use the protected registry directly and do not start the full Agent Runtime. Old connections migrate without changing their IDs. A successful verification checks the remote service identity and protocol, not whether its independent model is configured. Configure a model on the worker before delegating real work.
+
 Direct chat `--url` / `--token-file` options have been retired; legacy connection settings are ignored. `--project ID` chooses an existing local-host project. A CLI installed on a server is still a local CLI on that server, with its own session store; it does not attach to the independently running HTTP service.
 
 The same package installs the service commands:

@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultTerminalRuntime, normalizeTerminalRuntime, type TerminalRuntime, type CommandShell } from './contracts.js';
+import { inspectExecutableFile, type ExecutableInspection } from './executableLookup.js';
 export * from './contracts.js';
 export * from './windowsSupport.js';
+export type { ExecutableInspection } from './executableLookup.js';
 
 /** Decode file URLs using the target host's path rules, preserving plain paths. */
 export function localPath(value: string, platform: string = process.platform): string {
@@ -32,20 +34,30 @@ export function canonicalStoragePath(value: string): string {
 export interface PlatformContext {
   platform: NodeJS.Platform; arch: string; env: NodeJS.ProcessEnv;
   isExecutable: (file: string) => boolean;
+  inspectExecutable?: (file: string) => ExecutableInspection;
 }
 export function createPlatformContext(overrides: Partial<PlatformContext> = {}): PlatformContext {
   const platform = overrides.platform ?? process.platform;
-  return { platform, arch: overrides.arch ?? process.arch, env: overrides.env ?? process.env,
-    isExecutable: overrides.isExecutable ?? (file => {
-      try { return fs.statSync(file).isFile() && (fs.accessSync(file, platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK), true); }
-      catch { return false; }
-    }) };
+  const env = overrides.env ?? process.env;
+  const inspectExecutable: (file: string) => ExecutableInspection = overrides.inspectExecutable
+    ?? (overrides.isExecutable ? file => overrides.isExecutable!(file) ? { status: 'available', executable: file } : { status: 'missing' }
+      : file => inspectExecutableFile(file, platform, env));
+  return { platform, arch: overrides.arch ?? process.arch, env, inspectExecutable,
+    isExecutable: overrides.isExecutable ?? (file => inspectExecutable(file).status === 'available') };
 }
 function environment(context: PlatformContext, name: string) {
   return context.env[name] ?? (context.platform === 'win32'
     ? Object.entries(context.env).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1] : undefined);
 }
-export function findExecutable(command: string, context = createPlatformContext()): string | undefined {
+type LookupFailure = { path: string; status: 'invalid' | 'inaccessible'; code?: string };
+function executableAt(file: string, context: PlatformContext, failures?: LookupFailure[]): string | undefined {
+  if (!context.inspectExecutable) return context.isExecutable(file) ? file : undefined;
+  const result = context.inspectExecutable(file);
+  if (result.status === 'available') return result.executable;
+  if (result.status !== 'missing') failures?.push({ path: file, status: result.status, ...(result.code ? { code: result.code } : {}) });
+  return undefined;
+}
+function lookupExecutable(command: string, context: PlatformContext, failures?: LookupFailure[]): string | undefined {
   if (!command.trim() || command.includes('\0')) return undefined;
   const windows = context.platform === 'win32', paths = windows ? path.win32 : path.posix;
   const extensions = windows && !paths.extname(command) ? (environment(context,'PATHEXT') ?? '.EXE;.CMD;.BAT;.COM').split(';') : [''];
@@ -53,9 +65,13 @@ export function findExecutable(command: string, context = createPlatformContext(
     ? [''] : (environment(context,'PATH') ?? '').split(windows ? ';' : ':').map(value => value.replace(/^"|"$/g, '')).filter(Boolean);
   for (const directory of directories) for (const extension of extensions) {
     const file = directory ? paths.join(directory, command + extension) : command + extension;
-    if (context.isExecutable(file)) return file;
+    const executable = executableAt(file, context, failures);
+    if (executable) return executable;
   }
   return undefined;
+}
+export function findExecutable(command: string, context = createPlatformContext()): string | undefined {
+  return lookupExecutable(command, context);
 }
 export function gitBashExecutable(context = createPlatformContext()): string | undefined {
   if (context.platform !== 'win32') return findExecutable('bash',context) ?? (context.isExecutable('/bin/bash') ? '/bin/bash' : undefined);
@@ -70,17 +86,39 @@ export function gitBashExecutable(context = createPlatformContext()): string | u
   // Do not resolve the legacy Windows bash.exe WSL shim as Git Bash.
   return candidates.find(context.isExecutable);
 }
-function powershell(context: PlatformContext): string | undefined {
-  if (context.platform !== 'win32') return findExecutable('pwsh',context);
-  const selected = findExecutable('pwsh.exe',context);
+function powershell(context: PlatformContext, failures?: LookupFailure[]): string | undefined {
+  if (context.platform !== 'win32') return lookupExecutable('pwsh',context,failures);
+  const selected = lookupExecutable('pwsh.exe',context,failures);
   if (selected && path.win32.isAbsolute(selected)) return selected;
   const root = environment(context,'ProgramFiles');
   const installed = root && path.win32.isAbsolute(root) && path.win32.join(root,'PowerShell','7','pwsh.exe');
-  return installed && context.isExecutable(installed) ? installed : undefined;
+  const standard = installed ? executableAt(installed, context, failures) : undefined;
+  if (standard) return standard;
+  const local = environment(context, 'LOCALAPPDATA');
+  return local && path.win32.isAbsolute(local) ? executableAt(path.win32.join(local, 'Microsoft', 'WindowsApps', 'pwsh.exe'), context, failures) : undefined;
 }
 export function powerShellExecutable(context = createPlatformContext()): string {
-  const executable = powershell(context);
-  if (!executable) throw Error('PowerShell 7 (pwsh) is required. Ask the user to install PowerShell 7 on this host and make pwsh available. Windows PowerShell 5 is unsupported.');
+  const override = context.platform === 'win32' ? environment(context, 'CARDBUSH_TERMINAL_SHELL')?.trim() : undefined;
+  if (override) return terminalOverrideExecutable(override, context);
+  const failures: LookupFailure[] = [];
+  const executable = powershell(context, failures);
+  if (!executable) {
+    const blocked = failures.length > 0;
+    throw Object.assign(new Error(blocked
+      ? 'PowerShell 7 lookup could not verify an executable on this host. Installation is unknown; inspect the candidate paths and access errors before changing the installation. No command was started.'
+      : 'PowerShell 7 (pwsh) is required. Ask the user to install PowerShell 7 on this host and make pwsh available. Windows PowerShell 5 is unsupported.'), {
+      code: blocked ? 'powershell_lookup_failed' : 'powershell_not_found',
+      details: { shell: 'powershell', reason: blocked ? 'lookup_failed' : 'not_found', candidates: failures.slice(0, 8) },
+    });
+  }
+  return executable;
+}
+function terminalOverrideExecutable(override: string, context: PlatformContext): string {
+  const executable = findExecutable(override, context);
+  if (!executable) throw Object.assign(new Error('CARDBUSH_TERMINAL_SHELL must name an available executable, without command arguments.'), { code: 'terminal_shell_override_invalid' });
+  if (context.platform === 'win32' && path.win32.basename(executable).toLowerCase() !== 'pwsh.exe') {
+    throw Object.assign(new Error('Windows terminal overrides must select PowerShell 7 (pwsh.exe); Windows PowerShell 5 is unsupported.'), { code: 'terminal_shell_override_invalid' });
+  }
   return executable;
 }
 function nativeShell(context: PlatformContext): string {
@@ -100,9 +138,7 @@ export function terminalInvocation(runtime?: TerminalRuntime, cwd?: string, comm
     selected = defaultTerminalRuntime(context.platform);
   }
   if (override && selected === defaultTerminalRuntime(context.platform)) {
-    const executable = findExecutable(override,context);
-    if (!executable) throw new Error('CARDBUSH_TERMINAL_SHELL must name an available executable, without command arguments.');
-    if (context.platform === 'win32' && selected === 'powershell' && path.win32.basename(executable).toLowerCase() !== 'pwsh.exe') throw Error('Windows terminal overrides must select PowerShell 7 (pwsh.exe); Windows PowerShell 5 is unsupported.');
+    const executable = terminalOverrideExecutable(override, context);
     return {command:executable,args:command === undefined ? [] : selected === 'powershell'
       ? ['-NoLogo','-NoProfile','-NonInteractive','-Command',powerShellCommand(command)] : ['-lc',command]};
   }

@@ -50,7 +50,9 @@ cardbush worker verify CONNECTION_ID
 cardbush worker remove CONNECTION_ID
 ```
 
-然后让本地 Agent 将返回的连接与已验证服务 ID 保存成子 Agent 角色；Team 节点引用同一角色。App 与 CLI 当前分别保存连接和凭据，应在执行父 Agent 的宿主上注册；指向另一宿主连接的角色需要重新绑定。发现结果不暴露凭据。CLI 使用私有本地密钥加密，需保护并完整备份服务账号目录；桌面继续使用已有安全存储。
+然后让本地 Agent 将返回的连接与已验证服务 ID 保存成子 Agent 角色；Team 节点引用同一角色。App 与本机 CLI 共用 `<profile>/workers`，会话和角色历史仍由各自 Runtime 管理。旧 CLI 和桌面连接只迁移一次，保留连接 ID 与已验证实例身份；删除共享连接后不会从旧目录复活。跨进程写入串行处理，已缓存的客户端在派发前重新核对注册权限。
+
+CLI 的 worker 管理命令直接访问注册表，不启动模型、插件或 Agent Runtime。发现结果不暴露凭据。Windows 使用当前用户 DPAPI 保护加密密钥，并校验仅当前用户/SYSTEM 可访问的目录 ACL；Unix 使用服务账号私有目录与密钥。独立服务器部署继续使用自己的注册表。这不向 worker 自动传递模型配置、浏览器登录态或权限。落盘前的注册校验失败报告 `not_started / none / known`；写入后发生的失败仍保留副作用可能性。
 
 ## 交互与消息格式
 

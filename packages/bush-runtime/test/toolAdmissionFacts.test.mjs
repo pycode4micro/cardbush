@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
+import { commandSandboxPlan } from '../dist/commandSandboxAdmission.js';
+import { toolFailureFacts } from '../dist/toolFailureFacts.js';
 import {
   ToolRegistry, ToolExecutionCoordinator, registerWorkspaceTools, TerminalSessionManager,
   ProcessResourceGovernor, defaultProcessResourceLimits, configureProcessResourceClient,
@@ -67,6 +71,49 @@ test('worker resource RPC rejections gain facts at the terminal admission bounda
   assert.equal(acquisitions, 1);
   assert.equal(outcome.error.code, 'resource_capacity_busy');
   assert.deepEqual(outcome.execution, noExecution);
+  f.verifySchemas();
+});
+
+test('PowerShell lookup failures report no command execution through native and delegated tools', { skip: process.platform !== 'win32' }, async t => {
+  const keys = Object.keys(process.env).filter(key => /^(path|programfiles|localappdata|cardbush_terminal_shell)$/i.test(key));
+  const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  const directory = path.join(process.cwd(), 'missing-powershell-fixture');
+  process.env.PATH = directory;
+  t.after(() => { delete process.env.PATH; Object.assign(process.env, previous); });
+  let acquisitions = 0;
+  configureProcessResourceClient({ acquire: async () => { acquisitions++; throw new Error('discovery must precede process admission'); } });
+  t.after(() => configureProcessResourceClient());
+  const terminals = new TerminalSessionManager();
+  t.after(() => terminals.close());
+  const f = fixture(terminals);
+  const input = { command: 'Write-Output must-not-run', cwd: process.cwd(), shell: 'powershell', yield_time_ms: 1 };
+  const expected = { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input' };
+  for (const code of ['powershell_not_found', 'powershell_lookup_failed']) {
+    if (code === 'powershell_lookup_failed') {
+      const original = fs.statSync;
+      t.mock.method(fs, 'statSync', (file, ...args) => {
+        if (String(file) === path.join(directory, 'pwsh.exe')) throw Object.assign(new Error('fixture denied'), { code: 'EACCES' });
+        return original(file, ...args);
+      });
+    }
+    for (const name of ['terminal_exec', 'delegate_terminal', 'terminal_exec']) {
+      const outcome = await f.run(name, input);
+      assert.equal(outcome.kind, 'failed');
+      assert.equal(outcome.error.code, code);
+      assert.deepEqual(outcome.execution, expected);
+      assert.deepEqual(outcome.error.details.execution, expected);
+      assert.equal(terminals.hasActiveProcesses(), false);
+    }
+    await assert.rejects(commandSandboxPlan({ mode: 'auto', network: 'disabled', readableRoots: [], writableRoots: [] },
+      { input, sessionId: 'admission-s', turn: { request: { permissionMode: 'task_free', metadata: { workspaceDir: process.cwd() } } } }, process.cwd()), error => {
+      assert.equal(error.code, code);
+      assert.deepEqual(toolFailureFacts(error), expected, 'sandbox admission and revalidation also precede command execution');
+      return true;
+    });
+  }
+  assert.equal(acquisitions, 0);
+  assert.deepEqual((await f.run('post_dispatch_failure')).execution, unknownExecution);
   f.verifySchemas();
 });
 

@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export interface ResourceSample {
   availableMemoryBytes: number;
-  availableCommitBytes: number;
+  availableCommitBytes?: number;
   totalMemoryBytes: number;
   jobs: Array<{ id: string; memoryBytes: number }>;
 }
@@ -78,4 +78,4 @@ export class ProcessResourceObserver {
   }
 }
 
-function validBytes(value: number): boolean { return Number.isSafeInteger(value) && value >= 0; }
+function validBytes(value: number | undefined): boolean { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0; }

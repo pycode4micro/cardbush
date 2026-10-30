@@ -40,6 +40,7 @@ const result = spawnSync(compiler, [
   '/target:exe',
   `/out:${output}`,
   '/reference:System.Web.Extensions.dll',
+  '/reference:System.Security.dll',
   ...(testBuild ? ['/define:CARDBUSH_CONNECTOR_TEST'] : []),
   source,
   securitySource,

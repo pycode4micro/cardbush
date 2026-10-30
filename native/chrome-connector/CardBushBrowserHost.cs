@@ -26,6 +26,27 @@ internal static class CardBushBrowserHost
 
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && (args[0] == "--protect-worker-key" || args[0] == "--unprotect-worker-key"))
+        {
+            try {
+                // Credentials never appear in argv, files, or diagnostic text.
+                char[] input = new char[4097]; int count = 0, read;
+                while (count < input.Length && (read = Console.In.Read(input, count, input.Length - count)) > 0) count += read;
+                if (count == input.Length) throw new InvalidDataException();
+                byte[] value = Convert.FromBase64String(new string(input, 0, count));
+                byte[] entropy = Encoding.UTF8.GetBytes("cardbush.worker-store.v1");
+                bool protect = args[0] == "--protect-worker-key";
+                if (protect && value.Length != 32) throw new InvalidDataException();
+                byte[] result = protect
+                    ? System.Security.Cryptography.ProtectedData.Protect(value, entropy, System.Security.Cryptography.DataProtectionScope.CurrentUser)
+                    : System.Security.Cryptography.ProtectedData.Unprotect(value, entropy, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                if (!protect && result.Length != 32) throw new InvalidDataException();
+                Console.Out.Write(Convert.ToBase64String(result));
+                Array.Clear(value, 0, value.Length); Array.Clear(result, 0, result.Length);
+                return 0;
+            }
+            catch { Console.Error.WriteLine("Worker credential protection failed for this OS account."); return 4; }
+        }
         if (args.Length == 1 && args[0] == "--package-data-root")
         {
             try {

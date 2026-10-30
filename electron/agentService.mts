@@ -2,6 +2,7 @@ import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
 import { remoteControlSchema, validateRemoteResponse, SUBAGENT_INTERACTION_OPERATIONS, type RemoteControl } from '@cardbush/bush-protocol';
 import { workerObservation } from './remoteWorkerObservation.mjs';
 import { openHeadlessWorkers } from './headlessWorkerStore.mjs';
+import { openLocalWorkers } from './localWorkerStore.mjs';
 import { callRemoteWorker } from './remoteWorkers.mjs';
 import { readUserPrompt, remoteWorkerSchema, promptContextMetadata, collectTurnAttachments, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
 import { ModelImageStore } from '@cardbush/bush-runtime';
@@ -82,6 +83,11 @@ export class AgentService {
   readonly #extensionRoot: string;
   readonly #local: boolean;
   #workers?: ReturnType<typeof openHeadlessWorkers>;
+  readonly #workersProfile?: string;
+  #workerConnections() {
+    return this.#workers ??= this.#workersProfile
+      ? openLocalWorkers(this.#workersProfile, { legacyRoot: this.root }) : openHeadlessWorkers(this.root);
+  }
   readonly #remotePermissionAuthority: 'parent_delegate' | 'human_required';
   readonly #remotePermissionCeiling: 'task_free' | 'user_free' | 'all_free';
   readonly bundledRoot: string;
@@ -112,6 +118,7 @@ export class AgentService {
   readonly #disposeModelAccess?: () => void;
 
   private constructor(root: string, state: AgentState, release: () => Promise<void>, options: AgentServiceOptions, sandbox: SandboxSetup, desktop?: AgentDesktop) {
+    this.#workersProfile = options.local === true ? options.localProfileRoot : undefined;
     this.#toolsEnabled = options.toolsEnabled !== false;
     this.#webRestricted = options.webRestricted === true;
     this.#webFiles = this.#webRestricted ? new AgentWebFiles(root) : undefined;
@@ -177,7 +184,7 @@ export class AgentService {
       if (this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
         return callWebRemoteAgent(this.#webPolicy?.remoteAgents, operation, payload, signal);
       if (this.#local && !this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
-        return callRemoteWorker(await (this.#workers ??= openHeadlessWorkers(root)), operation, payload, signal);
+        return callRemoteWorker(await this.#workerConnections(), operation, payload, signal);
       if (operation === 'agent.desktop.tool' && this.#desktop) return this.#desktop.tool(payload, signal);
       if (operation === 'network.configuration') {
         const model = networkProxySchema.parse(await readFile(join(configurationRoot, 'config', 'network.json'), 'utf8').then(text => JSON.parse(text), (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return { mode: 'system' }; }));
@@ -442,7 +449,7 @@ export class AgentService {
     switch (operation) {
       case 'workers.command': {
         if (!this.#local || this.#webRestricted) throw new Error('Worker registrations can only be managed by the local host.');
-        const workers = await (this.#workers ??= openHeadlessWorkers(this.root));
+        const workers = await this.#workerConnections();
         switch (data.action) {
           case 'list': return workers.list();
           case 'save': return workers.save(data.connection as import('./agentTypes.js').AgentConnectionInput);

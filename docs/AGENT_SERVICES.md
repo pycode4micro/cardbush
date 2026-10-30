@@ -48,7 +48,7 @@ cardbush worker verify CONNECTION_ID
 cardbush worker remove CONNECTION_ID
 ```
 
-让本地 Agent 将连接 ID 与已验证 agent ID 绑定到注册角色。模型通过既有 `subagent`、`tasks` 和 Team 使用它，不接收 token。App/CLI 的连接凭据目录当前独立，角色需绑定到执行父 Agent 的宿主可用的连接。旧连接保留为候选；不能把地址相同的另一个实例当原服务，身份变化后重新确认注册。
+让本地 Agent 将连接 ID 与已验证 agent ID 绑定到注册角色。模型通过既有 `subagent`、`tasks` 和 Team 使用它，不接收 token。同一本机配置目录的 App/CLI 共用受保护的 worker 连接；独立服务器账号继续使用自己的注册表。旧连接迁移一次并保留 ID，worker CLI 命令不启动整套 Agent Runtime。角色和会话仍由各自 Runtime 管理；不能把地址相同的另一个实例当原服务，身份变化后重新确认注册。
 
 角色携带名称、指令和修订。远端使用自己的默认模型、默认项目；没有默认项目则创建工作区。父历史、本机路径、浏览器授权与凭据不自动传输。对子会话续做固定原角色和服务身份。远程角色不能配置声称在对端强制执行的本地 tools/settings/hooks/guards。
 

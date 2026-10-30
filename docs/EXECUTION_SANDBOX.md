@@ -4,6 +4,8 @@
 
 终端、文件内容读写和本地 rg 搜索共用进程沙箱后端、资源治理及退出清理。授权、文件版本冲突检测和补丁回滚由 Runtime 协调，内容 I/O 在受限子进程内完成。桌面端与独立 Agent 使用相同实现。项目仍在原来的目录中，不分区、不创建虚拟磁盘、不复制项目。
 
+Linux 准入采样所属进程树的 RSS，并核对 PID 启动时间。MCP 初始化握手完成后，以已测得的服务内存替代启动预留；无法测量时继续保留预留量。系统预留、单任务和总内存上限均不提高。这只是资源记账，不是新增内核隔离机制，也不授予文件或网络权限。
+
 **桌面端和 Agent 服务检测到已安装且可用的命令沙盒后默认启用；尚未安装时不会自动下载。它不是整个 CardBush 的安全边界，也尚未达到 Codex 的全部防护覆盖。** Windows AppContainer 和 Linux bubblewrap 已完成真实进程测试；本次 Linux 验收使用 Ubuntu 24.04 的实际 Agent 服务账号和 `NoNewPrivileges=yes`，不代表其他发行版已经实测。运行时按能力探测，不按发行版名称分支。macOS 暂不支持，开启隔离时拒绝执行。
 
 ## 启用
@@ -64,6 +66,8 @@ Windows `auto` 模式自动加入宿主选定的 shell 安装目录为只读范�
 终端返回和 `terminal_list` 中的 `sandbox` 字段表示该终端要求的隔离后端及网络策略；未要求隔离时为 `null`。它与资源限制分开：Windows 继续使用原来的内存、CPU、进程数和进程树预算；Linux 不能据此宣称具有 Windows Job Object 同等的内核资源配额。
 
 Windows 终端使用 PowerShell 7（pwsh），缺失时提示用户安装，不回退 Windows PowerShell 5。启动时先通过进程内 API 初始化已授权 cwd；盘符不可见时只从所选 PowerShell 安装加载基础模块，再建立 `CardBushWorkspace:` 文件系统盘，不扩大父目录权限。相对路径和原生子进程使用正确的目录；需要将 PowerShell 位置传给原生程序时，使用 `(Get-Location).ProviderPath` 获取磁盘路径。初始化失败在执行用户命令前终止。终端回执的 `phase` 区分 `preparing_sandbox`、`executing`、`cleaning_up` 和 `finished`，权限准备及回收不会伪装成命令正在计算。
+
+PowerShell 发现区分 `powershell_not_found` 和 `powershell_lookup_failed`；发现及准入阶段失败回报 `dispatch: not_started`、`effects: none`。找到 Store 可执行文件不代表它能进入 AppContainer：本机 Store 7.6.9 验证中，宿主启动成功，但沙箱启动被原生错误 87 拒绝。此时回执明确给出 `shell_launch_failed`、已发现的可执行路径和 `command_started: false`。可通过宿主的 `CARDBUSH_TERMINAL_SHELL` 选择已安装的 MSI/便携版 `pwsh.exe`，或修正启动配置；Runtime 不自动退出隔离重试、扩大权限或安装其他 Shell。
 
 终端的 PowerShell 错误诊断包装复用已经初始化的 `ProviderPath`，仅在它与进程 cwd 不一致时切换位置，避免重新解析绝对路径而触碰未授权父目录。错误诊断仍区分目录初始化失败和用户命令失败；父目录元数据与目录列表保持未授权。
 

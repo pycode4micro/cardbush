@@ -1,9 +1,8 @@
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { supportsRemoteInteraction } from '@cardbush/bush-protocol';
-import { openLocalChatClient } from './agentLocalChat.mjs';
+import { openLocalWorkers } from './localWorkerStore.mjs';
 import { terminalText } from './agentChatPresentation.mjs';
-import type { AgentConnection, AgentInfo } from './agentTypes.js';
 
 export async function main(args = process.argv.slice(3)): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
@@ -24,25 +23,25 @@ export async function main(args = process.argv.slice(3)): Promise<number> {
     if (!token || token.length > 16_384) throw new Error('Invalid token file.');
     connection = { name: values.name, transport: 'http', url: values.url, token };
   }
-  const client = await openLocalChatClient();
+  const workers = await openLocalWorkers();
   try {
     if (action === 'verify') {
-      const info = await client.call('workers.command', { action: 'verify', id }) as AgentInfo;
+      const info = await workers.connect(id!);
       if (!supportsRemoteInteraction(info.capabilities.workerInteraction)) throw new Error('This service needs an update before worker interactions are available.');
       process.stdout.write(terminalText(`Verified ${info.name} (${info.id})`) + '\n');
     } else {
-      const before = action === 'add' ? await client.call('workers.command', { action: 'list' }) as AgentConnection[] : [];
-      const items = await client.call('workers.command', { action: action === 'add' ? 'save' : action, ...(connection ? { connection } : {}), ...(id ? { id } : {}) }) as AgentConnection[];
+      const before = action === 'add' ? await workers.list() : [];
+      const items = action === 'add' ? await workers.save(connection!) : action === 'remove' ? await workers.remove(id!) : await workers.list();
       for (const item of items.filter(item => action !== 'add' || !before.some(old => old.id === item.id))) {
         process.stdout.write(terminalText(`${item.id}\t${item.name}\t${item.agentId ?? 'unverified'}`) + '\n');
         if (action === 'add') {
           // Saving succeeded even if verification fails. Keep the ID for explicit retry.
-          const info = await client.call('workers.command', { action: 'verify', id: item.id }) as AgentInfo;
+          const info = await workers.connect(item.id);
           if (!supportsRemoteInteraction(info.capabilities.workerInteraction)) throw new Error(`Saved ${item.id}; update the remote service, then run cardbush worker verify ${item.id}.`);
           process.stdout.write(terminalText(`Verified ${info.id}. Ask your local Agent to register a subagent role for connection ${item.id}.`) + '\n');
         }
       }
     }
     return 0;
-  } finally { await client.close(); }
+  } finally { await workers.close(); }
 }
