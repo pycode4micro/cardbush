@@ -1,0 +1,91 @@
+const assert = require('node:assert/strict');
+const { join, resolve } = require('node:path');
+const { writeFileSync } = require('node:fs');
+const { app, BrowserWindow } = require('electron');
+const directory=resolve(process.argv[2]);
+app.disableHardwareAcceleration();app.setPath('userData',join(directory,'profile'));
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const deadline=setTimeout(()=>{console.error('Subagent file tabs timed out');app.exit(1);},40000);
+app.whenReady().then(async()=>{
+  const window=new BrowserWindow({show:false,width:900,height:760,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false,offscreen:true}});
+  const errors=[];
+  window.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
+  window.webContents.session.webRequest.onBeforeRequest((details,done)=>{
+    const external=/^https?:/.test(details.url);if(external)errors.push('Unexpected network: '+details.url);done({cancel:external});
+  });
+  const read=script=>window.webContents.executeJavaScript(script);
+  const until=async script=>{const end=Date.now()+4000;while(!await read(script)){if(Date.now()>end)throw Error('Timed out: '+script+'; '+await read('document.body.innerText.slice(0,1200)'));await pause(30);}};
+  const click=async selector=>{
+    const point=await read(`(()=>{const node=document.querySelector(${JSON.stringify(selector)});if(!node)throw Error('Missing click target');const r=node.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()`);
+    window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});await pause(100);
+  };
+  const preview=id=>'subagent-file:remote-'+id+':child-'+id;
+  const active=async id=>{await until('navigation.activeId==='+JSON.stringify(id));await pause(180);assert.equal(await read('navigation.activeId'),id,'selection remains stable after effects');};
+  const file=path=>'.right-inspector-tab-page.active [data-file='+JSON.stringify(path)+'] button';
+  try {
+    await window.loadFile(join(directory,'index.html'));
+    await until('Boolean(document.querySelector("[data-file] button"))');
+    assert.equal(await read('getComputedStyle(document.querySelector(".app")).getPropertyValue("--text").trim()'),'#f0ede7','fixture loads the real App theme');
+    await click(file('/tmp/em_out.txt'));await active(preview('a'));
+    await until('Boolean(document.querySelector(".right-inspector-tab-page.active [role=alert]"))');
+    assert.equal(await read('fileCalls.length>0 && fileCalls.every(call=>call.connectionId==="remote-a" && call.sessionId==="child-a" && call.path==="/tmp/em_out.txt")'),true,'file reads target the child session on the remote service');
+    const failedReads=await read('fileCalls.length');
+    // Regression: active=true used to reopen the old preview immediately.
+    await click('[data-tab="child-a"]');await active('child-a');
+    assert.equal(await read('fileCalls.length'),failedReads,'switching back does not reread an unavailable file');
+    await click('[data-tab="'+preview('a')+'"]');await active(preview('a'));
+    await click('[data-close="'+preview('a')+'"]');await active('child-a');
+    assert.equal(await read('navigation.tabs.length'),1,'closing a failed preview does not resurrect it');
+    await click(file('/tmp/em_out.txt'));await active(preview('a'));
+    await until('fileCalls.length>'+failedReads);
+    await until('document.querySelector(".right-inspector-tab-page.active [role=alert]")?.textContent.includes("文件不存在")');
+    const reopenedReads=await read('fileCalls.length');
+    await read('navigation.setLanguage("en");void 0');
+    await until('document.querySelector(".right-inspector-tab-page.active [role=alert]")?.textContent.includes("does not exist")');
+    assert.equal(await read('fileCalls.length'),reopenedReads,'language switches translate without rereading');
+    await click('.right-inspector-tab-page.active [role=alert] button');await until('fileCalls.length==='+ (reopenedReads+1));
+    await read('window.restored=true;void 0');
+    await click('.right-inspector-tab-page.active [role=alert] button');
+    await until('document.querySelector(".right-inspector-tab-page.active .conversation-host-preview")?.textContent.includes("Report from remote-a / child-a")');
+    const reads=await read('fileCalls.length');
+    await click('[data-tab="child-a"]');await active('child-a');
+    await click('[data-tab="'+preview('a')+'"]');await active(preview('a'));
+    assert.equal(await read('fileCalls.length'),reads,'successful preview is retained across tab selection');
+    await click('[data-close="'+preview('a')+'"]');await active('child-a');
+    await click(file('/workspace/report.txt'));await active(preview('a'));
+    await until('document.querySelector(".right-inspector-tab-page.active .conversation-host-preview")?.textContent.includes("Report from remote-a / child-a")');
+    await read('navigation.openChild("b");void 0');await active('child-b');
+    await click(file('/workspace/report.txt'));await active(preview('b'));
+    await until('document.querySelector(".right-inspector-tab-page.active .conversation-host-preview")?.textContent.includes("Report from remote-b / child-b")');
+    await click('[data-close="child-a"]');await active(preview('b'));
+    await until('!navigation.tabs.some(tab=>tab.id==='+JSON.stringify(preview('a'))+')');
+    assert.equal(await read('navigation.tabs.length'),2,'closing one child disposes only its own preview');
+    await click('[data-close="'+preview('b')+'"]');await active('child-b');
+    await click('.right-inspector-tab-page.active [data-extract]');await active(preview('b'));
+    await until('document.querySelector(".right-inspector-tab-page.active .conversation-host-preview")?.textContent.includes("Saved extract")');
+    await click('[data-close="'+preview('b')+'"]');await active('child-b');
+    await click(file('/workspace/denied.txt'));await active(preview('b'));
+    await until('document.querySelector(".right-inspector-tab-page.active [role=alert]")?.textContent.includes("File is outside this conversation workspace.")');
+    assert.equal(await read('document.querySelector(".right-inspector-tab-page.active [role=alert]").textContent.includes("does not exist")'),false,'permission denial is not mislabelled as a missing file');
+    await click('[data-close="'+preview('b')+'"]');await active('child-b');
+    await read('window.restored=false;void 0');
+    await click(file(await read('window.missingPath')));await active(preview('b'));
+    window.setSize(390,760);
+    for(const [language,theme] of [['zh','dark'],['en','bright']]){
+      await read('navigation.setLanguage('+JSON.stringify(language)+');document.querySelector(".app").className='+JSON.stringify('app theme-'+theme)+';void 0');
+      await until('document.querySelector(".right-inspector-tab-page.active [role=alert]")?.textContent.includes("ENOENT")');
+      await pause(100);
+      assert.equal(await read('getComputedStyle(document.querySelector(".app")).getPropertyValue("--text").trim()'),theme==='dark'?'#f0ede7':'#1e1c1a');
+      const geometry=await read('(()=>{const e=document.querySelector(".right-inspector-tab-page.active [role=alert]"),p=e.closest(".right-inspector-tab-page"),r=e.getBoundingClientRect(),b=e.querySelector("button").getBoundingClientRect();return {width:p.clientWidth,scroll:p.scrollWidth,right:r.right,buttonRight:b.right,edge:p.getBoundingClientRect().right,buttonText:e.querySelector("button").textContent};})()');
+      assert.ok(geometry.scroll<=geometry.width+1,JSON.stringify(geometry));
+      assert.ok(geometry.right<=geometry.edge+1 && geometry.buttonRight<=geometry.edge+1,JSON.stringify(geometry));
+      assert.equal(geometry.buttonText,language==='zh'?'重试':'Retry');
+    }
+    writeFileSync(resolve('tmp/subagent-file-tabs-narrow.png'),(await window.webContents.capturePage()).toPNG());
+    await click('[data-close="'+preview('b')+'"]');await active('child-b');
+    await click('[data-close="child-b"]');await until('navigation.tabs.length===0');
+    assert.deepEqual(errors,[]);
+    console.log('Subagent file tabs passed: native switch/close/reopen, no automatic retries, remote child routing, missing-file localization and retry, successful preview retention, sibling cleanup, extracts and permission errors.');
+    clearTimeout(deadline);window.destroy();app.exit(0);
+  } catch(error){console.error(error);console.error(errors);writeFileSync(resolve('tmp/subagent-file-tabs-failure.png'),(await window.webContents.capturePage()).toPNG());clearTimeout(deadline);app.exit(1);}
+});

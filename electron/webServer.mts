@@ -21,7 +21,7 @@ import { cookie, csrfToken, digest, equalSecret, json, imageToken, modelToken, r
 export type WebServerConfig = { origin: string; port?: number; host?: string; staticRoot: string; modelSecret: string; models: WebModel[]; defaultModelId: string; imageModel?: { model: string; baseURL: string; apiKey: string } };
 type Job = { id: string; sessionId: string; turnId: string; status: string; text: string; modelId: string; error?: string };
 const prefix = '/api/web/v1';
-const visibleEvents = new Set(['turn_accepted', 'turn_started', 'assistant_segment_started', 'assistant_segment_delta', 'assistant_segment_completed', 'turn_terminal', 'model_request_usage', 'guidance_applied', 'tool_queued', 'tool_running', 'tool_returned', 'tool_failed', 'tool_cancelled', 'solution_selection_requested', 'solution_selection_answered', 'solution_selection_cancelled', 'context_compaction_started', 'context_compaction_completed']);
+const visibleEvents = new Set(['turn_accepted', 'turn_started', 'assistant_segment_started', 'assistant_segment_delta', 'assistant_segment_completed', 'turn_terminal', 'model_request_usage', 'guidance_queued', 'guidance_applied', 'tool_queued', 'tool_running', 'tool_returned', 'tool_failed', 'tool_cancelled', 'solution_selection_requested', 'solution_selection_answered', 'solution_selection_cancelled', 'context_compaction_started', 'context_compaction_completed']);
 const messageSchema = z.object({ requestId: z.string().uuid(), text: z.string().trim().min(1).max(100_000), modelId: z.string().min(1).max(160), attachments: z.array(z.string().uuid()).max(8).default([]) }).strict();
 
 /** This is an authenticated web application, not a proxy for the owner API.

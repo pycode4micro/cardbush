@@ -83,6 +83,7 @@ const coordinationEventEnvelopeSchema = z.object({
 });
 
 export const coordinationEventSchema = z.discriminatedUnion("kind", [
+  coordinationEventEnvelopeSchema.extend({ kind: z.literal('plan_cleared'), payload: z.object({}) }),
   coordinationEventEnvelopeSchema.extend({
     kind: z.literal("plan_set"),
     payload: planStateSchema,

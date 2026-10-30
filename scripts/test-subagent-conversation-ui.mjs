@@ -10,6 +10,7 @@ const local = path => resolve(path).replaceAll('\\', '/');
 const source = `
 import React from 'react'; import { createRoot } from 'react-dom/client';
 import { SubagentConversationView, childConversationMessages } from '${local('src/features/subagents/SubagentConversation.tsx')}';
+import { guidanceQueuedUpdate, guidanceAppliedUpdate } from '${local('src/backend/runtimeTranscriptEvents.ts')}';
 import {setConversationSource} from '${local('src/features/settings/conversationSource.ts')}'; window.setSource=setConversationSource;
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}';
 window.addEventListener('error',event=>console.error(event.error?.stack)); window.calls=[]; window.reads=[]; window.streams=new Map();
@@ -56,11 +57,24 @@ window.finish=(id,status='completed')=>{
 const models={defaultModelId:'deepseek',models:[{id:'deepseek',modelName:'deepseek-flash',provider:'openai',apiKey:'',baseUrl:'https://deepseek.example.invalid/v1',hasApiKey:true,maxContextTokens:128000,maxCompletionTokens:8000},
   {id:'gpt',modelName:'gpt-6-astra',provider:'openai',apiKey:'',baseUrl:'https://api.example.invalid/v1',hasApiKey:true,maxContextTokens:400000,maxCompletionTokens:8000}]};
 const call=async()=>models;
-let current='a',language='zh',theme='dark';
+let current='a',language='zh',theme='dark',refreshing=false;
+window.setRefreshing=value=>{refreshing=value;render();};
+window.setEmployee=enabled=>{tasks[current]={...taskFor(current),agentProfileId:enabled?'registered:fixture':undefined};render();};
 const readTasks=async()=>Object.values(tasks);
 window.parentFollowup=(id,notify)=>{const previous=taskFor(id);selectedTasks[id]??=previous;tasks[id]={...previous,taskId:'resumed-'+crypto.randomUUID(),childTurnId:'parent-followup-'+crypto.randomUUID(),requestPrompt:'父代理追加：请在报告后补充操作建议。',status:'running',terminal:false,createdAt:now(),updatedAt:now(),raw:{resumedFromTaskId:previous.taskId}};render();if(notify)window.dispatchEvent(new CustomEvent('cardbush:subagent-dispatch',{detail:{parentSessionId:'parent',childSessionId:id,taskId:tasks[id].taskId}}));};
+const parentGuidance=new Map();
+window.appendParentGuidance=(id,applied=false)=>{
+  const request=window.streams.get(id).request,turnId=request.turnId;
+  const event=parentGuidance.get(id)??{sessionId:id,turnId,requestId:'request-'+turnId,eventId:'queued-'+id,sequence:10,createdAt:now(),kind:'guidance_queued',
+    payload:{messageId:'parent-guidance-'+id,content:'追加要求：增强双 11 活动感，保留原有运镜。',createdAt:now(),queueDepth:1,metadata:{subagentAuthor:'parent',guidance_mode:'append_context'}}};
+  parentGuidance.set(id,event);
+  if(!applied){request.onExecution?.(guidanceQueuedUpdate(event));return;}
+  const message=guidanceQueuedUpdate(event).guidanceMessage;
+  if(!history(id).some(item=>item.id===message.id))history(id).push({...message,status:'sent',metadata:{...message.metadata,guidance_delivery:'sent'}});
+  request.onExecution?.({...guidanceAppliedUpdate({...event,eventId:'applied-'+id,sequence:11,kind:'guidance_applied',payload:{messageId:message.id,queueDepth:0,afterRound:1,previousAssistantMessageId:'live-'+turnId}}),guidanceMessage:message});
+};
 window.show=(id,lang='zh',mode='dark')=>{current=id;language=lang;theme=mode;taskFor(id);render();};
-render=()=>root.render(<div className={'app theme-'+theme} style={{height:'100vh',width:'100%',display:'flex'}}><main style={{flex:1,padding:32}}>主会话保持在这里</main><aside style={{width:620,height:'100%',borderLeft:'1px solid var(--border)'}}><SubagentConversationView key={current} task={selectedTasks[current]??taskFor(current)} parentSessionId="parent" language={language} active theme={theme} refresh={async()=>render()} refreshing={false} error="" runtime={runtime} base={base} call={call} readTasks={readTasks}/></aside></div>);
+render=()=>root.render(<div className={'app theme-'+theme} style={{height:'100vh',width:'100%',display:'flex'}}><main style={{flex:1,padding:32}}>主会话保持在这里</main><aside style={{width:620,height:'100%',borderLeft:'1px solid var(--border)'}}><SubagentConversationView key={current} task={selectedTasks[current]??taskFor(current)} parentSessionId="parent" language={language} active theme={theme} refresh={async()=>render()} refreshing={refreshing} error="" runtime={runtime} base={base} call={call} readTasks={readTasks}/></aside></div>);
 window.show('a');
 `;
 const result = await build({ configFile:false,logLevel:'warn',esbuild:{jsx:'automatic'},define:{'process.env.NODE_ENV':'"development"'},plugins:[{name:'subagent-conversation-fixture',resolveId(id){if(id.endsWith('__child_fixture__.tsx'))return '\0child-fixture.tsx';},load(id){if(id==='\0child-fixture.tsx')return source;}}],build:{outDir:directory,emptyOutDir:false,minify:false,lib:{entry:resolve('__child_fixture__.tsx'),formats:['es'],fileName:()=> 'fixture.js'}}});

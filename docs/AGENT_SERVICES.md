@@ -60,7 +60,7 @@ cardbush worker remove CONNECTION_ID
 
 ## 权限与宿主配置
 
-worker 默认 `CARDBUSH_REMOTE_PERMISSION_MODE=task_free`，与父请求取较低权限。管理员可设为 `user_free` 或 `all_free`，仍不能绕过 `--sandbox required` 或进程保护。`CARDBUSH_REMOTE_PARENT_APPROVAL=0` 默认要求人类授权，设为 1 才允许父 Agent 在协议限定范围内一次性批准。自然语言、父全权限或自称人类都不是放权依据。审批通道不可用时等待/拒绝/取消，不自动放行。
+worker 默认 `CARDBUSH_REMOTE_PERMISSION_MODE=task_free`，与父请求取较低权限。管理员可设为 `user_free` 或 `all_free`，仍不能绕过 `--sandbox required` 或进程保护。新版服务默认按委派任务的 `permissionRouting` 执行：选择“模型审批”时，父 Agent 在协议限定范围内一次性批准或拒绝，界面不重复显示人工卡。管理员显式设置 `CARDBUSH_REMOTE_PARENT_APPROVAL=0` 时仍强制人工审批，并返回 `remote_policy_requires_human` 原因；设为 1 还保留旧客户端的父审批默认值。未传路由的旧客户端默认仍为人工审批。自然语言、父全权限或自称人类都不是放权依据。审批通道不可用时等待/拒绝/取消，不自动放行。
 
 服务探测现有沙盒，不自动安装。`--sandbox required` 强制上限；`--sandbox off` 是管理员明确策略。Linux bubblewrap、Windows AppContainer 与命令/插件/网页授权是独立边界，见[执行沙盒](EXECUTION_SANDBOX.md)。
 

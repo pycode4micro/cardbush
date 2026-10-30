@@ -25,6 +25,8 @@
 
 本地和远程子 Agent 已共用归属校验、控制契约和观察投影。`subagent` 在两种宿主都支持显式 queue/insert 和回应交互；`tasks inspect` 返回相同的观察结构，`tasks stop` 精确指向一轮执行。本地排队复用已有任务日志和完成等待器；取消其中一项不会停止前项，也不会让后项越过仍在执行的任务。insert 在安全边界加入引导，不打断当前模型请求或工具。
 
+显示回执与 loop 消费分开：子 Runtime 将 insert 入队后立即发布 `guidance_queued`，携带用户可见原文、消息身份和作者。本地及远程子会话随即显示父 Agent 消息和现有等待提示；只有 `guidance_applied` 才封存上一段回复并标记已消费。重放回执更新同一消息，不重复显示、不回退状态，也不引入调度器或额外模型调用。远程 worker 需运行新版 Runtime 才能发布入队通知；旧 worker 仍按消费后通知的方式工作。
+
 发现只暴露身份、职责和支持的交互，worker 内部工具目录留在自身 loop。新 worker 声明 `workerInteraction.operations`（`observe`、`queue`、`insert`、`respond`、`cancel`），本地发现返回 `interaction_capabilities`；不支持的操作明确拒绝，不自动降级。未提供可选声明的旧 0.1 worker 沿用该版本规定的完整操作集。结束观察不取消持续工作，停止子任务须有独立操作和确认。
 
 ## 身份与注册
@@ -84,14 +86,15 @@ CLI 的 worker 管理命令直接访问注册表，不启动模型、插件或 A
 远端管理员通过 worker 进程环境配置，不能由父消息指定：
 
 ```sh
-# 以下为默认值
+# 默认执行上限：
 CARDBUSH_REMOTE_PERMISSION_MODE=task_free
-CARDBUSH_REMOTE_PARENT_APPROVAL=0
+# 可选管理员限制；不设置时遵循认证任务携带的审批路由：
+# CARDBUSH_REMOTE_PARENT_APPROVAL=0
 ```
 
 请求模式与远端设置的 `task_free`、`user_free` 或 `all_free` 上限取交集；强制沙盒和进程保护继续生效。完全访问只表示该宿主允许的范围，不代表无限权限。
 
-`CARDBUSH_REMOTE_PARENT_APPROVAL=1` 才允许父 Agent 代表远端作一次性审批；默认 `human_required` 拒绝模型批准，仍允许拒绝。需要人类的审批走 worker 所有者现有可信界面；本预览尚未实现跨宿主人类身份签证。父 Agent 不能在 JSON 中自称人类。没有合格审批通道时只能等待、拒绝或取消，不默认放行。
+新版 worker 广播 `workerInteraction.permissionRouting: true`，认证委派请求携带 `permissionRouting: parent | user`，按任务持久化，排队续接也保留。`parent` 允许父 Agent 对精确请求作一次性审批，不重复显示人工卡；`user` 保持人工审批。管理员显式设置 `CARDBUSH_REMOTE_PARENT_APPROVAL=0` 时，强制 `human_required` 并附带 `escalationReason: remote_policy_requires_human`，人工审批卡显示原因。设为 1 还允许未传路由的旧客户端走父审批，否则旧客户端默认人工审批。对不支持此能力的旧 worker 使用模型审批，会在派发前明确报错要求升级，不静默降级。仍允许拒绝。需要人类的审批走 worker 所有者现有可信界面；本预览尚未实现跨宿主人类身份签证。父 Agent 不能在 JSON 中自称人类。没有合格审批通道时只能等待、拒绝或取消，不默认放行。
 
 本地适配器复用子 Agent 已有权限路由和审批 broker：`parent` 路由允许委托的一次性决定，`user` 路由仍需人类确认。父日志中的审批按来源子会话与轮次精确筛选，不混入其他子 Agent 或父 Agent 的审批。两种适配器都校验待处理交互和动作摘要，不能扩大原有能力 ID 或资源范围。
 

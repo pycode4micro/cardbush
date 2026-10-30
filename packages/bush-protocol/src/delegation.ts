@@ -58,6 +58,7 @@ export interface RemoteSubagentRequest {
   connectionId: string; agentId?: string; taskId: string;
   parentSessionId: string; parentTurnId: string; sessionId: string; turnId: string;
   prompt: string; permissionMode: 'task_free' | 'user_free' | 'all_free'; language: string;
+  permissionRouting?: 'user' | 'parent';
   worker?: z.infer<typeof remoteWorkerSchema>;
   queue?: boolean;
 }

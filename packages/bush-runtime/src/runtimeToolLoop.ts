@@ -50,6 +50,7 @@ export interface RuntimeToolLoopOptions {
     parentTurnId: string;
     subagentTaskId?: string;
     permissionRouting: "user" | "parent";
+    permissionEscalationReason?: 'remote_policy_requires_human';
   };
 }
 

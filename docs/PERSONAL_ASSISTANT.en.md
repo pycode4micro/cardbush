@@ -25,6 +25,8 @@ With default bottom input, short replies scroll fully into view; long replies st
 
 ## Page content and tasks
 
+Right-click a text message to reply, quote or copy; select text first to quote or copy just that selection. Quotes appear separately above the composer, link back to the original message after sending, and survive send retries. Quick and additional emoji reactions can be added, replaced or removed and are saved with the local conversation. Reactions never invoke the model or become chat messages. Reset clears the quoted history and reactions. Use Shift+F10 to open the menu, arrow keys to navigate and Esc to close it.
+
 | Content/action | Behavior |
 | --- | --- |
 | Text messages, dictation after the user sends it | Visible and included in ongoing context. |
@@ -37,7 +39,16 @@ Delegation returns a task ID immediately so conversation can continue. Acceptanc
 
 Local children inherit the assistant's authorized CardBush tabs/browser selection and can use referenced pages. Adding new references when guiding/continuing a task updates its selection; absent new references, the child's selection remains. Closed/restarted tabs report stale references only when operated on, without blocking unrelated delegation or switching to Chrome/Edge. Remote children do not inherit local tab authorization.
 
-The assistant uses `subagent`, immediate `tasks action=inspect`, paged `tasks action=conversation` and `page_write`. `subagent({prompt})` creates work; `subagent({task_id,prompt})` guides a running task or continues its original session/host. Text and realtime voice share protocol tool definitions. Execution tools remain on the child under its permissions. Voice adds no dispatch confirmation but spoken consent cannot enable disabled tools or override host policy.
+The assistant uses `subagent`, `tasks`, Team and `page_write` to delegate, continue work, read results and publish replies. `subagent({prompt})` creates work; `subagent({task_id,prompt})` guides a running task or continues its original session/host. Realtime voice retains its shared protocol definitions for delegation, immediate status, paged results and page publication. Execution tools remain on the child under its permissions. Voice adds no dispatch confirmation but spoken consent cannot enable disabled tools or override host policy.
+
+Text conversations and the transcription–Agent–speech path also provide direct management tools without starting a child:
+
+- `schedule_task` creates, reads, edits, pauses, resumes, deletes, runs or stops this assistant's schedules using the existing Automations page and scheduler. Saved jobs retain the full model, workspace, execution tools and permission settings. Timed work runs in an isolated conversation without chat history, so prompts must be self-contained. Saving a job does not mean it has executed; CardBush must be running for scheduled execution.
+- `scheduled_results` pages through the scheduled-results inbox or reads specific runs. Reading neither marks results read nor reruns work.
+- `search_skills`, `list_plugin_commands` and `mcp_search` discover the current Runtime's capabilities, respecting tool settings, Skill scopes and plugin visibility. Discovery neither executes a plugin nor grants permission, and local results do not establish remote worker capabilities.
+- `update_task_plan` maintains the parent's overall plan in Work summary, with persistence across refresh and restart. Child progress remains separate. Explicitly resetting the assistant clears the plan but preserves saved schedules.
+
+These tools use the existing argument validation, host permission checks and plugin hooks and retain execution receipts. Permission requests needing human input appear above the composer with allow-once, allow-session, deny and cancel choices. Disabled tools remain disabled; terminal, file writes and generic plugin execution remain delegated.
 
 Transient connection, rate-limit or recoverable service failures allow at most three attempts per model round, using shared backoff (normally 1 and 2 seconds, respecting Retry-After). UI shows/clears retry state appropriately. Attempts preserve context/receipts without redispatching successful actions. Reset/exit cancels waiting. Realtime connectivity has a separate reconnection mechanism.
 

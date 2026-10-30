@@ -117,7 +117,7 @@ body.inspector-cover-dragging :is(webview, iframe) { pointer-events: none !impor
 .composer-stack.input-only .composer-surface:not(.voice-call-active) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px 10px; padding: 9px 10px 9px 13px; }
 .composer-stack.input-only .composer-surface:not(.voice-call-active) > :is(textarea, .composer-prompt-editor) { grid-area: 1 / 1; min-height: 1.5em; max-height: min(160px, 20dvh); margin: 3px 0; padding: 0; }
 .composer-stack.input-only .composer-surface:not(.voice-call-active) > .composer-footer { grid-area: 1 / 2; padding: 0; }
-.composer-stack.input-only .composer-surface > :is(.composer-image-strip, .composer-file-strip, .composer-command-mode, .composer-attachment-progress) { grid-column: 1 / -1; }
+.composer-stack.input-only .composer-surface > .composer-command-mode { grid-column: 1 / -1; }
 .composer-stack.input-only .composer-surface.is-multiline:not(.voice-call-active) > :is(textarea, .composer-prompt-editor, .composer-footer) { grid-column: 1 / -1; grid-row: auto; }
 .inspector-page-dialog { width: min(460px, calc(100% - 32px)); padding: 24px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
 .inspector-page-dialog::backdrop { background: #0008; }

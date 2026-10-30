@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { InMemoryRuntimeHost, ToolRegistry } from '../dist/index.js';
+import { InMemoryRuntimeHost, ToolRegistry, SubagentTaskStore } from '../dist/index.js';
 import { RuntimeEventProjector } from '../dist/runtimeEventProjector.js';
 import { InMemoryRuntimeEventLog } from '../dist/runtimeEventLog.js';
 
@@ -17,6 +17,33 @@ const snapshot = host => host.sendCommand({ kind: 'runtime.get_session', payload
 const waitFor = async predicate => { const deadline = Date.now() + 2500; while (!predicate()) {
   if (Date.now() > deadline) throw Error('Timed out waiting for continuation'); await new Promise(resolve => setTimeout(resolve, 5));
 } };
+
+test('guidance queued during child preparation publishes after admission without stealing the Turn identity', async t => {
+  const tasks = new SubagentTaskStore(), requests = [];
+  tasks.start({ taskId: 'starting', parentSessionId: 'parent', parentTurnId: 'parent-turn', childSessionId: 'session',
+    childTurnId: 'turn', prompt: 'Original task', inheritContext: false, inheritedMessageCount: 0, background: true });
+  const host = new InMemoryRuntimeHost({ subagentTaskStore: tasks, provider: { async *stream(input) {
+    requests.push(input);
+    yield event(input.requestId, 0, 'text_delta', { delta: 'Ready' });
+    yield event(input.requestId, 1, 'response_completed', { finishReason: 'stop' });
+  } } });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  await host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: {
+    protocol: 'bush.runtime_guidance.v1', sessionId: 'session', turnId: 'turn', messageId: 'early', createdAt: now,
+    content: 'Updated direction\nInternal context', metadata: { realtimeParent: true, realtimeParentSessionId: 'parent', realtimeTaskId: 'starting',
+      composerReferenceContent: 'Updated direction', timeContext: 'private runtime clock' },
+  } });
+  assert.equal(facts(host).length, 0, 'do not invent a request identity before admission');
+  assert.equal((await host.runSessionTurn(request())).payload.status, 'completed');
+  const receipt = facts(host).find(e => e.kind === 'guidance_queued');
+  const applied = facts(host).find(e => e.kind === 'guidance_applied');
+  assert.ok(receipt.sequence < applied.sequence);
+  assert.equal(receipt.requestId, 'request');
+  assert.equal(receipt.payload.content, 'Updated direction');
+  assert.equal(receipt.payload.metadata.subagentAuthor, 'parent');
+  assert.equal(receipt.payload.metadata.timeContext, undefined, 'display receipts exclude internal runtime context');
+  assert.equal(requests[0].messages.at(-1).content, 'Updated direction\nInternal context', 'presentation does not alter model input');
+});
 
 for (const stage of ['waiting', 'reasoning', 'text', 'partial-tool']) test(`immediate guidance interrupts ${stage}, ignores late provider events and stays in the same Turn`, { timeout: 6000 }, async t => {
   const old = Promise.withResolvers(), finish = Promise.withResolvers(); const requests = [], signals = []; let options;
@@ -74,8 +101,14 @@ for (const mode of [undefined, 'append_context']) test(`ordinary append still wa
   const running = host.runSessionTurn(request()); t.after(async () => { release.resolve(); await running; });
   await waitFor(() => requests.length === 1); await guide(host, 'append', mode ?? null);
   assert.equal(signals[0].aborted, false); assert.equal(requests.length, 1);
+  assert.equal(facts(host).filter(e => e.kind === 'guidance_queued').length, 1, 'publish while the provider is still blocked');
+  assert.equal(facts(host).some(e => e.kind === 'guidance_applied'), false, 'receipt is not consumption');
+  await guide(host, 'append', mode ?? null);
+  assert.equal(facts(host).filter(e => e.kind === 'guidance_queued').length, 1, 'transport retries do not duplicate queued messages');
   release.resolve(); assert.equal((await running).payload.status, 'completed');
   assert.equal(requests.length, 2); assert.equal(requests[1].messages.at(-1).content, 'Correction append');
+  await guide(host, 'append', mode ?? null);
+  assert.equal(facts(host).filter(e => e.kind === 'guidance_queued').length, 1, 'retry after consumption stays idempotent');
 });
 
 for (const stage of ['waiting', 'reasoning', 'text', 'partial-tool']) test(`guidance during ${stage} anchors to accepted history after earlier tool rounds`, {timeout:6000}, async t => {
@@ -162,6 +195,9 @@ test('guidance does not cancel an in-flight tool or repeat its effect after inte
   const running = host.runSessionTurn({ ...request(), tools: [definition] }); t.after(async () => { releaseTool.resolve(); releaseModel.resolve(); await running; });
   await waitFor(() => executions === 1).catch(error => { throw Error(`${error.message}: ${JSON.stringify(facts(host))}`); });
   assert.equal((await guide(host, 'during-tool')).modelRequestInterrupted, false); assert.equal(toolSignal.aborted, false);
+  const queued = facts(host).find(e => e.kind === 'guidance_queued');
+  assert.equal(queued.payload.content, 'Correction during-tool', 'long-running tools must not hold the display receipt');
+  assert.equal(facts(host).some(e => e.kind === 'guidance_applied'), false);
   releaseTool.resolve(); await waitFor(() => requests.length === 2);
   assert.equal(requests[1].messages.at(-1).content, 'Correction during-tool');
   assert.equal(requests[1].messages.filter(m => m.role === 'tool').length, 1);

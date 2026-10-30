@@ -86,6 +86,30 @@ async function project(events, mode = 'remote', extra = {}) {
 }
 const assistants = result => result.rows.filter(row => row.role === 'assistant');
 
+test('queued parent guidance renders before consumption on both local and remote streams', async () => {
+  const queued = event(3, 'guidance_queued', { messageId: 'parent-guide', content: '补充双 11 活动感', createdAt: now,
+    queueDepth: 1, metadata: { subagentAuthor: 'parent', guidance_mode: 'append_context' } });
+  const events = [text(1, 'm1', 'Waiting for the video'), tool(2, 'm1', 'long-tool', 'tool_running'), queued];
+  const remote = await project(events, 'remote');
+  assert.deepEqual(remote, await project(events, 'local'));
+  const row = remote.rows.find(row => row.id === 'parent-guide');
+  assert.equal(row.content, queued.payload.content);
+  assert.equal(row.metadata.subagentAuthor, 'parent');
+  assert.equal(row.metadata.guidance_delivery, 'queued');
+  assert.equal(assistants(remote).find(row => row.messageId === 'm1').metadata?.segment_boundary, undefined,
+    'the queued receipt must not seal the current reply');
+  assert.equal(assistants(remote).flatMap(row => row.toolExecutions ?? []).find(tool => tool.id === 'long-tool').state, 'running');
+  const guidance = [{ messageId: 'parent-guide', createdAt: now, message: { role: 'user', name: 'turn_guidance', content: queued.payload.content }, metadata: { subagentAuthor: 'parent' } }];
+  for (const mode of ['local', 'remote']) {
+    const replay = await project([...events, queued], mode);
+    assert.equal(replay.rows.filter(row => row.id === 'parent-guide').length, 1, 'reconnect replay deduplicates by message identity');
+    const applied = event(4, 'guidance_applied', { messageId: 'parent-guide', previousAssistantMessageId: 'm1', queueDepth: 0, afterRound: 1 });
+    const final = await project([...events, applied, queued], mode, { guidance });
+    assert.equal(final.rows.filter(row => row.id === 'parent-guide').length, 1);
+    assert.equal(final.rows.find(row => row.id === 'parent-guide').metadata.guidance_delivery, 'sent', 'late queued replay cannot downgrade consumption');
+  }
+});
+
 test('queued submissions and background replays use execution start on local and remote hosts', async () => {
   const accepted = event(1, 'turn_accepted', { status: 'accepted' });
   const terminal = event(9, 'turn_terminal', { status: 'completed', reason: 'complete', details: {} });
@@ -265,6 +289,34 @@ test('resolving another permission never hides the current live request', async 
     event(2, 'permission_answered', { permissionId: 'other', answerId: 'answer', grantedCapabilityIds: [] }),
   ]);
   assert.deepEqual(result.observations.permissions.map(request => request.id), ['current']);
+});
+
+for (const mode of ['local', 'remote']) test(`${mode} model-owned child approvals never create a human card, including replay`, async () => {
+  const requested = event(1, 'permission_requested', { permissionId: 'model-approval', toolCallId: 'read-tool',
+    reason: 'Read child input', actions: ['read'], targets: [{ kind: 'filesystem_path', value: '/srv/input' }],
+    requestedCapabilityIds: ['filesystem.read'], sourceSessionId: mode === 'local' ? 'child' : sessionId,
+    sourceTurnId: 'child-turn', subagentTaskId: 'child-task', permissionRouting: 'parent' });
+  for (let replay = 0; replay < 2; replay++) {
+    const result = await project([requested], mode);
+    assert.deepEqual(result.observations.permissions, []);
+  }
+  const human = await project([{ ...requested, payload: { ...requested.payload, permissionRouting: 'user',
+    permissionEscalationReason: 'remote_policy_requires_human' } }], mode);
+  assert.equal(human.observations.permissions.length, 1);
+  assert.equal(human.observations.permissions[0].raw.permissionEscalationReason, 'remote_policy_requires_human');
+});
+
+test('parent-routed approvals do not enter the human pending queue or notify its listeners', () => {
+  const host = api.createAgentConversationBackend(remoteCall, 'approval-routing', watch);
+  let notifications = 0;
+  host.runtime.interactions.onRuntimeInteractionsChanged(() => notifications++);
+  const request = { permissionId: 'parent-owned', sessionId, turnId, permissionRouting: 'parent',
+    request: { reason: 'Read', actions: ['read'], targets: [{ kind: 'opaque', value: 'fixture' }], requestedCapabilityIds: ['fixture:read'] },
+    answer: async () => assert.fail('No human answer should be sent') };
+  assert.equal(host.runtime.interactions.registerRuntimePermission(request), undefined);
+  assert.equal(host.runtime.interactions.pendingRuntimeInteraction(sessionId), null);
+  assert.equal(notifications, 0);
+  assert.equal(host.runtime.interactions.hasRuntimeInteraction('parent-owned'), false);
 });
 
 const outputLimitSnapshot = () => decodeSessionSnapshot({

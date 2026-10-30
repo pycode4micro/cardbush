@@ -91,4 +91,12 @@ test('remote delegation respects the configured child permission ceiling', async
   const result = await f.invoke('subagent', { prompt: 'x', target_agent: f.target.id }, request);
   await f.results.get(result.result.taskId);
   assert.equal(f.requests[0].permissionMode, 'task_free');
+  assert.equal(f.requests[0].permissionRouting, 'parent');
+  const resumed = await f.invoke('subagent', { prompt: 'Continue', task_id: result.result.taskId }, request);
+  await f.results.get(resumed.result.taskId);
+  assert.equal(f.requests[1].permissionRouting, 'parent');
+  const userRequest = { ...request, metadata: { ...request.metadata, subagentPermissionRouting: 'user' } };
+  const human = await f.invoke('subagent', { prompt: 'Continue with human approval', task_id: resumed.result.taskId }, userRequest);
+  await f.results.get(human.result.taskId);
+  assert.equal(f.requests[2].permissionRouting, 'user');
 });

@@ -186,6 +186,12 @@ test('resume preserves clean configuration while intersecting current permission
   assert.equal(requests[2].model, 'fixture');
   assert.equal(requests[2].maxOutputTokens, 512);
   assert.equal(requests[2].metadata.subagentMode, 'clean', 'repeated continuations retain the original explicit mode');
+  assert.equal((await run({ prompt: 'Use human approval', task_id: 'task3' }, { subagentPermissionRouting: 'user' })).kind, 'returned');
+  assert.equal(requests[3].metadata.permissionRouting, 'user');
+  assert.equal(requests[3].metadata.permissionScopeSessionId, 'parent');
+  assert.equal((await run({ prompt: 'Use model approval', task_id: 'task4' }, { subagentPermissionRouting: 'parent' })).kind, 'returned');
+  assert.equal(requests[4].metadata.permissionRouting, 'parent');
+  assert.equal(requests[4].metadata.permissionScopeSessionId, requests[4].sessionId);
 });
 
 test('tasks wait any returns the first result while its sibling stays running', async t => {

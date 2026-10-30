@@ -57,12 +57,14 @@ for (const remote of [false, true]) test(`${remote ? 'remote' : 'local'} Team no
     ] });
   };
   const f = await setup(t, async request => {
+    assert.equal(request.metadata.permissionRouting, 'parent', 'Team nodes retain the user-selected model approval route');
     assert.match(request.inputMessages.find(entry => entry.message.name === 'delivery_guidance').message.content, /report bodies and long tables out of Tool-loop messages/);
     record(request.sessionId, request.turnId, 'Assigned task'); return outcome(request, answer);
   }, remote ? { remoteAgents: {
     list: async () => [{ id: 'remote', name: 'Remote', agentId: 'worker' }],
     run: async input => {
       calls.push(input);
+      assert.equal(input.permissionRouting, 'parent', 'remote Team dispatch carries the same approval route');
       assert.match(input.prompt, /report bodies and long tables out of Tool-loop messages/, 'remote workers receive the same delivery rule even before their host is upgraded');
       const run = (await f.manager.listRuns('parent'))[0], node = run.nodes[0];
       assert.equal(node.taskId, input.taskId, 'identity is durable before remote execution');
@@ -74,7 +76,7 @@ for (const remote of [false, true]) test(`${remote ? 'remote' : 'local'} Team no
   } } : { readChildConversation: id => sessions.get(id) });
   if (remote) await f.agents.put({ id: 'stock', name: 'stock', system_prompt: 'stock role', remote: { connection_id: 'remote', agent_id: 'worker' } }, 1);
   await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0]] }, expected_revision: 0 });
-  const started = await f.call({ action: 'run', team_id: flow.id, input: 'Prepare report' });
+  const started = await f.call({ action: 'run', team_id: flow.id, input: 'Prepare report' }, { metadata: { subagentPermissionRouting: 'parent' } });
   const finished = await f.observe({ action: 'wait', task_ids: [started.run_id] });
   assert.equal(finished.status, 'completed');
   const task = f.tasks.list('parent')[0];

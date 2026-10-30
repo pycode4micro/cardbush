@@ -265,7 +265,7 @@ test('assistant dispatch/await stay nonblocking; only Markdown and final replies
   let round = 0;
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => tasks,
     checkpoint: () => ({}), delegate: async input => {
-      assert.equal(input.targetAgent, 'saved-ssh-agent');
+      assert.equal(input.targetAgent, undefined, 'legacy direct-host settings migrate to local parent dispatch; remote workers use registered roles');
       tasks.push({ taskId: 'child-task', status: 'running', finalResponse: '', errorMessage: '' });
       return { taskId: 'child-task', status: 'running' };
     }, provider: { async *stream(request) {
@@ -386,7 +386,7 @@ test('assistant attachments survive history and enter model and child context wi
     await until(() => !assistant.command({ action:'read', sessionId:id }).busy);
     assert.match(requests[0].messages.at(-1).content, /remote\/笔记.txt/);
     assert.equal(requests[0].messages.at(-1).images[0].url, 'C:/local/screen.png');
-    assert.equal(dispatched[0].targetAgent, 'ssh');
+    assert.equal(dispatched[0].targetAgent, undefined, 'a legacy profile cannot redirect the assistant to an SSH host');
     assert.ok(dispatched[0].parent.prefixMessages.some(item => item.content.includes('/remote/笔记.txt')));
     assert.deepEqual(new ConversationJournal(root).read(id)[0].attachments, attachments);
     assistant.command({ action:'turn', sessionId:id, entry:entry('followup'), parent:parent(), profile:assistantProfileSchema.parse({}) });

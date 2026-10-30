@@ -37,7 +37,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('canvas:directory', () => directory);
   ipcMain.handle('canvas:text', async (_, path) => ({ content: await readFile(path, 'utf8'), truncated: false, encoding: 'utf-8' }));
   ipcMain.handle('canvas:design', (_, input) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `canvas-${++ordinal}`, name: 'design', argumentsText: JSON.stringify(input) }, { requestId: 'ui', sessionId: 'ui', turnId: 'turn', round: 1, ordinal }, undefined, { request: { protocol: 'bush.model_request.v1', requestId: 'ui', sessionId: 'ui', turnId: 'turn', model: 'fixture', tools: registry.definitions(), messages: [], permissionMode: 'all_free', metadata: { workspaceDir: directory } }, contextMessages: [] }));
-  const win = new BrowserWindow({ show: false, width: 1440, height: 1020, webPreferences: { offscreen: true, webviewTag: true, preload: join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
+  const win = new BrowserWindow({ show: false, width: 1440, height: 1020, titleBarStyle: 'hidden', titleBarOverlay: { color: '#00000000', symbolColor: '#eeeeee', height: 36 }, webPreferences: { offscreen: true, webviewTag: true, preload: join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
   const guests = new Set(); win.webContents.on('did-attach-webview', (_, guest) => guests.add(guest.id));
   ipcMain.handle('canvas:capture', (event, input) => captureInspectorRegion(event.sender, input, id => { assert.ok(guests.has(id)); return webContents.fromId(id); }));
   protocol.handle('cardbush-file', async request => {
@@ -92,7 +92,7 @@ app.whenReady().then(async () => {
     await clickText('素材'); await until('document.querySelectorAll("[data-canvas-item]").length===2');
     await until('document.querySelector(".canvas-stage").textContent.includes("A real Markdown file")');
     assert.equal(await run('!!document.querySelector(".canvas-board-label")'), false, 'no extra canvas dimension label');
-    assert.equal(await run('(()=>{const stage=getComputedStyle(document.querySelector(".canvas-stage")),board=getComputedStyle(document.querySelector(".canvas-size"));return stage.backgroundImage==="none"&&board.backgroundImage.includes("radial-gradient")&&board.outlineStyle==="solid"})()'), true, 'the visible boundary and grid identify the actual placement area');
+    assert.equal(await run('(()=>{const stage=getComputedStyle(document.querySelector(".canvas-stage")),board=getComputedStyle(document.querySelector(".canvas-size"));return stage.backgroundImage.includes("radial-gradient")&&board.backgroundImage==="none"&&board.outlineStyle==="none"})()'), true, 'the canvas background covers the workspace rather than a fixed document rectangle');
     const initialBlank = await run('(()=>{const r=document.querySelector(".canvas-stage").getBoundingClientRect();return{x:Math.round(r.left+5),y:Math.round(r.top+5)}})()');
     pointer('mouseDown', initialBlank); pointer('mouseUp', initialBlank);
     const initialSize = win.getContentSize();
@@ -145,6 +145,7 @@ app.whenReady().then(async () => {
     const dragged = (await readCanvas(entry.path)).document.items.find(item => item.id === 'interactive'); assert.ok(dragged.frame.x > 40);
     const resize = await point('[data-canvas-item=interactive] [aria-label=调整大小]'); pointer('mouseDown', resize); pointer('mouseMove', { x: resize.x + 20, y: resize.y + 15 }); await delay(100); pointer('mouseUp', { x: resize.x + 20, y: resize.y + 15 });
     await until(`testBridge.creationCanvas({action:'read',path:${JSON.stringify(entry.path)}}).then(s=>s.document.items.find(i=>i.id==='interactive').frame.width>550)`);
+    await require('./helpers/canvas-auto-fit.cjs')({ run, until, win, delay, pointer, point, readCanvas, path: entry.path });
     // Exercise the actual pointer path at the small zoom reported by the user.
     const beforeGeometry = await readCanvas(entry.path);
     const peer = { id: 'alignment', kind: 'markdown', title: 'Alignment reference', markdown: '# Alignment reference\n\n' + 'A scrollable paragraph.\n\n'.repeat(40), frame: { x: 900, y: 580, width: 300, height: 200 } };
@@ -153,6 +154,13 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll("[data-canvas-item]").length===2 && !!document.querySelector("[data-canvas-item=alignment]")');
     const geometryFrame = async () => (await readCanvas(entry.path)).document.items.find(item => item.id === 'interactive').frame;
     const boardRect = () => run('(()=>{const r=document.querySelector(".canvas-plane").getBoundingClientRect();return{x:r.x,y:r.y}})()');
+    await run(`window.canvasResizeLog=[];new ResizeObserver(()=>canvasResizeLog.push({w:document.querySelector('.canvas-stage').clientWidth,h:document.querySelector('.canvas-stage').clientHeight,z:document.querySelector('.canvas-zoom span').textContent,at:performance.now()})).observe(document.querySelector('.canvas-stage'))`);
+    await run(`(()=>{const stage=document.querySelector('.canvas-stage'),rect=stage.getBoundingClientRect(),zoom=new DOMMatrix(getComputedStyle(document.querySelector('.canvas-plane')).transform).a;stage.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,ctrlKey:true,deltaY:-Math.log(.51/zoom)/.002,clientX:rect.x+rect.width/2,clientY:rect.y+(rect.height-56)/2}))})()`);
+    await until('document.querySelector(".canvas-zoom span").textContent==="51%"');
+    const manualSize = win.getContentSize(); win.setContentSize(1000, 780);
+    await until('innerWidth===1000 && innerHeight===780'); await delay(150);
+    assert.equal(await run('document.querySelector("[aria-label=适应窗口]").getAttribute("aria-pressed")'), 'true', 'resizing resumes auto-fit even after manual zoom');
+    win.setContentSize(...manualSize); await until(`innerWidth===${manualSize[0]} && innerHeight===${manualSize[1]}`); await delay(400); // Sidebar width transition must finish before a new manual gesture.
     await run(`(()=>{const stage=document.querySelector('.canvas-stage'),rect=stage.getBoundingClientRect(),zoom=new DOMMatrix(getComputedStyle(document.querySelector('.canvas-plane')).transform).a;stage.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,ctrlKey:true,deltaY:-Math.log(.51/zoom)/.002,clientX:rect.x+rect.width/2,clientY:rect.y+(rect.height-56)/2}))})()`);
     await until('document.querySelector(".canvas-zoom span").textContent==="51%"');
     const titleHandle = await point('[data-canvas-item=interactive] .canvas-item-move');
@@ -225,6 +233,7 @@ app.whenReady().then(async () => {
     await childFrame().executeJavaScript(`document.elementFromPoint(${buttonInFrame.x},${buttonInFrame.y}).click()`);
     assert.equal(await childFrame().executeJavaScript('document.querySelector("button").textContent'), '2', 'interactive content stays reachable after panning and resizing');
     await require('./helpers/canvas-presentation.cjs')({ run, until, win, delay, pointer, readCanvas, path: entry.path, childFrame });
+    await require('./helpers/canvas-expand.cjs')({ run, until, win, delay, pointer, point, readCanvas, design, path: entry.path, childFrame });
     const afterGeometry = await readCanvas(entry.path);
     await design({ action: 'update', path: entry.path, expected_revision: afterGeometry.revision, layout: true, canvas: { title: beforeGeometry.document.title }, remove: ['alignment'], upsert: beforeGeometry.document.items });
     await until('document.querySelectorAll("[data-canvas-item]").length===3 && !document.querySelector("[data-canvas-item=alignment]")');
@@ -260,7 +269,8 @@ app.whenReady().then(async () => {
       if (ext === 'pdf') await until('document.querySelector(".canvas-presentation").textContent.includes("Real PDF")');
       else if (ext === 'xlsx') await until(`document.querySelector('.canvas-presentation webview').executeJavaScript('document.querySelector("[data-region-grid]")?.cardbushRegionCells?.().some(c=>c.text==="Alpha")')`, 30000);
       else await until(`document.querySelector('.canvas-presentation webview').executeJavaScript('document.body.innerText').then(text=>text.includes(${JSON.stringify(ext === 'docx' ? 'Real Word document' : 'Real slides')}))`, 30000);
-      assert.equal(await run('document.querySelector(".canvas-presentation [aria-label=下一页]").disabled'), true);
+      assert.equal(await run('document.querySelector(".canvas-presentation").dataset.layout'), 'canvas');
+      assert.equal(await run('document.querySelectorAll(".canvas-presentation [aria-label=下一页]").length'), 0, 'one whole canvas has no region pagination controls');
       await run('document.querySelector(".canvas-presentation [aria-label=退出演示]").click()');
       await until('!document.querySelector(".canvas-presentation")');
     }
@@ -274,5 +284,5 @@ app.whenReady().then(async () => {
     await require('./helpers/canvas-markdown-workspace.cjs')({ run, until, clickText, selected, win, teams, directory });
     await require('./helpers/canvas-development-desk.cjs')({ run, until, clickText, selected, win, teams, directory, design });
     console.log('PASS: canvas previews and geometry; shared Markdown editing, autosave, line context, document switching, conflicts and Team round trip');
-  } catch (error) { await writeFile(resolve('tmp/creation-canvas-failure.png'), (await win.webContents.capturePage()).toPNG()); console.error('Pointer diagnostic', await run('window.pointerLog?.slice(-8)')); console.error('Wheel diagnostic', await run('window.canvasWheelLog')); throw error; } finally { win.destroy(); }
+  } catch (error) { await writeFile(resolve('tmp/creation-canvas-failure.png'), (await win.webContents.capturePage()).toPNG()); console.error('Pointer diagnostic', await run('window.pointerLog?.slice(-8)')); console.error('Wheel diagnostic', await run('window.canvasWheelLog')); console.error('Resize diagnostic', await run('window.canvasResizeLog')); throw error; } finally { win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

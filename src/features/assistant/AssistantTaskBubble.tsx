@@ -3,6 +3,7 @@ import { Check, ChevronRight, CircleAlert, LoaderCircle, Square } from 'lucide-r
 import type { SubagentTaskSnapshot } from '../../types';
 import { openWorkSummaryInspector } from '../subagents/subagentObservabilityEvents';
 import { subagentTaskPresentation } from '../subagents/subagentTaskPresentation';
+import '../subagents/subagent-activity.css';
 
 export function AssistantTaskBubble({ task, language }: { task: SubagentTaskSnapshot; language: string }) {
   const state = subagentTaskPresentation(task, language);
@@ -12,9 +13,9 @@ export function AssistantTaskBubble({ task, language }: { task: SubagentTaskSnap
     <button type="button" className="assistant-task-bubble" data-status={task.status}
       title={title} aria-label={`${state.label} · ${title} · ${uiText(language)('assistantTaskBubble.viewExecution')}`}
       onClick={() => openWorkSummaryInspector({ kind: 'subagent-task', sessionId: task.parentSessionId, task, title })}>
-      <Icon size={16} className={task.status === 'running' ? 'assistant-task-spinner' : undefined}/>
+      <Icon className={task.status === 'running' ? 'subagent-activity-spinner' : undefined}/>
       <span><strong>{title}</strong><small>{state.label} · {uiText(language)('assistantTaskBubble.viewExecution')}</small></span>
-      <ChevronRight size={15}/>
+      <ChevronRight/>
     </button>
   </div>;
 }

@@ -2,6 +2,11 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), electron = require('electron');
 if (typeof electron === 'string') {
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  if (process.argv.includes('--submission')) env.CARDBUSH_ASSISTANT_UI_CASE = 'submission';
+  if (process.argv.includes('--timeline')) env.CARDBUSH_ASSISTANT_UI_CASE = 'timeline';
+  if (process.argv.includes('--management')) env.CARDBUSH_ASSISTANT_UI_CASE = 'management';
+  if (process.argv.includes('--attachments')) env.CARDBUSH_ASSISTANT_UI_CASE = 'attachments';
+  if (process.argv.includes('--message-actions')) env.CARDBUSH_ASSISTANT_UI_CASE = 'message-actions';
   const directory = fs.mkdtempSync(path.resolve('tmp/assistant-ui-'));
   // Keep the native bundler in Node so Electron can close its Windows I/O loop cleanly.
   buildFixture(directory).then(() => {
@@ -29,14 +34,28 @@ async function buildFixture(directory) {
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions,chatAttachmentsFromOutbound} from ${file('src/shared/chatAttachments.ts')};
         export const assistantBackend={ensure:async()=>({id:'personal-assistant'}),contextVersion:()=>fixture.generation??0,voice:()=>({list:async()=>[],execute:async()=>({})}),
-          read:async(after=0)=>({entries:fixture.entries.slice(after),cursor:fixture.entries.length,busy:fixture.busy,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0}),
+          read:async(after=0)=>{if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
+          react:async(messageId,reaction)=>{if(fixture.failReact)throw Error('fixture reaction failed');fixture.reactions??={};if(reaction)fixture.reactions[messageId]=reaction;else delete fixture.reactions[messageId];return {reactions:structuredClone(fixture.reactions)};},
+          answerPermission:async(answer)=>{if(fixture.failPermission)throw Error('Approval connection failed');(fixture.permissionAnswers??=[]).push(answer);fixture.management.permissions=fixture.management.permissions.filter(item=>item.permissionId!==answer.permissionId);},
           stop:async()=>{fixture.stops=(fixture.stops??0)+1;fixture.busy=false;fixture.retry=null;fixture.runtimeError='已停止回复，可以稍后重试。';},
           retry:async()=>{fixture.retries=(fixture.retries??0)+1;fixture.runtimeError='';fixture.busy=true;},
-          reset:async()=>{fixture.resetCount=(fixture.resetCount??0)+1;fixture.generation=(fixture.generation??0)+1;fixture.entries=[];window.dispatchEvent(new Event('cardbush:assistant-reset'));},
-          send:async(text,config,spoken)=>{if(fixture.failSend)throw Error('fixture send failed');fixture.sent.push({text,spoken});const input=splitStreamAttachmentMentions(text);fixture.entries.push({id:'user-'+fixture.sent.length,role:'user',content:input.userInput,attachments:await chatAttachmentsFromOutbound(input),createdAt:new Date().toISOString(),source:'text',visibility:'conversation'});}};`;
+          reset:async()=>{fixture.resetCount=(fixture.resetCount??0)+1;fixture.generation=(fixture.generation??0)+1;fixture.entries=[];fixture.reactions={};window.dispatchEvent(new Event('cardbush:assistant-reset'));},
+          send:async(text,config,spoken,version,identity)=>{
+            fixture.sendCalls??=[];fixture.sendCalls.push({text,identity});
+            if(fixture.holdSend)await new Promise(resolve=>fixture.releaseSend=resolve);
+            if(version!==(fixture.generation??0))throw Error('fixture context reset');
+            if(fixture.failSend)throw Error('fixture send failed');
+            if(identity&&fixture.entries.some(entry=>entry.id===identity.id))return;
+            fixture.sent.push({text,spoken});const input=splitStreamAttachmentMentions(text);
+            fixture.entries.push({id:identity?.id??'user-'+fixture.sent.length,role:'user',content:input.userInput,replyTo:identity?.replyTo,attachments:await chatAttachmentsFromOutbound(input),createdAt:identity?.createdAt??new Date().toISOString(),source:'text',visibility:'conversation'});
+            if(fixture.failReadAfterAccept)fixture.failRead=true;
+            if(fixture.loseReceipt)throw Error('fixture acknowledgement lost');
+            if(fixture.holdReceipt)await new Promise(resolve=>fixture.releaseReceipt=resolve);
+          }};`;
       if (id === '\0assistant-fixture.tsx') return `
         import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
         import {AssistantView} from ${file('src/features/assistant/AssistantView.tsx')};
+        import {uiText} from ${file('src/i18n/index.ts')};
         import {saveComponents,useComponents} from ${file('src/features/components/componentStore.ts')};
         import {AssistantBulb} from ${file('src/features/assistant/AssistantBulb.tsx')};
         import {ChatSidebar} from ${file('src/features/sidebar/ChatSidebar.tsx')};
@@ -61,15 +80,18 @@ async function buildFixture(directory) {
           {id:'loop',role:'user',content:'不应显示的工具日志',source:'task',visibility:'internal',createdAt:new Date().toISOString()}
         ],busy:false};
         fixture.callContext=()=>realtimeConversationContext(applicationVoiceSession().target);
-        function Fixture(){const [active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile(),collection=useComponents();
+        fixture.uiText=uiText;
+        fixture.callHistory=()=>applicationVoiceSession().target?.historyMessages??[];
+        fixture.voiceState=()=>applicationVoiceSession().snapshot();
+        function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile(),collection=useComponents();
           fixture.setLayout=(width,flow={afterSend:'bottom',output:'above'})=>saveComponents({...collection,welcomeLayout:width?{viewportHeight:752,items:[{componentId:'system-input',x:(100-width)/2,y:260,width,height:52,inputStyle:'simple',composerFlow:flow}]}:undefined},collection.revision);
-          fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.portal=setPortal;fixture.inspector=setInspector;
+          fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
           return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost language="zh">
             <ChatSidebar language="zh" section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
               onSectionChange={noop} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
-            <section className="main-stage"><AssistantView active={active} language="zh" connections={[{id:'ssh-1',name:'测试服务器',sshTunnel:{connectionId:'ssh'}}]}
-              composerControls={controls} prepare={async()=>({sessionId:'personal-assistant',model:'fixture',userInput:''})} onManageHosts={()=>fixture.managed=true} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
+            <section className="main-stage"><AssistantView active={active} language={language}
+              composerControls={controls} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:''};}} onManageHosts={()=>fixture.managed=true} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
               composerPortalTarget={portal?target:null} browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
             {portal&&<aside ref={setTarget} className="inspector-quick-input" style={{position:"fixed",bottom:20,left:300,width:450,zIndex:30}}/>}
           </ApplicationVoiceHost></div>;
@@ -90,17 +112,26 @@ app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const deadline = setTimeout(() => app.exit(1), 55000);
 app.whenReady().then(async () => {
+  if (process.env.CARDBUSH_ASSISTANT_UI_CASE === 'attachments') electron.protocol.handle('cardbush-file', request => {
+    const target = path.resolve(decodeURIComponent(new URL(request.url).pathname).replace(/^\/(?=[a-z]:)/i, ''));
+    if (!target.startsWith(path.resolve(directory) + path.sep)) return new Response('', { status: 403 });
+    return electron.net.fetch(require('node:url').pathToFileURL(target).href);
+  });
   const win = new BrowserWindow({ show: false, width: 1120, height: 800, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false, offscreen: true } });
   win.webContents.setAudioMuted(true);
   win.webContents.session.setPermissionCheckHandler((_,permission)=>permission==='media');
   win.webContents.session.setPermissionRequestHandler((_,permission,callback)=>callback(permission==='media'));
   const errors = []; win.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
   const read = code => win.webContents.executeJavaScript(code).catch(error => { throw Error(code + '\n' + error + '\n' + errors.join('\n')); });
-  const until = async code => { for (let i = 0; i < 150; i++) { if (await read(code)) return; await pause(30); } throw Error('UI timed out: ' + await read('document.body.innerText') + errors.join('\n')); };
+  const until = async code => { for (let i = 0; i < 150; i++) { if (await read(code)) return; await pause(30); } throw Error('UI timed out: ' + code + '\nVoice: ' + JSON.stringify(await read('fixture.voiceState()')) + '\n' + await read('document.body.innerText') + errors.join('\n')); };
   const click = selector => read(`document.querySelector(${JSON.stringify(selector)}).click();void 0`);
   const fill = (selector, value) => read(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(n instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));})();`);
   try {
     await win.loadFile(path.join(directory, 'index.html')); await until('document.querySelectorAll(".assistant-message").length===2');
+    if (['submission', 'timeline', 'management', 'attachments', 'message-actions'].includes(process.env.CARDBUSH_ASSISTANT_UI_CASE)) {
+      await require('./helpers/assistant-' + process.env.CARDBUSH_ASSISTANT_UI_CASE + '.cjs')({ read, until, fill, click, pause, win, directory });
+      assert.deepEqual(errors, []); return;
+    }
     if (process.env.CARDBUSH_ASSISTANT_UI_CASE === 'scroll') {
       await read('sessionStorage.setItem("cardbush_scroll_debug","true")');
       try { await require('./helpers/assistant-scroll.cjs')({ read, until, fill, click, pause, win, directory }); }
@@ -121,9 +152,9 @@ app.whenReady().then(async () => {
     assert.ok(await read('(()=>{const n=document.querySelector(".assistant-view .conversation-connection-notice"),r=n.getBoundingClientRect();return r.height>30&&r.top>=48&&r.bottom<innerHeight&&document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)?.closest(".conversation-connection-notice")===n;})()'),'retry notice is visible below the header');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.join(directory,'assistant-retry.png'),(await win.webContents.capturePage()).toPNG());
-    await click('.assistant-stop-reply');
+    assert.equal(await read('!!document.querySelector(".assistant-activity-row button")'),false,'waiting only shows the typing bubble');
+    await read('fixture.busy=false;fixture.retry=null;fixture.runtimeError="fixture reply failed";void 0');
     await until('!document.querySelector(".assistant-typing-bubble")&&document.querySelector(".runtime-status-action")');
-    assert.equal(await read('fixture.stops'),1);
     await click('.runtime-status-action');
     await until('document.querySelector(".assistant-typing-bubble")&&!document.querySelector(".runtime-status-banner")');
     assert.equal(await read('fixture.retries'),1);
@@ -162,9 +193,10 @@ app.whenReady().then(async () => {
     await read(`fixture.entries.push(
       {id:'call-user',role:'user',content:'通话记忆用户内容',source:'voice',visibility:'internal',createdAt:new Date().toISOString()},
       {id:'call-reply',role:'assistant',content:'通话记忆回答内容',source:'voice',visibility:'internal',createdAt:new Date().toISOString()});void 0`);
-    await until('fixture.callContext().some(item=>item.text.includes("通话记忆回答内容"))');
+    await until('fixture.callHistory().some(item=>item.content.includes("通话记忆回答内容"))');
     assert.equal(await read('document.body.innerText.includes("通话记忆")'), false);
-    assert.equal(await read('fixture.callContext().some(item=>item.text.includes("通话记忆用户内容"))'), true);
+    assert.equal(await read('fixture.callHistory().some(item=>item.content.includes("通话记忆用户内容"))'), true, 'speech remains in authoritative conversation history');
+    assert.equal(await read('fixture.callContext().some(item=>item.text.includes("通话记忆"))'), false, 'Realtime owns its speech journal and must not import those transcripts twice');
     assert.equal(await read('document.querySelectorAll(".assistant-message").length'), 2);
     assert.equal(await read('document.querySelectorAll(".assistant-message-arriving").length'), 0, 'private transcripts do not animate the page');
     await fill('.assistant-composer-dock textarea', '继续聊聊'); await click('.assistant-composer-dock .send-button[aria-label="发送"]');
@@ -218,8 +250,9 @@ app.whenReady().then(async () => {
     await click(settingsButton); await read('fixture.hide();void 0'); await until('!document.querySelector(".assistant-settings-dialog")');
     await read('fixture.show();void 0'); await until('!document.querySelector(".assistant-view").hidden');
     assert.equal(await read('!!document.querySelector(\'.nav-row[title="Lumi"]\')'), true);
-    await click('.assistant-actions [role=combobox]'); await click('[role=option][data-value="ssh-1"]'.replace('[data-value="ssh-1"]', ':last-child'));
-    await until('document.querySelector(".assistant-actions [role=combobox]").textContent.includes("测试服务器")');
+    assert.equal(await read('document.querySelector(".assistant-actions [role=combobox]")===null'), true, 'Assistant no longer mixes local conversation with a separate execution-host selector');
+    await click('.assistant-actions .assistant-composer-tools button:first-child');
+    assert.equal(await read('fixture.managed'), true, 'employee management remains available');
     await read('fixture.hide();void 0'); await until('document.querySelector(".assistant-view").hidden');
     await read('fixture.show();fixture.busy=true;void 0'); await until('document.querySelector(".assistant-bulb[data-state=working]")');
     assert.equal(await read('document.querySelectorAll(".assistant-message").length'), 3);
@@ -281,7 +314,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('fixture.resetCount'),1);
     assert.equal(await read('fixture.callContext().length'),0);
     assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).name'),'Nova');
-    assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).targetAgent'),'ssh-1');
+    assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).targetAgent'),'');
     assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).outputMuted'),true);
 
     await read('fixture.entries.push(...Array.from({length:18},(_,i)=>({id:"history-"+i,role:i%2?"assistant":"user",content:"历史测试段落 "+i+"\\n\\n"+"用于检查滚动和输入框避让。".repeat(12),source:i%2?"page":"text",visibility:"conversation",createdAt:new Date().toISOString()})));void 0');
@@ -291,17 +324,21 @@ app.whenReady().then(async () => {
     await read('fixture.entries.push({id:"while-reading",role:"assistant",content:"新到达的资料",source:"page",visibility:"conversation",createdAt:new Date().toISOString()});void 0');
     await until('document.querySelectorAll(".assistant-message").length===19');await pause(100);
     assert.ok(await read('document.querySelector(".assistant-messages").scrollTop<5'),'incoming messages do not pull the reader away');
-    // Recording must use the same explicit-send positioning as text, even after reading history.
+    // Dictation fills a draft; its explicit send uses the ordinary submission path.
     await fill('.assistant-composer-dock textarea','文字发送定位');await click('.assistant-composer-dock .send-button[aria-label="发送"]');
     await until('fixture.sent.at(-1).text==="文字发送定位"');
     await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
     await read('(()=>{const list=document.querySelector(".assistant-messages");list.dispatchEvent(new WheelEvent("wheel",{deltaY:-500,bubbles:true}));list.scrollTop=0;fixture.holdTranscription=true;})()');
     await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="false"');
-    await click('.assistant-composer-dock .voice-trigger');await until('document.querySelector(".voice-composer-label")?.textContent==="正在录音"');
-    await pause(200);await click('.voice-composer-send');await until('typeof fixture.releaseTranscription==="function"');
-    assert.equal(await read('!!document.querySelector(".voice-call-active")'),true,'transcription stays in the recording composer');
+    const sentBeforeDictation=await read('fixture.sent.length');
+    await click('.assistant-composer-dock .voice-dictation-button');await until('fixture.voiceState().phase==="recording"');
+    await pause(400);await click('.assistant-composer-dock .voice-dictation-stop');await until('typeof fixture.releaseTranscription==="function"');
+    assert.equal(await read('document.querySelector(".voice-dictation-control").dataset.engaged'), 'true', 'transcription stays attached to the ordinary composer');
     assert.equal(await read('!!document.querySelector(".voice-floating-composer,.voice-mini,.voice-dialog")'),false,'transcription does not switch to an overlay');
     await read('fixture.holdTranscription=false;fixture.releaseTranscription();void 0');
+    await until('document.querySelector(".assistant-composer-dock textarea").value==="录音发送也应定位到最新消息"');
+    assert.equal(await read('fixture.sent.length'),sentBeforeDictation,'dictation never sends before the user submits');
+    await click('.assistant-composer-dock .send-button[aria-label="发送"]');
     await until('fixture.sent.at(-1).text==="录音发送也应定位到最新消息"');
     assert.equal(await read('fixture.sent.at(-1).spoken'),false);
     await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
@@ -327,6 +364,9 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelector(".assistant-composer-dock textarea").value'),'');
     await read(`fixture.tasks=[{taskId:'task-visible',origin:'subagent',parentSessionId:'personal-assistant',childSessionId:'child-execution',parentTurnId:'voice_turn_fixture',requestPrompt:'整理桌面应用清单',status:'running',terminal:false,createdAt:new Date().toISOString(),remote:{agentId:'ssh-1',taskId:'remote-task'}}];window.addEventListener('cardbush:open-work-summary-inspector',e=>fixture.taskDetail=e.detail);window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble[data-status=running]")');
+    await require('./helpers/subagent-activity-motion.cjs')({ read, pause, window:win,
+      selector:'.assistant-task-bubble .subagent-activity-spinner',
+      rerender:"fixture.tasks=[{...fixture.tasks[0],updatedAt:new Date().toISOString()}];window.dispatchEvent(new Event('fixture-tasks'))" });
     assert.match(await read('document.querySelector(".assistant-task-bubble").textContent'),/整理桌面应用清单/);
     await click('.assistant-task-bubble');
     assert.equal(await read('fixture.taskDetail.kind'),'subagent-task');
@@ -340,6 +380,7 @@ app.whenReady().then(async () => {
     }
     await read(`fixture.tasks=[{...fixture.tasks[0],status:'completed',terminal:true}];window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble[data-status=completed]")');
+    assert.equal(await read('document.querySelectorAll(".assistant-task-bubble .subagent-activity-spinner").length'), 0, 'completed tasks stop rotating');
     await menu();await choose('重置上下文');await until('document.querySelector(".confirm-action-dialog[open]")');
     await click('.confirm-action-dialog .danger');await until('document.querySelectorAll(".assistant-message,.assistant-task-bubble").length===0');
     await read(`fixture.entries.push({id:'after-task-reset',role:'user',content:'重新开始',source:'text',visibility:'conversation',createdAt:new Date().toISOString()});void 0`);
@@ -347,7 +388,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),0,'reset does not resurrect earlier tasks');
     await require('./helpers/assistant-reference-bubbles.cjs')({read,until,fill,click,pause,win,directory});
     assert.deepEqual(errors, []);
-    console.log('Assistant UI passed: shared header/docking, inspector/summary, browser references, portal draft, saved layout/resize, scroll follow, simple Composer, host selection, file picker/send/retry, Markdown, private speech, model settings, history, bubble/reduced-motion animations and responsive themes. Screenshots: ' + directory);
+    console.log('Assistant UI passed: shared header/docking, inspector/summary, browser references, portal draft, saved layout/resize, scroll follow, simple Composer, employee management, file picker/send/retry, dictation draft, Markdown, private speech, model settings, history, bubble/reduced-motion animations and responsive themes. Screenshots: ' + directory);
   } finally { win.destroy(); clearTimeout(deadline); }
   app.quit();
 }).catch(error => { console.error(error); clearTimeout(deadline); app.exit(1); });

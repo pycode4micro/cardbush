@@ -85,6 +85,16 @@ test('live child guidance is visible to the parent and concurrent sends cannot r
     messageId: 'user-guide', content: '先确认边界再继续', createdAt: new Date().toISOString() } });
   const page = await read(task.taskId);
   assert.ok(page.messages.some(item => item.author === 'user' && item.content === '先确认边界再继续'));
+  const parentGuidance = { protocol: 'bush.runtime_guidance.v1', sessionId: task.childSessionId, turnId: task.childTurnId,
+    messageId: 'parent-guide', content: '父 Agent 补充：保留原来的布局', createdAt: new Date().toISOString(),
+    metadata: { subagentAuthor: 'parent', realtimeParent: true, realtimeParentSessionId: 'parent', realtimeTaskId: task.taskId } };
+  await host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: parentGuidance });
+  await host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: parentGuidance });
+  const receipt = host.events(task.childSessionId, task.childTurnId).filter(e => e.kind === 'guidance_queued' && e.payload.messageId === 'parent-guide');
+  assert.equal(receipt.length, 1);
+  assert.equal(receipt[0].payload.metadata.subagentAuthor, 'parent');
+  assert.equal(receipt[0].payload.content, parentGuidance.content);
+  assert.equal(host.events(task.childSessionId, task.childTurnId).some(e => e.kind === 'guidance_applied'), false);
   await assert.rejects(host.runSessionTurn({ sessionId: task.childSessionId, turnId: 'conflicting' }), /active|running|admission/i);
   release(); await running;
   assert.ok((await read(task.taskId)).messages.some(item => item.author === 'user' && item.content === '先确认边界再继续'));

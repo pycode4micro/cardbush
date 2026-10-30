@@ -711,6 +711,13 @@ app.whenReady().then(async () => {
       window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(views.ChatPanel, chatProps)); };
       updateChat({});
     `);
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'attachment-layout') {
+      await require('./helpers/chat-attachment-layout.cjs')({ run, until, pause, window, root });
+      if (process.env.CARDBUSH_APP_VIEWS_CASE) {
+        assert.deepEqual(await run('failures'), [], 'no attachment layout renderer errors');
+        assert.deepEqual(errors, []); return;
+      }
+    }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'user-message-disclosure') {
       await require('./helpers/user-message-disclosure.cjs')({ run, until, pause, window, root });
       if (process.env.CARDBUSH_APP_VIEWS_CASE) {

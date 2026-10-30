@@ -72,6 +72,9 @@ export function PermissionRequestCard({
 
       <div className="permission-request-body">
         {error && <p className="permission-request-error" role="alert">{error}</p>}
+        {interaction.raw.permissionEscalationReason === 'remote_policy_requires_human' && (
+          <p className="permission-description">{uiText(language)('permissionRequestCard.remotePolicyRequiresHuman')}</p>
+        )}
         <div className="permission-target">
           <span className="permission-target-icon">
             {details.resourceKind === 'process' ? <Terminal size={17} /> : <Folder size={17} />}

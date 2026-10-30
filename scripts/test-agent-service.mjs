@@ -212,6 +212,70 @@ test('worker interaction asks the parent in words, resumes the same run and dedu
   } finally { await f.service.close(); }
 });
 
+test('remote submission negotiates routing and never silently downgrades model approval on old workers', async () => {
+  const submitted = [];
+  const info = { id: 'instance', capabilities: { delegation: true, workerInteraction: {
+    profile: 'subagent-remote-proton', version: '0.1', permissions: 'human_required',
+  } } };
+  const manager = { connect: async () => info, async *events() {}, call: async (_id, op, input) => {
+    if (op === 'delegation.submit') { submitted.push(input); throw Error('submission fixture'); }
+    throw Error(op);
+  } };
+  const request = { ...workerInput('routing'), connectionId: 'worker', agentId: 'instance' };
+  await assert.rejects(runRemoteSubagent(manager, { ...request, permissionRouting: 'parent' }), /Update the remote Agent service/);
+  assert.equal(submitted.length, 0);
+  await assert.rejects(runRemoteSubagent(manager, { ...request, permissionRouting: 'user' }), /submission fixture/);
+  assert.equal(submitted[0].permissionRouting, undefined, 'human-only old workers keep their strict request schema');
+  info.capabilities.workerInteraction.permissionRouting = true;
+  await assert.rejects(runRemoteSubagent(manager, { ...request, permissionRouting: 'parent' }), /submission fixture/);
+  assert.equal(submitted[1].permissionRouting, 'parent');
+  assert.equal(request.permissionRouting, undefined, 'negotiation does not mutate the caller request');
+});
+
+test('a parent model approves a remote child through the real HTTP bridge and the child resumes exactly once', { timeout: 30000 }, async t => {
+  const root = await directory(t), outside = join(root, 'protected.txt'); await writeFile(outside, 'parent-approved fixture');
+  const f = await openService(t, 'parent-model-approval', 20, outside);
+  const token = 'parent-approval-offline-fixture-token';
+  const server = await serveAgentHttp(f.service, { port: 0, token });
+  const manager = new AgentConnectionManager(join(f.root, 'connections.json'), { encrypt: value => value, decrypt: value => value });
+  let host;
+  try {
+    const [connection] = await manager.save({ name: 'Worker', transport: 'http', url: `http://127.0.0.1:${server.port}`, token });
+    const registry = new ToolRegistry(), tasks = new SubagentTaskStore(); let round = 0, approvals = 0;
+    host = new InMemoryRuntimeHost({ toolRegistry: registry, subagentTaskStore: tasks, remoteAgents: {
+      list: async () => [{ id: connection.id, name: 'Worker', agentId: f.service.info().id }],
+      run: (input, signal) => runRemoteSubagent(manager, input, signal),
+      control: (input, signal) => callRemoteWorker(manager, 'agents.control', input, signal),
+    }, provider: { async *stream(request) {
+      assert.ok(++round < 15, 'approval must resume the existing child without a polling loop');
+      let call;
+      const task = tasks.list('parent')[0], permission = task?.observation?.interactions.find(item => item.kind === 'permission');
+      if (!task) call = ['subagent', { prompt: 'Read the fixture', target_agent: connection.id }];
+      else if (permission && !approvals) {
+        assert.equal(permission.authority, 'parent_delegate'); approvals++;
+        call = ['subagent', { task_id: task.taskId, response: { kind: 'permission', interactionId: permission.interactionId,
+          actionDigest: permission.actionDigest, decision: 'allow_once' } }];
+      } else if (task.status === 'running') call = ['tasks', { action: 'wait', task_ids: [task.taskId], mode: 'all' }];
+      const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+      yield call ? { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `call-${round}`, nameDelta: call[0], argumentsDelta: JSON.stringify(call[1]) }
+        : { ...base, sequence: 0, kind: 'text_delta', delta: 'Child completed.' };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: call ? 'tool_calls' : 'stop' };
+    } } });
+    const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'parent-request', sessionId: 'parent', turnId: 'parent-turn',
+      model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Read the remote fixture' } }],
+      tools: registry.definitions(), permissionMode: 'task_free', metadata: { subagentPermissionRouting: 'parent', individuation: { habits: false, predictions: false } },
+    }, { signal: AbortSignal.timeout(20000) });
+    assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
+    assert.equal(approvals, 1); assert.equal(tasks.list('parent').length, 1);
+    assert.equal(tasks.list('parent')[0].status, 'completed');
+    assert.equal(f.model.calls.length, 2); assert.match(JSON.stringify(f.model.calls[1]), /parent-approved fixture/);
+    const task = tasks.list('parent')[0];
+    const events = await f.service.call('runtime.command', { kind: 'runtime.list_turn_events', payload: { sessionId: task.childSessionId, turnId: task.childTurnId } });
+    assert.equal(events.filter(event => event.kind === 'permission_answered').length, 1);
+    assert.equal(events.find(event => event.kind === 'permission_requested').payload.permissionRouting, 'parent');
+  } finally { await host?.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await manager.close(); await server.close(); await f.service.close(); }
+});
+
 test('worker queue and insert retain order, exact run identity and role revision', async t => {
   const gate = Promise.withResolvers(); let calls = 0;
   const f = await openService(t, 'worker-queue', () => ++calls === 1 ? gate.promise : Promise.resolve());
@@ -276,28 +340,58 @@ test('a full worker receipt journal still permits stop and repeated cancellation
   } finally { await service.close(); }
 });
 
-for (const delegateApproval of [false, true]) test(`worker permissions respect the remote ceiling and ${delegateApproval ? 'delegated' : 'human-only'} authority`, async t => {
+for (const [admin, routing, delegateApproval] of [
+  ['0', undefined, false], ['1', undefined, true],
+  ['', 'parent', true], ['', 'user', false], ['1', 'user', false], ['0', 'parent', false],
+]) test(`worker permissions respect the remote ceiling and task routing (admin=${admin || 'unset'}, route=${routing ?? 'legacy'})`, async t => {
   const root = await directory(t), outside = join(root, 'protected.txt'); await writeFile(outside, 'protected contents');
   const model = await modelFixture(t, 20, outside);
-  const service = await AgentService.open({ dataRoot: join(root, 'worker'), env: { CARDBUSH_REMOTE_PARENT_APPROVAL: delegateApproval ? '1' : '0', CARDBUSH_REMOTE_PERMISSION_MODE: 'task_free' } });
-  const request = workerInput('permission', { permissionMode: 'all_free' });
+  const service = await AgentService.open({ dataRoot: join(root, 'worker'), env: { CARDBUSH_REMOTE_PARENT_APPROVAL: admin, CARDBUSH_REMOTE_PERMISSION_MODE: 'task_free' } });
+  const request = workerInput('permission', { permissionMode: 'all_free', ...(routing ? { permissionRouting: routing } : {}) });
   try {
     await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture', baseURL: model.url }] } });
     await service.call('delegation.submit', request);
     const waiting = await until(() => workerControl(service, request, { operation: 'observe' }), state => state.interactions.length > 0);
     const permission = waiting.interactions[0]; assert.equal(permission.kind, 'permission');
+    assert.equal(permission.authority, delegateApproval ? 'parent_delegate' : 'human_required');
+    const escalated = routing === 'parent' && admin === '0';
+    assert.equal(permission.escalationReason, escalated ? 'remote_policy_requires_human' : undefined);
+    assert.equal(service.info().capabilities.workerInteraction.permissionRouting, true);
+    await assert.rejects(service.call('delegation.submit', { ...request, permissionRouting: (routing ?? (admin === '1' ? 'parent' : 'user')) === 'parent' ? 'user' : 'parent' }), /different permission routing/);
+    const events = await service.call('runtime.command', { kind: 'runtime.list_turn_events', payload: { sessionId: request.sessionId, turnId: request.turnId } });
+    const pending = events.find(event => event.kind === 'permission_requested');
+    assert.equal(pending.sessionId, request.sessionId, 'remote approvals remain in the child journal on the remote host');
+    assert.equal(pending.payload.permissionRouting, delegateApproval ? 'parent' : 'user');
+    assert.equal(pending.payload.permissionEscalationReason, permission.escalationReason);
+    assert.equal(pending.payload.subagentTaskId, request.taskId);
     assert.equal(JSON.parse(await readFile(join(root, 'worker', 'agent.json'), 'utf8')).jobs[0].input.permissionMode, 'task_free', 'parent full access cannot raise the remote ceiling');
     const response = { operation: 'respond', messageId: 'permission-1', response: { kind: 'permission', interactionId: permission.interactionId, actionDigest: permission.actionDigest, decision: 'allow_once' } };
     await assert.rejects(workerControl(service, request, { ...response, response: { ...response.response, actionDigest: 'sha256:' + '0'.repeat(64) } }), /action_changed/);
     await assert.rejects(workerControl(service, request, { ...response, response: { kind: 'answer', interactionId: permission.interactionId, text: 'Approved' } }), /structured_permission/);
-    if (delegateApproval) await workerControl(service, request, response);
+    if (delegateApproval) {
+      await workerControl(service, request, response);
+      await workerControl(service, request, response); // Same receipt cannot grant access twice.
+    }
     else {
       await assert.rejects(workerControl(service, request, response), /human_authority/);
-      await workerControl(service, request, { ...response, response: { ...response.response, decision: 'deny' } });
+      if (escalated) await service.call('runtime.command', { kind: 'runtime.answer_permission', payload: {
+        protocol: 'bush.runtime_permission_answer.v1', permissionId: permission.interactionId, answerId: 'human-answer',
+        decision: 'allow_once', grantedCapabilityIds: pending.payload.requestedCapabilityIds,
+      } });
+      else await workerControl(service, request, { ...response, response: { ...response.response, decision: 'deny' } });
     }
     await until(() => service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
-    if (delegateApproval) assert.match(JSON.stringify(model.calls[1]), /protected contents/);
+    if (delegateApproval || escalated) assert.match(JSON.stringify(model.calls[1]), /protected contents/);
     else assert.doesNotMatch(JSON.stringify(model.calls[1]), /protected contents/);
+    const resolved = await service.call('runtime.command', { kind: 'runtime.list_turn_events', payload: { sessionId: request.sessionId, turnId: request.turnId } });
+    assert.equal(resolved.filter(event => ['permission_answered', 'permission_rejected'].includes(event.kind)).length, 1);
+    assert.equal((await workerControl(service, request, { operation: 'observe' })).interactions.length, 0);
+    if (routing) {
+      await workerControl(service, request, { operation: 'message', delivery: 'queue', messageId: 'continue', text: 'Continue the same task' });
+      const jobs = await service.call('chat.jobs');
+      assert.equal(jobs[1].delegation.permissionRouting, routing, 'queued continuation retains the selected routing');
+      await until(() => service.call('chat.jobs'), jobs => jobs[1]?.status === 'completed');
+    }
   } finally { await service.close(); }
 });
 

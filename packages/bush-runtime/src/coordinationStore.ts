@@ -59,6 +59,8 @@ export class CoordinationStore {
     return plan ? structuredClone(plan) : undefined;
   }
 
+  clearPlan(sessionId: string) { if (this.getPlan(sessionId)) this.#append(sessionId, 'plan_cleared', {}); }
+
   setPlan(input: unknown): PlanState {
     const request = setRuntimePlanRequestSchema.parse(input);
     const before = this.getPlan(request.sessionId);
@@ -176,7 +178,7 @@ export class CoordinationStore {
   #append(
     sessionId: string,
     kind: CoordinationEvent["kind"],
-    payload: PlanState | GoalState,
+    payload: CoordinationEvent['payload'],
   ): void {
     const events = this.#load(sessionId);
     const event = coordinationEventSchema.parse({
@@ -210,6 +212,7 @@ export function projectCoordination(
       throw new Error(`Duplicate Coordination event ${event.eventId}.`);
     }
     eventIds.add(event.eventId);
+    if (event.kind === 'plan_cleared') { plan = undefined; continue; }
     if (event.payload.sessionId !== sessionId) {
       throw new Error("Coordination payload Session identity mismatch.");
     }

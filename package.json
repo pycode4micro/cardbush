@@ -135,7 +135,7 @@
     "test:turn-layout": "node scripts/test-panel-motion-contract.mjs && node scripts/test-turn-guidance-contract.mjs && node scripts/run-app-views-test.mjs turn-layout",
     "test:composer-resize": "node scripts/run-app-views-test.mjs composer-resize",
     "test:work-summary-outputs": "node --test scripts/test-work-summary-outputs.mjs && node scripts/test-work-summary-outputs-ui.mjs",
-    "test:inspector-tabs": "node scripts/run-inspector-tabs-test.mjs && node scripts/test-inspector-navigation-ui.mjs",
+    "test:inspector-tabs": "node scripts/run-inspector-tabs-test.mjs && node scripts/test-inspector-navigation-ui.mjs && node scripts/test-subagent-file-tabs-ui.mjs",
     "test:inspector-regions": "tsc -p tsconfig.node.json && vite build && node scripts/test-inspector-regions.mjs",
     "test:inspector-layouts": "node --test scripts/test-saved-inspector-layouts.mjs && node scripts/run-app-views-test.mjs inspector-layouts",
     "test:inspector-sessions": "node --test scripts/test-inspector-sessions.mjs && node scripts/run-app-views-test.mjs inspector-sessions",
@@ -188,6 +188,9 @@
     "test:status-indicators": "node scripts/run-app-views-test.mjs status-indicators",
     "test:deferred-modules": "node scripts/test-deferred-modules.mjs",
     "test:assistant-timing": "node scripts/test-assistant-timing-contract.mjs",
+    "test:assistant-management": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && node --test packages/bush-runtime/test/assistantManagement.test.mjs && node scripts/test-assistant-ui.cjs --management",
+    "test:attachment-layout": "node scripts/test-assistant-ui.cjs --attachments && node scripts/run-app-views-test.mjs attachment-layout",
+    "test:assistant-input": "node --test scripts/test-assistant-timeline.mjs scripts/test-assistant-send.mjs && node scripts/test-assistant-ui.cjs --submission && node scripts/test-assistant-ui.cjs --timeline",
     "test:run-status": "node scripts/test-run-status.mjs && node scripts/test-run-status-ui.mjs",
     "test:message-media": "node scripts/test-message-media-contract.mjs && node --test scripts/test-media-presentation.mjs",
     "test:resource-references": "node --test scripts/test-source-memo-shorthand.mjs && node scripts/test-resource-targets.mjs && node scripts/test-source-memo-ui.mjs",
@@ -250,7 +253,9 @@
     "test:ssh-ui": "node scripts/run-app-views-test.mjs ssh",
     "test:assistant": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-provider-openai && tsc -p tsconfig.node.json && node --test packages/bush-runtime/test/assistantConversation.test.mjs packages/bush-runtime/test/assistantMemory.test.mjs packages/bush-runtime/test/assistantRetry.test.mjs packages/bush-runtime/test/assistantCacheContinuity.test.mjs scripts/test-assistant-attachments.mjs scripts/test-realtime-voice.mjs && node scripts/test-assistant-ui.cjs && node scripts/test-realtime-voice-ui.cjs",
     "test:embodied": "npm run build:runtime && tsc -p tsconfig.node.json && node --test scripts/test-embodied.mjs scripts/test-realtime-voice.mjs",
-    "build:embodied-firmware": "python deploy/embodied/build_firmware.py"
+    "build:embodied-firmware": "python deploy/embodied/build_firmware.py",
+    "test:assistant-message-actions": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && node --test packages/bush-runtime/test/assistantMessageActions.test.mjs scripts/test-assistant-send.mjs && node scripts/test-assistant-ui.cjs --message-actions",
+    "test:subagent-activity": "node scripts/test-assistant-ui.cjs && node scripts/test-subagent-conversation-ui.mjs"
   },
   "dependencies": {
     "@cardbush/apps-mcp": "0.1.0",

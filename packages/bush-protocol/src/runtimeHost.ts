@@ -50,6 +50,7 @@ export const runtimeEventKindSchema = z.enum([
   "assistant_segment_started",
   "assistant_segment_delta",
   "assistant_segment_completed",
+  "guidance_queued",
   "guidance_applied",
   "tool_queued",
   "file_edit_preview",
@@ -142,6 +143,7 @@ const permissionIdentitySchema = z.object({
   parentTurnId: z.string().min(1).optional(),
   subagentTaskId: z.string().min(1).optional(),
   permissionRouting: z.enum(["user", "parent"]).optional(),
+  permissionEscalationReason: z.enum(['remote_policy_requires_human']).optional(),
 });
 
 export const runtimePermissionTargetSchema = z.object({
@@ -240,11 +242,19 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     payload: segmentCompletedPayloadSchema,
   }),
   runtimeEventEnvelopeSchema.extend({
+    kind: z.literal('guidance_queued'),
+    payload: z.object({
+      messageId: z.string().min(1), content: z.string(), createdAt: z.string().min(1),
+      queueDepth: z.number().int().nonnegative(), metadata: z.record(z.string(), z.unknown()).optional(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
     kind: z.literal("guidance_applied"),
     payload: z.object({
       messageId: z.string().min(1),
       queueDepth: z.number().int().nonnegative(),
-      afterRound: z.number().int().positive(),
+      // An insert accepted during child preparation can precede its first round.
+      afterRound: z.number().int().nonnegative(),
       previousAssistantMessageId: z.string().min(1).optional(),
     }),
   }),

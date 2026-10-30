@@ -58,7 +58,7 @@ import { projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
 import { contextWindowMetrics } from './contextWindowUsage';
 import { runtimeThinkingEvent } from './runtimeThinking';
 import { publishModelActivity } from '../runtime-client/modelActivity';
-import { streamChunk, assistantStreamChunk, toolLifecycle, terminalSnapshot, guidanceAppliedUpdate } from './runtimeTranscriptEvents';
+import { streamChunk, assistantStreamChunk, toolLifecycle, terminalSnapshot, guidanceAppliedUpdate, guidanceQueuedUpdate } from './runtimeTranscriptEvents';
 import { contextCompactionPresentationExecution } from './contextCompactionPresentation';
 import { selectRuntimeToolDefinitions } from './runtimeToolCatalog';
 import { realtimeConversationRecord } from '@cardbush/bush-runtime/realtime-conversation';
@@ -538,6 +538,9 @@ async function consumeRuntimeEvents(
           assistantStreamChunk(event),
         );
         break;
+      case 'guidance_queued':
+        request.onExecution?.(guidanceQueuedUpdate(event));
+        break;
       case 'guidance_applied': {
         const storedUser = await runtime.client.getUserMessage(event.sessionId, event.turnId, event.payload.messageId, signal).catch(() => null);
         request.onExecution?.({
@@ -685,7 +688,7 @@ async function consumeRuntimeEvents(
           liveToolExecutions.set(toolCallId, awaitingPermission);
           request.onToolExecution?.(awaitingPermission);
         }
-        request.onInteractiveRequest?.(interaction);
+        if (interaction) request.onInteractiveRequest?.(interaction);
         break;
       }
       case 'solution_selection_requested': {
@@ -762,7 +765,7 @@ async function consumeRuntimeEvents(
 function permissionInteraction(
   runtime: ConversationRuntime,
   event: Extract<RuntimeEvent, { kind: 'permission_requested' }>,
-): PendingInteraction {
+): PendingInteraction | undefined {
   return conversationInteractions(runtime).registerRuntimePermission({
     permissionId: event.payload.permissionId,
     sessionId: event.sessionId,
@@ -786,6 +789,7 @@ function permissionInteraction(
     parentTurnId: event.payload.parentTurnId,
     subagentTaskId: event.payload.subagentTaskId,
     permissionRouting: event.payload.permissionRouting,
+    permissionEscalationReason: event.payload.permissionEscalationReason,
     answer: (answer) => runtime.answerPermission(answer),
   });
 }

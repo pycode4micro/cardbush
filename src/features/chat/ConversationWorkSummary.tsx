@@ -21,6 +21,7 @@ import type {
   ChatMessage,
   SubagentDispatchEvent,
   SubagentTaskSnapshot,
+  TaskPlanSnapshot,
 } from '../../types';
 import {
   summarizeChangeReports,
@@ -56,6 +57,7 @@ export function ConversationWorkSummary({
   softVisible = true,
   running = false,
   activeTurnId = '',
+  taskPlan,
   hoverProps,
   keepOpenUntil,
 }: {
@@ -70,6 +72,7 @@ export function ConversationWorkSummary({
   softVisible?: boolean;
   running?: boolean;
   activeTurnId?: string;
+  taskPlan?: TaskPlanSnapshot;
   hoverProps?: HTMLAttributes<HTMLElement>;
   keepOpenUntil?: (completion: Promise<unknown>) => void;
 }) {
@@ -94,8 +97,8 @@ export function ConversationWorkSummary({
     [messages, changeReports, workspaceRoot, pathAliases],
   );
   const recentOutputs = outputsExpanded ? outputs : outputs.slice(0, outputPageSize);
-  const plan = useMemo(() => conversationTaskPlan(messages, running ? activeTurnId : ''),
-    [messages, running, activeTurnId]);
+  const plan = useMemo(() => taskPlan ?? conversationTaskPlan(messages, running ? activeTurnId : ''),
+    [taskPlan, messages, running, activeTurnId]);
 
   useEffect(() => {
     setVisibleSubagentTaskCount(subagentTaskPageSize);

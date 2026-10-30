@@ -20,6 +20,16 @@ app.whenReady().then(async () => {
     assert.equal(await read(`document.querySelectorAll('.subagent-conversation .chat-panel').length`),1);
     await until(`document.querySelector('.send-button svg.lucide-square') !== null`);
     await until(`document.querySelector('.tool-execution-block')?.textContent.includes('读取布局文件')`);
+    await require('./helpers/subagent-activity-motion.cjs')({ read, pause:wait, window,
+      selector:'.subagent-conversation-heading .subagent-inspector-state .subagent-activity-spinner', rerender:"window.show('a')" });
+    await read('window.setEmployee(true)');
+    await until(`document.querySelector('.subagent-conversation-heading small')?.textContent.includes('员工')`);
+    assert.equal(await read(`document.querySelector('.subagent-inspector-state .subagent-activity-spinner').getAnimations().some(animation=>animation.animationName==='subagent-activity-turn')`),true,'registered employees show the same running animation');
+    await read('window.setEmployee(false);window.setRefreshing(true)');
+    await until(`!!document.querySelector('.subagent-conversation-heading > button:disabled .subagent-activity-spinner')`);
+    assert.equal(await read(`document.querySelector('.subagent-conversation-heading > button svg').getAnimations().some(animation=>animation.animationName==='subagent-activity-turn')`),true,'manual refresh has an actual animation too');
+    await read('window.setRefreshing(false)');
+    await until(`!document.querySelector('.subagent-conversation-heading > button .subagent-activity-spinner')`);
     assert.ok(await read(`document.body.innerText.includes('上一轮已核对文件范围。')`),'initial running status must not fence out existing history');
     await read(`window.retainedChildComposer=document.querySelector('.composer-surface');window.retainedChildTool=document.querySelector('.tool-execution-block');window.retainedChildInput=document.querySelector('[data-composer-input]');`);
     await wait(3200);
@@ -40,6 +50,17 @@ app.whenReady().then(async () => {
     assert.ok(Math.abs(geometry.left)<2 && Math.abs(geometry.right)<2,'composer and transcript use the same reading width: '+JSON.stringify(geometry));
     assert.match(await read('document.body.innerText'),/主 Agent 派发：检查布局 a/);
     assert.equal(await read(`document.querySelector('.subagent-message-author').textContent`),'主 Agent');
+    await read(`window.appendParentGuidance('a')`);
+    await until(`document.querySelector('[data-message-id="parent-guidance-a"]')?.textContent.includes('增强双 11 活动感')`);
+    assert.equal(await read(`document.querySelector('[data-message-id="parent-guidance-a"] .subagent-message-author')?.textContent`),'主 Agent');
+    await until(`document.querySelector('.guidance-activity[data-guidance-state="queued"]')?.textContent.includes('等待当前步骤完成')`);
+    assert.ok(await read(`!!document.querySelector('.subagent-conversation-heading .subagent-activity-spinner')`),'queued guidance does not finish the running child');
+    await read(`window.appendParentGuidance('a')`);
+    await wait(100);
+    assert.equal(await read(`document.querySelectorAll('[data-message-id="parent-guidance-a"]').length`),1,'queue receipt replay does not duplicate parent messages');
+    await read(`window.appendParentGuidance('a',true);window.appendParentGuidance('a')`);
+    await until(`!!document.querySelector('.guidance-activity[data-guidance-state="sent"]')`);
+    assert.equal(await read(`document.querySelectorAll('[data-message-id="parent-guidance-a"]').length`),1,'consumption updates the existing row and ignores stale queue receipts');
     assert.equal(await read(`document.querySelectorAll('.subagent-inspector-raw,.subagent-inspector-facts').length`),0);
     assert.equal(await read(`window.projectChild([{id:'edit',role:'user',turnId:'edit-turn',content:'Revised assignment'}],{terminal:true,childTurnId:'old',requestPrompt:'Superseded assignment',raw:{}}).length`),1,'editing an assignment must not resurrect the superseded parent message');
     await read(`document.querySelector('button[title="添加"]').click()`);
@@ -71,7 +92,7 @@ app.whenReady().then(async () => {
     assert.equal(await read(`window.calls.find(item=>item.kind==='guide').sourceEnabled`),true,'Source defaults on for child guidance');
     await read(`window.finish('a'); window.show('a')`);
     await until(`document.body.innerText.includes('完成后检查字体')`);
-    await until(`!document.querySelector('.subagent-conversation-heading .spin')`);
+    await until(`!document.querySelector('.subagent-conversation-heading .subagent-activity-spinner')`);
     // Keep the inspector on the original card. The parent resumes that child;
     // the accepted assignment must appear before the model produces anything.
     for(let count=1;count<=2;count++) {
@@ -84,7 +105,7 @@ app.whenReady().then(async () => {
       assert.ok(await read(`(()=>{const rows=Array.from(document.querySelectorAll('.message-row'));const user=rows.findLastIndex(n=>n.textContent.includes('父代理追加：'));return user>=0&&rows.slice(user+1).some(n=>n.classList.contains('assistant'));})()`),'resumed assignment precedes its live reply instead of preceding all history');
       if(count===1){await read(`Array.from(document.querySelectorAll('.message-row.user')).findLast(n=>n.textContent.includes('父代理追加：')).scrollIntoView({block:'center'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);await wait(250);writeFileSync(resolve('tmp/subagent-parent-followup.png'),(await window.webContents.capturePage()).toPNG());}
       await read(`window.finish('a')`);
-      await until(`!document.querySelector('.subagent-conversation-heading .spin')`);
+      await until(`!document.querySelector('.subagent-conversation-heading .subagent-activity-spinner')`);
       await wait(1700);
       assert.equal(await read(`Array.from(document.querySelectorAll('.message-row.user')).filter(n=>n.textContent.includes('父代理追加：请在报告后补充操作建议。')).length`),count,'history replaces the live assignment once; repeated text in another turn is preserved');
     }
@@ -95,6 +116,7 @@ app.whenReady().then(async () => {
     await read(`document.querySelector('.send-button').click()`);
     await until(`window.calls.some(item=>item.kind==='stop'&&item.sessionId==='a'&&item.turnId.startsWith('human-'))`);
     await until(`!document.querySelector('.send-button svg.lucide-square') && document.body.innerText.includes('已停止')`);
+    await until(`!document.querySelector('.subagent-conversation-heading .subagent-activity-spinner')`);
     await type('未发送草稿');
     await read(`window.show('b')`);await until(`window.streams.has('b') && !!document.querySelector('[data-composer-input]')`);
     assert.ok(!await read(`document.body.innerText.includes('请先检查宽度')`),'sibling transcript is isolated');

@@ -1,3 +1,4 @@
+import { uiText } from '@cardbush/platform/i18n';
 import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
 import { remoteControlSchema, validateRemoteResponse, SUBAGENT_INTERACTION_OPERATIONS, type RemoteControl } from '@cardbush/bush-protocol';
 import { workerObservation } from './remoteWorkerObservation.mjs';
@@ -89,6 +90,7 @@ export class AgentService {
       ? openLocalWorkers(this.#workersProfile, { legacyRoot: this.root }) : openHeadlessWorkers(this.root);
   }
   readonly #remotePermissionAuthority: 'parent_delegate' | 'human_required';
+  readonly #legacyPermissionRouting: 'user' | 'parent';
   readonly #remotePermissionCeiling: 'task_free' | 'user_free' | 'all_free';
   readonly bundledRoot: string;
   readonly runtime: AgentRuntimeHost;
@@ -126,8 +128,11 @@ export class AgentService {
     const configurationRoot = this.#configurationRoot = options.localProfileRoot ? join(options.localProfileRoot, 'product-host') : root;
     const extensionRoot = this.#extensionRoot = options.localProfileRoot ?? root;
     this.#local = options.local === true;
-    // Only the remote administrator may delegate approval authority; never read it from a request.
-    this.#remotePermissionAuthority = (options.env?.CARDBUSH_REMOTE_PARENT_APPROVAL ?? process.env.CARDBUSH_REMOTE_PARENT_APPROVAL) === '1' ? 'parent_delegate' : 'human_required';
+    const parentApproval = z.enum(['0', '1']).optional().parse((options.env?.CARDBUSH_REMOTE_PARENT_APPROVAL ?? process.env.CARDBUSH_REMOTE_PARENT_APPROVAL) || undefined);
+    // Authenticated delegations follow the user's routing choice. An explicit
+    // administrator prohibition remains a hard ceiling; old clients keep their default.
+    this.#remotePermissionAuthority = parentApproval === '0' ? 'human_required' : 'parent_delegate';
+    this.#legacyPermissionRouting = parentApproval === '1' ? 'parent' : 'user';
     this.#remotePermissionCeiling = z.enum(['task_free', 'user_free', 'all_free']).parse(options.env?.CARDBUSH_REMOTE_PERMISSION_MODE ?? process.env.CARDBUSH_REMOTE_PERMISSION_MODE ?? 'task_free');
     this.#desktop = desktop;
     const runtimeRoot = join(root, 'runtime-state');
@@ -363,7 +368,7 @@ export class AgentService {
   }
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
     ...(this.#desktopSetup ? { desktopSetup: this.#desktopSetup } : {}),
-    capabilities: { ...(this.#toolsEnabled && !this.#webRestricted ? { workerInteraction: { profile: 'subagent-remote-proton' as const, version: '0.1' as const, binding: 'cardbush-http' as const, operations: [...SUBAGENT_INTERACTION_OPERATIONS], permissions: this.#remotePermissionAuthority } } : {}), webRemoteAgents: this.#webRestricted, webRestricted: this.#webRestricted, desktop: this.#desktop?.status().available === true, computerUse: this.#desktop?.status().available === true, browserUi: this.#desktop?.status().available === true, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: this.#toolsEnabled, tools: this.#toolsEnabled, delegation: this.#toolsEnabled, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sharedConfiguration: this.#toolsEnabled, sharedConfigurationVersion: 2, sandboxSettings: this.#toolsEnabled, pluginMarketplace: this.#toolsEnabled } }; }
+    capabilities: { ...(this.#toolsEnabled && !this.#webRestricted ? { workerInteraction: { profile: 'subagent-remote-proton' as const, version: '0.1' as const, binding: 'cardbush-http' as const, operations: [...SUBAGENT_INTERACTION_OPERATIONS], permissions: this.#remotePermissionAuthority, permissionRouting: true as const } } : {}), webRemoteAgents: this.#webRestricted, webRestricted: this.#webRestricted, desktop: this.#desktop?.status().available === true, computerUse: this.#desktop?.status().available === true, browserUi: this.#desktop?.status().available === true, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: this.#toolsEnabled, tools: this.#toolsEnabled, delegation: this.#toolsEnabled, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sharedConfiguration: this.#toolsEnabled, sharedConfigurationVersion: 2, sandboxSettings: this.#toolsEnabled, pluginMarketplace: this.#toolsEnabled } }; }
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; firstUserText?: string; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
@@ -603,12 +608,14 @@ export class AgentService {
       case 'delegation.submit': {
         const value = z.object({ taskId: id, sessionId: id, turnId: id, parentSessionId: id, parentTurnId: id,
           prompt: z.string().trim().min(1).max(1_000_000), permissionMode: sendSchema.shape.permissionMode, language: sendSchema.shape.language,
-          worker: remoteWorkerSchema.optional(), queue: z.boolean().optional() }).strict().parse(data);
+          worker: remoteWorkerSchema.optional(), queue: z.boolean().optional(), permissionRouting: z.enum(['user', 'parent']).optional() }).strict().parse(data);
+        const permissionRouting = value.permissionRouting ?? this.#legacyPermissionRouting;
         const levels = ['task_free', 'user_free', 'all_free'] as const;
         value.permissionMode = levels[Math.min(levels.indexOf(value.permissionMode), levels.indexOf(this.#remotePermissionCeiling))]!;
         if (value.turnId !== `turn-${value.taskId}` || !value.sessionId.startsWith('delegated-')) throw new Error('Invalid delegated task identity.');
         const existing = this.#state.jobs.find(job => job.id === value.taskId);
         if (existing) {
+          if ((existing.delegation?.permissionRouting ?? this.#legacyPermissionRouting) !== permissionRouting) throw new Error(uiText(value.language)('remoteSubagent.permissionRoutingConflict'));
           if (Boolean(existing.delegation?.queue) !== Boolean(value.queue)) throw new Error('Delegation ID was already used with different queue delivery.');
           if (JSON.stringify(existing.delegation?.worker) !== JSON.stringify(value.worker)) throw new Error('Delegation ID was already used for a different worker role.');
           if (existing.sessionId !== value.sessionId || existing.turnId !== value.turnId || existing.input.text !== value.prompt || existing.input.permissionMode !== value.permissionMode || existing.input.language !== value.language || existing.delegation?.parentSessionId !== value.parentSessionId || existing.delegation?.parentTurnId !== value.parentTurnId) throw new Error('Delegation ID was already used for different content.');
@@ -629,7 +636,7 @@ export class AgentService {
         if (!value.queue && this.#state.jobs.some(job => job.sessionId === value.sessionId && ['running', 'queued'].includes(job.status))) throw new Error('The original remote task is still active. Inspect or stop it before starting replacement work; use queue explicitly for a later message.');
         await this.#write(state => state.jobs.push({ id: value.taskId, sessionId: value.sessionId, turnId: value.turnId,
           input: { requestId: value.taskId, sessionId: value.sessionId, text: value.prompt, modelId: models.defaultModelId, permissionMode: value.permissionMode, language: value.language },
-          delegation: { parentSessionId: value.parentSessionId, parentTurnId: value.parentTurnId, queue: value.queue === true, ...(value.worker ? { worker: value.worker } : {}) }, createdAt: new Date().toISOString(), status: 'queued' }));
+          delegation: { parentSessionId: value.parentSessionId, parentTurnId: value.parentTurnId, permissionRouting, queue: value.queue === true, ...(value.worker ? { worker: value.worker } : {}) }, createdAt: new Date().toISOString(), status: 'queued' }));
         this.#pump(); return publicJob(this.#state.jobs.find(job => job.id === value.taskId)!);
       }
       case 'chat.send': {
@@ -919,7 +926,10 @@ export class AgentService {
       if (job.delegation) {
         if (job.delegation.worker) request.prefixMessages.push({ role: 'developer', content: job.delegation.worker.instructions });
         request.metadata = { ...request.metadata, agentRole: 'child', disabledTools: [...DEFAULT_CHILD_AGENT_DISABLED_TOOLS],
-          parentSessionId: job.delegation.parentSessionId, parentTurnId: job.delegation.parentTurnId, remoteDelegation: job.delegation };
+          parentSessionId: job.delegation.parentSessionId, parentTurnId: job.delegation.parentTurnId, remoteDelegation: job.delegation,
+          subagentTaskId: job.id, permissionRouting: this.#workerPermissionAuthority(job) === 'parent_delegate' ? 'parent' : 'user',
+          ...((job.delegation.permissionRouting ?? this.#legacyPermissionRouting) === 'parent' && this.#remotePermissionAuthority === 'human_required'
+            ? { permissionEscalationReason: 'remote_policy_requires_human' } : {}) };
         request.sessionMetadata = { ...request.sessionMetadata, agentRole: 'child', parentSessionId: job.delegation.parentSessionId, parentTurnId: job.delegation.parentTurnId };
         request.inputMessages = request.inputMessages.map(entry => entry.message.role === 'user' ? { ...entry, metadata: { ...entry.metadata, subagentAuthor: 'parent' } } : entry);
       }
@@ -956,6 +966,11 @@ export class AgentService {
       await this.#write(state => { const current = state.jobs.find(item => item.id === jobId)!; current.status = signal.aborted ? 'stopped' : 'failed'; current.completedAt = new Date().toISOString(); current.error = error instanceof Error ? error.message : String(error); });
     }
   }
+  #workerPermissionAuthority(job: AgentJob): 'parent_delegate' | 'human_required' {
+    return (job.delegation?.permissionRouting ?? this.#legacyPermissionRouting) === 'parent'
+      ? this.#remotePermissionAuthority : 'human_required';
+  }
+
   async #controlWorker(parentSessionId: string, control: RemoteControl, signal?: AbortSignal): Promise<unknown> {
     if (this.#closing || !this.#toolsEnabled || this.#webRestricted) throw new Error('Worker interaction is unavailable.');
     if (this.#storageFailure) throw new Error(this.#storageFailure);
@@ -967,7 +982,7 @@ export class AgentService {
     };
     const job = owned();
     const events = async () => await this.#command('runtime.list_turn_events', { sessionId: job.sessionId, turnId: job.turnId }) as RuntimeEvent[];
-    const observe = async () => workerObservation(owned(), await events(), this.#remotePermissionAuthority);
+    const observe = async () => workerObservation(owned(), await events(), this.#workerPermissionAuthority(owned()));
     if (control.operation === 'observe') {
       let snapshot = await observe();
       if (control.after !== undefined && control.after > snapshot.cursor) throw new Error('invalid_cursor');
@@ -999,7 +1014,7 @@ export class AgentService {
     if (!active && !(control.operation === 'message' && control.delivery === 'queue')) throw new Error('stale_target');
     const before = await events();
     if (control.operation === 'respond') {
-      const interaction = workerObservation(job, before, this.#remotePermissionAuthority).interactions.find(item => item.interactionId === control.response.interactionId);
+      const interaction = workerObservation(job, before, this.#workerPermissionAuthority(job)).interactions.find(item => item.interactionId === control.response.interactionId);
       if (!interaction) throw new Error('interaction_not_pending');
       validateRemoteResponse(interaction, control.response, 'parent_delegate');
     }
@@ -1017,7 +1032,8 @@ export class AgentService {
           const taskId = `queued-${createHash('sha256').update(key).digest('hex').slice(0, 40)}`;
           result = await this.#call('delegation.submit', { taskId, turnId: `turn-${taskId}`, sessionId: job.sessionId,
             parentSessionId, parentTurnId: job.delegation!.parentTurnId, prompt: control.text, queue: true,
-            permissionMode: job.input.permissionMode, language: job.input.language, worker: job.delegation!.worker });
+            permissionMode: job.input.permissionMode, permissionRouting: job.delegation!.permissionRouting ?? this.#legacyPermissionRouting,
+            language: job.input.language, worker: job.delegation!.worker });
         }
       } else if (control.response.kind === 'answer') {
         result = await this.#command('runtime.answer_solution_selection', { sessionId: job.sessionId, turnId: job.turnId,

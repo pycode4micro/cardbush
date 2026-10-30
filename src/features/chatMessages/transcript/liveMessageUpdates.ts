@@ -156,6 +156,7 @@ export function applyAssistantSegmentBoundary(
   update: StreamExecutionUpdate,
 ) {
   const messages = [...(current[sessionId] ?? [])];
+  const queued = update.reason === 'turn_guidance_queued';
   if (update.guidanceMessageId) {
     const guidanceMessageId = update.guidanceMessageId.trim();
     if (update.guidanceMessage && !messages.some(message => message.id === guidanceMessageId || message.messageId === guidanceMessageId || message.clientMessageId === guidanceMessageId)) {
@@ -166,23 +167,29 @@ export function applyAssistantSegmentBoundary(
       if (
         message.role === 'user' &&
         (message.id === guidanceMessageId ||
+          message.messageId === guidanceMessageId ||
           message.clientMessageId === guidanceMessageId ||
           String(message.metadata?.client_message_id ?? '') === guidanceMessageId)
       ) {
+        // Replayed queue receipts must not regress an already applied message.
+        if (queued && (message.status === 'sent' || message.metadata?.guidance_delivery === 'sent')) continue;
         messages[index] = {
           ...message,
           messageId: guidanceMessageId,
           sequence: update.sequence ?? message.sequence,
-          status: 'sent',
+          status: queued ? 'queued' : 'sent',
           metadata: {
             ...(message.metadata ?? {}),
-            guidance_delivery: 'sent',
+            ...update.guidanceMessage?.metadata,
+            guidance_delivery: queued ? 'queued' : 'sent',
             ...update.userMessageMetadata,
           },
         };
       }
     }
   }
+  // Enqueue is display-only; the running reply/tool is still in progress.
+  if (queued) return { ...current, [sessionId]: messages };
   const nextSegmentIndex =
     update.nextAssistantSegmentIndex ?? update.assistantSegmentIndex;
   const previousSegmentIndex =

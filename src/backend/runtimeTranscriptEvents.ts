@@ -88,3 +88,17 @@ export function guidanceAppliedUpdate(
     guidanceRoundIndex: event.payload.afterRound,
   };
 }
+
+/** Same queued-user-message projection for local and remote event streams. */
+export function guidanceQueuedUpdate(
+  event: Extract<RuntimeEvent, { kind: 'guidance_queued' }>,
+): StreamExecutionUpdate {
+  const { messageId, content, createdAt, metadata } = event.payload;
+  return {
+    ...streamChunk(event, ''), kind: 'loop_transition', reason: 'turn_guidance_queued',
+    guidanceMessageId: messageId, pendingGuidanceCount: event.payload.queueDepth,
+    guidanceMessage: { id: messageId, messageId, clientMessageId: messageId, role: 'user', content,
+      conversationId: event.sessionId, turnId: event.turnId, createdAt, sequence: event.sequence, status: 'queued',
+      metadata: { ...metadata, turn_guidance: true, client_message_id: messageId, guidance_delivery: 'queued' } },
+  };
+}

@@ -3,6 +3,7 @@ import { supportsRemoteInteraction, subagentInteractionCapabilitiesSchema, SUBAG
 import type { RemoteSubagentRequest, RemoteSubagentResult, SessionSnapshot } from '@cardbush/bush-protocol';
 import type { AgentJob, AgentInfo, AgentOperation, AgentEventRequest, AgentEventFrame } from './agentTypes.js';
 import { AgentNetworkError, AgentHttpError } from './agentHttpClient.mjs';
+import { uiText } from '@cardbush/platform/i18n';
 
 export interface RemoteSubagentConnection {
   connect(id: string): Promise<AgentInfo>;
@@ -24,6 +25,13 @@ export async function runRemoteSubagent(manager: RemoteSubagentConnection, reque
   signal?.throwIfAborted();
   if (agentId && info.id !== agentId) throw new Error('Remote Agent identity changed.');
   if (!info.capabilities.delegation) throw new Error('Update this Agent service to enable remote subagent delegation.');
+  if (input.permissionRouting && !info.capabilities.workerInteraction?.permissionRouting) {
+    // Older strict endpoints cannot accept routing. Never silently turn model
+    // approval into a human prompt (or enable model approval in user mode).
+    if (input.permissionRouting === 'parent' || info.capabilities.workerInteraction?.permissions === 'parent_delegate')
+      throw new Error(uiText(request.language)('remoteSubagent.permissionRoutingUpgradeRequired'));
+    delete input.permissionRouting;
+  }
   if (input.worker && !supportsRemoteInteraction(info.capabilities.workerInteraction)) throw new Error('Update this worker service before using a registered role and interactive delegation.');
   if (input.queue && (!supportsRemoteInteraction(info.capabilities.workerInteraction) ||
       !subagentInteractionCapabilitiesSchema.parse({ operations: info.capabilities.workerInteraction!.operations ?? [...SUBAGENT_INTERACTION_OPERATIONS] }).operations.includes('queue'))) throw new Error('Worker queue capability is unavailable.');

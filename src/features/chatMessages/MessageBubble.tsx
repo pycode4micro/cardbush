@@ -959,20 +959,18 @@ function MessageBubbleView({
   }
 
   if (message.role === 'user') {
+    const attachments = (imagePaths.length > 0 || videoPaths.length > 0 || audioPaths.length > 0 || fileAttachments.length > 0) && (
+      <section className="user-message-attachments" aria-label={uiText(language)('image.scope.attachments')}>
+        <MessageImageStrip paths={imagePaths} language={language} />
+        <MessageMediaStrip videoPaths={videoPaths} audioPaths={audioPaths} language={language} />
+        <MessageFileAttachmentStrip attachments={fileAttachments} language={language} />
+      </section>
+    );
     if (editing) {
       return (
         <div className="message-row user">
+          {attachments}
           <div className="user-edit-card">
-            <MessageImageStrip paths={imagePaths} language={language} />
-            <MessageMediaStrip
-              videoPaths={videoPaths}
-              audioPaths={audioPaths}
-              language={language}
-            />
-            <MessageFileAttachmentStrip
-              attachments={fileAttachments}
-              language={language}
-            />
             <textarea
               value={editText}
               autoFocus
@@ -1024,20 +1022,11 @@ function MessageBubbleView({
 
     return (
       <div className="message-row user">
-        <div className="user-bubble">
+        {attachments}
+        {Boolean(text || goalCommand || messageTeamId || message.metadata?.subagent_author || message.metadata?.automationReminder || messageDelivery === 'failed') && <div className="user-bubble">
           {Boolean(message.metadata?.subagent_author) && <div className="subagent-message-author">
             {message.metadata?.subagent_author === 'parent' ? (uiText(language)('messageBubble.parentAgent')) : (uiText(language)('quickContextRail.you'))}
           </div>}
-          <MessageImageStrip paths={imagePaths} language={language} />
-          <MessageMediaStrip
-            videoPaths={videoPaths}
-            audioPaths={audioPaths}
-            language={language}
-          />
-          <MessageFileAttachmentStrip
-            attachments={fileAttachments}
-            language={language}
-          />
           {messageTeamId && !selectedTeamReference(text) && (
             <div className="user-team-context" title={`Team: ${messageTeamId}`}>
               <PromptReferenceLink reference={{ kind: 'team', id: messageTeamId, title: messageTeamName || messageTeamId }} />
@@ -1078,15 +1067,15 @@ function MessageBubbleView({
               </button>
             </div>
           )}
-        </div>
+        </div>}
         <div className="message-actions">
-          <button
+          {text && <button
             type="button"
             title={uiText(language)('messageBubble.copy')}
             onClick={() => void copyText(text).catch(() => undefined)}
           >
             <Copy size={14} />
-          </button>
+          </button>}
           <button
             type="button"
             title={uiText(language)('messageBubble.editAndRerun')}

@@ -1,4 +1,4 @@
-import type { ComponentProps, RefObject } from 'react';
+import type { ComponentProps, RefObject, ReactNode } from 'react';
 import { PERSONAL_ASSISTANT_SESSION, type NextStepPrediction } from '@cardbush/bush-protocol';
 import { Composer } from '../composer';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
@@ -13,19 +13,22 @@ export type AssistantComposerControls = Pick<ComposerProps,
   'subagentPermissionRouting' | 'onSubagentPermissionRoutingChange' | 'reasoningLevel' |
   'reasoningLevelAvailable' | 'reasoningLevels' | 'onReasoningLevelChange' | 'skills' | 'disabledSkillNames' | 'onToggleSkill'>;
 
-export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, onSend, messages, fileDropTarget, browserTabs, nextStepPrediction, predictionPending }: {
+export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, onSend, messages, fileDropTarget, browserTabs, nextStepPrediction, predictionPending, interaction, quote }: {
   controls: AssistantComposerControls; language: string; draft: string; onDraftChange(value: string): void;
   ready: boolean; submitting: boolean; onSend(text: string): Promise<boolean>; messages: ChatMessage[];
   fileDropTarget: RefObject<HTMLElement | null>;
   browserTabs: BrowserPromptReference[];
   nextStepPrediction?: NextStepPrediction;
   predictionPending?: boolean;
+  interaction?: ReactNode;
+  quote?: ReactNode;
 }) {
   return <ComposerReferenceContext.Provider value={{ sessionId: PERSONAL_ASSISTANT_SESSION, browserTabs, messages, nextStepPrediction, predictionPending }}>
     <ComposerPresentationContext.Provider value={{ style: 'simple', preservePermissions: true }}>
       <Composer {...controls} compact language={language} draft={draft} onDraftChange={onDraftChange}
+        topAccessory={(interaction || quote) && <div className="assistant-composer-accessories">{interaction}{quote}</div>}
         fileDropTarget={fileDropTarget} inputReadOnly={!ready} submissionPending={submitting}
-        sending={false} referencePlanAvailable={false} retainUntilAccepted
+        sending={false} referencePlanAvailable={false} retainUntilAccepted optimisticSubmission
         onSend={onSend} onCancel={async () => {}} cancelEnabled={false}/>
     </ComposerPresentationContext.Provider>
   </ComposerReferenceContext.Provider>;

@@ -25,6 +25,8 @@ Registration gives a worker a role, not a second assistant identity in the appli
 
 Local and remote children now share the same ownership admission, control contract and observation projection. `subagent` supports explicit queue/insert and interaction responses on both hosts; `tasks inspect` returns the same observation shape, and `tasks stop` targets one run. Local queue entries reuse the existing task journal and completion waiters. Canceling an entry does not cancel its predecessor or let later work overtake an active turn. Insert adds guidance at a safe boundary without interrupting the current model request or tool.
 
+Display receipt and loop consumption are separate: the child Runtime publishes `guidance_queued` as soon as it queues an insert, including the authored text, message identity and author. Local and remote conversation views immediately show the parent message with the existing waiting indicator. Only `guidance_applied` seals the preceding reply and marks consumption. Replayed receipts update the same row without duplicates or status regression; no scheduler or additional model call is involved. Workers must run the updated Runtime to publish queued receipts; older workers retain their applied-only behavior.
+
 Discovery exposes identity, role and supported interactions; the worker's private tool catalog stays behind its own loop. New workers declare `workerInteraction.operations` (`observe`, `queue`, `insert`, `respond`, `cancel`); local discovery returns `interaction_capabilities`. Unsupported operations fail without fallback. Older version-0.1 workers without the optional declaration retain that version's full operation set. Closing an observation request does not cancel durable work; stopping a child requires a separate, acknowledged task operation.
 
 ## Identities and registration
@@ -84,14 +86,15 @@ Permission requests contain `kind: "permission"`, identities, `text`, `actionDig
 The remote administrator controls:
 
 ```sh
-# Defaults shown; set these on the worker process, not in a parent message.
+# Default execution ceiling:
 CARDBUSH_REMOTE_PERMISSION_MODE=task_free
-CARDBUSH_REMOTE_PARENT_APPROVAL=0
+# Optional administrator override; omit to follow authenticated task routing:
+# CARDBUSH_REMOTE_PARENT_APPROVAL=0
 ```
 
 The requested task mode is intersected with `task_free`, `user_free`, or `all_free` configured as the remote ceiling. Required sandbox policy and process protections remain in force. `all_free` means the host's allowed scope, not universal access.
 
-With `CARDBUSH_REMOTE_PARENT_APPROVAL=1`, the adapter can accept a parent-delegated one-use approval; default `human_required` rejects model approval. Denial remains possible. Human-only approval uses the worker owner's existing trusted approval interface; this preview does not implement cross-host human attestation. A parent cannot declare itself human in JSON. No authorized approval path means wait, deny or cancel, never implicit allow.
+Updated workers advertise `workerInteraction.permissionRouting: true`. The authenticated delegation carries `permissionRouting: parent | user`, persisted per task and retained for queued continuations. `parent` permits exact one-use parent approval without a duplicate human card; `user` remains human-required. Explicit `CARDBUSH_REMOTE_PARENT_APPROVAL=0` overrides parent routing with `human_required` and `escalationReason: remote_policy_requires_human`, displayed in the human approval card. `1` also enables parent approval for old clients that omit routing; otherwise omitted routing defaults to human approval. A model-approval dispatch to an old worker without this capability fails before submission with an upgrade explanation. Denial remains possible. Human-only approval uses the worker owner's existing trusted approval interface; this preview does not implement cross-host human attestation. A parent cannot declare itself human in JSON. No authorized approval path means wait, deny or cancel, never implicit allow.
 
 The local adapter uses the child's existing permission route and broker. A `parent` route permits a delegated one-use decision; a `user` route remains human-required. Parent-journal permissions are filtered by the exact source child session and turn, so sibling and parent approvals are never included. Both adapters verify the pending interaction and action digest; neither can widen the original capability IDs or resource scope.
 

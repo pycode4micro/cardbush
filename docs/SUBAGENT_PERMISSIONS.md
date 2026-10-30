@@ -53,7 +53,7 @@ non-overridable. An explicit clean dispatch may choose a lower permission mode;
 changing its permission routing never raises the pre-existing permission ceiling.
 
 The Composer route is a per-Turn product choice and takes precedence over the
-file's `permissionRouting`. `childPermissionMode` accepts `task_free`,
+file's `permissionRouting` and clean/registered role defaults, including resumed children. Model-owned requests stay in the audit journal but do not enter the human approval queue. Remote tasks carry the same choice; an explicit remote administrator prohibition is escalated with a reason. Unsupported old workers require an upgrade before model-approval dispatch. `childPermissionMode` accepts `task_free`,
 `user_free`, or `all_free`; elevated values are configuration-only and emit a
 startup security warning when used with `parent` routing.
 

@@ -77,9 +77,16 @@ export function createRuntimeInteractions() {
     parentTurnId?: string;
     subagentTaskId?: string;
     permissionRouting?: 'user' | 'parent';
+    permissionEscalationReason?: 'remote_policy_requires_human';
     answer: RuntimePermissionEntry['answer'];
-  }): PendingInteraction {
-    const fromSubagent = Boolean(input.sourceSessionId && input.sourceSessionId !== input.sessionId);
+  }): PendingInteraction | undefined {
+    // The parent owns this pending request through the subagent response broker.
+    // Keep the runtime events for audit, without registering a second human owner.
+    if (input.permissionRouting === 'parent' && !input.permissionEscalationReason) {
+      removeRuntimePermission(input.permissionId);
+      return undefined;
+    }
+    const fromSubagent = Boolean(input.subagentTaskId || input.sourceSessionId && input.sourceSessionId !== input.sessionId);
     const interaction: PendingInteraction = {
       id: input.permissionId,
       type: 'path_permission_request',
@@ -109,6 +116,7 @@ export function createRuntimeInteractions() {
         parentTurnId: input.parentTurnId,
         subagentTaskId: input.subagentTaskId,
         permissionRouting: input.permissionRouting,
+        permissionEscalationReason: input.permissionEscalationReason,
       },
     };
     permissions.set(input.permissionId, {

@@ -83,7 +83,7 @@ const parentRequest = registry => ({ protocol: 'bush.session_turn_request.v1', r
   prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Work' } }], tools: registry.definitions(), permissionMode: 'task_free',
   metadata: { individuation: { habits: false, predictions: false } } });
 
-for (const routing of ['parent', 'user']) test(`local ${routing} permission authority is enforced through the real broker`, { timeout: 7000 }, async () => {
+for (const routing of ['parent', 'user']) test(`local ${routing} permission authority is enforced through the real broker`, { timeout: 15000 }, async t => {
   const tasks = new SubagentTaskStore(), registry = new ToolRegistry(); let parentRound = 0, childRound = 0, effects = 0, deniedHuman = false;
   registry.register({ definition: { name: 'protected_action', inputSchema: { type: 'object' } }, decodeInput: input => input, visibleToChild: true,
     manifest: { effect_kind: 'observation', operation: 'fixture.read', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
@@ -105,8 +105,11 @@ for (const routing of ['parent', 'user']) test(`local ${routing} permission auth
     if (task.status === 'running') yield* respond(request, 'tasks', { action: 'wait', mode: 'all' }); else yield* respond(request);
   } };
   const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, subagentTaskStore: tasks,
-    subagentPermissionPolicy: { permissionRouting: routing, childPermissionMode: 'task_free' } });
-  const terminal = await host.runSessionTurn(parentRequest(registry), { signal: AbortSignal.timeout(5000) });
+    subagentPermissionPolicy: { permissionRouting: routing === 'parent' ? 'user' : 'parent', childPermissionMode: 'task_free' } });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const request = parentRequest(registry);
+  request.metadata.subagentPermissionRouting = routing;
+  const terminal = await host.runSessionTurn(request, { signal: AbortSignal.timeout(12000) });
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
   assert.equal(effects, routing === 'parent' ? 1 : 0);
   assert.equal(deniedHuman, routing === 'user');

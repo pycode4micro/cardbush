@@ -11,7 +11,8 @@ import type { PastedTextAttachment, PastedTextAttachmentApi } from '../../../ele
 
 const maxSize = 64 * 1024 * 1024;
 type Catalog = { skills: SkillSummary[]; pluginCommands: PluginCommandSummary[] };
-export function useAgentConversationHost(call: AgentCall, connectionId: string, sessionId: string, enabled: boolean, management = false) {
+export function useAgentConversationHost(call: AgentCall, connectionId: string, sessionId: string, enabled: boolean, management = false,
+  onOpenPreview?: (name: string) => void) {
   const [catalog, setCatalog] = useState<Catalog>({ skills: [], pluginCommands: [] });
   const [plugins, setPlugins] = useState<CardbushAppPlugin[]>([]);
   const [error, setError] = useState('');
@@ -84,7 +85,13 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
       const blob = new Blob(parts, { type: mime || 'application/octet-stream' });
       return { name, blob };
   }, [call, sessionId, enabled]);
-  const openFile = useCallback((path: string) => { setPreview({ path, name: path.replaceAll('\\', '/').split('/').at(-1) || path }); }, [setPreview]);
+  const openFile = useCallback((path: string) => {
+    const name = path.replaceAll('\\', '/').split('/').at(-1) || path;
+    setPreview({ path, name });
+    // Selection is an explicit action, not a consequence of retained preview state.
+    // Extracts also use this path, including when reopening the same file.
+    onOpenPreview?.(name);
+  }, [setPreview, onOpenPreview]);
   const previewFile = useCallback(async (path: string) => {
     const api = window.cardbushDesktop?.agents;
     if (!enabled || !api?.filePreview) throw new Error(uiText()('useAgentConversationHost.restart_the_updated_cardbush_app_and_connect'));

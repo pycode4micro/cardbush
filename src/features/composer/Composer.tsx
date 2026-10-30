@@ -357,6 +357,7 @@ export function Composer({
   inputReadOnly = false,
   portalCommands = false,
   retainUntilAccepted = false,
+  optimisticSubmission: immediateSubmission = false,
   topAccessory,
 }: {
   compact?: boolean;
@@ -414,8 +415,10 @@ export function Composer({
   inputReadOnly?: boolean;
   portalCommands?: boolean;
   retainUntilAccepted?: boolean;
+  optimisticSubmission?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
+  const optimisticSubmission = immediateSubmission || host?.optimisticSubmission;
   const referenceContext = useContext(ComposerReferenceContext);
   const attachmentKey = conversationViewKey(host?.id, referenceContext.sessionId, 'attachments');
   const [, rememberDraft, currentSubmittedDraft] = useConversationViewState(`${attachmentKey}:text`,
@@ -674,7 +677,7 @@ export function Composer({
         } finally { setAttachmentUploads(current => current - 1); }
       }
       const submittedIds = new Set([...imageAttachments, ...fileAttachments].map(item => item.id));
-      if (host?.optimisticSubmission) {
+      if (optimisticSubmission) {
         let clearedDraft: ReturnType<typeof currentSubmittedDraft> | undefined;
         if (currentSubmittedDraft() === submittedDraft) {
           onDraftChange('');
@@ -896,7 +899,7 @@ export function Composer({
   }
 
   function capturePastedText(event: React.ClipboardEvent<HTMLDivElement>) {
-    if (inputReadOnly || (submissionPending && !host?.optimisticSubmission)) { event.preventDefault(); event.stopPropagation(); return; }
+    if (inputReadOnly || (submissionPending && !optimisticSubmission)) { event.preventDefault(); event.stopPropagation(); return; }
     if (event.clipboardData.files.length) return;
     const text = event.clipboardData.getData('text/plain');
     const selection = textareaRef.current?.getSelectionRange() ?? { start: composerInputValue.length, end: composerInputValue.length };
@@ -1305,10 +1308,99 @@ export function Composer({
     return () => window.removeEventListener('keydown', handleImmediate);
   }, [fileDropTarget, keyboardShortcuts]);
 
+  const attachmentTray = (imageAttachments.length > 0 || fileAttachments.length > 0 || attachmentUploads > 0) && (
+    <section className="composer-attachments" aria-label={uiText(language)('image.scope.attachments')}>
+        {imageAttachments.length > 0 && (
+          <div className="composer-image-strip">
+            {imageAttachments.map((image) => (
+              <figure className="composer-image-thumb" key={image.id}>
+                <button
+                  className="composer-image-preview"
+                  type="button"
+                  aria-label={uiText(language)('composer.previewImage', { value1: image.name })}
+                  title={image.name}
+                  onClick={event => {
+                    const thumbnail = event.currentTarget.querySelector('img');
+                    setPreviewImage({
+                      src: image.previewUrl,
+                      name: image.name,
+                      path: image.path,
+                      naturalWidth: thumbnail?.naturalWidth,
+                      naturalHeight: thumbnail?.naturalHeight,
+                    });
+                  }}
+                >
+                  <img src={image.previewUrl} alt={image.name} />
+                </button>
+                <button
+                  className="composer-image-remove"
+                  type="button"
+                  aria-label={uiText(language)('composer.removeImage')}
+                  onClick={() =>
+                    setImageAttachments((current) =>
+                      current.filter((item) => item.id !== image.id),
+                    )
+                  }
+                >
+                  <X size={13} />
+                </button>
+              </figure>
+            ))}
+          </div>
+        )}
+        {fileAttachments.length > 0 && (
+          <div className="composer-file-strip">
+            {fileAttachments.map((file) => (
+              <article className="composer-file-attachment" data-pasted-text={file.pastedText ? true : undefined} key={file.id}>
+                <button
+                  className="composer-file-preview"
+                  type="button"
+                  title={file.kind === 'folder'
+                    ? uiText(language)('composer.openFolder', { value1: file.name })
+                    : uiText(language)('composer.previewReadOnly', { value1: file.name })}
+                  onClick={() => host ? host.openFile(file.path) : file.kind === 'folder'
+                    ? void window.cardbushDesktop?.openPath?.(file.path)
+                    : openInspector(file.path, file.name)}
+                >
+                  <ComposerFileIcon name={file.name} kind={file.kind} />
+                  <span className="composer-file-meta">
+                    <strong>{file.pastedText ? uiText(language)('composer.pastedText') : file.name}</strong>
+                    <small>{file.pastedText
+                      ? `${file.pastedText.lines} ${uiText(language)('composer.lineUnit', { count: file.pastedText.lines })} · ${formatFileSize(file.size)}`
+                      : file.kind === 'folder'
+                      ? uiText(language)('composer.folder')
+                      : formatFileSize(file.size)}</small>
+                    {file.pastedText?.preview && <small className="composer-pasted-text-preview">{file.pastedText.preview}</small>}
+                  </span>
+                </button>
+                <button
+                  className="composer-file-remove"
+                  type="button"
+                  disabled={attachmentUploads > 0}
+                  aria-label={file.kind === 'folder'
+                    ? uiText(language)('composer.removeFolder', { value1: file.name })
+                    : uiText(language)('composer.remove', { value1: file.name })}
+                  title={file.kind === 'folder'
+                    ? uiText(language)('composer.removeFolder_85e388c')
+                    : uiText(language)('composer.removeFile')}
+                  onClick={() => void removeFileAttachment(file).catch(error => showUiError(uiText(language)('composer.unableToRemoveAttachment'), String(error)))}
+                >
+                  <X size={12} />
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+        {attachmentUploads > 0 && <div className="composer-attachment-progress" role="status">{uiText(language)('composer.preparingAttachment')}</div>}
+    </section>
+  );
+
   const composer = (
     <div
       className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''} ${inputOnly ? 'input-only' : simple ? 'simple' : ''}`}
       ref={composerStackRef}
+      onPasteCapture={capturePastedText}
+      onPaste={(event) => void pasteAttachments(event).catch(error => showUiError(uiText(language)('composer.unableToAddAttachments'), String(error)))}
       style={
         {
           '--composer-popover-max-height': `${popoverMaxHeight}px`,
@@ -1392,9 +1484,10 @@ export function Composer({
         guidingQueuedId={guidingQueuedId} onGuideQueuedMessage={runtimeReady && !stopping && onGuideQueuedMessage ? guideQueuedMessage : undefined}
         onEditQueuedMessage={onEditQueuedMessage} onRemoveQueuedMessage={onRemoveQueuedMessage}
         onReorderQueuedMessage={onReorderQueuedMessage} />
+      {attachmentTray}
       <div
         ref={composerSurfaceRef}
-        className={`composer-surface${multilineInput || prediction ? ' is-multiline' : ''}${prediction ? ' has-next-step' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
+        className={`composer-surface${multilineInput ? ' is-multiline' : ''}${prediction ? ' has-next-step' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           const target = event.target;
@@ -1409,8 +1502,6 @@ export function Composer({
           event.preventDefault();
           textareaRef.current?.focus();
         }}
-        onPasteCapture={capturePastedText}
-        onPaste={(event) => void pasteAttachments(event).catch(error => showUiError(uiText(language)('composer.unableToAddAttachments'), String(error)))}
       >
         {fileDragActive && dropTargetRef.current && createPortal(
           <div className="composer-file-drop-overlay" role="status">
@@ -1419,87 +1510,6 @@ export function Composer({
             <span>{uiText(language)('composer.filesFoldersAndImagesAreSupported')}</span>
           </div>, dropTargetRef.current,
         )}
-        {imageAttachments.length > 0 && (
-          <div className="composer-image-strip">
-            {imageAttachments.map((image) => (
-              <figure className="composer-image-thumb" key={image.id}>
-                <button
-                  className="composer-image-preview"
-                  type="button"
-                  aria-label={uiText(language)('composer.previewImage', { value1: image.name })}
-                  onClick={event => {
-                    const thumbnail = event.currentTarget.querySelector('img');
-                    setPreviewImage({
-                      src: image.previewUrl,
-                      name: image.name,
-                      path: image.path,
-                      naturalWidth: thumbnail?.naturalWidth,
-                      naturalHeight: thumbnail?.naturalHeight,
-                    });
-                  }}
-                >
-                  <img src={image.previewUrl} alt={image.name} />
-                </button>
-                <button
-                  className="composer-image-remove"
-                  type="button"
-                  aria-label={uiText(language)('composer.removeImage')}
-                  onClick={() =>
-                    setImageAttachments((current) =>
-                      current.filter((item) => item.id !== image.id),
-                    )
-                  }
-                >
-                  <X size={13} />
-                </button>
-              </figure>
-            ))}
-          </div>
-        )}
-        {fileAttachments.length > 0 && (
-          <div className="composer-file-strip">
-            {fileAttachments.map((file) => (
-              <article className="composer-file-attachment" data-pasted-text={file.pastedText ? true : undefined} key={file.id}>
-                <button
-                  className="composer-file-preview"
-                  type="button"
-                  title={file.kind === 'folder'
-                    ? uiText(language)('composer.openFolder', { value1: file.name })
-                    : uiText(language)('composer.previewReadOnly', { value1: file.name })}
-                  onClick={() => host ? host.openFile(file.path) : file.kind === 'folder'
-                    ? void window.cardbushDesktop?.openPath?.(file.path)
-                    : openInspector(file.path, file.name)}
-                >
-                  <ComposerFileIcon name={file.name} kind={file.kind} />
-                  <span className="composer-file-meta">
-                    <strong>{file.pastedText ? uiText(language)('composer.pastedText') : file.name}</strong>
-                    <small>{file.pastedText
-                      ? `${file.pastedText.lines} ${uiText(language)('composer.lineUnit', { count: file.pastedText.lines })} · ${formatFileSize(file.size)}`
-                      : file.kind === 'folder'
-                      ? uiText(language)('composer.folder')
-                      : formatFileSize(file.size)}</small>
-                    {file.pastedText?.preview && <small className="composer-pasted-text-preview">{file.pastedText.preview}</small>}
-                  </span>
-                </button>
-                <button
-                  className="composer-file-remove"
-                  type="button"
-                  disabled={attachmentUploads > 0}
-                  aria-label={file.kind === 'folder'
-                    ? uiText(language)('composer.removeFolder', { value1: file.name })
-                    : uiText(language)('composer.remove', { value1: file.name })}
-                  title={file.kind === 'folder'
-                    ? uiText(language)('composer.removeFolder_85e388c')
-                    : uiText(language)('composer.removeFile')}
-                  onClick={() => void removeFileAttachment(file).catch(error => showUiError(uiText(language)('composer.unableToRemoveAttachment'), String(error)))}
-                >
-                  <X size={12} />
-                </button>
-              </article>
-            ))}
-          </div>
-        )}
-        {attachmentUploads > 0 && <div className="composer-attachment-progress" role="status">{uiText(language)('composer.preparingAttachment')}</div>}
         {goalDraft && (
           <div className="composer-command-mode goal" role="status">
             <Target size={15} />
@@ -1518,7 +1528,7 @@ export function Composer({
           </div>
         )}
         <ComposerPromptInput
-          readOnly={inputReadOnly || (submissionPending && !host?.optimisticSubmission)}
+          readOnly={inputReadOnly || (submissionPending && !optimisticSubmission)}
           richReferences={host ? 'applications' : true}
           ref={textareaRef}
           plugins={plugins}

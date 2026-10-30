@@ -608,6 +608,50 @@
   padding: 0 2px 2px 0;
 }
 
+/* Draft attachments sit above the input surface and never change its grid. */
+.composer-attachments {
+  --composer-attachment-height: 80px;
+  --composer-attachment-image-width: 100px;
+  --composer-attachment-file-width: 228px;
+  --composer-attachment-gap: 8px;
+  --composer-attachment-radius: 12px;
+  display: flex;
+  align-items: stretch;
+  gap: var(--composer-attachment-gap);
+  max-width: 100%;
+  min-width: 0;
+  margin-bottom: var(--composer-attachment-gap);
+  padding: 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.composer-attachments > :is(.composer-image-strip, .composer-file-strip) { display: contents; }
+.composer-attachments .composer-image-thumb {
+  flex: 0 0 var(--composer-attachment-image-width);
+  width: var(--composer-attachment-image-width);
+  height: var(--composer-attachment-height);
+  border-radius: var(--composer-attachment-radius);
+  background: var(--surface-strong);
+}
+.composer-attachments .composer-image-preview img { object-fit: contain; }
+.composer-attachments .composer-file-attachment {
+  flex: 0 0 var(--composer-attachment-file-width);
+  height: var(--composer-attachment-height);
+  border-radius: var(--composer-attachment-radius);
+  background: var(--surface-strong);
+}
+.composer-attachments .composer-file-preview { height: 100%; }
+.composer-attachments :is(.composer-image-preview, .composer-file-preview):focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.composer-attachments :is(.composer-image-remove, .composer-file-remove) {
+  width: 24px;
+  height: 24px;
+  top: 4px;
+  right: 4px;
+  transform: none;
+}
+.composer-attachments .composer-attachment-progress { align-self: center; flex-shrink: 0; margin: 0; }
+
 .composer-image-thumb {
   position: relative;
   flex: 0 0 auto;
@@ -812,8 +856,8 @@
 }
 .composer-prediction-accept:hover,
 .composer-prediction-accept:focus-visible { color: var(--text); background: var(--hover); }
-.composer-stack.simple .composer-surface.has-next-step > textarea { min-height: 2lh; }
-.composer-stack.simple .composer-surface.has-next-step .composer-tools > .composer-prediction-accept { display: inline-flex; }
+/* A suggestion is a placeholder, not authored content for field-sizing. */
+.composer-surface.has-next-step > textarea:placeholder-shown { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .composer-footer {
   height: 36px;

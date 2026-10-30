@@ -32,7 +32,26 @@ module.exports = async ({ run, until, win, delay, pointer, readCanvas, path, chi
 
   await run(`document.querySelector('.canvas-present-button').focus();document.querySelector('.canvas-present-button').click()`);
   await until(`!!document.querySelector('.canvas-presentation[open]')`);
-  assert.deepEqual(await visible(), ['interactive'], 'presentation starts at the selected region');
+  assert.equal(await run(`document.querySelector('.canvas-presentation').dataset.layout`), 'canvas', 'presentation defaults to the original composition');
+  assert.deepEqual(await visible(), ['interactive', 'alignment'], 'all regions form one presentation page');
+  assert.equal(await run(`document.querySelectorAll('.canvas-presentation [aria-label=下一页]').length`), 0);
+  assert.equal(await run(`document.querySelector('.canvas-presentation-toolbar').getBoundingClientRect().top>=36`), true, 'presentation controls stay below the native window controls');
+  assert.equal(await run(`getComputedStyle(document.querySelector('.canvas-presentation-window-drag')).webkitAppRegion`), 'drag');
+  const composition = async () => {
+    const frames = Object.fromEntries(before.document.items.map(item => [item.id, item.frame]));
+    const rects = await run(`(()=>{const board=document.querySelector('.canvas-presentation-layout').getBoundingClientRect();return Array.from(document.querySelectorAll('[data-presentation-item]')).map(node=>{const r=node.getBoundingClientRect();return{id:node.dataset.presentationItem,x:r.left-board.left,y:r.top-board.top,width:r.width,height:r.height}})})()`);
+    const left = Math.min(...Object.values(frames).map(f=>f.x)), top = Math.min(...Object.values(frames).map(f=>f.y));
+    const scale = rects[0].width / frames[rects[0].id].width;
+    for (const rect of rects) {
+      const f = frames[rect.id];
+      assert.ok(Math.abs(rect.x-(f.x-left)*scale)<.1 && Math.abs(rect.y-(f.y-top)*scale)<.1, 'relative placement is preserved');
+      assert.ok(Math.abs(rect.width-f.width*scale)<.1 && Math.abs(rect.height-f.height*scale)<.1, 'all regions share the same scale');
+    }
+    return scale;
+  };
+  await composition();
+  assert.equal(await run(`(()=>{const p=document.querySelector('.canvas-presentation-viewport').getBoundingClientRect(),c=document.querySelector('.canvas-presentation-layout').getBoundingClientRect();return c.left>=p.left&&c.right<=p.right&&c.top>=p.top&&c.bottom<=p.bottom})()`), true, 'whole composition fits a single page');
+  await screenshot('canvas-presentation-original-layout');
   await fit();
   await until(`!!document.querySelector('.canvas-presentation [data-presentation-item=interactive] iframe')`);
   const deadline = Date.now() + 10000;
@@ -44,6 +63,26 @@ module.exports = async ({ run, until, win, delay, pointer, readCanvas, path, chi
   }
   assert.ok(presentationFrame, 'presentation HTML loaded');
   await presentationFrame.executeJavaScript('document.querySelector("button").click()');
+  const canvasSize = win.getContentSize(); win.setContentSize(canvasSize[0], 360);
+  await until('innerHeight===360'); await fit();
+  const singleScale = await composition();
+  await mode('连续浏览');
+  await until(`document.querySelector('.canvas-presentation').dataset.mode==='continuous' && document.querySelector('.canvas-presentation-viewport').scrollHeight>document.querySelector('.canvas-presentation-viewport').clientHeight`);
+  assert.ok(await composition() > singleScale, 'continuous canvas grows to the viewport width');
+  assert.equal(await run(`(()=>{const p=document.querySelector('.canvas-presentation-viewport'),s=getComputedStyle(p),c=document.querySelector('.canvas-presentation-layout');return Math.abs(c.getBoundingClientRect().width-(p.clientWidth-parseFloat(s.paddingLeft)-parseFloat(s.paddingRight)))<1})()`), true);
+  await run(`document.querySelector('.canvas-presentation-viewport').focus()`); key('End');
+  await until(`document.querySelector('.canvas-presentation-viewport').scrollTop>0`);
+  await screenshot('canvas-presentation-original-continuous');
+  const lowerPosition = await run(`document.querySelector('.canvas-presentation-viewport').scrollTop`);
+  await mode('单页'); await fit();
+  await mode('连续浏览');
+  await until(`Math.abs(document.querySelector('.canvas-presentation-viewport').scrollTop-${lowerPosition})<1`);
+  await mode('单页');
+  win.setContentSize(...canvasSize); await until(`innerHeight===${canvasSize[1]}`);
+  await mode('按区域');
+  assert.deepEqual(await visible(), ['interactive'], 'region presentation still starts at the selected region');
+  await fit();
+  assert.equal(await presentationFrame.executeJavaScript('document.querySelector("button").textContent'), '1', 'layout and scroll modes reuse the same interactive frame');
   await screenshot('canvas-presentation-pages');
   await click('下一页'); await until(`!document.querySelector('[data-presentation-item=alignment]').hidden`);
   assert.deepEqual(await visible(), ['alignment']); await fit();
@@ -69,12 +108,21 @@ module.exports = async ({ run, until, win, delay, pointer, readCanvas, path, chi
   assert.equal(await run(`document.querySelector('.canvas-presentation [role=status]').textContent`), 'Page 2 of 2');
   assert.equal(await run(`(()=>{const r=document.querySelector('.canvas-presentation-toolbar').getBoundingClientRect();return [...document.querySelectorAll('.canvas-presentation-toolbar button')].every(b=>{const q=b.getBoundingClientRect();return q.left>=r.left&&q.right<=r.right})})()`), true, 'translated controls fit a narrow window');
   await screenshot('canvas-presentation-narrow-light');
+  await mode('Original layout'); win.setContentSize(390, 820);
+  await until('innerWidth===390'); await fit(); await composition();
+  assert.deepEqual(await visible(), ['interactive', 'alignment']);
+  assert.equal(await run(`(()=>{const viewport=document.querySelector('.canvas-presentation-viewport'),p=viewport.getBoundingClientRect(),c=document.querySelector('.canvas-presentation-layout').getBoundingClientRect();return viewport.scrollWidth<=viewport.clientWidth&&c.left>=p.left&&c.right<=p.right&&c.top>=p.top&&c.bottom<=p.bottom})()`), true, 'single composition fits even the narrowest window');
+  assert.equal(await run(`Array.from(document.querySelectorAll('.canvas-presentation-toolbar button')).every(button=>{const r=button.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=36})`), true, 'all translated layout, mode and exit controls stay accessible');
+  await screenshot('canvas-presentation-original-narrow');
+  assert.equal(await presentationFrame.executeJavaScript('document.querySelector("button").textContent'), '1', 'original layout restores the same interactive content after regional paging');
+  await mode('By region');
   await run(`canvasAppearance('zh','dark')`); win.setContentSize(...size);
   await until(`window.innerWidth===${size[0]} && !!document.querySelector('.canvas-presentation [aria-label=退出演示]')`);
   await fit();
   await run(`document.querySelector('.canvas-presentation [aria-label=进入全屏]').click()`, true);
   await until(`!!document.fullscreenElement && !!document.querySelector('.canvas-presentation [aria-label=退出全屏]')`);
   assert.equal(await run('document.fullscreenElement.classList.contains("canvas-presentation-screen")'), true);
+  assert.equal(await run(`document.querySelector('.canvas-presentation-toolbar').getBoundingClientRect().top`), 0, 'fullscreen removes the native titlebar reserve');
   await click('退出全屏'); await until(`!document.fullscreenElement && !!document.querySelector('.canvas-presentation [aria-label=进入全屏]')`);
   await run(`document.querySelector('.canvas-presentation [aria-label=进入全屏]').click()`, true);
   await until('!!document.fullscreenElement');
@@ -89,5 +137,5 @@ module.exports = async ({ run, until, win, delay, pointer, readCanvas, path, chi
   assert.equal(await run(`document.activeElement===document.querySelector('.canvas-present-button')`), true, 'focus returns to presentation launcher');
   await run(`document.querySelector('.canvas-present-button').click()`); await until(`!!document.querySelector('.canvas-presentation[open]')`);
   await run(`document.querySelector('.canvas-presentation-viewport').focus()`); key('Escape'); await until(`!document.querySelector('.canvas-presentation')`);
-  console.log('Canvas presentation passed: hover-only controls, fitting, pagination, continuous scrolling, language, theme, narrow window and state preservation.');
+  console.log('Canvas presentation passed: original multi-region composition, single-page fit, continuous canvas and reading position, native titlebar clearance, hover-only controls, region pagination, language, theme, narrow window and state preservation.');
 };

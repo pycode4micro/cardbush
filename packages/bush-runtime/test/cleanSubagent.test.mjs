@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { individuationPreferenceText } from '@cardbush/bush-protocol';
+import { individuationPreferenceText, REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
@@ -43,6 +43,14 @@ const build = (f, overrides = {}) => buildChildTurnRequest({
   prompt: clean.prompt, cleanSystemPrompt: clean.system_prompt, inherited: [], metadata: {}, ...overrides,
 });
 
+for (const routing of ['parent', 'user']) test(`user-selected ${routing} approval overrides a clean role default`, () => {
+  const f = fixture();
+  f.request.metadata.subagentPermissionRouting = routing;
+  const child = build(f, { cleanSettings: { permission_routing: routing === 'parent' ? 'user' : 'parent' } });
+  assert.equal(child.metadata.permissionRouting, routing);
+  assert.equal(child.metadata.permissionScopeSessionId, routing === 'parent' ? 'child-s' : f.request.sessionId);
+});
+
 test('ordinary dispatch defaults to fork and retains the exact parent prefix and definitions', async () => {
   const f = fixture(), definition = f.registry.resolve('subagent').definition;
   assert.equal(definition.inputSchema.properties.mode.default, 'fork');
@@ -53,9 +61,11 @@ test('ordinary dispatch defaults to fork and retains the exact parent prefix and
   assert.equal(outcome.result.mode, 'fork');
   assert.deepEqual(f.requests[0].prefixMessages, f.request.messages);
   assert.deepEqual(f.requests[0].tools, f.request.tools);
-  assert.deepEqual(f.requests[0].inputMessages[0].message, { role: 'user', name: 'individuation_preference', visibility: 'internal',
+  assert.deepEqual(f.requests[0].inputMessages[0].message, { role: 'user', name: 'delivery_guidance', visibility: 'internal',
+    content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') });
+  assert.deepEqual(f.requests[0].inputMessages[1].message, { role: 'user', name: 'individuation_preference', visibility: 'internal',
     content: individuationPreferenceText() });
-  assert.match(f.requests[0].inputMessages[1].message.content, /^你当前处于子agent状态\n\n我继续实现/);
+  assert.match(f.requests[0].inputMessages[2].message.content, /^你当前处于子agent状态\n\n我继续实现/);
 });
 
 test('explicit clean supplies the actual system and user messages without inherited history or fallback policy', async () => {
@@ -67,6 +77,7 @@ test('explicit clean supplies the actual system and user messages without inheri
   const child = f.requests[0];
   assert.deepEqual(child.prefixMessages, [{ role: 'system', content: clean.system_prompt }]);
   assert.deepEqual(child.inputMessages.map(item => item.message), [
+    { role: 'user', name: 'delivery_guidance', visibility: 'internal', content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') },
     { role: 'user', name: 'individuation_preference', visibility: 'internal',
       content: individuationPreferenceText() },
     { role: 'user', content: `你当前处于子agent状态\n\n${clean.prompt}` },

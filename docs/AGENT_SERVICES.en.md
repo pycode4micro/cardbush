@@ -60,7 +60,7 @@ Role name, instructions and revision accompany work. The worker uses its default
 
 ## Policy and configuration
 
-The worker defaults to `CARDBUSH_REMOTE_PERMISSION_MODE=task_free`, intersected with the parent's request. An administrator may choose user_free/all_free, but required sandbox and process protections remain. `CARDBUSH_REMOTE_PARENT_APPROVAL=0` requires human authority; 1 explicitly delegates one-use decisions to the parent within the protocol. Prose, a parent's full-access mode or a claimed human identity grants nothing. Without an authorized approval channel, wait/deny/cancel.
+The worker defaults to `CARDBUSH_REMOTE_PERMISSION_MODE=task_free`, intersected with the parent's request. An administrator may choose user_free/all_free, but required sandbox and process protections remain. Updated services follow the authenticated task’s `permissionRouting`: model approval permits exact one-use parent decisions without duplicate human cards. An explicit `CARDBUSH_REMOTE_PARENT_APPROVAL=0` still requires human approval and reports `remote_policy_requires_human`; 1 also retains parent approval for legacy clients. Old clients without a routing field otherwise default to human approval. Prose, a parent's full-access mode or a claimed human identity grants nothing. Without an authorized approval channel, wait/deny/cancel.
 
 Service startup probes installed sandbox support without downloading it. `--sandbox required` imposes a ceiling; `--sandbox off` is an explicit administrator policy. Linux bubblewrap, Windows AppContainer, path permissions, plugins and page grants are distinct; see [execution sandbox](EXECUTION_SANDBOX.en.md).
 

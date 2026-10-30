@@ -4547,7 +4547,7 @@ function matchingTerminalSnapshot(
 }
 
 function isTurnGuidanceBoundary(update: StreamExecutionUpdate) {
-  return update.reason === 'turn_guidance_pending' ||
+  return update.reason === 'turn_guidance_queued' || update.reason === 'turn_guidance_pending' ||
     update.reason === 'turn_guidance_applied';
 }
 

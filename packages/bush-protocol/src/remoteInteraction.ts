@@ -26,6 +26,7 @@ export const remoteInteractionSchema = z.discriminatedUnion('kind', [
   z.object({ ...identity, interactionId: id, kind: z.literal('permission'), text, actionDigest: digest,
     operations: z.array(id).min(1).max(64), resources: z.array(z.object({ kind: id, value: text }).strict()).min(1).max(64),
     authority: z.enum(['parent_delegate', 'human_required']),
+    escalationReason: z.enum(['remote_policy_requires_human']).optional(),
     decisions: z.array(z.enum(['allow_once', 'deny'])).min(1).max(2),
     createdAt: z.string().datetime(), expiresAt: z.string().datetime().optional() }).strict(),
 ]);

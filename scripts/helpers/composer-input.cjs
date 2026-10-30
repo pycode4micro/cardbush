@@ -307,8 +307,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run('inputSkillHost = { ...inputSkillHost, pluginCommands: [inputPluginCommand] }; void 0;');
     for (const [role, content] of [['assistant', '/baiying-replay:baiying-replay 说明'], ['user', '`/baiying-replay:baiying-replay` 说明'], ['user', '/demo:review 文件']]) {
       await run(`inputBubbleMessage = { id: ${JSON.stringify(role + content)}, role: ${JSON.stringify(role)}, content: ${JSON.stringify(content)} }; inputRenderSkillMessage();`);
-      await until('!!document.querySelector(".markdown-content") && !document.querySelector(".markdown-fallback")', 'literal message loaded');
-      assert.equal(await run('document.querySelector(".skill-reference-token")'), null, 'only user Skill invocations become tokens');
+      await until('!!document.querySelector(".markdown-content") && !document.querySelector(".markdown-fallback") && !document.querySelector(".skill-reference-token")', 'literal message replaces the prior Skill token');
+      assert.equal(await run('!!document.querySelector(".skill-reference-token")'), false, 'only user Skill invocations become tokens');
     }
     console.log('Composer and Skill messages passed: selection/send/copy/edit, Markdown, shared catalog, refresh/removal, local/remote file routing, literal examples and IME.');
   } catch (error) {

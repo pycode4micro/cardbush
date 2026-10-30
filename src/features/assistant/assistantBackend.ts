@@ -16,6 +16,17 @@ let contextVersion = 0;
 export const assistantBackend = {
   ensure: (name: string) => createConversation({ sessionId, title: name, metadata: { personalAssistant: true } }),
   read: (after = 0) => readConversationJournal(sessionId, after),
+  async react(messageId: string, reaction: import('@cardbush/bush-protocol').AssistantReaction | null) {
+    const version = contextVersion;
+    const { generation } = await assistantBackend.read();
+    if (resetting || version !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
+    return conversationJournalCommand<{ reactions: Record<string, import('@cardbush/bush-protocol').AssistantReaction> }>({ action: 'react', sessionId, messageId, reaction, generation });
+  },
+  async answerPermission(answer: import('@cardbush/bush-protocol').RuntimePermissionAnswer) {
+    const runtime = createDesktopRuntimeSession();
+    try { return await runtime.answerPermission(answer); }
+    finally { runtime.dispose(); }
+  },
   contextVersion: () => contextVersion,
   async stop() {
     const { generation } = await assistantBackend.read();
@@ -49,11 +60,15 @@ export const assistantBackend = {
       window.dispatchEvent(new Event('cardbush:assistant-reset'));
     })().finally(() => { resetting = undefined; });
   },
-  async send(text: UserPromptInput, config: ChatStreamRequest, spoken: boolean, expectedVersion = contextVersion) {
+  async send(text: UserPromptInput, config: ChatStreamRequest, spoken: boolean, expectedVersion = contextVersion,
+    identity?: Pick<ConversationEntry, 'id' | 'createdAt' | 'replyTo'>) {
     if (resetting) throw Error(uiText()('assistantBackend.context_is_being_reset_send_the_message'));
     if (expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
-    const { generation } = await assistantBackend.read();
+    const { generation, entries } = await assistantBackend.read();
     if (resetting || expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
+    // A lost acknowledgement must not duplicate an already admitted message.
+    if (identity && entries.some(entry => entry.id === identity.id)) return;
+    if (identity?.replyTo && !entries.some(entry => entry.id === identity.replyTo!.messageId && entry.visibility === 'conversation' && !['voice', 'task'].includes(entry.source))) throw Error(uiText()('assistantMessage.referenceUnavailable'));
     const runtime = createDesktopRuntimeSession();
     try {
       const prompt = readUserPrompt(text);
@@ -65,10 +80,11 @@ export const assistantBackend = {
         promptContext: outbound.promptContext,
         files: profile.targetAgent ? attachments.map(file => file.execution!.path) : input.files, images: input.images, attachments }, runtime, { turnId: `assistant_${crypto.randomUUID()}` });
       parent.metadata.assistantOutputMode = spoken ? 'voice' : 'text';
-      const entry: ConversationEntry = { id: `input-${crypto.randomUUID()}`, role: 'user', content: outbound.displayInput || input.userInput,
+      const entry: ConversationEntry = { id: identity?.id ?? `input-${crypto.randomUUID()}`, role: 'user', content: outbound.displayInput || input.userInput,
+        ...(identity?.replyTo ? { replyTo: identity.replyTo } : {}),
         ...(outbound.promptContext ? { promptContext: outbound.promptContext } : {}),
         ...(attachments.length ? { attachments } : {}),
-        source: spoken ? 'voice' : 'text', visibility: spoken ? 'internal' : 'conversation', createdAt: new Date().toISOString() };
+        source: spoken ? 'voice' : 'text', visibility: spoken ? 'internal' : 'conversation', createdAt: identity?.createdAt ?? new Date().toISOString() };
       await conversationJournalCommand({ action: 'turn', sessionId, entry, parent, profile, generation });
     } finally { runtime.dispose(); }
   },

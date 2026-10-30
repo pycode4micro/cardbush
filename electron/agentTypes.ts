@@ -13,10 +13,10 @@ export type AgentJob = {
   goalContinuation?: boolean;
   manualRelease?: boolean;
   guidance?: { turnId: string; messageId: string; createdAt: string; applied?: boolean; mode?: 'append_context' | 'interrupt_and_continue' };
-  delegation?: { parentSessionId: string; parentTurnId: string; queue?: boolean; worker?: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).RemoteSubagentRequest['worker'] };
+  delegation?: { parentSessionId: string; parentTurnId: string; permissionRouting?: 'user' | 'parent'; queue?: boolean; worker?: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).RemoteSubagentRequest['worker'] };
 };
 export type AgentInfo = { protocol: 'cardbush.agent.v1'; apiVersion: 1; eventStreams: ['sse', 'ndjson']; id: string; name: string; platform: string; desktopSetup?: import('./agentDesktopTypes.js').AgentDesktopSetup; capabilities: {
-  workerInteraction?: { profile: 'subagent-remote-proton'; version: '0.1'; binding: 'cardbush-http'; permissions: 'parent_delegate' | 'human_required'; operations?: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).SubagentInteractionCapabilities['operations'] };
+  workerInteraction?: { profile: 'subagent-remote-proton'; version: '0.1'; binding: 'cardbush-http'; permissions: 'parent_delegate' | 'human_required'; permissionRouting?: true; operations?: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).SubagentInteractionCapabilities['operations'] };
   webRestricted?: boolean; webRemoteAgents?: boolean; desktop: boolean; computerUse: boolean; browserUi: boolean; durableQueue: true; eventReplay: true; projects: true; models: true; plugins: boolean; tools?: boolean; delegation?: boolean; conversationUi?: boolean; conversationManagement?: boolean; sharedConversation?: boolean; sharedSettings?: boolean; sharedConfiguration?: boolean; sharedConfigurationVersion?: number; sandboxSettings?: boolean; pluginMarketplace?: boolean;
 } };
 export const agentOperations = ['workers.command', 'devices.command', 'web.configure', 'web.files', 'web.activity', 'info', 'desktop.status', 'desktop.frame', 'desktop.take', 'desktop.release', 'desktop.input', 'projects.list', 'projects.save', 'projects.remove', 'projects.default',

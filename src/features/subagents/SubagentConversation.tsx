@@ -26,6 +26,7 @@ import { subagentConversationBackend } from './subagentConversationBackend';
 import { subagentTaskPresentation } from './subagentTaskPresentation';
 import { subagentModelConfig, type SubagentExecutionModel } from './subagentConversationModel';
 import './subagent-conversation.css';
+import './subagent-activity.css';
 
 export type SubagentConversationOptions = {
   theme?: ThemeMode;
@@ -70,11 +71,11 @@ function RemoteChildConversation({ connectionId, ...props }: Props & { connectio
   const connection = useMemo(() => createAgentConversationBackend(call, connectionId,
     (request, listener) => window.cardbushDesktop!.agents!.watchEvents(connectionId, request, listener),
     { enhanced: true, sharedSettings: true, visualInputAvailable: true }), [call, connectionId]);
-  const { host: baseHost, preview, closePreview, error } = useAgentConversationHost(call, connectionId, props.task.childSessionId!, true, true);
-  const host = useMemo(() => ({ ...baseHost, sessionId: props.task.childSessionId!, runtime: connection.runtime }), [baseHost, props.task.childSessionId, connection]);
   const inspector = useContext(ConversationInspectorContext);
-  const previewId = `subagent-file:${host.id}`;
-  useEffect(() => { if (props.active && preview) inspector?.open(previewId, preview.name); }, [props.active, preview, previewId, inspector?.open]);
+  const previewId = `subagent-file:${connectionId}:${props.task.childSessionId}`;
+  const openPreview = useCallback((name: string) => inspector?.open(previewId, name), [previewId, inspector?.open]);
+  const { host: baseHost, preview, closePreview, error } = useAgentConversationHost(call, connectionId, props.task.childSessionId!, true, true, openPreview);
+  const host = useMemo(() => ({ ...baseHost, sessionId: props.task.childSessionId!, runtime: connection.runtime }), [baseHost, props.task.childSessionId, connection]);
   useEffect(() => () => { inspector?.close(previewId); closePreview(); }, [previewId, inspector?.close, closePreview]);
   return <ConversationHostContext.Provider value={host}>
     <SubagentConversationView {...props} error={props.error || error} runtime={connection.runtime} base={connection.backend} host={host} call={call}/>
@@ -176,10 +177,10 @@ export function SubagentConversationView({ task, language, active, refresh, refr
     <section className="subagent-conversation" aria-label={isEmployeeTask(task) ? (uiText(language)('subagentConversation.employeeConversation')) : (uiText(language)('subagentConversation.subagentConversation'))}>
       <header className="subagent-conversation-heading">
         <span className={`subagent-inspector-state ${status.tone}`}>
-          {isEmployeeTask(task) ? <EmployeeIcon size={18}/> : displayedStatus === 'running' ? <LoaderCircle className="spin" size={16}/> : displayedStatus === 'failed' ? <TriangleAlert size={16}/> : displayedStatus === 'stopped' ? <CircleStop size={16}/> : <CheckCircle2 size={16}/>}
+          {displayedStatus === 'running' ? <LoaderCircle className="subagent-activity-spinner"/> : isEmployeeTask(task) ? <EmployeeIcon/> : displayedStatus === 'failed' ? <TriangleAlert/> : displayedStatus === 'stopped' ? <CircleStop/> : <CheckCircle2/>}
         </span>
-        <div><strong>{employeeTaskTitle(task, language)}</strong><small>{isEmployeeTask(task) ? (uiText(language)('subagentConversation.employeeTaskConversation')) : (uiText(language)('subagentConversation.childOfTheParentAgent'))} · {status.label}</small></div>
-        <button type="button" disabled={refreshing} title={uiText(language)('subagentConversation.refreshConversation')} onClick={() => void refreshAll().catch(error => setError(String(error)))}><RefreshCw size={15} className={refreshing ? 'spin' : ''}/></button>
+        <div><strong title={employeeTaskTitle(task, language)}>{employeeTaskTitle(task, language)}</strong><small>{isEmployeeTask(task) ? (uiText(language)('subagentConversation.employeeTaskConversation')) : (uiText(language)('subagentConversation.childOfTheParentAgent'))} · {status.label}</small></div>
+        <button type="button" disabled={refreshing} title={uiText(language)('subagentConversation.refreshConversation')} onClick={() => void refreshAll().catch(error => setError(String(error)))}><RefreshCw className={refreshing ? 'subagent-activity-spinner' : undefined}/></button>
       </header>
       <ChatPanel embedded welcomeEnabled={false} workSummaryAvailable={false}
         language={language} theme={theme} title={employeeTaskTitle(task, language)} sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => openReview()}

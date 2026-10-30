@@ -338,7 +338,7 @@ export function registerSubagentTool(
           return options.remoteAgents!.run({ ...remote, taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
             sessionId: childSessionId, turnId: childTurnId, prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${context.input.prompt}`,
             ...(context.input.delivery === 'queue' ? { queue: true } : {}),
-            permissionMode, language: String(parent.metadata.uiLanguage || 'zh'),
+            permissionMode, permissionRouting: route === 'parent' ? 'parent' : 'user', language: String(parent.metadata.uiLanguage || 'zh'),
           }, context.signal);
         })().catch(error => ({ status: error instanceof Error && error.name === 'AbortError' ? 'stopped' as const : 'failed' as const, finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} }))
           .then(result => tasks.finish({ parentSessionId: context.sessionId, taskId, ...result })).finally(() => observer.abort());
@@ -412,7 +412,9 @@ export function registerSubagentTool(
           throw new Error('The parent workspace changed. Start a new child for that workspace instead of moving an existing child implicitly.');
         const originalTools = new Set(saved.tools.map(tool => tool.name));
         const levels = ['task_free', 'user_free', 'all_free'];
-        const routing = saved.metadata.permissionRouting === 'parent' ? 'parent' : childRequest.metadata.permissionRouting;
+        const selectedRouting = context.turn?.request.metadata.subagentPermissionRouting;
+        const routing = selectedRouting === 'parent' || selectedRouting === 'user' ? selectedRouting
+          : saved.metadata.permissionRouting ?? childRequest.metadata.permissionRouting;
         const disabled = [...new Set([...(saved.metadata.disabledTools as string[] ?? []), ...(childRequest.metadata.disabledTools as string[] ?? [])])];
         const turnLimits = [saved.metadata.pluginAgentMaxTurns, childRequest.metadata.pluginAgentMaxTurns]
           .filter((value): value is number => typeof value === 'number');

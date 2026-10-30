@@ -18,7 +18,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       onDraftChange:draft=>{predProps.draft=draft;renderPrediction();},onCancel:async()=>{predCancels++;},
       onSend:async(text,options)=>{predSends.push(text);predSendOptions.push(options??null);predProps.draft='';renderPrediction();}};
     window.renderPrediction=()=>renderView(h('div',{style:{width:'min(760px,100%)',padding:20,margin:'140px auto'}}, predAssistant
-      ? h(views.AssistantComposer,{controls:predProps,language:'zh',draft:predProps.draft,onDraftChange:predProps.onDraftChange,ready:true,submitting:false,
+      ? h(views.AssistantComposer,{controls:predProps,language:predProps.language,draft:predProps.draft,onDraftChange:predProps.onDraftChange,ready:true,submitting:false,
         onSend:predProps.onSend,messages:[],fileDropTarget:{current:null},browserTabs:[],nextStepPrediction:prediction,predictionPending:predContext.predictionPending})
       : h(views.ComposerReferenceContext.Provider,{value:predContext},h(views.ComposerPresentationContext.Provider,{value:{style:predStyle,preservePermissions:true}},h(views.Composer,predProps)))));
     window.predKey=(key='Enter',options={})=>{const input=document.querySelector('[data-composer-input]');input.focus();
@@ -50,7 +50,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.deepEqual(await run('predSends'), []);
   }
   for (const theme of ['theme-dark','theme-bright']) {
-    await run(`document.body.classList.remove('theme-dark','theme-bright');document.body.classList.add('${theme}');renderPrediction();`);
+    await run(`window.viewTheme='${theme}';renderPrediction();`);
     await pause(80);
     await fs.writeFile(path.join(root, 'tmp', 'composer-prediction-' + theme + '.png'), (await window.capturePage()).toPNG());
   }
@@ -157,9 +157,26 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('prediction=validPrediction;renderPrediction();');
   await until('!!document.querySelector(".composer-surface.has-next-step")','assistant restores a valid forecast');
   assert.notEqual(await run('getComputedStyle(document.querySelector(".composer-surface.has-next-step")).display'), 'none');
-  window.setContentSize(430, 720); await pause(80);
-  assert.equal(await run('(()=>{const a=document.querySelector("textarea").getBoundingClientRect(),b=document.querySelector(".composer-actions").getBoundingClientRect();return a.bottom<=b.top+1})()'), true,
-    'narrow simple input keeps suggested text above the controls');
+  const geometry = `(()=>{const s=document.querySelector('.composer-surface'),i=s.querySelector('textarea'),a=s.querySelector('.composer-actions'),r=s.getBoundingClientRect(),ir=i.getBoundingClientRect(),ar=a.getBoundingClientRect();return {height:r.height,radius:getComputedStyle(s).borderRadius,inputHeight:ir.height,inputTop:ir.top-r.top,actionsTop:ar.top-r.top,actionsHeight:ar.height,stacked:s.classList.contains('is-multiline'),contained:ir.right<=ar.left+1&&ar.right<=r.right,overflow:document.documentElement.scrollWidth>innerWidth}})()`;
+  const themeColors = new Map();
+  for (const [theme,language] of [['theme-dark','zh'],['theme-bright','en']]) for (const width of [1000,430]) {
+    window.setContentSize(width, 720);
+    await run(`window.viewTheme='${theme}';predProps.language='${language}';views.saveIndividuation({habits:true,predictions:false});renderPrediction();`);
+    await until('!document.querySelector(".composer-surface.has-next-step")', 'baseline empty input');await pause(80);
+    const baseline = await run(geometry);
+    themeColors.set(theme, await run('getComputedStyle(document.querySelector(".composer-surface")).backgroundColor'));
+    for (const text of ['我想每天固定时间收到一个提醒。','帮我把这次创作的优化和滚动闪烁修复一起提交 push，并整理一份完整的检查报告']) {
+      await run(`prediction={...validPrediction,id:'layout-'+${JSON.stringify(theme+width+text)},text:${JSON.stringify(text)}};views.saveIndividuation({habits:true,predictions:true});renderPrediction();`);
+      await until('!!document.querySelector(".composer-surface.has-next-step")', 'suggestion placeholder');await pause(80);
+      assert.deepEqual(await run(geometry),baseline,'short/long suggestions keep the empty input geometry, toolbar and radius in '+theme+' at '+width);
+      assert.equal(await run('document.querySelector("textarea").value'),'','suggestion is still not authored text');
+      assert.equal(await run('document.querySelector("textarea").placeholder'),text,'the complete suggestion remains available for acceptance');
+      assert.equal(baseline.stacked,false);assert.equal(baseline.contained,true);assert.equal(baseline.overflow,false);
+    }
+    await fs.writeFile(path.join(root,'tmp',`composer-prediction-assistant-${theme}-${width}.png`),(await window.capturePage()).toPNG());
+  }
+  assert.notEqual(themeColors.get('theme-dark'),themeColors.get('theme-bright'),'both actual App themes were exercised');
+  await run('prediction=validPrediction;predProps.language="zh";renderPrediction();');
   await fs.writeFile(path.join(root, 'tmp', 'composer-prediction-assistant.png'), (await window.capturePage()).toPNG());
   await run('predContext.predictionPending=true;renderPrediction();');
   await until('!document.querySelector(".composer-surface.has-next-step")', 'assistant busy state hides old suggestion');
@@ -171,12 +188,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('!!document.querySelector(".composer-surface.has-next-step")', 'assistant idle');
   await run('predKey("Enter")');
   await until('predProps.draft===prediction.text', 'keyboard confirmation only inserts');
+  await until('!!document.querySelector(".composer-surface.is-multiline")','accepted long text expands as authored content');
   assert.equal(await run('predSends.length'), 5);
   await run('prediction={...prediction,id:"tab-assistant"};predType("");renderPrediction();');
   await until('!!document.querySelector(".composer-surface.has-next-step")', 'new prediction in the simple assistant composer');
   assert.equal(await run('predKey("Tab")'), true);
   await until('predProps.draft===prediction.text', 'assistant Tab also inserts without sending');
   assert.equal(await run('predSends.length'), 5);
+  await run('predType("短句")');
+  await until('!document.querySelector(".composer-surface.is-multiline")','shortening the authored text restores the compact row');
   await run('predType(badPrediction.text);');
   await pause(30);await run('predKey()');
   await until('predSends.length===6','prediction checks never block the user\'s own text');

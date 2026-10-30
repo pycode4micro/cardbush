@@ -44,13 +44,14 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-bright
     renderStability();
     }
   `);
-  await until("document.querySelector('.user-bubble .message-image-strip img')?.naturalWidth === 1280", 'large user attachment loaded');
+  await until("document.querySelector('.user-message-attachments .message-image-strip img')?.naturalWidth === 1280", 'large user attachment loaded outside the text bubble');
+  assert.equal(await run("document.querySelector('.user-bubble .message-image-strip')"), null, 'user text and attachments have independent surfaces');
   assert.equal(await run("document.querySelector('.message-tool-artifact img')"), null, 'tool images stay in the on-demand viewer');
   await pause(600);
   await run(`
     window.stableList = document.querySelector('.message-list');
     window.stableRow = document.querySelector('.message-row.streaming');
-    window.stableImage = document.querySelector('.user-bubble .message-image-strip img');
+    window.stableImage = document.querySelector('.user-message-attachments .message-image-strip img');
     window.stableParagraph = stableRow.querySelector('.markdown-content p');
     window.stableToolBlock = stableRow.querySelector('.tool-execution-block');
     window.stabilityBaseline = { top: stableList.scrollTop, height: stableList.scrollHeight, y: stableImage.getBoundingClientRect().y };

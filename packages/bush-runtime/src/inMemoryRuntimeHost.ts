@@ -1,9 +1,11 @@
 import { ASSISTANT_CONVERSATION_COMMAND, assistantConversationRequestSchema } from '@cardbush/bush-protocol';
+import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
 import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt } from '@cardbush/bush-protocol';
 import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks } from './registeredAgents.js';
 import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
+import { AssistantManagement } from './assistantManagement.js';
 import { ConversationJournal } from './conversationJournal.js';
 import { restoreSessionModelPolicy, systemPolicyIdentity } from './sessionModelPolicy.js';
 import { executionWorkspace, isSshExecution, sshExecutionTools, sshTerminalTools } from './workspaceExecutionMode.js';
@@ -383,6 +385,7 @@ export class InMemoryRuntimeHost {
   readonly #subagentTasks: SubagentTaskStore;
   #realtimeAgents?: RealtimeAgentDispatcher;
   readonly #assistant: AssistantConversation;
+  readonly #assistantManagement: AssistantManagement;
   readonly #remoteAgents?: InMemoryRuntimeHostOptions['remoteAgents'];
   #voiceMaintenance = new Map<string, AbortController>();
   readonly #subagentResume: SubagentResumeStore;
@@ -471,12 +474,16 @@ export class InMemoryRuntimeHost {
     );
     this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.runInternalTask.bind(this));
     registerIndividuationTools(this.#toolRegistry, this.#memory.store.path, this.#memory);
+    this.#assistantManagement = new AssistantManagement({ registry: this.#toolRegistry, executions: this.#toolExecutions,
+      capabilities: this.#capabilityGrants, coordination: () => this.#coordination, automation: options.automation,
+      hooks: request => this.#managementToolHooks(request) });
     this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal')), {
       provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks'].includes(tool.name)),
+      management: this.#assistantManagement,
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
       snapshotImage: (source, signal) => this.#modelImages.snapshot(source, signal),
     });
@@ -671,7 +678,7 @@ export class InMemoryRuntimeHost {
         onInteraction: (parentSessionId, taskId, observation) => {
           for (const interaction of observation.interactions) this.#conversations.notify(parentSessionId, {
             key: `child:${taskId}:${interaction.interactionId}`.slice(0, 200), wake: true,
-            content: `Your child task ${taskId} needs a response. Read tasks inspect if the state has changed. Reply using subagent with this task_id and response. Question answers are text; a human_required permission cannot be approved by the model.\n${JSON.stringify(interaction)}`,
+            content: `Your child task ${taskId} needs a response. Read tasks inspect if the state has changed. Reply using subagent with this task_id and response. For parent_delegate permissions, review the exact operation against the user's authorized task and submit allow_once or deny with its interactionId and actionDigest; do not ask the user to repeat approval. For human_required permissions, explain the escalationReason (remote_policy_requires_human means the remote administrator explicitly requires human approval) and use the existing human approval card (remote requests appear in the child conversation); do not create a duplicate approval question. Never claim approval succeeded before the tool confirms it or bypass the restriction by changing global permissions. Question answers are text.\n${JSON.stringify(interaction)}`,
           });
         },
         readChildConversation: sessionId => this.#childConversation(sessionId),
@@ -799,6 +806,7 @@ export class InMemoryRuntimeHost {
           "assistant_segment_started",
           "assistant_segment_delta",
           "assistant_segment_completed",
+          "guidance_queued",
           "guidance_applied",
           "tool_queued",
           "file_edit_preview",
@@ -1595,6 +1603,10 @@ export class InMemoryRuntimeHost {
               `A direct user message was queued in the child conversation: ${JSON.stringify(guidance.content)}`);
           }
         }
+        // Receipt visibility must not wait for the next safe model/tool boundary.
+        // A child still preparing its workspace publishes when its Turn starts.
+        const identity = this.#eventLog.replay(guidance.sessionId, guidance.turnId)[0];
+        if (identity) this.#publishQueuedGuidance(identity);
         return {
           protocol: guidance.protocol,
           sessionId: guidance.sessionId,
@@ -1755,6 +1767,24 @@ export class InMemoryRuntimeHost {
         throw error;
       }
     });
+  }
+
+  #publishQueuedGuidance({ requestId, sessionId, turnId }: RuntimeEventIdentity) {
+    const identity = { requestId, sessionId, turnId };
+    const queue = this.#guidanceQueues.get(JSON.stringify([identity.sessionId, identity.turnId])) ?? [];
+    if (!queue.length) return;
+    const published = new Set(this.#eventLog.replay(identity.sessionId, identity.turnId)
+      .filter(event => event.kind === 'guidance_queued').map(event => event.payload.messageId));
+    for (const guidance of queue) {
+      if (published.has(guidance.messageId)) continue;
+      const prompt = readUserPrompt(guidance.content, guidance.metadata);
+      this.#eventLog.append(identity, { kind: 'guidance_queued', payload: {
+        messageId: guidance.messageId, content: prompt.text, createdAt: guidance.createdAt, queueDepth: queue.length,
+        metadata: { ...promptContextMetadata(prompt), guidance_mode: guidance.mode ?? 'append_context',
+          ...(guidance.metadata?.subagentAuthor ? { subagentAuthor: guidance.metadata.subagentAuthor } : {}),
+          ...(typeof guidance.metadata?.sourceEnabled === 'boolean' ? { sourceEnabled: guidance.metadata.sourceEnabled } : {}) },
+      } });
+    }
   }
 
   #notifyChildConversation(parentSessionId: string, taskId: string, content: string) {
@@ -1973,6 +2003,7 @@ export class InMemoryRuntimeHost {
         kind: "turn_started",
         payload: { status: "running" },
       });
+      this.#publishQueuedGuidance(identity);
       this.#recovery.save({
         request,
         messages: request.messages,
@@ -4287,7 +4318,24 @@ export class InMemoryRuntimeHost {
     }
   }
 
+  #managementToolHooks(request: ModelRequest): import('./toolExecutionCoordinator.js').ToolExecutionHooks {
+    const run = async (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => {
+      const extensions = await this.#loadPluginExtensions?.();
+      return this.#pluginHooks.run(await this.#pluginHookScopes.select(extensions?.hooks ?? [], request), event, { ...context, request });
+    };
+    return {
+      before: context => run('PreToolUse', { toolName: context.toolCall.name, input: context.input, signal: context.signal }),
+      permission: context => run('PermissionRequest', { toolName: context.toolCall.name, input: context.input, signal: context.signal }),
+      after: context => {
+        const error = context.outcome.kind === 'returned' ? context.outcome.resultError : context.outcome.error;
+        return run(error ? 'PostToolUseFailure' : 'PostToolUse', { toolName: context.toolCall.name, input: context.input,
+          ...(context.outcome.kind === 'returned' ? { output: context.outcome.result } : {}), ...(error ? { error: error.message } : {}), signal: context.signal });
+      },
+    };
+  }
+
   #answerPermission(answer: RuntimePermissionAnswer): RuntimePermissionAnswer {
+    if (this.#assistantManagement.hasPermission(answer.permissionId)) return this.#assistantManagement.answerPermission(answer);
     const matches = [...this.#toolLoops].filter((toolLoop) =>
       toolLoop.hasPendingPermission(answer.permissionId),
     );
@@ -4971,6 +5019,22 @@ function childPermissionRuntimeOptions(
   "capabilitySessionId" | "permissionEventIdentity" | "permissionSource"
 > {
   if (request.metadata.agentRole !== "child") return {};
+  // Remote children have no parent journal on this host. Keep their permissions
+  // in the child journal, carrying the server-resolved routing for every reader.
+  if (request.metadata.remoteDelegation && request.metadata.subagentTaskId) {
+    return {
+      capabilitySessionId: identity.sessionId,
+      permissionSource: {
+        sourceSessionId: identity.sessionId, sourceTurnId: identity.turnId,
+        parentSessionId: metadataString(request.metadata.parentSessionId),
+        parentTurnId: metadataString(request.metadata.parentTurnId),
+        subagentTaskId: metadataString(request.metadata.subagentTaskId),
+        permissionRouting: request.metadata.permissionRouting === 'parent' ? 'parent' : 'user',
+        ...(request.metadata.permissionEscalationReason === 'remote_policy_requires_human'
+          ? { permissionEscalationReason: 'remote_policy_requires_human' as const } : {}),
+      },
+    };
+  }
   const requestId = metadataString(request.metadata.permissionEventRequestId);
   const parentSessionId = metadataString(request.metadata.permissionEventSessionId);
   const parentTurnId = metadataString(request.metadata.permissionEventTurnId);

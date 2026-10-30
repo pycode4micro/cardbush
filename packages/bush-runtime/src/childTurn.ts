@@ -121,7 +121,9 @@ export function buildChildTurnRequest(input: {
     : defaultPermissionRouting === "user"
       ? parentRequest.permissionMode
       : turnPolicy.childPermissionMode ?? configuredPolicy.childPermissionMode;
-  const permissionRouting = settings.permission_routing ?? defaultPermissionRouting;
+  // The user's per-turn choice owns approval routing, including registered roles.
+  const permissionRouting = requestedPermissionRouting === 'user' || requestedPermissionRouting === 'parent'
+    ? requestedPermissionRouting : settings.permission_routing ?? defaultPermissionRouting;
   const permissionMode = settings.permission_mode ?? permissionCeiling;
   const levels = ['task_free', 'user_free', 'all_free'];
   if (levels.indexOf(permissionMode) > levels.indexOf(permissionCeiling)) throw new Error('Clean permission_mode exceeds the configured child permission ceiling.');

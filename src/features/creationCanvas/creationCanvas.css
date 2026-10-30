@@ -13,9 +13,9 @@
 .canvas-toolbar button:disabled,.canvas-menu button:disabled{opacity:.4;cursor:default}.canvas-menu-wrap{position:relative;z-index:8}.canvas-menu-dismiss{position:fixed;inset:0;border-radius:0!important;opacity:0;z-index:0}
 .canvas-menu{position:absolute;right:0;top:40px;width:250px;padding:6px;border:1px solid var(--border);border-radius:12px;background:var(--surface-raised);box-shadow:0 12px 40px #0004;z-index:1}.canvas-menu button{display:flex;width:100%;justify-content:flex-start;border-radius:7px;background:transparent;padding:10px}.canvas-menu button:hover{background:color-mix(in srgb,var(--text) 7%,var(--surface))}
 .canvas-workspace,.canvas-stage-shell{position:relative;flex:1;min-width:0;min-height:0;display:flex}
-.canvas-stage{overflow:hidden;position:relative;flex:1;min-width:0;min-height:0;background:var(--surface);cursor:grab;outline:none;touch-action:none}
+.canvas-stage{overflow:hidden;position:relative;flex:1;min-width:0;min-height:0;background-color:var(--canvas-paper);background-image:radial-gradient(circle,var(--canvas-dot) .7px,transparent .9px);background-size:24px 24px;cursor:grab;outline:none;touch-action:none}
 .canvas-stage:focus-visible{box-shadow:inset 0 0 0 1px var(--accent)}
-.canvas-size{position:absolute;background-color:var(--canvas-paper);background-image:radial-gradient(circle,var(--canvas-dot) .7px,transparent .9px);background-size:24px 24px;outline:1px solid var(--canvas-boundary);border-radius:2px}
+.canvas-size{position:absolute}
 .canvas-plane{position:absolute;top:0;left:0;transform-origin:top left}
 .canvas-pan-catcher{position:absolute;inset:0;z-index:20;cursor:grab}
 .canvas-item{position:absolute;outline:var(--canvas-line) solid #959da04d;background:var(--canvas-paper);cursor:default}
@@ -77,6 +77,8 @@
 .canvas-presentation{--canvas-ink:#e5e5e5;--canvas-boundary:#ffffff24;--presentation-gap:16px;position:fixed;inset:0;margin:0;width:100vw;height:100dvh;max-width:none;max-height:none;padding:0;border:0;background:var(--surface);color:var(--text);overflow:hidden}
 .canvas-presentation[open]{display:flex;flex-direction:column}
 .canvas-presentation-screen{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;background:var(--surface);color:var(--text)}
+.canvas-presentation-window-drag{height:var(--window-frame-height,36px);flex-shrink:0;-webkit-app-region:drag}
+.canvas-presentation-screen:fullscreen .canvas-presentation-window-drag{display:none}
 .canvas-presentation[data-light-paper=true]{--canvas-ink:#252525;--canvas-boundary:#00000030}
 .canvas-presentation::backdrop{background:var(--surface)}
 .canvas-presentation-toolbar{display:flex;align-items:center;gap:12px;padding:12px var(--presentation-gap);border-bottom:1px solid var(--border);flex-shrink:0}
@@ -90,6 +92,11 @@
 .canvas-presentation-modes{display:flex;gap:4px}
 .canvas-presentation-viewport{flex:1;min-height:0;min-width:0;overflow:hidden}
 .canvas-presentation[data-mode=continuous] .canvas-presentation-viewport{overflow-y:auto;scroll-snap-type:y proximity;overscroll-behavior:contain}
+.canvas-presentation-layout{position:relative;width:100%;height:100%}
+.canvas-presentation[data-layout=canvas] .canvas-presentation-viewport{display:flex;flex-direction:column;padding:var(--presentation-gap);background:var(--canvas-paper);scroll-snap-type:none;scrollbar-gutter:stable}
+.canvas-presentation[data-layout=canvas] .canvas-presentation-layout{flex-shrink:0;margin:auto}
+.canvas-presentation[data-layout=canvas] .canvas-presentation-page{position:absolute;padding:0;gap:0;scroll-snap-align:none}
+.canvas-presentation[data-layout=canvas] .canvas-presentation-page h2{display:none}
 .canvas-presentation-page{display:flex;flex-direction:column;gap:var(--presentation-gap);height:100%;min-width:0;padding:var(--presentation-gap);scroll-snap-align:start;box-sizing:border-box}
 .canvas-presentation-page[hidden]{display:none}
 .canvas-presentation-page h2{flex-shrink:0;margin:0;font-size:14px;font-weight:500;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-mid)}

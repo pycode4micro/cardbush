@@ -31,7 +31,7 @@
 
 根 Turn 完全访问时，`all_free` 是执行树的继承默认值，与路由无关。普通询问在 Runtime 内解决，不传到 GUI；硬准入拒绝不可绕过。显式 clean 可降低权限，修改路由不能抬高原权限上限。
 
-输入框路由是每轮产品选择，优先于文件 `permissionRouting`。`childPermissionMode` 接受 `task_free`、`user_free`、`all_free`；提高权限仅可通过配置，搭配 parent 路由会产生启动安全提示。
+输入框路由是每轮产品选择，优先于文件 `permissionRouting` 和 clean／员工角色默认配置，续接子会话也使用当前选择。父审批请求保留审计事件，但不进入人工审批队列。远程任务同步携带该选择；远端管理员明确禁止模型审批时，显示原因并上交人工。不支持此能力的旧 worker 需先升级才能使用模型审批。`childPermissionMode` 接受 `task_free`、`user_free`、`all_free`；提高权限仅可通过配置，搭配 parent 路由会产生启动安全提示。
 
 ## 模型策略
 

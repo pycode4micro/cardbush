@@ -1,0 +1,15 @@
+/* Imported by each task surface: activity must not depend on a voice or
+   composer stylesheet having been loaded by an unrelated view. */
+.subagent-activity-spinner {
+  --subagent-spin-duration: 1.2s;
+  flex-shrink: 0;
+  transform-box: view-box;
+  transform-origin: center;
+  animation: subagent-activity-turn var(--subagent-spin-duration) linear infinite;
+}
+@keyframes subagent-activity-turn { to { transform: rotate(360deg); } }
+:where(html[data-window-visible="false"]) .subagent-activity-spinner { animation-play-state: paused; }
+:where(html[data-motion-preference="on"]) .subagent-activity-spinner { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :where(html:not([data-motion-preference="off"])) .subagent-activity-spinner { animation: none; }
+}
