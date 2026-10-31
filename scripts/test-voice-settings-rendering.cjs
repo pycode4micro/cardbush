@@ -27,7 +27,7 @@ app.whenReady().then(async () => {
       import { SettingsDropdown } from ${file('src/features/settings/SettingsDropdown.tsx')};
       import { defaultVoiceSettings } from ${file('electron/voiceTypes.ts')};
       import { defaultRealtimeVoiceSettings } from ${file('electron/realtimeVoiceTypes.ts')};
-      let settings={...defaultVoiceSettings},realtime={...defaultRealtimeVoiceSettings};
+      let settings={...defaultVoiceSettings,voice:'male'},realtime={...defaultRealtimeVoiceSettings};
       window.cardbushDesktop={voice:{settings:async()=>settings,saveSettings:async value=>(settings=value),
         realtime:{settings:async()=>realtime,saveSettings:async input=>{const {apiKey,...rest}=input;return realtime={...rest,hasApiKey:apiKey===undefined?realtime.hasApiKey:!!apiKey};}},
         chooseSpeechPath:async kind=>window.nextSpeechPath??null,
@@ -37,14 +37,14 @@ app.whenReady().then(async () => {
         capabilities:async()=>({available:false,voices:[],recognizers:[],error:'UI test: no microphone or speech engine is used.'}),
         modelStatus:async()=>({supported:true,state:'not-installed',totalBytes:0,downloadedBytes:0,sources:[]}),
         speakerStatus:async()=>({enabled:false,mode:'strict',enrolled:false,profiles:[]}),cancel:async()=>{},onAudio:()=>()=>{}}};
-      function Fixture(){const [theme,setTheme]=useState('dark'),[font,setFont]=useState(1),[custom,setCustom]=useState(false),[open,setOpen]=useState(true);
-        window.fixture={theme:setTheme,font:setFont,custom:setCustom};
+      function Fixture(){const [theme,setTheme]=useState('dark'),[font,setFont]=useState(1),[custom,setCustom]=useState(false),[open,setOpen]=useState(true),[language,setLanguage]=useState('zh');
+        window.fixture={theme:setTheme,font:setFont,custom:setCustom,language:setLanguage};
         return <div className={'app theme-'+theme} style={{'--ui-font-scale':font,...(custom?{'--surface':'#203442','--surface-strong':'#284557','--text':'#fff2cc','--accent':'#a7e8bd'}:{})}}>
           <button onClick={()=>setOpen(true)}>语音设置</button>
-          {open && <section className="settings-shell voice-settings-test" style={{position:'fixed',inset:16,padding:20,overflow:'auto',background:'var(--surface-strong)'}}>
-            <button onClick={()=>setOpen(false)}>关闭</button><VoiceSettingsPanel language="zh"/>
+          {open && <section className="settings-shell voice-settings-test" style={{position:'fixed',inset:16,height:'auto',display:'block',padding:20,overflow:'auto',background:'var(--surface-strong)'}}>
+            <button onClick={()=>setOpen(false)}>关闭</button><VoiceSettingsPanel language={language}/>
           </section>}
-            <div className="settings-shell" style={{position:'fixed',right:16,bottom:16,width:210}}><SettingsDropdown label="Long choices" value="59" onChange={()=>{}} options={Array.from({length:60},(_,i)=>({value:String(i),label:'Local voice '+i+' — 中英文自然音色与语音识别模型（需要安装）'}))}/></div>
+            <div className="settings-shell" style={{position:'fixed',inset:'auto 16px 16px auto',height:'auto',width:210}}><SettingsDropdown label="Long choices" value="59" onChange={()=>{}} options={Array.from({length:60},(_,i)=>({value:String(i),label:'Local voice '+i+' — 中英文自然音色与语音识别模型（需要安装）'}))}/></div>
         </div>;
       }
       createRoot(document.getElementById('root')).render(<Fixture/>);
@@ -68,10 +68,29 @@ app.whenReady().then(async () => {
     await win.loadFile(path.join(directory,'index.html'));await until('document.querySelector(".voice-settings")');
     assert.equal(await read('!!document.querySelector(".app .voice-settings")'),true,'settings inherit application theme');
     assert.equal(await read('document.querySelector("[role=combobox][aria-label=通话模式]").value'),'realtime');
+    await until('(async()=>document.querySelector(".realtime-voice-picker [role=combobox]").value===(await cardbushDesktop.voice.realtime.settings()).maleVoice)()');
     assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').type`),'password');
     await read(`(()=>{const el=document.querySelector('input[aria-label="API Key"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,'fixture-credential');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await click('保存通话设置');await until('(async()=> (await cardbushDesktop.voice.realtime.settings()).hasApiKey)()');
+    assert.equal(await read('(async()=>{const value=await cardbushDesktop.voice.realtime.settings();return value.voiceId===value.maleVoice;})()'),true,'saving unrelated settings preserves the previous male voice selection');
     assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').value`),'','saved credentials are not echoed');
+    await openChoice('语音服务');await read('document.querySelector("[role=listbox][aria-label=语音服务] [value=qwen]").click();void 0');
+    await until('document.querySelector("input[aria-label=服务地址]")');
+    assert.equal(await read('document.querySelector("input[aria-label=服务地址]").value'),'','workspace-specific endpoint must be supplied');
+    assert.equal(await read('document.querySelector("input[aria-label=服务地址]").placeholder'),'wss://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime');
+    assert.equal(await read(`document.querySelector('input[aria-label="语音模型 ID"]').value`),'qwen3.8-omni-flash-realtime');
+    assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').value`),'');
+    assert.match(await read('document.querySelector(".voice-settings").innerText'),/音频、会话上下文和任务回执会发送给阿里云/);
+    win.setSize(500,850);await read('fixture.language("en");fixture.theme("bright");void 0');
+    await until(`document.querySelector('[role=combobox][aria-label="Voice provider"]')`);
+    await openChoice('Voice provider');await read(`document.querySelector('[role=listbox][aria-label="Voice provider"] [value=qwen]').click();void 0`);
+    await until(`document.querySelector('input[aria-label="Service endpoint"]')`);
+    assert.match(await read('document.querySelector(".voice-settings").innerText'),/Audio, conversation context and task receipts go to Alibaba Cloud/);
+    assert.equal(await read('document.querySelector(".voice-settings-test").scrollWidth<=document.querySelector(".voice-settings-test").clientWidth'),true,'Qwen endpoint and help wrap in a narrow window');
+    await read(`document.querySelector('input[aria-label="Service endpoint"]').closest('.settings-card').scrollIntoView({block:'start'});void 0`);
+    assert.ok(await read(`(()=>{const e=document.querySelector('input[aria-label="Service endpoint"]'),r=e.getBoundingClientRect();return r.width>200&&r.top>=0&&r.bottom<innerHeight&&e.checkVisibility();})()`),'Qwen connection controls are visible, not merely present in the DOM');
+    await snapshot('qwen-realtime-settings-en');
+    await read('fixture.language("zh");fixture.theme("dark");void 0');await until('document.querySelector("[role=combobox][aria-label=语音服务]")');win.setSize(920,850);
     await openChoice('语音服务');await key('END');await key('ENTER');
     await until('document.querySelector("input[aria-label=服务地址]")');
     assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').value`),'');

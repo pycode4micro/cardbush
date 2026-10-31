@@ -17,7 +17,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.equal(await run('document.querySelector(".user-bubble").textContent'), 'A short request.');
     for (const theme of ['theme-dark', 'theme-bright']) {
       await run(`document.querySelector('.app').className='app ${theme}'`);
-      await window.setContentSize(680, 800); await pause(80);
+      window.setContentSize(680, 800);
+      await until('innerWidth===680 && innerHeight===800', 'attachment viewport resized');
+      await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      // A resized offscreen Electron surface may lag behind DOM layout.
+      // Wait for the compositor before requesting the screenshot.
+      await pause(150);
       const geometry = await run(`(()=>{const image=document.querySelector('.user-message-attachments img').getBoundingClientRect(),bubble=document.querySelector('.user-bubble').getBoundingClientRect(),group=document.querySelector('.user-message-attachments').getBoundingClientRect();return{ratio:image.width/image.height,right:Math.abs(image.right-bubble.right),gap:bubble.top-group.bottom,width:bubble.width}})()`);
       assert.ok(Math.abs(geometry.ratio-400/900)<.01 && geometry.right<2 && geometry.gap>=7, JSON.stringify(geometry));
       assert.ok(geometry.width<300, 'text bubble fits its own short content');

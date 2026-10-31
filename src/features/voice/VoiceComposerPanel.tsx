@@ -3,6 +3,8 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { Mic, MicOff, Square, Volume2, VolumeX } from 'lucide-react';
 import type { VoiceSession } from './voiceSession';
 import { startConnectingCue } from './voiceCue';
+import { RealtimeVoicePicker } from './RealtimeVoicePicker';
+import { SettingsDropdown } from '../settings/SettingsDropdown';
 import './voiceComposer.css';
 
 /** A single continuous line responds to the microphone or the spoken reply. */
@@ -49,6 +51,8 @@ export function VoiceComposerPanel({ session, language }: { session: VoiceSessio
         : <VoiceWave level={audible ? state.outputLevel ?? 0 : state.muted || state.capturePaused ? 0 : state.level} quiet={Boolean(error || state.muted && !audible)}/>}
       {error ? <span className="voice-call-error" role="alert">{error}</span> : <span className="voice-call-status" role="status">{label}</span>}
     </div>
+    {state.realtimeSettings ? <RealtimeVoicePicker value={state.realtimeSettings} language={language} compact disabled={connecting||state.phase==='idle'} onChange={(voiceId,customVoices)=>session.selectRealtimeVoice(voiceId,customVoices)}/>
+      : !state.realtime && <div className="realtime-voice-picker" data-compact="true"><SettingsDropdown label={uiText(language)('realtimeVoiceOptions.voice')} value={state.voice} disabled={connecting} options={(['female','male'] as const).map(value=>({value,label:uiText(language)(value==='female'?'voiceSettingsPanel.female':'voiceSettingsPanel.male')}))} onChange={value=>void session.setVoice(value as 'female'|'male')}/></div>}
     <button type="button" className="voice-audio-toggle" aria-pressed={state.outputMuted}
       title={uiText(language)(state.outputMuted ? 'useAssistantActions.unmuteSpeech' : 'voiceComposerPanel.muteOutput')}
       aria-label={uiText(language)(state.outputMuted ? 'useAssistantActions.unmuteSpeech' : 'voiceComposerPanel.muteOutput')}

@@ -9,6 +9,7 @@ import { InspectorWebview } from '../inspector/InspectorWebview';
 import { inspectorSource } from '../inspector/inspectorTargets';
 import { openInspector } from '../inspector/inspectorEvents';
 import { canvasFileTarget, editableCanvasMarkdown } from './canvasModel';
+import { CanvasZoomValue } from './CanvasZoomValue';
 import { adjustCanvasFrame, canvasEditBounds, updateCanvasFrame, equalCanvasFrames, fitCanvasViewport, zoomCanvasPan, type AlignmentGuide, type ResizeHandle } from './canvasGeometry';
 import '../components/components.css';
 
@@ -37,14 +38,14 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
   const measuredSize = useRef(size);
   const viewGeneration = useRef(0);
   const [inset, setInset] = useState(14);
-  const [zoomOverride, setZoomOverride] = useState<number>(), [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoomOverride, setZoomOverride] = useState<number | undefined>(1), [pan, setPan] = useState({ x: 0, y: 0 });
   const [manualFit, setManualFit] = useState<ReturnType<typeof fitCanvasViewport>>();
   const [editingFit, setEditingFit] = useState<ReturnType<typeof fitCanvasViewport>>();
   const [draft, setDraft] = useState<ItemDraft>(), [guides, setGuides] = useState<AlignmentGuide[]>([]);
   const [dragging, setDragging] = useState(false), [panMode, setPanMode] = useState(false), [spaceHeld, setSpaceHeld] = useState(false);
   const liveFrame = useRef<ItemDraft | undefined>(undefined), gesture = useRef<Gesture | undefined>(undefined), saving = useRef(false);
   const document = snapshot.document;
-  const fit = manualFit ?? editingFit ?? fitCanvasViewport(size, document, inset);
+  const fit = manualFit ?? editingFit ?? fitCanvasViewport(size, document, inset, zoomOverride);
   const zoom = zoomOverride ?? fit.zoom;
   const lockView = () => setManualFit(fit);
   const rgb = document.background.slice(1).match(/../g)!.map(value => parseInt(value, 16));
@@ -65,7 +66,7 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
       const next = { width: root.clientWidth, height: root.clientHeight };
       if (next.width !== measuredSize.current.width || next.height !== measuredSize.current.height) {
         measuredSize.current = next; viewGeneration.current++; cancelRef.current();
-        setManualFit(undefined); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); setSize(next);
+        setManualFit(undefined); setPan({ x: 0, y: 0 }); setSize(next);
       }
       setInset(parseFloat(getComputedStyle(root).getPropertyValue('--canvas-inset')) || 14);
     });
@@ -75,7 +76,7 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
   useEffect(() => onViewport({ ...size, zoom }), [size, zoom, onViewport]);
   useEffect(() => {
     viewGeneration.current++;
-    cancelRef.current(); setManualFit(undefined); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); setPanMode(false); setSpaceHeld(false);
+    cancelRef.current(); setManualFit(undefined); setZoomOverride(1); setPan({ x: 0, y: 0 }); setPanMode(false); setSpaceHeld(false);
   }, [snapshot.path]);
   useEffect(() => {
     const reset = () => { cancelRef.current(); setSpaceHeld(false); };
@@ -243,9 +244,10 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
     <div className="canvas-zoom" aria-label={uiText(language)('canvasStage.canvasZoom')}>
       <button aria-label={uiText(language)('canvasStage.panCanvas')} aria-pressed={panMode} title={uiText(language)('canvasStage.panCanvasOrDragEmptySpace')} onClick={() => setPanMode(value => !value)}><Hand size={15}/></button>
       <i aria-hidden="true"/>
-      <button aria-label={uiText(language)('image.zoomOutHint')} onClick={() => changeZoom(zoom - .1)}><ZoomOut size={15}/></button><span>{Math.round(zoom * 100)}%</span>
+      <button aria-label={uiText(language)('image.zoomOutHint')} onClick={() => changeZoom(zoom - .1)}><ZoomOut size={15}/></button>
+      <CanvasZoomValue key={snapshot.path} zoom={zoom} language={language} onChange={changeZoom}/>
       <button aria-label={uiText(language)('image.zoomInHint')} onClick={() => changeZoom(zoom + .1)}><ZoomIn size={15}/></button>
-      <button aria-label={uiText(language)('canvasStage.fitCanvas')} aria-pressed={!manualFit} title={uiText(language)('canvasStage.fitAndAlignCanvas')} onClick={() => { viewGeneration.current++; cancel(); setManualFit(undefined); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); }}><Maximize2 size={15}/></button>
+      <button aria-label={uiText(language)('canvasStage.fitCanvas')} aria-pressed={zoomOverride === undefined && !manualFit} title={uiText(language)('canvasStage.fitAndAlignCanvas')} onClick={() => { viewGeneration.current++; cancel(); setManualFit(undefined); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); }}><Maximize2 size={15}/></button>
     </div>
   </div>;
 }

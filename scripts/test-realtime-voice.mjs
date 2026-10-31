@@ -14,8 +14,29 @@ import * as protocol from '@cardbush/bush-protocol';
 import * as i18n from '@cardbush/platform/i18n';
 import * as conversation from '@cardbush/bush-runtime/realtime-conversation';
 import { voiceRecallInstructions, voiceRecallPage } from '../dist-electron/realtimeVoiceRecall.js';
+import { realtimeVoiceOptions, realtimeVoiceId } from '../dist-electron/realtimeVoiceOptions.js';
 
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
+test('voice lists preserve legacy IDs and isolate custom choices and credentials by provider',()=>{
+  const f=fixture();
+  f.service.save({...defaults,femaleVoice:'legacy-custom-female',maleVoice:'legacy-custom-male'});
+  assert.ok(realtimeVoiceOptions(f.service.settings()).some(v=>v.id==='legacy-custom-male'));
+  const saved=f.service.saveVoices({provider:'volcengine',voiceId:'custom-voice',customVoices:[{id:'custom-voice',name:'My voice'}]});
+  assert.equal(saved.voiceId,'custom-voice');assert.equal(saved.hasApiKey,true);
+  assert.deepEqual(saved.customVoices,[{id:'custom-voice',name:'My voice'}]);
+  f.service.save({...defaults,provider:'qwen',model:'qwen3.8-omni-flash-realtime',endpoint:'wss://fixture.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime',femaleVoice:'Tina',maleVoice:'Raymond',apiKey:'qwen-fixture'});
+  assert.equal(f.service.settings().voiceId,undefined);
+  assert.ok(!realtimeVoiceOptions(f.service.settings()).some(v=>v.id==='custom-voice'));
+  f.service.saveVoices({provider:'volcengine',voiceId:'zh_male_m191_uranus_bigtts'});
+  assert.equal(f.service.settings().provider,'qwen','a live call cannot switch the provider selected in settings');
+  assert.equal(f.service.settings().hasApiKey,true);
+  assert.equal(f.service.settings().profiles.volcengine.voiceId,'zh_male_m191_uranus_bigtts');
+  assert.equal(f.service.settings().profiles.volcengine.hasApiKey,true);
+  assert.throws(()=>f.service.saveVoices({provider:'qwen',voiceId:'bad\nvoice'}));
+  assert.throws(()=>f.service.saveVoices({provider:'qwen',voiceId:'custom',customVoices:[{id:'custom',name:'a'},{id:'custom',name:'b'}]}));
+  assert.equal(realtimeVoiceId({femaleVoice:'legacy-female',maleVoice:'legacy-male',voiceId:'male'},'male'),'male','explicit IDs do not inherit obsolete gender aliases');
+  assert.equal(f.service.saveVoices({provider:'qwen',voiceId:'x'.repeat(120),customVoices:[{id:'x'.repeat(120),name:''}]}).voiceId.length,120,'a display name is optional even for long cloned IDs');
+});
 const compile=file=>{const exports={};const source=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   new Function('exports','require',source)(exports,spec=>spec==='../../i18n'?i18n:spec==='@cardbush/bush-protocol'?protocol:spec==='@cardbush/bush-runtime/realtime-conversation'?conversation:compile(path.resolve(path.dirname(file),spec+'.ts')));return exports;};
 const { RealtimeAgentBridge, realtimeConversationContext }=compile('src/features/voice/realtimeAgentBridge.ts');
@@ -419,6 +440,20 @@ test('final voice transcripts remain in the owning chat; both sides of assistant
   }
 });
 
+test('revised realtime ASR snapshots replace the current preview and retain the latest text on completion',async()=>{
+  let callback;const previews=[],recorded=[],playback=playbackFixture();
+  const api={onEvent:fn=>(callback=fn,()=>{}),start:async()=>{},audio:async()=>{},control:async()=>{},close:async()=>{}};
+  const call=new RealtimeVoiceCall(api,()=>{},()=>{},playback.make);
+  call.update({...target(),sessionId:'asr-owner',agent:{list:async()=>[],preview:async item=>previews.push(item),record:async item=>recorded.push(item)}});
+  try {
+    await call.start('','female');
+    for(const text of ['我想了解','我想看'])callback({id:call.id,type:'transcript',role:'user',text,itemId:'u',final:false,replace:true});
+    callback({id:call.id,type:'transcript',role:'user',text:'',itemId:'u',final:true});await pause();
+    assert.deepEqual(previews.map(item=>item.content),['我想了解','我想看']);
+    assert.equal(recorded[0].content,'我想看');assert.equal(recorded.length,1);
+  } finally {call.close();}
+});
+
 test('personal voice session advertises page_write and custom persona without changing ordinary call tools',()=>{
   const ordinary=provider.start(defaults,'female').session;
   const personal=provider.start(defaults,'female',{name:'Lumi',persona:'安静、可靠'}).session;
@@ -553,7 +588,7 @@ function hangupFixture(t) {
   t.mock.timers.enable({apis:['setTimeout']});
   let emit,ended=0,closed=0;
   const results=[],saved=[],playback=playbackFixture();
-  const api={onEvent:fn=>(emit=fn,()=>{}),start:async()=>{},close:async()=>closed++,audio:async()=>{},notify:async()=>{},
+  const api={onEvent:fn=>(emit=fn,()=>{}),start:async()=>{},close:async()=>closed++,audio:async()=>{},notify:async()=>{},control:async()=>{},
     results:async(_,value)=>results.push(value),playback:async()=>{}};
   const call=new RealtimeVoiceCall(api,()=>{},()=>{},playback.make,()=>{ended++;call.close();});
   call.update({...target(),agent:{execute:async()=>assert.fail('hangup cannot invoke or stop a child task'),list:async()=>[],record:async entry=>saved.push(entry)}});
@@ -631,6 +666,58 @@ test('hang_up without response IDs waits for fresh audio instead of reusing a st
   assert.equal(f.ended,0,'a late continuation cancels the pending close');
   f.event({type:'audio-end'});f.drain();t.mock.timers.tick(350);assert.equal(f.ended,1);
   t.mock.timers.tick(20000);assert.equal(f.ended,1,'close runs once');
+});
+
+test('assistant hangup is cancelled when the user speaks during the silent playback drain window',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'audio',responseId:'bye',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'tools',responseId:'bye',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  f.event({type:'audio-end',responseId:'bye'});f.drain();t.mock.timers.tick(100);
+  f.event({type:'input-start',itemId:'wait-one-more-thing'});
+  t.mock.timers.tick(20000);assert.equal(f.ended,0,'a resumed conversation must remain connected');
+});
+
+test('a late hangup tool from an interrupted response cannot end the new conversation',async t=>{
+  const f=hangupFixture(t);await f.call.start('','female');
+  f.event({type:'audio',responseId:'old',pcm:'AAA=',sampleRate:24000});
+  f.event({type:'input-start',itemId:'new-request'});
+  f.event({type:'tools',responseId:'old',calls:[{id:'late-bye',name:'hang_up',arguments:'{}'}]});await pause();
+  assert.equal(JSON.parse(f.results[0][0].output).status,'cancelled');
+  t.mock.timers.tick(20000);assert.equal(f.ended,0);
+});
+
+test('assistant device hangup uses the playback drain and never dispatches to a child agent',async t=>{
+  const {AssistantDeviceCall,assistantHostSettingsSchema}=await import('../dist-electron/assistantVoiceHost.mjs');
+  t.mock.timers.enable({apis:['setTimeout']});
+  let emit,closed=0;const results=[],events=[];
+  const voice={start:async(_owner,_input,fn)=>{emit=fn;},results:(_owner,_id,value)=>results.push(value),playback(){},close(){closed++;},
+    history:()=>({history:'actual saved conversation',nextCursor:null,totalCharacters:25})};
+  const call=new AssistantDeviceCall(voice,'fixture-device',assistantHostSettingsSchema.parse({}),{list:async()=>[],execute:async()=>assert.fail('local call control cannot reach child tools')},event=>events.push(event));
+  t.after(()=>call.close());await call.start();
+  const event=value=>emit({id:call.id,...value});
+  event({type:'tools',calls:[{id:'recall',name:'recall_conversation',arguments:'{}'}]});await pause();
+  assert.equal(JSON.parse(results[0][0].output).history,'actual saved conversation');
+  event({type:'audio',responseId:'bye',pcm:'AAA=',sampleRate:24000});call.playback(true);
+  event({type:'tools',responseId:'bye',calls:[{id:'bye',name:'hang_up',arguments:'{}'}]});await pause();
+  assert.equal(JSON.parse(results[1][0].output).status,'ending');
+  event({type:'audio-end',responseId:'bye'});t.mock.timers.tick(20000);assert.equal(closed,0);
+  call.playback(false);t.mock.timers.tick(350);assert.equal(closed,1);assert.equal(events.at(-1).type,'closed');
+});
+
+test('device interruption rejects stale hangup and its late cancellation cannot stop the next farewell',async t=>{
+  const {AssistantDeviceCall,assistantHostSettingsSchema}=await import('../dist-electron/assistantVoiceHost.mjs');
+  t.mock.timers.enable({apis:['setTimeout']});
+  let emit,closed=0;const results=[];
+  const voice={start:async(_owner,_input,fn)=>{emit=fn;},results:(_owner,_id,value)=>results.push(value),playback(){},control(){},close(){closed++;}};
+  const call=new AssistantDeviceCall(voice,'device',assistantHostSettingsSchema.parse({}),{list:async()=>[]},()=>{});
+  t.after(()=>call.close());await call.start();const event=value=>emit({id:call.id,...value});
+  event({type:'audio',responseId:'old',pcm:'AAA=',sampleRate:24000});call.control('interrupt');
+  event({type:'tools',responseId:'old',calls:[{id:'old-bye',name:'hang_up',arguments:'{}'}]});await pause();
+  assert.equal(JSON.parse(results[0][0].output).status,'cancelled');t.mock.timers.tick(20000);assert.equal(closed,0);
+  event({type:'audio',responseId:'new',pcm:'AAA=',sampleRate:24000});call.playback(true);
+  event({type:'tools',responseId:'new',calls:[{id:'new-bye',name:'hang_up',arguments:'{}'}]});await pause();
+  event({type:'interrupted',responseId:'old'});event({type:'audio-end',responseId:'new'});
+  call.playback(false);t.mock.timers.tick(350);assert.equal(closed,1);
 });
 
 test('hang_up times out only after silence, preserving partial text if the audio terminal is missing',async t=>{

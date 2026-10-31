@@ -5,6 +5,8 @@ import { matchContextReceipt, remoteContextItems } from './realtimeVoiceContextR
 
 interface ContextHooks {
   serverAssignedContextIds?: boolean;
+  restartOnly?: boolean;
+  maxPairs?: number;
   send(event: object): string;
   create(items: VoiceContextMessage[]): object;
   request(job: RealtimeContextJob): void;
@@ -31,6 +33,7 @@ export class RealtimeVoiceContext {
   private retryAfter = 0;
   private failedThrough = 0;
   private auxiliaryTokens = 0;
+  private observedTokens = 0;
   private remoteIds = new Map<string,string>();
   private seenRemoteIds = new Set<string>();
   private pendingOld?: VoiceContextMessage[];
@@ -53,7 +56,10 @@ export class RealtimeVoiceContext {
     const pending=new Promise<VoiceContextMessage[]>((resolve,reject)=>{this.restore={bytes,resolve,reject};});
     this.tick(); return pending;
   }
-  resumed() { this.detached=false; this.auxiliaryTokens=0; this.tick(); }
+  resumed() { this.detached=false; this.auxiliaryTokens=0; this.observedTokens=0; this.tick(); }
+  observeTokens(tokens: unknown) {
+    if (typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0) this.observedTokens = tokens;
+  }
   private fits(bytes:number) { const messages=this.history.messages();return messages.length<=this.maxRestoreItems && Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))<=bytes; }
 
   initialContext(maxBytes: number, strict=false): VoiceContextMessage[] {
@@ -91,9 +97,9 @@ export class RealtimeVoiceContext {
     }
     if (this.detached && !this.restore) return;
     const pairs=this.history.pairs;
-    const tokens=this.fixedTokens+Buffer.byteLength(JSON.stringify(this.history.messages()))/2+this.auxiliaryTokens;
+    const tokens=Math.max(this.observedTokens,this.fixedTokens+Buffer.byteLength(JSON.stringify(this.history.messages()))/2+this.auxiliaryTokens);
     const trigger=Math.max(this.threshold,this.fixedTokens+1500);
-    if (!this.job && !this.replacement && pairs.length && (this.restore || tokens>=trigger || this.pendingOld) && Date.now()>=this.retryAfter &&
+    if (!this.job && !this.replacement && pairs.length && (this.restore || tokens>=trigger || pairs.length>=(this.hooks.maxPairs??Infinity) || this.pendingOld) && Date.now()>=this.retryAfter &&
         pairs.at(-1)!.sequence>this.failedThrough) {
       let count=Math.max(1,pairs.length-2);
       const bytes=this.restore?.bytes ?? Math.max(3000,this.maxInputBytes-this.fixedTokens*2);
@@ -147,7 +153,7 @@ export class RealtimeVoiceContext {
       this.tick();return;
     }
     this.pendingOld=undefined;this.catchups=0;
-    this.replacement={ old, summary:this.history.summaryMessages(), stage:this.auxiliaryTokens>=this.threshold/2 ? 'restart' : 'retrieve' };
+    this.replacement={ old, summary:this.history.summaryMessages(), stage:this.hooks.restartOnly || this.auxiliaryTokens>=this.threshold/2 ? 'restart' : 'retrieve' };
     this.tick();
   }
   private advance() {

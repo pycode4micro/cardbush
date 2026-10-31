@@ -209,12 +209,24 @@ test('independent Agent: device -> provider -> existing assistant Runtime -> chi
     await until(tasks, list => list.length === 1 && list[0].status !== 'running');
     assert.equal((await tasks())[0].status, 'completed'); assert.ok(modelRequests.length > 0);
     assert.ok(JSON.stringify(modelRequests[0]).includes('fixture-context-42'), 'child receives the same bounded conversation journal as desktop delegation');
-    await until(() => providerInputs, list => list.some(e => e.type === 'speech_text_buffer.commit'));
+    await until(() => providerInputs, list => list.some(e => e.type === 'conversation.item.create' && e.items?.some(i=>i.content?.some(c=>c.text?.includes('CardBush background task notification')))));
+    assert.equal(providerInputs.some(e=>e.type==='speech_text_buffer.commit'),false,'task availability never forces narration');
+    assert.equal(modelRequests.length,1,'completion does not request a separate text-model summary');
     client.socket.close(); await once(client.socket, 'close'); await pause(100);
     client = connect(url, pair); await once(client.socket, 'open'); client.send(hello);
     await until(() => client.events, list => list.some(e => e.type === 'hello'));
     assert.equal((await tasks()).length, 1, 'reattaching audio never resubmits a task');
     assert.ok((await device('status')).devices[pair.id].connected);
+    // Real gateway playback acknowledgments drive the shared hangup lifecycle.
+    send({type:'response.output_audio.started',response_id:'device-goodbye'});
+    send({type:'response.output_audio.delta',response_id:'device-goodbye',delta:Buffer.alloc(960).toString('base64')});
+    send({type:'response.function_call_arguments.done',response_id:'device-goodbye',items:[{call_id:'device-hangup',name:'hang_up',arguments:'{}'}]});
+    send({type:'response.output_audio.done',response_id:'device-goodbye'});
+    await until(()=>providerInputs.flatMap(e=>e.items||[]).filter(i=>i.call_id==='device-hangup'),list=>list.length===1);
+    await until(()=>client.packets.length,n=>n>0);
+    assert.equal(client.socket.readyState,1,'the hangup receipt must not cut off device playback');
+    const ended=once(client.socket,'close');client.send({type:'cardbush',action:'playback',speaking:false});await ended;
+    assert.equal((await tasks()).length,1);
   } finally {
     client?.socket.terminate(); await management?.close(); await service?.close();
     for (const ws of voice.clients) ws.terminate(); await new Promise(resolve => voice.close(resolve));

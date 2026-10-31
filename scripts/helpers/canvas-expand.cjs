@@ -42,8 +42,10 @@ module.exports = async ({ run, until, win, delay, pointer, point, readCanvas, de
   win.maximize();
   for (let i = 0; i < 100 && !win.isMaximized(); i++) await delay(50);
   assert.equal(win.isMaximized(), true, 'exercise native maximize, not only setContentSize');
-  await until('document.querySelector("[aria-label=适应窗口]").getAttribute("aria-pressed")==="true"'); await delay(400); await settled();
-  assert.equal(await run(`(()=>{const s=document.querySelector('.canvas-stage').getBoundingClientRect(),items=[...document.querySelectorAll('[data-canvas-item]')].map(e=>e.getBoundingClientRect());return items.every(r=>r.left>=s.left&&r.right<=s.right&&r.top>=s.top&&r.bottom<=s.bottom-44)&&Math.abs((Math.min(...items.map(r=>r.left))+Math.max(...items.map(r=>r.right)))/2-(s.left+s.right)/2)<1})()`), true, 'maximizing replaces the old small, panned view with a centred fit');
+  await delay(400); await settled();
+  assert.equal(await run('document.querySelector(".canvas-zoom-value").textContent'), '63%', 'maximizing retains the explicitly selected scale');
+  assert.equal(await run('document.querySelector("[aria-label=适应窗口]").getAttribute("aria-pressed")'), 'false');
+  assert.equal(await run(`(()=>{const s=document.querySelector('.canvas-stage').getBoundingClientRect(),items=[...document.querySelectorAll('[data-canvas-item]')].map(e=>e.getBoundingClientRect());return items.every(r=>r.left>=s.left&&r.right<=s.right&&r.top>=s.top&&r.bottom<=s.bottom-44)&&Math.abs((Math.min(...items.map(r=>r.left))+Math.max(...items.map(r=>r.right)))/2-(s.left+s.right)/2)<1})()`), true, 'maximizing recentres the view at the selected scale');
   await writeFile(resolve('tmp/canvas-native-maximized.png'), (await win.webContents.capturePage()).toPNG());
 
   await manualView(.63, 20, 390);
@@ -81,6 +83,7 @@ module.exports = async ({ run, until, win, delay, pointer, point, readCanvas, de
       if (rendered) break; await delay(50);
     }
     assert.deepEqual(rendered, resized.items.find(item => item.id === 'interactive').frame, 'expanded layout reopens from disk: ' + await reopened.webContents.executeJavaScript('document.body.innerText.slice(0,500)'));
+    assert.equal(await reopened.webContents.executeJavaScript('document.querySelector(".canvas-zoom-value").textContent'), '100%', 'reopening a saved canvas defaults to actual size');
   } finally { reopened.destroy(); }
 
   const latest = await readCanvas(path);

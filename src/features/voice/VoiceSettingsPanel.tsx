@@ -63,7 +63,7 @@ export function VoiceSettingsPanel({ language }: { language: string }) {
     finally { playback.close(); if (player.current === playback) { player.current = undefined; if (alive.current) setPreview(false); } }
   };
   return <div className="settings-stack voice-settings">
-    <RealtimeVoiceSettingsPanel language={language} />
+    <RealtimeVoiceSettingsPanel language={language} legacyVoice={settings.voice} />
     <SettingsCard title={uiText(language)('voiceSettingsPanel.speechRecognition')} subtitle={uiText(language)('voiceSettingsPanel.sendRecognizedTextToYourCurrentAgent')}>
       <SettingsSelect name="voice-microphone" title={uiText(language)('voiceSettingsPanel.microphone')} value={settings.microphoneId} disabled={!loaded || busy || preview} onChange={value => update('microphoneId', value)}>
         <option value="">{uiText(language)('voiceSettingsPanel.systemDefaultMicrophone')}</option>

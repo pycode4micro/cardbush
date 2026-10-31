@@ -49,7 +49,9 @@ export function hydrateAssistantTurnTiming(messages: ChatMessage[]) {
   }]));
 
   return messages.map((message, index) => {
-    if (message.role !== 'assistant') return message;
+    // A journal entry is an utterance or published content, not an execution
+    // Turn. Time between speaking/receiving words is not processing duration.
+    if (message.role !== 'assistant' || message.metadata?.conversation_journal === true) return message;
     const metadata = message.metadata ?? {};
     const cached = cachedTimingForMessage(cache, message);
     const explicitStartedAt = firstTimestampString([

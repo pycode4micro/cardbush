@@ -88,7 +88,7 @@ export class RealtimeVoiceCall {
     this.target = this.ownerSessionId ? { ...target, agent: this.target?.agent } : target;
     this.bridge.update(this.target);
   }
-  async start(microphoneId:string,voice:'female'|'male') {
+  async start(microphoneId:string,voice:string) {
     if (this.target?.environment!=='local') throw Error(uiText()('realtimeVoiceCall.start_realtime_calls_in_a_local_agent'));
     this.unsubscribe=this.api.onEvent(event=>{ if (event.id===this.id && !this.closed) this.event(event); });
     await this.audio.prepare(microphoneId);
@@ -100,7 +100,7 @@ export class RealtimeVoiceCall {
     }
     if (this.closed) return;
     this.ownerSessionId = sessionId || undefined;
-    await this.api.start({id:this.id,sessionId:sessionId||undefined,voice,context:realtimeConversationContext(this.target), assistant:this.target?.assistant});
+    await this.api.start({id:this.id,sessionId:sessionId||undefined,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,voice,context:realtimeConversationContext(this.target), assistant:this.target?.assistant});
     if (this.closed) return;
     this.started=true; this.audio.mute(this.muted); this.diagnostic('connected');
     if (this.muted) await this.api.control(this.id,'mute');
@@ -170,7 +170,7 @@ export class RealtimeVoiceCall {
         // fallback; raw microphone amplitude alone never cancels speech.
         if(event.final && event.text.trim() && this.inputId!==event.itemId && !this.muted){this.inputId=event.itemId;this.bargeIn();}
         const key=event.role+':'+event.itemId;
-        const text=event.final ? event.text || this.captions.get(key) || '' : (this.captions.get(key)??'')+event.text;
+        const text=event.final ? event.text || this.captions.get(key) || '' : event.replace ? event.text : (this.captions.get(key)??'')+event.text;
         this.captions.set(key,text.slice(-16000));
         if (this.captions.size>80) this.captions.delete(this.captions.keys().next().value!);
         this.patch({transcript:text.slice(-16000),draftTranscript:'',inputPending:!event.final});
@@ -202,6 +202,11 @@ export class RealtimeVoiceCall {
     this.hangup.cancel();this.audio.stop();this.finishCaptions('assistant');this.outputActive=false;this.suppressAudio=true;
   }
   private bargeIn() {
+    // A new utterance also cancels a pending goodbye during the quiet drain
+    // window, when there is no longer active audio to interrupt.
+    this.hangup.cancel();
+    if (this.outputId) this.cancelledOutputs.add(this.outputId);
+    while(this.cancelledOutputs.size>80)this.cancelledOutputs.delete(this.cancelledOutputs.values().next().value!);
     if(!this.outputActive&&!this.playing)return;
     this.diagnostic('user-interrupted');this.interrupt();
   }
@@ -219,11 +224,13 @@ export class RealtimeVoiceCall {
           } catch { return {id:call.id,output:JSON.stringify({status:'error',message:'Saved call history is unavailable.'})}; }
         }
         if (call.name==='hang_up') {
+          if (responseId && this.cancelledOutputs.has(responseId))
+            return {id:call.id,output:JSON.stringify({status:'cancelled',message:'The user resumed speaking. This interrupted reply cannot end the call.'})};
           let args: unknown;
           try { args=JSON.parse(call.arguments); } catch { /* Invalid calls receive a normal tool error. */ }
           if (!args || typeof args!=='object' || Array.isArray(args) || Object.keys(args).length)
             return { id:call.id, output:JSON.stringify({status:'error',message:'hang_up accepts an empty object.'}) };
-          this.hangup.request(responseId); hangup=true;
+          this.hangup.request(responseId); hangup=true; this.diagnostic('hangup-requested');
           return {id:call.id,output:JSON.stringify({status:'ending',message:'The call will end after the goodbye finishes playing. Background tasks continue.'})};
         }
         return {id:call.id,output:await this.bridge.run(call)};
@@ -253,7 +260,7 @@ export class RealtimeVoiceCall {
   setOutputMuted(value:boolean) { this.audio.setOutputMuted?.(value); }
   interrupt() { this.stopOutput(); if (this.started && !this.closed) {this.pendingCancels++;void this.api.control(this.id,'interrupt').catch(()=>this.fail(uiText()('realtimeVoiceCall.could_not_interrupt_the_voice_reply')));} }
   commit() { if (this.started && !this.closed) void this.api.control(this.id,'commit').catch(()=>this.fail(uiText()('realtimeVoiceCall.could_not_submit_this_voice_turn'))); }
-  async setVoice(voice:'female'|'male') { if (this.started && !this.closed) { this.interrupt(); await this.api.setVoice(this.id,voice); } }
+  async setVoice(voice:string) { if (this.started && !this.closed) await this.api.setVoice(this.id,voice); }
   private fail(message:string) { if (this.closed) return; this.diagnostic('failed',message); this.close(); this.patch({phase:'idle',reconnecting:false,connectionNotice:'',error:message,speaking:false,muted:true,inputPending:false,level:0}); }
   close() { if (this.closed) return; this.diagnostic('closed'); this.closed=true; this.queuedFrames=[]; this.bridge.close();
     this.finishCaptions();

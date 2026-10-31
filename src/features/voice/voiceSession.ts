@@ -1,4 +1,7 @@
 import { uiText } from '../../i18n';
+import { realtimeVoiceCatalog } from '../../../electron/realtimeVoiceCatalog';
+import { realtimeVoiceId } from '../../../electron/realtimeVoiceOptions';
+import type { RealtimeVoiceSettings, RealtimeCustomVoice } from '../../../electron/realtimeVoiceTypes';
 import type { VoiceDesktopApi, VoiceSettings } from '../../../electron/voiceTypes';
 import type { ChatMessage } from '../../types';
 import { SpokenTranscript } from './speechText';
@@ -25,6 +28,7 @@ export interface VoiceTarget {
   send(text: string, options?: { immediate?: boolean }): Promise<void | boolean>;
 }
 export interface VoiceState {
+  realtimeSettings?: RealtimeVoiceSettings;
   sessionId?: string;
   assistant?: boolean;
   contextNotice?: string;
@@ -165,16 +169,17 @@ export class VoiceSession {
         const config = await this.api.realtime.settings();
         if (epoch !== this.epoch) return;
         if (config.mode === 'realtime') {
-          this.patch({ realtime: true, voice: this.settings.voice });
+          const voiceId=config.voiceId || realtimeVoiceId(config,this.settings.voice);
+          this.patch({ realtime: true, voice: this.settings.voice, realtimeSettings:{...config,voiceId} });
           if (this.settings.speakerLockEnabled) throw Error(uiText()('voiceSession.realtime_calls_do_not_support_voice_lock'));
-          if (!config.hasApiKey) throw Error(uiText()('voiceSession.enter_a_volcengine_realtime_voice_api_key'));
+          if (!config.hasApiKey && realtimeVoiceCatalog[config.provider].apiKeyRequired) throw Error(uiText()('voiceSession.realtimeProviderKeyRequired', {provider:uiText()(realtimeVoiceCatalog[config.provider].labelKey)}));
           this.realtime = new RealtimeVoiceCall(this.api.realtime,
             patch => { if (epoch === this.epoch) this.patch(patch); },
             submitting => { if (epoch === this.epoch && submitting && !this.target?.sessionId) this.sendingFirst = true; }, undefined,
             () => { if (epoch === this.epoch) this.end(); });
           if (this.target) this.realtime.update(this.target);
           this.realtime.mute(this.state.muted); this.realtime.setOutputMuted(this.state.outputMuted);
-          await this.realtime.start(this.settings.microphoneId, this.settings.voice);
+          await this.realtime.start(this.settings.microphoneId, voiceId);
           return;
         }
       }
@@ -465,6 +470,14 @@ export class VoiceSession {
       if (epoch === this.epoch) { this.settings = settings; this.patch({ voice }); await this.realtime?.setVoice(voice); }
     } catch (error) { if (epoch === this.epoch) this.patch({ error: voiceError(error, uiText()('voiceSession.could_not_save_the_voice')) }); }
   }
+  async selectRealtimeVoice(voiceId: string, customVoices?: RealtimeCustomVoice[]) {
+    const config=this.state.realtimeSettings, call=this.realtime, epoch=this.epoch;
+    if(!config || !call || !this.api?.realtime) return;
+    const saved=await this.api.realtime.saveVoices({provider:config.provider,voiceId,customVoices});
+    if(epoch!==this.epoch || call!==this.realtime)return;
+    await call.setVoice(voiceId);
+    if(epoch===this.epoch)this.patch({realtimeSettings:{...config,voiceId:saved.voiceId,customVoices:saved.customVoices}});
+  }
   end(error = '') {
     clearInterval(this.refreshTimer); this.refreshTimer = undefined;
     void this.api?.setCallActive?.(false).catch(() => {});
@@ -477,7 +490,7 @@ export class VoiceSession {
     this.requests.clear(); this.pending = 0; this.serial = Promise.resolve(); this.lastClip = undefined; this.failedText = '';
     this.spoken.reset([]); this.recentSpeech = []; this.settingsOpen = false;
     this.sendingFirst = false; this.insertTranscript = undefined; this.updateTranscript = undefined; if (active === this) active = undefined;
-    this.patch({ ...initial, error });
+    this.patch({ ...initial, realtimeSettings:undefined, error });
   }
 }
 

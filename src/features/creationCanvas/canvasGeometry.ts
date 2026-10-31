@@ -81,15 +81,15 @@ export function updateCanvasFrame(document: CreationCanvas, id: string, frame: C
   } };
 }
 
-/** Fit the occupied area without changing saved frames; reserve the bottom controls. */
-export function fitCanvasViewport(view: Bounds, board: Bounds & { items?: { frame: CanvasFrame }[] }, inset: number) {
+/** Centre occupied content at a fixed scale or fit it; reserve the bottom controls. */
+export function fitCanvasViewport(view: Bounds, board: Bounds & { items?: { frame: CanvasFrame }[] }, inset: number, fixedZoom?: number) {
   const frames = board.items?.map(item => item.frame) ?? [];
   const left = frames.length ? Math.min(...frames.map(frame => frame.x)) : 0;
   const top = frames.length ? Math.min(...frames.map(frame => frame.y)) : 0;
   const right = frames.length ? Math.max(...frames.map(frame => frame.x + frame.width)) : board.width;
   const bottom = frames.length ? Math.max(...frames.map(frame => frame.y + frame.height)) : board.height;
   const width = Math.max(1, view.width - inset * 2), height = Math.max(1, view.height - inset * 2 - 44);
-  const zoom = Math.min(2, width / Math.max(1, right - left), height / Math.max(1, bottom - top));
+  const zoom = fixedZoom ?? Math.min(2, width / Math.max(1, right - left), height / Math.max(1, bottom - top));
   return { zoom, origin: { x: inset + (width - (right - left) * zoom) / 2 - left * zoom,
     y: inset + (height - (bottom - top) * zoom) / 2 - top * zoom } };
 }

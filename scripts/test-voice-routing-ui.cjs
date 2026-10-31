@@ -28,7 +28,7 @@ app.whenReady().then(async()=>{
         setCallActive:async()=>{},cancel:async()=>{},
         transcribe:async()=>{if(fixture.holdTranscription)await new Promise(r=>fixture.releaseTranscription=r);return{text:'这是录音测试',speakerVerified:true};},
         speak:async()=>fixture.spoken++,onAudio:()=>()=>{},
-        realtime:{settings:async()=>({mode:'realtime',hasApiKey:true}),start:async data=>fixture.started.push(data),audio:async()=>fixture.frames++,
+        realtime:{settings:async()=>({mode:'realtime',provider:'cardbush',hasApiKey:false}),start:async data=>fixture.started.push(data),audio:async()=>fixture.frames++,
           control:async()=>{},playback:async()=>{},close:async id=>fixture.closed.push(id),onEvent:()=>()=>{}}}};
       const getMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia=async options=>{const stream=await getMedia(options);fixture.tracks.push(...stream.getTracks());return stream;};

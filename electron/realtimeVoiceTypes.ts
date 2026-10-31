@@ -3,18 +3,24 @@ import type { RealtimeContextJob, RealtimeContextResult } from '@cardbush/bush-p
 export type { RealtimeContextResult };
 export interface RealtimeVoiceSettings {
   mode: 'realtime' | 'chained';
-  provider: 'volcengine' | 'cardbush';
+  provider: 'volcengine' | 'qwen' | 'cardbush';
   model?: string;
   endpoint?: string;
   profiles?: Partial<Record<RealtimeVoiceSettings['provider'], RealtimeVoiceConnectionProfile>>;
   instructions: string;
   femaleVoice: string;
   maleVoice: string;
+  /** Explicit choice; older configurations fall back to their gender aliases. */
+  voiceId?: string;
+  customVoices?: RealtimeCustomVoice[];
   hasApiKey: boolean;
 }
 export interface RealtimeVoiceConnectionProfile {
   model: string; endpoint: string; femaleVoice: string; maleVoice: string; hasApiKey: boolean;
+  voiceId?: string; customVoices?: RealtimeCustomVoice[];
 }
+export interface RealtimeCustomVoice { id: string; name: string }
+export interface RealtimeVoiceSelection { provider: RealtimeVoiceSettings['provider']; voiceId: string; customVoices?: RealtimeCustomVoice[] }
 export const defaultRealtimeVoiceSettings: RealtimeVoiceSettings = {
   mode: 'realtime', provider: 'volcengine', hasApiKey: false,
   femaleVoice: 'zh_female_vv_jupiter_bigtts', maleVoice: 'zh_male_yunzhou_jupiter_bigtts',
@@ -26,7 +32,7 @@ export interface RealtimeToolResult { id: string; output: string }
 export type RealtimeVoiceEvent = { id: string; responseId?: string } & (
   | { type: 'ready' | 'closed' | 'interrupted' | 'audio-start' | 'audio-end' }
   | { type: 'audio'; pcm: string; sampleRate: number }
-  | { type: 'transcript'; role: 'user' | 'assistant'; text: string; final: boolean; itemId: string }
+  | { type: 'transcript'; role: 'user' | 'assistant'; text: string; final: boolean; itemId: string; replace?: boolean }
   | { type: 'input-discarded'; itemId: string }
   | { type: 'input-start'; itemId: string }
   | { type: 'tools'; calls: RealtimeToolCall[] }
@@ -38,7 +44,8 @@ export type RealtimeVoiceEvent = { id: string; responseId?: string } & (
 export interface RealtimeVoiceApi {
   settings(): Promise<RealtimeVoiceSettings>;
   saveSettings(input: RealtimeVoiceSettingsInput): Promise<RealtimeVoiceSettings>;
-  start(input: { id: string; sessionId?: string; assistant?: { name: string; persona: string }; voice: 'female' | 'male'; context: { role: 'user' | 'assistant'; text: string }[] }): Promise<void>;
+  saveVoices(input: RealtimeVoiceSelection): Promise<RealtimeVoiceSettings>;
+  start(input: { id: string; sessionId?: string; timeZone?: string; assistant?: { name: string; persona: string }; voice: string; context: { role: 'user' | 'assistant'; text: string }[] }): Promise<void>;
   audio(id: string, pcm: ArrayBuffer): Promise<void>;
   history(id: string, cursor?: number): Promise<{ history: string; nextCursor: number | null; totalCharacters: number }>;
   control(id: string, action: 'mute' | 'unmute' | 'interrupt' | 'commit'): Promise<void>;
@@ -47,7 +54,7 @@ export interface RealtimeVoiceApi {
   compacted(id: string, jobId: string, result?: RealtimeContextResult): Promise<void>;
   playback(id: string, speaking: boolean): Promise<void>;
   forgetHistory(sessionId?: string): Promise<void>;
-  setVoice(id: string, voice: 'female' | 'male'): Promise<void>;
+  setVoice(id: string, voice: string): Promise<void>;
   close(id: string): Promise<void>;
   onEvent(callback: (event: RealtimeVoiceEvent) => void): () => void;
 }

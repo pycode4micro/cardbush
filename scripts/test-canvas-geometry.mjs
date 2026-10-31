@@ -40,6 +40,10 @@ test('fit centres the empty board across wide, tall and narrow viewports', () =>
     assert.ok(Math.abs(fit.origin.y + board.height * fit.zoom / 2 - (view.height - 44) / 2) < 1e-9);
     assert.ok(fit.origin.x + board.width * fit.zoom <= view.width - inset + 1e-9);
     assert.ok(fit.origin.y + board.height * fit.zoom <= view.height - inset - 44 + 1e-9);
+    const actualSize = fitCanvasViewport(view, board, inset, 1);
+    assert.equal(actualSize.zoom, 1);
+    assert.equal(actualSize.origin.x + board.width / 2, view.width / 2);
+    assert.equal(actualSize.origin.y + board.height / 2, (view.height - 44) / 2);
   }
 });
 

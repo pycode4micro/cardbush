@@ -17,7 +17,7 @@ async function completeOrCancel<T>(operation: Promise<T>, cancelled: T): Promise
   catch (error) { if (error instanceof Error && error.name === 'VoiceCancelledError') return cancelled; throw error; }
 }
 
-export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime: { packaged: boolean; appPath: string; resourcesPath: string }, network: { download: typeof fetch; speech: typeof fetch; realtimeProxy: () => Promise<string>; realtimeDiagnostic?: (entry: RealtimeVoiceDiagnostic) => void }) {
+export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime: { packaged: boolean; appPath: string; resourcesPath: string }, network: { download: typeof fetch; speech: typeof fetch; realtimeProxy: () => Promise<string>; realtimeDiagnostic?: (entry: RealtimeVoiceDiagnostic) => void; uiLanguage?: () => string }) {
   let service: VoiceService | undefined;
   const models = new VoiceModelStore(path.join(app.getPath('userData'), 'voice-models'), network.download);
   const recognition = new SenseVoice(models, path.join(app.getPath('temp'), 'cardbush-voice'));
@@ -38,6 +38,7 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
   const realtime = new RealtimeVoiceService(path.join(app.getPath('userData'), 'voice-realtime-settings.json'), {
     ...crypto, connect: async (url, headers) => connectRealtimeVoice(await network.realtimeProxy(), url, headers),
     diagnostic: network.realtimeDiagnostic,
+    uiLanguage: network.uiLanguage,
   });
   const model = (kind: unknown) => { if (kind === 'speaker') return speakerModels; if (kind === 'speech') return speechModels; if (kind === undefined || kind === 'recognition') return models; throw Error('Invalid voice model kind.'); };
   app.once('before-quit', () => {
@@ -75,6 +76,7 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
   });
   ipcMain.handle('voice:realtime-settings', event => { authorized(event); return realtime.settings(); });
   ipcMain.handle('voice:realtime-save', (event, input) => { authorized(event); return realtime.save(input); });
+  ipcMain.handle('voice:realtime-save-voices', (event, input) => { authorized(event); return realtime.saveVoices(input); });
   ipcMain.handle('voice:realtime-start', (event, input) => {
     authorized(event);
     if (speaker.status().enabled) throw Error('实时通话不支持声纹锁定，请关闭锁定或选择「转写 + Agent + 朗读」模式。');

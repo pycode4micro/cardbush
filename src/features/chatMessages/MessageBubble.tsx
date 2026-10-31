@@ -1098,7 +1098,8 @@ function MessageBubbleView({
   const failedAssistantRound = isFailedAssistantMessage(message);
   // Final-display intent is independent of turn completion. Keep stop/actions
   // and task state live, but archive the process as soon as final text streams.
-  const streamingFinalResponse = isActiveAssistantTurn && isAssistantFinalResponse(message);
+  // Spoken replies stream independently of the text Agent's active Turn.
+  const streamingFinalResponse = (isActiveAssistantTurn || message.status === 'streaming') && isAssistantFinalResponse(message);
   const showActiveProcess = isActiveAssistantTurn && !streamingFinalResponse;
   const guidanceBoundaryRound =
     !isActiveAssistantTurn && isGuidanceBoundaryAssistantMessage(message);
@@ -1136,6 +1137,7 @@ function MessageBubbleView({
   const activations = mcpActivations(assistantProgressExecutions);
   const showAssistantProgress =
     message.role === 'assistant' &&
+    message.metadata?.conversation_journal !== true &&
     !stoppedAssistantRound &&
     (isActiveAssistantTurn ||
       toolExecutions.length > 0 ||
@@ -1155,7 +1157,7 @@ function MessageBubbleView({
     (!isActiveAssistantTurn || streamingFinalResponse) && isFinalAssistantDisplayMessage(message);
   const showFinalAnswer = finalAssistantRound &&
     !guidanceBoundaryRound && !stoppedAssistantRound && !failedAssistantRound;
-  const showAssistantActions = !isActiveAssistantTurn && !guidanceBoundaryRound &&
+  const showAssistantActions = !isActiveAssistantTurn && !streamingFinalResponse && !guidanceBoundaryRound &&
     !(sending && activeMessageTurn && activeMessageTurn === activeTurn) &&
     (finalAssistantRound || stoppedAssistantRound || failedAssistantRound);
   const historyToolIds = new Set(visibleLoopHistory.flatMap(item => (item.toolExecutions ?? []).map(tool => tool.id)));

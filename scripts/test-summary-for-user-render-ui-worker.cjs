@@ -44,7 +44,35 @@ app.whenReady().then(async () => {
     await waitFor('Boolean(document.querySelector(".assistant-active-transcript"))');
     assert.equal(await run('Boolean(document.querySelector(".assistant-final-answer,.message-actions"))'), false);
     assert.match(await run('document.querySelector(".assistant-active-transcript").textContent'), /检查习惯记录/);
+
+    // Voice playback streams independently of the Runtime turn. These are
+    // ordinary replies even while another Agent is working in this session.
+    for (const language of ['zh','en']) for (const mainTurnActive of [false,true]) {
+      const options=JSON.stringify({language,mainTurnActive});
+      await run(`showJournal('streaming','如果是日常交流',${options})`);
+      await waitFor('document.querySelector(".assistant-final-answer")?.textContent==="如果是日常交流"');
+      assert.equal(await run('Boolean(document.querySelector(".assistant-completed-disclosure,.assistant-run-header,.assistant-active-transcript,.message-actions"))'),false,
+        'spoken text must be visible without processed disclosure, execution status or premature final actions');
+      assert.equal(await run('projected.at(-1).status'),'streaming','display intent must not mark playback completed');
+      await run(`window.spokenBody=document.querySelector('.assistant-final-answer');showJournal('streaming','如果是日常交流，这些方法基本够用。',${options})`);
+      await waitFor('document.querySelector(".assistant-final-answer")?.textContent.includes("基本够用")');
+      assert.equal(await run('spokenBody===document.querySelector(".assistant-final-answer")'),true,'each playback update retains the visible reply node');
+      await run(`showJournal('completed','如果是日常交流，这些方法基本够用。',${options})`);
+      await waitFor('Boolean(document.querySelector(".message-actions"))');
+      assert.equal(await run('spokenBody===document.querySelector(".assistant-final-answer")'),true,'completion does not move the reply into another container');
+      assert.equal(await run('Boolean(document.querySelector(".assistant-completed-disclosure,.assistant-run-header"))'),false);
+      await run(`showJournal('interrupted','如果是日常交流',${options})`);
+      await waitFor('document.querySelector(".assistant-bubble")?.textContent.includes("如果是日常交流")');
+      assert.equal(await run('Boolean(document.querySelector(".assistant-completed-disclosure"))'),false,'interrupted speech remains readable outside the process history');
+      await run(`showJournal('completed','如果是日常交流，这些方法基本够用。',${options})`);
+      await waitFor('document.querySelector(".assistant-final-answer")?.textContent.includes("基本够用")');
+    }
+    await run('showJournal("completed","保留为内部通话",{internal:true})');
+    await waitFor('!document.querySelector(".message-row")');
+    await run('showJournal("completed","Published assistant page",{source:"page",language:"en"})');
+    await waitFor('document.querySelector(".assistant-final-answer")?.textContent==="Published assistant page"');
+    assert.equal(await run('Boolean(document.querySelector(".assistant-run-header,.assistant-completed-disclosure"))'),false);
     assert.equal(errors.length, 0, errors.join('\n'));
-    console.log('Final-response UI: collapse during streaming, expandable history, stable completion and resumed tools passed.');
+    console.log('Final-response UI: tool process disclosure, visible playback-paced journal replies, stable streaming/completion, interruption, background Runtime work, reload and internal visibility passed.');
   } finally { window.destroy(); }
 }).then(() => app.exit(0), error => { console.error(error); app.exit(1); });

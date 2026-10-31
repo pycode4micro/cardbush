@@ -41,7 +41,8 @@ export const realtimeVoiceMessages: Pick<RealtimeVoiceProvider, 'context' | 'aud
     if (user || type.startsWith('response.output_text.')) {
       const final = type.endsWith('.completed') || type.endsWith('.done');
       const text = str(event.transcript) || str(event.text) || str(event.delta);
-      return text || final ? [{ type: 'transcript', role: user ? 'user' : 'assistant', text: text.slice(0,16000), final, itemId, ...response } as ProviderEvent] : [];
+      return text || final || event.text_mode==='replace' ? [{ type: 'transcript', role: user ? 'user' : 'assistant', text: text.slice(0,16000), final, itemId,
+        ...(event.text_mode==='replace' ? {replace:true} : {}), ...response } as ProviderEvent] : [];
     }
     return [];
   },

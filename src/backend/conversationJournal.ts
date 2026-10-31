@@ -23,5 +23,8 @@ export function journalMessages(entries: ConversationEntry[], sessionId: string,
     content: entry.role === 'user' ? readUserPrompt(entry.content).text : entry.content,
     status: streaming ? 'streaming' : entry.status === 'interrupted' ? 'stopped' : 'completed', metadata: { ...(entry.role === 'user' ? promptContextMetadata(entry.promptContext
       ? { text: entry.content, context: entry.promptContext } : readUserPrompt(entry.content)) : {}),
+      // Journal replies address the user even while speech is still playing.
+      // Display intent is separate from playback/turn completion.
+      ...(entry.role === 'assistant' ? { transcript_kind: 'assistant_final' } : {}),
       conversation_journal: true, cardbush_terminal_snapshot: !streaming && entry.role === 'assistant', voice_transcript: entry.source === 'voice' } }));
 }

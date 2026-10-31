@@ -7,6 +7,7 @@ import { RealtimeAgentBridge, realtimeConversationRecord, type RealtimeConversat
 import type { ElectronProductHostController } from './productHostController.mjs';
 import type { RealtimeVoiceService } from './realtimeVoiceService.js';
 import type { RealtimeVoiceEvent } from './realtimeVoiceTypes.js';
+import { RealtimeVoiceHangup } from './realtimeVoiceHangup.js';
 import { writePrivateJson } from './atomicJsonFile.mjs';
 
 export const assistantHostSettingsSchema = z.object({
@@ -147,26 +148,53 @@ export class AssistantDeviceCall {
   private closed = false;
   private bridge: RealtimeAgentBridge;
   private partials = new Map<string, string>();
+  private hangup = new RealtimeVoiceHangup(() => { this.close(); this.emit({id:this.id,type:'closed'}); });
+  private outputId?: string;
+  private cancelledOutputs = new Set<string>();
   constructor(private voice: RealtimeVoiceService, private owner: string, private settings: AssistantHostSettings,
     private executor: RealtimeConversationExecutor, private emit: (event: RealtimeVoiceEvent) => void) {
     this.bridge = new RealtimeAgentBridge(() => {}, async result => {
-      let speech: string;
-      try { speech = await executor.summarize!(String(result.taskId), settings.language); }
-      catch { speech = settings.language === 'zh' ? '后台任务已有结果，请在电脑上的任务详情中查看。' : 'A background task has a result. Open its details on your computer.'; }
-      if (!this.closed) await voice.notify(owner, this.id, JSON.stringify({ ...result, speech, language: settings.language }));
+      if (!this.closed) await voice.notify(owner, this.id, JSON.stringify({ ...result, language: settings.language }));
     });
     this.bridge.update({ sessionId: PERSONAL_ASSISTANT_SESSION, environment: 'local', assistant: settings.profile, agent: executor });
   }
   async start() {
-    await this.voice.start(this.owner, { id: this.id, sessionId: PERSONAL_ASSISTANT_SESSION, assistant: this.settings.profile, voice: this.settings.voice, context: this.executor.initialContext?.() || [] }, event => this.event(event));
+    await this.voice.start(this.owner, { id: this.id, sessionId: PERSONAL_ASSISTANT_SESSION, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, assistant: this.settings.profile, voice: this.settings.voice, context: this.executor.initialContext?.() || [] }, event => this.event(event));
     if (this.closed) { this.voice.close(this.owner); return; }
     if (this.settings.profile.microphoneMuted) this.voice.control(this.owner, this.id, 'mute');
   }
   private event(event: RealtimeVoiceEvent) {
     if (this.closed) return;
+    if (event.type === 'input-start') {
+      this.cancelOutput();
+      this.emit({id:this.id,type:'interrupted',responseId:this.outputId});
+    }
+    const stale = event.responseId && this.cancelledOutputs.has(event.responseId);
+    if (stale && ['audio-start','audio','audio-end','transcript','interrupted'].includes(event.type) && !(event.type==='transcript' && event.role==='user')) return;
+    if (event.type === 'audio-start') { this.outputId=event.responseId; this.hangup.audioStart(event.responseId); }
+    if (event.type === 'audio') { this.outputId=event.responseId; this.hangup.audio(event.responseId); }
+    if (event.type === 'audio-end') this.hangup.audioEnd(event.responseId);
+    if (event.type === 'interrupted' || event.type === 'connection-state' && event.state!=='connected') this.cancelOutput();
     if (event.type === 'tools') {
-      void Promise.all(event.calls.map(async call => ({ id: call.id, output: await this.bridge.run(call) }))).then(results => {
-        if (!this.closed) { this.voice.results(this.owner, this.id, results); this.bridge.acknowledge(event.calls); }
+      let ending=false;
+      void Promise.all(event.calls.map(async call => {
+        if (call.name==='hang_up' || call.name==='recall_conversation') {
+          try {
+            const args=JSON.parse(call.arguments);
+            if (!args || typeof args!=='object' || Array.isArray(args)) throw Error('Invalid call arguments.');
+            if (call.name==='recall_conversation') {
+              if (Object.keys(args).some(key=>key!=='cursor')) throw Error('Invalid history cursor.');
+              return {id:call.id,output:JSON.stringify(this.voice.history(this.owner,this.id,args.cursor))};
+            }
+            if (Object.keys(args).length) throw Error('hang_up accepts an empty object.');
+            if (stale) return {id:call.id,output:JSON.stringify({status:'cancelled',message:'The user resumed speaking.'})};
+            this.hangup.request(event.responseId); ending=true;
+            return {id:call.id,output:JSON.stringify({status:'ending',message:'The call ends after goodbye playback. Background tasks continue.'})};
+          } catch { return {id:call.id,output:JSON.stringify({status:'error',message:'Invalid call arguments or unavailable history.'})}; }
+        }
+        return {id:call.id,output:await this.bridge.run(call)};
+      })).then(results => {
+        if (!this.closed) { this.voice.results(this.owner, this.id, results); this.bridge.acknowledge(event.calls); if(ending)this.hangup.acknowledge(); }
       }).catch(() => this.close());
     } else if (event.type === 'context-compact') {
       void this.executor.compact?.(event.job).then(result => { if (!this.closed) return this.voice.compacted(this.owner, this.id, event.job.jobId, result); }).catch(() => {
@@ -176,7 +204,7 @@ export class AssistantDeviceCall {
       this.partials.delete(`user:${event.itemId}`);
     } else if (event.type === 'transcript') {
       const key = `${event.role}:${event.itemId}`, prior = this.partials.get(key) || '';
-      const content = event.final ? event.text || prior : prior + event.text;
+      const content = event.final ? event.text || prior : event.replace ? event.text : prior + event.text;
       if (content.length > 64000 || this.partials.size > 80) { this.close(); return; }
       if (event.final) {
         this.partials.delete(key);
@@ -186,8 +214,13 @@ export class AssistantDeviceCall {
     }
     if (event.type !== 'tools' && event.type !== 'context-compact') this.emit(event);
   }
+  private cancelOutput() {
+    this.hangup.cancel();
+    if (this.outputId) this.cancelledOutputs.add(this.outputId);
+    while (this.cancelledOutputs.size>80) this.cancelledOutputs.delete(this.cancelledOutputs.values().next().value!);
+  }
   audio(pcm: Uint8Array) { if (!this.closed) this.voice.audio(this.owner, this.id, Uint8Array.from(pcm).buffer); }
-  control(action: 'interrupt' | 'commit' | 'mute' | 'unmute') { if (!this.closed) this.voice.control(this.owner, this.id, action); }
-  playback(speaking: boolean) { if (!this.closed) this.voice.playback(this.owner, this.id, speaking); }
-  close() { if (this.closed) return; this.closed = true; this.bridge.close(); this.partials.clear(); this.voice.close(this.owner, this.id); }
+  control(action: 'interrupt' | 'commit' | 'mute' | 'unmute') { if (!this.closed) { if(action==='interrupt')this.cancelOutput(); this.voice.control(this.owner, this.id, action); } }
+  playback(speaking: boolean) { if (!this.closed) { this.hangup.playback(speaking); this.voice.playback(this.owner, this.id, speaking); } }
+  close() { if (this.closed) return; this.closed = true; this.hangup.close(); this.bridge.close(); this.partials.clear(); this.voice.close(this.owner, this.id); }
 }

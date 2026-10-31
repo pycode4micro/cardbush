@@ -101,6 +101,16 @@ assert.equal(
   'derived_from_transcript',
 );
 
+for (const status of ['streaming','completed','stopped']) {
+  const spoken = { id:'spoken',role:'assistant',content:'A spoken reply',status,
+    createdAt:'2026-10-30T15:22:11Z',metadata:{conversation_journal:true,voice_transcript:true,transcript_kind:'assistant_final'} };
+  const visible = hydrateAssistantTurnTiming([
+    {id:'spoken-user',role:'user',content:'Question',createdAt:'2026-10-30T15:22:09Z',metadata:{conversation_journal:true}},spoken,
+  ]);
+  assert.equal(visible[1],spoken,'journal utterances must not acquire synthetic Runtime execution timing');
+  assert.equal(visible[1].metadata.cardbush_turn_duration_ms,undefined);
+}
+
 const completed = {
   id: 'assistant-exact',
   role: 'assistant',

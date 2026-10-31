@@ -13,6 +13,7 @@ const source = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MessageBubble } from '${local('src/features/chatMessages/MessageBubble.tsx')}';
+import { journalMessages } from '${local('src/backend/conversationJournal.ts')}';
 import { normalizeChatMessagesForDisplay, normalizeActiveTurnTranscriptForDisplay } from '${local('src/features/chatMessages/transcript/messageProjection.ts')}';
 const root = createRoot(document.getElementById('root'));
 const noop = async () => {};
@@ -35,6 +36,18 @@ window.show = (phase, content = '最终答复第一段') => {
 };
 const show = window.show;
 window.show = (...args) => { try { return show(...args); } catch (error) { console.error(error.stack); throw error; } };
+window.showJournal = (phase, content, options = {}) => {
+  const user = {id:'voice-user',role:'user',content:'你确定吗？',createdAt:'2026-10-30T15:22:09Z',source:'voice',visibility:'conversation'};
+  const reply = {id:'voice-reply',role:'assistant',content,createdAt:'2026-10-30T15:22:11Z',source:options.source || 'voice',
+    visibility:options.internal?'internal':'conversation',status:phase==='interrupted'?'interrupted':'completed'};
+  const messages = normalizeChatMessagesForDisplay([...journalMessages([user], 'voice-session'),
+    ...journalMessages([reply], 'voice-session', phase==='streaming')]);
+  window.projected = messages;
+  const message = messages.find(item=>item.id===reply.id);
+  root.render(message ? <MessageBubble message={message} language={options.language || 'zh'} sending={Boolean(options.mainTurnActive)}
+    activeTurnId={options.mainTurnActive?'unrelated-runtime-turn':''} activeAssistantMessageId={options.mainTurnActive?'unrelated-runtime-message':''}
+    onRegenerate={noop} onEditUserMessage={noop} onRetryGuidance={noop} onRevertChangeReport={noop} onOpenScene={noop}/> : null);
+};
 `;
 try {
   await build({ configFile: false, logLevel: 'silent', esbuild: { jsx: 'automatic' },

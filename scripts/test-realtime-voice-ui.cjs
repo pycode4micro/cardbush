@@ -51,6 +51,7 @@ app.whenReady().then(async()=>{
   ipcMain.handle('voice:save-settings',(_,settings)=>(preferences=settings));
   ipcMain.handle('voice:realtime-settings',()=>service.settings());
   ipcMain.handle('voice:realtime-save',(_,settings)=>service.save(settings));
+  ipcMain.handle('voice:realtime-save-voices',(_,settings)=>service.saveVoices(settings));
   ipcMain.handle('voice:realtime-start',(event,input)=>service.start(event.sender.id,input,value=>event.sender.send('voice:realtime-event',value)));
   ipcMain.handle('voice:realtime-audio',async(event,id,pcm)=>{
     if(holdAudio)await new Promise(resolve=>heldAudio.push(resolve));
@@ -80,10 +81,10 @@ app.whenReady().then(async()=>{
       fixture.outputLevel=()=>applicationVoiceSession().realtime.audio.outputGain.gain.value;
       const getMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia=async c=>{const s=await getMedia(c);fixture.tracks.push(...s.getTracks());return s;};
-      function Fixture(){const [messages,setMessages]=useState([]),[sessionId,setSession]=useState(''),[sending,setSending]=useState(false),[visible,setVisible]=useState(true);fixture.hide=()=>setVisible(false);
+      function Fixture(){const [messages,setMessages]=useState([]),[sessionId,setSession]=useState(''),[sending,setSending]=useState(false),[visible,setVisible]=useState(true),[language,setLanguage]=useState('zh');fixture.hide=()=>setVisible(false);fixture.language=setLanguage;
         fixture.switch=()=>setSession('other');
         fixture.complete=()=>{for(const task of fixture.tasks){task.status='completed';task.finalResponse='测试任务完成';}};
-        return <div className="app theme-dark"><ApplicationVoiceHost language="zh">{visible && <VoiceConversation language="zh" target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'own':null,
+        return <div className="app theme-dark"><ApplicationVoiceHost language={language}>{visible && <VoiceConversation language={language} target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'own':null,
           agent:{list:async()=>fixture.tasks,preview:async entry=>fixture.previews.push(entry),record:async entry=>fixture.recorded.push(entry),summarize:async()=>{fixture.summaries++;throw Error('Automatic speech summaries are disabled');},execute:async(id,name,args)=>{fixture.sent.push(args.prompt);const task={taskId:id,childSessionId:'child-'+id,parentTurnId:'voice_turn_'+id,status:'running',finalResponse:'',errorMessage:''};fixture.tasks.push(task);setTimeout(()=>setSession('created'),30);return task;}},
           send:async text=>{fixture.sent.push(text);setSending(true);setMessages([{id:'u',role:'user',turnId:'own',content:text}]);setTimeout(()=>setSession('created'),30);return true;}}}>
           <VoiceCallButton callEnabled className="send-button" aria-label="长按语音通话">Call</VoiceCallButton>
@@ -95,13 +96,13 @@ app.whenReady().then(async()=>{
   fs.mkdirSync(path.join(directory,'voice'));
   fs.copyFileSync('public/voice/realtime-capture-worklet.js',path.join(directory,'voice/realtime-capture-worklet.js'));
   fs.writeFileSync(path.join(directory,'index.html'),`<html><meta charset="utf-8"><style>${output.filter(v=>v.type==='asset'&&v.fileName.endsWith('.css')).map(v=>v.source).join('\n')}</style><div id="root"></div><script>${output.find(v=>v.type==='chunk').code.replaceAll('</script','<\\/script')}</script></html>`);
-  const win=new BrowserWindow({show:false,width:900,height:760,webPreferences:{preload:path.resolve('dist-electron/preload.js'),contextIsolation:true,sandbox:true,backgroundThrottling:false}});
+  const win=new BrowserWindow({show:false,width:900,height:760,webPreferences:{preload:path.resolve('dist-electron/preload.js'),contextIsolation:true,sandbox:true,offscreen:true,backgroundThrottling:false}});
   win.webContents.setAudioMuted(true);
   win.webContents.session.setPermissionCheckHandler((_wc,permission)=>permission==='media');
   win.webContents.session.setPermissionRequestHandler((_wc,permission,callback)=>callback(permission==='media'));
   win.webContents.session.webRequest.onBeforeRequest((details,callback)=>callback({cancel:/^https?:/.test(details.url)}));
   const errors=[];win.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
-  const read=code=>win.webContents.executeJavaScript(code);
+  const read=code=>win.webContents.executeJavaScript(code).catch(error=>{throw Error(error.message+'\nScript: '+code+'\n'+errors.join('\n'));});
   const until=async condition=>{const end=Date.now()+7000;while(!await condition()){if(Date.now()>end)throw Error('Timed out\n'+await read('document.body.innerText')+'\n'+errors.join('\n'));await pause(25);}};
   const dom=code=>until(()=>read(code));
   const click=label=>read(`Array.from(document.querySelectorAll('button')).find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)}||b.textContent===${JSON.stringify(label)}).click();void 0`);
@@ -113,6 +114,27 @@ app.whenReady().then(async()=>{
     await holdCall();await dom('document.querySelector(".voice-call-status")?.textContent==="正在聆听"');
     await until(()=>audioFrames>=5);
     assert.deepEqual(received[0].session.tools.map(tool=>tool.name).sort(), ['hang_up','recall_conversation','subagent','tasks']);
+    await click('通话音色');await dom('document.querySelector(".settings-dropdown-popover:popover-open")');
+    await read('document.querySelector("[role=option][value=zh_male_m191_uranus_bigtts]").click();void 0');
+    await dom('fixture.state().realtimeSettings.voiceId==="zh_male_m191_uranus_bigtts"');
+    assert.equal(service.settings().voiceId,'zh_male_m191_uranus_bigtts');
+    assert.equal(received.findLast(e=>e.type==='session.update').session.audio.output.voice,'zh_male_m191_uranus_bigtts');
+    await click('通话音色');await dom('document.querySelector(".settings-dropdown-popover:popover-open")');
+    await read('[...document.querySelectorAll("[role=option]")].find(b=>b.textContent.includes("添加音色")).click();void 0');
+    await dom('document.querySelector(".realtime-voice-dialog").open');
+    await read(`(()=>{const fields=document.querySelectorAll('.realtime-voice-dialog input');for(const [i,value] of ['自定义音色','fixture-custom'].entries()){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(fields[i],value);fields[i].dispatchEvent(new Event('input',{bubbles:true}));}})()`);
+    await click('添加并使用');await dom('fixture.state().realtimeSettings.voiceId==="fixture-custom"');
+    assert.equal(service.settings().customVoices[0].name,'自定义音色');
+    assert.equal(connections,1,'voice changes keep the same connection');
+    assert.equal(received.some(e=>e.type==='response.cancel'),false,'switching a voice must not interrupt speech');
+    assert.ok(await read('document.querySelector(".voice-call-signal").getBoundingClientRect().width>=32'),'floating voice controls retain a visible waveform');
+    await read('fixture.language("en");void 0');await dom(`document.querySelector('[role=combobox][aria-label="Call voice"]')`);
+    win.setSize(360,760);await pause(300);await click('Call voice');
+    await dom('document.querySelector(".settings-dropdown-popover:popover-open")');
+    assert.ok(await read('(()=>{const r=document.querySelector(".settings-dropdown-popover:popover-open").getBoundingClientRect();return r.width>100&&r.height>100&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight})()'),'voice list is visible and fits narrow windows');
+    await pause(150);assert.ok(await read('document.querySelector(".settings-dropdown-popover").matches(":popover-open")'),'the live voice picker stays open while microphone levels update');
+    fs.writeFileSync(path.resolve('tmp/voice-call-picker.png'),(await win.webContents.capturePage(undefined,{stayHidden:true})).toPNG());
+    await read('document.querySelector(".settings-dropdown-popover:popover-open").hidePopover();fixture.language("zh");void 0');win.setSize(900,760);
     holdAudio=true;await pause(650);
     assert.equal(peer.readyState,1,'a brief IPC stall must not disconnect capture');
     assert.equal(heldAudio.length,4,'microphone IPC concurrency stays bounded');
