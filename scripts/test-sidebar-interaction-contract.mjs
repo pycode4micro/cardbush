@@ -9,6 +9,9 @@ const sidebarSource = readSourceFile(
   'utf8',
 );
 const appSource = readAppViewSources();
+const appCenterSource = readSourceFile('src/features/appCenter/appCenterModel.ts', 'utf8');
+const menuSource = readSourceFile('src/features/windowMenu/applicationMenus.ts', 'utf8');
+const attentionSource = readSourceFile('src/features/sessionAttention.ts', 'utf8');
 const workspaceLocationSource = readSourceFile('src/features/ssh/WorkspaceLocationPicker.tsx', 'utf8');
 const chatHookSource = readSourceFile(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
@@ -127,10 +130,14 @@ assert.doesNotMatch(sidebarSource, /onSectionChange\('(plugins|automations)'\)/,
   'Application entries must not be duplicated above the sidebar sections');
 assert.doesNotMatch(appSource, /工具管理|Tool management/);
 assert.match(
-  appSource,
-  /if \(actions\.openTeam\)[^\n]*label: 'Beta'[^\n]*'Team'/,
-  'The experimental Team surface must live under the Beta menu',
+  appCenterSource,
+  /id: 'builtin:team', kind: 'builtin', target: 'team', title: uiText\(language\)\('appCenterModel\.workflows'\)/,
+  'Team workflows must have one localized, launchable entry in the application catalog',
 );
+assert.match(menuSource, /item\('openAppCenter', 'appCenter\.appCenter', actions\.openAppCenter/,
+  'The file menu opens the shared application center');
+assert.doesNotMatch(menuSource, /actions\.openTeam|id:\s*['"]beta['"]/i,
+  'Team must not regain a separate legacy Beta menu route');
 assert.doesNotMatch(appSource, /label="OS"|onOpenOs|enterOsMode/);
 const windowFrameMenuBlock = appSource.match(
   /function WindowFrameMenu\([\s\S]*?function WindowFrameMenuItem/,
@@ -145,11 +152,11 @@ assert.doesNotMatch(
   /onSectionChange\('(os|skills|tools|team)'\)/,
   'OS, Team, tools, and skills must not remain duplicated in primary sidebar navigation',
 );
-assert.match(sidebarSource, /title=\{language === 'zh' \? '置顶' : 'Pinned'\}/);
+assert.match(sidebarSource, /title=\{uiText\(language\)\('chatSidebar\.pinned'\)\}/);
 assert.match(sidebarSource, /cardbush_pinned_conversation_ids/);
 assert.match(sidebarSource, /pinnedProjects\.map\(renderProjectBlock\)/);
 assert.match(sidebarSource, /pinnedConversations\.map\(renderStandaloneConversation\)/);
-assert.match(sidebarSource, /options\.pinned[\s\S]*?取消置顶[\s\S]*?置顶对话/);
+assert.match(sidebarSource, /options\.pinned\s*\? uiText\(language\)\('chatSidebar\.unpinChat'\)\s*:\s*uiText\(language\)\('chatSidebar\.pinChat'\)/);
 assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
 const windowFrameBlock = appSource.match(/function WindowFrame\([\s\S]*?function WindowFrameMenu\(/)?.[0] ?? '';
 assert.doesNotMatch(windowFrameBlock, /onOpenPluginSettings|onOpenSkills|label=\{language === 'zh' \? '插件'/,
@@ -169,20 +176,22 @@ assert.match(
 );
 assert.match(sidebarSource, /cardbush_conversation_read_state_v1/);
 assert.match(sidebarSource, /conversationReadReceipt\(/);
-assert.match(sidebarSource, /document\.visibilityState !== 'visible' \|\| !document\.hasFocus\(\)/);
+assert.match(sidebarSource, /if \(!isCardbushForeground\(\)\) return;/,
+  'A background conversation must not be marked read');
+assert.match(attentionSource, /function isCardbushForeground\(\)[\s\S]*?return isWindowVisible\(\) && document\.hasFocus\(\)/,
+  'The shared foreground check combines native window visibility and document focus');
 assert.match(sidebarSource, /key: options\.unread \? 'mark-read' : 'mark-unread'/);
-assert.match(sidebarSource, /标记为已读/);
-assert.match(sidebarSource, /标记为未读/);
+assert.match(sidebarSource, /options\.unread\s*\? uiText\(language\)\('chatSidebar\.markAsRead'\)\s*:\s*uiText\(language\)\('chatSidebar\.markAsUnread'\)/);
 assert.doesNotMatch(sidebarSource, /className="conversation-unread-indicator"/);
 assert.doesNotMatch(stylesSource, /\.conversation-unread-indicator/);
 assert.match(stylesSource, /\.conversation-row\.unread \.conversation-title\s*\{/);
-assert.doesNotMatch(sidebarSource, /window\.prompt\([\s\S]{0,120}重命名对话/);
-assert.doesNotMatch(appSource, /window\.prompt\([\s\S]{0,120}重命名项目/);
+assert.doesNotMatch(sidebarSource, /window\.prompt\(/, 'Sidebar rename uses an App editor, not a native prompt');
+assert.doesNotMatch(appSource, /window\.prompt\(/, 'Project rename uses an App editor, not a native prompt');
 assert.match(appSource, /const \[projectRenameTarget, setProjectRenameTarget\]/);
 assert.match(appSource, /if \(action === 'rename'\) \{[\s\S]*?setProjectRenameTarget\(project\)/);
 assert.match(appSource, /function ProjectRenameDialog\(/);
-assert.match(appSource, /可同时重命名真实项目文件夹/);
-assert.match(appSource, /同时重命名项目文件夹（同一父目录）/);
+assert.match(appSource, /uiText\(language\)\('projectRenameDialog\.youCanAlsoRenameTheRealProject'\)/);
+assert.match(appSource, /uiText\(language\)\('projectRenameDialog\.alsoRenameTheProjectFolderSameParent'\)/);
 assert.match(appSource, /const renameProject = useCallback/);
 assert.match(appSource, /chat\.relocateProjectConversations/);
 assert.match(appSource, /renameProject\(projectRenameTarget, title, renameFolder\)/);
@@ -284,7 +293,7 @@ assert.match(
   'Long titles must shrink inside the title lane instead of pushing action controls',
 );
 assert.doesNotMatch(stylesSource, /\.conversation-change-badge\s*\{/);
-assert.match(sidebarSource, /key:\s*'diff'[\s\S]*?查看 Diff/);
+assert.match(sidebarSource, /key:\s*'diff'[\s\S]*?label:\s*uiText\(language\)\('cardlingWindow\.viewDiff'\)/);
 assert.match(
   stylesSource,
   /\.conversation-row\s*\{[\s\S]*?box-sizing:\s*border-box[\s\S]*?width:\s*100%/,
@@ -322,11 +331,11 @@ assert.match(
 assert.match(appSource, /function WelcomeProjectSwitcher\(/);
 assert.match(appSource, /function WelcomeProjectSwitcher\([\s\S]*?<WorkspaceLocationButton/,
   'The welcome project selector delegates to the shared local/SSH location picker');
-assert.match(workspaceLocationSource, /allowNone\s*&&[\s\S]*?onSelect\(null\)[\s\S]*?不关联项目/,
+assert.match(workspaceLocationSource, /allowNone\s*&&[\s\S]*?onSelect\(null\)[\s\S]*?t\('workspace\.noProject'\)/,
   'The shared picker retains an explicit choice to start without a project');
 assert.match(
   appSource,
-  /className="builtin-workspace-control">\{workspaceControl !== undefined \? workspaceControl : <WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
+  /className="builtin-workspace-control">\{workspaceControl !== undefined \? workspaceControl : <WelcomeProjectSwitcher[\s\S]*?\{composer === undefined \? welcomeComposer : composer\}/,
   'The optional project selector must always be available above the welcome composer',
 );
 assert.match(chatHookSource, /updateConversation\(\{[\s\S]*?projectDir: normalizedProjectDir \?\? null/);
@@ -334,7 +343,7 @@ assert.match(stylesSource, /\.welcome-project-switcher\s*\{/);
 assert.match(stylesSource, /\.welcome-input-stack\s*\{[\s\S]*?margin:\s*0 auto/);
 assert.match(
   stylesSource,
-  /\.welcome-input-stack \.composer-surface,[\s\S]*?border-radius:\s*16px/,
+  /\.welcome-input-stack \.composer-surface,[\s\S]*?border-radius:\s*24px/,
   'The inset project rail must join a fully rounded welcome composer',
 );
 assert.match(

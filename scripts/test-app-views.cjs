@@ -65,7 +65,7 @@ async function buildViews() {
   const { build } = await import('vite');
   const { default: react } = await import('@vitejs/plugin-react');
   const entryId = '\0app-view-test.ts';
-  const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx',
+  const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx', 'src/features/chat/QuickContextRail.tsx',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'terminal-task' ? ['src/features/tools/TerminalTaskStatus.tsx'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'runtime-readiness' ? [
       'src/shared/useRuntimeStartupStatus.ts', 'src/features/composer/Composer.tsx',
@@ -460,6 +460,12 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'code-rendering') {
       await require('./helpers/code-rendering.cjs')({ run, until, window, root });
       assert.deepEqual(await run('failures'), [], 'no code renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'project-hover') {
+      await require('./helpers/project-hover-preview.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no project hover renderer errors');
       assert.deepEqual(errors, []);
       return;
     }
@@ -1073,6 +1079,7 @@ app.whenReady().then(async () => {
     await until("document.querySelector('[data-failure-reason=model_output_limit_exceeded]')?.textContent.includes('2 times')", 'output failure explains bounded continuation');
     await require('./helpers/quick-context-layout.cjs')({ run, until, pause, window, root });
     await require('./helpers/sidebar-title-layout.cjs')({ run, until, pause, window, root });
+    await require('./helpers/project-hover-preview.cjs')({ run, until, pause, window, root });
     await run(`
       window.retryNotice = {
         state: 'retrying', source: 'provider', sessionId: 'fixture', attempt: 8,

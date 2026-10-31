@@ -157,10 +157,21 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   window.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
   await pause(80);
   for (const edge of ['first', 'last']) {
-    const tickPoint = await run("(() => { const ticks = [...document.querySelectorAll('.quick-context-tick')]; const r = ticks[" + (edge === 'first' ? '0' : 'ticks.length - 1') + "].getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()");
+    const tickPoint = await run("(() => { const area=document.querySelector('.quick-context-ticks').getBoundingClientRect(); const ticks = [...document.querySelectorAll('.quick-context-tick')].filter(node=>{const r=node.getBoundingClientRect();return r.top>=area.top&&r.bottom<=area.bottom;}); const r = ticks[" + (edge === 'first' ? '0' : 'ticks.length - 1') + "].getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()");
     window.webContents.sendInputEvent({ type: 'mouseMove', ...tickPoint });
     await pause(450);
-    await until("!!document.querySelector('.turn-hover-preview:popover-open')", 'hover turn summary card');
+    try { await until("!!document.querySelector('.turn-hover-preview:popover-open')", 'hover turn summary card'); }
+    catch (error) {
+      console.log('Rail hover state', edge, tickPoint, await run(`(() => {
+        const track=document.querySelector('.quick-context-ticks'),anchor=document.querySelector('.quick-context-hover-anchor');
+        const rect=node=>node?.getBoundingClientRect().toJSON();
+        return {track:rect(track),anchor:rect(anchor),pointer:getComputedStyle(track).pointerEvents,
+          atPoint:document.elementFromPoint(${tickPoint.x},${tickPoint.y})?.outerHTML.slice(0,600),
+          value:track.getAttribute('aria-valuenow'),hover:document.querySelector('.turn-hover-preview')?.outerHTML.slice(0,600)};
+      })()`));
+      throw error;
+    }
+    await until("!!document.querySelector('.turn-hover-preview strong')", 'lazy turn preview content');
     assert.equal(await run("document.querySelectorAll('[role=tooltip]').length"), 1, 'one summary card replaces redundant hover help');
     assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'no old text tooltip alongside the card');
     const hoveredQuestion = await run("chatProps.messages.find(message => message.id === document.querySelector('.quick-context-tick.previewing').dataset.turnMessageId).content");
@@ -207,6 +218,7 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   await until("!!document.querySelector('.quick-context-panel.detail')", 'reopen before session switch');
   await run("updateChat({ activeConversationId: 'session-context-other' })");
   await until("!document.querySelector('.quick-context-panel')", 'session switch closes the previous turn preview');
+  await require('./quick-context-stress.cjs')({run,until,pause,window,root});
   await run(`contextTooltipRoot.unmount(); contextTooltipHost.remove();
     document.querySelector('.context-layout-inspector').remove(); delete document.body.dataset.contextLayoutTest;
     if (contextClipboardDescriptor) Object.defineProperty(navigator, 'clipboard', contextClipboardDescriptor);

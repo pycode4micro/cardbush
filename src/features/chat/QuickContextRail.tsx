@@ -11,6 +11,8 @@ import {
   useMemo,
   useRef,
   useState,
+  memo,
+  type CSSProperties,
 } from 'react';
 
 import type { AppLanguage, ChatMessage } from '../../types';
@@ -19,37 +21,36 @@ import { MarkdownContent } from '../chatMessages/MessageBubble';
 import { FileMemoScope } from '../chatMessages/FileMemoScope';
 import { HoverPreview, useHoverPreview } from '../../components/HoverPreview';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
+import { contextTickWindow, indexContextTurns } from './quickContextIndex';
 
 type SelectedTurn = {
   message: ChatMessage;
-  messageIndex: number;
   serverMessageId?: string;
 };
 
-export function QuickContextRail({
+export const QuickContextRail = memo(function QuickContextRail({
   language,
   messages,
   sessionId = '',
   turnHistoryAvailable = false,
+  hasEarlier = false,
+  loadingEarlier = false,
+  onLoadEarlier,
 }: {
   language: AppLanguage;
   messages: ChatMessage[];
   sessionId?: string;
   turnHistoryAvailable?: boolean;
+  hasEarlier?: boolean;
+  loadingEarlier?: boolean;
+  onLoadEarlier?: () => void | Promise<unknown>;
 }) {
   const host = useContext(ConversationHostContext);
   const panelId = useId();
-  const userSignature = useMemo(
-    () => messages
-      .filter((message) => message.role === 'user')
-      .map((message) => `${message.id}:${message.content.length}:${fastTextFingerprint(message.content)}`)
-      .join('|'),
-    [messages],
-  );
-  const lastUserMessage = useMemo(
-    () => [...messages].reverse().find((message) => message.role === 'user') ?? null,
-    [userSignature],
-  );
+  const transcript = useMemo(() => indexContextTurns(messages), [messages]);
+  const railTurns = transcript.turns;
+  const userSignature = useMemo(() => railTurns.map(message => message.id).join('\0'), [railTurns]);
+  const lastUserMessage = railTurns.at(-1);
   const [panelView, setPanelView] = useState<'closed' | 'detail'>('closed');
   const hoverPreview = useHoverPreview(panelView !== 'closed');
   const [selectedTurn, setSelectedTurn] = useState<SelectedTurn | null>(null);
@@ -57,23 +58,24 @@ export function QuickContextRail({
   const [detailLoading, setDetailLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [railCapacity, setRailCapacity] = useState(72);
-  const [railWindowStart, setRailWindowStart] = useState(0);
+  const [railOffset, setRailOffset] = useState(0);
   const [visibleUserMessageId, setVisibleUserMessageId] = useState('');
   const railRef = useRef<HTMLElement>(null);
   const railHandleRef = useRef<HTMLDivElement>(null);
+  const ticksRef = useRef<HTMLDivElement>(null);
+  const tickStepRef = useRef(9);
+  const browsingRef = useRef(false);
+  const focusRequestRef = useRef<number | null>(null);
+  const labelsRef = useRef(new WeakMap<ChatMessage, string>());
+  const windowAnchorRef = useRef<{ id: string; index: number; offset: number } | null>(null);
+  const layoutRef = useRef<{ session: string; current: string; signature: string } | null>(null);
+  const pageRef = useRef({ hasEarlier, loadingEarlier, onLoadEarlier });
+  pageRef.current = { hasEarlier, loadingEarlier, onLoadEarlier };
+  const pagePendingRef = useRef<symbol | null>(null);
   const detailRequestRef = useRef<AbortController | null>(null);
-  const railTurns = useMemo(
-    () => messages.filter((message) => message.role === 'user'),
-    [userSignature],
-  );
-  const currentRailIndex = railTurns.findIndex((message) => message.id === (
-    visibleUserMessageId || lastUserMessage?.id
-  ));
-  const maxRailWindowStart = Math.max(0, railTurns.length - railCapacity);
-  const visibleRailTurns = railTurns.slice(
-    Math.min(railWindowStart, maxRailWindowStart),
-    Math.min(railWindowStart, maxRailWindowStart) + railCapacity,
-  );
+  const currentRailIndex = transcript.positions.get(visibleUserMessageId) ?? railTurns.length - 1;
+  const tickWindow = contextTickWindow(railTurns.length, railCapacity, railOffset, tickStepRef.current);
+  const visibleRailTurns = railTurns.slice(tickWindow.start, tickWindow.end);
   const hasRailTurns = railTurns.length > 0;
 
   useLayoutEffect(() => {
@@ -90,7 +92,9 @@ export function QuickContextRail({
         chatBody.style.removeProperty('--chat-reading-gutter');
       }
       const availableHeight = Math.max(0, handle.clientHeight - 20);
-      const nextCapacity = Math.max(8, Math.min(96, Math.floor(availableHeight / 9)));
+      const step = parseFloat(getComputedStyle(handle).getPropertyValue('--context-tick-step')) || 9;
+      tickStepRef.current = step;
+      const nextCapacity = Math.max(2, Math.min(96, Math.floor(availableHeight / step)));
       setRailCapacity((current) => current === nextCapacity ? current : nextCapacity);
     };
     const resizeObserver = new ResizeObserver(updateCapacity);
@@ -104,28 +108,69 @@ export function QuickContextRail({
   }, [hasRailTurns]);
 
   useEffect(() => {
-    setRailWindowStart((current) => {
-      const maxStart = Math.max(0, railTurns.length - railCapacity);
-      if (currentRailIndex < 0) return Math.min(current, maxStart);
-      const edgeBuffer = Math.min(6, Math.floor(railCapacity * 0.12));
-      if (currentRailIndex < current + edgeBuffer) {
-        return Math.max(0, currentRailIndex - edgeBuffer);
+    const ticks = ticksRef.current;
+    if (!ticks) return;
+    const wheel = (event: WheelEvent) => {
+      if (!event.cancelable || event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey ||
+        !Number.isFinite(event.deltaY) || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      event.stopPropagation();
+      browsingRef.current = true;
+      hoverPreview.close();
+      const page = pageRef.current;
+      if (event.deltaY < 0 && ticks.scrollTop <= tickStepRef.current * 2 && page.hasEarlier &&
+        !page.loadingEarlier && !pagePendingRef.current && page.onLoadEarlier) {
+        const token = Symbol(); pagePendingRef.current = token;
+        void Promise.resolve().then(page.onLoadEarlier).catch(() => undefined).finally(() => {
+          if (pagePendingRef.current === token) pagePendingRef.current = null;
+        });
       }
-      if (currentRailIndex >= current + railCapacity - edgeBuffer) {
-        return Math.min(maxStart, currentRailIndex - railCapacity + edgeBuffer + 1);
-      }
-      return Math.min(current, maxStart);
-    });
-  }, [currentRailIndex, railCapacity, railTurns.length]);
+    };
+    ticks.addEventListener('wheel', wheel, { passive: true });
+    return () => ticks.removeEventListener('wheel', wheel);
+  }, [hasRailTurns, sessionId, hoverPreview.close]);
 
-  const scrollRailWindow = (direction: number) => {
-    if (railTurns.length <= railCapacity || direction === 0) return;
-    const step = Math.max(1, Math.round(railCapacity * 0.08));
-    setRailWindowStart((current) => Math.min(
-      Math.max(0, railTurns.length - railCapacity),
-      Math.max(0, current + Math.sign(direction) * step),
-    ));
-  };
+  const rememberWindow = useCallback(() => {
+    const ticks = ticksRef.current;
+    if (!ticks) return;
+    const index = Math.max(0, Math.floor(ticks.scrollTop / tickStepRef.current));
+    if (railTurns[index]) windowAnchorRef.current = { id: railTurns[index].id, index,
+      offset: ticks.scrollTop - index * tickStepRef.current };
+    setRailOffset(ticks.scrollTop);
+  }, [railTurns]);
+
+  useLayoutEffect(() => {
+    const ticks = ticksRef.current;
+    if (!ticks || !railTurns.length) return;
+    const previous = layoutRef.current, anchor = windowAnchorRef.current;
+    const current = railTurns[currentRailIndex]?.id ?? '';
+    const step = tickStepRef.current;
+    if (!previous || previous.session !== sessionId) {
+      browsingRef.current = false;
+      ticks.scrollTop = Math.max(0, currentRailIndex - railCapacity + 1) * step;
+    } else {
+      const newIndex = anchor ? transcript.positions.get(anchor.id) : undefined;
+      if (newIndex !== undefined && anchor && newIndex !== anchor.index) {
+        // Prepending a history page keeps the same tick under the pointer.
+        ticks.scrollTop = newIndex * step + anchor.offset;
+      } else {
+        if (previous.current !== current && previous.signature === userSignature) browsingRef.current = false;
+        if (!browsingRef.current) {
+          const first = Math.floor(ticks.scrollTop / step);
+          if (currentRailIndex < first) ticks.scrollTop = currentRailIndex * step;
+          else if (currentRailIndex >= first + railCapacity) ticks.scrollTop = (currentRailIndex - railCapacity + 1) * step;
+        }
+      }
+    }
+    layoutRef.current = { session: sessionId, current, signature: userSignature };
+    rememberWindow();
+  }, [sessionId, currentRailIndex, userSignature, railCapacity]);
+
+  useLayoutEffect(() => {
+    const index = focusRequestRef.current;
+    if (index === null) return;
+    const button = ticksRef.current?.querySelector<HTMLButtonElement>(`[data-turn-index="${index}"]`);
+    if (button) { focusRequestRef.current = null; button.focus({ preventScroll: true }); }
+  }, [tickWindow.start, tickWindow.end, railCapacity]);
 
   useEffect(() => {
     const chatBody = railRef.current?.closest('.chat-body');
@@ -139,7 +184,7 @@ export function QuickContextRail({
     // positional reads, not a full-history scan on every animation frame.
     const userItems = Array.from(
       scroller.querySelectorAll<HTMLElement>('[data-message-role="user"]'),
-    );
+    ).filter(item => transcript.positions.has(item.dataset.messageId ?? ''));
     let frame = 0;
     const updateVisibleTurn = () => {
       if (frame) return;
@@ -187,6 +232,7 @@ export function QuickContextRail({
 
   useEffect(closePanel, [closePanel, sessionId]);
   useEffect(hoverPreview.close, [hoverPreview.close, sessionId]);
+  useEffect(() => { setVisibleUserMessageId(''); pagePendingRef.current = null; }, [sessionId]);
   useEffect(() => () => detailRequestRef.current?.abort(), []);
 
   useEffect(() => {
@@ -205,31 +251,26 @@ export function QuickContextRail({
     };
   }, [closePanel, panelView]);
 
+  const hoveredMessage = hoverPreview.anchor
+    ? transcript.byMessage.get(hoverPreview.anchor.dataset.turnMessageId ?? '') : undefined;
+  const hoverMessages = hoveredMessage ? quickTurnPreviewMessages(transcript.messagesFor(hoveredMessage.id)) : [];
+  const hoverUser = hoverMessages.find(message => message.role === 'user');
+  const hoverAssistant = hoverMessages.find(message => message.role === 'assistant');
+  const hoverContent = useLazyTurnPreview(sessionId, hoveredMessage, hoverUser, hoverAssistant);
+
   if (railTurns.length === 0) return null;
 
   const localSelectedTurnMessages = selectedTurn
-    ? turnMessagesFromTranscript(messages, selectedTurn.messageIndex)
+    ? transcript.messagesFor(selectedTurn.message.id)
     : [];
   const selectedTurnMessages = remoteTurnMessages ?? localSelectedTurnMessages;
   const selectedSourceMessage = selectedTurn
-    ? messages.find((message) => (
-      message.id === selectedTurn.message.id ||
-      message.messageId === selectedTurn.message.id ||
-      Boolean(selectedTurn.serverMessageId && (
-        message.id === selectedTurn.serverMessageId ||
-        message.messageId === selectedTurn.serverMessageId
-      ))
-    )) ?? null
+    ? transcript.byMessage.get(selectedTurn.message.id) ?? transcript.byMessage.get(selectedTurn.serverMessageId ?? '') ?? null
     : null;
   const previewMessages = quickTurnPreviewMessages(selectedTurnMessages);
   const assistantReply = previewMessages
     .find((message) => message.role === 'assistant')
     ?.content.trim() ?? '';
-  const hoveredMessage = hoverPreview.anchor
-    ? railTurns.find(message => message.id === hoverPreview.anchor?.dataset.turnMessageId) : undefined;
-  const hoverReply = hoveredMessage ? quickTurnPreviewMessages(turnMessagesFromTranscript(
-    messages, messages.findIndex(message => message.id === hoveredMessage.id),
-  )).find(message => message.role === 'assistant')?.content ?? '' : '';
 
   const selectTurn = (turn: SelectedTurn) => {
     detailRequestRef.current?.abort();
@@ -297,12 +338,27 @@ export function QuickContextRail({
   };
 
   const selectRailTurn = (message: ChatMessage) => {
-    const messageIndex = messages.findIndex((item) => item.id === message.id);
     selectTurn({
       message,
-      messageIndex: Math.max(0, messageIndex),
       serverMessageId: message.messageId ?? message.id,
     });
+  };
+
+  const focusTurn = (index: number) => {
+    const ticks = ticksRef.current;
+    if (!ticks) return;
+    browsingRef.current = true;
+    const first = Math.floor(ticks.scrollTop / tickStepRef.current);
+    if (index < first) ticks.scrollTop = index * tickStepRef.current;
+    else if (index >= first + railCapacity) ticks.scrollTop = (index - railCapacity + 1) * tickStepRef.current;
+    const button = ticks.querySelector<HTMLButtonElement>(`[data-turn-index="${index}"]`);
+    if (button) button.focus({ preventScroll: true }); else focusRequestRef.current = index;
+    rememberWindow();
+  };
+  const turnLabel = (message: ChatMessage) => {
+    let label = labelsRef.current.get(message);
+    if (label === undefined) { label = compactText(message.content, 120); labelsRef.current.set(message, label); }
+    return label;
   };
 
   return (
@@ -312,27 +368,39 @@ export function QuickContextRail({
       aria-label={uiText(language)('quickContextRail.quickContext')}
     >
       <div ref={railHandleRef} className="quick-context-handle">
-        <span
+        <div
+          ref={ticksRef}
           className="quick-context-ticks"
-          onWheel={(event) => {
-            if (railTurns.length <= railCapacity) return;
-            event.preventDefault();
-            scrollRailWindow(event.deltaY);
+          style={{ '--context-visible-count': Math.min(railTurns.length, railCapacity) } as CSSProperties}
+          data-loading={loadingEarlier} aria-busy={loadingEarlier}
+          aria-label={uiText(language)('quickContextRail.quickContext')}
+          aria-description={uiText(language)('quickContextRail.navigationHelp')}
+          onScroll={() => { hoverPreview.close(); rememberWindow(); }}
+          onKeyDown={event => {
+            const offsets: Record<string, number> = { ArrowUp: -1, ArrowDown: 1, PageUp: -10, PageDown: 10 };
+            const offset = offsets[event.key];
+            if (offset !== undefined || event.key === 'Home' || event.key === 'End') {
+              event.preventDefault();
+              const index = Number((event.target as HTMLElement).closest<HTMLElement>('[data-turn-index]')?.dataset.turnIndex ?? tickWindow.first);
+              focusTurn(event.key === 'Home' ? 0 : event.key === 'End' ? railTurns.length - 1
+                : Math.max(0, Math.min(railTurns.length - 1, index + offset!)));
+            } else if (event.key === 'Escape') hoverPreview.close();
           }}
         >
-          {visibleRailTurns.map((message) => {
-            const isCurrentTurn = message.id === (
-              visibleUserMessageId || lastUserMessage?.id
-            );
+          <div className="quick-context-items" style={{ height: railTurns.length * tickStepRef.current + 20 }}>
+          {visibleRailTurns.map((message, slot) => {
+            const index = tickWindow.start + slot, isCurrentTurn = index === currentRailIndex;
             return (
               <button
                 {...hoverPreview.triggerProps}
                 key={message.id}
                 type="button"
+                data-turn-index={index}
                 data-turn-message-id={message.id}
+                style={{ top: index * tickStepRef.current + 10 }}
                 className={`quick-context-tick${isCurrentTurn ? ' current' : ''}${hoveredMessage?.id === message.id ? ' previewing' : ''}`}
+                aria-label={uiText(language)('quickContextRail.turnPosition', { number: index + 1, count: railTurns.length, title: turnLabel(message) })}
                 aria-current={isCurrentTurn ? 'true' : undefined}
-                aria-label={compactText(message.content, 120)}
                 aria-haspopup="dialog"
                 aria-expanded={panelView === 'detail' && selectedTurn?.message.id === message.id}
                 aria-controls={panelView === 'detail' && selectedTurn?.message.id === message.id ? panelId : undefined}
@@ -341,15 +409,18 @@ export function QuickContextRail({
               />
             );
           })}
-        </span>
+          </div>
+        </div>
       </div>
       <HoverPreview preview={hoverPreview} className="turn-hover-preview" boundarySelector=".chat-body">
-        {hoveredMessage && <>
+        {hoveredMessage && (!hoverContent ? <div className="turn-hover-skeleton" role="status" aria-label={uiText(language)('common.loading')}>
+          <span/><span/><span/><span/>
+        </div> : <>
           <div className="hover-preview-title">
-            <strong>{compactText(conversationDisplayTitle(hoveredMessage.content), 160)}</strong>
+            <strong>{hoverContent.title}</strong>
           </div>
-          <p className="turn-hover-preview-reply">{turnHoverText(hoverReply) || (uiText(language)('quickContextRail.noReplyYet'))}</p>
-        </>}
+          <p className="turn-hover-preview-reply">{hoverContent.reply || (uiText(language)('quickContextRail.noReplyYet'))}</p>
+        </>)}
       </HoverPreview>
       <div className="quick-context-popovers">
         {panelView !== 'closed' && (
@@ -406,28 +477,10 @@ export function QuickContextRail({
       </div>
     </aside>
   );
-}
-
-function findNextUserMessageIndex(messages: ChatMessage[], startIndex: number) {
-  const nextIndex = messages.findIndex((message, index) => index >= startIndex && message.role === 'user');
-  return nextIndex < 0 ? messages.length : nextIndex;
-}
+});
 
 function selectorEscape(value: string) {
   return value.replace(/["\\]/g, '\\$&');
-}
-
-function turnMessagesFromTranscript(messages: ChatMessage[], anchorIndex: number) {
-  const anchor = messages[anchorIndex];
-  if (!anchor) return [];
-  const turnId = anchor.turnId?.trim() ?? '';
-  if (!turnId) {
-    return messages.slice(
-      anchorIndex,
-      findNextUserMessageIndex(messages, anchorIndex + 1),
-    );
-  }
-  return messages.slice(anchorIndex).filter((message) => message.turnId?.trim() === turnId);
 }
 
 export function quickTurnPreviewMessages(messages: ChatMessage[]) {
@@ -454,7 +507,7 @@ function isTurnGuidanceMessage(message: ChatMessage) {
 }
 
 function compactText(value: string, limit: number) {
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const normalized = value.slice(0, 4000).replace(/\s+/g, ' ').trim();
   return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
 }
 
@@ -466,12 +519,52 @@ function turnHoverText(value: string) {
     .replace(/\*\*|__|`/g, '')).filter(Boolean).join('\n').slice(0, 600);
 }
 
-function fastTextFingerprint(value: string) {
-  let hash = 2166136261;
-  const step = Math.max(1, Math.floor(value.length / 64));
-  for (let index = 0; index < value.length; index += step) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
+type TurnPreview = { title: string; reply: string };
+function useLazyTurnPreview(sessionId: string, anchor?: ChatMessage, user?: ChatMessage, assistant?: ChatMessage) {
+  type Entry = { sessionId: string; anchor: ChatMessage; user?: ChatMessage; assistant?: ChatMessage; value: TurnPreview };
+  const cache = useRef(new Map<string, Entry>());
+  const scope = useRef(sessionId);
+  const [loaded, setLoaded] = useState<Entry | null>(null);
+  const latest = useRef({ sessionId, anchor, user, assistant });
+  latest.current = { sessionId, anchor, user, assistant };
+  const pending = useRef<(() => void) | null>(null);
+  useEffect(() => () => pending.current?.(), [sessionId, anchor]);
+  useEffect(() => {
+    if (scope.current !== sessionId) { cache.current.clear(); scope.current = sessionId; }
+    if (!anchor) { setLoaded(null); return; }
+    const cached = cache.current.get(anchor.id);
+    if (cached?.anchor === anchor && cached.user === user && cached.assistant === assistant) {
+      pending.current?.();
+      cache.current.delete(anchor.id); cache.current.set(anchor.id, cached); setLoaded(cached); return;
+    }
+    if (pending.current) return;
+    setLoaded(value => value?.sessionId === sessionId && value.anchor === anchor ? value : null);
+    let cancelled = false, idle = 0, timer = 0;
+    const read = () => {
+      if (cancelled) return;
+      if (pending.current === cancel) pending.current = null;
+      const source = latest.current;
+      if (source.sessionId !== sessionId || source.anchor !== anchor) return;
+      const entry: Entry = { ...source, anchor, value: {
+        title: compactText(conversationDisplayTitle((source.user ?? anchor).content.slice(0, 4000)), 160),
+        reply: turnHoverText(source.assistant?.content ?? ''),
+      } };
+      cache.current.delete(anchor.id); cache.current.set(anchor.id, entry);
+      if (cache.current.size > 64) cache.current.delete(cache.current.keys().next().value!);
+      setLoaded(entry);
+    };
+    // Paint the skeleton first. Only the hovered turn is read during idle time;
+    // rapidly moving, scrolling or switching sessions cancels the pending work.
+    const frame = requestAnimationFrame(() => {
+      if (typeof requestIdleCallback === 'function') idle = requestIdleCallback(read, { timeout: 180 });
+      else timer = window.setTimeout(read, 0);
+    });
+    const cancel = () => {
+      cancelled = true; cancelAnimationFrame(frame); if (idle) cancelIdleCallback(idle); clearTimeout(timer);
+      if (pending.current === cancel) pending.current = null;
+    };
+    pending.current = cancel;
+  }, [sessionId, anchor, user, assistant]);
+  return loaded?.sessionId === sessionId && loaded.anchor === anchor
+    ? loaded.value : undefined;
 }

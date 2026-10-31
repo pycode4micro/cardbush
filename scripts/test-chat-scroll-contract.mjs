@@ -294,28 +294,31 @@ assert.doesNotMatch(
 );
 assert.match(
   quickContextSource,
-  /Math\.max\(8, Math\.min\(96, Math\.floor\(availableHeight \/ 9\)\)\)/,
+  /Math\.max\(2, Math\.min\(96, Math\.floor\(availableHeight \/ step\)\)\)/,
   'The context rail must cap rendered ticks to the available physical height',
 );
 assert.match(
   quickContextSource,
-  /visibleRailTurns = railTurns\.slice\([\s\S]*?railWindowStart[\s\S]*?railCapacity/,
-  'The context rail must render a bounded logical window without moving the rail container',
+  /visibleRailTurns = railTurns\.slice\(tickWindow.start, tickWindow.end\)/,
+  'The context rail must render a bounded contiguous window, without sampling or skipping turns',
 );
 assert.match(
   quickContextSource,
-  /onWheel=\{\(event\)[\s\S]*?scrollRailWindow\(event\.deltaY\)/,
-  'Dense context rails must support windowed wheel navigation',
+  /ticks\.addEventListener\('wheel', wheel, \{ passive: true \}\)/,
+  'Rail scrolling uses native wheel motion without blocking the browser default',
 );
+assert.match(quickContextSource,/event.stopPropagation\(\)/,'Rail browsing cannot scroll the conversation underneath');
+assert.match(quickContextSource,/requestIdleCallback\(read/,'Hover excerpts are read lazily after painting');
+assert.match(quickContextSource,/cancelIdleCallback\(idle\)/,'Cancelled hover work is disposed');
 const contextTickTrackRule = styles.match(
   /\.quick-context-ticks\s*\{([^}]*)\}/,
 )?.[1] ?? '';
 assert.match(contextTickTrackRule, /top:\s*50%/);
 assert.match(contextTickTrackRule, /transform:\s*translateY\(-50%\)/);
-assert.doesNotMatch(
+assert.match(
   contextTickTrackRule,
   /overflow-y:\s*auto/,
-  'The tick track must retain its original centered geometry instead of becoming a scroll container',
+  'The centered tick viewport must scroll through consecutive turns',
 );
 assert.match(
   quickContextSource,
@@ -330,7 +333,7 @@ assert.match(currentTickRule, /background:/);
 assert.doesNotMatch(
   currentTickRule,
   /(?:width|height|box-shadow)\s*:/,
-  'The visible turn must differ by color only, without a larger or glowing tick',
+  'The existing visible-turn style stays color-only, without changing tick dimensions or adding glow',
 );
 
 console.log('chat scroll contract tests passed');

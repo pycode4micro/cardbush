@@ -40,7 +40,7 @@ export function ConversationHoverPreview({ preview, conversation, projectLabel, 
   </HoverPreview>;
 }
 
-function relativeConversationAge(updated: number, language: AppLanguage) {
+export function relativeConversationAge(updated: number, language: AppLanguage) {
   if (!Number.isFinite(updated)) return '';
   const seconds = Math.max(0, (Date.now() - updated) / 1000);
   if (seconds < 60) return uiText(language)('conversationHoverPreview.justNow');

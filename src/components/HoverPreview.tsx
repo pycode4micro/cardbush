@@ -89,12 +89,13 @@ export function useHoverPreview(disabled = false, { interactive = false }: { int
   } };
 }
 
-export function HoverPreview({ preview, className = '', boundarySelector, interactiveLabel, placement = 'side', children }: {
+export function HoverPreview({ preview, className = '', boundarySelector, interactiveLabel, placement = 'side', onEscape, children }: {
   preview: ReturnType<typeof useHoverPreview>;
   className?: string;
   boundarySelector?: string;
   interactiveLabel?: string;
   placement?: 'side' | 'top';
+  onEscape?: () => boolean;
   children: ReactNode;
 }) {
   const node = useRef<HTMLDivElement>(null);
@@ -144,8 +145,9 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
       close();
     };
     const key = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.isComposing) return;
       if (interactiveLabel) { event.preventDefault(); event.stopPropagation(); }
+      if (onEscape?.()) return;
       const restoreFocus = interactiveLabel && node.current?.contains(document.activeElement);
       close();
       if (restoreFocus) anchor.focus({ preventScroll: true });
@@ -170,7 +172,7 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
       window.removeEventListener('resize', close);
       window.removeEventListener('scroll', scroll, true);
     };
-  }, [anchor, close, interactiveLabel]);
+  }, [anchor, close, interactiveLabel, onEscape]);
   if (!anchor) return null;
   return createPortal(<div ref={node} id={preview.id} popover="manual" role={interactiveLabel ? 'dialog' : 'tooltip'} aria-label={interactiveLabel}
     className={`hover-preview ${className}`} data-interactive={!!interactiveLabel} onPointerEnter={preview.keepOpen} onPointerMove={preview.keepOpen}

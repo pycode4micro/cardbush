@@ -2135,14 +2135,14 @@ export function ChatPanel({
   }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible, composerAnchored]);
 
   const prependAnchor = useRef<{ sessionId: string; firstId?: string; position: ReturnType<typeof captureConversationScrollPosition> } | undefined>(undefined);
-  const loadEarlier = () => void historyPages?.loadOlder(() => {
+  const loadEarlier = useCallback(() => historyPages?.loadOlder(() => {
     const scroller = listScrollerRef.current;
     if (!scroller) return;
     markUserDetachedFromBottom('load-earlier');
     cancelScheduledStreamFollow();
     prependAnchor.current = { sessionId: activeConversationId, firstId: renderMessages[0]?.id,
       position: captureConversationScrollPosition(scroller, false) };
-  });
+  }), [historyPages?.loadOlder, markUserDetachedFromBottom, cancelScheduledStreamFollow, activeConversationId, renderMessages[0]?.id]);
   useLayoutEffect(() => {
     const anchor = prependAnchor.current, scroller = listScrollerRef.current;
     if (!anchor || !scroller) return;
@@ -2655,6 +2655,9 @@ export function ChatPanel({
             messages={renderMessages}
             sessionId={activeConversationId}
             turnHistoryAvailable={turnHistoryAvailable}
+            hasEarlier={historyPages?.hasMore}
+            loadingEarlier={historyPages?.loadingOlder}
+            onLoadEarlier={loadEarlier}
           />
         )}
         <div className="chat-content-frame">

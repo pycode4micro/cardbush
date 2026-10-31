@@ -52,6 +52,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("document.querySelectorAll('[data-application-id=\"builtin:components\"]').length"), 1, 'components are available in the app center without a new default dock shortcut');
   assert.equal(await run("document.activeElement.getAttribute('aria-label')"), '搜索应用');
   assert.equal(await run('centerEvents.length'), 1, 'opening the center cannot execute an app');
+  const messages = JSON.parse(fs.readFileSync(path.join(root, 'src/i18n/locales/zh.json'), 'utf8')).messages;
+  assert.equal(await run("document.querySelector('.app-center-tile[data-application-id=\"builtin:team\"] strong').textContent"), messages['appCenterModel.workflows'], 'Team displays its current language-pack title in the application center');
+  assert.equal(await run("document.querySelectorAll('.app-center-tile[data-application-id=\"builtin:team\"]').length"), 1, 'Team has one launch entry');
+  assert.equal(await run("centerMenus.some(menu => menu.id === 'beta')"), false, 'there is no legacy Beta menu');
+  await run("document.querySelector('.app-center-tile[data-application-id=\"builtin:team\"] .app-center-tile-open').click()");
+  await until("!document.querySelector('.app-center-drawer')?.open", 'Team launch closes the application center');
+  assert.deepEqual(await run('centerEvents.pop()'), ['navigate', 'builtin:team', undefined], 'Team uses the existing application navigation handler');
+  await run("document.querySelector('.app-center-launcher').focus(); document.querySelector('.app-center-launcher').click()");
+  await until("document.querySelector('.app-center-drawer')?.open && document.querySelector('.app-center-drawer')?.dataset.visible==='true'", 'application center reopens after Team launch');
   await pause(230);
   const output = path.join(root,'tmp'); fs.mkdirSync(output,{recursive:true});
   fs.writeFileSync(path.join(output,'app-center-bright.png'),(await window.webContents.capturePage()).toPNG());

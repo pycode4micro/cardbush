@@ -69,6 +69,12 @@
   overflow-wrap: anywhere;
 }
 
+.turn-hover-skeleton { display: grid; gap: 8px; padding: 2px 0; }
+.turn-hover-skeleton span { display: block; height: 12px; border-radius: 4px; background: color-mix(in srgb, var(--text-soft) 28%, transparent); }
+.turn-hover-skeleton span:first-child { width: 60%; }
+.turn-hover-skeleton span:nth-child(3) { width: 92%; }
+.turn-hover-skeleton span:last-child { width: 80%; }
+
 .conversation-hover-preview time {
   flex: 0 0 auto;
   margin-left: auto;
@@ -117,6 +123,38 @@
 
 .conversation-hover-preview-project svg { flex: 0 0 auto; color: var(--text-soft); }
 .conversation-hover-preview-project span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.project-hover-preview {
+  --project-preview-icon-size: 14px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 24px);
+}
+.project-hover-preview svg { width: var(--project-preview-icon-size); height: var(--project-preview-icon-size); flex: 0 0 auto; }
+.project-hover-heading, .project-hover-count, .project-hover-name, .project-hover-name-form { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.project-hover-heading, .project-hover-count, .project-hover-more { flex: 0 0 auto; }
+.project-hover-heading > svg, .project-hover-count { color: var(--text-soft); }
+.project-hover-preview button { color: inherit; font: inherit; border: 0; cursor: pointer; }
+.project-hover-name, .project-hover-name-form { flex: 1; }
+.project-hover-name { padding: 3px 4px; margin-left: -4px; border-radius: 5px; background: transparent; text-align: left; }
+.project-hover-name strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-hover-name > svg { color: var(--text-soft); }
+.project-hover-name:hover, .project-hover-conversation:hover, .project-hover-more:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.project-hover-preview button:focus-visible, .project-hover-name-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.project-hover-name-form input { width: 0; min-width: 0; flex: 1; border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; color: var(--text); background: transparent; font: inherit; }
+.project-hover-name-form input[aria-invalid="true"] { border-color: var(--danger); }
+.project-hover-name-form button { display: grid; place-items: center; width: 24px; height: 26px; padding: 0; border-radius: 5px; background: transparent; }
+.project-hover-name-form button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.project-hover-name-form button:disabled { cursor: default; opacity: .5; }
+.project-hover-error { margin: 5px 0; color: var(--danger); overflow-wrap: anywhere; }
+.project-hover-count { margin-top: 3px; }
+.project-hover-conversations { min-height: 0; max-height: 320px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 4px; }
+.project-hover-conversation { display: block; width: 100%; padding: 6px; text-align: left; background: transparent; border-radius: 6px; }
+.project-hover-conversation[aria-current="page"] { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.project-hover-conversation-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.project-hover-conversation-meta { display: flex; flex-wrap: wrap; column-gap: 10px; color: var(--text-soft); font-size: 12px; }
+.project-hover-more { align-self: stretch; margin-top: 4px; padding: 5px 6px; text-align: left; border-radius: 5px; background: transparent; }
+.project-hover-empty { margin: 8px 0 2px; color: var(--text-soft); }
 
 @keyframes hover-preview-reveal { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .hover-preview { animation: none; } }

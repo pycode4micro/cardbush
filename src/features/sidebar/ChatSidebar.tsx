@@ -59,6 +59,7 @@ import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { useHoverPreview } from '../../components/HoverPreview';
 import { ConversationHoverPreview } from './ConversationHoverPreview';
+import { ProjectHoverPreview } from './ProjectHoverPreview';
 import { isCardbushForeground, sessionAttentionLabel } from '../sessionAttention';
 import { watchWindowVisibility } from '../../shared/windowVisibility';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
@@ -227,6 +228,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onCreateConversation,
   onAddProject,
   onProjectAction,
+  onRenameProject,
   onDeleteConversation,
   onRenameConversation,
   onConversationWorkspaceChange,
@@ -249,6 +251,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onCreateConversation: () => void;
   onAddProject: () => void;
   onProjectAction: (action: ProjectAction, project: ProjectItem) => void;
+  onRenameProject: (project: ProjectItem, title: string) => Promise<string | null>;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => Promise<boolean>;
   onConversationWorkspaceChange?: (conversationId: string, project: ProjectItem | null) => Promise<void>;
@@ -716,6 +719,9 @@ export const ChatSidebar = memo(function ChatSidebar({
   }
 
   function renderProjectBlock(project: ProjectItem) {
+    const projectConversations = visibleConversations.filter(item => conversationMatchesScope(item, {
+      mode: 'project', projectId: project.id, projectDir: project.rootPath,
+    }));
     return (
       <div key={project.id} data-workspace-drop={project.id}
         className={`workspace-drop-target${workspaceDropTarget === project.id ? ' workspace-drop-active' : ''}`}
@@ -723,9 +729,8 @@ export const ChatSidebar = memo(function ChatSidebar({
       <ProjectBlock
         key={project.id}
         project={project}
-        conversations={regularConversations.filter(item => conversationMatchesScope(item, {
-          mode: 'project', projectId: project.id, projectDir: project.rootPath,
-        }))}
+        conversations={projectConversations.filter(item => !pinnedConversationIds.has(item.id))}
+        previewConversations={projectConversations}
         activeConversationId={activeConversationId}
         runningConversationIds={runningConversationIds}
         attentionByConversation={attentionByConversation}
@@ -740,6 +745,7 @@ export const ChatSidebar = memo(function ChatSidebar({
           closeMenus();
           onProjectAction(action, project);
         }}
+        onRenameProject={title => onRenameProject(project, title)}
         onConversationChange={onConversationChange}
         onConversationArchive={toggleConversationArchive}
         onDeleteConversation={onDeleteConversation}
@@ -1063,6 +1069,7 @@ function SectionHeader({
 function ProjectBlock({
   project,
   conversations: projectConversations,
+  previewConversations,
   activeConversationId,
   runningConversationIds,
   attentionByConversation,
@@ -1072,6 +1079,7 @@ function ProjectBlock({
   onToggleExpanded,
   onContextMenu,
   onProjectAction,
+  onRenameProject,
   onConversationChange,
   onConversationArchive,
   onDeleteConversation,
@@ -1085,6 +1093,7 @@ function ProjectBlock({
 }: {
   project: ProjectItem;
   conversations: ConversationSummary[];
+  previewConversations: ConversationSummary[];
   activeConversationId: string;
   runningConversationIds?: Set<string>;
   attentionByConversation?: Record<string, SessionAttentionState>;
@@ -1094,6 +1103,7 @@ function ProjectBlock({
   onToggleExpanded: () => void;
   onContextMenu: (event: ReactMouseEvent) => void;
   onProjectAction: (action: ProjectAction) => void;
+  onRenameProject: (title: string) => Promise<string | null>;
   onConversationChange: (id: string) => void;
   onConversationArchive: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
@@ -1109,14 +1119,17 @@ function ProjectBlock({
   changeReportsByConversation: Record<string, ConversationChangeReport[]>;
   onOpenConversationChanges: (conversationId: string) => void;
 }) {
+  const hoverPreview = useHoverPreview(false, { interactive: true });
   return (
     <div className={`project-block${project.missing ? ' missing' : ''}`}>
       <div
+        {...hoverPreview.triggerProps}
         className="project-row"
         role="button"
+        aria-expanded={expanded}
         tabIndex={0}
         onClick={onToggleExpanded}
-        onContextMenu={onContextMenu}
+        onContextMenu={event => { hoverPreview.close(); onContextMenu(event); }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
@@ -1173,6 +1186,12 @@ function ProjectBlock({
           <Archive size={15} />
         </button>
       </div>
+      {hoverPreview.anchor && <ProjectHoverPreview preview={hoverPreview} project={project} conversations={previewConversations}
+        language={language} activeConversationId={activeConversationId} runningConversationIds={runningConversationIds}
+        attentionByConversation={attentionByConversation} onRename={onRenameProject} onConversationChange={id => {
+          if (unreadConversationIds.has(id)) onToggleConversationRead(id);
+          onConversationChange(id);
+        }} />}
       {expanded && projectConversations.map((conversation) => (
         <ConversationRow
           key={conversation.id}

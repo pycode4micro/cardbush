@@ -2214,6 +2214,7 @@ function CardbushApp() {
                   onCreateConversation={handleSidebarCreateConversation}
                   onAddProject={handleSidebarAddProject}
                   onProjectAction={handleSidebarProjectAction}
+                  onRenameProject={(project, title) => renameProject(project, title, false)}
                   onDeleteConversation={chat.deleteConversation}
                   onRenameConversation={chat.renameConversation}
                   onOpenConversationChanges={handleSidebarOpenConversationChanges}

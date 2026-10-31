@@ -14,6 +14,17 @@ new Function('exports', 'require', ts.transpileModule(readFileSync('src/features
 }).outputText)(exports, name => { if (name === '@cardbush/bush-protocol') return protocol; if (name === '../../i18n') return i18n; assert.equal(name, '../../shared/localApplications'); return localApps; });
 const { normalizeAppCenterPreferences, applicationLink, applicationCatalog, applicationReference, moveApplication } = exports;
 
+test('Team workflows use one localized application entry in every shipped language', () => {
+  for (const language of i18n.uiLanguages) {
+    const entries = applicationCatalog(language.locale, [], normalizeAppCenterPreferences(null)).filter(app => app.id === 'builtin:team');
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].kind, 'builtin');
+    assert.equal(entries[0].target, 'team');
+    assert.equal(entries[0].title, i18n.uiText(language.locale)('appCenterModel.workflows'));
+    assert.equal(entries[0].description, i18n.uiText(language.locale)('appCenterModel.buildWorkflowsThroughConversationAndInspectProgress'));
+  }
+});
+
 test('web apps join the catalog, dock and references without becoming external links or plugins', () => {
   const app = { ...protocol.websiteApplication('https://example.test/app/', 'Website'), id: 'web:example' };
   const prefs = normalizeAppCenterPreferences({ webApps: [app], shortcuts: [app.id], order: [app.id] });

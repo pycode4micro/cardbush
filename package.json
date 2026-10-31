@@ -199,7 +199,7 @@
     "test:image-preview": "node scripts/run-image-preview-test.mjs",
     "test:image-gallery": "tsc -p tsconfig.node.json && node scripts/test-image-gallery.mjs",
     "test:tool-media-artifacts": "node scripts/test-tool-media-artifacts-contract.mjs",
-    "test:chat-scroll": "node scripts/test-chat-scroll-contract.mjs",
+    "test:chat-scroll": "node scripts/test-chat-scroll-contract.mjs && node --test scripts/test-quick-context.mjs",
     "test:sidebar-interaction": "node scripts/test-sidebar-interaction-contract.mjs",
     "test:ui-performance": "node scripts/test-ui-performance-contract.mjs && node --test scripts/test-long-transcript.mjs",
     "replay:ui-performance": "node scripts/replay-ui-performance.mjs",
