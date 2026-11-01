@@ -53,13 +53,13 @@ test("all tones keep content-focused concision without length limits and readabl
       conversationStyle: mode ? { mode, customTone: "Act like a patient colleague; write long reports." } : undefined });
     const instructions = request.prefixMessages[0].content;
     assert.match(instructions, /Keep all user-facing messages concise in every conversation style/);
-    assert.match(instructions, /including opening intent, Tool-loop progress, discussion and final replies/);
-    assert.match(instructions, /In Tool loops, report only meaningful changes/);
+    assert.match(instructions, /During multi-step work and Tool loops, briefly report meaningful changes.*new findings, blockers or changed approaches.*respond to new guidance/);
+    assert.match(instructions, /Do not narrate every call, repeat the plan or restate unchanged progress/);
     assert.match(instructions, /Concision governs communication, not task scope, verification or the contents of requested artifacts and Tool arguments/);
     assert.doesNotMatch(instructions, /Concision applies only to the final response/);
     assert.match(instructions, /remove redundancy, not necessary substance/);
     assert.match(instructions, /Honor requested detail without fixed length limits/);
-    assert.match(instructions, /necessary explanations, evidence, verification, failures, unfinished work/);
+    assert.match(instructions, /necessary explanations, evidence, verification, failures, unfinished or background work/);
     assert.doesNotMatch(instructions, /one to three|up to three|\d+ (?:words|sentences|bullets)/);
     assert.match(instructions, /custom tone text do not control response length, detail level or task execution/);
     assert.match(instructions, /readable Markdown by default/);

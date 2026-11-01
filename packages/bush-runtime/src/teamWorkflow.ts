@@ -48,7 +48,7 @@ export class TeamWorkflowManager {
   }
   register(registry: ToolRegistry) {
     registry.register<TeamInput>({
-      definition: { name: 'team', description: 'Use for saved dependency workflows of registered clean Agents: the host schedules ready nodes, passes direct upstream results and resumes unfinished steps. For ad-hoc independent assignments, use subagent even with several agents. list finds definitions (section=runs finds this conversation\'s executions); get reads configuration. Save acyclic dependencies, deliverables and acceptance criteria. run starts a new execution; resume retains completed nodes. Use tasks for progress, final or selected node outputs, waiting and stopping. Completed means execution ended, not content validated. Nodes reuse subagent execution.',
+      definition: { name: 'team', description: 'Use for saved dependency workflows of registered clean Agents: the host schedules ready nodes, passes direct upstream results and resumes unfinished steps. For ad-hoc independent assignments, use subagent even with several agents. list finds definitions (section=runs finds this conversation\'s executions); get reads configuration. Save acyclic dependencies, deliverables and acceptance criteria. run starts a new execution; resume retains completed nodes. Use await for results; tasks reads progress/node outputs or stops runs. Completed means execution ended, not content validated. Nodes reuse subagent execution.',
         inputSchema: { type: 'object', additionalProperties: false, required: ['action'], properties: {
           action: actionFieldSchema(teamActions),
           definition: definitionSchema, expected_revision: { type: 'integer', minimum: 0 },
@@ -65,7 +65,7 @@ export class TeamWorkflowManager {
         return presentTool(definition, {
           fields: ['action', ...new Set(Object.values(rules).flatMap(rule => [...rule.required, ...('optional' in rule ? rule.optional : [])]))],
           properties: { action: actionFieldSchema(rules) },
-          description: `Run saved dependency workflows: the host schedules nodes, passes upstream results and resumes unfinished steps. For ad-hoc independent assignments use subagent, even with several agents. list/get find definitions; run starts with team_id; resume uses the returned run_id and retains completed nodes. Use tasks to inspect/wait/stop the returned task_id (the same execution as run_id). Employee IDs, team_id and node IDs are not run IDs. For editing definitions, load get_tool_schema(name="team"), then use call_tool with its full arguments.`,
+          description: `Run saved dependency workflows: the host schedules nodes, passes upstream results and resumes unfinished steps. For ad-hoc independent assignments use subagent, even with several agents. list/get find definitions; run starts with team_id; resume uses the returned run_id and retains completed nodes. Use await with task_id/run_id for results; tasks inspects/stops runs. Employee IDs, team_id and node IDs are not run IDs. For editing definitions, load get_tool_schema(name="team"), then use call_tool with its full arguments.`,
         });
       },
       manifest: { effect_kind: 'delegation', operation: 'agent.team', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },

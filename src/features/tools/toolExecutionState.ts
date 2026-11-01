@@ -60,6 +60,7 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
     mcp_search: 'toolExecutionState.find_available_tools' as const, call_tool: 'toolExecutionState.call_tool' as const,
     run_tools: 'toolExecutionState.run_tasks' as const, start_mcp_tool: 'toolExecutionState.start_background_task' as const,
     tasks: 'toolExecutionState.check_task_progress' as const,
+    await: 'toolExecutionState.wait_results_or_messages' as const,
     await_subagents: 'toolExecutionState.wait_task_results' as const,
     subagent: 'toolExecutionState.delegate_task' as const, update_task_plan: 'toolExecutionState.update_plan' as const,
     request_user_input_async: 'toolExecutionState.ask_user' as const,

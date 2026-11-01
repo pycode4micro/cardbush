@@ -55,11 +55,11 @@ test('remote subagents dispatch asynchronously, join any/all, and resume the sam
   assert.equal(invalidResume.kind, 'failed');
   const second = await f.invoke('subagent', { prompt: 'Check docs', target_agent: f.target.id });
   pending[1].resolve(completed('Docs checked'));
-  const any = await f.invoke('tasks', { action: 'wait', task_ids: [first.result.taskId, second.result.taskId] });
+  const any = await f.invoke('await', { task_ids: [first.result.taskId, second.result.taskId] });
   assert.deepEqual(any.result.tasks.filter(task => task.status === 'completed').map(task => task.task_id), [second.result.taskId]);
   assert.equal(f.tasks.get('parent-session', first.result.taskId).status, 'running');
   pending[0].resolve(completed('Build checked'));
-  const all = await f.invoke('tasks', { action: 'wait', task_ids: [first.result.taskId, second.result.taskId], mode: 'all' });
+  const all = await f.invoke('await', { task_ids: [first.result.taskId, second.result.taskId], mode: 'all' });
   assert.equal(all.result.tasks.filter(task => task.status === 'completed').length, 2);
   const resumed = await f.invoke('subagent', { prompt: 'Inspect follow-up', task_id: first.result.taskId });
   assert.equal(resumed.result.childSessionId, first.result.childSessionId);

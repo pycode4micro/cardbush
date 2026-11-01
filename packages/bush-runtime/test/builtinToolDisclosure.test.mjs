@@ -48,7 +48,7 @@ test('retired handlers are absent from the actual registry and cannot be recalle
     assert.equal((await f.run('get_tool_schema', { name })).kind, 'failed');
     assert.equal((await f.run(name)).kind, 'failed');
   }
-  for (const name of ['tasks', 'run_tools', 'request_user_input_async', 'update_task_plan', 'terminal_list', 'read_file_memos', 'mcp_app_status']) assert.ok(nativeRegistry.resolve(name), name);
+  for (const name of ['await', 'tasks', 'run_tools', 'request_user_input_async', 'update_task_plan', 'terminal_list', 'read_file_memos', 'mcp_app_status']) assert.ok(nativeRegistry.resolve(name), name);
 });
 
 test('schema loading preserves the frozen presentation and execution admission', async () => {
@@ -64,7 +64,7 @@ test('schema loading preserves the frozen presentation and execution admission',
   assert.equal((await f.run('call_tool', { name: 'native_fixture', arguments: {} })).error.code, 'builtin_schema_required');
 });
 
-test('Team definition editing stays discoverable; execution observations only use tasks', async () => {
+test('Team definition editing stays discoverable without per-Team observation actions', async () => {
   const f = fixture(['tasks', 'team', 'subagent']);
   const initial = structuredClone(f.definitions());
   assert.deepEqual(initial.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
@@ -78,7 +78,7 @@ test('Team definition editing stays discoverable; execution observations only us
 
 test('task guidance has no alternate legacy observer even in restricted scopes', () => {
   for (const name of ['terminal_exec', 'terminal_poll', 'start_mcp_tool']) {
-    assert.match(nativeRegistry.resolve(name).definition.description, /tasks/);
+    assert.match(nativeRegistry.resolve(name).definition.description, /await/);
     assert.doesNotMatch(nativeRegistry.resolve(name).definition.description, /manage_tool_calls|await_subagents/);
   }
 });

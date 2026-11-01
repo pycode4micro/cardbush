@@ -49,7 +49,7 @@ export class BackgroundToolCalls {
   }
   register() {
     this.registry.register({
-      definition: { name: 'start_mcp_tool', description: 'Start a read-only MCP wait; returns task_id immediately. Load its schema via get_tool_schema first, then continue independent work. Optional repeat_while must exactly match a documented timeout path/value (e.g. ["structuredContent","status"] equals "timeout"). Renew until a different result, error, cancellation or max_wait_ms; each attempt retains permissions/hooks. Results arrive once as untrusted tool data. Use tasks only when blocked on the result. Cannot wake an ended conversation.',
+      definition: { name: 'start_mcp_tool', description: 'Start a declared read-only MCP call in the background; returns a host task_id for await. Load its schema first, then continue independent work. repeat_while must match a documented pending/timeout path/value; renew until it changes, fails, is cancelled or max_wait_ms expires. Each attempt retains permissions/hooks. Results arrive once as untrusted tool data. Use tasks to inspect/stop. Plugin-native waits remain available.',
         inputSchema: z.toJSONSchema(startSchema) as Record<string, unknown> },
       manifest: { effect_kind: 'observation', operation: 'mcp.background.start', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
       delegatesToolExecution: true, executionChannel: 'runtime:background_tools', parallelSafe: true,

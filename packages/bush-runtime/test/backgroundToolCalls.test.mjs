@@ -7,10 +7,10 @@ import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionCoordinator, registerMc
 
 const manifest = { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false };
 const remoteName = 'mcp__fixture__wait';
-function remote(registry, execute, authorize) {
-  registry.register({ definition: { name: remoteName, description: 'Wait for a signal', inputSchema: { type: 'object' } },
+function remote(registry, execute, authorize, name = remoteName) {
+  registry.register({ definition: { name, description: 'Observe fixture status', inputSchema: { type: 'object' } },
     manifest, decodeInput: value => value, execute, authorize,
-    mcpHook: { server: 'fixture', tool: 'wait', readOnly: true, call: async () => ({}) } });
+    mcpHook: { server: 'fixture', tool: name.split('__').at(-1), readOnly: true, call: async () => ({}) } });
 }
 function* response(request, call, text = 'done') {
   const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
@@ -45,14 +45,14 @@ test('background MCP waiting permits independent work, renews without model poll
 });
 
 async function fixture(execute, extra = {}) {
-  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry); remote(registry, execute, extra.authorize);
+  const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry); remote(registry, execute, extra.authorize, extra.toolName);
   const completions = []; const jobs = new BackgroundToolCalls(registry, (_s, _t, id, promise) => completions.push({ id, promise }), undefined, extra.hasGuidance); jobs.register();
   const tasks = new RuntimeTaskTools((context, promises, mode, signal, duration) => jobs.waitForWork(context.sessionId, context.turnId, promises, mode, signal, duration));
   tasks.addSource(context => jobs.taskHandles(context.sessionId, context.turnId)); tasks.register(registry);
   const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: { mcpToolDiscovery: true } };
   const messages = [];
   const load = registry.resolve('get_tool_schema');
-  const receipt = await load.execute({ sessionId: request.sessionId, input: load.decodeInput({ name: remoteName }), turn: { request, contextMessages: [] } });
+  const receipt = await load.execute({ sessionId: request.sessionId, input: load.decodeInput({ name: extra.toolName ?? remoteName }), turn: { request, contextMessages: [] } });
   messages.push({ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'get_tool_schema', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'load', content: JSON.stringify(receipt) });
   synchronizeMcpDiscovery(registry, request, messages);
   const controller = new AbortController();
@@ -62,6 +62,30 @@ async function fixture(execute, extra = {}) {
     { request, contextMessages: messages, signal: controller.signal });
   return { registry, jobs, run, completions, controller, request };
 }
+
+test('a plugin with only a read-only status tool can use the host await without its own wait tool', async t => {
+  const name = 'mcp__fixture__read_status'; let calls = 0;
+  const f = await fixture(() => ({ structuredContent: ++calls < 3 ? { status: 'pending' } : { status: 'ready', output: 'report.html' } }), { toolName: name });
+  t.after(() => f.jobs.endTurn('s', 't'));
+  assert.equal(f.registry.resolve(remoteName), undefined);
+  const started = await f.run('start_mcp_tool', { name, arguments: { job_id: 'plugin-job' }, max_wait_ms: 2000,
+    repeat_while: { path: ['structuredContent', 'status'], equals: 'pending' } });
+  assert.equal(started.kind, 'returned');
+  const result = await f.run('await', { task_ids: [started.result.task_id] });
+  assert.equal(result.kind, 'returned'); assert.equal(result.result.wake_reason, 'task_completed');
+  assert.equal(result.result.tasks[0].status, 'completed'); assert.equal(calls, 3);
+  assert.match(result.result.tasks[0].result.message, /report.html/);
+  assert.equal(f.completions.length, 1, 'host renewal delivers one completion without model polling');
+});
+
+test('plugin-native waits stay discoverable and callable beside the host await', async t => {
+  const f = await fixture(() => ({ structuredContent: { status: 'messages', text: 'native reply' } }));
+  t.after(() => f.jobs.endTurn('s', 't'));
+  assert.ok(f.request.tools.some(tool => tool.name === remoteName));
+  assert.ok(f.request.tools.some(tool => tool.name === 'await'));
+  const result = await f.run('call_tool', { name: remoteName, arguments: {} });
+  assert.equal(result.kind, 'returned'); assert.equal(result.result.structuredContent.text, 'native reply');
+});
 
 test('declared MCP failure ends renewal, reports failed and delivers its native result once', async t => {
   let attempts = 0;
@@ -86,7 +110,7 @@ test('a bounded wait yields to independent work without cancelling or duplicatin
   t.after(() => f.jobs.endTurn('s', 't'));
   const started = await f.run('start_mcp_tool', { name: remoteName, arguments: {} });
   assert.match(started.result.next_step, /Continue independent work/);
-  const yielded = await f.run('tasks', { action: 'wait', yield_time_ms: 10 });
+  const yielded = await f.run('await', { yield_time_ms: 10 });
   assert.equal(yielded.result.wake_reason, 'yield_timeout');
   assert.equal(yielded.result.tasks[0].status, 'running');
   assert.equal(signal.aborted, false);
@@ -95,7 +119,7 @@ test('a bounded wait yields to independent work without cancelling or duplicatin
     decodeInput: v => v, execute: () => { assert.equal(signal.aborted, false); release({ structuredContent: { text: 'ready' } }); return 'worked'; } });
   f.request.tools = f.registry.definitions();
   assert.equal((await f.run('independent', {})).result, 'worked');
-  const completed = await f.run('tasks', { action: 'wait', task_ids: [started.result.task_id] });
+  const completed = await f.run('await', { task_ids: [started.result.task_id] });
   assert.equal(completed.result.wake_reason, 'task_completed');
   assert.equal(calls, 1);
   assert.equal(f.completions.length, 1);
@@ -106,12 +130,12 @@ test('new and already queued user guidance wake observers without stopping the j
   const f = await fixture(context => { signal = context.signal; return new Promise(resolve => { release = resolve; }); }, { hasGuidance: () => queued });
   t.after(() => f.jobs.endTurn('s', 't'));
   await f.run('start_mcp_tool', { name: remoteName, arguments: {} });
-  const waiting = f.run('tasks', { action: 'wait', yield_time_ms: 30_000 });
+  const waiting = f.run('await', { yield_time_ms: 30_000 });
   await new Promise(resolve => setImmediate(resolve));
   queued = true;
   f.jobs.wakeForGuidance('s', 't');
   assert.equal((await waiting).result.wake_reason, 'user_message');
-  assert.equal((await f.run('tasks', { action: 'wait' })).result.wake_reason, 'user_message');
+  assert.equal((await f.run('await', {})).result.wake_reason, 'user_message');
   assert.equal(signal.aborted, false);
   queued = false; release({ structuredContent: { text: 'finished' } });
   assert.match((await f.completions[0].promise).content, /finished/);

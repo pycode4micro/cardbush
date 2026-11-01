@@ -12,13 +12,14 @@ The registry remains the authoritative capability catalog. Provider definitions 
 | Read exact files / simple edits | `read_file` / `edit_file` / `write_file` |
 | Related local text changes | `apply_patch` |
 | Observe terminal, child, Team, MCP, question or script tasks | `tasks` |
+| Wait for results or user/peer messages | `await` |
 | Ask while continuing independent work | `request_user_input_async` |
 | Filter, transform or chain tool results | `run_tools` |
 | Load a complete native or MCP definition | `get_tool_schema` |
 | Invoke a loaded native or MCP business tool | `call_tool` |
 | Find MCP names | `mcp_search` |
 
-`subagent` dispatches individual children; `team` manages saved workflows and starts/resumes their runs. `tasks` owns observation, selected node outputs (`node_ids`), waiting, stopping and child conversation reads. Load the full `team` schema to edit workflow definitions. Loading a complete schema never broadens the authoritative request scope or changes top-level declarations.
+`subagent` dispatches individual children; `team` manages saved workflows and starts/resumes their runs. `tasks` owns observation, selected node outputs (`node_ids`), stopping and child conversation reads; `await` owns waiting. Load the full `team` schema to edit workflow definitions. Loading a complete schema never broadens the authoritative request scope or changes top-level declarations.
 
 `call_tool` transparently enters the existing coordinator under the selected native or MCP target name. Target validation, permissions, hooks, resource locks, scheduling, cancellation, results and UI/journal activity are reused; the wire call/result keeps its original ID. It is not another background executor or nested script. Discovery, archive reads and context-maintenance entry points remain direct calls so their history receipts retain their meaning.
 
@@ -60,13 +61,15 @@ Each `cache_chain_observed` event includes `payload.toolDefinitions` for the act
 
 Start receipts retain their existing handles. Team and asynchronous tools also provide `task_id`; terminals accept their session ID or completion-notification ID in `tasks`. Subagents retain `taskId`, usable unchanged as an entry in `task_ids`.
 
-`tasks` supports `list`, `inspect`, `conversation`, `wait`, `stop` and `cancel_observation`. Lists are bounded, show pending work first and omit results. `after` carries per-task revisions and suppresses unchanged result bodies. An unavailable source is explicitly reported without hiding independent tasks from other sources; status reads have a one-second per-source timeout.
+`tasks` supports `list`, `inspect`, `conversation`, `stop` and `cancel_observation`; `await` waits on existing task_ids (Team: task_id/run_id). Lists are bounded, show pending work first and omit results. `after` carries per-task revisions and suppresses unchanged result bodies. An unavailable source is explicitly reported without hiding independent tasks from other sources; status reads have a one-second per-source timeout.
 
-Waits default to 1 second, allow snapshots at 0, and cannot exceed 30 seconds. They wake on any/all completion or user guidance. Wait cancellation and timeout leave executors running. `cancel_observation` removes only a completion subscription; terminal status continues to come from the process. `stop` uses the executor's cancellation path, including ordinary terminal-stop permissions. Unsupported controls are explicit, including remote children whose bridge has no stop capability.
+Omit yield_time_ms to wait for an event; 0 reads a snapshot and explicit timeouts allow up to one hour. Omitted task_ids select pending tasks; with none pending, or with [], await user/peer messages. mode=any/all applies to task completion; messages may interrupt both. Wait cancellation and timeout leave executors running. `cancel_observation` removes only a completion subscription; terminal status continues to come from the process. `stop` uses the executor's cancellation path, including ordinary terminal-stop permissions. Unsupported controls are explicit, including remote children whose bridge has no stop capability.
 
 Questions use the existing persistent-in-turn UI broker. They return immediately and share task observation and automatic result delivery. Only an actual selected answer resolves a dependency; dismissal or turn cancellation grants no approval. One question may be pending per conversation. Question text allows 500 Unicode characters, suggested answers 120 each.
 
 Plan nodes keep `status=waiting` with a concrete `waitingFor` and a `waitingKind`: `user` for confirmation/input, `background` for an already-started task, or `dependency` for a prerequisite step. The terminal and committed turn retain this classification for streaming, recovery and history. Only user waits trigger attention notifications; passive waits use a neutral status. Older unclassified waits remain readable as generic waiting, without inferring user action from prose. Patches clear wait fields on resume/completion; changing the reason without a category clears the old category. Multiple waits prioritize explicit user input, and a pending interactive question cannot be hidden by a passive plan state. Plan updates still do not force another model response.
+
+Await reuses RuntimeTurnSignals without another executor or plugin lifecycle. Plugin-native waits remain loaded normally. A plugin without waiting can use start_mcp_tool with its declared read-only status query and documented repeat_while condition, then await the returned host task_id. Arbitrary plugin job IDs are not host handles, and absent completion signals cannot be invented. Frozen tasks(action=wait) calls retain execution compatibility but new catalogs omit that action. Await uses host-localized labels instead of injecting a per-call bilingual display-title parameter.
 
 ## Scheduling and recovery
 

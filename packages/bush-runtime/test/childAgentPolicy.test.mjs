@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { individuationPreferenceText } from '@cardbush/bush-protocol';
+import { individuationPreferenceText, REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import {
   buildChildTurnRequest, CacheChainTracker, inheritedChildMessages, InMemoryRuntimeHost,
   SubagentTaskStore, ToolExecutionCoordinator, ToolRegistry, registerSubagentTool,
@@ -51,16 +51,19 @@ test('inherited child input extends the exact cached prefix with frozen definiti
   assert.deepEqual(child.prefixMessages.slice(0, parent.messages.length), parent.messages);
   assert.equal(child.prefixMessages.at(-1).name, 'plugin_agent_role');
   assert.deepEqual(child.tools, parent.tools);
-  assert.deepEqual(child.inputMessages[0].message, { role: 'user', name: 'individuation_preference', visibility: 'internal',
-    content: individuationPreferenceText() });
-  assert.equal(child.inputMessages[1].message.content, '你当前处于子agent状态\n\n请验证修改；我将处理界面，接口结果稍后提供。');
+  assert.deepEqual(child.inputMessages.map(item => item.message), [
+    { role: 'user', name: 'delivery_guidance', visibility: 'internal',
+      content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') },
+    { role: 'user', name: 'individuation_preference', visibility: 'internal', content: individuationPreferenceText() },
+    { role: 'user', content: '你当前处于子agent状态\n\n请验证修改；我将处理界面，接口结果稍后提供。' },
+  ]);
   const tracker = new CacheChainTracker();
   const baseline = tracker.observe(parent);
   const observation = tracker.observe({ ...child, messages: [...child.prefixMessages, ...child.inputMessages.map(item => item.message)] });
   assert.equal(observation.stableInputDigest, baseline.stableInputDigest);
   assert.equal(observation.frozenPrefixBreak, false);
   assert.equal(observation.sharedPrefixMessages, parent.messages.length);
-  assert.equal(observation.appendedMessages, 3);
+  assert.equal(observation.appendedMessages, 4, 'plugin role, delivery guidance, memory preference and assignment extend the parent prefix');
   child.tools[0].description = 'child-local edit';
   child.prefixMessages[0].content = 'child-local edit';
   assert.deepEqual(parent, before, 'constructing or modifying the child must not change the parent chain');
@@ -157,6 +160,11 @@ test('runtime child receives a restriction result and finishes without starting 
   const parent = requests.find(req => req.sessionId === 'parent'), child = requests.find(req => req.metadata.agentRole === 'child');
   assert.deepEqual(child.tools, parent.tools);
   assert.deepEqual(child.messages.slice(0, parent.messages.length), parent.messages);
-  assert.equal(child.messages[parent.messages.length].name, 'individuation_preference');
-  assert.ok(child.messages[parent.messages.length + 1].content.startsWith('你当前处于子agent状态\n'));
+  const appended = child.messages.slice(parent.messages.length);
+  assert.equal(appended[0].name, 'delivery_guidance');
+  assert.match(appended[0].content, /Reports, research documents and backtest analyses belong in verified files/);
+  assert.match(appended[0].content, /read_source_memos must bind it to this turn/);
+  assert.equal(appended[1].name, 'individuation_preference');
+  assert.equal(appended[1].content, individuationPreferenceText());
+  assert.ok(appended[2].content.startsWith('你当前处于子agent状态\n'));
 });

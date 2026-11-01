@@ -3403,6 +3403,7 @@
     "toolExecutionState.start_background_task": "Start background task",
     "toolExecutionState.check_task_progress": "Check task progress",
     "toolExecutionState.wait_task_results": "Wait for task results",
+    "toolExecutionState.wait_results_or_messages": "Wait for results or messages",
     "toolExecutionState.delegate_task": "Delegate task",
     "toolExecutionState.update_plan": "Update plan",
     "toolExecutionState.ask_user": "Ask user",

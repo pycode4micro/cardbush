@@ -3,7 +3,16 @@ import test from 'node:test';
 import { InMemoryRuntimeHost, ToolRegistry } from '@cardbush/bush-runtime';
 import { createProductAgentTurnRequest, ROOT_AGENT_SYSTEM_PROMPT } from '../dist/index.js';
 import { continueChildConversation } from '../../bush-runtime/dist/subagentConversation.js';
-import { normalizeIndividuation } from '@cardbush/bush-protocol';
+import { FINAL_RESPONSE_SIGNAL_INSTRUCTIONS, normalizeIndividuation } from '@cardbush/bush-protocol';
+
+function assertFinalDisplayContract(text) {
+  assert.ok(text.includes(FINAL_RESPONSE_SIGNAL_INSTRUCTIONS), 'standalone entry points share the signal contract');
+  assert.match(text, /After this turn's other Tool work, call summary_for_user alone, when available, before the final reply to signal final display/);
+  assert.match(text, /Use \{\} when memory is disabled or nothing new needs recording/);
+  assert.match(text, /Without Tool work, reply directly/);
+  assert.match(text, /Do not signal opening\/progress updates/);
+  assert.match(text, /after further work or user guidance, signal again before finishing/);
+}
 
 test('individuation changes append user context without altering system/tools or cache prefixes', async t => {
   const seen = [], registry = new ToolRegistry();
@@ -33,28 +42,29 @@ test('individuation changes append user context without altering system/tools or
     const preference = input.messages.filter(m => m.name === 'individuation_preference').at(-1);
     assert.equal(preference.role, 'user'); assert.equal(preference.visibility, 'internal');
     assert.match(preference.content, new RegExp(`habits ${individuation?.habits ? 'enabled' : 'disabled'}`));
-    assert.match(preference.content, /call it alone after finishing other Tool work and before the final reply.*independently of memory settings/);
-    assert.match(preference.content, /nothing new to record, use \{\}/);
-    assert.match(preference.content, /Ordinary conversation without Tool work may reply directly without calling it/);
-    assert.match(preference.content, individuation?.habits || individuation?.predictions
-      ? /optional habit field.*optional prediction field.*Each field follows its own enabled category/
-      : /Memory storage is disabled: use \{\}.*omit habit and prediction/);
+    assertFinalDisplayContract(preference.content);
+    if (individuation?.habits || individuation?.predictions) {
+      assert.match(preference.content, /Use habit only for supported, reusable user preferences and prediction only for a supported next user request, each in its enabled category/);
+      assert.match(preference.content, /prediction remains unconfirmed.*prediction.text is a short message the user could send next.*not analysis about the user or an assistant plan/);
+      assert.match(preference.content, /Put conditions in applies_when; omit prediction if no single next request is clear/);
+      assert.match(preference.content, /Do not copy narrative wording from historical memory/);
+      assert.match(preference.content, /Omit unused fields entirely, never habit: \{\} or prediction: \{\}/);
+    } else {
+      assert.match(preference.content, /Memory storage is disabled: omit habit and prediction/);
+    }
     if (index) assert.deepEqual(input.messages.slice(0, seen[index - 1].messages.length), seen[index - 1].messages);
     assert.ok(host.events('prefs', request.turnId).filter(e => e.kind === 'cache_chain_observed').every(e => !e.payload.frozenPrefixBreak));
   }
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /Before every final user-facing answer, call summary_for_user/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /After this turn's other Tool work, call summary_for_user alone.*before the final reply to signal final display/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Use \{\} when memory is disabled or nothing new needs recording/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Without Tool work, reply directly/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /after further work or user guidance, signal again before finishing/);
+  assertFinalDisplayContract(ROOT_AGENT_SYSTEM_PROMPT);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /do not prepare an extra tool_summary/);
-  assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /optional habit field.*optional prediction field/, 'the tool contract owns its optional fields');
+  assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /Use habit only|prediction.text/, 'the memory guidance owns its optional fields');
   const summaryDescription = seen[0].tools.find(tool => tool.name === 'summary_for_user').description;
-  assert.match(summaryDescription, /this turn has used other tools, call this alone after finishing the tool work and before the final reply/);
-  assert.match(summaryDescription, /final-display signal is independent of memory settings/);
-  assert.match(summaryDescription, /Ordinary conversation without tool work may reply directly without calling this/);
+  assertFinalDisplayContract(summaryDescription);
   assert.match(summaryDescription, /do not write a tool recap/);
-  assert.match(summaryDescription, /All fields are optional; use \{\} when memory is disabled or there is nothing new to record/);
+  assert.match(summaryDescription, /All fields are optional/);
+  assert.match(summaryDescription, /memory write failure does not block the reply/);
+  assert.match(summaryDescription, /does not end the loop/);
   assert.doesNotMatch(summaryDescription, /Use only when there is a supported new habit|legacy final-display signal/);
   assert.match(summaryDescription, /habit is a supported reusable preference; prediction is an unconfirmed next user request/);
   assert.equal(seen[0].tools.find(tool => tool.name === 'summary_for_user').inputSchema.properties.tool_summary, undefined);

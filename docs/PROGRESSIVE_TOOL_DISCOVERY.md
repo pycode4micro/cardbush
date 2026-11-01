@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | `list_subagent_options` | 注册员工、插件角色、远端 Agent 的能力摘要 | `agent_id` 读员工完整定义；`agent_type` 读插件角色；`section: "settings"` 读模型、默认值和可信 Hook；`section: "tools"` 检索工具范围 |
 | `list_plugin_commands` | 命令用途、参数提示和调用资格 | `command` 读一个命令的完整描述与参数提示；`run_plugin_command` 执行 |
-| `team` | `list` 返回流程摘要；执行状态统一从 `tasks` 查询 | `get` 读流程配置；`list` + `section: "runs"` 看当前会话运行摘要；`tasks inspect/wait` 读运行结果；`node_ids` 读取选定节点输出 |
-| `tasks` | `list` 返回当前会话的后台任务状态和是否已有结果 | `inspect` + `task_ids` 读取所选结果；`wait` 等待并读取结果 |
+| `team` | `list` 返回流程摘要；执行状态统一从 `tasks` 查询 | `get` 读流程配置；`list` + `section: "runs"` 看当前会话运行摘要；`tasks inspect` 读取结果，`await` 等待结果；`node_ids` 读取选定节点输出 |
+| `tasks` | `list` 返回当前会话的后台任务状态和是否已有结果 | `inspect` + `task_ids` 读取所选结果；统一由 `await` 等待 |
 | `schedule_task` | `list` 返回任务名、触发时间、状态和最近一次运行状态 | `get` + `job_id` 读可编辑配置；结果由 `scheduled_results` 读取 |
 | `scheduled_results` | 返回执行结果的简短摘要 | `run_ids` 读取所选记录保存的完整结果 |
 

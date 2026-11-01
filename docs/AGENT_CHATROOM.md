@@ -9,7 +9,8 @@ AgentChatroom is an installed-by-default **bundled native plugin**, loaded by th
 | Entry point | Responsibility | Identity |
 | --- | --- | --- |
 | `subagent` | Create a child assignment or follow up with its owner-bound task ID | `task_id`, owned by the parent session |
-| `tasks` | List/inspect/wait/stop existing tasks; `action=conversation` reads one child's inputs and terminal replies | One `task_ids` entry and optional `cursor` for conversation reads |
+| `tasks` | List/inspect/stop existing tasks; `action=conversation` reads one child's inputs and terminal replies | One `task_ids` entry and optional `cursor` for conversation reads |
+| `await` | Wait for owned task results or user/peer messages | Existing `task_ids`; `[]` waits only for messages. Room plugin waits remain available. |
 | `agentchatroom` | `discover`, `join`, `invite`, `send`, `read`, `leave` for independent conversations and explicitly user-authorized children | Host-bound `agent_id` and joined `room_id` |
 
 Child conversations stay out of rooms by default; explicit user authorization permits joining and communication. Room messages never dispatch/resume child tasks or read another conversation's transcript. Child-conversation reads share the ownership check and local/remote reader. Intermediate reasoning and tool activity remain private. The former seven chatroom names retain compatibility handlers; the current catalog advertises the unified entry point. Child transcript reads use `tasks`, not a separately registered `read_subagent_conversation` tool. Hot refresh preserves already-exposed legacy chatroom schemas without adding those names to new conversations.

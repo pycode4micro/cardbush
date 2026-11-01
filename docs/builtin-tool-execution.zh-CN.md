@@ -12,13 +12,14 @@ Registry 是能力权威目录，Provider 定义只是展示，不是授权。�
 | 精确读写 | `read_file/edit_file/write_file` |
 | 多文件关联修改 | `apply_patch` |
 | 终端、子任务、Team、MCP、提问、脚本观察 | `tasks` |
+| 统一等待结果或用户/同伴消息 | `await` |
 | 询问并继续独立工作 | `request_user_input_async` |
 | 过滤、转换、串联结果 | `run_tools` |
 | 读取完整原生/MCP 定义 | `get_tool_schema` |
 | 调用已加载业务工具 | `call_tool` |
 | 搜索 MCP 名称 | `mcp_search` |
 
-`subagent` 分派个体，`team` 管保存流程及启动/恢复，`tasks` 负责观察、指定 `node_ids` 结果、等待/停止、子会话读取。编辑 Team 先加载完整定义，加载本身不扩权、不改顶层声明。
+`subagent` 分派个体，`team` 管保存流程及启动/恢复，`tasks` 负责观察、指定 `node_ids` 结果、停止和子会话读取，`await` 统一等待。编辑 Team 先加载完整定义，加载本身不扩权、不改顶层声明。
 
 `call_tool` 以目标名进入原协调器，复用校验、权限、Hook、资源锁、调度、取消、结果及 UI/日志，wire call/result ID 不变，不是第二个后台执行器或脚本。发现、归档读取、上下文维护仍直接调用，保留回执语义。
 
@@ -46,13 +47,15 @@ checkpoint 的 Markdown `summary` 保留 `<skill_constraints>`，每条约束写
 
 `cache_chain_observed.payload.toolDefinitions` 记录实际工具数、JSON 字符量、描述/schema 分量、排除扩展后的内置量及最大五项，不复制正文/schema/用户内容，也不注入模型。`estimatedTokens` 是 `runtime-tool-json-chars-v1`（JSON 字符/4 向上取整），不是 Provider 用量/账单，wire 格式可能不同。节省评估需结合请求数和结果质量。
 
-起始回执沿用句柄：Team/异步提供 task_id；终端可用 session ID 或完成通知 ID；子任务 taskId 原样进 task_ids。`tasks` 支持 list/inspect/conversation/wait/stop/cancel_observation，列表有界、优先待处理、不带结果；`after` 携每任务修订，省未变化正文。源不可用独立报告，不隐藏别源，状态读每源 1 秒截止。
+起始回执沿用句柄：Team/异步提供 task_id；终端可用 session ID 或完成通知 ID；子任务 taskId 原样进 task_ids。`tasks` 支持 list/inspect/conversation/stop/cancel_observation，列表有界、优先待处理、不带结果；`await` 统一等待。`after` 携每任务修订，省未变化正文。源不可用独立报告，不隐藏别源，状态读每源 1 秒截止。
 
-普通等待默认 1 秒，0 为快照，最多 30 秒，可等 any/all 或被用户引导唤醒；取消等待/超时不停止执行器。cancel_observation 只取消完成订阅，终端事实仍来自进程；stop 走执行器取消与原终端权限，不支持的控制明确报告。[远程子任务](SUBAGENT_REMOTE_PROTOCOL.zh-CN.md)另有所有权绑定的观察/消息/停止协议。
+`await` 省略 yield_time_ms 就等到事件，0 为快照，显式超时最多一小时。省略 task_ids 选择待处理任务；没有待处理任务或传 [] 时等用户/同伴消息。mode=any/all 约束任务完成，消息可中断两种模式；取消等待/超时不停止执行器。cancel_observation 只取消完成订阅，终端事实仍来自进程；stop 走执行器取消与原终端权限，不支持的控制明确报告。[远程子任务](SUBAGENT_REMOTE_PROTOCOL.zh-CN.md)另有所有权绑定的观察/消息/停止协议。
 
 问题复用本 turn 持久 broker，立即返回，共用任务观察和结果投递；真实选择/文字答案才解决依赖，关闭/取消不授权。每会话同时一组问题，文字最多 500 Unicode 字符、建议答案每项 120。
 
 计划等待节点保存 `status:waiting`、具体 `waitingFor` 和 `waitingKind:user|background|dependency`，流/恢复/历史同样持有。只有 user 触发注意通知，被动等待中性；旧未分类状态不从文字猜人类动作。恢复/完成清等待字段，只改原因不带类别则清旧类别。多等待优先明确用户输入，未答问题不能被被动计划隐藏；更新计划不强迫额外模型轮。
+
+统一等待沿用 RuntimeTurnSignals，不新增执行器或插件生命周期。插件自带等待工具正常加载。没有等待工具的插件可通过 start_mcp_tool 启动已声明只读的状态查询，用文档规定的 repeat_while 匹配未完成状态，再把宿主返回的 task_id 交给 await；不能把任意插件 job ID 当作宿主句柄，也不能凭空推断完成。旧会话冻结的 tasks(action=wait) 保留执行兼容，新目录不再展示该 action。await 使用宿主本地化标题，不注入每次调用都要生成的双语标题参数。
 
 ## 调度、失败与恢复
 

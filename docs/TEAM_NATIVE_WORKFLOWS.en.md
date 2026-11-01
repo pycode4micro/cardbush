@@ -40,7 +40,7 @@ Hooks reference installed, already trusted Hook IDs. Registration cannot install
 
 ## Team tools
 
-`team` supports `list`, `get`, `save`, `delete`, `run` and `resume`. Use **`tasks`** for progress, results, waiting and stopping, rather than obsolete `team status/wait/stop` actions. `list` returns workflow summaries, or current-conversation execution summaries with `section: "runs"`. `get` reads a full definition. `save` returns a short ID/revision receipt.
+`team` supports `list`, `get`, `save`, `delete`, `run` and `resume`. Use **`tasks`** for progress, results and stopping, and **`await`** for waiting, rather than obsolete `team status/wait/stop` actions. `list` returns workflow summaries, or current-conversation execution summaries with `section: "runs"`. `get` reads a full definition. `save` returns a short ID/revision receipt.
 
 ```json
 {"action":"save","expected_revision":0,"definition":{"id":"order-check","name":"Order review","max_parallel":2,"nodes":[{"id":"stock","agent_id":"warehouse","prompt":"Check inventory for the order"},{"id":"review","agent_id":"reviewer","prompt":"Use the inventory result to check shipment conditions","depends_on":["stock"]}]}}
@@ -52,11 +52,11 @@ All nodes reference registered, enabled employees. Independent nodes can run con
 {"action":"run","team_id":"order-check","input":"Check whether order 42 is ready to ship."}
 ```
 
-The result includes `run_id` and `task_id` for the same execution. Team cancellation is independent: finishing the parent turn or cancelling observation does not stop it. Call `tasks` with `action: "inspect"`, `"wait"` or `"stop"` and the execution handle in `task_ids`. Do not substitute the workflow's `team_id` or a node ID. Completed tasks return immediately; polling first is unnecessary.
+The result includes `run_id` and `task_id` for the same execution. Team cancellation is independent: finishing the parent turn or cancelling observation does not stop it. Call `tasks` with `action: "inspect"` or `"stop"`, or `await` to wait, using the execution handle in `task_ids`. Do not substitute the workflow's `team_id` or a node ID. Completed tasks return immediately; polling first is unnecessary.
 
-`tasks inspect/wait` returns full outputs for final nodes (nodes without dependents), plus all node statuses, identities and `has_output`. Multiple final branches are all included; `result_node_ids` identifies them. To trace intermediate evidence, use `tasks({"action":"inspect","task_ids":["returned-run-handle"],"node_ids":["stock"]})`. Selected outputs are not truncated. Full results remain in storage and management views.
+`tasks inspect` and `await` return full outputs for final nodes (nodes without dependents), plus all node statuses, identities and `has_output`. Multiple final branches are all included; `result_node_ids` identifies them. To trace intermediate evidence, use `tasks({"action":"inspect","task_ids":["returned-run-handle"],"node_ids":["stock"]})`. Selected outputs are not truncated. Full results remain in storage and management views.
 
-A running main conversation receives completion notifications; the text assistant can continue after background completion. Notifications contain final outputs and node statuses, not lengthy intermediate results. If the same final-result revision was already consumed through `tasks inspect/wait`, it is not reinjected or used to trigger another assistant response. Reading intermediate evidence does not consume final delivery. Resume creates a new result revision and can notify again. A finished main conversation can retrieve results with `tasks` on a later turn.
+A running main conversation receives completion notifications; the text assistant can continue after background completion. Notifications contain final outputs and node statuses, not lengthy intermediate results. If the same final-result revision was already consumed through `tasks inspect` or `await`, it is not reinjected or used to trigger another assistant response. Reading intermediate evidence does not consume final delivery. Resume creates a new result revision and can notify again. A finished main conversation can retrieve results with `tasks` on a later turn.
 
 `completed` means execution ended, not independent content validation. Specify deliverables and acceptance criteria in node tasks. Employees work from instructions/upstream evidence; the parent checks conclusions and gaps and distinguishes verified facts from recommendations. Explain timing only from evidence, not an assumed model load.
 

@@ -9,7 +9,8 @@ AgentChatroom 是默认安装的**内置原生插件**，经普通插件目录�
 | 入口 | 职责 | 身份与范围 |
 | --- | --- | --- |
 | `subagent` | 创建子任务，或针对原有任务继续分派 | 父会话拥有的 `task_id` |
-| `tasks` | 列表、检查、等待、停止；`action=conversation` 读取一个子会话的输入和终轮回复 | 单个 `task_ids`，可带分页 `cursor` |
+| `tasks` | 列表、检查、停止；`action=conversation` 读取一个子会话的输入和终轮回复 | 单个 `task_ids`，可带分页 `cursor` |
+| `await` | 等待所属任务结果或用户/同伴消息 | 已有 `task_ids`；`[]` 仅等待消息。房间插件的等待入口保留。 |
 | `agentchatroom` | 独立会话，以及获得明确用户授权的子会话，执行 `discover/join/invite/send/read/leave` | 宿主绑定的 `agent_id` 和已加入的 `room_id` |
 
 子会话默认不进入房间；明确的用户授权可允许加入和沟通。房间消息不能分派或恢复子任务，也不能读取其他会话的记录。子会话读取复用相同的所有权检查和本地/远程读取器；中间推理与工具活动保持私有。旧的七个聊天室工具名保留兼容处理器，新目录只展示统一入口。子会话记录通过 `tasks` 读取，不再注册独立的 `read_subagent_conversation` 工具。热刷新保留已暴露的旧聊天室 schema，不向新会话增加旧名称。

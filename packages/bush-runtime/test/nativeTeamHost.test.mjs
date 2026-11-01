@@ -180,7 +180,7 @@ for (const finishBeforeWait of [false, true]) test(`Team reads a real file and d
             assert.ok(attempt < 399, 'Team completion timed out');
           }
         }
-        yield call('tasks', { action: 'wait', task_ids: [receipt.task_id], yield_time_ms: 10000 });
+        yield call('await', { task_ids: [receipt.task_id], yield_time_ms: 10000 });
         yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
       }
       assert.equal(receipt.tasks[0].status, 'completed', JSON.stringify(receipt));

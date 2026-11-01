@@ -604,7 +604,7 @@ export function registerWorkspaceTools(
     definition: {
       name: "terminal_poll",
       description: [
-        "Read only new output from terminalSessionId (pass as session_id); yield_time_ms bounds the wait. Empty output is not completion. Continue independent work while state=running; never restart it. With completion_notification=true, use tasks for completion-only waits.",
+        "Read only new output from terminalSessionId (pass as session_id); yield_time_ms bounds the wait. Empty output is not completion. Continue independent work while state=running; never restart it. Use await for completion-only waits when available.",
       ].join(" "),
       inputSchema: objectSchema({
         session_id: { type: "string", minLength: 1 },
@@ -1007,7 +1007,7 @@ function terminalToolDescription(): string {
   return [
     "Run one command in cwd.",
     "Sandbox PATH, HOME and file visibility can differ from the host. Command-not-found, false Test-Path or a venv 'No Python' error does not prove an uninstalled or broken host toolchain. Inspect environmentDiagnostic and sandbox scope; request narrow additional_permissions for required interpreter/tool directories. A host lookup is metadata only and grants no execution access. Do not switch launchers or install replacements to evade isolation.",
-    `Required yield_time_ms <= ${MAX_TERMINAL_YIELD_MS} bounds waiting, not execution; use 1000 for long tasks and continue independent work. completion_notification=true delivers completion automatically. Wait via tasks with completion_task_id only when blocked on results; terminal_poll reads new output by terminalSessionId. Never restart a running command. Prefer search_file_content for content search.`,
+    `Required yield_time_ms <= ${MAX_TERMINAL_YIELD_MS} bounds waiting, not execution; use 1000 for long tasks and continue independent work. completion_notification=true delivers completion automatically. Use await with completion_task_id when blocked and available; terminal_poll reads new output by terminalSessionId. Never restart a running command. Prefer search_file_content for content search.`,
     process.platform === "win32"
       ? "For external waits use PowerShell Start-Sleep; reuse an existing wait session."
       : "For external waits use POSIX sleep; reuse an existing wait session.",

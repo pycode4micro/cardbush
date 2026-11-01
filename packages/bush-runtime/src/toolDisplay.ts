@@ -6,8 +6,8 @@ export { normalizeToolDisplayTitle } from '@cardbush/bush-protocol';
 export const TOOL_DISPLAY_TITLE = '_display_title';
 
 function acceptsDisplayTitle(definition: ToolDefinition): boolean {
-  // These maintenance tools do not need a visible action title.
-  if (definition.name === 'checkpoint_context' || definition.name === 'summary_for_user') return false;
+  // Maintenance and passive waiting use host UI labels, not per-call model prose.
+  if (['checkpoint_context', 'summary_for_user', 'await'].includes(definition.name)) return false;
   const schema = definition.inputSchema;
   if (schema.type !== 'object' || ['$ref', 'allOf', 'anyOf', 'oneOf', 'if', 'patternProperties'].some(key => key in schema)) return false;
   const properties = schema.properties;
@@ -41,9 +41,8 @@ export function toolCallDisplay(call: ToolCall, definition?: ToolDefinition): To
 }
 
 export function stripToolDisplayTitle(input: unknown, definition: ToolDefinition): unknown {
-  // Maintenance calls do not advertise titles, but a stray UI title must not
-  // reject an otherwise valid memory write or context checkpoint.
-  if (!acceptsDisplayTitle(definition) && !['summary_for_user', 'checkpoint_context'].includes(definition.name)) return input;
+  // A stale UI title must not reject a valid maintenance or passive wait call.
+  if (!acceptsDisplayTitle(definition) && !['summary_for_user', 'checkpoint_context', 'await'].includes(definition.name)) return input;
   return withoutToolDisplayTitle(input);
 }
 

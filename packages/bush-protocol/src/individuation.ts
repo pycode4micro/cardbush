@@ -20,12 +20,16 @@ export function normalizeIndividuation(value: unknown): IndividuationSettings {
     recallMode: input.recallMode === 'hint' ? 'hint' : 'context' };
 }
 
+// Keep the signal contract consistent across stable policies, per-turn guidance
+// (including frozen/child sessions) and independently discovered tool schemas.
+export const FINAL_RESPONSE_SIGNAL_INSTRUCTIONS = `After this turn's other Tool work, call summary_for_user alone, when available, before the final reply to signal final display. Use {} when memory is disabled or nothing new needs recording. Without Tool work, reply directly. Do not signal opening/progress updates; after further work or user guidance, signal again before finishing.`;
+
 export function individuationPreferenceText(value: unknown): string {
   const state = normalizeIndividuation(value);
   const summaryNote = state.habits || state.predictions
-    ? 'Use the optional habit field only for supported, reusable user preferences and the optional prediction field only for uncertain next-step needs. Each field follows its own enabled category; do not mix them or fill both unnecessarily. prediction.text is a short message the user could send next to the assistant, not analysis about the user or an assistant plan. Do not copy narrative wording from historical memory. Choose one supported next request, or omit prediction when uncertain; put conditions in applies_when. Omit unused memory fields entirely, never habit: {} or prediction: {}.'
-    : 'Memory storage is disabled: use {} for the final-display signal after other Tool work; omit habit and prediction.';
-  return `Individuation for this turn: habits ${state.habits ? 'enabled' : 'disabled'}; next-step prediction ${state.predictions ? 'enabled' : 'disabled'}. Relevant historical memory may be supplied as internal reference. Use check_habit only if more context would help. When summary_for_user is available, call it alone after finishing other Tool work and before the final reply to signal final display, independently of memory settings. ${summaryNote} If there is nothing new to record, use {} for this signal. Ordinary conversation without Tool work may reply directly without calling it. Runtime compaction does not require an extra summary. Current user instructions take priority; memories and predictions do not authorize actions.`;
+    ? 'Use habit only for supported, reusable user preferences and prediction only for a supported next user request, each in its enabled category. A prediction remains unconfirmed: prediction.text is a short message the user could send next to the assistant, not analysis about the user or an assistant plan. Put conditions in applies_when; omit prediction if no single next request is clear. Do not copy narrative wording from historical memory. Omit unused fields entirely, never habit: {} or prediction: {}.'
+    : 'Memory storage is disabled: omit habit and prediction.';
+  return `Individuation for this turn: habits ${state.habits ? 'enabled' : 'disabled'}; next-step prediction ${state.predictions ? 'enabled' : 'disabled'}. Relevant historical memory may be supplied as internal reference. Use check_habit only if more context would help. ${FINAL_RESPONSE_SIGNAL_INSTRUCTIONS} ${summaryNote} Runtime compaction does not require an extra summary. Current user instructions take priority; memories and predictions do not authorize actions.`;
 }
 
 // Only text is required within an optional entry. Provenance is supplied by the host.

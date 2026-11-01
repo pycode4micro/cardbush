@@ -91,8 +91,8 @@ test("builds one stable explicit product Turn for desktop and transport callers"
     assert.match(instructions, /do not repeat external side effects/);
     assert.doesNotMatch(instructions, /context_pressure|updates are supported/);
   }
-  assert.match(request.prefixMessages[0].content, /continue independent work while children run/);
-  assert.match(request.prefixMessages[0].content, /reconcile their results before finishing/);
+  assert.match(request.prefixMessages[0].content, /Before waiting on children or other background tasks, complete useful independent work/);
+  assert.match(request.prefixMessages[0].content, /reconcile child results before finishing/);
   assert.doesNotMatch(
     request.prefixMessages[0].content,
     /last-resort|prefer any purpose-built|use the direct read_file|chrome_devtools Tools as the primary route/i,

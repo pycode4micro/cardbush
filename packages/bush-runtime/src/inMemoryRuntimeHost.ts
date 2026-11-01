@@ -575,7 +575,7 @@ export class InMemoryRuntimeHost {
             try { const terminal = await this.#runPluginChild(child, signal); const result = resolveChildTurn({ terminal, session: this.#sessions.snapshot(child.sessionId) }, child.turnId); this.#subagentTasks.finish({ parentSessionId: context.sessionId, taskId, ...result }); }
             catch (error) { this.#subagentTasks.finish({ parentSessionId: context.sessionId, taskId, status: signal.aborted ? 'stopped' : 'failed', finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} }); }
           });
-          return `Background task ${taskId} started. Continue independent work; use tasks when its result is needed.`;
+          return `Background task ${taskId} started. Continue independent work; use await when its result is needed.`;
         }
         const terminal = await this.#runPluginChild(child, context.signal);
         const result = resolveChildTurn({ terminal, session: this.#sessions.snapshot(child.sessionId) }, child.turnId);

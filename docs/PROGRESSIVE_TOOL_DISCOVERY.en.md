@@ -8,8 +8,8 @@ Discovery returns available object IDs, short purposes and necessary state. Regi
 | --- | --- | --- |
 | `list_subagent_options` | Summaries of registered agents, plugin roles and remote Agents | `agent_id` reads a definition; `agent_type` reads a plugin role; `section: "settings"` reads models, defaults and trusted hooks; `section: "tools"` searches the tool scope. |
 | `list_plugin_commands` | Purpose, argument hints and eligibility | `command` reads one command's full description/hints; `run_plugin_command` executes it. |
-| `team` | `list` returns workflow summaries; execution state comes from `tasks` | `get` reads configuration; `list` with `section: "runs"` lists this session's runs; `tasks inspect/wait` reads results; `node_ids` selects node outputs. |
-| `tasks` | `list` returns this session's background states and result availability | `inspect` with `task_ids` reads selected results; `wait` waits and reads. |
+| `team` | `list` returns workflow summaries; execution state comes from `tasks` | `get` reads configuration; `list` with `section: "runs"` lists this session's runs; `tasks inspect` reads results and `await` waits; `node_ids` selects node outputs. |
+| `tasks` | `list` returns this session's background states and result availability | `inspect` with `task_ids` reads selected results; `await` waits and reads. |
 | `schedule_task` | `list` returns names, triggers, state and the latest run state | `get` with `job_id` reads editable configuration; `scheduled_results` reads outputs. |
 | `scheduled_results` | Short execution summaries | `run_ids` reads selected saved results in full. |
 

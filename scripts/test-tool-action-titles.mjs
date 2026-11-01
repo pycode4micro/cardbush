@@ -82,6 +82,11 @@ test('waiting for child tasks has a localized action in live and archived receip
   for (const language of ['zh', 'en', 'zh']) assert.equal(api.toolActionTitle(row, language), uiText(language)('toolExecutionState.wait_task_results'));
 });
 
+test('unified await uses the localized action for results and messages', () => {
+  const row = api.runtimeHistoryToolExecution({ ...record, display: undefined, toolCall: { ...record.toolCall, name: 'await' } });
+  for (const language of ['zh', 'en', 'zh']) assert.equal(api.toolActionTitle(row, language), uiText(language)('toolExecutionState.wait_results_or_messages'));
+});
+
 test('specific descriptions follow the UI language through live updates and archived receipts', () => {
   const titles = { zh: '检查项目类型错误', en: 'Check project type errors' };
   const display = { title: titles.en, titles };

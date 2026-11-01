@@ -3365,6 +3365,7 @@
     "toolExecutionState.start_background_task": "启动后台任务",
     "toolExecutionState.check_task_progress": "查看任务进度",
     "toolExecutionState.wait_task_results": "等待任务结果",
+    "toolExecutionState.wait_results_or_messages": "等待结果或消息",
     "toolExecutionState.delegate_task": "分配任务",
     "toolExecutionState.update_plan": "更新计划",
     "toolExecutionState.ask_user": "询问用户",
