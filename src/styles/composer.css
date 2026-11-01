@@ -1791,24 +1791,47 @@
   gap: 3px;
 }
 
-.permission-mode-row {
+.permission-mode-list .permission-mode-row {
+  --permission-mode-icon-size: 15px;
+  --permission-mode-check-size: 14px;
   min-height: 34px;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 14px;
+  grid-template-columns: 18px minmax(0, 1fr) var(--permission-mode-check-size);
+  align-items: start;
   padding: 6px 8px;
 }
 
-.permission-mode-row.active {
+.permission-mode-row > svg {
+  width: var(--permission-mode-icon-size);
+  height: var(--permission-mode-icon-size);
+  margin-top: 2px;
+  justify-self: center;
+}
+
+.permission-mode-row > svg:last-child {
+  width: var(--permission-mode-check-size);
+  height: var(--permission-mode-check-size);
+}
+
+.permission-mode-row > span > strong,
+.permission-mode-row > span > small {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.42;
+}
+
+.permission-mode-list .permission-mode-row.active {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
-.permission-mode-row.mode-all_free.active {
+.permission-mode-list .permission-mode-row.mode-all_free.active {
   color: color-mix(in srgb, #ff9b45 90%, var(--text));
   background: color-mix(in srgb, #ff9b45 14%, transparent);
 }
 
-.permission-mode-row.mode-all_free {
+.permission-mode-list .permission-mode-row.mode-all_free {
   color: color-mix(in srgb, #ff9b45 84%, var(--text));
 }
 
