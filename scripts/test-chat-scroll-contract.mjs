@@ -33,9 +33,11 @@ assert.match(
 );
 assert.match(
   appSource,
-  /className="message-list"[\s\S]*?ref=\{setListScrollerRef\}[\s\S]*?className="message-list-content"[\s\S]*?renderMessages\.map\(\(message, index\)/,
+  /className="message-list"[\s\S]*?ref=\{setListScrollerRef\}[\s\S]*?className="message-list-content"[\s\S]*?\{messageRows\}/,
   'All messages must render inside one native scroll container',
 );
+assert.match(appSource, /const messageRows = useMemo\(\(\) => renderMessages\.map\(\(message, index\) => renderMessage\(message, index\)\),\s*\[renderMessages, renderMessage\]\)/,
+  'The complete native message list is retained when only scroll controls change');
 assert.match(
   appSource,
   /scrollMotion\.move\(scroller, \(\) => absoluteBottomScrollTop\(scroller\), 'jump'[\s\S]*?strategy: 'native-message-list'/,
@@ -322,9 +324,11 @@ assert.match(
 );
 assert.match(
   quickContextSource,
-  /panelView !== 'closed'[\s\S]*?className=\{`quick-context-tick\$\{isCurrentTurn \? ' current'/,
+  /isCurrentTurn = index === currentRailIndex[\s\S]*?<QuickContextTick[\s\S]*?current=\{isCurrentTurn\}/,
   'Closed rails must reserve emphasis for the visible user turn',
 );
+assert.match(quickContextSource, /className=\{`quick-context-tick\$\{current \? ' current'/,
+  'Memoized ticks preserve the visible-turn emphasis');
 assert.match(styles, /\.quick-context-tick\.current::before\s*\{/);
 const currentTickRule = styles.match(
   /\.quick-context-tick\.current::before\s*\{([^}]*)\}/,

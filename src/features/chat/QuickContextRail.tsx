@@ -52,7 +52,7 @@ export const QuickContextRail = memo(function QuickContextRail({
   const userSignature = useMemo(() => railTurns.map(message => message.id).join('\0'), [railTurns]);
   const lastUserMessage = railTurns.at(-1);
   const [panelView, setPanelView] = useState<'closed' | 'detail'>('closed');
-  const hoverPreview = useHoverPreview(panelView !== 'closed');
+  const hoverPreview = useHoverPreview(panelView !== 'closed', { immediateSwitch: true });
   const [selectedTurn, setSelectedTurn] = useState<SelectedTurn | null>(null);
   const [remoteTurnMessages, setRemoteTurnMessages] = useState<ChatMessage[] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -258,8 +258,6 @@ export const QuickContextRail = memo(function QuickContextRail({
   const hoverAssistant = hoverMessages.find(message => message.role === 'assistant');
   const hoverContent = useLazyTurnPreview(sessionId, hoveredMessage, hoverUser, hoverAssistant);
 
-  if (railTurns.length === 0) return null;
-
   const localSelectedTurnMessages = selectedTurn
     ? transcript.messagesFor(selectedTurn.message.id)
     : [];
@@ -272,7 +270,7 @@ export const QuickContextRail = memo(function QuickContextRail({
     .find((message) => message.role === 'assistant')
     ?.content.trim() ?? '';
 
-  const selectTurn = (turn: SelectedTurn) => {
+  const selectTurn = useCallback((turn: SelectedTurn) => {
     detailRequestRef.current?.abort();
     detailRequestRef.current = null;
     setSelectedTurn(turn);
@@ -298,7 +296,7 @@ export const QuickContextRail = memo(function QuickContextRail({
       detailRequestRef.current = null;
       setDetailLoading(false);
     });
-  };
+  }, [host?.runtime, host?.sessionId, sessionId, turnHistoryAvailable]);
 
   const copyAssistantReply = async () => {
     if (!assistantReply) return;
@@ -337,12 +335,13 @@ export const QuickContextRail = memo(function QuickContextRail({
     });
   };
 
-  const selectRailTurn = (message: ChatMessage) => {
+  const selectRailTurn = useCallback((message: ChatMessage) => {
+    hoverPreview.close();
     selectTurn({
       message,
       serverMessageId: message.messageId ?? message.id,
     });
-  };
+  }, [hoverPreview.close, selectTurn]);
 
   const focusTurn = (index: number) => {
     const ticks = ticksRef.current;
@@ -360,6 +359,8 @@ export const QuickContextRail = memo(function QuickContextRail({
     if (label === undefined) { label = compactText(message.content, 120); labelsRef.current.set(message, label); }
     return label;
   };
+
+  if (railTurns.length === 0) return null;
 
   return (
     <aside
@@ -391,21 +392,15 @@ export const QuickContextRail = memo(function QuickContextRail({
           {visibleRailTurns.map((message, slot) => {
             const index = tickWindow.start + slot, isCurrentTurn = index === currentRailIndex;
             return (
-              <button
+              <QuickContextTick
                 {...hoverPreview.triggerProps}
                 key={message.id}
-                type="button"
-                data-turn-index={index}
-                data-turn-message-id={message.id}
-                style={{ top: index * tickStepRef.current + 10 }}
-                className={`quick-context-tick${isCurrentTurn ? ' current' : ''}${hoveredMessage?.id === message.id ? ' previewing' : ''}`}
-                aria-label={uiText(language)('quickContextRail.turnPosition', { number: index + 1, count: railTurns.length, title: turnLabel(message) })}
-                aria-current={isCurrentTurn ? 'true' : undefined}
-                aria-haspopup="dialog"
-                aria-expanded={panelView === 'detail' && selectedTurn?.message.id === message.id}
-                aria-controls={panelView === 'detail' && selectedTurn?.message.id === message.id ? panelId : undefined}
+                message={message} language={language} index={index} count={railTurns.length}
+                top={index * tickStepRef.current + 10} summary={turnLabel(message)}
+                current={isCurrentTurn} previewing={hoveredMessage?.id === message.id}
+                expanded={panelView === 'detail' && selectedTurn?.message.id === message.id} panelId={panelId}
                 aria-describedby={hoveredMessage?.id === message.id ? hoverPreview.id : undefined}
-                onClick={() => { hoverPreview.close(); selectRailTurn(message); }}
+                onChoose={selectRailTurn}
               />
             );
           })}
@@ -477,6 +472,20 @@ export const QuickContextRail = memo(function QuickContextRail({
       </div>
     </aside>
   );
+});
+
+// Scrolling changes only the former/current tick. Keep labels, handlers and
+// unchanged buttons out of the render path when the reading turn advances.
+const QuickContextTick = memo(function QuickContextTick({ message, language, index, count, top, summary,
+  current, previewing, expanded, panelId, onChoose, ...triggerProps }: ReturnType<typeof useHoverPreview>['triggerProps'] & {
+  message: ChatMessage; language: AppLanguage; index: number; count: number; top: number; summary: string;
+  current: boolean; previewing: boolean; expanded: boolean; panelId: string; onChoose: (message: ChatMessage) => void;
+}) {
+  return <button {...triggerProps} type="button" data-turn-index={index} data-turn-message-id={message.id}
+    style={{ top }} className={`quick-context-tick${current ? ' current' : ''}${previewing ? ' previewing' : ''}`}
+    aria-label={uiText(language)('quickContextRail.turnPosition', { number: index + 1, count, title: summary })}
+    aria-current={current ? 'true' : undefined} aria-haspopup="dialog" aria-expanded={expanded}
+    aria-controls={expanded ? panelId : undefined} onClick={() => onChoose(message)} />;
 });
 
 function selectorEscape(value: string) {

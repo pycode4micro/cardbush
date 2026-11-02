@@ -863,6 +863,12 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), [], 'no backdrop renderer errors');
       assert.deepEqual(errors, []); return;
     }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'history-scroll') {
+      await require('./helpers/chat-history-scroll.cjs')({ run, until, pause, window });
+      assert.deepEqual(await run('failures'), [], 'no long-history renderer errors');
+      assert.deepEqual(errors, []);
+      if (process.env.CARDBUSH_APP_VIEWS_CASE) return;
+    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'reflow-scroll') {
       await require('./helpers/chat-reflow-scroll.cjs')({ run, until, pause });
       assert.deepEqual(await run('failures'), [], 'no reflow renderer errors');

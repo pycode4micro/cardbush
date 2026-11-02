@@ -308,7 +308,6 @@ export function ToolExecutionBlock({
         type="button"
         aria-expanded={expanded}
         aria-label={historySummary}
-        title={runSummary}
         onClick={toggleExpanded}
       >
         <ToolLogo name={logoExecution?.name ?? ''} size={16} />
@@ -723,16 +722,12 @@ function ToolExecutionRow({
   const waiting = active && (execution.state === 'awaiting_permission' || execution.state === 'awaiting_solution');
   const status = toolActivityStatus(execution, language, active);
   const terminalOutcome = toolTerminalOutcome(execution);
-  const name = isContextCompactionPresentationExecution(execution)
-    ? uiText(language)('toolExecutionBlock.contextCompaction')
-    : displayToolName(execution.name, language);
   const label = toolActionTitle(execution, language);
   return (
     <section ref={rowRef} className={`tool-execution-detail ${expanded ? 'expanded' : ''}`} data-execution-id={execution.id}>
       <button className="tool-execution-row"
         type="button" aria-expanded={expanded} aria-controls={expanded ? detailId : undefined}
         aria-label={`${label} · ${status}`}
-        title={`${name}${label !== name ? `\n${label}` : ''}`}
         onClick={() => preserveScrollPositionForToggle(rowRef.current, onToggle)}>
         <ToolLogo name={execution.name} size={14} />
         {(waiting || terminalOutcome === 'failed' || terminalOutcome === 'stopped') && <span className="tool-execution-row-status">{status}</span>}

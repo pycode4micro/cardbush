@@ -156,6 +156,7 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
   await until('document.hasFocus()', 'tooltip window focus');
   window.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
   await pause(80);
+  await require('./quick-context-motion.cjs')({ run, until, window });
   for (const edge of ['first', 'last']) {
     const tickPoint = await run("(() => { const area=document.querySelector('.quick-context-ticks').getBoundingClientRect(); const ticks = [...document.querySelectorAll('.quick-context-tick')].filter(node=>{const r=node.getBoundingClientRect();return r.top>=area.top&&r.bottom<=area.bottom;}); const r = ticks[" + (edge === 'first' ? '0' : 'ticks.length - 1') + "].getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()");
     window.webContents.sendInputEvent({ type: 'mouseMove', ...tickPoint });

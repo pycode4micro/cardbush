@@ -637,6 +637,9 @@ export function ChatPanel({
   }, []);
 
   const releaseAssistantStageReservation = useCallback(() => {
+    // After the tail reserve is retired, wheel/scroll handlers have nothing to
+    // release. Avoid repeatedly traversing a long transcript for its spacer.
+    if (!assistantStageAnchorRef.current) return;
     const scroller = listScrollerRef.current;
     if (!scroller || releaseResponseSpacer(scroller)) assistantStageAnchorRef.current = '';
   }, []);
@@ -2403,7 +2406,7 @@ export function ChatPanel({
     scrollerRef: listScrollerRef, requestedVisible: showScrollBottom, scope: scrollPositionKey,
     enabled: !loading && !showWelcome, revision: scrollMountRevision,
   });
-  const renderMessage = (message: ChatMessage, index: number, preview = false) => (
+  const renderMessage = useCallback((message: ChatMessage, index: number, preview = false) => (
     <div
       key={message.renderKey ?? message.id}
       className={`message-list-item${index === 0 ? ' first' : ''}${
@@ -2472,7 +2475,16 @@ export function ChatPanel({
         />
       )}
     </div>
-  );
+  ), [sending, activeTurnId, latestTaskStartIndex, enteringUserMessageIds, pendingSubmittedUserEntryMessageId,
+    activeAssistantForRender, lastAssistantByTurn, runtimeSessionId, latestCompletedMessageId, activeConversationId,
+    thinkingVisible, readOnlyActions, guidanceAvailable, completedGuidanceTurnMessages, language, reversibleTurnIds,
+    executingModel, selectedModelConfig?.modelName, selectedModel, activeGoal, onRegenerate, onEditUserMessage,
+    onRetryMessage, onRetryGuidance, onRevertChangeReport, openScene, guidanceActivities, stopping, goalMessageId,
+    activeGoalRounds, goalCancelling, goalWaiting, onCancelGoal]);
+  // Scroll controls and composer geometry can update without changing a single
+  // message. Retain the row elements instead of rebuilding the whole history.
+  const messageRows = useMemo(() => renderMessages.map((message, index) => renderMessage(message, index)),
+    [renderMessages, renderMessage]);
 
   if (import.meta.env.DEV && isComposerRuntimePreTestEnabled()) {
     return <ComposerRuntimePreTest language={language} />;
@@ -2756,7 +2768,7 @@ export function ChatPanel({
                       : uiText(language)('chatPanel.unableToLoadTryAgain')}
                   </span>}
                 </div>}
-                {renderMessages.map((message, index) => renderMessage(message, index))}
+                {messageRows}
                 {connectionRecovery && connectionRecovery.state !== 'recovered' && (
                   <ConversationConnectionNotice
                     language={language}

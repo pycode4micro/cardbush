@@ -285,12 +285,9 @@
 }
 
 .quick-context-tick:hover::before,
-.quick-context-tick:focus-visible::before {
-  width: 15px;
-  background: color-mix(in srgb, var(--text) 88%, transparent);
-}
-
+.quick-context-tick:focus-visible::before,
 .quick-context-tick.previewing::before {
+  /* Opening the delayed preview must not start a second expansion. */
   width: 24px;
   background: var(--text);
 }

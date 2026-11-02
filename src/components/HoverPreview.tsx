@@ -3,7 +3,9 @@ import { createPortal } from 'react-dom';
 import './hover-preview.css';
 
 /** Delayed previews share one interaction policy; they never fetch or steal focus. */
-export function useHoverPreview(disabled = false, { interactive = false }: { interactive?: boolean } = {}) {
+export function useHoverPreview(disabled = false, { interactive = false, immediateSwitch = false }: {
+  interactive?: boolean; immediateSwitch?: boolean;
+} = {}) {
   const id = useId();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const pending = useRef<HTMLElement | null>(null);
@@ -55,11 +57,14 @@ export function useHoverPreview(disabled = false, { interactive = false }: { int
     if (disabled || dismissed.current === element || anchor === element || pending.current === element) return;
     pending.current = element;
     window.clearTimeout(openTimer.current);
+    // Dense navigation keeps the initial hover delay, then follows the next
+    // trigger without leaving the previous selection highlighted behind it.
+    if (immediateSwitch && anchor) { pending.current = null; setAnchor(element); return; }
     openTimer.current = window.setTimeout(() => {
       pending.current = null;
       if (element.isConnected && !element.closest('[inert]')) setAnchor(element);
     }, 280);
-  }, [anchor, disabled, keepOpen]);
+  }, [anchor, disabled, immediateSwitch, keepOpen]);
   const pointer = useCallback((event: PointerEvent<HTMLElement>) => {
     if (event.pointerType === 'touch' || event.buttons) return;
     const action = event.target instanceof Element
