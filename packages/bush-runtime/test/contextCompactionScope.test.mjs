@@ -3,7 +3,7 @@ import test from 'node:test';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry, assembleContext, projectActiveTurnContext,
   InMemoryRuntimeCheckpointStore, InMemoryRuntimeEventLog } from '../dist/index.js';
 import { validateConversation } from '../dist/sessionStore.js';
-import { selectContextCompactionScope } from '../dist/contextCompactionScope.js';
+import { selectContextCompactionScope, contextToolHandoffAdmissionPressure } from '../dist/contextCompactionScope.js';
 import { orderedCheckpointTool } from './helpers/orderedCheckpoint.mjs';
 
 const now = '2026-10-23T08:00:00Z';
@@ -46,6 +46,37 @@ function* done(request) {
   yield event(request, 1, 'response_completed', { finishReason: 'stop' });
 }
 const shutdown = host => host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+
+test('handoff admission compares compatible estimates, without carrying the old token floor into rewritten input', () => {
+  const pressure = (estimatedPromptTokens, fallbackPromptTokens = estimatedPromptTokens) => ({
+    estimatedPromptTokens, fallbackPromptTokens, fallbackScale: 1, measurement: 'fallback_estimate',
+    usableInputTokens: 402000, reservedOutputTokens: 128000, ratio: estimatedPromptTokens / 402000,
+    inputProjection: { format: 'fixture', transport: 'full', inputDigests: [], parameterDigests: {},
+      tokenEstimate: { method: 'chars-v1', tokens: fallbackPromptTokens, inputParametersDigest: 'same-model-and-tools' } },
+  });
+  const source = pressure(274784, 231710), candidate = pressure(227348);
+  const before = structuredClone({ source, candidate });
+  assert.ok(contextToolHandoffAdmissionPressure(source, candidate).estimatedPromptTokens > 255952,
+    'resetting the estimate is not the ~47k savings reported by the faulty admission');
+  const efficient = contextToolHandoffAdmissionPressure(source, pressure(50000));
+  assert.ok(efficient.estimatedPromptTokens < 60000, 'only density is compared, not the old input floor');
+  assert.equal(efficient.measurement, 'fallback_estimate');
+  assert.equal(efficient.minimumInputTokens, undefined);
+  assert.equal(efficient.calibration, undefined, 'the rewritten prefix is not marked as measured');
+  const exact = { ...candidate, measurement: 'provider' };
+  assert.strictEqual(contextToolHandoffAdmissionPressure(source, exact), exact);
+  assert.equal(contextToolHandoffAdmissionPressure(pressure(100000, 231710), candidate).estimatedPromptTokens, 227348,
+    'a low-density source cannot discount unknown rewritten text');
+  for (const change of [{ method: 'chars-v2' }, { inputParametersDigest: 'other-model' }, { inputParametersDigest: undefined }]) {
+    const incompatible = structuredClone(candidate);
+    Object.assign(incompatible.inputProjection.tokenEstimate, change);
+    assert.strictEqual(contextToolHandoffAdmissionPressure(source, incompatible), incompatible);
+  }
+  const legacy = { ...source, inputProjection: undefined };
+  assert.strictEqual(contextToolHandoffAdmissionPressure(legacy, candidate), candidate);
+  assert.equal(contextToolHandoffAdmissionPressure(source, undefined), undefined);
+  assert.deepEqual({ source, candidate }, before);
+});
 
 test('range selection keeps parallel receipts, image bytes and native replay intact', () => {
   const messages = [user('Goal.'), assistant('Old evidence. '.repeat(12000)),

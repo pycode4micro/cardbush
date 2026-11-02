@@ -167,7 +167,7 @@ import {
 } from "./contextCompaction.js";
 import { ContextCompactionTransaction, isContextLengthFailure, type RestoredCompactionFailure } from './contextCompactionTransaction.js';
 import { referenceSingleCheckpointSummary } from './checkpointReceipt.js';
-import { contextCompactionInputDigest, contextCompactionTarget, contextCompactionMinimumTarget, selectContextCompactionScope, type ContextCompactionScope } from './contextCompactionScope.js';
+import { contextCompactionInputDigest, contextCompactionTarget, contextCompactionMinimumTarget, contextToolHandoffAdmissionPressure, selectContextCompactionScope, type ContextCompactionScope } from './contextCompactionScope.js';
 import { contextCompactionCorrectionMessage, isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
 import { latestConversationPreference } from './conversationPreferences.js';
 import { projectActiveTurnContext } from "./contextAssembler.js";
@@ -2717,7 +2717,8 @@ export class InMemoryRuntimeHost {
                 coveredMessageIds: activeContextCheckpoint?.projectionVersion === 'exchange_v1' ? activeContextCheckpoint.coveredMessageIds : undefined,
               });
               if (prepared) {
-                const measured = await this.#measureContextPressure(request, prepared.context.messages, freshResponseChain(), input.signal);
+                const measured = contextToolHandoffAdmissionPressure(pressure,
+                  await this.#measureContextPressure(request, prepared.context.messages, freshResponseChain(), input.signal));
                 if (measured && fitsContextRequest(measured) && measured.estimatedPromptTokens < pressure.estimatedPromptTokens &&
                   measured.estimatedPromptTokens <= contextCompactionTarget(pressure) &&
                   (!measured.requestBody || measured.requestBody.bytes < measured.requestBody.maxBytes * 0.875)) {

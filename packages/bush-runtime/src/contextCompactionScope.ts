@@ -61,6 +61,24 @@ export function contextCompactionMinimumTarget(pressure: ContextPressure): numbe
   return trigger - Math.ceil((trigger - contextCompactionTarget(pressure)) / 2);
 }
 
+/** A local handoff must save space on the same basis that triggered it. A
+ * rewrite invalidates the measured-prefix floor, but losing that floor is not
+ * token savings. Use the source's upward density correction only to admit this
+ * candidate; never persist it as measured usage or apply it to later requests.
+ * Exact provider counts always win, and incompatible estimators cannot mix. */
+export function contextToolHandoffAdmissionPressure(source: ContextPressure,
+  candidate: ContextPressure | undefined): ContextPressure | undefined {
+  if (!candidate || candidate.measurement === 'provider') return candidate;
+  const before = source.inputProjection?.tokenEstimate, after = candidate.inputProjection?.tokenEstimate;
+  if (!before || !after || source.fallbackPromptTokens <= 0 ||
+      source.inputProjection?.format !== candidate.inputProjection?.format || before.method !== after.method ||
+      !before.inputParametersDigest || before.inputParametersDigest !== after.inputParametersDigest ||
+      before.tokens !== source.fallbackPromptTokens || after.tokens !== candidate.fallbackPromptTokens) return candidate;
+  const scale = Math.max(1, source.estimatedPromptTokens / source.fallbackPromptTokens);
+  const estimatedPromptTokens = Math.max(candidate.estimatedPromptTokens, Math.ceil(candidate.fallbackPromptTokens * scale));
+  return { ...candidate, estimatedPromptTokens, fallbackScale: scale, ratio: estimatedPromptTokens / candidate.usableInputTokens };
+}
+
 function estimate(messages: ModelMessage[]): number {
   return messages.reduce((total, message) => {
     const images = 'images' in message ? message.images : undefined;

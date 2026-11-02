@@ -10,6 +10,7 @@ import { validateConversation } from '../dist/sessionStore.js';
 import { ContextCompactionTransaction } from '../dist/contextCompactionTransaction.js';
 import { locateContextCompactionSources } from '../dist/contextCompaction.js';
 import { checkpointSkillReceiptEvidence } from '../dist/checkpointSkillEvidence.js';
+import { runtimeInputTokenProjection } from '../dist/inputTokenBasis.js';
 import { preparedCompactionCases } from '../../../scripts/fixtures/prepared-compaction-cases.mjs';
 import { longScenarioForLayout } from '../../../scripts/fixtures/prepared-compaction-long-cases.mjs';
 
@@ -199,6 +200,58 @@ test('no-progress handoff is not persisted and falls back to ordinary bounded co
   const result = await host.runSessionTurn(request());
   assert.equal(result.payload.reason, 'context_compaction_no_progress');
   assert.equal(calls, 3); assert.equal(store.snapshot(sessionId).turns[0].contextToolHandoff, undefined);
+});
+
+for (const method of ['recorded', 'prepared']) test(`${method} handoff cannot appear effective just because rewriting discards token calibration`, async t => {
+  const store = new SessionStore(), original = seed(store), registry = new ToolRegistry();
+  registry.register({ definition: { name: 'fixture_probe', description: 'Inspect existing work.', inputSchema: { type: 'object' } },
+    manifest: { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
+    decodeInput: x => x, execute: () => ({ status: 'verified', job: 'R-22' }) });
+  let normal = 0, summaries = 0, handoffCandidates = 0;
+  const hasCheckpoint = input => input.messages.some(m => m.role === 'assistant' && m.toolCalls.some(c => c.name === 'checkpoint_context'));
+  const hasHandoff = input => input.messages.some(m => m.content.includes('<tool_summary') || m.content.startsWith('<recorded_tool_exchange>'));
+  const projection = input => {
+    const value = runtimeInputTokenProjection(input);
+    // Reproduce the reported mismatch: a ~227k raw estimate represents ~270k
+    // actual input. The local handoff saves too little to clear a 255,952 target.
+    value.tokenEstimate.tokens = maintenance(input) ? 30000 : hasCheckpoint(input) ? 50000 : hasHandoff(input) ? 227348
+      : input.messages.some(m => m.role === 'tool' && m.toolCallId === 'probe') ? 230000 : 227000;
+    return value;
+  };
+  const host = new InMemoryRuntimeHost({ sessionStore: store, toolRegistry: registry,
+    ...(method === 'prepared' ? { preferPreparedToolHandoffs: true } : {}), registerDefaultWorkspaceTools: false,
+    provider: {
+      estimateInputTokens(input, options) {
+        if (hasHandoff(input)) handoffCandidates++;
+        const value = projection(input); options.onInputProjection(value); return value.tokenEstimate.tokens;
+      },
+      async *stream(input, options) {
+        options.onInputProjection(projection(input));
+        if (maintenance(input)) { yield* compact(input, `cp-${++summaries}`); return; }
+        if (normal++ === 0) {
+          yield event(input, 0, 'tool_call_delta', { index: 0, toolCallId: 'probe', nameDelta: 'fixture_probe', argumentsDelta: '{}' });
+          yield event(input, 1, 'usage', { inputTokens: 270000, outputTokens: 100 });
+          yield event(input, 2, 'response_completed', { finishReason: 'tool_calls' });
+        } else {
+          assert.ok(hasCheckpoint(input), 'weak local rewrite must fall through to a real checkpoint before resuming');
+          yield* done(input);
+        }
+      },
+    } });
+  t.after(() => shutdown(host));
+  const terminal = await host.runSessionTurn(request('density', { tools: registry.definitions(), permissionMode: 'all_free',
+    maxOutputTokens: 128000, metadata: { contextWindowTokens: 530000 } }));
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
+  assert.ok(handoffCandidates > 0, 'exercise the eligible local handoff candidate');
+  assert.ok(summaries > 0);
+  assert.equal(normal, 2);
+  assert.deepEqual(store.snapshot(sessionId).turns[0].messages, original.messages);
+  assert.equal(store.snapshot(sessionId).turns[0].contextToolHandoff, undefined, 'failed admission never commits the local rewrite');
+  const starts = host.events(sessionId, 'density').filter(e => e.kind === 'context_compaction_started');
+  const completed = host.events(sessionId, 'density').filter(e => e.kind === 'context_compaction_completed');
+  assert.equal(starts.length, 1, 'one effective compaction, no misleading completed handoff first');
+  assert.equal(completed.length, 1);
+  assert.equal(completed[0].payload.method, 'checkpoint');
 });
 
 test('keeps a checkpoint carrying earlier turns; superseding source facts invalidates the handoff', () => {
