@@ -131,9 +131,20 @@ disable; use Revoke access in the extension to clear them. This consent only
 applies to managed session groups. It never authorizes personal tabs implicitly.
 One-time grants and tab/group IDs remain browser-session state; a browser restart
 does not adopt restored personal tabs based on their title or numeric ID.
-Pairing a new connection preserves other credentials. After intentionally
-re-pairing the same profile, remove its old offline entry. Explicit Connect after
-revocation creates a new profile identity; background retries cannot undo revocation.
+Each extension profile keeps one stable identity and a private ECDH key in its
+own extension storage. Re-pairing exchanges a new transport credential in place:
+the previous secret and its live sockets stop working after the new credential
+is saved. Session bindings, the default browser and other profiles stay intact.
+Manual codes are single-use enrollment tickets; remote brokers require a valid
+ticket and do not allow automatic enrollment. The stable profile key proves
+ownership; a browser name, connection ID or ticket alone cannot replace another
+profile. Revocation/denial is current state for that identity, not a new identity
+on every attempt. Explicit consent can restore the same profile; background
+retries cannot undo revocation. Interrupted confirmations retain provisional
+material so an accepted credential can be recovered without another prompt.
+Reload the extension after upgrading. Existing CB2 connections retain their IDs
+and register the stable profile key on an authenticated reconnect. Historical
+entries with no verifiable profile relationship are never merged by name.
 See [implementation and license scope](../THIRD_PARTY_NOTICES.md).
 
 MSIX connector configuration resides in the package's LocalState. Older

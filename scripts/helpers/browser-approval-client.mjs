@@ -15,6 +15,7 @@ export async function approvalClient(port, identity, options = {}) {
     } },
   });
   vm.runInContext(source, context);
+  if (!identity.privateKey) Object.assign(identity, await vm.runInContext('connectorProfileKeys', context)());
   return vm.runInContext('requestConnectorPairing', context)(identity, { ports: [Number(port)], attemptTimeoutMs: 1500,
-    onPrepared: async (code, confirmed = false) => { identity.pending = code; identity.confirmed = confirmed; }, confirm: async () => true, ...rest });
+    onPrepared: async (code, confirmed = false) => { identity.pending = code; identity.confirmed = confirmed; if (confirmed) identity.refresh = false; }, confirm: async () => true, ...rest });
 }

@@ -1,0 +1,56 @@
+/* Shared by chat, Source popovers and Markdown documents. */
+a.web-link,
+.markdown-content a.web-link,
+.markdown-document a.web-link,
+.source-memo-card a.web-link {
+  --web-link-bg: color-mix(in srgb, currentColor 6%, transparent);
+  --web-link-border: color-mix(in srgb, currentColor 12%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: .4em;
+  max-width: min(100%, 30ch);
+  min-width: 0;
+  box-sizing: border-box;
+  padding: .12em .6em .12em .4em;
+  border: 1px solid var(--web-link-border);
+  border-radius: 999px;
+  background: var(--web-link-bg);
+  color: inherit;
+  font: inherit;
+  font-size: .92em;
+  font-weight: 500;
+  line-height: 1.4;
+  text-decoration: none;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+a.web-link:hover {
+  background: color-mix(in srgb, currentColor 11%, transparent);
+  border-color: color-mix(in srgb, currentColor 24%, transparent);
+  text-decoration: none;
+}
+
+a.web-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  text-decoration: none;
+}
+
+.web-link > .web-link-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-link > .browser-site-icon { flex: none; }
+.web-link > .browser-site-icon img {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}

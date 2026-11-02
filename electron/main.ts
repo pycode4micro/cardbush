@@ -4316,7 +4316,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
         runtimeWorkerReadySeen = true;
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
-      onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal) => {
+      onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal, onAccepted: () => void) => {
         if (operation === 'browser.inherit-scope') {
           const input = payload as { parentSessionId: string; childSessionId: string };
           signal.throwIfAborted();
@@ -4343,7 +4343,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
         }
         if (['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation)) {
           const { callRemoteWorker } = await import('./remoteWorkers.mjs');
-          return callRemoteWorker(await agentConnections(), operation, payload, signal);
+          return callRemoteWorker(await agentConnections(), operation, payload, signal, onAccepted);
         }
         if (operation === 'subagent.models' || operation === 'subagent.prepare-model') {
           if (!productHostController) throw new Error('Product Host is not ready.');

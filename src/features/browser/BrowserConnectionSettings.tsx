@@ -27,6 +27,8 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
   const [pairingCopied, setPairingCopied] = useState(false);
   const [cleanupCopied, setCleanupCopied] = useState(false);
   const connector = window.cardbushDesktop;
+  const defaultConnection = status?.connections.find(connection => connection.id === status.defaultConnectionId);
+  const connectedCount = status?.connections.filter(connection => connection.connected).length ?? 0;
   const mode = plugin.config.connectionMode === 'remote_debugging'
     ? 'remote_debugging'
     : 'connector';
@@ -47,8 +49,9 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
   }, [connector, refresh]);
 
   useEffect(() => {
-    if (!status?.connectorEnabled || status.connections.some(connection => connection.id === pairing?.id)) setPairing(null);
-  }, [status, pairing?.id]);
+    if (working === 'pair') return;
+    if (!status?.connectorEnabled || status.pendingPairingId === null || status.connections.some(connection => connection.id === pairing?.id)) setPairing(null);
+  }, [status, pairing?.id, working]);
   useEffect(() => {
     if (!pairing) return;
     const timer = window.setTimeout(() => setPairing(null), Math.max(0, Date.parse(pairing.expiresAt) - Date.now()));
@@ -87,19 +90,21 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
       {mode === 'connector' ? (
         <div className="browser-connector-card">
           <div className="browser-connector-heading">
-            <span className={`browser-connector-indicator ${status?.extensionConnected ? 'online' : status?.bridgeRunning ? 'waiting' : ''}`} />
+            <span className={`browser-connector-indicator ${defaultConnection?.connected ? 'online' : status?.bridgeRunning ? 'waiting' : ''}`} />
             <div>
               <strong>{status?.lifecycleState === 'needs_repair'
                 ? (uiText(language)('browserConnectionSettings.connectorNeedsAttention'))
                 : !status?.connectorEnabled
                 ? (uiText(language)('browserConnectionSettings.connectorDisabled'))
-                : status?.extensionConnected
-                ? (uiText(language)('browserConnectionSettings.browserConnected'))
+                : defaultConnection
+                ? uiText(language)(defaultConnection.connected ? 'browserConnectionSettings.defaultConnected' : 'browserConnectionSettings.defaultOffline', { name: defaultConnection.label, id: defaultConnection.id.slice(0, 8) })
+                : connectedCount > 0
+                ? uiText(language)('browserConnectionSettings.connectedWithoutDefault', { count: connectedCount })
                 : status?.bridgeRunning
                   ? (uiText(language)('browserConnectionSettings.localBridgeReadyWaitingForExtension'))
                   : (uiText(language)('browserConnectionSettings.connectorNotReady'))}</strong>
-              <small>{status?.extensionConnected
-                ? `${status.activeTabTitle || (uiText(language)('browserConnectionSettings.currentTab'))} · ${status.controlledTabCount} ${uiText(language)('browserConnectionSettings.controlledTabs')}`
+              <small>{status?.connectorEnabled && status.bridgeRunning && status.lifecycleState !== 'needs_repair' && (defaultConnection || connectedCount > 0)
+                ? uiText(language)('browserConnectionSettings.connectionScopeSummary', { count: connectedCount })
                 : status?.lifecycleState === 'needs_repair'
                   ? (uiText(language)('browserConnectionSettings.aStartupFailureDoesNotInvalidateSaved'))
                 : status?.portRecovery && status?.paired
@@ -143,7 +148,7 @@ export function BrowserConnectionSettings({ language, plugin, busy, onReplace, o
             </details>
             {status.connections.length > 0 && <div className="browser-connections">
               {status.connections.map(connection => <div className="browser-connection-row" key={connection.id}>
-                <div><strong>{connection.label}</strong><small>{connection.browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome'} · {connection.connected ? (uiText(language)('browserConnectionSettings.connected')) : (uiText(language)('browserConnectionSettings.offline'))}</small></div>
+                <div><strong>{connection.label}</strong><small>{uiText(language)(connection.connected ? 'browserConnectionSettings.connectionOnlineIdentity' : 'browserConnectionSettings.connectionOfflineIdentity', { browser: connection.browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome', id: connection.id.slice(0, 8) })}</small></div>
                 <button type="button" className="secondary-button compact" disabled={working !== '' || status.defaultConnectionId === connection.id}
                   onClick={() => void run('default', () => connector!.selectDefaultBrowserConnection(connection.id))}>
                   {status.defaultConnectionId === connection.id ? (uiText(language)('browserConnectionSettings.defaultBrowser')) : (uiText(language)('browserConnectionSettings.setDefault'))}

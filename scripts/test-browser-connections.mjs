@@ -52,6 +52,32 @@ test('clicking a reference targets its exact browser without changing the agent 
   await assert.rejects(f.call(broker, 'agent', 'tabs.reveal', { tabId: 42 }), /exact browser/);
 });
 
+test('an offline default reports available connections without pinning a new session or switching an existing one', async t => {
+  const f = fixture(t), broker = await f.create();
+  const old = await f.connect(broker, 'chrome'), live = await f.connect(broker, 'chrome');
+  await f.call(broker, 'bound');
+  old.socket.destroy();
+  await until(() => !broker.status().connections.find(c => c.id === old.id).connected);
+  assert.equal(broker.status().extensionConnected, true);
+  const check = source => error => {
+    assert.equal(error.code, 'browser_unavailable');
+    assert.equal(error.details.connectionId, old.id);
+    assert.equal(error.details.selectionSource, source);
+    assert.deepEqual(error.details.availableConnections.map(c => c.id), [live.id]);
+    assert.match(error.details.nextStep, /list_browsers/);
+    return true;
+  };
+  await assert.rejects(f.call(broker, 'new'), check('default'));
+  assert.equal((await f.call(broker, 'new', 'browser.list')).selectedConnectionId, null);
+  await assert.rejects(f.call(broker, 'bound'), check('session'));
+  assert.equal((await f.call(broker, 'bound', 'browser.list')).selectedConnectionId, old.id);
+  assert.equal(live.calls.length, 0, 'no action is silently redirected');
+  broker.setDefaultConnection(live.id);
+  assert.equal((await f.call(broker, 'new')).browser, 'chrome');
+  assert.equal((await f.call(broker, 'new', 'browser.list')).selectedConnectionId, live.id);
+  assert.equal((await f.call(broker, 'bound', 'browser.list')).selectedConnectionId, old.id);
+});
+
 test('Chrome and Edge coexist; defaults, session bindings and restart never cross-route matching tab ids', async t => {
   const f = fixture(t), broker = await f.create();
   const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge');
@@ -126,18 +152,32 @@ test('responses are correlated to their browser; disconnect returns promptly wit
 test('an offline command waits for the same paired browser and dispatches exactly once after reconnect', async t => {
   const f = fixture(t), broker = await f.create();
   const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge');
+  await f.call(broker, 'waiting', 'browser.select', { connectionId: chrome.id });
   chrome.socket.destroy(); await until(() => !broker.status().connections.find(c => c.id === chrome.id).connected);
   let diagnostics;
   const pending = requestBrowserConnector('debugger.command', { scopeId: 'waiting', command: 'Input.dispatchMouseEvent', tabId: 42 },
     { configPath: broker.configPath, timeoutMs: 4000, onDiagnostics: value => { diagnostics = value; } });
   const routes = path.join(f.root, 'browser-connector/routes.json');
-  await until(() => fs.existsSync(routes) && JSON.parse(fs.readFileSync(routes, 'utf8')).bindings.some(([scope]) => scope === 'waiting'));
+  assert.ok(JSON.parse(fs.readFileSync(routes, 'utf8')).bindings.some(([scope, id]) => scope === 'waiting' && id === chrome.id));
+  await delay(100);
   broker.setDefaultConnection(edge.id);
   const reconnected = await f.connect(broker, 'chrome', chrome.code);
   assert.equal((await pending).browser, 'chrome');
   assert.equal(reconnected.calls.length, 1); assert.equal(edge.calls.length, 0);
   assert.ok(diagnostics.reconnectAttempts >= 1);
   assert.ok(diagnostics.stages.some(stage => stage.stage === 'waiting_for_browser'));
+});
+
+test('changing an offline default during a command does not replay it in the new default', async t => {
+  const f = fixture(t), broker = await f.create();
+  const chrome = await f.connect(broker, 'chrome'), edge = await f.connect(broker, 'edge');
+  chrome.socket.destroy(); await until(() => !broker.status().connections.find(c => c.id === chrome.id).connected);
+  const pending = f.call(broker, 'unbound', 'debugger.command', { command: 'Input.dispatchMouseEvent', tabId: 42 });
+  const rejected = assert.rejects(pending, error => error.code === 'browser_selection_changed');
+  await delay(100); broker.setDefaultConnection(edge.id);
+  await rejected;
+  assert.equal(edge.calls.length, 0);
+  assert.equal((await f.call(broker, 'unbound', 'browser.list')).selectedConnectionId, null);
 });
 
 test('explicit selection while waiting cancels the old action instead of rerouting it', async t => {

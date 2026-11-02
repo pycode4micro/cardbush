@@ -23,27 +23,25 @@ export interface RuntimeTaskHandle {
 }
 export type TaskSource = (context: ToolHandlerContext<unknown>) => Promise<RuntimeTaskHandle[]> | RuntimeTaskHandle[];
 export const taskPending = (task: RuntimeTaskHandle) => ['running', 'pending', 'waiting_user', 'stopping'].includes(task.status);
-// Execution-only compatibility for task waits in already frozen tool catalogs.
-const legacySchema = z.object({
-  action: z.enum(['list', 'inspect', 'conversation', 'wait', 'stop', 'cancel_observation']).default('list'),
-  cursor: z.string().regex(/^\d+:\d+$/).optional(),
-  node_ids: z.array(z.string().trim().min(1)).min(1).max(TEAM_WORKFLOW_MAX_NODES).refine(ids => new Set(ids).size === ids.length, 'node_ids must be unique').optional().describe('Selected node outputs from one Team run for inspect/wait; omit for final outputs. conversation requires exactly one node ID from that run.'),
-  task_ids: z.array(z.string().min(1)).min(1).max(TASK_BATCH_LIMIT).optional().describe('Existing task_id handles from tasks list or launch results (subagent taskId, team task_id/run_id). Employee IDs, workflow definition IDs, node IDs and chat session IDs are not task handles.'),
-  mode: z.enum(['any', 'all']).default('any'),
-  yield_time_ms: z.number().int().min(0).max(TASK_WAIT_MAX_MS).optional().describe('Omit to wait until completion or new guidance, without periodic model wakeups. 0 reads a snapshot; a positive value explicitly requests a timeout. Cancellation stops observation only.'),
-  after: z.record(z.string(), z.string()).refine(value => Object.keys(value).length <= TASK_BATCH_LIMIT).optional(),
-  offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(TASK_BATCH_LIMIT).default(TASK_PAGE_DEFAULT),
-}).strict();
 const taskIds = z.array(z.string().min(1)).max(TASK_BATCH_LIMIT);
-const schema = legacySchema.omit({ mode: true, yield_time_ms: true }).extend({
+const revisions = z.record(z.string(), z.string()).refine(value => Object.keys(value).length <= TASK_BATCH_LIMIT).optional();
+const schema = z.object({
   action: z.enum(['list', 'inspect', 'conversation', 'stop', 'cancel_observation']).default('list'),
   task_ids: taskIds.min(1).optional().describe('Owned task_id from launch/list; Team uses task_id/run_id. Employee, workflow, node and chat IDs are not task handles.'),
-  node_ids: legacySchema.shape.node_ids.describe('Selected nodes of one Team run for inspect/conversation; conversation requires exactly one node.'),
+  node_ids: z.array(z.string().trim().min(1)).min(1).max(TEAM_WORKFLOW_MAX_NODES).refine(ids => new Set(ids).size === ids.length, 'node_ids must be unique').optional().describe('Selected nodes of one Team run for inspect/conversation; conversation requires exactly one node.'),
+  cursor: z.string().regex(/^\d+:\d+$/).optional(),
+  after: revisions,
+  offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(TASK_BATCH_LIMIT).default(TASK_PAGE_DEFAULT),
 }).strict();
-const awaitSchema = legacySchema.pick({ mode: true, yield_time_ms: true, after: true }).extend({
+const awaitSchema = z.object({
   task_ids: taskIds.optional().describe('Host handles; omit for pending tasks, [] for user/peer messages only.'),
-  yield_time_ms: legacySchema.shape.yield_time_ms.describe('Omit to wait for events; 0 snapshots; positive values bound this wait, not the work.'),
+  mode: z.enum(['any', 'all']).default('any'),
+  yield_time_ms: z.number().int().min(0).max(TASK_WAIT_MAX_MS).optional().describe('Omit to wait for events; 0 snapshots; positive values bound this wait, not the work.'),
+  after: revisions,
 }).strict();
+type TaskOperation = z.infer<typeof schema> | (z.infer<typeof awaitSchema> & {
+  action: 'await'; offset: number; limit: number; node_ids?: never; cursor?: never;
+});
 
 /** A facade over existing executors; never creates a second task lifecycle. */
 export class RuntimeTaskTools {
@@ -77,8 +75,8 @@ export class RuntimeTaskTools {
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,
         after: Object.fromEntries((page.tasks as RuntimeTaskHandle[]).map(task => [task.task_id, task.revision])) })),
       decodeInput: value => awaitSchema.parse(value),
-      execute: context => this.execute({ ...context, input: legacySchema.parse({ ...context.input, task_ids: context.input.task_ids?.length ? context.input.task_ids : undefined, action: 'wait' }) },
-        context.input.task_ids?.length === 0 ? 'messages' : 'tasks_or_messages'),
+      execute: context => this.execute({ ...context, input: { ...context.input, task_ids: context.input.task_ids?.length ? context.input.task_ids : undefined,
+        action: 'await', offset: 0, limit: TASK_BATCH_LIMIT } }, context.input.task_ids?.length === 0),
     });
     registry.register({
       definition: { name: 'tasks', description: 'Manage owned tasks. Creates no work. list returns handles; inspect reads results/progress; conversation pages one child’s ordered inputs/final replies via nextCursor, excluding private reasoning/tool logs. All but list require task_ids. after skips unchanged results. stop uses normal permissions; cancel_observation removes only a subscription. Use await when blocked; do not poll or restart pending work.', inputSchema: z.toJSONSchema(schema, { io: 'input' }) },
@@ -86,15 +84,15 @@ export class RuntimeTaskTools {
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,
         after: Object.fromEntries((page.tasks as RuntimeTaskHandle[]).map(task => [task.task_id, task.revision])) })),
-      decodeInput: value => legacySchema.parse(value), execute: context => this.execute(context),
+      decodeInput: value => schema.parse(value), execute: context => this.execute(context),
     });
   }
-  private async execute(context: ToolHandlerContext<z.infer<typeof legacySchema>>, waitScope?: 'messages' | 'tasks_or_messages') {
+  private async execute(context: ToolHandlerContext<TaskOperation>, messagesOnly = false) {
     const input = context.input;
     if (['inspect', 'conversation', 'stop', 'cancel_observation'].includes(input.action) && !input.task_ids) throw new Error('Explicit task_ids are required for this action.');
     if (input.action === 'conversation' && input.task_ids?.length !== 1) throw new Error('Read one child conversation at a time.');
     if (input.cursor !== undefined && input.action !== 'conversation') throw new Error('A conversation cursor requires action=conversation.');
-    let snapshot = waitScope === 'messages' ? { handles: [], unavailable_sources: [] } : await this.snapshot(context);
+    let snapshot = messagesOnly ? { handles: [], unavailable_sources: [] } : await this.snapshot(context);
     const all = snapshot.handles;
     const select = (items: RuntimeTaskHandle[], ids: string[]) => [...new Set(ids.map(id => {
       const exact = items.find(item => item.task_id === id);
@@ -104,8 +102,8 @@ export class RuntimeTaskTools {
       if (!matches.length) throw new Error(`Task ${id} is not available in this conversation. Use tasks list to find an existing task_id; employee IDs, workflow definition IDs, node IDs and chat session IDs are not task handles.`);
       return matches[0]!;
     }))];
-    let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'wait' ? all.filter(taskPending).slice(0, TASK_BATCH_LIMIT) : all.slice(input.offset, input.offset + input.limit);
-    if (input.node_ids && (!['inspect', 'wait', 'conversation'].includes(input.action) || selected.length !== 1 || selected[0]!.kind !== 'team' || !input.task_ids)) throw new Error('node_ids requires inspect, wait or conversation and one explicit Team task_id.');
+    let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'await' ? all.filter(taskPending).slice(0, TASK_BATCH_LIMIT) : all.slice(input.offset, input.offset + input.limit);
+    if (input.node_ids && (!['inspect', 'conversation'].includes(input.action) || selected.length !== 1 || selected[0]!.kind !== 'team' || !input.task_ids)) throw new Error('node_ids requires inspect or conversation and one explicit Team task_id.');
     if (input.action === 'conversation') {
       const task = selected[0]!;
       if (task.kind === 'team' && input.node_ids?.length !== 1) throw new Error('Team conversation requires exactly one node_ids entry. Use tasks inspect to find node IDs.');
@@ -119,11 +117,11 @@ export class RuntimeTaskTools {
     if (input.action === 'stop') for (const task of selected) controls.push({ task_id: task.task_id, result: await task.stop!(context) });
     if (input.action === 'cancel_observation') selected.forEach(task => task.cancelObservation!());
     let wake: string | undefined;
-    if (input.action === 'wait') {
+    if (input.action === 'await') {
       const pending = selected.filter(taskPending), observedCompletion = selected.some(task => !taskPending(task) && input.after?.[task.task_id] !== task.revision);
-      const waitForMessage = !!waitScope && !selected.length && !input.task_ids;
+      const waitForMessage = !selected.length && !input.task_ids;
       if (waitForMessage && snapshot.unavailable_sources.length) wake = 'sources_unavailable';
-      else if (!waitForMessage && (!pending.length || input.mode === 'any' && observedCompletion)) wake = selected.length ? 'task_completed' : 'no_pending_tasks';
+      else if (!waitForMessage && (!pending.length || input.mode === 'any' && observedCompletion)) wake = 'task_completed';
       else if (input.yield_time_ms === 0) wake = 'snapshot';
       else {
         const waiting = new AbortController();
@@ -136,10 +134,10 @@ export class RuntimeTaskTools {
         finally { waiting.abort(); }
       }
     }
-    if (input.action !== 'list' && waitScope !== 'messages') { snapshot = await this.snapshot(context); selected = select(snapshot.handles, selected.map(task => task.task_id)); }
+    if (input.action !== 'list' && !messagesOnly) { snapshot = await this.snapshot(context); selected = select(snapshot.handles, selected.map(task => task.task_id)); }
     return { ...(wake ? { wake_reason: wake } : {}), ...(controls.length ? { controls } : {}),
       ...(snapshot.unavailable_sources.length ? { complete: false, unavailable_sources: snapshot.unavailable_sources, note: 'Unavailable sources do not prove tasks ended or never started. Inspect the original handles before retrying.' } : {}),
-      ...(input.action === 'wait' && !input.task_ids && all.filter(taskPending).length > selected.length ? { selection_limited: true, pending_count: snapshot.handles.filter(taskPending).length } : {}),
+      ...(input.action === 'await' && !input.task_ids && all.filter(taskPending).length > selected.length ? { selection_limited: true, pending_count: snapshot.handles.filter(taskPending).length } : {}),
       ...(input.action === 'list' && !input.task_ids ? { total: all.length, offset: input.offset, next_offset: input.offset + selected.length < all.length ? input.offset + selected.length : null } : {}),
       tasks: await Promise.all(selected.map(async ({ task_id, kind, status, revision, summary, progress, readProgress, result, readResult, stop, cancelObservation }) => {
         const unchanged = !input.node_ids && input.after?.[task_id] === revision;

@@ -23,6 +23,7 @@ export type BrowserApprovalOptions = {
 };
 type Credential = BrowserConnection & { secret: string };
 type Pairing = Credential & { expiresAt: number };
+type ProfileIdentity = { id: string; browser: ConnectorBrowser; key: string };
 const hex = (size: number) => randomBytes(size).toString('hex');
 export function connectorProof(secret: string, text: string): string {
   return createHmac('sha256', Buffer.from(secret, 'hex')).update(text).digest('hex');
@@ -41,12 +42,13 @@ export class BrowserConnectorWebSocket {
   readonly #ws = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024,
     perMessageDeflate: false, handleProtocols: () => 'cardbush-v2' });
   readonly #approvalWs = new WebSocketServer({ noServer: true, maxPayload: 4096,
-    perMessageDeflate: false, handleProtocols: protocols => protocols.has('cardbush-pair-v2') ? 'cardbush-pair-v2' : 'cardbush-pair-v1' });
+    perMessageDeflate: false, handleProtocols: protocols => ['cardbush-pair-v3', 'cardbush-pair-v2', 'cardbush-pair-v1'].find(value => protocols.has(value)) || false });
   #approval?: WebSocket;
   #approvalNotBefore = 0;
   readonly #sockets = new Set<Socket>();
   readonly #nonces = new Set<string>();
   #credentials = new Map<string, Credential>();
+  readonly #profiles = new Map<string, ProfileIdentity>();
   #defaultConnectionId = '';
   readonly #revoked = new Set<string>();
   readonly #clients = new Map<WebSocket, string>();
@@ -83,11 +85,11 @@ export class BrowserConnectorWebSocket {
       if (request.headers.origin !== `chrome-extension://${browserConnectorExtensionId}`) return reject('extension_origin_mismatch');
       if (this.#ws.clients.size >= 16) return reject('connection_limit');
       const protocols = request.headers['sec-websocket-protocol']?.split(',').map(value => value.trim());
-      if (request.url === '/request-connection' && this.options.allowLocalPairing && protocols?.length === 1
-        && ['cardbush-pair-v1', 'cardbush-pair-v2'].includes(protocols[0])) {
+      if (request.url === '/request-connection' && protocols?.length === 1
+        && ['cardbush-pair-v1', 'cardbush-pair-v2', 'cardbush-pair-v3'].includes(protocols[0])) {
         this.#approvalWs.handleUpgrade(request, socket, head, client => {
           request.socket.setTimeout(0);
-          if (protocols[0] === 'cardbush-pair-v1') {
+          if (protocols[0] !== 'cardbush-pair-v3') {
             client.on('error', () => {});
             this.#observe('rejected', 'extension_update_required');
             client.send(JSON.stringify({ type: 'pair_error', code: 'extension_update_required' })); client.close();
@@ -124,7 +126,7 @@ export class BrowserConnectorWebSocket {
       const credentials = saved.version === 2
         ? (saved.credential ? [{ ...saved.credential, browser: 'chrome', label: 'Chrome' }] : []) : saved.credentials;
       const invalid = () => new Error('Invalid browser pairing configuration. Remove the connector configuration and pair again.');
-      if (![2, 3].includes(saved.version) || !Number.isInteger(saved.port) || saved.port < 1024 || saved.port > 65535
+      if (![2, 3, 4].includes(saved.version) || !Number.isInteger(saved.port) || saved.port < 1024 || saved.port > 65535
         || !Array.isArray(credentials) || credentials.length > 8) throw invalid();
       for (const credential of credentials) {
         if (!credential || !/^[a-f0-9]{32}$/.test(credential.id) || !/^[a-f0-9]{64}$/.test(credential.secret)
@@ -137,6 +139,14 @@ export class BrowserConnectorWebSocket {
       this.#port = saved.port;
       if (saved.revoked !== undefined && (!Array.isArray(saved.revoked) || saved.revoked.length > 256 || saved.revoked.some((id: unknown) => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)))) throw invalid();
       for (const id of saved.revoked ?? []) this.#revoked.add(id);
+      if (saved.profiles !== undefined && (!Array.isArray(saved.profiles) || saved.profiles.length > 264)) throw invalid();
+      for (const profile of saved.profiles ?? []) {
+        if (!profile || !/^[a-f0-9]{32}$/.test(profile.id) || !['chrome', 'edge'].includes(profile.browser)
+          || !/^04[a-f0-9]{128}$/.test(profile.key) || this.#profiles.has(profile.id)
+          || (this.#credentials.has(profile.id) && this.#credentials.get(profile.id)!.browser !== profile.browser)
+          || (!this.#credentials.has(profile.id) && !this.#revoked.has(profile.id))) throw invalid();
+        this.#profiles.set(profile.id, profile);
+      }
       if (saved.approvalNotBefore !== undefined && (!Number.isFinite(saved.approvalNotBefore) || saved.approvalNotBefore < 0)) throw invalid();
       this.#approvalNotBefore = Math.min(saved.approvalNotBefore ?? 0, Date.now() + 60_000);
     }
@@ -184,7 +194,7 @@ export class BrowserConnectorWebSocket {
     if (!this.#running) throw new Error('Enable the connector before pairing.');
     const browser = input.browser ?? 'chrome';
     if (browser !== 'chrome' && browser !== 'edge') throw new Error(uiText(this.options.uiLanguage?.())('browserConnector.supportedBrowsers'));
-    if (this.#credentials.size >= 8) throw new Error('Remove an unused browser pairing before adding another (maximum 8).');
+    // A ticket can refresh an existing profile even when all connection slots are used.
     if (input.label !== undefined && (typeof input.label !== 'string' || input.label.length > 80)) throw new Error('Connection name must be at most 80 characters.');
     const label = input.label?.trim() || (browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome');
     this.#pending = { id: hex(16), secret: hex(32), browser, label, expiresAt: Date.now() + (this.options.pairingTtlMs ?? 300_000) };
@@ -192,7 +202,8 @@ export class BrowserConnectorWebSocket {
       expiresAt: new Date(this.#pending.expiresAt).toISOString(), id: this.#pending.id, browser };
   }
   get port(): number { return this.#port; }
-  importPairings(credentials: Credential[], defaultId: string): void {
+  get pendingPairingId(): string | null { return this.#pending && this.#pending.expiresAt > Date.now() ? this.#pending.id : null; }
+  importPairings(credentials: Credential[], defaultId: string, profiles: ProfileIdentity[] = []): void {
     if (!Array.isArray(credentials) || credentials.length > 8) throw new Error('Invalid legacy browser pairings.');
     const next = new Map(this.#credentials);
     for (const item of credentials) {
@@ -201,18 +212,40 @@ export class BrowserConnectorWebSocket {
         throw new Error('Invalid legacy browser pairing.');
       if (this.#revoked.has(item.id)) continue;
       const existing = next.get(item.id);
-      if (existing && (existing.secret !== item.secret || existing.browser !== item.browser)) throw new Error('Conflicting legacy browser identity.');
+      if (existing) {
+        if (existing.browser !== item.browser || (existing.secret !== item.secret && !this.#profiles.has(item.id)))
+          throw new Error('Conflicting legacy browser identity.');
+        // A recurring CLI migration must not undo a profile's credential refresh.
+        continue;
+      }
       next.set(item.id, item);
     }
     if (next.size > 8) throw new Error('Remove unused browser connections before importing the CLI pairings (maximum 8).');
+    if (!Array.isArray(profiles) || profiles.length > 264) throw new Error('Invalid legacy profile identities.');
+    const previousProfiles = new Map(this.#profiles), nextProfiles = new Map(this.#profiles);
+    for (const profile of profiles) {
+      if (!profile || !/^[a-f0-9]{32}$/.test(profile.id) || !/^04[a-f0-9]{128}$/.test(profile.key)
+        || !['chrome', 'edge'].includes(profile.browser)) throw new Error('Invalid legacy profile identity.');
+      if (this.#revoked.has(profile.id) || !next.has(profile.id)) continue;
+      const existing = nextProfiles.get(profile.id);
+      if (next.get(profile.id)!.browser !== profile.browser || (existing && existing.key !== profile.key)) throw new Error('Conflicting legacy profile identity.');
+      nextProfiles.set(profile.id, profile);
+    }
     const previous = this.#credentials, previousDefault = this.#defaultConnectionId;
     this.#credentials = next;
+    for (const [id, profile] of nextProfiles) this.#profiles.set(id, profile);
     if (previous.size === 0 && !previousDefault && next.has(defaultId)) this.#defaultConnectionId = defaultId;
-    try { this.#save(); } catch (error) { this.#credentials = previous; this.#defaultConnectionId = previousDefault; throw error; }
+    try { this.#save(); } catch (error) {
+      this.#credentials = previous; this.#defaultConnectionId = previousDefault;
+      this.#profiles.clear(); for (const [id, profile] of previousProfiles) this.#profiles.set(id, profile);
+      throw error;
+    }
   }
   #requestConnection(client: WebSocket): void {
     const controller = new AbortController();
-    let phase = 'hello', id = '', nonce = '', secret = '', browser: ConnectorBrowser;
+    let phase = 'hello', id = '', nonce = '', secret = '', browser: ConnectorBrowser, profileKey = '';
+    let original: Credential | undefined, profile: ProfileIdentity | undefined, ticket: Pairing | undefined, wasRevoked = false;
+    const authorized = () => ticket ? this.#pending === ticket && ticket.expiresAt > Date.now() : this.options.allowLocalPairing?.() === true;
     let timer = setTimeout(() => client.terminate(), 5000);
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     const fail = (code: string) => { phase = 'done'; controller.abort(); clearTimeout(timer); clearInterval(heartbeat);
@@ -232,16 +265,37 @@ export class BrowserConnectorWebSocket {
       const message = JSON.parse(data.toString());
       if (message.type === 'pair_ping') return;
       if (phase === 'browser') {
+        if (this.#credentials.get(id) !== original || this.#revoked.has(id) !== wasRevoked || this.#profiles.get(id) !== profile) {
+          fail('identity_conflict'); return;
+        }
         if (message.type === 'pair_decline' && matches(String(message.proof), connectorProof(secret, `decline:${id}:${nonce}`))) {
-          this.#revoked.add(id); this.#save(); fail('connection_denied'); return;
+          if (!original) {
+            this.#revoked.add(id); this.#profiles.set(id, { id, browser, key: profileKey });
+            try { this.#save(); } catch (error) {
+              if (!wasRevoked) this.#revoked.delete(id);
+              if (profile) this.#profiles.set(id, profile); else this.#profiles.delete(id);
+              throw error;
+            }
+          }
+          fail('connection_denied'); return;
         }
         if (message.type !== 'pair_accept' || !matches(String(message.proof), connectorProof(secret, `accept:${id}:${nonce}`))) throw new Error('Browser confirmation required');
-        if (!this.options.allowLocalPairing?.()) { fail('connector_disabled'); return; }
+        if (!authorized()) { fail('connector_disabled'); return; }
+        if (!original && this.#credentials.size >= 8) { fail('connection_limit'); return; }
         phase = 'done';
-        this.#credentials.set(id, { id, secret, browser, label: browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome' });
+        this.#credentials.set(id, { id, secret, browser, label: original?.label ?? ticket?.label ?? (browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome') });
+        this.#profiles.set(id, { id, browser, key: profileKey }); this.#revoked.delete(id);
         const previous = this.#defaultConnectionId;
         if (this.#credentials.size === 1 && !previous) this.#defaultConnectionId = id;
-        try { this.#save(); } catch (error) { this.#credentials.delete(id); this.#defaultConnectionId = previous; throw error; }
+        try { this.#save(); } catch (error) {
+          if (original) this.#credentials.set(id, original); else this.#credentials.delete(id);
+          if (profile) this.#profiles.set(id, profile); else this.#profiles.delete(id);
+          if (wasRevoked) this.#revoked.add(id);
+          this.#defaultConnectionId = previous; throw error;
+        }
+        if (ticket) this.#pending = null;
+        // Already authenticated sockets using the replaced secret lose control too.
+        for (const [socket, connectionId] of this.#clients) if (connectionId === id) socket.terminate();
         approved(); client.close(); return;
       }
       if (phase === 'hello') {
@@ -249,29 +303,39 @@ export class BrowserConnectorWebSocket {
         if (message.type !== 'pair_request' || !/^[a-f0-9]{32}$/.test(message.id)
           || !/^[a-f0-9]{64}$/.test(message.nonce) || !['chrome', 'edge'].includes(message.browser)
           || !/^04[a-f0-9]{128}$/.test(message.key)) throw new Error('Invalid identity');
-        id = message.id; nonce = message.nonce; browser = message.browser;
-        if (!this.options.allowLocalPairing?.()) { fail('connector_disabled'); return; }
-        if (this.#revoked.has(id)) { fail('connection_revoked'); return; }
-        const existing = this.#credentials.get(id);
-        if (existing) {
-          if (existing.browser !== browser || !matches(String(message.resumeProof), connectorProof(existing.secret, `resume:${id}:${nonce}`))) {
+        id = message.id; nonce = message.nonce; browser = message.browser; profileKey = message.key;
+        if (message.ticketId !== undefined) {
+          const candidate = this.#pending;
+          if (!candidate || candidate.id !== message.ticketId || candidate.browser !== browser || candidate.expiresAt <= Date.now()
+            || !matches(String(message.ticketProof), connectorProof(candidate.secret, `ticket:${id}:${nonce}:${browser}:${profileKey}`))) {
             fail('identity_conflict'); return;
           }
-          secret = existing.secret; approved(); client.close(); return;
+          ticket = candidate;
         }
-        if (this.#approval || Date.now() < this.#approvalNotBefore) { fail('approval_busy'); return; }
-        if (this.#credentials.size >= 8 || this.#revoked.size >= 256) { fail('connection_limit'); return; }
+        original = this.#credentials.get(id); profile = this.#profiles.get(id); wasRevoked = this.#revoked.has(id);
+        if (!ticket && this.options.allowLocalPairing && !this.options.allowLocalPairing()) { fail('connector_disabled'); return; }
+        const resume = original && matches(String(message.resumeProof), connectorProof(original.secret, `resume:${id}:${nonce}:${profileKey}`));
+        if ((profile && (profile.browser !== browser || profile.key !== profileKey))
+          || (original && (original.browser !== browser || (!profile && !resume)))) { fail('identity_conflict'); return; }
+        if (wasRevoked && (!profile || (!message.rotate && !ticket))) { fail('connection_revoked'); return; }
+        if (original && !message.rotate && !ticket) {
+          if (!resume) { fail('identity_conflict'); return; }
+          secret = original.secret; approved(); client.close(); return;
+        }
+        if (!authorized()) { fail(this.options.allowLocalPairing ? 'connector_disabled' : 'connector_unavailable'); return; }
+        if (this.#approval || (!profile && !ticket && Date.now() < this.#approvalNotBefore)) { fail('approval_busy'); return; }
+        if ((!original && this.#credentials.size >= 8) || (!original && !wasRevoked && this.#revoked.size >= 256)) { fail('connection_limit'); return; }
         const key = createECDH('prime256v1'); key.generateKeys();
         const publicKey = key.getPublicKey('hex');
         secret = createHash('sha256').update(key.computeSecret(Buffer.from(message.key, 'hex')))
-          .update(`cardbush-pair-v2:${id}:${browser}:${publicKey}`).digest('hex');
+          .update(`cardbush-pair-v3:${id}:${browser}:${profileKey}:${publicKey}:${ticket?.id ?? ''}:${message.rotate === true}`).digest('hex');
         this.#approval = client;
         client.send(JSON.stringify({ type: 'pair_challenge', key: publicKey }));
         return;
       }
       if (phase !== 'challenge' || message.type !== 'pair_confirm'
         || !matches(String(message.proof), connectorProof(secret, `request:${id}:${nonce}`))) throw new Error('Invalid confirmation');
-      if (!this.options.allowLocalPairing?.()) { fail('connector_disabled'); return; }
+      if (!authorized()) { fail('connector_disabled'); return; }
       phase = 'browser';
       this.#approvalNotBefore = Date.now() + (this.options.approvalCooldownMs ?? 30_000);
       this.#save();
@@ -318,8 +382,9 @@ export class BrowserConnectorWebSocket {
     this.#server.close(); this.#ws.close(); this.#approvalWs.close();
   }
   #save(): void {
-    writeConnectorFile(this.#file, JSON.stringify({ version: 3, port: this.#port,
-      credentials: [...this.#credentials.values()], defaultConnectionId: this.#defaultConnectionId, revoked: [...this.#revoked], approvalNotBefore: this.#approvalNotBefore }));
+    writeConnectorFile(this.#file, JSON.stringify({ version: 4, port: this.#port,
+      credentials: [...this.#credentials.values()], profiles: [...this.#profiles.values()],
+      defaultConnectionId: this.#defaultConnectionId, revoked: [...this.#revoked], approvalNotBefore: this.#approvalNotBefore }));
   }
   #authenticate(client: WebSocket, candidate: Credential, nonce: string): void {
     const serverNonce = hex(32);
@@ -335,13 +400,27 @@ export class BrowserConnectorWebSocket {
         if ((!isPending && this.#credentials.get(candidate.id) !== candidate) || message.type !== 'authenticate'
           || message.browser !== candidate.browser
           || !matches(String(message.proof), connectorProof(candidate.secret, `client:${transcript}:${message.browser}`))) throw new Error('Invalid proof');
+        const previousProfile = this.#profiles.get(candidate.id);
+        if (message.profileKey !== undefined && (!/^04[a-f0-9]{128}$/.test(message.profileKey)
+          || (previousProfile && previousProfile.key !== message.profileKey)
+          || !matches(String(message.profileProof), connectorProof(candidate.secret, `profile:${transcript}:${message.profileKey}`)))) throw new Error('Invalid profile identity');
+        const attachProfile = message.profileKey !== undefined && !previousProfile;
         if (isPending) {
+          if (this.#credentials.size >= 8) throw new Error('Browser connection limit reached');
           const previous = this.#defaultConnectionId;
           const { id, secret, browser, label } = candidate;
           this.#credentials.set(id, { id, secret, browser, label });
+          if (attachProfile) this.#profiles.set(id, { id, browser, key: message.profileKey });
           if (!previous && this.#credentials.size === 1) this.#defaultConnectionId = id;
-          try { this.#save(); } catch (error) { this.#credentials.delete(id); this.#defaultConnectionId = previous; throw error; }
+          try { this.#save(); } catch (error) {
+            this.#credentials.delete(id); if (attachProfile) this.#profiles.delete(id);
+            this.#defaultConnectionId = previous; throw error;
+          }
           this.#pending = null;
+        }
+        if (attachProfile && !isPending) {
+          this.#profiles.set(candidate.id, { id: candidate.id, browser: candidate.browser, key: message.profileKey });
+          try { this.#save(); } catch (error) { this.#profiles.delete(candidate.id); throw error; }
         }
         clearTimeout(timer); client.off('message', authenticate);
         this.#clients.set(client, candidate.id);

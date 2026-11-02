@@ -18,7 +18,7 @@ function fixture(source = () => [], pending) {
   return { registry, signals, run };
 }
 
-test('new catalogs have one host wait entry and keep frozen tasks(wait) executable', async () => {
+test('only await accepts waiting; retired tasks(wait) and stale fields fail before touching tasks', async () => {
   const f = fixture(() => [{ task_id: 'team-run', kind: 'team', status: 'completed', revision: '2', result: { output: 'verified fixture' } }]);
   const tasks = f.registry.resolve('tasks').definition;
   assert.ok(!tasks.inputSchema.properties.action.enum.includes('wait'));
@@ -29,16 +29,21 @@ test('new catalogs have one host wait entry and keep frozen tasks(wait) executab
   assert.equal(f.registry.resolve('await').nestedCallable, false);
   const definition = f.registry.resolve('await').definition;
   assert.equal(withToolDisplayTitle(definition).inputSchema.properties._display_title, undefined, 'passive waiting needs no model-generated bilingual action prose');
-  assert.deepEqual(stripToolDisplayTitle({ task_ids: ['team-run'], _display_title: 'legacy title' }, definition), { task_ids: ['team-run'] });
+  assert.throws(() => f.registry.resolve('await').decodeInput(stripToolDisplayTitle({ task_ids: ['team-run'], _display_title: 'stale title' }, definition)), /_display_title/);
   assert.match(definition.description, /Team task_id\/run_id/);
   assert.match(definition.description, /plugins without waits.*start_mcp_tool.*declared read-only.*repeat_while.*host task_id/);
   assert.match(definition.description, /Plugin-native waits remain available/);
   for (const name of ['await_subagents', 'await_team_result', 'manage_tool_calls']) assert.equal(f.registry.resolve(name), undefined);
   const current = await f.run({ task_ids: ['team-run'] });
-  const legacy = await f.run({ action: 'wait', task_ids: ['team-run'] }, {}, 'tasks');
-  assert.deepEqual(current, legacy);
   assert.equal(current.tasks[0].result.output, 'verified fixture');
-  assert.equal((await fixture().run({ action: 'wait' }, {}, 'tasks')).wake_reason, 'no_pending_tasks');
+  let snapshots = 0;
+  const retired = fixture(() => { snapshots++; return []; });
+  for (const input of [{ action: 'wait' }, { action: 'wait', task_ids: ['team-run'] },
+    { action: 'inspect', task_ids: ['team-run'], mode: 'all' }, { action: 'list', yield_time_ms: 1 }]) {
+    assert.throws(() => retired.run(input, {}, 'tasks'));
+  }
+  assert.throws(() => retired.run({ node_ids: ['final'] }), /node_ids/);
+  assert.equal(snapshots, 0);
 });
 
 test('mixed Team and plugin handles share any/all and already-read completion semantics', async t => {

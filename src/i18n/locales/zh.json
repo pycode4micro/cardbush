@@ -2,6 +2,13 @@
   "locale": "zh",
   "name": "中文",
   "messages": {
+    "remoteSubagent.taskNotFound": "未找到远程子任务，任务可能尚未被接收或已被移除。",
+    "browserConnectionSettings.defaultConnected": "默认浏览器已连接：{name}（{id}）",
+    "browserConnectionSettings.defaultOffline": "默认浏览器已离线：{name}（{id}）",
+    "browserConnectionSettings.connectedWithoutDefault": "有 {count} 个浏览器连接在线，尚未选择默认浏览器",
+    "browserConnectionSettings.connectionScopeSummary": "当前有 {count} 个浏览器连接在线。默认连接用于新的选择；已有会话保留各自选中的浏览器。有连接在线不代表所有会话都已连接。",
+    "browserConnectionSettings.connectionOnlineIdentity": "{browser} · {id} · 已连接",
+    "browserConnectionSettings.connectionOfflineIdentity": "{browser} · {id} · 离线",
     "realtimeVoiceOptions.voice": "通话音色",
     "realtimeVoiceOptions.changeHint": "切换后续语音使用的音色",
     "realtimeVoiceOptions.add": "添加音色…",

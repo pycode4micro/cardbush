@@ -8,6 +8,14 @@ app.whenReady().then(async()=>{
   const read=code=>win.webContents.executeJavaScript(code);
   const pause=()=>new Promise(resolve=>setTimeout(resolve,100));
   const errors=[];win.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
+  require('./helpers/fixture-site-icon.cjs').installFixtureSiteIcons(win.webContents.session);
+  win.webContents.session.webRequest.onBeforeRequest((details, done) => {
+    const icon = require('./helpers/fixture-site-icon.cjs').fixtureSiteIcon(details);
+    if (icon) return done(icon);
+    const external = /^https?:/.test(details.url);
+    if (external) errors.push('Unexpected network request: ' + details.url);
+    done({ cancel: external });
+  });
   const until=async code=>{for(let i=0;i<100;i++){if(await read(code))return;await pause();}throw Error('Timeout: '+code+'\n'+await read('document.body.innerText'));};
   const inViewport=selector=>read(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return r.width>200&&r.height>100&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()`);
   const moveTo=async selector=>{
@@ -22,6 +30,8 @@ app.whenReady().then(async()=>{
     await until(`!!document.querySelector('.source-memo-card:popover-open')`);
     assert.match(await read(`document.querySelector('.source-memo-card').innerText`),/文件已变化/);
     assert.equal(await read('window.lookups.length'),2,'hover uses preloaded records, never fetches or calls a model');
+    assert.deepEqual(await read(`(()=>{const a=document.querySelector('a.source-memo-evidence-link');return {pill:a.classList.contains('web-link'),label:a.textContent,title:a.title,decoration:getComputedStyle(a).textDecorationLine,icon:!!a.querySelector('.browser-site-icon')}})()`),
+      {pill:true,label:'协议说明',title:'协议说明\nhttps://example.org/spec',decoration:'none',icon:true});
     assert.equal(await read(`document.querySelectorAll('.source-memo-card pre, .source-memo-card details').length`),0,'the first level contains no excerpt');
     const parentSize=await read(`(()=>{const r=document.querySelector('.source-memo-card').getBoundingClientRect();return [r.width,r.height]})()`);
     await moveTo('.source-memo-evidence-row');
@@ -199,6 +209,10 @@ app.whenReady().then(async()=>{
     await until(`Boolean(document.querySelector('.source-memo-marker'))`);
     await read(`document.querySelector('.source-memo-marker').click()`);
     await until(`document.querySelector('.source-memo-card')?.textContent.includes('保留已完成')`);
+    await read(`document.querySelector('a.source-memo-evidence-link').click()`);
+    assert.equal(await read('window.opens.at(-1)'),'https://example.org/spec','Source pill opens its original evidence URL');
+    await require('./helpers/web-link-pills.cjs')({win,read,until,pause});
+    await require('./helpers/cached-web-link-icons.cjs')({win,read,until,pause});
     assert.deepEqual(errors,[]);
     console.log('Source UI passed: file/web/memo links and source popovers; malformed image/audio/video/file references in local/remote conversations never read files or mount broken media.');
     win.destroy();app.exit(0);

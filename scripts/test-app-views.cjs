@@ -265,7 +265,10 @@ app.whenReady().then(async () => {
   window.webContents.on('console-message', event => {
     if (/Maximum update depth|Cannot update a component|Invalid hook call|ResizeObserver loop|passive event listener|Encountered two children with the same key/.test(event.message)) errors.push(event.message);
   });
+  require('./helpers/fixture-site-icon.cjs').installFixtureSiteIcons(window.webContents.session);
   window.webContents.session.webRequest.onBeforeRequest((details, done) => {
+    const icon = require('./helpers/fixture-site-icon.cjs').fixtureSiteIcon(details);
+    if (icon) return done(icon);
     const external = /^https?:/.test(details.url);
     if (external) errors.push('Unexpected network request: ' + details.url);
     done({ cancel: external });
@@ -546,10 +549,11 @@ app.whenReady().then(async () => {
     await run(`resolveReads('D:/fixture/links.md', ${JSON.stringify(urlParagraph)})`);
     await until("document.querySelectorAll('.markdown-content a').length === 2", 'two independent localhost links');
     assert.deepEqual(await run("Array.from(document.querySelectorAll('.markdown-content a'), link => [link.textContent, link.getAttribute('href')])"), [
-      ['http://localhost:51231/', 'http://localhost:51231/'],
-      ['http://localhost:51231/admin.html', 'http://localhost:51231/admin.html'],
-    ], 'display labels and navigation URLs must both exclude Chinese prose');
-    assert.equal(await run("document.querySelector('.markdown-content p').textContent"), urlParagraph.replaceAll('`', ''), 'all surrounding prose and punctuation remain visible');
+      ['localhost', 'http://localhost:51231/'],
+      ['localhost', 'http://localhost:51231/admin.html'],
+    ], 'bare URL pills show the domain and preserve exact destinations without Chinese prose');
+    assert.ok(await run("Array.from(document.querySelectorAll('.markdown-content a'), link => link.classList.contains('web-link') && link.title.includes(link.href)).every(Boolean)"), 'full URLs remain available on hover');
+    assert.equal(await run("document.querySelector('.markdown-content p').textContent"), urlParagraph.replaceAll('`', '').replace('http://localhost:51231/admin.html','localhost').replace('http://localhost:51231/','localhost'), 'all surrounding prose and punctuation remain visible');
     await run(`
       window.linkTargets = [];
       window.recordLinkTarget = event => linkTargets.push(event.detail.target);

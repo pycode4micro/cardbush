@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { readBrowserIcon } from '../dist-electron/browserIcon.js';
+import { browserPageIcons, readBrowserIcon, readBrowserSiteIcon } from '../dist-electron/browserIcon.js';
 
 const code = ts.transpileModule(readFileSync('src/features/browser/browserSiteIcons.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -80,4 +80,50 @@ test('native icon reads accept only bounded web images, including ICO and SVG', 
   assert.equal(await readBrowserIcon('https://example.com/logo.svg', async () => new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml; charset=utf-8' } })), 'data:image/svg+xml;base64,PHN2Zy8+');
   assert.equal(await readBrowserIcon('https://example.com', async () => new Response('<html/>', { headers: { 'content-type': 'text/html' } })), '');
   assert.equal(await readBrowserIcon('https://example.com', async () => new Response(new Uint8Array(262_145), { headers: { 'content-type': 'image/png' } })), '');
+});
+
+test('homepage metadata resolves declared CDN/relative icons, entities and base URLs without active content', () => {
+  const html = `<head><base href="https://cdn.example.test/assets/">
+    <!-- <link rel="icon" href="https://ignored.test/comment"> -->
+    <script>const sample = '<link rel="icon" href="https://ignored.test/script">';</script>
+    <link rel="apple-touch-icon" href="touch.png">
+    <link data-href="https://ignored.test/data" REL='shortcut ICON' href='brand.svg?a=1&amp;b=2'>
+    <link rel=icon href=//static.example.test/favicon.png>
+    <link rel=icon href="file:///private/icon.png"><link rel=icon href="https://u:p@example.test/icon.png">
+    <link rel=icon href='brand.svg?a=1&#38;b=2'></head><link rel=icon href="https://ignored.test/body">`;
+  assert.deepEqual(browserPageIcons(html, 'https://example.test/redirected/'), [
+    'https://cdn.example.test/assets/brand.svg?a=1&b=2', 'https://static.example.test/favicon.png', 'https://cdn.example.test/assets/touch.png',
+  ]);
+});
+
+test('site icon discovery reads only the public homepage, follows its metadata base, and skips invalid images', async () => {
+  const calls = [];
+  const fetcher = async (url, options) => {
+    calls.push(url); assert.equal(options.credentials, 'omit'); assert.ok(options.signal);
+    if (url === 'https://example.test/') {
+      const response = new Response('<head><link rel="icon" href="broken.svg"><link rel="icon" href="../brand.png"></head>', {headers:{'content-type':'text/html'}});
+      Object.defineProperty(response, 'url', { value:'https://cdn.example.test/en/home' }); return response;
+    }
+    if (url.endsWith('broken.svg')) return new Response('<html>404</html>', {headers:{'content-type':'text/html'}});
+    return new Response('PNG', {headers:{'content-type':'image/png'}});
+  };
+  assert.equal(await readBrowserSiteIcon('https://example.test/private/delete?id=secret', fetcher), 'data:image/png;base64,UE5H');
+  assert.deepEqual(calls, ['https://example.test/', 'https://cdn.example.test/en/broken.svg', 'https://cdn.example.test/brand.png']);
+  for (const bad of ['file:///private', 'javascript:alert(1)', 'https://u:p@example.test/']) assert.equal(await readBrowserSiteIcon(bad, fetcher), '');
+  assert.equal(calls.length,3);
+});
+
+test('homepage discovery stops after head/byte limits and rejects non-HTML responses', async () => {
+  let pulls = 0, cancelled = false;
+  const result = await readBrowserSiteIcon('https://example.test/', async () => new Response(new ReadableStream({
+    pull(controller) { pulls++; controller.enqueue(new TextEncoder().encode('x'.repeat(32_768))); },
+    cancel() { cancelled = true; },
+  }), {headers:{'content-type':'text/html'}}));
+  assert.equal(result,''); assert.ok(cancelled); assert.ok(pulls<=9,'only a bounded head prefix is consumed');
+  let image = false;
+  assert.equal(await readBrowserSiteIcon('https://example.test/', async url => {
+    if (url !== 'https://example.test/') image=true;
+    return new Response('<link rel="icon" href="/fake.png">', {headers:{'content-type':'application/json'}});
+  }), '');
+  assert.equal(image,false);
 });

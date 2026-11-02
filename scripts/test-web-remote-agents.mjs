@@ -121,7 +121,7 @@ test('native runtime discovers only remote targets and preserves async await/fol
     asyncDispatch: true, createTaskId: () => 'task_' + ++serial,
     models: { list: () => assert.fail('Never assemble local model settings') },
     loadPluginAgents: () => assert.fail('Never load local plugin agent roles'),
-    remoteAgents: { list: async () => [{ id: 'remote-test', name: 'Remote', agentId: 'instance-a' }], run: input => new Promise(resolve => pending.push({ input, resolve })) },
+    remoteAgents: { list: async () => [{ id: 'remote-test', name: 'Remote', agentId: 'instance-a' }], run: (input, _signal, onAccepted) => { onAccepted(); return new Promise(resolve => pending.push({ input, resolve })); } },
     onAsyncResult: item => results.set(item.taskId, item.result),
   });
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: () => assert.fail('Unexpected permission') } });
@@ -173,7 +173,8 @@ test('admin endpoints require login, admin role, CSRF and validate authorized pe
 test('gateway scopes remote identifiers, returns async results, isolates reads and rejects arbitrary RPC', async t => {
   const submitted = [], operations = [], sessions = new Map(), jobs = new Map();
   const client = {
-    async info() { return info('instance-a'); }, close() {},
+    async info() { return { ...info('instance-a'), capabilities: { ...info('instance-a').capabilities,
+      workerInteraction: { profile: 'subagent-remote-proton', version: '0.1', permissionRouting: true } } }; }, close() {},
     async call(operation, input) {
       operations.push(operation);
       if (operation === 'delegation.submit') {
@@ -189,7 +190,12 @@ test('gateway scopes remote identifiers, returns async results, isolates reads a
   };
   const f = await gatewayFixture(t, async () => client);
   const input = { connectionId: 'remote-test', agentId: 'instance-a', parentSessionId: 'parent-alice', parentTurnId: 'turn', sessionId: 'delegated-child', turnId: 'turn-task', taskId: 'task', prompt: 'Review', permissionMode: 'all_free', language: 'zh' };
-  const result = await callWebRemoteAgent(f.configuration, 'agents.delegate', input);
+  let accepted = 0;
+  const result = await callWebRemoteAgent(f.configuration, 'agents.delegate', { ...input, permissionRouting: 'parent' }, undefined, () => {
+    assert.equal(submitted.length, 1, 'acceptance follows durable submission'); accepted++;
+  });
+  assert.equal(accepted, 1);
+  assert.equal(submitted[0].permissionRouting, 'parent', 'the web gateway preserves approval routing');
   assert.equal(result.finalResponse, 'Remote result');
   assert.notEqual(submitted[0].parentSessionId, input.parentSessionId); assert.notEqual(submitted[0].sessionId, input.sessionId);
   assert.equal(submitted[0].permissionMode, 'all_free'); assert.equal(submitted[0].turnId, 'turn-' + submitted[0].taskId);
@@ -212,6 +218,20 @@ test('gateway scopes remote identifiers, returns async results, isolates reads a
   assert.ok(!operations.includes('configuration.sync'));
   await callWebRemoteAgent(f.configuration, 'agents.delegate', { ...input, taskId: 'task-full-access', turnId: 'turn-task-full-access', sessionId: 'delegated-full-access', permissionMode: 'task_free' });
   assert.equal(submitted.at(-1).permissionMode, 'task_free', 'The gateway cannot elevate the parent request; the worker also enforces its ceiling');
+});
+
+test('gateway reports unsupported approval routing without acknowledging or submitting a task', async t => {
+  let accepted = 0;
+  const f = await gatewayFixture(t, async () => ({
+    async info() { return info('instance-a'); }, close() {},
+    async call() { assert.fail('unsupported routing must be rejected before submission'); },
+    async *events() { assert.fail('an unsubmitted task must not be observed'); },
+  }));
+  const input = { connectionId: 'remote-test', agentId: 'instance-a', parentSessionId: 'parent-alice', parentTurnId: 'turn',
+    sessionId: 'delegated-rejected', turnId: 'turn-rejected', taskId: 'rejected', prompt: 'Review',
+    permissionMode: 'task_free', permissionRouting: 'parent', language: 'en' };
+  await assert.rejects(callWebRemoteAgent(f.configuration, 'agents.delegate', input, undefined, () => { accepted++; }), /Update the remote Agent service/);
+  assert.equal(accepted, 0);
 });
 
 test('real restricted tenant uses the private gateway and native HTTP delegation without spawning local children', { timeout: 60000 }, async t => {
@@ -256,7 +276,7 @@ test('real restricted tenant uses the private gateway and native HTTP delegation
     } else if (parentRound === 4) {
       const match = JSON.stringify(body).replaceAll('\\"', '"').match(/"taskId"\s*:\s*"([^"]+)"/);
       assert.ok(match, 'A native asynchronous task receipt must be returned');
-      item = { type: 'function_call', name: 'tasks', arguments: JSON.stringify({ action: 'wait', mode: 'all' }), call_id: 'wait', id: 'wait' };
+      item = { type: 'function_call', name: 'await', arguments: JSON.stringify({ mode: 'all' }), call_id: 'wait', id: 'wait' };
     } else {
       assert.match(JSON.stringify(body), /REMOTE_OK/);
       assert.ok(parentRound < 8);

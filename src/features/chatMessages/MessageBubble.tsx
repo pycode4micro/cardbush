@@ -110,6 +110,7 @@ import { PromptReferenceLink } from '../composer/PromptReferenceLink';
 import { selectedTeamReference } from '../../shared/promptReferences';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { MarkdownReference, parseMarkdownReference, UnavailableMarkdownReference } from './MarkdownReference';
+import { WebLink, webLinkAddress } from '../browser/WebLink';
 import { ConversationFileReference } from './ConversationFileReference';
 import { FileMemoScope } from './FileMemoScope';
 import { useSourceMemoReferences } from './useSourceMemoReferences';
@@ -389,6 +390,12 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           )}
         >{children}</button>;
       }
+      if (webLinkAddress(href)) return <WebLink {...props} href={href} onClick={event => {
+        event.preventDefault();
+        const target = event.currentTarget.href;
+        if (host?.openExternal) host.openExternal(target);
+        else openInspector(target, event.currentTarget.textContent || target);
+      }}>{children}</WebLink>;
       return (
         <><a
           {...props}

@@ -105,6 +105,33 @@ test('existing CLI pairing and session route migrate without undoing a later rev
   assert.equal((await current.refresh()).connections.length, 0, 'legacy data cannot restore revoked access');
 });
 
+test('profile ownership migrates with CLI bindings and a repeated import cannot restore the old secret', { skip: process.platform !== 'win32' }, async t => {
+  const legacy = await fixture(t), shared = await fixture(t);
+  const old = new BrowserConnectorBroker(legacy.root, { nativeHostPath, allowLocalPairing: () => true });
+  t.after(() => old.stop()); await old.start();
+  const oldPort = JSON.parse(await readFile(join(legacy.root, 'browser-connector/pairing.json'))).port;
+  const owner = { id: randomBytes(16).toString('hex') };
+  const initial = await approvalClient(oldPort, owner);
+  legacy.peers.push(await pairedClient(initial.code));
+  await requestBrowserConnector('browser.select', { scopeId: 'existing-cli', connectionId: owner.id }, { configPath: old.configPath });
+  old.stop();
+  const current = shared.create(); await current.start(); await current.importLegacy(legacy.root);
+  const saved = () => readFile(join(shared.root, 'browser-connector/pairing.json')).then(JSON.parse);
+  assert.equal((await saved()).profiles[0].key, owner.publicKey);
+  owner.refresh = true;
+  const ticket = await current.createPairing();
+  const refreshed = await approvalClient((await saved()).port, owner, { pairingCode: ticket.code });
+  await current.importLegacy(legacy.root);
+  assert.equal((await saved()).credentials.length, 1);
+  assert.equal((await saved()).credentials[0].secret, refreshed.code.split('.').at(-1));
+  assert.equal((await saved()).defaultConnectionId, owner.id);
+  shared.peers.push(await pairedClient(refreshed.code));
+  const state = await requestBrowserConnector('browser.list', { scopeId: 'existing-cli' }, { configPath: current.configPath });
+  assert.equal(state.selectedConnectionId, owner.id);
+  await assert.rejects(pairedClient(`CB2.${(await saved()).port}.${owner.id}.${initial.code.split('.').at(-1)}`));
+  await assert.rejects(approvalClient((await saved()).port, { id: owner.id, refresh: true }, { pairingCode: (await current.createPairing()).code }), error => error.code === 'identity_conflict');
+});
+
 test('removing configuration while offline revokes old pairings before re-enabling', { skip: process.platform !== 'win32' }, async t => {
   const f = await fixture(t), client = f.create(); await client.start();
   const code = (await client.createPairing()).code, peer = await pairedClient(code); f.peers.push(peer);

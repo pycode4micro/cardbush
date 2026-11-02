@@ -738,7 +738,8 @@ export class InMemoryRuntimeHost {
       result: { session_id: task.childSessionId, turn_id: task.childTurnId, ...(task.status !== 'running' ? { output: task.finalResponse, error: task.errorMessage } : {}) },
       readResult: async () => {
         let observation = task.observation, observationError = task.observationError;
-        if (subagents && (!task.remote || options.remoteAgents?.control)) {
+        if (subagents && (!task.remote || options.remoteAgents?.control &&
+            (task.status === 'unavailable' || task.status === 'running' && task.remoteAcceptedAt))) {
           try { observation = await subagents.control(context, observationControl(task)) as typeof observation; observationError = undefined; }
           catch (error) { observationError = error instanceof Error ? error.message : String(error); }
         }
@@ -749,7 +750,8 @@ export class InMemoryRuntimeHost {
       },
       ...(subagents?.readConversation ? { readConversation: (ctx: import('./toolRegistry.js').ToolHandlerContext<unknown>, cursor?: string) => subagents.readConversation!(ctx, task.taskId, cursor) } : {}),
       wait: (signal: AbortSignal) => this.#subagentTasks.waitForCompletion(context.sessionId, task.taskId, signal),
-      ...(subagents && (!task.remote || options.remoteAgents?.control) ? { stop: async () => subagents.control(context,
+      ...(subagents && (!task.remote || options.remoteAgents?.control &&
+          (task.status === 'unavailable' || task.status === 'running' && task.remoteAcceptedAt)) ? { stop: async () => subagents.control(context,
         { profile: 'subagent-remote-proton', version: '0.1', contextId: task.childSessionId, taskId: task.taskId, operation: 'cancel', messageId: `stop-${task.taskId}` }) } : {}),
     })); });
     taskTools.addSource(context => this.#backgroundTools.taskHandles(context.sessionId, context.turnId));

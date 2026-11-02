@@ -9,7 +9,8 @@ import { webcrypto } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 import { extensionRoot } from './build-browser-extension.mjs';
-import { extensionOrigin } from './helpers/chrome-paired-client.mjs';
+import { extensionOrigin, pairedClient } from './helpers/chrome-paired-client.mjs';
+import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
 
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, removeListener(fn) { this.listeners = this.listeners.filter(value => value !== fn); }, emit(value) { for (const fn of [...this.listeners]) fn(value); } });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -74,6 +75,86 @@ function worker(local, browser, beforeLocalWrite = async () => {}, options = {})
   };
 }
 
+test('one profile rotates in place across local/manual repair, revocation and restart, without crossing another Chrome profile', async t => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'cardbush-stable-profile-'));
+  const nativeHostPath=process.platform==='win32'?path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe'):process.execPath;
+  const brokers=[],workers=[];
+  t.after(async()=>{workers.forEach(w=>w.stop());brokers.forEach(b=>b.stop());await delay(60);fs.rmSync(root,{recursive:true,force:true});});
+  const start=async()=>{const b=new BrowserConnectorBroker(root,{nativeHostPath,allowLocalPairing:()=>true,approvalCooldownMs:0});brokers.push(b);await b.start();return b;};
+  let broker=await start();
+  const saved=()=>JSON.parse(fs.readFileSync(path.join(root,'browser-connector/pairing.json'),'utf8'));
+  const options={reachablePorts:()=>[saved().port]};
+  const local={cardbushConnectorEnabled:true,allowedOrigins:['https://example.test']}, other={cardbushConnectorEnabled:true};
+  let first=worker(local,'chrome',undefined,options);workers.push(first);
+  await until(()=>first.state().nativeReady);
+  const id=local.cardbushLocalBrowserIdentity.id,key=local.cardbushLocalBrowserIdentity.publicKey;
+  const second=worker(other,'chrome',undefined,options);workers.push(second);await until(()=>second.state().nativeReady);
+  const otherId=other.cardbushLocalBrowserIdentity.id;
+  assert.notEqual(id,otherId);assert.notEqual(key,other.cardbushLocalBrowserIdentity.publicKey);
+  broker.setDefaultConnection(id);
+  const call=(method,params={})=>requestBrowserConnector(method,{scopeId:'bound-task',...params},{configPath:broker.configPath,timeoutMs:2500});
+  await call('browser.select',{connectionId:id});
+  const routes=fs.readFileSync(path.join(root,'browser-connector/routes.json'),'utf8');
+  for(const manual of [false,true,false,true]) {
+    const old=local.cardbushConnectorPairingV2;
+    if(manual) {
+      const ticket=broker.createPairing({browser:'chrome',label:'replacement ticket'}).code;
+      await first.action({action:'pair',code:ticket});
+      assert.equal(broker.status().pendingPairingId,null);
+    } else {
+      await first.action({action:'disable_connector'});
+      await first.action({action:'request_local_connection'});
+    }
+    await until(()=>first.state().nativeReady&&local.cardbushConnectorPairingV2!==old);
+    assert.equal(local.cardbushLocalBrowserIdentity.id,id);
+    assert.equal(local.cardbushLocalBrowserIdentity.publicKey,key);
+    assert.equal(local.cardbushConnectorPairingV2.split('.')[2],id);
+    assert.equal(broker.status().defaultConnectionId,id);
+    assert.equal((await call('browser.list')).selectedConnectionId,id);
+    assert.equal(fs.readFileSync(path.join(root,'browser-connector/routes.json'),'utf8'),routes);
+    assert.equal(saved().credentials.length,2);assert.equal(saved().profiles.length,2);assert.deepEqual(saved().revoked,[]);
+    assert.ok(!JSON.stringify(saved()).includes(old.split('.').at(-1)),'old secrets are not retained');
+    await assert.rejects(pairedClient(old));
+    assert.equal(second.state().nativeReady,true,'another Chrome profile remains connected');
+  }
+  for(let i=0;i<3;i++) {
+    broker.revokeConnection(id);await until(()=>!first.state().connectorEnabled);
+    const denied= saved();assert.deepEqual(denied.revoked,[id]);assert.equal(denied.profiles.length,2);
+    await first.action({action:'request_local_connection'});await until(()=>first.state().nativeReady);
+    assert.equal(saved().credentials.length,2);assert.equal(saved().profiles.length,2);assert.deepEqual(saved().revoked,[]);
+    assert.equal((await call('browser.list')).selectedConnectionId,id);
+    assert.deepEqual(local.allowedOrigins,['https://example.test']);
+  }
+  broker.setDefaultConnection(id);
+  const code=local.cardbushConnectorPairingV2;
+  first.stop();broker.stop();await until(()=>!second.state().connected);await delay(50);
+  broker=await start();first=worker(local,'chrome',undefined,options);workers.push(first);
+  await until(()=>first.state().nativeReady);second.retry();await until(()=>second.state().nativeReady);
+  assert.equal(local.cardbushConnectorPairingV2,code);assert.equal(broker.status().defaultConnectionId,id);
+  assert.equal((await call('browser.list')).selectedConnectionId,id);
+  assert.equal(saved().credentials.length,2);assert.equal(saved().profiles.length,2);
+});
+
+test('manual tickets refresh the same profile on a standalone broker without enabling automatic enrollment', async t => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'cardbush-manual-profile-'));
+  const broker=new BrowserConnectorBroker(root,{nativeHostPath:path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe'),approvalCooldownMs:0});
+  const workers=[];t.after(async()=>{workers.forEach(w=>w.stop());broker.stop();await delay(50);fs.rmSync(root,{recursive:true,force:true});});
+  await broker.start();
+  const saved=()=>JSON.parse(fs.readFileSync(path.join(root,'browser-connector/pairing.json'),'utf8'));
+  const local={cardbushConnectorEnabled:false};
+  const w=worker(local,'edge',undefined,{reachablePorts:()=>[saved().port]});workers.push(w);
+  let id;
+  for(let i=0;i<3;i++) {
+    const old=local.cardbushConnectorPairingV2;
+    await w.action({action:'pair',code:broker.createPairing({browser:'edge'}).code});await until(()=>w.state().nativeReady);
+    id??=local.cardbushLocalBrowserIdentity.id;
+    assert.equal(local.cardbushLocalBrowserIdentity.id,id);assert.equal(saved().credentials.length,1);assert.equal(saved().profiles.length,1);
+    assert.equal(saved().defaultConnectionId,id);assert.deepEqual(saved().revoked,[]);
+    if(old)await assert.rejects(pairedClient(old,{browser:'edge'}));
+  }
+  assert.equal(w.consentWindows.length,0,'entering an explicit manual ticket is the confirmation');
+});
+
 for (const browser of ['chrome', 'edge']) test(`${browser}: real extension transport reconnects after app and browser restarts with the same pairing`, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-worker-restart-'));
   const nativeHostPath = process.platform === 'win32' ? path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe') : process.execPath;
@@ -85,12 +166,20 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
   async function start() { const b = new BrowserConnectorBroker(root, { nativeHostPath }); brokers.push(b); await b.start(); return b; }
   let broker = await start();
   const pairing = broker.createPairing({ browser }).code;
+  const legacyPeer = await pairedClient(pairing, { browser }); legacyPeer.destroy(); broker.stop();
+  const pairingPath = path.join(root, 'browser-connector/pairing.json');
+  const legacy = JSON.parse(fs.readFileSync(pairingPath, 'utf8'));
+  legacy.version = 3; delete legacy.profiles;
+  fs.writeFileSync(pairingPath, JSON.stringify(legacy));
+  broker = await start();
   const local = { cardbushConnectorEnabled: true, cardbushConnectorPairingV2: pairing, allowAllSites: true, allowedOrigins: ['https://example.test'] };
   const options = { reachablePorts: () => [Number(local.cardbushConnectorPairingV2.split('.')[1]),
     JSON.parse(fs.readFileSync(path.join(root, 'browser-connector/pairing.json'), 'utf8')).port] };
   let w = worker(local, browser, undefined, options); workers.push(w);
   await until(() => w.state().nativeReady && broker.status().extensionConnected);
   assert.match(w.state().runtimeBuild, /^[a-f0-9]{64}$/);
+  assert.equal(local.cardbushLocalBrowserIdentity.id, pairing.split('.')[2]);
+  assert.equal(JSON.parse(fs.readFileSync(pairingPath, 'utf8')).profiles[0].key, local.cardbushLocalBrowserIdentity.publicKey);
 
   for (let cycle = 0; cycle < 3; cycle++) {
     broker.stop(); await until(() => !w.state().connected);
@@ -272,8 +361,8 @@ test('manual retry after failed local enrollment keeps the local target across w
   await restarted.action({ action: 'pair', code: original });
   await until(() => restarted.state().connectionFailures === 1);
   assert.ok(restarted.attempts.length > manualStart);
-  assert.ok(restarted.attempts.slice(manualStart).every(url => new URL(url).pathname === '/connect'),
-    'explicit manual pairing still selects its own target');
+  assert.ok(restarted.attempts.slice(manualStart).every(url => new URL(url).pathname === '/request-connection' && Number(new URL(url).port) === Number(original.split('.')[1])),
+    'manual replacement exchanges its ticket only with the explicit target');
   assert.equal((await restarted.status()).localConnectionRequested, false);
 });
 
@@ -307,7 +396,7 @@ test('declined local enrollment stays stopped after restart until an explicit us
   await restarted.action({ action: 'reconnect' });
   await until(() => restarted.state().nativeReady && broker.status().extensionConnected);
   assert.equal(approvals, 2);
-  assert.notEqual(local.cardbushLocalBrowserIdentity.id, declinedId);
+  assert.equal(local.cardbushLocalBrowserIdentity.id, declinedId, 'explicit retry retains the same profile identity');
   assert.notEqual(local.cardbushConnectorPairingV2, original);
   assert.deepEqual(local.allowedOrigins, ['https://example.test']);
 });

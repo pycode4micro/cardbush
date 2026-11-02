@@ -5,7 +5,7 @@
 export const SUBAGENT_ARGUMENTS = {
   followup: ['action', 'prompt', 'task_id', 'run_in_background', 'delivery', 'response'],
   employee: ['action', 'prompt', 'agent_id', 'mode', 'run_in_background'],
-  remote: ['action', 'prompt', 'target_agent', 'name'],
+  remote: ['action', 'prompt', 'target_agent', 'name', 'run_in_background'],
   save: ['action', 'agent', 'expected_revision'],
   delete: ['action', 'agent_id', 'expected_revision'],
 } as const;

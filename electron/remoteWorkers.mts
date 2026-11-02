@@ -5,10 +5,10 @@ import { runRemoteSubagent } from './remoteSubagent.mjs';
 
 const identity = z.object({ connectionId: z.string().min(1), agentId: z.string().min(1).optional(), parentSessionId: z.string().min(1) });
 /** CardBush host adapter. Protocol operations do not expose Runtime commands or tool names. */
-export async function callRemoteWorker(manager: AgentConnectionManager, operation: string, payload: unknown, signal?: AbortSignal): Promise<unknown> {
+export async function callRemoteWorker(manager: AgentConnectionManager, operation: string, payload: unknown, signal?: AbortSignal, onAccepted?: () => void): Promise<unknown> {
   if (operation === 'agents.list') return (await manager.list()).filter(item => item.hasToken && !item.migrationIssue).map(({ id, name, agentId, info }) => ({ id, name, agentId,
     ...(supportsRemoteInteraction(info?.capabilities.workerInteraction) ? { interactionCapabilities: subagentInteractionCapabilitiesSchema.parse({ operations: info!.capabilities.workerInteraction!.operations ?? [...SUBAGENT_INTERACTION_OPERATIONS] }) } : {}) }));
-  if (operation === 'agents.delegate') return runRemoteSubagent(manager, payload as RemoteSubagentRequest, signal);
+  if (operation === 'agents.delegate') return runRemoteSubagent(manager, payload as RemoteSubagentRequest, signal, { onAccepted });
   if (operation === 'agents.control') {
     const input = identity.extend({ control: remoteControlSchema, worker: z.unknown().optional() }).strict().parse(payload);
     const info = await manager.connect(input.connectionId); signal?.throwIfAborted();

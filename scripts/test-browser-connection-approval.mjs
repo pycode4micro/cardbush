@@ -107,7 +107,7 @@ test('a fake local service cannot skip browser-owned consent by fabricating appr
         const key = createECDH('prime256v1'); key.generateKeys();
         const publicKey = key.getPublicKey('hex');
         secret = createHash('sha256').update(key.computeSecret(Buffer.from(message.key, 'hex')))
-          .update(`cardbush-pair-v2:${message.id}:${message.browser}:${publicKey}`).digest('hex');
+          .update(`cardbush-pair-v3:${message.id}:${message.browser}:${message.key}:${publicKey}:${message.ticketId ?? ''}:${message.rotate === true}`).digest('hex');
         client.send(JSON.stringify({ type: 'pair_challenge', key: publicKey }));
       } else if (message.type === 'pair_confirm') {
         client.send(JSON.stringify({ type: 'pair_approved', proof: connectorProof(secret, `approved:${request.id}:${request.nonce}`) }));
@@ -150,4 +150,66 @@ test('old enrollment clients receive an update requirement, while saved pairings
   const pairing = f.broker.createPairing();
   const connected = await pairedClient(pairing.code); t.after(() => connected.destroy());
   assert.equal(f.broker.status().extensionConnected, true);
+});
+
+test('refresh replaces the live credential, closes old sockets and resumes a lost receipt without another approval', async t => {
+  const f=await fixture(t,{allowLocalPairing:()=>true,approvalCooldownMs:0});
+  const request=identity(), first=await approvalClient(f.port,request);
+  const peer=await pairedClient(first.code);t.after(()=>peer.destroy());
+  const before=f.broker.status().defaultConnectionId;
+  request.refresh=true;
+  let confirmations=0;
+  const next=await approvalClient(f.port,request,{confirm:async()=>{confirmations++;return true;}});
+  await until(()=>peer.destroyed);
+  assert.notEqual(first.code,next.code);assert.equal(first.code.split('.')[2],next.code.split('.')[2]);
+  await assert.rejects(pairedClient(first.code));
+  assert.equal(f.broker.status().defaultConnectionId,before);
+  assert.equal((await f.saved()).credentials.length,1);assert.equal((await f.saved()).profiles.length,1);
+  const resumed=await approvalClient(f.port,request,{confirm:async()=>{assert.fail('receipt recovery cannot prompt again');}});
+  assert.equal(resumed.code,next.code);assert.equal(confirmations,1);
+  const active=await pairedClient(next.code);t.after(()=>active.destroy());
+});
+
+test('profile ids and labels alone cannot replace or resurrect another profile, even with a manual ticket', async t => {
+  const f=await fixture(t,{allowLocalPairing:()=>true,approvalCooldownMs:0});
+  const owner=identity(), first=await approvalClient(f.port,owner);
+  const attacker={id:owner.id,refresh:true};
+  await assert.rejects(approvalClient(f.port,attacker),error=>error.code==='identity_conflict');
+  const ticket=f.broker.createPairing().code;
+  await assert.rejects(approvalClient(f.port,attacker,{pairingCode:ticket}),error=>error.code==='identity_conflict');
+  f.broker.revokeConnection(owner.id);
+  await assert.rejects(approvalClient(f.port,attacker,{pairingCode:ticket}),error=>error.code==='identity_conflict');
+  owner.refresh=true;
+  const recovered=await approvalClient(f.port,owner,{pairingCode:ticket});
+  assert.equal(recovered.code.split('.')[2],owner.id);
+  assert.deepEqual((await f.saved()).revoked,[]);
+  await assert.rejects(pairedClient(first.code));
+});
+
+test('declined refresh leaves the current credential intact; revocation during refresh wins over late consent', async t => {
+  const f=await fixture(t,{allowLocalPairing:()=>true,approvalCooldownMs:0});
+  const owner=identity(), first=await approvalClient(f.port,owner);
+  owner.refresh=true;
+  await assert.rejects(approvalClient(f.port,owner,{confirm:async()=>false}),error=>error.code==='connection_denied');
+  assert.deepEqual((await f.saved()).revoked,[]);
+  const peer=await pairedClient(first.code);t.after(()=>peer.destroy());
+  let settle;owner.refresh=true;
+  const replacing=approvalClient(f.port,owner,{confirm:()=>new Promise(resolve=>{settle=resolve;})});
+  await until(()=>settle);f.broker.revokeConnection(owner.id);settle(true);
+  await assert.rejects(replacing,error=>error.code==='identity_conflict');
+  assert.equal((await f.saved()).credentials.length,0);
+  assert.deepEqual((await f.saved()).revoked,[owner.id]);
+  assert.equal((await f.saved()).profiles.length,1);
+});
+
+test('a full connection list still permits in-place renewal but cannot admit a ninth profile', async t => {
+  const f=await fixture(t,{allowLocalPairing:()=>true,approvalCooldownMs:0});
+  const owners=[];
+  for(let i=0;i<8;i++){const owner=identity();await approvalClient(f.port,owner);owners.push(owner);}
+  const ticket=f.broker.createPairing().code;
+  await assert.rejects(approvalClient(f.port,identity(),{pairingCode:ticket}),error=>error.code==='connection_limit');
+  owners[0].refresh=true;
+  await approvalClient(f.port,owners[0],{pairingCode:ticket});
+  assert.equal((await f.saved()).credentials.length,8);assert.equal((await f.saved()).profiles.length,8);
+  assert.deepEqual((await f.saved()).revoked,[]);
 });

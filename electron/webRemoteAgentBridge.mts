@@ -6,13 +6,14 @@ import type { WebStore } from './webStore.mjs';
 import { equalSecret, json, readJson, WebError } from './webCommon.mjs';
 import { remoteAgentToken, remoteIdentity, WebRemoteAgents } from './webRemoteAgents.mjs';
 import { runRemoteSubagent } from './remoteSubagent.mjs';
+import { uiText } from '@cardbush/platform/i18n';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,160}$/);
 const common = { connectionId: id, agentId: id.optional(), parentSessionId: id, sessionId: id };
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('agents.list'), input: z.object({}).strict() }).strict(),
   z.object({ operation: z.literal('agents.delegate'), input: z.object({ ...common, taskId: id, turnId: id, parentTurnId: id,
-    prompt: z.string().min(1).max(100_000), queue: z.boolean().optional(), worker: remoteWorkerSchema.optional(), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
+    prompt: z.string().min(1).max(100_000), queue: z.boolean().optional(), worker: remoteWorkerSchema.optional(), permissionRouting: z.enum(['user', 'parent']).optional(), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
   z.object({ operation: z.literal('agents.control'), input: z.object({ connectionId: id, agentId: id, parentSessionId: id,
     worker: remoteWorkerSchema.optional(), control: remoteControlSchema }).strict().transform(value => ({ ...value, sessionId: value.control.contextId })) }).strict(),
   z.object({ operation: z.literal('agents.read-child'), input: z.object(common).strict() }).strict(),
@@ -136,11 +137,13 @@ export class WebRemoteAgentBridge {
         connect: async () => info,
         call: (_id, operation, value, signal) => remote.call(operation, value, signal),
         events: (_id, input, signal) => remote.events(input, signal),
-      }, delegated, combined);
+      }, delegated, combined, { onAccepted: () => { if (!response.destroyed) response.write('{"type":"accepted"}\n'); } });
       response.end(JSON.stringify({ type: 'result', value: result }) + '\n');
     } catch (error) {
       if (response.headersSent) {
-        const message = error instanceof Error && error.message.includes('cancellation could not be confirmed')
+        const message = operation === 'agents.delegate' && (error as { code?: string })?.code === 'remote_permission_routing_unsupported'
+          ? uiText(input.language)('remoteSubagent.permissionRoutingUpgradeRequired')
+          : error instanceof Error && error.message.includes('cancellation could not be confirmed')
           ? '远程任务是否停止尚未确认，请先在远程服务确认状态，避免重复执行。'
           : '远程子任务连接中断或执行失败，请查看任务状态后重试。';
         if (!response.destroyed) response.end(JSON.stringify({ type: 'error', error: message }) + '\n');

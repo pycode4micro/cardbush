@@ -131,8 +131,8 @@ test('parent-authored live follow-up never becomes a human intervention notifica
     tasks.start({ taskId: 'observation-fixture', parentSessionId: task.childSessionId, parentTurnId: task.childTurnId,
       childSessionId: 'fixture-child', childTurnId: 'fixture-turn', prompt: 'fixture', inheritContext: false, inheritedMessageCount: 0 });
     observedChild = task.childSessionId;
-    const observer = registry.resolve('tasks'), observe = () => observer.execute({ sessionId: task.childSessionId, turnId: task.childTurnId,
-      signal: AbortSignal.timeout(5000), input: observer.decodeInput({ action: 'wait', task_ids: ['observation-fixture'] }) });
+    const observer = registry.resolve('await'), observe = () => observer.execute({ sessionId: task.childSessionId, turnId: task.childTurnId,
+      signal: AbortSignal.timeout(5000), input: observer.decodeInput({ task_ids: ['observation-fixture'] }) });
     const waiting = observe();
     const subagent = registry.resolve('subagent');
     await subagent.execute({ sessionId: 'parent', turnId: 'dispatch', toolCall: { id: 'wrap-up' },

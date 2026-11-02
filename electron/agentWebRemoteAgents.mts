@@ -1,7 +1,7 @@
 /** Private account-bound gateway bridge. No registry or local Agent provisioning
  * exists in the tenant, and remote credentials never enter the runtime worker. */
 export async function callWebRemoteAgent(configuration: { gateway: string; credential: string } | undefined,
-  operation: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
+  operation: string, input: unknown, signal?: AbortSignal, onAccepted?: () => void): Promise<unknown> {
   if (!configuration) { if (operation === 'agents.list') return []; throw new Error('No remote Agents are configured.'); }
   const abort = new AbortController(), combined = signal ? AbortSignal.any([signal, abort.signal]) : abort.signal;
   let idle = setTimeout(() => abort.abort(), 45_000);
@@ -28,6 +28,7 @@ export async function callWebRemoteAgent(configuration: { gateway: string; crede
         const line = pending.slice(0, newline); pending = pending.slice(newline + 1);
         if (!line) continue;
         const frame = JSON.parse(line) as { type: string; value?: unknown; error?: string };
+        if (frame.type === 'accepted' && operation === 'agents.delegate') { onAccepted?.(); onAccepted = undefined; continue; }
         if (frame.type === 'result') return frame.value;
         if (frame.type === 'error') throw new Error(frame.error ?? 'Remote Agent failed.');
         if (frame.type !== 'heartbeat') throw new Error('Invalid remote Agent stream.');

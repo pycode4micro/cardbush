@@ -92,7 +92,7 @@ for (const routing of ['parent', 'user']) test(`local ${routing} permission auth
   const provider = { async *stream(request) {
     if (request.metadata.agentRole === 'child') { yield* respond(request, ++childRound === 1 ? 'protected_action' : undefined, {}); return; }
     if (++parentRound === 1) { yield* respond(request, 'subagent', { prompt: 'Read the item' }); return; }
-    if (parentRound === 2) { yield* respond(request, 'tasks', { action: 'wait', mode: 'all' }); return; }
+    if (parentRound === 2) { yield* respond(request, 'await', { mode: 'all' }); return; }
     const task = tasks.list('parent')[0], permission = task.observation?.interactions.find(item => item.kind === 'permission');
     if (parentRound === 3) {
       assert.equal(permission.authority, routing === 'parent' ? 'parent_delegate' : 'human_required');
@@ -102,7 +102,7 @@ for (const routing of ['parent', 'user']) test(`local ${routing} permission auth
       assert.equal(effects, 0); assert.match(request.messages.filter(m => m.role === 'tool').at(-1).content, /human_authority_required/); deniedHuman = true;
       yield* respond(request, 'subagent', { task_id: task.taskId, response: { kind: 'permission', interactionId: permission.interactionId, actionDigest: permission.actionDigest, decision: 'deny' } }); return;
     }
-    if (task.status === 'running') yield* respond(request, 'tasks', { action: 'wait', mode: 'all' }); else yield* respond(request);
+    if (task.status === 'running') yield* respond(request, 'await', { mode: 'all' }); else yield* respond(request);
   } };
   const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, subagentTaskStore: tasks,
     subagentPermissionPolicy: { permissionRouting: routing === 'parent' ? 'user' : 'parent', childPermissionMode: 'task_free' } });

@@ -20,7 +20,7 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
   #failure?: Error;
   #closePromise?: Promise<void>;
 
-  constructor(env: NodeJS.ProcessEnv, handle: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>,
+  constructor(env: NodeJS.ProcessEnv, handle: (operation: McpHostOperation, payload: unknown, signal: AbortSignal, onAccepted: () => void) => Promise<unknown>,
     diagnostic: AgentRuntimeDiagnosticSink = (_stream, text) => { process.stderr.write(text); }) {
     this.failure = new Promise(resolve => { this.#resolveFailure = resolve; });
     this.#worker = new Worker(new URL('./runtimeHostWorker.mjs', import.meta.url), { env: normalizeHostEnvironment(env), stdout: true, stderr: true });
@@ -36,7 +36,7 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
           if (input.type === 'request') {
             const abort = new AbortController();
             this.#hostRequests.set(input.id, abort);
-            void handleMcpHostRequest(input, abort.signal, handle).then(result => {
+            void handleMcpHostRequest(input, abort.signal, handle, event => { if (!this.#failure) this.#worker.postMessage(event); }).then(result => {
               if (!this.#failure) this.#worker.postMessage(result);
             }).finally(() => this.#hostRequests.delete(input.id));
           }

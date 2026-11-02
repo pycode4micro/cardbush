@@ -38,6 +38,7 @@ export const subagentTaskSchema = z.object({
   resumedFromTaskId: z.string().min(1).optional(),
   queuedAfterTaskId: z.string().min(1).optional(),
   executionStartedAt: z.string().min(1).optional(),
+  remoteAcceptedAt: z.string().datetime().optional(),
   remote: z.object({ connectionId: z.string().min(1), agentId: z.string().optional(), worker: remoteWorkerSchema.optional() }).optional(),
   observation: remoteObservationSchema.optional(),
   observationError: z.string().optional(),

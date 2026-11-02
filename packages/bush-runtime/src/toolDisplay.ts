@@ -41,8 +41,8 @@ export function toolCallDisplay(call: ToolCall, definition?: ToolDefinition): To
 }
 
 export function stripToolDisplayTitle(input: unknown, definition: ToolDefinition): unknown {
-  // A stale UI title must not reject a valid maintenance or passive wait call.
-  if (!acceptsDisplayTitle(definition) && !['summary_for_user', 'checkpoint_context', 'await'].includes(definition.name)) return input;
+  // A stray UI title must not reject a valid maintenance call.
+  if (!acceptsDisplayTitle(definition) && !['summary_for_user', 'checkpoint_context'].includes(definition.name)) return input;
   return withoutToolDisplayTitle(input);
 }
 

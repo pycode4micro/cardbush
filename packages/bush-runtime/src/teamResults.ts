@@ -48,10 +48,10 @@ export function teamCompletionAlreadyRead(content: string, messages: ModelMessag
   for (const message of messages) {
     if (message.role === 'assistant') for (const call of message.toolCalls) {
       const input = jsonObject(call.argumentsText);
-      const args = call.name === 'await' && input ? { ...input, action: 'wait' } : call.name === 'tasks' ? input : call.name === 'call_tool' && input?.name === 'tasks' &&
+      const args = call.name === 'await' && input ? { ...input, action: 'await' } : call.name === 'tasks' ? input : call.name === 'call_tool' && input?.name === 'tasks' &&
         input.arguments && typeof input.arguments === 'object' && !Array.isArray(input.arguments)
         ? input.arguments as Record<string, unknown> : undefined;
-      if (args && ['inspect', 'wait'].includes(String(args.action)) &&
+      if (args && (call.name === 'await' || args.action === 'inspect') &&
         (!args.task_ids || Array.isArray(args.task_ids) && args.task_ids.includes(notice.run_id))) waits.add(call.id);
     }
     if (message.role !== 'tool' || !waits.has(message.toolCallId)) continue;

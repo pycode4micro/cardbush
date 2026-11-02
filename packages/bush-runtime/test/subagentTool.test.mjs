@@ -523,7 +523,7 @@ test("lets the parent execute independent work but prevents a terminal commit wi
   ));
 });
 
-test("joins outstanding children explicitly through tasks wait without polling", async () => {
+test("joins outstanding children explicitly through await without polling", async () => {
   let parentRound = 0;
   let releaseChild;
   const childGate = new Promise((resolve) => { releaseChild = resolve; });
@@ -566,8 +566,8 @@ test("joins outstanding children explicitly through tasks wait without polling",
           kind: "tool_call_delta",
           index: 0,
           toolCallId: "join_children",
-          nameDelta: "tasks",
-          argumentsDelta: '{"action":"wait"}',
+          nameDelta: "await",
+          argumentsDelta: '{}',
         };
         yield { ...base, sequence: 2, kind: "response_completed", finishReason: "tool_calls" };
         return;
@@ -615,7 +615,7 @@ test('a short child join returns pending so the parent can execute independent w
     }
     rounds++;
     const call = rounds === 1 ? { name: 'subagent', args: { prompt: 'independent child' } }
-      : rounds === 2 ? { name: 'tasks', args: { action: 'wait', yield_time_ms: 10 } }
+      : rounds === 2 ? { name: 'await', args: { yield_time_ms: 10 } }
       : rounds === 3 ? { name: 'independent_step', args: {} } : undefined;
     if (rounds === 3) {
       const joined = JSON.parse(request.messages.findLast(message => message.role === 'tool').content);

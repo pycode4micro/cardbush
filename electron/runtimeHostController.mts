@@ -27,7 +27,7 @@ import {
 
 export interface RuntimeHostControllerOptions {
   onReady?: () => void;
-  onMcpHostRequest?: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>;
+  onMcpHostRequest?: (operation: McpHostOperation, payload: unknown, signal: AbortSignal, onAccepted: () => void) => Promise<unknown>;
   modulePath: string;
   env?: NodeJS.ProcessEnv;
   startupTimeoutMs?: number;
@@ -123,11 +123,11 @@ export class RuntimeUtilityProcessController {
           if (candidate.type === 'request') {
             const abort = new AbortController();
             hostRequests.set(candidate.id, abort);
-            void handleMcpHostRequest(candidate, abort.signal, (operation, payload, signal) => {
+            void handleMcpHostRequest(candidate, abort.signal, (operation, payload, signal, onAccepted) => {
               if (operation === 'resources.acquire' || operation === 'resources.release' || operation === 'resources.track' || operation === 'resources.ready') return resources.handle(operation, payload, signal);
               if (!this.#options.onMcpHostRequest) throw new Error('MCP desktop integration is unavailable.');
-              return this.#options.onMcpHostRequest(operation, payload, signal);
-            })
+              return this.#options.onMcpHostRequest(operation, payload, signal, onAccepted);
+            }, event => { if (this.#child === child) child.postMessage(event); })
               .then(response => { if (this.#child === child) child.postMessage(response); })
               .catch(error => this.#options.onStderr?.(`MCP host response delivery failed: ${errorMessage(error)}`))
               .finally(() => hostRequests.delete(candidate.id));

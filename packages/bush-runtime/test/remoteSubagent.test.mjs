@@ -2,16 +2,16 @@ import { RuntimeTaskTools } from '../dist/taskTools.js';
 import { RuntimeTurnSignals } from '../dist/turnSignals.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SubagentTaskStore, ToolRegistry, ToolExecutionCoordinator, registerSubagentTool } from '../dist/index.js';
+import { InMemoryRuntimeHost, SubagentTaskStore, ToolRegistry, ToolExecutionCoordinator, registerSubagentTool } from '../dist/index.js';
 
-function fixture(run) {
+function fixture(run, { autoAccept = true, control } = {}) {
   const registry = new ToolRegistry(); const tasks = new SubagentTaskStore(); let serial = 0;
   const results = new Map(); const requests = [];
   const target = { id: 'saved-http-agent', name: 'Build server', agentId: 'pinned-agent' };
   const dispatcher = registerSubagentTool(registry, tasks, async () => { throw Error('Must not run locally'); }, {
     inheritBrowserScope: async () => { assert.fail('Remote tasks must not inherit local browser grants'); },
     createTaskId: () => `remote-${++serial}`, asyncDispatch: true,
-    remoteAgents: { list: async () => [target], run: (input, signal) => { requests.push(input); return run(input, signal); } },
+    remoteAgents: { list: async () => [target], ...(control ? { control } : {}), run: (input, signal, onAccepted) => { requests.push(input); if (autoAccept) onAccepted(); return run(input, signal, onAccepted); } },
     onAsyncResult: item => results.set(item.taskId, item.result),
   });
   const signals = new RuntimeTurnSignals();
@@ -29,6 +29,63 @@ function fixture(run) {
   return { tasks, requests, results, target, request, invoke, dispatcher };
 }
 const completed = text => ({ status: 'completed', finalResponse: text, errorMessage: '', usage: { inputTokens: 3, outputTokens: 2 } });
+
+test('remote dispatch waits for acceptance, not completion, and never observes an unsubmitted task', async () => {
+  let accept, finish, returned = false, observations = 0;
+  const f = fixture((_input, _signal, onAccepted) => {
+    accept = onAccepted; return new Promise(resolve => { finish = resolve; });
+  }, { autoAccept: false, control: async () => { observations++; throw Error('fixture observer'); } });
+  const dispatch = f.invoke('subagent', { prompt: 'Review', target_agent: f.target.id, run_in_background: true }).then(value => { returned = true; return value; });
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(typeof accept, 'function');
+  assert.equal(returned, false, 'a local handle is not a successful remote submission');
+  assert.equal(observations, 0);
+  assert.equal(f.tasks.list('parent-session')[0].remoteAcceptedAt, undefined);
+  accept();
+  const receipt = await dispatch;
+  assert.equal(receipt.result.status, 'running');
+  assert.ok(f.tasks.get('parent-session', receipt.result.taskId).remoteAcceptedAt);
+  finish(completed('done'));
+  await f.results.get(receipt.result.taskId);
+});
+
+test('remote admission rejection is returned immediately without a running receipt or duplicate notification', async () => {
+  const f = fixture(async () => { throw Error('permission routing unsupported'); }, { autoAccept: false });
+  const receipt = await f.invoke('subagent', { prompt: 'Review', target_agent: f.target.id });
+  assert.equal(receipt.result.status, 'failed');
+  assert.match(receipt.result.errorMessage, /permission routing unsupported/);
+  assert.equal(f.results.size, 0);
+  assert.equal(f.tasks.get('parent-session', receipt.result.taskId).remoteAcceptedAt, undefined);
+});
+
+test('tasks inspect preserves a rejected submission without querying a nonexistent remote job', async t => {
+  const registry = new ToolRegistry(), tasks = new SubagentTaskStore();
+  let round = 0, observations = 0, inspected;
+  const host = new InMemoryRuntimeHost({ toolRegistry: registry, subagentTaskStore: tasks,
+    remoteAgents: { list: async () => [{ id: 'remote', name: 'Remote', agentId: 'worker' }],
+      run: async () => { throw Error('approval routing unsupported'); },
+      control: async () => { observations++; throw Error('This worker task belongs to another parent.'); } },
+    provider: { async *stream(request) {
+      round++;
+      const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+      const call = round === 1 ? ['subagent', { target_agent: 'remote', prompt: 'Review' }]
+        : round === 2 ? ['tasks', { action: 'inspect', task_ids: [tasks.list('parent')[0].taskId] }] : undefined;
+      if (!call) inspected = JSON.parse(request.messages.filter(message => message.role === 'tool').at(-1).content);
+      yield call ? { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `call-${round}`, nameDelta: call[0], argumentsDelta: JSON.stringify(call[1]) }
+        : { ...base, sequence: 0, kind: 'text_delta', delta: 'Submission rejected.' };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: call ? 'tool_calls' : 'stop' };
+    } } });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: 'parent', turnId: 'turn',
+    model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Delegate only' } }],
+    tools: registry.definitions(), permissionMode: 'task_free', metadata: {} });
+  assert.equal(result.payload.status, 'completed');
+  assert.equal(round, 3);
+  assert.equal(observations, 0);
+  assert.match(inspected.tasks[0].result.error, /approval routing unsupported/);
+  assert.equal(inspected.tasks[0].result.observation_error, undefined);
+  assert.equal(inspected.tasks[0].controls.stop, false);
+});
 
 test('failed remote onStarted settles the journal without starting remote work', async () => {
   const f = fixture(async () => assert.fail('must not dispatch after persistence failure'));

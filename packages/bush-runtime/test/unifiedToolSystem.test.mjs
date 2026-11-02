@@ -329,7 +329,7 @@ test('async question yields immediately, independent tools run, answer arrives o
   assert.equal(start.kind, 'returned'); const id = start.result.task_id;
   assert.equal(f.broker.list('s')[0].blocking, false);
   assert.equal((await f.run('independent', {})).result.done, true);
-  const waiting = await f.run('tasks', { action: 'wait', task_ids: [id], yield_time_ms: 5 });
+  const waiting = await f.run('await', { task_ids: [id], yield_time_ms: 5 });
   assert.equal(waiting.kind, 'returned', JSON.stringify(waiting)); assert.equal(waiting.result.tasks[0].status, 'waiting_user');
   assert.equal((await f.run('tasks', { action: 'inspect', task_ids: [id] }, undefined, 'other')).kind, 'failed');
   const request = f.broker.list('s')[0]; f.broker.answer({ selectionId: request.selectionId, sessionId: 's', turnId: 't', kind: 'answers', answers: [{ questionId: 'choice', kind: 'option', optionIndex: 1 }] });
@@ -368,8 +368,8 @@ test('task waits yield and abort without stopping work; stopping and cancelling 
   const f = fixture(t), gate = Promise.withResolvers(); let status = 'running', stopped = 0, unwatched = 0;
   f.tasks.addSource(() => [{ task_id: 'manual', kind: 'terminal', status, revision: status, wait: () => gate.promise,
     stop: async () => { stopped++; status = 'stopped'; gate.resolve(); return { stopped: true }; }, cancelObservation: () => { unwatched++; } }]);
-  assert.equal((await f.run('tasks', { action: 'wait', yield_time_ms: 5 })).result.wake_reason, 'yield_timeout');
-  const controller = new AbortController(), pending = f.run('tasks', { action: 'wait', yield_time_ms: 30000 }, controller.signal);
+  assert.equal((await f.run('await', { yield_time_ms: 5 })).result.wake_reason, 'yield_timeout');
+  const controller = new AbortController(), pending = f.run('await', { yield_time_ms: 30000 }, controller.signal);
   await delay(5); controller.abort(); assert.equal((await pending).kind, 'cancelled'); assert.equal(stopped, 0);
   await f.run('tasks', { action: 'cancel_observation', task_ids: ['manual'] }); assert.equal(unwatched, 1); assert.equal(stopped, 0);
   await f.run('tasks', { action: 'stop', task_ids: ['manual'] }); assert.equal(stopped, 1);
@@ -432,7 +432,7 @@ test('scripts aggregate parallel delegated permission waits and resume only afte
   const started = await f.run('run_tools', { code: 'return await Promise.all([tools.approval_delegate({index:0}), tools.approval_delegate({index:1})]);' });
   assert.equal(started.kind, 'returned');
   const id = started.result.task_id;
-  const snapshot = async () => (await f.run('tasks', { action: 'wait', task_ids: [id], yield_time_ms: 0 })).result.tasks[0];
+  const snapshot = async () => (await f.run('await', { task_ids: [id], yield_time_ms: 0 })).result.tasks[0];
   await asked.promise;
   const waiting = await snapshot(); assert.equal(waiting.status, 'waiting_user'); assert.match(waiting.summary, /2 pending/);
   const approve = request => permissions.answer({ protocol: 'bush.runtime_permission_answer.v1', answerId: `answer-${request.permissionId}`, permissionId: request.permissionId, decision: 'allow_once', grantedCapabilityIds: request.capabilityIds });
@@ -545,7 +545,7 @@ test('script CPU and promise limits fail promptly; independent work proceeds dur
   assert.equal(infinite.completion.status, 'failed'); assert.ok(Date.now() - before < 2000);
   const stalled = await f.script('await new Promise(() => {});'); assert.equal(stalled.completion.status, 'failed');
   const start = await f.run('run_tools', { code: 'return await tools.slow({});' });
-  const snapshot = await f.run('tasks', { action: 'wait', task_ids: [start.result.task_id], yield_time_ms: 0 });
+  const snapshot = await f.run('await', { task_ids: [start.result.task_id], yield_time_ms: 0 });
   assert.equal(snapshot.result.tasks[0].status, 'running');
   gate.resolve({ ready: true }); await f.deliveries.at(-1).message;
 });
@@ -567,8 +567,8 @@ test('unavailable task sources do not prevent inspecting independent tasks, and 
   const store = new SubagentTaskStore(); store.start({ taskId: 'a', parentSessionId: 's', parentTurnId: 't', childSessionId: 'c', childTurnId: 'u', prompt: 'work', inheritContext: false, inheritedMessageCount: 0 });
   const immediateGuidance = new RuntimeTaskTools(async () => 'user_message');
   const registry = new ToolRegistry(); immediateGuidance.addSource(() => [{ task_id: 'a', kind: 'subagent', status: 'running', revision: '1', wait: signal => store.waitForCompletion('s', 'a', signal) }]); immediateGuidance.register(registry);
-  const tool = registry.resolve('tasks');
-  assert.equal((await tool.execute({ input: tool.decodeInput({ action: 'wait' }) })).wake_reason, 'user_message');
+  const tool = registry.resolve('await');
+  assert.equal((await tool.execute({ input: tool.decodeInput({}) })).wake_reason, 'user_message');
   await delay(5); // No unhandled rejection from the abandoned completion subscription.
 });
 

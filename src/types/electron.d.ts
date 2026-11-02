@@ -12,6 +12,7 @@ import type {
 
 interface BrowserConnectorStatus {
   defaultConnectionId: string;
+  pendingPairingId?: string | null;
   connections: Array<{ id: string; browser: 'chrome' | 'edge'; label: string; connected: boolean; extensionVersion?: string; controlledTabCount: number }>;
   paired: boolean;
   transport: 'loopback_websocket';

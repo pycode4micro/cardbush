@@ -150,14 +150,14 @@ for (const remote of [false, true]) test(`unified child lifecycle through ${remo
       case 7: yield* response(request, 'subagent', { task_id: initial.taskId, response: { kind: 'answer', interactionId: question.interactionId, text: 'October 30' } }); return;
       default:
         assert.ok(stage < 14, 'no model polling loop');
-        if (tasks.list('parent').some(task => task.status === 'running')) yield* response(request, 'tasks', { action: 'wait', mode: 'all' });
+        if (tasks.list('parent').some(task => task.status === 'running')) yield* response(request, 'await', { mode: 'all' });
         else yield* response(request);
     }
   } };
   const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, subagentTaskStore: tasks,
     ...(remote ? { remoteAgents: {
       list: signal => callRemoteWorker(manager, 'agents.list', {}, signal),
-      run: (input, signal) => callRemoteWorker(manager, 'agents.delegate', input, signal),
+      run: (input, signal, onAccepted) => callRemoteWorker(manager, 'agents.delegate', input, signal, onAccepted),
       control: (input, signal) => callRemoteWorker(manager, 'agents.control', input, signal),
     } } : {}) });
   try {
@@ -201,6 +201,7 @@ test('worker interaction asks the parent in words, resumes the same run and dedu
     assert.equal((await f.service.call('chat.jobs'))[0].status, 'running');
     assert.match(JSON.stringify(f.model.calls[0]), /Review release readiness/);
     await assert.rejects(workerControl(f.service, request, { operation: 'observe' }, 'another-parent'), /another parent/);
+    await assert.rejects(workerControl(f.service, { ...request, taskId: 'unsubmitted-task' }, { operation: 'observe' }), /task was not found/);
     const answer = { operation: 'respond', messageId: 'answer-1', response: { kind: 'answer', interactionId: waiting.interactions[0].interactionId, text: 'Use October 30.' } };
     const receipt = await workerControl(f.service, request, answer);
     assert.deepEqual(await workerControl(f.service, request, answer), receipt);
@@ -214,6 +215,7 @@ test('worker interaction asks the parent in words, resumes the same run and dedu
 
 test('remote submission negotiates routing and never silently downgrades model approval on old workers', async () => {
   const submitted = [];
+  let accepted = 0;
   const info = { id: 'instance', capabilities: { delegation: true, workerInteraction: {
     profile: 'subagent-remote-proton', version: '0.1', permissions: 'human_required',
   } } };
@@ -222,7 +224,8 @@ test('remote submission negotiates routing and never silently downgrades model a
     throw Error(op);
   } };
   const request = { ...workerInput('routing'), connectionId: 'worker', agentId: 'instance' };
-  await assert.rejects(runRemoteSubagent(manager, { ...request, permissionRouting: 'parent' }), /Update the remote Agent service/);
+  await assert.rejects(runRemoteSubagent(manager, { ...request, permissionRouting: 'parent' }, undefined, { onAccepted: () => { accepted++; } }), /Update the remote Agent service/);
+  assert.equal(accepted, 0, 'unsupported approval routing must not acknowledge submission');
   assert.equal(submitted.length, 0);
   await assert.rejects(runRemoteSubagent(manager, { ...request, permissionRouting: 'user' }), /submission fixture/);
   assert.equal(submitted[0].permissionRouting, undefined, 'human-only old workers keep their strict request schema');
@@ -244,7 +247,7 @@ test('a parent model approves a remote child through the real HTTP bridge and th
     const registry = new ToolRegistry(), tasks = new SubagentTaskStore(); let round = 0, approvals = 0;
     host = new InMemoryRuntimeHost({ toolRegistry: registry, subagentTaskStore: tasks, remoteAgents: {
       list: async () => [{ id: connection.id, name: 'Worker', agentId: f.service.info().id }],
-      run: (input, signal) => runRemoteSubagent(manager, input, signal),
+      run: (input, signal, onAccepted) => runRemoteSubagent(manager, input, signal, { onAccepted }),
       control: (input, signal) => callRemoteWorker(manager, 'agents.control', input, signal),
     }, provider: { async *stream(request) {
       assert.ok(++round < 15, 'approval must resume the existing child without a polling loop');
@@ -255,7 +258,7 @@ test('a parent model approves a remote child through the real HTTP bridge and th
         assert.equal(permission.authority, 'parent_delegate'); approvals++;
         call = ['subagent', { task_id: task.taskId, response: { kind: 'permission', interactionId: permission.interactionId,
           actionDigest: permission.actionDigest, decision: 'allow_once' } }];
-      } else if (task.status === 'running') call = ['tasks', { action: 'wait', task_ids: [task.taskId], mode: 'all' }];
+      } else if (task.status === 'running') call = ['await', { task_ids: [task.taskId], mode: 'all' }];
       const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
       yield call ? { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `call-${round}`, nameDelta: call[0], argumentsDelta: JSON.stringify(call[1]) }
         : { ...base, sequence: 0, kind: 'text_delta', delta: 'Child completed.' };

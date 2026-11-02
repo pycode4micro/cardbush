@@ -145,7 +145,7 @@ test('text assistant dispatch reaches the actual child loop and reports completi
   } finally { childGate.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
 });
 
-for (const [foregroundWait, followUp] of [[false, false], [true, false], [true, true]]) test(`text assistant reads Team results once with ${foregroundWait ? 'foreground wait' : 'asynchronous completion'}${followUp ? ' and new user input' : ''}`, async () => {
+for (const [foregroundRead, followUp] of [[false, false], [true, false], [true, true]]) test(`text assistant reads Team results once with ${foregroundRead ? 'foreground read' : 'asynchronous completion'}${followUp ? ' and new user input' : ''}`, async () => {
   const sessions = new SessionStore(), registry = new ToolRegistry(), childGate = gate(), children = [], receipts = [];
   sessions.ensureSession(id);
   const batches = [
@@ -170,14 +170,20 @@ for (const [foregroundWait, followUp] of [[false, false], [true, false], [true, 
     if (index < batches.length) {
       yield* response(request, { calls: [{ ...batches[index], id: `native-${index}` }] }); return;
     }
-    if (index === batches.length && !foregroundWait) {
+    if (index === batches.length && !foregroundRead) {
       yield* response(request, { text: '团队正在后台执行。' }); return;
     }
     const notices = request.messages.filter(message => message.name === 'background_task_result').map(message => JSON.parse(message.content));
     const result = receipts.flatMap(receipt => (receipt.tasks ?? []).map(task => task.result)).find(result => result?.output_node_ids) ?? notices.find(notice => notice.type === 'team_result');
     if (!result) {
       const run = receipts.find(receipt => receipt.run_id);
-      yield* response(request, { calls: [{ id: 'read-team-result', name: 'tasks', args: { action: 'wait', task_ids: [run.run_id] } }] }); return;
+      // Simulate a foreground reply arriving as the background result settles.
+      // The conversational assistant only reads; it never exposes a wait tool.
+      await childGate.promise;
+      const reader = registry.resolve('tasks');
+      await until(async () => (await reader.execute({ sessionId: id, turnId: request.turnId,
+        input: reader.decodeInput({ action: 'inspect', task_ids: [run.run_id] }) })).tasks[0]?.status === 'completed');
+      yield* response(request, { calls: [{ id: 'read-team-result', name: 'tasks', args: { action: 'inspect', task_ids: [run.run_id] } }] }); return;
     }
     assert.equal(result.nodes[0].output, 'Inventory verified for order 42.');
     assert.equal(request.messages.filter(message => message.content.includes('Inventory verified for order 42.')).length, 1);
@@ -186,7 +192,7 @@ for (const [foregroundWait, followUp] of [[false, false], [true, false], [true, 
   const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
   try {
     await command({ action: 'turn', entry: entry('native-team'), parent: parent(registry), profile: assistantProfileSchema.parse({}) });
-    if (!foregroundWait) await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '团队正在后台执行。'));
+    if (!foregroundRead) await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '团队正在后台执行。'));
     await until(() => children.length === 1);
     assert.equal(children[0].metadata.registeredAgentId, 'clerk');
     assert.doesNotMatch(JSON.stringify(children[0].messages), /Execution instructions only/);
@@ -353,7 +359,7 @@ test('remote voice children retain host identity for guidance, reads and resumpt
   const host = new InMemoryRuntimeHost({ dataRoot: temporary(), subagentTaskStore: tasks, toolRegistry: registry,
     provider: { async *stream() {} }, remoteAgents: {
       list: async () => [{ id: 'remote-1', name: 'SSH', agentId: 'server-1' }],
-      run: async input => { assert.equal(input.connectionId, 'remote-1'); await finish.promise; return { status: 'completed', finalResponse: 'Remote result', errorMessage: '', usage: {} }; },
+      run: async (input, _signal, onAccepted) => { onAccepted(); assert.equal(input.connectionId, 'remote-1'); await finish.promise; return { status: 'completed', finalResponse: 'Remote result', errorMessage: '', usage: {} }; },
       guide: async input => { guided.push(input); return { accepted: true }; },
       read: async () => undefined,
     } });

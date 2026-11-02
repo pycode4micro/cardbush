@@ -184,12 +184,12 @@ export class AgentService {
     // Inherited client endpoints must not influence service capability reports.
     this.#desktopEnv = env;
     this.#network = new PluginNetwork(join(configurationRoot, 'config', 'apps.json'), () => createHeadlessProxySession(env));
-    this.runtime = new AgentRuntimeHost(env, async (operation, payload, signal) => {
+    this.runtime = new AgentRuntimeHost(env, async (operation, payload, signal, onAccepted) => {
       const data = payload as Record<string, unknown>;
       if (this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
-        return callWebRemoteAgent(this.#webPolicy?.remoteAgents, operation, payload, signal);
+        return callWebRemoteAgent(this.#webPolicy?.remoteAgents, operation, payload, signal, onAccepted);
       if (this.#local && !this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
-        return callRemoteWorker(await this.#workerConnections(), operation, payload, signal);
+        return callRemoteWorker(await this.#workerConnections(), operation, payload, signal, onAccepted);
       if (operation === 'agent.desktop.tool' && this.#desktop) return this.#desktop.tool(payload, signal);
       if (operation === 'network.configuration') {
         const model = networkProxySchema.parse(await readFile(join(configurationRoot, 'config', 'network.json'), 'utf8').then(text => JSON.parse(text), (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return { mode: 'system' }; }));
@@ -977,7 +977,8 @@ export class AgentService {
     signal?.throwIfAborted();
     const owned = () => {
       const job = this.#state.jobs.find(item => item.id === control.taskId);
-      if (!job || job.sessionId !== control.contextId || job.delegation?.parentSessionId !== parentSessionId) throw new Error('This worker task belongs to another parent.');
+      if (!job) throw new Error(uiText()('remoteSubagent.taskNotFound'));
+      if (job.sessionId !== control.contextId || job.delegation?.parentSessionId !== parentSessionId) throw new Error('This worker task belongs to another parent.');
       return job;
     };
     const job = owned();

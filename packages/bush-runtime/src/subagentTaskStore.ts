@@ -107,6 +107,13 @@ export class SubagentTaskStore {
     return structuredClone(task);
   }
 
+  acceptRemote(parentSessionId: string, taskId: string): void {
+    const task = this.get(parentSessionId, taskId);
+    if (!task?.remote || task.status !== 'running' || task.remoteAcceptedAt) return;
+    const now = this.#now();
+    this.#append(parentSessionId, subagentTaskSchema.parse({ ...task, remoteAcceptedAt: now, updatedAt: now, revision: task.revision + 1 }));
+  }
+
   beginExecution(parentSessionId: string, taskId: string): void {
     const task = this.get(parentSessionId, taskId);
     if (!task || task.status !== 'running') throw new Error('stale_target');

@@ -4,7 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BrowserBookmarkImporter, browserWebUrl, type BookmarkImportResult, type BrowserProfile } from './browserImport';
 import { BrowserLibrary, type BrowserDownload, type BrowserLibraryPage, type BrowserVisit, type BrowserFrequentSite } from './browserLibrary';
-import { readBrowserIcon } from './browserIcon';
+import { readBrowserIcon, readBrowserSiteIcon } from './browserIcon';
 import type { WebApplicationInfo } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 export type BrowserPageCommand = { action: 'status' | 'print' | 'screenshot' }
@@ -17,7 +17,7 @@ export type BrowserUiBridge = {
   importBookmarks: (profileId?: string) => Promise<BookmarkImportResult | null>;
   page: (guestId: number, command: BrowserPageCommand) => Promise<BrowserPageResult>;
   webApplication: (guestId: number, expectedUrl: string) => Promise<WebApplicationInfo>;
-  readIcon?: (url: string) => Promise<string>;
+  readIcon?: (url: string, options?: { discover?: boolean }) => Promise<string>;
   history: (query?: string, offset?: number) => Promise<BrowserLibraryPage<BrowserVisit>>;
   frequentSites: () => Promise<BrowserFrequentSite[]>;
   onHistoryChanged: (callback: () => void) => () => void;
@@ -188,7 +188,8 @@ export function registerBrowserUiIpc(assertSender: (id: number) => void, createS
     return chosen.canceled || !chosen.filePaths[0] ? null : get().importer.file(chosen.filePaths[0]);
   });
   handle('page', (owner, id: number, command: BrowserPageCommand) => get().page(owner, id, command));
-  handle('icon', (_owner, url: unknown) => readBrowserIcon(url, iconFetch).catch(() => ''));
+  handle('icon', (_owner, url: unknown, options?: { discover?: boolean }) =>
+    (options?.discover === true ? readBrowserSiteIcon(url, iconFetch) : readBrowserIcon(url, iconFetch)).catch(() => ''));
   handle('web-application', async (owner, id: number, expectedUrl: string) => {
     const guest = get().guest(owner, id);
     const { readWebsiteApplication } = await import('./browserWebApplications.mjs');

@@ -7,7 +7,7 @@
 .browser-connector-card { display: grid; gap: 12px; margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--text) 3%, transparent); }
 .browser-connector-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
 .browser-connector-heading > div { display: grid; gap: 4px; min-width: 0; }
-.browser-connector-heading strong { color: var(--text); font-size: 13px; }
+.browser-connector-heading strong { overflow-wrap: anywhere; color: var(--text); font-size: 13px; }
 .browser-connector-heading small { overflow-wrap: anywhere; color: var(--text-soft); font-size: 12px; }
 .browser-connector-indicator { width: 9px; height: 9px; border-radius: 50%; background: var(--text-soft); }
 .browser-connector-indicator.waiting { background: var(--warning, #c49a56); }

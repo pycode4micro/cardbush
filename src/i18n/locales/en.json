@@ -2,6 +2,13 @@
   "locale": "en",
   "name": "English",
   "messages": {
+    "remoteSubagent.taskNotFound": "The remote worker task was not found. It may not have been accepted or may have been removed.",
+    "browserConnectionSettings.defaultConnected": "Default browser connected: {name} ({id})",
+    "browserConnectionSettings.defaultOffline": "Default browser offline: {name} ({id})",
+    "browserConnectionSettings.connectedWithoutDefault": "{count} browser connections online; no default selected",
+    "browserConnectionSettings.connectionScopeSummary": "{count} browser connections online. The default applies to new selections; existing conversations keep their selected browser. An online connection does not mean every conversation is connected.",
+    "browserConnectionSettings.connectionOnlineIdentity": "{browser} · {id} · Connected",
+    "browserConnectionSettings.connectionOfflineIdentity": "{browser} · {id} · Offline",
     "realtimeVoiceOptions.voice": "Call voice",
     "realtimeVoiceOptions.changeHint": "Change the voice for upcoming speech",
     "realtimeVoiceOptions.add": "Add voice…",

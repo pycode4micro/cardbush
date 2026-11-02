@@ -26,14 +26,21 @@ async function connectorHmac(secret, text) {
   const key = await crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return connectorHex(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(text))));
 }
+async function connectorProfileKeys() {
+  const keys = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  return { privateKey: await crypto.subtle.exportKey('jwk', keys.privateKey),
+    publicKey: connectorHex(new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey))) };
+}
 // The enabled local connector offers a connection; only the extension's own
 // confirmation window can accept it. Key agreement binds that confirmation to
 // this endpoint/request without exposing a reusable credential during discovery.
 async function requestConnectorPairing(identity, { signal, onPrepared, confirm, ports = CONNECTOR_DISCOVERY_PORTS,
-  attemptTimeoutMs = CONNECTOR_ATTEMPT_TIMEOUT_MS, approvalTimeoutMs = 95_000 } = {}) {
+  pairingCode, attemptTimeoutMs = CONNECTOR_ATTEMPT_TIMEOUT_MS, approvalTimeoutMs = 95_000 } = {}) {
   const browser = connectorBrowser();
-  const keys = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
-  const publicKey = connectorHex(new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey)));
+  const privateKey = await crypto.subtle.importKey('jwk', identity.privateKey, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+  const publicKey = identity.publicKey, rotate = identity.refresh === true;
+  const ticket = pairingCode ? parseConnectorPairing(pairingCode) : null;
+  if (ticket) ports = [ticket.port];
   const problem = code => Object.assign(new Error({
     connection_denied: '连接申请未获同意。需要连接时，请点击「连接 CardBush」重新申请。',
     connection_revoked: '连接已被移除。需要连接时，请点击「连接 CardBush」重新申请。',
@@ -58,17 +65,19 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
       let timer = setTimeout(() => finish(null), attemptTimeoutMs);
       signal?.addEventListener('abort', cancel, { once: true });
       if (signal?.aborted) { cancel(); return; }
-      try { socket = new WebSocket(`ws://127.0.0.1:${port}/request-connection`, 'cardbush-pair-v2'); }
+      try { socket = new WebSocket(`ws://127.0.0.1:${port}/request-connection`, 'cardbush-pair-v3'); }
       catch { finish(null); return; }
       socket.onopen = () => { queue = queue.then(async () => {
         let resumeProof;
         if (identity.pending) {
           const pending = parseConnectorPairing(identity.pending);
           if (pending.id === identity.id && identity.confirmed === true) {
-            locallyConfirmed = true; secret = pending.secret; resumeProof = await connectorHmac(secret, `resume:${identity.id}:${nonce}`);
+            locallyConfirmed = true; secret = pending.secret; resumeProof = await connectorHmac(secret, `resume:${identity.id}:${nonce}:${publicKey}`);
           }
         }
-        if (!finished) socket.send(JSON.stringify({ type: 'pair_request', id: identity.id, browser, key: publicKey, nonce, resumeProof }));
+        const ticketProof = ticket ? await connectorHmac(ticket.secret, `ticket:${identity.id}:${nonce}:${browser}:${publicKey}`) : undefined;
+        if (!finished) socket.send(JSON.stringify({ type: 'pair_request', id: identity.id, browser, key: publicKey, nonce, resumeProof,
+          rotate, ticketId: ticket?.id, ticketProof }));
       }).catch(() => finish(null)); };
       socket.onmessage = event => { queue = queue.then(async () => {
         if (finished || typeof event.data !== 'string' || event.data.length > 4096) return;
@@ -79,8 +88,8 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
           timer = setTimeout(() => finish({ error: 'connection_denied' }), approvalTimeoutMs);
           const serverKey = await crypto.subtle.importKey('raw', new Uint8Array(message.key.match(/../g).map(value => parseInt(value, 16))),
             { name: 'ECDH', namedCurve: 'P-256' }, false, []);
-          const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: serverKey }, keys.privateKey, 256));
-          const context = new TextEncoder().encode(`cardbush-pair-v2:${identity.id}:${browser}:${message.key}`);
+          const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: serverKey }, privateKey, 256));
+          const context = new TextEncoder().encode(`cardbush-pair-v3:${identity.id}:${browser}:${publicKey}:${message.key}:${ticket?.id ?? ''}:${rotate}`);
           const material = new Uint8Array(shared.length + context.length); material.set(shared); material.set(context, shared.length);
           secret = connectorHex(new Uint8Array(await crypto.subtle.digest('SHA-256', material)));
           const code = `CB2.${port}.${identity.id}.${secret}`;
@@ -118,7 +127,7 @@ async function requestConnectorPairing(identity, { signal, onPrepared, confirm, 
       socket.onclose = socket.onerror = () => { void queue.then(() => finish(null)); };
     });
     if (result?.code) return result;
-    if (result?.error) throw problem(result.error);
+    if (result?.error && result.error !== 'connector_unavailable') throw problem(result.error);
   }
   throw problem('connector_unavailable');
 }
@@ -126,7 +135,7 @@ function createConnectorPort(pairing, { attemptTimeoutMs,
   openTimeoutMs = attemptTimeoutMs ?? CONNECTOR_ATTEMPT_TIMEOUT_MS,
   handshakeTimeoutMs = attemptTimeoutMs ?? 3000,
   authenticationTimeoutMs = attemptTimeoutMs ?? 3000,
-  discover = true, onDiscovery = () => {} } = {}) {
+  discover = true, onDiscovery = () => {}, profileKey } = {}) {
   const messages = new Set(), disconnects = new Set();
   const attempts = new Set();
   let socket = null, endpointPort = null, closed = false, ready = false, heartbeat;
@@ -204,10 +213,11 @@ function createConnectorPort(pairing, { attemptTimeoutMs,
           const transcript = `${pairing.id}:${nonce}:${message.nonce}`;
           if (message.proof !== await connectorHmac(pairing.secret, `server:${transcript}`)) throw new Error('Untrusted broker');
           const proof = await connectorHmac(pairing.secret, `client:${transcript}:${browser}`);
+          const profileProof = profileKey ? await connectorHmac(pairing.secret, `profile:${transcript}:${profileKey}`) : undefined;
           if (closed || ready || finished) return;
           serverVerified = true;
           deadline('authentication', authenticationTimeoutMs);
-          candidate.send(JSON.stringify({ type: 'authenticate', browser, proof }));
+          candidate.send(JSON.stringify({ type: 'authenticate', browser, proof, profileKey, profileProof }));
           return;
         }
         if (!ready) {

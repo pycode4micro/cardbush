@@ -77,16 +77,17 @@ test('team definition, run and node IDs stay separate across direct and recalled
   await f.call('get_tool_schema', { names: ['team', 'tasks'] });
   await f.call('call_tool', { name: 'team', arguments: { action: 'save', definition: workflow, expected_revision: 0 } });
   const started = await f.call('team', { action: 'run', team_id: workflow.id, input: 'Check fixture.' });
-  const finished = await f.call('tasks', { action: 'wait', task_ids: [started.task_id] });
+  const finished = await f.call('await', { task_ids: [started.task_id] });
   assert.equal(finished.tasks[0].status, 'completed');
   assert.equal(started.task_id, started.run_id);
   const node = f.store.list('parent').find(task => task.origin === 'team');
   const before = await f.teams.listRuns('parent');
   for (const run_id of [workflow.id, 'employee-review', 'review-node', node.taskId, node.childSessionId]) {
     await f.reject('call_tool', { name: 'team', arguments: { action: 'resume', run_id } }, /run_id.*section=runs/);
-    for (const action of ['inspect', 'wait', 'stop']) {
+    for (const action of ['inspect', 'stop']) {
       await f.reject('call_tool', { name: 'tasks', arguments: { action, task_ids: [run_id] } }, /tasks list.*task_id/);
     }
+    await f.reject('await', { task_ids: [run_id] }, /tasks list.*task_id/);
   }
   for (const team_id of [started.run_id, node.taskId, node.childSessionId, 'employee-review']) {
     await f.reject('team', { action: 'run', team_id, input: 'Check fixture.' }, /team_id.*run_id/);
@@ -96,9 +97,10 @@ test('team definition, run and node IDs stay separate across direct and recalled
   await f.reject('team', { action: 'resume', team_id: workflow.id }, /Accepted fields: run_id/);
   await f.reject('team', { action: 'resume', run_id: started.run_id, team_id: workflow.id }, /Accepted fields: run_id/);
   await f.reject('team', { action: 'resume', run_id: started.run_id }, /unavailable in this conversation/, 'other-parent');
-  for (const action of ['inspect', 'wait', 'stop']) {
+  for (const action of ['inspect', 'stop']) {
     await f.reject('tasks', { action, task_ids: [started.task_id] }, /not available in this conversation/, 'other-parent');
   }
+  await f.reject('await', { task_ids: [started.task_id] }, /not available in this conversation/, 'other-parent');
   await f.reject('subagent', { task_id: node.taskId, prompt: 'Bypass the workflow.' }, /Team workflow node.*run_id/);
   assert.equal(f.executions.length, 1); assert.deepEqual(f.guidance, []);
   assert.deepEqual(await f.teams.listRuns('parent'), before);
@@ -114,9 +116,10 @@ test('tasks rejects wrong-domain and foreign IDs before any mixed selection read
     readResult: () => effects.push('read'), wait: async () => effects.push('wait'), stop: async () => effects.push('stop'),
     cancelObservation: () => effects.push('cancel'), readConversation: async () => effects.push('conversation') }] : []);
   for (const id of ['employee-review', workflow.id, 'review-node', 'child-session']) {
-    for (const action of ['inspect', 'wait', 'stop', 'cancel_observation']) {
+    for (const action of ['inspect', 'stop', 'cancel_observation']) {
       await f.reject('tasks', { action, task_ids: ['existing-task', id] }, /tasks list.*task_id/);
     }
+    await f.reject('await', { task_ids: ['existing-task', id] }, /tasks list.*task_id/);
     await f.reject('tasks', { action: 'conversation', task_ids: [id] }, /tasks list.*task_id/);
   }
   await f.reject('tasks', { action: 'stop', task_ids: ['existing-task'] }, /not available in this conversation/, 'other-parent');
@@ -136,9 +139,10 @@ test('tasks prefers canonical IDs over aliases and rejects ambiguous aliases bef
   const exact = await f.call('tasks', { action: 'stop', task_ids: ['team-run'] });
   assert.deepEqual(stopped, ['team-run']);
   assert.equal(exact.tasks[0].kind, 'team');
-  for (const action of ['inspect', 'wait', 'stop', 'cancel_observation']) {
+  for (const action of ['inspect', 'stop', 'cancel_observation']) {
     await f.reject('tasks', { action, task_ids: ['terminal', 'ambiguous'] }, /ambiguous.*exact task_id/);
   }
+  await f.reject('await', { task_ids: ['terminal', 'ambiguous'] }, /ambiguous.*exact task_id/);
   assert.deepEqual(stopped, ['team-run']); assert.deepEqual(cancelled, []);
   const alias = await f.call('tasks', { action: 'stop', task_ids: ['terminal-notice', 'terminal'] });
   assert.deepEqual(stopped, ['team-run', 'terminal']);

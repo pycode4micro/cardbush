@@ -57,7 +57,7 @@ for (const remote of [false, true]) test(`a ${remote ? 'remote' : 'local'} child
     }
     parentRound++;
     if (parentRound === 1) yield* respond(request, 'subagent', { prompt: 'Prepare the release', ...(remote ? { target_agent: 'worker' } : {}) });
-    else if (parentRound === 2) yield* respond(request, 'tasks', { action: 'wait', mode: 'all' });
+    else if (parentRound === 2) yield* respond(request, 'await', { mode: 'all' });
     else if (!answered) {
       const notice = request.messages.find(m => typeof m.content === 'string' && /Your child task .* (asks:|needs a response)/.test(m.content));
       assert.ok(notice, JSON.stringify(request.messages.slice(-4)));
@@ -69,7 +69,7 @@ for (const remote of [false, true]) test(`a ${remote ? 'remote' : 'local'} child
   } };
   const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, subagentTaskStore: tasks, ...(remote ? { remoteAgents: {
     list: async () => [{ id: 'worker', name: 'Worker', agentId: 'instance' }],
-    run: async request => { childRequest = request; await pending.promise; return { status: 'completed', finalResponse: 'child finished', errorMessage: '', usage: {} }; },
+    run: async (request, _signal, onAccepted) => { childRequest = request; onAccepted(); await pending.promise; return { status: 'completed', finalResponse: 'child finished', errorMessage: '', usage: {} }; },
     control: async ({ control }) => {
       assert.equal(control.taskId, childRequest.taskId);
       if (control.operation === 'respond') { assert.equal(control.response.text, 'October 30'); pending.resolve(); return { accepted: true }; }
@@ -210,7 +210,7 @@ test('tasks wait any returns the first result while its sibling stays running', 
     }
     parentRound++;
     if (parentRound <= 2) yield* respond(request, 'subagent', { prompt: parentRound === 1 ? 'A' : 'B' });
-    else if (parentRound === 3) yield* respond(request, 'tasks', { action: 'wait', mode: 'any' });
+    else if (parentRound === 3) yield* respond(request, 'await', { mode: 'any' });
     else if (parentRound === 4) {
       const result = request.messages.filter(m => m.role === 'tool').at(-1);
       assert.match(result.content, /result A/); assert.doesNotMatch(result.content, /result B/);

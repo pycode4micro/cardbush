@@ -30,9 +30,9 @@
 }
 .source-memo-card button { font: inherit; color: inherit; cursor: pointer; }
 .source-memo-card button:focus-visible, .source-memo-excerpt pre:focus-visible { outline: 1px solid var(--text-soft); outline-offset: 2px; border-radius: 4px; }
-.source-memo-card .source-memo-evidence-link { min-width: 0; max-width: 100%; text-align: left; background: none; padding: 0; border: 0; font: inherit; }
+.source-memo-card .source-memo-evidence-link:not(.web-link) { min-width: 0; max-width: 100%; text-align: left; background: none; padding: 0; border: 0; font: inherit; }
 .source-memo-evidence-link > span:not(.local-file-type-icon) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.source-memo-evidence-link:hover > span:not(.local-file-type-icon) { text-decoration: underline; text-underline-offset: 3px; }
+.source-memo-evidence-link:not(.web-link):hover > span:not(.local-file-type-icon) { text-decoration: underline; text-underline-offset: 3px; }
 .source-memo-card small { display: block; color: var(--text-soft); font-size: 11px; }
 .source-memo-card .source-memo-excerpt-trigger {
   display: inline-flex; align-items: center; justify-content: center; flex: none; gap: 2px;

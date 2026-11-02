@@ -45,7 +45,8 @@ test('documented variants validate and invalid cross-field combinations fail bef
     [{ prompt: 'read', mode: 'clean' }, false], [{ prompt: 'read', settings: {} }, false],
     [{ prompt: 'read', system_prompt: 'wrong mode' }, false], [{ prompt: 'read', inherit_context: true }, false],
     [{ prompt: 'read', agent_id: 'employee', name: 'override' }, false],
-    [{ prompt: 'read', target_agent: 'remote', run_in_background: true }, false],
+    [{ prompt: 'read', target_agent: 'remote', run_in_background: true }, true],
+    [{ prompt: 'read', target_agent: 'remote', run_in_background: 'true' }, false],
     [{ action: 'save', expected_revision: 0 }, false], [{ action: 'delete', agent_id: 'reviewer' }, false],
   ];
   for (const [input, expected] of cases) {

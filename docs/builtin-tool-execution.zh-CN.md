@@ -25,7 +25,7 @@ Registry 是能力权威目录，Provider 定义只是展示，不是授权。�
 
 发现和调用分别检查：`get_tool_schema` 恰好 `name/names` 二选一（最多 16），覆盖原生和 MCP；`mcp_search` 只搜索。完整回执为 `bush.tool_schema.v1`，含来源/修订，共用归档验证。必须读到完整定义再调用，并行“加载+调用”不满足此前提。脚本经 `run_tools → tools.call`。
 
-已退役的 `mcp_call/parallel_tools/manage_tool_calls/manage_plugin_agents/await_subagents/read_subagent_conversation/solution_selection/request_permission` 不再注册或提供旧结果适配；旧 `mcp_search action=load` 拒绝。产品策略 v9 在执行前拒绝不兼容历史合同，不迁移重放。显式历史清理可删除会话、执行及恢复状态，保留配置/插件/项目文件。
+已退役的 `mcp_call/parallel_tools/manage_tool_calls/manage_plugin_agents/await_subagents/read_subagent_conversation/solution_selection/request_permission` 不再注册或提供旧结果适配；旧 `mcp_search action=load` 拒绝。产品策略 v10 在执行前拒绝不兼容历史合同，不迁移重放。显式历史清理可删除会话、执行及恢复状态，保留配置/插件/项目文件。
 
 错路由或包装直接入口返回带原参数的 `corrected_call`；重复相同错误从已有回执给针对性入口检查，不反复塞完整 schema。这只是下一步建议，不自动转发/重放，不猜别名，仍需发现/作用域/授权/Hook。原生和 MCP 业务工具共用 `call_tool`。
 
@@ -55,7 +55,7 @@ checkpoint 的 Markdown `summary` 保留 `<skill_constraints>`，每条约束写
 
 计划等待节点保存 `status:waiting`、具体 `waitingFor` 和 `waitingKind:user|background|dependency`，流/恢复/历史同样持有。只有 user 触发注意通知，被动等待中性；旧未分类状态不从文字猜人类动作。恢复/完成清等待字段，只改原因不带类别则清旧类别。多等待优先明确用户输入，未答问题不能被被动计划隐藏；更新计划不强迫额外模型轮。
 
-统一等待沿用 RuntimeTurnSignals，不新增执行器或插件生命周期。插件自带等待工具正常加载。没有等待工具的插件可通过 start_mcp_tool 启动已声明只读的状态查询，用文档规定的 repeat_while 匹配未完成状态，再把宿主返回的 task_id 交给 await；不能把任意插件 job ID 当作宿主句柄，也不能凭空推断完成。旧会话冻结的 tasks(action=wait) 保留执行兼容，新目录不再展示该 action。await 使用宿主本地化标题，不注入每次调用都要生成的双语标题参数。
+统一等待沿用 RuntimeTurnSignals，不新增执行器或插件生命周期。插件自带等待工具正常加载。没有等待工具的插件可通过 start_mcp_tool 启动已声明只读的状态查询，用文档规定的 repeat_while 匹配未完成状态，再把宿主返回的 task_id 交给 await；不能把任意插件 job ID 当作宿主句柄，也不能凭空推断完成。tasks(action=wait) 直接拒绝，等待只接受 await。产品策略 v10 拒绝旧会话合同，不翻译、不迁移或重放；清理旧记录后重新开始。await 使用宿主本地化标题，不注入每次调用都要生成的双语标题参数。
 
 ## 调度、失败与恢复
 

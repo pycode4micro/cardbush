@@ -18,7 +18,7 @@ function transient(error: unknown): boolean {
 
 /** Credentials remain in the main process. A detached HTTP reader never owns the remote job. */
 export async function runRemoteSubagent(manager: RemoteSubagentConnection, request: RemoteSubagentRequest, signal?: AbortSignal,
-  recovery: { attempts?: number; delayMs?: number } = {}): Promise<RemoteSubagentResult> {
+  recovery: { attempts?: number; delayMs?: number; onAccepted?: () => void } = {}): Promise<RemoteSubagentResult> {
   signal?.throwIfAborted();
   const { connectionId, agentId, ...input } = request;
   const info = await manager.connect(connectionId);
@@ -29,7 +29,8 @@ export async function runRemoteSubagent(manager: RemoteSubagentConnection, reque
     // Older strict endpoints cannot accept routing. Never silently turn model
     // approval into a human prompt (or enable model approval in user mode).
     if (input.permissionRouting === 'parent' || info.capabilities.workerInteraction?.permissions === 'parent_delegate')
-      throw new Error(uiText(request.language)('remoteSubagent.permissionRoutingUpgradeRequired'));
+      throw Object.assign(new Error(uiText(request.language)('remoteSubagent.permissionRoutingUpgradeRequired')),
+        { code: 'remote_permission_routing_unsupported' });
     delete input.permissionRouting;
   }
   if (input.worker && !supportsRemoteInteraction(info.capabilities.workerInteraction)) throw new Error('Update this worker service before using a registered role and interactive delegation.');
@@ -53,7 +54,7 @@ export async function runRemoteSubagent(manager: RemoteSubagentConnection, reque
       signal?.throwIfAborted();
       try {
         // This endpoint is idempotent by taskId, including uncertain acknowledgements.
-        if (!submitted) { await manager.call(connectionId, 'delegation.submit', input, signal); submitted = true; }
+        if (!submitted) { await manager.call(connectionId, 'delegation.submit', input, signal); submitted = true; recovery.onAccepted?.(); }
         const jobs = await manager.call(connectionId, 'chat.jobs', { sessionId: input.sessionId }, signal) as AgentJob[];
         const job = jobs.find(item => item.id === input.taskId);
         if (!job) throw new Error('The remote delegated task is missing.');

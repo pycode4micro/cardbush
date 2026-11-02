@@ -51,7 +51,8 @@ function fallbackSubagentName(sessionId: string, language: unknown) {
 
 export interface RemoteSubagentBridge {
   list(signal?: AbortSignal): Promise<Array<{ id: string; name: string; agentId?: string; interactionCapabilities?: SubagentInteractionCapabilities }>>;
-  run(input: RemoteSubagentRequest, signal?: AbortSignal): Promise<RemoteSubagentResult>;
+  /** Acknowledge only after the remote service durably accepts this task. */
+  run(input: RemoteSubagentRequest, signal?: AbortSignal, onAccepted?: () => void): Promise<RemoteSubagentResult>;
   read?(input: { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string }, signal?: AbortSignal): Promise<SessionSnapshot | undefined>;
   guide?(input: { connectionId: string; agentId?: string; parentSessionId: string; sessionId: string; turnId: string; messageId: string; content: string }, signal?: AbortSignal): Promise<unknown>;
   control?(input: { connectionId: string; agentId?: string; parentSessionId: string; control: RemoteControl }, signal?: AbortSignal): Promise<unknown>;
@@ -214,13 +215,13 @@ export function registerSubagentTool(
           delivery: { type: 'string', enum: ['queue', 'insert'], description: 'Owned task_id follow-up, local or remote. queue starts a later turn in the same child; insert guides the exact active run at its next safe boundary. Omit for ordinary follow-up. No silent fallback if an explicit insert target has ended.' },
           response: { ...z.toJSONSchema(remoteResponseSchema), description: 'Answer a pending interaction from an owned child task. Free text answers questions; a permission needs its exact actionDigest and a structured decision. Human-required approval cannot be granted by a parent model. Use tasks inspect to read the pending interaction.' },
           name: { type: 'string', minLength: 1, maxLength: SUBAGENT_NAME_MAX_LENGTH, description: 'Short responsibility label in the user\'s language, e.g. 视觉设计 or API reviewer; put assignment details in prompt. New ad-hoc children only. Omit when task_id or agent_id is supplied: follow-ups and registered employees keep their existing name. This labels the task without changing its instructions or permissions.' },
-          ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt, target_agent and optional name; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),
+          ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt, target_agent and optional name/run_in_background; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),
           ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Owned child taskId from a subagent result, or task_id with kind=subagent from tasks list. Never substitute agent_id, childSessionId, team run_id or a workflow node ID. Supply task_id and prompt, with optional run_in_background; the original history and execution host are retained.' } } : {}),
           mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork is a snapshot of the pre-dispatch conversation and intent; later parent messages are not synchronized. clean uses a registered agent_id, or explicit independent system_prompt/settings. Discover reusable employees with list_subagent_options. Each new clean task has its own conversation; use task_id to continue an existing task.' },
           system_prompt: { type: 'string', minLength: 1, description: 'Required for an unregistered clean Agent; omit when using agent_id or fork. Sets the actual system message. Host permissions cannot be overridden.' },
           allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no tools. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
           settings: CLEAN_AGENT_SETTINGS_SCHEMA,
-          ...(options.runBackground ? { run_in_background: { type: 'boolean', default: false } } : {}),
+          ...(options.runBackground ? { run_in_background: { type: 'boolean', default: false, description: 'Keep delegated work running in the background. Remote targets return after service acceptance; this does not change the remote worker configuration.' } } : {}),
           ...(options.loadPluginAgents ? { agent_type: { type: 'string', description: 'Optional exact plugin Agent id from list_subagent_options.agent_roles. Its role and tool restrictions apply to the child.' } } : {}),
         },
       }),
@@ -329,22 +330,33 @@ export function registerSubagentTool(
           ...(worker ? { agentProfileId: worker.id } : {}), ...(previous ? { resumedFromTaskId: previous.taskId } : {}) });
         const observer = new AbortController();
         const observationSignal = context.signal ? AbortSignal.any([observer.signal, context.signal]) : observer.signal;
+        let accept!: () => void;
+        const accepted = new Promise<void>(resolve => { accept = resolve; });
         const completion = (async () => {
           // Persist the owning Team node identity before a remote worker can start.
           // Callback failures use the same terminal settlement as transport failures.
           await execution.onStarted?.({ taskId, sessionId: childSessionId });
           context.signal?.throwIfAborted();
-          if (options.remoteAgents!.control) void watchChild(context, taskId, observationSignal);
           return options.remoteAgents!.run({ ...remote, taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
             sessionId: childSessionId, turnId: childTurnId, prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${context.input.prompt}`,
             ...(context.input.delivery === 'queue' ? { queue: true } : {}),
             permissionMode, permissionRouting: route === 'parent' ? 'parent' : 'user', language: String(parent.metadata.uiLanguage || 'zh'),
-          }, context.signal);
+          }, context.signal, () => {
+            if (tasks.get(context.sessionId, taskId)?.remoteAcceptedAt) return;
+            tasks.acceptRemote(context.sessionId, taskId);
+            accept();
+            if (options.remoteAgents!.control) void watchChild(context, taskId, observationSignal);
+          });
         })().catch(error => ({ status: error instanceof Error && error.name === 'AbortError' ? 'stopped' as const : 'failed' as const, finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} }))
           .then(result => tasks.finish({ parentSessionId: context.sessionId, taskId, ...result })).finally(() => observer.abort());
         if (options.asyncDispatch && !execution.waitForResult) {
+          // Await admission, never the work itself. A rejected submission is a
+          // direct failed receipt, not a successful dispatch plus a later error.
+          await Promise.race([accepted, completion]);
+          const current = tasks.get(context.sessionId, taskId)!;
+          if (current.status !== 'running') return taskResult(current);
           options.onAsyncResult?.({ parentSessionId: context.sessionId, parentTurnId: context.turnId, taskId, result: completion.then(asyncResultMessage) });
-          return { ...submittedResult(tasks.get(context.sessionId, taskId)!), remote };
+          return { ...submittedResult(current), remote };
         }
         return taskResult(await completion);
       }
@@ -578,7 +590,7 @@ function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<s
     ...(task.agentName ? { agentName: task.agentName } : {}),
     taskId: task.taskId,
     status: task.status,
-    ...(task.status === 'running' ? { next_step: 'Continue independent work now. The child result arrives automatically; wait only when it blocks the next step.' } : {}),
+    ...(task.status === 'running' ? { next_step: 'The child result arrives automatically. Continue only other work within the user’s requested scope; wait only when the result blocks that work.' } : {}),
     childSessionId: task.childSessionId,
     childTurnId: task.childTurnId,
     mode: task.inheritContext ? 'fork' : 'clean',
@@ -640,8 +652,9 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   }
   if (object.target_agent !== undefined) {
     if (typeof object.target_agent !== 'string' || !object.target_agent.trim()) throw new Error('target_agent must be a saved Agent connection ID.');
-    if (!onlySubagentArguments(object, 'remote')) throw new Error('Remote delegation accepts prompt, target_agent and optional name only; the server owns its configuration.');
-    return { prompt, name, mode: 'clean', targetAgent: object.target_agent.trim() };
+    if (!onlySubagentArguments(object, 'remote')) throw new Error('Remote delegation accepts prompt, target_agent and optional name/run_in_background only; the server owns its configuration.');
+    if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
+    return { prompt, name, mode: 'clean', targetAgent: object.target_agent.trim(), runInBackground: object.run_in_background as boolean | undefined };
   }
   if (object.task_id !== undefined) {
     if (typeof object.task_id !== 'string' || !object.task_id.trim()) throw new Error('task_id must be non-empty.');

@@ -6,6 +6,23 @@ import { McpDesktopHost, checkedMcpUrl } from '../dist-electron/mcpDesktopHost.j
 import { McpHostBridge, handleMcpHostRequest } from '../dist-electron/mcpHostBridge.js';
 import { checkedExternalWebUrl } from '../dist-electron/externalWebUrl.js';
 
+test('remote admission is delivered once over host IPC without settling completion', async () => {
+  let accept, finish, done = false, accepted = 0;
+  const bridge = new McpHostBridge(message => {
+    if (message.type !== 'request') return;
+    void handleMcpHostRequest(message, new AbortController().signal, async (_operation, _payload, _signal, onAccepted) => {
+      accept = onAccepted; return new Promise(resolve => { finish = resolve; });
+    }, event => bridge.receive(event)).then(reply => bridge.receive(reply));
+  });
+  const request = bridge.request('agents.delegate', {}, undefined, true, () => { accepted++; }).then(value => { done = true; return value; });
+  assert.equal(accepted, 0);
+  accept(); accept();
+  assert.equal(accepted, 1);
+  assert.equal(done, false);
+  finish('remote result');
+  assert.equal(await request, 'remote result');
+});
+
 function fixture(openUrl) {
   const desktop = new McpDesktopHost({ path: 'unused', openUrl, changed() {},
     encrypt() { throw Error('must not use credentials'); }, decrypt() { throw Error('must not use credentials'); } });

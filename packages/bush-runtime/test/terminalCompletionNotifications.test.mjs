@@ -45,7 +45,7 @@ test('real terminal exit is delivered once, with no model polling and a stable m
       assert.match(receipt, /"completion_notification":true/);
       taskId = JSON.parse(receipt.split('\n\n')[0]).completion_task_id;
       yield* response(request, { name: 'independent', args: {} });
-    } else if (rounds === 3) yield* response(request, { name: 'tasks', args: { action: 'wait', task_ids: [taskId], yield_time_ms: 30_000 } });
+    } else if (rounds === 3) yield* response(request, { name: 'await', args: { task_ids: [taskId], yield_time_ms: 30_000 } });
     else {
       const notices = request.messages.filter(m => m.name === 'background_tool_result');
       assert.equal(notices.length, 1); assert.equal(notices[0].visibility, 'internal');
@@ -95,13 +95,13 @@ test('SSH observers renew in the host and wait(any) ignores already settled jobs
   const tasks = new RuntimeTaskTools((ctx, promises, mode, signal, duration) => jobs.waitForWork(ctx.sessionId, ctx.turnId, promises, mode, signal, duration));
   tasks.addSource(ctx => watcher.list(ctx.sessionId, ctx.turnId).map(job => ({ task_id: job.id, kind: 'terminal', status: job.status, revision: job.status, wait: () => job.promise })));
   tasks.register(registry);
-  const manage = registry.resolve('tasks');
+  const manage = registry.resolve('await');
   const run = (input, sessionId = 's') => manage.execute({ sessionId, turnId: 't', input: manage.decodeInput(input) });
-  await assert.rejects(() => run({ action: 'wait', task_ids: [id] }, 'foreign'), /not available in this conversation/);
-  const waited = await run({ action: 'wait', task_ids: [id] });
+  await assert.rejects(() => run({ task_ids: [id] }, 'foreign'), /not available in this conversation/);
+  const waited = await run({ task_ids: [id] });
   assert.equal(waited.tasks[0].status, 'completed'); assert.equal(observations, 3);
   assert.match((await deliveries[0]).content, /ssh-done/);
-  assert.deepEqual((await run({ action: 'wait' })).tasks, []);
+  assert.deepEqual((await run({ yield_time_ms: 0 })).tasks, []);
   watcher.endTurn('s', 't');
 });
 
@@ -120,7 +120,7 @@ test('stopping while awaiting a terminal never resumes the model; persistent opt
         if (notify) {
           assert.equal(receipt.completion_notification, true);
           setTimeout(() => controller.abort(), 40);
-          yield* response(request, { name: 'tasks', args: { action: 'wait', task_ids: [receipt.completion_task_id] } });
+          yield* response(request, { name: 'await', args: { task_ids: [receipt.completion_task_id] } });
         } else { assert.equal(receipt.completion_notification, undefined); yield* response(request); }
       }
     } } });

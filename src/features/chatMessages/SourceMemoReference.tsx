@@ -2,7 +2,7 @@ import { useUiLanguage } from '../../i18n/react';
 import { uiText } from '../../i18n';
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronRight, Globe } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { parseSourceMemoReference, type SourceEvidence, type SourceMemoResolution } from '@cardbush/bush-protocol';
 import { fetchSourceMemo } from '../../backend/sourceMemo';
 import { ConversationHostContext } from '../conversationHost';
@@ -10,6 +10,7 @@ import { openInspector } from '../inspector/inspectorEvents';
 import { resourceBasename } from '../../shared/localPaths';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import { FileTypeIcon } from './FileTypeIcon';
+import { WebLink } from '../browser/WebLink';
 import './source-memo.css';
 
 function evidenceLabel(source: SourceEvidence) {
@@ -166,8 +167,8 @@ export function SourceMemoReference({ reference, language: selectedLanguage, loa
       title={source.target} disabled={disabled} onClick={() => openEvidence(source)}>
       <FileTypeIcon path={source.target} /><span>{evidenceLabel(source)}</span>
     </button>;
-    return <a href={source.target} title={source.target} className="source-memo-evidence-link local-file-reference"
-      onClick={event => { event.preventDefault(); openEvidence(source); }}><Globe size={14} aria-hidden="true" /><span>{evidenceLabel(source)}</span></a>;
+    return <WebLink href={source.target} className="source-memo-evidence-link"
+      onClick={event => { event.preventDefault(); openEvidence(source); }}>{evidenceLabel(source)}</WebLink>;
   };
   const pinForContextMenu = () => { cancelClose(); cancelExcerptTimer(); setOpen('pinned'); };
   return <>

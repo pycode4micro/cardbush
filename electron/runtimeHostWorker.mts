@@ -893,7 +893,7 @@ host = new InMemoryRuntimeHost({
   subagentPermissionPolicy,
   remoteAgents: process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_WEB_REMOTE_AGENTS !== '1' && process.env.CARDBUSH_LOCAL_WORKERS !== '1' ? undefined : {
     list: signal => mcpHost.request('agents.list', {}, signal),
-    run: (input, signal) => mcpHost.request('agents.delegate', input, signal, true),
+    run: (input, signal, onAccepted) => mcpHost.request('agents.delegate', input, signal, true, onAccepted),
     read: (input, signal) => mcpHost.request('agents.read-child', input, signal),
     guide: (input, signal) => mcpHost.request('agents.guide-child', input, signal),
     control: (input, signal) => mcpHost.request('agents.control', input, signal, true),

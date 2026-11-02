@@ -13,7 +13,7 @@ test('default task wait survives many former timeout windows and remains interru
   const tasks = new RuntimeTaskTools((ctx, promises, mode, signal, ms) => { duration = ms; return signals.wait(ctx.sessionId, ctx.turnId, promises, mode, signal, ms); });
   tasks.addSource(() => [{ task_id: 'child', kind: 'subagent', status: done ? 'completed' : 'running', revision: done ? '2' : '1', wait: () => work.promise }]);
   tasks.register(registry);
-  const tool = registry.resolve('tasks'), context = { sessionId: 'parent', turnId: 'turn', input: tool.decodeInput({ action: 'wait', task_ids: ['child'] }) };
+  const tool = registry.resolve('await'), context = { sessionId: 'parent', turnId: 'turn', input: tool.decodeInput({ task_ids: ['child'] }) };
   const waiting = tool.execute(context).then(result => { settled = true; return result; });
   await flush();
   assert.equal(duration, undefined);
@@ -29,12 +29,12 @@ test('explicit timeouts, cancellation, snapshots and progress retain the task li
   const tasks = new RuntimeTaskTools((c, p, m, s, ms) => signals.wait(c.sessionId, c.turnId, p, m, s, ms));
   const progress = { phase: 'tools', model_requests: 2, completed_tool_calls: 8, failed_tool_calls: 1, active_tool_calls: 1 };
   tasks.addSource(() => [{ task_id: 'child', kind: 'subagent', status: 'running', revision: '1', progress, result: 'private result', wait: () => work.promise }]);
-  tasks.register(registry); const tool = registry.resolve('tasks');
+  tasks.register(registry); const tool = registry.resolve('await');
   const run = (input, signal) => tool.execute({ sessionId: 'p', turnId: 't', signal, input: tool.decodeInput(input) });
-  const snapshot = await run({ action: 'wait', task_ids: ['child'], yield_time_ms: 0, after: { child: '1' } });
+  const snapshot = await run({ task_ids: ['child'], yield_time_ms: 0, after: { child: '1' } });
   assert.equal(snapshot.wake_reason, 'snapshot'); assert.deepEqual(snapshot.tasks[0].progress, progress); assert.equal(snapshot.tasks[0].result, undefined);
-  assert.equal((await run({ action: 'wait', yield_time_ms: 1 })).wake_reason, 'yield_timeout');
-  const controller = new AbortController(); const waiting = run({ action: 'wait' }, controller.signal);
+  assert.equal((await run({ yield_time_ms: 1 })).wake_reason, 'yield_timeout');
+  const controller = new AbortController(); const waiting = run({}, controller.signal);
   await flush(); controller.abort(); await assert.rejects(waiting, /abort/i);
   work.resolve('still runs'); assert.equal(await work.promise, 'still runs');
 });

@@ -41,6 +41,7 @@ export interface BrowserConnectorStatus {
   controlledTabCount: number;
   lastError?: string;
   paired: boolean;
+  pendingPairingId?: string | null;
   transport: 'loopback_websocket';
   portRecovery?: ConnectorPortRecovery;
   connectionAttempt?: ConnectorConnectionAttempt;
@@ -200,6 +201,7 @@ export class BrowserConnectorBroker {
       extensionConnected: this.#extensions.size > 0,
       controlledTabCount: [...this.#extensions.values()].reduce((sum, peer) => sum + (peer.status?.controlledTabCount ?? 0), 0),
       paired: this.#webSocket.paired,
+      pendingPairingId: this.#webSocket.pendingPairingId,
       transport: 'loopback_websocket',
       ...(this.#webSocket.portRecovery ? { portRecovery: this.#webSocket.portRecovery } : {}),
       ...(this.#webSocket.connectionAttempt ? { connectionAttempt: this.#webSocket.connectionAttempt } : {}),
@@ -216,7 +218,9 @@ export class BrowserConnectorBroker {
     return () => this.#listeners.delete(listener);
   }
 
-  createPairing(input: { browser?: ConnectorBrowser; label?: string } = {}) { return this.#webSocket.createPairing(input); }
+  createPairing(input: { browser?: ConnectorBrowser; label?: string } = {}) {
+    const pairing = this.#webSocket.createPairing(input); this.#publish(); return pairing;
+  }
   setDefaultConnection(id: string): void { this.#webSocket.setDefault(id); this.#publish(); }
   revokeConnection(id: string): void {
     const peer = this.#extensions.get(id);
@@ -338,7 +342,8 @@ export class BrowserConnectorBroker {
             || entry.length !== 2 || typeof entry[0] !== 'string' || !entry[0] || entry[0].length > 512 || !/^[a-f0-9]{32}$/.test(entry[1])))
             throw new Error('Invalid legacy browser routes.');
           if (new Set([...this.#scopeBindings.keys(), ...input.bindings.map(entry => entry[0])]).size > 4096) throw new Error('Browser session route limit reached.');
-          this.#webSocket.importPairings(input.credentials as Parameters<BrowserConnectorWebSocket['importPairings']>[0], string(input.defaultConnectionId));
+          this.#webSocket.importPairings(input.credentials as Parameters<BrowserConnectorWebSocket['importPairings']>[0], string(input.defaultConnectionId),
+            input.profiles as Parameters<BrowserConnectorWebSocket['importPairings']>[2]);
           for (const [scope, connection] of input.bindings) if (!this.#scopeBindings.has(scope)) this.#bind(scope, connection);
           result = this.status(); this.#publish(); break;
         case 'disable':
@@ -403,6 +408,7 @@ export class BrowserConnectorBroker {
           this.#reply(peer, id, undefined, 'browser_session_busy', 'Wait for the browser switch to finish.'); return;
         }
         let connectionId = referenceAction ? string(params.connectionId) : this.#scopeBindings.get(scopeId);
+        const selectionSource = referenceAction ? 'reference' : connectionId ? 'session' : 'default';
         if (message.method === 'debugger.suspendScope' && !connectionId) {
           this.#reply(peer, id, { suspended: false, scopeId }); return;
         }
@@ -425,7 +431,6 @@ export class BrowserConnectorBroker {
         if (!connectionId) {
           connectionId = this.#webSocket.defaultConnectionId;
           if (!connectionId) { this.#reply(peer, id, undefined, 'browser_selection_required', 'Call list_browsers then select_browser, or choose a default browser in Browser Use settings.'); return; }
-          if (this.#webSocket.connections().some(connection => connection.id === connectionId)) this.#bind(scopeId, connectionId);
         }
         if (string(message.expectedConnectionId) && message.expectedConnectionId !== connectionId) {
           this.#reply(peer, id, undefined, 'browser_selection_changed', 'The selected browser changed while waiting for reconnection. This operation was not sent; observe the selected browser before trying again.'); return;
@@ -436,8 +441,14 @@ export class BrowserConnectorBroker {
           this.#reply(peer, id, undefined, 'browser_unavailable', paired
             ? 'The paired browser is offline. Open the same browser profile with its Browser Use extension; it will reconnect automatically. Pairing is retained and saved website permissions do not need to be granted again.'
             : 'This session’s browser pairing was removed. Select another connected browser explicitly or pair this profile again.',
-          { retryable: paired, execution: 'not_dispatched', connectionId }); return;
+          { retryable: paired, execution: 'not_dispatched', connectionId, selectionSource,
+            defaultConnectionId: this.#webSocket.defaultConnectionId,
+            availableConnections: this.status().connections.filter(connection => connection.connected),
+            nextStep: 'Only this selected connection is unavailable. Call list_browsers to inspect live connections. Ask the user to reselect another browser/profile before select_browser; no automatic fallback was used.' }); return;
         }
+        // An unavailable default is not a successful session selection. Preserve
+        // explicit bindings, but do not pin a new session to an offline default.
+        if (!referenceAction && !this.#scopeBindings.has(scopeId)) this.#bind(scopeId, connectionId);
         const request = { ...message, clientId: peer.id };
         if (Buffer.byteLength(JSON.stringify(request), 'utf8') > maximumCommandBytes) {
           this.#reply(peer, id, undefined, 'browser_request_too_large', 'This browser command exceeds the connector request limit.'); return;

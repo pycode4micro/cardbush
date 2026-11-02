@@ -11,6 +11,10 @@ const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {MarkdownContent} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import {SourceMemoReference} from '${local('src/features/chatMessages/SourceMemoReference.tsx')}';
+import {MarkdownDocument} from '${local('src/features/mdPresentation/MarkdownDocument.tsx')}';
+import {WebLink} from '${local('src/features/browser/WebLink.tsx')}';
+import '${local('src/features/mdPresentation/md-presentation.css')}';
+import '${local('src/features/assistant/assistant.css')}';
 import {MarkdownReference,parseMarkdownReference} from '${local('src/features/chatMessages/MarkdownReference.tsx')}';
 import {FileMemoScope} from '${local('src/features/chatMessages/FileMemoScope.tsx')}';
 import {ImagePreviewDialog} from '${local('src/features/chatMessages/ImagePreviewDialog.tsx')}';
@@ -132,6 +136,33 @@ window.showDeliveryFallbacks=(language='zh',failedLookup=false)=>{
 window.showLoopSource=()=>root.render(<div className="app theme-dark"><ConversationHostContext.Provider value={host}>
   <MarkdownReference reference={parseMarkdownReference(memo.reference)} language="zh" rich={false}>[1]</MarkdownReference>
 </ConversationHostContext.Provider></div>);
+window.showWebLinks=(theme='dark',documentMode=false)=>{
+  const text=[
+    '参考 [开发者文档](https://example.org/docs?q=one#start) 了解详情。',
+    '裸网址：https://example.org/path?q=one#section',
+    '[https://example.org/titled](https://example.org/titled "网站页面标题")',
+    '['+'这是一个很长的网站标题'.repeat(8)+'](https://example.org/long)',
+    '| 入口 | 说明 |\\n| --- | --- |\\n| [表格链接](https://example.org/table) | 可访问 |',
+    '[邮件](mailto:hello@example.org) · [回到标题](#heading)',
+    '[![链接内的图片](https://example.org/favicon.ico)](https://example.org/image)',
+  ].join('\\n\\n');
+  root.render(<div className={'app theme-'+theme} style={{height:'100vh',padding:24,overflow:'auto'}}><ConversationHostContext.Provider value={host}>
+    <section className="assistant-message-user"><div className="assistant-text-bubble">
+      {documentMode?<div className="md-prose"><MarkdownDocument source={text} scope="web-links" onNavigate={()=>{}} language="en"/></div>:<MarkdownContent content={text} language="zh" referenceMode="local" compactImages={false}/>}
+    </div></section>
+  </ConversationHostContext.Provider></div>);
+};
+window.iconReads=[];window.iconPending=[];
+window.showCachedWebIcons=(origin='https://native-only.example.test',theme='bright')=>{
+  window.cardbushDesktop={browser:{readIcon:(url,options)=>{
+    window.iconReads.push({url,options});return new Promise(resolve=>window.iconPending.push(resolve));
+  }}};
+  const cachedMemo={...memo,sources:[{kind:'url',target:origin+'/source?private=source',label:'Source 网站'}]};
+  root.render(<div key={origin} className={'app theme-'+theme} style={{height:'100vh',padding:32}}>
+    <WebLink href={origin+'/private?secret=1'}>网站首页</WebLink>{' '}<WebLink href={origin+'/another'}>同站点链接</WebLink>{' '}
+    <SourceMemoReference reference={memo.reference} language="zh" load={async()=>({status:'resolved',memo:cachedMemo,evidenceStatus:['link']})}/>
+  </div>);
+};
 window.show();
 `;
 const result = await build({ configFile:false,logLevel:'warn',esbuild:{jsx:'automatic'},define:{'process.env.NODE_ENV':'"development"'},plugins:[{name:'source-fixture',resolveId(id){if(id.endsWith('__source_fixture__.tsx'))return '\0source-fixture.tsx';},load(id){if(id==='\0source-fixture.tsx')return source;}}],build:{outDir:directory,emptyOutDir:false,minify:false,lib:{entry:resolve('__source_fixture__.tsx'),formats:['es'],fileName:()=> 'fixture.js'}}});

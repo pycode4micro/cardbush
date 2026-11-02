@@ -76,12 +76,12 @@ export class SharedBrowserConnector implements BrowserConnectorHandle {
     assertConnectorFile(pairingPath);
     if (!fs.existsSync(pairingPath)) return;
     const saved = JSON.parse(fs.readFileSync(pairingPath, 'utf8'));
-    if (![2, 3].includes(saved.version)) throw new Error('Invalid legacy CLI browser pairing configuration.');
+    if (![2, 3, 4].includes(saved.version)) throw new Error('Invalid legacy CLI browser pairing configuration.');
     const routesPath = path.join(directory, 'routes.json'); assertConnectorFile(routesPath);
     const routes = fs.existsSync(routesPath) ? JSON.parse(fs.readFileSync(routesPath, 'utf8')) : { version: 1, bindings: [] };
     if (routes.version !== 1) throw new Error('Invalid legacy CLI browser routes.');
     const credentials = saved.version === 2 ? (saved.credential ? [{ ...saved.credential, browser: 'chrome', label: 'Google Chrome' }] : []) : saved.credentials;
-    await this.#call('import', { credentials, defaultConnectionId: saved.version === 2 ? saved.credential?.id : saved.defaultConnectionId, bindings: routes.bindings });
+    await this.#call('import', { credentials, profiles: saved.profiles, defaultConnectionId: saved.version === 2 ? saved.credential?.id : saved.defaultConnectionId, bindings: routes.bindings });
   }
   onStatus(listener: (status: BrowserConnectorStatus) => void) { this.#listeners.add(listener); return () => { this.#listeners.delete(listener); }; }
   #publish(status: BrowserConnectorStatus) { this.#status = status; for (const listener of this.#listeners) listener(status); }
