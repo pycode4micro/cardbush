@@ -89,6 +89,7 @@ cardbush serve --stop
 | Team 与助手 | [Team 工作流](docs/TEAM_NATIVE_WORKFLOWS.md) · [个人助手](docs/PERSONAL_ASSISTANT.md) |
 | 浏览器、语音与自动化 | [Browser / Computer Use](docs/CORE_BROWSER_COMPUTER_USE.md) · [语音](docs/REALTIME_VOICE.md) · [自动化](docs/AUTOMATIONS.md) |
 | 远程工作 | [Agent 服务](docs/AGENT_SERVICES.md) · [SSH 工作区](docs/SSH_WORKSPACES.md) |
+| Bot 对话接入 | [通用 Webhook / WebSocket 接口](deploy/bots/README.md)，默认复用本机模型和插件配置 |
 | 开发与发布 | [参与开发](CONTRIBUTING.zh-CN.md) · [架构](docs/ARCHITECTURE.md) · [发布渠道](docs/CROSS_PLATFORM_RELEASE.zh-CN.md) |
 
 漏洞报告、数据处理与执行边界单独放在 [SECURITY.zh-CN.md](SECURITY.zh-CN.md)。普通问题与功能建议请使用 [GitHub Issues](https://github.com/pycode4micro/cardbush/issues)。

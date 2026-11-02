@@ -10,6 +10,7 @@ async function fixture(t) {
   const root = await mkdtemp(join(base, 'case-')), source = join(root, 'source');
   t.after(async () => { assert.ok(resolve(root).startsWith(base + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
   for (const path of ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/cardbush-agent.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentServiceProcess.mjs', 'dist-electron/agentService.mjs',
+    'dist-electron/botGatewayCli.mjs', 'dist-electron/botGateway.mjs', 'dist-electron/botGatewayHttp.mjs', 'dist-electron/botGatewayConfig.mjs', 'deploy/bots/README.md', 'deploy/bots/example.json',
     'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
     'dist-electron/agentLocalRuntime.mjs', 'dist-electron/agentLocalRuntimeHost.mjs', 'dist-electron/agentServer.mjs',
     'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',
@@ -55,6 +56,8 @@ test('Linux Agent packaging retains runtime and CommonJS dependencies without re
   await access(join(f.output, 'dist-electron/agentChatCli.mjs'));
   await access(join(f.output, 'dist-electron/agentChatCompletion.mjs'));
   await access(join(f.output, 'dist-electron/agentChatShell.mjs'));
+  await access(join(f.output, 'dist-electron/botGatewayCli.mjs'));
+  await access(join(f.output, 'deploy/bots/example.json'));
   await access(join(f.output, 'bin/cardbush.mjs'));
   assert.match(await readFile(join(f.output, 'DEPLOY.txt'), 'utf8'), /cardbush --resume <session-id>/);
   await access(join(f.output,'assets/skills/cardbush-docs/references/agent-deployment.md'));

@@ -19,6 +19,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:bot-gateway": "npm run build:agent && node --test --test-timeout=60000 scripts/test-bot-gateway.mjs",
     "test:remote-workers": "npm run build:agent && node --test packages/bush-protocol/test/remoteInteraction.test.mjs packages/bush-runtime/test/subagentInteractions.test.mjs packages/bush-runtime/test/subagentResume.test.mjs packages/bush-runtime/test/registeredAgents.test.mjs scripts/test-agent-service.mjs scripts/test-web-remote-agents.mjs scripts/test-local-workers.mjs && node scripts/run-agents-ui-test.mjs",
     "test:mcp-conformance": "npm run build:runtime && node scripts/run-mcp-conformance.mjs",
     "test:mcp-conformance:all": "npm run test:mcp-conformance -- --suite all",

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "host": "127.0.0.1",
+  "port": 4790,
+  "language": "zh",
+  "channels": [
+    {
+      "id": "my-bot",
+      "tokenEnv": "CARDBUSH_BOT_TOKEN",
+      "callback": {
+        "url": "http://127.0.0.1:8088/cardbush/replies",
+        "secretEnv": "CARDBUSH_BOT_CALLBACK_SECRET"
+      }
+    }
+  ]
+}

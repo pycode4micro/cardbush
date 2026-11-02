@@ -64,7 +64,7 @@ export async function packageNpm(root, output, { npmCli = process.env.npm_execpa
     type: source.type, engines: source.engines,
     bin: { cardbush: 'bin/cardbush.mjs', 'cardbush-agent': 'bin/cardbush-agent.mjs' },
     files: ['bin/', 'dist-electron/', 'packages/', 'assets/', 'dist-native/', 'scripts/agent-desktop/',
-      'deploy/agent/install-windows-desktop.ps1', 'README.md', 'LICENSE', 'NOTICE'],
+      'deploy/agent/install-windows-desktop.ps1', 'deploy/bots/', 'README.md', 'LICENSE', 'NOTICE'],
     dependencies: Object.fromEntries(Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b))),
     bundleDependencies: [...internal].sort(),
     publishConfig: { access: 'public' },

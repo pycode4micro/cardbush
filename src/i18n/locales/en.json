@@ -4126,6 +4126,11 @@
     "assistantMessage.reaction.think": "Thinking",
     "assistantMessage.reaction.watch": "Watching",
     "assistantMessage.reaction.launch": "Launch",
-    "assistantMessage.reaction.surprise": "Surprised"
+    "assistantMessage.reaction.surprise": "Surprised",
+    "botGateway.error": "Bot connection error: {code}.",
+    "botGateway.conversationTitle": "{channel} · {sender}",
+    "botGateway.configValid": "Bot connection configuration is valid ({count} connections). No network requests were made.",
+    "botGateway.listening": "Bot gateway listening at {url} ({count} connections). Keep this process running to receive messages and deliver replies.",
+    "botGateway.help": "CardBush generic Bot gateway\nUsage: cardbush bots --config PATH [options]\n\n  --check             Validate configuration and secret environment variables without connecting\n  --state-dir PATH    Message receipts and callback delivery state\n  --profile-dir PATH  Local Cardbush profile (models and plugins)\n  --data-dir PATH     Local CLI conversation data\n  --url URL           Optional remote Cardbush Agent service\n  --token-file PATH   Access-token file for --url\n  --language TAG      Language for gateway messages\n\nDefaults to the local Cardbush model/plugin configuration. The gateway provides generic HTTP Webhooks and WebSocket events. Your Bot service converts platform-specific messages. See deploy/bots/README.md."
   }
 }

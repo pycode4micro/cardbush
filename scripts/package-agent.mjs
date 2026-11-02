@@ -7,6 +7,7 @@ import { verifyAgentBundledAssets, verifyAgentBundledMcp } from '../dist-electro
 
 const sourceRoot = resolve(import.meta.dirname, '..');
 const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/cardbush-agent.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentServiceProcess.mjs',
+  'dist-electron/botGatewayCli.mjs', 'dist-electron/botGateway.mjs', 'dist-electron/botGatewayHttp.mjs', 'dist-electron/botGatewayConfig.mjs', 'deploy/bots/README.md', 'deploy/bots/example.json',
   'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
   'dist-electron/agentLocalRuntime.mjs', 'dist-electron/agentLocalRuntimeHost.mjs', 'dist-electron/agentServer.mjs',
   'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',
@@ -61,6 +62,7 @@ export async function packageAgent(root, output, platform = process.platform) {
   await mkdir(join(output, 'deploy/agent'), { recursive: true });
   await cp(join(root, 'deploy/agent/install-windows-desktop.ps1'), join(output, 'deploy/agent/install-windows-desktop.ps1'));
   await cp(join(root, 'deploy/agent/README.md'), join(output, 'deploy/agent/README.md'));
+  await cp(join(root, 'deploy/bots'), join(output, 'deploy/bots'), { recursive: true, filter });
   for (const entry of await readdir(join(root, 'packages'), { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const from = join(root, 'packages', entry.name), to = join(output, 'packages', entry.name);

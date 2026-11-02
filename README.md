@@ -89,6 +89,7 @@ The [documentation index](docs/README.md) pairs current English and Chinese guid
 | Team and assistant | [Team workflows](docs/TEAM_NATIVE_WORKFLOWS.en.md) · [Personal assistant](docs/PERSONAL_ASSISTANT.en.md) |
 | Browsers, voice and automation | [Browser / Computer Use](docs/CORE_BROWSER_COMPUTER_USE.en.md) · [Voice](docs/REALTIME_VOICE.en.md) · [Automations](docs/AUTOMATIONS.en.md) |
 | Remote operation | [Agent services](docs/AGENT_SERVICES.en.md) · [SSH workspaces](docs/SSH_WORKSPACES.en.md) |
+| Bot conversations | [Generic Webhook / WebSocket gateway](deploy/bots/README.md) (Chinese), using the local model and plugin configuration by default |
 | Development and releases | [Contributing](CONTRIBUTING.md) · [Architecture](docs/ARCHITECTURE.en.md) · [Release channels](docs/CROSS_PLATFORM_RELEASE.md) |
 
 Security reporting, data handling and execution boundaries are documented separately in [SECURITY.md](SECURITY.md). For ordinary bugs and feature requests, use [GitHub Issues](https://github.com/pycode4micro/cardbush/issues).

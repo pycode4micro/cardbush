@@ -4084,6 +4084,11 @@
     "assistantMessage.reaction.think": "思考",
     "assistantMessage.reaction.watch": "关注",
     "assistantMessage.reaction.launch": "出发",
-    "assistantMessage.reaction.surprise": "惊讶"
+    "assistantMessage.reaction.surprise": "惊讶",
+    "botGateway.error": "Bot 连接错误：{code}。",
+    "botGateway.conversationTitle": "{channel} · {sender}",
+    "botGateway.configValid": "Bot 连接配置有效（{count} 个连接）。未发起网络请求。",
+    "botGateway.listening": "Bot 接口已监听 {url}（{count} 个连接）。保持此进程运行以接收消息和回传回复。",
+    "botGateway.help": "CardBush 通用 Bot 接口\n用法：cardbush bots --config 路径 [选项]\n\n  --check             仅检查配置和密钥环境变量，不连接服务\n  --state-dir 路径    消息回执和回调投递状态\n  --profile-dir 路径  本机 Cardbush 配置目录（模型与插件）\n  --data-dir 路径     本机 CLI 会话数据目录\n  --url 地址          可选的远程 Cardbush Agent 服务\n  --token-file 路径   --url 对应的访问令牌文件\n  --language 语言     接口提示语言\n\n默认复用本机 Cardbush 的模型和插件配置。提供通用 HTTP Webhook 和 WebSocket 事件接口，由你的 Bot 服务转换平台消息。详见 deploy/bots/README.md。"
   }
 }
