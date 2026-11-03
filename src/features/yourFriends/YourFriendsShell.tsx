@@ -1,9 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { ArrowLeft, ArrowUp, Check, ChevronRight, Circle, History, Settings2, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Check, ChevronRight, Circle, History, Palette, Settings2, Sparkles, X } from 'lucide-react';
 import { uiText, type MessageKey } from '../../i18n';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from '../composer/ComposerPromptInput';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { FriendAvatar } from './FriendAvatar';
+import { FriendAppearanceEditor, characterLabels } from './FriendAppearanceEditor';
+import type { FriendAppearanceGenerator } from './generateFriendAppearance';
+import type { FriendAppearance } from './friendDesign';
 import { YourFriendsSettings } from './YourFriendsSettings';
 import { circleGeometry, confirmFriendIntroduction, introductionSteps, readFriendsDraft, recordFriendEvent, saveFriendsDraft,
   updateFriendsState, useFriendsState, type IntroductionStep } from './friendsStore';
@@ -17,24 +20,26 @@ const stepPrompts: Record<IntroductionStep, MessageKey> = {
   address: 'yourFriends.addressPrompt', context: 'yourFriends.contextPrompt', judgment: 'yourFriends.judgmentPrompt',
   communication: 'yourFriends.communicationPrompt', boundaries: 'yourFriends.boundariesPrompt', appearance: 'yourFriends.appearancePrompt',
 };
-const tones = ['lilac', 'peach', 'sage'] as const;
-const toneLabels: Record<typeof tones[number], MessageKey> = { lilac: 'yourFriends.lilac', peach: 'yourFriends.peach', sage: 'yourFriends.sage' };
 const exampleFile = 'SettingsToolbar.tsx';
+const panelTitles: Record<'events' | 'settings' | 'appearance', MessageKey> = {
+  events: 'yourFriends.events', settings: 'yourFriends.settings', appearance: 'yourFriends.designAppearance',
+};
 
-/** A local interaction preview. No model calls, scheduler, or implicit permission grants. */
-export function YourFriendsShell({ language, origin, onClose }: {
-  language: string; origin?: { x: number; y: number }; onClose(): void;
+/** Profile and events stay local; appearance generation explicitly uses the configured model. */
+export function YourFriendsShell({ language, origin, onClose, generateAppearance }: {
+  language: string; origin?: { x: number; y: number }; onClose(): void; generateAppearance?: FriendAppearanceGenerator;
 }) {
   const t = uiText(language), state = useFriendsState(), shortcuts = useKeyboardShortcuts();
   const number = new Intl.NumberFormat(language);
   const name = state.name || t('yourFriends.title'), ready = Boolean(state.introduction.confirmedAt);
   const step = introductionSteps[state.introduction.step];
+  const designing = !ready && step === 'appearance';
   const draftScope = ready ? 'event' : step ?? 'review';
   const savedDraft = () => readFriendsDraft(draftScope) ?? (!ready && step ? state.introduction.answers[step] ?? '' : '');
   const [draft, setDraft] = useState(savedDraft), [error, setError] = useState('');
   const [phase, setPhase] = useState<'opening' | 'open' | 'closing'>(origin ? 'opening' : 'open');
   const [geometry, setGeometry] = useState<ReturnType<typeof circleGeometry>>();
-  const [panel, setPanel] = useState<'events' | 'settings' | null>(null), [selectedId, setSelectedId] = useState('');
+  const [panel, setPanel] = useState<keyof typeof panelTitles | null>(null), [selectedId, setSelectedId] = useState('');
   const [relatesTo, setRelatesTo] = useState<string>(), [demoStep, setDemoStep] = useState<number | null>(null);
   const [profileConfirmed, setProfileConfirmed] = useState(false), [boundaryConfirmed, setBoundaryConfirmed] = useState(false);
   const root = useRef<HTMLDivElement>(null), stage = useRef<HTMLDivElement>(null), input = useRef<ComposerPromptInputHandle>(null);
@@ -44,7 +49,10 @@ export function YourFriendsShell({ language, origin, onClose }: {
   const selected = state.events.find(event => event.id === selectedId && !event.archived);
   const related = state.events.find(event => event.id === relatesTo);
   const save = (change: Parameters<typeof updateFriendsState>[0]) => {
-    try { updateFriendsState(change); setError(''); } catch { setError(t('yourFriends.saveError')); }
+    try { updateFriendsState(change); setError(''); return true; } catch { setError(t('yourFriends.saveError')); return false; }
+  };
+  const applyAppearance = (appearance: FriendAppearance, advance = false) => {
+    if (save(current => ({ ...current, appearance, ...(advance ? { introduction: { ...current.introduction, step: introductionSteps.length } } : {}) }))) setPanel(null);
   };
 
   useLayoutEffect(() => {
@@ -73,7 +81,7 @@ export function YourFriendsShell({ language, origin, onClose }: {
   useEffect(() => { if (demoStep !== null) root.current?.querySelector('.friends-demo')?.scrollIntoView({ block: 'nearest' }); }, [demoStep]);
 
   const submit = () => {
-    if (submitting.current || !draft.trim() || (!ready && !step)) return;
+    if (submitting.current || !draft.trim() || designing || (!ready && !step)) return;
     if (draft.length > 8000) { setError(t('yourFriends.inputTooLong', { count: number.format(8000) })); return; }
     submitting.current = true;
     try {
@@ -91,19 +99,22 @@ export function YourFriendsShell({ language, origin, onClose }: {
     try { saveFriendsDraft(value, draftScope); setError(''); } catch { setError(t('yourFriends.saveError')); }
   };
   const leave = () => { if (phase !== 'closing') setPhase('closing'); };
-  const canFinish = Boolean(state.introduction.answers.context?.trim()) && profileConfirmed && boundaryConfirmed;
+  const continueIntroduction = () => save(current => ({ ...current, introduction: { ...current.introduction,
+    step: current.introduction.step + 1,
+  } }));
+  const canFinish = Boolean(state.introduction.answers.context?.trim()) && Boolean(state.appearance) && profileConfirmed && boundaryConfirmed;
   const transitionStyle = geometry ? {
     '--friend-origin-x': `${geometry.x}px`, '--friend-origin-y': `${geometry.y}px`, '--friend-radius': `${geometry.radius}px`,
   } as CSSProperties : undefined;
 
   return <div ref={root} className="your-friends" role="dialog" aria-modal="true" aria-labelledby={titleId}
-    data-phase={phase} data-tone={state.tone} data-motion={state.motion} data-ready={ready} style={transitionStyle}
+    data-phase={phase} data-tone={state.tone} data-motion={state.motion} data-ready={ready} data-designing={designing} style={transitionStyle}
     onAnimationEnd={event => { if (event.target === event.currentTarget) { if (phase === 'closing') onClose(); else setPhase('open'); } }}
     onKeyDown={event => {
       if (panel || event.nativeEvent.isComposing) return;
       if (event.key === 'Escape') { event.stopPropagation(); leave(); }
       if (event.key === 'Tab') {
-        const controls = Array.from(root.current!.querySelectorAll<HTMLElement>('button:not(:disabled),textarea:not(:disabled),input:not(:disabled),select,[tabindex="0"]')).filter(node => node.getClientRects().length);
+        const controls = Array.from(root.current!.querySelectorAll<HTMLElement>('button:not(:disabled),textarea:not(:disabled),input:not(:disabled),select,summary,[tabindex="0"]')).filter(node => node.getClientRects().length);
         const first = controls[0], last = controls.at(-1);
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -113,14 +124,15 @@ export function YourFriendsShell({ language, origin, onClose }: {
       <button className="friends-icon friends-back" type="button" onClick={leave} aria-label={t('yourFriends.back')} title={t('yourFriends.back')}><ArrowLeft/></button>
       <div className="friends-brand"><span id={titleId}>{name}</span><span className="friends-preview">{t('yourFriends.preview')}</span></div>
       <nav aria-label={t('yourFriends.navigation')}>
-        <button type="button" className="friends-icon" onClick={() => setPanel('events')} aria-label={t('yourFriends.events')} title={t('yourFriends.events')}><History/></button>
-        <button type="button" className="friends-icon" onClick={() => setPanel('settings')} aria-label={t('yourFriends.settings')} title={t('yourFriends.settings')}><Settings2/></button>
+        <button type="button" className="friends-icon" data-panel="appearance" disabled={designing} onClick={() => setPanel('appearance')} aria-label={t('yourFriends.designAppearance')} title={t('yourFriends.designAppearance')}><Palette/></button>
+        <button type="button" className="friends-icon" data-panel="events" onClick={() => setPanel('events')} aria-label={t('yourFriends.events')} title={t('yourFriends.events')}><History/></button>
+        <button type="button" className="friends-icon" data-panel="settings" onClick={() => setPanel('settings')} aria-label={t('yourFriends.settings')} title={t('yourFriends.settings')}><Settings2/></button>
       </nav>
     </header>
     <div className="friends-stage" ref={stage}>
       <div className="friends-story">
-        <div className="friends-companion"><FriendAvatar state={draft ? 'listening' : demoStep !== null && demoStep < 2 ? 'working' : ready ? 'done' : 'idle'}/>
-          <span className="friends-presence"><i/>{t(ready ? 'yourFriends.here' : 'yourFriends.gettingAcquainted')}</span></div>
+        {!designing && <div className="friends-companion"><FriendAvatar appearance={state.appearance} state={draft ? 'listening' : demoStep !== null && demoStep < 2 ? 'working' : ready ? 'done' : 'idle'}/>
+          <span className="friends-presence"><i/>{t(ready ? 'yourFriends.here' : 'yourFriends.gettingAcquainted')}</span></div>}
         {!ready ? <section className="friends-introduction" aria-labelledby="friends-step-title">
           <div className="friends-eyebrow">{t('yourFriends.introductionProgress', { current: number.format(state.introduction.step + 1), total: number.format(introductionSteps.length + 1) })}</div>
           <h1 id="friends-step-title">{t(step ? stepTitles[step] : 'yourFriends.reviewTitle')}</h1>
@@ -135,22 +147,22 @@ export function YourFriendsShell({ language, origin, onClose }: {
               <option value="always">{t('yourFriends.reportAlways')}</option><option value="important">{t('yourFriends.reportImportant')}</option></select></label>
             <p>{t('yourFriends.boundaryDraft')}</p>
           </div>}
-          {step === 'appearance' && <div className="friends-tones" role="group" aria-label={t('yourFriends.appearanceTitle')}>
-            {tones.map(tone => <button key={tone} type="button" data-tone={tone} aria-pressed={state.tone === tone}
-              onClick={() => save(current => ({ ...current, tone }))}><i/>{t(toneLabels[tone])}{state.tone === tone && <Check/>}</button>)}
-          </div>}
+          {designing && <FriendAppearanceEditor language={language} state={state} generate={generateAppearance} onApply={appearance => applyAppearance(appearance, true)} onChange={change => save(current => ({ ...current, ...change }))}/>}
           {!step && <div className="friends-review friends-card">
-            {introductionSteps.map((key, index) => <div className="friends-review-row" key={key}><div><h2>{t(stepTitles[key])}</h2><p>{state.introduction.answers[key] || t('yourFriends.notShared')}</p></div>
+            {introductionSteps.map((key, index) => <div className="friends-review-row" key={key}><div><h2>{t(stepTitles[key])}</h2>
+              {key === 'appearance' && <p>{t('yourFriends.appearanceSummary', { character: state.appearance?.type === 'generated' ? state.appearance.design.name : state.appearance?.type === 'builtin' ? t(characterLabels[state.appearance.character]) : t('yourFriends.designNotGenerated'), motion: t(state.motion ? 'yourFriends.motionOn' : 'yourFriends.motionOff') })}</p>}
+              {(key !== 'appearance' || state.introduction.answers[key]) && <p>{state.introduction.answers[key] || t('yourFriends.notShared')}</p>}</div>
               <button type="button" className="friends-text-button" onClick={() => { setProfileConfirmed(false); setBoundaryConfirmed(false); save(current => ({ ...current, introduction: { ...current.introduction, step: index } })); }}>{t('yourFriends.edit')}</button></div>)}
             <p>{t('yourFriends.boundarySummary', { before: t(state.delegation.beforeExecution === 'ask' ? 'yourFriends.askFirst' : 'yourFriends.withinScope'), report: t(state.delegation.report === 'always' ? 'yourFriends.reportAlways' : 'yourFriends.reportImportant') })}</p>
             {!state.introduction.answers.context?.trim() && <p className="your-friends-error">{t('yourFriends.contextRequired')}</p>}
+            {!state.appearance && <p className="your-friends-error">{t('yourFriends.designRequired')}</p>}
             <label className="friends-confirm"><input type="checkbox" checked={profileConfirmed} onChange={event => setProfileConfirmed(event.target.checked)}/><span>{t('yourFriends.confirmProfile')}</span></label>
             <label className="friends-confirm"><input type="checkbox" checked={boundaryConfirmed} onChange={event => setBoundaryConfirmed(event.target.checked)}/><span>{t('yourFriends.confirmBoundary')}</span></label>
             <button type="button" className="friends-primary" disabled={!canFinish} onClick={() => { try { confirmFriendIntroduction(); setError(''); setSelectedId(''); } catch { setError(t('yourFriends.saveError')); } }}>{t('yourFriends.finish')}<ChevronRight/></button>
           </div>}
           <div className="friends-step-actions">
             {state.introduction.step > 0 && <button className="friends-text-button" type="button" onClick={() => save(current => ({ ...current, introduction: { ...current.introduction, step: current.introduction.step - 1 } }))}><ArrowLeft/>{t('yourFriends.previous')}</button>}
-            {step && (step !== 'context' || Boolean(state.introduction.answers.context?.trim())) && <button className="friends-text-button" type="button" onClick={() => save(current => ({ ...current, introduction: { ...current.introduction, step: current.introduction.step + 1 } }))}>{t(step === 'boundaries' || step === 'appearance' ? 'yourFriends.keepSelection' : 'yourFriends.skip')}<ChevronRight/></button>}
+            {step && !designing && (step !== 'context' || Boolean(state.introduction.answers.context?.trim())) && <button className="friends-text-button" type="button" onClick={continueIntroduction}>{t(step === 'boundaries' ? 'yourFriends.keepSelection' : 'yourFriends.skip')}<ChevronRight/></button>}
           </div>
         </section> : <section className="friends-event-stage" aria-live="polite">
           <h1>{t(selected ? 'yourFriends.receivedTitle' : 'yourFriends.readyTitle', { name })}</h1>
@@ -171,7 +183,7 @@ export function YourFriendsShell({ language, origin, onClose }: {
       <div className="friends-input-inner">
         {related && <div className="friends-relation"><span>{t('yourFriends.continuing', { text: related.text })}</span><button type="button" className="friends-icon" aria-label={t('yourFriends.removeRelation')} onClick={() => setRelatesTo(undefined)}><X/></button></div>}
         {error && <p role="alert" className="your-friends-error">{error}</p>}
-        <div className="friends-input-surface" data-readonly={!ready && !step}>
+        {!designing && <div className="friends-input-surface" data-readonly={!ready && !step}>
           <ComposerPromptInput ref={input} language={language} plugins={[]} richReferences={false} value={draft} readOnly={!ready && !step}
             ariaLabel={t('yourFriends.inputLabel')} ariaDescribedBy={noticeId} placeholder={t(!ready && !step ? 'yourFriends.reviewPlaceholder' : 'yourFriends.inputPlaceholder')}
             onChange={changeDraft} onSelectionChange={() => {}} onKeyDown={event => {
@@ -179,13 +191,17 @@ export function YourFriendsShell({ language, origin, onClose }: {
               if (shortcuts.matches('sendMessage', event) || shortcuts.matches('guideNow', event)) { event.preventDefault(); event.stopPropagation(); submit(); }
             }}/>
           <button type="button" className="friends-send" aria-label={t('yourFriends.send')} title={t('yourFriends.send')} disabled={!draft.trim() || (!ready && !step)} onClick={submit}><ArrowUp/></button>
-        </div>
+        </div>}
         <p className="friends-footnote" id={noticeId}>{t('yourFriends.previewNotice')}</p>
       </div>
     </footer>
-    {panel && <FriendsDialog title={t(panel === 'events' ? 'yourFriends.events' : 'yourFriends.settings')} closeLabel={t('yourFriends.close')} onClose={() => setPanel(null)}>
-      {panel === 'settings' ? <><YourFriendsSettings language={language}/><p className="friends-aside">{t('yourFriends.localData')}</p>
-        {ready && <button type="button" className="friends-text-button" onClick={() => { save(current => ({ ...current, introduction: { ...current.introduction, step: 6, confirmedAt: undefined } })); setProfileConfirmed(false); setBoundaryConfirmed(false); setPanel(null); }}>{t('yourFriends.reviewIdentity')}</button>}</> : <>
+    {panel && <FriendsDialog title={t(panelTitles[panel])} closeLabel={t('yourFriends.close')} onClose={() => setPanel(null)}>
+      {panel === 'appearance' ? <>
+        {!state.introduction.answers.context?.trim() && <p className="friends-aside">{t('yourFriends.designNeedsContext')}</p>}
+        <FriendAppearanceEditor language={language} state={state} generate={generateAppearance} onApply={appearance => applyAppearance(appearance)} onChange={change => save(current => ({ ...current, ...change }))}/>
+        {error && <p className="your-friends-error" role="alert">{error}</p>}
+      </> : panel === 'settings' ? <><YourFriendsSettings language={language}/><p className="friends-aside">{t('yourFriends.localData')}</p>
+        {ready && <button type="button" className="friends-text-button" onClick={() => { save(current => ({ ...current, introduction: { ...current.introduction, step: introductionSteps.length, confirmedAt: undefined } })); setProfileConfirmed(false); setBoundaryConfirmed(false); setPanel(null); }}>{t('yourFriends.reviewIdentity')}</button>}</> : <>
         <p className="friends-aside">{t('yourFriends.eventsDescription')}</p>
         {!state.events.length && <p className="friends-empty">{t('yourFriends.noEvents')}</p>}
         <ol className="friends-event-list">{[...state.events].reverse().map(event => <li key={event.id} data-archived={event.archived}>

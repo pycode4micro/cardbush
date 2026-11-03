@@ -103,6 +103,7 @@ import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
 import { WindowFrame } from './components/WindowFrame';
 import { YourFriendsShell } from './features/yourFriends/YourFriendsShell';
+import { generateFriendAppearance } from './features/yourFriends/generateFriendAppearance';
 import { friendsStartupEnabled } from './features/yourFriends/friendsStore';
 import { applicationMenus } from './features/windowMenu/applicationMenus';
 import { InspectorActions } from './features/inspector/InspectorActions';
@@ -2901,7 +2902,8 @@ function CardbushApp() {
       </ConversationInspectorContext.Provider>
       </RegionConversationContext.Provider>
       </PageNavigationScope.Provider>
-      {friendsOpen && <YourFriendsShell language={language} origin={friendsOrigin} onClose={closeFriends}/>}
+      {friendsOpen && <YourFriendsShell language={language} origin={friendsOrigin} onClose={closeFriends}
+        generateAppearance={(input, signal) => generateFriendAppearance(input, chat.prepareFriendsRequest, signal)}/>}
       {projectRenameTarget && (
         <ProjectRenameDialog
           key={projectRenameTarget.id}

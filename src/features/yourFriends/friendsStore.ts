@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { validFriendAppearance, type FriendAppearance } from './friendDesign';
 
 export const friendsStorageKey = 'cardbush_your_friends_v1';
 export const friendsDraftKey = 'cardbush_your_friends_draft_v1';
@@ -9,19 +10,20 @@ export type FriendEvent = {
   step?: IntroductionStep; relatesTo?: string; archived: boolean;
 };
 export type FriendsState = {
-  version: 1;
+  version: 2;
   id: 'primary-friend';
   name: string;
   startup: boolean;
   motion: boolean;
   tone: 'lilac' | 'peach' | 'sage';
+  appearance?: FriendAppearance;
   introduction: { step: number; answers: Partial<Record<IntroductionStep, string>>; confirmedAt?: string };
   // These are interview drafts, never runtime permission grants.
   delegation: { beforeExecution: 'ask' | 'within-scope'; report: 'always' | 'important'; confirmedAt?: string };
   events: FriendEvent[];
 };
 
-const defaults = (): FriendsState => ({ version: 1, id: 'primary-friend', name: '', startup: false, motion: true,
+const defaults = (): FriendsState => ({ version: 2, id: 'primary-friend', name: '', startup: false, motion: true,
   tone: 'lilac', introduction: { step: 0, answers: {} }, delegation: { beforeExecution: 'ask', report: 'always' }, events: [] });
 let cachedRaw: string | null | undefined;
 let cached = defaults();
@@ -31,8 +33,9 @@ const listeners = new Set<() => void>();
 function validState(value: unknown): value is FriendsState {
   if (!value || typeof value !== 'object') return false;
   const state = value as FriendsState;
-  return state.version === 1 && state.id === 'primary-friend' && typeof state.name === 'string' && state.name.length <= 60 &&
+  return state.version === 2 && state.id === 'primary-friend' && typeof state.name === 'string' && state.name.length <= 60 &&
     typeof state.startup === 'boolean' && typeof state.motion === 'boolean' && ['lilac', 'peach', 'sage'].includes(state.tone) &&
+    validFriendAppearance(state.appearance) &&
     Boolean(state.introduction && Number.isInteger(state.introduction.step) && state.introduction.step >= 0 && state.introduction.step <= introductionSteps.length &&
       state.introduction.answers && typeof state.introduction.answers === 'object' &&
       Object.entries(state.introduction.answers).every(([key, answer]) => introductionSteps.includes(key as IntroductionStep) && typeof answer === 'string' && answer.length <= 8000) &&
@@ -44,11 +47,17 @@ function validState(value: unknown): value is FriendsState {
       typeof event.archived === 'boolean' && (!event.step || introductionSteps.includes(event.step)) && (!event.relatesTo || typeof event.relatesTo === 'string'));
 }
 
+function migrateState(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || (value as { version?: unknown }).version !== 1) return value;
+  // Read-only migration: persist only on the next successful user edit.
+  return { ...value, version: 2 };
+}
+
 export function readFriendsState(): FriendsState {
   try {
     const raw = localStorage.getItem(friendsStorageKey);
     if (cachedRaw !== raw || unreadable) {
-      const parsed: unknown = raw ? JSON.parse(raw) : defaults();
+      const parsed: unknown = raw ? migrateState(JSON.parse(raw)) : defaults();
       unreadable = !validState(parsed);
       if (!unreadable) { cachedRaw = raw; cached = parsed as FriendsState; }
     }
@@ -99,6 +108,7 @@ export function recordFriendEvent(text: string, step?: IntroductionStep, relates
 export function confirmFriendIntroduction() {
   updateFriendsState(current => {
     if (!current.introduction.answers.context?.trim()) throw Error('FRIENDS_CONTEXT_REQUIRED');
+    if (!current.appearance) throw Error('FRIENDS_APPEARANCE_REQUIRED');
     const confirmedAt = new Date().toISOString();
     return { ...current, introduction: { ...current.introduction, confirmedAt }, delegation: { ...current.delegation, confirmedAt } };
   });
