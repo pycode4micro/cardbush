@@ -1,0 +1,40 @@
+.your-friends {
+  --friend-enter-duration: 720ms;
+  --friend-exit-duration: 480ms;
+  --friend-transition-duration: var(--friend-enter-duration);
+  --friend-aperture-x: 50%;
+  --friend-aperture-y: 50%;
+  transform-origin: var(--friend-aperture-x) var(--friend-aperture-y);
+}
+.your-friends[data-phase="opening"] { animation: friends-surface-arrive var(--friend-transition-duration) cubic-bezier(.16,1,.3,1) both; }
+.your-friends[data-phase="closing"] {
+  --friend-transition-duration: var(--friend-exit-duration);
+  animation: friends-surface-arrive var(--friend-transition-duration) cubic-bezier(.4,0,.6,1) reverse both;
+  pointer-events: none;
+}
+/* One continuous surface grows from the entry point, without a persistent emblem. */
+@keyframes friends-surface-arrive {
+  0% {
+    clip-path: inset(var(--friend-aperture-y) calc(100% - var(--friend-aperture-x)) calc(100% - var(--friend-aperture-y)) var(--friend-aperture-x) round 32px);
+    opacity: 0; transform: scale(.96);
+  }
+  48% { clip-path: inset(3% 3% 3% 3% round 28px); opacity: 1; }
+  100% { clip-path: inset(0 0 0 0 round 0); opacity: 1; transform: scale(1); }
+}
+.friends-transition { position: absolute; inset: 0; z-index: 4; overflow: hidden; pointer-events: none; }
+.friends-transition-wash {
+  position: absolute; inset: 0;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--surface) 75%, transparent), transparent 68%);
+  animation: friends-material-settle var(--friend-transition-duration) both;
+}
+.your-friends[data-phase="closing"] .friends-transition-wash { animation-direction: reverse; }
+.your-friends[data-phase="opening"] > :is(.friends-header, .friends-stage, .friends-input-dock) { animation: friends-content-arrive var(--friend-transition-duration) both; }
+.your-friends[data-phase="closing"] > :is(.friends-header, .friends-stage, .friends-input-dock) { animation: friends-content-leave var(--friend-transition-duration) both; }
+@keyframes friends-material-settle { 0% { opacity: .8; } 100% { opacity: 0; } }
+@keyframes friends-content-arrive { 0%, 18% { opacity: 0; transform: translateY(6px); } 100% { opacity: 1; transform: translateY(0); } }
+@keyframes friends-content-leave { 0% { opacity: 1; transform: translateY(0); } 65%, 100% { opacity: 0; transform: translateY(3px); } }
+
+/* Reduced motion bypasses the surface animation, including startup entry. */
+.your-friends[data-motion="false"] .friends-transition,
+html[data-reduce-motion="true"] .friends-transition { display: none; }
+@media (prefers-reduced-motion: reduce) { .friends-transition { display: none; } }

@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowUp, Check, ChevronRight, Circle, History, Palette, Sett
 import { uiText, type MessageKey } from '../../i18n';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from '../composer/ComposerPromptInput';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
-import { FriendAvatar } from './FriendAvatar';
+import { FriendsTransition } from './FriendsTransition';
 import { FriendTextPages } from './FriendTextPages';
 import { FriendAppearanceEditor, characterLabels } from './FriendAppearanceEditor';
 import type { FriendAppearanceGenerator } from './generateFriendAppearance';
@@ -42,8 +42,8 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   const draftScope = ready ? 'event' : step ?? 'review';
   const savedDraft = () => readFriendsDraft(draftScope) ?? (!ready && step ? state.introduction.answers[step] ?? '' : '');
   const [draft, setDraft] = useState(savedDraft), [error, setError] = useState('');
-  const [phase, setPhase] = useState<'opening' | 'open' | 'closing'>(origin ? 'opening' : 'open');
-  const [geometry, setGeometry] = useState<ReturnType<typeof circleGeometry>>();
+  const [phase, setPhase] = useState<'opening' | 'open' | 'closing'>('opening');
+  const [geometry, setGeometry] = useState<ReturnType<typeof circleGeometry> & { apertureX: number; apertureY: number }>();
   const [panel, setPanel] = useState<keyof typeof panelTitles | null>(null), [selectedId, setSelectedId] = useState('');
   const [relatesTo, setRelatesTo] = useState<string>(), [demoStep, setDemoStep] = useState<number | null>(null);
   const [profileConfirmed, setProfileConfirmed] = useState(false), [boundaryConfirmed, setBoundaryConfirmed] = useState(false);
@@ -67,9 +67,14 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   };
 
   useLayoutEffect(() => {
-    if (!origin || !root.current) return;
+    if (!root.current) return;
     const element = root.current;
-    const measure = () => setGeometry(circleGeometry(element.getBoundingClientRect(), origin));
+    const measure = () => {
+      // Use layout coordinates: the entrance itself scales the visual rectangle.
+      const bounds = { left: element.offsetLeft, top: element.offsetTop, width: element.clientWidth, height: element.clientHeight };
+      const measured = circleGeometry(bounds, origin ?? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
+      setGeometry({ ...measured, apertureX: Math.max(0, Math.min(bounds.width, measured.x)), apertureY: Math.max(0, Math.min(bounds.height, measured.y)) });
+    };
     measure();
     const observer = new ResizeObserver(measure); observer.observe(element);
     return () => observer.disconnect();
@@ -82,7 +87,10 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
     const timer = window.setTimeout(() => phase === 'closing' ? close.current() : setPhase('open'), duration + 80);
     return () => window.clearTimeout(timer);
   }, [phase]);
-  useEffect(() => { root.current?.querySelector<HTMLButtonElement>('.friends-back')?.focus(); }, []);
+  useEffect(() => {
+    if (phase === 'opening') root.current?.focus();
+    if (phase === 'open') root.current?.querySelector<HTMLButtonElement>('.friends-back')?.focus();
+  }, [phase]);
   // A draft belongs to one question/event, even when navigating backwards or skipping.
   useLayoutEffect(() => { setDraft(savedDraft()); }, [draftScope]);
   useLayoutEffect(() => {
@@ -116,14 +124,16 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   const canFinish = Boolean(state.introduction.answers.context?.trim()) && Boolean(state.appearance) && profileConfirmed && boundaryConfirmed;
   const transitionStyle = geometry ? {
     '--friend-origin-x': `${geometry.x}px`, '--friend-origin-y': `${geometry.y}px`, '--friend-radius': `${geometry.radius}px`,
+    '--friend-aperture-x': `${geometry.apertureX}px`, '--friend-aperture-y': `${geometry.apertureY}px`,
   } as CSSProperties : undefined;
 
-  return <div ref={root} className="your-friends" role="dialog" aria-modal="true" aria-labelledby={titleId}
+  return <div ref={root} className="your-friends" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
     data-phase={phase} data-tone={state.tone} data-motion={state.motion} data-ready={ready} data-designing={designing} data-step={step ?? 'review'} data-active-panel={panel ?? 'none'} style={transitionStyle}
     onAnimationEnd={event => { if (event.target === event.currentTarget) { if (phase === 'closing') onClose(); else setPhase('open'); } }}
     onKeyDown={event => {
       if (panel || event.nativeEvent.isComposing) return;
       if (event.key === 'Escape') { event.stopPropagation(); leave(); }
+      if (phase !== 'open') { if (event.key === 'Tab') event.preventDefault(); return; }
       if (event.key === 'Tab') {
         const controls = Array.from(root.current!.querySelectorAll<HTMLElement>('button:not(:disabled),textarea:not(:disabled),input:not(:disabled),select,summary,[tabindex="0"]')).filter(node => node.getClientRects().length);
         const first = controls[0], last = controls.at(-1);
@@ -131,7 +141,8 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }
     }}>
-    <header className="friends-header">
+    {phase !== 'open' && <FriendsTransition/>}
+    <header className="friends-header" inert={phase !== 'open'}>
       <button className="friends-icon friends-back" type="button" onClick={leave} aria-label={t('yourFriends.back')} title={t('yourFriends.back')}><ArrowLeft/></button>
       <div className="friends-brand"><span id={titleId}>{name}</span><span className="friends-preview">{t('yourFriends.preview')}</span></div>
       <nav aria-label={t('yourFriends.navigation')}>
@@ -140,10 +151,9 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
         <button type="button" className="friends-icon" data-panel="settings" onClick={() => setPanel('settings')} aria-label={t('yourFriends.settings')} title={t('yourFriends.settings')}><Settings2/></button>
       </nav>
     </header>
-    <div className="friends-stage" ref={stage}>
+    <div className="friends-stage" ref={stage} inert={phase !== 'open'}>
       <div className="friends-story">
-        {ready && <div className="friends-companion"><FriendAvatar appearance={state.appearance} state={draft ? 'listening' : demoStep !== null && demoStep < 2 ? 'working' : 'done'}/>
-          <span className="friends-presence"><i/>{t(ready ? 'yourFriends.here' : 'yourFriends.gettingAcquainted')}</span></div>}
+        {ready && <div className="friends-presence"><i/>{t('yourFriends.here')}</div>}
         {!ready ? <section className="friends-introduction" aria-labelledby="friends-step-title">
           <div className="friends-eyebrow">{t('yourFriends.introductionProgress', { current: number.format(state.introduction.step + 1), total: number.format(introductionSteps.length + 1) })}</div>
           <h1 id="friends-step-title">{t(step ? stepTitles[step] : 'yourFriends.reviewTitle')}</h1>
@@ -198,7 +208,7 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
         </section>}
       </div>
     </div>
-    <footer className="friends-input-dock">
+    <footer className="friends-input-dock" inert={phase !== 'open'}>
       <div className="friends-input-inner">
         {related && <div className="friends-relation"><span>{t('yourFriends.continuing', { text: related.text })}</span><button type="button" className="friends-icon" aria-label={t('yourFriends.removeRelation')} onClick={() => setRelatesTo(undefined)}><X/></button></div>}
         {error && <p role="alert" className="your-friends-error">{error}</p>}

@@ -2,15 +2,14 @@
   --friend-lilac: #c5b7ed;
   --friend-peach: #e9b49e;
   --friend-sage: #accbb8;
-  --friend-tint: var(--friend-lilac);
-  --friend-on-accent: #302b38;
-  --friend-ink: #696078;
-  --friend-paper: var(--surface);
-  --friend-control-radius: 8px;
-  --friend-panel-radius: 12px;
-  --friend-card: color-mix(in srgb, var(--text) 2%, var(--surface));
-  --friend-line: color-mix(in srgb, var(--text) 10%, transparent);
-  --friend-secondary: color-mix(in srgb, var(--text) 65%, var(--surface));
+  --friend-tint: var(--accent);
+  --friend-ink: var(--text-mid);
+  --friend-paper: var(--bg);
+  --friend-control-radius: 12px;
+  --friend-panel-radius: 20px;
+  --friend-card: var(--surface);
+  --friend-line: var(--border);
+  --friend-secondary: var(--text-mid);
   --friend-radius: 200vmax;
   --friend-origin-x: 50%;
   --friend-origin-y: 50%;
@@ -25,14 +24,9 @@
   background: var(--friend-paper);
   isolation: isolate;
 }
-.your-friends[data-tone="peach"] { --friend-tint: var(--friend-peach); --friend-ink: #815e51; }
-.your-friends[data-tone="sage"] { --friend-tint: var(--friend-sage); --friend-ink: #526d60; }
-.your-friends[data-phase="opening"] { animation: friends-reveal .58s cubic-bezier(.22,.75,.24,1) both; }
-.your-friends[data-phase="closing"] { animation: friends-reveal .32s cubic-bezier(.45,0,.6,1) reverse both; pointer-events: none; }
-@keyframes friends-reveal {
-  from { clip-path: circle(0 at var(--friend-origin-x) var(--friend-origin-y)); }
-  to { clip-path: circle(var(--friend-radius) at var(--friend-origin-x) var(--friend-origin-y)); }
-}
+.friends-appearance-editor .friend-avatar { --friend-tint: var(--friend-lilac); --friend-ink: #696078; }
+.your-friends[data-tone="peach"] .friends-appearance-editor .friend-avatar { --friend-tint: var(--friend-peach); --friend-ink: #815e51; }
+.your-friends[data-tone="sage"] .friends-appearance-editor .friend-avatar { --friend-tint: var(--friend-sage); --friend-ink: #526d60; }
 .your-friends button, .your-friends select, .your-friends input { font: inherit; }
 .your-friends button { cursor: pointer; }
 .your-friends button:disabled { cursor: default; opacity: .4; }
@@ -47,13 +41,10 @@
 .friends-icon:hover { background: var(--friend-card); border-color: var(--friend-line); }
 .friends-stage { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable both-edges; }
 .friends-story { width: min(620px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0; }
-.friends-companion { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 32px; }
-.your-friends[data-ready="true"] .friends-companion { flex-direction: row; justify-content: center; gap: 4px; margin-bottom: 16px; }
-.your-friends[data-ready="true"] .friend-avatar { width: 110px; height: 114px; }
-.friends-presence { display: inline-flex; align-items: center; gap: 7px; color: var(--friend-secondary); font-size: 11px; }
+.friends-presence { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 16px 0 24px; color: var(--friend-secondary); font-size: 11px; }
 .friends-presence i { width: 5px; height: 5px; border-radius: 50%; background: var(--friend-tint); }
 .friends-eyebrow { text-align: center; color: var(--friend-secondary); font-size: 11px; letter-spacing: .08em; margin-bottom: 14px; }
-.your-friends h1 { font-size: clamp(22px, 2.5vw, 28px); font-weight: 550; line-height: 1.4; letter-spacing: -.025em; text-align: center; margin: 0 0 16px; overflow-wrap: anywhere; }
+.your-friends h1 { font-size: clamp(22px, 2.5vw, 28px); font-weight: 500; line-height: 1.4; letter-spacing: -.025em; text-align: center; margin: 0 0 16px; overflow-wrap: anywhere; }
 .friends-lead { max-width: 510px; margin: 0 auto 22px; text-align: center; line-height: 1.7; font-size: 14px; color: var(--friend-secondary); white-space: pre-line; }
 .friends-aside { color: var(--friend-secondary); font-size: 12px; line-height: 1.8; }
 .friends-introduction > .friends-aside { text-align: center; }
@@ -78,10 +69,11 @@
 .your-friends[data-ready="false"] .friends-story { width: min(880px, calc(100% - 64px)); height: 100%; box-sizing: border-box; }
 .your-friends[data-ready="false"] .friends-introduction { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .your-friends[data-ready="false"] :is(.friends-eyebrow, h1, .friends-lead, .friends-aside, .friends-step-actions) { flex-shrink: 0; }
-.your-friends[data-ready="false"] :is(.friends-eyebrow, h1, .friends-lead) { text-align: left; width: 100%; max-width: none; }
+.your-friends[data-ready="false"] :is(.friends-eyebrow, h1, .friends-lead) { text-align: center; width: 100%; max-width: none; }
 .your-friends[data-ready="false"] .friends-lead { margin-bottom: 20px; }
 .your-friends[data-ready="false"]:not([data-designing="true"]):not([data-step="review"]) .friends-story { width: min(660px, calc(100% - 64px)); padding-top: clamp(20px, 8vh, 96px); }
-.your-friends[data-ready="false"] .friends-introduction > .friends-aside { text-align: left; max-width: 540px; }
+.your-friends[data-ready="false"] .friends-introduction > .friends-aside { text-align: center; max-width: 540px; }
+.your-friends[data-ready="false"] .friends-introduction > .friends-aside { align-self: center; }
 .your-friends[data-ready="false"] .friends-step-actions { margin-top: auto; padding-top: 12px; }
 .your-friends[data-ready="false"] .friends-input-inner { width: min(660px, 100%); }
 .your-friends[data-ready="false"] .friends-input-surface textarea { max-height: min(128px, 20dvh); scrollbar-width: none; }
@@ -122,7 +114,7 @@
 .friends-receipt p { font-size: 12px; color: var(--friend-secondary); line-height: 1.8; }
 .friends-input-dock { flex-shrink: 0; padding: 12px 28px 16px; background: var(--friend-paper); }
 .friends-input-inner { width: min(720px, 100%); margin: auto; }
-.friends-input-surface { position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 13px 14px 13px 24px; border: 1px solid var(--friend-line); border-radius: var(--friend-panel-radius); background: var(--friend-card); }
+.friends-input-surface { position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 13px 14px 13px 24px; border: 1px solid var(--friend-line); border-radius: var(--friend-panel-radius); background: var(--friend-card); box-shadow: 0 4px 16px var(--shadow); }
 .friends-input-surface:focus-within { border-color: color-mix(in srgb, var(--friend-tint) 80%, var(--friend-line)); }
 .friends-input-surface textarea { display: block; flex: 1; min-width: 0; resize: none; field-sizing: content; min-height: 38px; max-height: 160px; padding: 8px 0; margin: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; line-height: 1.6; }
 .friends-input-surface textarea:focus-visible { outline: 0; }
@@ -191,14 +183,13 @@
 @keyframes friends-blink { 0%, 44%, 48%, 100% { scale: 1 1; } 46% { scale: 1 .15; } }
 @keyframes friends-look { 0%, 100% { translate: 0 0; } 35%, 65% { translate: 3px 0; } }
 .friend-avatar-generated img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.friend-avatar-pending { opacity: .45; }
-.friend-avatar-pending .friend-avatar-art { fill: var(--friend-secondary); }
 .friends-appearance-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 20px; }
 .friends-design-toolbar { display: flex; flex-shrink: 0; justify-content: space-between; align-items: center; gap: 12px; }
 .friends-view-switch { display: flex; gap: 4px; border-bottom: 1px solid var(--friend-line); }
 .friends-view-switch button { background: transparent; color: var(--friend-secondary); border: 0; border-bottom: 2px solid transparent; padding: 10px 14px; font-size: 12px; }
 .friends-view-switch button[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--text); }
 .friends-design-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
+.friends-design-workspace[data-has-design="false"] { grid-template-columns: minmax(0, 560px); grid-template-rows: minmax(0, 1fr); justify-content: center; }
 .friends-generated-preview { min-height: 0; display: flex; flex-direction: column; padding: 20px; background: var(--friend-card); border: 1px solid var(--friend-line); border-radius: var(--friend-panel-radius); }
 .friends-design-canvas { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; }
 .your-friends .friends-generated-preview .friend-avatar { position: absolute; inset: 0; margin: auto; width: min(240px, 100%); height: min(240px, 100%); }

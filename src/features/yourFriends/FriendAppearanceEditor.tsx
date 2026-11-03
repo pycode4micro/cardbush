@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, RotateCcw, Sparkles } from 'lucide-react';
+import { Check, PenTool, RotateCcw } from 'lucide-react';
 import { uiText, type MessageKey } from '../../i18n';
 import { FriendAvatar } from './FriendAvatar';
 import { FriendTextPages } from './FriendTextPages';
@@ -54,16 +54,16 @@ export function FriendAppearanceEditor({ language, state, generate, onApply, onC
       </div>
       <label className="friends-appearance-motion"><input type="checkbox" checked={state.motion} onChange={event => onChange({ motion: event.target.checked })}/><span>{t('yourFriends.motion')}</span></label>
     </div>
-    <div className="friends-design-workspace">
-      <div className="friends-generated-preview" data-busy={busy}>
+    <div className="friends-design-workspace" data-has-design={Boolean(candidate)}>
+      {candidate && <div className="friends-generated-preview" data-busy={busy}>
         <div className="friends-design-canvas">
           {candidate?.type === 'generated' && explanation ? <FriendTextPages text={`${candidate.design.name}\n\n${candidate.design.description}`} language={language}/> : <FriendAvatar appearance={candidate} state={busy ? 'working' : 'idle'}/>}
         </div>
         <div className="friends-design-explanation">
-          <h2>{candidate?.type === 'generated' ? candidate.design.name : t(candidate?.type === 'builtin' ? characterLabels[candidate.character] : 'yourFriends.designNotGenerated')}</h2>
+          <h2>{candidate.type === 'generated' ? candidate.design.name : t(characterLabels[candidate.character])}</h2>
           {candidate?.type === 'generated' && <button type="button" className="friends-text-button friends-explanation-toggle" aria-pressed={explanation} onClick={() => setExplanation(value => !value)}>{t(explanation ? 'yourFriends.showArtwork' : 'yourFriends.showDesignNotes')}</button>}
         </div>
-      </div>
+      </div>}
       <div className="friends-design-controls">
         {mode === 'generate' ? <>
           <label className="friends-design-feedback"><span>{t('yourFriends.designFeedback')}</span>
@@ -85,7 +85,7 @@ export function FriendAppearanceEditor({ language, state, generate, onApply, onC
         {(error || (!generate && mode === 'generate')) && <div role="alert" className="your-friends-error friends-design-error"><FriendTextPages language={language} text={error || t('yourFriends.designUnavailable')}/></div>}
         <div className="friends-generation-actions">
           {mode === 'generate' && <button type="button" className="friends-primary friends-generate" disabled={busy || !generate || !state.introduction.answers.context?.trim()} onClick={() => void create()}>
-            {candidate?.type === 'generated' ? <RotateCcw/> : <Sparkles/>}{t(busy ? 'yourFriends.designGenerating' : candidate?.type === 'generated' ? 'yourFriends.designRegenerate' : 'yourFriends.designGenerate')}
+            {candidate?.type === 'generated' ? <RotateCcw/> : <PenTool/>}{t(busy ? 'yourFriends.designGenerating' : candidate?.type === 'generated' ? 'yourFriends.designRegenerate' : 'yourFriends.designGenerate')}
           </button>}
           {busy && <button type="button" className="friends-text-button friends-generation-cancel" onClick={cancel}>{t('yourFriends.designCancel')}</button>}
           {candidate && !busy && <button type="button" className="friends-primary friends-apply-design" onClick={() => onApply(candidate)}><Check/>{t('yourFriends.useAppearance')}</button>}

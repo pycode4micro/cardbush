@@ -9,9 +9,7 @@ export function FriendAvatar({ state = 'idle', appearance, preview = false }: {
   if (appearance?.type === 'generated') return <div className="friend-avatar friend-avatar-generated" data-state={state} data-preview={preview} aria-hidden="true">
     <img className="friend-avatar-body" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(appearance.design.svg)}`} alt="" draggable={false}/>
   </div>;
-  if (!appearance) return <div className="friend-avatar friend-avatar-pending" aria-hidden="true">
-    <svg className="friend-avatar-art" viewBox="0 0 200 220" focusable="false"><path d="M100 70Q103 100 132 110Q103 115 100 145Q95 115 66 110Q95 100 100 70Z"/><circle cx="143" cy="72" r="4"/><circle cx="59" cy="148" r="3"/></svg>
-  </div>;
+  if (!appearance) return null;
   return <div className="friend-avatar" data-state={state} data-character={appearance.character} data-preview={preview} aria-hidden="true">
     <svg className="friend-avatar-art" viewBox="0 0 200 220" focusable="false">
       <defs>

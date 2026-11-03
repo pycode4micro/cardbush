@@ -41,7 +41,7 @@ async function buildFixture(directory) {
             request.onFinalAssistantText(JSON.stringify(fixture.design),{});request.onDone({status:'completed'});}
         });
         function Fixture(){const [open,setOpen]=useState(store.friendsStartupEnabled),[origin,setOrigin]=useState(),[language,setLanguage]=useState('zh'),[theme,setTheme]=useState('bright');const entry=useRef();
-          useLayoutEffect(()=>{if(!open)entry.current?.focus();},[open]);
+          useLayoutEffect(()=>{if(!open)(entry.current??document.querySelector('[data-nav-section="your-friends"]'))?.focus();},[open]);
           fixture.language=setLanguage;fixture.theme=setTheme;
           const enter=()=>{entry.current=document.querySelector('[data-nav-section="your-friends"]');const r=entry.current.getBoundingClientRect();setOrigin({x:r.left+r.width/2,y:r.top+r.height/2});setOpen(true);};
           fixture.open=enter;
@@ -109,9 +109,14 @@ function runFixture() {
       // Real entry and measured animation origin; the workspace is retained and inert.
       await click('[data-nav-section="your-friends"]');
       await until('document.querySelector(".your-friends[data-phase=opening]")');
-      assert.ok(await read(`(()=>{const n=document.querySelector('.your-friends'),r=n.getBoundingClientRect(),b=document.querySelector('[data-nav-section=your-friends]').getBoundingClientRect(),s=getComputedStyle(n);return Math.abs(parseFloat(s.getPropertyValue('--friend-origin-x'))-(b.left+b.width/2-r.left))<1&&Math.abs(parseFloat(s.getPropertyValue('--friend-origin-y'))-(b.top+b.height/2-r.top))<1;})()`));
+      assert.equal(await read('!!document.querySelector(".friends-transition")'), true, 'entry uses temporary geometry');
+      assert.equal(await read('document.querySelector(".friends-stage").inert'), true, 'controls are inactive while the entrance is concealed');
+      assert.ok(await read(`(()=>{const n=document.querySelector('.your-friends'),b=document.querySelector('[data-nav-section=your-friends]').getBoundingClientRect(),s=getComputedStyle(n);return Math.abs(parseFloat(s.getPropertyValue('--friend-origin-x'))-(b.left+b.width/2-n.offsetLeft))<1&&Math.abs(parseFloat(s.getPropertyValue('--friend-origin-y'))-(b.top+b.height/2-n.offsetTop))<1;})()`));
       assert.equal(await read('document.querySelector(".desktop-shell").inert'), true);
       await until('document.querySelector(".your-friends[data-phase=open]")');
+      assert.equal(await read('!!document.querySelector(".friends-transition,.friend-avatar")'), false, 'no geometric avatar or placeholder remains after entry');
+      assert.equal(await read('document.querySelector(".friends-stage").inert'), false);
+      assert.ok(await read(`(()=>{const app=document.querySelector('.app'),root=document.querySelector('.your-friends'),before=app.getAttribute('style');try{app.style.setProperty('--bg','#213247');app.style.setProperty('--text','#f2e4d7');app.style.setProperty('--accent','#c98742');const a=getComputedStyle(app),r=getComputedStyle(root);return a.backgroundColor===r.backgroundColor&&a.color===r.color&&a.getPropertyValue('--accent').trim()===r.getPropertyValue('--friend-tint').trim();}finally{if(before===null)app.removeAttribute('style');else app.setAttribute('style',before);}})()`), 'custom theme colours flow into Friends without a separate palette');
       await capture('introduction-bright');
       await fitsMinimumWindow('.your-friends', 'recognition');
       await fitsViewport('.your-friends', 'recognition has no scrolling surfaces');
@@ -129,7 +134,9 @@ function runFixture() {
       await fill('.friends-input-surface textarea', '叫我小林'); await click('.friends-send');
       await until('fixture.store.readFriendsState().introduction.step===1');
       await fill('.friends-input-surface textarea', '白天做产品，下班想看 NBA 和打台球。');
-      await click('.friends-back'); await until('!document.querySelector(".your-friends")');
+      await click('.friends-back');
+      await until('document.querySelector(".your-friends[data-phase=closing] .friends-transition")');
+      await until('!document.querySelector(".your-friends")');
       await until('document.activeElement.dataset.navSection==="your-friends"');
       assert.equal(await read('document.querySelector(".fixture-settings textarea").value'), 'retained workspace draft');
       await click('[data-nav-section="your-friends"]'); await until('document.querySelector(".your-friends[data-phase=open]")');
@@ -152,6 +159,7 @@ function runFixture() {
       await win.setContentSize(1120, 850);
       await textButton('.friends-step-actions', 'yourFriends.keepSelection');
       await until('document.querySelector(".friends-generate")');
+      assert.equal(await read('!!document.querySelector(".friends-generated-preview,.friend-avatar")'), false, 'before generation there is no placeholder artwork or empty portrait card');
       assert.equal(await read('document.querySelector(".friends-appearance-editor").dataset.mode'), 'generate', 'presets remain a secondary option');
       assert.equal(await read('!!document.querySelector(".friends-builtin-options")'), false, 'preset controls do not stack below generation');
       assert.equal(await read('!!document.querySelector(".friends-input-surface")'), false);
@@ -229,6 +237,7 @@ function runFixture() {
       assert.equal(await read('document.querySelector(".friends-review .friends-primary").disabled'), true, 'profile confirmation cannot grant boundaries');
       await click('.friends-confirm:last-of-type input'); await click('.friends-review .friends-primary');
       await until('fixture.store.readFriendsState().introduction.confirmedAt');
+      assert.equal(await read('!!document.querySelector(".friends-stage .friend-avatar")'), false, 'the home view does not display a character, including a generated one');
       // User events preserve exact text; the stage only shows the relevant acknowledgement.
       const utterance = '  明天有 NBA 比赛时告诉我。\n喜欢看精彩的比赛。  ';
       await fill('.friends-input-surface textarea', utterance); await click('.friends-send');
@@ -268,7 +277,8 @@ function runFixture() {
       await click('.friends-characters [data-character="cat"]');
       await click('.friends-tones [data-tone="sage"]');
       await until('document.querySelector(".your-friends").dataset.tone==="sage"');
-      assert.ok(await read(`(()=>{const s=getComputedStyle(document.querySelector('.your-friends'));return s.getPropertyValue('--friend-tint').trim()===s.getPropertyValue('--friend-sage').trim();})()`));
+      assert.ok(await read(`(()=>{const s=getComputedStyle(document.querySelector('.friends-appearance-editor .friend-avatar'));return s.getPropertyValue('--friend-tint').trim()===s.getPropertyValue('--friend-sage').trim();})()`));
+      assert.ok(await read(`(()=>{const s=getComputedStyle(document.querySelector('.your-friends')),app=getComputedStyle(document.querySelector('.app'));return s.backgroundColor===app.backgroundColor&&s.color===app.color&&s.getPropertyValue('--friend-tint').trim()===app.getPropertyValue('--accent').trim();})()`), 'a preset palette never recolours the main theme');
       await capture('appearance-fallback-cat');
       await fitsMinimumWindow('.friends-dialog', 'preset selection');
       await fitsViewport('.friends-dialog', 'appearance dialog has no nested scrolling');
@@ -286,6 +296,7 @@ function runFixture() {
       assert.equal(await read('fixture.store.readFriendsState().introduction.confirmedAt'), confirmed);
       assert.equal(await read('fixture.store.readFriendsState().events.length'), before + 1);
       assert.equal(await read('fixture.store.readFriendsState().appearance.character'), 'cat');
+      assert.equal(await read('!!document.querySelector(".friends-stage .friend-avatar")'), false, 'even selected presets only appear inside the designer');
       assert.equal(await read('document.querySelector(".friends-input-dock").parentElement===document.querySelector(".friends-stage").parentElement'), true, 'input is outside the stage');
       // Settings update the real sidebar, persist startup preference and respect reduced motion.
       await click('.friends-header nav button:last-child');
@@ -296,7 +307,9 @@ function runFixture() {
       assert.equal(await read('document.querySelector("[data-nav-section=your-friends]").textContent.trim()'), '团子');
       await click('.friends-dialog .settings-switch:last-of-type input');
       await click('.friends-dialog header button');
+      await click('.friends-header [data-panel="appearance"]');
       assert.equal(await read('getComputedStyle(document.querySelector(".friend-avatar-body")).animationDuration'), '1e-05s');
+      await click('.friends-dialog header button');
       await read('fixture.language("en");document.documentElement.lang="en";void 0');
       await until('document.querySelector(".friends-header [data-panel=events]").getAttribute("aria-label")==="Events"');
       await read('fixture.store.updateFriendsState(s=>({...s,name:"A very long companion name that should fit a small window"}));void 0');
@@ -327,8 +340,45 @@ function runFixture() {
       // Corrupt saved state is never overwritten with a blank profile on the next edit.
       assert.ok(await read(`(()=>{const k=fixture.store.friendsStorageKey,raw=localStorage.getItem(k);localStorage.setItem(k,'{broken');let blocked=false;try{fixture.store.updateFriendsState(s=>({...s,name:'overwrite'}));}catch{blocked=true;}const retained=localStorage.getItem(k)==='{broken';localStorage.setItem(k,raw);fixture.store.updateFriendsState(s=>s);return blocked&&retained;})()`));
       assert.ok(await read(`(()=>{try{fixture.store.recordFriendEvent('orphan',undefined,'missing-event');return false;}catch{return true;}})()`));
+      // Startup, interrupted entry and global motion preferences must all finish and restore focus.
+      await read('fixture.store.updateFriendsState(s=>({...s,motion:true}));void 0');
+      await win.reload(); await until('document.querySelector(".your-friends[data-phase=opening]")');
+      assert.ok(await read(`(()=>{const n=document.querySelector('.your-friends'),s=getComputedStyle(n);return Math.abs(parseFloat(s.getPropertyValue('--friend-aperture-x'))-n.clientWidth/2)<1;})()`), 'startup without a sidebar origin opens from the centre');
+      await read(`document.querySelector('.your-friends').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0`);
+      await until('!document.querySelector(".your-friends")');
+      await until('document.activeElement.dataset.navSection==="your-friends"');
+      await read('document.documentElement.dataset.reduceMotion="true";fixture.open();void 0');
+      await until('document.querySelector(".your-friends[data-phase=open]")');
+      assert.equal(await read('!!document.querySelector(".friends-transition")'), false);
+      await click('.friends-back'); await until('!document.querySelector(".your-friends")');
+      await read('delete document.documentElement.dataset.reduceMotion;void 0');
+      win.webContents.debugger.attach('1.3');
+      await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await read('fixture.open();void 0'); await until('document.querySelector(".your-friends[data-phase=open]")');
+      assert.equal(await read('!!document.querySelector(".friends-transition")'), false);
+      await click('.friends-back'); await until('!document.querySelector(".your-friends")');
+      await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] }); win.webContents.debugger.detach();
+      if (process.env.CARDBUSH_FRIENDS_MOTION_CAPTURE === '1') {
+        // Record the real renderer at its actual timings, without mocking or slowing the animation.
+        await read('fixture.store.updateFriendsState(s=>({...s,name:"",motion:true,appearance:undefined,introduction:{step:0,answers:{}}}));void 0');
+        await win.setContentSize(1120, 760);
+        for (const theme of ['bright', 'dark']) {
+          await read(`fixture.theme(${JSON.stringify(theme)});void 0`); await pause(80);
+          const framesDirectory = path.join(directory, 'motion-' + theme); fs.mkdirSync(framesDirectory);
+          const frames = [];
+          const frame = async () => { const time = Date.now(), file = String(frames.length).padStart(4, '0') + '.png'; fs.writeFileSync(path.join(framesDirectory, file), (await win.webContents.capturePage()).toPNG()); frames.push({ file, time }); };
+          await frame(); await click('[data-nav-section="your-friends"]');
+          const entered = Date.now();
+          while (Date.now() - entered < 1500) { await frame(); await pause(30); }
+          await capture('geometry-' + theme);
+          await click('.friends-back'); const leaving = Date.now();
+          while (Date.now() - leaving < 800) { await frame(); await pause(30); }
+          await until('!document.querySelector(".your-friends")'); await frame();
+          fs.writeFileSync(path.join(framesDirectory, 'frames.json'), JSON.stringify(frames));
+        }
+      }
       assert.deepEqual(errors, []);
-      console.log('Your Friends UI passed: recognition before model generation, configured model and profile context, preview/apply/redesign, cancellation/failure, optional Cat/Bunny/Sprout, inert SVG validation, v1 migration, entry/resume, IME, confirmations, provenance, failed saves, settings, language, themes, narrow layout and motion. Screenshots: ' + directory);
+      console.log('Your Friends UI passed: temporary geometric entry/exit, no placeholder or home avatar, theme inheritance, startup/interruption/reduced motion, recognition before generation, preview/apply/redesign, cancellation/failure, optional presets, inert SVG validation, v1 migration, IME, confirmations, failed saves, language and single-viewport layouts. Screenshots: ' + directory);
     } finally { win.destroy(); clearTimeout(deadline); }
     app.quit();
   }).catch(error => { console.error(error); clearTimeout(deadline); app.exit(1); });

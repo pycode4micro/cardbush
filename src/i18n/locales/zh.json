@@ -39,7 +39,7 @@
     "yourFriends.introductionProgress": "初始设置 · {current} / {total}",
     "yourFriends.addressTitle": "如何称呼你",
     "yourFriends.addressPrompt": "填写你希望使用的称呼。伙伴的名字可以稍后在设置中修改。",
-    "yourFriends.interviewNote": "接下来会了解你的日常、偏好和行动边界，用于形象设计。内容自动保留，随时可以继续。",
+    "yourFriends.interviewNote": "只分享你愿意说的。内容自动保存，随时可以继续。",
     "yourFriends.contextTitle": "了解你的日常",
     "yourFriends.contextPrompt": "你最近主要在做什么？有哪些兴趣，或希望留出更多时间的事情？",
     "yourFriends.judgmentTitle": "你如何做选择",
