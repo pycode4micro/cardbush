@@ -22,6 +22,7 @@ export function FriendAppearanceEditor({ language, state, generate, onApply, onC
   const t = uiText(language), [candidate, setCandidate] = useState(state.appearance);
   const [feedback, setFeedback] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [mode, setMode] = useState<'generate' | 'builtin'>('generate'), [explanation, setExplanation] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const request = useRef<AbortController | null>(null), latestState = useRef(state); latestState.current = state;
   useEffect(() => () => { request.current?.abort(); request.current = null; }, []);
   const create = async () => {
@@ -38,7 +39,7 @@ export function FriendAppearanceEditor({ language, state, generate, onApply, onC
       if (JSON.stringify(profile) !== JSON.stringify({ address: current.address, context: current.context, judgment: current.judgment, communication: current.communication })) {
         setError(t('yourFriends.designProfileChanged')); return;
       }
-      setCandidate(result); setExplanation(false);
+      setCandidate(result); setExplanation(false); setFeedbackOpen(false);
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : t('yourFriends.designFailed'));
     } finally {
@@ -46,50 +47,51 @@ export function FriendAppearanceEditor({ language, state, generate, onApply, onC
     }
   };
   const cancel = () => { request.current?.abort(); request.current = null; setBusy(false); setError(''); };
-  return <div className="friends-appearance-editor" aria-busy={busy} data-mode={mode}>
-    <div className="friends-design-toolbar">
-      <div className="friends-view-switch" role="group" aria-label={t('yourFriends.designMethod')}>
-        <button type="button" data-mode="generate" aria-pressed={mode === 'generate'} disabled={busy} onClick={() => setMode('generate')}>{t('yourFriends.modelDesign')}</button>
-        <button type="button" data-mode="builtin" aria-pressed={mode === 'builtin'} disabled={busy} onClick={() => setMode('builtin')}>{t('yourFriends.useBuiltin')}</button>
-      </div>
-      <label className="friends-appearance-motion"><input type="checkbox" checked={state.motion} onChange={event => onChange({ motion: event.target.checked })}/><span>{t('yourFriends.motion')}</span></label>
-    </div>
-    <div className="friends-design-workspace" data-has-design={Boolean(candidate)}>
-      {candidate && <div className="friends-generated-preview" data-busy={busy}>
-        <div className="friends-design-canvas">
-          {candidate?.type === 'generated' && explanation ? <FriendTextPages text={`${candidate.design.name}\n\n${candidate.design.description}`} language={language}/> : <FriendAvatar appearance={candidate} state={busy ? 'working' : 'idle'}/>}
-        </div>
-        <div className="friends-design-explanation">
-          <h2>{candidate.type === 'generated' ? candidate.design.name : t(characterLabels[candidate.character])}</h2>
-          {candidate?.type === 'generated' && <button type="button" className="friends-text-button friends-explanation-toggle" aria-pressed={explanation} onClick={() => setExplanation(value => !value)}>{t(explanation ? 'yourFriends.showArtwork' : 'yourFriends.showDesignNotes')}</button>}
-        </div>
-      </div>}
-      <div className="friends-design-controls">
-        {mode === 'generate' ? <>
-          <label className="friends-design-feedback"><span>{t('yourFriends.designFeedback')}</span>
-            <textarea value={feedback} maxLength={2000} onChange={event => setFeedback(event.target.value)} placeholder={t('yourFriends.designFeedbackPlaceholder')} disabled={busy}/>
-          </label>
-          {!error && <p className="friends-design-note">{t('yourFriends.designModelNotice')}</p>}
-        </> : <div className="friends-builtin-options">
-          <div className="friends-characters" role="group" aria-label={t('yourFriends.characterLabel')}>
-            {characters.map(character => <button type="button" key={character} data-character={character} disabled={busy}
-              aria-pressed={candidate?.type === 'builtin' && candidate.character === character} onClick={() => { setCandidate({ type: 'builtin', character }); setExplanation(false); }}>
-              <FriendAvatar appearance={{ type: 'builtin', character }} preview/><span>{t(characterLabels[character])}</span><Check className="friends-selection-check"/>
-            </button>)}
+  const view = busy ? 'generating' : mode === 'builtin' ? 'presets' : feedbackOpen ? 'preferences' : candidate ? 'preview' : 'prepare';
+  const showPreview = Boolean(candidate && !feedbackOpen && (mode === 'generate' || candidate.type === 'builtin'));
+  return <div className="friends-appearance-editor" aria-busy={busy} data-mode={mode} data-view={view}>
+    <div className="friends-design-workspace" data-has-design={showPreview}>
+      <div className="friends-design-step" key={view}>
+        {busy ? <div className="friends-generation-status" role="status">
+          <p>{t('yourFriends.designGenerating')}</p><div className="friends-generation-progress" aria-hidden="true"><i/></div>
+          <button type="button" className="friends-text-button friends-generation-cancel" onClick={cancel}>{t('yourFriends.designCancel')}</button>
+        </div> : <>
+          {showPreview && candidate && <div className="friends-generated-preview">
+            <div className="friends-design-canvas">
+              {candidate.type === 'generated' && explanation ? <FriendTextPages text={`${candidate.design.name}\n\n${candidate.design.description}`} language={language}/> : <FriendAvatar appearance={candidate}/>}
+            </div>
+            <div className="friends-design-explanation">
+              <h2>{candidate.type === 'generated' ? candidate.design.name : t(characterLabels[candidate.character])}</h2>
+              {candidate.type === 'generated' && <button type="button" className="friends-text-button friends-explanation-toggle" aria-pressed={explanation} onClick={() => setExplanation(value => !value)}>{t(explanation ? 'yourFriends.showArtwork' : 'yourFriends.showDesignNotes')}</button>}
+            </div>
+          </div>}
+          {mode === 'builtin' ? <div className="friends-builtin-options">
+            <div className="friends-characters" role="group" aria-label={t('yourFriends.characterLabel')}>
+              {characters.map(character => <button type="button" key={character} data-character={character}
+                aria-pressed={candidate?.type === 'builtin' && candidate.character === character} onClick={() => { setCandidate({ type: 'builtin', character }); setExplanation(false); }}>
+                <FriendAvatar appearance={{ type: 'builtin', character }} preview/><span>{t(characterLabels[character])}</span><Check className="friends-selection-check"/>
+              </button>)}
+            </div>
+            {candidate?.type === 'builtin' && <div className="friends-tones" role="group" aria-label={t('yourFriends.colorLabel')}>
+              {tones.map(tone => <button key={tone} type="button" data-tone={tone} aria-pressed={state.tone === tone}
+                onClick={() => onChange({ tone })}><i/>{t(toneLabels[tone])}{state.tone === tone && <Check/>}</button>)}
+            </div>}
+          </div> : feedbackOpen ? <label className="friends-design-feedback"><span>{t('yourFriends.designFeedback')}</span>
+            <textarea autoFocus value={feedback} maxLength={2000} onChange={event => setFeedback(event.target.value)} placeholder={t('yourFriends.designFeedbackPlaceholder')}/>
+          </label> : !candidate && <p className="friends-design-note">{t('yourFriends.designModelNotice')}</p>}
+          {(error || (!generate && mode === 'generate')) && <div role="alert" className="your-friends-error friends-design-error"><FriendTextPages language={language} text={error || t('yourFriends.designUnavailable')}/></div>}
+          <div className="friends-generation-actions">
+            {mode === 'generate' && (!candidate || feedbackOpen) && <button type="button" className="friends-primary friends-generate" disabled={!generate || !state.introduction.answers.context?.trim()} onClick={() => void create()}>
+              {candidate?.type === 'generated' ? <RotateCcw/> : <PenTool/>}{t(candidate?.type === 'generated' ? 'yourFriends.designRegenerate' : 'yourFriends.designGenerate')}
+            </button>}
+            {candidate && !feedbackOpen && (mode === 'generate' || candidate.type === 'builtin') && <button type="button" className="friends-primary friends-apply-design" onClick={() => onApply(candidate)}>{t('yourFriends.useAppearance')}</button>}
           </div>
-          <div className="friends-tones" role="group" aria-label={t('yourFriends.colorLabel')}>
-            {tones.map(tone => <button key={tone} type="button" data-tone={tone} aria-pressed={state.tone === tone}
-              onClick={() => onChange({ tone })}><i/>{t(toneLabels[tone])}{state.tone === tone && <Check/>}</button>)}
+          <div className="friends-design-secondary">
+            {mode === 'generate' && !feedbackOpen && <button type="button" className="friends-text-button friends-refine-design" onClick={() => { setFeedbackOpen(true); setExplanation(false); }}>{t(candidate ? 'yourFriends.refineAppearance' : 'yourFriends.addDesignPreferences')}</button>}
+            {mode === 'generate' && feedbackOpen && <button type="button" className="friends-text-button friends-refine-cancel" onClick={() => setFeedbackOpen(false)}>{t(candidate ? 'yourFriends.showArtwork' : 'yourFriends.cancelPreferences')}</button>}
+            {!feedbackOpen && <button type="button" className="friends-text-button friends-design-method" data-mode={mode === 'generate' ? 'builtin' : 'generate'} onClick={() => { setMode(mode === 'generate' ? 'builtin' : 'generate'); setFeedbackOpen(false); }}>{t(mode === 'generate' ? 'yourFriends.useBuiltin' : 'yourFriends.returnToGenerate')}</button>}
           </div>
-        </div>}
-        {(error || (!generate && mode === 'generate')) && <div role="alert" className="your-friends-error friends-design-error"><FriendTextPages language={language} text={error || t('yourFriends.designUnavailable')}/></div>}
-        <div className="friends-generation-actions">
-          {mode === 'generate' && <button type="button" className="friends-primary friends-generate" disabled={busy || !generate || !state.introduction.answers.context?.trim()} onClick={() => void create()}>
-            {candidate?.type === 'generated' ? <RotateCcw/> : <PenTool/>}{t(busy ? 'yourFriends.designGenerating' : candidate?.type === 'generated' ? 'yourFriends.designRegenerate' : 'yourFriends.designGenerate')}
-          </button>}
-          {busy && <button type="button" className="friends-text-button friends-generation-cancel" onClick={cancel}>{t('yourFriends.designCancel')}</button>}
-          {candidate && !busy && <button type="button" className="friends-primary friends-apply-design" onClick={() => onApply(candidate)}><Check/>{t('yourFriends.useAppearance')}</button>}
-        </div>
+        </>}
       </div>
     </div>
   </div>;
