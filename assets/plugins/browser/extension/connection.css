@@ -23,4 +23,6 @@ button:focus-visible { outline: 2px solid #aaa; outline-offset: 3px; }
 #allow { color: #181818; background: #eee; border-color: #eee; font-weight: 600; }
 #allow:hover { background: #d8d8d8; }
 button:disabled { opacity: .4; cursor: default; }
+.site-actions { flex-wrap: wrap; }
+.details p { overflow-wrap: anywhere; }
 @media (max-width: 360px) { main { padding: 20px; } header small { font-size: 11px; } h1 { font-size: 21px; } }

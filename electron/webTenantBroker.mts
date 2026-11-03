@@ -1,9 +1,10 @@
 import { createServer, request as httpRequest } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { createHmac } from 'node:crypto';
 import { AgentHttpClient } from './agentHttpClient.mjs';
 import { equalSecret, json, readJson, tenantToken, WebError } from './webCommon.mjs';
 
-export type BrokerConfig = { secret: string; image: string; network: string; prefix: string; maxActive?: number; idleMinutes?: number; memoryMiB?: number; port?: number };
+export type BrokerConfig = { secret: string; image: string; network: string; prefix: string; modelOrigin?: string; maxActive?: number; idleMinutes?: number; memoryMiB?: number; port?: number };
 type DockerContainer = { Image?: string; Id: string; Names: string[]; State: string; Labels: Record<string, string> };
 /** Only this private control process has the Docker socket. Neither the website
  * nor any Agent container receives it, host paths, or container-management tools. */
@@ -12,6 +13,11 @@ export class DockerTenantBroker {
   readonly #lastUsed = new Map<string, number>();
   constructor(readonly config: BrokerConfig) {
     if (config.secret.length < 48 || !/^[a-z][a-z0-9-]{2,30}$/.test(config.prefix)) throw new Error('Invalid private broker configuration.');
+    if (config.modelOrigin) {
+      const origin = new URL(config.modelOrigin);
+      if (origin.protocol !== 'http:' || !/^[a-z][a-z0-9-]{1,62}$/.test(origin.hostname) || origin.origin !== config.modelOrigin)
+        throw new Error('Invalid private model gateway origin.');
+    }
   }
   async docker<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -37,7 +43,7 @@ export class DockerTenantBroker {
   async idle(container: DockerContainer, minimumAge: number) {
     const key = container.Labels['cardbush.web.tenant'];
     if (!/^[a-f0-9]{64}$/.test(key) || Date.now() - (this.#lastUsed.get(key) ?? 0) < minimumAge) return false;
-    const client = new AgentHttpClient(`http://${this.config.prefix}-${key.slice(0, 24)}:4780/`, tenantToken(this.config.secret, key));
+    const client = AgentHttpClient.forIsolatedContainer(`http://${this.config.prefix}-${key.slice(0, 24)}:4780/`, tenantToken(this.config.secret, key));
     try {
       const jobs = await client.call('chat.jobs', {}) as Array<{ status: string }>;
       if (jobs.some(job => ['queued', 'running'].includes(job.status))) return false;
@@ -52,7 +58,8 @@ export class DockerTenantBroker {
       const containers = await this.containers();
       let existing = containers.find(item => item.Labels['cardbush.web.tenant'] === key);
       const name = `${this.config.prefix}-${key.slice(0, 24)}`;
-      if (existing && existing.Image !== this.config.image) {
+      if (existing && (existing.Image !== this.config.image || existing.Labels['cardbush.credential-store'] !== 'v1'
+        || existing.Labels['cardbush.model-origin'] !== (this.config.modelOrigin ?? ''))) {
         if (existing.State === 'running' && !await this.idle(existing, 0)) throw new WebError(503, '会话正在执行，完成后将自动更新服务。');
         if (existing.State === 'running') await this.docker('POST', `/containers/${existing.Id}/stop?t=30`);
         await this.docker('DELETE', `/containers/${existing.Id}`); existing = undefined;
@@ -72,8 +79,12 @@ export class DockerTenantBroker {
             Image: this.config.image, User: '1100:1100', WorkingDir: '/opt/cardbush',
             Entrypoint: ['/usr/bin/tini', '--', 'node', 'dist-electron/agentServiceCli.mjs'],
             Cmd: ['--data-dir', '/data', '--host', '0.0.0.0', '--web-restricted'],
-            Env: [`CARDBUSH_AGENT_TOKEN=${tenantToken(this.config.secret, key)}`, 'NODE_ENV=production', 'HOME=/home/cardbush', 'NODE_OPTIONS=--max-old-space-size=384'],
-            Labels: { 'cardbush.web.owner': this.config.prefix, 'cardbush.web.tenant': key },
+            Env: [`CARDBUSH_AGENT_TOKEN=${tenantToken(this.config.secret, key)}`,
+              `CARDBUSH_CREDENTIAL_KEY=${createHmac('sha256', this.config.secret).update(`credential-store:v1:${key}`).digest('hex')}`,
+              ...(this.config.modelOrigin ? [`CARDBUSH_PRIVATE_MODEL_ORIGIN=${this.config.modelOrigin}`] : []),
+              'NODE_ENV=production', 'HOME=/home/cardbush', 'NODE_OPTIONS=--max-old-space-size=384'],
+            Labels: { 'cardbush.web.owner': this.config.prefix, 'cardbush.web.tenant': key,
+              'cardbush.credential-store': 'v1', 'cardbush.model-origin': this.config.modelOrigin ?? '' },
             HostConfig: { NetworkMode: this.config.network, ReadonlyRootfs: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges:true'],
               PidsLimit: 128, Memory: (this.config.memoryMiB ?? 768) * 1024 * 1024, NanoCpus: 1_000_000_000,
               Mounts: [{ Type: 'volume', Source: `${name}-data`, Target: '/data' }],

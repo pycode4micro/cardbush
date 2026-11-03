@@ -191,7 +191,8 @@ app.whenReady().then(async () => {
     // A single permanent microphone dictates into the draft, even when ASR needs retry.
     await click('语音转写');await until('fixture.state().phase==="recording"');
     assert.equal(await read('!!document.querySelector(".voice-dialog,.voice-composer-call")'),false);
-    assert.equal(await read('document.querySelector(".voice-dictation-button").getAttribute("aria-pressed")'),'true');
+    assert.equal(await read('document.querySelector(".voice-dictation-button").classList.contains("is-active")'),true);
+    assert.equal(await read('document.querySelector(".voice-dictation-button").getAttribute("aria-pressed")'),'false','the live microphone starts unmuted');
     await read('fixture.voice().end();void 0');assert.equal(requests.length,0);
     await click('语音转写');await until('fixture.state().phase==="recording"');
     holdTranscription=true;await pause(500);await click('结束录音并转写');

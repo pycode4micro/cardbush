@@ -61,6 +61,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -101,6 +102,8 @@ import { createPortal } from 'react-dom';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
 import { WindowFrame } from './components/WindowFrame';
+import { YourFriendsShell } from './features/yourFriends/YourFriendsShell';
+import { friendsStartupEnabled } from './features/yourFriends/friendsStore';
 import { applicationMenus } from './features/windowMenu/applicationMenus';
 import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
@@ -291,6 +294,22 @@ function CardbushApp() {
   );
   const [appSettings, setAppSettings] = useAppSettings();
   const [section, setSection] = useState<AppSection>('chat');
+  // Keep the underlying workspace mounted so entering/leaving preserves its draft and scroll.
+  const [friendsOpen, setFriendsOpen] = useState(friendsStartupEnabled);
+  const [friendsOrigin, setFriendsOrigin] = useState<{ x: number; y: number }>();
+  const friendsReturnFocus = useRef<HTMLElement | null>(null);
+  const friendsRestoreFocus = useRef(false);
+  const closeFriends = useCallback(() => {
+    friendsRestoreFocus.current = true;
+    setFriendsOpen(false);
+  }, []);
+  useLayoutEffect(() => {
+    if (!friendsOpen && friendsRestoreFocus.current) {
+      friendsRestoreFocus.current = false;
+      const target = friendsReturnFocus.current?.isConnected ? friendsReturnFocus.current : document.querySelector<HTMLElement>('[data-nav-section="your-friends"]');
+      target?.focus();
+    }
+  }, [friendsOpen]);
   const { compactLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
@@ -1158,6 +1177,7 @@ function CardbushApp() {
     window.addEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
     const removeDesktopListener = window.cardbushDesktop?.onOpenInspectorRequest?.((detail) => {
       if (!detail?.target?.trim()) return;
+      setFriendsOpen(false);
       openInspectorTarget(detail);
     });
     return () => {
@@ -1403,6 +1423,7 @@ function CardbushApp() {
 
   const createConversation = useCallback(
     (projectDir?: string | null) => {
+      setFriendsOpen(false);
       const resolvedProjectDir = projectDir?.trim() || undefined;
       const resolvedProjectId = resolvedProjectDir
         ? projectItems.find((project) => samePath(project.rootPath, resolvedProjectDir))?.id ?? stableProjectId(resolvedProjectDir)
@@ -1462,6 +1483,7 @@ function CardbushApp() {
   }, [conversationPromptFocus, settingsOpen, section, chat.activeConversationId]);
 
   const openConversation = useCallback((conversationId: string) => {
+    setFriendsOpen(false);
     const normalized = conversationId.trim();
     if (!normalized) return false;
     const target = chat.conversations.find((conversation) => conversation.id === normalized);
@@ -1503,6 +1525,7 @@ function CardbushApp() {
   const openSessionAttention = useCallback((sessionId: string) => {
     const normalized = sessionId.trim();
     if (!normalized) return;
+    setFriendsOpen(false);
     setSettingsOpen(false);
     setSection('chat');
     pendingSessionAttentionRef.current = normalized;
@@ -1913,6 +1936,7 @@ function CardbushApp() {
     pluginTab: 'plugins' | 'skills' = 'plugins',
   ) => {
     setSettingsInitialSection(targetSection);
+    setFriendsOpen(false);
     setSettingsPluginTab(pluginTab);
     setSettingsMounted(true);
     setSettingsOpen(true);
@@ -1954,6 +1978,14 @@ function CardbushApp() {
   // handlers used to be recreated by App on every message update, defeating
   // React.memo and making an unrelated stream interrupt title animations.
   const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
+    if (nextSection === 'your-friends') {
+      const entry = document.querySelector<HTMLElement>('[data-nav-section="your-friends"]');
+      const bounds = entry?.getBoundingClientRect();
+      friendsReturnFocus.current = entry ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      setFriendsOrigin(bounds ? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 } : undefined);
+      setSettingsOpen(false); setFriendsOpen(true); return;
+    }
+    setFriendsOpen(false);
     if (!['assistant'].includes(section) && !['assistant'].includes(nextSection)) revealConversation();
     setSection(nextSection);
   }, [section, revealConversation]);
@@ -1995,14 +2027,16 @@ function CardbushApp() {
     activeConversationId: chat.activeConversationId,
     conversations: chat.conversations,
     preparedConversations: chat.preparedConversations,
-    enabled: section === 'chat' && !settingsOpen && !conversationSearch.open,
+    enabled: section === 'chat' && !friendsOpen && !settingsOpen && !conversationSearch.open,
     onOpenConversation: handlePreviousConversation,
   });
-  const currentPage: AppPage = settingsOpen
+  const currentPage: AppPage = friendsOpen ? { section: 'your-friends' } : settingsOpen
     ? { section: 'settings', agentId: '', settingsSection: settingsInitialSection, pluginTab: settingsPluginTab }
     : section === 'chat' ? { section, conversationId: chat.activeConversationId }
     : { section };
   const pageNavigation = usePageNavigation(currentPage, page => {
+    if (page.section === 'your-friends') { handleSidebarSectionChange('your-friends'); return; }
+    setFriendsOpen(false);
     if (page.section === 'settings') { openSettings(page.settingsSection, page.pluginTab); return; }
     const workspaceId = page.section === 'assistant' ? localInspectorWorkspace('personal-assistant')
       : page.section === 'md-presentation' ? localInspectorWorkspace(creationSessionId || 'creation')
@@ -2022,10 +2056,12 @@ function CardbushApp() {
     createConversation();
   }, [createConversation]);
   const handleSearchOpenFiles = useCallback(() => {
+    setFriendsOpen(false);
     setSettingsOpen(false);
     void openInspectorFiles();
   }, [openInspectorFiles]);
   const handleSearchAddProject = useCallback(() => {
+    setFriendsOpen(false);
     setSettingsOpen(false);
     void addProject();
   }, [addProject]);
@@ -2033,8 +2069,8 @@ function CardbushApp() {
   const toggleSidebar = () => setSidebarCollapsed(collapsed => !collapsed);
   const windowMenus = applicationMenus(language, {
     openAppCenter: requestAppCenter,
-    openPlugins: () => { setSettingsOpen(false); setSection('plugins'); },
-    openAutomations: () => { setSettingsOpen(false); setSection('automations'); },
+    openPlugins: () => { setFriendsOpen(false); setSettingsOpen(false); setSection('plugins'); },
+    openAutomations: () => { setFriendsOpen(false); setSettingsOpen(false); setSection('automations'); },
     newConversation: () => { handleSearchCreateConversation(); setConversationPromptFocus(value => value + 1); },
     openProject: window.cardbushDesktop?.pickProjectDirectory ? handleSearchAddProject : undefined,
     openFiles: window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined,
@@ -2043,11 +2079,12 @@ function CardbushApp() {
     openDiagnostics: () => openSettings('diagnostics'),
     toggleSidebar,
     toggleInspector: () => {
+      setFriendsOpen(false);
       if (settingsOpen) { setSettingsOpen(false); setInspectorOpen(true); }
       else toggleInspector();
     },
     search: conversationSearch.show,
-    openBrowser: () => { setSettingsOpen(false); openNewBrowserInspectorTab(); },
+    openBrowser: () => { setFriendsOpen(false); setSettingsOpen(false); openNewBrowserInspectorTab(); },
     focusBrowserAddress: !settingsOpen && inspectorOpen && displayedInspectorTarget &&
       isInspectorBrowserTarget(displayedInspectorTarget.target, displayedInspectorTarget.mediaType)
       ? () => {
@@ -2059,10 +2096,10 @@ function CardbushApp() {
     reloadBrowser: !settingsOpen && inspectorOpen && displayedInspectorTarget && activeInspectorNavigation &&
       inspectorWebviewRefs.current.has(activeInspectorTabIdentity)
       ? () => inspectorWebviewRefs.current.get(activeInspectorTabIdentity)?.reload() : undefined,
-    openReview: inspectorReviewAvailable ? () => { setSettingsOpen(false); openChangeReviewInspector(inspectorConversationId); } : undefined,
+    openReview: inspectorReviewAvailable ? () => { setFriendsOpen(false); setSettingsOpen(false); openChangeReviewInspector(inspectorConversationId); } : undefined,
     openHistory: section === 'chat' && chat.activeConversationId
-      ? () => { setSettingsOpen(false); openWorkSummaryTab({ kind: 'turn-history', sessionId: chat.activeConversationId }); } : undefined,
-    openShadow: inspectorShadowAvailable ? () => { setSettingsOpen(false); openShadowInspectorTab(); } : undefined,
+      ? () => { setFriendsOpen(false); setSettingsOpen(false); openWorkSummaryTab({ kind: 'turn-history', sessionId: chat.activeConversationId }); } : undefined,
+    openShadow: inspectorShadowAvailable ? () => { setFriendsOpen(false); setSettingsOpen(false); openShadowInspectorTab(); } : undefined,
     previousConversation: conversationNavigation.canGoPrevious ? conversationNavigation.previous : undefined,
     back: pageNavigation.canGoBack ? pageNavigation.back : undefined,
     forward: pageNavigation.canGoForward ? pageNavigation.forward : undefined,
@@ -2092,6 +2129,7 @@ function CardbushApp() {
       data-diff-indicators={appearance.diffIndicators}
     >
       <AppCenterProvider language={language} onNavigate={(application, environmentId) => {
+        setFriendsOpen(false);
         if (application.kind === 'web') { setSettingsOpen(false); openInspectorTarget({ target: application.target, title: application.title }); return; }
         if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins'); return; }
         if (environmentId && application.kind === 'builtin' && application.target === 'settings') { openSettings(); return; }
@@ -2181,8 +2219,8 @@ function CardbushApp() {
       <ConversationInspectorContext.Provider value={{ ...conversationInspectorActions, outlets: conversationInspectorOutlets, visible: inspectorOpen, visibleTabIds: visibleInspectorTabIds }}>
       <main
         className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}${inspectorLayout ? ' inspector-multi-page' : ''}${inspectorCover ? ' inspector-covered' : conversationCovered ? ' inspector-conversation-covered' : ''}`}
-        aria-hidden={settingsVisible}
-        inert={settingsVisible ? true : undefined}
+        aria-hidden={settingsVisible || friendsOpen}
+        inert={settingsVisible || friendsOpen ? true : undefined}
       >
           <CompactSidebarBackdrop visible={(compactLayout || inspectorCover) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
           {sidebarPresence.mounted && (
@@ -2201,7 +2239,7 @@ function CardbushApp() {
               ) : (
                 <ChatSidebar
                   language={language}
-                  section={section}
+                  section={friendsOpen ? 'your-friends' : section}
                   activeConversationId={section === 'chat' ? chat.activeConversationId : ''}
                   runningConversationIds={chat.processingConversationIds}
                   onConversationWorkspaceChange={(conversationId, project) => chat.setConversationProject(conversationId, project?.rootPath ?? null, project?.id ?? null)}
@@ -2863,6 +2901,7 @@ function CardbushApp() {
       </ConversationInspectorContext.Provider>
       </RegionConversationContext.Provider>
       </PageNavigationScope.Provider>
+      {friendsOpen && <YourFriendsShell language={language} origin={friendsOrigin} onClose={closeFriends}/>}
       {projectRenameTarget && (
         <ProjectRenameDialog
           key={projectRenameTarget.id}

@@ -10,6 +10,7 @@ import { CONVERSATION_DRAG_TYPE } from '../chat/ConversationExtraction';
 import { skillPromptParts, type SkillPromptPart } from '../skills/skillReferences';
 import { ConversationHostContext } from '../conversationHost';
 import { ComposerReferenceContext } from './ComposerReferenceContext';
+import { useComposerCodeHighlights } from './useComposerCodeHighlights';
 
 type ComposerPromptPart = PluginPromptPart & SkillPromptPart & { contextReference?: PromptReference };
 
@@ -170,6 +171,8 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
     else textarea.current?.setSelectionRange(caret, caret);
   });
 
+  const codeHighlights = useComposerCodeHighlights(value, rich, textarea, editor, locatePromptOffset);
+
   const publish = () => {
     if (editor.current && !composing.current) {
       lastCaret.current = caretOffset(editor.current);
@@ -247,12 +250,12 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       if (event.dataTransfer.files.length || event.dataTransfer.types.includes('application/x-cardbush-quickload') || event.dataTransfer.types.includes(CONVERSATION_DRAG_TYPE)) return;
       event.preventDefault(); document.execCommand('insertText', false, event.dataTransfer.getData('text/plain'));
     }}
-  /> : <textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2} readOnly={readOnly}
+  /> : <><textarea ref={textarea} data-composer-input value={value} placeholder={placeholder} rows={2} readOnly={readOnly}
     aria-describedby={ariaDescribedBy}
     aria-label={ariaLabel ?? (uiText(language)('composerPromptInput.message'))}
     onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent, event.currentTarget)}
     onChange={event => { lastCaret.current = event.currentTarget.selectionStart; onChange(event.target.value, lastCaret.current); }}
-    onClick={select} onKeyUp={select} onKeyDown={keyDown} />;
+    onClick={select} onKeyUp={select} onKeyDown={keyDown} />{codeHighlights}</>;
 });
 
 function readPrompt(node: Node, nativeEditing = false): string {
@@ -295,8 +298,7 @@ function offsetBefore(root: HTMLElement, node: Node): number {
   return readPrompt(range.cloneContents()).length;
 }
 
-function selectOffsets(root: HTMLElement, start: number, end: number): void {
-  const locate = (offset: number): [Node, number] => {
+function locatePromptOffset(root: HTMLElement, offset: number): [Node, number] {
     const walk = (node: Node): [Node, number] | undefined => {
       if (node.nodeType === Node.TEXT_NODE) {
         const length = node.textContent?.length ?? 0;
@@ -310,8 +312,10 @@ function selectOffsets(root: HTMLElement, start: number, end: number): void {
       for (const child of node.childNodes) { const found = walk(child); if (found) return found; }
     };
     return walk(root) ?? [root, root.childNodes.length];
-  };
-  const range = document.createRange(); range.setStart(...locate(start)); range.setEnd(...locate(end));
+}
+
+function selectOffsets(root: HTMLElement, start: number, end: number): void {
+  const range = document.createRange(); range.setStart(...locatePromptOffset(root, start)); range.setEnd(...locatePromptOffset(root, end));
   const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
 }
 

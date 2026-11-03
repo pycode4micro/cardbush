@@ -1,5 +1,6 @@
 import { createECDH, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
+import { readProtectedJson, protectConfiguration } from '@cardbush/platform/credentials';
 import http from 'node:http';
 import type { Socket } from 'node:net';
 import path from 'node:path';
@@ -120,13 +121,14 @@ export class BrowserConnectorWebSocket {
 
   async start(): Promise<void> {
     assertConnectorFile(this.#file);
+    if (fs.existsSync(this.#file) && [2, 3, 4].includes(JSON.parse(fs.readFileSync(this.#file, 'utf8')).version)) {
+      fs.rmSync(this.#file);
+    }
     if (fs.existsSync(this.#file)) {
-      const saved = JSON.parse(fs.readFileSync(this.#file, 'utf8'));
-      // One-time conversion of the former single Chrome pairing, without losing consent.
-      const credentials = saved.version === 2
-        ? (saved.credential ? [{ ...saved.credential, browser: 'chrome', label: 'Chrome' }] : []) : saved.credentials;
+      const saved = readProtectedJson(this.#file) as Record<string, any>;
+      const credentials = saved.credentials;
       const invalid = () => new Error('Invalid browser pairing configuration. Remove the connector configuration and pair again.');
-      if (![2, 3, 4].includes(saved.version) || !Number.isInteger(saved.port) || saved.port < 1024 || saved.port > 65535
+      if (saved.version !== 5 || !Number.isInteger(saved.port) || saved.port < 1024 || saved.port > 65535
         || !Array.isArray(credentials) || credentials.length > 8) throw invalid();
       for (const credential of credentials) {
         if (!credential || !/^[a-f0-9]{32}$/.test(credential.id) || !/^[a-f0-9]{64}$/.test(credential.secret)
@@ -134,7 +136,7 @@ export class BrowserConnectorWebSocket {
           || !credential.label.trim() || credential.label.length > 80 || this.#credentials.has(credential.id)) throw invalid();
         this.#credentials.set(credential.id, credential);
       }
-      this.#defaultConnectionId = saved.version === 2 ? credentials[0]?.id ?? '' : saved.defaultConnectionId;
+      this.#defaultConnectionId = saved.defaultConnectionId;
       if (typeof this.#defaultConnectionId !== 'string' || (this.#defaultConnectionId && !this.#credentials.has(this.#defaultConnectionId))) throw invalid();
       this.#port = saved.port;
       if (saved.revoked !== undefined && (!Array.isArray(saved.revoked) || saved.revoked.length > 256 || saved.revoked.some((id: unknown) => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)))) throw invalid();
@@ -203,44 +205,6 @@ export class BrowserConnectorWebSocket {
   }
   get port(): number { return this.#port; }
   get pendingPairingId(): string | null { return this.#pending && this.#pending.expiresAt > Date.now() ? this.#pending.id : null; }
-  importPairings(credentials: Credential[], defaultId: string, profiles: ProfileIdentity[] = []): void {
-    if (!Array.isArray(credentials) || credentials.length > 8) throw new Error('Invalid legacy browser pairings.');
-    const next = new Map(this.#credentials);
-    for (const item of credentials) {
-      if (!item || !/^[a-f0-9]{32}$/.test(item.id) || !/^[a-f0-9]{64}$/.test(item.secret)
-        || !['chrome', 'edge'].includes(item.browser) || typeof item.label !== 'string' || !item.label.trim() || item.label.length > 80)
-        throw new Error('Invalid legacy browser pairing.');
-      if (this.#revoked.has(item.id)) continue;
-      const existing = next.get(item.id);
-      if (existing) {
-        if (existing.browser !== item.browser || (existing.secret !== item.secret && !this.#profiles.has(item.id)))
-          throw new Error('Conflicting legacy browser identity.');
-        // A recurring CLI migration must not undo a profile's credential refresh.
-        continue;
-      }
-      next.set(item.id, item);
-    }
-    if (next.size > 8) throw new Error('Remove unused browser connections before importing the CLI pairings (maximum 8).');
-    if (!Array.isArray(profiles) || profiles.length > 264) throw new Error('Invalid legacy profile identities.');
-    const previousProfiles = new Map(this.#profiles), nextProfiles = new Map(this.#profiles);
-    for (const profile of profiles) {
-      if (!profile || !/^[a-f0-9]{32}$/.test(profile.id) || !/^04[a-f0-9]{128}$/.test(profile.key)
-        || !['chrome', 'edge'].includes(profile.browser)) throw new Error('Invalid legacy profile identity.');
-      if (this.#revoked.has(profile.id) || !next.has(profile.id)) continue;
-      const existing = nextProfiles.get(profile.id);
-      if (next.get(profile.id)!.browser !== profile.browser || (existing && existing.key !== profile.key)) throw new Error('Conflicting legacy profile identity.');
-      nextProfiles.set(profile.id, profile);
-    }
-    const previous = this.#credentials, previousDefault = this.#defaultConnectionId;
-    this.#credentials = next;
-    for (const [id, profile] of nextProfiles) this.#profiles.set(id, profile);
-    if (previous.size === 0 && !previousDefault && next.has(defaultId)) this.#defaultConnectionId = defaultId;
-    try { this.#save(); } catch (error) {
-      this.#credentials = previous; this.#defaultConnectionId = previousDefault;
-      this.#profiles.clear(); for (const [id, profile] of previousProfiles) this.#profiles.set(id, profile);
-      throw error;
-    }
-  }
   #requestConnection(client: WebSocket): void {
     const controller = new AbortController();
     let phase = 'hello', id = '', nonce = '', secret = '', browser: ConnectorBrowser, profileKey = '';
@@ -382,9 +346,9 @@ export class BrowserConnectorWebSocket {
     this.#server.close(); this.#ws.close(); this.#approvalWs.close();
   }
   #save(): void {
-    writeConnectorFile(this.#file, JSON.stringify({ version: 4, port: this.#port,
+    writeConnectorFile(this.#file, JSON.stringify(protectConfiguration({ version: 5, port: this.#port,
       credentials: [...this.#credentials.values()], profiles: [...this.#profiles.values()],
-      defaultConnectionId: this.#defaultConnectionId, revoked: [...this.#revoked], approvalNotBefore: this.#approvalNotBefore }));
+      defaultConnectionId: this.#defaultConnectionId, revoked: [...this.#revoked], approvalNotBefore: this.#approvalNotBefore })));
   }
   #authenticate(client: WebSocket, candidate: Credential, nonce: string): void {
     const serverNonce = hex(32);

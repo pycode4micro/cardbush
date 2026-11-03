@@ -79,3 +79,7 @@ docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml
 ```
 
 Fixtures use disposable profiles/local pages, no model or real accounts. Validate actual preview/takeover/release, browser retention on preview close and container restart, and absence of graphics in the default image. Build/unit success does not certify those cases. The source's 2026-10-03 Ubuntu/Windows-client validation and old `--desktop-live` procedure remain historical only: `run-agents-ui-test.mjs` now checks worker registration, not that removed standalone UI. It was functional evidence, not a multi-task stress test or certification of third-party website login.
+
+## Credential key for Linux containers
+
+Before saving model or MCP secrets, provision CARDBUSH_CREDENTIAL_KEY_FILE as described in [credential storage](../../docs/AGENT_SERVICES.en.md#credential-storage). Bind-mount the separately managed 32-byte key read-only outside /data (for example /run/secrets/cardbush-credentials), owned by container UID 1100 with mode 0600, and set the environment variable to that container path. Alternatively inject CARDBUSH_CREDENTIAL_KEY from a secret manager as 64 hex characters. Keep it stable across container replacements and separate from data backups. The built-in private Web broker provisions distinct tenant keys automatically.

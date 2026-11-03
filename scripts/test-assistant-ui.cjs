@@ -3,6 +3,7 @@ const assert = require('node:assert/strict'), fs = require('node:fs'), path = re
 if (typeof electron === 'string') {
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
   if (process.argv.includes('--submission')) env.CARDBUSH_ASSISTANT_UI_CASE = 'submission';
+  if (process.argv.includes('--shortcuts')) env.CARDBUSH_ASSISTANT_UI_CASE = 'shortcuts';
   if (process.argv.includes('--timeline')) env.CARDBUSH_ASSISTANT_UI_CASE = 'timeline';
   if (process.argv.includes('--management')) env.CARDBUSH_ASSISTANT_UI_CASE = 'management';
   if (process.argv.includes('--attachments')) env.CARDBUSH_ASSISTANT_UI_CASE = 'attachments';
@@ -99,6 +100,8 @@ async function buildFixture(directory) {
     },
   }], build: { write: false, minify: false, lib: { entry: path.resolve('src/__assistant_fixture__.tsx'), name: 'AssistantFixture', formats: ['iife'] } } });
   const output = Array.isArray(result) ? result[0].output : result.output;
+  fs.mkdirSync(path.join(directory, 'voice'));
+  fs.copyFileSync('public/voice/realtime-capture-worklet.js', path.join(directory, 'voice/realtime-capture-worklet.js'));
   fs.writeFileSync(path.join(directory, 'index.html'), `<html><meta charset="utf-8"><style>${output.filter(item => item.type === 'asset' && item.fileName.endsWith('.css')).map(item => item.source).join('\n')}</style><div id="root"></div><script>${output.find(item => item.type === 'chunk').code.replaceAll('</script', '<\\/script')}</script></html>`);
 }
 
@@ -107,6 +110,7 @@ const { app, BrowserWindow } = electron;
 const directory = process.argv[2];
 if (!directory) throw Error('Run this fixture with node scripts/test-assistant-ui.cjs');
 app.setPath('userData', path.join(directory, 'profile')); app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('force-device-scale-factor', '1');
 app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -128,7 +132,7 @@ app.whenReady().then(async () => {
   const fill = (selector, value) => read(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(n instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));})();`);
   try {
     await win.loadFile(path.join(directory, 'index.html')); await until('document.querySelectorAll(".assistant-message").length===2');
-    if (['submission', 'timeline', 'management', 'attachments', 'message-actions'].includes(process.env.CARDBUSH_ASSISTANT_UI_CASE)) {
+    if (['submission', 'shortcuts', 'timeline', 'management', 'attachments', 'message-actions'].includes(process.env.CARDBUSH_ASSISTANT_UI_CASE)) {
       await require('./helpers/assistant-' + process.env.CARDBUSH_ASSISTANT_UI_CASE + '.cjs')({ read, until, fill, click, pause, win, directory });
       assert.deepEqual(errors, []); return;
     }

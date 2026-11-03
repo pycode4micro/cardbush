@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:f
 import { dirname, join, sep } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { z } from 'zod';
+import { unprotectConfiguration, writeProtectedJson } from '@cardbush/platform/credentials';
 import { networkProxySchema } from '@cardbush/bush-protocol';
 import { ProductModelConfigStore, ProductMcpConfigStore, decodeProductSubagentConfig } from '@cardbush/product-host';
 import { replaceFileWithRetry, writePrivateJson as writeJson } from './atomicJsonFile.mjs';
@@ -129,7 +130,7 @@ async function rollback(root: string, transaction: Transaction) {
   }
   if (transaction.entries.some(entry => entry.path === 'config/mcp-servers.json')) {
     const prior = await new ProductMcpConfigStore(mcpPath).read();
-    await writeJson(mcpPath, { ...prior, revision: Math.max(attemptedRevision, prior.revision) + 1 });
+    writeProtectedJson(mcpPath, { ...prior, revision: Math.max(attemptedRevision, prior.revision) + 1 });
     const receiptPath = join(root, 'shared-configuration', 'current.json');
     if (await exists(receiptPath)) {
       const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
@@ -223,7 +224,7 @@ export class AgentSharedConfiguration {
     const secrets = configurationValues([payload.models, payload.apps, payload.mcp, payload.network]);
     // Rollback diagnostics may mention credentials from the previous configuration too.
     for (const file of ['models.json', 'apps.json', 'mcp-servers.json', 'network.json']) {
-      try { secrets.push(...configurationValues(JSON.parse(await readFile(join(this.root, 'config', file), 'utf8')))); }
+      try { secrets.push(...configurationValues(unprotectConfiguration(JSON.parse(await readFile(join(this.root, 'config', file), 'utf8'))))); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
     let transaction: Transaction | undefined;

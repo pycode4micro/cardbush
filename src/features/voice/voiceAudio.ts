@@ -1,4 +1,5 @@
 import { uiText } from '../../i18n';
+import { openMicrophone } from './microphone';
 import type { VoiceDesktopApi } from '../../../electron/voiceTypes';
 import { VoiceActivity } from './voiceActivity';
 
@@ -14,7 +15,7 @@ export class VoicePlayback {
   private epoch = 0;
   constructor(private api: VoiceDesktopApi, private outputLevel: (value: number) => void = () => {}) {}
   async prepare() {
-    this.context ??= new AudioContext({ sampleRate: 24_000 });
+    this.context ??= new AudioContext();
     if (!this.outputGain) {
       this.outputGain = this.context.createGain();
       const analyser = this.context.createAnalyser(); analyser.fftSize = 256;
@@ -94,13 +95,7 @@ export class VoiceCapture {
   constructor(private mode: 'recording' | 'call', private callbacks: CaptureCallbacks, private microphoneId = '') {}
   async start() {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw Error(uiText()('voiceAudio.recording_is_not_supported_in_this_environment'));
-    let stream: MediaStream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true,
-      ...(this.microphoneId ? { deviceId: { exact: this.microphoneId } } : {}) } }); }
-    catch (error) {
-      if (error instanceof DOMException && ['NotFoundError', 'OverconstrainedError'].includes(error.name)) throw Error(uiText()('voiceAudio.the_selected_microphone_is_unavailable_choose_another'));
-      throw error;
-    }
+    const stream = await openMicrophone(this.microphoneId, () => this.closed);
     if (this.closed) { stream.getTracks().forEach(track => track.stop()); return; }
     this.stream = stream;
     stream.getAudioTracks().forEach(track => track.addEventListener('ended', () => { if (!this.closed) this.callbacks.error(uiText()('voiceAudio.the_microphone_was_disconnected_reconnect_it_before')); }));

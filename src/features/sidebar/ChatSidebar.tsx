@@ -1,4 +1,5 @@
 import { uiText } from '../../i18n';
+import { useFriendsState } from '../yourFriends/friendsStore';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
 import { AppCenterDock } from '../appCenter/AppCenter';
@@ -34,6 +35,7 @@ import {
   RotateCcw,
   RotateCw,
   Search,
+  Smile,
   Trash2,
   X,
 } from 'lucide-react';
@@ -263,6 +265,7 @@ export const ChatSidebar = memo(function ChatSidebar({
 }) {
   const sidebarRenderStartedAt = performance.now();
   const assistantActions = useAssistantActions(language), assistantProfile = assistantActions.profile;
+  const friends = useFriendsState();
   useLayoutEffect(() => {
     recordUiPerformanceMetric('sidebar_commit_ms', {
       sessionId: activeConversationId,
@@ -843,6 +846,8 @@ export const ChatSidebar = memo(function ChatSidebar({
             {assistantProfile.microphoneMuted && <MicOff size={12} aria-label={uiText(language)('chatSidebar.microphoneMuted')}/>}
             {assistantProfile.outputMuted && <VolumeX size={12} aria-label={uiText(language)('chatSidebar.speechMuted')}/>}
           </span>}/>
+        <NavRow icon={<Smile/>} label={friends.name || uiText(language)('yourFriends.title')} active={section === 'your-friends'}
+          navSection="your-friends" onClick={() => onSectionChange('your-friends')}/>
       </nav>
 
       <div className="sidebar-scroll">
@@ -956,6 +961,7 @@ function NavRow({
   onContextMenu,
   trailing,
   shortcut,
+  navSection,
 }: {
   active?: boolean;
   icon: React.ReactNode;
@@ -964,11 +970,13 @@ function NavRow({
   onContextMenu?: (event: ReactMouseEvent) => void;
   trailing?: React.ReactNode;
   shortcut?: ShortcutId;
+  navSection?: AppSection;
 }) {
   return (
     <button
       className={`nav-row ${active ? 'active' : ''}`}
       data-shortcut={shortcut}
+      data-nav-section={navSection}
       title={label}
       type="button"
       onClick={onClick}

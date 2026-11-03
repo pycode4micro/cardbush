@@ -4,6 +4,18 @@ import { modelAuthenticationSchema, SIWC } from './siwc.js';
 export const modelApiProtocolSchema = z.enum(["openai_responses", "openai_chat_completions", "anthropic_messages"]);
 export type ModelApiProtocol = z.infer<typeof modelApiProtocolSchema>;
 export const anthropicThinkingModeSchema = z.enum(['adaptive', 'budget']);
+export const storedModelHeader = '[cardbush:stored-secret]';
+export function publicModelHeaders(headers: Record<string, string> = {}) {
+  return Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, value && value !== '{{sessionId}}' ? storedModelHeader : value]));
+}
+export function restoreModelHeaders(headers: Record<string, string>, previous: Record<string, string> = {}) {
+  return Object.fromEntries(Object.entries(headers).map(([name, value]) => {
+    if (value !== storedModelHeader) return [name, value];
+    const prior = Object.entries(previous).find(([key]) => key.toLowerCase() === name.toLowerCase());
+    if (!prior?.[1]) throw new Error('stored_model_header_missing');
+    return [name, prior[1]];
+  }));
+}
 
 export const modelHeadersSchema = z.record(z.string(), z.string()).superRefine((headers, ctx) => {
   const names = new Set<string>();
@@ -23,6 +35,14 @@ export function modelApiBaseURL(protocol: ModelApiProtocol, baseURL?: string): s
   if (/^https?:\/\/[^/]*@/i.test(url) || /[?#]/.test(url)) {
     throw new Error('API base URL must be an HTTP(S) URL without credentials, query or fragment.');
   }
+  const parsed = new URL(url);
+  // A private Web deployment may pin its isolated Docker model gateway. This
+  // is a host setting, never a model configuration or renderer-controlled flag.
+  const privateOrigin = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.CARDBUSH_PRIVATE_MODEL_ORIGIN;
+  const privateGateway = privateOrigin && parsed.origin === privateOrigin && parsed.pathname.startsWith('/internal/model/');
+  if (parsed.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname) && !privateGateway) {
+    throw new Error('remote_model_requires_https');
+  }
   return url.replace(/\/+$/, '');
 }
 
@@ -38,6 +58,7 @@ export function modelApiGateway(baseURL?: string): 'opencode' | 'openrouter' | u
 export function modelRequestHeaders(baseURL: string | undefined, defaults: Record<string, string> | undefined, sessionId: string): Record<string, string> {
   const headers: Record<string, string> = { 'user-agent': 'CardBush/1.0' };
   for (const [name, value] of Object.entries(modelHeadersSchema.parse(defaults ?? {}))) {
+    if (value === storedModelHeader) throw new Error('stored_model_header_requires_value');
     headers[name.toLowerCase()] = value.replaceAll('{{sessionId}}', sessionId);
   }
   if (modelApiGateway(baseURL) === 'opencode') {
@@ -81,6 +102,8 @@ export const runtimeProviderBindingConfigSchema = z.object({
   defaultHeaders: modelHeadersSchema.default({}),
   timeoutMs: z.number().int().positive().optional(),
 }).superRefine((config, ctx) => {
+  try { modelApiBaseURL(config.adapter, config.baseURL); }
+  catch { ctx.addIssue({ code: 'custom', message: 'remote_model_requires_https' }); }
   if (config.authentication?.kind === 'chatgpt') {
     if (config.adapter !== 'openai_responses' || config.apiKey ||
         (config.baseURL && config.baseURL !== SIWC.resource) || Object.keys(config.defaultHeaders).length) {

@@ -29,7 +29,9 @@ export function AssistantComposer({ controls, language, draft, onDraftChange, re
         topAccessory={(interaction || quote) && <div className="assistant-composer-accessories">{interaction}{quote}</div>}
         fileDropTarget={fileDropTarget} inputReadOnly={!ready} submissionPending={submitting}
         sending={false} referencePlanAvailable={false} retainUntilAccepted optimisticSubmission
-        onSend={onSend} onCancel={async () => {}} cancelEnabled={false}/>
+        // Composer passes delivery options; Assistant's second argument is reserved
+        // for an explicit failed-message retry. Forward only the new prompt.
+        onSend={text => onSend(text)} onCancel={async () => {}} cancelEnabled={false}/>
     </ComposerPresentationContext.Provider>
   </ComposerReferenceContext.Provider>;
 }

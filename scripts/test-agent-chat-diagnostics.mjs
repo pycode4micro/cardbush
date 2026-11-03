@@ -35,3 +35,19 @@ test('unbounded output and file write errors cannot flood or crash the terminal'
   assert.doesNotThrow(() => { failed.write('stderr', 'sensitive raw diagnostic\n'); failed.write('stderr', 'late log\n'); failed.close(); });
   assert.match(failed.error, /^[A-Z0-9_]+$/);
 });
+
+test('diagnostics redact browser pairing receipts and additional credential fields across chunks', async t => {
+  const path = join(await fixture(t), 'runtime.log'), log = new AgentChatDiagnostics(path);
+  const pairing = `CB2.43120.${'a'.repeat(32)}.${'b'.repeat(64)}`;
+  const receipt = `Connection receipt: ${pairing}\n`;
+  log.write('stdout', receipt.slice(0, 49));
+  log.write('stdout', receipt.slice(49));
+  log.write('stderr', JSON.stringify({ code: 'runtime_mcp_stderr', message:
+    `subscription_key="AUDIT_SUBSCRIPTION" privateKey='AUDIT_PRIVATE' original receipt ${pairing}` }) + '\n');
+  log.close();
+  const raw = await readFile(path, 'utf8');
+  assert.doesNotMatch(raw, /CB2\.|b{64}|AUDIT_SUBSCRIPTION|AUDIT_PRIVATE/);
+  assert.match(raw, /Connection receipt/);
+  assert.match(raw, /runtime_mcp_stderr/);
+  assert.match(raw, /redacted/);
+});

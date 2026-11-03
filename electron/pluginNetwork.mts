@@ -3,6 +3,7 @@ import { createServer, request, type IncomingMessage, type Server, type ClientRe
 import { request as secureRequest } from 'node:https';
 import { connect, type Socket } from 'node:net';
 import { readFile } from 'node:fs/promises';
+import { unprotectConfiguration } from '@cardbush/platform/credentials';
 import { dirname, join } from 'node:path';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
@@ -25,11 +26,11 @@ export class PluginNetwork {
 
   async configuration() {
     let stored: { proxy?: unknown; plugins?: Array<{ id: string; config?: { proxy?: unknown } }> } = {};
-    try { stored = JSON.parse(await readFile(this.configPath, 'utf8')); }
+    try { stored = unprotectConfiguration(JSON.parse(await readFile(this.configPath, 'utf8'))); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     const defaults = stored.proxy === undefined ? undefined : pluginProxySchema.parse(stored.proxy);
     let mcp: { servers?: Array<{ id: string; proxy?: unknown }> } = {};
-    try { mcp = JSON.parse(await readFile(join(dirname(this.configPath), 'mcp-servers.json'), 'utf8')); }
+    try { mcp = unprotectConfiguration(JSON.parse(await readFile(join(dirname(this.configPath), 'mcp-servers.json'), 'utf8'))); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     return { default: resolvePluginProxy(this.model, defaults), plugins: Object.fromEntries((stored.plugins ?? []).map(plugin =>
       [plugin.id, resolvePluginProxy(this.model, defaults, plugin.config?.proxy === undefined ? undefined : pluginProxySchema.parse(plugin.config.proxy))])),

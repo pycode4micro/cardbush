@@ -19,11 +19,14 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:composer-markdown": "node --test scripts/test-composer-code-ranges.mjs && node scripts/run-app-views-test.mjs composer-input && node scripts/run-app-views-test.mjs code-rendering",
+    "test:your-friends": "npm run build --workspace @cardbush/platform && node scripts/test-your-friends-ui.cjs",
+    "test:credential-security": "node scripts/build-chrome-native-host.mjs && npm run build:runtime && tsc -p tsconfig.node.json && node --test scripts/test-credential-security.mjs",
     "test:bot-gateway": "npm run build:agent && node --test --test-timeout=60000 scripts/test-bot-gateway.mjs",
     "test:remote-workers": "npm run build:agent && node --test packages/bush-protocol/test/remoteInteraction.test.mjs packages/bush-runtime/test/subagentInteractions.test.mjs packages/bush-runtime/test/subagentResume.test.mjs packages/bush-runtime/test/registeredAgents.test.mjs scripts/test-agent-service.mjs scripts/test-web-remote-agents.mjs scripts/test-local-workers.mjs && node scripts/run-agents-ui-test.mjs",
     "test:mcp-conformance": "npm run build:runtime && node scripts/run-mcp-conformance.mjs",
     "test:mcp-conformance:all": "npm run test:mcp-conformance -- --suite all",
-    "test:voice": "node scripts/build-voice-native-host.mjs && tsc -p tsconfig.node.json && node --test scripts/test-voice.mjs scripts/test-voice-native.mjs scripts/test-voice-models.mjs scripts/test-speaker-lock.mjs scripts/test-custom-speech.mjs && node scripts/test-voice-ui.cjs && node scripts/test-voice-routing-ui.cjs && node scripts/test-voice-composer-ui.cjs && node scripts/test-voice-settings-rendering.cjs",
+    "test:voice": "node scripts/build-voice-native-host.mjs && tsc -p tsconfig.node.json && node --test scripts/test-microphone-capture.mjs scripts/test-voice.mjs scripts/test-voice-native.mjs scripts/test-voice-models.mjs scripts/test-speaker-lock.mjs scripts/test-custom-speech.mjs && node scripts/test-voice-ui.cjs && node scripts/test-voice-routing-ui.cjs && node scripts/test-voice-composer-ui.cjs && node scripts/test-voice-settings-rendering.cjs",
     "test:voice-composer": "node scripts/test-voice-composer-ui.cjs && node scripts/test-voice-composer-ui.cjs --live-dictation",
     "test:voice-custom-native": "tsc -p tsconfig.node.json && node scripts/test-custom-speech-native.mjs",
     "test:voice-realtime": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && tsc -p tsconfig.node.json && node --test scripts/test-realtime-voice.mjs scripts/test-realtime-context.mjs scripts/test-qwen-realtime.mjs scripts/test-realtime-time-context.mjs packages/bush-runtime/test/realtimeAgent.test.mjs packages/bush-runtime/test/realtimeContextCompaction.test.mjs && node scripts/test-realtime-voice-ui.cjs",
@@ -112,6 +115,7 @@
     "test:chrome-capture": "npm run build --workspace @cardbush/chrome-mcp && node scripts/run-chrome-capture-test.mjs",
     "test:chrome-reconnect-native": "npm run test:browser-reconnect-native --",
     "test:browser-reconnect-native": "node scripts/build-chrome-native-host.mjs && npm run build --workspace @cardbush/chrome-mcp && tsc -p tsconfig.node.json && node scripts/test-browser-reconnect-native.mjs",
+    "test:browser-cli-consent-native": "node scripts/build-chrome-native-host.mjs && npm run build --workspace @cardbush/chrome-mcp && tsc -p tsconfig.node.json && node scripts/test-browser-cli-consent-native.mjs && node scripts/test-browser-cli-consent-native.mjs --edge",
     "test:browser-mcp": "npm run test:chrome-mcp",
     "test:browser-connector": "npm run test:chrome-connector",
     "test:chrome-actions": "npm run build --workspace @cardbush/chrome-mcp && node --test packages/cardbush-chrome-mcp/test/snapshot.test.mjs packages/cardbush-chrome-mcp/test/pageWait.test.mjs && node scripts/test-browser-actions.mjs",
@@ -191,7 +195,7 @@
     "test:assistant-timing": "node scripts/test-assistant-timing-contract.mjs",
     "test:assistant-management": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && node --test packages/bush-runtime/test/assistantManagement.test.mjs && node scripts/test-assistant-ui.cjs --management",
     "test:attachment-layout": "node scripts/test-assistant-ui.cjs --attachments && node scripts/run-app-views-test.mjs attachment-layout",
-    "test:assistant-input": "node --test scripts/test-assistant-timeline.mjs scripts/test-assistant-send.mjs && node scripts/test-assistant-ui.cjs --submission && node scripts/test-assistant-ui.cjs --timeline",
+    "test:assistant-input": "node --test scripts/test-assistant-timeline.mjs scripts/test-assistant-send.mjs && node scripts/test-assistant-ui.cjs --submission && node scripts/test-assistant-ui.cjs --shortcuts && node scripts/test-assistant-ui.cjs --timeline",
     "test:run-status": "node scripts/test-run-status.mjs && node scripts/test-run-status-ui.mjs",
     "test:message-media": "node scripts/test-message-media-contract.mjs && node --test scripts/test-media-presentation.mjs",
     "test:resource-references": "node --test scripts/test-source-memo-shorthand.mjs && node scripts/test-resource-targets.mjs && node scripts/test-source-memo-ui.mjs",
@@ -313,12 +317,12 @@
     "ssh2": "^1.17.0",
     "tar": "7.5.22",
     "three": "0.185.1",
-    "undici": "^7.29.1",
+    "undici": "^7.30.1",
     "word-extractor": "^1.0.4",
     "ws": "^8.22.0",
     "yauzl": "3.4.0",
     "zip-stream": "4.1.1",
-    "zod": "^4.1.12"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",
@@ -346,7 +350,7 @@
       "global-agent": "4.1.3"
     },
     "@file-viewer/core": {
-      "dompurify": "3.4.16"
+      "dompurify": "3.4.17"
     },
     "concurrently": {
       "shell-quote": "1.11.0"

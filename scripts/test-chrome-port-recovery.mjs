@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import vm from 'node:vm';
+import { readProtectedJson, writeProtectedJson } from '@cardbush/platform/credentials';
 import { randomBytes, webcrypto, createHmac } from 'node:crypto';
 import { BrowserConnectorWebSocket } from '../dist-electron/browserConnectorWebSocket.js';
 import { browserConnectorDiscoveryPorts } from '../dist-electron/browserConnectorConstants.js';
@@ -19,9 +20,9 @@ async function until(predicate) {
 function fixture(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-port-recovery-'));
   const credential = { id: randomBytes(16).toString('hex'), secret: randomBytes(32).toString('hex'), browser: 'chrome', label: 'Existing browser' };
-  const saved = { version: 3, port: 60123, credentials: [credential], defaultConnectionId: credential.id };
+  const saved = { version: 5, port: 60123, credentials: [credential], defaultConnectionId: credential.id };
   const file = path.join(root, 'pairing.json');
-  fs.writeFileSync(file, JSON.stringify(saved));
+  writeProtectedJson(file, saved);
   const server = new BrowserConnectorWebSocket(root, client => client.send(JSON.stringify({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' })), options);
   t.after(async () => { server.stop(); await delay(20); fs.rmSync(root, { recursive: true, force: true }); });
   return { server, saved, file };
@@ -41,7 +42,7 @@ test('local consent migrates an old port into the fresh extension discovery rang
   const identity = { id: randomBytes(16).toString('hex') };
   await approvalClient(0, identity, { ports: undefined, reachablePorts: [f.server.port], confirm: async () => { approvals++; return true; } });
   assert.equal(approvals, 1);
-  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  const saved = readProtectedJson(f.file);
   assert.deepEqual(saved.credentials.find(item => item.id === credential.id), credential);
   assert.ok(saved.credentials.some(item => item.id === identity.id));
 });
@@ -65,7 +66,7 @@ for (const code of ['EACCES', 'EADDRINUSE']) test(`${code}: a saved endpoint rec
   assert.equal(attempts[1], browserConnectorDiscoveryPorts[0]);
   assert.ok(browserConnectorDiscoveryPorts.includes(f.server.port));
   assert.deepEqual(f.server.portRecovery, { previousPort: f.saved.port, port: f.server.port, reason: code });
-  const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  const saved = readProtectedJson(f.file);
   assert.deepEqual(saved.credentials, f.saved.credentials);
   assert.equal(saved.defaultConnectionId, f.saved.defaultConnectionId);
   assert.equal(saved.port, f.server.port);

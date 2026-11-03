@@ -18,6 +18,8 @@ if (process.env.CI === 'true' && process.platform === 'linux') app.disableHardwa
 // CI Windows Server disables system animations. Motion regressions need an
 // explicit baseline; reduced-motion cases below still use media emulation.
 app.commandLine.appendSwitch('force-prefers-no-reduced-motion');
+// Viewport assertions use CSS pixels regardless of the developer's Windows DPI.
+app.commandLine.appendSwitch('force-device-scale-factor', '1');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');

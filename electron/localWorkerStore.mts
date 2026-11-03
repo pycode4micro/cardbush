@@ -1,16 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { chmod, lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AgentConnectionManager } from './agentConnections.mjs';
-import { workerCredentialCipher } from './headlessWorkerStore.mjs';
+import { workerCredentialCipher, discardLegacyWorkerCache, openHeadlessWorkers } from './headlessWorkerStore.mjs';
 import { assertConnectorFile, secureConnectorResourceAsync } from './browserConnectorFiles.js';
 import { withWorkerStoreLock } from './workerStoreLock.mjs';
 import { localCliDataRoot, localDesktopProfile } from './localProfilePaths.mjs';
 
-type Cipher = AgentConnectionManager['cipher'];
-type Options = { legacyRoot?: string; desktopCipher?: Cipher; nativeHostPath?: string; manager?: AgentConnectionManager['options'] };
+type Options = { legacyRoot?: string; nativeHostPath?: string; manager?: AgentConnectionManager['options'] };
 
 function nativeWorkerHost() {
   const installation = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,16 +19,19 @@ function nativeWorkerHost() {
 
 /** One user/profile-owned registry; no Runtime, model or plugin startup required.
  * Windows protects the key with current-user DPAPI and verifies its private ACL.
- * Unix uses the same private service-account boundary as headless credentials. */
+ * Unix requires an independently managed credential key. */
 export async function openLocalWorkers(profile = localDesktopProfile(), options: Options = {}) {
   await mkdir(profile, { recursive: true, mode: 0o700 });
   const root = await realpath(profile), directory = join(root, 'workers');
   await mkdir(directory, { recursive: true, mode: 0o700 });
   if ((await lstat(directory)).isSymbolicLink() || dirname(await realpath(directory)) !== root) throw Error('Worker store must belong to this profile.');
   const native = options.nativeHostPath ?? nativeWorkerHost();
-  if (process.platform === 'win32') await secureConnectorResourceAsync(native, 'directory', directory);
-  else await chmod(directory, 0o700);
-  const keyFile = join(directory, process.platform === 'win32' ? 'credentials.dpapi' : 'credentials.key');
+  if (process.platform !== 'win32') {
+    await discardLegacyWorkerCache(join(root, 'agents'));
+    return openHeadlessWorkers(root, options.manager);
+  }
+  await secureConnectorResourceAsync(native, 'directory', directory);
+  const keyFile = join(directory, 'credentials.dpapi');
   const key = await withWorkerStoreLock(keyFile, async () => {
     assertConnectorFile(keyFile);
     let stored = await readFile(keyFile).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return undefined; });
@@ -38,28 +40,21 @@ export async function openLocalWorkers(profile = localDesktopProfile(), options:
       catch { throw Error('Worker credential protection failed for this OS account.'); }
     };
     if (!stored) {
+      const exists = await lstat(join(directory, 'connections.json')).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+      if (exists) throw Error('worker_credential_key_missing');
       const fresh = randomBytes(32);
-      stored = process.platform === 'win32' ? protect(fresh, '--protect-worker-key') : fresh;
+      stored = protect(fresh, '--protect-worker-key');
       await writeFile(keyFile, stored, { flag: 'wx', mode: 0o600 });
-      if (stored !== fresh) fresh.fill(0);
+      fresh.fill(0);
     }
-    const value = process.platform === 'win32' ? protect(stored, '--unprotect-worker-key') : stored;
+    const value = protect(stored, '--unprotect-worker-key');
     if (value.length !== 32) throw Error('Invalid worker credential store.');
     return value;
   });
   const manager = new AgentConnectionManager(join(directory, 'connections.json'), workerCredentialCipher(key), options.manager);
-  // No new legacy directories/keys are created just to discover old connections.
+  // Retired caches are discarded, never imported into the shared registry.
   const legacy = join(resolve(options.legacyRoot ?? localCliDataRoot()), 'workers');
-  if (legacy !== directory && !await manager.hasImportedLegacy(join(legacy, 'connections.json'))) {
-    const file = join(legacy, 'connections.json'); assertConnectorFile(file);
-    const exists = await lstat(file).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return false; });
-    if (exists) {
-      const legacyKeyFile = join(legacy, 'credentials.key'); assertConnectorFile(legacyKeyFile);
-      const legacyKey = await readFile(legacyKeyFile);
-      if (legacyKey.length !== 32) throw Error('Invalid legacy worker credential store.');
-      await manager.importLegacy(new AgentConnectionManager(file, workerCredentialCipher(legacyKey)));
-    }
-  }
-  if (options.desktopCipher) await manager.importLegacy(new AgentConnectionManager(join(root, 'agents', 'connections.json'), options.desktopCipher));
+  if (legacy !== directory) await discardLegacyWorkerCache(legacy);
+  await discardLegacyWorkerCache(join(root, 'agents'));
   return manager;
 }

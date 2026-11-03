@@ -47,6 +47,8 @@
 .composer-actions:has(.voice-dictation-control[data-engaged=true]) > :not(.voice-dictation-control) { visibility:hidden; pointer-events:none; }
 @keyframes voice-dictation-move { from { transform:translateX(var(--dictation-travel,0px)); } to { transform:translateX(0); } }
 .composer-stack.simple .composer-footer.is-voice-call { display:flex; grid-column:1 / -1; grid-row:auto; }
+.composer-stack.simple .composer-surface:has(.voice-dictation-control[data-engaged=true]) { display:flex; flex-direction:column; align-items:stretch; }
+.composer-stack.simple .composer-footer:has(.voice-dictation-control[data-engaged=true]) { display:flex; position:relative; min-height:36px; }
 .composer-stack.simple .composer-surface.voice-call-active { padding:10px 14px; }
 .composer-stack.simple .composer-footer.is-voice-call .composer-tools { display:none; }
 .composer-stack.simple .composer-footer.is-voice-call .composer-actions { margin-left:auto; }

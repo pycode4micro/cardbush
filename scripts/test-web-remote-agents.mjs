@@ -82,8 +82,8 @@ test('revocation works offline and optimistic concurrency rejects conflicting wr
 test('remote address policy rejects local, link-local, embedded credentials and public plaintext HTTP', async () => {
   for (const url of ['http://127.0.0.1:4780', 'http://[::1]:4780', 'http://169.254.169.254', 'http://localhost', 'file:///tmp/a', 'https://name:token@remote.test', 'https://remote.test/?token=x'])
     assert.throws(() => remoteAgentUrl(url), undefined, url);
-  assert.equal(remoteAgentUrl('http://192.168.1.20:4780/api/agent/v1'), 'http://192.168.1.20:4780/');
-  await assert.rejects(createRemoteClient({ url: 'http://1.1.1.1/', token: 'secret' }), /HTTPS/);
+  assert.throws(() => remoteAgentUrl('http://192.168.1.20:4780/api/agent/v1'), /requires_https/);
+  await assert.rejects(createRemoteClient({ url: 'http://1.1.1.1/', token: 'secret' }), /requires_https/);
   await assert.rejects(createRemoteClient({ url: 'https://[::ffff:127.0.0.1]/', token: 'secret' }));
 });
 

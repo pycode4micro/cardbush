@@ -86,3 +86,5 @@ NAS 基础发布记录见 [NAS-20261009.md](NAS-20261009.md)；图片上传优�
 IndexedDB 最多保留 40 个会话、160 张图片，总计 128 MiB，文本另限 12 MiB，7 天过期；单条会话缓存上限 2 MiB、单张图片上限 16 MiB，超限仍正常从服务端读取。内存数据缓存与未使用的图片 URL 池各限 24 MiB；正在显示的图片引用在卸载后回收。缓存不可用或磁盘配额不足时自动回退。不会缓存身份凭据、CSRF 或管理员权限。退出、账号切换和身份失效清理缓存及 Blob URL；跨标签页用身份围栏阻止旧请求回写。私有 API 和文件响应仍保持 `no-store`，图片由账号缓存管理，避免共享 HTTP 缓存串号。
 
 缓存回归：`node --test scripts/test-web-cache.mjs scripts/test-web-files-ui.mjs`。手工慢网测试可运行 `node scripts/fixtures/web-cache-browser.mjs dist-web`（仅监听本机 5208）；该测试夹具可暂停读取响应，验证切换、刷新仍显示已缓存内容以及退出后清理。它不使用真实模型或生产账号。
+
+凭据保护要求 broker.json 的 modelOrigin 与 web.json 的 internalURL origin 一致（示例：http://cardbush-web:4880）。内部 HTTP 仅允许该模型网关路径和 broker 管理的容器名称，不能作为用户连接的通用例外。broker 会注入独立的租户加密密钥，并在容器空闲后按新策略重建；需稳定保存并保护 broker secret。

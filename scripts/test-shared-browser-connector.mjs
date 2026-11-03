@@ -6,6 +6,7 @@ import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { readProtectedJson } from '@cardbush/platform/credentials';
 import { SharedBrowserConnector, assertLegacyBrowserConnectorStopped } from '../dist-electron/sharedBrowserConnector.js';
 import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 import { BrowserConnectorLifecycle } from '../dist-electron/browserConnectorLifecycle.js';
@@ -90,22 +91,24 @@ test('consent pairs without a copied code and preserves revocation across shared
   assert.equal(restarted.status().connections.length, 0);
 });
 
-test('existing CLI pairing and session route migrate without undoing a later revocation', { skip: process.platform !== 'win32' }, async t => {
+test('retired CLI pairing and session routes are deleted instead of imported', { skip: process.platform !== 'win32' }, async t => {
   const legacy = await fixture(t), shared = await fixture(t);
   const old = new BrowserConnectorBroker(legacy.root, { nativeHostPath });
   t.after(() => old.stop()); await old.start();
   const pairing = old.createPairing(); const peer = await pairedClient(pairing.code); legacy.peers.push(peer);
   await requestBrowserConnector('browser.select', { scopeId: 'existing-cli', connectionId: pairing.id }, { configPath: old.configPath });
   old.stop();
-  const current = shared.create(); await current.start(); await current.importLegacy(legacy.root);
-  const restored = await pairedClient(pairing.code); shared.peers.push(restored);
+  const current = shared.create(); await current.start(); await current.discardLegacy(legacy.root);
+  await assert.rejects(readFile(join(legacy.root, 'browser-connector/pairing.json')), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(legacy.root, 'browser-connector/routes.json')), { code: 'ENOENT' });
+  await assert.rejects(pairedClient(pairing.code));
   const state = await requestBrowserConnector('browser.list', { scopeId: 'existing-cli' }, { configPath: current.configPath });
-  assert.equal(state.selectedConnectionId, pairing.id); assert.equal(state.connections[0].connected, true);
-  await current.revokeConnection(pairing.id); await current.importLegacy(legacy.root);
-  assert.equal((await current.refresh()).connections.length, 0, 'legacy data cannot restore revoked access');
+  assert.equal(state.connections.length, 0);
+  await current.discardLegacy(legacy.root);
+  assert.equal((await current.refresh()).connections.length, 0, 'retired data cannot restore access');
 });
 
-test('profile ownership migrates with CLI bindings and a repeated import cannot restore the old secret', { skip: process.platform !== 'win32' }, async t => {
+test('a retired profile needs a new pairing ticket; repeated cleanup preserves the new authorization', { skip: process.platform !== 'win32' }, async t => {
   const legacy = await fixture(t), shared = await fixture(t);
   const old = new BrowserConnectorBroker(legacy.root, { nativeHostPath, allowLocalPairing: () => true });
   t.after(() => old.stop()); await old.start();
@@ -115,17 +118,18 @@ test('profile ownership migrates with CLI bindings and a repeated import cannot 
   legacy.peers.push(await pairedClient(initial.code));
   await requestBrowserConnector('browser.select', { scopeId: 'existing-cli', connectionId: owner.id }, { configPath: old.configPath });
   old.stop();
-  const current = shared.create(); await current.start(); await current.importLegacy(legacy.root);
-  const saved = () => readFile(join(shared.root, 'browser-connector/pairing.json')).then(JSON.parse);
-  assert.equal((await saved()).profiles[0].key, owner.publicKey);
+  const current = shared.create(); await current.start(); await current.discardLegacy(legacy.root);
+  const saved = async () => readProtectedJson(join(shared.root, 'browser-connector/pairing.json'));
+  assert.deepEqual((await saved()).profiles, []);
   owner.refresh = true;
   const ticket = await current.createPairing();
   const refreshed = await approvalClient((await saved()).port, owner, { pairingCode: ticket.code });
-  await current.importLegacy(legacy.root);
+  await current.discardLegacy(legacy.root);
   assert.equal((await saved()).credentials.length, 1);
   assert.equal((await saved()).credentials[0].secret, refreshed.code.split('.').at(-1));
   assert.equal((await saved()).defaultConnectionId, owner.id);
   shared.peers.push(await pairedClient(refreshed.code));
+  await requestBrowserConnector('browser.select', { scopeId: 'existing-cli', connectionId: owner.id }, { configPath: current.configPath });
   const state = await requestBrowserConnector('browser.list', { scopeId: 'existing-cli' }, { configPath: current.configPath });
   assert.equal(state.selectedConnectionId, owner.id);
   await assert.rejects(pairedClient(`CB2.${(await saved()).port}.${owner.id}.${initial.code.split('.').at(-1)}`));

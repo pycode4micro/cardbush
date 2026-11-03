@@ -67,7 +67,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
     this.#openRouter = modelApiGateway(config.baseURL) === 'openrouter';
     this.#format = this.#openRouter ? OPENROUTER_FORMAT : FORMAT;
     this.#client = new OpenAI({ apiKey: config.apiKey, baseURL: modelApiBaseURL('openai_chat_completions', config.baseURL),
-      timeout: config.timeoutMs, fetch: config.fetch, maxRetries: 0 });
+      timeout: config.timeoutMs, fetch: (input, init) => (config.fetch ?? globalThis.fetch)(input, { ...init, redirect: 'error' }), maxRetries: 0 });
   }
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
     options.signal?.throwIfAborted();

@@ -39,6 +39,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   `);
   try {
     await until('!!document.querySelector("textarea[data-composer-input]")', 'plain composer ready');
+    await require('./composer-code-highlights.cjs')({ run, until, pause, window, root });
     await run('document.querySelector(".message-list").focus()');
     const paddingPoint = await run(`(() => {
       const surface = document.querySelector('.composer-surface'), rect = surface.getBoundingClientRect();

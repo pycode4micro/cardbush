@@ -1,8 +1,8 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
-import { modelApiProtocolSchema, modelHeadersSchema, anthropicThinkingModeSchema, reasoningEffortSchema, protocolReasoningEffort, type ModelApiProtocol, type ReasoningEffort } from '@cardbush/bush-protocol';
+import { isAbsolute, resolve } from "node:path";
+import { readProtectedJson, writeProtectedJson } from '@cardbush/platform/credentials';
+import { modelApiProtocolSchema, modelHeadersSchema, publicModelHeaders, restoreModelHeaders, modelApiBaseURL, anthropicThinkingModeSchema, reasoningEffortSchema, protocolReasoningEffort, type ModelApiProtocol, type ReasoningEffort } from '@cardbush/bush-protocol';
 
-import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
+import { withConfigFileLock } from "./atomicFiles.js";
 import { modelAuthenticationSchema, SIWC, type ModelAuthentication } from '@cardbush/bush-protocol';
 
 export interface ProductModelConfig {
@@ -39,7 +39,7 @@ export class ProductModelConfigStore {
   }
   async #read(): Promise<ProductModelConfigSnapshot> {
     try {
-      return decodeSnapshot(JSON.parse(await readFile(this.#path, "utf8")));
+      return decodeSnapshot(readProtectedJson(this.#path));
     } catch (error) {
       if (isMissing(error)) return emptySnapshot();
       throw error;
@@ -87,14 +87,7 @@ export class ProductModelConfigStore {
   }
 
   async #writeSnapshot(snapshot: ProductModelConfigSnapshot): Promise<void> {
-    await mkdir(dirname(this.#path), { recursive: true });
-    const temp = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    await writeFile(temp, `${JSON.stringify(snapshot, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await replaceFile(temp, this.#path);
-    await chmod(this.#path, 0o600).catch(() => undefined);
+    writeProtectedJson(this.#path, snapshot);
   }
 
   publicPayload(snapshot: ProductModelConfigSnapshot): Record<string, unknown> {
@@ -113,7 +106,7 @@ export class ProductModelConfigStore {
         apiProtocol: config.apiProtocol ?? 'openai_responses',
         anthropicThinkingMode: config.anthropicThinkingMode,
         reasoningEffort: config.reasoningEffort ?? null,
-        defaultHeaders: config.defaultHeaders ?? {},
+        defaultHeaders: publicModelHeaders(config.defaultHeaders),
         maxContextTokens: config.maxContextTokens,
         maxCompletionTokens: config.maxOutputTokens,
       })),
@@ -205,13 +198,14 @@ function decodeUpdate(
       reasoningEffort: decodeReasoning(config.reasoningEffort === undefined ? previous?.reasoningEffort : config.reasoningEffort,
         modelApiProtocolSchema.parse(config.apiProtocol ?? previous?.apiProtocol ?? 'openai_responses')),
       ...optionalProperty("baseURL", optionalString(config.baseURL ?? config.baseUrl ?? config.base_url)),
-      ...optionalProperty("defaultHeaders", stringRecord(config.defaultHeaders ?? config.default_headers ?? previous?.defaultHeaders)),
+      ...optionalProperty("defaultHeaders", restoreModelHeaders(stringRecord(config.defaultHeaders ?? config.default_headers ?? previous?.defaultHeaders) ?? {}, previous?.defaultHeaders)),
       ...optionalProperty("maxContextTokens", maxContextTokens),
       ...optionalProperty("maxOutputTokens", maxOutputTokens),
     } satisfies ProductModelConfig;
   });
   const ids = new Set<string>();
   for (const config of models) {
+    modelApiBaseURL(config.apiProtocol ?? 'openai_responses', config.baseURL);
     validateAuthentication(config);
     if (ids.has(config.id)) throw new Error(`Duplicate model configuration: ${config.id}`);
     ids.add(config.id);

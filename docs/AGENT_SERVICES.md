@@ -50,7 +50,7 @@ cardbush worker verify CONNECTION_ID
 cardbush worker remove CONNECTION_ID
 ```
 
-让本地 Agent 将连接 ID 与已验证 agent ID 绑定到注册角色。模型通过既有 `subagent`、`tasks` 和 Team 使用它，不接收 token。同一本机配置目录的 App/CLI 共用受保护的 worker 连接；独立服务器账号继续使用自己的注册表。旧连接迁移一次并保留 ID，worker CLI 命令不启动整套 Agent Runtime。角色和会话仍由各自 Runtime 管理；不能把地址相同的另一个实例当原服务，身份变化后重新确认注册。
+让本地 Agent 将连接 ID 与已验证 agent ID 绑定到注册角色。模型通过既有 `subagent`、`tasks` 和 Team 使用它，不接收 token。同一本机配置目录的 App/CLI 共用受保护的 worker 连接；独立服务器账号继续使用自己的注册表。旧浏览器与 worker 凭据缓存直接清理，不再导入，升级后需要重新连接与授权；worker CLI 命令不启动整套 Agent Runtime。角色和会话仍由各自 Runtime 管理；不能把地址相同的另一个实例当原服务，身份变化后重新确认注册。
 
 部署时完成[分层验收](../assets/skills/cardbush-docs/references/remote-workers.md#分层验收)：连接与角色注册、真实模型委派、原 task_id 续接、沙箱读写与产物独立核验、空闲服务重启后的实例及历史保留。连接成功不等于模型和工具可用；隔离 CLI 的注册不等于日常 App 已配置；进程重启通过不等于开机自启通过。
 
@@ -115,3 +115,13 @@ docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml
 更新服务和 CLI 程序不更新已运行进程，也不替换桌面 App。保留数据，待任务安全结束再重启。内置技能随发行资源更新到 `bundled/skills`；用户 `skills` 另保留。工具 schema、loop 与产品指令来自构建代码，修改 JSON 或同步设置不能代替升级。通过目标的工具目录和版本核对真正生效的构建。
 
 验证：`npm run test:agents`、`npm run test:remote-workers`、`npm run test:agents-ui`、`npm run test:agent-chat`。使用隔离 Node Worker、模拟模型、真实本机 HTTP/CLI 和 UI，不部署生产服务。独立 worker 适配器需要另做交互契约验证；后续若增加 MCP 绑定，还需验证所声明修订的一致性。
+
+## 凭据保护
+
+模型 API Key、自定义请求头、MCP 环境变量与参数，以及按字段识别的插件密钥，以密文保存在 JSON 中。Windows 使用当前账户的 DPAPI，App 与 CLI 需一起升级；设置页不会回显已保存的请求头原值。手动填写 JSON 密钥后，宿主下次读取会将其加密。Windows 密文不能直接复制给其他系统账户使用。
+
+Linux/macOS 必须在启动 App、CLI 或服务前设置 CARDBUSH_CREDENTIAL_KEY_FILE，指向独立管理的绝对路径文件：内容为 32 字节随机值、权限 0600、归当前用户所有，且不能是链接。密钥应位于 CardBush 配置与数据目录之外，并与数据备份分开保管；重启时使用相同密钥。缺失或无效时明确报错，不会生成与密文放在一起的明文密钥。可在独立的私有目录中用 openssl rand -out /private/cardbush-keys/credentials.key 32 生成，再执行 chmod 600。
+
+此保护不能阻止同一系统账户下的恶意程序。浏览器扩展存储仅允许受信任的扩展上下文读取，但其中配对材料仍依赖浏览器 profile 的保护。服务 access-token 仍是限制文件权限的管理凭据，可改用服务管理器注入 CARDBUSH_AGENT_TOKEN。清理 CardBush 旧授权缓存不会清理浏览器 Cookie 或网站登录态。
+
+服务管理器也可注入 CARDBUSH_CREDENTIAL_KEY（恰好 64 个十六进制字符），但不能同时指定密钥文件；该变量只交给可信宿主，不应交给插件或模型执行环境。私有 Web broker 为每个租户派生独立且稳定的密钥，与 API token 分离。私有 Web 容器仅在隔离的 Docker 网络内保留 HTTP；broker.json 需显式填写 modelOrigin，例外只覆盖该 origin 的 /internal/model/ 路径。用户配置的远程连接仍要求 HTTPS。

@@ -1,4 +1,4 @@
-importScripts('build-info.js', 'downloads.js', 'connector-transport.js');
+importScripts('build-info.js', 'downloads.js', 'connector-transport.js', 'consent-window.js', 'i18n.js');
 // Capture the loaded worker's build. getManifest() alone cannot identify a
 // stale service worker after the unpacked extension files change on disk.
 const runtimeBuild = globalThis.CARDBUSH_CONNECTOR_BUILD;
@@ -29,6 +29,16 @@ const PENDING_AUTHORIZATIONS_STORAGE_KEY = 'cardbushPendingAuthorizations';
 const AUTHORIZATION_LEASE_TTL_MS = 5 * 60_000;
 const GROUP_COLOR = 'cyan';
 const GROUP_TITLE_PREFIX = 'CardBush · ';
+// The bridge is a page tool, not a browser-wide CDP tunnel. In particular,
+// Target/Browser/Storage/Network commands must not escape a managed tab.
+const PAGE_DEBUGGER_COMMANDS = new Set([
+  'Accessibility.enable', 'Accessibility.getFullAXTree', 'DOM.describeNode',
+  'DOM.getContentQuads', 'DOM.getFrameOwner', 'DOM.getNodeForLocation', 'DOM.resolveNode',
+  'DOM.setFileInputFiles', 'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride',
+  'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent', 'Input.insertText',
+  'Page.captureScreenshot', 'Page.getFrameTree', 'Page.getLayoutMetrics',
+  'Runtime.callFunctionOn', 'Runtime.evaluate', 'Runtime.releaseObject',
+]);
 
 let nativePort = null;
 let nativeReady = false;
@@ -54,16 +64,37 @@ const pendingScreenshots = new Map();
 const sessionGrants = new Map();
 const scopeLeases = new Map();
 const pendingAuthorizations = new Map();
+const siteConsentWindows = new Map();
+const SITE_CONSENT_LIMIT = 3;
+let sitePermissionQueue = Promise.resolve();
+function updateSitePermissions(operation) {
+  const next = sitePermissionQueue.catch(() => {}).then(operation);
+  sitePermissionQueue = next;
+  return next;
+}
 const managedScopes = new Map();
 const tabReferenceKeys = new Map();
 let tabReferenceKeysDirty = false;
 const TAB_REFERENCE_KEYS = 'cardbushTabReferenceKeys';
 const controlIdleTimers = new Map();
 const groupCreations = new Map();
-const managedScopesReady = restoreManagedState();
-const reconnectReady = restoreReconnectState();
+const storageReady = (async () => {
+  // Content scripts must never gain access to pairing credentials or grants.
+  await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  await chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  const saved = await chrome.storage.local.get(['cardbushCredentialCacheVersion']);
+  if (saved.cardbushCredentialCacheVersion !== 1) {
+    await chrome.storage.local.remove([PAIRING_KEY, AUTOMATIC_IDENTITY_KEY, RECONNECT_STATE_KEY, 'allowedOrigins', 'allowAllSites']);
+    await chrome.storage.session.remove([RECONNECT_STATE_KEY, MANAGED_SCOPES_STORAGE_KEY, ACTIVE_SCOPE_STORAGE_KEY,
+      SESSION_GRANTS_STORAGE_KEY, SCOPE_LEASES_STORAGE_KEY, PENDING_AUTHORIZATIONS_STORAGE_KEY, TAB_REFERENCE_KEYS]);
+    await chrome.storage.local.set({ cardbushCredentialCacheVersion: 1 });
+  }
+})();
+const managedScopesReady = storageReady.then(() => restoreManagedState());
+const reconnectReady = storageReady.then(() => restoreReconnectState());
+void managedScopesReady.catch(() => {});
 
-void reconnectReady.then(() => connectNative());
+void reconnectReady.then(() => connectNative()).catch(() => { lastError = 'credential_storage_unavailable'; });
 chrome.runtime.onInstalled.addListener(() => { void reconnectReady.then(() => connectNative()); });
 chrome.runtime.onStartup.addListener(() => { void reconnectReady.then(() => connectNative()); });
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -83,16 +114,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (['connection_state', 'confirm_connection'].includes(message?.action)) {
     void (async () => {
       const pending = browserConnectionConsent;
-      if (!pending || message.token !== pending.token || sender.id !== chrome.runtime.id
-        || sender.url?.split('#')[0] !== chrome.runtime.getURL('connection.html')) return { ok: false };
-      await pending.ready;
-      if (browserConnectionConsent !== pending || !Number.isInteger(pending.tabId)
-        || sender.tab?.id !== pending.tabId || Date.now() >= pending.expiresAt) return { ok: false };
+      if (!await isBrowserConsentSender(pending, message, sender) || browserConnectionConsent !== pending) return { ok: false };
       if (message.action === 'connection_state') return { ok: true, browser: pending.browser, expiresAt: pending.expiresAt };
       pending.finish(message.allow === true);
       return { ok: true };
     })().then(sendResponse, () => sendResponse({ ok: false }));
     return true;
+  }
+  if (['site_state', 'confirm_site'].includes(message?.action)) {
+    void handleSiteConsent(message, sender).then(sendResponse, () => sendResponse({ ok: false }));
+    return true;
+  }
+  if (sender?.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('popup.html')) {
+    sendResponse({ ok: false }); return false;
   }
   void handlePopupMessage(message).then(sendResponse, (error) => {
     sendResponse({ ok: false, error: normalizedError(error) });
@@ -329,35 +363,14 @@ async function automaticConnectorPairing(epoch, identity, pairingCode) {
 
 function confirmLocalBrowserConnection(signal) {
   if (signal.aborted) return Promise.resolve(false);
-  return new Promise(resolve => {
-    browserConnectionConsent?.finish(false);
-    const token = connectorHex(crypto.getRandomValues(new Uint8Array(24)));
-    let markReady;
-    const ready = new Promise(resolveReady => { markReady = resolveReady; });
-    const expiresAt = Date.now() + 60_000;
-    let windowId, finished = false;
-    const removed = id => { if (id === windowId) finish(false); };
-    const cancel = () => finish(false);
-    const timer = setTimeout(cancel, 60_000);
-    const finish = allowed => {
-      if (finished) return; finished = true; markReady(); clearTimeout(timer); signal.removeEventListener('abort', cancel);
-      chrome.windows.onRemoved.removeListener(removed);
-      if (browserConnectionConsent?.token === token) browserConnectionConsent = null;
-      if (windowId !== undefined) void chrome.windows.remove(windowId).catch(() => {});
-      resolve(allowed);
-    };
-    browserConnectionConsent = { token, tabId: null, finish, ready, expiresAt, browser: connectorBrowser() };
-    signal.addEventListener('abort', cancel, { once: true });
-    chrome.windows.onRemoved.addListener(removed);
-    void chrome.windows.create({ url: chrome.runtime.getURL(`connection.html#${token}`), type: 'popup', width: 480, height: 470, focused: true })
-      .then(async window => {
-        windowId = window.id;
-        if (finished) { if (windowId !== undefined) await chrome.windows.remove(windowId); return; }
-        const tabs = window.tabs ?? await chrome.tabs.query({ windowId });
-        if (!Number.isInteger(tabs[0]?.id)) { cancel(); return; }
-        if (browserConnectionConsent?.token === token) browserConnectionConsent.tabId = tabs[0]?.id;
-        markReady();
-      }).catch(cancel);
+  browserConnectionConsent?.finish(false);
+  const pending = openBrowserConsent('connection.html', { browser: connectorBrowser() });
+  browserConnectionConsent = pending;
+  const cancel = () => pending.finish(false);
+  signal.addEventListener('abort', cancel, { once: true });
+  return pending.result.finally(() => {
+    signal.removeEventListener('abort', cancel);
+    if (browserConnectionConsent === pending) browserConnectionConsent = null;
   });
 }
 
@@ -629,6 +642,9 @@ async function dispatch(method, params, progress = () => {}) {
     return publicTab(await chrome.tabs.get(tabId));
   }
   if (method === 'debugger.command') {
+    const command = String(params.command || '');
+    if (!PAGE_DEBUGGER_COMMANDS.has(command)) throw connectorError('unsupported_debugger_command',
+      CardBushExtensionI18n.uiText(chrome.i18n.getUILanguage())('browser.extension.authorization.unsupportedCommand'));
     const tabId = requiredTabId(params.tabId);
     progress('checking_access');
     await requireTabAccess(scope, tabId);
@@ -636,7 +652,6 @@ async function dispatch(method, params, progress = () => {}) {
     await ensureAttached(scope, tabId);
     progress('debugger_ready');
     touchControlTimer(scope.id);
-    const command = String(params.command || '');
     progress('command_pending');
     const run = () => chrome.debugger.sendCommand(
       { tabId },
@@ -707,7 +722,8 @@ async function handlePopupMessage(message) {
     return { ok: true, ...(await popupState()) };
   }
   if (action === 'revoke') {
-    await chrome.storage.local.set({ allowAllSites: false, allowedOrigins: [] });
+    forgetPendingAuthorizations();
+    await updateSitePermissions(() => chrome.storage.local.set({ allowAllSites: false, allowedOrigins: [] }));
     await releaseAll();
     return { ok: true, ...(await popupState()) };
   }
@@ -738,12 +754,14 @@ async function handlePopupMessage(message) {
   if (action === 'allow_once') {
     setSessionGrant(managedTab.id, scope.id, origin, 'copied');
   } else if (action === 'allow_site') {
-    const stored = await chrome.storage.local.get(['allowedOrigins']);
-    const origins = new Set(Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : []);
-    origins.add(origin);
-    await chrome.storage.local.set({ allowedOrigins: [...origins] });
+    await updateSitePermissions(async () => {
+      const stored = await chrome.storage.local.get(['allowedOrigins']);
+      const origins = new Set(Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : []);
+      origins.add(origin);
+      await chrome.storage.local.set({ allowedOrigins: [...origins] });
+    });
   } else {
-    await chrome.storage.local.set({ allowAllSites: true });
+    await updateSitePermissions(() => chrome.storage.local.set({ allowAllSites: true }));
   }
 
   forgetPendingAuthorizations({ scopeId: scope.id, origin });
@@ -928,6 +946,7 @@ async function suspendAll() {
 }
 
 async function releaseAll() {
+  for (const consent of siteConsentWindows.values()) consent.finish();
   await suspendAll();
   sessionGrants.clear();
   scopeLeases.clear();
@@ -1167,14 +1186,13 @@ async function persistSessionState() {
 async function publishStatus(includeError = true) {
   const port = nativePort;
   if (!port || !nativeReady) return;
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (nativePort !== port || !nativeReady) return;
+  // Connection health never needs the user's foreground tab. In particular,
+  // private tab URLs/titles and consent-page nonce fragments stay in the browser.
   port.postMessage({
     type: 'status',
     version: chrome.runtime.getManifest().version,
-    activeTabId: tab?.id,
-    activeTabTitle: tab?.title || '',
-    activeTabUrl: tab?.url || '',
+    activeTabTitle: '',
+    activeTabUrl: '',
     controlledTabCount: attachedTabs.size,
     activeScopeId: activeScope?.id || '',
     activeScopeTitle: activeScope ? groupTitle(activeScope) : '',
@@ -1306,6 +1324,9 @@ function sessionGrantAllows(scopeId, tabId, origin) {
 
 async function rememberPendingAuthorization(scope, tab, origin) {
   const now = Date.now();
+  const key = pendingAuthorizationKey({ scopeId: scope.id, tabId: tab.id, origin });
+  const previous = pendingAuthorizations.get(key);
+  if (previous?.expiresAt > now) return;
   const authorization = {
     scopeId: scope.id,
     scopeTitle: scope.title,
@@ -1315,8 +1336,54 @@ async function rememberPendingAuthorization(scope, tab, origin) {
     requestedAt: now,
     expiresAt: now + AUTHORIZATION_LEASE_TTL_MS,
   };
-  pendingAuthorizations.set(pendingAuthorizationKey(authorization), authorization);
+  pendingAuthorizations.set(key, authorization);
   await persistSessionState();
+  if (siteConsentWindows.size >= SITE_CONSENT_LIMIT || !connectorEnabled || !nativeReady) return;
+  const consent = openBrowserConsent('authorization.html', { authorization, epoch: connectionEpoch, port: nativePort });
+  siteConsentWindows.set(consent.token, consent);
+  void consent.result.finally(() => { siteConsentWindows.delete(consent.token); });
+}
+
+async function handleSiteConsent(message, sender) {
+  const consent = siteConsentWindows.get(message.token);
+  if (!await isBrowserConsentSender(consent, message, sender) || siteConsentWindows.get(message.token) !== consent) return { ok: false };
+  const authorization = consent.authorization;
+  const key = pendingAuthorizationKey(authorization);
+  const current = pendingAuthorizations.get(key);
+  const scope = managedScopes.get(authorization.scopeId);
+  const stillCurrent = () => !consent.closed && connectorEnabled && nativeReady && consent.epoch === connectionEpoch
+    && consent.port === nativePort && pendingAuthorizations.get(key) === authorization;
+  if (!stillCurrent() || current !== authorization || authorization.expiresAt <= Date.now()
+    || !scope || !(scopeLeases.get(scope.id)?.expiresAt > Date.now())) { consent.finish(); return { ok: false }; }
+  const tab = await requireManagedTab(scope, authorization.tabId);
+  if (!stillCurrent()) return { ok: false };
+  if (message.action === 'site_state') return { ok: true, origin: authorization.origin,
+    scopeTitle: authorization.scopeTitle, expiresAt: consent.expiresAt };
+  if (consent.responding) return { ok: false };
+  consent.responding = true;
+  try {
+    if (message.allow === 'site') {
+      const saved = await updateSitePermissions(async () => {
+        const stored = await chrome.storage.local.get(['allowedOrigins']);
+        if (!stillCurrent()) return false;
+        const origins = new Set(Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : []);
+        origins.add(authorization.origin);
+        await chrome.storage.local.set({ allowedOrigins: [...origins] });
+        return true;
+      });
+      if (!saved) return { ok: false };
+      forgetPendingAuthorizations({ origin: authorization.origin });
+      await persistSessionState();
+    } else if (message.allow === 'once') {
+      setSessionGrant(tab.id, scope.id, authorization.origin, 'copied');
+      forgetPendingAuthorizations({ scopeId: scope.id, tabId: tab.id, origin: authorization.origin });
+      await persistSessionState();
+    }
+    // Never replay the blocked browser command. The caller must inspect the
+    // state and intentionally retry after the user's decision.
+    consent.finish();
+    return { ok: true };
+  } finally { consent.responding = false; }
 }
 
 function forgetPendingAuthorizations({ scopeId = '', tabId, origin = '' } = {}) {
@@ -1326,6 +1393,9 @@ function forgetPendingAuthorizations({ scopeId = '', tabId, origin = '' } = {}) 
     if (tabId != null && authorization.tabId !== tabId) continue;
     if (origin && authorization.origin !== origin) continue;
     pendingAuthorizations.delete(key);
+    for (const consent of siteConsentWindows.values()) {
+      if (pendingAuthorizationKey(consent.authorization) === key) consent.finish();
+    }
     changed = true;
   }
   return changed;

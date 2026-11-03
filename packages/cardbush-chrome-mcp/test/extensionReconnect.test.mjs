@@ -5,25 +5,27 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 
 const root = new URL('../../../assets/plugins/browser/extension/', import.meta.url);
-const source = await readFile(new URL('downloads.js', root), 'utf8') + '\n' + await readFile(new URL('background.js', root), 'utf8');
+const source = (await Promise.all(['downloads.js', 'consent-window.js', 'background.js'].map(file => readFile(new URL(file, root), 'utf8')))).join('\n');
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, removeListener(fn) { this.listeners = this.listeners.filter(value => value !== fn); }, emit(...args) { this.listeners.forEach(fn => fn(...args)); } });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const pairingKey = 'cardbushConnectorPairingV2';
 const pairing = 'CB2.12345.' + 'a'.repeat(32) + '.' + 'b'.repeat(64);
 async function worker(saved = { cardbushConnectorEnabled: true }, local = { cardbushConnectorEnabled: true, [pairingKey]: pairing }, requestPairing, portOptions = {}) {
+  local.cardbushCredentialCacheVersion ??= 1;
   const ports = [], alarms = [], timers = new Map(), activeAlarms = new Map();
-  const storage = values => ({ get: async keys => Object.fromEntries(keys.map(key => [key, values[key]])), set: async value => Object.assign(values, structuredClone(value)), remove: async key => { delete values[key]; } });
+  const storage = values => ({ setAccessLevel: async ({ accessLevel }) => assert.equal(accessLevel, 'TRUSTED_CONTEXTS'), get: async keys => Object.fromEntries(keys.map(key => [key, values[key]])), set: async value => Object.assign(values, structuredClone(value)), remove: async keys => { for (const key of [].concat(keys)) delete values[key]; } });
   const chrome = {
     runtime: { id: 'fixture', onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'test' }), getURL: file => `chrome-extension://fixture/${file}`,
       connectNative: () => { const port = { onMessage: event(), onDisconnect: event(), postMessage() {}, disconnect() {} }; ports.push(port); return port; } },
     alarms: { onAlarm: event(), clear: async name => activeAlarms.delete(name), create: (name, options) => { alarms.push({ name, ...options }); activeAlarms.set(name, options); } },
     storage: { session: storage(saved), local: storage(local) },
-    tabs: { onRemoved: event(), query: async () => [] }, tabGroups: { onRemoved: event() }, debugger: { onDetach: event() },
+    tabs: { onRemoved: event(), query: async () => [], remove: async () => {} }, tabGroups: { onRemoved: event() }, debugger: { onDetach: event() },
     windows: { onRemoved: event(), create: async () => ({ id: 99, tabs: [{ id: 123 }] }), remove: async () => {} },
   };
   const context = vm.createContext({ chrome, console, URL, structuredClone, AbortController, importScripts() {},
     requestConnectorPairing: requestPairing ?? (async () => { throw new Error('Local App is offline'); }),
     crypto: webcrypto, connectorHex: bytes => Buffer.from(bytes).toString('hex'), connectorBrowser: () => 'chrome',
+    connectorProfileKeys: async () => ({ publicKey: 'fixture-key', privateKey: {} }),
     parseConnectorPairing: code => {
       if (code !== pairing) throw new Error('Pairing is required.');
       return { port: 12345, id: 'fixture', secret: 'fixture' };
@@ -37,6 +39,16 @@ async function worker(saved = { cardbushConnectorEnabled: true }, local = { card
     retry: async () => { chrome.alarms.onAlarm.emit({ name: 'cardbush-native-reconnect' }); await flush(); },
     manual: async () => { vm.runInContext('connectNative(true)', context); await flush(); } };
 }
+
+test('retired extension pairing and site grants are cleared before any reconnect', async () => {
+  const local = { cardbushCredentialCacheVersion: 0, cardbushConnectorEnabled: false, [pairingKey]: pairing,
+    cardbushLocalBrowserIdentity: { privateKey: 'retired-private-key' }, allowAllSites: true, allowedOrigins: ['https://private.test'] };
+  const f = await worker({ cardbushSessionGrants: [{ old: true }] }, local);
+  assert.equal(local[pairingKey], undefined); assert.equal(local.cardbushLocalBrowserIdentity, undefined);
+  assert.equal(local.allowAllSites, undefined); assert.equal(local.allowedOrigins, undefined);
+  assert.equal(local.cardbushCredentialCacheVersion, 1); assert.equal(f.ports.length, 0);
+  assert.equal(f.saved.cardbushSessionGrants, undefined);
+});
 
 test('saved authorization reconnects after a long app outage without another consent or manual retry', async () => {
   const f = await worker();
@@ -231,9 +243,14 @@ test('a late approval cannot undo disable and denied/revoked identities require 
   assert.equal(revoked.state().connectorEnabled, false); assert.equal(revoked.state().pairingRequired, true);
   await revoked.retry(); assert.equal(revoked.ports.length, 0);
   const oldIdentity = revoked.local.cardbushLocalBrowserIdentity.id;
-  revoked.context.requestConnectorPairing = async () => ({ code: pairing });
+  revoked.context.requestConnectorPairing = async (identity, { onPrepared }) => {
+    assert.equal(identity.refresh, true);
+    await onPrepared(pairing, true);
+    return { code: pairing };
+  };
   await revoked.manual();
-  assert.notEqual(revoked.local.cardbushLocalBrowserIdentity.id, oldIdentity);
+  assert.equal(revoked.local.cardbushLocalBrowserIdentity.id, oldIdentity, 'explicit repair rotates credentials for the same profile identity');
+  assert.equal(revoked.local.cardbushLocalBrowserIdentity.refresh, false, 'successful enrollment completes the refresh');
   assert.equal(revoked.ports.length, 1);
   const denied = await worker({}, {}, async () => { throw Object.assign(new Error('Denied'), { code: 'connection_denied' }); });
   assert.equal(denied.state().connectorEnabled, false);
@@ -338,12 +355,15 @@ test('explicit removal forgets pairing but only revoke clears persistent site pe
   assert.equal(f.local.allowAllSites, false);
 });
 
-test('opening the popup retries immediately while polling and disabled extensions do not', async () => {
+test('popup status respects backoff; explicit Connect retries while polling cannot revive a disabled extension', async () => {
   const f = await worker();
   await f.fail('App closed');
   await vm.runInContext('handlePopupMessage({action: "status"})', f.context);
   assert.equal(f.ports.length, 1);
   await vm.runInContext('handlePopupMessage({action: "status", reconnect: true})', f.context);
+  assert.equal(f.ports.length, 1, 'opening the popup preserves background backoff');
+  await vm.runInContext('handlePopupMessage({action: "reconnect"})', f.context);
+  await flush();
   assert.equal(f.ports.length, 2);
   await vm.runInContext('disableConnector()', f.context);
   await vm.runInContext('handlePopupMessage({action: "status", reconnect: true})', f.context);

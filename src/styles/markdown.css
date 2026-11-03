@@ -386,7 +386,8 @@
 
 /* Bold prose and inline code have distinct emphasis. Only inline code gets a
    theme-aware capsule, without inheriting bold weight from surrounding text. */
-.assistant-final-answer .markdown-content :not(pre) > code {
+.assistant-final-answer .markdown-content :not(pre) > code,
+.user-bubble .markdown-content :not(pre) > code {
   padding: 0.08em 0.38em;
   color: var(--markdown-emphasis-text);
   background: var(--markdown-emphasis-bg);

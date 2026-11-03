@@ -7,6 +7,10 @@
   "main": "./dist-cjs/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./credentials": {
+      "types": "./dist-cjs/credentials.d.ts",
+      "default": "./dist-cjs/credentials.js"
+    },
     ".": {
       "import": {
         "types": "./dist/index.d.ts",

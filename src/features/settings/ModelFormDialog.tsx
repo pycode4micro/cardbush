@@ -2,7 +2,7 @@ import { uiText } from '../../i18n';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Download } from 'lucide-react';
 import { SettingsFormDialog } from './SettingsFormDialog';
-import { modelApiBaseURL, modelApiGateway, modelHeadersSchema, resolveModelReasoningEffort, reasoningEffortsForProtocol, type ModelApiProtocol } from '@cardbush/bush-protocol';
+import { storedModelHeader, modelApiBaseURL, modelApiGateway, modelHeadersSchema, resolveModelReasoningEffort, reasoningEffortsForProtocol, type ModelApiProtocol } from '@cardbush/bush-protocol';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { AppLanguage, ManagedModelConfig, ReasoningLevel } from '../../types';
 import { modelReasoningLabel } from './modelReasoning';
@@ -39,6 +39,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
   const [context, setContext] = useState(String(model?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS));
   const [completion, setCompletion] = useState(String(model?.maxCompletionTokens ?? ''));
   const [headers, setHeaders] = useState(Object.keys(model?.defaultHeaders ?? {}).length ? JSON.stringify(model!.defaultHeaders, null, 2) : '');
+  const hasStoredHeaders = headers.includes(storedModelHeader);
   const [advanced, setAdvanced] = useState(false), [formError, setFormError] = useState('');
   const [discovered, setDiscovered] = useState<string[]>([]), [discovering, setDiscovering] = useState(false);
   const discoveryVersion = useRef(0), mounted = useRef(true);
@@ -89,7 +90,7 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
         <SettingsInput label={uiText(language)('modelFormDialog.api_key')} type="password" value={key} placeholder={hasKey ? uiText(language)('modelFormDialog.savedLeaveBlankToKeep') : uiText(language)('modelFormDialog.providerApiKey')} onChange={value => { setKey(value); changedConnection(); }}/>
         </>}
         <div className="model-name-row"><SettingsInput label={uiText(language)('modelFormDialog.modelName')} value={name} placeholder={gateway === 'openrouter' ? 'provider/model-id' : apiProtocol === 'anthropic_messages' ? 'claude-sonnet-4-6' : 'gpt-6-luna'} onChange={setName}/>
-          {!chatGpt && discoverModels && <button type="button" className="secondary-button model-fetch-button" disabled={discovering || !key.trim()} title={hasKey && !key.trim() ? uiText(language)('modelFormDialog.reEnterTheApiKeyToFetch') : undefined}
+          {!chatGpt && discoverModels && <button type="button" className="secondary-button model-fetch-button" disabled={discovering || !key.trim() || hasStoredHeaders} title={hasStoredHeaders ? uiText(language)('modelFormDialog.protectedHeadersDiscovery') : hasKey && !key.trim() ? uiText(language)('modelFormDialog.reEnterTheApiKeyToFetch') : undefined}
             onClick={async () => {
               const version = discoveryVersion.current; setDiscovering(true); setFormError('');
               try { const result = await discoverModels(modelApiBaseURL(apiProtocol, baseUrl), key.trim(), { apiProtocol, defaultHeaders: readHeaders() });
@@ -117,7 +118,8 @@ export function ModelFormDialog({ model, language, providerOptions, busy, error,
           <ModelContextWindow language={language} contextTokens={context.trim() ? Number(context) : DEFAULT_MAX_CONTEXT_TOKENS}
             outputTokens={!chatGpt && completion.trim() ? Number(completion) : undefined}/>
           {!chatGpt && <><label className="settings-field"><span>{uiText(language)('modelFormDialog.customHeadersJson')}</span><textarea rows={4} value={headers} spellCheck={false} placeholder={'{\n  "x-session-id": "{{sessionId}}"\n}'} onChange={event => { setHeaders(event.currentTarget.value); changedConnection(); }}/></label>
-          <p className="model-field-hint">{uiText(language)('modelFormDialog.useForTheStableIdOfThe')}</p></>}
+          <p className="model-field-hint">{uiText(language)('modelFormDialog.useForTheStableIdOfThe')}</p>
+          <p className="model-field-hint">{uiText(language)('modelFormDialog.protectedHeadersHint', { marker: storedModelHeader })}</p></>}
         </div>}
         {(formError || error) && <p className="settings-inline-error" role="alert">{formError || error}</p>}
       </fieldset>

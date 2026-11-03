@@ -31,6 +31,8 @@
     transform var(--panel-motion-duration) var(--panel-motion-ease);
 }
 
+.nav-row[data-nav-section="your-friends"] .nav-row-icon svg { width: 18px; height: 18px; }
+
 .sidebar-panel-content {
   --side-panel-width: inherit;
   width: var(--side-panel-width);

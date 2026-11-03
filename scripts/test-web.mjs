@@ -49,8 +49,8 @@ async function fixture(t, malicious = false, modelOutput) {
     let raw = ''; for await (const chunk of request) raw += chunk; const body = JSON.parse(raw);
     if (request.url.endsWith('/input_tokens')) { response.end(JSON.stringify({ input_tokens: 100 })); return; }
     calls.push(body); const n = calls.length;
-    const item = modelOutput ? modelOutput({ body, n, root }) : malicious && n === 1 ? { id: 'bad-call', call_id: 'bad-call', type: 'function_call', name: malicious === 'solution' ? 'solution_selection' : malicious === 'read' ? 'read_file' : 'terminal_exec',
-      arguments: JSON.stringify(malicious === 'solution' ? {prompt:'选择方案', options:['方案甲','方案乙']} : malicious === 'read' ? {path:join(root,'usr_alice','workspaces','uploads','native.txt')} : { command: `echo forbidden > "${marker}"`, cwd: root, shell: process.platform === 'win32' ? 'cmd' : 'posix' }), status: 'completed' }
+    const item = modelOutput ? modelOutput({ body, n, root }) : malicious && n === 1 ? { id: 'bad-call', call_id: 'bad-call', type: 'function_call', name: malicious === 'solution' ? 'request_user_input_async' : malicious === 'read' ? 'read_file' : 'terminal_exec',
+      arguments: JSON.stringify(malicious === 'solution' ? {questions:[{id:'solution',prompt:'选择方案', options:['方案甲','方案乙']}]} : malicious === 'read' ? {path:join(root,'usr_alice','workspaces','uploads','native.txt')} : { command: `echo forbidden > "${marker}"`, cwd: root, shell: process.platform === 'win32' ? 'cmd' : 'posix' }), status: 'completed' }
       : { id: `msg-${n}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: `reply-${n}`, annotations: [] }] };
     response.writeHead(200, { 'Content-Type': 'text/event-stream' }); const emit = value => response.write(`data: ${JSON.stringify(value)}\n\n`);
     const output = { id: `resp-${n}`, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };
@@ -261,7 +261,7 @@ test('model proxy binds credentials to an active account and rejects tools', asy
 });
 
 test('broker creates only a private, bounded, unprivileged tool-disabled container', async () => {
-  const broker = new DockerTenantBroker({ secret: 's'.repeat(64), image: 'fixture:tag', network: 'private-test', prefix: 'cbtest' });
+  const broker = new DockerTenantBroker({ secret: 's'.repeat(64), image: 'fixture:tag', network: 'private-test', prefix: 'cbtest', modelOrigin: 'http://cardbush-web:4880' });
   const calls = [];
   broker.docker = async (method, path, body) => { calls.push({ method, path, body }); return path.startsWith('/containers/json') ? [] : path.startsWith('/containers/create') ? { Id: 'container-a' } : undefined; };
   await assert.rejects(broker.ensure('../another-user'), /identity/);
@@ -269,6 +269,10 @@ test('broker creates only a private, bounded, unprivileged tool-disabled contain
   assert.equal(config.User, '1100:1100'); assert.ok(config.Cmd.includes('--web-restricted')); assert.equal(config.HostConfig.ReadonlyRootfs, true);
   assert.equal(config.HostConfig.NetworkMode, 'private-test'); assert.equal(config.HostConfig.Mounts.length, 1); assert.equal(config.HostConfig.Mounts[0].Type, 'volume');
   assert.equal(config.HostConfig.PortBindings, undefined); assert.equal(config.Labels['cardbush.web.tenant'], key); assert.ok(result.token.length >= 32);
+  const credentialKey = config.Env.find(value => value.startsWith('CARDBUSH_CREDENTIAL_KEY=')).split('=')[1];
+  assert.match(credentialKey, /^[a-f0-9]{64}$/); assert.notEqual(credentialKey, result.token);
+  assert.ok(config.Env.includes('CARDBUSH_PRIVATE_MODEL_ORIGIN=http://cardbush-web:4880'));
+  assert.equal(config.Labels['cardbush.credential-store'], 'v1');
 });
 
 
@@ -329,8 +333,8 @@ test('native solution choices survive reconnect and only the owning account can 
   const session=await(await a.request('/sessions','POST',{requestId:randomUUID()})).json();
   const start=Date.now();const job=await(await a.request(`/sessions/${session.id}/messages`,'POST',{requestId:randomUUID(),text:'Give me choices',modelId:'fixture'})).json();assert.ok(Date.now()-start<2000);
   const state=await until(async()=>await(await a.request(`/sessions/${session.id}`)).json(),value=>value.solutions?.length===1);
-  const choice=state.solutions[0];assert.equal(choice.options.length,2);
-  const answer={selectionId:choice.selectionId,turnId:choice.turnId,kind:'option',optionIndex:1};
+  const choice=state.solutions[0];assert.equal(choice.questions[0].options.length,2);
+  const answer={selectionId:choice.selectionId,turnId:choice.turnId,kind:'answers',answers:[{questionId:'solution',kind:'option',optionIndex:1}]};
   assert.equal((await b.request(`/sessions/${session.id}/solutions`,'POST',answer)).status,404);
   assert.equal((await a.request(`/sessions/${session.id}/solutions`,'POST',answer)).status,200);
   await until(()=>f.services.get('usr_alice').call('chat.jobs',{}),jobs=>jobs.every(job=>job.status==='completed'));
@@ -340,22 +344,23 @@ test('native solution choices survive reconnect and only the owning account can 
 test('multi-question answers cross the web boundary atomically and remain account-scoped', async t => {
   const questions = [{ id:'version',prompt:'选择版本',options:['当前','新版'] },{ id:'period',prompt:'统计范围',options:['本周'] }];
   const f = await fixture(t, false, ({n}) => n === 1
-    ? { id:'batch',call_id:'batch',type:'function_call',name:'solution_selection',arguments:JSON.stringify({questions}),status:'completed' }
+    ? { id:'batch',call_id:'batch',type:'function_call',name:'request_user_input_async',arguments:JSON.stringify({questions}),status:'completed' }
     : { id:'done',type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:`reply-${n}`,annotations:[]}] });
   const a = await f.login('alice'), b = await f.login('bob');
   const session = await (await a.request('/sessions','POST',{requestId:randomUUID()})).json();
   await a.request(`/sessions/${session.id}/messages`,'POST',{requestId:randomUUID(),text:'Ask two questions',modelId:'fixture'});
   const state = await until(async () => (await a.request(`/sessions/${session.id}`)).json(), value => value.solutions?.length === 1);
   const choice = state.solutions[0]; assert.deepEqual(choice.questions, questions);
+  await until(async () => f.calls.length, count => count === 2);
   const answer = { selectionId:choice.selectionId,turnId:choice.turnId,kind:'answers',answers:[
     {questionId:'version',kind:'option',optionIndex:1},{questionId:'period',kind:'text',text:'上月'}
   ] };
   assert.equal((await b.request(`/sessions/${session.id}/solutions`,'POST',answer)).status,404);
   assert.ok((await a.request(`/sessions/${session.id}/solutions`,'POST',{...answer,answers:answer.answers.slice(0,1)})).status >= 400);
   assert.equal((await (await a.request(`/sessions/${session.id}`)).json()).solutions.length,1);
-  assert.equal(f.calls.length,1);
+  assert.equal(f.calls.length,2, 'the asynchronous question lets independent execution finish before an answer');
   assert.equal((await a.request(`/sessions/${session.id}/solutions`,'POST',answer)).status,200);
-  await until(() => f.services.get('usr_alice').call('chat.jobs',{}),jobs => jobs.every(job => job.status === 'completed'));
+  await until(() => f.services.get('usr_alice').call('chat.jobs',{}),jobs => jobs.every(job => job.status === 'completed') && JSON.stringify(f.calls.at(-1)).includes('上月'));
   assert.match(JSON.stringify(f.calls.at(-1)),/上月/);
   assert.match(JSON.stringify(f.calls.at(-1)),/新版/);
 });

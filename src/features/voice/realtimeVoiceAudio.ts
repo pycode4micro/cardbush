@@ -1,4 +1,5 @@
 import { uiText } from '../../i18n';
+import { openMicrophone } from './microphone';
 import type { VoicePlaybackProgress } from './realtimeVoiceCaptions';
 /** PCM16/16 kHz capture with browser AEC. AudioWorklet avoids main-thread sampling drift. */
 export class RealtimeVoiceAudio {
@@ -19,8 +20,8 @@ export class RealtimeVoiceAudio {
     private outputLevel: (value: number) => void = () => {}, private progress:(value:VoicePlaybackProgress)=>void=()=>{}) {}
   async prepare(microphoneId: string) {
     try {
-      this.input = new AudioContext({ sampleRate: 16000 });
-      this.output = new AudioContext({ sampleRate: 24000 });
+      this.input = new AudioContext();
+      this.output = new AudioContext();
       this.outputGain = this.output.createGain(); this.outputGain.gain.value = this.outputMuted ? 0 : 1;
       this.outputAnalyser = this.output.createAnalyser(); this.outputAnalyser.fftSize = 256;
       this.outputGain.connect(this.outputAnalyser).connect(this.output.destination);
@@ -31,9 +32,7 @@ export class RealtimeVoiceAudio {
         this.outputAnalyser!.getFloatTimeDomainData(samples);
         this.outputLevel(Math.min(1, Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length) * 5));
       }, 50);
-      if (this.input.sampleRate !== 16000) throw Error(uiText()('realtimeVoiceAudio.this_audio_device_does_not_support_16'));
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true,
-        autoGainControl: true, channelCount: 1, ...(microphoneId ? { deviceId: { exact: microphoneId } } : {}) }, video: false });
+      const stream = await openMicrophone(microphoneId, () => this.closed);
       if (this.closed) { stream.getTracks().forEach(track => track.stop()); return; }
       this.stream = stream;
       for (const track of stream.getAudioTracks()) track.onended = () => { if (!this.closed) this.failed(Error(uiText()('realtimeVoiceAudio.the_microphone_was_disconnected_start_the_call'))); };

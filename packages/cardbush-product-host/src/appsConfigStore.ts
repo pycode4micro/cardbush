@@ -1,7 +1,8 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
+import { readProtectedJson, writeProtectedJson } from '@cardbush/platform/credentials';
 
-import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
+import { withConfigFileLock } from "./atomicFiles.js";
 import { DEFAULT_SEARCH_RESULT_LIMIT, defaultPluginProxy, pluginProxySchema, searchResultLimitSchema, type PluginProxySettings } from '@cardbush/bush-protocol';
 
 export const CARDBUSH_APPS_CONFIG_PROTOCOL = "cardbush.apps_config.v1" as const;
@@ -124,7 +125,7 @@ export class CardbushAppsConfigStore {
   async #read(): Promise<CardbushAppsConfigSnapshot> {
     let stored;
     try {
-      stored = JSON.parse(await readFile(this.#path, "utf8"));
+      stored = readProtectedJson(this.#path) as Record<string, unknown>;
     } catch (error) {
       if (isMissing(error)) return defaultCardbushAppsConfig(await this.#catalog());
       throw error;
@@ -184,14 +185,7 @@ export class CardbushAppsConfigStore {
   }
 
   async #persist(snapshot: CardbushAppsConfigSnapshot): Promise<CardbushAppsConfigSnapshot> {
-    await mkdir(dirname(this.#path), { recursive: true });
-    const temporary = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await replaceFile(temporary, this.#path);
-    await chmod(this.#path, 0o600).catch(() => undefined);
+    writeProtectedJson(this.#path, snapshot);
     return snapshot;
   }
 

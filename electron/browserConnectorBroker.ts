@@ -93,6 +93,10 @@ export class BrowserConnectorBroker {
     const nativeHost = this.options.nativeHostPath ?? path.resolve('dist-native/chrome-connector/CardBushBrowserHost.exe');
     secureConnectorResource(nativeHost, 'directory', directory);
     assertConnectorFile(this.#routesPath);
+    const pairingPath = path.join(directory, 'pairing.json'); assertConnectorFile(pairingPath);
+    if (fs.existsSync(pairingPath) && [2, 3, 4].includes(JSON.parse(fs.readFileSync(pairingPath, 'utf8')).version)) {
+      fs.rmSync(this.#routesPath, { force: true }); this.#scopeBindings.clear();
+    }
     if (fs.existsSync(this.#routesPath)) {
       const saved = JSON.parse(fs.readFileSync(this.#routesPath, 'utf8'));
       if (saved.version !== 1 || !Array.isArray(saved.bindings) || saved.bindings.length > 4096) throw new Error('Invalid browser session routes.');
@@ -337,15 +341,6 @@ export class BrowserConnectorBroker {
         case 'pair': result = this.createPairing({ browser: input.browser as ConnectorBrowser, label: input.label as string | undefined }); break;
         case 'default': this.setDefaultConnection(string(input.id)); result = this.status(); break;
         case 'revoke': this.revokeConnection(string(input.id)); result = this.status(); break;
-        case 'import':
-          if (!Array.isArray(input.bindings) || input.bindings.length > 4096 || input.bindings.some(entry => !Array.isArray(entry)
-            || entry.length !== 2 || typeof entry[0] !== 'string' || !entry[0] || entry[0].length > 512 || !/^[a-f0-9]{32}$/.test(entry[1])))
-            throw new Error('Invalid legacy browser routes.');
-          if (new Set([...this.#scopeBindings.keys(), ...input.bindings.map(entry => entry[0])]).size > 4096) throw new Error('Browser session route limit reached.');
-          this.#webSocket.importPairings(input.credentials as Parameters<BrowserConnectorWebSocket['importPairings']>[0], string(input.defaultConnectionId),
-            input.profiles as Parameters<BrowserConnectorWebSocket['importPairings']>[2]);
-          for (const [scope, connection] of input.bindings) if (!this.#scopeBindings.has(scope)) this.#bind(scope, connection);
-          result = this.status(); this.#publish(); break;
         case 'disable':
           if (input.forgetPairing === true) for (const connection of this.#webSocket.connections()) this.revokeConnection(connection.id);
           else void this.disableExtension();

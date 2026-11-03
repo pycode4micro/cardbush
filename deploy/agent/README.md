@@ -103,3 +103,7 @@ docker compose -f deploy/agent/compose.yaml -f deploy/agent/compose.desktop.yaml
 旧版独立 Agents UI 的历史客户端检查使用 `scripts/run-agents-ui-test.mjs --desktop-live`（当前该脚本已改为 worker 注册界面回归，不再代表这条历史流程）：将测试实例经 SSH 转发到本机回环地址，设置 `CARDBUSH_TEST_DESKTOP_URL` 和 `CARDBUSH_TEST_DESKTOP_TOKEN_FILE`。令牌只在测试主进程读取，不注入渲染器。可在测试容器中单独启动 `node scripts/agent-desktop/ui-fixture.mjs`，打开容器内 `http://127.0.0.1:7890/`，验证页面实际收到中文输入；该测试网页不随正常服务启动。
 
 验证记录（2026-10-03）：Ubuntu 24.04 x64、约 2 GB 内存的独立服务器完成了真实 Docker 构建和运行。默认服务没有图形进程，桌面能力关闭；可选镜像以 UID 1100、零有效/边界 capabilities、no-new-privileges、seccomp 和 docker-default AppArmor 运行，Chromium 沙盒开启。真实 DOM、X11 中文输入、1600×900 截图、越界拒绝、用户独占接管、跨会话旧观察拒绝、worker 重启保留浏览器配置，以及 HTTP Bearer/Origin 检查通过。重建容器后实例 ID、访问令牌与浏览器 localStorage 保留。真实 Agent 循环通过私有桥调用两个 Linux 工具，截图进入本地确定性模型的请求。Windows Electron 的实际组件经 SSH 隧道加载真实 Linux 画面，完成点击、中文输入、关闭面板释放控制且保持浏览器运行。全程使用临时测试网页和数据，没有调用真实模型或验证第三方网站登录策略。这是功能验收，不代表多任务压力测试。
+
+## Linux 容器凭据密钥
+
+保存模型或 MCP 密钥前，按[凭据保护](../../docs/AGENT_SERVICES.md#凭据保护)配置 CARDBUSH_CREDENTIAL_KEY_FILE。将独立管理的 32 字节密钥只读挂载到 /data 之外，例如 /run/secrets/cardbush-credentials，文件归容器 UID 1100 所有、权限为 0600，并将环境变量指向容器内路径；也可由密钥管理器注入 64 位十六进制 CARDBUSH_CREDENTIAL_KEY。更换容器时保持相同密钥，并与数据备份分开保管。内置私有 Web broker 会自动提供独立的租户密钥。

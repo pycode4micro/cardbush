@@ -1,18 +1,50 @@
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, rm, lstat } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { AgentConnectionManager } from './agentConnections.mjs';
+import { assertPrivateConfigFile, readProtectedJson, secureConfigDirectory, writeProtectedJson } from '@cardbush/platform/credentials';
+import { withWorkerStoreLock } from './workerStoreLock.mjs';
+
+export async function discardLegacyWorkerCache(directory: string) {
+  const present = await lstat(directory).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+  if (!present) return;
+  if (!present.isDirectory() || present.isSymbolicLink()) throw new Error('credential_config_redirected');
+  await withWorkerStoreLock(join(directory, 'connections.json'), async () => {
+    const oldKey = await lstat(join(directory, 'credentials.key')).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+    if (!oldKey && basename(directory) !== 'agents') return;
+    for (const name of ['connections.json', 'credentials.key']) assertPrivateConfigFile(join(directory, name));
+    for (const name of ['connections.json', 'credentials.key']) await rm(join(directory, name), { force: true });
+  });
+}
 
 /** Headless credentials belong to this service account, never to the model or renderer. */
-export async function openHeadlessWorkers(root: string): Promise<AgentConnectionManager> {
+export async function openHeadlessWorkers(root: string, options?: AgentConnectionManager['options']): Promise<AgentConnectionManager> {
   const directory = join(root, 'workers');
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const keyFile = join(directory, 'credentials.key');
-  try { await writeFile(keyFile, randomBytes(32), { mode: 0o600, flag: 'wx' }); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-  const key = await readFile(keyFile);
-  if (key.length !== 32) throw new Error('Invalid worker credential store.');
-  return new AgentConnectionManager(join(directory, 'connections.json'), workerCredentialCipher(key));
+  secureConfigDirectory(directory);
+  const keyFile = join(directory, 'credentials.protected');
+  const key = await withWorkerStoreLock(keyFile, async () => {
+    // Retire the insecure sidecar format. Old connections must be added again;
+    // never decrypt or import them using a key stored beside their ciphertext.
+    const legacy = join(directory, 'credentials.key'); assertPrivateConfigFile(legacy);
+    const old = await readFile(legacy).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+    if (old) {
+      const connections = join(directory, 'connections.json'); assertPrivateConfigFile(connections);
+      await rm(connections, { force: true }); await rm(legacy, { force: true }); old.fill(0);
+    }
+    let saved: { secret?: string };
+    try { saved = readProtectedJson(keyFile) as { secret?: string }; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      // A missing key for an existing store is corruption, not a fresh install.
+      const existing = await readFile(join(directory, 'connections.json')).catch((failure: NodeJS.ErrnoException) => { if (failure.code !== 'ENOENT') throw failure; });
+      if (existing) throw new Error('worker_credential_key_missing');
+      saved = { secret: randomBytes(32).toString('base64') }; writeProtectedJson(keyFile, saved);
+    }
+    const value = Buffer.from(saved.secret ?? '', 'base64');
+    if (value.length !== 32) throw new Error('Invalid worker credential store.');
+    return value;
+  });
+  return new AgentConnectionManager(join(directory, 'connections.json'), workerCredentialCipher(key), options);
 }
 
 export function workerCredentialCipher(key: Buffer) {

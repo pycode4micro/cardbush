@@ -2463,6 +2463,7 @@ ipcMain.handle('models:list', async (_, baseUrl: string, apiKey: string, options
   }
   const response = await modelFetch(endpoint, {
     method: 'GET',
+    redirect: 'error',
     signal: AbortSignal.timeout(15_000),
     headers: {
       accept: 'application/json',
@@ -2663,13 +2664,7 @@ function agentFilePreviews() {
 const agentPreviewOwners = new Set<number>();
 function agentConnections() {
   return agentConnectionsPromise ??= import('./localWorkerStore.mjs').then(async ({ openLocalWorkers }) => {
-    const manager = await openLocalWorkers(app.getPath('userData'), { nativeHostPath: browserConnectorNativeHostPath(), desktopCipher: {
-    encrypt: value => {
-      if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')) throw new Error('Secure credential storage is unavailable.');
-      return safeStorage.encryptString(value).toString('base64');
-    },
-    decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
-    }, manager: { ssh: await sshConnections() } });
+    const manager = await openLocalWorkers(app.getPath('userData'), { nativeHostPath: browserConnectorNativeHostPath(), manager: { ssh: await sshConnections() } });
     return manager;
   });
 }

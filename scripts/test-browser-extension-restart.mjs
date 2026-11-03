@@ -20,10 +20,12 @@ async function until(condition) {
 }
 
 function worker(local, browser, beforeLocalWrite = async () => {}, options = {}) {
+  local.cardbushCredentialCacheVersion ??= 1;
   let clockOffset = 0;
   assert.equal(typeof options.reachablePorts, 'function', 'fixture probes must never reach a user connector');
   const session = {}, timers = new Map(), alarms = new Map(), sockets = new Set(), attempts = [], consentWindows = [];
   const storage = data => ({
+    setAccessLevel: async ({ accessLevel }) => assert.equal(accessLevel, 'TRUSTED_CONTEXTS'),
     get: async keys => Object.fromEntries(keys.map(key => [key, data[key]])),
     set: async values => { if (data === local) await beforeLocalWrite(values); Object.assign(data, structuredClone(values)); },
     remove: async keys => { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; },
@@ -32,9 +34,16 @@ function worker(local, browser, beforeLocalWrite = async () => {}, options = {})
     runtime: { id: extensionOrigin.split('://')[1], onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'integration-test' }), getURL: file => extensionOrigin + '/' + file },
     storage: { local: storage(local), session: storage(session) },
     alarms: { onAlarm: event(), create: async (name, options) => alarms.set(name, options), clear: async name => alarms.delete(name) },
-    tabs: { onRemoved: event(), query: async () => [] },
+    tabs: { onRemoved: event(), query: async () => [], remove: async () => {}, create: async value => {
+      consentWindows.push(value);
+      setImmediate(() => message({ action: 'confirm_connection', token: new URL(value.url).hash.slice(1), allow: true },
+        { id: chrome.runtime.id, tab: { id: 12 }, url: value.url }));
+      return { id: 12, windowId: 2 };
+    } },
     tabGroups: { onRemoved: event() }, debugger: { onDetach: event() },
-    windows: { onRemoved: event(), remove: async () => {}, create: async value => {
+    windows: { onRemoved: event(), remove: async () => {}, update: async () => {}, create: async value => {
+      if (options.popupFailure) throw new Error('Popup unavailable');
+      if (options.emptyPopup) return { id: 1, tabs: [] };
       consentWindows.push(value);
       setImmediate(async () => {
         const allowed = typeof options.browserConsent === 'function' ? await options.browserConsent() : options.browserConsent !== false;
@@ -73,6 +82,21 @@ function worker(local, browser, beforeLocalWrite = async () => {}, options = {})
     retry() { chrome.alarms.onAlarm.emit({ name: 'cardbush-native-reconnect' }); },
     stop() { vm.runInContext('connectorEnabled = false; pairingController?.abort(); nativePort?.disconnect()', context); for (const socket of sockets) { socket.on('error', () => {}); socket.terminate(); } timers.clear(); },
   };
+}
+
+for (const browser of ['chrome', 'edge']) for (const failure of ['popupFailure', 'emptyPopup']) {
+  test(`${browser}: ${failure} falls back to a nonce-bound extension tab`, async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-consent-fallback-'));
+    const broker = new BrowserConnectorBroker(root, { nativeHostPath: path.resolve('dist-native/chrome-connector-test/CardBushBrowserHost.exe'), allowLocalPairing: () => true });
+    let w;
+    t.after(async () => { w?.stop(); broker.stop(); await delay(40); fs.rmSync(root, { recursive: true, force: true }); });
+    await broker.start();
+    const port = JSON.parse(fs.readFileSync(path.join(root, 'browser-connector/pairing.json'), 'utf8')).port;
+    w = worker({ cardbushConnectorEnabled: true }, browser, undefined, { reachablePorts: () => [port], [failure]: true });
+    await until(() => w.state().nativeReady);
+    assert.equal(w.consentWindows.length, 1);
+    assert.equal(broker.status().connections[0].browser, browser);
+  });
 }
 
 test('one profile rotates in place across local/manual repair, revocation and restart, without crossing another Chrome profile', async t => {
@@ -169,7 +193,7 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
   const legacyPeer = await pairedClient(pairing, { browser }); legacyPeer.destroy(); broker.stop();
   const pairingPath = path.join(root, 'browser-connector/pairing.json');
   const legacy = JSON.parse(fs.readFileSync(pairingPath, 'utf8'));
-  legacy.version = 3; delete legacy.profiles;
+  delete legacy.profiles;
   fs.writeFileSync(pairingPath, JSON.stringify(legacy));
   broker = await start();
   const local = { cardbushConnectorEnabled: true, cardbushConnectorPairingV2: pairing, allowAllSites: true, allowedOrigins: ['https://example.test'] };

@@ -161,7 +161,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
       timeout: config.timeoutMs, maxRetries: 0, fetch: (input, init) => {
         const url = String(input);
         const prefix = `${this.#baseURL}/v1/`;
-        return fetcher(url.startsWith(prefix) ? `${this.#baseURL}/${url.slice(prefix.length)}` : input, init);
+        return fetcher(url.startsWith(prefix) ? `${this.#baseURL}/${url.slice(prefix.length)}` : input, { ...init, redirect: 'error' });
       } });
   }
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {

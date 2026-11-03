@@ -25,7 +25,7 @@ export class BrokerWebAgents implements WebAgents {
     const result = await response.json() as { url: string; token: string; containerId: string; error?: string };
     if (!response.ok) throw new WebError(503, result.error ?? '会话服务暂不可用。');
     const previous = this.#clients.get(userId);
-    const client = previous?.containerId === result.containerId ? previous.client : new AgentHttpClient(result.url, result.token);
+    const client = previous?.containerId === result.containerId ? previous.client : AgentHttpClient.forIsolatedContainer(result.url, result.token);
     if (previous && previous.client !== client) previous.client.close();
     let ready = false;
     for (let attempt = 0; attempt < 35; attempt++) {

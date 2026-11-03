@@ -1,4 +1,5 @@
 import { leaseTemporaryDirectory } from './cacheMaintenance';
+import { unprotectConfiguration } from '@cardbush/platform/credentials';
 import { isCoreCapabilityId } from './coreCapabilities';
 import { resolveRuntimePluginPackage, readRuntimePluginBundle } from './runtimePluginPackage';
 import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
@@ -115,7 +116,7 @@ export async function loadEnabledProductPluginSkillRootEntries(
 export async function loadEnabledProductPlugins(roots: PluginRoot[], configPath: string) {
   let snapshot: Record<string, unknown> | null = null;
   try {
-    snapshot = await readJson(configPath);
+    snapshot = unprotectConfiguration(await readJson(configPath));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }

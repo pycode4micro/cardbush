@@ -57,8 +57,9 @@ export function troubleshootingLaunch(transport: McpServerSnapshot['transport'])
 export function redactTroubleshootingText(value: string, secrets: string[] = environmentSecrets()) {
   let result = value;
   for (const secret of [...new Set(secrets)].sort((a, b) => b.length - a.length)) result = result.replaceAll(secret, '[redacted]');
-  return result.replace(/((?:Bearer|Basic)\s+)\S+/gi, '$1[redacted]')
-    .replace(/(\b[\w-]*(?:token|secret|password|passwd|authorization|credential|cookie|api[_-]?key|access[_-]?key)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}&]+)/gi, '$1[redacted]')
+  return result.replace(/\bCB2\.\d{1,5}\.[a-f0-9]{32}\.[a-f0-9]{64}\b/gi, '[redacted]')
+    .replace(/((?:Bearer|Basic)\s+)\S+/gi, '$1[redacted]')
+    .replace(/(\b[\w-]*(?:token|secret|password|passwd|authorization|credential|cookie|(?:api|access|private|subscription)[_-]?key)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}&]+)/gi, '$1[redacted]')
     .replace(/https?:\/\/[^\s"'<>]+/gi, value => {
       try { const url = new URL(value); url.username = ''; url.password = ''; url.search = ''; url.hash = ''; return url.href; }
       catch { return '[invalid URL omitted]'; }

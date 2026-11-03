@@ -345,11 +345,16 @@ export class VoiceSession {
         if (epoch !== this.epoch) return;
         if (result.speaker) {
           this.lastClip = undefined; this.failedText = '';
-          if (this.state.mode === 'recording') throw Error(uiText()('voiceSession.voice_verification_failed_ask_the_enrolled_speaker'));
+          if (this.state.mode === 'recording') { this.end(uiText(this.target?.language)('voiceSession.voice_verification_failed_ask_the_enrolled_speaker')); return; }
           this.patch({ speakerNotice: uiText(this.target?.language)(result.speaker === 'uncertain' ? 'voice.uncertainIgnored' : 'voice.unmatchedIgnored') });
           return;
         }
-        if (!result.text.trim()) { if (this.state.mode === 'recording') throw Error(uiText()('voiceSession.no_speech_was_recognized_cancel_and_record')); return; }
+        if (!result.text.trim()) {
+          // Silence is a completed attempt, not a failed request worth retrying.
+          // Release the clip and ownership so the next click opens a fresh capture.
+          if (this.state.mode === 'recording') this.end(uiText(this.target?.language)('voiceSession.noSpeechRecordAgain'));
+          return;
+        }
         // A configured lock still requires proof for THIS clip. Removing the
         // confirmation UI must not turn a missing verification into permission.
         if (!retryText && this.state.mode === 'call' && this.settings?.speakerLockEnabled && result.speakerVerified !== true) {

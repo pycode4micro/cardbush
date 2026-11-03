@@ -13,6 +13,7 @@ import {
   BUSH_MODEL_EVENT_PROTOCOL,
   DEFAULT_MAX_OUTPUT_TOKENS,
   modelRequestHeaders,
+  modelApiBaseURL,
   type ModelEvent,
   type ModelMessage,
   type ModelRequest,
@@ -373,8 +374,9 @@ export class OpenAIResponsesProvider implements ModelProvider {
     }
     this.#client = new OpenAI({
       apiKey: config.chatGpt ? 'siwc-host-managed' : config.apiKey,
-      baseURL: config.chatGpt ? SIWC.resource : config.baseURL,
-      fetch: config.chatGpt ? siwcFetch(config.chatGpt.accountId, config.chatGpt.access, config.fetch, config.chatGpt.signal) : config.fetch,
+      baseURL: config.chatGpt ? SIWC.resource : modelApiBaseURL('openai_responses', config.baseURL),
+      fetch: config.chatGpt ? siwcFetch(config.chatGpt.accountId, config.chatGpt.access, config.fetch, config.chatGpt.signal)
+        : (input, init) => (config.fetch ?? globalThis.fetch)(input, { ...init, redirect: 'error' }),
       timeout: config.timeoutMs,
       maxRetries: 0,
     });

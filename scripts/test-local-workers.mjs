@@ -4,11 +4,10 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, readFile, rm, lstat, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, lstat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { openLocalWorkers } from '../dist-electron/localWorkerStore.mjs';
-import { openHeadlessWorkers } from '../dist-electron/headlessWorkerStore.mjs';
 import { AgentConnectionManager } from '../dist-electron/agentConnections.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { ProcessResourceGovernor, defaultProcessResourceLimits, spawnResourceManagedProcess } from '../packages/bush-runtime/dist/processResourceGuard.js';
@@ -36,30 +35,35 @@ async function fixture(t) {
     changeIdentity() { instance = 'changed-instance'; } };
 }
 
-test('App and CLI share workers, migrate both stores without changing identity, and do not resurrect removals', async t => {
-  const f = await fixture(t), legacy = await openHeadlessWorkers(f.legacyRoot);
-  const [old] = await legacy.save({ name: 'CLI worker', transport: 'http', url: f.url, token: f.token });
-  await legacy.connect(old.id); await legacy.close();
+test('App and CLI discard retired caches, share newly authorized workers and do not resurrect removals', async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.legacyRoot, 'workers'), { recursive: true });
+  await writeFile(join(f.legacyRoot, 'workers', 'credentials.key'), Buffer.alloc(32, 5));
+  await writeFile(join(f.legacyRoot, 'workers', 'connections.json'), '[]');
   const desktop = new AgentConnectionManager(join(f.profile, 'agents', 'connections.json'), cipher);
   const [desktopOld] = await desktop.save({ name: 'App worker', transport: 'http', url: f.url, token: f.token });
-  const app = await openLocalWorkers(f.profile, { legacyRoot: f.legacyRoot, desktopCipher: cipher });
+  await desktop.close();
+  const app = await openLocalWorkers(f.profile, { legacyRoot: f.legacyRoot });
   const cli = await openLocalWorkers(f.profile, { legacyRoot: f.legacyRoot });
   t.after(() => Promise.all([app.close(), cli.close()]));
-  assert.deepEqual(new Set((await cli.list()).map(x => x.id)), new Set([old.id, desktopOld.id]));
-  const verified = await Promise.all([cli.connect(desktopOld.id), app.connect(desktopOld.id)]);
+  assert.deepEqual(await cli.list(), []);
+  for (const file of [join(f.legacyRoot, 'workers', 'credentials.key'), join(f.legacyRoot, 'workers', 'connections.json'), join(f.profile, 'agents', 'connections.json')]) await assert.rejects(lstat(file), { code: 'ENOENT' });
+  await assert.rejects(cli.connect(desktopOld.id), /Unknown Agent connection/);
+  const [old] = await app.save({ name: 'New worker', transport: 'http', url: f.url, token: f.token });
+  const verified = await Promise.all([cli.connect(old.id), app.connect(old.id)]);
   assert.ok(verified.every(info => info.id === 'worker-instance'));
   assert.equal((await app.list()).find(x => x.id === old.id).agentId, 'worker-instance');
   const stored = await readFile(join(f.profile, 'workers', 'connections.json'), 'utf8');
   assert.ok(!stored.includes(f.token)); assert.ok(!JSON.stringify(await cli.list()).includes(f.token));
   await cli.remove(old.id);
   await assert.rejects(app.connect(old.id), /Unknown Agent connection/);
-  await rm(join(f.legacyRoot, 'workers', 'credentials.key'));
-  const reopened = await openLocalWorkers(f.profile, { legacyRoot: f.legacyRoot, desktopCipher: cipher });
+  const reopened = await openLocalWorkers(f.profile, { legacyRoot: f.legacyRoot });
   assert.ok(!(await reopened.list()).some(x => x.id === old.id)); await reopened.close();
   const separate = await openLocalWorkers(join(f.directory, 'other-profile'), { legacyRoot: join(f.directory, 'other-cli') });
   assert.deepEqual(await separate.list(), []); await separate.close();
-  await app.disconnect(desktopOld.id); f.changeIdentity();
-  await assert.rejects(app.connect(desktopOld.id), /identity changed/i);
+  const [fresh] = await app.save({ name: 'Identity check', transport: 'http', url: f.url, token: f.token });
+  await app.connect(fresh.id); await app.disconnect(fresh.id); f.changeIdentity();
+  await assert.rejects(app.connect(fresh.id), /identity changed/i);
 });
 
 test('simultaneous independent processes preserve every saved connection', async t => {

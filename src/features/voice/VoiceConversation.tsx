@@ -69,7 +69,7 @@ export function VoiceButton({ language, disabled, onTranscript, onTranscriptUpda
   const context = useVoiceContext(), session = context?.session;
   const state = useSyncExternalStore<Pick<VoiceState, 'mode' | 'phase' | 'error' | 'retryAvailable'> & Partial<Pick<VoiceState, 'muted' | 'level'>>>(session?.subscribe ?? noopSubscribe, session?.snapshot ?? (() => idle));
   const [starting, setStarting] = useState(false), sequence = useRef(0);
-  const control = useRef<HTMLSpanElement>(null), travel = useRef(0);
+  const control = useRef<HTMLSpanElement>(null), startLeft = useRef<number | undefined>(undefined);
   const current = useRef({ context, disabled, onTranscript, onTranscriptUpdate });
   current.current = { context, disabled, onTranscript, onTranscriptUpdate };
   useLayoutEffect(() => {
@@ -79,6 +79,13 @@ export function VoiceButton({ language, disabled, onTranscript, onTranscriptUpda
   const recording = state.mode === 'recording' && Boolean(context && session?.ownsVoice(context.target));
   const error = context && session?.matchesTarget(context.target) && state.mode !== 'call' ? state.error : '';
   const engaged = starting || recording && state.phase !== 'idle' && !error;
+  useLayoutEffect(() => {
+    if (!engaged || startLeft.current === undefined || !control.current) return;
+    // Measure after the recording layout is applied: a display:contents footer
+    // has no rectangle in the idle simple composer.
+    control.current.style.setProperty('--dictation-travel', `${startLeft.current - control.current.getBoundingClientRect().left}px`);
+    startLeft.current = undefined;
+  }, [engaged]);
   // Requesting a device is cancellable, but is not yet a live recording.
   const active = engaged && !starting && state.phase !== 'connecting';
   const label = uiText(language)(error && state.retryAvailable ? 'voiceConversation.retryTranscription'
@@ -98,8 +105,7 @@ export function VoiceButton({ language, disabled, onTranscript, onTranscriptUpda
     if (state.mode !== 'idle') return;
     if (state.error) session!.end();
     const attempt = ++sequence.current;
-    const rect = control.current?.getBoundingClientRect(), footer = control.current?.closest('.composer-footer')?.getBoundingClientRect();
-    travel.current = rect && footer ? rect.left - footer.left : 0;
+    startLeft.current = control.current?.getBoundingClientRect().left;
     setStarting(true);
     // Play before acquiring the microphone, so the cue cannot enter the transcript.
     await playDictationCue();
@@ -111,7 +117,7 @@ export function VoiceButton({ language, disabled, onTranscript, onTranscriptUpda
   }
   const canMute = recording && state.phase === 'recording';
   const micLabel = canMute ? uiText(language)(state.muted ? 'useAssistantActions.unmuteMicrophone' : 'useAssistantActions.muteMicrophone') : label;
-  return <span ref={control} className="voice-dictation-control" data-engaged={engaged} data-muted={Boolean(state.muted)} style={{ '--dictation-travel': `${travel.current}px` } as React.CSSProperties}>
+  return <span ref={control} className="voice-dictation-control" data-engaged={engaged} data-muted={Boolean(state.muted)}>
     <button type="button" className={`voice-dictation-button${active ? ' is-active' : ''}`} aria-label={label} title={label}
       {...(canMute ? { 'aria-label': micLabel, title: micLabel } : {})}
       aria-pressed={canMute ? Boolean(state.muted) : engaged} aria-busy={starting || recording && (state.phase === 'connecting' || state.phase === 'transcribing')} aria-keyshortcuts={engaged || recording ? 'Escape' : undefined} disabled={!context || disabled || state.mode !== 'idle' && !recording}

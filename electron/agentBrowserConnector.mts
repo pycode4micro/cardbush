@@ -79,7 +79,7 @@ export class AgentBrowserConnector {
           throw Error('Agent browser connector component is missing. Install the complete Agent package.');
         const broker = this.shared ? new SharedBrowserConnector(this.root, nativeHostPath, join(this.configurationRoot, 'config', 'apps.json')) : new BrowserConnectorBroker(this.root, { nativeHostPath });
         try { await broker.start();
-          if (broker instanceof SharedBrowserConnector && this.legacyRoot) await broker.importLegacy(this.legacyRoot);
+          if (broker instanceof SharedBrowserConnector && this.legacyRoot) await broker.discardLegacy(this.legacyRoot);
           this.#broker = broker; }
         catch (error) { broker.stop(); throw error; }
       }

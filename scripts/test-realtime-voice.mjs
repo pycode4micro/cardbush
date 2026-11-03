@@ -386,7 +386,7 @@ test('background notifications wait for a speech gap and update model context wi
 
 test('AudioWorklet sends exact little-endian 20 ms frames and discards partial audio on mute',()=>{
   let Processor;const frames=[];
-  const context=vm.createContext({AudioWorkletProcessor:class{port={postMessage:buffer=>frames.push(buffer),onmessage:null};},registerProcessor:(_name,ctor)=>Processor=ctor,Int16Array,Math});
+  const context=vm.createContext({sampleRate:16000,AudioWorkletProcessor:class{port={postMessage:buffer=>frames.push(buffer),onmessage:null};},registerProcessor:(_name,ctor)=>Processor=ctor,Int16Array,Math});
   vm.runInContext(fs.readFileSync('public/voice/realtime-capture-worklet.js','utf8'),context);const processor=new Processor();
   processor.process([[new Float32Array(128).fill(.5)]]);assert.equal(frames.length,0);
   processor.port.onmessage({data:true});for(let i=0;i<5;i++)processor.process([[new Float32Array(128).fill(.5)]]);

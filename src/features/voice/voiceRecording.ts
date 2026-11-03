@@ -3,15 +3,13 @@ import { uiText } from '../../i18n';
 export async function prepareVoiceRecording(blob: Blob, engine: 'system' | 'sensevoice' | 'cloud') {
   const audio = await blob.arrayBuffer();
   if (engine === 'cloud') return { audio, mimeType: blob.type };
-  const context = new AudioContext();
-  try {
-    const decoded = await context.decodeAudioData(audio);
-    if (!decoded.length || decoded.duration > 121) throw Error(uiText()('voiceRecording.the_recording_is_too_long_keep_it'));
-    const rendering = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16000), 16000);
-    const source = rendering.createBufferSource(); source.buffer = decoded; source.connect(rendering.destination); source.start();
-    const converted = await rendering.startRendering();
-    return { audio: pcmWave(converted.getChannelData(0), 16000), mimeType: 'audio/wav' };
-  } finally { await context.close(); }
+  // File conversion must not require a live playback device.
+  const decoded = await new OfflineAudioContext(1, 1, 16000).decodeAudioData(audio);
+  if (!decoded.length || decoded.duration > 121) throw Error(uiText()('voiceRecording.the_recording_is_too_long_keep_it'));
+  const rendering = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16000), 16000);
+  const source = rendering.createBufferSource(); source.buffer = decoded; source.connect(rendering.destination); source.start();
+  const converted = await rendering.startRendering();
+  return { audio: pcmWave(converted.getChannelData(0), 16000), mimeType: 'audio/wav' };
 }
 
 export function pcmWave(samples: Float32Array, sampleRate: number): ArrayBuffer {

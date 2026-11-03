@@ -68,6 +68,29 @@ async function run() {
         await pause(25);
       }
       await pause(100);
+      if (mode === 'main') {
+        const read = code => win.webContents.executeJavaScript(code);
+        const until = async code => { const end = Date.now() + 6000; while (!await read(code)) { if (Date.now() >= end) throw Error('Your Friends production integration timed out: ' + code); await pause(25); } };
+        await until('document.querySelector("[data-nav-section=your-friends]")');
+        await read('document.querySelector("[data-nav-section=your-friends]").click();void 0');
+        await until('document.querySelector(".your-friends[data-phase=open]")');
+        assert.equal(await read('document.querySelector(".desktop-shell").inert'), true);
+        assert.equal(await read('!!document.querySelector(".window-frame")'), true, 'native window frame remains mounted');
+        await read('document.querySelector(".friends-header nav button:last-child").click();void 0');
+        await until('document.querySelector(".friends-dialog[open]")');
+        await read('document.querySelector(".friends-dialog .settings-switch input").click();void 0');
+        await read('document.querySelector(".friends-dialog header button").click();void 0');
+        await read('document.querySelector(".friends-back").click();void 0');
+        await until('!document.querySelector(".your-friends")');
+        assert.equal(await read('document.querySelector(".desktop-shell").inert'), false);
+        assert.equal(await read('document.activeElement.dataset.navSection'), 'your-friends');
+        await win.reload();
+        await until('document.querySelector(".your-friends[data-phase=open]")');
+        assert.ok(await read('document.querySelector(".friends-introduction")'), 'saved default startup resumes introduction');
+        await read('document.querySelector(".friends-back").click();void 0');
+        await until('!document.querySelector(".your-friends")');
+        assert.equal(await read('document.activeElement.dataset.navSection'), 'your-friends', 'default entry has a valid return focus');
+      }
       assert.deepEqual(failures, [], `${mode} must evaluate its split chunks without runtime errors`);
       if (mode === 'cardling') assert.equal(await win.webContents.executeJavaScript('document.documentElement.lang'), 'en',
         'the early host snapshot must reach the deferred companion');
@@ -77,6 +100,6 @@ async function run() {
   }
   assert.deepEqual(errors, []);
   clearTimeout(deadline);
-  console.log('Production window entries passed: workspace, companion, shadow and early companion state.');
+  console.log('Production window entries passed: workspace, Your Friends entry/return/default startup, companion, shadow and early companion state.');
   app.exit(0);
 }

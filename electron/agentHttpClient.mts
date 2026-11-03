@@ -57,15 +57,28 @@ export function agentBaseUrl(value: string) {
   url.pathname = url.pathname.replace(/\/$/, '').replace(/\/api\/agent\/v1$/, '').replace(/\/mcp$/, '').replace(/\/$/, '') + '/';
   return url.href;
 }
+const isolatedContainerTransport = Symbol('isolated_container_transport');
 export class AgentHttpClient {
   readonly #closed = new AbortController();
   readonly #direct?: HttpAgent;
   #agentId?: string;
-  constructor(readonly url: string, private readonly token: string, agentId?: string, private readonly connector?: buildConnector.connector) {
+  /** Only the authenticated private Docker broker may supply these endpoints.
+   * User-created connections always go through the default HTTPS policy. */
+  static forIsolatedContainer(value: string, token: string) {
+    const url = new URL(value);
+    if (url.protocol === 'http:' && /^[a-z][a-z0-9-]{2,30}-[a-f0-9]{24}$/.test(url.hostname) && url.port === '4780'
+      && url.pathname === '/' && !url.username && !url.password && !url.search && !url.hash) {
+      return new AgentHttpClient(url.href, token, undefined, undefined, isolatedContainerTransport);
+    }
+    return new AgentHttpClient(value, token);
+  }
+  constructor(readonly url: string, private readonly token: string, agentId?: string, private readonly connector?: buildConnector.connector,
+    transport?: typeof isolatedContainerTransport) {
+    this.url = transport === isolatedContainerTransport ? url : agentBaseUrl(url);
     this.#agentId = agentId;
     // Local services and SSH channels must not send their token through an environment proxy.
     if (connector) this.#direct = new HttpAgent({ connect: connector });
-    else if (['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)) this.#direct = new HttpAgent();
+    else if (transport === isolatedContainerTransport || ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname)) this.#direct = new HttpAgent();
   }
   close() { this.#closed.abort(); void this.#direct?.destroy().catch(() => undefined); }
   /** Host lifecycle requests still authenticate the selected Agent instance. */

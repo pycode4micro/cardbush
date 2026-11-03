@@ -65,9 +65,9 @@ export function VoiceSettingsPanel({ language }: { language: string }) {
   return <div className="settings-stack voice-settings">
     <RealtimeVoiceSettingsPanel language={language} legacyVoice={settings.voice} />
     <SettingsCard title={uiText(language)('voiceSettingsPanel.speechRecognition')} subtitle={uiText(language)('voiceSettingsPanel.sendRecognizedTextToYourCurrentAgent')}>
-      <SettingsSelect name="voice-microphone" title={uiText(language)('voiceSettingsPanel.microphone')} value={settings.microphoneId} disabled={!loaded || busy || preview} onChange={value => update('microphoneId', value)}>
+      <SettingsSelect name="voice-microphone" title={uiText(language)('voiceSettingsPanel.microphone')} subtitle={uiText(language)('voiceSettingsPanel.microphoneFollowsSystem')} value={settings.microphoneId} disabled={!loaded || busy || preview} onChange={value => update('microphoneId', value)}>
         <option value="">{uiText(language)('voiceSettingsPanel.systemDefaultMicrophone')}</option>
-        {settings.microphoneId && !microphones.some(item => item.deviceId === settings.microphoneId) && <option value={settings.microphoneId}>{uiText(language)('voiceSettingsPanel.previousMicrophoneUnavailableSelectAnother')}</option>}
+        {settings.microphoneId && !microphones.some(item => item.deviceId === settings.microphoneId) && <option value={settings.microphoneId}>{uiText(language)('voiceSettingsPanel.previousMicrophoneUsingDefault')}</option>}
         {microphones.map((item, index) => <option key={item.deviceId} value={item.deviceId}>{item.label || `${uiText(language)('voiceSettingsPanel.microphone')} ${index + 1}`}</option>)}
       </SettingsSelect>
       <SettingsSelect name="voice-turn-wait" title={uiText(language)('voiceSettingsPanel.pauseBeforeSending')} value={settings.turnEndPause ?? 'normal'} disabled={!loaded || busy || preview} onChange={value => update('turnEndPause', value)}

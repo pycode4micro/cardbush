@@ -26,6 +26,23 @@ internal static class CardBushBrowserHost
 
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && (args[0] == "--protect-secret" || args[0] == "--unprotect-secret"))
+        {
+            try {
+                char[] input = new char[2 * 1024 * 1024]; int count = 0, read;
+                while (count < input.Length && (read = Console.In.Read(input, count, input.Length - count)) > 0) count += read;
+                if (count == input.Length) throw new InvalidDataException();
+                byte[] value = Convert.FromBase64String(new string(input, 0, count));
+                byte[] entropy = Encoding.UTF8.GetBytes("cardbush.credential-store.v1");
+                byte[] result = args[0] == "--protect-secret"
+                    ? System.Security.Cryptography.ProtectedData.Protect(value, entropy, System.Security.Cryptography.DataProtectionScope.CurrentUser)
+                    : System.Security.Cryptography.ProtectedData.Unprotect(value, entropy, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                Console.Out.Write(Convert.ToBase64String(result));
+                Array.Clear(input, 0, input.Length); Array.Clear(value, 0, value.Length); Array.Clear(result, 0, result.Length);
+                return 0;
+            }
+            catch { Console.Error.WriteLine("credential_protection_failed"); return 4; }
+        }
         if (args.Length == 1 && (args[0] == "--protect-worker-key" || args[0] == "--unprotect-worker-key"))
         {
             try {
@@ -78,7 +95,7 @@ internal static class CardBushBrowserHost
             }
             catch (Exception error) { Console.Error.WriteLine(error.Message); return 4; }
         }
-        if (args.Length == 2 && (args[0] == "--secure-directory" || args[0] == "--secure-pipe"))
+        if (args.Length == 2 && (args[0] == "--secure-directory" || args[0] == "--secure-credential-directory" || args[0] == "--secure-pipe"))
         {
             try { ConnectorSecurity.SecureResource(args[0], args[1]); return 0; }
             catch (Exception error) { Console.Error.WriteLine(error.Message); return 4; }

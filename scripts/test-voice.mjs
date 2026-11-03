@@ -189,8 +189,8 @@ test('an enabled speaker lock drops missing proof without sending or asking for 
   // The fixture skips actual WAV conversion; the production host verifies audio.
   const previousAudioContext=globalThis.AudioContext;
   const previousOfflineAudioContext=globalThis.OfflineAudioContext;
-  globalThis.AudioContext=class{decodeAudioData(){return Promise.resolve({length:16000,duration:1});}close(){return Promise.resolve();}};
-  globalThis.OfflineAudioContext=class{createBufferSource(){return {connect(){},start(){}};}startRendering(){return Promise.resolve({getChannelData:()=>new Float32Array(16000)});}};
+  globalThis.AudioContext=class{constructor(){throw Error('file conversion must not open a playback device');}};
+  globalThis.OfflineAudioContext=class{decodeAudioData(){return Promise.resolve({length:16000,duration:1});}createBufferSource(){return {connect(){},start(){}};}startRendering(){return Promise.resolve({getChannelData:()=>new Float32Array(16000)});}};
   try {
     await f.session.start('call');f.session.finishUtterance();await pause();await pause();
     assert.equal(f.sent.length,1);const before=f.stopped;
@@ -337,6 +337,23 @@ test('recording failures retain the session and allow one retry', async () => {
   assert.equal(f.sent.length, 0); f.session.retry(); f.session.retry(); await pause(); await pause();
   assert.equal(attempts, 2); assert.deepEqual(f.dictated, ['录音已保留']); assert.equal(f.sent.length, 0);
 });
+for (const result of [{ text: '' }, { text: '   ' }, { text: '', speaker: 'rejected' }]) {
+  test(`unusable dictation releases the recording instead of retrying it: ${JSON.stringify(result)}`, async () => {
+    let attempts = 0, captures = 0;
+    const f = sessionFixture({ transcribe: async () => ++attempts === 1 ? result : { text: '重新录音成功' } }, {}, undefined,
+      { start: async () => { captures++; } });
+    try {
+      await f.session.start('recording', text => f.dictated.push(text)); f.session.finishRecording(); await pause(); await pause();
+      assert.equal(f.session.snapshot().mode, 'idle'); assert.equal(f.session.snapshot().phase, 'idle');
+      assert.equal(f.session.snapshot().retryAvailable, false); assert.equal(f.session.snapshot().queuedClips, 0);
+      assert.equal(f.session.ownsVoice(f.target), false); assert.ok(f.session.snapshot().error); assert.equal(f.closed, 1);
+      f.session.retry(); f.session.retry(); await pause(); assert.equal(attempts, 1); assert.deepEqual(f.dictated, []);
+      await f.session.start('recording', text => f.dictated.push(text)); assert.equal(captures, 2); assert.equal(f.session.snapshot().error, '');
+      f.session.finishRecording(); await pause(); await pause();
+      assert.equal(attempts, 2); assert.deepEqual(f.dictated, ['重新录音成功']); assert.deepEqual(f.sent, []);
+    } finally { f.session.end(); }
+  });
+}
 test('failed dictation startup releases ownership and can acquire the microphone again', async () => {
   let attempts = 0;
   const f = sessionFixture({}, {}, undefined, { start: async () => { if (++attempts === 1) throw Error('microphone unavailable'); } });
@@ -468,7 +485,10 @@ test('rejected dictation cannot bypass identity verification through retry', asy
   const f = sessionFixture({ transcribe: async () => { attempts++; return { text: '', speaker: 'rejected' }; } });
   await f.session.start('recording', text => f.dictated.push(text)); f.session.finishRecording(); await pause(); await pause();
   assert.equal(f.sent.length, 0); assert.ok(f.session.snapshot().error.includes('声纹'));
-  f.session.retry(); await pause(); await pause(); assert.equal(attempts, 2); assert.equal(f.sent.length, 0); f.session.end();
+  assert.equal(f.session.snapshot().retryAvailable, false);
+  f.session.retry(); await pause(); await pause(); assert.equal(attempts, 1); assert.equal(f.sent.length, 0);
+  await f.session.start('recording', text => f.dictated.push(text)); f.session.finishRecording(); await pause(); await pause();
+  assert.equal(attempts, 2); assert.equal(f.sent.length, 0); assert.equal(f.dictated.length, 0); f.session.end();
 });
 
 test('activity gate rejects taps, hum, pure tones and broadband noise but accepts sustained speech bands', () => {

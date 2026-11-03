@@ -1,0 +1,29 @@
+[data-composer-input], .composer-code-highlights {
+  --composer-code-background: color-mix(in srgb, var(--text) 11%, transparent);
+}
+textarea[data-composer-input] { position: relative; z-index: 1; }
+.composer-code-highlights {
+  position: absolute;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  color: transparent;
+}
+.composer-code-mirror {
+  box-sizing: border-box;
+  width: 100%;
+  white-space: pre-wrap;
+  color: transparent;
+}
+.composer-code-mark {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  color: transparent;
+  background: var(--composer-code-background);
+  font: inherit;
+}
+::highlight(cardbush-composer-code) { background-color: var(--composer-code-background); }

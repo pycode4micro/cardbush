@@ -31,6 +31,14 @@ Ignoring install scripts avoids downloading Electron; build-time types do not ma
 
 Start each instance with a separate empty directory, never desktop data. Locks reject another process and existing Runtime data without service identity. `agent.json` preserves identity. Back up a stopped directory or consistent snapshot, including token, runtime-state, config, plugins/marketplaces, skills, bundled assets and AGENTS.md, with equivalent access protection. One directory supports one process on one host, not NFS replicas or distributed leases.
 
+## Credential storage
+
+Model API keys, custom headers, MCP environment/arguments and recognized plugin secrets are sealed in their JSON files. Windows uses current-account DPAPI through the bundled native helper; App and CLI must both be upgraded. Saved header values are hidden from settings and can be kept using the displayed marker. Editing a JSON secret is supported; the host seals it on the next read. Never copy a sealed Windows value to another account.
+
+On Linux/macOS, set CARDBUSH_CREDENTIAL_KEY_FILE to an absolute path to a separately managed, owner-only (0600) regular file containing exactly 32 random bytes. Keep it outside the CardBush profile/data directories and outside their backups; provision it before starting the App, CLI, or service. Missing or invalid key protection fails closed. No plaintext key sidecar is created. For example, create a private directory outside the data root and use openssl rand -out /private/cardbush-keys/credentials.key 32, then chmod 600 that file. Keep the key stable across restarts.
+
+Credential files are protected against accidental file disclosure, not malicious programs running as the same OS user. Extension storage is restricted to trusted extension contexts, but its browser-owned pairing material still depends on the browser profile's protection. The service access-token file remains an owner-only administrative credential; prefer a service-managed CARDBUSH_AGENT_TOKEN when appropriate. Browser cookies and site logins are not deleted with CardBush authorization caches.
+
 ## Network and identity
 
 Default bind is `127.0.0.1:4780`. A random token is stored in owner-only `access-token` on POSIX, or supplied by `CARDBUSH_AGENT_TOKEN` (at least 32 characters). Logs show its path only. This is an administrative instance credential, not a scoped multi-tenant delegation token.
@@ -50,7 +58,7 @@ cardbush worker verify CONNECTION_ID
 cardbush worker remove CONNECTION_ID
 ```
 
-Ask the local Agent to bind a role to the returned connection and verified instance. Existing subagent/tasks/Team tools use it without seeing the token. App and CLI using the same local profile share protected worker connections; standalone server accounts retain their own stores. Existing connection IDs migrate once, and worker CLI commands do not start the full Agent Runtime. Roles and conversations remain owned by their Runtime. An instance change at the same URL needs explicit new registration.
+Ask the local Agent to bind a role to the returned connection and verified instance. Existing subagent/tasks/Team tools use it without seeing the token. App and CLI using the same local profile share protected worker connections; standalone server accounts retain their own stores. Retired browser and worker credential caches are deleted instead of imported; reconnect and authorize them once after upgrading. Worker CLI commands do not start the full Agent Runtime. Roles and conversations remain owned by their Runtime. An instance change at the same URL needs explicit new registration.
 
 Complete the [layered acceptance checks](../assets/skills/cardbush-docs/references/remote-workers.md#分层验收): connection and role registration, real model delegation, continuation with the original task_id, sandbox file operations with independently verified output, and identity/history preservation after an idle service restart. Connectivity does not prove model/tool readiness; an isolated CLI registration does not configure the daily App; a process restart does not verify boot startup.
 
@@ -114,3 +122,5 @@ The desktop/browser profile/volume belong to that worker; independent people nee
 Updating service/CLI files does not update running processes or the desktop App. Preserve data and restart after work settles. Update bundled skills with release assets while retaining user skills. Tool schemas, loop logic and product instructions come from built code; JSON/config sync cannot replace upgrading. Inspect the target version and catalog to confirm the active build.
 
 Tests: `test:agents`, `test:remote-workers`, `test:agents-ui`, `test:agent-chat`. They use isolated Node workers, simulated models, real local HTTP/CLI and UI, not production deployment. Independent worker adapters need separate interaction-contract validation; any future MCP binding also needs the conformance checks for its advertised revision.
+
+A service manager may instead inject CARDBUSH_CREDENTIAL_KEY as exactly 64 hex characters; do not set both key inputs. This is for trusted host processes, never plugin or model environments. The private Web broker derives a separate stable key per tenant, independent of its API token. Private Web containers keep HTTP only on the isolated Docker network; broker.json must pin modelOrigin to the exact internal gateway origin. Its exception covers /internal/model/ only. Public and user-configured remote endpoints still require HTTPS.

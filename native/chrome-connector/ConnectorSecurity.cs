@@ -76,10 +76,11 @@ internal static class ConnectorSecurity
     public static void SecureResource(string operation, string target)
     {
         string sid = WindowsIdentity.GetCurrent().User.Value;
-        bool directory = operation == "--secure-directory";
+        bool directory = operation == "--secure-directory" || operation == "--secure-credential-directory";
         if (directory)
         {
-            if (!Path.IsPathRooted(target) || (Path.GetFileName(target) != "browser-connector" && Path.GetFileName(target) != "model-access" && Path.GetFileName(target) != "local-runtime" && Path.GetFileName(target) != "workers") ||
+            if (!Path.IsPathRooted(target) || String.Equals(Path.GetFullPath(target).TrimEnd('\\', '/'), Path.GetPathRoot(target).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase) ||
+                (operation != "--secure-credential-directory" && Path.GetFileName(target) != "browser-connector" && Path.GetFileName(target) != "model-access" && Path.GetFileName(target) != "local-runtime" && Path.GetFileName(target) != "workers" && Path.GetFileName(target) != "config") ||
                 (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Invalid private IPC directory.");
         }

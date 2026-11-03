@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),electron=require('electron');
 if(typeof electron==='string'){
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
-  const result=require('node:child_process').spawnSync(electron,[__filename,...process.argv.slice(2)],{env,windowsHide:true,stdio:'inherit',timeout:90000});
+  const result=require('node:child_process').spawnSync(electron,['--force-device-scale-factor=1',__filename,...process.argv.slice(2)],{env,windowsHide:true,stdio:'inherit',timeout:120000});
   if(result.error)console.error(result.error);process.exit(result.status??1);
 }
 const {app,BrowserWindow}=electron,directory=fs.mkdtempSync(path.resolve('tmp/voice-composer-ui-'));
@@ -15,10 +15,11 @@ if(liveDictation){
   for(let i=0;i<rate*seconds;i++){const sample=[1,2,3,4,5,6,7].reduce((sum,h)=>sum+Math.sin(i*2*Math.PI*170*h/rate)/Math.sqrt(h),0)*2400;wave.writeInt16LE(Math.round(sample),44+i*2);}
   const microphone=path.join(directory,'microphone.wav');fs.writeFileSync(microphone,wave);app.commandLine.appendSwitch('use-file-for-fake-audio-capture',microphone);
 }
-const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),deadline=setTimeout(()=>app.exit(1),85000);
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),deadline=setTimeout(()=>app.exit(1),115000);
 app.whenReady().then(async()=>{
   const {build}=await import('vite'),{default:react}=await import('@vitejs/plugin-react');
   const {defaultVoiceSettings}=require('../dist-electron/voiceTypes.js');
+  const {defaultRealtimeVoiceSettings}=require('../dist-electron/realtimeVoiceTypes.js');
   const file=name=>JSON.stringify(path.resolve(name).replaceAll('\\','/'));
   const result=await build({configFile:false,logLevel:'error',define:{'process.env.NODE_ENV':'"production"'},plugins:[react(),{
     name:'voice-composer-fixture',resolveId:id=>id.endsWith('__voice_composer_fixture__.tsx')?'\0voice-composer-fixture.tsx':undefined,
@@ -30,13 +31,14 @@ app.whenReady().then(async()=>{
       import {ComposerPortalContext} from ${file('src/features/composer/ComposerPortalContext.ts')};
       import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
       window.fixture={cancelled:0,sent:[],frames:0,started:0,closed:0,captures:0,transcriptions:0,tracks:[]};
+      window.addEventListener('error',event=>console.error(event.error?.stack||event.message));
       document.documentElement.lang='zh';
       const getMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia=async options=>{fixture.captures++;if(fixture.failCapture)throw new DOMException('fixture missing microphone','NotFoundError');const stream=await getMedia(options);fixture.tracks.push(...stream.getTracks());return stream;};
       const settings=${JSON.stringify({...defaultVoiceSettings,engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,speakerLockEnabled:false})};
       window.cardbushDesktop={pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),voice:{settings:async()=>settings,setCallActive:async()=>{},cancel:async()=>{},
-        transcribe:async input=>{fixture.transcriptions++;fixture.audio=input;if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);if(fixture.failTranscription){fixture.failTranscription=false;throw Error('fixture transcription failed');}return{text:(fixture.state().phase==='transcribing'?fixture.finalText:fixture.previewText)||'这是录音测试',speakerVerified:true};},speak:async()=>{},onAudio:()=>()=>{},
-        realtime:{settings:async()=>({mode:'realtime',hasApiKey:true}),start:async()=>{fixture.started++;if(fixture.holdStart)await new Promise(resolve=>fixture.releaseStart=resolve);if(fixture.failStart)throw Error('fixture connection failed');},audio:async()=>fixture.frames++,control:async()=>{},playback:async()=>{},close:async()=>fixture.closed++,onEvent:()=>()=>{}}}};
+        transcribe:async input=>{fixture.transcriptions++;fixture.audio=input;if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);if(fixture.failTranscription){fixture.failTranscription=false;throw Error('fixture transcription failed');}return{text:fixture.emptyTranscription?'':(fixture.state().phase==='transcribing'?fixture.finalText??'这是录音测试':fixture.previewText??''),speakerVerified:true};},speak:async()=>{},onAudio:()=>()=>{},
+        realtime:{settings:async()=>(${JSON.stringify({...defaultRealtimeVoiceSettings,mode:'realtime',hasApiKey:true})}),start:async()=>{fixture.started++;if(fixture.holdStart)await new Promise(resolve=>fixture.releaseStart=resolve);if(fixture.failStart)throw Error('fixture connection failed');},audio:async()=>fixture.frames++,control:async()=>{},playback:async()=>{},close:async()=>fixture.closed++,onEvent:()=>()=>{}}}};
       fixture.state=()=>applicationVoiceSession().snapshot();
       const noop=()=>{},controls={selectedModel:'fixture',availableModels:[],onModelChange:noop,onConfigureModels:noop,referencePlanMode:'off',onReferencePlanModeChange:noop,permissionMode:'task_free',onPermissionModeChange:noop,subagentPermissionRouting:'inherit',onSubagentPermissionRoutingChange:noop,reasoningLevel:'medium',reasoningLevels:['medium'],reasoningLevelAvailable:false,onReasoningLevelChange:noop,skills:[],disabledSkillNames:new Set(),onToggleSkill:noop};
       function Fixture(){const [style,setStyle]=useState('standard'),[draft,setDraft]=useState(''),[view,setView]=useState('chat'),[theme,setTheme]=useState('dark'),[sending,setSending]=useState(false),[portal,setPortal]=useState(false),[portalTarget,setPortalTarget]=useState(null),[language,setLanguage]=useState('zh');
@@ -124,7 +126,7 @@ app.whenReady().then(async()=>{
       assert.equal(await read('fixture.state().mode'),'idle');
       assert.deepEqual(await rect('.voice-dictation-button'),mic,'failure notice must not change toolbar geometry');
       const message=await read('document.querySelector(".voice-dictation-error").textContent');
-      assert.match(message,language==='zh'?/所选麦克风不可用/:/selected microphone is unavailable/);
+      assert.match(message,language==='zh'?/系统没有可用的录音设备/:/No system recording device is available/);
       await screenshot(style+'-dictation-unavailable');
       win.setSize(360,600);await until('innerWidth===360');
       assert.ok(await read('(()=>{const notice=document.querySelector(".voice-dictation-error").getBoundingClientRect();return notice.left>=0&&notice.right<=innerWidth&&document.documentElement.scrollWidth<=innerWidth;})()'),'translated device errors fit a narrow composer');
@@ -168,10 +170,23 @@ app.whenReady().then(async()=>{
       assert.equal(await read('!!document.querySelector(".voice-mini,.voice-dialog,.voice-composer-call")'),false);
       await pause(350);
       assert.ok((await rect('.voice-dictation-button')).x<mic.x-40,'dictation microphone moves to the left');
+      const travel=await read('parseFloat(getComputedStyle(document.querySelector(".voice-dictation-control")).getPropertyValue("--dictation-travel"))');
+      assert.ok(Math.abs(travel-(mic.x-(await rect('.voice-dictation-button')).x))<1,'the recording animation starts at the original microphone position in both presentations');
       await click('.voice-dictation-button');assert.equal(await read('fixture.state().muted'),true);
       assert.equal(await read('fixture.state().phase'),'recording','mute preserves dictation capture');
       await click('.voice-dictation-button');assert.equal(await read('fixture.state().muted'),false);
       await screenshot(style+'-dictation');await pause(200);
+      const separated=()=>read(`(()=>{const bar=document.querySelector('.voice-dictation-control').getBoundingClientRect(),editor=document.querySelector('.composer-surface textarea').getBoundingClientRect(),surface=document.querySelector('.composer-surface').getBoundingClientRect();return editor.bottom<=bar.top&&bar.left>=surface.left&&bar.right<=surface.right&&bar.bottom<=surface.bottom;})()`);
+      assert.ok(await separated(),'recording controls must stay below the draft without overlap');
+      if(style==='simple'){
+        win.setSize(360,600);await until('innerWidth===360');
+        for(const draft of ['', '第一行\n第二行\n第三行']){
+          await fill(draft);await pause(150);assert.ok(await separated(),'empty and multiline drafts must not overlap the narrow recording bar');
+          assert.equal(await read('document.documentElement.scrollWidth<=innerWidth'),true);
+          await screenshot(draft?'simple-dictation-narrow-multiline':'simple-dictation-narrow-empty');
+        }
+        win.setSize(900,600);await until('innerWidth===900');
+      }
       await read('fixture.holdTranscription=true;fixture.releaseTranscription=undefined;fixture.failTranscription=true;void 0');
       await click('.voice-dictation-stop');await until('typeof fixture.releaseTranscription==="function"');
       await fill('识别期间继续编辑');assert.equal(await read('fixture.tracks.every(t=>t.readyState==="ended")'),true);
@@ -183,6 +198,20 @@ app.whenReady().then(async()=>{
       await until('document.querySelector(".composer-surface textarea").value==="识别期间继续编辑 这是录音测试"');
       assert.equal(await read('fixture.sent.length'),sent,'dictation never sends to a running Agent');
       assert.equal(await read('fixture.captures'),captures,'ASR retry reuses the recording');
+      await read('fixture.emptyTranscription=true;void 0');
+      await click('.voice-dictation-button');await until('fixture.state().phase==="recording"');await pause(200);
+      await click('.voice-dictation-stop');await until('fixture.state().mode==="idle"&&document.querySelector(".voice-dictation-error")');
+      assert.equal(await read('fixture.state().retryAvailable'),false);
+      assert.equal(await read('fixture.tracks.every(t=>t.readyState==="ended")'),true);
+      assert.equal(await read('document.querySelector(".composer-surface textarea").value'),'识别期间继续编辑 这是录音测试');
+      const emptyCalls=await read('fixture.transcriptions'),emptyCaptures=await read('fixture.captures');await pause(250);
+      assert.equal(await read('fixture.transcriptions'),emptyCalls,'silence must not restart transcription');
+      await read('fixture.emptyTranscription=false;void 0');
+      await click('.voice-dictation-button');await until('fixture.state().phase==="recording"');await pause(200);
+      assert.equal(await read('fixture.captures'),emptyCaptures+1,'the next microphone click records new audio after silence');
+      await click('.voice-dictation-stop');await until('fixture.state().mode==="idle"&&!document.querySelector(".voice-dictation-error")');
+      assert.equal(await read('document.querySelector(".composer-surface textarea").value'),'识别期间继续编辑 这是录音测试 这是录音测试');
+      assert.equal(await read('fixture.sent.length'),sent,'recovering from silence must not send a message');
       await pointer(true);assert.equal(await read('fixture.started'),index,'a hold while the Agent works must not join a call');
       await read('fixture.sending(false);fixture.draft("请保留这段草稿");void 0');await pause(100);
       await click('.composer-tools .tool-chip');
@@ -224,9 +253,11 @@ app.whenReady().then(async()=>{
       await screenshot(style+'-portal');await read('fixture.portal(false);void 0');
       await until('!document.querySelector(".inspector-quick-input .composer-stack")');
       win.setSize(360,600);await read('fixture.theme("light");void 0');await pause(100);
+      await screenshot(style+'-call-narrow-light');
       assert.ok(await read('document.documentElement.scrollWidth<=innerWidth'));
-      assert.ok(await read('(()=>{const a=document.querySelector(".voice-call-signal").getBoundingClientRect(),b=document.querySelector(".voice-composer-end").getBoundingClientRect();return a.width>100&&a.right<=b.left&&b.right<=innerWidth;})()'));
-      await screenshot(style+'-call-narrow-light');win.setSize(900,600);
+      // The real provider voice selector shares this row with the waveform.
+      assert.ok(await read('(()=>{const a=document.querySelector(".voice-call-signal").getBoundingClientRect(),p=document.querySelector(".realtime-voice-picker").getBoundingClientRect(),m=document.querySelector(".voice-composer-call .voice-audio-toggle:nth-of-type(2)").getBoundingClientRect(),b=document.querySelector(".voice-composer-end").getBoundingClientRect();return a.width>=64&&p.width>=48&&a.right<=p.left&&p.right<=m.left&&m.right<=b.left&&b.right<=innerWidth;})()'),JSON.stringify({wave:await rect('.voice-call-signal'),end:await rect('.voice-composer-end'),picker:await rect('.realtime-voice-picker')}));
+      win.setSize(900,600);
       await click('.voice-composer-end');await until('fixture.state().mode==="idle"&&!document.querySelector(".voice-composer-call")');
       assert.equal(await read('fixture.cancelled'),0,'ending voice must not cancel the Agent');
       assert.equal(await read('document.querySelector(".composer-surface textarea").value'),'请保留这段草稿');

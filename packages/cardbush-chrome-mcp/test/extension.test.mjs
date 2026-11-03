@@ -13,7 +13,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
     import.meta.dirname,
     '../../../assets/plugins/browser/extension/background.js',
   );
-  const source = await readFile(path.join(path.dirname(workerPath), 'downloads.js'), 'utf8') + '\n' + await readFile(workerPath, 'utf8');
+  const source = (await Promise.all(['downloads.js', 'consent-window.js', 'i18n.js', 'background.js'].map(file => readFile(path.join(path.dirname(workerPath), file), 'utf8')))).join('\n');
   const nativeMessages = event();
   const nativeDisconnects = event();
   const runtimeMessages = event();
@@ -23,6 +23,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   const sessionStored = { cardbushConnectorEnabled: true };
   const attached = new Set();
   const focusedWindows = [], debuggerCommands = [];
+  const consentWindows = [];
   const screenshotTimers = new Set();
   const groups = new Map();
   const tabs = [
@@ -42,6 +43,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
 
   const chrome = {
     runtime: {
+      id: 'fixture', getURL: file => `chrome-extension://fixture/${file}`,
       lastError: undefined,
       connectNative: (name) => {
         assert.equal(name, 'com.cardbush.browser_connector');
@@ -121,7 +123,10 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
       get: async (groupId) => requiredGroup(groups, groupId),
       update: async (groupId, update) => Object.assign(requiredGroup(groups, groupId), update),
     },
-    windows: { update: async (id, update) => { focusedWindows.push({ id, ...update }); } },
+    i18n: { getUILanguage: () => 'en' },
+    windows: { onRemoved: event(), remove: async () => {}, create: async options => {
+      consentWindows.push(options); return { id: 9, tabs: [{ id: 9000 + consentWindows.length }] };
+    }, update: async (id, update) => { focusedWindows.push({ id, ...update }); } },
     debugger: {
       onDetach: event(),
       attach: async ({ tabId }) => { attached.add(tabId); },
@@ -136,6 +141,8 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
 
   vm.runInNewContext(source, {
     importScripts: () => {},
+    connectorHex: bytes => Buffer.from(bytes).toString('hex'),
+    connectorProfileKeys: async () => ({ publicKey: 'fixture-key', privateKey: {} }),
     parseConnectorPairing: () => ({ port: 12345, id: 'fixture', secret: 'fixture' }),
     createConnectorPort: () => nativePort,
     chrome,
@@ -156,13 +163,18 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
 
   const connecting = await popupRequest(runtimeMessages, 'status');
   assert.equal(connecting.nativeConnected, false, 'allocating a native port is not a completed handshake');
-  assert.equal(connecting.nativeConnecting, true);
+  assert.equal(connecting.nativeConnecting, true, JSON.stringify(connecting));
   assert.equal(posted.length, 0, 'status must wait for the broker handshake');
   nativeMessages.emit({ type: 'connector_ready', protocol: 'wrong-protocol' });
   assert.equal((await popupRequest(runtimeMessages, 'status')).nativeConnected, false);
   nativeMessages.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
   assert.equal((await popupRequest(runtimeMessages, 'status')).nativeConnected, true);
   await eventually(() => posted.some(message => message.type === 'status'));
+  for (const message of posted.filter(message => message.type === 'status')) {
+    assert.equal(message.activeTabId, undefined);
+    assert.equal(message.activeTabTitle, ''); assert.equal(message.activeTabUrl, '');
+    assert.ok(!JSON.stringify(message).includes('focused.example'), 'connection health does not leak private foreground tabs');
+  }
 
   const missingScope = await nativeRequest(nativeMessages, posted, 'tabs.list', {});
   assert.equal(missingScope.error.code, 'browser_scope_missing');
@@ -285,6 +297,27 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   });
   assert.equal(crossOriginA.error.code, 'site_permission_required');
   assert.equal(tabA.url, 'https://a.example/continued');
+  await flush();
+  assert.equal(consentWindows.length, 1, 'a blocked site request opens browser-owned consent for CLI and App');
+  const consentUrl = consentWindows[0].url, token = new URL(consentUrl).hash.slice(1);
+  const consentSender = { id: 'fixture', url: consentUrl, tab: { id: 9001 } };
+  const consentMessage = (message, sender = consentSender) => new Promise(resolve => runtimeMessages.emit(message, sender, resolve));
+  assert.equal((await consentMessage({ action: 'site_state', token })).origin, 'https://different.example');
+  for (const sender of [{ ...consentSender, tab: { id: tabA.id } }, { ...consentSender, url: 'https://evil.example/' },
+    { ...consentSender, id: 'another-extension' }]) {
+    assert.equal((await consentMessage({ action: 'confirm_site', token, allow: 'site' }, sender)).ok, false);
+  }
+  assert.equal((await consentMessage({ action: 'allow_all' }, { id: 'fixture', url: 'https://evil.example/' })).ok, false);
+  assert.equal(stored.allowAllSites, false);
+  assert.equal((await consentMessage({ action: 'confirm_site', token, allow: false })).ok, true);
+  await nativeRequest(nativeMessages, posted, 'tabs.navigate', { ...SCOPE_A, tabId: tabA.id, url: 'https://different.example/' });
+  assert.equal(consentWindows.length, 1, 'denial does not cause another dialog on repeated tool calls');
+  assert.equal((await consentMessage({ action: 'confirm_site', token, allow: 'site' })).ok, false, 'used tokens cannot grant access');
+  for (const command of ['Target.getTargets', 'Target.attachToTarget', 'Network.getAllCookies', 'Storage.getCookies', 'Browser.close', 'Page.navigate']) {
+    const result = await nativeRequest(nativeMessages, posted, 'debugger.command', { ...SCOPE_A, tabId: tabA.id, command });
+    assert.equal(result.error.code, 'unsupported_debugger_command');
+    assert.ok(!debuggerCommands.some(item => item.command === command));
+  }
 
   const createdB = await nativeRequest(nativeMessages, posted, 'tabs.create', {
     ...SCOPE_B,
@@ -418,7 +451,7 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
     import.meta.dirname,
     '../../../assets/plugins/browser/extension/background.js',
   );
-  const source = await readFile(path.join(path.dirname(workerPath), 'downloads.js'), 'utf8') + '\n' + await readFile(workerPath, 'utf8');
+  const source = (await Promise.all(['downloads.js', 'consent-window.js', 'i18n.js', 'background.js'].map(file => readFile(path.join(path.dirname(workerPath), file), 'utf8')))).join('\n');
   const nativeMessages = event();
   const runtimeMessages = event();
   const posted = [];
@@ -463,6 +496,7 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
   };
   const chrome = {
     runtime: {
+      id: 'fixture', getURL: file => `chrome-extension://fixture/${file}`,
       lastError: undefined,
       connectNative: () => nativePort,
       getManifest: () => ({ version: 'restart-test' }),
@@ -495,6 +529,7 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
 
   vm.runInNewContext(source, {
     importScripts: () => {},
+    connectorProfileKeys: async () => ({ publicKey: 'fixture-key', privateKey: {} }),
     parseConnectorPairing: () => ({ port: 12345, id: 'fixture', secret: 'fixture' }),
     createConnectorPort: () => nativePort,
     chrome,
@@ -533,7 +568,10 @@ function setActiveTab(tabs, activeTab, onActive) {
 }
 
 function storageArea(values) {
+  values.cardbushCredentialCacheVersion ??= 1;
   return {
+    setAccessLevel: async ({ accessLevel }) => assert.equal(accessLevel, 'TRUSTED_CONTEXTS'),
+    remove: async keys => { for (const key of [].concat(keys)) delete values[key]; },
     get: async (keys) => Object.fromEntries(
       keys.filter((key) => key in values).map((key) => [key, values[key]]),
     ),
@@ -545,7 +583,8 @@ function event() {
   const listeners = [];
   return {
     addListener(listener) { listeners.push(listener); },
-    emit(...args) { return listeners.map((listener) => listener(...args)); },
+    removeListener(listener) { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); },
+    emit(...args) { return [...listeners].map((listener) => listener(...args)); },
   };
 }
 
@@ -579,7 +618,7 @@ async function nativeRequest(eventTarget, posted, method, params) {
 async function popupRequest(eventTarget, action) {
   return await new Promise((resolve) => {
     const message = typeof action === 'string' ? { action } : action;
-    const results = eventTarget.emit(message, {}, resolve);
+    const results = eventTarget.emit(message, { id: 'fixture', url: 'chrome-extension://fixture/popup.html' }, resolve);
     assert.equal(results.length, 1);
     assert.equal(results[0], true);
   });

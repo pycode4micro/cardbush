@@ -213,7 +213,7 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
       if (!Array.isArray(result.connections) || !result.connections.some(connection => record(connection).connected === true)) {
         result.availability = 'needs_connection';
         result.nextStep = Array.isArray(result.connections) && result.connections.length
-          ? 'Open the already paired Chrome/Edge profile and let its CardBush Browser Use extension reconnect automatically; if the user explicitly disabled the extension connection, they must click Connect to resume. Automatic recovery stops after three failed attempts and then also requires the user to click Connect. Then call list_browsers again. Existing pairings and the session selection are preserved; do not generate a new pairing code for a temporary disconnect.'
+          ? 'Open the already paired Chrome/Edge profile and let its CardBush Browser Use extension reconnect automatically; if the user explicitly disabled the extension connection, they must click Connect to resume. After three fast attempts, a saved connection keeps retrying every 30 seconds; browser suspension may delay recovery. The user can click Connect to retry immediately. Then call list_browsers again. Existing pairings and the session selection are preserved; do not generate a new pairing code for a temporary disconnect.'
           : bridgeSetupGuidance;
         const attempt = record(result.connectionAttempt);
         const age = Date.now() - Date.parse(String(attempt.at ?? ''));

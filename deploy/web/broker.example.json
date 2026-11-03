@@ -3,6 +3,7 @@
   "image": "cardbush-web:TESTED_RELEASE_TAG",
   "network": "cardbush-web-private",
   "prefix": "cbweb",
+  "modelOrigin": "http://cardbush-web:4880",
   "maxActive": 3,
   "memoryMiB": 768,
   "idleMinutes": 10,

@@ -77,7 +77,8 @@ test("persists model secrets in the Product Host and only exposes masked facts",
   assert.equal(publicPayload.models[0].apiKey, "");
   assert.equal(publicPayload.models[0].hasApiKey, true);
   assert.equal(JSON.stringify(publicPayload).includes("secret-provider-key"), false);
-  assert.equal((await readFile(path, "utf8")).includes("secret-provider-key"), true);
+  assert.equal((await readFile(path, "utf8")).includes("secret-provider-key"), false);
+  assert.equal((await new ProductModelConfigStore(path).read()).models[0].apiKey, 'secret-provider-key');
 
   const preserved = await store.write({
     defaultModelId: "vision",

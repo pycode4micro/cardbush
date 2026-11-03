@@ -27,12 +27,9 @@ const commandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('delete'), revision: z.number().int().positive(), id: identifier }).strict(),
   z.object({ action: z.literal('test'), agent: inputSchema }).strict(),
 ]);
-function privateAddress(address: string) {
-  const [a, b] = address.split('.').map(Number);
-  return a === 10 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || /^f[cd]/i.test(address);
-}
 export function remoteAgentUrl(value: string) {
   const url = new URL(value);
+  if (url.protocol !== 'https:') throw new WebError(400, 'remote_agent_requires_https');
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash ||
       /^(localhost|.*\.localhost)$/i.test(url.hostname) || blockedAddress(url.hostname))
     throw new WebError(400, '请填写远程 HTTP(S) Agent 地址，不支持本机地址、命令、SSH 或嵌入式凭据。');
@@ -48,9 +45,8 @@ export const createRemoteClient: RemoteClientFactory = async connection => {
   }
   const url = new URL(remoteAgentUrl(connection.url));
   const addresses = await lookup(url.hostname.replace(/^\[|\]$/g, ''), { all: true });
-  if (!addresses.length || addresses.some(item => blockedAddress(item.address)) ||
-      url.protocol === 'http:' && addresses.some(item => !privateAddress(item.address)))
-    throw new WebError(400, '远程公网服务需要 HTTPS；HTTP 仅支持内网地址，禁止本机和链路本地地址。');
+  if (!addresses.length || addresses.some(item => blockedAddress(item.address)))
+    throw new WebError(400, 'remote_agent_address_blocked');
   const address = addresses[0];
   const connector = buildConnector({ lookup: (_hostname, options, callback) => {
     if (typeof options === 'object' && options.all) callback(null, [address] as never);

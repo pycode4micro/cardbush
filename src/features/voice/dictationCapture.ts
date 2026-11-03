@@ -1,3 +1,4 @@
+import { openMicrophone } from './microphone';
 import { uiText } from '../../i18n';
 import type { CaptureCallbacks, VoiceClipTiming } from './voiceAudio';
 import { VoiceActivity } from './voiceActivity';
@@ -27,24 +28,13 @@ export class DictationCapture {
   private flushTimeout?: number;
   constructor(private callbacks: CaptureCallbacks, private microphoneId = '') {}
   async start() {
-    if (!navigator.mediaDevices?.getUserMedia) throw Error(uiText()('voiceAudio.recording_is_not_supported_in_this_environment'));
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: {
-        echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1,
-        ...(this.microphoneId ? { deviceId: { exact: this.microphoneId } } : {}),
-      } });
-    } catch (error) {
-      if (error instanceof DOMException && ['NotFoundError', 'OverconstrainedError'].includes(error.name)) throw Error(uiText()('voiceAudio.the_selected_microphone_is_unavailable_choose_another'));
-      throw error;
-    }
+    const stream = await openMicrophone(this.microphoneId, () => this.closed);
     if (this.closed) { stream.getTracks().forEach(track => track.stop()); return; }
     this.stream = stream;
     stream.getAudioTracks().forEach(track => track.addEventListener('ended', () => {
       if (!this.closed && !this.finishing) this.callbacks.error(uiText()('voiceAudio.the_microphone_was_disconnected_reconnect_it_before'));
     }));
-    this.context = new AudioContext({ sampleRate: rate });
-    if (this.context.sampleRate !== rate) throw Error(uiText()('realtimeVoiceAudio.this_audio_device_does_not_support_16'));
+    this.context = new AudioContext();
     await this.context.audioWorklet.addModule(new URL('voice/realtime-capture-worklet.js', document.baseURI).href);
     if (this.closed) return;
     this.analyser = this.context.createAnalyser(); this.analyser.fftSize = 2048;
@@ -70,7 +60,7 @@ export class DictationCapture {
     const rms = Math.sqrt(sum / pcm.length), now = this.samples / rate * 1000;
     this.callbacks.level(Math.min(1, rms * 10));
     this.analyser!.getFloatFrequencyData(this.spectrum);
-    const activity = this.activity.update(rms, this.spectrum, rate, now);
+    const activity = this.activity.update(rms, this.spectrum, this.context!.sampleRate, now);
     if (activity.voiced) { this.lastSpeech = this.samples; this.voiced = true; }
     if (activity.started) this.callbacks.speech();
     if (this.voiced) {
