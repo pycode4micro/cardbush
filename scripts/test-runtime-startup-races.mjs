@@ -11,7 +11,7 @@ import ts from 'typescript';
 const source = ts.createSourceFile('main.ts', readFileSync('electron/main.ts', 'utf8'), ts.ScriptTarget.Latest, true);
 const names = ['ensureRuntimeServicesReady', 'ensureRuntimeHostReady', 'startRuntimeServices',
   'disposeRuntimeServices', 'initializeRuntimeHost', 'initializeRuntimeHostWithinDeadline',
-  'withRuntimeStartupTimeout', 'initializeProductHost', 'startRuntimeAutomations'];
+  'withRuntimeStartupTimeout', 'initializeProductHost', 'startRuntimeAutomations', 'runtimeStartupStep'];
 const functions = names.map(name => {
   const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.ok(declaration, name); return declaration.getText(source);
@@ -58,13 +58,16 @@ function fixture(timeout = 2000) {
     process: { env: {}, platform: 'win32', arch: 'x64', resourcesPath: '/resources' },
     app: { getPath: () => '/profile', getAppPath: () => '/app', commandLine: { getSwitchValue: () => '' } },
     browserConnectorDataRoot: () => '/connector-profile',
-    cardbushRuntimeIsPackaged: false, runtimeServicesStartupTimeoutMs: timeout,
+    cardbushRuntimeIsPackaged: false, packagedSmokeMode: false, runtimeServicesStartupTimeoutMs: timeout,
     runtimeServicesInitialization: null, runtimeServicesAbort: null, runtimeServicesStopping: false,
     runtimeStartupStatus: { phase: 'initializing', attempt: 0 }, runtimeHostController: null,
     productHostController: null, sandboxSetup: undefined, productMcpManagement: null,
     runtimeHostIpc: { reset() {} }, disposeCapabilityCatalogWatcher: undefined,
     browserConnectorBroker: null, browserUseEndpoint: null, browserUseRouter: async () => ({}), shadowWindows: new Map(), bushRuntimeIpcProtocol: 'bush.runtime_ipc.v1',
     publishRuntimeStartupStatus(status) { context.runtimeStartupStatus = status; statuses.push(status); },
+    dependentStarts: [], startupSteps: [],
+    async embodiedHost() { context.dependentStarts.push(context.runtimeStartupStatus.phase); },
+    appendDebugLog(_scope, entry) { context.startupSteps.push(entry); },
     registerDesktopControlMonitor() {}, disposeDesktopControlMonitor() {},
     resolveBundledRipgrepPath: () => undefined, productSkillRoots: () => [], productPluginRoots: () => [],
     visualThemeContextPath: () => '/theme', browserConfigurationPath: () => '/browser', productAppsConfigPath: () => '/apps',
@@ -104,8 +107,11 @@ test('early desktop requests wait for one boot and each dispatches once', async 
     f.invoke('mcp:connection-action', 'mcp', 'reconnect'),
     ...Array.from({ length: 20 }, () => f.context.ensureRuntimeHostReady())].map(p => p.then(value => { settled++; return value; }));
   await flush(); assert.equal(settled, 0); assert.equal(f.context.runtimeStartupStatus.attempt, 1);
+  assert.equal(f.context.dependentStarts.length, 0, 'dependent services cannot compete with Runtime initialization');
   f.gates.probe.resolve(); await Promise.all(requests);
   assert.equal(f.controllers.length, 1); assert.equal(f.context.runtimeStartupStatus.phase, 'ready');
+  assert.deepEqual(f.context.dependentStarts, ['ready']);
+  assert.ok(f.context.startupSteps.some(entry => entry.step === 'worker-ready' && entry.stage === 'runtime-step-completed'));
   assert.equal(f.calls.filter(item => item.command.kind === 'runtime.automation').length, 2);
   assert.equal(f.calls.filter(item => item.command.kind === 'runtime.mcp_reconnect').length, 1);
   await f.context.startRuntimeServices(); assert.equal(f.controllers.length, 1);
@@ -116,6 +122,7 @@ test('failed boot retains the cause, background reads never retry, explicit retr
   const failed = assert.rejects(f.invoke('automation:command', { action: 'list' }), /fixture worker refused to start/);
   await flush(); f.gates.worker.reject(Error('fixture worker refused to start')); await failed;
   const old = f.controllers[0]; assert.equal(old.disposed, true);
+  assert.equal(f.context.dependentStarts.length, 0, 'failed startup must not launch dependent services');
   await Promise.all(Array.from({ length: 30 }, () => assert.rejects(f.context.ensureRuntimeHostReady(), /fixture worker refused to start/)));
   assert.equal(f.controllers.length, 1); assert.equal(f.context.runtimeStartupStatus.attempt, 1);
   f.gates.worker = deferred(); f.gates.close = deferred();
@@ -127,6 +134,7 @@ test('failed boot retains the cause, background reads never retry, explicit retr
   assert.equal(f.controllers.length, 2);
   f.gates.worker.resolve(); await Promise.all(retries);
   assert.equal(f.context.runtimeStartupStatus.phase, 'ready');
+  assert.deepEqual(f.context.dependentStarts, ['ready'], 'explicit retry restores dependent services after readiness');
   await f.invoke('automation:command', { action: 'list' });
   assert.equal(f.calls.filter(item => item.command.kind === 'runtime.automation').length, 1, 'the failed request was not replayed');
 });

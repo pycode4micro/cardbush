@@ -18,6 +18,7 @@ const startupBlock = main.slice(main.indexOf('app.whenReady().then'), main.index
 assert.ok(startupBlock.indexOf('createWindow();') < startupBlock.indexOf('void startRuntimeServices();'), 'window must be created before Runtime startup');
 assert.ok(startupBlock.indexOf('registerRuntimeHostIpc(') < startupBlock.indexOf('createWindow();'), 'Runtime IPC must exist before the renderer can send requests');
 assert.ok(startupBlock.indexOf('createWindow();') < startupBlock.indexOf('void ensureLegacyProductSkillsMigrated();'), 'window must be created before legacy Skill migration');
+assert.doesNotMatch(main, /app\.whenReady\(\)\.then\(\(\) => embodiedHost\(\)\)/, 'dependent services must not bypass the ordered desktop startup');
 assert.match(main, /phase: 'initializing' \| 'ready' \| 'error'/);
 assert.match(main, /ipcMain\.handle\('app:retry-runtime'/);
 assert.match(main, /stage: 'renderer-ready'/);

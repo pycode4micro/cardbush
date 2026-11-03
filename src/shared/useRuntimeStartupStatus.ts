@@ -43,9 +43,13 @@ export function createRuntimeStartupStatusStore(desktop?: StartupSource) {
 let localStore: ReturnType<typeof createRuntimeStartupStatusStore> | undefined;
 const bypassStore = { getSnapshot: () => readyStatus, subscribe: () => () => {} };
 
+export function getRuntimeStartupStatusStore() {
+  return localStore ??= createRuntimeStartupStatusStore(window.cardbushDesktop);
+}
+
 export function useRuntimeStartupStatus(enabled = true): RuntimeStartupStatus {
   const store = enabled
-    ? localStore ??= createRuntimeStartupStatusStore(window.cardbushDesktop)
+    ? getRuntimeStartupStatusStore()
     : bypassStore;
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }

@@ -12,7 +12,7 @@ export function CalendarWidget({ language }: { language: string }) {
   const uiLanguage = language, locale = language;
   const [now, setNow] = useState(Date.now), [selected, setSelected] = useState(() => localDay(new Date()));
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const data = useCalendarData(), { jobs, error } = useCalendarJobs();
+  const data = useCalendarData(), { jobs } = useCalendarJobs();
   const days = useMemo(() => calendarMonthDays(selected), [selected]);
   const calendars = useMemo(() => data.state.datasets.filter(item => item.enabled).map(item => item.calendar), [data.state.datasets]);
   const entries = useMemo(() => calendarEntriesForDays(jobs, days, now), [jobs, days, now]);
@@ -48,7 +48,6 @@ export function CalendarWidget({ language }: { language: string }) {
           if (next) { event.preventDefault(); details.close(); focus.current = true; setSelected(next); }
         }}><span className="calendar-day-number">{day.getDate()}</span>{count > 0 && <i className="calendar-day-dot" aria-hidden="true"/>}</button>;
     }}/>
-    {(error || data.error) && <small className="calendar-widget-error" role="status">{uiText(language)('calendarWidget.someSchedulesAreUnavailable')}</small>}
     {details.popover}
     {settingsOpen && <CalendarSettings data={data} uiLanguage={uiLanguage} onClose={() => setSettingsOpen(false)}/>}
   </div>;

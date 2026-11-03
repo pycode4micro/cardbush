@@ -2652,7 +2652,6 @@ function embodiedHost() {
   })().catch(error => { embodiedHostPromise = undefined; throw error; });
 }
 ipcMain.handle('embodied:command', async (event, input) => { assertMainWindowSender(event.sender.id); return (await embodiedHost()).command(input); });
-void app.whenReady().then(() => embodiedHost()).catch(error => console.warn('[embodied] startup:', String(error)));
 app.on('before-quit', () => { void embodiedHostPromise?.then(host => host.close()).catch(() => {}); });
 
 let agentConnectionsPromise: Promise<import('./agentConnections.mjs', { with: { 'resolution-mode': 'import' } }).AgentConnectionManager> | undefined;
@@ -4150,6 +4149,11 @@ async function startRuntimeServices(force = false): Promise<void> {
         completedAt: new Date().toISOString(),
         elapsedMs: Date.now() - startedAtMs,
       });
+      // Dependent services must not start Runtime ahead of the main window or
+      // consume its boot deadline while the desktop is still initializing.
+      if (!runtimeServicesStopping && !packagedSmokeMode) {
+        void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
+      }
     })
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -4207,33 +4211,33 @@ async function initializeRuntimeHost() {
 async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
   const sandboxSettingsPath = path.join(app.getPath('userData'), 'product-host', 'config', 'sandbox.json');
   const sandboxHostEnv = { ...process.env, CARDBUSH_EXECUTION_SANDBOX: process.env.CARDBUSH_EXECUTION_SANDBOX || app.commandLine.getSwitchValue('execution-sandbox') || undefined };
-  const sandboxModule = await import(pathToFileURL(path.join(__dirname, 'sandboxSetup.mjs')).href);
+  const sandboxModule = await runtimeStartupStep('sandbox-module', () => import(pathToFileURL(path.join(__dirname, 'sandboxSetup.mjs')).href));
   signal.throwIfAborted();
   sandboxSetup = new sandboxModule.SandboxSetup({ path: sandboxSettingsPath, env: sandboxHostEnv, interactive: true,
     windowsHostDirectory: cardbushRuntimeIsPackaged ? path.join(process.resourcesPath, 'process-guard') : path.join(app.getAppPath(), 'dist-native', 'process-guard') }) as SandboxSetupHost;
   // Detection never installs anything or prompts. An existing saved opt-out is preserved.
-  await sandboxSetup.get().catch(error => console.warn('[sandbox-check]', error));
+  await runtimeStartupStep('sandbox-check', () => sandboxSetup!.get()).catch(error => console.warn('[sandbox-check]', error));
   signal.throwIfAborted();
   const bundledRipgrep = resolveBundledRipgrepPath();
-  const managementModule = await import(pathToFileURL(path.join(__dirname, 'productMcpManagement.mjs')).href);
+  const managementModule = await runtimeStartupStep('management-module', () => import(pathToFileURL(path.join(__dirname, 'productMcpManagement.mjs')).href));
   signal.throwIfAborted();
-  const management = await managementModule.startProductMcpManagement(() => {
+  const management = await runtimeStartupStep<NonNullable<typeof productMcpManagement>>('management-bridge', () => managementModule.startProductMcpManagement(() => {
     if (!productHostController) throw new Error('CardBush Product Host is not ready.');
     return productHostController;
-  });
+  }));
   if (signal.aborted) { await management.close(); signal.throwIfAborted(); }
   productMcpManagement = management;
-  const browserModule = await import(pathToFileURL(path.join(__dirname, 'browserUseHost.mjs')).href);
-  const browserEndpoint = await browserModule.startBrowserUseHost(await browserUseRouter(), {
+  const browserModule = await runtimeStartupStep('browser-module', () => import(pathToFileURL(path.join(__dirname, 'browserUseHost.mjs')).href));
+  const browserEndpoint = await runtimeStartupStep('browser-bridge', async () => browserModule.startBrowserUseHost(await browserUseRouter(), {
     browserConfigPath: browserConfigurationPath(),
     artifactsDirectory: path.join(app.getPath('userData'), 'browser-connector', 'artifacts'),
-  });
+  }));
   if (signal.aborted) { await browserEndpoint.close(); signal.throwIfAborted(); }
   browserUseEndpoint = browserEndpoint;
   const controllerModuleUrl = pathToFileURL(
       path.join(__dirname, 'runtimeHostController.mjs'),
     ).href;
-    const controllerModule = await import(controllerModuleUrl);
+    const controllerModule = await runtimeStartupStep('worker-module', () => import(controllerModuleUrl));
     signal.throwIfAborted();
     let runtimeWorkerReadySeen = false;
     const controller = new controllerModule.RuntimeUtilityProcessController({
@@ -4354,15 +4358,28 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
     runtimeHostController = controller;
     registerDesktopControlMonitor(controller);
   await Promise.all([
-    controller.start(),
-    initializeProductHost(controller, signal),
+    runtimeStartupStep('worker-ready', () => controller.start()),
+    runtimeStartupStep('product-host', () => initializeProductHost(controller, signal)),
   ]);
   signal.throwIfAborted();
-  await productHostController?.execute({
+  await runtimeStartupStep('product-settings', async () => productHostController?.execute({
     protocol: 'cardbush.product_host_ipc.v1',
     kind: 'apps.get',
-  });
+  }));
   signal.throwIfAborted();
+}
+
+async function runtimeStartupStep<T>(step: string, operation: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now(), attempt = runtimeStartupStatus.attempt;
+  appendDebugLog('startup', { stage: 'runtime-step-started', step, attempt });
+  try {
+    const result = await operation();
+    appendDebugLog('startup', { stage: 'runtime-step-completed', step, attempt, elapsedMs: Date.now() - startedAt });
+    return result;
+  } catch (error) {
+    appendDebugLog('startup', { stage: 'runtime-step-failed', step, attempt, elapsedMs: Date.now() - startedAt });
+    throw error;
+  }
 }
 
 function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number, abort: AbortController): Promise<T> {

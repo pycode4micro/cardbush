@@ -19,12 +19,15 @@ import usCalendar from '${local('assets/calendars/us.json')}';
 import {importedThemeStyleVariables} from '${local('src/features/appearance/importedThemeStyle.ts')}';
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/appearance.css')}';
 window.listeners=new Set(); window.calls=[]; window.opened=[]; window.openedRuns=[]; window.setupRequests=0; window.failSave=false;
+window.runtimeStatus={phase:'ready',attempt:1,startedAt:''};window.runtimeListeners=new Set();window.emitRuntime=phase=>{runtimeStatus={...runtimeStatus,phase};for(const listener of runtimeListeners)listener(runtimeStatus)};
+window.failList=false;window.failCalendars=false;
 window.pickerThemeTokens=[];window.pickerTheme=theme=>{const app=document.querySelector('.app');for(const token of pickerThemeTokens)app.style.removeProperty(token);app.className='app '+themeClassNames(theme==='custom'?'dark':theme);pickerThemeTokens=[];if(theme==='custom'){const tokens=importedThemeStyleVariables({protocol:'cardbush.appearance_style.v1',name:'测试导入配色',base:'dark',colors:{surface:'#201b2c',surfaceRaised:'#31273f',border:'#675679',text:'#f3eafc',textMuted:'#cec1db',accent:'#d2a9f4'}});for(const [token,value]of Object.entries(tokens))app.style.setProperty(token,value);pickerThemeTokens=Object.keys(tokens)}};
 window.addEventListener('cardbush:open-automation-run',event=>openedRuns.push(event.detail));
 window.state={available:true,jobs:[],sessions:[{id:'session',title:'构建与导出检查',model:'Fixture'}]};
 window.notify=()=>{for(const listener of listeners)listener()};
 window.calendarState={datasets:[chinaCalendar,usCalendar].map(calendar=>({calendar,enabled:false,builtin:true})),chineseLunar:false};window.calendarCalls=[];window.calendarListeners=new Set();window.importCalendar=undefined;
-window.cardbushDesktop={onCalendarChanged:fn=>{calendarListeners.add(fn);return()=>calendarListeners.delete(fn)},calendarCommand:async command=>{
+window.cardbushDesktop={runtimeStartupStatus:async()=>runtimeStatus,onRuntimeStartupStatus:fn=>{runtimeListeners.add(fn);return()=>runtimeListeners.delete(fn)},onCalendarChanged:fn=>{calendarListeners.add(fn);return()=>calendarListeners.delete(fn)},calendarCommand:async command=>{
+ if(failCalendars)throw Error('Fixture calendar source unavailable');
  calendarCalls.push(command);if(command.action==='import'&&importCalendar){calendarState.datasets=calendarState.datasets.filter(item=>item.calendar.id!==importCalendar.id);calendarState.datasets.push({calendar:structuredClone(importCalendar),enabled:true})}
  if(command.action==='lunar')calendarState.chineseLunar=command.enabled;
  if(command.action==='enabled')calendarState.datasets.find(item=>item.calendar.id===command.id).enabled=command.enabled;
@@ -32,7 +35,7 @@ window.cardbushDesktop={onCalendarChanged:fn=>{calendarListeners.add(fn);return(
  if(command.action==='remove')calendarState.datasets=calendarState.datasets.filter(item=>item.calendar.id!==command.id);
  return {state:structuredClone(calendarState),...(command.action==='import'&&importCalendar?{imported:importCalendar.name}:{})};
 },onAutomationChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},automationCommand:async command=>{
- calls.push(command); if(command.action==='list')return structuredClone(state);
+ calls.push(command); if(command.action==='list'){if(failList)throw Error('Fixture Runtime unavailable');return structuredClone(state);}
  if(failSave)throw Error('Automation changed. Refresh before saving.');
  if(command.action==='mark_read'||command.action==='mark_unread'){for(const job of state.jobs)for(const run of job.runs)if(command.runIds.includes(run.id)){if(command.action==='mark_read')run.readAt=new Date().toISOString();else delete run.readAt;}notify();return{};}
  let job=state.jobs.find(job=>job.id===command.id);
