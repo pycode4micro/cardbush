@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowUp, Check, ChevronRight, Circle, History, Palette, Sett
 import { uiText, type MessageKey } from '../../i18n';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from '../composer/ComposerPromptInput';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
-import { FriendsTransition } from './FriendsTransition';
 import { FriendsOnboarding } from './FriendsOnboarding';
 import { FriendAppearanceEditor } from './FriendAppearanceEditor';
 import type { FriendAppearanceGenerator } from './generateFriendAppearance';
@@ -12,6 +11,7 @@ import { YourFriendsSettings } from './YourFriendsSettings';
 import { circleGeometry, confirmFriendIntroduction, introductionSteps, readFriendsDraft, recordFriendEvent, saveFriendsDraft,
   updateFriendsState, useFriendsState } from './friendsStore';
 import './yourFriends.css';
+import './friendsTransition.css';
 import './friendsOnboarding.css';
 
 const exampleFile = 'SettingsToolbar.tsx';
@@ -31,8 +31,8 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   const draftScope = ready ? 'event' : step ?? 'review';
   const savedDraft = () => readFriendsDraft(draftScope) ?? (!ready && step ? state.introduction.answers[step] ?? '' : '');
   const [draft, setDraft] = useState(savedDraft), [error, setError] = useState('');
-  const [phase, setPhase] = useState<'opening' | 'open' | 'closing'>('opening');
-  const [geometry, setGeometry] = useState<ReturnType<typeof circleGeometry> & { apertureX: number; apertureY: number }>();
+  const [phase, setPhase] = useState<'opening' | 'open' | 'closing'>(origin ? 'opening' : 'open');
+  const [geometry, setGeometry] = useState<ReturnType<typeof circleGeometry>>();
   const [panel, setPanel] = useState<keyof typeof panelTitles | null>(null), [selectedId, setSelectedId] = useState('');
   const [relatesTo, setRelatesTo] = useState<string>(), [demoStep, setDemoStep] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null), stage = useRef<HTMLDivElement>(null), input = useRef<ComposerPromptInputHandle>(null);
@@ -56,10 +56,9 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
     if (!root.current) return;
     const element = root.current;
     const measure = () => {
-      // Use layout coordinates: the entrance itself scales the visual rectangle.
+      // The reveal follows the sidebar entry; startup exits use the viewport centre.
       const bounds = { left: element.offsetLeft, top: element.offsetTop, width: element.clientWidth, height: element.clientHeight };
-      const measured = circleGeometry(bounds, origin ?? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
-      setGeometry({ ...measured, apertureX: Math.max(0, Math.min(bounds.width, measured.x)), apertureY: Math.max(0, Math.min(bounds.height, measured.y)) });
+      setGeometry(circleGeometry(bounds, origin ?? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }));
     };
     measure();
     const observer = new ResizeObserver(measure); observer.observe(element);
@@ -119,7 +118,6 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   </div>;
   const transitionStyle = geometry ? {
     '--friend-origin-x': `${geometry.x}px`, '--friend-origin-y': `${geometry.y}px`, '--friend-radius': `${geometry.radius}px`,
-    '--friend-aperture-x': `${geometry.apertureX}px`, '--friend-aperture-y': `${geometry.apertureY}px`,
   } as CSSProperties : undefined;
 
   return <div ref={root} className="your-friends" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
@@ -136,7 +134,6 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }
     }}>
-    {phase !== 'open' && <FriendsTransition/>}
     <header className="friends-header" inert={phase !== 'open'}>
       <button className="friends-icon friends-back" type="button" onClick={leave} aria-label={t('yourFriends.back')} title={t('yourFriends.back')}><ArrowLeft/></button>
       <div className="friends-brand"><span id={titleId}>{name}</span>{ready && <span className="friends-preview">{t('yourFriends.preview')}</span>}</div>

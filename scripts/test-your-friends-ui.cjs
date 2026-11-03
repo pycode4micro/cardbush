@@ -113,7 +113,7 @@ function runFixture() {
       // Real entry and measured animation origin; the workspace is retained and inert.
       await click('[data-nav-section="your-friends"]');
       await until('document.querySelector(".your-friends[data-phase=opening]")');
-      assert.equal(await read('!!document.querySelector(".friends-transition")'), true, 'entry uses temporary geometry');
+      assert.ok(await read(`(()=>{const s=getComputedStyle(document.querySelector('.your-friends'));return s.animationName==='friends-reveal'&&s.animationDuration==='0.58s'&&s.clipPath.startsWith('circle(')&&s.transform==='none'&&s.opacity==='1';})()`), 'entry restores the original circle reveal without scaling or fading the surface');
       assert.equal(await read('document.querySelector(".friends-stage").inert'), true, 'controls are inactive while the entrance is concealed');
       assert.ok(await read(`(()=>{const n=document.querySelector('.your-friends'),b=document.querySelector('[data-nav-section=your-friends]').getBoundingClientRect(),s=getComputedStyle(n);return Math.abs(parseFloat(s.getPropertyValue('--friend-origin-x'))-(b.left+b.width/2-n.offsetLeft))<1&&Math.abs(parseFloat(s.getPropertyValue('--friend-origin-y'))-(b.top+b.height/2-n.offsetTop))<1;})()`));
       assert.equal(await read('document.querySelector(".desktop-shell").inert'), true);
@@ -147,7 +147,8 @@ function runFixture() {
       assert.equal(await read('document.activeElement.id'), 'friends-step-title', 'the new question receives focus after becoming interactive');
       await fill('.friends-input-surface textarea', '白天做产品，下班想看 NBA 和打台球。');
       await click('.friends-back');
-      await until('document.querySelector(".your-friends[data-phase=closing] .friends-transition")');
+      await until('document.querySelector(".your-friends[data-phase=closing]")');
+      assert.ok(await read(`(()=>{const s=getComputedStyle(document.querySelector('.your-friends'));return s.animationName==='friends-reveal'&&s.animationDuration==='0.32s'&&s.animationDirection==='reverse'&&s.clipPath.startsWith('circle(');})()`), 'exit contracts the same circle at the original speed');
       await until('!document.querySelector(".your-friends")');
       await until('document.activeElement.dataset.navSection==="your-friends"');
       assert.equal(await read('document.querySelector(".fixture-settings textarea").value'), 'retained workspace draft');
@@ -378,20 +379,25 @@ function runFixture() {
       assert.ok(await read(`(()=>{try{fixture.store.recordFriendEvent('orphan',undefined,'missing-event');return false;}catch{return true;}})()`));
       // Startup, interrupted entry and global motion preferences must all finish and restore focus.
       await read('fixture.store.updateFriendsState(s=>({...s,motion:true}));void 0');
-      await win.reload(); await until('document.querySelector(".your-friends[data-phase=opening]")');
-      assert.ok(await read(`(()=>{const n=document.querySelector('.your-friends'),s=getComputedStyle(n);return Math.abs(parseFloat(s.getPropertyValue('--friend-aperture-x'))-n.clientWidth/2)<1;})()`), 'startup without a sidebar origin opens from the centre');
+      await win.reload(); await until('document.querySelector(".your-friends[data-phase=open]")');
+      assert.ok(await read(`(()=>{const n=document.querySelector('.your-friends'),s=getComputedStyle(n);return s.animationName==='none'&&Math.abs(parseFloat(s.getPropertyValue('--friend-origin-x'))-n.clientWidth/2)<1;})()`), 'startup restores the original direct entry and keeps a centred exit origin');
+      await click('.friends-back'); await until('!document.querySelector(".your-friends")');
+      await click('[data-nav-section="your-friends"]'); await until('document.querySelector(".your-friends[data-phase=opening]")');
       await read(`document.querySelector('.your-friends').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0`);
       await until('!document.querySelector(".your-friends")');
       await until('document.activeElement.dataset.navSection==="your-friends"');
-      await read('document.documentElement.dataset.reduceMotion="true";fixture.open();void 0');
-      await until('document.querySelector(".your-friends[data-phase=open]")');
-      assert.equal(await read('!!document.querySelector(".friends-transition")'), false);
+      const reducedEntry = async () => {
+        await read(`window.reducedEntryDurations=[];window.reducedEntryObserver=new MutationObserver(()=>{const n=document.querySelector('.your-friends');if(n?.dataset.phase==='opening')reducedEntryDurations.push(parseFloat(getComputedStyle(n).animationDuration)*1000);if(n?.dataset.phase==='open')reducedEntryObserver.disconnect();});reducedEntryObserver.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['data-phase']});fixture.open();void 0`);
+        await until('document.querySelector(".your-friends[data-phase=open]")');
+        assert.ok(await read('reducedEntryDurations.length>0&&reducedEntryDurations.every(duration=>duration<=1)'), 'reduced motion bypasses the circular reveal');
+      };
+      await read('document.documentElement.dataset.reduceMotion="true";void 0');
+      await reducedEntry();
       await click('.friends-back'); await until('!document.querySelector(".your-friends")');
       await read('delete document.documentElement.dataset.reduceMotion;void 0');
       win.webContents.debugger.attach('1.3');
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-      await read('fixture.open();void 0'); await until('document.querySelector(".your-friends[data-phase=open]")');
-      assert.equal(await read('!!document.querySelector(".friends-transition")'), false);
+      await reducedEntry();
       await click('.friends-back'); await until('!document.querySelector(".your-friends")');
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] }); win.webContents.debugger.detach();
       await read('fixture.store.updateFriendsState(s=>({...s,motion:false,appearance:undefined,introduction:{...s.introduction,step:5,confirmedAt:undefined}}));fixture.open();void 0');
