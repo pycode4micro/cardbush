@@ -5,8 +5,10 @@
   --friend-tint: var(--friend-lilac);
   --friend-on-accent: #302b38;
   --friend-ink: #696078;
-  --friend-paper: color-mix(in srgb, var(--surface) 96%, var(--friend-tint));
-  --friend-card: color-mix(in srgb, var(--surface) 80%, transparent);
+  --friend-paper: var(--surface);
+  --friend-control-radius: 8px;
+  --friend-panel-radius: 12px;
+  --friend-card: color-mix(in srgb, var(--text) 2%, var(--surface));
   --friend-line: color-mix(in srgb, var(--text) 10%, transparent);
   --friend-secondary: color-mix(in srgb, var(--text) 65%, var(--surface));
   --friend-radius: 200vmax;
@@ -20,7 +22,7 @@
   flex-direction: column;
   overflow: hidden;
   color: var(--text);
-  background: radial-gradient(ellipse at 50% 31%, color-mix(in srgb, var(--friend-tint) 18%, transparent), transparent 54%), var(--friend-paper);
+  background: var(--friend-paper);
   isolation: isolate;
 }
 .your-friends[data-tone="peach"] { --friend-tint: var(--friend-peach); --friend-ink: #815e51; }
@@ -36,49 +38,72 @@
 .your-friends button:disabled { cursor: default; opacity: .4; }
 .your-friends :is(button, input, textarea, select):focus-visible { outline: 2px solid var(--friend-tint); outline-offset: 4px; }
 .your-friends svg { width: var(--friend-icon-size); height: var(--friend-icon-size); flex: 0 0 auto; stroke-width: 1.65; }
-.friends-header { display: flex; align-items: center; gap: 16px; padding: 22px 32px; flex-shrink: 0; }
+.friends-header { display: flex; align-items: center; gap: 16px; padding: 14px 28px; flex-shrink: 0; }
 .friends-header nav { margin-left: auto; display: flex; gap: 10px; }
 .friends-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .friends-brand > span:first-child { font-size: 16px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.friends-preview { display: inline-flex; align-items: center; flex-shrink: 0; border: 1px solid var(--friend-line); border-radius: 999px; padding: 4px 9px; font-size: 10px; color: var(--friend-secondary); letter-spacing: .04em; }
-.friends-icon { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; border: 1px solid transparent; background: transparent; color: var(--friend-secondary); flex-shrink: 0; }
+.friends-preview { display: inline-flex; align-items: center; flex-shrink: 0; border: 1px solid var(--friend-line); border-radius: 4px; padding: 3px 6px; font-size: 10px; color: var(--friend-secondary); letter-spacing: .04em; }
+.friends-icon { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: var(--friend-control-radius); border: 1px solid transparent; background: transparent; color: var(--friend-secondary); flex-shrink: 0; }
 .friends-icon:hover { background: var(--friend-card); border-color: var(--friend-line); }
 .friends-stage { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable both-edges; }
-.friends-story { width: min(620px, calc(100% - 48px)); margin: 0 auto; padding: 18px 0 36px; }
+.friends-story { width: min(620px, calc(100% - 48px)); margin: 0 auto; padding: 24px 0; }
 .friends-companion { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 32px; }
 .your-friends[data-ready="true"] .friends-companion { flex-direction: row; justify-content: center; gap: 4px; margin-bottom: 16px; }
 .your-friends[data-ready="true"] .friend-avatar { width: 110px; height: 114px; }
 .friends-presence { display: inline-flex; align-items: center; gap: 7px; color: var(--friend-secondary); font-size: 11px; }
 .friends-presence i { width: 5px; height: 5px; border-radius: 50%; background: var(--friend-tint); }
 .friends-eyebrow { text-align: center; color: var(--friend-secondary); font-size: 11px; letter-spacing: .08em; margin-bottom: 14px; }
-.your-friends h1 { font-size: clamp(23px, 3vw, 30px); font-weight: 500; line-height: 1.45; letter-spacing: -.035em; text-align: center; margin: 0 0 16px; overflow-wrap: anywhere; }
-.friends-lead { max-width: 510px; margin: 0 auto 22px; text-align: center; line-height: 1.9; font-size: 14px; color: var(--friend-secondary); white-space: pre-line; }
+.your-friends h1 { font-size: clamp(22px, 2.5vw, 28px); font-weight: 550; line-height: 1.4; letter-spacing: -.025em; text-align: center; margin: 0 0 16px; overflow-wrap: anywhere; }
+.friends-lead { max-width: 510px; margin: 0 auto 22px; text-align: center; line-height: 1.7; font-size: 14px; color: var(--friend-secondary); white-space: pre-line; }
 .friends-aside { color: var(--friend-secondary); font-size: 12px; line-height: 1.8; }
 .friends-introduction > .friends-aside { text-align: center; }
-.friends-card { border: 1px solid var(--friend-line); border-radius: 24px; padding: 24px; background: var(--friend-card); box-shadow: 0 8px 36px color-mix(in srgb, var(--friend-tint) 6%, transparent); }
+.friends-card { border: 1px solid var(--friend-line); border-radius: var(--friend-panel-radius); padding: 20px; background: var(--friend-card); }
 .friends-step-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-top: 24px; }
 .friends-text-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 0; color: var(--friend-secondary); background: transparent; border: 0; font-size: 12px; }
 .friends-text-button:hover { color: var(--text); }
-.friends-primary { display: inline-flex; align-items: center; justify-content: center; gap: 10px; border: 0; border-radius: 999px; padding: 12px 22px; background: var(--friend-tint); color: var(--friend-on-accent); }
+.friends-primary { display: inline-flex; align-items: center; justify-content: center; gap: 10px; border: 0; border-radius: var(--friend-control-radius); padding: 10px 16px; background: var(--text); color: var(--surface); }
 .friends-boundaries { display: grid; gap: 18px; }
 .friends-boundaries label { display: flex; align-items: center; gap: 16px; justify-content: space-between; font-size: 12px; }
-.friends-boundaries select { max-width: 65%; padding: 10px 12px; border: 1px solid var(--friend-line); background: var(--surface); color: var(--text); border-radius: 12px; }
+.friends-boundaries select { max-width: 65%; padding: 10px 12px; border: 1px solid var(--friend-line); background: var(--surface); color: var(--text); border-radius: var(--friend-control-radius); }
 .friends-boundaries p, .friends-review > p { margin: 0; color: var(--friend-secondary); font-size: 12px; line-height: 1.8; }
 .friends-tones { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; }
-.friends-tones button { display: flex; align-items: center; gap: 9px; border: 1px solid var(--friend-line); border-radius: 999px; background: var(--friend-card); color: var(--friend-secondary); padding: 12px 16px; }
+.friends-tones button { display: flex; align-items: center; gap: 9px; border: 1px solid var(--friend-line); border-radius: var(--friend-control-radius); background: var(--friend-card); color: var(--friend-secondary); padding: 12px 16px; }
 .friends-tones button[aria-pressed="true"] { border-color: var(--friend-tint); color: var(--text); }
 .friends-tones i { width: 14px; height: 14px; border-radius: 50%; background: var(--friend-lilac); }
 .friends-tones [data-tone="peach"] i { background: var(--friend-peach); }
 .friends-tones [data-tone="sage"] i { background: var(--friend-sage); }
-.friends-review { display: grid; gap: 20px; }
-.friends-review-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--friend-line); padding-bottom: 16px; }
-.friends-review-row > div { min-width: 0; }
-.friends-review-row h2 { margin: 0 0 6px; font-size: 12px; font-weight: 550; }
-.friends-review-row p { margin: 0; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--friend-secondary); }
-.friends-review-row button { flex-shrink: 0; }
+/* Setup is one viewport; only the event history has a scrolling reading surface. */
+.your-friends[data-ready="false"] .friends-stage { overflow: hidden; scrollbar-gutter: auto; }
+.your-friends[data-active-panel="appearance"] .friends-stage { overflow: hidden; scrollbar-gutter: auto; }
+.your-friends[data-ready="false"] .friends-story { width: min(880px, calc(100% - 64px)); height: 100%; box-sizing: border-box; }
+.your-friends[data-ready="false"] .friends-introduction { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.your-friends[data-ready="false"] :is(.friends-eyebrow, h1, .friends-lead, .friends-aside, .friends-step-actions) { flex-shrink: 0; }
+.your-friends[data-ready="false"] :is(.friends-eyebrow, h1, .friends-lead) { text-align: left; width: 100%; max-width: none; }
+.your-friends[data-ready="false"] .friends-lead { margin-bottom: 20px; }
+.your-friends[data-ready="false"]:not([data-designing="true"]):not([data-step="review"]) .friends-story { width: min(660px, calc(100% - 64px)); padding-top: clamp(20px, 8vh, 96px); }
+.your-friends[data-ready="false"] .friends-introduction > .friends-aside { text-align: left; max-width: 540px; }
+.your-friends[data-ready="false"] .friends-step-actions { margin-top: auto; padding-top: 12px; }
+.your-friends[data-ready="false"] .friends-input-inner { width: min(660px, 100%); }
+.your-friends[data-ready="false"] .friends-input-surface textarea { max-height: min(128px, 20dvh); scrollbar-width: none; }
+.your-friends[data-ready="false"] .friends-input-surface textarea::-webkit-scrollbar { display: none; }
+.friends-review { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.friends-review-tabs { flex-shrink: 0; }
+.friends-review-row { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.friends-review-row h2 { margin: 0; font-size: 13px; font-weight: 550; }
+.friends-review > .friends-primary { align-self: flex-start; flex-shrink: 0; }
+.friends-review-confirmation { display: flex; flex-direction: column; align-items: flex-start; gap: 20px; }
+.friends-review-confirmation > p { margin: 0; color: var(--friend-secondary); font-size: 13px; line-height: 1.8; }
+.friends-review > .friends-text-pages { flex: 1; min-height: 0; padding: 14px; border: 1px solid var(--friend-line); border-radius: var(--friend-control-radius); }
+.friends-text-pages { display: flex; flex-direction: column; min-height: 0; height: 100%; width: 100%; min-width: 0; }
+.friends-text-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.friends-page-text, .friends-page-measure { font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.friends-page-measure { position: absolute; top: 0; left: 0; width: 100%; visibility: hidden; pointer-events: none; }
+.friends-page-navigation { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: 8px; height: 28px; font-size: 11px; color: var(--friend-secondary); }
+.friends-page-navigation[data-multiple="false"] { visibility: hidden; }
+.friends-page-navigation .friends-icon { width: 28px; height: 28px; }
 .friends-confirm { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; line-height: 1.8; }
 .friends-confirm input { margin-top: 5px; accent-color: var(--friend-ink); }
-.friends-demo-invite { display: flex; align-items: center; justify-content: center; gap: 14px; width: 100%; margin: 24px auto 0; padding: 20px; border: 1px dashed var(--friend-line); border-radius: 22px; background: transparent; color: var(--friend-secondary); }
+.friends-demo-invite { display: flex; align-items: center; justify-content: center; gap: 14px; width: 100%; margin: 24px auto 0; padding: 20px; border: 1px dashed var(--friend-line); border-radius: var(--friend-panel-radius); background: transparent; color: var(--friend-secondary); }
 .friends-demo-invite:hover { background: var(--friend-card); }
 .friends-demo h2 { font-size: 16px; font-weight: 500; line-height: 1.7; margin: 16px 0 6px; }
 .friends-demo { margin-top: 20px; }
@@ -87,7 +112,7 @@
 .friends-flow li { display: flex; align-items: center; gap: 6px; color: var(--friend-secondary); font-size: 12px; opacity: .55; }
 .friends-flow li:not(:last-child)::after { content: '→'; margin-left: 8px; }
 .friends-flow li[data-complete="true"] { opacity: 1; color: var(--text); }
-.friends-artifact { overflow: hidden; background: var(--surface); border: 1px solid var(--friend-line); border-radius: 16px; }
+.friends-artifact { overflow: hidden; background: var(--surface); border: 1px solid var(--friend-line); border-radius: var(--friend-control-radius); }
 .friends-artifact > span { display: block; padding: 12px 16px; border-bottom: 1px solid var(--friend-line); font-size: 11px; color: var(--friend-secondary); }
 .friends-artifact pre { margin: 0; padding: 16px; overflow: auto; font-size: 12px; line-height: 1.9; }
 .friends-deletion { color: var(--danger, #bc6565); }
@@ -95,26 +120,26 @@
 .friends-status { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; }
 .friends-status svg { width: 11px; height: 11px; }
 .friends-receipt p { font-size: 12px; color: var(--friend-secondary); line-height: 1.8; }
-.friends-input-dock { flex-shrink: 0; padding: 16px 28px 22px; background: linear-gradient(transparent, var(--friend-paper) 20%); }
+.friends-input-dock { flex-shrink: 0; padding: 12px 28px 16px; background: var(--friend-paper); }
 .friends-input-inner { width: min(720px, 100%); margin: auto; }
-.friends-input-surface { position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 13px 14px 13px 24px; border: 1px solid var(--friend-line); border-radius: 30px; background: var(--friend-card); box-shadow: 0 5px 30px color-mix(in srgb, var(--friend-tint) 8%, transparent); }
+.friends-input-surface { position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 13px 14px 13px 24px; border: 1px solid var(--friend-line); border-radius: var(--friend-panel-radius); background: var(--friend-card); }
 .friends-input-surface:focus-within { border-color: color-mix(in srgb, var(--friend-tint) 80%, var(--friend-line)); }
 .friends-input-surface textarea { display: block; flex: 1; min-width: 0; resize: none; field-sizing: content; min-height: 38px; max-height: 160px; padding: 8px 0; margin: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; line-height: 1.6; }
 .friends-input-surface textarea:focus-visible { outline: 0; }
 .friends-input-surface textarea::placeholder { color: var(--friend-secondary); opacity: .7; }
 .friends-input-surface[data-readonly="true"] { opacity: .6; }
-.friends-send { width: 38px; height: 38px; display: inline-grid; place-items: center; border-radius: 50%; border: 0; background: var(--friend-tint); color: var(--friend-on-accent); flex-shrink: 0; }
+.friends-send { width: 38px; height: 38px; display: inline-grid; place-items: center; border-radius: var(--friend-control-radius); border: 0; background: var(--text); color: var(--surface); flex-shrink: 0; }
 .friends-footnote { margin: 12px 6px 0; text-align: center; color: var(--friend-secondary); font-size: 11px; line-height: 1.6; }
 .friends-relation { display: flex; align-items: center; gap: 8px; padding: 0 12px 8px; color: var(--friend-secondary); font-size: 12px; }
 .friends-relation > span { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .friends-relation .friends-icon { margin-left: auto; }
 .your-friends-error { color: var(--danger, #bc6565); font-size: 12px; line-height: 1.6; }
-.friends-dialog { color: var(--text); background: var(--friend-paper); border: 1px solid var(--friend-line); border-radius: 28px; width: min(600px, calc(100vw - 32px)); max-height: calc(100dvh - 100px); padding: 0; box-shadow: 0 24px 100px #0002; }
-.friends-dialog::backdrop { background: #17131f44; backdrop-filter: blur(6px); }
+.friends-dialog { color: var(--text); background: var(--friend-paper); border: 1px solid var(--friend-line); border-radius: var(--friend-panel-radius); width: min(600px, calc(100vw - 32px)); max-height: calc(100dvh - 100px); padding: 0; box-shadow: 0 24px 100px #0002; }
+.friends-dialog::backdrop { background: #16161655; backdrop-filter: blur(3px); }
 .friends-dialog > header { display: flex; align-items: center; justify-content: space-between; padding: 22px 24px 12px; }
 .friends-dialog h2 { font-size: 17px; font-weight: 500; margin: 0; }
 .friends-dialog-body { padding: 12px 24px 28px; }
-.friends-dialog .settings-card { background: var(--friend-card); border-color: var(--friend-line); border-radius: 20px; }
+.friends-dialog .settings-card { background: var(--friend-card); border-color: var(--friend-line); border-radius: var(--friend-panel-radius); }
 .friends-dialog .secondary-button { margin-top: 12px; }
 .friends-event-list { list-style: none; margin: 0; padding: 0; }
 .friends-event-list > li { padding: 24px 0; border-bottom: 1px solid var(--friend-line); }
@@ -165,59 +190,132 @@
 @keyframes friends-breathe { 0%, 100% { translate: 0 0; } 50% { translate: 0 -5px; } }
 @keyframes friends-blink { 0%, 44%, 48%, 100% { scale: 1 1; } 46% { scale: 1 .15; } }
 @keyframes friends-look { 0%, 100% { translate: 0 0; } 35%, 65% { translate: 3px 0; } }
-.your-friends[data-designing="true"] .friends-step-actions, .friends-dialog .friends-step-actions { justify-content: center; }
 .friend-avatar-generated img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.friend-avatar-pending { opacity: .65; }
-.friend-avatar-pending .friend-avatar-art { fill: var(--friend-tint); }
-.friends-appearance-editor { display: grid; gap: 20px; max-width: 460px; margin: auto; }
-.friends-appearance-section h2 { margin: 0 0 10px; font-size: 12px; font-weight: 550; color: var(--friend-secondary); }
-.friends-characters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.friends-characters button { position: relative; display: flex; flex-direction: column; align-items: center; padding: 8px 8px 12px; border: 1px solid var(--friend-line); border-radius: 20px; color: var(--friend-secondary); background: var(--friend-card); font-size: 12px; }
-.friends-characters button:hover { border-color: var(--friend-tint); }
-.friends-characters button[aria-pressed="true"] { border-color: var(--friend-ink); background: color-mix(in srgb, var(--friend-tint) 16%, var(--surface)); color: var(--text); }
-.your-friends .friends-characters .friend-avatar { width: 76px; height: 84px; }
-.your-friends .friends-selection-check { position: absolute; right: 10px; top: 10px; width: 13px; height: 13px; visibility: hidden; color: var(--friend-ink); }
-.friends-characters [aria-pressed="true"] .friends-selection-check { visibility: visible; }
-.friends-appearance-editor .friends-tones { justify-content: flex-start; gap: 8px; }
-.friends-appearance-editor .friends-tones button { padding: 9px 12px; font-size: 12px; }
-.friends-appearance-motion { display: flex; align-items: flex-start; gap: 10px; color: var(--text); font-size: 12px; cursor: pointer; }
-.friends-appearance-motion input { accent-color: var(--friend-ink); margin: 3px 0 0; }
-.friends-appearance-motion small { display: block; margin-top: 4px; color: var(--friend-secondary); font-size: 11px; line-height: 1.6; }
-.friends-appearance-preview { display: flex; justify-content: center; margin: -12px 0 12px; }
-.friends-generated-preview { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px; border: 1px solid var(--friend-line); border-radius: 24px; background: var(--friend-card); }
-.your-friends .friends-generated-preview .friend-avatar { width: 172px; height: 180px; }
-.friends-generated-preview[data-busy="true"] { border-color: var(--friend-tint); }
-.friends-design-explanation h2 { margin: 0 0 6px; font-size: 16px; font-weight: 550; }
-.friends-design-explanation p, .friends-design-note { margin: 0; color: var(--friend-secondary); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
-.friends-design-feedback { display: grid; gap: 8px; color: var(--friend-secondary); font-size: 12px; }
-.friends-design-feedback textarea { width: 100%; min-height: 72px; resize: vertical; padding: 12px; border: 1px solid var(--friend-line); border-radius: 12px; color: var(--text); background: var(--friend-card); line-height: 1.7; }
-.friends-generation-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.friend-avatar-pending { opacity: .45; }
+.friend-avatar-pending .friend-avatar-art { fill: var(--friend-secondary); }
+.friends-appearance-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 20px; }
+.friends-design-toolbar { display: flex; flex-shrink: 0; justify-content: space-between; align-items: center; gap: 12px; }
+.friends-view-switch { display: flex; gap: 4px; border-bottom: 1px solid var(--friend-line); }
+.friends-view-switch button { background: transparent; color: var(--friend-secondary); border: 0; border-bottom: 2px solid transparent; padding: 10px 14px; font-size: 12px; }
+.friends-view-switch button[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--text); }
+.friends-design-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
+.friends-generated-preview { min-height: 0; display: flex; flex-direction: column; padding: 20px; background: var(--friend-card); border: 1px solid var(--friend-line); border-radius: var(--friend-panel-radius); }
+.friends-design-canvas { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; }
+.your-friends .friends-generated-preview .friend-avatar { position: absolute; inset: 0; margin: auto; width: min(240px, 100%); height: min(240px, 100%); }
+.friends-generated-preview[data-busy="true"] { border-color: var(--friend-secondary); }
+.friends-design-explanation { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+.friends-design-explanation h2 { min-width: 0; margin: 0; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.friends-design-explanation button { flex-shrink: 0; }
+.friends-design-controls { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 16px; }
+.friends-design-controls > :not(.friends-design-error) { flex-shrink: 0; }
+.friends-design-note { margin: 0; color: var(--friend-secondary); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.friends-design-feedback { display: flex; flex-direction: column; gap: 10px; color: var(--friend-secondary); font-size: 12px; }
+.friends-design-feedback textarea { box-sizing: border-box; width: 100%; height: 112px; resize: none; padding: 12px; border: 1px solid var(--friend-line); border-radius: var(--friend-control-radius); color: var(--text); background: var(--surface); font: inherit; line-height: 1.7; scrollbar-width: none; }
+.friends-design-feedback textarea::-webkit-scrollbar { display: none; }
+.friends-generation-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: auto; flex-shrink: 0; }
 .friends-generation-actions .friends-primary { max-width: 100%; font-size: 12px; line-height: 1.5; }
-.friends-generation-actions .friends-apply-design { background: var(--friend-ink); color: var(--friend-coat-light, #fffcf4); }
-.friends-builtin-options { border-top: 1px solid var(--friend-line); padding-top: 18px; }
-.friends-builtin-options summary { color: var(--friend-secondary); cursor: pointer; font-size: 12px; }
-.friends-builtin-options > :not(summary) { margin-top: 14px; }
+.friends-generation-actions .friends-generate { border: 1px solid var(--friend-line); background: var(--surface); color: var(--text); }
+.friends-appearance-motion { display: flex; align-items: center; gap: 7px; flex-shrink: 0; color: var(--friend-secondary); font-size: 12px; cursor: pointer; }
+.friends-appearance-motion input { accent-color: var(--text); margin: 0; }
+.friends-builtin-options { display: flex; flex-direction: column; gap: 20px; }
+.friends-characters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.friends-characters button { position: relative; display: flex; flex-direction: column; align-items: center; padding: 8px; border: 1px solid var(--friend-line); border-radius: var(--friend-control-radius); color: var(--friend-secondary); background: transparent; font-size: 12px; }
+.friends-characters button:hover { background: var(--friend-card); }
+.friends-characters button[aria-pressed="true"] { border-color: var(--text); color: var(--text); }
+.your-friends .friends-characters .friend-avatar { width: 64px; height: 70px; }
+.your-friends .friends-selection-check { position: absolute; right: 6px; top: 6px; width: 12px; height: 12px; visibility: hidden; color: var(--text); }
+.friends-characters [aria-pressed="true"] .friends-selection-check { visibility: visible; }
+.friends-appearance-editor .friends-tones { justify-content: flex-start; gap: 6px; }
+.friends-appearance-editor .friends-tones button { padding: 8px; gap: 5px; font-size: 12px; }
+.friends-appearance-editor .friends-tones button svg { width: 12px; height: 12px; }
+.friends-design-error { flex: 1; min-height: 66px; max-height: 110px; margin: 0; }
+.friends-design-error .friends-page-text, .friends-design-error .friends-page-measure { font-size: 12px; }
+.friends-dialog[data-panel="appearance"] { width: min(900px, calc(100vw - 48px)); height: min(580px, calc(100dvh - 80px)); max-height: none; overflow: hidden; }
+.friends-dialog[data-panel="appearance"][open] { display: flex; flex-direction: column; }
+.friends-dialog[data-panel="appearance"] > header { flex-shrink: 0; }
+.friends-dialog[data-panel="appearance"] .friends-dialog-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.friends-dialog[data-panel="appearance"] .friends-aside { margin: 0; }
 .your-friends[data-motion="false"], .your-friends[data-motion="false"] * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; }
 @media (prefers-reduced-motion: reduce) {
   .your-friends, .your-friends * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; }
 }
-@media (max-width: 560px) {
-  .friends-header { padding: 12px 14px; gap: 8px; }
+@media (max-width: 620px) {
+  .friends-header { padding: 10px 14px; gap: 8px; }
   .friends-header nav { gap: 2px; }
   .friends-brand { gap: 7px; }
   .friends-brand > span:first-child { font-size: 14px; }
-  .friends-story { width: calc(100% - 36px); padding-top: 6px; }
-  .friends-companion { margin-bottom: 22px; }
-  .friends-card { padding: 20px; border-radius: 20px; }
-  .friends-input-dock { padding: 10px 16px 14px; }
-  .friends-input-surface { padding-left: 18px; }
-  .friends-boundaries label { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .friends-brand .friends-preview { display: none; }
+  .friends-story { width: calc(100% - 32px); }
+  .your-friends[data-ready="false"] .friends-story,
+  .your-friends[data-ready="false"]:not([data-designing="true"]):not([data-step="review"]) .friends-story { width: calc(100% - 32px); padding-block: 12px; }
+  .friends-card { padding: 16px; }
+  .friends-input-dock { padding: 8px 16px 12px; }
+  .friends-input-surface { padding-left: 14px; }
+  .friends-footnote { font-size: 10px; margin-top: 8px; }
+  .friends-boundaries label { align-items: flex-start; flex-direction: column; gap: 6px; }
   .friends-boundaries select { max-width: 100%; width: 100%; }
-  .friends-dialog-body { padding: 8px 18px 24px; }
+  .friends-dialog-body { padding: 8px 16px 16px; }
+  .friends-dialog[data-panel="appearance"] { width: calc(100vw - 24px); height: calc(100dvh - 48px); }
+  .friends-dialog > header { padding: 12px 16px 8px; }
+  .friends-appearance-editor { gap: 12px; }
+  .friends-design-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(80px, 1fr) auto; gap: 12px; }
+  .friends-generated-preview { padding: 8px 12px; }
+  .friends-design-canvas { overflow: hidden; }
+  .your-friends .friends-generated-preview .friend-avatar { width: min(150px, 100%); height: min(150px, 100%); }
+  .friends-design-controls { gap: 10px; }
+  .friends-design-feedback { gap: 6px; }
+  .friends-design-feedback textarea { height: 70px; }
+  .friends-builtin-options { gap: 10px; }
+  .friends-design-toolbar { gap: 6px; }
+  .friends-view-switch button { padding: 8px; }
+  .friends-review-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; }
+  .friends-review { gap: 6px; }
+  .friends-review > .friends-text-pages { padding: 8px 10px; }
+  .friends-confirm { font-size: 11px; line-height: 1.5; }
 }
-@media (max-height: 680px) {
-  .friends-companion { margin-bottom: 18px; }
-  .friend-avatar { width: 120px; height: 125px; }
-  .friends-story { padding-top: 0; }
-  .friends-header { padding-block: 12px; }
+@media (max-height: 720px) {
+  .friends-header { padding-block: 8px; }
+  .your-friends[data-ready="false"] .friends-story,
+  .your-friends[data-ready="false"]:not([data-designing="true"]):not([data-step="review"]) .friends-story { padding-top: 8px; padding-bottom: 8px; }
+  .friends-eyebrow { margin-bottom: 8px; }
+  .your-friends h1 { font-size: 22px; margin-bottom: 8px; }
+  .your-friends[data-ready="false"] .friends-lead { margin-bottom: 12px; font-size: 12px; }
+  .friends-appearance-editor { gap: 10px; }
+  .friends-design-workspace { gap: 12px; }
+  .friends-design-controls { gap: 8px; }
+  .friends-design-feedback textarea { height: 64px; }
+  .friends-design-note { font-size: 11px; line-height: 1.5; }
+  .friends-review { gap: 6px; }
+  .friends-review > .friends-text-pages { padding-block: 6px; }
+  .friends-boundaries { gap: 10px; }
+  .friends-footnote { margin-top: 4px; }
+  .friends-input-dock { padding-block: 6px; }
+}
+@media (max-height: 560px) {
+  .friends-header { padding-block: 4px; }
+  .your-friends h1 { font-size: 20px; }
+  .friends-eyebrow { margin-bottom: 4px; }
+  .your-friends[data-ready="false"] .friends-step-actions { padding-top: 4px; }
+  .friends-boundaries { padding: 8px; gap: 6px; }
+  .friends-boundaries label { flex-direction: row; align-items: center; gap: 8px; }
+  .friends-boundaries select { width: auto; max-width: 72%; padding: 6px 8px; }
+  .friends-boundaries p { font-size: 11px; line-height: 1.5; }
+  .your-friends[data-step="boundaries"] .friends-input-surface textarea { max-height: 38px; }
+  .friends-design-workspace { grid-template-columns: minmax(96px, 1fr) minmax(0, 2.5fr); grid-template-rows: minmax(0, 1fr); }
+  .friends-generated-preview { padding: 8px; }
+  .friends-design-explanation { flex-direction: column; gap: 0; align-items: flex-start; }
+  .friends-design-explanation h2 { font-size: 12px; }
+  .friends-design-feedback textarea { height: 48px; }
+  .friends-design-feedback { gap: 4px; }
+  .friends-design-controls { gap: 6px; }
+  .friends-generation-actions { gap: 6px; }
+  .friends-generation-actions .friends-primary { padding: 8px 10px; gap: 6px; }
+  .friends-view-switch button { padding-block: 5px; }
+  .friends-review-row .friends-text-button { padding-block: 4px; }
+  .friends-review-confirmation { gap: 12px; }
+  .your-friends .friends-characters .friend-avatar { width: 48px; height: 52px; }
+  .friends-characters button { padding: 6px; }
+  .friends-builtin-options { gap: 8px; }
+  .friends-appearance-editor .friends-tones button { padding: 6px; }
+  .friends-dialog[data-panel="appearance"] { height: calc(100dvh - 32px); }
 }

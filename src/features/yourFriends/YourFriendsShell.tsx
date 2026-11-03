@@ -4,6 +4,7 @@ import { uiText, type MessageKey } from '../../i18n';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from '../composer/ComposerPromptInput';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { FriendAvatar } from './FriendAvatar';
+import { FriendTextPages } from './FriendTextPages';
 import { FriendAppearanceEditor, characterLabels } from './FriendAppearanceEditor';
 import type { FriendAppearanceGenerator } from './generateFriendAppearance';
 import type { FriendAppearance } from './friendDesign';
@@ -19,6 +20,10 @@ const stepTitles: Record<IntroductionStep, MessageKey> = {
 const stepPrompts: Record<IntroductionStep, MessageKey> = {
   address: 'yourFriends.addressPrompt', context: 'yourFriends.contextPrompt', judgment: 'yourFriends.judgmentPrompt',
   communication: 'yourFriends.communicationPrompt', boundaries: 'yourFriends.boundariesPrompt', appearance: 'yourFriends.appearancePrompt',
+};
+const reviewLabels: Record<IntroductionStep, MessageKey> = {
+  address: 'yourFriends.reviewAddress', context: 'yourFriends.reviewContext', judgment: 'yourFriends.reviewJudgment',
+  communication: 'yourFriends.reviewCommunication', boundaries: 'yourFriends.reviewBoundaries', appearance: 'yourFriends.reviewAppearance',
 };
 const exampleFile = 'SettingsToolbar.tsx';
 const panelTitles: Record<'events' | 'settings' | 'appearance', MessageKey> = {
@@ -42,6 +47,9 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   const [panel, setPanel] = useState<keyof typeof panelTitles | null>(null), [selectedId, setSelectedId] = useState('');
   const [relatesTo, setRelatesTo] = useState<string>(), [demoStep, setDemoStep] = useState<number | null>(null);
   const [profileConfirmed, setProfileConfirmed] = useState(false), [boundaryConfirmed, setBoundaryConfirmed] = useState(false);
+  const [reviewIndex, setReviewIndex] = useState(0);
+  const [reviewConfirming, setReviewConfirming] = useState(false);
+  const reviewKey = introductionSteps[reviewIndex];
   const root = useRef<HTMLDivElement>(null), stage = useRef<HTMLDivElement>(null), input = useRef<ComposerPromptInputHandle>(null);
   const titleId = useId(), noticeId = useId(), submitting = useRef(false), close = useRef(onClose);
   const focusInputAfterDialog = useRef(false);
@@ -52,7 +60,10 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
     try { updateFriendsState(change); setError(''); return true; } catch { setError(t('yourFriends.saveError')); return false; }
   };
   const applyAppearance = (appearance: FriendAppearance, advance = false) => {
-    if (save(current => ({ ...current, appearance, ...(advance ? { introduction: { ...current.introduction, step: introductionSteps.length } } : {}) }))) setPanel(null);
+    if (save(current => ({ ...current, appearance, ...(advance ? { introduction: { ...current.introduction, step: introductionSteps.length } } : {}) }))) {
+      setPanel(null);
+      if (advance) setReviewConfirming(false);
+    }
   };
 
   useLayoutEffect(() => {
@@ -108,7 +119,7 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   } as CSSProperties : undefined;
 
   return <div ref={root} className="your-friends" role="dialog" aria-modal="true" aria-labelledby={titleId}
-    data-phase={phase} data-tone={state.tone} data-motion={state.motion} data-ready={ready} data-designing={designing} style={transitionStyle}
+    data-phase={phase} data-tone={state.tone} data-motion={state.motion} data-ready={ready} data-designing={designing} data-step={step ?? 'review'} data-active-panel={panel ?? 'none'} style={transitionStyle}
     onAnimationEnd={event => { if (event.target === event.currentTarget) { if (phase === 'closing') onClose(); else setPhase('open'); } }}
     onKeyDown={event => {
       if (panel || event.nativeEvent.isComposing) return;
@@ -131,7 +142,7 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
     </header>
     <div className="friends-stage" ref={stage}>
       <div className="friends-story">
-        {!designing && <div className="friends-companion"><FriendAvatar appearance={state.appearance} state={draft ? 'listening' : demoStep !== null && demoStep < 2 ? 'working' : ready ? 'done' : 'idle'}/>
+        {ready && <div className="friends-companion"><FriendAvatar appearance={state.appearance} state={draft ? 'listening' : demoStep !== null && demoStep < 2 ? 'working' : 'done'}/>
           <span className="friends-presence"><i/>{t(ready ? 'yourFriends.here' : 'yourFriends.gettingAcquainted')}</span></div>}
         {!ready ? <section className="friends-introduction" aria-labelledby="friends-step-title">
           <div className="friends-eyebrow">{t('yourFriends.introductionProgress', { current: number.format(state.introduction.step + 1), total: number.format(introductionSteps.length + 1) })}</div>
@@ -148,22 +159,30 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
             <p>{t('yourFriends.boundaryDraft')}</p>
           </div>}
           {designing && <FriendAppearanceEditor language={language} state={state} generate={generateAppearance} onApply={appearance => applyAppearance(appearance, true)} onChange={change => save(current => ({ ...current, ...change }))}/>}
-          {!step && <div className="friends-review friends-card">
-            {introductionSteps.map((key, index) => <div className="friends-review-row" key={key}><div><h2>{t(stepTitles[key])}</h2>
-              {key === 'appearance' && <p>{t('yourFriends.appearanceSummary', { character: state.appearance?.type === 'generated' ? state.appearance.design.name : state.appearance?.type === 'builtin' ? t(characterLabels[state.appearance.character]) : t('yourFriends.designNotGenerated'), motion: t(state.motion ? 'yourFriends.motionOn' : 'yourFriends.motionOff') })}</p>}
-              {(key !== 'appearance' || state.introduction.answers[key]) && <p>{state.introduction.answers[key] || t('yourFriends.notShared')}</p>}</div>
-              <button type="button" className="friends-text-button" onClick={() => { setProfileConfirmed(false); setBoundaryConfirmed(false); save(current => ({ ...current, introduction: { ...current.introduction, step: index } })); }}>{t('yourFriends.edit')}</button></div>)}
+          {!step && <div className="friends-review">
+            {!reviewConfirming ? <><div className="friends-review-tabs friends-view-switch" role="group" aria-label={t('yourFriends.reviewSections')}>
+              {introductionSteps.map((key, index) => <button type="button" key={key} data-section={key} aria-pressed={reviewIndex === index} onClick={() => setReviewIndex(index)}>{t(reviewLabels[key])}</button>)}
+            </div>
+            <div className="friends-review-row"><h2>{t(stepTitles[reviewKey])}</h2>
+              <button type="button" className="friends-text-button" onClick={() => { setProfileConfirmed(false); setBoundaryConfirmed(false); save(current => ({ ...current, introduction: { ...current.introduction, step: reviewIndex } })); }}>{t('yourFriends.edit')}</button></div>
+            <FriendTextPages key={reviewKey} language={language} text={reviewKey === 'appearance'
+              ? [t('yourFriends.appearanceSummary', { character: state.appearance?.type === 'generated' ? state.appearance.design.name : state.appearance?.type === 'builtin' ? t(characterLabels[state.appearance.character]) : t('yourFriends.designNotGenerated'), motion: t(state.motion ? 'yourFriends.motionOn' : 'yourFriends.motionOff') }), state.introduction.answers.appearance].filter(Boolean).join('\n\n')
+              : state.introduction.answers[reviewKey] || t('yourFriends.notShared')}/>
+            <button type="button" className="friends-primary friends-review-continue" onClick={() => setReviewConfirming(true)}>{t('yourFriends.continueReview')}<ChevronRight/></button>
+            </> : <div className="friends-review-confirmation">
+            <button type="button" className="friends-text-button friends-review-return" onClick={() => setReviewConfirming(false)}><ArrowLeft/>{t('yourFriends.reviewResponses')}</button>
             <p>{t('yourFriends.boundarySummary', { before: t(state.delegation.beforeExecution === 'ask' ? 'yourFriends.askFirst' : 'yourFriends.withinScope'), report: t(state.delegation.report === 'always' ? 'yourFriends.reportAlways' : 'yourFriends.reportImportant') })}</p>
             {!state.introduction.answers.context?.trim() && <p className="your-friends-error">{t('yourFriends.contextRequired')}</p>}
             {!state.appearance && <p className="your-friends-error">{t('yourFriends.designRequired')}</p>}
             <label className="friends-confirm"><input type="checkbox" checked={profileConfirmed} onChange={event => setProfileConfirmed(event.target.checked)}/><span>{t('yourFriends.confirmProfile')}</span></label>
             <label className="friends-confirm"><input type="checkbox" checked={boundaryConfirmed} onChange={event => setBoundaryConfirmed(event.target.checked)}/><span>{t('yourFriends.confirmBoundary')}</span></label>
             <button type="button" className="friends-primary" disabled={!canFinish} onClick={() => { try { confirmFriendIntroduction(); setError(''); setSelectedId(''); } catch { setError(t('yourFriends.saveError')); } }}>{t('yourFriends.finish')}<ChevronRight/></button>
+            </div>}
           </div>}
-          <div className="friends-step-actions">
+          {(step || !reviewConfirming) && <div className="friends-step-actions">
             {state.introduction.step > 0 && <button className="friends-text-button" type="button" onClick={() => save(current => ({ ...current, introduction: { ...current.introduction, step: current.introduction.step - 1 } }))}><ArrowLeft/>{t('yourFriends.previous')}</button>}
             {step && !designing && (step !== 'context' || Boolean(state.introduction.answers.context?.trim())) && <button className="friends-text-button" type="button" onClick={continueIntroduction}>{t(step === 'boundaries' ? 'yourFriends.keepSelection' : 'yourFriends.skip')}<ChevronRight/></button>}
-          </div>
+          </div>}
         </section> : <section className="friends-event-stage" aria-live="polite">
           <h1>{t(selected ? 'yourFriends.receivedTitle' : 'yourFriends.readyTitle', { name })}</h1>
           <p className="friends-lead">{t(selected ? 'yourFriends.receivedDescription' : 'yourFriends.readyDescription')}</p>
@@ -183,9 +202,9 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
       <div className="friends-input-inner">
         {related && <div className="friends-relation"><span>{t('yourFriends.continuing', { text: related.text })}</span><button type="button" className="friends-icon" aria-label={t('yourFriends.removeRelation')} onClick={() => setRelatesTo(undefined)}><X/></button></div>}
         {error && <p role="alert" className="your-friends-error">{error}</p>}
-        {!designing && <div className="friends-input-surface" data-readonly={!ready && !step}>
-          <ComposerPromptInput ref={input} language={language} plugins={[]} richReferences={false} value={draft} readOnly={!ready && !step}
-            ariaLabel={t('yourFriends.inputLabel')} ariaDescribedBy={noticeId} placeholder={t(!ready && !step ? 'yourFriends.reviewPlaceholder' : 'yourFriends.inputPlaceholder')}
+        {(ready || (step && !designing)) && <div className="friends-input-surface">
+          <ComposerPromptInput ref={input} language={language} plugins={[]} richReferences={false} value={draft}
+            ariaLabel={t('yourFriends.inputLabel')} ariaDescribedBy={noticeId} placeholder={t('yourFriends.inputPlaceholder')}
             onChange={changeDraft} onSelectionChange={() => {}} onKeyDown={event => {
               if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) return;
               if (shortcuts.matches('sendMessage', event) || shortcuts.matches('guideNow', event)) { event.preventDefault(); event.stopPropagation(); submit(); }
@@ -195,13 +214,13 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
         <p className="friends-footnote" id={noticeId}>{t('yourFriends.previewNotice')}</p>
       </div>
     </footer>
-    {panel && <FriendsDialog title={t(panelTitles[panel])} closeLabel={t('yourFriends.close')} onClose={() => setPanel(null)}>
+    {panel && <FriendsDialog kind={panel} title={t(panelTitles[panel])} closeLabel={t('yourFriends.close')} onClose={() => setPanel(null)}>
       {panel === 'appearance' ? <>
         {!state.introduction.answers.context?.trim() && <p className="friends-aside">{t('yourFriends.designNeedsContext')}</p>}
         <FriendAppearanceEditor language={language} state={state} generate={generateAppearance} onApply={appearance => applyAppearance(appearance)} onChange={change => save(current => ({ ...current, ...change }))}/>
         {error && <p className="your-friends-error" role="alert">{error}</p>}
       </> : panel === 'settings' ? <><YourFriendsSettings language={language}/><p className="friends-aside">{t('yourFriends.localData')}</p>
-        {ready && <button type="button" className="friends-text-button" onClick={() => { save(current => ({ ...current, introduction: { ...current.introduction, step: introductionSteps.length, confirmedAt: undefined } })); setProfileConfirmed(false); setBoundaryConfirmed(false); setPanel(null); }}>{t('yourFriends.reviewIdentity')}</button>}</> : <>
+        {ready && <button type="button" className="friends-text-button" onClick={() => { save(current => ({ ...current, introduction: { ...current.introduction, step: introductionSteps.length, confirmedAt: undefined } })); setProfileConfirmed(false); setBoundaryConfirmed(false); setReviewConfirming(false); setPanel(null); }}>{t('yourFriends.reviewIdentity')}</button>}</> : <>
         <p className="friends-aside">{t('yourFriends.eventsDescription')}</p>
         {!state.events.length && <p className="friends-empty">{t('yourFriends.noEvents')}</p>}
         <ol className="friends-event-list">{[...state.events].reverse().map(event => <li key={event.id} data-archived={event.archived}>
@@ -216,10 +235,10 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   </div>;
 }
 
-function FriendsDialog({ title, closeLabel, onClose, children }: { title: string; closeLabel: string; onClose(): void; children: ReactNode }) {
+function FriendsDialog({ kind, title, closeLabel, onClose, children }: { kind: string; title: string; closeLabel: string; onClose(): void; children: ReactNode }) {
   const dialog = useRef<HTMLDialogElement>(null), id = useId();
   useLayoutEffect(() => { const element = dialog.current!; element.showModal(); return () => element.close(); }, []);
-  return <dialog ref={dialog} className="friends-dialog" aria-labelledby={id} onCancel={event => { event.preventDefault(); onClose(); }}>
+  return <dialog ref={dialog} className="friends-dialog" data-panel={kind} aria-labelledby={id} onCancel={event => { event.preventDefault(); onClose(); }}>
     <header><h2 id={id}>{title}</h2><button className="friends-icon" type="button" onClick={onClose} aria-label={closeLabel}><X/></button></header>
     <div className="friends-dialog-body">{children}</div>
   </dialog>;

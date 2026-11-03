@@ -76,6 +76,32 @@ function runFixture() {
     const fill = (selector, value) => read(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(n instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     const textButton = (container, key) => read(`(()=>{const label=fixture.t(document.documentElement.lang||'zh')(${JSON.stringify(key)});const b=[...document.querySelectorAll(${JSON.stringify(container + ' button')})].find(b=>b.textContent.trim()===label);if(!b)throw Error(label);b.click();})()`);
     const capture = async name => { await pause(100); fs.writeFileSync(path.join(directory, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
+    const fitsViewport = async (scope, label) => {
+      await pause(100);
+      await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      const failures = await read(`(()=>{const root=document.querySelector(${JSON.stringify(scope)}), failures=[];
+        const containers=['.friends-stage','.friends-story','.friends-introduction','.friends-review','.friends-appearance-editor','.friends-design-workspace','.friends-generated-preview','.friends-design-controls','.friends-dialog-body','.friends-text-viewport'];
+        for(const node of [root,...root.querySelectorAll(containers.join(','))]){
+          if(node.scrollHeight>node.clientHeight+2||node.scrollWidth>node.clientWidth+2)failures.push(node.className+': overflow '+node.scrollHeight+'/'+node.clientHeight+' '+node.scrollWidth+'/'+node.clientWidth);
+        }
+        for(const node of root.querySelectorAll('button,input,select,textarea,.friends-page-text')){
+          if(!node.getClientRects().length||getComputedStyle(node).visibility==='hidden')continue;
+          const r=node.getBoundingClientRect();
+          if(r.top<0||r.left<0||r.right>innerWidth+1||r.bottom>innerHeight+1)failures.push(node.className+': outside viewport');
+        }
+        const artwork=root.querySelector('.friends-generated-preview .friend-avatar');if(artwork){const r=artwork.getBoundingClientRect(),canvas=artwork.parentElement.getBoundingClientRect();if(r.height<24||r.width<24||r.bottom>canvas.bottom+1||r.top<canvas.top-1)failures.push('artwork is clipped or too small: '+r.height);}
+        return failures;})()`);
+      if(failures.length) await capture('layout-failure');
+      assert.deepEqual(failures, [], label);
+    };
+    const fitsMinimumWindow = async (scope, label) => {
+      await win.setContentSize(480, 480);
+      await read('fixture.language("en");document.documentElement.lang="en";void 0');
+      await fitsViewport(scope, label + ' at the app minimum window size');
+      await read('fixture.language("zh");document.documentElement.lang="zh";void 0');
+      await fitsViewport(scope, label + ' in Chinese at minimum size');
+      await win.setContentSize(1120, 850);
+    };
     try {
       await win.loadFile(path.join(directory, 'index.html'));
       await until('document.querySelector("[data-nav-section=your-friends]")');
@@ -87,6 +113,10 @@ function runFixture() {
       assert.equal(await read('document.querySelector(".desktop-shell").inert'), true);
       await until('document.querySelector(".your-friends[data-phase=open]")');
       await capture('introduction-bright');
+      await fitsMinimumWindow('.your-friends', 'recognition');
+      await fitsViewport('.your-friends', 'recognition has no scrolling surfaces');
+      await win.setContentSize(390, 640); await fitsViewport('.your-friends', 'narrow recognition fits');
+      await capture('introduction-narrow'); await win.setContentSize(1120, 850);
       assert.equal(await read('fixture.store.introductionSteps[fixture.store.readFriendsState().introduction.step]'), 'address');
       assert.equal(await read('fixture.store.readFriendsState().appearance'), undefined, 'a preset is never selected by default');
       assert.equal(await read('fixture.requests.length'), 0, 'recognition precedes generation');
@@ -117,21 +147,41 @@ function runFixture() {
       await textButton('.friends-step-actions', 'yourFriends.skip');
       await fill('.friends-input-surface textarea', '只看官方赛程，晚上不要打扰我。'); await click('.friends-send');
       await until('fixture.store.readFriendsState().introduction.step===4');
+      await fitsMinimumWindow('.your-friends', 'boundaries');
+      await win.setContentSize(390, 640); await fitsViewport('.your-friends', 'boundary controls fit without scrolling');
+      await win.setContentSize(1120, 850);
       await textButton('.friends-step-actions', 'yourFriends.keepSelection');
       await until('document.querySelector(".friends-generate")');
-      assert.equal(await read('document.querySelector(".friends-builtin-options").open'), false, 'presets remain a secondary option');
-      assert.equal(await read('document.querySelectorAll(".friends-characters button").length'), 3, 'keep all three fallback characters, including Cat');
+      assert.equal(await read('document.querySelector(".friends-appearance-editor").dataset.mode'), 'generate', 'presets remain a secondary option');
+      assert.equal(await read('!!document.querySelector(".friends-builtin-options")'), false, 'preset controls do not stack below generation');
       assert.equal(await read('!!document.querySelector(".friends-input-surface")'), false);
       await capture('appearance-before-generation');
+      await fitsMinimumWindow('.your-friends', 'appearance generation');
+      await fitsViewport('.your-friends', 'design fits in one viewport');
+      await win.setContentSize(390, 640); await fitsViewport('.your-friends', 'narrow design fits in one viewport');
+      await read('fixture.language("en");document.documentElement.lang="en";void 0');
+      await fitsViewport('.your-friends', 'English design fits in a short narrow window');
+      await capture('design-narrow-en');
+      await read('fixture.language("zh");document.documentElement.lang="zh";void 0');
+      await win.setContentSize(1120, 850);
       // The production adapter receives recognition data and uses the configured model, not a canned selector.
       await click('.friends-generate');
       await until('document.querySelector(".friends-apply-design")');
       assert.equal(await read('fixture.store.readFriendsState().appearance'), undefined, 'a generated preview is not applied without choosing it');
       assert.ok(await read(`(()=>{const r=fixture.requests.at(-1);return r.model==='configured-test-model'&&r.allowedTools.length===0&&r.allowedSkills.length===0&&!r.teamModeEnabled&&!r.projectDir&&!r.teamInstructions&&r.userInput.includes('白天做产品，下班想看 NBA 和打台球。')&&r.userInput.includes('只看官方赛程，晚上不要打扰我。')&&fixture.created.metadata.hidden===true;})()`));
       assert.ok(await read('document.querySelector(".friends-design-explanation").textContent.includes("夜航")'));
+      await read('fixture.design.name="夜航与安静的自然轮廓".repeat(6);fixture.design.description="根据你的日常和交流偏好，采用克制的线条、自然配色和清晰轮廓。".repeat(18);void 0');
       await fill('.friends-design-feedback textarea', '更像猫一些，保留安静的表情');
       await click('.friends-generate'); await until('!document.querySelector(".friends-generate").disabled');
       assert.ok(await read('fixture.requests.at(-1).userInput.includes("更像猫一些")&&fixture.requests.at(-1).userInput.includes("previousDesign")'));
+      await click('.friends-explanation-toggle');
+      await win.setContentSize(390, 640);
+      await fitsViewport('.your-friends', 'long design notes paginate within the preview');
+      await until('document.querySelector(".friends-generated-preview .friends-page-navigation").dataset.multiple==="true"');
+      const readPages = selector => read(`(async()=>{let result='';const root=document.querySelector(${JSON.stringify(selector)});for(let i=0;i<1000;i++){result+=root.querySelector('.friends-page-text').textContent;const next=root.querySelector('.friends-page-navigation button:last-child');if(next.disabled)return result;next.click();await new Promise(requestAnimationFrame);}throw Error('pagination did not end');})()`);
+      assert.equal(await readPages('.friends-generated-preview'), await read('fixture.design.name+"\\n\\n"+fixture.design.description'), 'the full name and every design note character remain accessible');
+      await capture('design-notes-narrow');
+      await win.setContentSize(1120, 850); await click('.friends-explanation-toggle');
       // Cancellation and failures keep the preview and cannot silently apply a preset or a late result.
       await read('fixture.hold=true;void 0'); await click('.friends-generate');
       await until('document.querySelector(".friends-generation-cancel")');
@@ -139,17 +189,41 @@ function runFixture() {
       assert.equal(await read('fixture.requests.at(-1).signal.aborted'), true);
       await read('fixture.fail=true;void 0'); await click('.friends-generate');
       await until('document.querySelector(".friends-appearance-editor [role=alert]")');
+      await fitsMinimumWindow('.your-friends', 'generation error');
+      await win.setContentSize(390, 640); await fitsViewport('.your-friends', 'generation failure keeps actions visible');
+      await win.setContentSize(1120, 850);
       assert.equal(await read('fixture.store.readFriendsState().appearance'), undefined);
       await read('fixture.fail=false;void 0');
       await click('.friends-apply-design');
-      await until('document.querySelectorAll(".friends-confirm input").length===2');
+      await until('document.querySelector(".friends-review-tabs")');
       assert.equal(await read('fixture.store.readFriendsState().appearance.type'), 'generated');
       assert.equal(await read('fixture.store.readFriendsState().appearance.design.svg'), await read('fixture.design.svg'));
+      await fitsViewport('.your-friends', 'review fits without a stacked answer list');
+      await fitsMinimumWindow('.your-friends', 'review');
+      await read('fixture.savedContext=fixture.store.readFriendsState().introduction.answers.context;fixture.longContext="我希望留出时间运动、阅读和思考。👨‍👩‍👧‍👦\\n".repeat(80);fixture.store.updateFriendsState(s=>({...s,introduction:{...s.introduction,answers:{...s.introduction.answers,context:fixture.longContext}}}));void 0');
+      await click('.friends-review-tabs [data-section="context"]');
+      await win.setContentSize(390, 640);
+      await until('document.querySelector(".friends-review .friends-page-navigation").dataset.multiple==="true"');
+      await fitsViewport('.your-friends', 'long recognition text fits review without scrollbars');
+      assert.equal(await readPages('.friends-review'), await read('fixture.longContext'), 'review preserves every character, newline and emoji');
+      await capture('review-narrow');
+      await read('fixture.language("en");document.documentElement.lang="en";void 0');
+      await fitsViewport('.your-friends', 'English review fits in a short narrow window');
+      await read('fixture.language("zh");document.documentElement.lang="zh";fixture.store.updateFriendsState(s=>({...s,introduction:{...s.introduction,answers:{...s.introduction.answers,context:fixture.savedContext}}}));void 0');
+      await win.setContentSize(1120, 850);
       // Reviewing the appearance returns to the same confirmation step.
-      await click('.friends-review-row:last-of-type button');
+      await click('.friends-review-tabs [data-section="appearance"]');
+      await click('.friends-review-row button');
       await until('document.querySelector(".friends-apply-design")');
       await click('.friends-apply-design');
+      await click('.friends-review-continue');
       await until('document.querySelectorAll(".friends-confirm input").length===2');
+      await fitsMinimumWindow('.your-friends', 'final confirmation');
+      await win.setContentSize(390, 640); await fitsViewport('.your-friends', 'final confirmation fits without scrolling');
+      await read('fixture.language("en");document.documentElement.lang="en";void 0');
+      await fitsViewport('.your-friends', 'English confirmation fits without scrolling');
+      await read('fixture.language("zh");document.documentElement.lang="zh";void 0');
+      await win.setContentSize(1120, 850);
       assert.equal(await read('document.querySelector(".friends-review .friends-primary").disabled'), true);
       await click('.friends-confirm:first-of-type input');
       assert.equal(await read('document.querySelector(".friends-review .friends-primary").disabled'), true, 'profile confirmation cannot grant boundaries');
@@ -189,17 +263,20 @@ function runFixture() {
       await read('fixture.theme("dark");void 0'); await capture('event-dark');
       const confirmed = await read('fixture.store.readFriendsState().introduction.confirmedAt');
       await click('.friends-header [data-panel="appearance"]');
-      await click('.friends-builtin-options summary');
+      await click('.friends-view-switch [data-mode="builtin"]');
+      assert.equal(await read('document.querySelectorAll(".friends-characters button").length'), 3, 'keep all three fallback characters, including Cat');
       await click('.friends-characters [data-character="cat"]');
       await click('.friends-tones [data-tone="sage"]');
       await until('document.querySelector(".your-friends").dataset.tone==="sage"');
       assert.ok(await read(`(()=>{const s=getComputedStyle(document.querySelector('.your-friends'));return s.getPropertyValue('--friend-tint').trim()===s.getPropertyValue('--friend-sage').trim();})()`));
       await capture('appearance-fallback-cat');
-      await read('document.querySelector(".friends-dialog").scrollTop=document.querySelector(".friends-dialog").scrollHeight;void 0');
+      await fitsMinimumWindow('.friends-dialog', 'preset selection');
+      await fitsViewport('.friends-dialog', 'appearance dialog has no nested scrolling');
       await capture('appearance-builtin-options');
       await read('fixture.language("en");document.documentElement.lang="en";void 0');
       await until('document.querySelector(".friends-characters [data-character=cat]").textContent.includes("Cat")');
       await win.setContentSize(390, 740); await pause(120);
+      await fitsViewport('.friends-dialog', 'all three presets fit the narrow dialog');
       assert.ok(await read('document.documentElement.scrollWidth<=innerWidth'));
       assert.ok(await read(`(()=>{const r=document.querySelector('.friends-characters').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;})()`));
       await capture('appearance-narrow-en');
