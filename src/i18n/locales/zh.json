@@ -538,6 +538,8 @@
     "assistantSettingsDialog.personaChangesApplyToTheNextCall": "角色修改将在下一次通话时生效。",
     "assistantTaskBubble.doSomething": "处理任务",
     "assistantTaskBubble.viewExecution": "查看执行",
+    "assistantView.modelBindingUnavailable": "当前模型配置不可用，消息已保留。请检查模型设置后重试回复。",
+    "webhookConnection.modelUnavailable": "此连接使用的模型已被移除。请重新连接服务并选择可用模型。",
     "assistantView.executionHost": "执行主机",
     "assistantView.connectSshManageHosts": "连接 SSH / 管理主机",
     "assistantView.remoteComputer": "云端电脑",

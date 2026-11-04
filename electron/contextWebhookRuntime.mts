@@ -1,4 +1,4 @@
-import { createTurnTimeContext, runtimeSessionTurnRequestSchema, assistantProfileSchema, type SessionSnapshot } from '@cardbush/bush-protocol';
+import { createTurnTimeContext, runtimeSessionTurnRequestSchema, runtimeProviderBindingRefSchema, assistantProfileSchema, type SessionSnapshot, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { WebhookBinding } from './contextWebhookTypes.js';
@@ -11,7 +11,29 @@ export const webhookBindingSchema = z.object({
 }).strict().refine(value => value.parent.sessionId === value.sessionId && (value.kind === 'assistant'
   ? value.sessionId === 'personal-assistant' && Boolean(value.profile) && value.generation !== undefined : value.sessionId !== 'personal-assistant'));
 export type WebhookResult = { status: 'completed' | 'failed' | 'interrupted' | 'stopped'; reply: string; errorCode?: string };
-export type WebhookRuntime = { command(kind: string, payload: unknown): Promise<any> };
+export type WebhookRuntime = { command(kind: string, payload: unknown): Promise<any>;
+  prepareParent?(parent: RuntimeSessionTurnRequest, signal: AbortSignal): Promise<RuntimeSessionTurnRequest> };
+
+/** Saved connections keep model identities, not a live worker's credential registry. */
+export async function prepareWebhookParentModels(parent: RuntimeSessionTurnRequest,
+  resolve: (modelId: string) => Promise<unknown>, signal: AbortSignal): Promise<RuntimeSessionTurnRequest> {
+  const result = structuredClone(parent), resolved = new Map<string, Promise<{ model: string; binding: import('@cardbush/bush-protocol').RuntimeProviderBindingRef }>>();
+  const model = (id: string) => {
+    signal.throwIfAborted();
+    if (!resolved.has(id)) resolved.set(id, resolve(id).then(value => z.object({ model: z.string().min(1), binding: runtimeProviderBindingRefSchema }).parse(value)));
+    return resolved.get(id)!;
+  };
+  if (parent.providerBinding) {
+    const current = await model(parent.providerBinding.bindingId);
+    result.model = current.model; result.providerBinding = current.binding;
+  }
+  const policy = result.metadata.childAgentPolicy as { model?: { mode?: string; modelId?: string; providerBinding?: { bindingId: string }; model?: string } } | undefined;
+  if (policy?.model?.mode === 'fixed') {
+    const id = policy.model.modelId || policy.model.providerBinding?.bindingId;
+    if (id) { const current = await model(id); policy.model.model = current.model; policy.model.providerBinding = current.binding; }
+  }
+  signal.throwIfAborted(); return result;
+}
 
 export function contextWebhookTurnResult(state: SessionSnapshot, turnId: string): WebhookResult | undefined {
   const turn = state.turns.find(turn => turn.turnId === turnId);
@@ -29,7 +51,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
   const sessionId = binding.sessionId, turnId = `webhook-${id}`, inputId = `webhook-input-${id}`;
   const snapshot = await runtime.command('runtime.get_session', { sessionId }) as SessionSnapshot | null;
   if (!snapshot) throw new WebhookError('context_deleted', 404);
-  const parent = structuredClone(binding.parent);
+  let parent = structuredClone(binding.parent);
   parent.requestId = turnId; parent.turnId = turnId;
   delete parent.metadata.botSourceRef;
   if (sourceRef) parent.metadata.botSourceRef = sourceRef;
@@ -45,6 +67,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
     if (journal.generation !== binding.generation) throw new WebhookError('context_reset', 409);
     if (!journal.entries.some((entry: { id: string }) => entry.id === inputId)) {
       if (recovering) return { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
+      parent = await runtime.prepareParent?.(parent, signal) ?? parent;
       await runtime.command('runtime.assistant_conversation', { action: 'turn', sessionId, generation: binding.generation,
         profile: binding.profile, parent: { ...parent, metadata: { ...parent.metadata, assistantOutputMode: 'text' } },
         entry: { id: inputId, originTurnId: turnId, role: 'user', source: 'text', visibility: 'conversation', content: message.text, createdAt,
@@ -66,6 +89,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
   const resultFrom = (state: SessionSnapshot) => contextWebhookTurnResult(state, turnId);
   const existing = resultFrom(snapshot); if (existing) return existing;
   if (recovering) return { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
+  parent = await runtime.prepareParent?.(parent, signal) ?? parent;
   await runtime.command('runtime.run_session_turn', parent);
   const finished = await runtime.command('runtime.get_session', { sessionId }) as SessionSnapshot | null;
   return finished && resultFrom(finished) || { status: 'interrupted', reply: '', errorCode: 'response_unavailable' };

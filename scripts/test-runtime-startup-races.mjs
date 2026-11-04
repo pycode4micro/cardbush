@@ -51,6 +51,7 @@ function fixture(timeout = 2000) {
     async refreshMcp(_uninstall, _update, signal) { this.refreshSignal = signal; this.refreshCount = (this.refreshCount ?? 0) + 1; await wait('refresh'); signal?.throwIfAborted(); }
     async pluginTroubleshootingContext() { return 'troubleshooting'; }
     async savePluginConnections() { return 'connections'; }
+    async resolveWebhookModel(id, language) { this.resolutions ??= []; this.resolutions.push({ id, language }); return { model: 'current-model', binding: { bindingId: id, revision: 'current-revision' } }; }
   }
   const context = {
     Promise, Date, Error, AbortController, setTimeout, clearTimeout,
@@ -79,6 +80,7 @@ function fixture(timeout = 2000) {
     randomUUID: (() => { let id = 0; return () => `operation-${++id}`; })(),
     ipcMain: { handle: (channel, fn) => ipc.set(channel, fn) },
     async loadModule(url) {
+      if (url.endsWith('contextWebhookRuntime.mjs')) return import('../dist-electron/contextWebhookRuntime.mjs');
       if (url.endsWith('contextWebhookHost.mjs')) return { ContextWebhookHost: class {
         constructor(_root, _secrets, runtime) { this.runtime = runtime; context.webhookHosts.push(this); }
         async start() { this.listening = true; return this; }
@@ -218,6 +220,20 @@ test('Webhook discovery starts independently before, during and after a failed R
   assert.equal((await f.invoke('webhooks:command', { action: 'read', sessionId: 'existing' })).listening, true);
   assert.equal(f.context.webhookHosts.length, 1, 'late Bot registration keeps using the original HTTP host');
   assert.equal(f.products[0].refreshCount ?? 0, 0, 'failed boot never starts automation initialization');
+});
+
+test('desktop Webhook model preparation waits for the active Product Host and preserves the message source', async () => {
+  const f = fixture(); f.gates.worker = deferred();
+  await f.invoke('webhooks:command', { action: 'read', sessionId: 'existing' });
+  const parent = { model: 'old-model', providerBinding: { bindingId: 'chosen', revision: 'old-revision' },
+    metadata: { uiLanguage: 'zh', botSourceRef: 'webhook:original' }, permissionMode: 'task_free' };
+  const prepared = f.context.webhookHosts[0].runtime.prepareParent(parent, new AbortController().signal);
+  await flush(); assert.equal(f.products[0]?.resolutions, undefined);
+  f.gates.worker.resolve(); const result = await prepared;
+  assert.equal(result.providerBinding.revision, 'current-revision');
+  assert.equal(result.metadata.botSourceRef, 'webhook:original'); assert.equal(result.permissionMode, 'task_free');
+  assert.equal(parent.providerBinding.revision, 'old-revision');
+  assert.equal(f.products[0].resolutions[0].id, 'chosen'); assert.equal(f.products[0].resolutions[0].language, 'zh');
 });
 
 test('cleanup failure cannot hide the original startup failure', async () => {

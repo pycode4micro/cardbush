@@ -6,6 +6,7 @@ import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry, type AssistantReact
 import type { ChatStreamRequest } from '../../backend/api';
 import { journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
 import { assistantBackend } from './assistantBackend';
+import { assistantErrorText } from './assistantError';
 import { VoiceConversation, applicationVoiceSession } from '../voice/VoiceConversation';
 import type { VoiceTarget } from '../voice/voiceSession';
 import { MarkdownContent, MessageFileAttachmentStrip, MessageImageStrip } from '../chatMessages/MessageBubble';
@@ -319,7 +320,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
         const text = messageMenu.selection || assistantQuoteText(messageMenu.entry, language);
         closeMessageMenu(); void copyText(text).catch(() => setError(uiText(language)('assistantMessage.copyFailed')));
       }} onReact={reaction => void reactToMessage(messageMenu.entry.id, reactions[messageMenu.entry.id] === reaction ? null : reaction)}/>}
-    {(error || runtimeError) && <RuntimeStatusBanner language={language} tone="error" message={error || runtimeError}
+    {(error || runtimeError) && <RuntimeStatusBanner language={language} tone="error" message={assistantErrorText(error || runtimeError, language)}
       actionLabel={canRetry ? uiText(language)('assistantView.retryReply') : undefined} onAction={canRetry ? retryReply : undefined}
       onDismiss={() => { setError(''); setRuntimeError(''); }}/>}
     {retry && !error && !runtimeError && <ConversationConnectionNotice language={language}

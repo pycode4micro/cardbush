@@ -225,6 +225,7 @@ let productHostController: {
   replacePlugin: import('./productPlugins').ProductPluginReplacement;
   requestPluginCredentials: (input: unknown, signal: AbortSignal) => Promise<unknown>;
   resolveAutomationModel: (modelId: string) => Promise<Record<string, unknown>>;
+  resolveWebhookModel: (modelId: string, language?: string) => Promise<Record<string, unknown>>;
   subagentModels: () => Promise<Array<{ id: string; model: string; maxContextTokens?: number; maxOutputTokens?: number }>>;
   resolveSubagentModel: (modelId: string) => Promise<Record<string, unknown>>;
 } | null = null;
@@ -2648,6 +2649,12 @@ function contextWebhookHost() {
       },
       decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
     }, {
+      async prepareParent(parent, signal) {
+        const product = await ensureRuntimeServicesReady();
+        const { prepareWebhookParentModels } = await import('./contextWebhookRuntime.mjs');
+        return prepareWebhookParentModels(parent, id => product.resolveWebhookModel(id,
+          typeof parent.metadata.uiLanguage === 'string' ? parent.metadata.uiLanguage : undefined), signal);
+      },
       async command(kind, payload) {
         const controller = await ensureRuntimeHostReady();
         const response = await controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind, payload } }) as any;

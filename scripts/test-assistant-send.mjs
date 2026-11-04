@@ -5,7 +5,7 @@ import { build } from 'vite';
 const mocks = {
   '../../backend/api': 'export const createConversation=async()=>({});',
   '../../backend/conversationJournal': 'export const readConversationJournal=async()=>fixture.read();export const conversationJournalCommand=async payload=>fixture.command(payload);export const journalMessages=()=>[];',
-  '../../backend/runtimeChat': 'export const prepareRuntimeAgentRequest=async config=>{fixture.prepared++;return {runtimeRequest:{sessionId:config.sessionId,metadata:{}}};};',
+  '../../backend/runtimeChat': 'export const prepareRuntimeAgentRequest=async config=>{fixture.prepared++;return {runtimeRequest:{sessionId:config.sessionId,providerBinding:{bindingId:config.model,revision:String(fixture.prepared)},metadata:{}}};};',
   '../../backend/realtimeAgent': 'export const createRealtimeAgentExecutor=()=>({});',
   '../../runtime-client/ElectronRuntimeSession': 'export const createDesktopRuntimeSession=()=>({dispose(){}});',
   './assistantProfile': 'export const readAssistantProfile=()=>({name:"assistant",targetAgent:""});',
@@ -40,4 +40,17 @@ test('assistant admission uses the visible input identity and reconciles lost ac
     await assert.rejects(assistantBackend.send(text,config,false,version,identity),/reset/i);
     assert.equal(commands.filter(item=>item.action==='turn').length,1,'reset rejects a delayed old input');
   } finally {globalThis.window=originalWindow;globalThis.fixture=originalFixture;}
+});
+
+test('each assistant retry prepares a current model binding without resubmitting the webhook user message', async () => {
+  const previous = globalThis.fixture;
+  const entries = [{ id: 'webhook-original', role: 'user', source: 'text', content: 'Reply to my bot message.', botSourceRef: 'webhook:original' }], commands = [];
+  globalThis.fixture = { prepared: 0, read: () => ({ generation: 4, entries }), command: payload => { commands.push(payload); } };
+  try {
+    await assistantBackend.retry({ model: 'selected-model' }); await assistantBackend.retry({ model: 'selected-model' });
+    assert.equal(fixture.prepared, 2); assert.deepEqual(commands.map(command => command.action), ['retry', 'retry']);
+    assert.deepEqual(commands.map(command => command.parent.providerBinding.revision), ['1', '2']);
+    assert.ok(commands.every(command => command.generation === 4 && command.entry === undefined));
+    assert.equal(entries.length, 1); assert.equal(entries[0].botSourceRef, 'webhook:original');
+  } finally { globalThis.fixture = previous; }
 });

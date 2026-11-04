@@ -9,6 +9,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { uiText } from '@cardbush/platform/i18n';
 import { clearDiagnosticFiles, mergeCleanup, scheduleDiagnosticRetention, type CleanupResult } from './cacheMaintenance.js';
 
 import {
@@ -175,6 +176,11 @@ export class ElectronProductHostController {
     const config = await this.#models.read();
     if (!config.models.some(model => model.id === modelId)) throw new Error('The automation model was removed. Send a message in the target conversation with an available model.');
     return this.#resolveModel(modelId);
+  }
+
+  async resolveWebhookModel(modelId: string, language?: string) {
+    await this.#ensureLegacyModelCredentials();
+    return this.#resolveModel(modelId, uiText(language)('webhookConnection.modelUnavailable'));
   }
 
   async subagentModels() {

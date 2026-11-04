@@ -539,6 +539,8 @@
     "assistantSettingsDialog.personaChangesApplyToTheNextCall": "Persona changes apply to the next call.",
     "assistantTaskBubble.doSomething": "Do something",
     "assistantTaskBubble.viewExecution": "View execution",
+    "assistantView.modelBindingUnavailable": "The current model configuration is unavailable. Your message is saved. Check the model settings, then retry the reply.",
+    "webhookConnection.modelUnavailable": "The model used by this connection was removed. Reconnect the service with an available model.",
     "assistantView.executionHost": "Execution host",
     "assistantView.connectSshManageHosts": "Connect SSH / manage hosts",
     "assistantView.remoteComputer": "Remote computer",
