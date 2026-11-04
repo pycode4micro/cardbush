@@ -58,17 +58,27 @@ test('desktop HTTP binding continues the existing Runtime history, routes callba
   try {
     await runtime.runSessionTurn(request('existing', 'Remember olive.'));
     gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+    const savedBinding = binding();
+    savedBinding.parent.inputMessages.unshift({ messageId: 'old-clock', message: { role: 'user', name: 'turn_runtime_context',
+      visibility: 'internal', content: '<time_context>old binding time</time_context>' } });
     const saved = await gateway.command({ action: 'save', config: config({ url: `http://127.0.0.1:${receiver.address().port}/reply`,
       headers: { Authorization: 'Bearer external-private' }, parameters: { receiver: 'room-1' },
-      body: { text: '{{reply}}', receiver: '{{parameters.receiver}}', eventId: '{{eventId}}' } }), binding: binding() });
+      body: { text: '{{reply}}', receiver: '{{parameters.receiver}}', eventId: '{{eventId}}' } }), binding: savedBinding });
     assert.equal(saved.listening, true); const connection = saved.connections[0], bot = client(connection);
     assert.equal((await fetch(connection.endpoint, { method: 'POST' })).status, 401);
+    const submittedAfter = Date.now();
     const accepted = await bot.send(message('first')); assert.equal(accepted.status, 202);
     assert.equal((await bot.send(message('first'))).status, 202);
     assert.equal((await bot.send(message('first', 'different'))).status, 409);
     const result = await until(async () => { const value = await bot.read('first'); return value.status === 'completed' && value; });
     assert.equal(result.sessionId, 'existing'); assert.equal(result.reply, 'The word was olive.');
     assert.equal(calls.length, 2); assert.match(JSON.stringify(calls[1].messages), /Remember olive/);
+    const clock = calls[1].messages.find(m => m.name === 'turn_runtime_context');
+    assert.equal(clock.visibility, 'internal');
+    assert.match(clock.content, /Snapshot at message submission \(UTC\):/);
+    const timestamp = Date.parse(clock.content.match(/Snapshot at message submission \(UTC\): (.+)/)[1]);
+    assert.ok(timestamp >= submittedAfter && timestamp <= Date.now(), 'each webhook input receives a fresh host clock');
+    assert.ok(!calls[1].messages.some(m => m.content.includes('old binding time')));
     await until(() => delivered.length); assert.equal(delivered[0].body.receiver, 'room-1'); assert.equal(delivered[0].authorization, 'Bearer external-private');
     const disk = await readFile(join(root, 'webhooks/state.json'), 'utf8'); assert.ok(!disk.includes(connection.token) && !disk.includes('external-private'));
     await gateway.close(); gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
@@ -98,6 +108,9 @@ test('Assistant webhook uses the same journal, correlates replies and rejects a 
     assert.equal(result.status, 'completed'); assert.match(result.reply, /olive/); assert.match(JSON.stringify(calls[0].messages), /Remember olive/);
     const journal = await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId });
     assert.ok(journal.entries.find(e => e.role === 'assistant').responseTo.includes('webhook-input-unique'));
+    const clocks = calls[0].messages.filter(m => m.name === 'turn_runtime_context');
+    assert.equal(clocks.length, 2, 'historical input and the webhook message each keep their own timestamp');
+    assert.ok(clocks.at(-1).content.includes(journal.entries.find(e => e.id === 'webhook-input-unique').createdAt));
     const resumed = await runContextWebhook(bridge, selected, message('a'), 'unique', true, new AbortController().signal);
     assert.equal(resumed.reply, result.reply); assert.equal(calls.length, 1);
     await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });

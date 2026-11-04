@@ -13,7 +13,7 @@ function canonicalTimeZone(value: unknown): string | undefined {
   }
 }
 
-/** Derive once from the persisted input timestamp, never from a model-round clock. */
+/** Shared by conversation, Assistant and webhook input. Derive once from the persisted timestamp. */
 export function createTurnTimeContext(input: TurnTimeContextInput): string {
   const instant = new Date(input.createdAt);
   if (!Number.isFinite(instant.getTime())) throw new Error("Invalid turn timestamp for time context.");

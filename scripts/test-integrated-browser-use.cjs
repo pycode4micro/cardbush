@@ -244,6 +244,10 @@ async function run() {
   assert.deepEqual(await restarted.inheritScope('personal-assistant','new-child-after-restart'),{inherited:false},'missing tabs cannot block unrelated child tasks');
   await assert.rejects(restarted.request('tabs.list',{scopeId:'new-child-after-restart'}),error=>error.code==='cardbush_browser_reselect_required');
   assert.equal(externalCalls.length,externalBefore);
+  await restarted.request('browser.select',{scopeId:'new-child-after-restart',connectionId:'cardbush'});
+  assert.deepEqual(await restarted.request('tabs.list',{scopeId:'new-child-after-restart'}),{pages:[],selectedPageId:null,selectionState:'none'},
+    'a child can explicitly select CardBush for new work without requiring a user @ or restoring old grants');
+  await assert.rejects(restarted.request('tabs.activate',{scopeId:'new-child-after-restart',tabId:pageId}),error=>error.code==='cardbush_page_not_authorized');
   success(await call('select_browser',{connectionId:externalId}));
   assert.equal(success(await call('list_pages')).selectedPageId,637760547);
   success(await call('select_browser',{connectionId:externalId},assistantChild));

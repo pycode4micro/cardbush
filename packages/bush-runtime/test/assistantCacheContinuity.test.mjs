@@ -98,6 +98,43 @@ test('new input arriving during a tool keeps the old exchange intact and enters 
   validateConversation(requests[2].messages);
 });
 
+test('Assistant timestamps each input and task result once, preserving clocks across retries and restart', async t => {
+  const requests = [];
+  const f = fixture(t, { async *stream(request) {
+    requests.push(structuredClone(request)); yield* reply(request, { text: 'Ready.' });
+  } });
+  const send = async (app, key, createdAt) => {
+    app.assistant.command({ action: 'turn', sessionId: id, entry: { ...entry(key), createdAt }, parent, profile: assistantProfileSchema.parse({}) });
+    await until(() => !app.read().busy); assert.equal(app.read().error, '');
+  };
+  const clocks = request => request.messages.filter(m => m.name === 'turn_runtime_context');
+  const first = f.create();
+  await send(first, 'old day', '2026-11-02T07:58:00.000Z');
+  const oldPrefix = requests.at(-1).messages;
+  first.assistant.close();
+  const restarted = f.create();
+  await send(restarted, 'today', '2026-11-04T04:47:39.000Z');
+  assert.deepEqual(requests.at(-1).messages.slice(0, oldPrefix.length), oldPrefix);
+  assert.equal(clocks(requests.at(-1)).length, 2);
+  assert.match(clocks(requests.at(-1)).at(-1).content, /Snapshot at message submission \(UTC\): 2026-11-04T04:47:39.000Z/);
+  assert.equal(requests.at(-1).messages.at(-2).name, 'turn_runtime_context');
+  assert.equal(requests.at(-1).messages.at(-1).content, 'today');
+  const retry = async () => {
+    restarted.assistant.command({ action: 'retry', sessionId: id, parent, profile: assistantProfileSchema.parse({}) });
+    await until(() => !restarted.read().busy); assert.equal(restarted.read().error, '');
+  };
+  await retry();
+  assert.equal(clocks(requests.at(-1)).length, 2, 'retry must not replace a submitted timestamp or duplicate context');
+  restarted.journal.append(id, { ...entry('task-result', 'Task finished.'), source: 'task', createdAt: '2026-11-04T04:51:01.000Z' });
+  await retry();
+  assert.equal(clocks(requests.at(-1)).length, 3);
+  assert.match(clocks(requests.at(-1)).at(-1).content, /2026-11-04T04:51:01.000Z/);
+  assert.equal(requests.at(-1).messages.at(-1).name, 'background_task_result');
+  assert.ok(clocks(requests.at(-1)).every(m => m.visibility === 'internal'));
+  assert.ok(!restarted.read().entries.some(e => e.content.includes('<time_context>')), 'clock metadata stays outside visible chat text');
+  requests.forEach(request => validateConversation(request.messages));
+});
+
 test('interrupted persisted tools receive an explicit unknown receipt without replaying side effects', async t => {
   const requests = [];
   const f = fixture(t, { async *stream(request) { requests.push(request); yield* reply(request, { text: 'Check current state first.' }); } }, () => assert.fail('must not redispatch'));
@@ -123,7 +160,8 @@ test('large configured assistant context is not compacted at the old 20k-charact
   for (let i = 0; i < 8; i++) app.journal.append(id, entry(`old-${i}`, `Important context ${i}. `.repeat(400)));
   app.send('latest'); await until(() => !app.read().busy);
   assert.equal(app.read().error, ''); assert.equal(requests.length, 1);
-  assert.equal(requests[0].messages.filter(m => m.role === 'user').length, 9);
+  assert.equal(requests[0].messages.filter(m => m.role === 'user' && !m.name).length, 9);
+  assert.equal(requests[0].messages.filter(m => m.name === 'turn_runtime_context').length, 9);
   assert.ok(!requests[0].tools.some(tool => tool.name === 'checkpoint_context'));
 });
 

@@ -1,4 +1,4 @@
-import { runtimeSessionTurnRequestSchema, assistantProfileSchema, type SessionSnapshot } from '@cardbush/bush-protocol';
+import { createTurnTimeContext, runtimeSessionTurnRequestSchema, assistantProfileSchema, type SessionSnapshot } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { WebhookBinding } from './contextWebhookTypes.js';
@@ -21,7 +21,10 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
   if (!snapshot) throw new WebhookError('context_deleted', 404);
   const parent = structuredClone(binding.parent);
   parent.requestId = turnId; parent.turnId = turnId;
-  parent.inputMessages = [{ messageId: inputId, createdAt: new Date().toISOString(), message: { role: 'user', content: message.text },
+  const createdAt = new Date().toISOString();
+  parent.inputMessages = [{ messageId: `${inputId}:turn-context`, createdAt,
+    message: { role: 'user', name: 'turn_runtime_context', visibility: 'internal', content: createTurnTimeContext({ createdAt }) } },
+    { messageId: inputId, createdAt, message: { role: 'user', content: message.text },
     metadata: { externalMessage: { messageId: message.messageId, senderId: message.senderId, conversationId: message.conversationId } } }];
   delete parent.supersession;
   if (binding.kind === 'assistant') {
@@ -32,7 +35,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
       if (recovering) return { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
       await runtime.command('runtime.assistant_conversation', { action: 'turn', sessionId, generation: binding.generation,
         profile: binding.profile, parent: { ...parent, metadata: { ...parent.metadata, assistantOutputMode: 'text' } },
-        entry: { id: inputId, originTurnId: turnId, role: 'user', source: 'text', visibility: 'conversation', content: message.text, createdAt: new Date().toISOString() } });
+        entry: { id: inputId, originTurnId: turnId, role: 'user', source: 'text', visibility: 'conversation', content: message.text, createdAt } });
     }
     for (;;) {
       signal.throwIfAborted(); journal = await read();
