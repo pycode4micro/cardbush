@@ -15,6 +15,7 @@ export type ContextWebhookConnection = ContextWebhookConfig & {
 };
 export type ContextWebhookSnapshot = {
   listening: boolean; host: string; port: number; error?: string; connections: ContextWebhookConnection[];
+  pairings: Array<{ requestId: string; name: string; replyUrl: string }>;
 };
 export type ContextWebhookApi = {
   command(input: { action: string; [key: string]: unknown }): Promise<unknown>;

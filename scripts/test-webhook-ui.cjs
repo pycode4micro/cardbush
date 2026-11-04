@@ -29,9 +29,14 @@ async function build(directory) {
         import {TopBar} from ${file('src/components/TopBar.tsx')};
         import {uiText} from ${file('src/i18n/index.ts')};
         import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
-        window.fixture={t:uiText,commands:[],prepared:[],disposed:0,connections:[],host:'127.0.0.1',port:4791};
+        window.fixture={t:uiText,commands:[],prepared:[],disposed:0,connections:[],pairings:[],host:'127.0.0.1',port:4791};
         window.cardbushDesktop={webhooks:{command:async input=>{
           fixture.commands.push(structuredClone(input));
+          if(input.action==='approve_pairing'){
+            const pending=fixture.pairings.find(p=>p.requestId===input.requestId);fixture.pairings=fixture.pairings.filter(p=>p!==pending);
+            fixture.connections.push({id:crypto.randomUUID(),name:pending.name,enabled:true,url:pending.replyUrl,headers:{},parameters:{},body:{},incoming:{},sessionId:input.binding.sessionId,kind:input.binding.kind,token:'fixture-token',endpoint:'http://127.0.0.1:4791/fixture',pending:0});
+          }
+          if(input.action==='reject_pairing')fixture.pairings=fixture.pairings.filter(p=>p.requestId!==input.requestId);
           if(input.action==='save'){
             if(!input.config.headers||Array.isArray(input.config.headers))throw Error('invalid_parameters');
             const id=input.config.id??crypto.randomUUID();fixture.connections=fixture.connections.filter(c=>c.id!==id);
@@ -40,7 +45,7 @@ async function build(directory) {
           if(input.action==='delete')fixture.connections=fixture.connections.filter(c=>c.id!==input.id);
           if(input.action==='listener'){fixture.host=input.host;fixture.port=input.port;}
           if(input.action==='test')return {delivered:true};
-          return {host:fixture.host,port:fixture.port,listening:fixture.connections.some(c=>c.enabled),connections:fixture.connections.filter(c=>c.sessionId===(input.sessionId??input.binding?.sessionId))};
+          return {host:fixture.host,port:fixture.port,listening:true,pairings:fixture.pairings,connections:fixture.connections.filter(c=>c.sessionId===(input.sessionId??input.binding?.sessionId))};
         }}};
         Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{fixture.copied=text}}});
         function Fixture(){const [language,setLanguage]=useState('zh'),[theme,setTheme]=useState('dark'),[sessionId,setSession]=useState('existing-chat');
@@ -69,7 +74,24 @@ function run() {
     try {
       await win.loadFile(path.join(directory, 'index.html')); await until('!!document.querySelector("[data-webhook-connect]")');
       assert.equal(await read('document.querySelector("[data-webhook-connect]").disabled'), false);
-      await click('[data-webhook-connect]'); await until('!!document.querySelector(".webhook-dialog fieldset:not(:disabled)")');
+      await click('[data-webhook-connect]'); await until('!!document.querySelector(".webhook-empty")');
+      assert.equal(await read('document.querySelectorAll(".webhook-dialog input,.webhook-dialog textarea").length'), 0, 'first connection requires no address/token form');
+      await read("fixture.pairings=[{requestId:crypto.randomUUID(),name:'Local Bot',replyUrl:'http://127.0.0.1:4792/reply'}];void 0");
+      await until('!!document.querySelector("[data-pairing]")');
+      assert.equal(await read('fixture.prepared.length'), 0, 'discovery does not prepare a model or export context');
+      fs.writeFileSync(path.join(directory, 'quick-connect-dark.png'), (await win.webContents.capturePage()).toPNG());
+      await click('.webhook-pair-action'); await until('!!document.querySelector("[data-connection]")');
+      assert.equal(await read('fixture.commands.find(c=>c.action==="approve_pairing").binding.sessionId'), 'existing-chat');
+      assert.equal(await read('fixture.connections.length'), 1);
+      for (const [language,theme] of [['zh','dark'],['en','bright']]) {
+        win.setContentSize(390,740); await read(`fixture.language('${language}');fixture.theme('${theme}');document.documentElement.lang='${language}';void 0`); await pause(100);
+        assert.equal(await read('document.querySelector(".settings-dialog-body").scrollWidth<=document.querySelector(".settings-dialog-body").clientWidth'), true);
+        fs.writeFileSync(path.join(directory, `quick-connected-${theme}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      await read("fixture.language('zh');fixture.theme('dark');document.documentElement.lang='zh';void 0");
+      await button('webhook.delete'); await until('!document.querySelector("[data-connection]")');
+      await read('fixture.prepared=[];fixture.disposed=0;fixture.commands=[];void 0'); win.setContentSize(980,800);
+      await button('webhook.manual'); await until('!!document.querySelector(".webhook-dialog fieldset:not(:disabled)")');
       assert.ok(await read('document.querySelector(".settings-dialog-header").textContent.includes("existing-chat")'));
       await fill('webhook-name', 'My bot'); await fill('webhook-url', 'https://bot.example/reply');
       await click('.webhook-dialog details summary'); await fill('webhook-headers', '{"Authorization":"Bearer custom"}');
@@ -101,7 +123,8 @@ function run() {
         fs.writeFileSync(path.join(directory, `${language}-${theme}.png`), (await win.webContents.capturePage()).toPNG());
       }
       await read("fixture.session('personal-assistant');void 0"); await until('!document.querySelector(".webhook-dialog")');
-      await click('[data-webhook-connect]'); await until('!!document.querySelector(".webhook-dialog fieldset:not(:disabled)")');
+      await click('[data-webhook-connect]'); await until('!!document.querySelector(".webhook-quick-dialog")'); await button('webhook.manual');
+      await until('!!document.querySelector(".webhook-dialog fieldset:not(:disabled)")');
       assert.equal(await read('!!document.querySelector(".webhook-endpoint")'), false, 'connection list is scoped to current context');
       await button('webhook.save'); await until('!!document.querySelector(".webhook-endpoint")');
       assert.equal(await read('fixture.commands.filter(c=>c.action==="save").at(-1).binding.generation'), 3);

@@ -4256,7 +4256,7 @@
     "browser.extension.authorization.expired": "此请求已结束。请关闭此页，需要时从 Browser Use 重试。",
     "browser.extension.authorization.scope": "会话：{name}",
     "browser.extension.authorization.unsupportedCommand": "此调试命令超出了支持的页面操作范围。",
-    "webhook.open": "连接 Webhook",
+    "webhook.open": "连接服务",
     "webhook.unavailable": "开始本机会话后可连接 Webhook",
     "webhook.title": "Webhook 连接",
     "webhook.binding": "绑定当前上下文：{title}",
@@ -4302,6 +4302,17 @@
     "webhook.copied": "已复制",
     "webhook.loadFailed": "无法读取 Webhook 连接，请检查 Runtime 状态后重试。",
     "webhook.operationFailed": "Webhook 操作未完成：{code}",
-    "webhook.receiveHelp": "把接收地址和令牌填入你的 Bot 服务，即可在此会话中收发消息。"
+    "webhook.receiveHelp": "把接收地址和令牌填入你的 Bot 服务，即可在此会话中收发消息。",
+    "webhook.quickTitle": "连接服务",
+    "webhook.quickHelp": "本机服务会自动出现在这里。点击连接，即可在当前会话中收发消息，无需复制地址或令牌。",
+    "webhook.availableServices": "等待连接",
+    "webhook.connectedServices": "已连接的服务",
+    "webhook.localService": "本机服务",
+    "webhook.connect": "连接",
+    "webhook.dismiss": "忽略",
+    "webhook.connected": "已连接到当前会话",
+    "webhook.manage": "设置",
+    "webhook.manual": "手动配置（高级）",
+    "webhook.localEmpty": "还没有发现服务。启动支持 Cardbush 协议的本机 Bot 后，无需填写地址即可在这里连接。"
   }
 }

@@ -7,16 +7,18 @@ import { writePrivateJson } from './atomicJsonFile.mjs';
 import { webhookConfigSchema, WebhookError, incomingMessage, webhookHash, deliverWebhook, type WebhookMessage } from './contextWebhookProtocol.mjs';
 import { webhookBindingSchema, runContextWebhook, type WebhookRuntime, type WebhookResult } from './contextWebhookRuntime.mjs';
 import type { ContextWebhookConfig, ContextWebhookSnapshot, WebhookBinding } from './contextWebhookTypes.js';
+import { contextWebhookPort, contextWebhookProtocol } from './contextWebhookDefaults.js';
+import { localPairingSchema, localPairingConfig, assertLocalPairingRequest, readWebhookJson, type LocalWebhookPairing } from './contextWebhookPairing.mjs';
 
 type Connection = ContextWebhookConfig & { id: string; token: string; binding: WebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string };
 type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: WebhookBinding;
   status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
-type State = { version: 1; host: string; port: number; connections: Connection[]; receipts: Receipt[] };
+type State = { version: 1; host: string; port: number; connections: Connection[]; receipts: Receipt[]; pairings: LocalWebhookPairing[] };
 const terminal = (status: Receipt['status']) => !['accepted', 'running'].includes(status);
 const serializeError = (error: unknown) => error instanceof WebhookError ? error.code : error instanceof z.ZodError ? 'invalid_parameters' : 'service_unavailable';
 
 export class ContextWebhookHost {
-  private state: State = { version: 1, host: '127.0.0.1', port: 4791, connections: [], receipts: [] };
+  private state: State = { version: 1, host: '127.0.0.1', port: contextWebhookPort, connections: [], receipts: [], pairings: [] };
   private server?: Server;
   private listenerError?: string;
   private writes: Promise<unknown> = Promise.resolve();
@@ -38,6 +40,7 @@ export class ContextWebhookHost {
       const state = JSON.parse(this.secrets.decrypt(saved.encrypted)) as State;
       if (state.version !== 1 || !Array.isArray(state.connections) || !Array.isArray(state.receipts)) throw new WebhookError('storage_invalid');
       for (const c of state.connections) { webhookConfigSchema.parse(this.config(c)); webhookBindingSchema.parse(c.binding); }
+      state.pairings ??= [];
       this.state = state;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     if (this.options.port !== undefined) this.state.port = this.options.port;
@@ -64,8 +67,10 @@ export class ContextWebhookHost {
   }
   private snapshot(sessionId: string): ContextWebhookSnapshot {
     const address = this.server?.address(); const port = address && typeof address === 'object' ? address.port : this.state.port;
-    const host = this.state.host.includes(':') ? `[${this.state.host}]` : this.state.host;
+    const host = this.state.host === '0.0.0.0' ? '127.0.0.1' : this.state.host.includes(':') ? `[${this.state.host}]` : this.state.host;
     return { listening: Boolean(address), host: this.state.host, port, error: this.listenerError,
+      pairings: this.state.pairings.filter(p => p.status === 'pending' && p.expiresAt > Date.now())
+        .map(p => ({ requestId: p.requestId, name: p.name, replyUrl: p.replyUrl })),
       connections: this.state.connections.filter(c => c.binding.sessionId === sessionId).map(c => ({ ...this.config(c), id: c.id,
         sessionId, kind: c.binding.kind, token: c.token, endpoint: `http://${host}:${port}/api/webhooks/v1/${c.id}/messages`,
         pending: this.state.receipts.filter(r => r.connectionId === c.id && (!terminal(r.status) || !r.delivered)).length,
@@ -81,9 +86,25 @@ export class ContextWebhookHost {
       z.object({ action: z.literal('save'), config: webhookConfigSchema, binding: webhookBindingSchema }).strict(),
       z.object({ action: z.literal('delete'), id: z.string().uuid(), sessionId: z.string().min(1) }).strict(),
       z.object({ action: z.literal('test'), config: webhookConfigSchema, text: z.string().min(1).max(500) }).strict(),
+      z.object({ action: z.literal('approve_pairing'), requestId: z.string().uuid(), binding: webhookBindingSchema }).strict(),
+      z.object({ action: z.literal('reject_pairing'), requestId: z.string().uuid(), sessionId: z.string().min(1) }).strict(),
       z.object({ action: z.literal('listener'), host: z.enum(['127.0.0.1', '0.0.0.0', '::1']), port: z.number().int().min(1024).max(65535), sessionId: z.string().min(1) }).strict(),
     ]).parse(input);
     if (request.action === 'read') return this.snapshot(request.sessionId);
+    if (request.action === 'approve_pairing' || request.action === 'reject_pairing') {
+      if (request.action === 'approve_pairing' && !await this.runtime.command('runtime.get_session', { sessionId: request.binding.sessionId })) throw new WebhookError('context_deleted');
+      await this.write(state => {
+        const pending = state.pairings.find(p => p.requestId === request.requestId);
+        if (!pending || pending.expiresAt <= Date.now()) throw new WebhookError('pairing_expired');
+        if (pending.status !== 'pending') throw new WebhookError('pairing_already_handled');
+        if (request.action === 'reject_pairing') pending.status = 'rejected';
+        else {
+          const connection = this.saveConnection(state, localPairingConfig(pending), request.binding);
+          pending.status = 'connected'; pending.connectionId = connection.id;
+        }
+      });
+      return this.snapshot(request.action === 'approve_pairing' ? request.binding.sessionId : request.sessionId);
+    }
     if (request.action === 'test') {
       if (!request.config.url) throw new WebhookError('reply_url_required');
       await deliverWebhook(request.config, { protocol: 'cardbush.webhook.v1', type: 'connection.test', eventId: randomUUID(),
@@ -106,46 +127,85 @@ export class ContextWebhookHost {
     } else {
       const config = request.config, binding = request.binding;
       if (!await this.runtime.command('runtime.get_session', { sessionId: binding.sessionId })) throw new WebhookError('context_deleted');
-      await this.write(state => {
-        const previous = config.id ? state.connections.find(c => c.id === config.id) : undefined;
-        if (config.id && (!previous || previous.binding.sessionId !== binding.sessionId || previous.binding.kind !== binding.kind)) throw new WebhookError('binding_mismatch');
-        if (!previous && state.connections.length >= 32) throw new WebhookError('connection_limit');
-        // Keep no copied chat history or ephemeral input in the saved request policy.
-        const parent = { ...binding.parent, inputMessages: [{ messageId: 'binding', message: { role: 'user' as const, content: 'Webhook binding' } }] };
-        delete parent.supersession;
-        const next: Connection = { ...config, id: previous?.id ?? randomUUID(), token: previous?.token ?? randomBytes(32).toString('hex'),
-          binding: { ...binding, parent }, lastReceivedAt: previous?.lastReceivedAt, lastDeliveredAt: previous?.lastDeliveredAt };
-        state.connections = [...state.connections.filter(c => c.id !== next.id), next];
-      });
+      await this.write(state => this.saveConnection(state, config, binding));
     }
     await this.listen(); this.pump();
     return this.snapshot(request.action === 'save' ? request.binding.sessionId : request.sessionId);
   }
+  private saveConnection(state: State, config: ContextWebhookConfig, binding: WebhookBinding) {
+    const previous = config.id ? state.connections.find(c => c.id === config.id) : undefined;
+    if (config.id && (!previous || previous.binding.sessionId !== binding.sessionId || previous.binding.kind !== binding.kind)) throw new WebhookError('binding_mismatch');
+    if (!previous && state.connections.length >= 32) throw new WebhookError('connection_limit');
+    const parent = { ...binding.parent, inputMessages: [{ messageId: 'binding', message: { role: 'user' as const, content: 'Webhook binding' } }] };
+    delete parent.supersession;
+    const next: Connection = { ...config, id: previous?.id ?? randomUUID(), token: previous?.token ?? randomBytes(32).toString('hex'),
+      binding: { ...binding, parent }, lastReceivedAt: previous?.lastReceivedAt, lastDeliveredAt: previous?.lastDeliveredAt };
+    state.connections = [...state.connections.filter(c => c.id !== next.id), next]; return next;
+  }
+  private pairingResult(pairing: LocalWebhookPairing) {
+    if (pairing.expiresAt <= Date.now()) throw new WebhookError('pairing_expired', 410);
+    const connection = pairing.connectionId && this.state.connections.find(c => c.id === pairing.connectionId && c.enabled);
+    const result = { protocol: contextWebhookProtocol, requestId: pairing.requestId, status: pairing.status };
+    if (pairing.status !== 'connected') return result;
+    if (!connection) return { ...result, status: 'revoked' };
+    const view = this.snapshot(connection.binding.sessionId).connections.find(c => c.id === connection.id)!;
+    return { ...result, connection: { id: connection.id, endpoint: view.endpoint, token: connection.token,
+      sessionId: connection.binding.sessionId, title: connection.binding.title } };
+  }
   private async listen() {
-    if (this.server || !this.state.connections.some(c => c.enabled)) {
-      if (this.server && !this.state.connections.some(c => c.enabled)) await this.closeListener();
-      return;
-    }
+    // Local discovery is available before the first connection is configured.
+    if (this.server) return;
     const server = createServer((req, res) => {
       const json = (status: number, value: unknown) => { if (!res.destroyed) res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify(value)); };
       void (async () => {
+        if (req.url === '/api/webhooks/v1/discovery' && req.method === 'GET') {
+          assertLocalPairingRequest(req);
+          json(200, { protocol: contextWebhookProtocol, capabilities: ['local_pairing'], pairingPath: '/api/webhooks/v1/pairings' }); return;
+        }
+        const pairingPath = /^\/api\/webhooks\/v1\/pairings(?:\/([\w-]+))?$/.exec(req.url ?? '');
+        if (pairingPath) {
+          assertLocalPairingRequest(req);
+          const secret = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.authorization ?? '')?.[1];
+          if (!secret) throw new WebhookError('unauthorized', 401);
+          const secretHash = webhookHash(secret);
+          if (req.method === 'POST' && !pairingPath[1]) {
+            const input = localPairingSchema.parse(await readWebhookJson(req, 16 * 1024)); localPairingConfig(input);
+            const pairing = await this.write(state => {
+              state.pairings = state.pairings.filter(p => p.expiresAt > Date.now());
+              const existing = state.pairings.find(p => p.requestId === input.requestId);
+              if (existing) {
+                if (existing.secretHash !== secretHash) throw new WebhookError('unauthorized', 401);
+                if (existing.name !== input.name || existing.replyUrl !== input.replyUrl || webhookHash(existing.replyHeaders) !== webhookHash(input.replyHeaders)) throw new WebhookError('pairing_conflict', 409);
+                return existing;
+              }
+              if (state.pairings.length >= 64) throw new WebhookError('pairing_limit', 429);
+              const next: LocalWebhookPairing = { ...input, secretHash, expiresAt: Date.now() + 10 * 60000, status: 'pending' };
+              state.pairings.push(next); return next;
+            });
+            json(202, this.pairingResult(pairing)); return;
+          }
+          if (req.method === 'GET' && pairingPath[1]) {
+            const pairing = this.state.pairings.find(p => p.requestId === pairingPath[1]);
+            if (!pairing || pairing.secretHash !== secretHash) throw new WebhookError('unauthorized', 401);
+            json(200, this.pairingResult(pairing)); return;
+          }
+          throw new WebhookError('endpoint_not_found', 404);
+        }
         const match = /^\/api\/webhooks\/v1\/([\w-]+)\/messages(?:\/([^/?]+))?$/.exec(req.url ?? '');
         const connection = match && this.state.connections.find(c => c.id === match[1] && c.enabled);
         if (!connection || req.headers.origin !== undefined) throw new WebhookError('unauthorized', 401);
         const wanted = Buffer.from(`Bearer ${connection.token}`), received = Buffer.from(req.headers.authorization ?? '');
         if (wanted.length !== received.length || !timingSafeEqual(wanted, received)) throw new WebhookError('unauthorized', 401);
+        if (req.method === 'GET' && !match![2]) {
+          json(200, { protocol: contextWebhookProtocol, type: 'connection.info', sessionId: connection.binding.sessionId, title: connection.binding.title }); return;
+        }
         if (req.method === 'GET' && match![2]) {
           const messageId = decodeURIComponent(match![2]); const record = this.state.receipts.find(r => r.connectionId === connection.id && r.message.messageId === messageId);
           if (!record) throw new WebhookError('message_not_found', 404);
           json(200, this.receipt(record)); return;
         }
         if (req.method !== 'POST' || match![2]) throw new WebhookError('endpoint_not_found', 404);
-        if (req.headers['content-type']?.split(';')[0].trim() !== 'application/json') throw new WebhookError('json_required', 415);
-        const chunks: Buffer[] = []; let size = 0;
-        for await (const chunk of req.iterator({ destroyOnReturn: false })) {
-          size += chunk.length; if (size > 128 * 1024) throw new WebhookError('body_too_large', 413); chunks.push(Buffer.from(chunk));
-        }
-        let body: unknown; try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new WebhookError('invalid_json'); }
+        const body = await readWebhookJson(req);
         const message = incomingMessage(body, connection.incoming), fingerprint = webhookHash(message);
         const receipt = await this.write(state => {
           if (!state.connections.some(c => c.id === connection.id && c.enabled)) throw new WebhookError('connection_disabled', 409);

@@ -6,11 +6,11 @@ import type { ContextWebhookApi, ContextWebhookConfig, ContextWebhookConnection,
 import { SettingsFormDialog } from '../settings/SettingsFormDialog';
 import { prepareWebhookBinding } from './webhookBinding';
 import './webhooks.css';
+import { contextWebhookBody, contextWebhookIncoming, contextWebhookPort } from '../../../electron/contextWebhookDefaults';
 
-const defaultBody = { protocol: 'cardbush.webhook.v1', type: '{{type}}', eventId: '{{eventId}}', sequence: '{{sequence}}', messageId: '{{messageId}}', sessionId: '{{sessionId}}',
-  conversationId: '{{conversationId}}', senderId: '{{senderId}}', status: '{{status}}', reply: '{{reply}}', errorCode: '{{errorCode}}' };
+const defaultBody = contextWebhookBody;
 const defaults = (): ContextWebhookConfig => ({ name: 'Webhook', enabled: true, url: '', headers: {}, parameters: {}, body: defaultBody,
-  incoming: { messageId: 'messageId', text: 'text', senderId: 'senderId', conversationId: 'conversationId' } });
+  incoming: contextWebhookIncoming });
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 type Props = { language: string; sessionId: string; title: string; kind: WebhookBinding['kind']; prepare?: () => Promise<ChatStreamRequest> };
 export function WebhookConnectionButton(props: Props) {
@@ -21,10 +21,60 @@ export function WebhookConnectionButton(props: Props) {
     <button type="button" className="topbar-inspector-action icon-only webhook-connect-button" data-webhook-connect
       disabled={!available} aria-label={t('webhook.open')} title={t(available ? 'webhook.open' : 'webhook.unavailable')}
       onClick={() => setOpen(true)}><Webhook aria-hidden="true"/></button>
-    {open && available && <WebhookConnectionDialog key={props.sessionId} {...props} onClose={() => setOpen(false)}/>}
+    {open && available && <QuickWebhookDialog key={props.sessionId} {...props} onClose={() => setOpen(false)}/>}
   </>;
 }
-export function WebhookConnectionDialog({ language, sessionId, title, kind, prepare, onClose }: Props & { onClose(): void }) {
+function QuickWebhookDialog(props: Props & { onClose(): void }) {
+  const t = uiText(props.language), mounted = useRef(true), operation = useRef(false);
+  const [snapshot, setSnapshot] = useState<ContextWebhookSnapshot>(), [manual, setManual] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const command = (input: Parameters<ContextWebhookApi['command']>[0]) => window.cardbushDesktop!.webhooks!.command(input);
+  useEffect(() => {
+    mounted.current = true;
+    const refresh = async () => {
+      try { const next = await command({ action: 'read', sessionId: props.sessionId }) as ContextWebhookSnapshot;
+        if (mounted.current) setSnapshot(next); }
+      catch { if (mounted.current) setError('webhook_unavailable'); }
+    };
+    void refresh(); const timer = setInterval(() => void refresh(), 1500);
+    return () => { mounted.current = false; clearInterval(timer); };
+  }, [props.sessionId, manual]);
+  const perform = async (work: () => Promise<unknown>) => {
+    if (operation.current) return; operation.current = true; setBusy(true); setError('');
+    try { const next = await work(); if (mounted.current) setSnapshot(next as ContextWebhookSnapshot); }
+    catch (e) { if (mounted.current) setError(e instanceof Error && /[a-z_0-9]+$/.exec(e.message)?.[0] || 'request_failed'); }
+    finally { operation.current = false; if (mounted.current) setBusy(false); }
+  };
+  if (manual !== null) return <WebhookConnectionDialog {...props} initialId={manual} onClose={() => setManual(null)}/>;
+  return <SettingsFormDialog className="webhook-dialog webhook-quick-dialog" language={props.language} title={t('webhook.quickTitle')}
+    description={t('webhook.binding', { title: props.title })} busy={busy} onCancel={props.onClose} onSubmit={() => {}}
+    footer={<><button type="button" className="webhook-manual" disabled={busy} onClick={() => setManual('')}>{t('webhook.manual')}</button>
+      <button type="button" disabled={busy} onClick={props.onClose}>{t('common.close')}</button></>}>
+    <p className="webhook-quick-intro">{t('webhook.quickHelp')}</p>
+    {!snapshot && !error && <p role="status">{t('common.loading')}</p>}
+    {snapshot?.error && <p role="alert">{t('webhook.operationFailed', { code: snapshot.error })}</p>}
+    {!!snapshot?.pairings?.length && <section className="webhook-service-list" aria-label={t('webhook.availableServices')}>
+      <h3>{t('webhook.availableServices')}</h3>
+      {snapshot.pairings.map(pairing => <div key={pairing.requestId} className="webhook-service" data-pairing={pairing.requestId}>
+        <div className="webhook-service-name"><Webhook aria-hidden="true"/><div><strong>{pairing.name}</strong><span>{t('webhook.localService')}</span></div></div>
+        <button type="button" disabled={busy} className="webhook-pair-action" onClick={() => void perform(async () => command({ action: 'approve_pairing', requestId: pairing.requestId,
+          binding: await prepareWebhookBinding(props.prepare!, props.kind, props.sessionId, props.title) }))}>{t('webhook.connect')}</button>
+        <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'reject_pairing', requestId: pairing.requestId, sessionId: props.sessionId }))}>{t('webhook.dismiss')}</button>
+      </div>)}
+    </section>}
+    {!!snapshot?.connections.length && <section className="webhook-service-list" aria-label={t('webhook.connectedServices')}>
+      <h3>{t('webhook.connectedServices')}</h3>
+      {snapshot.connections.map(connection => <div key={connection.id} className="webhook-service" data-connection={connection.id}>
+        <div className="webhook-service-name"><Webhook aria-hidden="true"/><div><strong>{connection.name}</strong><span>{t(connection.enabled ? 'webhook.connected' : 'webhook.paused')}</span></div></div>
+        <button type="button" disabled={busy} onClick={() => setManual(connection.id)}>{t('webhook.manage')}</button>
+        <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'delete', id: connection.id, sessionId: props.sessionId }))}>{t('webhook.delete')}</button>
+      </div>)}
+    </section>}
+    {snapshot && !snapshot.pairings?.length && !snapshot.connections.length && <div className="webhook-empty" role="status">{t('webhook.localEmpty')}</div>}
+    {error && <p role="alert">{t('webhook.operationFailed', { code: error })}</p>}
+  </SettingsFormDialog>;
+}
+export function WebhookConnectionDialog({ language, sessionId, title, kind, prepare, onClose, initialId }: Props & { onClose(): void; initialId?: string }) {
   const t = uiText(language), mounted = useRef(true), operation = useRef(false);
   const [snapshot, setSnapshot] = useState<ContextWebhookSnapshot>();
   const [config, setConfig] = useState<ContextWebhookConfig>(defaults);
@@ -32,7 +82,7 @@ export function WebhookConnectionDialog({ language, sessionId, title, kind, prep
   const [body, setBody] = useState(pretty(defaultBody)), [mapping, setMapping] = useState(pretty(defaults().incoming));
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [notice, setNotice] = useState<Parameters<typeof t>[0] | ''>('');
-  const [host, setHost] = useState('127.0.0.1'), [port, setPort] = useState('4791');
+  const [host, setHost] = useState('127.0.0.1'), [port, setPort] = useState(String(contextWebhookPort));
   const selected = snapshot?.connections.find(c => c.id === config.id);
   const command = (input: Parameters<ContextWebhookApi['command']>[0]) => window.cardbushDesktop!.webhooks!.command(input);
   const choose = (connection?: ContextWebhookConnection) => {
@@ -50,7 +100,7 @@ export function WebhookConnectionDialog({ language, sessionId, title, kind, prep
         const next = await command({ action: 'read', sessionId }) as ContextWebhookSnapshot;
         if (!mounted.current) return;
         setSnapshot(next);
-        if (initial) { initial = false; choose(next.connections[0]); setHost(next.host); setPort(String(next.port)); }
+        if (initial) { initial = false; choose(initialId === undefined ? next.connections[0] : next.connections.find(c => c.id === initialId)); setHost(next.host); setPort(String(next.port)); }
       } catch { if (mounted.current) setError('load_failed'); }
       finally { if (mounted.current) setLoading(false); }
     };

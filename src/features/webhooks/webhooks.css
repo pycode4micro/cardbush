@@ -38,3 +38,21 @@
 .webhook-dialog button:hover:not(:disabled) { filter: brightness(.94); }
 @media (prefers-reduced-motion: reduce) { .webhook-toggle input, .webhook-toggle input::after { transition: none; } }
 @media (max-width: 480px) { .webhook-dialog .settings-dialog-footer { flex-wrap: wrap; } }
+.webhook-quick-intro { margin: 0 0 22px; color: var(--text-soft); font-size: 13px; line-height: 1.7; }
+.webhook-service-list + .webhook-service-list { margin-top: 24px; }
+.webhook-service-list h3 { margin: 0 0 12px; font-size: 12px; font-weight: 500; color: var(--text-soft); }
+.webhook-service { display: flex; align-items: center; gap: 8px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.webhook-service-name { display: flex; flex: 1; align-items: center; min-width: 0; gap: 12px; }
+.webhook-service-name > svg { flex: 0 0 auto; width: 20px; height: 20px; color: var(--webhook-accent); }
+.webhook-service-name > div { min-width: 0; display: grid; gap: 5px; }
+.webhook-service-name strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.webhook-service-name span { font-size: 12px; color: var(--text-soft); }
+.webhook-service > button { flex: 0 0 auto; padding: 7px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); font-size: 12px; }
+.webhook-service > .webhook-pair-action { background: var(--text); color: var(--surface); border-color: transparent; }
+.webhook-empty { margin: 20px 0; padding: 22px; border: 1px dashed var(--border); border-radius: 14px; color: var(--text-soft); font-size: 13px; line-height: 1.7; }
+.webhook-manual { margin-right: auto; }
+@media (max-width: 480px) {
+  .webhook-service { display: grid; grid-template-columns: 1fr auto; row-gap: 12px; }
+  .webhook-service-name { grid-column: 1 / -1; }
+  .webhook-service > button:first-of-type { justify-self: end; }
+}

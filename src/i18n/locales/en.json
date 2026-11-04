@@ -4298,7 +4298,7 @@
     "browser.extension.authorization.expired": "This request has ended. Close this page and retry from Browser Use if needed.",
     "browser.extension.authorization.scope": "Session: {name}",
     "browser.extension.authorization.unsupportedCommand": "This debugging command is outside the supported page operations.",
-    "webhook.open": "Connect Webhook",
+    "webhook.open": "Connect a service",
     "webhook.unavailable": "Start a local conversation to connect a Webhook",
     "webhook.title": "Webhook connection",
     "webhook.binding": "Bound to this context: {title}",
@@ -4344,6 +4344,17 @@
     "webhook.copied": "Copied",
     "webhook.loadFailed": "Could not load Webhook connections. Check Runtime status and try again.",
     "webhook.operationFailed": "Webhook operation failed: {code}",
-    "webhook.receiveHelp": "Add this address and token to your bot to exchange messages in this conversation."
+    "webhook.receiveHelp": "Add this address and token to your bot to exchange messages in this conversation.",
+    "webhook.quickTitle": "Connect a service",
+    "webhook.quickHelp": "Local services appear here automatically. Connect one to exchange messages in this conversation, without copying addresses or tokens.",
+    "webhook.availableServices": "Ready to connect",
+    "webhook.connectedServices": "Connected services",
+    "webhook.localService": "Local service",
+    "webhook.connect": "Connect",
+    "webhook.dismiss": "Dismiss",
+    "webhook.connected": "Connected to this conversation",
+    "webhook.manage": "Settings",
+    "webhook.manual": "Manual setup (advanced)",
+    "webhook.localEmpty": "No services found yet. Start a local bot that supports the Cardbush protocol, then connect it here without entering an address."
   }
 }

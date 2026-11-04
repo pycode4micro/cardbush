@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest, Agent } from 'node:http';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry } from '../packages/bush-runtime/dist/index.js';
 import { assistantProfileSchema } from '@cardbush/bush-protocol';
 import { ContextWebhookHost } from '../dist-electron/contextWebhookHost.mjs';
@@ -76,7 +77,8 @@ test('desktop HTTP binding continues the existing Runtime history, routes callba
     assert.deepEqual((await gateway.command({ action: 'read', sessionId: 'another' })).connections, []);
     await assert.rejects(gateway.command({ action: 'save', config: config({ id: reopened.id }), binding: binding('another') }));
     await gateway.command({ action: 'delete', id: reopened.id, sessionId: 'existing' });
-    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).listening, false);
+    assert.equal((await client(reopened).send(message('after-delete'))).status, 401, 'deletion revokes message access while local discovery stays available');
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).listening, true);
   } finally { await gateway?.close(); await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); receiver.closeAllConnections();
     await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });
@@ -114,8 +116,61 @@ test('delivery retry does not call the model again; disabled/deleted bindings st
     const connection = (await gateway.command({ action: 'save', config: cfg, binding: binding() })).connections[0];
     await client(connection).send(message('retry')); await until(() => deliveries >= 2); assert.equal(executions, 1);
     await gateway.command({ action: 'save', config: { ...cfg, id: connection.id, enabled: false }, binding: binding() });
-    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).listening, false);
+    assert.equal((await client(connection).send(message('after-disable'))).status, 401);
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).listening, true);
   } finally { await gateway.close(); receiver.closeAllConnections(); await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
+});
+
+test('generic local pairing exchanges parameters only after desktop authorization and survives restart', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-pairing-')), runtime = { command: async () => ({}) }; let gateway;
+  try {
+    gateway = await new ContextWebhookHost(root, secrets, runtime, { port: 0 }).start();
+    let view = await gateway.command({ action: 'read', sessionId: 'chosen-session' });
+    let base = `http://127.0.0.1:${view.port}`;
+    assert.equal(view.listening, true, 'first-time discovery needs no saved connection');
+    assert.equal((await (await fetch(base + '/api/webhooks/v1/discovery')).json()).protocol, 'cardbush.webhook.v1');
+    assert.equal((await fetch(base + '/api/webhooks/v1/discovery', { headers: { Origin: 'https://example.com' } })).status, 403);
+    const foreignHost = await new Promise((resolve, reject) => {
+      // Bypass inherited environment proxies so the test sends this exact Host header.
+      const req = httpRequest(base + '/api/webhooks/v1/discovery', { agent: new Agent({ proxyEnv: {} }), headers: { Host: 'attacker.example' } }, res => { res.resume(); resolve(res.statusCode); });
+      req.on('error', reject); req.end();
+    });
+    assert.equal(foreignHost, 403);
+    const body = { requestId: randomUUID(), name: 'Independent generic service', replyUrl: 'http://127.0.0.1:4792/reply', replyHeaders: { Authorization: 'Bearer private-callback' } };
+    const headers = { Authorization: 'Bearer ' + 'a'.repeat(64), 'Content-Type': 'application/json' };
+    const post = value => fetch(base + '/api/webhooks/v1/pairings', { method: 'POST', headers, body: JSON.stringify(value) });
+    const poll = () => fetch(base + '/api/webhooks/v1/pairings/' + body.requestId, { headers });
+    assert.equal((await post({ ...body, replyUrl: 'http://example.com/reply' })).status, 400);
+    assert.equal((await post({ ...body, sessionId: 'unapproved' })).status, 400);
+    assert.equal((await post(body)).status, 202); assert.equal((await post(body)).status, 202);
+    const waiting = await (await poll()).json(); assert.equal(waiting.status, 'pending'); assert.equal(waiting.connection, undefined);
+    view = await gateway.command({ action: 'read', sessionId: 'chosen-session' });
+    assert.equal(view.connections.length, 0); assert.equal(view.pairings.length, 1);
+    assert.equal(JSON.stringify(view.pairings).includes('private-callback'), false);
+    await gateway.close(); gateway = await new ContextWebhookHost(root, secrets, runtime, { port: 0 }).start();
+    base = `http://127.0.0.1:${(await gateway.command({ action: 'read', sessionId: 'chosen-session' })).port}`;
+    assert.equal((await (await poll()).json()).status, 'pending');
+    view = await gateway.command({ action: 'approve_pairing', requestId: body.requestId, binding: binding('chosen-session') });
+    const grant = await (await poll()).json(); assert.equal(grant.status, 'connected'); assert.equal(grant.connection.sessionId, 'chosen-session');
+    assert.equal(grant.connection.token, view.connections[0].token); assert.equal(view.pairings.length, 0);
+    assert.equal(view.connections[0].headers.Authorization, body.replyHeaders.Authorization);
+    assert.equal(view.connections[0].body.sequence, '{{sequence}}');
+    assert.equal((await fetch(base + '/api/webhooks/v1/pairings/' + body.requestId, { headers: { Authorization: 'Bearer ' + 'b'.repeat(64) } })).status, 401);
+    await assert.rejects(gateway.command({ action: 'approve_pairing', requestId: body.requestId, binding: binding('another-session') }), /pairing_already_handled/);
+    const info = await fetch(grant.connection.endpoint, { headers: { Authorization: 'Bearer ' + grant.connection.token } });
+    assert.equal((await info.json()).type, 'connection.info');
+    await gateway.command({ action: 'delete', id: grant.connection.id, sessionId: 'chosen-session' });
+    assert.equal((await (await poll()).json()).status, 'revoked');
+    const rejected = { ...body, requestId: randomUUID() }; await post(rejected);
+    await gateway.command({ action: 'reject_pairing', requestId: rejected.requestId, sessionId: 'chosen-session' });
+    assert.equal((await (await fetch(base + '/api/webhooks/v1/pairings/' + rejected.requestId, { headers })).json()).status, 'rejected');
+    const expired = { ...body, requestId: randomUUID() }; await post(expired);
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * 60000 + 1 });
+    assert.equal((await fetch(base + '/api/webhooks/v1/pairings/' + expired.requestId, { headers })).status, 410);
+    await assert.rejects(gateway.command({ action: 'approve_pairing', requestId: expired.requestId, binding: binding('chosen-session') }), /pairing_expired/);
+    assert.deepEqual((await gateway.command({ action: 'read', sessionId: 'chosen-session' })).pairings, []);
+    assert.ok(!(await readFile(join(root, 'webhooks/state.json'), 'utf8')).includes(grant.connection.token));
+  } finally { await gateway?.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test('Assistant background task completion updates only its originating Webhook receipt', { timeout: 20000 }, async () => {
