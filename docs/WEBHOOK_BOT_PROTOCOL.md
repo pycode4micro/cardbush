@@ -113,6 +113,10 @@ Bot 服务必须：
 
 ## 验证
 
-`npm run test:cli-webhooks` 验证 CLI 配对、当前历史/模型、真实 Runtime 工具调用、文件字节、权限来源、重启去重和终端草稿保护。开发目录旁有独立桥仓库时，`npm run test:cli-webhook-bridges` 直接加载两份未修改的桥执行契约测试；也可用 `CARDBUSH_WEIXIN_BRIDGE_DIR` / `CARDBUSH_FEISHU_BRIDGE_DIR` 指定路径。平台网络和模型使用隔离模拟服务，不会发送真实微信或飞书消息。
+`npm run test:cli-webhooks` 验证 CLI 配对、当前历史/模型、真实 Runtime 工具调用、文件字节、权限来源、重启去重和终端草稿保护。`npm run test:cli-webhook-bridges` 默认加载相邻独立项目 `../cardbush-bridges` 中的微信、飞书适配器；可用 `CARDBUSH_BRIDGES_DIR` 指定统一项目，或用旧的 `CARDBUSH_WEIXIN_BRIDGE_DIR` / `CARDBUSH_FEISHU_BRIDGE_DIR` 指定兼容入口。平台网络和模型使用隔离模拟服务，不会发送真实微信或飞书消息。
 
-`npm run test:context-webhooks` 覆盖既有 Webhook、常驻工具、真实 Runtime 工具调用、Assistant 来源、二进制传输、权限、能力及重试。独立微信桥的 `npm run test:cardbush` 验证完整本机 HTTP 链路，腾讯侧使用模拟器；真实微信附件送达需登录账号后的人工验收。
+`npm run test:context-webhooks` 覆盖既有 Webhook、常驻工具、真实 Runtime 工具调用、Assistant 来源、二进制传输、权限、能力及重试。统一桥项目的 `npm run test:cardbush` 验证两个平台的完整本机 HTTP 链路，平台侧使用模拟器；真实附件送达需登录账号后的人工验收。
+
+## 独立桥项目
+
+微信和飞书集中在 [cardbush-bridges](../../cardbush-bridges/README.md)，平台账号、SDK 和发送代码不在 Cardbush 源码中。进入桥项目运行 `npm start` 选择平台，或 `npm start -- feishu` / `npm start -- weixin`；完成配置后可用 `npm start -- all` 同时启动。App 通过目标上下文右上角“连接服务”接入；CLI 使用 `/webhook`。新增平台只需在桥项目注册适配器，继续遵守此通用协议。

@@ -1,4 +1,4 @@
-// Optional cross-repository contract test. Uses the unchanged external bridges;
+// Optional cross-repository contract test. Uses the independent unified bridge project;
 // only their platform network calls and the model are simulated.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,10 +14,13 @@ const tempRoot = resolve('tmp/cli-bridge-contract-tests');
 const wait = () => new Promise(r => setTimeout(r, 30));
 async function until(fn) { for (let n = 0; n < 300; n++) { const value = await fn(); if (value) return value; await wait(); } throw Error('test_timeout'); }
 
-for (const platform of ['weixin', 'feishu']) test(`unmodified ${platform} bridge discovers CLI, continues the bound session and sends a tool file`, { timeout: 60000 }, async () => {
-  const source = resolve(process.env[`CARDBUSH_${platform.toUpperCase()}_BRIDGE_DIR`] || `../cardbush-${platform}-bridge`);
-  const { Bridge } = await import(pathToFileURL(join(source, 'src/bridge.mjs')));
-  const { connectLocalService } = await import(pathToFileURL(join(source, 'src/local-connection.mjs')));
+for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers CLI, continues the bound session and sends a tool file`, { timeout: 60000 }, async () => {
+  const legacy = process.env[`CARDBUSH_${platform.toUpperCase()}_BRIDGE_DIR`];
+  const source = resolve(process.env.CARDBUSH_BRIDGES_DIR || '../cardbush-bridges');
+  const adapter = legacy ? resolve(legacy, 'src') : join(source, 'src/adapters', platform);
+  const shared = legacy ? resolve(legacy, 'src') : join(source, 'src/shared');
+  const { Bridge } = await import(pathToFileURL(join(adapter, 'bridge.mjs')));
+  const { connectLocalService } = await import(pathToFileURL(join(shared, 'local-connection.mjs')));
   await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, platform + '-'));
   const bridgeRoot = join(root, 'bridge'); await mkdir(bridgeRoot);
   const file = join(root, 'contract.txt'), bytes = Buffer.from('微信/飞书桥原样接入 CLI\n'); await writeFile(file, bytes);
