@@ -11,13 +11,13 @@ import ts from 'typescript';
 const source = ts.createSourceFile('main.ts', readFileSync('electron/main.ts', 'utf8'), ts.ScriptTarget.Latest, true);
 const names = ['ensureRuntimeServicesReady', 'ensureRuntimeHostReady', 'startRuntimeServices',
   'disposeRuntimeServices', 'initializeRuntimeHost', 'initializeRuntimeHostWithinDeadline',
-  'withRuntimeStartupTimeout', 'initializeProductHost', 'startRuntimeAutomations', 'runtimeStartupStep'];
+  'withRuntimeStartupTimeout', 'initializeProductHost', 'startRuntimeAutomations', 'runtimeStartupStep', 'contextWebhookHost'];
 const functions = names.map(name => {
   const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.ok(declaration, name); return declaration.getText(source);
 });
 const handlers = ['automation:command', 'cardbush-product-host:command', 'app:retry-runtime',
-  'plugins:troubleshooting-context', 'plugins:save-connections', 'mcp:connection-action'];
+  'plugins:troubleshooting-context', 'plugins:save-connections', 'mcp:connection-action', 'webhooks:command'];
 const registrations = handlers.map(channel => {
   const statement = source.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
     && node.expression.expression.getText(source) === 'ipcMain.handle' && node.expression.arguments[0]?.text === channel);
@@ -36,7 +36,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture(timeout = 2000) {
-  const gates = {}, controllers = [], managers = [], browserEndpoints = [], products = [], calls = [], statuses = [], ipc = new Map();
+  const gates = {}, controllers = [], managers = [], browserEndpoints = [], products = [], calls = [], statuses = [], warnings = [], ipc = new Map();
   const wait = name => gates[name]?.promise ?? Promise.resolve();
   class Controller {
     disposed = false;
@@ -48,18 +48,19 @@ function fixture(timeout = 2000) {
   class Product {
     constructor(options) { this.options = options; products.push(this); }
     async execute(input) { await wait('apps'); return input; }
-    async refreshMcp() { await wait('refresh'); }
+    async refreshMcp(_uninstall, _update, signal) { this.refreshSignal = signal; this.refreshCount = (this.refreshCount ?? 0) + 1; await wait('refresh'); signal?.throwIfAborted(); }
     async pluginTroubleshootingContext() { return 'troubleshooting'; }
     async savePluginConnections() { return 'connections'; }
   }
   const context = {
     Promise, Date, Error, AbortController, setTimeout, clearTimeout,
-    console: { warn() {}, error() {} }, path, pathToFileURL, __dirname: '/fixture',
+    console: { warn(...args) { warnings.push(args); }, error() {} }, path, pathToFileURL, __dirname: '/fixture',
     process: { env: {}, platform: 'win32', arch: 'x64', resourcesPath: '/resources' },
     app: { getPath: () => '/profile', getAppPath: () => '/app', commandLine: { getSwitchValue: () => '' } },
     browserConnectorDataRoot: () => '/connector-profile',
     cardbushRuntimeIsPackaged: false, packagedSmokeMode: false, runtimeServicesStartupTimeoutMs: timeout,
-    runtimeServicesInitialization: null, runtimeServicesAbort: null, runtimeServicesStopping: false,
+    runtimeServicesInitialization: null, runtimeServicesAbort: null, runtimeServicesStopping: false, isQuitting: false, runtimeAutomationStartup: null,
+    contextWebhookHostPromise: undefined, webhookHosts: [],
     runtimeStartupStatus: { phase: 'initializing', attempt: 0 }, runtimeHostController: null,
     productHostController: null, sandboxSetup: undefined, productMcpManagement: null,
     runtimeHostIpc: { reset() {} }, disposeCapabilityCatalogWatcher: undefined,
@@ -78,6 +79,11 @@ function fixture(timeout = 2000) {
     randomUUID: (() => { let id = 0; return () => `operation-${++id}`; })(),
     ipcMain: { handle: (channel, fn) => ipc.set(channel, fn) },
     async loadModule(url) {
+      if (url.endsWith('contextWebhookHost.mjs')) return { ContextWebhookHost: class {
+        constructor(_root, _secrets, runtime) { this.runtime = runtime; context.webhookHosts.push(this); }
+        async start() { this.listening = true; return this; }
+        async command(input) { return { listening: this.listening, sessionId: input.sessionId }; }
+      } };
       if (url.endsWith('sandboxSetup.mjs')) return { SandboxSetup: class { get() { return wait('probe'); } } };
       if (url.endsWith('productMcpManagement.mjs')) return { async startProductMcpManagement() {
         const manager = { url: 'fixture', token: 'fixture', closed: 0, async close() { this.closed++; await wait('close'); } };
@@ -94,7 +100,7 @@ function fixture(timeout = 2000) {
   };
   vm.runInNewContext(code, context);
   const invoke = (channel, ...args) => ipc.get(channel)({ sender: { id: 1 } }, ...args);
-  return { context, gates, controllers, managers, browserEndpoints, products, calls, statuses, invoke };
+  return { context, gates, controllers, managers, browserEndpoints, products, calls, statuses, warnings, invoke };
 }
 
 test('early desktop requests wait for one boot and each dispatches once', async () => {
@@ -167,6 +173,51 @@ test('shutdown blocks new initialization and late automation callbacks', async (
   await assert.rejects(f.context.ensureRuntimeHostReady(), /shutting down/);
   await f.context.startRuntimeServices(true);
   assert.equal(f.controllers.length, 1); assert.equal(f.calls.length, 0);
+  assert.equal(f.products[0].refreshSignal.aborted, true);
+  assert.equal(f.warnings.length, 0, 'expected cancellation must not appear as automation startup failure');
+});
+
+test('automation initialization starts only after all startup steps finish', async () => {
+  const f = fixture(); f.gates.apps = deferred();
+  const boot = f.context.startRuntimeServices(); await flush(); await flush();
+  assert.equal(f.products.length, 1);
+  assert.equal(f.products[0].refreshCount ?? 0, 0, 'catalog initialization must not compete with boot or its deadline');
+  f.gates.apps.resolve(); await boot; await flush();
+  assert.equal(f.products[0].refreshCount, 1);
+  assert.equal(f.calls.filter(item => item.command.kind === 'runtime.automation_start').length, 1);
+});
+
+test('stopped or replaced automation initialization is cancelled without stale warnings', async () => {
+  for (const mode of ['quit', 'retry']) {
+    const f = fixture(); const oldRefresh = deferred(); f.gates.refresh = oldRefresh;
+    await f.context.ensureRuntimeHostReady(); const old = f.products[0];
+    if (mode === 'quit') { f.context.isQuitting = true; await f.context.disposeRuntimeServices(); }
+    else { delete f.gates.refresh; await f.invoke('app:retry-runtime'); }
+    oldRefresh.reject(Error('Runtime Utility Process was stopped.')); await flush(); await flush();
+    assert.equal(old.refreshSignal.aborted, true);
+    assert.equal(f.warnings.length, 0, 'a retired initialization must not report its cancellation as a new failure');
+    assert.equal(f.calls.filter(item => item.command.kind === 'runtime.automation_start').length, mode === 'retry' ? 1 : 0);
+  }
+});
+
+test('a current automation initialization failure remains visible', async () => {
+  const f = fixture(); f.gates.refresh = deferred();
+  await f.context.ensureRuntimeHostReady();
+  f.gates.refresh.reject(Error('actual catalog failure')); await flush();
+  assert.equal(f.warnings.length, 1); assert.match(f.warnings[0][1].message, /actual catalog failure/);
+});
+
+test('Webhook discovery starts independently before, during and after a failed Runtime boot', async () => {
+  const f = fixture(); f.gates.worker = deferred();
+  const first = await f.invoke('webhooks:command', { action: 'read', sessionId: 'existing' });
+  assert.equal(first.listening, true); assert.equal(f.controllers.length, 0, 'reading services cannot launch Runtime');
+  const boot = f.context.startRuntimeServices(); await flush();
+  assert.equal((await f.invoke('webhooks:command', { action: 'read', sessionId: 'existing' })).listening, true);
+  f.gates.worker.reject(Error('worker unavailable')); await boot;
+  assert.equal(f.context.runtimeStartupStatus.phase, 'error');
+  assert.equal((await f.invoke('webhooks:command', { action: 'read', sessionId: 'existing' })).listening, true);
+  assert.equal(f.context.webhookHosts.length, 1, 'late Bot registration keeps using the original HTTP host');
+  assert.equal(f.products[0].refreshCount ?? 0, 0, 'failed boot never starts automation initialization');
 });
 
 test('cleanup failure cannot hide the original startup failure', async () => {

@@ -187,9 +187,12 @@ export class ElectronProductHostController {
     return this.#resolveModel(modelId, 'The selected clean Agent model is not configured. Use list_subagent_options section=settings to select an available model.');
   }
 
-  async refreshMcp(uninstallPluginId?: string, updatePluginId?: string): Promise<unknown> {
+  async refreshMcp(uninstallPluginId?: string, updatePluginId?: string, signal?: AbortSignal): Promise<unknown> {
+    signal?.throwIfAborted();
     await this.#prepareBundledMcp?.();
+    signal?.throwIfAborted();
     const config = await this.#mcp.read();
+    signal?.throwIfAborted();
     const snapshot = mcpSnapshotSchema.parse({
       protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,
       snapshotId: 'cardbush-product-mcp',
@@ -213,7 +216,7 @@ export class ElectronProductHostController {
       ? { kind: 'runtime.prepare_plugin_update', payload: { ...snapshot, updatePluginId } }
       : uninstallPluginId
       ? { kind: 'runtime.prepare_plugin_uninstall', payload: { ...snapshot, uninstallPluginId } }
-      : { kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: snapshot });
+      : { kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: snapshot }, signal);
   }
 
   async replacePlugin<T>(pluginId: string, replace: () => Promise<T>): Promise<T> {

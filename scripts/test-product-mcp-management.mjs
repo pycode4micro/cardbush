@@ -10,6 +10,35 @@ import { ElectronProductHostController } from '../dist-electron/productHostContr
 import { startProductMcpManagement, mergeMcpServer } from '../dist-electron/productMcpManagement.mjs';
 import { mcpManagementView } from '../dist-electron/productMcpManagementView.mjs';
 
+test('cancelled startup catalog refresh never submits late work and cancels an in-flight command', async () => {
+  const parent = resolve('tmp'); await mkdir(parent, { recursive: true });
+  const root = await mkdtemp(join(parent, 'product-refresh-cancel-'));
+  let release, rejectCommand, request, cancelled; let preparations = 0;
+  let preparing = new Promise(resolve => { release = resolve; });
+  const host = new ElectronProductHostController({
+    dataRoot: join(root, 'product'), runtimeStateRoot: join(root, 'runtime'), bundledSkillRoot: join(root, 'skills'),
+    userSkillRoot: join(root, 'user-skills'), bundledPluginRoot: join(root, 'plugins'), userPluginRoot: join(root, 'user-plugins'),
+    prepareBundledMcp: async () => { preparations++; await preparing; },
+    runtimeBridge: {
+      command: input => { request = input; return new Promise((_resolve, reject) => { rejectCommand = reject; }); },
+      cancelOperation: async input => { cancelled = input; rejectCommand(Error('cancelled pending refresh')); },
+    },
+  });
+  try {
+    await assert.rejects(host.refreshMcp(undefined, undefined, AbortSignal.abort()), { name: 'AbortError' });
+    assert.equal(preparations, 0);
+    const abort = new AbortController(), pending = host.refreshMcp(undefined, undefined, abort.signal);
+    abort.abort(); release(); await assert.rejects(pending, { name: 'AbortError' });
+    assert.equal(request, undefined, 'stopped initialization must not recreate a worker after its file preparation finishes');
+    preparing = Promise.resolve(); const nextAbort = new AbortController();
+    const inFlight = host.refreshMcp(undefined, undefined, nextAbort.signal);
+    const rejected = assert.rejects(inFlight, /cancelled pending refresh/);
+    for (let i = 0; i < 100 && !request; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(request); nextAbort.abort(); await rejected;
+    assert.equal(cancelled.operationId, request.operationId);
+  } finally { release(); await host.stopMaintenance(); assert.ok(root.startsWith(parent + sep)); await rm(root, { recursive: true, force: true }); }
+});
+
 test('compact MCP observations retain failures, pending state and unavailable-runtime distinctions', () => {
   const tools = Array.from({ length: 400 }, (_, i) => ({ remoteName: `tool_${i}`, runtimeName: `mcp__other__tool_${i}` }));
   const source = { configuration: { revision: 9, servers: [{ id: 'broken', enabled: true }, { id: 'disabled', enabled: false }] },
@@ -109,7 +138,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
     requestInit: { headers: { Authorization: `Bearer ${endpoint.token}` } },
   });
   const configPath = join(root, 'product-host', 'config', 'mcp-servers.json');
-  const readConfig = async () => JSON.parse(await readFile(configPath, 'utf8'));
+  const readConfig = () => new ProductMcpConfigStore(configPath).read();
   const invoke = async (name, args = {}) => {
     const result = await client.callTool({ name, arguments: args });
     assert.notEqual(result.isError, true, JSON.stringify(result));
@@ -196,6 +225,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       assert.equal((await echo()).pid, firstPid);
       assert.equal((await echo()).value, 'one');
       assert.equal((await readConfig()).servers[0].env.API_TOKEN, 'fixture-private-value');
+      assert.ok(!(await readFile(configPath, 'utf8')).includes('fixture-private-value'), 'preserved credentials stay encrypted on disk');
       idle = true;
       await until(() => manager.snapshot()?.applicationState === 'applied');
       assert.equal((await echo()).value, 'two');

@@ -212,7 +212,7 @@ let productHostController: {
   execute: (command: unknown) => Promise<unknown>;
   executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
   shutdown: () => Promise<void>;
-  refreshMcp: () => Promise<unknown>;
+  refreshMcp: (uninstallPluginId?: string, updatePluginId?: string, signal?: AbortSignal) => Promise<unknown>;
   listMcpServers: () => Promise<unknown>;
   reconnectMcpServer: (id: string, signal?: AbortSignal) => Promise<unknown>;
   configureMcpServer: (input: import('./productMcpManagement.mjs', { with: { 'resolution-mode': 'import' } }).McpServerPatch, signal?: AbortSignal) => Promise<unknown>;
@@ -325,6 +325,7 @@ let runtimeStartupStatus: RuntimeStartupStatus = {
 };
 let runtimeServicesInitialization: Promise<void> | null = null;
 let runtimeServicesAbort: AbortController | null = null;
+let runtimeAutomationStartup: AbortController | null = null;
 let runtimeServicesStopping = false;
 let packagedSmokeRendererReadyResolve: (() => void) | null = null;
 const packagedSmokeRendererReady = new Promise<void>((resolve) => {
@@ -2635,8 +2636,11 @@ let embodiedHostPromise: Promise<import('./embodiedHost.mjs', { with: { 'resolut
 let contextWebhookHostPromise: Promise<import('./contextWebhookHost.mjs', { with: { 'resolution-mode': 'import' } }).ContextWebhookHost> | undefined;
 function contextWebhookHost() {
   return contextWebhookHostPromise ??= (async () => {
-    await ensureRuntimeServicesReady();
+    // Discovery/configuration uses only local storage and HTTP. Model execution
+    // waits for Runtime inside command(), without blocking service discovery.
+    if (isQuitting) throw Error('webhook_unavailable');
     const { ContextWebhookHost } = await import('./contextWebhookHost.mjs');
+    if (isQuitting) throw Error('webhook_unavailable');
     const host = new ContextWebhookHost(app.getPath('userData'), {
       encrypt(value) {
         if (!safeStorage.isEncryptionAvailable() || process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text') throw Error('secure_storage_unavailable');
@@ -3923,6 +3927,7 @@ app.whenReady().then(async () => {
     packaged: cardbushRuntimeIsPackaged,
   });
   void ensureLegacyProductSkillsMigrated();
+  void contextWebhookHost().catch(() => console.warn('[webhooks] startup unavailable'));
   void startRuntimeServices();
   setImmediate(() => {
     const shortcutUpdated = ensureWindowsTaskbarShortcut();
@@ -4177,11 +4182,10 @@ async function startRuntimeServices(force = false): Promise<void> {
         completedAt: new Date().toISOString(),
         elapsedMs: Date.now() - startedAtMs,
       });
-      // Dependent services must not start Runtime ahead of the main window or
-      // consume its boot deadline while the desktop is still initializing.
-      if (!runtimeServicesStopping && !packagedSmokeMode) {
-        void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
-        void contextWebhookHost().catch(() => console.warn('[webhooks] startup unavailable'));
+      // Runtime-dependent work starts only after the complete boot succeeds.
+      if (!runtimeServicesStopping && !isQuitting && runtimeHostController) {
+        startRuntimeAutomations(runtimeHostController);
+        if (!packagedSmokeMode) void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
       }
     })
     .catch((error) => {
@@ -4203,6 +4207,8 @@ async function startRuntimeServices(force = false): Promise<void> {
 }
 
 async function disposeRuntimeServices(error?: Error) {
+  runtimeAutomationStartup?.abort();
+  runtimeAutomationStartup = null;
   disposeDesktopControlMonitor();
   disposeCapabilityCatalogWatcher?.();
   disposeCapabilityCatalogWatcher = undefined;
@@ -4338,7 +4344,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
         CARDBUSH_APPS_CONFIG_PATH: productAppsConfigPath(),
       },
       onReady: () => {
-        // The initial boot is owned by initializeProductHost; later worker
+        // The initial boot is owned by startRuntimeServices; later worker
         // generations must restore the MCP catalog and restart the timer too.
         if (runtimeWorkerReadySeen) startRuntimeAutomations(controller);
         runtimeWorkerReadySeen = true;
@@ -4436,13 +4442,20 @@ function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number, 
 
 function startRuntimeAutomations(controller: RuntimeHostController) {
   const host = productHostController;
-  if (!host || runtimeServicesStopping) return;
-  void host.refreshMcp().catch((error: unknown) => console.warn('[automation-startup]', error))
+  const current = () => !runtimeServicesStopping && !isQuitting && runtimeStartupStatus.phase === 'ready'
+    && productHostController === host && runtimeHostController === controller;
+  if (!host || !current()) return;
+  runtimeAutomationStartup?.abort();
+  const abort = new AbortController();
+  runtimeAutomationStartup = abort;
+  const report = (error: unknown) => { if (!abort.signal.aborted && current()) console.warn('[automation-startup]', error); };
+  void host.refreshMcp(undefined, undefined, abort.signal).catch(report)
     .then(() => {
-      if (runtimeServicesStopping || productHostController !== host || runtimeHostController !== controller) return;
+      if (abort.signal.aborted || !current()) return;
       return controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind: 'runtime.automation_start', payload: {} } });
     })
-    .catch((error: unknown) => console.warn('[automation-startup]', error));
+    .catch(report)
+    .finally(() => { if (runtimeAutomationStartup === abort) runtimeAutomationStartup = null; });
 }
 
 async function initializeProductHost(controller: RuntimeHostController, signal: AbortSignal) {
@@ -4476,7 +4489,6 @@ async function initializeProductHost(controller: RuntimeHostController, signal: 
     },
     requestClientCredentials: (input: Parameters<McpDesktopHost['requestClientCredentials']>[0], signal: AbortSignal) => mcpDesktop().requestClientCredentials(input, signal),
   }) as NonNullable<typeof productHostController>;
-  startRuntimeAutomations(controller);
   disposeCapabilityCatalogWatcher?.();
   disposeCapabilityCatalogWatcher = watchCapabilityCatalog([
     ...productSkillRoots(),
@@ -4915,6 +4927,8 @@ async function previewRendererAssetResponse(
 
 app.on('before-quit', (event) => {
   isQuitting = true;
+  runtimeAutomationStartup?.abort();
+  runtimeAutomationStartup = null;
   disposeCapabilityCatalogWatcher?.();
   disposeCapabilityCatalogWatcher = undefined;
   if (hostShutdownComplete) {

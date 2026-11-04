@@ -173,6 +173,28 @@ test('generic local pairing exchanges parameters only after desktop authorizatio
   } finally { await gateway?.close(); await rm(root, { recursive: true, force: true }); }
 });
 
+test('late service registration and temporary port contention recover without restarting the desktop', { timeout: 15000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-discovery-recovery-'));
+  const occupied = createServer(); occupied.listen(0, '127.0.0.1'); await once(occupied, 'listening');
+  const port = occupied.address().port; let gateway;
+  try {
+    gateway = await new ContextWebhookHost(root, secrets, { command: async () => { throw Error('Runtime still starting'); } }, { port }).start();
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).error, 'listener_failed');
+    await new Promise(resolve => occupied.close(resolve));
+    await until(async () => (await gateway.command({ action: 'read', sessionId: 'existing' })).listening);
+    const base = `http://127.0.0.1:${port}`;
+    assert.equal((await fetch(base + '/api/webhooks/v1/discovery')).status, 200);
+    const view = await gateway.command({ action: 'read', sessionId: 'existing' });
+    assert.equal(view.error, undefined); assert.deepEqual(view.pairings, []);
+    const requestId = randomUUID();
+    const response = await fetch(base + '/api/webhooks/v1/pairings', { method: 'POST',
+      headers: { Authorization: 'Bearer ' + 'a'.repeat(64), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, name: 'Started after desktop' }) });
+    assert.equal(response.status, 202);
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).pairings[0].requestId, requestId);
+  } finally { occupied.close(); await gateway?.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test('Assistant background task completion updates only its originating Webhook receipt', { timeout: 20000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'webhook-background-'));
   let release; const gate = new Promise(resolve => { release = resolve; }); let rounds = 0, gateway;

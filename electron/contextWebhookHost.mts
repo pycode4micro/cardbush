@@ -20,6 +20,8 @@ const serializeError = (error: unknown) => error instanceof WebhookError ? error
 export class ContextWebhookHost {
   private state: State = { version: 1, host: '127.0.0.1', port: contextWebhookPort, connections: [], receipts: [], pairings: [] };
   private server?: Server;
+  private listenerStart?: Promise<void>;
+  private listenerRetryAt = 0;
   private listenerError?: string;
   private writes: Promise<unknown> = Promise.resolve();
   private commands: Promise<unknown> = Promise.resolve();
@@ -152,9 +154,12 @@ export class ContextWebhookHost {
     return { ...result, connection: { id: connection.id, endpoint: view.endpoint, token: connection.token,
       sessionId: connection.binding.sessionId, title: connection.binding.title } };
   }
-  private async listen() {
+  private listen(): Promise<void> {
     // Local discovery is available before the first connection is configured.
-    if (this.server) return;
+    if (this.server || this.abort.signal.aborted) return Promise.resolve();
+    return this.listenerStart ??= this.openListener().finally(() => { this.listenerStart = undefined; });
+  }
+  private async openListener() {
     const server = createServer((req, res) => {
       const json = (status: number, value: unknown) => { if (!res.destroyed) res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify(value)); };
       void (async () => {
@@ -225,10 +230,13 @@ export class ContextWebhookHost {
     try {
       await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(this.state.port, this.state.host, () => { server.off('error', reject); resolve(); }); });
       this.server = server; this.listenerError = undefined;
-    } catch { server.close(); this.listenerError = 'listener_failed'; }
+    } catch { server.close(); this.listenerError = 'listener_failed'; this.listenerRetryAt = Date.now() + 3000; }
   }
   private pump() {
     if (this.abort.signal.aborted) return;
+    // A previous application instance can briefly own the fixed port during
+    // restart. Keep recovering discovery without requiring a settings change.
+    if (!this.server && Date.now() >= this.listenerRetryAt) void this.listen();
     if (!this.checkingFollowups) { this.checkingFollowups = true; void this.followups().catch(() => {}).finally(() => { this.checkingFollowups = false; }); }
     for (const record of this.state.receipts) {
       const connection = this.state.connections.find(c => c.id === record.connectionId && c.enabled); if (!connection) continue;
@@ -296,6 +304,9 @@ export class ContextWebhookHost {
         if (r.reply !== reply) { r.reply = reply; r.sequence++; r.delivered = false; r.nextDelivery = 0; r.attempts = 0; } });
     }
   }
-  private async closeListener() { if (this.server) { const server = this.server; this.server = undefined; server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); } }
+  private async closeListener() {
+    await this.listenerStart;
+    if (this.server) { const server = this.server; this.server = undefined; server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  }
   async close() { this.abort.abort(); clearInterval(this.timer); await this.closeListener(); await this.writes; }
 }
