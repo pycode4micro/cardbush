@@ -866,6 +866,10 @@ host = new InMemoryRuntimeHost({
   // must not acquire an unavailable SSH source from this shared worker.
   ...(!process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? {
     remoteWorkspace: { request: (action, payload, signal) => mcpHost.request('ssh.workspace', { action, ...payload }, signal) },
+    botMessaging: {
+      context: (sessionId, sourceRef, signal) => mcpHost.request('webhook.bot', { action: 'context', sessionId, sourceRef }, signal),
+      send: (sessionId, input, signal, files) => mcpHost.request('webhook.bot', { action: 'send', sessionId, input, files }, signal),
+    },
   } : {}),
   loadSearchResultLimit,
   ...(hostNetworkAvailable ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),

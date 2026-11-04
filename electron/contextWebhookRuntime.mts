@@ -15,12 +15,14 @@ export type WebhookRuntime = { command(kind: string, payload: unknown): Promise<
 
 /** Uses the bound desktop identity. The external request never supplies policy, model or session. */
 export async function runContextWebhook(runtime: WebhookRuntime, binding: WebhookBinding, message: WebhookMessage,
-  id: string, recovering: boolean, signal: AbortSignal): Promise<WebhookResult> {
+  id: string, recovering: boolean, signal: AbortSignal, sourceRef?: string): Promise<WebhookResult> {
   const sessionId = binding.sessionId, turnId = `webhook-${id}`, inputId = `webhook-input-${id}`;
   const snapshot = await runtime.command('runtime.get_session', { sessionId }) as SessionSnapshot | null;
   if (!snapshot) throw new WebhookError('context_deleted', 404);
   const parent = structuredClone(binding.parent);
   parent.requestId = turnId; parent.turnId = turnId;
+  delete parent.metadata.botSourceRef;
+  if (sourceRef) parent.metadata.botSourceRef = sourceRef;
   const createdAt = new Date().toISOString();
   parent.inputMessages = [{ messageId: `${inputId}:turn-context`, createdAt,
     message: { role: 'user', name: 'turn_runtime_context', visibility: 'internal', content: createTurnTimeContext({ createdAt }) } },
@@ -35,7 +37,8 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
       if (recovering) return { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
       await runtime.command('runtime.assistant_conversation', { action: 'turn', sessionId, generation: binding.generation,
         profile: binding.profile, parent: { ...parent, metadata: { ...parent.metadata, assistantOutputMode: 'text' } },
-        entry: { id: inputId, originTurnId: turnId, role: 'user', source: 'text', visibility: 'conversation', content: message.text, createdAt } });
+        entry: { id: inputId, originTurnId: turnId, role: 'user', source: 'text', visibility: 'conversation', content: message.text, createdAt,
+          ...(sourceRef ? { botSourceRef: sourceRef } : {}) } });
     }
     for (;;) {
       signal.throwIfAborted(); journal = await read();

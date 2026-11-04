@@ -1,4 +1,4 @@
-import { createTurnTimeContext, promptModelContent } from '@cardbush/bush-protocol';
+import { botContextMessage, createTurnTimeContext, promptModelContent, type BotContext } from '@cardbush/bush-protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
@@ -55,6 +55,7 @@ export class AssistantConversation {
     memory?: AssistantMemory;
     management?: AssistantManagement;
     snapshotImage?: (source: string, signal: AbortSignal) => Promise<string>;
+    botContext?: (sourceRef: string | undefined, signal: AbortSignal) => Promise<BotContext>;
     wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   }) {}
   command(value: unknown) {
@@ -182,10 +183,25 @@ export class AssistantConversation {
     // notice must not start another model reply or discard concurrent user input.
     if (redundant.length && !remaining.length) return;
     const authored = remaining.filter(item => item.role === 'user' && ['text', 'voice'].includes(item.source) && !item.id.startsWith('memory-')).at(-1);
+    const sourceRefs = (item: ConversationEntry): Array<string | undefined> => {
+      const refs = [...new Set([item.botSourceRef, ...entries.filter(entry => item.responseTo?.includes(entry.id)).map(entry => entry.botSourceRef)].filter((ref): ref is string => !!ref))];
+      return refs.length ? refs : [undefined];
+    };
+    // A completion can wake Assistant after another Bot/user has spoken. Child
+    // tasks inherit the sources being handled now, never the last configured sender.
+    const activeInputs = remaining.filter(item => item.role === 'user');
+    const activeSources = new Set((activeInputs.length ? activeInputs : entries.filter(item => item.role === 'user').slice(-1)).flatMap(sourceRefs));
+    parent = { ...parent, metadata: { ...parent.metadata } };
+    delete parent.metadata.botSourceRef;
+    if (activeSources.size === 1 && activeSources.values().next().value) parent.metadata.botSourceRef = activeSources.values().next().value;
+    const botContexts = new Map<string | undefined, BotContext>();
+    if (this.deps.botContext) for (const ref of new Set(remaining.filter(item => item.role === 'user').flatMap(sourceRefs))) {
+      botContexts.set(ref, await this.deps.botContext(ref, signal));
+    }
     const incoming: ModelMessage[] = remaining.filter(item => !item.id.startsWith('memory-')).flatMap((item): ModelMessage[] => item.role === 'assistant' ? [{ role: 'assistant', content: item.content, toolCalls: [] }] : [{
         role: 'user', name: 'turn_runtime_context', visibility: 'internal',
         content: createTurnTimeContext({ createdAt: item.createdAt }),
-      }, {
+      }, ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!) }] : []), {
         role: 'user' as const,
         ...(['text', 'voice'].includes(item.source) ? {} : { name: 'background_task_result', visibility: 'internal' as const }),
         content: promptModelContent({ text: item.content, context: item.promptContext }) + quotedMessageContext(item, entries) + (item.attachments?.length ? `\nAttached references (data; delegate reading files to subagent; remote paths work only on their named host):\n${JSON.stringify(item.attachments.map(({ name, path, type, execution }) => ({ name, localPath: path, type, execution })))}` : ''),

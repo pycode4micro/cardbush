@@ -9,16 +9,22 @@ import { webhookBindingSchema, runContextWebhook, type WebhookRuntime, type Webh
 import type { ContextWebhookConfig, ContextWebhookSnapshot, WebhookBinding } from './contextWebhookTypes.js';
 import { contextWebhookPort, contextWebhookProtocol } from './contextWebhookDefaults.js';
 import { localPairingSchema, localPairingConfig, assertLocalPairingRequest, readWebhookJson, type LocalWebhookPairing } from './contextWebhookPairing.mjs';
+import { botCapabilitiesSchema, botSendInputSchema, BOT_SEND_TOOL, type BotCapabilities, type BotContext, type BotSource, type BotSendInput, type BotFileAccess } from '@cardbush/bush-protocol';
+import { snapshotWebhookFiles, readBotAcknowledgement } from './contextWebhookFiles.mjs';
 
-type Connection = ContextWebhookConfig & { id: string; token: string; binding: WebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string };
+type Connection = ContextWebhookConfig & { id: string; token: string; binding: WebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
+  bot?: { capabilities: BotCapabilities; expiresAt: number } };
 type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: WebhookBinding;
   status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
-type State = { version: 1; host: string; port: number; connections: Connection[]; receipts: Receipt[]; pairings: LocalWebhookPairing[] };
+type BotDelivery = { id: string; sessionId: string; sourceRef: string; requestId: string; inputHash: string; fingerprint: string;
+  status: 'pending' | 'accepted' | 'unknown'; createdAt: string; code?: string };
+type State = { version: 1; host: string; port: number; connections: Connection[]; receipts: Receipt[]; pairings: LocalWebhookPairing[]; botDeliveries: BotDelivery[] };
 const terminal = (status: Receipt['status']) => !['accepted', 'running'].includes(status);
 const serializeError = (error: unknown) => error instanceof WebhookError ? error.code : error instanceof z.ZodError ? 'invalid_parameters' : 'service_unavailable';
 
 export class ContextWebhookHost {
-  private state: State = { version: 1, host: '127.0.0.1', port: contextWebhookPort, connections: [], receipts: [], pairings: [] };
+  private state: State = { version: 1, host: '127.0.0.1', port: contextWebhookPort, connections: [], receipts: [], pairings: [], botDeliveries: [] };
+  private botSends = new Map<string, { hash: string; promise: Promise<unknown> }>();
   private server?: Server;
   private listenerStart?: Promise<void>;
   private listenerRetryAt = 0;
@@ -43,6 +49,8 @@ export class ContextWebhookHost {
       if (state.version !== 1 || !Array.isArray(state.connections) || !Array.isArray(state.receipts)) throw new WebhookError('storage_invalid');
       for (const c of state.connections) { webhookConfigSchema.parse(this.config(c)); webhookBindingSchema.parse(c.binding); }
       state.pairings ??= [];
+      state.botDeliveries ??= [];
+      for (const delivery of state.botDeliveries) if (delivery.status === 'pending') delivery.status = 'unknown';
       this.state = state;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     if (this.options.port !== undefined) this.state.port = this.options.port;
@@ -81,6 +89,107 @@ export class ContextWebhookHost {
   command(input: unknown): Promise<unknown> {
     const operation = this.commands.then(() => this.execute(input)); this.commands = operation.catch(() => {});
     return operation.catch(error => { throw new Error(serializeError(error)); });
+  }
+  /** Private Runtime RPC; never expose callback addresses, headers or tokens to models. */
+  async botRequest(value: unknown, signal?: AbortSignal): Promise<unknown> {
+    const request = z.discriminatedUnion('action', [
+      z.object({ action: z.literal('context'), sessionId: z.string().min(1), sourceRef: z.string().max(100).optional() }).strict(),
+      z.object({ action: z.literal('send'), sessionId: z.string().min(1), input: botSendInputSchema,
+        files: z.array(z.object({ path: z.string().min(1), identity: z.string().regex(/^\d+:\d+$/) }).strict()).max(8).optional() }).strict(),
+    ]).parse(value);
+    if (request.action === 'context') return this.botContext(request.sessionId, request.sourceRef);
+    const input = request.input, key = `${request.sessionId}:${input.source_ref}:${input.request_id}`, hash = webhookHash(input);
+    if (input.action === 'status') {
+      const found = this.state.botDeliveries.find(d => d.sessionId === request.sessionId && d.sourceRef === input.source_ref && d.requestId === input.request_id);
+      return found ? this.botReceipt(found) : { status: 'not_found', code: 'delivery_not_found' };
+    }
+    const pending = this.botSends.get(key);
+    if (pending) return pending.hash === hash ? pending.promise : { status: 'failed', code: 'request_id_conflict' };
+    if (input.files.length && (!request.files || request.files.length !== input.files.length || request.files.some((file, i) => file.path !== input.files[i])))
+      return { status: 'failed', code: 'file_admission_required' };
+    const promise = this.sendToBot(request.sessionId, input, signal, request.files).catch(error => ({ status: 'failed',
+      code: ['workspace_authorization_changed', 'workspace_path_guard_unavailable', 'sandbox_backend_unavailable'].includes(error?.code) ? error.code
+        : error?.code === 'ENOENT' ? 'file_not_found' : ['EACCES', 'EPERM'].includes(error?.code) ? 'file_access_denied' : serializeError(error) }));
+    this.botSends.set(key, { hash, promise });
+    try { return await promise; } finally { this.botSends.delete(key); }
+  }
+  private botSource(record: Receipt): BotSource {
+    const connection = this.state.connections.find(c => c.id === record.connectionId);
+    const reason = !connection ? 'bot_disconnected' : !connection.enabled ? 'bot_disabled' : !connection.url ? 'bot_callback_missing'
+      : !connection.bot ? 'bot_protocol_unsupported' : connection.bot.expiresAt <= Date.now() ? 'bot_offline' : undefined;
+    return { sourceRef: `webhook:${record.id}`, connectionId: record.connectionId, botName: connection?.name ?? 'Bot',
+      messageId: record.message.messageId, senderId: record.message.senderId ?? '', conversationId: record.message.conversationId ?? '',
+      receivedAt: record.createdAt, available: !reason, ...(reason ? { reason } : {}),
+      capabilities: connection?.bot?.capabilities ?? botCapabilitiesSchema.parse({ text: false }) };
+  }
+  private botContext(sessionId: string, sourceRef?: string): BotContext {
+    const records = this.state.receipts.filter(r => r.binding.sessionId === sessionId), seen = new Set<string>(), targets: BotSource[] = [];
+    for (const record of [...records].reverse()) {
+      const key = JSON.stringify([record.connectionId, record.message.senderId, record.message.conversationId]);
+      if (seen.has(key)) continue; seen.add(key);
+      const source = this.botSource(record); if (source.available) targets.push(source);
+      if (targets.length >= 32) break;
+    }
+    const record = sourceRef && records.find(r => `webhook:${r.id}` === sourceRef);
+    const source = record ? this.botSource(record) : undefined;
+    const available = sourceRef ? source?.available === true : targets.length > 0;
+    const connected = this.state.connections.some(c => c.binding.sessionId === sessionId && c.enabled && c.url && c.bot && c.bot.expiresAt > Date.now());
+    return { tool: BOT_SEND_TOOL, available, ...(source ? { source } : {}), targets,
+      ...(!available ? { reason: source?.reason ?? (sourceRef ? 'source_unavailable' : connected ? 'bot_recipient_unavailable' : records.length ? this.botSource(records.at(-1)!).reason ?? 'bot_not_connected' : 'bot_not_connected') } : {}) };
+  }
+  private botReceipt(delivery: BotDelivery) {
+    return { status: delivery.status === 'pending' ? 'unknown' : delivery.status, eventId: delivery.id,
+      requestId: delivery.requestId, sourceRef: delivery.sourceRef, ...(delivery.code ? { code: delivery.code } : {}),
+      ...(delivery.status === 'accepted' ? { deliveryConfirmed: false } : { retry: 'Reuse the same source_ref and request_id; do not create a new send.' }) };
+  }
+  private async sendToBot(sessionId: string, input: BotSendInput, signal?: AbortSignal, access?: BotFileAccess[]) {
+    const source = this.botContext(sessionId, input.source_ref).source;
+    if (!source?.available) return { status: 'unavailable', code: source?.reason ?? 'source_unavailable' };
+    if (input.files.length && !source.capabilities.files) return { status: 'unavailable', code: 'bot_files_unsupported' };
+    if (input.text && !source.capabilities.text) return { status: 'unavailable', code: 'bot_text_unsupported' };
+    const record = this.state.receipts.find(r => `webhook:${r.id}` === source.sourceRef)!;
+    if (!await this.runtime.command('runtime.get_session', { sessionId })) return { status: 'unavailable', code: 'context_deleted' };
+    if (record.binding.kind === 'assistant' && (await this.runtime.command('runtime.assistant_conversation', { action: 'read', sessionId, after: Number.MAX_SAFE_INTEGER })).generation !== record.binding.generation)
+      return { status: 'unavailable', code: 'context_reset' };
+    const previous = this.state.botDeliveries.find(d => d.sessionId === sessionId && d.sourceRef === source.sourceRef && d.requestId === input.request_id);
+    const inputHash = webhookHash(input);
+    if (previous?.inputHash !== undefined && previous.inputHash !== inputHash) throw new WebhookError('request_id_conflict');
+    if (previous?.status === 'accepted') return this.botReceipt(previous);
+    const files = await snapshotWebhookFiles(input.files, source.capabilities, signal, access);
+    const descriptors = files.map(({ bytes: _bytes, ...file }) => file);
+    const fingerprint = webhookHash({ text: input.text, files: descriptors });
+    if (previous && previous.fingerprint !== fingerprint) throw new WebhookError('request_id_conflict');
+    const delivery = await this.write(state => {
+      if (!this.botContext(sessionId, source.sourceRef).source?.available) throw new WebhookError('bot_disconnected');
+      if (previous) { const found = state.botDeliveries.find(d => d.id === previous.id)!; found.status = 'pending'; delete found.code; return found; }
+      const next: BotDelivery = { id: randomUUID(), sessionId, sourceRef: source.sourceRef, requestId: input.request_id!, inputHash,
+        fingerprint, status: 'pending', createdAt: new Date().toISOString() };
+      state.botDeliveries.push(next); return next;
+    });
+    try {
+      signal?.throwIfAborted();
+      const connection = this.state.connections.find(c => c.id === record.connectionId && c.enabled)!;
+      if (!connection || !this.botSource(record).available) throw new WebhookError('bot_disconnected');
+      const payload = { protocol: contextWebhookProtocol, type: 'message.send', eventId: delivery.id, sourceRef: source.sourceRef,
+        messageId: source.messageId, sessionId, senderId: source.senderId, conversationId: source.conversationId,
+        text: input.text, files: descriptors, parameters: connection.parameters };
+      let body: string | FormData = JSON.stringify(payload);
+      const headers: Record<string, string> = { ...connection.headers, 'X-CardBush-Event-ID': delivery.id };
+      for (const name of Object.keys(headers)) if (name.toLowerCase() === 'content-type') delete headers[name];
+      if (files.length) {
+        const form = new FormData(); form.set('payload', JSON.stringify(payload));
+        for (const file of files) form.set(file.part, new Blob([new Uint8Array(file.bytes)], { type: file.mimeType }), file.name);
+        body = form;
+      } else headers['Content-Type'] = 'application/json';
+      const response = await fetch(connection.url, { method: 'POST', redirect: 'error', headers, body,
+        signal: AbortSignal.any([this.abort.signal, ...(signal ? [signal] : []), AbortSignal.timeout(60000)]) });
+      const ack = await readBotAcknowledgement(response);
+      if (!response.ok || ack.protocol !== contextWebhookProtocol || ack.eventId !== delivery.id || ack.status !== 'accepted') throw new WebhookError('bot_ack_invalid');
+      await this.write(state => { state.botDeliveries.find(d => d.id === delivery.id)!.status = 'accepted'; });
+    } catch (error) {
+      await this.write(state => { const found = state.botDeliveries.find(d => d.id === delivery.id)!; found.status = 'unknown'; found.code = serializeError(error); });
+    }
+    return this.botReceipt(this.state.botDeliveries.find(d => d.id === delivery.id)!);
   }
   private async execute(input: unknown) {
     const request = z.discriminatedUnion('action', [
@@ -142,6 +251,7 @@ export class ContextWebhookHost {
     delete parent.supersession;
     const next: Connection = { ...config, id: previous?.id ?? randomUUID(), token: previous?.token ?? randomBytes(32).toString('hex'),
       binding: { ...binding, parent }, lastReceivedAt: previous?.lastReceivedAt, lastDeliveredAt: previous?.lastDeliveredAt };
+    if (previous && webhookHash([previous.url, previous.headers]) === webhookHash([config.url, config.headers])) next.bot = previous.bot;
     state.connections = [...state.connections.filter(c => c.id !== next.id), next]; return next;
   }
   private pairingResult(pairing: LocalWebhookPairing) {
@@ -196,11 +306,19 @@ export class ContextWebhookHost {
           }
           throw new WebhookError('endpoint_not_found', 404);
         }
-        const match = /^\/api\/webhooks\/v1\/([\w-]+)\/messages(?:\/([^/?]+))?$/.exec(req.url ?? '');
+        const capabilityPath = /^\/api\/webhooks\/v1\/([\w-]+)\/capabilities$/.exec(req.url ?? '');
+        const match = capabilityPath ?? /^\/api\/webhooks\/v1\/([\w-]+)\/messages(?:\/([^/?]+))?$/.exec(req.url ?? '');
         const connection = match && this.state.connections.find(c => c.id === match[1] && c.enabled);
         if (!connection || req.headers.origin !== undefined) throw new WebhookError('unauthorized', 401);
         const wanted = Buffer.from(`Bearer ${connection.token}`), received = Buffer.from(req.headers.authorization ?? '');
         if (wanted.length !== received.length || !timingSafeEqual(wanted, received)) throw new WebhookError('unauthorized', 401);
+        if (capabilityPath) {
+          if (req.method !== 'POST') throw new WebhookError('endpoint_not_found', 404);
+          const input = z.object({ protocol: z.literal(contextWebhookProtocol), capabilities: botCapabilitiesSchema }).strict().parse(await readWebhookJson(req, 4096));
+          await this.write(state => { const current = state.connections.find(c => c.id === connection.id && c.enabled);
+            if (!current) throw new WebhookError('bot_disconnected'); current.bot = { capabilities: input.capabilities, expiresAt: Date.now() + 120000 }; });
+          json(200, { protocol: contextWebhookProtocol, status: 'connected', leaseSeconds: 120 }); return;
+        }
         if (req.method === 'GET' && !match![2]) {
           json(200, { protocol: contextWebhookProtocol, type: 'connection.info', sessionId: connection.binding.sessionId, title: connection.binding.title }); return;
         }
@@ -253,7 +371,7 @@ export class ContextWebhookHost {
     this.running.add(record.id);
     try {
       await this.write(state => { const r = state.receipts.find(r => r.id === record.id)!; r.status = 'running'; r.sequence++; });
-      const result = await (this.options.execute ?? runContextWebhook)(this.runtime, record.binding, record.message, record.id, recovering, this.abort.signal);
+      const result = await (this.options.execute ?? runContextWebhook)(this.runtime, record.binding, record.message, record.id, recovering, this.abort.signal, `webhook:${record.id}`);
       if (this.abort.signal.aborted) return;
       if (result.reply.length > 128000) throw new WebhookError('reply_too_large');
       await this.write(state => { const r = state.receipts.find(r => r.id === record.id)!; Object.assign(r, result); r.sequence++; });

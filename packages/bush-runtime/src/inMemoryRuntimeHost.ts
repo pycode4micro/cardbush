@@ -35,6 +35,8 @@ import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { EXTRACT_RUNTIME_SESSION_COMMAND, FORK_RUNTIME_SESSION_COMMAND, sessionExtractionRequestSchema, forkRuntimeSessionRequestSchema } from '@cardbush/bush-protocol';
 import { extractSessionSource } from './sessionExtraction.js';
 import { registerDesignTool } from './designTool.js';
+import { registerBotMessagingTool, type BotMessagingBridge } from './botMessaging.js';
+import { BOT_SEND_TOOL, PERSONAL_ASSISTANT_SESSION, botContextMessage, unavailableBotContext } from '@cardbush/bush-protocol';
 import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COMMAND, sessionHistoryRequestSchema, finalReplySessionSnapshot } from '@cardbush/bush-protocol';
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
@@ -264,6 +266,7 @@ import type { RuntimeInternalTaskOptions, RuntimeInternalTaskRunner } from './ru
 export { defaultRuntimeRetryDelayMs, type RuntimeRetryContext } from './runtimeRetry.js';
 
 export interface InMemoryRuntimeHostOptions {
+  botMessaging?: BotMessagingBridge;
   /** Default path: derive handoffs from recorded tools, without model preparation. */
   preferRecordedToolHandoffs?: boolean;
   /** Legacy model-authored path, opt-in for controlled comparisons. */
@@ -362,6 +365,7 @@ export class InMemoryRuntimeHost {
   readonly #wait: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly #projectorOptions: RuntimeEventProjectorOptions;
   readonly #toolRegistry: ToolRegistry;
+  readonly #botMessaging?: BotMessagingBridge;
   readonly #pluginHookScopes: PluginHookScopes;
   readonly #pluginAgentEnvironment: PluginAgentEnvironment;
   readonly #pluginBackground: PluginBackgroundTasks;
@@ -474,6 +478,8 @@ export class InMemoryRuntimeHost {
     );
     this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.runInternalTask.bind(this));
     registerIndividuationTools(this.#toolRegistry, this.#memory.store.path, this.#memory);
+    this.#botMessaging = options.botMessaging;
+    registerBotMessagingTool(this.#toolRegistry, options.botMessaging, id => this.#botRootSession(id));
     this.#assistantManagement = new AssistantManagement({ registry: this.#toolRegistry, executions: this.#toolExecutions,
       capabilities: this.#capabilityGrants, coordination: () => this.#coordination, automation: options.automation,
       hooks: request => this.#managementToolHooks(request) });
@@ -485,6 +491,7 @@ export class InMemoryRuntimeHost {
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks'].includes(tool.name)),
       management: this.#assistantManagement,
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
+      ...(options.botMessaging ? { botContext: (sourceRef: string | undefined, signal: AbortSignal) => this.#readBotContext(PERSONAL_ASSISTANT_SESSION, sourceRef, signal) } : {}),
       snapshotImage: (source, signal) => this.#modelImages.snapshot(source, signal),
     });
     this.#captureCacheRoot = join(runtimeDataRoot, 'captures');
@@ -1814,6 +1821,20 @@ export class InMemoryRuntimeHost {
     return { sessionId, messages, supersededMessageIds: session.supersededMessageIds, finalMessageIds: childFinalMessageIds(session) };
   }
 
+  #botRootSession(id: string): string {
+    const seen = new Set<string>();
+    while (!seen.has(id) && seen.size < 32) {
+      seen.add(id);
+      const parent = this.#sessions.snapshot(id)?.metadata?.parentSessionId;
+      if (typeof parent !== 'string' || !parent) return id;
+      id = parent;
+    }
+    throw Error('Invalid Bot delegation ancestry.');
+  }
+  async #readBotContext(sessionId: string, sourceRef?: string, signal?: AbortSignal) {
+    try { return await this.#botMessaging?.context(this.#botRootSession(sessionId), sourceRef, signal) ?? unavailableBotContext(); }
+    catch { signal?.throwIfAborted(); return unavailableBotContext('bot_status_unavailable'); }
+  }
   async #runSessionTurn(
     input: RuntimeSessionTurnRequest,
     options: { signal?: AbortSignal },
@@ -1835,6 +1856,22 @@ export class InMemoryRuntimeHost {
     // Keep the app's current inbox snapshot separate from the authored input.
     let unreadReminder: Awaited<ReturnType<AutomationScheduler['reminder']>> | undefined;
     const authoredInput = [...candidate.inputMessages].reverse().find(entry => entry.message.role === 'user' && entry.message.visibility !== 'internal' && entry.message.name !== 'goal_continuation');
+    if (!candidate.tools.some(tool => tool.name === BOT_SEND_TOOL) && candidate.metadata.toolExecutionPolicy !== 'none'
+      && !(candidate.metadata.disabledTools as string[] | undefined)?.includes(BOT_SEND_TOOL)
+      && (!Array.isArray(candidate.metadata.childToolAllowlist) || candidate.metadata.childToolAllowlist.includes(BOT_SEND_TOOL))) {
+      candidate.tools.push(this.#toolRegistry.resolve(BOT_SEND_TOOL)!.definition);
+    }
+    if (authoredInput && this.#botMessaging) {
+      const parentId = candidate.sessionMetadata?.parentSessionId;
+      const contextSession = !this.#sessions.hasSession(candidate.sessionId) && typeof parentId === 'string' ? parentId : candidate.sessionId;
+      const sourceRef = typeof candidate.metadata.botSourceRef === 'string' ? candidate.metadata.botSourceRef : undefined;
+      const state = await this.#readBotContext(contextSession, sourceRef, options.signal);
+      authoredInput.metadata = { ...authoredInput.metadata, botContext: state };
+      candidate.inputMessages.splice(candidate.inputMessages.indexOf(authoredInput), 0, {
+        messageId: `${authoredInput.messageId}:bot-context`, createdAt: authoredInput.createdAt,
+        message: { role: 'user', name: 'bot_context', visibility: 'internal', content: botContextMessage(state) },
+      });
+    }
     if (authoredInput && this.#automation && !candidate.metadata.automationRunId && candidate.metadata.agentRole !== 'child') {
       try {
         unreadReminder = await this.#automation.reminder();

@@ -69,3 +69,4 @@ export * from './subagentObservation.js';
 export * from './subagentInteractions.js';
 export * from './localSubagentInteractions.js';
 export { captureCanvasVersion, releaseCanvasVersion, resourceFormat, rewriteCanvasResources } from './canvasVersions.js';
+export { withWorkspaceFileAccess, openWorkspaceFile } from './workspaceFileAccess.js';

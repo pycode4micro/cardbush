@@ -5,6 +5,7 @@ export * from "./delegation.js";
 export * from "./remoteInteraction.js";
 export * from "./environment.js";
 export * from "./timeContext.js";
+export * from "./botMessaging.js";
 export * from "./guidance.js";
 export * from "./mcp.js";
 export * from './mcpAppReference.js';

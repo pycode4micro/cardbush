@@ -4351,6 +4351,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal, onAccepted: () => void) => {
+        if (operation === 'webhook.bot') return (await contextWebhookHost()).botRequest(payload, signal);
         if (operation === 'browser.inherit-scope') {
           const input = payload as { parentSessionId: string; childSessionId: string };
           signal.throwIfAborted();

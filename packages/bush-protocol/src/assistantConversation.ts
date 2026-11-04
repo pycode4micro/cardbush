@@ -4,7 +4,7 @@ import type { PlanState } from './coordination.js';
 import type { RuntimePermissionRequest } from './runtimeHost.js';
 
 /** Direct, bounded management; execution tools remain owned by children. */
-export const ASSISTANT_MANAGEMENT_TOOLS = ['schedule_task', 'scheduled_results', 'search_skills', 'list_plugin_commands', 'mcp_search', 'update_task_plan'] as const;
+export const ASSISTANT_MANAGEMENT_TOOLS = ['schedule_task', 'scheduled_results', 'search_skills', 'list_plugin_commands', 'mcp_search', 'update_task_plan', 'send_to_bot'] as const;
 export interface AssistantManagementSnapshot {
   plan?: PlanState;
   permissions: Array<{ permissionId: string; toolCallId: string; sessionId: string; turnId: string; request: RuntimePermissionRequest }>;
@@ -27,6 +27,7 @@ export const conversationEntrySchema = z.object({
   // Real input entries consumed by this response; transports must not guess from adjacency.
   responseTo: z.array(z.string().min(1).max(220)).max(256).optional(),
   originTurnId: z.string().min(1).max(220).optional(),
+  botSourceRef: z.string().min(1).max(100).optional(),
   promptContext: z.array(z.object({ kind: z.enum(['preview-selection', 'editing-location', 'plugin-diagnostics']),
     content: z.string().max(256000), requestId: z.string().optional() }).strict()).max(16).optional(),
   attachments: z.array(z.object({
