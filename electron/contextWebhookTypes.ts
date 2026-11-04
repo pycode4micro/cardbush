@@ -1,4 +1,4 @@
-import type { AssistantProfile, RuntimeSessionTurnRequest } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
+import type { AssistantProfile, BotConnectionStatus, RuntimeSessionTurnRequest } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 export type WebhookBinding = {
   kind: 'conversation' | 'assistant'; sessionId: string; title: string;
@@ -11,6 +11,7 @@ export type ContextWebhookConfig = {
 };
 export type ContextWebhookConnection = ContextWebhookConfig & {
   id: string; sessionId: string; kind: WebhookBinding['kind']; token: string; endpoint: string;
+  status: BotConnectionStatus;
   pending: number; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
 };
 export type ContextWebhookSnapshot = {

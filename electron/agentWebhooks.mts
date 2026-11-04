@@ -66,7 +66,7 @@ export class AgentWebhooks {
     const state = await host.command({ action: 'read', sessionId: request.sessionId }) as ContextWebhookSnapshot;
     // Management clients never need tokens, callback headers or request templates.
     return { enabled: true, listening: state.listening, host: state.host, port: state.port, error: state.error,
-      connections: state.connections.map(c => ({ id: c.id, name: c.name, enabled: c.enabled, pending: c.pending })),
+      connections: state.connections.map(c => ({ id: c.id, name: c.name, enabled: c.enabled, status: c.status, pending: c.pending })),
       pairings: state.pairings.map(p => ({ requestId: p.requestId, name: p.name })) };
   }
   async close() { this.#closed = true; await this.#commands; await (await this.#host)?.close(); this.#host = undefined; }

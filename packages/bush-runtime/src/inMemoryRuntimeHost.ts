@@ -1869,7 +1869,7 @@ export class InMemoryRuntimeHost {
       authoredInput.metadata = { ...authoredInput.metadata, botContext: state };
       candidate.inputMessages.splice(candidate.inputMessages.indexOf(authoredInput), 0, {
         messageId: `${authoredInput.messageId}:bot-context`, createdAt: authoredInput.createdAt,
-        message: { role: 'user', name: 'bot_context', visibility: 'internal', content: botContextMessage(state) },
+        message: { role: 'user', name: 'bot_context', visibility: 'internal', content: botContextMessage(state, sourceRef) },
       });
     }
     if (authoredInput && this.#automation && !candidate.metadata.automationRunId && candidate.metadata.agentRole !== 'child') {

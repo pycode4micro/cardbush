@@ -85,6 +85,7 @@ export class ContextWebhookHost {
         .map(p => ({ requestId: p.requestId, name: p.name, replyUrl: p.replyUrl })),
       connections: this.state.connections.filter(c => c.binding.sessionId === sessionId).map(c => ({ ...this.config(c), id: c.id,
         sessionId, kind: c.binding.kind, token: c.token, endpoint: `http://${host}:${port}/api/webhooks/v1/${c.id}/messages`,
+        status: this.connectionStatus(c),
         pending: this.state.receipts.filter(r => r.connectionId === c.id && (!terminal(r.status) || !r.delivered)).length,
         lastReceivedAt: c.lastReceivedAt, lastDeliveredAt: c.lastDeliveredAt, lastError: c.lastError })) };
   }
@@ -112,10 +113,16 @@ export class ContextWebhookHost {
       try { return await promise; } finally { this.botSends.delete(key); }
     }
   }
+  private connectionReason(connection?: Connection) {
+    return !connection ? 'bot_disconnected' : !connection.enabled ? 'bot_disabled' : !connection.url ? 'bot_callback_missing'
+      : this.abort.signal.aborted || !this.server?.listening || !connection.bot || connection.bot.expiresAt <= Date.now() ? 'bot_offline' : undefined;
+  }
+  private connectionStatus(connection: Connection) {
+    return !connection.enabled ? 'disabled' as const : this.connectionReason(connection) ? 'offline' as const : 'connected' as const;
+  }
   private botSource(record: Receipt): BotSource {
     const connection = this.state.connections.find(c => c.id === record.connectionId);
-    const reason = !connection ? 'bot_disconnected' : !connection.enabled ? 'bot_disabled' : !connection.url ? 'bot_callback_missing'
-      : !connection.bot ? 'bot_protocol_unsupported' : connection.bot.expiresAt <= Date.now() ? 'bot_offline' : undefined;
+    const reason = this.connectionReason(connection);
     return { sourceRef: `webhook:${record.id}`, connectionId: record.connectionId, botName: connection?.name ?? 'Bot',
       messageId: record.message.messageId, senderId: record.message.senderId ?? '', conversationId: record.message.conversationId ?? '',
       receivedAt: record.createdAt, available: !reason, ...(reason ? { reason } : {}),
@@ -134,9 +141,12 @@ export class ContextWebhookHost {
     const record = sourceRef && records.find(r => `webhook:${r.id}` === sourceRef);
     const source = record ? this.botSource(record) : undefined;
     const available = sourceRef ? source?.available === true : targets.length > 0;
-    const connected = this.state.connections.some(c => c.binding.sessionId === sessionId && c.enabled && c.url && c.bot && c.bot.expiresAt > Date.now());
-    return { discovery: 'mcp_search', available, ...(source ? { source } : {}), targets,
-      ...(!available ? { reason: source?.reason ?? (sourceRef ? 'source_unavailable' : connected ? 'bot_recipient_unavailable' : records.length ? this.botSource(records.at(-1)!).reason ?? 'bot_not_connected' : 'bot_not_connected') } : {}) };
+    const connections = this.state.connections.filter(c => c.binding.sessionId === sessionId)
+      .map(c => ({ connectionId: c.id, botName: c.name, status: this.connectionStatus(c) }));
+    const connected = connections.some(c => c.status === 'connected');
+    return { discovery: 'mcp_search', available, ...(source ? { source } : {}), targets, connections,
+      ...(!available ? { reason: source?.reason ?? (sourceRef ? 'source_unavailable' : connected ? 'bot_recipient_unavailable'
+        : connections.some(c => c.status === 'offline') ? 'bot_offline' : connections.length ? 'bot_disabled' : 'bot_not_connected') } : {}) };
   }
   private botReceipt(delivery: BotDelivery) {
     return { status: delivery.status === 'pending' ? 'unknown' : delivery.status, eventId: delivery.id,
@@ -146,8 +156,8 @@ export class ContextWebhookHost {
   }
   private pluginCatalog(sessionId: string) {
     if (this.abort.signal.aborted) return [];
-    return this.state.connections.filter(connection => connection.binding.sessionId === sessionId && connection.enabled && connection.url &&
-      connection.bot && connection.bot.expiresAt > Date.now()).flatMap(connection => (connection.bot!.plugins ?? []).map(plugin => ({
+    return this.state.connections.filter(connection => connection.binding.sessionId === sessionId && !this.connectionReason(connection))
+      .flatMap(connection => (connection.bot!.plugins ?? []).map(plugin => ({
         connectionId: connection.id, sessionId, expiresAt: connection.bot!.expiresAt, plugin, revision: webhookHash(plugin),
       })));
   }

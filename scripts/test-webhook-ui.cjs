@@ -34,13 +34,13 @@ async function build(directory) {
           fixture.commands.push(structuredClone(input));
           if(input.action==='approve_pairing'){
             const pending=fixture.pairings.find(p=>p.requestId===input.requestId);fixture.pairings=fixture.pairings.filter(p=>p!==pending);
-            fixture.connections.push({id:crypto.randomUUID(),name:pending.name,enabled:true,url:pending.replyUrl,headers:{},parameters:{},body:{},incoming:{},sessionId:input.binding.sessionId,kind:input.binding.kind,token:'fixture-token',endpoint:'http://127.0.0.1:4791/fixture',pending:0});
+            fixture.connections.push({id:crypto.randomUUID(),name:pending.name,enabled:true,status:'offline',url:pending.replyUrl,headers:{},parameters:{},body:{},incoming:{},sessionId:input.binding.sessionId,kind:input.binding.kind,token:'fixture-token',endpoint:'http://127.0.0.1:4791/fixture',pending:0});
           }
           if(input.action==='reject_pairing')fixture.pairings=fixture.pairings.filter(p=>p.requestId!==input.requestId);
           if(input.action==='save'){
             if(!input.config.headers||Array.isArray(input.config.headers))throw Error('invalid_parameters');
             const id=input.config.id??crypto.randomUUID();fixture.connections=fixture.connections.filter(c=>c.id!==id);
-            fixture.connections.push({...input.config,id,sessionId:input.binding.sessionId,kind:input.binding.kind,token:'fixture-token',endpoint:'http://127.0.0.1:4791/api/webhooks/v1/'+id+'/messages',pending:0});
+            fixture.connections.push({...input.config,id,status:input.config.enabled?'offline':'disabled',sessionId:input.binding.sessionId,kind:input.binding.kind,token:'fixture-token',endpoint:'http://127.0.0.1:4791/api/webhooks/v1/'+id+'/messages',pending:0});
           }
           if(input.action==='delete')fixture.connections=fixture.connections.filter(c=>c.id!==input.id);
           if(input.action==='listener'){fixture.host=input.host;fixture.port=input.port;}
@@ -83,12 +83,24 @@ function run() {
       await click('.webhook-pair-action'); await until('!!document.querySelector("[data-connection]")');
       assert.equal(await read('fixture.commands.find(c=>c.action==="approve_pairing").binding.sessionId'), 'existing-chat');
       assert.equal(await read('fixture.connections.length'), 1);
+      await until('document.querySelector("[data-connection] [role=status]").textContent===fixture.t("zh")("webhook.offline")');
+      assert.equal(await read('document.querySelector(".webhook-service-list h3").textContent'), await read('fixture.t("zh")("webhook.savedServices")'));
+      await read("fixture.connections[0].status='connected';void 0");
+      await until('document.querySelector("[data-connection] [role=status]").textContent===fixture.t("zh")("webhook.connected")');
+      await read("fixture.connections[0].status='offline';void 0");
+      await until('document.querySelector("[data-connection] [role=status]").textContent===fixture.t("zh")("webhook.offline")');
+      assert.equal(await read('fixture.connections[0].enabled'), true, 'disconnect must not disable or remove saved configuration');
+      await read("fixture.connections[0].name='A saved service with a very long descriptive name';void 0");
+      await until('document.querySelector("[data-connection] strong").textContent===fixture.connections[0].name');
       for (const [language,theme] of [['zh','dark'],['en','bright']]) {
         win.setContentSize(390,740); await read(`fixture.language('${language}');fixture.theme('${theme}');document.documentElement.lang='${language}';void 0`); await pause(100);
         assert.equal(await read('document.querySelector(".settings-dialog-body").scrollWidth<=document.querySelector(".settings-dialog-body").clientWidth'), true);
+        assert.equal(await read(`document.querySelector('[data-connection] [role=status]').textContent===fixture.t('${language}')('webhook.offline')`), true);
         fs.writeFileSync(path.join(directory, `quick-connected-${theme}.png`), (await win.webContents.capturePage()).toPNG());
       }
       await read("fixture.language('zh');fixture.theme('dark');document.documentElement.lang='zh';void 0");
+      await read("fixture.connections[0].enabled=false;fixture.connections[0].status='disabled';void 0");
+      await until('document.querySelector("[data-connection] [role=status]").textContent===fixture.t("zh")("webhook.disabled")');
       await button('webhook.delete'); await until('!document.querySelector("[data-connection]")');
       await read('fixture.prepared=[];fixture.disposed=0;fixture.commands=[];void 0'); win.setContentSize(980,800);
       await button('webhook.manual'); await until('!!document.querySelector(".webhook-dialog fieldset:not(:disabled)")');
@@ -99,6 +111,7 @@ function run() {
       await fill('webhook-body', '{"text":"{{reply}}","room":"{{parameters.room}}","sequence":"{{sequence}}"}');
       await fill('webhook-mapping', '{"messageId":"event.id","text":"event.content","senderId":"sender","conversationId":"room"}');
       await button('webhook.save'); await until('!!document.querySelector(".webhook-endpoint")');
+      assert.equal(await read('document.querySelector(".webhook-endpoint .webhook-status").textContent'), await read('fixture.t("zh")("webhook.offline")'));
       const saved = await read('fixture.commands.find(c=>c.action==="save")');
       assert.equal(saved.binding.sessionId, 'existing-chat'); assert.equal(saved.binding.parent.model, 'configured-model');
       assert.equal(saved.config.parameters.room, 'my-room'); assert.equal(saved.config.incoming.text, 'event.content');

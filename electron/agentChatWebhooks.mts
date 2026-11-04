@@ -3,11 +3,12 @@ import type { AgentSendInput } from './agentTypes.js';
 import type { ChatClient } from './agentLocalChat.mjs';
 import type { ChatTerminal } from './agentChatCli.mjs';
 import { terminalText } from './agentChatPresentation.mjs';
+import type { BotConnectionStatus } from '@cardbush/bush-protocol';
 
 // Match the CLI's current interface language; message catalogs still own all copy.
 export const CLI_UI_LANGUAGE = 'en';
 export type CliWebhookState = { enabled: boolean; listening: boolean; host: string; port: number; error?: string;
-  connections: Array<{ id: string; name: string; enabled: boolean; pending: number }>; pairings: Array<{ requestId: string; name: string }> };
+  connections: Array<{ id: string; name: string; enabled: boolean; status: BotConnectionStatus; pending: number }>; pairings: Array<{ requestId: string; name: string }> };
 type Settings = Pick<AgentSendInput, 'modelId' | 'permissionMode' | 'language' | 'reasoningEffort'>;
 
 export async function chatWebhookCommand(text: string, client: Pick<ChatClient, 'call'>, io: ChatTerminal, signal: AbortSignal,
@@ -25,7 +26,8 @@ export async function chatWebhookCommand(text: string, client: Pick<ChatClient, 
       if (!state.enabled) { io.status(t('cliWebhook.inactive') + '\n'); return state; }
       if (!state.listening) { io.status(t('cliWebhook.portBusy', { port: state.port }) + '\n'); return state; }
       io.status(t('cliWebhook.listening', { port: state.port, session: terminalText(sessionId) }) + '\n');
-      for (const c of state.connections) io.status(t('cliWebhook.connection', { name: terminalText(c.name), id: c.id, count: c.pending }) + '\n');
+      for (const c of state.connections) io.status(t('cliWebhook.connection', { name: terminalText(c.name), id: c.id, count: c.pending,
+        status: t(!c.enabled ? 'webhook.disabled' : c.status === 'connected' ? 'webhook.connected' : 'webhook.offline') }) + '\n');
       if (!['connect', 'disconnect'].includes(action)) return state;
       const choices = action === 'connect'
         ? state.pairings.map((p, index) => ({ value: p.requestId, label: `${index + 1}. ${terminalText(p.name)}`, name: p.name }))

@@ -12,6 +12,8 @@ const defaultBody = contextWebhookBody;
 const defaults = (): ContextWebhookConfig => ({ name: 'Webhook', enabled: true, url: '', headers: {}, parameters: {}, body: defaultBody,
   incoming: contextWebhookIncoming });
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
+const connectionStatusKey = (connection: ContextWebhookConnection) => !connection.enabled ? 'webhook.disabled'
+  : connection.status === 'connected' ? 'webhook.connected' : 'webhook.offline';
 type Props = { language: string; sessionId: string; title: string; kind: WebhookBinding['kind']; prepare?: () => Promise<ChatStreamRequest> };
 export function WebhookConnectionButton(props: Props) {
   const [open, setOpen] = useState(false), t = uiText(props.language);
@@ -62,10 +64,10 @@ function QuickWebhookDialog(props: Props & { onClose(): void }) {
         <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'reject_pairing', requestId: pairing.requestId, sessionId: props.sessionId }))}>{t('webhook.dismiss')}</button>
       </div>)}
     </section>}
-    {!!snapshot?.connections.length && <section className="webhook-service-list" aria-label={t('webhook.connectedServices')}>
-      <h3>{t('webhook.connectedServices')}</h3>
-      {snapshot.connections.map(connection => <div key={connection.id} className="webhook-service" data-connection={connection.id}>
-        <div className="webhook-service-name"><Webhook aria-hidden="true"/><div><strong>{connection.name}</strong><span>{t(connection.enabled ? 'webhook.connected' : 'webhook.paused')}</span></div></div>
+    {!!snapshot?.connections.length && <section className="webhook-service-list" aria-label={t('webhook.savedServices')}>
+      <h3>{t('webhook.savedServices')}</h3>
+      {snapshot.connections.map(connection => <div key={connection.id} className="webhook-service" data-connection={connection.id} data-status={connection.status}>
+        <div className="webhook-service-name"><Webhook aria-hidden="true"/><div><strong>{connection.name}</strong><span role="status">{t(connectionStatusKey(connection))}</span></div></div>
         <button type="button" disabled={busy} onClick={() => setManual(connection.id)}>{t('webhook.manage')}</button>
         <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'delete', id: connection.id, sessionId: props.sessionId }))}>{t('webhook.delete')}</button>
       </div>)}
@@ -145,6 +147,7 @@ export function WebhookConnectionDialog({ language, sessionId, title, kind, prep
       <label>{t('webhook.replyUrl')}<input name="webhook-url" type="url" value={config.url} onChange={event => setConfig({ ...config, url: event.target.value })}/></label>
       <p className="webhook-note">{t('webhook.replyHelp')}</p>
       {selected && <section className="webhook-endpoint">
+        <div className="webhook-status" data-active={selected.status === 'connected'} role="status"><span>{t(connectionStatusKey(selected))}</span></div>
         <div className="webhook-status" data-active={Boolean(snapshot?.listening && selected.enabled)} role="status"><span>{t(snapshot?.listening && selected.enabled ? 'webhook.listening' : 'webhook.paused')}</span>
           {selected.pending > 0 && <span>{t('webhook.pending', { count: new Intl.NumberFormat(language).format(selected.pending) })}</span>}</div>
         <label>{t('webhook.receiveUrl')}<div className="webhook-copy"><input readOnly value={selected.endpoint}/><button type="button" aria-label={t('webhook.copyUrl')} onClick={() => void copy(selected.endpoint)}><Copy/></button></div></label>

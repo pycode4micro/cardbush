@@ -13,6 +13,7 @@ import { chatWebhookCommand, askWithWebhookJobs } from '../dist-electron/agentCh
 import { commandSuggestions } from '../dist-electron/agentChatCompletion.mjs';
 import { NativeChatTerminal } from '../dist-electron/agentChatTerminal.mjs';
 import { openLocalChatClient } from '../dist-electron/agentLocalChat.mjs';
+import { uiText } from '@cardbush/platform/i18n';
 
 if (process.platform !== 'win32') process.env.CARDBUSH_CREDENTIAL_KEY = randomBytes(32).toString('hex');
 const tempRoot = resolve('tmp/cli-webhook-tests');
@@ -45,6 +46,22 @@ test('idle prompt wakes for a fast completed Webhook job, without requiring a lo
   const io = { ask: async (_prompt, signal) => new Promise(resolve => signal.addEventListener('abort', () => resolve(null), { once: true })) };
   const result = await askWithWebhookJobs(client, io, 'current', new Set(), new AbortController().signal);
   assert.equal(result.text, null); assert.deepEqual(result.jobs, ['external']);
+});
+
+test('CLI reports live bridge status separately from saved configuration', async () => {
+  const state = { enabled: true, listening: true, port: 4791, pairings: [], connections: [
+    { id: 'online', name: 'Online Bot', enabled: true, status: 'connected', pending: 0 },
+    { id: 'saved', name: 'Saved Bot', enabled: true, status: 'offline', pending: 0 },
+    { id: 'disabled', name: 'Disabled Bot', enabled: false, status: 'disabled', pending: 0 },
+  ] };
+  for (const language of ['zh', 'en']) {
+    const output = [], t = uiText(language);
+    await chatWebhookCommand('/webhook status', { call: async () => state }, { status: text => output.push(text) },
+      new AbortController().signal, 'current', settings, language);
+    for (const [index, key] of ['webhook.connected', 'webhook.offline', 'webhook.disabled'].entries())
+      assert.equal(output[index + 1].trim(), t('cliWebhook.connection', { name: state.connections[index].name,
+        id: state.connections[index].id, count: 0, status: t(key) }));
+  }
 });
 
 test('shared host reports an occupied port without changing the other host, and stops persisting its enabled state', async () => {

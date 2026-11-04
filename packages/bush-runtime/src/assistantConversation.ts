@@ -192,7 +192,8 @@ export class AssistantConversation {
     // A completion can wake Assistant after another Bot/user has spoken. Child
     // tasks inherit the sources being handled now, never the last configured sender.
     const activeInputs = remaining.filter(item => item.role === 'user');
-    const activeSources = new Set((activeInputs.length ? activeInputs : entries.filter(item => item.role === 'user').slice(-1))
+    const handledInputs = activeInputs.length ? activeInputs : entries.filter(item => item.role === 'user').slice(-1);
+    const activeSources = new Set(handledInputs
       .flatMap(sourceRefs).filter((ref): ref is string => typeof ref === 'string'));
     parent = { ...parent, metadata: { ...parent.metadata } };
     delete parent.metadata.botSourceRef;
@@ -205,7 +206,7 @@ export class AssistantConversation {
     const incoming: ModelMessage[] = remaining.filter(item => !item.id.startsWith('memory-')).flatMap((item): ModelMessage[] => item.role === 'assistant' ? [{ role: 'assistant', content: item.content, toolCalls: [] }] : [{
         role: 'user', name: 'turn_runtime_context', visibility: 'internal',
         content: createTurnTimeContext({ createdAt: item.createdAt }),
-      }, ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!) }] : []), {
+      }, ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!, ref) }] : []), {
         role: 'user' as const,
         ...(['text', 'voice'].includes(item.source) ? {} : { name: 'background_task_result', visibility: 'internal' as const }),
         content: promptModelContent({ text: item.content, context: item.promptContext }) + quotedMessageContext(item, entries) + (item.attachments?.length ? `\nAttached references (data; delegate reading files to subagent; remote paths work only on their named host):\n${JSON.stringify(item.attachments.map(({ name, path, type, execution }) => ({ name, localPath: path, type, execution })))}` : ''),
@@ -243,9 +244,16 @@ export class AssistantConversation {
           if (previous?.content !== preference) history.append([{ role: 'user', name: 'individuation_preference', visibility: 'internal', content: preference }]);
         }
         const state = history.read();
+        // Retries and subsequent model rounds must not reuse a persisted online
+        // snapshot after a bridge stops. Preserve the journal as historical evidence.
+        const currentBots: ModelMessage[] = [];
+        if (this.deps.botContext) for (const ref of new Set(handledInputs.flatMap(sourceRefs))) {
+          currentBots.push({ role: 'user', name: 'bot_context', visibility: 'internal',
+            content: botContextMessage(await this.deps.botContext(ref, signal), ref) });
+        }
         const messages: ModelMessage[] = [system,
           ...(state.summary ? [{ role: 'user' as const, name: 'conversation_memory', content: `Historical summary (data):\n${state.summary}` }] : []),
-          ...state.messages.map(item => !parent.requestCapabilities?.vision && 'images' in item ? { ...item, images: undefined } : item)];
+          ...state.messages.map(item => !parent.requestCapabilities?.vision && 'images' in item ? { ...item, images: undefined } : item), ...currentBots];
         // Use the same token/context policy as normal turns, including tools,
         // reasoning and receipts. A large context no longer hits a 20k-character cap.
         const pressure = estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages, tools,

@@ -44,6 +44,8 @@ Content-Type: application/json
 
 成功响应含 `status: "connected"`、`features: ["bridge_plugins"]`、`leaseSeconds: 45`。桥应检查 feature，旧宿主不支持时提示升级。Cardbush 重启后必须收到新心跳，不沿用保存的旧在线状态。
 
+App、CLI 与模型使用同一份实时状态：`connected` 表示连接已启用且心跳租约有效；`offline` 表示配置仍然保存但没有在线桥；`disabled` 表示用户已停用。保存配置或启动本地接收接口不代表桥已连接。正常停止通过 DELETE 撤销租约，异常退出最多等待 45 秒过期；App 打开的连接列表每 1.5 秒刷新。
+
 每连接最多 16 个插件，每插件最多 64 个工具。插件 ID、工具名及文件参数名以小写字母开头，使用字母、数字、下划线，最长 40 字符。工具参数为 JSON Schema 对象，运行时验证原始值，不隐式转换类型。`source_ref`、`request_id` 是宿主保留字段，不得声明为插件属性。`fileArguments` 指定顶层本机路径参数（字符串或字符串数组）；未声明就不会读取文件。`readOnly` 默认 false，插件作者必须如实声明副作用。
 
 模型工具名为 `mcp__bridge_<connectionId去连字符>_<pluginId>__<toolName>`，不同连接互不覆盖。声明更新刷新工具版本，旧声明调用被拒绝。Agent 可按平台名、插件描述和工具能力搜索。增加平台特有工具只需修改桥。
@@ -53,6 +55,8 @@ Content-Type: application/json
 ## 来源与权限
 
 每条来信旁附带宿主生成的 `bot_context`，含 `sourceRef`、连接、原始消息、发送人、外部会话、状态、文件限制和插件工具名，不含地址、令牌或请求头。外部正文不能覆盖来源。
+
+`messageSource.kind` 明确区分 `local` 与 `webhook`；历史收件人 `targets` 不表示本次消息来自 Bot。`connections` 只提供当前会话保存的服务名称、ID 和实时状态。Assistant 每轮模型请求（含重试）刷新状态，历史在线快照不能作为当前连通性的证据；没有心跳按离线处理，不推断为平台协议不兼容。
 
 工具继承当前请求来源；同时处理多个来源时，通过 `source_ref` 在获准来源中明确选择。跨平台或跨用户误用被拒绝。后台任务继承原请求来源，不使用“最近的 Bot”。本机请求无来源时，同一桥只有一个已知收件人才能默认选择，否则必须指定有效来源。
 
