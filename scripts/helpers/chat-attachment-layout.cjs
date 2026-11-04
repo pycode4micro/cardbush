@@ -39,6 +39,32 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.equal(await run('document.querySelectorAll(".message-row.user .message-actions button").length'), 1, 'image-only message offers editing without an empty-text copy action');
     await run('updateChat({messages:[{...attachmentLayoutMessage,attachments:[]}]})');
     await until('!document.querySelector(".user-message-attachments")&&!!document.querySelector(".user-bubble")', 'text-only message has no attachment gap');
+    await run(`crypto.randomUUID??=()=>require('node:crypto').randomUUID();
+      window.draftAttachmentApi={pick:cardbushDesktop.pickAttachments,inspect:cardbushDesktop.inspectAttachments};
+      cardbushDesktop.pickAttachments=async()=>['C:/fixture/one.png','C:/fixture/two.png'];
+      cardbushDesktop.inspectAttachments=async paths=>paths.map(path=>({path,name:path.split('/').pop(),kind:'file',size:2048}));
+      updateChat({activeConversationId:'',messages:[],draft:'',language:'zh',selectedProjectDir:'',loading:false});`);
+    await until('!!document.querySelector(".welcome-composer .composer-surface")', 'welcome composer');
+    await run(`document.querySelector('.composer-tools .tool-chip').click()`);
+    await until('!!document.querySelector(".composer-add-action")', 'attachment picker');
+    await run(`document.querySelector('.composer-add-action').click()`);
+    await until('document.querySelectorAll(".composer-image-thumb").length===2', 'two draft images');
+    // The fixture does not expose native files. Supply real image pixels for visual review.
+    await run(`document.querySelectorAll('.composer-image-thumb img').forEach((img,i)=>img.src=attachmentLayoutImage(400,700+i*100))`);
+    for (const theme of ['theme-dark', 'theme-bright']) for (const width of [1180, 460]) {
+      window.setContentSize(width, 760);
+      await run(`document.querySelector('.app').className='app ${theme}'`);
+      await pause(150);
+      const geometry = await run(`(()=>{const surface=document.querySelector('.composer-surface'),s=surface.getBoundingClientRect(),tray=document.querySelector('.composer-attachments'),t=tray.getBoundingClientRect(),input=document.querySelector('[data-composer-input]').getBoundingClientRect(),bar=document.querySelector('.builtin-workspace-control').getBoundingClientRect();return{contained:surface.contains(tray)&&t.top>=s.top&&t.bottom<=s.bottom,above:t.bottom<=input.top,stripGap:s.top-bar.bottom,bottom:s.bottom,viewport:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth}})()`);
+      assert.ok(geometry.contained && geometry.above, JSON.stringify(geometry));
+      assert.ok(geometry.stripGap<=1 && geometry.stripGap>=-24, 'workspace strip remains attached: '+JSON.stringify(geometry));
+      assert.ok(!geometry.overflow && geometry.bottom<=geometry.viewport, JSON.stringify(geometry));
+      fs.writeFileSync(path.join(root, 'tmp', `welcome-attachments-${theme}-${width}.png`), (await window.webContents.capturePage()).toPNG());
+    }
+    await run(`document.querySelector('.composer-image-remove').click()`);
+    await until('document.querySelectorAll(".composer-image-thumb").length===1', 'remove one draft image');
+    await run(`document.querySelector('.composer-image-remove').click();cardbushDesktop.pickAttachments=draftAttachmentApi.pick;cardbushDesktop.inspectAttachments=draftAttachmentApi.inspect`);
+    await until('!document.querySelector(".composer-attachments")', 'empty tray removed');
     console.log('Chat attachments passed: separate image/file cards, intrinsic text width, portrait ratio, editing, image-only/text-only and responsive themes.');
   } finally {
     await window.webContents.removeInsertedCSS(sizing);

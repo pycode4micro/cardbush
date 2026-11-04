@@ -1490,7 +1490,6 @@ export function Composer({
         guidingQueuedId={guidingQueuedId} onGuideQueuedMessage={runtimeReady && !stopping && onGuideQueuedMessage ? guideQueuedMessage : undefined}
         onEditQueuedMessage={onEditQueuedMessage} onRemoveQueuedMessage={onRemoveQueuedMessage}
         onReorderQueuedMessage={onReorderQueuedMessage} />
-      {attachmentTray}
       <div
         ref={composerSurfaceRef}
         className={`composer-surface${multilineInput ? ' is-multiline' : ''}${prediction ? ' has-next-step' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
@@ -1509,6 +1508,7 @@ export function Composer({
           textareaRef.current?.focus();
         }}
       >
+        {attachmentTray}
         {fileDragActive && dropTargetRef.current && createPortal(
           <div className="composer-file-drop-overlay" role="status">
             <Paperclip size={20} />

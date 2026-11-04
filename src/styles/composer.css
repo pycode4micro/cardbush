@@ -608,7 +608,7 @@
   padding: 0 2px 2px 0;
 }
 
-/* Draft attachments sit above the input surface and never change its grid. */
+/* Draft attachments belong to the input surface; sent attachments use message layout. */
 .composer-attachments {
   --composer-attachment-height: 80px;
   --composer-attachment-image-width: 100px;
@@ -620,6 +620,7 @@
   gap: var(--composer-attachment-gap);
   max-width: 100%;
   min-width: 0;
+  grid-column: 1 / -1;
   margin-bottom: var(--composer-attachment-gap);
   padding: 4px;
   overflow-x: auto;

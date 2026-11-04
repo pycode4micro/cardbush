@@ -27,9 +27,9 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   await pick([portrait, filePath]);
   await until('document.querySelector(".composer-image-preview img")?.naturalWidth===400 && !!document.querySelector(".composer-file-attachment")');
   const input = await read(`(()=>{const tray=document.querySelector('.composer-attachments'),surface=document.querySelector('.composer-surface');return {
-    separate:!surface.contains(tray),above:tray.getBoundingClientRect().bottom<=surface.getBoundingClientRect().top,
+    contained:surface.contains(tray)&&tray.getBoundingClientRect().top>=surface.getBoundingClientRect().top,above:tray.getBoundingClientRect().bottom<=surface.querySelector('textarea').getBoundingClientRect().top,
     height:surface.getBoundingClientRect().height,fit:getComputedStyle(tray.querySelector('img')).objectFit,draft:surface.querySelector('textarea').value}})()`);
-  assert.equal(input.separate, true); assert.equal(input.above, true); assert.ok(Math.abs(input.height-originalHeight)<1, JSON.stringify(input));
+  assert.equal(input.contained, true); assert.equal(input.above, true); assert.ok(input.height>originalHeight+60, JSON.stringify(input));
   assert.equal(input.fit, 'contain'); assert.equal(input.draft, '用这张图生成视频。');
   await click('.composer-image-preview'); await until('!!document.querySelector(".image-preview-dialog")');
   await until('document.querySelector(".image-preview-stage img")?.naturalHeight===900');
@@ -69,10 +69,10 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   await until('!!document.querySelector(".inspector-quick-input textarea")');
   await pick([portrait, wide, square, filePath]);
   await until('document.querySelectorAll(".inspector-quick-input .composer-image-thumb").length===3');
-  assert.equal(await read('!!document.querySelector(".inspector-quick-input .composer-surface .composer-image-strip")'), false);
+  assert.equal(await read('!!document.querySelector(".inspector-quick-input .composer-surface .composer-image-strip")'), true);
   assert.equal(await read('document.querySelector("textarea").value'), '新草稿');
   await click('.composer-image-remove'); await until('document.querySelectorAll(".composer-image-thumb").length===2');
   await click('.composer-file-remove'); await until('!document.querySelector(".composer-file-attachment")');
   assert.equal(await read('document.querySelector("textarea").value'), '新草稿');
-  console.log('Assistant attachments passed: independent draft tray and sent cards, uncropped portrait, unchanged text surface, original payload, viewer, removal, gallery stability, portal and both responsive themes. Screenshots: ' + directory);
+  console.log('Assistant attachments passed: draft tray inside input, separate sent cards, uncropped portrait, preserved draft, original payload, viewer, removal, gallery stability, portal and both responsive themes. Screenshots: ' + directory);
 };
