@@ -159,7 +159,7 @@
     "test:runtime-host-env": "tsc -p tsconfig.node.json && node scripts/test-runtime-host-env.cjs",
     "test:session-read-fences": "node scripts/test-session-read-fences.mjs",
     "test:conversation-switching": "node scripts/test-conversation-switching.mjs && node scripts/run-agents-ui-test.mjs --switching && node scripts/run-app-views-test.mjs session-scroll",
-    "test:chat-transcript": "node scripts/test-chat-transcript.mjs && node --test scripts/test-task-plan-stream.mjs",
+    "test:chat-transcript": "node scripts/test-chat-transcript.mjs && node --test scripts/test-task-plan-stream.mjs scripts/test-background-turn-input.mjs",
     "test:app-views": "node scripts/run-app-views-test.mjs",
     "test:app-preferences": "node --test scripts/test-app-preferences.mjs",
     "test:compact-window": "tsc -p tsconfig.node.json && node scripts/run-app-views-test.mjs compact-window",

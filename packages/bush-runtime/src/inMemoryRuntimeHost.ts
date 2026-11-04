@@ -2036,13 +2036,23 @@ export class InMemoryRuntimeHost {
     try {
       this.#eventLog.append(identity, {
         kind: "turn_accepted",
-        payload: { status: "accepted" },
+        payload: {
+          status: "accepted",
+          ...(options.sessionCommit ? { input: {
+            turnSequence: options.sessionCommit.turnSequence,
+            messages: options.sessionCommit.inputMessages.flatMap((item, messageIndex) =>
+              item.message.role === 'user' && item.message.visibility !== 'internal'
+                ? [{ messageId: item.messageId, messageIndex }] : []),
+          } } : {}),
+        },
       });
       this.#eventLog.append(identity, {
         kind: "turn_started",
         payload: { status: "running" },
       });
       this.#publishQueuedGuidance(identity);
+      // Keep admission and this durable input save synchronous: event-stream
+      // consumers must be able to read accepted inputs before provider activity.
       this.#recovery.save({
         request,
         messages: request.messages,

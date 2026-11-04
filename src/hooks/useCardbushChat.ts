@@ -1356,6 +1356,10 @@ export function useCardbushChat(
         };
       },
       onStart: (start) => {
+        const userMessages = start.userMessages;
+        if (userMessages?.length) {
+          setMessagesByConversation(state => mergeMessages(state, normalizedSessionId, userMessages));
+        }
         ensureAssistant({ createdAt: start.createdAt, startedAt: start.createdAt });
         markSessionRunning(normalizedSessionId, start.turnId || normalizedTurnId);
       },

@@ -54,7 +54,7 @@ import { configuredMcpServerId } from './mcpConfigurationFact';
 import { prepareRuntimePluginTurn } from '../plugins/runtimeExtensions';
 import { parseGoalCommand } from './goalCommand';
 import { toolArtifactsFromPayload } from './toolArtifacts';
-import { projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
+import { projectRuntimeSessionMessage, projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
 import { contextWindowMetrics } from './contextWindowUsage';
 import { runtimeThinkingEvent } from './runtimeThinking';
 import { publishModelActivity } from '../runtime-client/modelActivity';
@@ -490,7 +490,9 @@ async function consumeRuntimeEvents(
   })) {
     publishFileEditEvent(event);
     publishModelActivity(event);
-    request.onEventCursor?.({
+    // Acceptance includes input hydration. Do not acknowledge it before the
+    // bubble is delivered, or a detach during the read would skip it on replay.
+    if (event.kind !== 'turn_accepted') request.onEventCursor?.({
       eventName: event.kind,
       eventId: event.eventId,
       sequence: event.sequence,
@@ -510,16 +512,30 @@ async function consumeRuntimeEvents(
     }
     switch (event.kind) {
       case 'turn_accepted': {
-        const userMessageId = runtimeRequest.inputMessages?.find(item => item.message.role === 'user' && item.message.visibility !== 'internal')?.messageId;
-        const storedUser = userMessageId ? await runtime.client.getUserMessage(event.sessionId, event.turnId, userMessageId, signal).catch(() => null) : null;
+        const input = event.payload.input;
+        const references = input?.messages ?? runtimeRequest.inputMessages?.flatMap((item, messageIndex) =>
+          item.message.role === 'user' && item.message.visibility !== 'internal' ? [{ messageId: item.messageId, messageIndex }] : []) ?? [];
+        const storedInputs = await Promise.all(references.map(async reference => ({
+          ...reference,
+          stored: await runtime.client.getUserMessage(event.sessionId, event.turnId, reference.messageId, signal).catch(() => null),
+        })));
+        const userMessageId = references[0]?.messageId;
+        const storedUser = storedInputs[0]?.stored;
+        const userMessages = input ? storedInputs.flatMap(({ stored, messageIndex }) =>
+          stored?.message.role === 'user' && stored.message.visibility !== 'internal'
+            ? [projectRuntimeSessionMessage({ ...stored, createdAt: stored.createdAt ?? event.createdAt,
+                turnId: event.turnId, turnSequence: input.turnSequence, messageIndex }, event.sessionId)] : []) : [];
+        signal.throwIfAborted();
         request.onStart?.({
           sessionId: event.sessionId,
           turnId: event.turnId,
           userMessageId,
+          ...(userMessages.length ? { userMessages } : {}),
           ...(storedUser ? { userMessageMetadata: { ...promptContextMetadata(readUserPrompt(storedUser.message.content, storedUser.metadata)),
             ...(storedUser.metadata?.automationReminder ? { automationReminder: storedUser.metadata.automationReminder } : {}) } } : {}),
           createdAt: event.createdAt,
         });
+        request.onEventCursor?.({ eventName: event.kind, eventId: event.eventId, sequence: event.sequence });
         break;
       }
       case 'reasoning_segment_started':

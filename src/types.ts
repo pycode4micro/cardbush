@@ -603,6 +603,8 @@ export interface StreamStart {
   turnId: string;
   userMessageId?: string;
   userMessageMetadata?: Record<string, unknown>;
+  /** Durable visible inputs for observers that did not submit this turn. */
+  userMessages?: ChatMessage[];
   messageId?: string;
   assistantSegmentIndex?: number;
   createdAt?: string;

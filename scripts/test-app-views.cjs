@@ -116,7 +116,7 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-reference-sizing' ? [
       'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
     ] : []),
-    ...(!process.env.CARDBUSH_APP_VIEWS_CASE || ['team-composer', 'composer-input', 'queue'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
+    ...(!process.env.CARDBUSH_APP_VIEWS_CASE || ['team-composer', 'composer-input', 'queue', 'background-input'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
       'src/shared/promptReferences.ts', 'src/features/composer/PromptReferenceLink.tsx',
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerPromptInput.tsx',
       'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
@@ -1032,6 +1032,14 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'turn-layout') {
       await require('./helpers/chat-turn-layout.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no turn layout renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'background-input') {
+      await require('./helpers/background-turn-input.cjs')({ run, until, pause });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'background-input') {
+      assert.deepEqual(await run('failures'), [], 'no background input renderer errors');
       assert.deepEqual(errors, []);
       return;
     }
