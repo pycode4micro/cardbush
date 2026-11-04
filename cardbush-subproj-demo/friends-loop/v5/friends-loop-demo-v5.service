@@ -1,0 +1,17 @@
+[Unit]
+Description=Friends isolated short live news experiment
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+WorkingDirectory=/opt/friends-loop-demo-20261104/v5
+ExecStart=/usr/local/bin/node /opt/friends-loop-demo-20261104/v5/main.mjs serve /opt/friends-loop-demo-20261104/v5/runs/live-03
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+MemoryMax=512M
+StandardOutput=append:/opt/friends-loop-demo-20261104/v5/runs/live-03/service.log
+StandardError=append:/opt/friends-loop-demo-20261104/v5/runs/live-03/service.log

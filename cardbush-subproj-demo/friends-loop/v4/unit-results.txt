@@ -1,0 +1,16 @@
+✔ events originate from observed habit and repeated creation is idempotent (25.553541ms)
+✔ clock registration survives reload, does not fire early and fires exactly once (39.177223ms)
+✔ directory content change enqueues facts; same content and generated output do not retrigger (29.271027ms)
+✔ read evidence must be real, scoped and current; future event cannot be completed (24.147278ms)
+✔ completion receipt alone does not deliver; actual final reply is committed once (34.310517ms)
+✔ interrupted activation is recovered without losing the signal (21.582729ms)
+✔ source unavailability is a health fact, not user absence or a fabricated success (24.299544ms)
+✔ stale event revision and invalid timezone are rejected (19.098911ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 290.563674

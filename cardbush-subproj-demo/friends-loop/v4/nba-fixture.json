@@ -1,0 +1,7 @@
+{
+  "label": "NBA habit autonomous loop — synthetic news fixture, accelerated time",
+  "timezone": "Asia/Shanghai",
+  "start": "2026-11-04T16:55:00+08:00",
+  "habit": "我喜欢看 NBA，通常希望每天 17:00 左右看到当天的 NBA 新闻。用中文简短汇总重点，注明消息来源；同一份内容不要重复告诉我。如果有更正，应以更新后的事实为准。",
+  "applies_when": "日常 NBA 新闻阅读、新闻内容选择和汇报时机"
+}

@@ -1,0 +1,6 @@
+{
+  "label": "Real public NBA news, short live-clock habit test",
+  "habit": "我喜欢看 NBA，习惯每天北京时间 {reading_time} 看一份最新的中文 NBA 新闻简报。重点关注比赛结果、重要伤病和交易，最多三条，注明原始来源链接与发布时间。不要把旧闻当新消息；已经看过的相同内容不要重复告诉我，没有值得看的新消息就保持安静。",
+  "applies_when": "日常 NBA 新闻阅读、来源选择、阅读时机与汇报方式",
+  "lead_seconds": 120
+}

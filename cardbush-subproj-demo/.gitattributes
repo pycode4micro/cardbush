@@ -1,0 +1,3 @@
+# Preserve the bytes of the Linux experiment snapshots across checkouts.
+friends-loop/v4/** text eol=lf
+friends-loop/v5/** text eol=lf

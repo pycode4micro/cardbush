@@ -1,0 +1,202 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "habit_created_event_without_user_message",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "agent_registered_time_and_directory_detectors",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "event_respects_habit_time",
+      "passed": true,
+      "details": [
+        {
+          "id": "event_1ce8ec0a-933e-4523-b57a-9edc3cf46eec",
+          "logical_key": "nba-daily-digest-2026-11-04",
+          "title": "今日 NBA 新闻汇总（2026-11-04）",
+          "intent": "按每日习惯，在 17:00 左右读取收件箱中的当日 NBA 新闻文档，用中文简短汇总重点并注明消息来源；避免重复已告知内容，出现更正时以更新后事实为准。",
+          "completion": "已基于当日文档生成中文 NBA 新闻摘要 artifact（列明来源名称与证据 ID），核对无重复且更正已采纳，并在 17:00 之后完成用户汇报。",
+          "habit_refs": "[{\"id\":\"habit_8398568382debd1930206ae1\",\"revision\":1}]",
+          "not_before": "2026-11-04T09:00:00.000Z",
+          "state": "waiting",
+          "revision": 3,
+          "created": 1793783536876,
+          "created_by": "wake_ad973ab4-3f73-46ff-8fa7-9b4669026d98",
+          "artifact_id": null,
+          "updated": 1793783540076
+        }
+      ]
+    },
+    {
+      "name": "no_premature_report_at_bootstrap",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "source_files_detected_without_user_input",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "no_early_report_with_documents",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "restart_keeps_registered_conditions",
+      "passed": true,
+      "details": {
+        "old_pid": 2127131,
+        "new_pid": 2127743
+      }
+    },
+    {
+      "name": "idle_restart_does_not_call_model",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "no_early_report_one_minute_before",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "clock_detector_woke_loop",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "directory_change_woke_loop",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "first_actual_terminal_reply",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "first_reply_uses_corrected_score",
+      "passed": true,
+      "details": "今天是 2026-11-04，NBA 新闻摘要如下（均为人工合成的测试资料，不是真实新闻）：\n\n- 勇士对阵湖人：最终核对比分为 112:110，勇士获胜。此前初报的 112:108 是录入错误，已按更正记录更新。\n- 来源：测试通讯社 A（初报）、测试通讯社 B（更正）。\n- 收件箱另有一份天气类资料，与 NBA 无关，因此没有纳入。\n\n已生成摘要文件并完成今日汇报；下一次汇总定在明日 17:00 前后进行。"
+    },
+    {
+      "name": "unrelated_weather_not_reported",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "synthetic_fixture_disclosed",
+      "passed": true,
+      "details": "今天是 2026-11-04，NBA 新闻摘要如下（均为人工合成的测试资料，不是真实新闻）：\n\n- 勇士对阵湖人：最终核对比分为 112:110，勇士获胜。此前初报的 112:108 是录入错误，已按更正记录更新。\n- 来源：测试通讯社 A（初报）、测试通讯社 B（更正）。\n- 收件箱另有一份天气类资料，与 NBA 无关，因此没有纳入。\n\n已生成摘要文件并完成今日汇报；下一次汇总定在明日 17:00 前后进行。"
+    },
+    {
+      "name": "real_artifact_matches_receipt",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "agent_prepared_next_occurrence",
+      "passed": true,
+      "details": [
+        {
+          "id": "event_1d9d2790-e662-4ac5-9c77-d754141664e4",
+          "logical_key": "nba-daily-digest-2026-11-05",
+          "title": "明日 NBA 新闻汇总（2026-11-05）",
+          "intent": "按每日习惯，在 2026-11-05 17:00 左右读取收件箱中的当日 NBA 新闻文档，用中文简短汇总重点并注明消息来源；避免重复已告知内容，出现更正时以更新后事实为准。",
+          "completion": "已基于 2026-11-05 当日文档生成中文 NBA 新闻摘要 artifact（列明来源名称与证据 ID），核对无重复且更正已采纳，并在 17:00 之后完成用户汇报。",
+          "habit_refs": "[{\"id\":\"habit_8398568382debd1930206ae1\",\"revision\":1}]",
+          "not_before": "2026-11-05T09:00:00.000Z",
+          "state": "waiting",
+          "revision": 3,
+          "created": 1793783671573,
+          "created_by": "wake_5d97306b-f146-49d1-a190-1f37434fa88e",
+          "artifact_id": null,
+          "updated": 1793783673722
+        }
+      ]
+    },
+    {
+      "name": "unchanged_directory_uses_no_model_calls",
+      "passed": true,
+      "details": {
+        "before": 19,
+        "after": 19
+      }
+    },
+    {
+      "name": "no_duplicate_final_reply",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "second_occurrence_not_reported_early",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "second_day_new_result",
+      "passed": true,
+      "details": "今日 NBA 摘要：凯尔特人（Celtics）以 105:101 战胜雄鹿（Bucks），凯尔特人获胜。消息来源：测试通讯社 C《NBA 合成测试资料 C》。以上内容为人工合成资料，是演示数据，并非真实新闻。今日未发现更正文档，且今日内容与昨日已汇报的赛事不重复。"
+    },
+    {
+      "name": "second_day_does_not_repeat_previous_news",
+      "passed": true,
+      "details": "今日 NBA 摘要：凯尔特人（Celtics）以 105:101 战胜雄鹿（Bucks），凯尔特人获胜。消息来源：测试通讯社 C《NBA 合成测试资料 C》。以上内容为人工合成资料，是演示数据，并非真实新闻。今日未发现更正文档，且今日内容与昨日已汇报的赛事不重复。"
+    },
+    {
+      "name": "all_events_model_created",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "zero_user_signals",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "zero_user_role_model_messages",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "continued_future_registration",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "idle_after_second_result_no_model_calls",
+      "passed": true,
+      "details": null
+    }
+  ],
+  "reports": [
+    {
+      "id": "report_11c2f10c-30e4-4b56-8d14-f20509c9af3c",
+      "wake": "wake_5d97306b-f146-49d1-a190-1f37434fa88e",
+      "final_text": "今天是 2026-11-04，NBA 新闻摘要如下（均为人工合成的测试资料，不是真实新闻）：\n\n- 勇士对阵湖人：最终核对比分为 112:110，勇士获胜。此前初报的 112:108 是录入错误，已按更正记录更新。\n- 来源：测试通讯社 A（初报）、测试通讯社 B（更正）。\n- 收件箱另有一份天气类资料，与 NBA 无关，因此没有纳入。\n\n已生成摘要文件并完成今日汇报；下一次汇总定在明日 17:00 前后进行。",
+      "event_ids": "[\"event_1ce8ec0a-933e-4523-b57a-9edc3cf46eec\"]",
+      "artifact_ids": "[\"artifact_b78f1a5e-df9b-4b6b-a4b8-31f0469ef1fb\"]",
+      "created": 1793783682568,
+      "virtual_at": "2026-11-04T09:00:00.000Z"
+    },
+    {
+      "id": "report_6b0c98aa-8b36-4790-9e25-1a97fa88d72d",
+      "wake": "wake_e4561e39-b492-4105-a7e2-ab6349217691",
+      "final_text": "今日 NBA 摘要：凯尔特人（Celtics）以 105:101 战胜雄鹿（Bucks），凯尔特人获胜。消息来源：测试通讯社 C《NBA 合成测试资料 C》。以上内容为人工合成资料，是演示数据，并非真实新闻。今日未发现更正文档，且今日内容与昨日已汇报的赛事不重复。",
+      "event_ids": "[\"event_1d9d2790-e662-4ac5-9c77-d754141664e4\"]",
+      "artifact_ids": "[\"artifact_7ae0481d-e4c2-40b9-8047-1b80f2a607f3\"]",
+      "created": 1793783780721,
+      "virtual_at": "2026-11-05T09:00:00.000Z"
+    }
+  ],
+  "calls": 33,
+  "user_signals": 0,
+  "fixture": true,
+  "accelerated_clock": true
+}

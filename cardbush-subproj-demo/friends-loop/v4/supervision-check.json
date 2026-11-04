@@ -1,0 +1,7 @@
+{
+  "calls_before": 33,
+  "calls_after": 33,
+  "boot_enabled": false,
+  "service": "friends-loop-demo-v4.service",
+  "passed": true
+}

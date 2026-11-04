@@ -1,0 +1,71 @@
+{
+  "framework_business_literals": {
+    "store.mjs": [],
+    "environment-service.mjs": [],
+    "event-registry.mjs": [],
+    "friends-loop.mjs": [],
+    "main.mjs": []
+  },
+  "unit_tests": 8,
+  "scenario_checks": 27,
+  "scenario_passed": true,
+  "calls": {
+    "count": 33,
+    "input_tokens": 828993,
+    "output_tokens": 26327,
+    "cached_tokens": 780416
+  },
+  "signals": [
+    {
+      "kind": "clock.reached",
+      "origin": "detector",
+      "count": 2
+    },
+    {
+      "kind": "directory.changed",
+      "origin": "detector",
+      "count": 2
+    },
+    {
+      "kind": "system.started",
+      "origin": "system",
+      "count": 1
+    }
+  ],
+  "events": [
+    {
+      "title": "今日 NBA 新闻汇总（2026-11-04）",
+      "state": "completed",
+      "not_before": "2026-11-04T09:00:00.000Z",
+      "created_by": "wake_ad973ab4-3f73-46ff-8fa7-9b4669026d98"
+    },
+    {
+      "title": "明日 NBA 新闻汇总（2026-11-05）",
+      "state": "completed",
+      "not_before": "2026-11-05T09:00:00.000Z",
+      "created_by": "wake_5d97306b-f146-49d1-a190-1f37434fa88e"
+    },
+    {
+      "title": "明日 NBA 新闻汇总（2026-11-06）",
+      "state": "waiting",
+      "not_before": "2026-11-06T09:00:00.000Z",
+      "created_by": "wake_e4561e39-b492-4105-a7e2-ab6349217691"
+    }
+  ],
+  "reports": 2,
+  "current_heartbeat": {
+    "pid": 2129137,
+    "phase": "watching",
+    "model_requests": 33,
+    "pending": 0,
+    "active_registrations": 2,
+    "uptime_ms": 87091,
+    "cpu_ms": 718.555,
+    "peak_rss_bytes": 170360832,
+    "wall_at": "2026-11-04T09:19:56.027Z",
+    "virtual_at": "2026-11-05T09:00:00.000Z"
+  },
+  "production_service": "MainPID=1480462\nActiveState=active\nSubState=running",
+  "demo_service": "MainPID=2129137\nActiveState=active\nSubState=running",
+  "source_archive_sha256": "9103d2915f8669eb6c98ef73299f4ac3672617e92974f11b2a378a61ca87c3d5"
+}

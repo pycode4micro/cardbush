@@ -1,0 +1,36 @@
+{
+  "root": "/opt/friends-loop-demo-20261104/v5/runs/live-02",
+  "model": null,
+  "metrics": null,
+  "events": [],
+  "registrations": [],
+  "wakes": [],
+  "reports": [],
+  "artifacts": [],
+  "signals": [
+    {
+      "id": "signal_e64c5bfb-f016-40df-a923-6d45f2dc000e",
+      "dedup": "bootstrap",
+      "kind": "system.started",
+      "origin": "system",
+      "data": {
+        "reason": "runtime_initialized",
+        "habit_count": 1
+      },
+      "created": 1793785529485,
+      "state": "pending",
+      "wake": null,
+      "attempts": 0,
+      "available": 0
+    }
+  ],
+  "calls": {
+    "calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cached_tokens": 0
+  },
+  "effects": [],
+  "user_signal_count": 0,
+  "user_model_message_count": 0
+}

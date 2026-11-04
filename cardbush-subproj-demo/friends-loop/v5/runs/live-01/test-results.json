@@ -1,0 +1,25 @@
+{
+  "passed": false,
+  "phase": "source_acquisition",
+  "wakes": [
+    {
+      "status": "completed",
+      "error": null
+    },
+    {
+      "status": "failed",
+      "error": "RUNTIME_failed:provider_stream_exception"
+    },
+    {
+      "status": "failed",
+      "error": "RUNTIME_failed:provider_stream_exception"
+    },
+    {
+      "status": "failed",
+      "error": "RUNTIME_stopped:turn_stop_requested"
+    }
+  ],
+  "finding": "Clock fired correctly; source acquisition repeatedly exhausted activation round limit. Search relevance and missing anchor labels impeded source verification. No final briefing was produced.",
+  "intervention": "Engineer stopped this run; changes will be tested in a fresh run without injected user instructions.",
+  "at": "2026-11-04T09:42:47.162006+00:00"
+}

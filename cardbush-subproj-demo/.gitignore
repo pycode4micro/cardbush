@@ -1,0 +1,11 @@
+.env
+*.private.json
+*.local.json
+*.sqlite
+*.sqlite-*
+*.log
+*.zip
+*.pyc
+__pycache__/
+daemon.lock
+runtime/

@@ -1,0 +1,5 @@
+{
+  "stage": "failed",
+  "wall_time": "2026-11-04T09:45:29.839511+00:00",
+  "error": "[Errno 2] No such file or directory: '/opt/friends-loop-demo-20261104/v5/runs/live-02/heartbeat.json'"
+}
