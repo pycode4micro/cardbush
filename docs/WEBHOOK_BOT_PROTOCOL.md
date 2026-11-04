@@ -119,4 +119,4 @@ Bot 服务必须：
 
 ## 独立桥项目
 
-微信和飞书集中在 [cardbush-bridges](../../cardbush-bridges/README.md)，平台账号、SDK 和发送代码不在 Cardbush 源码中。进入桥项目运行 `npm start` 选择平台，或 `npm start -- feishu` / `npm start -- weixin`；完成配置后可用 `npm start -- all` 同时启动。App 通过目标上下文右上角“连接服务”接入；CLI 使用 `/webhook`。新增平台只需在桥项目注册适配器，继续遵守此通用协议。
+微信和飞书集中在 [cardbush-bridges](../../cardbush-bridges/README.md)，平台账号、SDK 和发送代码不在 Cardbush 源码中。首次在桥项目执行 `npm ci --ignore-scripts` 和 `npm link --ignore-scripts`，之后可在任意目录运行 `cardbush-bridge start` 选择平台，或 `cardbush-bridge start feishu` / `cardbush-bridge start weixin`；完成配置后可用 `cardbush-bridge start --all` 同时启动。`cardbush-bridge --help` 查看完整用法。App 通过目标上下文右上角“连接服务”接入；CLI 使用 `/webhook`。新增平台只需在桥项目注册适配器，继续遵守此通用协议。
