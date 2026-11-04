@@ -13,6 +13,16 @@ export const webhookBindingSchema = z.object({
 export type WebhookResult = { status: 'completed' | 'failed' | 'interrupted' | 'stopped'; reply: string; errorCode?: string };
 export type WebhookRuntime = { command(kind: string, payload: unknown): Promise<any> };
 
+export function contextWebhookTurnResult(state: SessionSnapshot, turnId: string): WebhookResult | undefined {
+  const turn = state.turns.find(turn => turn.turnId === turnId);
+  if (!turn) return;
+  const authored = turn.messages.filter(entry => entry.message.role === 'assistant' && !entry.message.toolCalls.length);
+  const explicit = authored.filter(entry => entry.metadata?.transcript_kind === 'assistant_final');
+  const finals = explicit.length ? explicit : authored.slice(-1);
+  return { status: turn.status === 'completed' ? 'completed' : turn.status === 'stopped' ? 'stopped' : 'failed',
+    reply: finals.map(entry => entry.message.content).join('\n\n'), ...(turn.status === 'completed' ? {} : { errorCode: 'turn_failed' }) };
+}
+
 /** Uses the bound desktop identity. The external request never supplies policy, model or session. */
 export async function runContextWebhook(runtime: WebhookRuntime, binding: WebhookBinding, message: WebhookMessage,
   id: string, recovering: boolean, signal: AbortSignal, sourceRef?: string): Promise<WebhookResult> {
@@ -53,15 +63,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
       await delay(500, undefined, { signal });
     }
   }
-  const resultFrom = (state: SessionSnapshot): WebhookResult | undefined => {
-    const turn = state.turns.find(turn => turn.turnId === turnId);
-    if (!turn) return;
-    const authored = turn.messages.filter(entry => entry.message.role === 'assistant' && !entry.message.toolCalls.length);
-    const explicit = authored.filter(entry => entry.metadata?.transcript_kind === 'assistant_final');
-    const finals = explicit.length ? explicit : authored.slice(-1);
-    return { status: turn.status === 'completed' ? 'completed' : turn.status === 'stopped' ? 'stopped' : 'failed',
-      reply: finals.map(entry => entry.message.content).join('\n\n'), ...(turn.status === 'completed' ? {} : { errorCode: 'turn_failed' }) };
-  };
+  const resultFrom = (state: SessionSnapshot) => contextWebhookTurnResult(state, turnId);
   const existing = resultFrom(snapshot); if (existing) return existing;
   if (recovering) return { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
   await runtime.command('runtime.run_session_turn', parent);

@@ -2,6 +2,8 @@
 
 Cardbush 提供常驻原生工具 `send_to_bot`。Assistant、普通会话和继承工具权限的本机子任务均可调用；平台适配由独立 Bot 服务实现。没有连接时工具仍可发现，调用返回不可用。仅创建连接不代表 Bot 在线或支持文件。
 
+CLI 通过 `/webhook` 绑定当前会话，与 App 共用 `ContextWebhookHost` 及本页协议。Bot 桥无需改变接口；CLI 来信进入自身持久化任务队列，文件出口仍通过同一宿主校验来源和权限。接入、后台生命周期及默认端口冲突处理见 [CLI 说明](CLI.zh-CN.md#webhook-bot-连接)。
+
 已有用户更新后重启 Cardbush 和 Bot 服务即可。Bot 先发送一条用户消息，建立可验证的收件人来源，用户再要求 Agent“把报告作为文件发给我”。生成文件不会自动触发转发。
 
 ## 消息来源与工具调用
@@ -110,5 +112,7 @@ Bot 服务必须：
 原有自动文字回复仍使用 `message.updated` / `message.completed` 回调；显式发送附件只由 `send_to_bot` 触发。两类事件可共用同一个回调接口。
 
 ## 验证
+
+`npm run test:cli-webhooks` 验证 CLI 配对、当前历史/模型、真实 Runtime 工具调用、文件字节、权限来源、重启去重和终端草稿保护。开发目录旁有独立桥仓库时，`npm run test:cli-webhook-bridges` 直接加载两份未修改的桥执行契约测试；也可用 `CARDBUSH_WEIXIN_BRIDGE_DIR` / `CARDBUSH_FEISHU_BRIDGE_DIR` 指定路径。平台网络和模型使用隔离模拟服务，不会发送真实微信或飞书消息。
 
 `npm run test:context-webhooks` 覆盖既有 Webhook、常驻工具、真实 Runtime 工具调用、Assistant 来源、二进制传输、权限、能力及重试。独立微信桥的 `npm run test:cardbush` 验证完整本机 HTTP 链路，腾讯侧使用模拟器；真实微信附件送达需登录账号后的人工验收。

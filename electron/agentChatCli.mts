@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { uiText } from '@cardbush/platform/i18n';
+import { chatWebhookCommand, askWithWebhookJobs, CLI_UI_LANGUAGE, type CliWebhookState } from './agentChatWebhooks.mjs';
 import { realpath } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -434,7 +436,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
     'full-access': { type: 'boolean' }, local: { type: 'boolean' },
     models: { type: 'boolean' }, projects: { type: 'boolean' }, sessions: { type: 'boolean' },
   } });
-  if (values.help) { process.stdout.write(help); return 0; }
+  if (values.help) { process.stdout.write(help + '\n' + uiText(CLI_UI_LANGUAGE)('cliWebhook.usage') + '\n'); return 0; }
   if (positionals.length && (positionals.length !== 2 || positionals[0] !== 'resume' || !positionals[1].trim())) {
     throw new Error('Usage: cardbush or cardbush --resume [session-id]');
   }
@@ -589,11 +591,11 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         const command = text.trim();
         if (await referenceCommand(text)) return;
         if (await toolCommand(text)) return;
-        if (command === '/help') { io.commitInput(text); io.status(help); return; }
+        if (command === '/help') { io.commitInput(text); io.status(help); io.status(uiText(CLI_UI_LANGUAGE)('cliWebhook.usage') + '\n'); return; }
         if (command === '/logs') { io.commitInput(text); showLogs(); return; }
         if (command === '/plan') { io.commitInput(text); await readPlan(); return; }
         if (await chatBrowserCommand(text, client, io, lifetime.signal)) return;
-        if (/^\/(?:model|settings|habit|prediction|new|session)(?:\s|$)/.test(command) || chatShellCommand(text) !== undefined) {
+        if (/^\/(?:model|settings|habit|prediction|new|session|webhook)(?:\s|$)/.test(command) || chatShellCommand(text) !== undefined) {
           io.commitInput(text);
           io.status('[Not sent] Use this command after the current task finishes, or stop it with Esc.\n'); return;
         }
@@ -681,9 +683,12 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         } finally { io.finishTurn(outcome); turn = undefined; }
       }
     };
-    let liveInputEnabled = false;
+    let liveInputEnabled = false, webhooksEnabled = false;
     const restoreSession = async (history: boolean, restoreModel: boolean) => {
       const previousJobs = await client.call('chat.jobs', { sessionId: session!.sessionId }, lifetime.signal) as SavedChatJob[];
+      for (const job of previousJobs) if (!pendingJob(job)) observed.add(job.id);
+      if (prompt === undefined) webhooksEnabled = await client.call('webhooks.command', { action: 'read', sessionId: session!.sessionId }, lifetime.signal)
+        .then(state => (state as CliWebhookState).enabled, () => false);
       const existing = previousJobs.filter(job => pendingJob(job));
       if (existing.length && prompt !== undefined) throw new Error('This session has an active task. Run cardbush --resume interactively first; no new prompt was submitted.');
       if (restoreModel) {
@@ -760,7 +765,10 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
           continue;
         }
       }
-      const text = prompt ?? await io.ask('❯ ', lifetime.signal, true);
+      const input = prompt === undefined && webhooksEnabled
+        ? await askWithWebhookJobs(client, io, session.sessionId, observed, lifetime.signal) : undefined;
+      if (input) { for (const id of input.jobs) queued.add(id); if (input.text === null && input.jobs.length) continue; }
+      const text = prompt ?? (input ? input.text : await io.ask('❯ ', lifetime.signal, true));
       if (text === null) break;
       if (prompt === undefined && await referenceCommand(text)) continue;
       if (prompt === undefined && await toolCommand(text)) continue;
@@ -788,7 +796,14 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
         await executeChatShell(io, shellCommand, cwd, lifetime.signal); continue;
       }
       if (prompt === undefined && uncertain.has(text)) { queueRunningInput(text); await inputWork; continue; }
-      if (prompt === undefined && text.trim() === '/help') { io.commitInput(text); io.status(help); continue; }
+      if (prompt === undefined && text.trim() === '/help') { io.commitInput(text); io.status(help); io.status(uiText(CLI_UI_LANGUAGE)('cliWebhook.usage') + '\n'); continue; }
+      if (prompt === undefined && /^\s*\/webhook(?:\s|$)/.test(text)) {
+        io.commitInput(text);
+        const state = await chatWebhookCommand(text, client, io, lifetime.signal, session.sessionId,
+          { modelId, reasoningEffort, permissionMode: permissionMode as AgentSendInput['permissionMode'], language: CLI_UI_LANGUAGE });
+        if (state) webhooksEnabled = state.enabled;
+        continue;
+      }
       if (prompt === undefined && await chatBrowserCommand(text, client, io, lifetime.signal)) continue;
       const memoryCommand = prompt === undefined ? /^\s*\/(habit|prediction)(?:\s+(.*))?\s*$/s.exec(text) : null;
       if (memoryCommand) {

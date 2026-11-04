@@ -69,11 +69,12 @@ async function run() {
   };
   const idle = async () => {
     if (closing || clients || checking) return;
+    if (service.keepAlive) { schedule(5000); return; }
     checking = true;
     try {
       const jobs = await service.call('chat.jobs', {}) as Array<{ status: string }>;
       const activity = await service.runtime.transport.sendCommand({ kind: 'runtime.local_activity', payload: {} }) as { active: boolean };
-      if (clients || http?.activeRequests() || activity.active || jobs.some(job => ['queued', 'running'].includes(job.status))) { schedule(); return; }
+      if (clients || service.keepAlive || http?.activeRequests() || activity.active || jobs.some(job => ['queued', 'running'].includes(job.status))) { schedule(); return; }
       await stop();
     } finally { checking = false; }
   };

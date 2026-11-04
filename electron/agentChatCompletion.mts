@@ -1,4 +1,6 @@
 import { posix, win32 } from 'node:path';
+import { uiText } from '@cardbush/platform/i18n';
+import { CLI_UI_LANGUAGE } from './agentChatWebhooks.mjs';
 import type { AgentHttpClient } from './agentHttpClient.mjs';
 import type { WorkspaceDirectoryPage } from './workspaceFiles.js';
 import { chatShellCommand } from './agentChatShell.mjs';
@@ -88,6 +90,7 @@ export function commandSuggestions(line: string, cursor: number, models: Model[]
   const slash = /^(\s*)\/([^\s/]*)$/.exec(before);
   if (!slash) return;
   const unique = new Map(commands.map(item => [item.value.trim(), item]));
+  unique.set('/webhook', { value: '/webhook', description: uiText(CLI_UI_LANGUAGE)('cliWebhook.description') });
   for (const item of extra) if (!unique.has(item.value.trim())) unique.set(item.value.trim(), item);
   const prefix = `/${slash[2]}`.toLowerCase();
   // Exact names and consecutive prefixes win. Only fall back to ordered fuzzy

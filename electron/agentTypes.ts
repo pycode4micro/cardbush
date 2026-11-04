@@ -8,6 +8,8 @@ export type AgentSendInput = { individuation?: IndividuationSettings; queueOnly?
 export type AgentProject = { id: string; name: string; path: string };
 export type AgentSessionItem = { sessionId: string; metadata?: Record<string, unknown>; updatedAt?: string };
 export type AgentJob = {
+  /** Host-created source, never accepted from chat.send or external message text. */
+  botSourceRef?: string;
   id: string; sessionId: string; turnId: string; createdAt: string; startedAt?: string; completedAt?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted'; error?: string; input: AgentSendInput;
   goalContinuation?: boolean;
@@ -19,7 +21,7 @@ export type AgentInfo = { protocol: 'cardbush.agent.v1'; apiVersion: 1; eventStr
   workerInteraction?: { profile: 'subagent-remote-proton'; version: '0.1'; binding: 'cardbush-http'; permissions: 'parent_delegate' | 'human_required'; permissionRouting?: true; operations?: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).SubagentInteractionCapabilities['operations'] };
   webRestricted?: boolean; webRemoteAgents?: boolean; desktop: boolean; computerUse: boolean; browserUi: boolean; durableQueue: true; eventReplay: true; projects: true; models: true; plugins: boolean; tools?: boolean; delegation?: boolean; conversationUi?: boolean; conversationManagement?: boolean; sharedConversation?: boolean; sharedSettings?: boolean; sharedConfiguration?: boolean; sharedConfigurationVersion?: number; sandboxSettings?: boolean; pluginMarketplace?: boolean;
 } };
-export const agentOperations = ['workers.command', 'devices.command', 'web.configure', 'web.files', 'web.activity', 'info', 'desktop.status', 'desktop.frame', 'desktop.take', 'desktop.release', 'desktop.input', 'projects.list', 'projects.save', 'projects.remove', 'projects.default',
+export const agentOperations = ['webhooks.command', 'workers.command', 'devices.command', 'web.configure', 'web.files', 'web.activity', 'info', 'desktop.status', 'desktop.frame', 'desktop.take', 'desktop.release', 'desktop.input', 'projects.list', 'projects.save', 'projects.remove', 'projects.default',
   'sessions.list', 'sessions.create', 'sessions.get', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'sessions.bind',
   'chat.send', 'chat.queue', 'chat.jobs', 'chat.stop', 'chat.events', 'delegation.submit', 'delegation.control', 'conversation.catalog', 'conversation.extracts', 'files.read', 'files.list', 'files.upload', 'files.pasted-text', 'runtime.command', 'product.command',
   'plugins.install', 'plugins.uninstall', 'plugins.connections', 'plugins.connections.save', 'plugins.configure', 'plugins.marketplace',
