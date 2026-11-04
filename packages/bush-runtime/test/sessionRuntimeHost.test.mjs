@@ -161,7 +161,7 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
   ]);
   assert.deepEqual(
     observedRequests[0].tools.map((tool) => tool.name),
-    ["checkpoint_context", "send_to_bot"],
+    ["checkpoint_context"],
   );
   assert.deepEqual(observedRequests[1].messages.map((message) => message.content), [
     "fixed-prefix",
@@ -537,11 +537,11 @@ test("forces atomic context compaction and resumes the same active Turn", async 
   assert.equal(observedRequests.length, 3);
   assert.deepEqual(
     observedRequests[1].tools.map((tool) => tool.name),
-    ["ordinary_tool", "checkpoint_context", "send_to_bot"],
+    ["ordinary_tool", "checkpoint_context"],
   );
   assert.deepEqual(
     observedRequests[2].tools.map((tool) => tool.name),
-    ["ordinary_tool", "checkpoint_context", "send_to_bot"],
+    ["ordinary_tool", "checkpoint_context"],
   );
   assert.match(
     checkpointArguments(observedRequests[2].messages.find(isCheckpoint)),
@@ -740,7 +740,7 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
   );
   assert.ok(observedRequests.every((item) =>
     item.tools.map((tool) => tool.name).join(",") ===
-      "ordinary_tool,checkpoint_context,send_to_bot"));
+      "ordinary_tool,checkpoint_context"));
 
   const snapshot = await host.sendCommand({
     kind: GET_RUNTIME_SESSION_COMMAND,

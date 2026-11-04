@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { fixturePlugin, bridgeModelStep } from './helpers/bridge-plugin-fixture.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
@@ -55,7 +56,7 @@ test('shared host reports an occupied port without changing the other host, and 
     assert.equal(state.listening, false); assert.equal(await (await fetch(`http://127.0.0.1:${p}`)).text(), 'existing-owner');
     await assert.rejects(host.command({ action: 'connect', id: randomUUID(), sessionId: 's' }, () => assert.fail()), /listener_failed/);
     await host.command({ action: 'stop', sessionId: 's' }, () => assert.fail()); assert.equal(host.keepAlive, false);
-    assert.deepEqual(await host.botRequest({ action: 'context', sessionId: 's' }), { tool: 'send_to_bot', available: false, reason: 'bot_not_connected', targets: [] });
+    assert.deepEqual(await host.botRequest({ action: 'context', sessionId: 's' }), { discovery: 'mcp_search', available: false, reason: 'bot_not_connected', targets: [] });
     assert.equal(JSON.parse(await readFile(join(root, 'webhooks/host.json'), 'utf8')).enabled, false);
   } finally { await host.close(); occupied.closeAllConnections(); await new Promise(r => occupied.close(r)); await cleanup(root); }
 });
@@ -75,7 +76,7 @@ test('an incoming Bot task preserves an unfinished native terminal draft', async
   } finally { io.close(); input.destroy(); output.destroy(); }
 });
 
-test('actual headless Runtime preserves current CLI history/model, invokes send_to_bot, persists pairing and deduplicates restart', { timeout: 60000 }, async () => {
+test('actual headless Runtime preserves current CLI history/model, discovers bridge plugins, persists pairing and deduplicates restart', { timeout: 60000 }, async () => {
   const root = await directory(), webhookPort = await port(), modelCalls = [], received = [];
   const bytes = Buffer.from('CLI 通用文件链路\n\0🙂'), file = join(root, 'report.txt'); await writeFile(file, bytes);
   let service; const callbackToken = 'b'.repeat(64);
@@ -86,9 +87,9 @@ test('actual headless Runtime preserves current CLI history/model, invokes send_
     modelCalls.push(body); const n = modelCalls.length;
     const strings = []; const visit = value => { if (typeof value === 'string') strings.push(value); else if (value && typeof value === 'object') Object.values(value).forEach(visit); }; visit(body.input);
     const source = strings.join('\n').match(/"sourceRef"\s*:\s*"(webhook:[a-f0-9-]{36})"/)?.[1];
-    const send = source && !JSON.stringify(body.input).includes('cli-file-call');
-    const item = send ? { id: 'function-file', call_id: 'cli-file-call', type: 'function_call', name: 'send_to_bot',
-      arguments: JSON.stringify({ source_ref: source, request_id: 'report-once', files: [file] }), status: 'completed' }
+    const send = bridgeModelStep(body.input, file, 'cli');
+    const item = send ? { id: 'function-' + n, call_id: send.id, type: 'function_call', name: send.name,
+      arguments: JSON.stringify(send.arguments), status: 'completed' }
       : { id: 'msg_' + n, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: source ? 'Sent to the original bot.' : 'Remembered olive.', annotations: [] }] };
     res.writeHead(200, { 'content-type': 'text/event-stream' }); const emit = value => res.write(`data: ${JSON.stringify(value)}\n\n`);
     const response = { id: 'response_' + n, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };
@@ -130,16 +131,16 @@ test('actual headless Runtime preserves current CLI history/model, invokes send_
     await service.call('webhooks.command', { action: 'connect', id: requestId, sessionId: 'current', settings });
     const paired = await (await fetch(base + '/pairings/' + requestId, { headers: pairHeaders })).json();
     const connection = paired.connection, headers = { Authorization: 'Bearer ' + connection.token, 'Content-Type': 'application/json' };
-    const caps = await fetch(connection.endpoint.replace(/\/messages$/, '/capabilities'), { method: 'POST', headers, body: JSON.stringify({ protocol, capabilities: { text: true, files: true } }) });
+    const caps = await fetch(connection.endpoint.replace(/\/messages$/, '/capabilities'), { method: 'POST', headers, body: JSON.stringify({ protocol, capabilities: { text: true, files: true }, plugins: [fixturePlugin] }) });
     assert.equal(caps.status, 200);
     const message = { messageId: 'external-once', text: 'Send the report as a file.', senderId: 'original-user', conversationId: 'original-chat' };
     assert.equal((await fetch(connection.endpoint, { method: 'POST', headers, body: JSON.stringify(message) })).status, 202);
     const receipt = await until(async () => { const r = await (await fetch(connection.endpoint + '/external-once', { headers })).json(); return !['accepted','running'].includes(r.status) && r; });
     assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
-    const delivery = await until(() => received.find(item => item.event.type === 'message.send'));
+    const delivery = await until(() => received.find(item => item.event.type === 'tool.call'));
     assert.deepEqual(delivery.fileBytes, bytes); assert.equal(delivery.event.senderId, message.senderId); assert.equal(delivery.event.conversationId, message.conversationId);
     assert.equal(delivery.event.files[0].sha256, createHash('sha256').update(bytes).digest('hex'));
-    assert.match(JSON.stringify(modelCalls[1].input), /Remember olive/); assert.ok(modelCalls[1].tools.some(t => t.name === 'send_to_bot'));
+    assert.match(JSON.stringify(modelCalls[1].input), /Remember olive/); assert.ok(modelCalls.every(call => !call.tools.some(t => t.name === 'send_to_bot')));
     assert.equal(modelCalls[1].model, 'fixture-model');
     const jobs = await service.call('chat.jobs', { sessionId: 'current' }); assert.match(jobs.at(-1).botSourceRef, /^webhook:/);
     assert.equal((await service.call('chat.jobs', { sessionId: 'other' })).length, 0);

@@ -9,15 +9,16 @@ import { webhookBindingSchema, runContextWebhook, type WebhookRuntime, type Webh
 import type { ContextWebhookConfig, ContextWebhookSnapshot, WebhookBinding } from './contextWebhookTypes.js';
 import { contextWebhookPort, contextWebhookProtocol } from './contextWebhookDefaults.js';
 import { localPairingSchema, localPairingConfig, assertLocalPairingRequest, readWebhookJson, type LocalWebhookPairing } from './contextWebhookPairing.mjs';
-import { botCapabilitiesSchema, botSendInputSchema, BOT_SEND_TOOL, type BotCapabilities, type BotContext, type BotSource, type BotSendInput, type BotFileAccess } from '@cardbush/bush-protocol';
+import { botCapabilitiesSchema, type BotCapabilities, type BotContext, type BotSource, type BotFileAccess } from '@cardbush/bush-protocol';
 import { snapshotWebhookFiles, readBotAcknowledgement } from './contextWebhookFiles.mjs';
+import { bridgePluginsSchema, bridgeToolCallSchema, bridgeFilePaths, bridgeToolName, type BridgePlugin, type BridgeToolCall } from '@cardbush/bush-protocol';
 
 type Connection = ContextWebhookConfig & { id: string; token: string; binding: WebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
-  bot?: { capabilities: BotCapabilities; expiresAt: number } };
+  bot?: { capabilities: BotCapabilities; expiresAt: number; plugins?: BridgePlugin[]; instanceId?: string } };
 type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: WebhookBinding;
   status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
 type BotDelivery = { id: string; sessionId: string; sourceRef: string; requestId: string; inputHash: string; fingerprint: string;
-  status: 'pending' | 'accepted' | 'unknown'; createdAt: string; code?: string };
+  status: 'pending' | 'accepted' | 'unknown'; createdAt: string; code?: string; result?: unknown };
 type State = { version: 1; host: string; port: number; connections: Connection[]; receipts: Receipt[]; pairings: LocalWebhookPairing[]; botDeliveries: BotDelivery[] };
 const terminal = (status: Receipt['status']) => !['accepted', 'running'].includes(status);
 const serializeError = (error: unknown) => error instanceof WebhookError ? error.code : error instanceof z.ZodError ? 'invalid_parameters' : 'service_unavailable';
@@ -52,6 +53,7 @@ export class ContextWebhookHost {
       state.botDeliveries ??= [];
       for (const delivery of state.botDeliveries) if (delivery.status === 'pending') delivery.status = 'unknown';
       this.state = state;
+      for (const connection of this.state.connections) delete connection.bot;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     if (this.options.port !== undefined) this.state.port = this.options.port;
     await this.listen();
@@ -94,24 +96,21 @@ export class ContextWebhookHost {
   async botRequest(value: unknown, signal?: AbortSignal): Promise<unknown> {
     const request = z.discriminatedUnion('action', [
       z.object({ action: z.literal('context'), sessionId: z.string().min(1), sourceRef: z.string().max(100).optional() }).strict(),
-      z.object({ action: z.literal('send'), sessionId: z.string().min(1), input: botSendInputSchema,
+      z.object({ action: z.literal('catalog'), sessionId: z.string().min(1) }).strict(),
+      z.object({ action: z.literal('call'), sessionId: z.string().min(1), input: bridgeToolCallSchema,
         files: z.array(z.object({ path: z.string().min(1), identity: z.string().regex(/^\d+:\d+$/) }).strict()).max(8).optional() }).strict(),
     ]).parse(value);
     if (request.action === 'context') return this.botContext(request.sessionId, request.sourceRef);
-    const input = request.input, key = `${request.sessionId}:${input.source_ref}:${input.request_id}`, hash = webhookHash(input);
-    if (input.action === 'status') {
-      const found = this.state.botDeliveries.find(d => d.sessionId === request.sessionId && d.sourceRef === input.source_ref && d.requestId === input.request_id);
-      return found ? this.botReceipt(found) : { status: 'not_found', code: 'delivery_not_found' };
+    if (request.action === 'catalog') return this.pluginCatalog(request.sessionId);
+    if (request.action === 'call') {
+      const key = `plugin:${request.sessionId}:${request.input.sourceRef}:${request.input.requestId}`, hash = webhookHash(request.input);
+      const pending = this.botSends.get(key);
+      if (pending) return pending.hash === hash ? pending.promise : { status: 'failed', code: 'request_id_conflict' };
+      const promise = this.callBridgePlugin(request.sessionId, request.input, request.files, signal)
+        .catch(error => ({ status: 'failed', code: ['workspace_authorization_changed', 'workspace_path_guard_unavailable', 'sandbox_backend_unavailable'].includes(error?.code) ? error.code : serializeError(error), requestId: request.input.requestId }));
+      this.botSends.set(key, { hash, promise });
+      try { return await promise; } finally { this.botSends.delete(key); }
     }
-    const pending = this.botSends.get(key);
-    if (pending) return pending.hash === hash ? pending.promise : { status: 'failed', code: 'request_id_conflict' };
-    if (input.files.length && (!request.files || request.files.length !== input.files.length || request.files.some((file, i) => file.path !== input.files[i])))
-      return { status: 'failed', code: 'file_admission_required' };
-    const promise = this.sendToBot(request.sessionId, input, signal, request.files).catch(error => ({ status: 'failed',
-      code: ['workspace_authorization_changed', 'workspace_path_guard_unavailable', 'sandbox_backend_unavailable'].includes(error?.code) ? error.code
-        : error?.code === 'ENOENT' ? 'file_not_found' : ['EACCES', 'EPERM'].includes(error?.code) ? 'file_access_denied' : serializeError(error) }));
-    this.botSends.set(key, { hash, promise });
-    try { return await promise; } finally { this.botSends.delete(key); }
   }
   private botSource(record: Receipt): BotSource {
     const connection = this.state.connections.find(c => c.id === record.connectionId);
@@ -120,7 +119,9 @@ export class ContextWebhookHost {
     return { sourceRef: `webhook:${record.id}`, connectionId: record.connectionId, botName: connection?.name ?? 'Bot',
       messageId: record.message.messageId, senderId: record.message.senderId ?? '', conversationId: record.message.conversationId ?? '',
       receivedAt: record.createdAt, available: !reason, ...(reason ? { reason } : {}),
-      capabilities: connection?.bot?.capabilities ?? botCapabilitiesSchema.parse({ text: false }) };
+      capabilities: connection?.bot?.capabilities ?? botCapabilitiesSchema.parse({ text: false }),
+      plugins: connection?.bot?.plugins?.map(plugin => ({ id: plugin.id, name: plugin.name,
+        tools: plugin.tools.map(tool => bridgeToolName(connection.id, plugin.id, tool.name)) })) ?? [] };
   }
   private botContext(sessionId: string, sourceRef?: string): BotContext {
     const records = this.state.receipts.filter(r => r.binding.sessionId === sessionId), seen = new Set<string>(), targets: BotSource[] = [];
@@ -134,62 +135,73 @@ export class ContextWebhookHost {
     const source = record ? this.botSource(record) : undefined;
     const available = sourceRef ? source?.available === true : targets.length > 0;
     const connected = this.state.connections.some(c => c.binding.sessionId === sessionId && c.enabled && c.url && c.bot && c.bot.expiresAt > Date.now());
-    return { tool: BOT_SEND_TOOL, available, ...(source ? { source } : {}), targets,
+    return { discovery: 'mcp_search', available, ...(source ? { source } : {}), targets,
       ...(!available ? { reason: source?.reason ?? (sourceRef ? 'source_unavailable' : connected ? 'bot_recipient_unavailable' : records.length ? this.botSource(records.at(-1)!).reason ?? 'bot_not_connected' : 'bot_not_connected') } : {}) };
   }
   private botReceipt(delivery: BotDelivery) {
     return { status: delivery.status === 'pending' ? 'unknown' : delivery.status, eventId: delivery.id,
       requestId: delivery.requestId, sourceRef: delivery.sourceRef, ...(delivery.code ? { code: delivery.code } : {}),
+      ...(delivery.result === undefined ? {} : { result: delivery.result }),
       ...(delivery.status === 'accepted' ? { deliveryConfirmed: false } : { retry: 'Reuse the same source_ref and request_id; do not create a new send.' }) };
   }
-  private async sendToBot(sessionId: string, input: BotSendInput, signal?: AbortSignal, access?: BotFileAccess[]) {
-    const source = this.botContext(sessionId, input.source_ref).source;
-    if (!source?.available) return { status: 'unavailable', code: source?.reason ?? 'source_unavailable' };
-    if (input.files.length && !source.capabilities.files) return { status: 'unavailable', code: 'bot_files_unsupported' };
-    if (input.text && !source.capabilities.text) return { status: 'unavailable', code: 'bot_text_unsupported' };
-    const record = this.state.receipts.find(r => `webhook:${r.id}` === source.sourceRef)!;
-    if (!await this.runtime.command('runtime.get_session', { sessionId })) return { status: 'unavailable', code: 'context_deleted' };
+  private pluginCatalog(sessionId: string) {
+    if (this.abort.signal.aborted) return [];
+    return this.state.connections.filter(connection => connection.binding.sessionId === sessionId && connection.enabled && connection.url &&
+      connection.bot && connection.bot.expiresAt > Date.now()).flatMap(connection => (connection.bot!.plugins ?? []).map(plugin => ({
+        connectionId: connection.id, sessionId, expiresAt: connection.bot!.expiresAt, plugin, revision: webhookHash(plugin),
+      })));
+  }
+  private async callBridgePlugin(sessionId: string, input: BridgeToolCall, access: BotFileAccess[] | undefined, signal?: AbortSignal) {
+    const source = this.botContext(sessionId, input.sourceRef).source;
+    if (!source?.available || source.connectionId !== input.connectionId) throw new WebhookError('bridge_source_unavailable');
+    const declaration = this.pluginCatalog(sessionId).find(entry => entry.connectionId === input.connectionId && entry.plugin.id === input.pluginId);
+    const tool = declaration?.plugin.tools.find(tool => tool.name === input.tool);
+    if (!declaration || !tool || declaration.revision !== input.revision) throw new WebhookError('bridge_plugin_changed');
+    const record = this.state.receipts.find(record => `webhook:${record.id}` === source.sourceRef)!;
+    if (!await this.runtime.command('runtime.get_session', { sessionId })) throw new WebhookError('context_deleted');
     if (record.binding.kind === 'assistant' && (await this.runtime.command('runtime.assistant_conversation', { action: 'read', sessionId, after: Number.MAX_SAFE_INTEGER })).generation !== record.binding.generation)
-      return { status: 'unavailable', code: 'context_reset' };
-    const previous = this.state.botDeliveries.find(d => d.sessionId === sessionId && d.sourceRef === source.sourceRef && d.requestId === input.request_id);
+      throw new WebhookError('context_reset');
+    const paths = bridgeFilePaths(tool, input.arguments);
+    if (paths.length && (!access || access.length !== paths.length || access.some((file, index) => file.path !== paths[index]))) throw new WebhookError('file_admission_required');
+    if (paths.length && !source.capabilities.files) throw new WebhookError('bot_files_unsupported');
     const inputHash = webhookHash(input);
-    if (previous?.inputHash !== undefined && previous.inputHash !== inputHash) throw new WebhookError('request_id_conflict');
+    const previous = this.state.botDeliveries.find(delivery => delivery.sessionId === sessionId && delivery.sourceRef === input.sourceRef && delivery.requestId === input.requestId);
+    if (previous && previous.inputHash !== inputHash) throw new WebhookError('request_id_conflict');
     if (previous?.status === 'accepted') return this.botReceipt(previous);
-    const files = await snapshotWebhookFiles(input.files, source.capabilities, signal, access);
-    const descriptors = files.map(({ bytes: _bytes, ...file }) => file);
-    const fingerprint = webhookHash({ text: input.text, files: descriptors });
+    const files = await snapshotWebhookFiles(paths, source.capabilities, signal, access), descriptors = files.map(({ bytes: _bytes, ...file }) => file);
+    const args = structuredClone(input.arguments); let index = 0;
+    for (const key of tool.fileArguments) if (args[key] !== undefined)
+      args[key] = Array.isArray(args[key]) ? (args[key] as unknown[]).map(() => ({ part: descriptors[index++]!.part })) : { part: descriptors[index++]!.part };
+    const fingerprint = webhookHash({ arguments: args, files: descriptors });
     if (previous && previous.fingerprint !== fingerprint) throw new WebhookError('request_id_conflict');
     const delivery = await this.write(state => {
-      if (!this.botContext(sessionId, source.sourceRef).source?.available) throw new WebhookError('bot_disconnected');
-      if (previous) { const found = state.botDeliveries.find(d => d.id === previous.id)!; found.status = 'pending'; delete found.code; return found; }
-      const next: BotDelivery = { id: randomUUID(), sessionId, sourceRef: source.sourceRef, requestId: input.request_id!, inputHash,
-        fingerprint, status: 'pending', createdAt: new Date().toISOString() };
+      if (previous) { const found = state.botDeliveries.find(item => item.id === previous.id)!; found.status = 'pending'; delete found.code; return found; }
+      const next: BotDelivery = { id: randomUUID(), sessionId, sourceRef: input.sourceRef, requestId: input.requestId, inputHash, fingerprint, status: 'pending', createdAt: new Date().toISOString() };
       state.botDeliveries.push(next); return next;
     });
     try {
-      signal?.throwIfAborted();
-      const connection = this.state.connections.find(c => c.id === record.connectionId && c.enabled)!;
-      if (!connection || !this.botSource(record).available) throw new WebhookError('bot_disconnected');
-      const payload = { protocol: contextWebhookProtocol, type: 'message.send', eventId: delivery.id, sourceRef: source.sourceRef,
-        messageId: source.messageId, sessionId, senderId: source.senderId, conversationId: source.conversationId,
-        text: input.text, files: descriptors, parameters: connection.parameters };
-      let body: string | FormData = JSON.stringify(payload);
-      const headers: Record<string, string> = { ...connection.headers, 'X-CardBush-Event-ID': delivery.id };
+      const connection = this.state.connections.find(connection => connection.id === input.connectionId)!;
+      if (!this.botSource(record).available || !this.pluginCatalog(sessionId).some(entry => entry.connectionId === input.connectionId && entry.revision === input.revision)) throw new WebhookError('bridge_disconnected');
+      const payload = { protocol: contextWebhookProtocol, type: 'tool.call', eventId: delivery.id, pluginId: input.pluginId, pluginVersion: declaration.plugin.version,
+        tool: input.tool, arguments: args, sourceRef: input.sourceRef, messageId: source.messageId, sessionId,
+        senderId: source.senderId, conversationId: source.conversationId, files: descriptors, parameters: connection.parameters };
+      const headers = { ...connection.headers, 'X-CardBush-Event-ID': delivery.id } as Record<string, string>;
       for (const name of Object.keys(headers)) if (name.toLowerCase() === 'content-type') delete headers[name];
+      let body: string | FormData;
       if (files.length) {
         const form = new FormData(); form.set('payload', JSON.stringify(payload));
         for (const file of files) form.set(file.part, new Blob([new Uint8Array(file.bytes)], { type: file.mimeType }), file.name);
         body = form;
-      } else headers['Content-Type'] = 'application/json';
+      } else { headers['Content-Type'] = 'application/json'; body = JSON.stringify(payload); }
       const response = await fetch(connection.url, { method: 'POST', redirect: 'error', headers, body,
         signal: AbortSignal.any([this.abort.signal, ...(signal ? [signal] : []), AbortSignal.timeout(60000)]) });
       const ack = await readBotAcknowledgement(response);
-      if (!response.ok || ack.protocol !== contextWebhookProtocol || ack.eventId !== delivery.id || ack.status !== 'accepted') throw new WebhookError('bot_ack_invalid');
-      await this.write(state => { state.botDeliveries.find(d => d.id === delivery.id)!.status = 'accepted'; });
+      if (!response.ok || ack.protocol !== contextWebhookProtocol || ack.eventId !== delivery.id || ack.status !== 'accepted') throw new WebhookError('bridge_ack_invalid');
+      await this.write(state => { const found = state.botDeliveries.find(item => item.id === delivery.id)!; found.status = 'accepted'; found.result = ack.result; });
     } catch (error) {
-      await this.write(state => { const found = state.botDeliveries.find(d => d.id === delivery.id)!; found.status = 'unknown'; found.code = serializeError(error); });
+      await this.write(state => { const found = state.botDeliveries.find(item => item.id === delivery.id)!; found.status = 'unknown'; found.code = serializeError(error); });
     }
-    return this.botReceipt(this.state.botDeliveries.find(d => d.id === delivery.id)!);
+    return this.botReceipt(this.state.botDeliveries.find(item => item.id === delivery.id)!);
   }
   private async execute(input: unknown) {
     const request = z.discriminatedUnion('action', [
@@ -313,11 +325,19 @@ export class ContextWebhookHost {
         const wanted = Buffer.from(`Bearer ${connection.token}`), received = Buffer.from(req.headers.authorization ?? '');
         if (wanted.length !== received.length || !timingSafeEqual(wanted, received)) throw new WebhookError('unauthorized', 401);
         if (capabilityPath) {
+          if (req.method === 'DELETE') {
+            const input = z.object({ protocol: z.literal(contextWebhookProtocol), instanceId: z.string().uuid() }).strict().parse(await readWebhookJson(req, 1024));
+            await this.write(state => { const current = state.connections.find(c => c.id === connection.id);
+              if (current?.bot?.instanceId === input.instanceId) delete current.bot; });
+            json(200, { protocol: contextWebhookProtocol, status: 'disconnected' }); return;
+          }
           if (req.method !== 'POST') throw new WebhookError('endpoint_not_found', 404);
-          const input = z.object({ protocol: z.literal(contextWebhookProtocol), capabilities: botCapabilitiesSchema }).strict().parse(await readWebhookJson(req, 4096));
+          const input = z.object({ protocol: z.literal(contextWebhookProtocol), capabilities: botCapabilitiesSchema,
+            plugins: bridgePluginsSchema.optional(), instanceId: z.string().uuid().optional() }).strict().parse(await readWebhookJson(req, 256 * 1024));
           await this.write(state => { const current = state.connections.find(c => c.id === connection.id && c.enabled);
-            if (!current) throw new WebhookError('bot_disconnected'); current.bot = { capabilities: input.capabilities, expiresAt: Date.now() + 120000 }; });
-          json(200, { protocol: contextWebhookProtocol, status: 'connected', leaseSeconds: 120 }); return;
+            if (!current) throw new WebhookError('bot_disconnected'); current.bot = { capabilities: input.capabilities, plugins: input.plugins,
+              instanceId: input.instanceId, expiresAt: Date.now() + 45000 }; });
+          json(200, { protocol: contextWebhookProtocol, status: 'connected', leaseSeconds: 45, features: ['bridge_plugins'] }); return;
         }
         if (req.method === 'GET' && !match![2]) {
           json(200, { protocol: contextWebhookProtocol, type: 'connection.info', sessionId: connection.binding.sessionId, title: connection.binding.title }); return;

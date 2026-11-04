@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import { AgentService } from '../dist-electron/agentService.mjs';
+import { bridgeModelStep } from './helpers/bridge-plugin-fixture.mjs';
 if (process.platform !== 'win32') process.env.CARDBUSH_CREDENTIAL_KEY = randomBytes(32).toString('hex');
 const tempRoot = resolve('tmp/cli-bridge-contract-tests');
 const wait = () => new Promise(r => setTimeout(r, 30));
@@ -31,9 +32,9 @@ for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers
     if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end('{"input_tokens":100}'); return; }
     calls.push(body); const strings = []; const visit = x => { if (typeof x === 'string') strings.push(x); else if (x && typeof x === 'object') Object.values(x).forEach(visit); }; visit(body.input);
     const sourceRef = strings.join('\n').match(/"sourceRef"\s*:\s*"(webhook:[a-f0-9-]{36})"/)?.[1];
-    const send = sourceRef && !JSON.stringify(body.input).includes('bridge-file-call'), n = calls.length;
-    const item = send ? { id: 'function-file', call_id: 'bridge-file-call', type: 'function_call', name: 'send_to_bot', status: 'completed',
-      arguments: JSON.stringify({ source_ref: sourceRef, request_id: 'contract-file', files: [file] }) }
+    const send = bridgeModelStep(body.input, file), n = calls.length;
+    const item = send ? { id: 'function-' + n, call_id: send.id, type: 'function_call', name: send.name, status: 'completed',
+      arguments: JSON.stringify(send.arguments) }
       : { id: 'msg_' + n, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '完成测试。', annotations: [] }] };
     const response = { id: 'response_' + n, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };
     res.writeHead(200, { 'content-type': 'text/event-stream' }); const emit = value => res.write(`data: ${JSON.stringify(value)}\n\n`);
@@ -70,7 +71,8 @@ for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers
     assert.equal(sent.find(s => s[0] === 'file')[1], platform === 'weixin' ? 'owner' : 'oc_origin');
     if (platform === 'weixin') assert.equal(sent.find(s => s[0] === 'file')[2], 'original-context');
     assert.equal((await service.call('chat.jobs', { sessionId: 'chosen' })).length, 1);
-    assert.ok(calls[0].tools.some(t => t.name === 'send_to_bot'));
+    assert.ok(calls.every(call => !call.tools.some(t => t.name === 'send_to_bot')));
+    assert.ok(JSON.stringify(calls).includes('bridge-schema-call'), 'plugin schema is loaded through discovery');
     await bridge.processOnce(); assert.equal(uploads.length, 1);
   } finally { cancel.abort(); await connecting?.catch(() => {}); await bridge?.close(); await service?.close(); model.closeAllConnections(); await new Promise(r => model.close(r));
     assert.ok(resolve(root).startsWith(tempRoot + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); }

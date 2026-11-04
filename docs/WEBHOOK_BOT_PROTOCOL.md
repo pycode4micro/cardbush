@@ -1,48 +1,18 @@
-# Agent 向 Bot 发送文件
+# Webhook 桥插件协议
 
-Cardbush 提供常驻原生工具 `send_to_bot`。Assistant、普通会话和继承工具权限的本机子任务均可调用；平台适配由独立 Bot 服务实现。没有连接时工具仍可发现，调用返回不可用。仅创建连接不代表 Bot 在线或支持文件。
+平台能力由独立桥项目提供。Cardbush App 和 CLI 只管理连接、消息来源、插件发现、权限和通用调用。微信、飞书的 SDK、账号、上传逻辑和发送队列均在桥项目内。常驻 `send_to_bot` 已移除。
 
-CLI 通过 `/webhook` 绑定当前会话，与 App 共用 `ContextWebhookHost` 及本页协议。Bot 桥无需改变接口；CLI 来信进入自身持久化任务队列，文件出口仍通过同一宿主校验来源和权限。接入、后台生命周期及默认端口冲突处理见 [CLI 说明](CLI.zh-CN.md#webhook-bot-连接)。
+## 使用与生命周期
 
-已有用户更新后重启 Cardbush 和 Bot 服务即可。Bot 先发送一条用户消息，建立可验证的收件人来源，用户再要求 Agent“把报告作为文件发给我”。生成文件不会自动触发转发。
+更新后重启 Cardbush 和独立桥。在 App 的 Assistant / 会话右上角“连接服务”选择桥；CLI 输入 `/webhook`。已保存连接自动恢复，无需再复制地址或令牌。桥声明的插件进入当前会话的工具搜索，Agent 使用 `mcp_search` → `get_tool_schema` → `call_tool`；Assistant 可以搜索并委派子任务执行。
 
-## 消息来源与工具调用
+在 Bot 说“把报告作为文件发给我”即可。当前两桥各提供 `send_text`、`send_file`、`delivery_status`。工具默认使用当前消息来源；生成文件本身不会触发发送。
 
-每条进入模型的用户消息旁附带主机生成的 `bot_context`，包含 `source`（当前消息来源）、`targets`（同一上下文可用的接收来源）、`available` 和不可用原因。来源含 `sourceRef`、连接名称、原始消息 ID、发送人、会话 ID、能力和大小限制，不含回调地址、令牌或请求头。外部消息正文不能覆盖这些字段。
+正常关闭时立即撤销声明；进程崩溃或断网最多 45 秒后租约过期。下一次目录刷新移除工具，已加载的旧工具在执行时仍会检查实时连接。工具仅在绑定会话及获准的子任务内可用，不会全局安装，也不会下载或执行桥提供的代码。普通文字回复保持原有流程。
 
-后台任务按原始用户请求找回来源，不使用全局“最近的 Bot”。普通本机消息没有 Webhook 来源；如用户明确指定已接入的 Bot，Agent 可查询状态并选择相应目标，不能自行猜测收件人。
+## 声明插件集合
 
-查询连接状态：
-
-```json
-{"action":"status"}
-```
-
-发送（`source_ref` 必须复制相关消息的 `sourceRef`）：
-
-```json
-{
-  "action":"send",
-  "source_ref":"webhook:主机生成的来源ID",
-  "request_id":"requested-report-1",
-  "text":"这是报告。",
-  "files":["D:/reports/report.pdf"]
-}
-```
-
-`text` 和 `files` 至少提供一个。文件仍受当前任务的读取权限约束；每次最多 8 个，单文件上限 64 MiB，总计 128 MiB，也遵守 Bot 声明的更小限制。只发送本机文件字节，不让模型生成 Base64。远程 Agent 没有桌面出口时返回不可用；远程路径须先通过既有工具取回本机。
-
-同一次逻辑发送必须保持 `request_id`，包括重试。查询这次发送记录：
-
-```json
-{"action":"status","source_ref":"webhook:来源ID","request_id":"requested-report-1"}
-```
-
-常见不可用原因：`bot_not_connected`、`bot_recipient_unavailable`（尚无来信收件人）、`bot_protocol_unsupported`（尚未声明能力）、`bot_offline`、`bot_disabled`、`bot_disconnected`、`bot_files_unsupported`、`source_unavailable`、`context_reset`。工具执行前再次校验实时状态；上下文快照不是永久授权。
-
-## 外部服务声明能力
-
-保留现有通用 Webhook 的自动配对和接收消息协议，不新增平台专用接口。将 Cardbush 分配的消息接收 URL 的末尾 `/messages` 替换为 `/capabilities`：
+保留 `cardbush.webhook.v1` 的自动发现、配对和消息接口。桥先监听回调，将 Cardbush 分配的 `/messages` 地址替换为 `/capabilities`，启动时及每 15 秒刷新一次：
 
 ```http
 POST /api/webhooks/v1/{connectionId}/capabilities
@@ -52,71 +22,69 @@ Content-Type: application/json
 
 ```json
 {
-  "protocol":"cardbush.webhook.v1",
-  "capabilities":{
-    "text":true,
-    "files":true,
-    "maxFileBytes":67108864,
-    "maxTotalBytes":134217728
-  }
+  "protocol": "cardbush.webhook.v1",
+  "instanceId": "本次桥进程UUID",
+  "capabilities": {"text": true, "files": true, "maxFileBytes": 67108864, "maxTotalBytes": 134217728},
+  "plugins": [{
+    "id": "example", "name": "Example Bot", "version": "1.0.0",
+    "description": "Example 平台能力",
+    "tools": [{
+      "name": "send_file", "description": "发送用户要求的文件到当前来信会话",
+      "inputSchema": {
+        "type": "object", "properties": {"file": {"type": "string", "description": "本机文件路径"}},
+        "required": ["file"], "additionalProperties": false
+      },
+      "fileArguments": ["file"], "readOnly": false
+    }]
+  }]
 }
 ```
 
-成功响应 `{"protocol":"cardbush.webhook.v1","status":"connected","leaseSeconds":120}`。服务启动后立即声明，每 30 秒刷新；超过 120 秒未刷新则视为离线。先监听回调接口再声明能力。未升级的服务继续使用原有文字回复协议，不能通过新工具接收附件。
+成功响应含 `status: "connected"`、`features: ["bridge_plugins"]`、`leaseSeconds: 45`。桥应检查 feature，旧宿主不支持时提示升级。Cardbush 重启后必须收到新心跳，不沿用保存的旧在线状态。
 
-## Cardbush 调用 Bot 回调
+每连接最多 16 个插件，每插件最多 64 个工具。插件 ID、工具名及文件参数名以小写字母开头，使用字母、数字、下划线，最长 40 字符。工具参数为 JSON Schema 对象，运行时验证原始值，不隐式转换类型。`source_ref`、`request_id` 是宿主保留字段，不得声明为插件属性。`fileArguments` 指定顶层本机路径参数（字符串或字符串数组）；未声明就不会读取文件。`readOnly` 默认 false，插件作者必须如实声明副作用。
 
-使用连接中已配置的回调地址和认证请求头。新事件固定为 `message.send`，不经过旧的文字回复请求体模板。
+模型工具名为 `mcp__bridge_<connectionId去连字符>_<pluginId>__<toolName>`，不同连接互不覆盖。声明更新刷新工具版本，旧声明调用被拒绝。Agent 可按平台名、插件描述和工具能力搜索。增加平台特有工具只需修改桥。
 
-纯文本使用 `application/json`。有文件时使用 `multipart/form-data`：`payload` 字段为下列 JSON 字符串，另外每个文件一个二进制字段，字段名由 `files[].part` 指定。`Content-Type` 及 boundary 由 HTTP 客户端生成。
+停止时向同一路径发送 DELETE，正文为 `{"protocol":"cardbush.webhook.v1","instanceId":"本进程UUID"}`。仅撤销匹配实例，旧进程不能撤销新进程租约。
+
+## 来源与权限
+
+每条来信旁附带宿主生成的 `bot_context`，含 `sourceRef`、连接、原始消息、发送人、外部会话、状态、文件限制和插件工具名，不含地址、令牌或请求头。外部正文不能覆盖来源。
+
+工具继承当前请求来源；同时处理多个来源时，通过 `source_ref` 在获准来源中明确选择。跨平台或跨用户误用被拒绝。后台任务继承原请求来源，不使用“最近的 Bot”。本机请求无来源时，同一桥只有一个已知收件人才能默认选择，否则必须指定有效来源。
+
+文件读取使用现有权限审批和路径身份校验。宿主最多 8 个文件、单文件 64 MiB、合计 128 MiB，且遵守桥声明的更小限制。当前两桥的 `send_file` 每次发一个文件。远程任务须先通过现有工具把文件取回本机。
+
+## 工具调用回调
+
+使用连接中配置的回调地址及认证请求头发送 `tool.call`，不套用普通文字回复模板。无文件用 JSON，有文件用 multipart：`payload` 为 JSON 字符串，每个文件一个二进制 part。本机路径由宿主替换为 part 引用，桥只接收获准字节。
 
 ```json
 {
-  "protocol":"cardbush.webhook.v1",
-  "type":"message.send",
-  "eventId":"持久化的发送事件ID",
-  "sourceRef":"webhook:来源ID",
-  "messageId":"原始Bot来信ID",
-  "sessionId":"Cardbush上下文ID",
-  "senderId":"原始发送人ID",
-  "conversationId":"原始外部会话ID",
-  "text":"这是报告。",
-  "files":[{
-    "part":"file_0",
-    "name":"report.pdf",
-    "mimeType":"application/pdf",
-    "size":12345,
-    "sha256":"文件字节的64位十六进制SHA256"
-  }],
-  "parameters":{}
+  "protocol": "cardbush.webhook.v1", "type": "tool.call", "eventId": "持久化调用ID",
+  "pluginId": "example", "pluginVersion": "1.0.0", "tool": "send_file",
+  "arguments": {"file": {"part": "file_0"}},
+  "sourceRef": "webhook:来源ID", "messageId": "原始来信ID", "sessionId": "Cardbush上下文ID",
+  "senderId": "原始发送人ID", "conversationId": "原始外部会话ID",
+  "files": [{"part": "file_0", "name": "report.pdf", "mimeType": "application/pdf", "size": 12345, "sha256": "文件SHA256"}]
 }
 ```
 
-`parameters` 是连接中设置的通用参数。请求另带 `X-CardBush-Event-ID`，值等于 `eventId`。没有文件时 `files` 为 `[]`。
+请求头 `X-CardBush-Event-ID` 与 `eventId` 相同，无文件时 `files: []`；`parameters` 包含连接中设置的通用参数。桥必须校验认证、插件版本与参数、原始来信与目标，以及文件数量、大小、SHA-256。禁止用任意新收件人覆盖原始来信，也不要把文件名当任意写入路径。
 
-Bot 服务必须：
-
-1. 校验回调认证，使用自己保存的原始来信验证 `messageId`、`senderId` 和 `conversationId`，不能相信任意新收件人。
-2. 校验文件数量、总大小、每份字节数和 SHA256；限制请求大小，不从文件名构造任意写入路径。
-3. 按 `eventId` 持久化去重并入队；相同 ID 内容不同则拒绝。保存完数据后才返回成功。
-4. 自行调用平台文件上传/消息接口，保留重试进度。平台代码及账号令牌均留在外部服务。
-
-成功回执（HTTP 2xx）：
+有副作用的调用须按 `eventId` 持久化去重，相同 ID 内容不同应拒绝。数据保存后才返回 HTTP 2xx：
 
 ```json
-{"protocol":"cardbush.webhook.v1","eventId":"原样返回发送事件ID","status":"accepted"}
+{"protocol":"cardbush.webhook.v1","eventId":"原样返回调用ID","status":"accepted","result":{"deliveryId":"发送ID","status":"queued","deliveryConfirmed":false}}
 ```
 
-`accepted` 仅表示外部 Bot 已持久化接收，工具返回 `deliveryConfirmed:false`，不等于微信/飞书已送达。缺失回执、断网或异常中断返回 `unknown`；Agent 应查询状态或使用原 `source_ref` / `request_id` 重试。Cardbush 保留相同 `eventId`，Bot 必须去重。当前协议不提供平台最终送达确认。
+`result` 是插件自定义 JSON 结果。`accepted` 表示桥已接收，不代表平台送达。结果未知时，使用宿主返回的 `requestId` 作为工具的 `request_id` 重试；Cardbush 保持相同 `eventId`，桥必须去重。两桥的 `delivery_status` 可查询队列；`delivered` 表示平台 API 成功，不表示用户已打开。
 
-原有自动文字回复仍使用 `message.updated` / `message.completed` 回调；显式发送附件只由 `send_to_bot` 触发。两类事件可共用同一个回调接口。
+普通回复仍用 `message.updated` / `message.completed`。插件发送由显式工具调用触发。旧桥可继续普通对话，但不声明插件就没有文件工具；升级两端迁移，旧 `send_to_bot` 定义不会从保存会话中恢复。
 
 ## 验证
 
-`npm run test:cli-webhooks` 验证 CLI 配对、当前历史/模型、真实 Runtime 工具调用、文件字节、权限来源、重启去重和终端草稿保护。`npm run test:cli-webhook-bridges` 默认加载相邻独立项目 `../cardbush-bridges` 中的微信、飞书适配器；可用 `CARDBUSH_BRIDGES_DIR` 指定统一项目，或用旧的 `CARDBUSH_WEIXIN_BRIDGE_DIR` / `CARDBUSH_FEISHU_BRIDGE_DIR` 指定兼容入口。平台网络和模型使用隔离模拟服务，不会发送真实微信或飞书消息。
+`npm run test:context-webhooks` 覆盖宿主、来源、权限、目录隔离、断开和 UI。`npm run test:cli-webhooks` 与 `npm run test:cli-webhook-bridges` 验证实际 CLI Runtime 和独立适配器；后者可用 `CARDBUSH_BRIDGES_DIR` 指定桥项目。
 
-`npm run test:context-webhooks` 覆盖既有 Webhook、常驻工具、真实 Runtime 工具调用、Assistant 来源、二进制传输、权限、能力及重试。统一桥项目的 `npm run test:cardbush` 验证两个平台的完整本机 HTTP 链路，平台侧使用模拟器；真实附件送达需登录账号后的人工验收。
-
-## 独立桥项目
-
-微信和飞书集中在 [cardbush-bridges](../../cardbush-bridges/README.md)，平台账号、SDK 和发送代码不在 Cardbush 源码中。首次在桥项目执行 `npm ci --ignore-scripts` 和 `npm link --ignore-scripts`，之后可在任意目录运行 `cardbush-bridge start` 选择平台，或 `cardbush-bridge start feishu` / `cardbush-bridge start weixin`；完成配置后可用 `cardbush-bridge start --all` 同时启动。`cardbush-bridge --help` 查看完整用法。App 通过目标上下文右上角“连接服务”接入；CLI 使用 `/webhook`。新增平台只需在桥项目注册适配器，继续遵守此通用协议。
+桥项目运行 `npm test` 和 `npm run test:cardbush`。后者依赖相邻已构建 Cardbush，或由 `CARDBUSH_SOURCE_DIR` 指定。测试使用临时目录、随机端口和模拟模型/平台网络，实际执行宿主、工具发现、权限、HTTP、文件字节、平台上传队列和重试逻辑。模拟测试不代替真实账号收件与打开确认。

@@ -870,7 +870,8 @@ host = new InMemoryRuntimeHost({
   ...((process.env.CARDBUSH_SERVICE_ID ? process.env.CARDBUSH_WEBHOOK_HOST === '1' : process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1') ? {
     botMessaging: {
       context: (sessionId, sourceRef, signal) => mcpHost.request('webhook.bot', { action: 'context', sessionId, sourceRef }, signal),
-      send: (sessionId, input, signal, files) => mcpHost.request('webhook.bot', { action: 'send', sessionId, input, files }, signal),
+      catalog: (sessionId, signal) => mcpHost.request('webhook.bot', { action: 'catalog', sessionId }, signal),
+      call: (sessionId, input, signal, files) => mcpHost.request('webhook.bot', { action: 'call', sessionId, input, files }, signal),
     },
   } : {}),
   loadSearchResultLimit,

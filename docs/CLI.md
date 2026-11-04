@@ -97,7 +97,7 @@ CLI and App use the same generic Webhook host, discovery, pairing, capability le
 1. Start `cardbush`, open or resume the target session and select its model and permissions.
 2. Enter `/webhook` to start the local endpoint.
 3. Start the Bot bridge in another terminal. Refresh the CLI service list and select the service to bind it to the current session.
-4. Send text through the Bot. For files, ask the Agent to use `send_to_bot`.
+4. Send text through the Bot. For files, ask the Agent to send the file through the originating Bot.
 
 Addresses and tokens are exchanged automatically. The default port is **4791**. App and CLI have separate session and connection data; only one host can listen on that port. Close the App or other host using 4791 before using the default CLI flow. A collision is reported without taking over another host's connections.
 
@@ -111,13 +111,13 @@ When moving a previously App-bound bridge to CLI, run `npm run connect` in the b
 /webhook start           # Restore the listener and saved bindings
 ```
 
-Bindings capture the selected model, reasoning effort and permissions; provider bindings are resolved afresh on every turn. Rebind to change those choices. Incoming messages use the existing session queue, workspace and history. The terminal observes Bot jobs and handles approvals without discarding your draft. The host supplies message provenance, and file tools target the original source. `send_to_bot` remains discoverable when disconnected and reports unavailability.
+Bindings capture the selected model, reasoning effort and permissions; provider bindings are resolved afresh on every turn. Rebind to change those choices. Incoming messages use the existing session queue, workspace and history. The terminal observes Bot jobs and handles approvals without discarding your draft. The host supplies message provenance, and file tools target the original source. Connected bridges register their own plugin tools in `mcp_search`; disconnected tools cannot execute. The permanent `send_to_bot` tool has been removed.
 
 The local Runtime stays running after the CLI window closes while Webhooks are enabled. Use `cardbush --resume SESSION_ID` to observe it again, or `/webhook stop` when finished. After reboot, launch CLI again to restore saved connections; no boot task is installed. Account models retain their existing desktop authorization requirements.
 
 For concurrent App and CLI Bot hosts, use `/webhook port 6112`, set `CARDBUSH_WEBHOOK_URL=http://127.0.0.1:6112` in the corresponding bridge terminal and run its `npm run connect`. Re-pair after changing ports. This is generic configuration, with no platform-specific code.
 
-The new flow uses `/api/webhooks/v1`, like App. Legacy `cardbush bots --config …` retains `/api/bots/v1`; use `/webhook` for the current Weixin/Feishu bridges. See [the generic file protocol](WEBHOOK_BOT_PROTOCOL.md) for file limits, acknowledgement semantics and idempotency.
+The new flow uses `/api/webhooks/v1`, like App. Legacy `cardbush bots --config …` retains `/api/bots/v1`; use `/webhook` for the current Weixin/Feishu bridges. See [the bridge plugin protocol](WEBHOOK_BOT_PROTOCOL.md) for file limits, acknowledgement semantics and idempotency.
 
 After updating source, run `npm run build:agent`, stop the old Webhook service and close old CLI windows before starting the new CLI. Global npm installations require a build containing this feature; updating a checkout does not update the installed package.
 

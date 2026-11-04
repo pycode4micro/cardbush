@@ -32,8 +32,9 @@ export class AgentWebhooks {
   }
   async botRequest(input: unknown, signal?: AbortSignal) {
     if (this.#host) return (await this.#host).botRequest(input, signal);
+    if ((input as { action?: string })?.action === 'catalog') return [];
     return (input as { action?: string })?.action === 'context'
-      ? { tool: 'send_to_bot', available: false, reason: 'bot_not_connected', targets: [] }
+      ? { discovery: 'mcp_search', available: false, reason: 'bot_not_connected', targets: [] }
       : { status: 'unavailable', code: 'bot_not_connected' };
   }
   command(input: unknown, binding: () => Promise<WebhookBinding>) {

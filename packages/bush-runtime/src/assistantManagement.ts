@@ -35,8 +35,7 @@ export class AssistantManagement {
   definitions(parent: RuntimeSessionTurnRequest) {
     if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' || parent.metadata.toolExecutionPolicy === 'none') return [];
     const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [] };
-    return this.options.registry.definitions().filter(tool => allowed.has(tool.name) && (parent.tools.some(item => item.name === tool.name)
-      || tool.name === 'send_to_bot' && !(parent.metadata.disabledTools as string[] | undefined)?.includes(tool.name))
+    return this.options.registry.definitions().filter(tool => allowed.has(tool.name) && parent.tools.some(item => item.name === tool.name)
       && this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
         if (tool.name === 'mcp_search') return { ...tool, description: 'Discover MCP tool names and summaries available on this Runtime for delegation. Start with query keywords or *; optionally narrow by server. Continue with next_cursor as cursor without query/server. Try alternate queries before concluding a capability is unavailable. This query executes no target and grants no permission. Delegate actual execution to a child; schema loading and generic invocation are not available in this assistant scope. Local results do not establish remote worker capabilities.' };
         if (tool.name === 'search_skills') return { ...tool, description: 'Discover installed Skills on this Runtime by capability or name; query=* lists visible Skills. Results include descriptions, mainResource and optional plugin invocation IDs. Continue with next_offset as offset and the same query. Use these facts to choose a child for execution; reading instructions and invoking Skills belong to that child. Local results do not establish remote worker capabilities.' };

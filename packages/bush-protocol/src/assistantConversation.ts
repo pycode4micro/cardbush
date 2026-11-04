@@ -4,7 +4,7 @@ import type { PlanState } from './coordination.js';
 import type { RuntimePermissionRequest } from './runtimeHost.js';
 
 /** Direct, bounded management; execution tools remain owned by children. */
-export const ASSISTANT_MANAGEMENT_TOOLS = ['schedule_task', 'scheduled_results', 'search_skills', 'list_plugin_commands', 'mcp_search', 'update_task_plan', 'send_to_bot'] as const;
+export const ASSISTANT_MANAGEMENT_TOOLS = ['schedule_task', 'scheduled_results', 'search_skills', 'list_plugin_commands', 'mcp_search', 'update_task_plan'] as const;
 export interface AssistantManagementSnapshot {
   plan?: PlanState;
   permissions: Array<{ permissionId: string; toolCallId: string; sessionId: string; turnId: string; request: RuntimePermissionRequest }>;

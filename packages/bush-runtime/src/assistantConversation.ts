@@ -54,6 +54,7 @@ export class AssistantConversation {
     delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
     management?: AssistantManagement;
+    prepareParent?: (parent: RuntimeSessionTurnRequest, signal: AbortSignal) => Promise<RuntimeSessionTurnRequest>;
     snapshotImage?: (source: string, signal: AbortSignal) => Promise<string>;
     botContext?: (sourceRef: string | undefined, signal: AbortSignal) => Promise<BotContext>;
     wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
@@ -141,6 +142,7 @@ export class AssistantConversation {
     }
   }
   private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal) {
+    parent = await this.deps.prepareParent?.(parent, signal) ?? parent;
     const id = PERSONAL_ASSISTANT_SESSION;
     const memoryTools = this.deps.memory?.definitions() ?? [];
     const managementTools = this.deps.management?.definitions(parent) ?? [];
@@ -190,9 +192,11 @@ export class AssistantConversation {
     // A completion can wake Assistant after another Bot/user has spoken. Child
     // tasks inherit the sources being handled now, never the last configured sender.
     const activeInputs = remaining.filter(item => item.role === 'user');
-    const activeSources = new Set((activeInputs.length ? activeInputs : entries.filter(item => item.role === 'user').slice(-1)).flatMap(sourceRefs));
+    const activeSources = new Set((activeInputs.length ? activeInputs : entries.filter(item => item.role === 'user').slice(-1))
+      .flatMap(sourceRefs).filter((ref): ref is string => typeof ref === 'string'));
     parent = { ...parent, metadata: { ...parent.metadata } };
     delete parent.metadata.botSourceRef;
+    parent.metadata.botSourceRefs = [...activeSources];
     if (activeSources.size === 1 && activeSources.values().next().value) parent.metadata.botSourceRef = activeSources.values().next().value;
     const botContexts = new Map<string | undefined, BotContext>();
     if (this.deps.botContext) for (const ref of new Set(remaining.filter(item => item.role === 'user').flatMap(sourceRefs))) {

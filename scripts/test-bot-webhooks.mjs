@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { fixturePlugin, bridgeModelStep } from './helpers/bridge-plugin-fixture.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm, lstat, realpath, mkdir, symlink } from 'node:fs/promises';
 import { renameSync, symlinkSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { ContextWebhookHost } from '../dist-electron/contextWebhookHost.mjs';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry, ToolExecutionCoordinator } from '../packages/bush-runtime/dist/index.js';
-import { registerBotMessagingTool } from '../packages/bush-runtime/dist/botMessaging.js';
+import { BridgePluginTools } from '../packages/bush-runtime/dist/botMessaging.js';
 import { ConversationJournal } from '../packages/bush-runtime/dist/conversationJournal.js';
 import { AssistantConversation } from '../packages/bush-runtime/dist/assistantConversation.js';
 import { assistantProfileSchema, botCapabilitiesSchema } from '../packages/bush-protocol/dist/index.js';
@@ -22,21 +23,20 @@ const until = async check => { for (let i = 0; i < 200; i++) { if (await check()
 async function* answer(input, call) {
   const base = { protocol: 'bush.model_event.v1', requestId: input.requestId, createdAt: new Date().toISOString() };
   yield { ...base, sequence: 0, kind: 'response_started' };
-  if (call) yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: 'send', nameDelta: 'send_to_bot', argumentsDelta: JSON.stringify(call) };
+  if (call) yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: call.id, nameDelta: call.name, argumentsDelta: JSON.stringify(call.arguments) };
   else yield { ...base, sequence: 1, kind: 'text_delta', delta: 'Ready.' };
   yield { ...base, sequence: 2, kind: 'response_completed', finishReason: call ? 'tool_calls' : 'stop' };
 }
-test('send_to_bot remains directly callable without a connected Bot, including an old frozen catalog', async () => {
-  const calls = [], runtime = new InMemoryRuntimeHost({ sessionStore: new SessionStore(), provider: { async *stream(input) {
-    calls.push(input); yield* answer(input, calls.length === 1 ? { action: 'status' } : undefined);
+test('retired send_to_bot is absent without a bridge and cannot return through an old saved binding', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'bridge-empty-'));
+  const calls = [], runtime = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: new SessionStore(), provider: { async *stream(input) {
+    calls.push(input); yield* answer(input);
   } } });
   try {
-    await runtime.runSessionTurn(request('unconnected'));
-    assert.ok(calls[0].tools.some(t => t.name === 'send_to_bot'));
-    const result = JSON.parse(calls[1].messages.find(m => m.role === 'tool').content);
-    assert.equal(result.available, false); assert.equal(result.reason, 'bot_not_connected');
-    assert.match(calls[0].tools.find(t => t.name === 'send_to_bot').description, /remains present/);
-  } finally { await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
+    await runtime.runSessionTurn({ ...request('unconnected'), tools: [{ name: 'send_to_bot', description: 'Legacy tool', inputSchema: { type: 'object' } }] });
+    assert.ok(!calls[0].tools.some(t => t.name === 'send_to_bot'));
+    assert.ok(!(await runtime.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} })).some(t => t.name === 'send_to_bot'));
+  } finally { await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
 });
 
 test('generic file push binds source, checks capabilities, persists idempotency and keeps tokens out of model state', async t => {
@@ -47,7 +47,7 @@ test('generic file push binds source, checks capabilities, persists idempotency 
     const bytes = Buffer.concat(chunks), type = req.headers['content-type'];
     const form = type.startsWith('multipart/') ? await new Response(bytes, { headers: { 'Content-Type': type } }).formData() : null;
     const payload = JSON.parse(form ? form.get('payload') : bytes.toString());
-    if (payload.type !== 'message.send') { res.end('{}'); return; }
+    if (payload.type !== 'tool.call') { res.end('{}'); return; }
     received.push({ payload, authorization: req.headers.authorization, bytes: form ? Buffer.from(await form.get('file_0').arrayBuffer()) : undefined });
     if (loseAcknowledgement) { loseAcknowledgement = false; res.end('{}'); return; }
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ protocol: 'cardbush.webhook.v1', eventId: payload.eventId, status: 'accepted' }));
@@ -65,31 +65,40 @@ test('generic file push binds source, checks capabilities, persists idempotency 
     const post = (c, suffix, body) => fetch(c.endpoint.replace(/\/messages$/, suffix), { method: 'POST', headers: { Authorization: `Bearer ${c.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     for (const c of [a, b]) assert.equal((await post(c, '/messages', { messageId: c.name, senderId: c.name + '-user', conversationId: c.name + '-room', text: 'Forward my file.' })).status, 202);
     assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'same-chat' })).available, false);
-    for (const c of [a, b]) assert.equal((await post(c, '/capabilities', { protocol: 'cardbush.webhook.v1', capabilities: { files: c === a, maxFileBytes: 1000 } })).status, 200);
+    for (const c of [a, b]) assert.equal((await post(c, '/capabilities', { protocol: 'cardbush.webhook.v1', capabilities: { files: c === a, maxFileBytes: 1000 }, plugins: [fixturePlugin] })).status, 200);
     const state = await gateway.botRequest({ action: 'context', sessionId: 'same-chat' });
     assert.equal(state.targets.length, 2); assert.ok(!JSON.stringify(state).includes('callback-secret')); assert.ok(!JSON.stringify(state).includes(a.token));
     const sourceA = state.targets.find(t => t.botName === 'Weixin'), sourceB = state.targets.find(t => t.botName === 'Feishu');
+    const catalog = await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' });
+    assert.equal(catalog.length, 2);
+    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'another-chat' }), []);
+    const callInput = (source, requestId, file, extra = {}) => ({ connectionId: source.connectionId, pluginId: 'fixture',
+      revision: catalog.find(entry => entry.connectionId === source.connectionId).revision, tool: 'send_file', sourceRef: source.sourceRef,
+      requestId, arguments: { file, ...extra } });
     const later = Date.now() + 120001, clock = t.mock.method(Date, 'now', () => later);
     assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'same-chat', sourceRef: sourceA.sourceRef })).source.reason, 'bot_offline');
+    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' }), []);
     clock.mock.restore();
     const file = join(root, 'real-file.txt'), bytes = Buffer.from('实际文件内容\n'); await writeFile(file, bytes);
     const send = async (source, requestId, extra = {}, sessionId = 'same-chat') => {
       const path = await realpath(file), info = await lstat(path, { bigint: true });
-      return gateway.botRequest({ action: 'send', sessionId, files: [{ path, identity: `${info.dev}:${info.ino}` }],
-        input: { source_ref: source.sourceRef, request_id: requestId, files: [path], ...extra } });
+      return gateway.botRequest({ action: 'call', sessionId, files: [{ path, identity: `${info.dev}:${info.ino}` }], input: callInput(source, requestId, path, extra) });
     };
     assert.equal((await send(sourceB, 'unsupported')).code, 'bot_files_unsupported');
-    assert.equal((await send(sourceA, 'foreign', {}, 'another-chat')).code, 'source_unavailable');
+    assert.equal((await send(sourceA, 'foreign', {}, 'another-chat')).code, 'bridge_source_unavailable');
     const delivered = await send(sourceA, 'file-1'); assert.equal(delivered.status, 'accepted'); assert.equal(delivered.deliveryConfirmed, false);
     assert.deepEqual(received[0].bytes, bytes); assert.equal(received[0].payload.senderId, 'Weixin-user');
+    assert.deepEqual(received[0].payload.arguments, { file: { part: 'file_0' } }, 'the bridge never receives a local file path');
+    assert.deepEqual(received[0].payload.parameters, {}, 'connection parameters remain available to generic bridge handlers');
+    assert.equal((await gateway.botRequest({ action: 'call', sessionId: 'same-chat', input: { ...callInput(sourceA, 'wrong-platform', file), connectionId: b.id } })).code, 'bridge_source_unavailable');
     assert.equal(received[0].payload.messageId, 'Weixin'); assert.equal(received[0].authorization, 'Bearer callback-secret');
     assert.equal((await send(sourceA, 'file-1')).eventId, delivered.eventId); assert.equal(received.length, 1);
     assert.equal((await send(sourceA, 'file-1', { text: 'changed' })).code, 'request_id_conflict');
     await writeFile(file, Buffer.alloc(1001)); assert.equal((await send(sourceA, 'too-large')).code, 'file_too_large');
     const oldPath = await realpath(file), oldIdentity = await lstat(oldPath, { bigint: true });
     renameSync(file, file + '.previous'); await writeFile(file, 'replacement');
-    assert.equal((await gateway.botRequest({ action: 'send', sessionId: 'same-chat', files: [{ path: oldPath, identity: `${oldIdentity.dev}:${oldIdentity.ino}` }],
-      input: { source_ref: sourceA.sourceRef, request_id: 'replaced-file', files: [oldPath] } })).code, 'workspace_authorization_changed');
+    assert.equal((await gateway.botRequest({ action: 'call', sessionId: 'same-chat', files: [{ path: oldPath, identity: `${oldIdentity.dev}:${oldIdentity.ino}` }],
+      input: callInput(sourceA, 'replaced-file', oldPath) })).code, 'workspace_authorization_changed');
     assert.equal(received.length, 1, 'a replaced file must not reach the callback');
     await rm(file); renameSync(file + '.previous', file);
     await writeFile(file, bytes); loseAcknowledgement = true;
@@ -97,9 +106,20 @@ test('generic file push binds source, checks capabilities, persists idempotency 
     assert.equal((await send(sourceA, 'retry-same')).status, 'accepted');
     assert.equal(received.at(-1).payload.eventId, received.at(-2).payload.eventId, 'uncertain retries use the same external event ID');
     await gateway.close(); gateway = await new ContextWebhookHost(root, cipher, runtime, options).start();
+    a.endpoint = (await gateway.command({ action: 'read', sessionId: 'same-chat' })).connections.find(c => c.id === a.id).endpoint;
+    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' }), [], 'restart requires a fresh bridge heartbeat');
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await post(a, '/capabilities', { protocol: 'cardbush.webhook.v1', instanceId, capabilities: { files: true, maxFileBytes: 1000 }, plugins: [fixturePlugin] });
     assert.equal((await send(sourceA, 'file-1')).eventId, delivered.eventId); assert.equal(received.length, 3);
+    const withdraw = id => fetch(a.endpoint.replace(/\/messages$/, '/capabilities'), { method: 'DELETE', headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ protocol: 'cardbush.webhook.v1', instanceId: id }) });
+    await withdraw('22222222-2222-4222-8222-222222222222');
+    assert.equal((await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' })).length, 1, 'an old process cannot revoke a newer bridge lease');
+    await withdraw(instanceId);
+    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' }), []);
+    assert.equal((await send(sourceA, 'after-close')).code, 'bridge_source_unavailable');
     await gateway.command({ action: 'delete', sessionId: 'same-chat', id: a.id });
-    assert.equal((await send(sourceA, 'revoked')).status, 'unavailable'); assert.equal(received.length, 3);
+    assert.equal((await send(sourceA, 'revoked')).code, 'bridge_source_unavailable'); assert.equal(received.length, 3);
   } finally { await gateway?.close(); receiver.closeAllConnections(); await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });
 
@@ -117,23 +137,27 @@ for (const kind of ['conversation', 'assistant']) test(`${kind}: real model tool
   receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
   const runtime = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: new SessionStore(), botMessaging: {
     context: (sessionId, sourceRef, signal) => gateway.botRequest({ action: 'context', sessionId, sourceRef }, signal),
-    send: (sessionId, input, signal, files) => gateway.botRequest({ action: 'send', sessionId, input, files }, signal),
+    catalog: (sessionId, signal) => gateway.botRequest({ action: 'catalog', sessionId }, signal),
+    call: (sessionId, input, signal, files) => gateway.botRequest({ action: 'call', sessionId, input, files }, signal),
   }, provider: { async *stream(input) {
     calls.push(input);
     const state = JSON.parse(input.messages.filter(m => m.name === 'bot_context').at(-1).content.split('\n').at(-1));
     assert.equal(state.source.botName, 'Selected Bot'); assert.equal(state.source.senderId, 'original-user');
     assert.equal(state.source.available, true);
-    yield* answer(input, input.messages.some(m => m.role === 'tool' && m.toolCallId === 'send') ? undefined
-      : { source_ref: state.source.sourceRef, request_id: 'report-once', files: [file] });
+    if (kind === 'assistant' && input.sessionId === sessionId && input.metadata.agentRole !== 'child') {
+      yield* answer(input, input.messages.some(m => m.role === 'tool' && m.toolCallId === 'delegate-file') ? undefined
+        : { id: 'delegate-file', name: 'subagent', arguments: { prompt: 'Send the requested report file through the current source bridge plugin.' } });
+    } else yield* answer(input, bridgeModelStep(input.messages, file));
   } } });
   const bridge = { command: (name, payload) => runtime.sendCommand({ kind: name, payload }) };
   try {
     await bridge.command('runtime.create_session', { sessionId });
     gateway = await new ContextWebhookHost(root, cipher, bridge, { port: 0 }).start();
+    const definitions = await bridge.command('runtime.get_tool_catalog', {});
     const saved = await gateway.command({ action: 'save', config: config('Selected Bot', `http://127.0.0.1:${receiver.address().port}/reply`),
-      binding: { kind, sessionId, title: 'Context', parent: request(sessionId), ...(kind === 'assistant' ? { profile: assistantProfileSchema.parse({}), generation: 0 } : {}) } });
+      binding: { kind, sessionId, title: 'Context', parent: { ...request(sessionId), tools: definitions, metadata: { mcpCatalogUpdates: 'additions' } }, ...(kind === 'assistant' ? { profile: assistantProfileSchema.parse({}), generation: 0 } : {}) } });
     const connection = saved.connections[0], headers = { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' };
-    await fetch(connection.endpoint.replace(/\/messages$/, '/capabilities'), { method: 'POST', headers, body: JSON.stringify({ protocol: 'cardbush.webhook.v1', capabilities: { files: true } }) });
+    await fetch(connection.endpoint.replace(/\/messages$/, '/capabilities'), { method: 'POST', headers, body: JSON.stringify({ protocol: 'cardbush.webhook.v1', capabilities: { files: true }, plugins: [fixturePlugin] }) });
     assert.equal((await fetch(connection.endpoint, { method: 'POST', headers, body: JSON.stringify({ messageId: 'requested-file', senderId: 'original-user', conversationId: 'original-room', text: 'Send the report.' }) })).status, 202);
     let result;
     for (let i = 0; i < 150; i++) {
@@ -142,14 +166,17 @@ for (const kind of ['conversation', 'assistant']) test(`${kind}: real model tool
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     assert.equal(result.status, 'completed', JSON.stringify(result));
+    await until(() => sent.length === 1);
     assert.equal(sent.length, 1); assert.equal(sent[0].messageId, 'requested-file'); assert.equal(sent[0].senderId, 'original-user');
-    assert.ok(calls[0].tools.some(tool => tool.name === 'send_to_bot'), 'old bindings still expose the permanent tool');
-    assert.equal(JSON.parse(calls.at(-1).messages.find(m => m.role === 'tool' && m.toolCallId === 'send').content).status, 'accepted');
+    assert.ok(calls.every(call => !call.tools.some(tool => tool.name === 'send_to_bot')), 'no permanent forwarding tool');
+    assert.ok(JSON.stringify(calls).includes('bridge-schema-call'), 'schema discovery precedes execution');
     assert.ok(!JSON.stringify(calls).includes(connection.token)); assert.ok(!JSON.stringify(calls).includes('callback-secret'));
     if (kind === 'assistant') {
       const state = await gateway.botRequest({ action: 'context', sessionId });
       await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });
-      const refused = await gateway.botRequest({ action: 'send', sessionId, input: { source_ref: state.targets[0].sourceRef, request_id: 'after-reset', text: 'Do not send.' } });
+      const declaration = (await gateway.botRequest({ action: 'catalog', sessionId }))[0];
+      const refused = await gateway.botRequest({ action: 'call', sessionId, input: { connectionId: declaration.connectionId, pluginId: 'fixture',
+        revision: declaration.revision, tool: 'send_file', sourceRef: state.targets[0].sourceRef, requestId: 'after-reset', arguments: { file } } });
       assert.equal(refused.code, 'context_reset'); assert.equal(sent.length, 1);
     }
   } finally { await gateway?.close(); await bridge.command('runtime.shutdown', {}); receiver.closeAllConnections(); await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
@@ -159,7 +186,7 @@ test('Assistant background completion retains Bot A after a newer message from B
   const root = await mkdtemp(join(tmpdir(), 'bot-background-')), journal = new ConversationJournal(root), delegated = [], calls = [];
   const sessionId = 'personal-assistant';
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
-    botContext: async sourceRef => ({ tool: 'send_to_bot', available: true, targets: [], source: { sourceRef } }),
+    botContext: async sourceRef => ({ discovery: 'mcp_search', available: true, targets: [], source: { sourceRef } }),
     delegate: async input => { delegated.push(input); return { taskId: 'continued', status: 'running' }; },
     provider: { async *stream(input) {
       calls.push(input);
@@ -193,13 +220,17 @@ test('file forwarding enforces filesystem permission and rejects a redirected pa
   const link = join(work, 'link'); await symlink(safe, link, process.platform === 'win32' ? 'junction' : 'dir');
   let sends = 0, prompts = 0, redirect = false;
   const registry = new ToolRegistry();
-  registerBotMessagingTool(registry, { context: async () => ({ source: { available: true, capabilities: botCapabilitiesSchema.parse({ files: true }) } }),
-    send: async () => { sends++; } }, id => id);
+  const connectionId = '11111111-1111-4111-8111-111111111111';
+  const plugins = new BridgePluginTools(registry, {
+    catalog: async () => [{ connectionId, sessionId: 's', expiresAt: Date.now() + 60000, revision: 'a'.repeat(64), plugin: fixturePlugin }],
+    context: async () => ({ targets: [], source: { sourceRef: 'webhook:a', connectionId, available: true, capabilities: botCapabilitiesSchema.parse({ files: true }) } }),
+    call: async () => { sends++; } }, id => id);
+  await plugins.sync('s'); const toolName = registry.definitions()[0].name;
   const coordinator = new ToolExecutionCoordinator({ registry,
     observer: { running: () => { if (redirect) { renameSync(link, join(work, 'old')); symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir'); } } },
     permissions: { request: async () => { prompts++; return { decision: 'deny', grantedCapabilityIds: [] }; } } });
-  const run = file => coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'send-' + prompts, name: 'send_to_bot',
-    argumentsText: JSON.stringify({ source_ref: 'webhook:a', request_id: 'forward', files: [file] }) },
+  const run = file => coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'send-' + prompts, name: toolName,
+    argumentsText: JSON.stringify({ source_ref: 'webhook:a', request_id: 'forward', file }) },
     { requestId: 'r', sessionId: 's', turnId: 't', ordinal: prompts + 1, round: 1 }, undefined,
     { request: { ...request('s'), messages: [], tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: work } }, contextMessages: [] });
   try {

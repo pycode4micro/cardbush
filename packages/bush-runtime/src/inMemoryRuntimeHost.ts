@@ -35,8 +35,8 @@ import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import { EXTRACT_RUNTIME_SESSION_COMMAND, FORK_RUNTIME_SESSION_COMMAND, sessionExtractionRequestSchema, forkRuntimeSessionRequestSchema } from '@cardbush/bush-protocol';
 import { extractSessionSource } from './sessionExtraction.js';
 import { registerDesignTool } from './designTool.js';
-import { registerBotMessagingTool, type BotMessagingBridge } from './botMessaging.js';
-import { BOT_SEND_TOOL, PERSONAL_ASSISTANT_SESSION, botContextMessage, unavailableBotContext } from '@cardbush/bush-protocol';
+import { BridgePluginTools, type BotMessagingBridge } from './botMessaging.js';
+import { PERSONAL_ASSISTANT_SESSION, botContextMessage, unavailableBotContext } from '@cardbush/bush-protocol';
 import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COMMAND, sessionHistoryRequestSchema, finalReplySessionSnapshot } from '@cardbush/bush-protocol';
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
@@ -366,6 +366,7 @@ export class InMemoryRuntimeHost {
   readonly #projectorOptions: RuntimeEventProjectorOptions;
   readonly #toolRegistry: ToolRegistry;
   readonly #botMessaging?: BotMessagingBridge;
+  readonly #bridgePlugins: BridgePluginTools;
   readonly #pluginHookScopes: PluginHookScopes;
   readonly #pluginAgentEnvironment: PluginAgentEnvironment;
   readonly #pluginBackground: PluginBackgroundTasks;
@@ -479,7 +480,7 @@ export class InMemoryRuntimeHost {
     this.#memory = new IndividuationMemory(join(runtimeDataRoot, 'personalization.sqlite'), this.runInternalTask.bind(this));
     registerIndividuationTools(this.#toolRegistry, this.#memory.store.path, this.#memory);
     this.#botMessaging = options.botMessaging;
-    registerBotMessagingTool(this.#toolRegistry, options.botMessaging, id => this.#botRootSession(id));
+    this.#bridgePlugins = new BridgePluginTools(this.#toolRegistry, options.botMessaging, id => this.#botRootSession(id));
     this.#assistantManagement = new AssistantManagement({ registry: this.#toolRegistry, executions: this.#toolExecutions,
       capabilities: this.#capabilityGrants, coordination: () => this.#coordination, automation: options.automation,
       hooks: request => this.#managementToolHooks(request) });
@@ -490,6 +491,7 @@ export class InMemoryRuntimeHost {
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks'].includes(tool.name)),
       management: this.#assistantManagement,
+      prepareParent: (parent, signal) => this.#bridgePlugins.prepare(parent, signal),
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
       ...(options.botMessaging ? { botContext: (sourceRef: string | undefined, signal: AbortSignal) => this.#readBotContext(PERSONAL_ASSISTANT_SESSION, sourceRef, signal) } : {}),
       snapshotImage: (source, signal) => this.#modelImages.snapshot(source, signal),
@@ -1832,6 +1834,7 @@ export class InMemoryRuntimeHost {
     throw Error('Invalid Bot delegation ancestry.');
   }
   async #readBotContext(sessionId: string, sourceRef?: string, signal?: AbortSignal) {
+    await this.#bridgePlugins.sync(sessionId, signal);
     try { return await this.#botMessaging?.context(this.#botRootSession(sessionId), sourceRef, signal) ?? unavailableBotContext(); }
     catch { signal?.throwIfAborted(); return unavailableBotContext('bot_status_unavailable'); }
   }
@@ -1856,11 +1859,8 @@ export class InMemoryRuntimeHost {
     // Keep the app's current inbox snapshot separate from the authored input.
     let unreadReminder: Awaited<ReturnType<AutomationScheduler['reminder']>> | undefined;
     const authoredInput = [...candidate.inputMessages].reverse().find(entry => entry.message.role === 'user' && entry.message.visibility !== 'internal' && entry.message.name !== 'goal_continuation');
-    if (!candidate.tools.some(tool => tool.name === BOT_SEND_TOOL) && candidate.metadata.toolExecutionPolicy !== 'none'
-      && !(candidate.metadata.disabledTools as string[] | undefined)?.includes(BOT_SEND_TOOL)
-      && (!Array.isArray(candidate.metadata.childToolAllowlist) || candidate.metadata.childToolAllowlist.includes(BOT_SEND_TOOL))) {
-      candidate.tools.push(this.#toolRegistry.resolve(BOT_SEND_TOOL)!.definition);
-    }
+    // Legacy persisted bindings must not resurrect the retired global forwarding tool.
+    candidate.tools = candidate.tools.filter(tool => tool.name !== 'send_to_bot');
     if (authoredInput && this.#botMessaging) {
       const parentId = candidate.sessionMetadata?.parentSessionId;
       const contextSession = !this.#sessions.hasSession(candidate.sessionId) && typeof parentId === 'string' ? parentId : candidate.sessionId;
@@ -2007,7 +2007,7 @@ export class InMemoryRuntimeHost {
       internalTask?: Pick<RuntimeInternalTaskOptions, 'acceptResult'>;
     } = {},
   ): Promise<RuntimeEvent> {
-    const request = resolveModelRequestContextLimits(modelRequestSchema.parse(input));
+    const request = resolveModelRequestContextLimits(modelRequestSchema.parse(options.internalTask ? input : await this.#bridgePlugins.prepare(input, options.signal)));
     delete request.metadata.mcpDiscoveredToolNames;
     delete request.metadata.mcpDiscoveredToolVersions;
     delete request.metadata.mcpModelToolSnapshot;
@@ -2618,6 +2618,7 @@ export class InMemoryRuntimeHost {
             this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error)));
           }
         }
+        if (!input.internalTask && !sshOnly) await this.#bridgePlugins.sync(request.sessionId, input.signal);
         const catalogUpdate = input.internalTask || sshOnly ? undefined : synchronizeMcpCatalog(this.#toolRegistry, request);
         if (catalogUpdate) {
           messages.push(catalogUpdate);

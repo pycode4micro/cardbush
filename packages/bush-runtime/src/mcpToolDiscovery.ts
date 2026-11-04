@@ -210,6 +210,7 @@ export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequ
   const current = registry.definitions().filter(definition => {
     if (!allowAdditions && !visible.has(definition.name)) return false;
     const registration = registry.resolve(definition.name)!;
+    if (registration.registrationOwner?.startsWith('bridge:')) return registration.modelAvailable?.(request) !== false;
     if (!visible.has(definition.name) && !advertised.has(definition.name)) return false;
     return registration.registrationOwner?.startsWith('extension:') || registration.registrationOwner === 'runtime_mcp' &&
       registration.mcpHook && registration.mcpHook.modelVisible !== false;

@@ -263,7 +263,7 @@
     "build:embodied-firmware": "python deploy/embodied/build_firmware.py",
     "test:assistant-message-actions": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && node --test packages/bush-runtime/test/assistantMessageActions.test.mjs scripts/test-assistant-send.mjs && node scripts/test-assistant-ui.cjs --message-actions",
     "test:subagent-activity": "node scripts/test-assistant-ui.cjs && node scripts/test-subagent-conversation-ui.mjs",
-    "test:context-webhooks": "npm run build:agent && node --test --test-timeout=45000 scripts/test-context-webhooks.mjs scripts/test-bot-webhooks.mjs && node scripts/test-webhook-ui.cjs"
+    "test:context-webhooks": "npm run build:agent && node --test --test-timeout=45000 scripts/test-context-webhooks.mjs scripts/test-bot-webhooks.mjs scripts/test-bridge-plugin-scope.mjs && node scripts/test-webhook-ui.cjs"
   },
   "dependencies": {
     "@cardbush/apps-mcp": "0.1.0",

@@ -42,6 +42,7 @@
     "test:unit": "node --test --test-concurrency=1 test/*.test.mjs"
   },
   "dependencies": {
+    "ajv": "8.20.0",
     "@cardbush/bush-protocol": "^0.1.0",
     "@cardbush/platform": "0.1.0",
     "js-yaml": "4.3.2",
