@@ -51,6 +51,7 @@ declare global {
     cardbushDesktop?: {
       voice?: import('../../electron/voiceTypes').VoiceDesktopApi;
       embodied?: { command(input: { action: string; input?: unknown }): Promise<unknown> };
+      webhooks?: import('../../electron/contextWebhookTypes').ContextWebhookApi;
       agents?: import('../../electron/agentTypes').AgentDesktopApi;
       conversationExtracts?: import('@cardbush/bush-protocol').ConversationExtractDesktopApi;
       platform: string;

@@ -15,6 +15,7 @@ export function TopBar({
   onToggleInspector,
   workspaceControl,
   titleIcon,
+  connectionControl,
 }: {
   title: string;
   language: AppLanguage;
@@ -26,6 +27,7 @@ export function TopBar({
   onToggleInspector?: () => void;
   workspaceControl?: ReactNode;
   titleIcon?: ReactNode;
+  connectionControl?: ReactNode;
 }) {
   const displayTitle = conversationDisplayTitle(title);
   return (
@@ -33,6 +35,7 @@ export function TopBar({
       {titleIcon}
       <h1 title={displayTitle}>{displayTitle}</h1>
       {workspaceControl}
+      {connectionControl}
       {conversationContentAvailable && onToggleWorkSummary && (
         <button
           {...workSummaryHoverProps}

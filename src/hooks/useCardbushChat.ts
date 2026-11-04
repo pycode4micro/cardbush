@@ -4383,6 +4383,7 @@ export function useCardbushChat(
     sendVoiceMessage,
     voiceAgent,
     prepareAssistantRequest: () => prepareVoiceRequest('personal-assistant'),
+    prepareWebhookRequest: () => prepareVoiceRequest(),
     prepareFriendsRequest: () => prepareVoiceRequest('your-friends-appearance'),
     retryFailedUserMessage,
     regenerateAssistantMessage,

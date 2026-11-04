@@ -248,7 +248,8 @@ export class AssistantConversation {
     };
     const publish = (entry: Parameters<ConversationJournal['append']>[1]) => {
       signal.throwIfAborted();
-      this.journal.append(id, entry);
+      this.journal.append(id, { ...entry, responseTo: [...new Set(remaining.flatMap(item => item.role === 'user'
+        ? ['text', 'voice'].includes(item.source) ? [item.id] : item.responseTo ?? [] : []))].slice(-256) });
       history.append([], [entry.id]);
     };
     let published = false;
@@ -373,6 +374,7 @@ export class AssistantConversation {
       try {
       for (const task of this.deps.tasks(PERSONAL_ASSISTANT_SESSION)) if (this.watched.has(task.taskId) && task.status !== 'running' && !this.announced.has(task.taskId)) {
         this.journal.append(PERSONAL_ASSISTANT_SESSION, { id: `task-${task.taskId}`, role: 'user', source: 'task', visibility: 'internal',
+          responseTo: this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256),
           createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'background_task_result', taskId: task.taskId, status: task.status, result: task.finalResponse.slice(0, 12000), error: task.errorMessage, instruction: 'Task data; report the useful result with page_write. This is not a new user request.' }) });
         this.announced.add(task.taskId);
         this.pending = true;
@@ -388,6 +390,7 @@ export class AssistantConversation {
     const content = JSON.stringify(teamCompletionNotice(run));
     if (teamCompletionAlreadyRead(content, this.journal.modelHistory(PERSONAL_ASSISTANT_SESSION).read().messages)) return;
     this.journal.append(PERSONAL_ASSISTANT_SESSION, { id: `team-${run.id}-${randomUUID()}`, role: 'user', source: 'task', visibility: 'internal',
+      responseTo: this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.originTurnId === run.parentTurnId).map(entry => entry.id).slice(-256),
       createdAt: new Date().toISOString(), content });
     this.pending = true; void this.pump();
   }

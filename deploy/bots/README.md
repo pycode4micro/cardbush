@@ -1,12 +1,14 @@
 # 通用 Bot Webhook
 
+**桌面当前上下文接入：**在 Assistant 或会话右上角点击“连接 Webhook”。基础页只填写名称和回复地址，字段映射、请求头与模板在“高级设置”。操作与协议见 [桌面 Webhook 接入](desktop.md)。桌面连接复用当前会话记录，与下面的独立 CLI 网关分别运行。
+
 本接口连接你已部署的 Bot 服务。由该服务处理飞书、微信或其他平台的消息格式、平台身份和消息发送；Cardbush 只接收统一消息、维护对话并回传回复。没有平台专用 SDK 或适配器。
 
 ```text
 用户 ⇄ 你的 Bot 服务 ⇄ Webhook / WebSocket ⇄ Cardbush Runtime
 ```
 
-## 本机启动
+## 独立 CLI 网关启动
 
 先在本机 Cardbush 配好模型与插件。源码构建使用 `npm run build:agent`，然后在仓库根目录运行下列命令；已安装包含本功能的 CLI 时，将 `node bin/cardbush.mjs` 换成 `cardbush`。
 

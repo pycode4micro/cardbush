@@ -24,6 +24,9 @@ export const conversationEntrySchema = z.object({
   status: z.enum(['completed', 'interrupted']).optional(),
   visibility: z.enum(['conversation', 'internal']).default('conversation'),
   replyTo: assistantReplySchema.optional(),
+  // Real input entries consumed by this response; transports must not guess from adjacency.
+  responseTo: z.array(z.string().min(1).max(220)).max(256).optional(),
+  originTurnId: z.string().min(1).max(220).optional(),
   promptContext: z.array(z.object({ kind: z.enum(['preview-selection', 'editing-location', 'plugin-diagnostics']),
     content: z.string().max(256000), requestId: z.string().optional() }).strict()).max(16).optional(),
   attachments: z.array(z.object({

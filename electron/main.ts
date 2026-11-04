@@ -2632,6 +2632,34 @@ ipcMain.handle('files:read-workspace-directory', async (event, input: Parameters
 
 let sshConnectionsPromise: Promise<import('./sshConnections.mjs', { with: { 'resolution-mode': 'import' } }).SshConnectionManager> | undefined;
 let embodiedHostPromise: Promise<import('./embodiedHost.mjs', { with: { 'resolution-mode': 'import' } }).EmbodiedHost> | undefined;
+let contextWebhookHostPromise: Promise<import('./contextWebhookHost.mjs', { with: { 'resolution-mode': 'import' } }).ContextWebhookHost> | undefined;
+function contextWebhookHost() {
+  return contextWebhookHostPromise ??= (async () => {
+    await ensureRuntimeServicesReady();
+    const { ContextWebhookHost } = await import('./contextWebhookHost.mjs');
+    const host = new ContextWebhookHost(app.getPath('userData'), {
+      encrypt(value) {
+        if (!safeStorage.isEncryptionAvailable() || process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text') throw Error('secure_storage_unavailable');
+        return safeStorage.encryptString(value).toString('base64');
+      },
+      decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
+    }, {
+      async command(kind, payload) {
+        const controller = await ensureRuntimeHostReady();
+        const response = await controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind, payload } }) as any;
+        if (!response.ok) throw Object.assign(new Error(response.error?.message || 'Runtime command failed.'), { code: response.error?.code });
+        return response.result;
+      },
+    });
+    try { return await host.start(); } catch (error) { await host.close(); throw error; }
+  })().catch(error => { contextWebhookHostPromise = undefined; throw error; });
+}
+ipcMain.handle('webhooks:command', async (event, input) => {
+  assertMainWindowSender(event.sender.id);
+  try { return await (await contextWebhookHost()).command(input); }
+  catch (error) { throw new Error(error instanceof Error && /^[a-z_0-9]+$/.test(error.message) ? error.message : 'webhook_unavailable'); }
+});
+app.on('before-quit', () => { void contextWebhookHostPromise?.then(host => host.close()).catch(() => {}); });
 function embodiedHost() {
   return embodiedHostPromise ??= (async () => {
     await ensureRuntimeServicesReady();
@@ -4153,6 +4181,7 @@ async function startRuntimeServices(force = false): Promise<void> {
       // consume its boot deadline while the desktop is still initializing.
       if (!runtimeServicesStopping && !packagedSmokeMode) {
         void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
+        void contextWebhookHost().catch(() => console.warn('[webhooks] startup unavailable'));
       }
     })
     .catch((error) => {

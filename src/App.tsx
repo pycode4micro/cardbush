@@ -2299,6 +2299,7 @@ function CardbushApp() {
                 language={language}
                 theme={theme}
                 title={chat.activeConversation?.title ?? 'cardbush'}
+                prepareWebhook={chat.prepareWebhookRequest}
                 sidebarCollapsed={sidebarCollapsed}
                 windowMaximized={windowMaximized}
                 inspectorOpen={inspectorOpen}

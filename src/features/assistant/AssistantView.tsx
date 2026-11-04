@@ -12,6 +12,7 @@ import { MarkdownContent, MessageFileAttachmentStrip, MessageImageStrip } from '
 import { AssistantComposer, type AssistantComposerControls } from './AssistantComposer';
 import { AssistantBulb } from './AssistantBulb';
 import { AssistantSettingsDialog } from './AssistantSettingsDialog';
+import { WebhookConnectionButton } from '../webhooks/WebhookConnectionButton';
 import { readAssistantProfile, saveAssistantProfile, useAssistantProfile, setAssistantWorking } from './assistantProfile';
 import { TopBar } from '../../components/TopBar';
 import { ScrollBottomButton } from '../chat/ScrollBottomButton';
@@ -305,6 +306,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
   return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>
     <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
+      connectionControl={<WebhookConnectionButton language={language} kind="assistant" sessionId={sessionId} title={profile.name} prepare={prepare}/>}
       titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantBulb size={22} working={busy}/></span>}
       workspaceControl={headerControls} conversationContentAvailable={timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
