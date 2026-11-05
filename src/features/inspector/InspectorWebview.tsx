@@ -30,6 +30,7 @@ import {
 } from './inspectorTargets';
 
 export type InspectorNavigationState = {
+  sourceTarget?: string;
   guestWebContentsId?: number;
   url: string;
   title: string;
@@ -83,6 +84,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   onOpenTarget: (detail: InspectorOpenDetail) => void;
   onActivate?: (identity: string) => void;
   startPage?: ReactNode;
+  onLeaveStartPage?: () => void;
   active?: boolean;
   regionConversation?: RegionConversation;
   regionEnabled?: boolean;
@@ -100,6 +102,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   onOpenTarget,
   onActivate,
   startPage,
+  onLeaveStartPage,
   active = true,
   regionConversation,
   regionEnabled = false,
@@ -113,6 +116,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const toolsRef = useRef<BrowserPageToolsHandle>(null);
   const activateRef = useRef(onActivate); activateRef.current = onActivate;
   const openTargetRef = useRef(onOpenTarget); openTargetRef.current = onOpenTarget;
+  const leaveStartPageRef = useRef(onLeaveStartPage); leaveStartPageRef.current = onLeaveStartPage;
   const languageRef = useRef(language); languageRef.current = language;
   const webviewDomReadyRef = useRef(false);
   const requestedUrlRef = useRef(source);
@@ -149,6 +153,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const publishNavigation = useCallback(() => {
     const webview = webviewRef.current;
     const fallbackNavigation: InspectorNavigationState = {
+      sourceTarget: target,
       url: requestedUrlRef.current || source,
       title: '',
       canGoBack: false,
@@ -165,6 +170,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       requestedUrlRef.current = url;
       setCurrentUrl(url);
       onNavigationStateChange(identity, {
+        sourceTarget: target,
         guestWebContentsId: webview.getWebContentsId?.(),
         url,
         title: /^about:blank(?:[?#]|$)/i.test(url) ? (uiText(languageRef.current)('browserStartPage.newTab')) : webview.getTitle?.().trim() || '',
@@ -184,7 +190,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webviewDomReadyRef.current = false;
       onNavigationStateChange(identity, fallbackNavigation);
     }
-  }, [identity, onNavigationStateChange, source]);
+  }, [identity, onNavigationStateChange, source, target]);
   useEffect(() => { if (!rendererPreview) publishNavigation(); }, [publishNavigation, rendererPreview, language]);
 
   useImperativeHandle(forwardedRef, () => ({
@@ -225,6 +231,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       if (rendererPreview) {
         setFilePreviewRevision((value) => value + 1);
         onNavigationStateChange(identity, {
+          sourceTarget: target,
           url: target,
           title: fileTitle,
           canGoBack: false,
@@ -281,6 +288,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     loadingRef.current = isLoading;
     setLoading(isLoading);
     onNavigationStateChange(identity, {
+      sourceTarget: target,
       url: target,
       title: fileTitle,
       canGoBack: false,
@@ -363,6 +371,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       const detail = event as Event & { url?: string; isMainFrame?: boolean };
       if (detail.isMainFrame === false) return;
       const url = detail.url?.trim();
+      if (url && !/^about:blank(?:[?#]|$)/i.test(url)) leaveStartPageRef.current?.();
       // History/hash changes keep the current document's icon metadata.
       if (url && event.type === 'did-navigate-in-page' && faviconRef.current) faviconRef.current.page = url;
       if (url) requestedUrlRef.current = url;

@@ -39,8 +39,6 @@ import { GlobalTooltip } from './components/GlobalTooltip';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { useCapabilityCatalogRefresh } from './hooks/useCapabilityCatalogRefresh';
 import {
-  ArrowLeft,
-  ArrowRight,
   Bot,
   UsersRound,
   Clipboard,
@@ -113,6 +111,7 @@ import { InspectorPageDialog } from './features/inspector/InspectorPageDialog';
 import { InspectorLayoutDialog } from './features/inspector/InspectorLayoutDialog';
 import { captureInspectorLayout, restoreInspectorLayout, type InspectorLayoutSnapshot, type SavedInspectorLayout } from './features/inspector/savedInspectorLayouts';
 import { InspectorTileFrame } from './features/inspector/InspectorTileFrame';
+import { InspectorHistoryButtons } from './features/inspector/InspectorHistoryButtons';
 import {
   panelIds,
   panelRects,
@@ -673,7 +672,7 @@ function CardbushApp() {
     allTabs: retainedInspectorTabs, open: inspectorOpen, setOpen: setInspectorOpen,
     lockedIds: lockedInspectorTabs, toggleLock: toggleInspectorTabLock, ownerOfTab: inspectorTabOwner,
     disposeTabs: disposeInspectorTabs,
-    openTab: openInspectorTab, navigateStartPage, activateTab: selectInspectorTab, closeTabs: removeInspectorTabs,
+    openTab: openInspectorTab, navigateStartPage, stepStartHistory, activateTab: selectInspectorTab, closeTabs: removeInspectorTabs,
     bindBrowserTabs: bindInspectorBrowserTabs, snapshot: inspectorSessionSnapshot,
   } = useInspectorTabs(inspectorWorkspaceId);
   const { outlets: conversationInspectorOutlets, register: registerConversationInspectorOutlet } = useConversationInspectorOutlets();
@@ -996,6 +995,7 @@ function CardbushApp() {
       const previous = current[identity];
       if (
         previous?.url === navigation.url &&
+        previous.sourceTarget === navigation.sourceTarget &&
         previous.guestWebContentsId === navigation.guestWebContentsId &&
         previous.title === navigation.title &&
         previous.faviconUrl === navigation.faviconUrl &&
@@ -2676,28 +2676,12 @@ function CardbushApp() {
                 </div>,
                 document.querySelector('.app') ?? document.body,
               )}
-              {displayedInspectorTarget && !inspectorLayout && (
+              {displayedInspectorTab && !inspectorLayout && (displayedInspectorTarget || (displayedInspectorTab.kind === 'history' && displayedInspectorTab.backToStart)) && (
                 <div className="right-inspector-navigation">
-                  <button
-                    type="button"
-                    disabled={!activeInspectorNavigation?.canGoBack}
-                    title={uiText(language)('app.back')}
-                    aria-label={uiText(language)('app.back')}
-                    onClick={() => inspectorWebviewRefs.current
-                      .get(activeInspectorTabIdentity)?.goBack()}
-                  >
-                    <ArrowLeft size={15} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!activeInspectorNavigation?.canGoForward}
-                    title={uiText(language)('app.forward')}
-                    aria-label={uiText(language)('app.forward')}
-                    onClick={() => inspectorWebviewRefs.current
-                      .get(activeInspectorTabIdentity)?.goForward()}
-                  >
-                    <ArrowRight size={15} aria-hidden="true" />
-                  </button>
+                  <InspectorHistoryButtons tab={displayedInspectorTab} language={language} navigation={activeInspectorNavigation}
+                    handle={inspectorWebviewRefs.current.get(activeInspectorTabIdentity)} onStep={stepStartHistory}/>
+                  {displayedInspectorTab.kind === 'history' && <div className="right-inspector-address"><span>{displayedInspectorTab.title}</span></div>}
+                  {displayedInspectorTarget && <>
                   <button
                     type="button"
                     title={uiText(language)('app.reloadCurrentPage')}
@@ -2744,6 +2728,7 @@ function CardbushApp() {
                   )}
                   <button type="button" aria-label={uiText(language)('app.selectARegionForAi')} title={uiText(language)('app.clickABlockOrDragToSelect')} aria-pressed={regionSelectionId === activeInspectorTabIdentity}
                     onClick={() => setRegionSelectionId(id => id === activeInspectorTabIdentity ? '' : activeInspectorTabIdentity)}><ScanLine size={16}/></button>
+                  </>}
                 </div>
               )}
               <div className="right-inspector-body">
@@ -2758,6 +2743,7 @@ function CardbushApp() {
                     onActivate={selectInspectorTab}
                     onResize={(path, ratio) => setInspectorLayout(tree => tree ? resizePanelSplit(tree, path, ratio) : tree)}
                     renderFrame={tab => <InspectorTileFrame tab={tab} language={language} navigation={inspectorNavigationByTarget[tab.id]}
+                      onStep={stepStartHistory}
                       handle={inspectorWebviewRefs.current.get(tab.id)}
                       regionSelected={regionSelectionId === tab.id} onSelectRegion={() => setRegionSelectionId(id => id === tab.id ? '' : tab.id)}
                       onSwap={(from, x, y) => {
@@ -2779,6 +2765,7 @@ function CardbushApp() {
                         <>
                           {tab.kind === 'resource' ? (
                             <InspectorWebview
+                              key={tab.detail.target}
                               ref={(handle) => {
                                 if (handle) inspectorWebviewRefs.current.set(tab.id, handle);
                                 else inspectorWebviewRefs.current.delete(tab.id);
@@ -2796,6 +2783,7 @@ function CardbushApp() {
                               startPage={<InspectorActions {...inspectorActionProps} tabId={tab.id}
                                 onOpenBookmark={url => inspectorWebviewRefs.current.get(tab.id)?.navigate(url)}/>}
                               onNavigationStateChange={updateInspectorNavigation}
+                              onLeaveStartPage={tab.forwardPage ? () => stepStartHistory(tab.id, 'discard-forward') : undefined}
                               onActivate={id => { if (inspectorLayout) selectInspectorTab(id); }}
                               onOpenTarget={detail => openInspectorTarget(detail,
                                 active && inspectorOpen ? inspectorWorkspaceId : inspectorTabOwner(tab.id) ?? inspectorWorkspaceId)}

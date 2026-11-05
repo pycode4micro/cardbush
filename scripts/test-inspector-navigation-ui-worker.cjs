@@ -37,6 +37,16 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelectorAll(".right-inspector-tab-page.active").length'),1);
     assert.equal(await read('Array.from(document.querySelectorAll(".right-inspector-tab-page:not(.active)")).every(page=>page.inert)'),true);
   };
+  const checkRoundTrip = async (id, ready) => {
+    const ids = await read('navigation.tabs.map(tab=>tab.id)');
+    await click('.inspector-history-back:enabled');
+    await until('document.querySelector(".right-inspector-tab-page.active .inspector-new-tab-page") && document.querySelector(".inspector-history-forward:enabled")');
+    assert.equal(await read('navigation.activeId'),id);
+    await click('.inspector-history-forward:enabled');
+    await until(ready);
+    assert.equal(await read('navigation.activeId'),id);
+    assert.deepEqual(await read('navigation.tabs.map(tab=>tab.id)'),ids);
+  };
   try {
     await window.loadFile(join(directory,'index.html'));
     await until('Boolean(window.navigation)');
@@ -45,6 +55,7 @@ app.whenReady().then(async () => {
     await click('.right-inspector-tab-page.active [data-inspector-action="history"]');
     await until('document.querySelectorAll(".work-summary-inspector-turn").length===9');
     assert.deepEqual(await read('navigation.tabs.map(tab => tab.id)'), [historyTab], 'history occupies the original tab');
+    await checkRoundTrip(historyTab, 'document.querySelectorAll(".work-summary-inspector-turn").length===9');
     await read('document.getElementById("conversation-scroll").scrollTop=300; void 0');
     for (const theme of ['dark','bright']) {
       await read('document.querySelector(".app").className='+JSON.stringify('app theme-'+theme)+'; void 0');
@@ -85,6 +96,16 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".markdown-inspector-preview")?.textContent.includes("预览内容")');
     assert.deepEqual(await read('navigation.tabs.map(tab => tab.id)'), [historyTab, fileTab], 'file preview fills the new tab beside history');
     assert.equal(await read('navigation.activeId'), fileTab);
+    await checkRoundTrip(fileTab, 'document.querySelector(".markdown-inspector-preview")?.textContent.includes("预览内容")');
+    await read('navigation.setLayout('+JSON.stringify({kind:'split',axis:'x',ratio:.5,first:{kind:'page',id:historyTab},second:{kind:'page',id:fileTab}})+'); void 0');
+    const fileTile = '[data-inspector-page-id="' + fileTab + '"]';
+    await click(fileTile + ' .inspector-history-back:enabled');
+    await until('document.querySelector(".inspector-tile-frame .inspector-history-forward:enabled") && document.querySelector(".inspector-new-tab-page")');
+    assert.equal(await read('document.querySelector(".work-summary-turn-inspector")===historyNode'), true, 'the neighboring history page stays mounted');
+    await click(fileTile + ' .inspector-history-forward:enabled');
+    await until('document.querySelector(".markdown-inspector-preview")?.textContent.includes("预览内容")');
+    await read('navigation.setLayout(null); void 0');
+    await select(fileTab);
     await read('window.fileNode=document.querySelector(".markdown-inspector-preview"); window.initialFileReads=fileReads; void 0');
     await click('#add');
     const browserTab = await read('navigation.activeId');
@@ -164,6 +185,11 @@ app.whenReady().then(async () => {
     await click('.right-inspector-tab-page.active .work-summary-turn-selector > button');
     assert.equal(await read('document.querySelector(".work-summary-turn-selector-menu").getAttribute("aria-label")'),'Select turn');
     assert.equal(await read('(()=>{const p=document.querySelector(".right-inspector").getBoundingClientRect(),m=document.querySelector(".work-summary-turn-selector-menu").getBoundingClientRect();return m.left>=p.left&&m.right<=p.right;})()'),true,'turn menu fits the narrow sidebar');
+    await select(fileTab);
+    await click('.inspector-history-back:enabled');
+    await until('document.querySelector(".right-inspector-tab-page.active .right-inspector-preview.ready .inspector-new-tab-page")');
+    await read('document.querySelector(".right-inspector-tab-page.active webview").loadURL("data:text/html,New%20branch")');
+    await until('!navigation.activeTab.forwardPage && document.querySelector(".inspector-history-forward:disabled")');
     await read('navigation.closeTabs(new Set(navigation.tabs.map(tab=>tab.id))); void 0');
     await until('document.querySelectorAll(".right-inspector-tab-page").length===0');
     assert.equal(await read('navigation.activeId'),'');

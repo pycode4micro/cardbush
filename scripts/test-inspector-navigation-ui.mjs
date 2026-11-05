@@ -62,6 +62,8 @@ import { useInspectorTabs } from '${local('src/hooks/useInspectorTabs.ts')}';
 import { workSummaryInspectorTab } from '${local('src/features/inspector/inspectorTabs.ts')}';
 import { InspectorTabPages } from '${local('src/features/inspector/InspectorTabPages.tsx')}';
 import { InspectorActions } from '${local('src/features/inspector/InspectorActions.tsx')}';
+import { InspectorHistoryButtons } from '${local('src/features/inspector/InspectorHistoryButtons.tsx')}';
+import { InspectorTileFrame } from '${local('src/features/inspector/InspectorTileFrame.tsx')}';
 import { InspectorWebview } from '${local('src/features/inspector/InspectorWebview.tsx')}';
 import { WorkSummaryInspector } from '${local('src/features/chat/WorkSummaryInspector.tsx')}';
 import { ConversationChangeDialog } from '${local('src/features/sidebar/ChatSidebar.tsx')}';
@@ -92,6 +94,10 @@ window.cardbushDesktop = {
 const noop=()=>{};
 function Harness() {
   const tabs=useInspectorTabs();
+  const handles=React.useRef({});
+  const [nav,setNav]=React.useState({});
+  const [layout,setLayout]=React.useState(null);
+  const updateNav=React.useCallback((id,value)=>setNav(previous=>({...previous,[id]:value})),[]);
   const [language,setLanguage]=React.useState('zh');
   const [currentSession,setSession]=React.useState('a');
   const [liveReports,setReports]=React.useState(reports);
@@ -99,7 +105,7 @@ function Harness() {
   const openReview=(initialFilePath='')=>tabs.openTab({id:'review:a',kind:'review',conversationId:'a',title:'审查',initialFilePath,selectionRequestId:crypto.randomUUID()});
   const openShadow=()=>tabs.openTab({id:'shadow:a',kind:'shadow',title:'Shadow',context:{windowId:'shadow:a',sessionId:'a',sourceTurnId:'',title:'源会话',language:'zh',theme:'dark',accentColor:'#6699ff',themeVariables:{},modelConfig:{id:'fixture'},reasoningLevel:'medium',projectDir:'',initialMode:'readonly'}});
   const openResource=(id,target)=>tabs.openTab({id,kind:'resource',detail:{target,title:id}});
-  window.navigation={...tabs,openHistory,openReview,openShadow,openResource,setLanguage,setSession,refreshReports:()=>setReports(current=>structuredClone(current))};
+  window.navigation={...tabs,openHistory,openReview,openShadow,openResource,setLayout,setLanguage,setSession,refreshReports:()=>setReports(current=>structuredClone(current))};
   return <div className="app theme-dark" style={{display:'flex',height:'100vh'}}>
     <main id="conversation-scroll" style={{flex:1,overflow:'auto',height:'100%'}}><button id="outside">会话区</button><div style={{height:2400}}>当前会话：{currentSession}</div></main>
     <aside className="right-inspector" style={{width:520,flex:'0 0 520px','--side-panel-width':'520px'}}>
@@ -108,9 +114,14 @@ function Harness() {
         <div className="right-inspector-tabs" role="tablist">{tabs.tabs.map(tab=><button key={tab.id} data-tab={tab.id} role="tab" aria-selected={tab.id===tabs.activeId} onClick={()=>{tabs.activateTab(tab.id);}}>{tab.kind}</button>)}</div>
         <button id="add" className="right-inspector-new-tab" onClick={()=>openResource(crypto.randomUUID(),'about:blank')}>+</button>
       </header>
-      <div className="right-inspector-body"><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId}>{(tab,active)=>
+      {!layout && tabs.activeTab && <div className="right-inspector-navigation"><InspectorHistoryButtons tab={tabs.activeTab}
+        language={language} navigation={nav[tabs.activeId]} handle={handles.current[tabs.activeId]} onStep={tabs.stepStartHistory}/></div>}
+      <div className="right-inspector-body"><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId} layout={layout} onActivate={tabs.activateTab}
+        renderFrame={tab=><InspectorTileFrame tab={tab} language={language} navigation={nav[tab.id]} handle={handles.current[tab.id]} onStep={tabs.stepStartHistory} onSwap={noop}/>}>{(tab,active)=>
         tab.kind==='history'||tab.kind==='subagent'?<WorkSummaryInspector active={active} language={language} detail={tab.detail} messages={messages}/>
-        :tab.kind==='resource'?<InspectorWebview identity={tab.id} target={tab.detail.target} source={tab.detail.target} language={language} onOpenTarget={noop} onNavigationStateChange={noop}
+        :tab.kind==='resource'?<InspectorWebview key={tab.detail.target} ref={handle=>{handles.current[tab.id]=handle;}} identity={tab.id}
+          target={tab.detail.target} source={tab.detail.target} language={language} onOpenTarget={noop} onNavigationStateChange={updateNav}
+          onLeaveStartPage={tab.forwardPage?()=>tabs.stepStartHistory(tab.id,'discard-forward'):undefined}
           startPage={<InspectorActions language={language} tabId={tab.id} filesAvailable shadowUnavailableReason=""
             onOpenHistory={id=>tabs.navigateStartPage(id,[workSummaryInspectorTab({kind:'turn-history',sessionId:currentSession},language)])} onOpenReview={()=>openReview()}
             onOpenFiles={id=>tabs.navigateStartPage(id,[{id:'file',kind:'resource',detail:{target:'C:/fixture.md'}}])} onOpenShadow={openShadow}/>}/>

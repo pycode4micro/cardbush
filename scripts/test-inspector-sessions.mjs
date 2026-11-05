@@ -60,6 +60,24 @@ test('history opens in the clicked shared tab and remains reachable through its 
   assert.equal(view(state, 'b').activeId, 'blank');
   assert.equal(view(state, 'a').tabs[0].detail.turnId, 'turn');
   assert.equal(retained(state).length, 2);
+  const step = (current, direction) => reduce(current, { type: 'start-history', tabId: 'blank', step: direction });
+  state = step(state, 'back');
+  const start = view(state, 'b').tabs.find(tab => tab.id === 'blank');
+  assert.equal(start.detail.target, 'about:blank');
+  assert.equal(start.forwardPage.detail.turnId, 'turn', 'forward remembers the history detail last displayed');
+  assert.equal(step(state, 'back'), state, 'no second local back entry at the start page');
+  assert.equal(owner(state, 'blank'), 'a');
+  state = step(state, 'forward');
+  assert.equal(view(state, 'a').tabs[0].detail.turnId, 'turn');
+  assert.equal(view(state, 'b').activeId, 'blank');
+  assert.equal(retained(state).length, 2);
+  state = step(state, 'back');
+  const file = { id: 'notes', kind: 'resource', detail: { target: 'C:/notes.txt' } };
+  state = reduce(state, { type: 'navigate-start', workspaceId: 'b', tabId: 'blank', pages: [file] });
+  state = step(state, 'back');
+  assert.equal(view(state, 'a').tabs[0].forwardPage.pageId, 'notes', 'choosing a different destination replaces the old forward entry');
+  const closed = act(state, 'b', { type: 'close', ids: new Set(['blank']) });
+  assert.equal(step(closed, 'forward'), closed, 'a closed tab cannot be restored by a stale forward action');
 });
 
 test('background browser tabs are retained without selecting a tab or opening the inspector', () => {

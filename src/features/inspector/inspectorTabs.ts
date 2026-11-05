@@ -6,7 +6,10 @@ import type { InspectorOpenDetail } from './inspectorEvents';
 
 // A start-page tool keeps the physical tab ID (and its tile/lock). pageId is
 // the destination's ordinary lookup ID for later opens from the conversation.
-export type InspectorResourceTab = { id: string; pageId?: string; kind: 'resource'; detail: InspectorOpenDetail };
+export type InspectorResourceTab = {
+  id: string; pageId?: string; kind: 'resource'; detail: InspectorOpenDetail;
+  backToStart?: InspectorOpenDetail; forwardPage?: InspectorResourceTab | InspectorHistoryTab;
+};
 export type InspectorReviewTab = {
   id: string; kind: 'review'; conversationId: string; initialFilePath: string; title: string;
   selectionRequestId?: string;
@@ -16,6 +19,7 @@ export type InspectorShadowTab = {
 };
 export type InspectorHistoryTab = {
   id: string; pageId?: string; kind: 'history'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'turn-history' }>; title: string;
+  backToStart?: InspectorOpenDetail;
 };
 export type InspectorSubagentTab = {
   id: string; kind: 'subagent'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'subagent-task' }>; title: string;
@@ -69,8 +73,9 @@ export function inspectorTabsReducer(state: InspectorTabsState, action: Inspecto
     ));
     if (index < 0) return { tabs: [...state.tabs, action.tab], activeId: action.activate === false ? state.activeId : action.tab.id };
     const previous = state.tabs[index];
-    const tab = { ...next, id: previous.id, ...('pageId' in previous ? { pageId: previous.pageId } : {}) };
+    const tab = { ...next, id: previous.id, ...('pageId' in previous ? { pageId: previous.pageId, backToStart: previous.backToStart } : {}) };
     if (previous.kind === 'resource' && tab.kind === 'resource') {
+      if (previous.forwardPage && previous.detail.target === tab.detail.target) tab.forwardPage = previous.forwardPage;
       tab.detail = { ...previous.detail, ...tab.detail, title: tab.detail.title || previous.detail.title };
     }
     const tabs = [...state.tabs];

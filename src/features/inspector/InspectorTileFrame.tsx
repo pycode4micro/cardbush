@@ -1,5 +1,5 @@
 import { uiText } from '../../i18n';
-import { ArrowLeft, ArrowRight, GripHorizontal, RefreshCw, ScanLine } from 'lucide-react';
+import { GripHorizontal, RefreshCw, ScanLine } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { AppLanguage } from '../../types';
 import type { InspectorNavigationState, InspectorWebviewHandle } from './InspectorWebview';
@@ -8,10 +8,12 @@ import { inspectorTabLabel, isInspectorBrowserTarget } from './inspectorTargets'
 import { BrowserBookmarkButton } from './BrowserBookmarkButton';
 import { BrowserInstallButton } from '../browser/BrowserInstallButton';
 import { useInspectorTileDrag } from './useInspectorTileDrag';
+import { InspectorHistoryButtons } from './InspectorHistoryButtons';
 
-export function InspectorTileFrame({ tab, language, navigation, handle, onSwap, regionSelected, onSelectRegion }: {
+export function InspectorTileFrame({ tab, language, navigation, handle, onStep, onSwap, regionSelected, onSelectRegion }: {
   tab: InspectorTab; language: AppLanguage; navigation?: InspectorNavigationState; handle?: InspectorWebviewHandle;
   onSwap: (from: string, x: number, y: number) => void;
+  onStep?: (id: string, step: 'back' | 'forward') => void;
   regionSelected?: boolean; onSelectRegion?: () => void;
 }) {
   const resource = tab.kind === 'resource' ? tab.detail : null;
@@ -26,9 +28,10 @@ export function InspectorTileFrame({ tab, language, navigation, handle, onSwap, 
       <button type="button" className="inspector-tile-drag" aria-label={uiText(language)('inspectorTileFrame.dragToSwapPages')}>
         <GripHorizontal size={13}/>
       </button>
+      {(resource || (tab.kind === 'history' && tab.backToStart)) &&
+        <InspectorHistoryButtons tab={tab} language={language} navigation={navigation} handle={handle} onStep={onStep}/>}
+      {tab.kind === 'history' && tab.backToStart && <span className="inspector-tile-path">{tab.title}</span>}
       {resource && <>
-      <button type="button" className="inspector-tile-history" disabled={!navigation?.canGoBack} aria-label={uiText(language)('app.back')} onClick={() => handle?.goBack()}><ArrowLeft size={14}/></button>
-      <button type="button" className="inspector-tile-history" disabled={!navigation?.canGoForward} aria-label={uiText(language)('app.forward')} onClick={() => handle?.goForward()}><ArrowRight size={14}/></button>
       <button type="button" aria-label={uiText(language)('inspectorTileFrame.reload')} onClick={() => handle?.reload()}><RefreshCw size={14}/></button>
       {browser ? <form className="right-inspector-address editable" onSubmit={event => { event.preventDefault(); handle?.navigate(draft); }}>
         <input aria-label={uiText(language)('app.address')} value={draft} onChange={event => setDraft(event.target.value)} placeholder={uiText(language)('app.searchOrEnterAddress')}/>

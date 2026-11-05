@@ -28,6 +28,7 @@ export type InspectorSessionsAction =
   | ({ type: 'adopt-draft' } & InspectorDraftAdoption)
   | { type: 'tabs'; workspaceId: string; action: InspectorTabsAction }
   | { type: 'navigate-start'; workspaceId: string; tabId: string; pages: (InspectorHistoryTab | InspectorResourceTab)[] }
+  | { type: 'start-history'; tabId: string; step: 'back' | 'forward' | 'discard-forward' }
   | { type: 'open-state'; workspaceId: string; update: boolean | ((open: boolean) => boolean) }
   | { type: 'bind-browser'; workspaceId: string; ids: string[] }
   | { type: 'dispose'; ids: ReadonlySet<string> }
@@ -53,6 +54,21 @@ export function inspectorSession(state: InspectorSessionsState, workspaceId: str
 
 /** Resource pages have one owner. A lock shares visibility, never a second guest. */
 export function inspectorSessionsReducer(state: InspectorSessionsState, action: InspectorSessionsAction): InspectorSessionsState {
+  if (action.type === 'start-history') {
+    const owner = inspectorTabOwner(state, action.tabId);
+    if (!owner) return state;
+    const workspace = state.workspaces[owner];
+    const current = workspace.tabs.find(tab => tab.id === action.tabId);
+    if (current?.kind !== 'resource' && current?.kind !== 'history') return state;
+    let page: InspectorResourceTab | InspectorHistoryTab;
+    if (action.step === 'back' && current.backToStart) {
+      page = { kind: 'resource', id: current.id, detail: current.backToStart, forwardPage: current };
+    } else if (action.step !== 'back' && current.kind === 'resource' && current.forwardPage) {
+      page = action.step === 'forward' ? current.forwardPage : { ...current, forwardPage: undefined };
+    } else return state;
+    return { ...state, workspaces: { ...state.workspaces, [owner]: { ...workspace,
+      tabs: workspace.tabs.map(tab => tab.id === current.id ? page : tab) } } };
+  }
   if (action.type === 'adopt-draft') {
     const draft = state.workspaces[action.from];
     if (!draft || action.from === action.to) return state;
@@ -105,7 +121,9 @@ export function inspectorSessionsReducer(state: InspectorSessionsState, action: 
     if (!first || source?.kind !== 'resource' || source.pageId) return state;
     const owner = inspectorTabOwner(state, source.id)!;
     const original = state.workspaces[owner];
-    const replacement = { ...first, id: source.id, pageId: first.id };
+    // The guest may have reached about:blank after opening at a different URL.
+    const backToStart = /^about:blank(?:[?#]|$)/i.test(source.detail.target) ? source.detail : { target: 'about:blank' };
+    const replacement = { ...first, id: source.id, pageId: first.id, backToStart };
     const workspaces = { ...state.workspaces,
       [owner]: { ...original, tabs: original.tabs.map(tab => tab.id === source.id ? replacement : tab) },
     };
