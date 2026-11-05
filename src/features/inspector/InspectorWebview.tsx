@@ -470,11 +470,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     webviewRevision,
   ]);
 
-  const showStartPage = Boolean(startPage) && isInspectorBrowserTarget(target, mediaType)
+  const browserPage = isInspectorBrowserTarget(target, mediaType);
+  const showStartPage = Boolean(startPage) && browserPage
     && /^about:blank(?:[?#]|$)/i.test(currentUrl) && !previewError && (!loading || !hasDocument);
   return (
     <DeferredResizePreview className={`right-inspector-preview ${loading ? 'loading' : 'ready'}${showStartPage ? ' showing-start-page' : ''}`}>
-      {!rendererPreview && isInspectorBrowserTarget(target, mediaType) && <BrowserPageTools ref={toolsRef} webviewRef={webviewRef} revision={webviewRevision} language={language}/>}
+      {!rendererPreview && browserPage && <BrowserPageTools ref={toolsRef} webviewRef={webviewRef} revision={webviewRevision} language={language}/>}
       <div className="inspector-selectable-surface" ref={surfaceRef} data-region-enabled={regionEnabled || undefined}>
       <InspectorErrorBoundary
         key={`${target}:${filePreviewRevision}:${webviewRevision}`}
@@ -510,7 +511,8 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           src: source,
           // Main routes normal links to tabs and preserves opener-dependent popup workflows.
           allowpopups: '',
-          webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
+          // Browser tabs need Chromium to paint the page's native canvas under transparent HTML.
+          webpreferences: `contextIsolation=yes,nodeIntegration=no,sandbox=yes,transparent=${browserPage ? 'no' : 'yes'}`,
         })}
       </InspectorErrorBoundary>
       {showStartPage && <div className="inspector-new-tab-page">{startPage}</div>}
@@ -530,7 +532,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           <small>{uiText(language)('inspectorWebview.loadingPreview')}</small>
         </div>
       )}
-      <InspectorRegionSelection surface={surfaceRef} guest={webviewRef} enabled={regionEnabled && active && !showStartPage && !loading && !previewError} language={language} target={isInspectorBrowserTarget(target, mediaType) ? currentUrl : filePath}
+      <InspectorRegionSelection surface={surfaceRef} guest={webviewRef} enabled={regionEnabled && active && !showStartPage && !loading && !previewError} language={language} target={browserPage ? currentUrl : filePath}
         revision={`${currentUrl}:${filePreviewRevision}:${webviewRevision}`} conversation={regionConversation} onClose={() => onRegionSelectionClose?.()} onReference={onRegionReference}
         onRefresh={() => rendererPreview ? setFilePreviewRevision(value => value + 1) : webviewRef.current?.reload?.()}/>
       </div>

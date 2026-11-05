@@ -2,11 +2,37 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-module.exports = async ({ window, original, origin, read, waitFor, activeReady, pause, click, uiService }) => {
+module.exports = async ({ window, original, origin, read, waitFor, activeReady, until, pause, click, uiService }) => {
   const active = '.right-inspector-tab-page.active ';
   const search = active + '.inspector-bookmark-search input';
   const typeSearch = async value => read(`(()=>{const input=document.querySelector(${JSON.stringify(search)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   const count = () => read(`document.querySelectorAll('${active}.inspector-bookmark-link').length`);
+  // Sample Chromium's actual canvas. Computed backgrounds on html and body
+  // can both be transparent even when the correct final canvas is opaque.
+  const { nativeTheme } = require('electron');
+  const previousTheme = nativeTheme.themeSource;
+  const canvas = async () => {
+    const rect = await read(`(()=>{const r=document.querySelector('${active}webview').getBoundingClientRect();return {x:Math.round(r.x)+8,y:Math.round(r.y)+8,width:1,height:1}})()`);
+    const frame = await window.webContents.capturePage();
+    const size = frame.getSize();
+    if (rect.x < 0 || rect.y < 0 || rect.x >= size.width || rect.y >= size.height) return [];
+    return [...frame.crop(rect).toBitmap().subarray(0, 4)];
+  };
+  try {
+    nativeTheme.themeSource = 'dark';
+    await read("document.querySelector('.app').classList.replace('theme-bright','theme-dark')");
+    await until(async () => (await canvas()).join(',') === '255,255,255,255', 'an unstyled website gets a white canvas in the dark App');
+    await original.executeJavaScript("document.documentElement.style.colorScheme='light dark'; void 0");
+    await until(async () => { const [b, g, r, a] = await canvas(); return a === 255 && Math.max(b, g, r) < 64; },
+      'a website that opts into dark mode gets a native dark canvas');
+    nativeTheme.themeSource = 'light';
+    await until(async () => (await canvas()).join(',') === '255,255,255,255', 'the same live page follows a light preference');
+    await original.executeJavaScript("document.body.style.backgroundColor='#123456'; void 0");
+    await until(async () => (await canvas()).join(',') === '86,52,18,255', 'the site can paint its own background');
+  } finally {
+    nativeTheme.themeSource = previousTheme;
+    await read("document.querySelector('.app').classList.replace('theme-dark','theme-bright')");
+  }
   await original.loadURL(origin + '/tab-design'); await activeReady();
   await waitFor(`browserFixture.navigation[browserFixture.activeId]?.faviconUrl===${JSON.stringify(origin + '/site-logo.svg')}`, 'native page favicon reaches the tab');
   await waitFor(`document.querySelector('.right-inspector-tab.active .browser-site-icon img')?.naturalWidth>0`, 'website logo renders');
