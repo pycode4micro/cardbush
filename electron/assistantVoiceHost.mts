@@ -111,7 +111,7 @@ export async function createAssistantVoiceExecutor(host: AssistantVoiceRuntime, 
     pageWrite: (id, content) => record({ id: `device-page-${callScope}-${id}`.slice(0, 220), role: 'assistant', content, createdAt: new Date().toISOString(), source: 'page', visibility: 'conversation' }),
     async execute(callId, action, args) {
       return host.command('runtime.realtime_agent_tool', { sessionId, callId: `${callScope}:${callId}`, action, parent: action === 'read_subagent_conversation' ? undefined : await parent(),
-        prompt: args.prompt, taskId: args.task_id, cursor: args.cursor, targetAgent: settings.profile.targetAgent || undefined });
+        prompt: args.prompt, taskId: args.task_id, delivery: args.delivery, cursor: args.cursor, targetAgent: settings.profile.targetAgent || undefined });
     },
     list: () => host.command('runtime.list_subagent_tasks', { parentSessionId: sessionId }) as Promise<SubagentTask[]>,
     async summarize(taskId, language) {

@@ -178,7 +178,7 @@ export function registerSubagentTool(
         if (task.status !== 'running' || queuedChild(task)) throw new Error('stale_target');
         await options.inheritBrowserScope?.(context.sessionId, task.childSessionId, context.signal);
         return options.guideChild!({ protocol: 'bush.runtime_guidance.v1', sessionId: task.childSessionId, turnId: task.childTurnId,
-          messageId: control.messageId, content: control.text, createdAt: new Date().toISOString(), mode: 'append_context',
+          messageId: control.messageId, content: control.text, createdAt: new Date().toISOString(), mode: 'interrupt_and_continue',
           metadata: { subagentAuthor: 'parent', realtimeParent: true, realtimeParentSessionId: context.sessionId, realtimeTaskId: task.taskId } });
       }
       if (control.operation === 'cancel') {
@@ -212,7 +212,7 @@ export function registerSubagentTool(
             expected_revision: { type: 'integer', minimum: 0, description: 'Required for save/delete. 0 creates a new definition; otherwise use its observed revision.' },
           } : {}),
           prompt: { type: "string", minLength: 1, description: "Child assignment or follow-up text: necessary facts, original user's communication language, expected output and handoffs. Required for messages; omit when answering with response, whose text/decision is the complete reply. Distinguish pending dependencies from confirmed facts." },
-          delivery: { type: 'string', enum: ['queue', 'insert'], description: 'Owned task_id follow-up, local or remote. queue starts a later turn in the same child; insert guides the exact active run at its next safe boundary. Omit for ordinary follow-up. No silent fallback if an explicit insert target has ended.' },
+          delivery: { type: 'string', enum: ['queue', 'insert'], description: 'Owned task_id follow-up, local or remote. queue starts a later turn in the same child; insert interrupts active model reasoning and continues the same turn with your message. Already dispatched tools finish first. Omit for ordinary follow-up. No silent fallback if an explicit insert target has ended.' },
           response: { ...z.toJSONSchema(remoteResponseSchema), description: 'Answer a pending interaction from an owned child task. Free text answers questions; a permission needs its exact actionDigest and a structured decision. Human-required approval cannot be granted by a parent model. Use tasks inspect to read the pending interaction.' },
           name: { type: 'string', minLength: 1, maxLength: SUBAGENT_NAME_MAX_LENGTH, description: 'Short responsibility label in the user\'s language, e.g. 视觉设计 or API reviewer; put assignment details in prompt. New ad-hoc children only. Omit when task_id or agent_id is supplied: follow-ups and registered employees keep their existing name. This labels the task without changing its instructions or permissions.' },
           ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt, target_agent and optional name/run_in_background; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),

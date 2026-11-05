@@ -109,7 +109,7 @@ export class WebRemoteAgentBridge {
         if (!session.turns.some(turn => turn.turnId === turnId)) throw new WebError(404, '远程子任务不存在。');
         json(response, 200, await client.call('runtime.command', { kind: 'runtime.enqueue_guidance', payload: {
           protocol: 'bush.runtime_guidance.v1', sessionId, turnId, messageId: 'webguide_' + remoteIdentity(secret, userId, input.parentSessionId, input.messageId),
-          content: input.content, createdAt: new Date().toISOString(), mode: 'append_context',
+          content: input.content, createdAt: new Date().toISOString(), mode: 'interrupt_and_continue',
           metadata: { subagentAuthor: 'parent', realtimeParent: true },
         } })); return;
       }

@@ -66,7 +66,7 @@ const parentGuidance=new Map();
 window.appendParentGuidance=(id,applied=false)=>{
   const request=window.streams.get(id).request,turnId=request.turnId;
   const event=parentGuidance.get(id)??{sessionId:id,turnId,requestId:'request-'+turnId,eventId:'queued-'+id,sequence:10,createdAt:now(),kind:'guidance_queued',
-    payload:{messageId:'parent-guidance-'+id,content:'追加要求：增强双 11 活动感，保留原有运镜。',createdAt:now(),queueDepth:1,metadata:{subagentAuthor:'parent',guidance_mode:'append_context'}}};
+    payload:{messageId:'parent-guidance-'+id,content:'追加要求：增强双 11 活动感，保留原有运镜。',createdAt:now(),queueDepth:1,metadata:{subagentAuthor:'parent',guidance_mode:'interrupt_and_continue'}}};
   parentGuidance.set(id,event);
   if(!applied){request.onExecution?.(guidanceQueuedUpdate(event));return;}
   const message=guidanceQueuedUpdate(event).guidanceMessage;

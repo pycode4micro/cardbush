@@ -16,6 +16,11 @@ test('text and voice resolve the same conversational tool contracts through ESM 
       { prompt: 'Inspect the selected page.' });
     assert.deepEqual(entry.conversationalSubagentInput.parse({ prompt: 'Continue', task_id: 'child-1' }),
       { prompt: 'Continue', task_id: 'child-1' });
+    for (const delivery of ['queue', 'insert']) {
+      const followup = { prompt: 'Continue', task_id: 'child-1', delivery };
+      assert.deepEqual(entry.conversationalSubagentInput.parse(followup), followup);
+      assert.equal(entry.conversationalSubagentInput.safeParse({ prompt: 'Start', delivery }).success, false);
+    }
     assert.deepEqual(entry.conversationalTaskInput.parse({}), { action: 'inspect' }, 'omitted task_ids means all owned tasks');
     assert.deepEqual(entry.conversationalTaskInput.parse({ task_ids: ['child-1'] }), { action: 'inspect', task_ids: ['child-1'] });
     assert.deepEqual(entry.conversationalTaskInput.parse({ action: 'conversation', task_ids: ['child-1'], cursor: '12:34' }),

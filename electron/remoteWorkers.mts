@@ -27,6 +27,6 @@ export async function callRemoteWorker(manager: AgentConnectionManager, operatio
   if (operation !== 'agents.guide-child' || !input.turnId || !input.messageId || !input.content) throw new Error('Invalid worker operation.');
   return manager.call(input.connectionId, 'runtime.command', { kind: 'runtime.enqueue_guidance', payload: {
     protocol: 'bush.runtime_guidance.v1', sessionId: input.sessionId, turnId: input.turnId, messageId: input.messageId,
-    content: input.content, createdAt: new Date().toISOString(), mode: 'append_context', metadata: { subagentAuthor: 'parent', realtimeParent: true },
+    content: input.content, createdAt: new Date().toISOString(), mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent', realtimeParent: true },
   } }, signal);
 }

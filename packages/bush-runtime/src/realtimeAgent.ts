@@ -57,7 +57,7 @@ export class RealtimeAgentDispatcher {
     const native = input.nativeArguments && { ...input.nativeArguments };
     if (native && input.action === 'subagent' && (!native.action || native.action === 'run') && !native.target_agent) native.run_in_background = true;
     const outcome = await coordinator.execute({ protocol: BUSH_TOOL_CALL_PROTOCOL, id: input.callId, name: input.action,
-      argumentsText: JSON.stringify(native ?? (task ? { prompt: input.prompt, task_id: task.taskId, run_in_background: true }
+      argumentsText: JSON.stringify(native ?? (task ? { prompt: input.prompt, task_id: task.taskId, delivery: input.delivery, run_in_background: true }
         : input.targetAgent ? { prompt: input.prompt, target_agent: input.targetAgent }
         : { prompt: input.prompt, run_in_background: true })) },
       { requestId: request.requestId, sessionId: request.sessionId, turnId: request.turnId, round: 1, ordinal: 0 },

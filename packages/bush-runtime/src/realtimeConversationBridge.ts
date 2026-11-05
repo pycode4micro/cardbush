@@ -61,7 +61,7 @@ export class RealtimeAgentBridge {
     if (!agent || this.target?.environment !== 'local') throw Object.assign(Error('This call requires a configured local Agent.'), { code: 'realtime_local_agent_required' });
     let args = JSON.parse(call.arguments) as Record<string, unknown>;
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw Error('Invalid arguments.');
-    const allowed: Record<string, string[]> = { subagent: ['prompt', 'task_id'], tasks: ['action', 'task_ids', 'cursor'], ...(this.target?.assistant ? { page_write: ['content'] } : {}) };
+    const allowed: Record<string, string[]> = { subagent: ['prompt', 'task_id', 'delivery'], tasks: ['action', 'task_ids', 'cursor'], ...(this.target?.assistant ? { page_write: ['content'] } : {}) };
     if (!allowed[call.name] || Object.keys(args).some(key => !allowed[call.name].includes(key))) throw Error('Unknown voice tool or arguments.');
     if (call.name === 'page_write') {
       if (!agent.pageWrite || typeof args.content !== 'string' || !args.content.trim() || args.content.length > 64000) throw Error('Invalid page content.');

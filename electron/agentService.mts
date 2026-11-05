@@ -1096,7 +1096,7 @@ export class AgentService {
           // The exact running turn is mandatory; the Runtime rejects a completed target.
           result = await this.#command('runtime.enqueue_guidance', { protocol: 'bush.runtime_guidance.v1',
             sessionId: job.sessionId, turnId: job.turnId, messageId: control.messageId, content: control.text,
-            createdAt: new Date().toISOString(), mode: 'append_context', metadata: { subagentAuthor: 'parent', realtimeParent: true } });
+            createdAt: new Date().toISOString(), mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent', realtimeParent: true } });
           result = { accepted: true, applied: false, receipt: result };
         } else {
           const taskId = `queued-${createHash('sha256').update(key).digest('hex').slice(0, 40)}`;

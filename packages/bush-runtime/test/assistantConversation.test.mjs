@@ -145,6 +145,82 @@ test('text assistant dispatch reaches the actual child loop and reports completi
   } finally { childGate.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
 });
 
+for (const voice of [false, true]) test(`assistant ${voice ? 'conversational' : 'native'} tool queues a later turn and interrupts only child reasoning`, async () => {
+  const sessions = new SessionStore(), registry = new ToolRegistry(), tasks = new SubagentTaskStore();
+  sessions.ensureSession(id);
+  const oldStream = gate(), releaseTool = gate(), requests = [];
+  let oldSignal, toolSignal, toolRuns = 0, nextCall;
+  registry.register({
+    definition: { name: 'check_inventory', description: 'Check inventory', inputSchema: { type: 'object', properties: {} } },
+    manifest: { effect_kind: 'observation', operation: 'fixture.inventory', risk: 'low', owner: 'test', dispatch_scope: 'turn', mutating: false },
+    visibleToChild: true, decodeInput: value => value,
+    async execute(context) { toolRuns++; toolSignal = context.signal; await releaseTool.promise; return { count: 17 }; },
+  });
+  const host = new InMemoryRuntimeHost({ dataRoot: temporary(), sessionStore: sessions, toolRegistry: registry, subagentTaskStore: tasks,
+    provider: { async *stream(request, { signal }) {
+      if (request.metadata.agentRole !== 'child') {
+        const call = nextCall; nextCall = undefined;
+        yield* response(request, call ? { calls: [call] } : { text: 'Acknowledged.' }); return;
+      }
+      requests.push(request);
+      if (requests.length === 1) {
+        oldSignal = signal;
+        yield { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString(),
+          sequence: 0, kind: 'reasoning_delta', delta: 'Checking the original scope.' };
+        await oldStream.promise;
+        yield { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString(),
+          sequence: 1, kind: 'text_delta', delta: 'Obsolete answer.' };
+      } else if (requests.length === 2) {
+        yield* response(request, { calls: [{ id: 'inventory', name: 'check_inventory', args: {} }] });
+      } else {
+        yield* response(request, { text: 'Finished.' });
+      }
+    } } });
+  const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
+  async function ask(callId, args) {
+    nextCall = { id: callId, name: 'subagent', args };
+    await command({ action: 'turn', entry: entry(callId), parent: { ...parent(registry, voice), turnId: callId, requestId: callId },
+      profile: assistantProfileSchema.parse({}) });
+    await until(async () => !(await command({ action: 'read' })).busy);
+    assert.equal((await command({ action: 'read' })).error, '');
+  }
+  try {
+    await ask('dispatch', { prompt: 'Check stock.' });
+    await until(() => oldSignal);
+    const [child] = tasks.list(id);
+    const events = () => host.events(child.childSessionId, child.childTurnId);
+    await ask('later', { task_id: child.taskId, delivery: 'queue', prompt: 'Review the final inventory.' });
+    const queued = tasks.list(id).find(task => task.queuedAfterTaskId === child.taskId);
+    assert.ok(queued); assert.equal(queued.childSessionId, child.childSessionId);
+    assert.equal(oldSignal.aborted, false); assert.equal(requests.length, 1);
+
+    await ask('now', { task_id: child.taskId, delivery: 'insert', prompt: 'Only count available items.' });
+    await until(() => toolRuns === 1);
+    assert.equal(oldSignal.aborted, true);
+    assert.equal(requests[1].turnId, child.childTurnId);
+    assert.equal(requests[1].messages.at(-1).role, 'user');
+    assert.equal(requests[1].messages.at(-1).content, 'Only count available items.');
+
+    await ask('during-tool', { task_id: child.taskId, delivery: 'insert', prompt: 'Include the count in your reply.' });
+    const pending = events().find(e => e.kind === 'guidance_queued' && e.payload.content === 'Include the count in your reply.');
+    assert.equal(pending?.payload.metadata.subagentAuthor, 'parent', 'show the parent message while the tool is running');
+    assert.equal(events().some(e => e.kind === 'guidance_applied' && e.payload.messageId === pending.payload.messageId), false);
+    assert.equal(toolSignal.aborted, false); assert.equal(requests.length, 2);
+    releaseTool.resolve();
+    await until(() => tasks.list(id).every(task => task.status === 'completed'));
+    assert.equal(toolRuns, 1); assert.equal(requests.length, 4);
+    assert.equal(requests[2].turnId, child.childTurnId);
+    assert.deepEqual(requests[2].messages.filter(m => m.name === 'turn_guidance').map(m => m.content),
+      ['Only count available items.', 'Include the count in your reply.']);
+    assert.match(requests[2].messages.find(m => m.role === 'tool' && m.toolCallId === 'inventory').content, /17/);
+    assert.equal(requests[2].messages.some(m => m.content.includes('Review the final inventory.')), false);
+    assert.equal(requests[3].turnId, queued.childTurnId); assert.notEqual(queued.childTurnId, child.childTurnId);
+    assert.ok(requests[3].messages.some(m => m.role === 'user' && m.content.includes('Review the final inventory.')));
+  } finally {
+    oldStream.resolve(); releaseTool.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+  }
+});
+
 for (const [foregroundRead, followUp] of [[false, false], [true, false], [true, true]]) test(`text assistant reads Team results once with ${foregroundRead ? 'foreground read' : 'asynchronous completion'}${followUp ? ' and new user input' : ''}`, async () => {
   const sessions = new SessionStore(), registry = new ToolRegistry(), childGate = gate(), children = [], receipts = [];
   sessions.ensureSession(id);

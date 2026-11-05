@@ -28,7 +28,7 @@ export function webToolDefinition<T extends ModelRequest['tools'][number]>(tool:
       prompt: { type: 'string', minLength: 1, maxLength: 100000, description: 'Self-contained assignment or message. Required unless response supplies the complete reply. No credentials or personal file paths.' },
       target_agent: { type: 'string', minLength: 1, description: 'Authorized remote Agent id; required for new work.' },
       task_id: { type: 'string', minLength: 1, description: 'Owned remote task id for a follow-up; do not combine with target_agent.' },
-      delivery: { type: 'string', enum: ['queue', 'insert'], description: 'task_id and prompt only: queue a later run, or insert guidance into the exact active run. Do not combine with response.' },
+      delivery: { type: 'string', enum: ['queue', 'insert'], description: 'task_id and prompt only: queue a later turn, or interrupt active model reasoning in the exact current turn. Already dispatched tools finish before insert takes effect. Do not combine with response.' },
       response: { ...z.toJSONSchema(remoteResponseSchema), description: 'task_id only: answer an observed question or submit an exact structured permission decision. Authority is validated on the worker, never supplied here.' },
     } } };
 }

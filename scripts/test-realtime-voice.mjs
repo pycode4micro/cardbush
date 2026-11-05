@@ -283,12 +283,17 @@ test('follow-ups and ordered conversation reads use the owned child and invalid 
     assert.equal(JSON.parse(await bridge.run(tool('m','subagent',{task_id:'a',prompt:'correction'}))).status,'message_queued');
     assert.equal(f.tasks.length,1,'follow-up reuses the existing task');
     assert.equal(f.calls.at(-1).name,'subagent');
+    for (const delivery of ['queue', 'insert']) {
+      const followup = { task_id: 'a', prompt: 'Use the updated details', delivery };
+      await bridge.run(tool(delivery, 'subagent', followup));
+      assert.deepEqual(f.calls.at(-1).args, followup);
+    }
     assert.equal(JSON.parse(await bridge.run(tool('r','tasks',{action:'conversation',task_ids:['a']}))).messages[0].content,'child answer');
     for(const call of [tool('bad1','shell',{prompt:'no'}),tool('bad2','subagent',{prompt:'no',approved:true}),tool('bad3','tasks',{action:'inspect',task_ids:['unrelated']}),{id:'bad4',name:'subagent',arguments:'invalid'},
       tool('bad5','subagent',{task_id:'',prompt:'no'}),tool('removed-message','send_subagent_message',{task_id:'a',prompt:'no'}),
       tool('removed-wait','await_subagent',{}),tool('removed-arg','subagent',{resume_task_id:'a',prompt:'no'})])
       assert.equal(JSON.parse(await bridge.run(call)).status,'error');
-    assert.equal(f.calls.length,3);
+    assert.equal(f.calls.length,5);
   }finally{bridge.close();}
 });
 test('hangup detaches completion notices without cancelling tasks; reconnect observes running children',async()=>{

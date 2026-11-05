@@ -60,7 +60,7 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
         // stable across transport retries; the voice bridge deduplicates vendor calls.
         const payload: RealtimeAgentToolRequest = { sessionId: config.sessionId, callId: `voice_tool_${crypto.randomUUID()}`, action, parent,
           prompt: args.prompt as string | undefined, taskId: args.task_id as string | undefined, cursor: args.cursor as string | undefined,
-          targetAgent: options.targetAgent?.() || undefined };
+          delivery: args.delivery as RealtimeAgentToolRequest['delivery'], targetAgent: options.targetAgent?.() || undefined };
         const result = await runtime.client.command({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }, value => value as Record<string, unknown>);
         if (parent && typeof result.taskId === 'string' && result.status === 'running') emitSubagentDispatch({
           protocol: 'bush.subagent_dispatch.v1', phase: 'dispatched', status: 'running', terminal: false, accepted: true,

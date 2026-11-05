@@ -10,9 +10,11 @@ export const realtimeAgentToolRequestSchema = z.object({
   parent: runtimeSessionTurnRequestSchema.optional(),
   prompt: z.string().trim().min(1).max(8000).optional(),
   taskId: z.string().min(1).optional(),
+  delivery: z.enum(['queue', 'insert']).optional(),
   cursor: z.string().regex(/^\d+:\d+$/).optional(),
   targetAgent: z.string().min(1).max(200).optional(),
   /** Text assistant uses the Runtime's native schemas; voice keeps its small interface. */
   nativeArguments: z.record(z.string(), z.unknown()).optional(),
-}).strict();
+}).strict().refine(input => !input.delivery || (input.action === 'subagent' && !!input.taskId && !input.nativeArguments),
+  { message: 'delivery requires a subagent follow-up with taskId' });
 export type RealtimeAgentToolRequest = z.infer<typeof realtimeAgentToolRequestSchema>;

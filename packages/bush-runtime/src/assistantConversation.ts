@@ -383,7 +383,7 @@ export class AssistantConversation {
           } else {
             const input = conversationalSubagentInput.parse(args);
             output = await this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
-              parent, prompt: input.prompt, taskId: input.task_id, targetAgent: profile.targetAgent || undefined });
+              parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined });
             signal.throwIfAborted();
             const taskId = (output as { taskId?: string })?.taskId;
             if (taskId) { this.watched.add(taskId); this.announced.delete(taskId); this.schedule(); }

@@ -23,7 +23,7 @@ test('one subagent entry guides the current child and rejects stale names and fo
   tasks.start({ taskId: 'current', parentSessionId: 'parent', parentTurnId: 'previous', childSessionId: 'child', childTurnId: 'second', prompt: 'next', inheritContext: true, inheritedMessageCount: 0 });
   const receipt = await invoke('subagent', { task_id: 'old', prompt: 'Keep it read only' });
   assert.equal(receipt.result.status, 'message_queued'); assert.equal(receipt.result.taskId, 'current');
-  assert.equal(guidance[0].turnId, 'second'); assert.equal(guidance[0].mode, 'append_context');
+  assert.equal(guidance[0].turnId, 'second'); assert.equal(guidance[0].mode, 'interrupt_and_continue');
   assert.equal((await invoke('subagent', { task_id: 'old', prompt: 'x' }, 'foreign')).kind, 'failed');
   assert.equal((await invoke('subagent', { task_id: 'unknown', prompt: 'x' })).kind, 'failed');
   assert.equal((await invoke('subagent', { resume_task_id: 'old', prompt: 'x' })).kind, 'failed');

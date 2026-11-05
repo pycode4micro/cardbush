@@ -281,26 +281,31 @@ test('a parent model approves a remote child through the real HTTP bridge and th
 
 test('worker queue and insert retain order, exact run identity and role revision', async t => {
   const gate = Promise.withResolvers(); let calls = 0;
-  const f = await openService(t, 'worker-queue', () => ++calls === 1 ? gate.promise : Promise.resolve());
+  const f = await openService(t, 'worker-queue', () => ++calls <= 2 ? gate.promise : Promise.resolve());
   const request = workerInput('queue', { worker: { id: 'writer', revision: 2, name: 'Writer', instructions: 'Keep the original layout.' } });
   try {
     await f.service.call('delegation.submit', request);
     await until(() => f.model.calls.length, n => n === 1);
     await assert.rejects(f.service.call('delegation.submit', { ...request, queue: true }), /different queue delivery/);
     await assert.rejects(f.service.call('delegation.submit', { ...request, taskId: 'replacement', turnId: 'turn-replacement' }), /still active/);
-    const insert = { operation: 'message', delivery: 'insert', messageId: 'insert-1', text: 'Keep the chart labels too.' };
-    const receipt = await workerControl(f.service, request, insert);
-    assert.equal(receipt.accepted, true); assert.equal(receipt.applied, false);
-    assert.deepEqual(await workerControl(f.service, request, insert), receipt);
     const queued = await workerControl(f.service, request, { operation: 'message', delivery: 'queue', messageId: 'queue-1', text: 'Now review the result.' });
     assert.equal(queued.status, 'queued');
     assert.equal((await f.service.call('chat.jobs')).length, 2); assert.equal(f.model.calls.length, 1);
+    const insert = { operation: 'message', delivery: 'insert', messageId: 'insert-1', text: 'Keep the chart labels too.' };
+    const receipt = await workerControl(f.service, request, insert);
+    assert.equal(receipt.accepted, true); assert.equal(receipt.applied, false);
+    assert.equal(receipt.receipt.modelRequestInterrupted, true);
+    await until(() => f.model.calls.length, n => n === 2);
+    assert.match(JSON.stringify(f.model.calls[1].input), /Keep the chart labels/);
+    assert.doesNotMatch(JSON.stringify(f.model.calls[1].input), /Now review the result/);
+    assert.deepEqual(await workerControl(f.service, request, insert), receipt);
     gate.resolve();
     await until(() => f.service.call('chat.jobs'), jobs => jobs.every(job => job.status === 'completed'));
     await assert.rejects(workerControl(f.service, request, { ...insert, messageId: 'late-insert' }), /stale_target/);
     const snapshot = await f.service.call('sessions.get', { sessionId: request.sessionId });
     assert.equal(snapshot.metadata.remoteWorker.revision, 2);
-    assert.match(JSON.stringify(f.model.calls), /Keep the chart labels/);
+    assert.equal(f.model.calls.length, 3);
+    assert.match(JSON.stringify(f.model.calls[2].input), /Now review the result/);
     await assert.rejects(f.service.call('delegation.submit', { ...request, taskId: 'changed-role', turnId: 'turn-changed-role', worker: { ...request.worker, revision: 4 } }), /original registered role/);
   } finally { gate.resolve(); await f.service.close(); }
 });

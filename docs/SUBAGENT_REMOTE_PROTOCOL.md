@@ -23,7 +23,7 @@ Registration gives a worker a role, not a second assistant identity in the appli
 | Connection | Reuse service identity, private credentials, HTTP/SSH routing, event cursors and bounded recovery. MCP client transport/authentication/lifecycle components are reuse candidates; its tool-catalog-specific manager is not itself a generic child-session manager. |
 | Wire contract | Describe messages, progress, input requirements, replies and explicit stop, independent of model tool names. The remote host maps these to its own implementation. |
 
-Local and remote children now share the same ownership admission, control contract and observation projection. `subagent` supports explicit queue/insert and interaction responses on both hosts; `tasks inspect` returns the same observation shape, and `tasks stop` targets one run. Local queue entries reuse the existing task journal and completion waiters. Canceling an entry does not cancel its predecessor or let later work overtake an active turn. Insert adds guidance at a safe boundary without interrupting the current model request or tool.
+Local and remote children now share the same ownership admission, control contract and observation projection. `subagent` supports explicit queue/insert and interaction responses on both hosts; `tasks inspect` returns the same observation shape, and `tasks stop` targets one run. Local queue entries reuse the existing task journal and completion waiters. Canceling an entry does not cancel its predecessor or let later work overtake an active turn. Insert interrupts the active model request and continues the same turn with the new user guidance. Already dispatched tools finish once before the model continues.
 
 Display receipt and loop consumption are separate: the child Runtime publishes `guidance_queued` as soon as it queues an insert, including the authored text, message identity and author. Local and remote conversation views immediately show the parent message with the existing waiting indicator. Only `guidance_applied` seals the preceding reply and marks consumption. Replayed receipts update the same row without duplicates or status regression; no scheduler or additional model call is involved. Workers must run the updated Runtime to publish queued receipts; older workers retain their applied-only behavior.
 
@@ -68,7 +68,7 @@ Generated [JSON Schemas](protocols/subagent-remote-proton/0.1/README.md) are aut
 | --- | --- |
 | Submit | Create an owned task with words; persist before acknowledgement. CardBush binds this to `delegation.submit`. |
 | `message`, `delivery=queue` | Schedule a later run in the same conversation. Does not replace an active run. |
-| `message`, `delivery=insert` | Add guidance to the exact active run at its next safe boundary. Does not interrupt an already dispatched tool or silently become a new run. |
+| `message`, `delivery=insert` | Interrupt current model reasoning and continue the exact active run with the guidance. In-flight tools settle first. A stale target is rejected. |
 | `observe` | Return state, cursor, phase, action counts and pending interactions; optionally wait up to 30 seconds. Does not invoke a model. |
 | `respond` | Answer a pending question or make a structured permission decision. |
 | `cancel` | Request cancellation and report whether the worker has confirmed termination. |
