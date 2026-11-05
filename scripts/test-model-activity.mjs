@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as protocol from '@cardbush/bush-protocol';
+import * as i18n from '@cardbush/platform/i18n';
 
 test('GUI model activity follows stream facts, keeps compaction visible and clears terminal turns', () => {
   const compiled = ts.transpileModule(readFileSync('src/runtime-client/modelActivity.ts', 'utf8'),
@@ -11,7 +12,11 @@ test('GUI model activity follows stream facts, keeps compaction visible and clea
   const module = { exports: {} };
   let warnings = 0;
   vm.runInNewContext(compiled.outputText, { module, exports: module.exports, console: { warn() { warnings++; } },
-    require: name => { assert.equal(name, '@cardbush/bush-protocol'); return protocol; } });
+    require: name => {
+      if (name === '../i18n') return i18n;
+      assert.equal(name, '@cardbush/bush-protocol');
+      return protocol;
+    } });
   const { publishModelActivity: publish, modelActivityLabel: label, subscribeModelActivity: subscribe } = module.exports;
   let changes = 0; const unsubscribe = subscribe(() => changes++);
   const emit = (kind, payload = {}, turnId = 'one') => publish({ kind, payload, turnId });

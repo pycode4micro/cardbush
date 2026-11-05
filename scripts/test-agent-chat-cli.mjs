@@ -2002,6 +2002,23 @@ test('native model/settings commands share App JSON, preserve secrets, and recov
   assert.equal(await readFile(configPath, 'utf8'), sharedText, 'resume does not change shared settings');
 });
 
+test('local CLI reports an unreadable model credential without prompting to edit valid JSON', async t => {
+  const f = await fixture(t); await f.stopService();
+  const env = await sharedCliEnv(f);
+  const modelFile = join(env.CARDBUSH_CLI_PROFILE_DIR, 'product-host', 'config', 'models.json');
+  const config = JSON.parse(await readFile(modelFile, 'utf8'));
+  const backend = process.platform === 'win32' ? 'dpapi' : 'external';
+  config.models[0].apiKey = `cardbush-secret:v1:${backend}:AA==`;
+  const stored = JSON.stringify(config);
+  await writeFile(modelFile, stored);
+  const result = await cli(t, ['--prompt', 'test'], { env, cwd: f.cwd }).result;
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /credential_decryption_failed/);
+  assert.doesNotMatch(result.stderr, /Configure a model|Invalid model configuration|AA==/);
+  assert.equal(await readFile(modelFile, 'utf8'), stored);
+  assert.equal(f.calls.length, 0);
+});
+
 test('unconfigured local CLI waits for file editing, reloads in place and never submits setup input', async t => {
   const f = await fixture(t); await f.stopService();
   const dataRoot = join(f.root, 'unconfigured'), profile = join(f.root, 'no-desktop'), configPath = join(profile, 'product-host', 'config', 'models.json');

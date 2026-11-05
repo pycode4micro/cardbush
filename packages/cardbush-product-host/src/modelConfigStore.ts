@@ -38,11 +38,17 @@ export class ProductModelConfigStore {
     return withConfigFileLock(this.#path, () => this.#read());
   }
   async #read(): Promise<ProductModelConfigSnapshot> {
+    let stored: unknown;
     try {
-      return decodeSnapshot(readProtectedJson(this.#path));
+      stored = readProtectedJson(this.#path);
     } catch (error) {
       if (isMissing(error)) return emptySnapshot();
+      if (error instanceof SyntaxError) throw Object.assign(error, { code: 'invalid_model_configuration' });
       throw error;
+    }
+    try { return decodeSnapshot(stored); }
+    catch (error) {
+      throw Object.assign(error instanceof Error ? error : new Error('Stored model configuration is invalid.'), { code: 'invalid_model_configuration' });
     }
   }
 

@@ -104,10 +104,10 @@ export async function serveAgentHttp(service: AgentService, options: { host?: st
     })().catch(error => {
       if (!response.headersSent && !response.destroyed) {
         const status = error instanceof HttpError ? error.status : error instanceof z.ZodError ? 400 : 409;
-          const code = (error as { code?: string })?.code;
-          json(response, status, { error: { code: error instanceof HttpError || error instanceof AgentBusyError ? error.code
-            : code === 'permission_not_pending' || code === 'solution_not_pending' ? code
-            : status === 400 ? 'invalid_request' : 'operation_failed', message: error instanceof Error ? error.message : 'Agent request failed.' } });
+        const code = (error as { code?: string })?.code;
+        json(response, status, { error: { code: error instanceof HttpError || error instanceof AgentBusyError ? error.code
+          : code === 'permission_not_pending' || code === 'solution_not_pending' || code === 'invalid_model_configuration' ? code
+          : status === 400 ? 'invalid_request' : 'operation_failed', message: error instanceof Error ? error.message : 'Agent request failed.' } });
       } else if (!response.writableEnded) response.destroy();
       request.resume();
     });

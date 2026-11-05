@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { fork, type Serializable } from 'node:child_process';
 import { normalizeHostEnvironment } from '@cardbush/bush-runtime/processes';
 import { randomUUID } from 'node:crypto';
 import { BUSH_RUNTIME_IPC_PROTOCOL, decodeRuntimeIpcOutboundMessage, type RuntimeIpcOutboundMessage } from '@cardbush/bush-protocol';
@@ -7,13 +8,38 @@ import { handleMcpHostRequest, isMcpHostMessage, type McpHostOperation } from '.
 
 export type AgentRuntimeDiagnosticSink = (stream: 'stdout' | 'stderr', text: string) => void;
 
+function startRuntime(env: NodeJS.ProcessEnv) {
+  const entry = new URL('./runtimeHostWorker.mjs', import.meta.url);
+  env = normalizeHostEnvironment(env);
+  if (process.platform !== 'win32') {
+    const worker = new Worker(entry, { env, stdout: true, stderr: true });
+    return { events: worker, stdout: worker.stdout, stderr: worker.stderr,
+      postMessage: (message: unknown) => worker.postMessage(message), terminate: () => worker.terminate() };
+  }
+  // MCP launches must not inherit handles from concurrent host operations.
+  // In a Windows worker thread even a long-lived MCP can inherit a short-lived
+  // DPAPI helper's output pipe, blocking the host's synchronous credential read.
+  const child = fork(entry, [], { env, execArgv: [], windowsHide: true, serialization: 'advanced',
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  const exited = new Promise<void>(resolve => {
+    child.once('exit', () => resolve());
+    if (child.pid === undefined) child.once('error', () => resolve());
+  });
+  return { events: child, stdout: child.stdout!, stderr: child.stderr!,
+    postMessage: (message: unknown) => child.send(message as Serializable),
+    terminate: () => {
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) child.kill();
+      return exited;
+    } };
+}
+
 /** Node host for the shared Runtime; never imports or launches Electron. */
 export class AgentRuntimeHost implements ElectronRuntimeBridge {
   readonly transport = new ElectronRuntimeTransport(this);
   readonly #listeners = new Set<(message: unknown) => void>();
   readonly #pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   readonly #hostRequests = new Map<string, AbortController>();
-  readonly #worker: Worker;
+  readonly #worker: ReturnType<typeof startRuntime>;
   readonly ready: Promise<RuntimeIpcOutboundMessage>;
   readonly failure: Promise<Error>;
   #resolveFailure!: (error: Error) => void;
@@ -23,14 +49,14 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
   constructor(env: NodeJS.ProcessEnv, handle: (operation: McpHostOperation, payload: unknown, signal: AbortSignal, onAccepted: () => void) => Promise<unknown>,
     diagnostic: AgentRuntimeDiagnosticSink = (_stream, text) => { process.stderr.write(text); }) {
     this.failure = new Promise(resolve => { this.#resolveFailure = resolve; });
-    this.#worker = new Worker(new URL('./runtimeHostWorker.mjs', import.meta.url), { env: normalizeHostEnvironment(env), stdout: true, stderr: true });
+    this.#worker = startRuntime(env);
     // Worker replies/events use IPC. Its output is diagnostic, never chat text.
     // A local CLI provides a file sink so late MCP logs cannot overwrite readline.
     this.#worker.stdout.setEncoding('utf8').on('data', text => diagnostic('stdout', text));
     this.#worker.stderr.setEncoding('utf8').on('data', text => diagnostic('stderr', text));
     this.ready = new Promise((resolve, reject) => {
       const timer = setTimeout(() => { const error = new Error('Agent Runtime startup timed out.'); reject(error); this.#fail(error); void this.#worker.terminate(); }, 30_000);
-      this.#worker.on('message', (input: unknown) => {
+      this.#worker.events.on('message', (input: unknown) => {
         if (isMcpHostMessage(input)) {
           if (input.type === 'cancel') { this.#hostRequests.get(input.id)?.abort(); return; }
           if (input.type === 'request') {
@@ -53,8 +79,8 @@ export class AgentRuntimeHost implements ElectronRuntimeBridge {
           } else { this.#fail(new Error(message.error.message)); }
         } catch (error) { clearTimeout(timer); reject(error); this.#fail(error as Error); }
       });
-      this.#worker.on('error', error => { clearTimeout(timer); reject(error); this.#fail(error instanceof Error ? error : new Error(String(error))); });
-      this.#worker.on('exit', code => {
+      this.#worker.events.on('error', error => { clearTimeout(timer); reject(error); this.#fail(error instanceof Error ? error : new Error(String(error))); });
+      this.#worker.events.on('exit', code => {
         clearTimeout(timer);
         const error = new Error(`Agent Runtime exited (${code}).`);
         reject(error); this.#fail(error);

@@ -3,6 +3,7 @@ import { readAgentDesktopBridge, agentDesktopBridgeTransport, syncAgentDesktopBr
 import { z } from 'zod';
 import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { parentPort as nodeParentPort } from 'node:worker_threads';
+import type { Serializable } from 'node:child_process';
 import {
   BUSH_RUNTIME_ERROR_PROTOCOL,
   BUSH_RUNTIME_IPC_PROTOCOL,
@@ -86,10 +87,16 @@ const parentPort = process.parentPort ?? (nodeParentPort ? {
   postMessage: (message: unknown) => nodeParentPort!.postMessage(message),
   on: (_event: 'message', listener: (event: { data: unknown }) => void) =>
     nodeParentPort!.on('message', data => listener({ data })),
+} : process.send ? {
+  postMessage: (message: unknown) => process.send!(message as Serializable),
+  on: (_event: 'message', listener: (event: { data: unknown }) => void) =>
+    process.on('message', data => listener({ data })),
 } : undefined);
 if (!parentPort) {
   throw new Error('The Runtime Host requires a desktop or service message port.');
 }
+// A forked Runtime has the same lifetime as its owning host, including crashes.
+if (process.send && !process.parentPort && !nodeParentPort) process.once('disconnect', () => process.exit(0));
 
 const operations = new Map<string, AbortController>();
 const mcpHost = new McpHostBridge(message => parentPort.postMessage(message));

@@ -11,7 +11,12 @@ import { secureConnectorResourceAsync } from '../dist-electron/browserConnectorF
 const windows = process.platform === 'win32';
 async function directory(t) {
   const parent = await realpath(tmpdir()), root = await mkdtemp(join(parent, 'cardbush-ipc-security-'));
-  t.after(async () => { assert.equal(dirname(root), parent); await rm(root, { recursive: true, force: true }); });
+  t.after(async () => {
+    assert.equal(dirname(root), parent);
+    // The fixture acknowledges release just before exiting. Windows can still
+    // hold its executable open for the few milliseconds between those events.
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
   return root;
 }
 
@@ -40,6 +45,7 @@ test('helper exit settles readiness without waiting for a retained stderr pipe; 
       await writeFile(join(target, 'release'), 'release');
       const until = Date.now() + 5000;
       while (!await readFile(join(target, 'released')).catch(() => null) && Date.now() < until) await delay(25);
+      await readFile(join(target, 'released'));
     }
   }
 });

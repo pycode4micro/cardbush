@@ -82,6 +82,26 @@ test('failed worker retires an attached local host; reconnect elects one healthy
   }
 });
 
+test('Windows Runtime has separate process handles and exits if its host dies', { skip: process.platform !== 'win32', timeout: 30000 }, async t => {
+  const f = await fixture(t), pidFile = join(f.root, 'runtime.pid');
+  const host = fork(resolve('dist-electron/agentLocalRuntimeHost.mjs'), [f.dataRoot, f.profileRoot, resolve('assets')], {
+    env: { ...process.env, NODE_OPTIONS: `--import=${preload}`, CARDBUSH_TEST_RUNTIME_PID: pidFile },
+    execArgv: [], windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  });
+  let runtimePid;
+  f.cleanup.push(async () => {
+    if (host.exitCode === null && host.signalCode === null) host.kill();
+    if (runtimePid && alive(runtimePid)) process.kill(runtimePid);
+  });
+  const [message] = await once(host, 'message');
+  assert.equal(message.ready, true);
+  runtimePid = Number(await readFile(pidFile, 'utf8'));
+  assert.ok(runtimePid > 0 && alive(runtimePid));
+  assert.notEqual(runtimePid, host.pid);
+  host.kill();
+  await until(() => !alive(runtimePid));
+});
+
 test('worker failure during startup cannot publish a dead endpoint or retain the data lock', { timeout: 60000 }, async t => {
   const f = await fixture(t), messages = [];
   const child = fork(resolve('dist-electron/agentLocalRuntimeHost.mjs'), [f.dataRoot, f.profileRoot, resolve('assets')], {

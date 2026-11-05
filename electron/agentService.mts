@@ -407,8 +407,8 @@ export class AgentService {
     this.#writes = task.catch(() => undefined); return task;
   }
   async #product(command: Record<string, unknown>) {
-    const result = await this.product.execute({ ...command, protocol: 'cardbush.product_host_ipc.v1' }) as { ok: boolean; value?: unknown; error?: { message: string } };
-    if (!result.ok) throw new Error(result.error?.message || 'Product command failed.');
+    const result = await this.product.execute({ ...command, protocol: 'cardbush.product_host_ipc.v1' }) as { ok: boolean; value?: unknown; error?: { code: string; message: string } };
+    if (!result.ok) throw Object.assign(new Error(result.error?.message || 'Product command failed.'), { code: result.error?.code });
     if (command.kind === 'apps.update' || command.kind === 'mcp.update') await this.product.refreshMcp();
     return result.value;
   }

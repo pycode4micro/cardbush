@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { reasoningEffortsForProtocol, resolveModelReasoningEffort, type ModelApiProtocol, type ReasoningEffort } from '@cardbush/bush-protocol';
 import type { ChatTerminal } from './agentChatCli.mjs';
 import type { ChatClient } from './agentLocalChat.mjs';
+import { AgentHttpError } from './agentHttpClient.mjs';
 import { chatExitCommands, isChatExitCommand } from './agentChatCompletion.mjs';
 import { chatShellCommand, executeChatShell } from './agentChatShell.mjs';
 
@@ -69,7 +70,10 @@ export async function readChatModels(client: ChatClient, io: ChatTerminal, signa
     let config: ChatModels | undefined;
     let invalid = false;
     try { config = await client.call('product.command', { kind: 'models.get' }, signal) as ChatModels; }
-    catch (error) { if (!path || signal.aborted) throw error; invalid = true; }
+    catch (error) {
+      if (!path || signal.aborted || !(error instanceof AgentHttpError) || error.code !== 'invalid_model_configuration') throw error;
+      invalid = true;
+    }
     if (!path || config?.models.length) return config;
     if (!explained) {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
