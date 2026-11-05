@@ -1580,7 +1580,7 @@ test('real Agent and native readline submit all question answers to the offline 
   const process = cli(t, [], { env: f.env, cwd: f.cwd, interactive: true });
   await until(() => process.stderr, text => text.includes('❯ '));
   f.tools({ name: 'request_user_input_async', arguments: { questions: multiQuestion.questions } },
-    { name: 'tasks', arguments: { action: 'wait', yield_time_ms: 15000 } });
+    { name: 'await', arguments: { yield_time_ms: 15000 } });
   process.child.stdin.write('ask two questions\n');
   await until(() => process.stderr, text => text.includes('[1/2] Which version?') && text.includes('/cancel'));
   process.child.stdin.write('2\n');
@@ -1592,8 +1592,11 @@ test('real Agent and native readline submit all question answers to the offline 
   process.child.stdin.write('Last month\n');
   await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1)?.status === 'completed');
   assert.equal(f.calls.length, 3);
-  const receipt = JSON.stringify(f.calls.at(-1));
-  assert.match(receipt, /New/); assert.match(receipt, /Last month/); assert.match(receipt, /questionId/);
+  const waitOutput = f.calls.at(-1).input.findLast(item => item.type === 'function_call_output');
+  const question = JSON.parse(waitOutput.output).tasks.find(task => task.kind === 'question');
+  assert.deepEqual(question.result.value.answers.map(({ questionId, text }) => [questionId, text]), [
+    ['version', 'New'], ['period', 'Last month'],
+  ]);
   process.child.stdin.write('/exit\n');
   assert.equal((await process.result).code, 0);
 });
@@ -1637,8 +1640,16 @@ test('worker CLI registers a protected connection, verifies identity and never o
   assert.equal(added.code, 0, added.stderr); assert.match(added.stdout, /Verified/);
   const id = added.stdout.split('\t')[0].trim(); assert.ok(id);
   assert.doesNotMatch(added.stdout + added.stderr, /fixture-cli-token|fixture-model-secret/);
-  assert.doesNotMatch(await readFile(join(dataRoot, 'workers', 'connections.json'), 'utf8'), /fixture-cli-token/);
-  assert.equal((await readFile(join(dataRoot, 'workers', 'credentials.key'))).length, 32);
+  const workers = join(env.CARDBUSH_CLI_PROFILE_DIR, 'workers');
+  assert.doesNotMatch(await readFile(join(workers, 'connections.json'), 'utf8'), /fixture-cli-token/);
+  await assert.rejects(readFile(join(workers, 'credentials.key')), { code: 'ENOENT' });
+  if (process.platform === 'win32') {
+    const wrappedKey = await readFile(join(workers, 'credentials.dpapi'));
+    assert.ok(wrappedKey.length > 32, 'the DPAPI blob wraps the 32-byte worker key');
+  } else {
+    const protectedKey = JSON.parse(await readFile(join(workers, 'credentials.protected'), 'utf8'));
+    assert.match(protectedKey.secret, /^cardbush-secret:v1:external:/);
+  }
   const listed = await call(['list']); assert.equal(listed.code, 0, listed.stderr); assert.ok(listed.stdout.includes(id));
   const verified = await call(['verify', id]); assert.equal(verified.code, 0, verified.stderr);
   assert.deepEqual(await f.service.call('chat.jobs'), []); assert.equal(f.calls.length, 0);
