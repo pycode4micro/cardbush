@@ -1,6 +1,6 @@
 ---
 name: cardbush-docs
-description: CardBush 使用、配置、开发与部署文档。用于插件打包、本机或远程 Agent 的插件安装与更新、环境与依赖配置、MCP、主题、日历导入与万年历/中国农历转换、Agent 服务部署、创作文档与 Team 协作，以及 assistant 通话和实时语音接入。CardBush docs, local and remote plugin installation and setup, agent deployment, Create and Team. 不用于其他宿主或无关应用的配置与部署。
+description: CardBush 使用、配置、开发与部署文档。用于 Webhook 配置、将微信或飞书 Bot 接入当前会话、外部 Agent 与 Assistant 双向对话，以及插件打包、本机或远程 Agent 的插件安装与更新、环境与依赖配置、MCP、主题、日历导入与万年历/中国农历转换、Agent 服务部署、创作文档与 Team 协作、assistant 通话和实时语音接入。CardBush docs, webhook bridge setup, local and remote plugin installation, agent deployment, Create and Team. 不用于其他宿主或无关应用的配置与部署。
 license: Apache-2.0
 ---
 
@@ -13,6 +13,7 @@ license: Apache-2.0
 | 应用中心、快捷方式、@ 应用引用、独立应用链接 | [应用中心](references/app-center.md) |
 | 创作文档、Team 的文档可视化、从写作到协作实践 | [创作与 Team](references/bush-it.md) |
 | 添加 MCP 服务、检查连接、配置插件 OAuth | [MCP 接入](references/mcp-management.md) |
+| “把微信／飞书接到当前会话”、让外部 Bot 或 Agent 通过 Webhook 与 Assistant / CLI 对话、排查消息或文件投递 | [通过对话配置 Webhook](references/webhook-setup.md)。自建服务的请求、认证、回执和心跳见 [Webhook HTTP 接口](references/webhook-http.md)。 |
 | Browser Use：本机首次授权与自动重连、手动／远程配对、连接选择 | [浏览器连接](references/browser-use.md) |
 | 创建、打包、安装、更新、停用或卸载 CardBush 插件；在本机或远程 Agent 安装指定包、配置依赖、修复 MCP 启动 | [插件管理](references/plugin-management.md)，格式与入口见 [插件契约](references/plugin-contract.md) |
 | 修改主题、配色、应用界面样式 | [样式管理](references/style-management.md)；新主题或全局变化再读 [主题契约](references/theme-contract.md) |
