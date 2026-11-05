@@ -31,6 +31,22 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await pause();
     assert.equal(await run('!!userDisclosureToggle()'), false, 'short questions remain complete without a toggle');
     for (const theme of ['theme-dark', 'theme-bright']) {
+      const heading = '请为这款商品制作一段介绍视频，画面从街景切换到室内展示，再给几个细节特写，最后回到商品全景。'.repeat(2);
+      await run(`viewTheme = ${JSON.stringify(theme)}; showUserDisclosure({ messages: [{ ...userDisclosureMessage,
+        attachments: [], content: ${JSON.stringify(heading + '\n------\n另外准备几个参考画面。')} }] });`);
+      await until('!!userDisclosureBubble()?.querySelector("h2")', 'Markdown underline produces a heading');
+      const layout = await run(`(() => {
+        const bubble = userDisclosureBubble().querySelector('.user-bubble');
+        const h = bubble.querySelector('h2');
+        const style = getComputedStyle(bubble);
+        const right = bubble.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+        const range = document.createRange();
+        range.selectNodeContents(h);
+        const lines = [...range.getClientRects()];
+        return { lines: lines.length, gap: right - lines[0].right, em: parseFloat(getComputedStyle(h).fontSize) };
+      })()`);
+      assert.ok(layout.lines > 1 && layout.gap >= -1 && layout.gap < 2 * layout.em,
+        `a wrapped user heading should fill the bubble before wrapping: ${JSON.stringify(layout)}`);
       await run(`viewTheme = ${JSON.stringify(theme)}; showUserDisclosure({ messages: [userDisclosureMessage] });`);
       await until("userDisclosureToggle()?.textContent === '展示更多' && !!userDisclosureBubble().querySelector('code.language-json')", 'long question after lazy Markdown');
       const preview = await run(`(() => {
