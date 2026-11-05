@@ -6,6 +6,27 @@ const { webContents } = require('electron');
 module.exports = async ({ run, until, pause, window, root }) => {
   await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/features/inspector/inspectorWorkspace.css'), 'utf8'));
   await window.webContents.insertCSS('.app{width:100%!important}.right-inspector-tab-pages{min-height:300px}');
+  await run(`
+    window.previousBrowserApi=cardbushDesktop.browser;
+    window.historyListeners=new Set(); window.siteReads=0; window.pendingSiteReads=[];
+    cardbushDesktop.browser={...previousBrowserApi,
+      frequentSites:()=>{siteReads++;return new Promise(resolve=>pendingSiteReads.push(resolve));},
+      onHistoryChanged:fn=>{historyListeners.add(fn);return()=>historyListeners.delete(fn);}
+    };
+    window.finishSiteRead=()=>pendingSiteReads.splice(0).forEach(resolve=>resolve([]));
+    window.showStartPages=n=>renderView(h('div',null,Array.from({length:n},(_,i)=>h(views.InspectorActions,
+      {key:i,tabId:String(i),language:'en',filesAvailable:true,shadowUnavailableReason:'',onOpenBookmark:()=>{}}))));
+    showStartPages(16);
+  `);
+  await until('document.querySelectorAll(".inspector-start-tools").length===16 && siteReads>0', 'sixteen start pages mounted');
+  assert.deepEqual(await run('[historyListeners.size,siteReads]'), [1,1], 'start pages share one history subscription and initial read');
+  await run('for(let i=0;i<20;i++) for(const refresh of historyListeners) refresh(); finishSiteRead();void 0');
+  await until('siteReads===2', 'burst coalesces into one fresh read');
+  await run('finishSiteRead();void 0');
+  await until('document.querySelectorAll(".inspector-start-sites").length===16', 'all pages receive the shared result');
+  await run('showStartPages(0);void 0');
+  await until('historyListeners.size===0', 'closing all start pages releases the history subscription');
+  await run('cardbushDesktop.browser=previousBrowserApi;void 0');
   const page = 'data:text/html,' + encodeURIComponent('<title>Retained document</title><style>body{height:2400px}</style><input aria-label="Unsaved input"><script>window.ticks=0;setInterval(()=>ticks++,30)</script>');
   await run(`
     localStorage.setItem('cardbush.inspector_width','500');
@@ -131,6 +152,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const backend=React.useMemo(()=>({
         fetchGoalRuntimeStatus:async()=>({enabled:false}),fetchPendingInteraction:async()=>null,onRuntimeInteractionsChanged:()=>()=>{},
         fetchConversations:async()=>fixtureSessions,fetchMessages:async()=>[],fetchExperimentalGoals:async()=>[],
+        deleteConversationApi:async id=>{fixtureSessions=fixtureSessions.filter(session=>session.id!==id);return true;},
         createConversation:async input=>{
           if(failFixtureCreation){fixtureCreateFailures++;throw Error('Offline creation failure');}
           const session={id:input.sessionId,title:'Offline chat',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
@@ -163,6 +185,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('sessionFixture.workspace.inspectorLayout.ratio'), .61);
   assert.equal(await run('sessionFixture.tabs.ownerOfTab("draft-one")'), `local:${JSON.stringify(adoptedId)}`);
   assert.equal(await run('document.querySelector("[data-inspector-page-id=draft-one] webview").getWebContentsId()'), draftGuestId);
+
   assert.equal(draftGuest.isAudioMuted(), true);
   assert.deepEqual(await draftSnapshot(), draftBefore, 'first send preserves the native document, input, history and scroll');
   assert.ok((await run('adoptionFrames')).every(frame => frame.open && frame.ids.length === 2 && frame.layout?.ratio === .61), 'no committed frame collapses or loses tabs during adoption');
@@ -189,6 +212,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run(`draftChat.openConversation(${JSON.stringify(adoptedId)});void 0`);
   await until('sessionFixture.tabs.activeId==="draft-two" && sessionFixture.workspace.inspectorLayout?.ratio===.64', 'original chat restores all adopted state after a retry elsewhere');
   assert.equal(await run('document.querySelector("[data-inspector-page-id=draft-one] webview").getWebContentsId()'), draftGuestId);
+  const removedGuestId = await run('document.querySelector("[data-inspector-page-id=draft-two] webview").getWebContentsId()');
+  await run(`window.deletedTabs=sessionFixture.tabs; deletedTabs.toggleLock('draft-one'); window.deleting=draftChat.deleteConversation(${JSON.stringify(adoptedId)});void 0`);
+  await until('!!document.querySelector(".confirm-action-dialog[open]")', 'delete confirmation');
+  await run('document.querySelector(".confirm-action-dialog .danger").click();window.deleting');
+  await until('!sessionFixture.tabs.allTabs.some(tab=>tab.id==="draft-two")', 'deleted conversation releases private pages');
+  await until('!document.querySelector("[data-inspector-page-id=draft-two]")', 'private guest detached');
+  assert.equal(webContents.fromId(removedGuestId), undefined, 'deleted conversation releases its native renderer');
+  assert.equal(await run('document.querySelector("[data-inspector-page-id=draft-one] webview").getWebContentsId()'), draftGuestId, 'locked guest retains its document');
+  await run("deletedTabs.openTab({id:'late',kind:'resource',detail:{target:'about:blank'}});deletedTabs.closeTabs(new Set(['draft-one']));void 0");
+  await pause();
+  assert.deepEqual(await run("['late','draft-one'].map(id=>sessionFixture.tabs.allTabs.some(tab=>tab.id===id))"), [false,true], 'stale callbacks cannot reopen a deleted page or close a surviving lock');
   console.log('First-send inspector adoption passed: real chat hook, no explicit @ reference, unchanged webview/document/mute/selection/layout, no collapsed frame, isolated next draft, late callbacks and failed-creation retry.');
   console.log('Inspector conversation UI passed: independent local/assistant/SSH workspaces, locks left of close, delayed/background routing, native document/history/draft/scroll retention, continuing work, cover/collapse restoration and actual disposal.');
 };

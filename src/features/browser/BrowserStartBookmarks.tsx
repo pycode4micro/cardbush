@@ -16,8 +16,9 @@ export function BrowserStartBookmarks({ language, onNavigate, onImport, onManage
   const [query, setQuery] = useState(''), [limit, setLimit] = useState(24);
   const matches = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
+    if (!needle || view !== 'bookmarks') return bookmarks;
     return bookmarks.filter(item => `${item.title}\n${item.url}\n${item.folder ?? ''}`.toLocaleLowerCase().includes(needle));
-  }, [bookmarks, query]);
+  }, [bookmarks, query, view]);
   return <section className="inspector-bookmark-library" aria-label={uiText(language)('browserStartBookmarks.sites')}>
     <header>
       <div className="inspector-site-views" role="group" aria-label={uiText(language)('browserStartBookmarks.siteCollection')}>

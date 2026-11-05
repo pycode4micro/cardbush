@@ -1,5 +1,5 @@
 import { inspectorTabsReducer, type InspectorHistoryTab, type InspectorResourceTab, type InspectorTabsAction, type InspectorTabsState } from './inspectorTabs';
-import { onConversationDraftAdopted } from '../../shared/conversationDraft';
+import { onConversationDeleted, onConversationDraftAdopted } from '../../shared/conversationDraft';
 
 export function localInspectorWorkspace(sessionId: string) { return `local:${JSON.stringify(sessionId)}`; }
 export function agentInspectorWorkspace(connectionId: string, sessionId: string) {
@@ -7,6 +7,12 @@ export function agentInspectorWorkspace(connectionId: string, sessionId: string)
 }
 
 export type InspectorDraftAdoption = { from: string; to: string };
+export function onInspectorSessionDeleted(listener: (workspaceId: string, draftId: string) => void) {
+  return onConversationDeleted(({ sessionId, connectionId }) => listener(
+    connectionId ? agentInspectorWorkspace(connectionId, sessionId) : localInspectorWorkspace(sessionId),
+    connectionId ? agentInspectorWorkspace(connectionId, '') : localInspectorWorkspace(''),
+  ));
+}
 export function onInspectorDraftAdopted(listener: (adoption: InspectorDraftAdoption) => void) {
   return onConversationDraftAdopted(({ sessionId, connectionId }) => listener({
     from: connectionId ? agentInspectorWorkspace(connectionId, '') : localInspectorWorkspace(''),
@@ -26,6 +32,7 @@ export type InspectorSessionsState = { workspaces: Record<string, Workspace>; lo
 export const emptyInspectorSessions: InspectorSessionsState = { workspaces: {}, lockedIds: new Set() };
 export type InspectorSessionsAction =
   | ({ type: 'adopt-draft' } & InspectorDraftAdoption)
+  | { type: 'delete-workspace'; workspaceId: string; draftId: string }
   | { type: 'tabs'; workspaceId: string; action: InspectorTabsAction }
   | { type: 'navigate-start'; workspaceId: string; tabId: string; pages: (InspectorHistoryTab | InspectorResourceTab)[] }
   | { type: 'start-history'; tabId: string; step: 'back' | 'forward' | 'discard-forward' }
@@ -46,14 +53,44 @@ export function inspectorTabOwner(state: InspectorSessionsState, id: string) {
 }
 export function inspectorSession(state: InspectorSessionsState, workspaceId: string) {
   const own = state.workspaces[workspaceId];
-  const locked = retainedInspectorTabs(state).filter(tab => state.lockedIds.has(tab.id));
-  const tabs = [...(own?.tabs ?? []), ...locked.filter(tab => !own?.tabs.some(owned => owned.id === tab.id))];
+  let tabs = own?.tabs ?? [];
+  if (state.lockedIds.size) {
+    const ownIds = new Set(tabs.map(tab => tab.id));
+    const shared = retainedInspectorTabs(state).filter(tab => state.lockedIds.has(tab.id) && !ownIds.has(tab.id));
+    if (shared.length) tabs = [...tabs, ...shared];
+  }
   const activeId = tabs.some(tab => tab.id === own?.activeId) ? own!.activeId : tabs[0]?.id ?? '';
-  return { tabs, activeId, open: own?.open ?? locked.length > 0 };
+  return { tabs, activeId, open: own?.open ?? state.lockedIds.size > 0 };
+}
+
+// Every remaining lock is visible in every workspace. Determining whether an
+// empty pane should collapse doesn't require projecting all tabs for each owner.
+function closeWorkspaceTabs(workspace: Workspace, ids: ReadonlySet<string>, hasLocks: boolean): Workspace {
+  const next = ids.size ? inspectorTabsReducer(workspace, { type: 'close', ids }) : workspace;
+  const open = workspace.open && (next.tabs.length > 0 || hasLocks);
+  return next === workspace && open === workspace.open ? workspace : { ...next, open };
 }
 
 /** Resource pages have one owner. A lock shares visibility, never a second guest. */
 export function inspectorSessionsReducer(state: InspectorSessionsState, action: InspectorSessionsAction): InspectorSessionsState {
+  if (action.type === 'delete-workspace') {
+    const removed = state.workspaces[action.workspaceId];
+    if (!removed || action.workspaceId === action.draftId) return state;
+    const workspaces = { ...state.workspaces };
+    delete workspaces[action.workspaceId];
+    // Locks survive their owner's deletion and remain reachable from the draft.
+    const draft = workspaces[action.draftId];
+    const keep = new Map(removed.tabs.filter(tab => state.lockedIds.has(tab.id)).map(tab => [tab.id, tab]));
+    for (const other of Object.values(workspaces)) {
+      if (!keep.size) break;
+      for (const tab of other.tabs) keep.delete(tab.id);
+    }
+    if (keep.size) {
+      const tabs = [...(draft?.tabs ?? []), ...keep.values()];
+      workspaces[action.draftId] = { open: draft?.open ?? true, activeId: draft?.activeId || tabs[0].id, tabs };
+    }
+    return { ...state, workspaces };
+  }
   if (action.type === 'start-history') {
     const owner = inspectorTabOwner(state, action.tabId);
     if (!owner) return state;
@@ -83,22 +120,19 @@ export function inspectorSessionsReducer(state: InspectorSessionsState, action: 
   if (action.type === 'bind-browser') {
     // An explicit @ reference carries the existing guest into its conversation.
     // Move unlocked resources atomically; locked tabs remain shared by their owner.
-    const tabs = action.ids.flatMap(id => {
-      const tab = retainedInspectorTabs(state).find(tab => tab.id === id);
+    const retained = new Map(retainedInspectorTabs(state).map(tab => [tab.id, tab]));
+    const tabs = [...new Set(action.ids)].flatMap(id => {
+      const tab = retained.get(id);
       return tab?.kind === 'resource' ? [tab] : [];
     });
     if (!tabs.length) return state;
     const moved = new Set(tabs.filter(tab => !state.lockedIds.has(tab.id)).map(tab => tab.id));
     const own = state.workspaces[action.workspaceId] ?? { tabs: [], activeId: '', open: false };
     const workspaces = Object.fromEntries(Object.entries(state.workspaces).map(([key, workspace]) => [key,
-      key === action.workspaceId ? workspace : { ...workspace, ...inspectorTabsReducer(workspace, { type: 'close', ids: moved }) }]));
+      key === action.workspaceId ? workspace : closeWorkspaceTabs(workspace, moved, state.lockedIds.size > 0)]));
     workspaces[action.workspaceId] = { ...own, open: true, activeId: tabs[0].id,
       tabs: [...own.tabs, ...tabs.filter(tab => moved.has(tab.id) && !own.tabs.some(existing => existing.id === tab.id))] };
-    const next = { ...state, workspaces };
-    for (const [key, workspace] of Object.entries(workspaces)) {
-      if (!inspectorSession(next, key).tabs.length) workspaces[key] = { ...workspace, open: false };
-    }
-    return next;
+    return { ...state, workspaces };
   }
   if (action.type === 'toggle-lock') {
     if (!retainedInspectorTabs(state).some(tab => tab.id === action.id)) return state;
@@ -107,11 +141,10 @@ export function inspectorSessionsReducer(state: InspectorSessionsState, action: 
     return { ...state, lockedIds };
   }
   if (action.type === 'dispose') {
+    const lockedIds = new Set([...state.lockedIds].filter(id => !action.ids.has(id)));
     const workspaces = Object.fromEntries(Object.entries(state.workspaces).map(([key, workspace]) =>
-      [key, { ...workspace, ...inspectorTabsReducer(workspace, { type: 'close', ids: action.ids }) }]));
-    const next = { workspaces, lockedIds: new Set([...state.lockedIds].filter(id => !action.ids.has(id))) };
-    for (const key of Object.keys(workspaces)) if (!inspectorSession(next, key).tabs.length) workspaces[key] = { ...workspaces[key], open: false };
-    return next;
+      [key, closeWorkspaceTabs(workspace, action.ids, lockedIds.size > 0)]));
+    return { workspaces, lockedIds };
   }
   const visible = inspectorSession(state, action.workspaceId);
   const own = state.workspaces[action.workspaceId] ?? { tabs: [], activeId: '', open: visible.open };
@@ -138,29 +171,24 @@ export function inspectorSessionsReducer(state: InspectorSessionsState, action: 
   }
   if (action.type === 'open-state') {
     const open = typeof action.update === 'function' ? action.update(visible.open) : action.update;
+    if (state.workspaces[action.workspaceId]?.open === open) return state;
     return { ...state, workspaces: { ...state.workspaces, [action.workspaceId]: { ...own, open } } };
   }
   const update = action.action;
   if (update.type === 'close') {
     // Resource closure disposes its guest everywhere. Explicitly opened portals
     // (e.g. the same SSH desktop) may also be referenced by another workspace.
-    const retained = retainedInspectorTabs(state);
-    const ids = new Set([...update.ids].filter(id => retained.some(tab => tab.id === id)));
+    const closing = retainedInspectorTabs(state).filter(tab => update.ids.has(tab.id));
+    const ids = new Set(closing.map(tab => tab.id));
     if (!ids.size) return state;
-    const workspaces = Object.fromEntries(Object.entries(state.workspaces).map(([key, workspace]) => {
-      const closing = key === action.workspaceId ? ids : new Set([...ids].filter(id => state.lockedIds.has(id) || retained.some(tab => tab.id === id && tab.kind === 'resource')));
-      const next = inspectorTabsReducer(workspace, { type: 'close', ids: closing });
-      return [key, { ...workspace, ...next }];
-    }));
+    const globalIds = new Set(closing.filter(tab => tab.kind === 'resource' || state.lockedIds.has(tab.id)).map(tab => tab.id));
     const lockedIds = new Set([...state.lockedIds].filter(id => !ids.has(id)));
-    const next = { workspaces, lockedIds };
-    for (const key of Object.keys(workspaces)) {
-      if (!inspectorSession(next, key).tabs.length) workspaces[key] = { ...workspaces[key], open: false };
-    }
-    return next;
+    const workspaces = Object.fromEntries(Object.entries(state.workspaces).map(([key, workspace]) =>
+      [key, closeWorkspaceTabs(workspace, key === action.workspaceId ? ids : globalIds, lockedIds.size > 0)]));
+    return { workspaces, lockedIds };
   }
   if (update.type === 'activate') {
-    if (!visible.tabs.some(tab => tab.id === update.id)) return state;
+    if (own.activeId === update.id || !visible.tabs.some(tab => tab.id === update.id)) return state;
     return { ...state, workspaces: { ...state.workspaces, [action.workspaceId]: { ...own, activeId: update.id } } };
   }
   const targetId = visible.tabs.some(tab => tab.id === update.tab.id) ? update.tab.id

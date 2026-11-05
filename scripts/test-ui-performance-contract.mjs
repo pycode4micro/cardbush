@@ -185,9 +185,11 @@ assert.match(
 );
 assert.match(
   appSource,
-  /<MessageFileReferenceScope[\s\S]*?<div className="message-list-content">[\s\S]*?renderMessages\.map/,
+  /<MessageFileReferenceScope[^>]*>\s*<div className="message-list-content">(?:(?!<\/MessageFileReferenceScope>)[\s\S])*?\{messageRows\}/,
   'file-reference context must be shared by the list instead of recreated per row',
 );
+assert.match(appSource, /const messageRows = useMemo\(\(\) => renderMessages\.map\(/,
+  'unrelated panel renders must reuse the projected transcript rows');
 assert.match(
   appSource,
   /const activeProjectPathAliases = useMemo\([\s\S]*?conversationProjectPathAliases\(chat\.activeConversation\)[\s\S]*?\[chat\.activeConversation\]/,

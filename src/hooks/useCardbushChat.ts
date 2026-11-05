@@ -8,7 +8,7 @@ import type { ConversationEntry } from '@cardbush/bush-protocol';
 import type { VoiceTarget } from '../features/voice/voiceSession';
 import { adoptDraftConversationSource, resolveConversationSource } from '../features/settings/conversationSource';
 import { adoptDraftConversationStyle } from '../features/settings/conversationStyle';
-import { adoptConversationDraft } from '../shared/conversationDraft';
+import { adoptConversationDraft, notifyConversationDeleted } from '../shared/conversationDraft';
 import { useConversationViewState } from '../shared/conversationViewState';
 import { submissionReceipt } from '../shared/submissionReceipt';
 import { selectedTeamReference, teamReferenceInstructions } from '../shared/promptReferences';
@@ -2090,6 +2090,8 @@ export function useCardbushChat(
       return;
     }
     selectConversationModel('', conversationId, backend.scope);
+    notifyConversationDeleted(conversationId, backend.scope);
+    transcriptVisitsRef.current.delete(conversationId);
     historyReadsRef.current.invalidate(conversationId.trim());
     contextUsageReadsRef.current.invalidate(conversationId.trim());
     clearSessionAttention(conversationId);

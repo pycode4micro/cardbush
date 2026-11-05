@@ -701,6 +701,16 @@ function CardbushApp() {
   const [inspectorNavigationByTarget, setInspectorNavigationByTarget] = useState<
     Record<string, InspectorNavigationState>
   >({});
+  useEffect(() => {
+    const retained = new Set(retainedInspectorTabs.map(tab => tab.id));
+    setInspectorNavigationByTarget(current => {
+      const stale = Object.keys(current).filter(id => !retained.has(id));
+      if (!stale.length) return current;
+      const next = { ...current };
+      for (const id of stale) delete next[id];
+      return next;
+    });
+  }, [retainedInspectorTabs]);
   const composerBrowserTabs = useMemo(() => inspectorBrowserReferences(inspectorTabs, inspectorNavigationByTarget), [inspectorTabs, inspectorNavigationByTarget]);
   useBrowserTabReferences({
     tabs: retainedInspectorTabs, workspaceId: inspectorWorkspaceId, ownerOfTab: inspectorTabOwner,
@@ -933,19 +943,6 @@ function CardbushApp() {
     const closingTabs = retainedInspectorTabs.filter((tab) => closingIdentities.has(tab.id));
     if (closingTabs.length === 0) return;
     removeInspectorTabs(closingIdentities, workspaceId);
-    for (const closingTab of closingTabs) {
-      inspectorWebviewRefs.current.delete(closingTab.id);
-    }
-    setInspectorNavigationByTarget((current) => {
-      const next = { ...current };
-      let changed = false;
-      for (const closingTab of closingTabs) {
-        if (!(closingTab.id in next)) continue;
-        delete next[closingTab.id];
-        changed = true;
-      }
-      return changed ? next : current;
-    });
     if (closingTabs.some((tab) => tab.kind === 'review')) setChangeReviewNotice('');
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);

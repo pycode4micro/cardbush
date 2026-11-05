@@ -23,6 +23,31 @@ const resource = id => ({ id, kind: 'resource', detail: { target: 'https://examp
 const open = (state, workspaceId, id) => reduce(reduce(state, { type: 'tabs', workspaceId, action: { type: 'open', tab: resource(id) } }), { type: 'open-state', workspaceId, update: true });
 const act = (state, workspaceId, action) => reduce(state, { type: 'tabs', workspaceId, action });
 
+test('closing and binding pages preserve unaffected workspaces, including when locks are visible', () => {
+  const ids = [local('first'), local('second'), remote('host', 'first')];
+  let state = ids.reduce((current, id, index) => open(current, id, 'tab-' + index), emptyInspectorSessions);
+  state = reduce(state, { type: 'toggle-lock', id: 'tab-0' });
+  const moved = reduce(state, { type: 'bind-browser', workspaceId: ids[0], ids: ['tab-1', 'tab-1'] });
+  assert.equal(moved.workspaces[ids[2]], state.workspaces[ids[2]]);
+  assert.deepEqual(moved.workspaces[ids[0]].tabs.map(tab => tab.id), ['tab-0', 'tab-1']);
+  const closed = act(moved, ids[1], { type: 'close', ids: new Set(['tab-0']) });
+  assert.equal(closed.workspaces[ids[2]], state.workspaces[ids[2]]);
+  assert.equal(view(closed, ids[1]).open, false, 'closing the last shared tab collapses the empty pane');
+  assert.equal(view(closed, ids[0]).tabs, closed.workspaces[ids[0]].tabs);
+});
+
+test('deleting a conversation drops its private pages and keeps locks reachable on the same host', () => {
+  const a = remote('first', 'conversation'), b = remote('second', 'conversation'), draft = remote('first', '');
+  let state = open(open(open(emptyInspectorSessions, a, 'private'), a, 'keep'), b, 'unrelated');
+  state = reduce(state, { type: 'toggle-lock', id: 'keep' });
+  const next = reduce(state, { type: 'delete-workspace', workspaceId: a, draftId: draft });
+  assert.equal(next.workspaces[a], undefined);
+  assert.equal(owner(next, 'private'), undefined);
+  assert.equal(owner(next, 'keep'), draft);
+  assert.equal(next.workspaces[b], state.workspaces[b]);
+  assert.ok(next.lockedIds.has('keep'));
+});
+
 test('start-page navigation preserves the source slot and opens additional files in the background', () => {
   const workspaceId = local('a'), tabId = 'blank';
   let state = open(open(open(emptyInspectorSessions, workspaceId, 'left'), workspaceId, tabId), workspaceId, 'right');
