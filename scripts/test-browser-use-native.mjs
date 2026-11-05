@@ -14,6 +14,14 @@ if (process.platform !== 'win32') throw new Error('This regression requires Wind
 const workspaceTmp = path.resolve('tmp');
 await fs.mkdir(workspaceTmp, { recursive: true });
 const root = await fs.mkdtemp(path.join(workspaceTmp, 'browser-use-native-'));
+const extensionPath = path.join(root, 'extension');
+await fs.cp(path.resolve('assets/plugins/browser/extension'), extensionPath, { recursive: true });
+// This manual-pairing fixture must never auto-enroll with the user's running App.
+const workerPath = path.join(extensionPath, 'background.js');
+await fs.writeFile(workerPath, (await fs.readFile(workerPath, 'utf8')).replace(
+  'const managedScopesReady = storageReady.then',
+  "const fixtureReady = storageReady.then(async () => { const saved = await chrome.storage.local.get(CONNECTOR_ENABLED_KEY); if (saved[CONNECTOR_ENABLED_KEY] === undefined) await chrome.storage.local.set({ [CONNECTOR_ENABLED_KEY]: false }); });\nconst managedScopesReady = fixtureReady.then",
+).replace('const reconnectReady = storageReady.then', 'const reconnectReady = fixtureReady.then'));
 const report = { startedAt: new Date().toISOString(), success: false, browsers: [], checks: [] };
 const chromeOnly = process.argv.includes('--chrome-only');
 const quietTabs = process.argv.includes('--quiet-tabs');
@@ -59,7 +67,7 @@ async function startBrowser(browser, executable, existingId = '') {
     child.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
   });
   const version = await send('Browser.getVersion');
-  const extension = await send('Extensions.loadUnpacked', { path: path.resolve('assets/plugins/browser/extension') });
+  const extension = await send('Extensions.loadUnpacked', { path: extensionPath });
   assert.equal(extension.id, 'iibaamkfgackofhhpadgnmgcjkhckeln');
   if (existingId) await until(() => broker.status().connections.some(connection => connection.id === existingId && connection.connected), `${browser} restart auto-connect before opening popup`);
   const target = await send('Target.createTarget', { url: `chrome-extension://${extension.id}/popup.html` });
@@ -75,8 +83,9 @@ async function startBrowser(browser, executable, existingId = '') {
     const pairing = broker.createPairing({ browser, label: `${browser} native test` });
     const result = await evaluate(`chrome.runtime.sendMessage(${JSON.stringify({ action: 'pair', code: pairing.code })})`);
     assert.equal(result.ok, true, JSON.stringify(result));
-    id = pairing.id;
-    await until(() => broker.status().connections.some(connection => connection.id === id && connection.connected), `${browser} pairing`);
+    // A one-use ticket ID is not the stable browser profile connection ID.
+    const connected = await until(() => broker.status().connections.find(connection => connection.browser === browser && connection.connected), `${browser} pairing`);
+    id = connected.id;
   }
   report.browsers.push({ browser, version: version.product, userAgent: version.userAgent, extension: await evaluate('chrome.runtime.getManifest().version'), restarted: Boolean(existingId) });
   return { id, item, evaluate };
@@ -141,7 +150,7 @@ try {
       report.checks.push(`${name}: background creation/selection, repeated real typing/clicks, screenshot, release and explicit foreground presentation preserve the correct active tab`);
       continue;
     }
-    const allowed = await connection.evaluate(`chrome.tabs.update(${JSON.stringify(tabId)}, {active:true}).then(() => chrome.runtime.sendMessage({action:'allow_all',scopeId:${JSON.stringify(name)}}))`);
+    const allowed = await connection.evaluate(`chrome.tabs.update(${JSON.stringify(tabId)}, {active:true}).then(() => chrome.runtime.sendMessage({action:'copy_tab',scopeId:${JSON.stringify(name)}}))`);
     assert.equal(allowed.ok, true);
     assert.equal(allowed.allowAllSites, true);
     report.checks.push(`${name}: select, create, accessibility snapshot, fill, click, evaluate, screenshot, isolated page listing`);
@@ -156,7 +165,7 @@ try {
     assert.equal(state.connectorEnabled, true);
     assert.equal(state.hasPairing, true);
     assert.equal(state.allowAllSites, true);
-    await until(() => connection.evaluate('document.querySelector("#connection").textContent.includes("自动重连") && document.querySelector("#site-access").textContent.includes("已保存")'), 'popup reflects offline state and retained consent');
+    await until(() => connection.evaluate('document.querySelector("#connection").classList.contains("waiting") && document.querySelector("#site-access").textContent === CardBushExtensionI18n.uiText(document.documentElement.lang)("browser.extension.allSitesSaved")'), 'popup reflects offline state and retained consent');
   }
   portOccupant = net.createServer(socket => socket.destroy());
   await new Promise((resolve, reject) => { portOccupant.once('error', reject); portOccupant.listen(savedConnectorPort, '127.0.0.1', resolve); });
@@ -189,18 +198,18 @@ try {
   await call('edge', 'release_browser');
   await call('chrome', 'release_browser');
   report.checks.push('default changes preserve bindings; explicit switch releases Chrome and preserves Edge session isolation');
-  assert.equal((await edge.evaluate('chrome.runtime.sendMessage({action:"revoke"})')).allowAllSites, false);
-  assert.equal(broker.status().connections.find(connection => connection.id === edge.id)?.connected, true);
-  report.checks.push('explicit site permission revocation leaves pairing connected');
+  assert.equal((await edge.evaluate('chrome.runtime.sendMessage({action:"disable_connector"})')).nativeConnected, false);
+  await until(() => !broker.status().connections.find(connection => connection.id === edge.id)?.connected, 'disabled Edge disconnects');
+  report.checks.push('connection permission is shared across websites; stopping control preserves pairing');
   } else {
     await call('chrome', 'release_browser');
-    assert.equal((await chrome.evaluate('chrome.runtime.sendMessage({action:"revoke"})')).allowAllSites, false);
+    assert.equal((await chrome.evaluate('chrome.runtime.sendMessage({action:"status"})')).allowAllSites, true);
     assert.equal(broker.status().connections.find(connection => connection.id === chrome.id)?.connected, true);
-    report.checks.push('explicit site permission revocation leaves pairing connected');
+    report.checks.push('connection permission is shared across websites; stopping control preserves pairing');
   }
   broker.revokeConnection(chrome.id);
   await until(async () => !(await chrome.evaluate('chrome.runtime.sendMessage({action:"status"})')).connectorEnabled, 'revoked extension stays disabled');
-  if (edge) assert.equal(broker.status().connections.find(connection => connection.id === edge.id)?.connected, true);
+  if (edge) await until(() => !broker.status().connections.find(connection => connection.id === edge.id)?.connected, 'disabled Edge disconnects');
   await broker.disableExtension();
   await until(() => broker.status().connections.every(connection => !connection.connected), 'disable all browsers');
   report.checks.push(edge ? 'individual revocation and global disable' : 'individual revocation');

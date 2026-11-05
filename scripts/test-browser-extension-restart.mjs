@@ -264,7 +264,7 @@ for (const browser of ['chrome', 'edge']) test(`${browser}: real extension trans
   const status = await restarted.status();
   assert.equal(status.hasPairing, true);
   assert.equal(status.allowAllSites, true);
-  assert.equal(status.allowedSiteCount, 1);
+  assert.equal(status.allowedSiteCount, undefined, 'connection consent replaces individual site grants');
   assert.equal(local.cardbushConnectorEnabled, true);
   assert.equal(local.cardbushConnectorPairingV2.split('.').slice(2).join('.'), pairing.split('.').slice(2).join('.'));
 });

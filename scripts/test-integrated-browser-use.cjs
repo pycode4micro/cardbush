@@ -42,8 +42,9 @@ async function run() {
     sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:true,backgroundThrottling:false,offscreen:true}});
   installInspectorWindowOpen(window.webContents);
   const browserActions=[];
-  const integrated=new IntegratedBrowser({getContents:id=>webContents.fromId(id),defaultOwner:()=>window.webContents,
+  const createIntegrated=()=>new IntegratedBrowser({getContents:id=>webContents.fromId(id),defaultOwner:()=>window.webContents,
     action:(ownerId,action)=>{browserActions.push(action);webContents.fromId(ownerId)?.send('inspector:browser-action',action);}});
+  let integrated=createIntegrated();
   const externalCalls=[];
   const externalId='a'.repeat(32);
   const external=async(method,params)=>{
@@ -237,17 +238,6 @@ async function run() {
   await ui(`browserFixture.open({target:${JSON.stringify(url)}})`);
   await until(()=>ui(`Boolean(browserFixture.navigation[${JSON.stringify(url)}]?.guestWebContentsId!==${pageId})`),'Replacement page not ready');
   await assert.rejects(router.bindReferences(window.webContents,scope,[{tabId:url,pageId:String(pageId)}]),/closed or replaced/);
-  // Persisted CardBush selection after restart is fail-closed until explicitly re-selected.
-  const restarted=new BrowserUseRouter(new IntegratedBrowser({getContents:()=>undefined,defaultOwner:()=>window.webContents,action(){}}),{external,routesPath});
-  await assert.rejects(restarted.request('tabs.list',{scopeId:scope}),error=>error.code==='cardbush_browser_reselect_required');
-  await assert.rejects(restarted.request('tabs.list',{scopeId:assistantChild}),error=>error.code==='cardbush_browser_reselect_required');
-  assert.deepEqual(await restarted.inheritScope('personal-assistant','new-child-after-restart'),{inherited:false},'missing tabs cannot block unrelated child tasks');
-  await assert.rejects(restarted.request('tabs.list',{scopeId:'new-child-after-restart'}),error=>error.code==='cardbush_browser_reselect_required');
-  assert.equal(externalCalls.length,externalBefore);
-  await restarted.request('browser.select',{scopeId:'new-child-after-restart',connectionId:'cardbush'});
-  assert.deepEqual(await restarted.request('tabs.list',{scopeId:'new-child-after-restart'}),{pages:[],selectedPageId:null,selectionState:'none'},
-    'a child can explicitly select CardBush for new work without requiring a user @ or restoring old grants');
-  await assert.rejects(restarted.request('tabs.activate',{scopeId:'new-child-after-restart',tabId:pageId}),error=>error.code==='cardbush_page_not_authorized');
   success(await call('select_browser',{connectionId:externalId}));
   assert.equal(success(await call('list_pages')).selectedPageId,637760547);
   success(await call('select_browser',{connectionId:externalId},assistantChild));
@@ -370,6 +360,30 @@ async function run() {
   await until(()=>ui(`browserFixture.activeId===${JSON.stringify(draftTab)}`),'Original selected tab was not restored');
   assert.equal(success(await call('list_pages',{},firstTurn)).pages[0].visible,true);
   success(await call('take_screenshot',{format:'png'},firstTurn));
+  // Restart restores browser availability without importing stale or unrelated tabs.
+  await router.request('browser.select',{scopeId:scope,connectionId:'cardbush'});
+  await router.request('browser.select',{scopeId:assistantChild,connectionId:'cardbush'});
+  const externalBeforeRestart=externalCalls.length;
+  const beforeRestart=integrated;
+  integrated=createIntegrated();
+  const restarted=new BrowserUseRouter(integrated,{external,routesPath});
+  const emptyPages={pages:[],selectedPageId:null,selectionState:'none'};
+  assert.deepEqual(await restarted.request('tabs.list',{scopeId:scope}),emptyPages);
+  assert.deepEqual(await restarted.request('tabs.list',{scopeId:assistantChild}),emptyPages);
+  assert.deepEqual(await restarted.inheritScope('personal-assistant','new-child-after-restart'),{inherited:false},'missing tabs cannot block unrelated child tasks');
+  assert.deepEqual(await restarted.request('tabs.list',{scopeId:'new-child-after-restart'}),emptyPages);
+  assert.equal(externalCalls.length,externalBeforeRestart);
+  await restarted.request('browser.select',{scopeId:'new-child-after-restart',connectionId:'cardbush'});
+  assert.deepEqual(await restarted.request('tabs.list',{scopeId:'new-child-after-restart'}),{pages:[],selectedPageId:null,selectionState:'none'},
+    'a child can explicitly select CardBush for new work without requiring a user @ or restoring old grants');
+  await assert.rejects(restarted.request('tabs.activate',{scopeId:'new-child-after-restart',tabId:pageId}),error=>error.code==='cardbush_page_not_authorized');
+  const recoveredPage=await restarted.request('tabs.create',{scopeId:'new-child-after-restart',url});
+  assert.equal((await restarted.request('tabs.list',{scopeId:'new-child-after-restart'})).pages[0].id,recoveredPage.id,
+    'a real integrated guest can be created immediately after restart without a user @');
+  await assert.rejects(restarted.request('tabs.activate',{scopeId:scope,tabId:recoveredPage.id}),error=>error.code==='cardbush_page_not_authorized');
+  assert.equal(externalCalls.length,externalBeforeRestart,'recovery never falls through to Chrome');
+  await restarted.request('tabs.close',{scopeId:'new-child-after-restart',tabId:recoveredPage.id});
+  integrated=beforeRestart;
   console.log('Passed integrated Browser Use: native guest preservation across first-turn references, confirmed visibility and hidden screenshot guards, background workspace isolation, Runtime discovery, HTTP MCP, uploads, delegation, cancellation, closed/replaced targets and external-browser isolation.');
 }
 run().then(async()=>{await client?.close();await endpoint?.close();fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(0);},async error=>{console.error(error);await client?.close().catch(()=>{});await endpoint?.close().catch(()=>{});fixture?.closeAllConnections();fixture?.close();window?.destroy();clearTimeout(deadline);app.exit(1);});

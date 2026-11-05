@@ -13,7 +13,7 @@ Development installation:
 1. Run CardBush App or the local CLI on Windows 10 / 11 and install/enable Browser Use.
 2. Open `chrome://extensions` or `edge://extensions` in that browser, enable Developer mode, and choose **Load unpacked**.
 3. Select this directory and approve the first connection once in the CardBush-styled
-   extension window. No system dialog or pairing code is needed. Page access still requires authorization. Start a browser task in CardBush. New tabs are
+   extension window. No system dialog or pairing code is needed. This connection consent includes all websites; tool permissions still apply. Start a browser task in CardBush. New tabs are
    placed in a cyan group named for that CardBush session. The connector only
    lists and controls tabs in that session's groups.
 4. To use an existing personal tab, open the extension popup and explicitly
@@ -28,13 +28,23 @@ Version 1.2.4 recovers when a saved loopback port is occupied or denied by Windo
 Reload the existing extension after upgrading; do not uninstall it, which deletes its saved state. Version 1.4 discovers the enabled local connector and requests consent once in a CardBush-styled extension window. No Windows system dialog is opened. No `nativeMessaging` permission or registry registration is required. An already saved pairing continues to use the authenticated WebSocket transport without another dialog.
 `list_browsers` and `select_browser` expose the connected profiles to the agent. The configured default applies only to unbound sessions; existing bindings survive a broker restart. Switching explicitly releases the old session scope first. A failed release or disconnect never falls through to another browser. Browser and profile labels describe the target; the pairing credential and exact Origin authenticate it.
 
-Turn completion suspends the browser debugger and collapses managed groups, but
-does not discard the session's tab grants. A pending authorization remains
-available in the popup for five minutes so it can be completed after the model
-turn has ended. When several CardBush sessions are awaiting access, the popup
-requires an explicit target-session selection. Temporary grants are kept in
-`chrome.storage.session`, while per-site and all-site grants remain explicitly
-revocable persistent settings.
+Version 1.5.2 includes website access in connection consent. Existing paired
+connections keep working after an extension reload; legacy per-site settings are
+no longer admission gates. There are no once-only or per-site grant buttons.
+Personal tabs still require an explicit **Copy this page to the conversation
+group** action. Tools cannot list or control another conversation's tabs.
+Disabling stops the connection; removing it in CardBush revokes its credentials.
+
+Turn completion suspends the debugger and collapses background groups without
+revoking the connection. Recent task destinations stay in the popup for five
+minutes; when more than one task is eligible, choose the target conversation.
+Group identities remain browser-session state and cannot import unrelated tabs
+after a browser restart.
+
+The integrated browser restores an empty conversation scope automatically after
+a host restart. Listing and creating pages need no new @ reference. Old page and
+element identities remain invalid: take a fresh list/snapshot, and only ask the
+user to identify a page when the task specifically needs that existing page.
 
 Visual verification uses `take_screenshot`, `resize_page`, and `export_image`.
 An accidental viewport narrower than 320 CSS pixels (or shorter than 180) is
@@ -156,4 +166,4 @@ An untrusted local service cannot authorize itself by claiming approval. Closing
 rejecting or timing out denies the request; no UAC or privilege elevation is involved.
 MSIX keeps registry and filesystem
 virtualization enabled and adds no `unvirtualizedResources` capability or execution
-alias. Website authorization remains separate from connection consent.
+alias. Connection consent includes all websites; Runtime tool permissions and tab isolation remain enforced.

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
@@ -10,6 +10,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ts from 'typescript';
 import * as protocol from '@cardbush/bush-protocol';
+import { uiText } from '@cardbush/platform/i18n';
 import { createProductAgentTurnRequest } from '../packages/bush-product-agent/dist/index.js';
 
 const cache = new Map();
@@ -20,7 +21,12 @@ function load(file) {
   cache.set(file, exports);
   const require = createRequire(file);
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  new Function('exports', 'require', code)(exports, name => name === '@cardbush/bush-protocol' ? protocol : name.startsWith('.') ? load(resolve(dirname(file), name + '.ts')) : require(name));
+  new Function('exports', 'require', code)(exports, name => {
+    if (name === '@cardbush/bush-protocol') return protocol;
+    if (!name.startsWith('.')) return require(name);
+    const base = resolve(dirname(file), name);
+    return load([base + '.ts', base + '.tsx', resolve(base, 'index.ts')].find(existsSync) ?? base);
+  });
   return exports;
 }
 const refs = load('src/shared/promptReferences.ts');
@@ -444,7 +450,8 @@ test('browser references resolve exact CardBush guest identities and never subst
   await assert.rejects(resolvePromptReferenceContext(content+' '+missing,'current',undefined,'en',undefined,undefined,undefined,resolveBrowser),/Cannot reference/);
   assert.equal(calls.length,1,'an invalid draft does not change the browser target');
   const { rejectRemoteBrowserReferences } = load('src/backend/promptReferenceContext.ts');
-  await assert.rejects(resolvePromptReferenceContext(content,'remote',undefined,'en',undefined,undefined,undefined,rejectRemoteBrowserReferences),/远程 Agent/);
+  await assert.rejects(resolvePromptReferenceContext(content,'remote',undefined,'en',undefined,undefined,undefined,rejectRemoteBrowserReferences),
+    { message: uiText()('promptReferenceContext.this_reference_belongs_to_a_local_cardbush') });
   await assert.rejects(resolvePromptReferenceContext(content,'current',undefined,'en',undefined,undefined,undefined,async()=>{throw Error('selected tab closed');}),/selected tab closed/);
 });
 

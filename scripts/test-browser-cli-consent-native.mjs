@@ -58,7 +58,7 @@ try {
     }
     // A second extension page possessing the URL/nonce still cannot approve.
     const token = new URL(target.url).hash.slice(1);
-    const action = page === 'connection.html' ? 'confirm_connection' : 'confirm_site';
+    const action = 'confirm_connection';
     assert.equal((await evaluate(`chrome.runtime.sendMessage(${JSON.stringify({ action, token, allow: true })})`)).ok, false);
     await cdp.evaluate(`document.querySelector(${JSON.stringify(button)}).click()`, session).catch(error => {
       if (!/closed|destroyed|No session/i.test(error.message)) throw error;
@@ -95,28 +95,21 @@ try {
   const cookie = await request('debugger.command', { tabId: tab.id, command: 'Runtime.evaluate', commandParams: { expression: 'document.cookie', returnByValue: true } });
   assert.ok(cookie.result.value.includes(`fixture_login=${kind}`));
   assert.deepEqual((await request('tabs.list')).map(t => t.id), [tab.id], 'private tabs stay hidden');
-  await assert.rejects(request('tabs.navigate', { tabId: tab.id, url: origins[1] }), { code: 'site_permission_required' });
-  await consent('authorization.html', '#site', 'site');
-  assert.equal((await request('tabs.list'))[0].url, origins[0] + '/', 'approval never replays a blocked navigation');
-  await request('tabs.navigate', { tabId: tab.id, url: origins[1] });
-  assert.ok((await evaluate('chrome.storage.local.get("allowedOrigins").then(x=>x.allowedOrigins)')).includes(origins[1]));
-  assert.ok(!(await evaluate('chrome.storage.session.get("cardbushPendingAuthorizations").then(x=>x.cardbushPendingAuthorizations)')).some(p => p.origin === origins[1]),
-    'successful consent clears the pending request');
-  await assert.rejects(request('tabs.navigate', { tabId: tab.id, url: origins[2] }), { code: 'site_permission_required' });
-  await consent('authorization.html', '#once');
-  await request('tabs.navigate', { tabId: tab.id, url: origins[2] });
-  assert.ok(!(await evaluate('chrome.storage.local.get("allowedOrigins").then(x=>x.allowedOrigins)')).includes(origins[2]));
-  await request('tabs.list', {}, 'app-task');
+  assert.equal((await status()).allowAllSites, true);
+  for (const url of [origins[1], origins[2], origins[0]]) {
+    await request('tabs.navigate', { tabId: tab.id, url });
+    await until(async () => (await request('tabs.list')).find(page => page.id === tab.id)?.url === url + '/', 'cross-site navigation completes');
+  }
   await request('browser.select', { connectionId }, 'app-task');
   const appTab = await request('tabs.create', { url: origins[0] }, 'app-task');
-  await request('tabs.navigate', { tabId: appTab.id, url: origins[1] }, 'app-task');
-  assert.equal((await send('Target.getTargets')).targetInfos.some(t => t.url.includes('/authorization.html')), false);
-  await assert.rejects(request('tabs.navigate', { tabId: appTab.id, url: origins[2] }, 'app-task'), { code: 'site_permission_required' });
-  await consent('authorization.html', '#cancel');
-  await assert.rejects(request('tabs.navigate', { tabId: appTab.id, url: origins[2] }, 'app-task'), { code: 'site_permission_required' });
-  assert.equal((await send('Target.getTargets')).targetInfos.some(t => t.url.includes('/authorization.html')), false, 'denial does not reopen the dialog');
-  report.checks.push('Allow once stays scoped to its task; cancellation prevents navigation and repeated requests do not reopen consent');
-  report.checks.push('CLI site consent appears; saved site permission and same-profile login are reused while private tabs stay isolated');
+  await request('tabs.navigate', { tabId: appTab.id, url: origins[2] }, 'app-task');
+  await assert.rejects(request('debugger.command', { tabId: tab.id, command: 'Runtime.evaluate' }, 'app-task'), { code: 'unmanaged_tab' });
+  await assert.rejects(request('tabs.navigate', { tabId: appTab.id, url: origins[1] }), { code: 'unmanaged_tab' });
+  assert.equal((await send('Target.getTargets')).targetInfos.some(t => /\/(authorization|connection)\.html/.test(t.url)), false);
+  const popupText = await evaluate('document.body.innerText');
+  assert.doesNotMatch(popupText, /仅本次|始终允许此网站/);
+  report.checks.push('One connection consent covers all websites for App and CLI; cross-conversation tabs remain inaccessible');
+  report.checks.push('Cross-site navigation needs no dialog; private tabs stay isolated and same-profile login is reused');
   for (const command of ['Target.getTargets', 'Network.getAllCookies', 'Storage.getCookies']) {
     await assert.rejects(request('debugger.command', { tabId: tab.id, command }), { code: 'unsupported_debugger_command' });
   }
@@ -124,7 +117,8 @@ try {
   await until(async () => (await cli.sync()).state === 'running' && (await request('browser.list')).connections.some(c => c.id === connectionId && c.connected), 'CLI takes over after App exits');
   assert.deepEqual((await read(path.join(profile, 'browser-connector/pairing.json'))).credentials, saved.credentials);
   assert.equal((await send('Target.getTargets')).targetInfos.some(t => t.url.includes('/connection.html')), false);
-  await request('tabs.list');
+  await request('tabs.navigate', { tabId: tab.id, url: origins[1] });
+  await until(async () => (await request('tabs.list'))[0]?.url === origins[1] + '/', 'navigation after reconnect');
   report.checks.push('App exit hands the same credential to CLI; no new approval, and global CDP access is rejected');
   report.success = true;
 } catch (error) { report.error = error.stack; process.exitCode = 1; }

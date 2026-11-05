@@ -192,6 +192,11 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal(attached.size, 0);
   stored.allowAllSites = false;
 
+  const blank = await nativeRequest(nativeMessages, posted, 'tabs.create', { ...SCOPE_A, url: 'about:blank' });
+  assert.equal((await debug(nativeMessages, posted, SCOPE_A, blank.result.id)).result.accepted, true);
+  assert.equal((await nativeRequest(nativeMessages, posted, 'tabs.navigate', { ...SCOPE_A, tabId: blank.result.id, url: 'https://first.example/' })).result.url, 'https://first.example/');
+  await nativeRequest(nativeMessages, posted, 'tabs.close', { ...SCOPE_A, tabId: blank.result.id });
+
   const createdA = await nativeRequest(nativeMessages, posted, 'tabs.create', {
     ...SCOPE_A,
     url: 'https://a.example/',
@@ -227,12 +232,13 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
     }
     return originalCommand(target, command, params);
   };
+  const commandsBeforeConcurrentReads = debuggerCommands.length;
   const firstRead = debug(nativeMessages, posted, SCOPE_A, tabA.id);
   await eventually(() => Boolean(completeAttachment));
   const secondRead = debug(nativeMessages, posted, SCOPE_A, tabA.id);
   await flush();
   assert.equal(initializationCalls, 1);
-  assert.equal(debuggerCommands.length, 0, 'concurrent reads wait for background control initialization');
+  assert.equal(debuggerCommands.length, commandsBeforeConcurrentReads, 'concurrent reads wait for background control initialization');
   completeAttachment({});
   assert.ok((await Promise.all([firstRead, secondRead])).every(reply => reply.result.accepted));
   chrome.debugger.sendCommand = originalCommand;
@@ -295,24 +301,15 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
     action: 'url',
     url: 'https://different.example/',
   });
-  assert.equal(crossOriginA.error.code, 'site_permission_required');
-  assert.equal(tabA.url, 'https://a.example/continued');
+  assert.equal(crossOriginA.result.url, 'https://different.example/');
+  assert.equal(tabA.url, 'https://different.example/');
   await flush();
-  assert.equal(consentWindows.length, 1, 'a blocked site request opens browser-owned consent for CLI and App');
-  const consentUrl = consentWindows[0].url, token = new URL(consentUrl).hash.slice(1);
-  const consentSender = { id: 'fixture', url: consentUrl, tab: { id: 9001 } };
-  const consentMessage = (message, sender = consentSender) => new Promise(resolve => runtimeMessages.emit(message, sender, resolve));
-  assert.equal((await consentMessage({ action: 'site_state', token })).origin, 'https://different.example');
-  for (const sender of [{ ...consentSender, tab: { id: tabA.id } }, { ...consentSender, url: 'https://evil.example/' },
-    { ...consentSender, id: 'another-extension' }]) {
-    assert.equal((await consentMessage({ action: 'confirm_site', token, allow: 'site' }, sender)).ok, false);
+  assert.equal(consentWindows.length, 0, 'connection consent covers cross-site navigation without another dialog');
+  const popupMessage = (message, sender) => new Promise(resolve => runtimeMessages.emit(message, sender, resolve));
+  assert.equal((await popupMessage({ action: 'copy_tab', scopeId: SCOPE_A.scopeId }, { id: 'fixture', url: 'https://evil.example/' })).ok, false);
+  for (const action of ['allow_once', 'allow_site', 'allow_all', 'revoke']) {
+    assert.equal((await popupRequest(runtimeMessages, action)).error.code, 'unsupported_popup_action');
   }
-  assert.equal((await consentMessage({ action: 'allow_all' }, { id: 'fixture', url: 'https://evil.example/' })).ok, false);
-  assert.equal(stored.allowAllSites, false);
-  assert.equal((await consentMessage({ action: 'confirm_site', token, allow: false })).ok, true);
-  await nativeRequest(nativeMessages, posted, 'tabs.navigate', { ...SCOPE_A, tabId: tabA.id, url: 'https://different.example/' });
-  assert.equal(consentWindows.length, 1, 'denial does not cause another dialog on repeated tool calls');
-  assert.equal((await consentMessage({ action: 'confirm_site', token, allow: 'site' })).ok, false, 'used tokens cannot grant access');
   for (const command of ['Target.getTargets', 'Target.attachToTarget', 'Network.getAllCookies', 'Storage.getCookies', 'Browser.close', 'Page.navigate']) {
     const result = await nativeRequest(nativeMessages, posted, 'debugger.command', { ...SCOPE_A, tabId: tabA.id, command });
     assert.equal(result.error.code, 'unsupported_debugger_command');
@@ -366,16 +363,15 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal(groupA.collapsed, true);
   assert.equal(groupB.collapsed, false);
   const expiredA = await debug(nativeMessages, posted, SCOPE_A, tabA.id);
-  assert.equal(expiredA.error.code, 'site_permission_required');
+  assert.equal(expiredA.result.accepted, true, 'stopping control does not revoke connection consent');
 
   nativeMessages.emit({ type: 'control', method: 'debugger.suspendAll' });
   await eventually(() => attached.size === 0 && groupA.collapsed && groupB.collapsed);
   setActiveTab(tabs, tabA, (value) => { activeTabId = value; });
   const pendingAfterTurn = await popupRequest(runtimeMessages, 'status');
   assert.equal(pendingAfterTurn.activeScope.id, SCOPE_A.scopeId);
-  assert.equal(pendingAfterTurn.pendingAuthorization, true);
   assert.ok(pendingAfterTurn.scopeCandidates.some((candidate) => candidate.id === SCOPE_B.scopeId));
-  const reauthorizedA = await popupRequest(runtimeMessages, 'allow_once');
+  const reauthorizedA = await popupRequest(runtimeMessages, 'copy_tab');
   assert.equal(reauthorizedA.ok, true);
   assert.equal((await debug(nativeMessages, posted, SCOPE_A, tabA.id)).result.accepted, true);
 
@@ -385,11 +381,11 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal(ambiguousScope.activeScope, null);
   assert.equal(ambiguousScope.scopeCandidates.length, 2);
   const copied = await popupRequest(runtimeMessages, {
-    action: 'allow_once',
+    action: 'copy_tab',
     scopeId: SCOPE_A.scopeId,
   });
   assert.equal(copied.ok, true);
-  assert.equal(copied.access, 'once');
+  assert.equal(copied.allowAllSites, true);
   assert.equal(requiredTab(tabs, 22).groupId, -1);
   const copiedTab = requiredTab(tabs, copied.copiedTabId);
   assert.equal(copiedTab.groupId, groupA.id);
@@ -409,17 +405,17 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   assert.equal(activeTabId, copiedTab.id);
   assert.equal(groupB.collapsed, true);
   assert.ok(Array.isArray(sessionStored.cardbushManagedScopes));
-  assert.ok(Array.isArray(sessionStored.cardbushSessionGrants));
+  assert.ok(Array.isArray(sessionStored.cardbushScopeLeases));
   const suspendedState = await popupRequest(runtimeMessages, {
     action: 'status',
     scopeId: SCOPE_A.scopeId,
   });
   assert.equal(suspendedState.activeScope.id, SCOPE_A.scopeId);
-  assert.equal(suspendedState.access, 'once');
+  assert.equal(suspendedState.allowAllSites, true);
   assert.equal((await debug(nativeMessages, posted, SCOPE_A, copiedTab.id)).result.accepted, true);
 
   nativeMessages.emit({ type: 'control', method: 'debugger.detachAll' });
-  await eventually(() => attached.size === 0 && sessionStored.cardbushSessionGrants.length === 0);
+  await eventually(() => attached.size === 0 && sessionStored.cardbushScopeLeases.length === 0);
   const releasedState = await popupRequest(runtimeMessages, 'status');
   assert.equal(releasedState.activeScope, null);
   assert.equal(releasedState.scopeCandidates.length, 0);
@@ -446,7 +442,7 @@ test('MV3 worker isolates sessions and recovers screenshot timeouts without over
   await popupRequest(runtimeMessages, 'disable_connector');
 });
 
-test('MV3 worker restores a live scope lease and session tab grant', async () => {
+test('MV3 worker restores isolated groups without depending on legacy site grants', async () => {
   const workerPath = path.resolve(
     import.meta.dirname,
     '../../../assets/plugins/browser/extension/background.js',
@@ -547,7 +543,7 @@ test('MV3 worker restores a live scope lease and session tab grant', async () =>
   nativeMessages.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
   assert.equal((await popupRequest(runtimeMessages, 'status')).nativeConnected, true);
   assert.equal(restoredState.activeScope.id, SCOPE_A.scopeId);
-  assert.equal(restoredState.access, 'once');
+  assert.equal(restoredState.allowAllSites, true);
   const restoredDebug = await debug(nativeMessages, posted, SCOPE_A, 22);
   assert.equal(restoredDebug.result.restored, true);
   assert.deepEqual([...attached], [22]);

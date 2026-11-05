@@ -147,8 +147,10 @@ export class BrowserUseRouter {
       return selected;
     }
     if (route === 'cardbush') {
-      if (!this.integrated.hasScope(scope)) throw new BrowserConnectorError('cardbush_browser_reselect_required',
-        'This conversation is bound to CardBush. After restart, select the intended tab again with @ (or explicitly select CardBush to create a new tab). Chrome/Edge was not used.');
+      // Restore the conversation's browser after a host restart. This creates
+      // an empty scope, never grants another conversation's tabs or revives
+      // stale page/element identities. Discovery and new work can continue.
+      this.integrated.select(scope);
       if (typeof params.expectedTargetKey === 'string' && !params.expectedTargetKey.startsWith('cardbush:')) throw new BrowserConnectorError('browser_target_changed', 'The user selected a CardBush tab. Take a fresh snapshot; old browser element ids cannot be reused.');
       const deadline = new AbortController();
       const timer = setTimeout(() => deadline.abort(new BrowserConnectorError('cardbush_browser_timeout',

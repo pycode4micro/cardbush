@@ -23,10 +23,8 @@ let connectorPreferenceQueue = Promise.resolve();
 let connectionCleanup = Promise.resolve();
 const MANAGED_SCOPES_STORAGE_KEY = 'cardbushManagedScopes';
 const ACTIVE_SCOPE_STORAGE_KEY = 'cardbushActiveScope';
-const SESSION_GRANTS_STORAGE_KEY = 'cardbushSessionGrants';
 const SCOPE_LEASES_STORAGE_KEY = 'cardbushScopeLeases';
-const PENDING_AUTHORIZATIONS_STORAGE_KEY = 'cardbushPendingAuthorizations';
-const AUTHORIZATION_LEASE_TTL_MS = 5 * 60_000;
+const SCOPE_LEASE_TTL_MS = 5 * 60_000;
 const GROUP_COLOR = 'cyan';
 const GROUP_TITLE_PREFIX = 'CardBush · ';
 // The bridge is a page tool, not a browser-wide CDP tunnel. In particular,
@@ -61,17 +59,7 @@ const attachmentReady = new Map();
 const viewportTabs = new Set();
 const downloadManager = createDownloadManager(chrome);
 const pendingScreenshots = new Map();
-const sessionGrants = new Map();
 const scopeLeases = new Map();
-const pendingAuthorizations = new Map();
-const siteConsentWindows = new Map();
-const SITE_CONSENT_LIMIT = 3;
-let sitePermissionQueue = Promise.resolve();
-function updateSitePermissions(operation) {
-  const next = sitePermissionQueue.catch(() => {}).then(operation);
-  sitePermissionQueue = next;
-  return next;
-}
 const managedScopes = new Map();
 const tabReferenceKeys = new Map();
 let tabReferenceKeysDirty = false;
@@ -86,7 +74,7 @@ const storageReady = (async () => {
   if (saved.cardbushCredentialCacheVersion !== 1) {
     await chrome.storage.local.remove([PAIRING_KEY, AUTOMATIC_IDENTITY_KEY, RECONNECT_STATE_KEY, 'allowedOrigins', 'allowAllSites']);
     await chrome.storage.session.remove([RECONNECT_STATE_KEY, MANAGED_SCOPES_STORAGE_KEY, ACTIVE_SCOPE_STORAGE_KEY,
-      SESSION_GRANTS_STORAGE_KEY, SCOPE_LEASES_STORAGE_KEY, PENDING_AUTHORIZATIONS_STORAGE_KEY, TAB_REFERENCE_KEYS]);
+      'cardbushSessionGrants', SCOPE_LEASES_STORAGE_KEY, 'cardbushPendingAuthorizations', TAB_REFERENCE_KEYS]);
     await chrome.storage.local.set({ cardbushCredentialCacheVersion: 1 });
   }
 })();
@@ -121,10 +109,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })().then(sendResponse, () => sendResponse({ ok: false }));
     return true;
   }
-  if (['site_state', 'confirm_site'].includes(message?.action)) {
-    void handleSiteConsent(message, sender).then(sendResponse, () => sendResponse({ ok: false }));
-    return true;
-  }
   if (sender?.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('popup.html')) {
     sendResponse({ ok: false }); return false;
   }
@@ -141,12 +125,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   viewportTabs.delete(tabId);
   interruptScreenshot(tabId);
   attachedTabs.delete(tabId);
-  void managedScopesReady.then(async () => {
-    const grantChanged = sessionGrants.delete(tabId);
-    const pendingChanged = forgetPendingAuthorizations({ tabId });
-    if (grantChanged || pendingChanged) await persistSessionState();
-    await publishStatus();
-  });
+  void managedScopesReady.then(() => publishStatus());
 });
 
 chrome.debugger.onDetach.addListener((source) => {
@@ -604,10 +583,6 @@ async function dispatch(method, params, progress = () => {}) {
       }
       throw error;
     }
-    if (tab.id != null) {
-      setSessionGrant(tab.id, scope.id, originForUrl(targetUrl), 'created');
-      await persistSessionState();
-    }
     if (foreground) {
       const created = await chrome.tabs.get(tab.id);
       if (created.groupId >= 0) await chrome.tabGroups.update(created.groupId, { collapsed: false });
@@ -721,13 +696,7 @@ async function handlePopupMessage(message) {
     else await releaseAll();
     return { ok: true, ...(await popupState()) };
   }
-  if (action === 'revoke') {
-    forgetPendingAuthorizations();
-    await updateSitePermissions(() => chrome.storage.local.set({ allowAllSites: false, allowedOrigins: [] }));
-    await releaseAll();
-    return { ok: true, ...(await popupState()) };
-  }
-  if (!['allow_once', 'allow_site', 'allow_all'].includes(action)) {
+  if (action !== 'copy_tab') {
     throw connectorError('unsupported_popup_action', `Unsupported action: ${action}`);
   }
   if (!nativePort || !nativeReady) {
@@ -751,20 +720,6 @@ async function handlePopupMessage(message) {
 
   const managedTab = await copyTabIntoScope(scope, sourceTab);
   if (managedTab.id == null) throw connectorError('active_tab_missing', 'The copied browser tab has no id.');
-  if (action === 'allow_once') {
-    setSessionGrant(managedTab.id, scope.id, origin, 'copied');
-  } else if (action === 'allow_site') {
-    await updateSitePermissions(async () => {
-      const stored = await chrome.storage.local.get(['allowedOrigins']);
-      const origins = new Set(Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : []);
-      origins.add(origin);
-      await chrome.storage.local.set({ allowedOrigins: [...origins] });
-    });
-  } else {
-    await updateSitePermissions(() => chrome.storage.local.set({ allowAllSites: true }));
-  }
-
-  forgetPendingAuthorizations({ scopeId: scope.id, origin });
   await activateScope(scope);
   await persistSessionState();
 
@@ -821,27 +776,11 @@ async function isTabManaged(scope, tab) {
 async function requireTabAccess(scope, tabId, requestedOrigin = '') {
   const tab = await requireManagedTab(scope, tabId);
   const origin = requestedOrigin || originForTab(tab);
-  const grant = sessionGrants.get(tabId);
-  if (grant?.scopeId === scope.id) {
-    if (!origin || grant.origins.has(origin)) return tab;
-    if (grant.source === 'created' && grant.origins.size === 0) {
-      grant.origins.add(origin);
-      await persistSessionState();
-      return tab;
-    }
-  }
-  if (!origin) {
+  // Website access is part of the authenticated connection consent. Keep the
+  // managed-group boundary and Chromium's unsupported-page boundary here;
+  // Runtime still admits each tool before it reaches this connector.
+  if (!origin && tab.url !== 'about:blank') {
     throw connectorError('unsupported_page', 'The browser does not permit extensions to debug this page.');
-  }
-  const stored = await chrome.storage.local.get(['allowedOrigins', 'allowAllSites']);
-  const allowedOrigins = Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : [];
-  if (stored.allowAllSites !== true && !allowedOrigins.includes(origin)) {
-    await rememberPendingAuthorization(scope, tab, origin);
-    throw connectorError(
-      'site_permission_required',
-      `Open the CardBush Browser Use in the selected browser and allow access to ${origin}.`,
-      { tabId, origin, scopeId: scope.id },
-    );
   }
   return tab;
 }
@@ -924,10 +863,6 @@ async function suspendScope(scopeId) {
 
 async function releaseScope(scopeId) {
   await suspendScope(scopeId);
-  for (const [tabId, grant] of sessionGrants) {
-    if (grant.scopeId === scopeId) sessionGrants.delete(tabId);
-  }
-  forgetPendingAuthorizations({ scopeId });
   scopeLeases.delete(scopeId);
   if (activeScope?.id === scopeId) {
     activeScope = null;
@@ -946,11 +881,8 @@ async function suspendAll() {
 }
 
 async function releaseAll() {
-  for (const consent of siteConsentWindows.values()) consent.finish();
   await suspendAll();
-  sessionGrants.clear();
   scopeLeases.clear();
-  pendingAuthorizations.clear();
   activeScope = null;
   await persistSessionState();
   await publishStatus(false);
@@ -1043,7 +975,7 @@ async function activateScope(candidate) {
     id: scope.id,
     title: scope.title,
     lastRequestedAt: now,
-    expiresAt: now + AUTHORIZATION_LEASE_TTL_MS,
+    expiresAt: now + SCOPE_LEASE_TTL_MS,
   });
   await persistSessionState();
   return scope;
@@ -1087,9 +1019,7 @@ async function restoreManagedState() {
     const stored = await chrome.storage.session.get([
       MANAGED_SCOPES_STORAGE_KEY,
       ACTIVE_SCOPE_STORAGE_KEY,
-      SESSION_GRANTS_STORAGE_KEY,
       SCOPE_LEASES_STORAGE_KEY,
-      PENDING_AUTHORIZATIONS_STORAGE_KEY,
       TAB_REFERENCE_KEYS,
     ]);
     for (const entry of Array.isArray(stored[TAB_REFERENCE_KEYS]) ? stored[TAB_REFERENCE_KEYS] : []) {
@@ -1103,28 +1033,12 @@ async function restoreManagedState() {
       const scope = restoredScope(candidate);
       if (scope) managedScopes.set(scope.id, scope);
     }
-    const grants = Array.isArray(stored[SESSION_GRANTS_STORAGE_KEY])
-      ? stored[SESSION_GRANTS_STORAGE_KEY]
-      : [];
-    for (const candidate of grants) {
-      const grant = restoredSessionGrant(candidate);
-      if (grant && managedScopes.has(grant.scopeId)) sessionGrants.set(grant.tabId, grant);
-    }
     const leases = Array.isArray(stored[SCOPE_LEASES_STORAGE_KEY])
       ? stored[SCOPE_LEASES_STORAGE_KEY]
       : [];
     for (const candidate of leases) {
       const lease = restoredScopeLease(candidate);
       if (lease && managedScopes.has(lease.id)) scopeLeases.set(lease.id, lease);
-    }
-    const pending = Array.isArray(stored[PENDING_AUTHORIZATIONS_STORAGE_KEY])
-      ? stored[PENDING_AUTHORIZATIONS_STORAGE_KEY]
-      : [];
-    for (const candidate of pending) {
-      const authorization = restoredPendingAuthorization(candidate);
-      if (authorization && managedScopes.has(authorization.scopeId)) {
-        pendingAuthorizations.set(pendingAuthorizationKey(authorization), authorization);
-      }
     }
     const activeScopeId = cleanScopeId(stored[ACTIVE_SCOPE_STORAGE_KEY]);
     activeScope = activeScopeId ? managedScopes.get(activeScopeId) ?? null : null;
@@ -1169,14 +1083,7 @@ async function persistSessionState() {
   try {
     await chrome.storage.session.set({
       [ACTIVE_SCOPE_STORAGE_KEY]: activeScope?.id || '',
-      [SESSION_GRANTS_STORAGE_KEY]: [...sessionGrants.values()].map((grant) => ({
-        tabId: grant.tabId,
-        scopeId: grant.scopeId,
-        origins: [...grant.origins],
-        source: grant.source,
-      })),
       [SCOPE_LEASES_STORAGE_KEY]: [...scopeLeases.values()],
-      [PENDING_AUTHORIZATIONS_STORAGE_KEY]: [...pendingAuthorizations.values()],
     });
   } catch (error) {
     lastError = `Unable to save browser authorization state: ${errorMessage(error)}`;
@@ -1202,11 +1109,10 @@ async function publishStatus(includeError = true) {
 
 async function popupState(preferredScopeId = '') {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const stored = await chrome.storage.local.get(['allowedOrigins', 'allowAllSites', PAIRING_KEY]);
+  const stored = await chrome.storage.local.get([PAIRING_KEY]);
   let hasPairing = false;
   try { parseConnectorPairing(stored[PAIRING_KEY]); hasPairing = true; } catch { /* First use or explicitly removed. */ }
   const origin = originForTab(tab);
-  const allowedOrigins = Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : [];
   const candidates = await popupScopeCandidates(tab);
   const selectedCandidate = selectPopupScopeCandidate(candidates, preferredScopeId);
   const selectedScope = selectedCandidate
@@ -1225,8 +1131,8 @@ async function popupState(preferredScopeId = '') {
     reconnectWaiting,
     nextRetryAt,
     connectionDiagnostic: nativePort?.diagnostics ?? connectionDiagnostic,
-    allowAllSites: stored.allowAllSites === true,
-    allowedSiteCount: allowedOrigins.length,
+    // Connection consent covers every supported website in isolated groups.
+    allowAllSites: hasPairing,
     nativeConnecting: (nativePort != null || connectingEpoch === connectionEpoch) && !nativeReady && !lastError,
     controlledTabCount: attachedTabs.size,
     activeScope: selectedScope ? {
@@ -1235,17 +1141,9 @@ async function popupState(preferredScopeId = '') {
       groupTitle: groupTitle(selectedScope),
     } : null,
     scopeCandidates: candidates.map(({ priority: _priority, ...candidate }) => candidate),
-    pendingAuthorization: selectedCandidate?.pending === true,
     managedTab,
     tab: tab ? publicTab(tab) : null,
     origin,
-    access: tab?.id != null && selectedScope && sessionGrantAllows(selectedScope.id, tab.id, origin)
-      ? 'once'
-      : stored.allowAllSites === true
-        ? 'all'
-        : origin && allowedOrigins.includes(origin)
-          ? 'site'
-          : 'none',
     lastError,
   };
 }
@@ -1261,32 +1159,20 @@ async function popupAuthorizationScope(preferredScopeId = '', currentTab = null)
 
 async function popupScopeCandidates(tab) {
   if (pruneExpiredSessionState()) await persistSessionState();
-  const origin = originForTab(tab);
   const now = Date.now();
   const candidates = [];
   for (const lease of scopeLeases.values()) {
     if (lease.expiresAt <= now) continue;
     const scope = managedScopes.get(lease.id);
     if (!scope) continue;
-    const matchingPending = [...pendingAuthorizations.values()].filter((authorization) => (
-      authorization.scopeId === scope.id &&
-      authorization.expiresAt > now &&
-      Boolean(origin) &&
-      authorization.origin === origin
-    ));
-    const exactPending = matchingPending.some((authorization) => authorization.tabId === tab?.id);
     const managedTab = tab ? await isTabManaged(scope, tab) : false;
     candidates.push({
       id: scope.id,
       title: scope.title,
       groupTitle: groupTitle(scope),
-      pending: matchingPending.length > 0,
-      expiresAt: Math.max(lease.expiresAt, ...matchingPending.map((value) => value.expiresAt)),
-      priority: exactPending ? 4 : managedTab ? 3 : matchingPending.length > 0 ? 2 : 1,
-      lastRequestedAt: Math.max(
-        lease.lastRequestedAt,
-        ...matchingPending.map((value) => value.requestedAt),
-      ),
+      expiresAt: lease.expiresAt,
+      priority: managedTab ? 2 : 1,
+      lastRequestedAt: lease.lastRequestedAt,
     });
   }
   return candidates.sort((left, right) => (
@@ -1307,108 +1193,6 @@ function selectPopupScopeCandidate(candidates, preferredScopeId = '') {
   return strongest.length === 1 ? strongest[0] : null;
 }
 
-function setSessionGrant(tabId, scopeId, origin, source) {
-  const existing = sessionGrants.get(tabId);
-  const grant = existing?.scopeId === scopeId
-    ? existing
-    : { tabId, scopeId, origins: new Set(), source };
-  if (origin) grant.origins.add(origin);
-  if (source === 'created') grant.source = 'created';
-  sessionGrants.set(tabId, grant);
-}
-
-function sessionGrantAllows(scopeId, tabId, origin) {
-  const grant = sessionGrants.get(tabId);
-  return grant?.scopeId === scopeId && (!origin || grant.origins.has(origin));
-}
-
-async function rememberPendingAuthorization(scope, tab, origin) {
-  const now = Date.now();
-  const key = pendingAuthorizationKey({ scopeId: scope.id, tabId: tab.id, origin });
-  const previous = pendingAuthorizations.get(key);
-  if (previous?.expiresAt > now) return;
-  const authorization = {
-    scopeId: scope.id,
-    scopeTitle: scope.title,
-    tabId: tab.id,
-    windowId: tab.windowId,
-    origin,
-    requestedAt: now,
-    expiresAt: now + AUTHORIZATION_LEASE_TTL_MS,
-  };
-  pendingAuthorizations.set(key, authorization);
-  await persistSessionState();
-  if (siteConsentWindows.size >= SITE_CONSENT_LIMIT || !connectorEnabled || !nativeReady) return;
-  const consent = openBrowserConsent('authorization.html', { authorization, epoch: connectionEpoch, port: nativePort });
-  siteConsentWindows.set(consent.token, consent);
-  void consent.result.finally(() => { siteConsentWindows.delete(consent.token); });
-}
-
-async function handleSiteConsent(message, sender) {
-  const consent = siteConsentWindows.get(message.token);
-  if (!await isBrowserConsentSender(consent, message, sender) || siteConsentWindows.get(message.token) !== consent) return { ok: false };
-  const authorization = consent.authorization;
-  const key = pendingAuthorizationKey(authorization);
-  const current = pendingAuthorizations.get(key);
-  const scope = managedScopes.get(authorization.scopeId);
-  const stillCurrent = () => !consent.closed && connectorEnabled && nativeReady && consent.epoch === connectionEpoch
-    && consent.port === nativePort && pendingAuthorizations.get(key) === authorization;
-  if (!stillCurrent() || current !== authorization || authorization.expiresAt <= Date.now()
-    || !scope || !(scopeLeases.get(scope.id)?.expiresAt > Date.now())) { consent.finish(); return { ok: false }; }
-  const tab = await requireManagedTab(scope, authorization.tabId);
-  if (!stillCurrent()) return { ok: false };
-  if (message.action === 'site_state') return { ok: true, origin: authorization.origin,
-    scopeTitle: authorization.scopeTitle, expiresAt: consent.expiresAt };
-  if (consent.responding) return { ok: false };
-  consent.responding = true;
-  try {
-    if (message.allow === 'site') {
-      const saved = await updateSitePermissions(async () => {
-        const stored = await chrome.storage.local.get(['allowedOrigins']);
-        if (!stillCurrent()) return false;
-        const origins = new Set(Array.isArray(stored.allowedOrigins) ? stored.allowedOrigins : []);
-        origins.add(authorization.origin);
-        await chrome.storage.local.set({ allowedOrigins: [...origins] });
-        return true;
-      });
-      if (!saved) return { ok: false };
-      forgetPendingAuthorizations({ origin: authorization.origin });
-      await persistSessionState();
-    } else if (message.allow === 'once') {
-      setSessionGrant(tab.id, scope.id, authorization.origin, 'copied');
-      forgetPendingAuthorizations({ scopeId: scope.id, tabId: tab.id, origin: authorization.origin });
-      await persistSessionState();
-    }
-    // Never replay the blocked browser command. The caller must inspect the
-    // state and intentionally retry after the user's decision.
-    consent.finish();
-    return { ok: true };
-  } finally { consent.responding = false; }
-}
-
-function forgetPendingAuthorizations({ scopeId = '', tabId, origin = '' } = {}) {
-  let changed = false;
-  for (const [key, authorization] of pendingAuthorizations) {
-    if (scopeId && authorization.scopeId !== scopeId) continue;
-    if (tabId != null && authorization.tabId !== tabId) continue;
-    if (origin && authorization.origin !== origin) continue;
-    pendingAuthorizations.delete(key);
-    for (const consent of siteConsentWindows.values()) {
-      if (pendingAuthorizationKey(consent.authorization) === key) consent.finish();
-    }
-    changed = true;
-  }
-  return changed;
-}
-
-function pendingAuthorizationKey(authorization) {
-  return JSON.stringify([
-    authorization.scopeId,
-    authorization.tabId,
-    authorization.origin,
-  ]);
-}
-
 function pruneExpiredSessionState() {
   const now = Date.now();
   let changed = false;
@@ -1417,33 +1201,11 @@ function pruneExpiredSessionState() {
     scopeLeases.delete(scopeId);
     changed = true;
   }
-  for (const [key, authorization] of pendingAuthorizations) {
-    if (authorization.expiresAt > now && scopeLeases.has(authorization.scopeId)) continue;
-    pendingAuthorizations.delete(key);
-    changed = true;
-  }
   if (activeScope && !scopeLeases.has(activeScope.id)) {
     activeScope = null;
     changed = true;
   }
   return changed;
-}
-
-function restoredSessionGrant(candidate) {
-  const tabId = Number(candidate?.tabId);
-  const scopeId = cleanScopeId(candidate?.scopeId);
-  if (!Number.isSafeInteger(tabId) || tabId < 0 || !scopeId) return null;
-  const origins = new Set(
-    Array.isArray(candidate?.origins)
-      ? candidate.origins.filter((value) => typeof value === 'string' && value.length <= 2048)
-      : [],
-  );
-  return {
-    tabId,
-    scopeId,
-    origins,
-    source: candidate?.source === 'created' ? 'created' : 'copied',
-  };
 }
 
 function restoredScopeLease(candidate) {
@@ -1455,30 +1217,6 @@ function restoredScopeLease(candidate) {
     id,
     title: cleanScopeTitle(candidate?.title, id),
     lastRequestedAt,
-    expiresAt,
-  };
-}
-
-function restoredPendingAuthorization(candidate) {
-  const scopeId = cleanScopeId(candidate?.scopeId);
-  const tabId = Number(candidate?.tabId);
-  const windowId = Number(candidate?.windowId);
-  const origin = typeof candidate?.origin === 'string' ? candidate.origin : '';
-  const requestedAt = Number(candidate?.requestedAt);
-  const expiresAt = Number(candidate?.expiresAt);
-  if (
-    !scopeId || !origin ||
-    !Number.isSafeInteger(tabId) || tabId < 0 ||
-    !Number.isSafeInteger(windowId) || windowId < 0 ||
-    !Number.isFinite(requestedAt) || !Number.isFinite(expiresAt)
-  ) return null;
-  return {
-    scopeId,
-    scopeTitle: cleanScopeTitle(candidate?.scopeTitle, scopeId),
-    tabId,
-    windowId,
-    origin,
-    requestedAt,
     expiresAt,
   };
 }

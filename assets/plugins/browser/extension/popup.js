@@ -1,3 +1,4 @@
+document.documentElement.lang = chrome.i18n?.getUILanguage?.() ?? document.documentElement.lang;
 const connection = document.querySelector('#connection');
 const connectionHelp = document.querySelector('#connection-help');
 const scope = document.querySelector('#scope');
@@ -100,9 +101,7 @@ async function refresh(reconnect = false) {
     localConnectionRepair.hidden = staleWorker || !state.hasPairing || state.nativeConnected;
     extensionUpdate.hidden = !staleWorker;
     reloadExtension.disabled = state.nativeConnected || state.nativeConnecting || state.controlledTabCount > 0;
-    extensionUpdateMessage.textContent = reloadExtension.disabled
-      ? '新版扩展尚未生效。请先在 CardBush 中关闭连接器，再重新加载扩展并开启连接器。已保存的配对与网站授权会保留。'
-      : '新版扩展尚未生效。重新加载后将使用已保存的配对和网站授权，无需重新生成配对码。';
+    extensionUpdateMessage.textContent = t(reloadExtension.disabled ? 'browser.extension.update.busy' : 'browser.extension.update.ready');
     const pairingState = staleWorker ? 'outdated' : Boolean(state.hasPairing);
     if (lastPairingState !== pairingState) {
       pairingDetails.open = false;
@@ -113,14 +112,14 @@ async function refresh(reconnect = false) {
       selectedScopeId = '';
     }
     if (!selectedScopeId && state.activeScope?.id) selectedScopeId = state.activeScope.id;
-    const scopeOptions = JSON.stringify([candidates.map(({ id, title, pending }) => ({ id, title, pending })), selectedScopeId]);
+    const scopeOptions = JSON.stringify([candidates.map(({ id, title }) => ({ id, title })), selectedScopeId]);
     if (lastScopeOptions !== scopeOptions) {
       scopeSelect.replaceChildren(...[
         ...(candidates.length > 1 && !selectedScopeId
-          ? [new Option('请选择目标会话', '', true, true)]
+          ? [new Option(t('browser.extension.scope.choose'), '', true, true)]
           : []),
         ...candidates.map((candidate) => new Option(
-          `${candidate.pending ? '待授权 · ' : ''}${candidate.title}`,
+          candidate.title,
           candidate.id,
           false,
           candidate.id === selectedScopeId,
@@ -148,23 +147,16 @@ async function refresh(reconnect = false) {
     if (!actionError && !staleWorker && !state.nativeConnected && state.lastError) connection.textContent += `\n${state.lastError}`;
     connection.classList.toggle('offline', Boolean(actionError) || (!staleWorker && state.pairingRequired));
     connection.classList.toggle('waiting', staleWorker || (!state.nativeConnected && !state.pairingRequired && !actionError));
-    siteAccess.textContent = staleWorker
-      ? '已保存的授权不会因重新加载而清除；完整授权状态将在新版后台加载后显示。'
-      : state.allowAllSites
-      ? '已保存：允许隔离组访问全部网站。退出或重启后仍有效，可随时撤销。'
-      : state.allowedSiteCount > 0
-        ? `已保存 ${state.allowedSiteCount} 个网站的授权。退出或重启后仍有效。`
-        : '尚未保存网站授权；「仅本次」只适用于当前浏览器会话。';
+    siteAccess.textContent = t(staleWorker ? 'browser.extension.allSitesStale'
+      : state.hasPairing ? 'browser.extension.allSitesSaved' : 'browser.extension.allSitesPending');
     scope.textContent = state.activeScope?.groupTitle
-      ? `${state.pendingAuthorization ? '等待授权' : '目标组'}：${state.activeScope.groupTitle}`
-      : candidates.length > 1
-        ? '请选择要授权的 CardBush 会话'
-        : '先在 CardBush 中发起浏览器任务';
+      ? t('browser.extension.scope.target', { name: state.activeScope.groupTitle })
+      : t(candidates.length > 1 ? 'browser.extension.scope.choose' : 'browser.extension.scope.start');
     title.textContent = state.tab?.title || '当前标签页';
     origin.textContent = state.origin || state.tab?.url || '此页面不支持调试';
     buttons.forEach((button) => {
-      const permissionAction = ['allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action);
-      button.disabled = permissionAction && (!state.nativeConnected || !state.activeScope || !state.origin);
+      const copyAction = button.dataset.action === 'copy_tab';
+      button.disabled = copyAction && (!state.nativeConnected || !state.activeScope || !state.origin);
       if (button.dataset.action === 'disable_connector') button.disabled = !state.connectorEnabled;
       if (button.dataset.action === 'reconnect') {
         button.disabled = state.nativeConnected || state.nativeConnecting;
@@ -174,14 +166,8 @@ async function refresh(reconnect = false) {
         button.disabled = state.nativeConnected || state.nativeConnecting || state.requestingLocalConnection;
         button.textContent = t('browser.extension.repair');
       }
-      if (staleWorker && ['pair', 'reconnect', 'request_local_connection', 'allow_once', 'allow_site', 'allow_all'].includes(button.dataset.action)) button.disabled = true;
-      if (button.dataset.action === 'allow_all') button.textContent = state.allowAllSites
-        ? '复制当前页 · 已允许全部网站'
-        : '复制并允许隔离组访问全部网站';
-      button.classList.toggle('active',
-        (button.dataset.action === 'allow_once' && !state.allowAllSites && state.access === 'once') ||
-        (button.dataset.action === 'allow_site' && !state.allowAllSites && state.access === 'site') ||
-        (button.dataset.action === 'allow_all' && state.allowAllSites));
+      if (staleWorker && ['pair', 'reconnect', 'request_local_connection', 'copy_tab'].includes(button.dataset.action)) button.disabled = true;
+      if (copyAction) button.textContent = t('browser.extension.copyTab');
     });
   } catch (error) {
     if (requestRevision === revision && !busy) {

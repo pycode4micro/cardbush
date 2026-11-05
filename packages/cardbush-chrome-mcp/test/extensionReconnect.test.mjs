@@ -209,7 +209,7 @@ test('a fresh browser session reconnects using local intent and preserves all-si
   const status = await vm.runInContext('popupState()', f.context);
   assert.equal(status.hasPairing, true);
   assert.equal(status.allowAllSites, true);
-  assert.equal(status.allowedSiteCount, 1);
+  assert.equal(status.allowedSiteCount, undefined, 'site-specific grants are no longer exposed');
   assert.equal(JSON.stringify(status).includes(pairing), false);
   assert.equal(status.activeScope, null, 'persistent consent never imports personal tabs or previous browser tab IDs');
 });
@@ -336,7 +336,7 @@ test('a delayed enable write cannot outlive a later disable or revive a restarte
   assert.equal(restarted.ports.length, 0);
 });
 
-test('explicit removal forgets pairing but only revoke clears persistent site permissions', async () => {
+test('explicit removal revokes connection access regardless of legacy site grants', async () => {
   const f = await worker();
   f.local.allowAllSites = true;
   f.ports[0].onMessage.emit({ type: 'connector_ready', protocol: 'cardbush.chrome_connector.v1' });
@@ -351,8 +351,8 @@ test('explicit removal forgets pairing but only revoke clears persistent site pe
   await f.retry(); await f.manual();
   assert.equal(f.ports.length, 1);
   assert.equal(f.state().pairingRequired, false, 'explicit Connect requests a new automatic identity and waits for the native host');
-  await vm.runInContext('handlePopupMessage({action: "revoke"})', f.context);
-  assert.equal(f.local.allowAllSites, false);
+  assert.equal((await vm.runInContext('popupState()', f.context)).allowAllSites, false);
+  await assert.rejects(vm.runInContext('handlePopupMessage({action: "revoke"})', f.context), { code: 'unsupported_popup_action' });
 });
 
 test('popup status respects backoff; explicit Connect retries while polling cannot revive a disabled extension', async () => {

@@ -1,3 +1,10 @@
+document.documentElement.lang = chrome.i18n.getUILanguage();
+const t = CardBushExtensionI18n.uiText(document.documentElement.lang);
+for (const [selector, key] of Object.entries({
+  '#connection-title': 'title', '#heading': 'heading', '#connection-isolation': 'isolation',
+  '#connection-reconnect': 'reconnect', '#status': 'waiting', '#allow': 'allow', '#cancel': 'cancel',
+})) document.querySelector(selector).textContent = t('browser.extension.connection.' + key);
+document.title = t('browser.extension.connection.title');
 const allowButton = document.querySelector('#allow');
 const cancelButton = document.querySelector('#cancel');
 const status = document.querySelector('#status');
@@ -6,14 +13,14 @@ let valid = false, busy = false, expiry;
 cancelButton.focus({ preventScroll: true });
 const expire = () => {
   valid = false; allowButton.disabled = true;
-  status.textContent = '连接申请已结束。关闭此窗口后，可在扩展中重新申请。';
+  status.textContent = t('browser.extension.connection.expired');
 };
 
 void (async () => {
   try {
     const state = await chrome.runtime.sendMessage({ action: 'connection_state', token });
     if (!state?.ok || !['chrome', 'edge'].includes(state.browser) || !Number.isFinite(state.expiresAt) || state.expiresAt <= Date.now()) { expire(); return; }
-    document.querySelector('#browser-name').textContent = state.browser === 'edge' ? ' Microsoft Edge' : ' Google Chrome';
+    document.querySelector('#description').textContent = t('browser.extension.connection.description', { browser: state.browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome' });
     valid = true; allowButton.disabled = false; status.textContent = '';
     expiry = setTimeout(expire, Math.min(state.expiresAt - Date.now(), 60_000));
   } catch { expire(); }

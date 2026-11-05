@@ -26,7 +26,9 @@ assert.deepEqual(manifest.permissions.filter((permission) => [
 assert.equal(manifest.permissions.includes('nativeMessaging'), false);
 
 const background = await readFile(path.join(extensionRoot, 'background.js'), 'utf8');
-assert.match(background, /site_permission_required/);
+assert.doesNotMatch(background, /site_permission_required|confirm_site|allow_once|allow_site/);
+assert.match(background, /requireManagedTab/);
+assert.match(background, /copy_tab/);
 assert.match(background, /unmanaged_tab/);
 assert.match(background, /CONTROL_IDLE_TIMEOUT_MS/);
 assert.match(background, /debugger\.detachAll/);
@@ -34,8 +36,8 @@ assert.match(background, /debugger\.suspendAll/);
 assert.match(background, /debugger\.detachScope/);
 assert.match(background, /chrome\.tabs\.group/);
 assert.match(background, /chrome\.tabGroups\.update/);
-assert.match(background, /SESSION_GRANTS_STORAGE_KEY/);
-assert.match(background, /PENDING_AUTHORIZATIONS_STORAGE_KEY/);
+assert.match(background, /SCOPE_LEASES_STORAGE_KEY/);
+assert.match(background, /MANAGED_SCOPES_STORAGE_KEY/);
 assert.match(background, /chrome\.alarms\.create\(RECONNECT_ALARM/);
 assert.doesNotMatch(background, /DevToolsActivePort|--remote-debugging-port|launch\(/);
 

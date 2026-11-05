@@ -24,7 +24,7 @@ async function popup(initialState) {
     });
     return nodes.get(id);
   };
-  const actions = ['pair', 'reconnect', 'request_local_connection', 'allow_once', 'allow_site', 'allow_all', 'disconnect', 'disable_connector', 'revoke'];
+  const actions = ['pair', 'reconnect', 'request_local_connection', 'copy_tab', 'disconnect', 'disable_connector'];
   const buttons = actions.map(action => Object.assign(element(action), { dataset: { action } }));
   let state = initialState, reloads = 0, tick;
   const messages = [];
@@ -70,7 +70,7 @@ test('matching builds retain normal reconnect and saved authorization display', 
   assert.match(f.element('#connection').textContent, /恢复已保存的连接/);
   assert.equal(f.element('reconnect').textContent, '重试已保存的连接');
   assert.equal(f.element('#pairing-details').open, false);
-  assert.match(f.element('#site-access').textContent, /已保存：允许/);
+  assert.match(f.element('#site-access').textContent, /连接已授权全部网站/);
   await f.reload();
   assert.equal(f.reloads, 0);
   assert.match(f.element('#connection-help').textContent, /已保存的连接.*每 30 秒自动重连/);
