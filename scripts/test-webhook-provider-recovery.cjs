@@ -18,6 +18,7 @@ async function run() {
   const { RuntimeUtilityProcessController } = await import('../dist-electron/runtimeHostController.mjs');
   const { ElectronProductHostController } = await import('../dist-electron/productHostController.mjs');
   const { prepareWebhookParentModels, runContextWebhook } = await import('../dist-electron/contextWebhookRuntime.mjs');
+  const { ContextWebhookHost } = await import('../dist-electron/contextWebhookHost.mjs');
   const { ProductModelConfigStore } = await import('@cardbush/product-host');
   const { assistantProfileSchema } = await import('@cardbush/bush-protocol');
   const requests = [], server = createServer(async (req, res) => {
@@ -46,7 +47,7 @@ async function run() {
   const store = new ProductModelConfigStore(path.join(root, 'product/config/models.json'));
   const model = (id, apiKey = 'fixture-first', name = 'fixture') => ({ id, provider: 'fixture', model: name, apiKey,
     baseURL: `http://127.0.0.1:${server.address().port}/v1`, apiProtocol: 'openai_responses' });
-  let prepared = 0;
+  let prepared = 0, gateway;
   const bridge = { async command(kind, payload = {}) {
     const response = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: randomUUID(), command: { kind, payload } });
     assert.equal(response.ok, true, JSON.stringify(response)); return response.result;
@@ -91,11 +92,33 @@ async function run() {
     await bridge.command('runtime.create_session', { sessionId: 'conversation' }); controller.stop();
     const conversation = { kind: 'conversation', sessionId: 'conversation', title: 'Conversation', parent: { ...parent, sessionId: 'conversation' } };
     assert.equal((await runContextWebhook(bridge, conversation, message, 'conversation', false, signal)).status, 'completed');
+    // The actual HTTP host must also refresh Assistant context independently of saved model bindings.
+    const secrets = { encrypt: value => Buffer.from(value).toString('base64'), decrypt: value => Buffer.from(value, 'base64').toString() };
+    gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+    let connection = (await gateway.command({ action: 'save', binding, config: { name: 'Fixture bridge', enabled: true,
+      url: '', headers: {}, parameters: {}, body: {}, incoming: { messageId: 'messageId', text: 'text', senderId: 'senderId', conversationId: 'conversationId' } } })).connections[0];
+    const send = id => fetch(connection.endpoint, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...message, messageId: id, text: id }) });
+    const receipt = async id => (await fetch(connection.endpoint + '/' + id, { headers: { Authorization: `Bearer ${connection.token}` } })).json();
+    const contextCount = requests.length;
+    await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });
+    assert.equal((await send('http-after-reset')).status, 202);
+    await until(async () => (await receipt('http-after-reset')).status === 'completed');
+    assert.deepEqual((await read()).entries.filter(e => e.role === 'user').map(e => e.content), ['http-after-reset']);
+    await gateway.close(); controller.stop();
+    gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+    connection = (await gateway.command({ action: 'read', sessionId })).connections[0];
+    assert.equal((await (await send('http-after-reset')).json()).status, 'completed');
+    assert.equal((await send('http-after-restart')).status, 202);
+    await until(async () => (await receipt('http-after-restart')).status === 'completed');
+    assert.equal(requests.length, contextCount + 2, 'new contexts refresh both generation and model registration without replay');
+    assert.equal(requests.at(-1).authorization, 'Bearer fixture-second');
+    await gateway.close(); gateway = undefined;
     await store.write({ defaultModelId: 'child', models: [model('child')] });
     const count = requests.length;
     await assert.rejects(runContextWebhook(bridge, binding, message, 'removed', false, signal), /此连接使用的模型已被移除/);
     assert.equal(requests.length, count, 'a removed bound model must never silently fall back to the default');
     await assert.rejects(prepareWebhookParentModels(parent, () => assert.fail('aborted preparation must not resolve models'), AbortSignal.abort()), { name: 'AbortError' });
-    console.log('PASS: reproduces stale binding; retry, worker restart, changed config, fixed child model and conversation recover; removed models fail closed.');
-  } finally { await product.stopMaintenance(); controller.dispose(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+    console.log('PASS: stale models, Assistant reset, HTTP host/worker restart, retries and new messages recover without replay; removed models fail closed.');
+  } finally { await gateway?.close(); await product.stopMaintenance(); controller.dispose(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }

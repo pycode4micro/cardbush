@@ -123,6 +123,110 @@ test('Assistant webhook uses the same journal, correlates replies and rejects a 
   } finally { await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
 });
 
+test('Assistant webhook accepts new messages after reset and Runtime restart without reconnecting', { timeout: 20000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-assistant-reset-')), calls = [], sessionId = 'personal-assistant';
+  const reply = Promise.withResolvers(); let runtime, gateway;
+  const bridge = { command: (kind, payload) => runtime.sendCommand({ kind, payload }) };
+  const startRuntime = () => new InMemoryRuntimeHost({ dataRoot: root, sessionStore: new SessionStore(), toolRegistry: new ToolRegistry(),
+    provider: { async *stream(input) { calls.push(input); await reply.promise; yield* answer(input, 'Received in the current context.'); } } });
+  const stored = async () => JSON.parse(secrets.decrypt(JSON.parse(await readFile(join(root, 'webhooks/state.json'), 'utf8')).encrypted));
+  try {
+    runtime = startRuntime(); await bridge.command('runtime.create_session', { sessionId });
+    gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+    const connection = (await gateway.command({ action: 'save', config: config(), binding: {
+      ...binding(sessionId), kind: 'assistant', generation: 0, profile: assistantProfileSchema.parse({}) } })).connections[0];
+    const bot = client(connection);
+    await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });
+    assert.equal((await bot.send(message('after-reset', 'A new request after clearing Assistant.'))).status, 202);
+    await until(() => calls.length === 1);
+    const journal = await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId });
+    assert.equal(journal.generation, 1); assert.equal(journal.busy, true);
+    assert.deepEqual(journal.entries.filter(e => e.role === 'user').map(e => e.content), ['A new request after clearing Assistant.'],
+      'the user bubble is available to the UI before the model completes');
+    assert.match(journal.entries.find(e => e.role === 'user').botSourceRef, /^webhook:/);
+    reply.resolve();
+    const completed = await until(async () => { const r = await bot.read('after-reset'); return r.status === 'completed' && r; });
+    assert.equal(completed.reply, 'Received in the current context.');
+    assert.equal((await stored()).connections[0].binding.generation, 1);
+    await gateway.close(); await bridge.command('runtime.shutdown', {});
+    runtime = startRuntime(); await bridge.command('runtime.create_session', { sessionId });
+    gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+    const reopened = (await gateway.command({ action: 'read', sessionId })).connections[0], resumed = client(reopened);
+    assert.equal(reopened.id, connection.id); assert.equal(reopened.token, connection.token);
+    assert.equal((await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId })).generation, 0);
+    const duplicate = await (await resumed.send(message('after-reset', 'A new request after clearing Assistant.'))).json();
+    assert.equal(duplicate.status, 'completed'); assert.equal(duplicate.eventId, completed.eventId);
+    assert.equal((await stored()).connections[0].binding.generation, 1, 'duplicates do not rebind saved connections');
+    assert.equal((await resumed.send(message('after-restart'))).status, 202);
+    await until(async () => (await resumed.read('after-restart')).status === 'completed');
+    assert.equal(calls.length, 2);
+    const state = await stored();
+    assert.equal(state.connections[0].binding.generation, 0);
+    assert.deepEqual(state.receipts.map(r => r.binding.generation), [1, 0], 'each accepted receipt retains its context');
+  } finally { reply.resolve(); await gateway?.close(); await runtime?.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
+});
+
+test('Assistant webhook reset isolates running and queued receipts from subsequent new messages', { timeout: 20000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-assistant-queue-')), calls = [], sessionId = 'personal-assistant';
+  const oldReply = Promise.withResolvers(); let gateway;
+  const runtime = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: new SessionStore(), toolRegistry: new ToolRegistry(),
+    provider: { async *stream(input) { calls.push(input); if (calls.length === 1) await oldReply.promise; yield* answer(input, 'Current reply.'); } } });
+  const bridge = { command: (kind, payload) => runtime.sendCommand({ kind, payload }) };
+  try {
+    await bridge.command('runtime.create_session', { sessionId });
+    gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+    const connection = (await gateway.command({ action: 'save', config: config(), binding: {
+      ...binding(sessionId), kind: 'assistant', generation: 0, profile: assistantProfileSchema.parse({}) } })).connections[0];
+    const bot = client(connection);
+    assert.equal((await bot.send(message('running', 'Old running request.'))).status, 202);
+    await until(() => calls.length === 1);
+    assert.equal((await bot.send(message('queued', 'Old queued request.'))).status, 202);
+    assert.equal((await bot.read('queued')).status, 'accepted');
+    await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });
+    assert.equal((await bot.send(message('fresh', 'Fresh request.'))).status, 202);
+    oldReply.resolve();
+    for (const id of ['running', 'queued']) {
+      const rejected = await until(async () => { const r = await bot.read(id); return r.status === 'failed' && r; });
+      assert.equal(rejected.errorCode, 'context_reset');
+    }
+    await until(async () => (await bot.read('fresh')).status === 'completed');
+    const duplicate = await (await bot.send(message('queued', 'Old queued request.'))).json();
+    assert.equal(duplicate.status, 'failed'); assert.equal(duplicate.errorCode, 'context_reset');
+    assert.equal((await bot.send(message('queued', 'Changed old request.'))).status, 409);
+    assert.equal(calls.length, 2, 'old queued requests are never executed in the new context');
+    assert.doesNotMatch(JSON.stringify(calls[1].messages), /Old (running|queued) request/);
+    const journal = await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId });
+    assert.deepEqual(journal.entries.filter(e => e.role === 'user').map(e => e.content), ['Fresh request.']);
+    const state = JSON.parse(secrets.decrypt(JSON.parse(await readFile(join(root, 'webhooks/state.json'), 'utf8')).encrypted));
+    assert.deepEqual(state.receipts.map(r => r.binding.generation), [0, 0, 1]);
+  } finally { oldReply.resolve(); await gateway?.close(); await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
+});
+
+test('Assistant webhook admission remains retryable when the current context cannot be read', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-assistant-admission-')), sessionId = 'personal-assistant';
+  let gateway, unavailable = true, calls = 0;
+  const runtime = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: new SessionStore(), toolRegistry: new ToolRegistry(),
+    provider: { async *stream(input) { calls++; yield* answer(input, 'Received once.'); } } });
+  const bridge = { async command(kind, payload) {
+    if (unavailable && kind === 'runtime.assistant_conversation' && payload.action === 'read') throw Error('Runtime transport temporarily unavailable.');
+    return runtime.sendCommand({ kind, payload });
+  } };
+  try {
+    await bridge.command('runtime.create_session', { sessionId });
+    gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+    const connection = (await gateway.command({ action: 'save', config: config(), binding: {
+      ...binding(sessionId), kind: 'assistant', generation: 0, profile: assistantProfileSchema.parse({}) } })).connections[0];
+    const bot = client(connection), failed = await bot.send(message('retry'));
+    assert.equal(failed.status, 503); assert.deepEqual(await failed.json(), { error: { code: 'service_unavailable' } });
+    const state = JSON.parse(secrets.decrypt(JSON.parse(await readFile(join(root, 'webhooks/state.json'), 'utf8')).encrypted));
+    assert.deepEqual(state.receipts, [], 'a failed admission must not consume the bridge message ID');
+    await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId }); unavailable = false;
+    assert.equal((await bot.send(message('retry'))).status, 202);
+    await until(async () => (await bot.read('retry')).status === 'completed');
+    assert.equal(calls, 1);
+  } finally { await gateway?.close(); await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
+});
+
 test('legacy webhook bindings use full access, deny question cards and continue from a final-reply question', async () => {
   const root = await mkdtemp(join(tmpdir(), 'webhook-policy-')), log = new InMemoryRuntimeEventLog(), registry = new ToolRegistry();
   const calls = []; let executions = 0;

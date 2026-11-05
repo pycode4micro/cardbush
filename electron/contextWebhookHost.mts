@@ -64,9 +64,9 @@ export class ContextWebhookHost {
   private config(c: Connection): ContextWebhookConfig {
     return { id: c.id, name: c.name, enabled: c.enabled, url: c.url, headers: c.headers, parameters: c.parameters, body: c.body, incoming: c.incoming };
   }
-  private write<T>(change: (next: State) => T): Promise<T> {
+  private write<T>(change: (next: State) => T | Promise<T>): Promise<T> {
     const work = this.writes.then(async () => {
-      const next = structuredClone(this.state), result = change(next);
+      const next = structuredClone(this.state), result = await change(next);
       await writePrivateJson(join(this.root, 'webhooks', 'state.json'), { version: 1, encrypted: this.secrets.encrypt(JSON.stringify(next)) });
       this.state = next; return result;
     });
@@ -361,14 +361,23 @@ export class ContextWebhookHost {
         if (req.method !== 'POST' || match![2]) throw new WebhookError('endpoint_not_found', 404);
         const body = await readWebhookJson(req);
         const message = incomingMessage(body, connection.incoming), fingerprint = webhookHash(message);
-        const receipt = await this.write(state => {
-          if (!state.connections.some(c => c.id === connection.id && c.enabled)) throw new WebhookError('connection_disabled', 409);
+        const receipt = await this.write(async state => {
+          const current = state.connections.find(c => c.id === connection.id && c.enabled);
+          if (!current) throw new WebhookError('connection_disabled', 409);
           const existing = state.receipts.find(r => r.connectionId === connection.id && r.message.messageId === message.messageId);
           if (existing) { if (existing.fingerprint !== fingerprint) throw new WebhookError('message_id_conflict', 409); return this.receipt(existing); }
           if (state.receipts.filter(r => !terminal(r.status)).length >= 128) throw new WebhookError('queue_full', 429);
-          const record: Receipt = { id: randomUUID(), connectionId: connection.id, message, fingerprint, binding: connection.binding,
+          // A connection survives Assistant resets and Runtime restarts. Only a new
+          // message adopts the current context; queued/recovered receipts stay pinned.
+          if (current.binding.kind === 'assistant') {
+            const { generation } = await this.runtime.command('runtime.assistant_conversation', {
+              action: 'read', sessionId: current.binding.sessionId, after: Number.MAX_SAFE_INTEGER })
+              .catch(() => { throw new WebhookError('service_unavailable', 503); });
+            current.binding = { ...current.binding, generation };
+          }
+          const record: Receipt = { id: randomUUID(), connectionId: connection.id, message, fingerprint, binding: structuredClone(current.binding),
             status: 'accepted', reply: '', createdAt: new Date().toISOString(), delivered: false, sequence: 1, attempts: 0 };
-          state.receipts.push(record); state.connections.find(c => c.id === connection.id)!.lastReceivedAt = record.createdAt;
+          state.receipts.push(record); current.lastReceivedAt = record.createdAt;
           return this.receipt(record);
         });
         res.setHeader('Location', `/api/webhooks/v1/${connection.id}/messages/${encodeURIComponent(message.messageId)}`);
