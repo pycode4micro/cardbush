@@ -2007,7 +2007,8 @@ export class InMemoryRuntimeHost {
       internalTask?: Pick<RuntimeInternalTaskOptions, 'acceptResult'>;
     } = {},
   ): Promise<RuntimeEvent> {
-    const request = resolveModelRequestContextLimits(modelRequestSchema.parse(options.internalTask ? input : await this.#bridgePlugins.prepare(input, options.signal)));
+    const parsed = modelRequestSchema.parse(input);
+    const request = resolveModelRequestContextLimits(options.internalTask ? parsed : await this.#bridgePlugins.prepare(parsed, options.signal));
     delete request.metadata.mcpDiscoveredToolNames;
     delete request.metadata.mcpDiscoveredToolVersions;
     delete request.metadata.mcpModelToolSnapshot;
