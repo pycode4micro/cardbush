@@ -62,7 +62,8 @@ import { useInspectorTabs } from '${local('src/hooks/useInspectorTabs.ts')}';
 import { workSummaryInspectorTab } from '${local('src/features/inspector/inspectorTabs.ts')}';
 import { InspectorTabPages } from '${local('src/features/inspector/InspectorTabPages.tsx')}';
 import { InspectorActions } from '${local('src/features/inspector/InspectorActions.tsx')}';
-import { InspectorHistoryButtons } from '${local('src/features/inspector/InspectorHistoryButtons.tsx')}';
+import { InspectorHistoryButtons, inspectorHistoryActions } from '${local('src/features/inspector/InspectorHistoryButtons.tsx')}';
+import { useWindowHistoryInput } from '${local('src/features/navigation/useWindowHistoryInput.ts')}';
 import { InspectorTileFrame } from '${local('src/features/inspector/InspectorTileFrame.tsx')}';
 import { InspectorWebview } from '${local('src/features/inspector/InspectorWebview.tsx')}';
 import { WorkSummaryInspector } from '${local('src/features/chat/WorkSummaryInspector.tsx')}';
@@ -92,11 +93,18 @@ window.cardbushDesktop = {
   readTextPreview:async()=>{window.fileReads++;return {content:'# 本地文件\\n\\n预览内容',truncated:false,encoding:'utf-8'};},
 };
 const noop=()=>{};
+const shortcuts={};
+window.conversationHistory=[];
 function Harness() {
   const tabs=useInspectorTabs();
   const handles=React.useRef({});
   const [nav,setNav]=React.useState({});
   const [layout,setLayout]=React.useState(null);
+  useWindowHistoryInput({onBack:()=>window.conversationHistory.push('back'),onForward:()=>window.conversationHistory.push('forward'),
+    onInspectorHistory:(direction,id=tabs.activeId)=>{
+      const tab=tabs.tabs.find(tab=>tab.id===id);
+      if (tab) inspectorHistoryActions({tab,navigation:nav[id],handle:handles.current[id],onStep:tabs.stepStartHistory})[direction]?.();
+    }},shortcuts);
   const updateNav=React.useCallback((id,value)=>setNav(previous=>({...previous,[id]:value})),[]);
   const [language,setLanguage]=React.useState('zh');
   const [currentSession,setSession]=React.useState('a');
@@ -108,7 +116,7 @@ function Harness() {
   window.navigation={...tabs,openHistory,openReview,openShadow,openResource,setLayout,setLanguage,setSession,refreshReports:()=>setReports(current=>structuredClone(current))};
   return <div className="app theme-dark" style={{display:'flex',height:'100vh'}}>
     <main id="conversation-scroll" style={{flex:1,overflow:'auto',height:'100%'}}><button id="outside">会话区</button><div style={{height:2400}}>当前会话：{currentSession}</div></main>
-    <aside className="right-inspector" style={{width:520,flex:'0 0 520px','--side-panel-width':'520px'}}>
+    <aside id="right-inspector" className="right-inspector" style={{width:520,flex:'0 0 520px','--side-panel-width':'520px'}}>
       <div className="right-inspector-viewport"><div className="right-inspector-content">
       <header className="right-inspector-toolbar with-tabs">
         <div className="right-inspector-tabs" role="tablist">{tabs.tabs.map(tab=><button key={tab.id} data-tab={tab.id} role="tab" aria-selected={tab.id===tabs.activeId} onClick={()=>{tabs.activateTab(tab.id);}}>{tab.kind}</button>)}</div>

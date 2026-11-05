@@ -102,6 +102,8 @@ declare global {
       windowMenuContext: () => Promise<{ editTargetId: number }>;
       executeWindowMenuAction: (action: import('../../electron/windowMenu').WindowMenuAction, editTargetId?: number) => Promise<void>;
       onWindowMenuKeyDown: (callback: (gesture: { key: string; code: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }) => void) => () => void;
+      setHistoryBindings: (bindings: import('../../electron/shortcutBinding').HistoryBinding[]) => void;
+      onHistoryInput: (callback: (input: import('../../electron/shortcutBinding').HistoryInput) => void) => () => void;
       openShadowWindow: (payload: {
         sessionId: string;
         sourceTurnId: string;

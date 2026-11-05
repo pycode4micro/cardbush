@@ -1,6 +1,7 @@
 import type { MessageKey } from '../../i18n';
 import { uiText } from '../../i18n';
-export type ShortcutBinding = { key: string; ctrl?: boolean; alt?: boolean; shift?: boolean };
+import { bindingFromEvent, sameBinding, type HistoryBinding, type ShortcutBinding, type ShortcutEvent } from '../../../electron/shortcutBinding';
+export { bindingFromEvent, sameBinding, type ShortcutEvent, type ShortcutBinding };
 type ShortcutContext = 'composer' | 'queue' | 'transcript' | 'edit' | 'sidebar' | 'image';
 type Text = MessageKey;
 type ShortcutDefinition = {
@@ -93,20 +94,16 @@ export const shortcutDefinitions = [
 
 export type ShortcutId = typeof shortcutDefinitions[number]['id'];
 export type ShortcutOverrides = Partial<Record<ShortcutId, ShortcutBinding | null>>;
-export type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'> &
-  Partial<Pick<KeyboardEvent, 'code' | 'repeat' | 'isComposing' | 'keyCode'>>;
 
-export function bindingFromEvent(event: ShortcutEvent): ShortcutBinding | null {
-  if (event.isComposing || event.keyCode === 229 || ['Control', 'Meta', 'Alt', 'Shift', 'AltGraph', 'Dead', 'Process', 'Unidentified'].includes(event.key)) return null;
-  let key = event.key === ' ' ? 'Space' : event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  if (['+', '='].includes(key) || event.code === 'NumpadAdd') key = 'Plus';
-  if (['-', '_'].includes(key) || event.code === 'NumpadSubtract') key = 'Minus';
-  return { key, ctrl: event.ctrlKey || event.metaKey, alt: event.altKey,
-    shift: key === 'Plus' || key === 'Minus' ? false : event.shiftKey };
-}
-
-export function sameBinding(a: ShortcutBinding | null, b: ShortcutBinding | null) {
-  return a === b || Boolean(a && b && a.key === b.key && !!a.ctrl === !!b.ctrl && !!a.alt === !!b.alt && !!a.shift === !!b.shift);
+export function historyBindings(overrides: ShortcutOverrides): HistoryBinding[] {
+  const result: HistoryBinding[] = [];
+  for (const [id, direction, key] of [['navigateBack', 'back', 'ArrowLeft'], ['navigateForward', 'forward', 'ArrowRight']] as const) {
+    const binding = shortcutBinding(id, overrides);
+    if (binding) result.push({ direction, binding });
+    const alternate = { alt: true, key };
+    if (!Object.hasOwn(overrides, id) && !conflictingShortcut(id, alternate, overrides)) result.push({ direction, binding: alternate });
+  }
+  return result;
 }
 
 export function shortcutBinding(id: ShortcutId, overrides: ShortcutOverrides): ShortcutBinding | null {

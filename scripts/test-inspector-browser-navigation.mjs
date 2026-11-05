@@ -36,6 +36,9 @@ import { ConversationHostContext } from '${local('src/features/conversationHost.
 import { toggleBrowserBookmark, importBrowserBookmarks } from '${local('src/features/inspector/useBrowserBookmarks.ts')}';
 import { newBrowserTab } from '${local('src/features/browser/browserStartPage.ts')}';
 import { useInspectorBrowserActions } from '${local('src/features/inspector/useInspectorBrowserActions.ts')}';
+import { useWindowHistoryInput } from '${local('src/features/navigation/useWindowHistoryInput.ts')}';
+import { useKeyboardShortcuts, saveKeyboardShortcuts } from '${local('src/features/shortcuts/useKeyboardShortcuts.ts')}';
+import { inspectorHistoryActions } from '${local('src/features/inspector/InspectorHistoryButtons.tsx')}';
 import { useBrowserTabReferences } from '${local('src/features/browser/useBrowserTabReferences.ts')}';
 import { MarkdownContent } from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import { inspectorBrowserReferences } from '${local('src/features/composer/ComposerReferenceContext.ts')}';
@@ -45,10 +48,18 @@ import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
 window.openedLinks=[];
 window.toolClicks=[];
+window.conversationHistory=[];
+window.saveKeyboardShortcuts=saveKeyboardShortcuts;
 function Harness() {
   const [workspaceId,setWorkspaceId]=React.useState('shared');
   const tabs=useInspectorTabs(workspaceId), refs=React.useRef({});
   const [navigation,setNavigation]=React.useState({});
+  const shortcuts=useKeyboardShortcuts();
+  useWindowHistoryInput({onBack:()=>conversationHistory.push('back'),onForward:()=>conversationHistory.push('forward'),
+    onInspectorHistory:(direction,id=tabs.activeId)=>{
+      const tab=tabs.tabs.find(tab=>tab.id===id);
+      if (tab) inspectorHistoryActions({tab,navigation:navigation[id],handle:refs.current[id]})[direction]?.();
+    }},shortcuts.overrides);
   const strip=useInspectorTabStrip(tabs.activeId,tabs.tabs.length);
   const [address,setAddress]=React.useState('');
   const [layout,setLayout]=React.useState(null);
@@ -84,7 +95,7 @@ function Harness() {
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
     <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/>
       {citation && <MarkdownContent content={citation} language="zh"/>}</div><AppCenterDock language={language}/></section>
-    {(presence.mounted || tabs.allTabs.length > 0) && <aside className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
+    {(presence.mounted || tabs.allTabs.length > 0) && <aside id="right-inspector" className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
       inert={!presence.visible} aria-hidden={!presence.visible} style={{'--right-inspector-width':width+'px'}}>
     <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} softVisible={presence.visible} label="Resize workspace"/>
     <div className="right-inspector-viewport"><div className="right-inspector-content">

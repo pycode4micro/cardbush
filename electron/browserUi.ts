@@ -83,7 +83,7 @@ export class BrowserUiService {
       if (!owner.isDestroyed()) owner.send('browser:audio-state-changed', id);
     });
     guest.on('before-input-event', (event, input) => {
-      if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'f') {
+      if (!event.defaultPrevented && input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'f') {
         event.preventDefault();
         if (!owner.isDestroyed()) owner.send('browser:find', id);
       }

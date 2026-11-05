@@ -6,11 +6,14 @@ import { WindowSidebarToggle } from './WindowSidebarToggle';
 import { useKeyboardShortcuts } from '../features/shortcuts/useKeyboardShortcuts';
 import { windowMenuItems, type ApplicationMenu, type WindowMenuEntry, type WindowMenuItem } from '../features/windowMenu/applicationMenus';
 import { captureMenuFocus } from '../features/windowMenu/menuFocus';
+import { useWindowHistoryInput } from '../features/navigation/useWindowHistoryInput';
+import type { HistoryDirection } from '../../electron/shortcutBinding';
 
 type OpenMenu = { id: string; anchor: HTMLElement; initialFocus?: 'first' | 'last' };
 type Props = {
   language: AppLanguage; sidebarCollapsed: boolean; onToggleSidebar: () => void;
   menus: ApplicationMenu[]; onBack?: () => void; onForward?: () => void;
+  onInspectorHistory?: (direction: HistoryDirection, tabId?: string) => void;
   onError: (error: unknown) => void;
 };
 
@@ -19,6 +22,7 @@ export function WindowFrame(props: Props) {
 
   const nativeControls = window.cardbushDesktop?.platform === 'win32';
   const shortcuts = useKeyboardShortcuts();
+  useWindowHistoryInput(props, shortcuts.overrides);
   const [maximized, setMaximized] = useState(false);
   const [open, setOpen] = useState<OpenMenu | null>(null);
   const [submenu, setSubmenu] = useState<OpenMenu | null>(null);

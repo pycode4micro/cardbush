@@ -37,6 +37,9 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelectorAll(".right-inspector-tab-page.active").length'),1);
     assert.equal(await read('Array.from(document.querySelectorAll(".right-inspector-tab-page:not(.active)")).every(page=>page.inert)'),true);
   };
+  const key = (keyCode, modifier) => {
+    for (const type of ['keyDown','keyUp']) window.webContents.sendInputEvent({type,keyCode,modifiers:[modifier]});
+  };
   const checkRoundTrip = async (id, ready) => {
     const ids = await read('navigation.tabs.map(tab=>tab.id)');
     await click('.inspector-history-back:enabled');
@@ -56,6 +59,18 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll(".work-summary-inspector-turn").length===9');
     assert.deepEqual(await read('navigation.tabs.map(tab => tab.id)'), [historyTab], 'history occupies the original tab');
     await checkRoundTrip(historyTab, 'document.querySelectorAll(".work-summary-inspector-turn").length===9');
+    await read('document.querySelector(".work-summary-turn-selector > button").focus()');
+    key('Left','alt');
+    await until('navigation.activeTab.detail.target==="about:blank"');
+    key('Left','alt'); // No earlier entry in this tab.
+    key('Right','alt'); // The focused history control was unmounted.
+    await until('navigation.activeTab.kind==="history"');
+    assert.deepEqual(await read('conversationHistory'),[]);
+    await read('document.querySelector("#outside").focus()');
+    key('[','control');
+    key(']','control');
+    await until('conversationHistory.length===2');
+    assert.deepEqual(await read('conversationHistory'),['back','forward']);
     await read('document.getElementById("conversation-scroll").scrollTop=300; void 0');
     for (const theme of ['dark','bright']) {
       await read('document.querySelector(".app").className='+JSON.stringify('app theme-'+theme)+'; void 0');
@@ -99,11 +114,13 @@ app.whenReady().then(async () => {
     await checkRoundTrip(fileTab, 'document.querySelector(".markdown-inspector-preview")?.textContent.includes("预览内容")');
     await read('navigation.setLayout('+JSON.stringify({kind:'split',axis:'x',ratio:.5,first:{kind:'page',id:historyTab},second:{kind:'page',id:fileTab}})+'); void 0');
     const fileTile = '[data-inspector-page-id="' + fileTab + '"]';
-    await click(fileTile + ' .inspector-history-back:enabled');
+    await read('document.querySelector('+JSON.stringify(fileTile+' .inspector-history-back')+').focus()');
+    key('[','control');
     await until('document.querySelector(".inspector-tile-frame .inspector-history-forward:enabled") && document.querySelector(".inspector-new-tab-page")');
     assert.equal(await read('document.querySelector(".work-summary-turn-inspector")===historyNode'), true, 'the neighboring history page stays mounted');
     await click(fileTile + ' .inspector-history-forward:enabled');
     await until('document.querySelector(".markdown-inspector-preview")?.textContent.includes("预览内容")');
+    assert.deepEqual(await read('conversationHistory'),['back','forward']);
     await read('navigation.setLayout(null); void 0');
     await select(fileTab);
     await read('window.fileNode=document.querySelector(".markdown-inspector-preview"); window.initialFileReads=fileReads; void 0');

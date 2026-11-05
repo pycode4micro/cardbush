@@ -7,9 +7,26 @@ const module = { exports: {} };
 const compiled = ts.transpileModule(readFileSync('src/features/shortcuts/keyboardShortcuts.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-new Function('module', 'exports', 'require', compiled)(module, module.exports, id => { if (id === '../../i18n') return i18n; throw Error(id); });
+const shared = {};
+new Function('exports', ts.transpileModule(readFileSync('electron/shortcutBinding.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText)(shared);
+new Function('module', 'exports', 'require', compiled)(module, module.exports, id => {
+  if (id === '../../i18n') return i18n;
+  if (id === '../../../electron/shortcutBinding') return shared;
+  throw Error(id);
+});
 const { matchesShortcut, bindingFromEvent, conflictingShortcut, bindingError, normalizeShortcutOverrides, shortcutBinding } = module.exports;
 const key = (value, options = {}) => ({ key: value, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...options });
+const history = (event, overrides = {}) => shared.matchHistoryInput(module.exports.historyBindings(overrides), event);
+assert.equal(history(key('[', { ctrlKey: true })), 'back');
+assert.equal(history(key(']', { metaKey: true })), 'forward');
+assert.equal(history(key('ArrowLeft', { altKey: true })), 'back');
+assert.equal(history(key('ArrowRight', { altKey: true })), 'forward');
+assert.equal(history(key('ArrowRight', { altKey: true, isComposing: true })), undefined);
+assert.equal(history(key('ArrowLeft', { altKey: true }), { navigateBack: null }), undefined);
+assert.equal(history(key('ArrowLeft', { altKey: true }), { openFiles: { key: 'ArrowLeft', alt: true } }), undefined);
+assert.equal(history(key('[', { ctrlKey: true }), { navigateBack: { key: 'k', ctrl: true } }), undefined);
 assert.equal(matchesShortcut('searchConversations', key('f', { ctrlKey: true }), {}), true);
 assert.equal(matchesShortcut('previousConversation', key('Tab', { ctrlKey: true }), {}), true);
 assert.equal(matchesShortcut('previousConversation', key('Tab'), {}), false);

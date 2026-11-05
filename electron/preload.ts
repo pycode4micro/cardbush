@@ -282,6 +282,12 @@ const desktopApi = {
     return () => ipcRenderer.removeListener('window:resize-gesture', listener);
   },
   windowMenuContext: () => ipcRenderer.invoke('window:menu-context') as Promise<{ editTargetId: number }>,
+  setHistoryBindings: (bindings: import('./shortcutBinding').HistoryBinding[]) => ipcRenderer.send('window:history-bindings', bindings),
+  onHistoryInput: (callback: (input: import('./shortcutBinding').HistoryInput) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, input: Parameters<typeof callback>[0]) => callback(input);
+    ipcRenderer.on('window:history-input', listener);
+    return () => { ipcRenderer.removeListener('window:history-input', listener); };
+  },
   executeWindowMenuAction: (action: import('./windowMenu').WindowMenuAction, editTargetId?: number) =>
     ipcRenderer.invoke('window:menu-action', action, editTargetId) as Promise<void>,
   onWindowMenuKeyDown: (callback: (gesture: { key: string; code: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }) => void) => {

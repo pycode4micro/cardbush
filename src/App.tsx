@@ -111,7 +111,7 @@ import { InspectorPageDialog } from './features/inspector/InspectorPageDialog';
 import { InspectorLayoutDialog } from './features/inspector/InspectorLayoutDialog';
 import { captureInspectorLayout, restoreInspectorLayout, type InspectorLayoutSnapshot, type SavedInspectorLayout } from './features/inspector/savedInspectorLayouts';
 import { InspectorTileFrame } from './features/inspector/InspectorTileFrame';
-import { InspectorHistoryButtons } from './features/inspector/InspectorHistoryButtons';
+import { inspectorHistoryActions, InspectorHistoryButtons } from './features/inspector/InspectorHistoryButtons';
 import {
   panelIds,
   panelRects,
@@ -2146,6 +2146,12 @@ function CardbushApp() {
         menus={windowMenus}
         onBack={pageNavigation.canGoBack ? pageNavigation.back : undefined}
         onForward={pageNavigation.canGoForward ? pageNavigation.forward : undefined}
+        onInspectorHistory={(direction, tabId = activeInspectorTabIdentity) => {
+          if (!visibleInspectorTabIds.has(tabId)) return;
+          const tab = inspectorTabs.find(item => item.id === tabId);
+          if (tab) inspectorHistoryActions({ tab, navigation: inspectorNavigationByTarget[tabId],
+            handle: inspectorWebviewRefs.current.get(tabId), onStep: stepStartHistory })[direction]?.();
+        }}
         onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
       />
       {conversationSearch.open && <ConversationSearchDialog

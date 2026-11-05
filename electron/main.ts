@@ -66,6 +66,7 @@ import { collectPluginAcquisitionCache, runAcquisitionCommand } from './pluginAc
 import { closeHostProcesses, processOwnerSignal, runHostCommand, spawnHostProcess, setHostApplicationMemoryProvider } from './hostProcesses';
 import { applicationMemoryBytes, installPreviewResourceProtection, relievePreviewForMemoryPressure } from './previewResourceProtection';
 import { installInspectorWindowOpen } from './inspectorWindowOpen';
+import { installWindowHistoryInput } from './windowHistoryInput';
 import { browserConfigurationPath, browserConfigurationStore } from './browserSettings';
 import { collectPluginInstallCache, installLocalProductPlugin, localPluginInstallDialog } from './localPluginInstall';
 import { clearBrowserCaches, clearDiagnosticFiles, mergeCleanup } from './cacheMaintenance';
@@ -645,6 +646,7 @@ function createWindow(options: { reveal?: boolean } = {}) {
   window.setMenu(null);
   applyMainWindowVisualMaterial(window, lastMainWindowTheme);
 
+  installWindowHistoryInput(window);
   installMainWindowNavigationGuard(window);
   installWindowResizeEvents(window);
   installMainRendererResilience(window);

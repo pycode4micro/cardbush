@@ -22,7 +22,9 @@ export function installInspectorWindowOpen(owner: WebContents, onPopupEvent?: (e
     };
     guest.on('focus', activate);
     // Guest mouse/focus events do not bubble into the renderer's React tree.
-    guest.on('before-mouse-event', (_event, input) => { if (input.type === 'mouseDown') activate(); });
+    guest.on('before-mouse-event', (_event, input) => {
+      if (input.type === 'mouseDown' && (input.button === 'left' || input.button === 'middle' || input.button === 'right')) activate();
+    });
     // Sites can probe native apps from hidden frames or HTTP redirects, without
     // opening a popup. Cancel those navigations before disturbing the document;
     // session permissions also deny Chromium's direct external-protocol dispatch.

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { installInspectorWindowOpen } = require('../dist-electron/inspectorWindowOpen.js');
+const { installWindowHistoryInput } = require('../dist-electron/windowHistoryInput.js');
 const { installAppSessionPermissions } = require('../dist-electron/appSessionPermissions.js');
 const { IntegratedBrowser } = require('../dist-electron/integratedBrowser.js');
 const { BrowserUiService, registerBrowserUiIpc } = require('../dist-electron/browserUi.js');
@@ -107,6 +108,7 @@ app.whenReady().then(async () => {
   browserSession.setPermissionCheckHandler = setCheck;
   browserSession.setPermissionRequestHandler = setRequest;
   const popupEvents = [];
+  installWindowHistoryInput(window);
   installInspectorWindowOpen(window.webContents, event => popupEvents.push(event));
   installInspectorWindowOpen(window.webContents, event => popupEvents.push(event)); // Idempotent installation.
   const integrated = new IntegratedBrowser({ getContents: id => webContents.fromId(id), defaultOwner: () => window.webContents,
@@ -289,12 +291,48 @@ app.whenReady().then(async () => {
     await selectSearch(); await click(original, '#same');
     await waitFor('document.querySelector("#address").textContent.endsWith("/same")'); await activeReady();
     assert.equal(await read('browserFixture.tabs.length'), 3, 'same-tab links do not add a tab');
-    await read('document.querySelector("#back").click(); void 0');
+    const guestKey = (keyCode, modifiers) => {
+      for (const type of ['keyDown','keyUp']) original.sendInputEvent({type,keyCode,modifiers});
+    };
+    await read('window.historyInputs=[]; window.stopRecordingHistory=cardbushDesktop.onHistoryInput(input=>historyInputs.push(input)); void 0');
+    guestKey('Left',['alt']);
     await waitFor(`document.querySelector('#address').textContent===${JSON.stringify(searchUrl)}`); await activeReady();
     assert.equal(await read('document.querySelector("#forward").disabled'), false);
-    await read('document.querySelector("#forward").click(); void 0');
+    // Wait for the main process to receive the user's new shortcut before pressing it in a guest.
+    const updated = new Promise(resolve => window.webContents.ipc.once('window:history-bindings',resolve));
+    await read("saveKeyboardShortcuts({navigateForward:{key:'k',ctrl:true,shift:true}})");
+    await updated;
+    guestKey('K',['control','shift']);
     await waitFor('document.querySelector("#address").textContent.endsWith("/same")'); await activeReady();
-    await read('document.querySelector("#back").click(); void 0');
+    assert.deepEqual(await read('historyInputs.map(input=>[input.direction,input.guestId])'),[['back',originalId],['forward',originalId]]);
+    await read('document.querySelector(".right-inspector-tab-page.active webview").focus(); void 0');
+    const sideButton = async button => {
+      original.debugger.attach();
+      try {
+        for (const type of ['mousePressed','mouseReleased']) {
+          await original.debugger.sendCommand('Input.dispatchMouseEvent',{type,button,x:16,y:16,clickCount:1});
+        }
+      } finally { original.debugger.detach(); }
+    };
+    const appCommand = command => window.emit('app-command',{preventDefault(){}},command);
+    await sideButton('back');
+    appCommand('browser-backward'); // Some drivers report both events for one click.
+    await waitFor(`document.querySelector('#address').textContent===${JSON.stringify(searchUrl)}`); await activeReady();
+    assert.deepEqual(await read('conversationHistory'),[]);
+    assert.equal(await read('historyInputs.length'),3,'the raw side button and matching OS command traverse once');
+    await read('document.querySelector("#forward").focus()');
+    appCommand('browser-forward');
+    await waitFor('document.querySelector("#address").textContent.endsWith("/same")'); await activeReady();
+    await read('document.querySelector("#conversation-draft").focus()');
+    await sideButton('back'); // The pointer can be over a guest while the draft owns keyboard focus.
+    await waitFor('conversationHistory.length===1');
+    assert.deepEqual(await read('conversationHistory'),['back']);
+    assert.equal(original.getURL(),origin+'/same');
+    await sideButton('forward');
+    await waitFor('conversationHistory.length===2');
+    assert.deepEqual(await read('conversationHistory'),['back','forward']);
+    await read('stopRecordingHistory(); void 0');
+    await read('saveKeyboardShortcuts({}); document.querySelector("#back").click(); void 0');
     await waitFor(`document.querySelector('#address').textContent===${JSON.stringify(searchUrl)}`); await activeReady();
 
     await click(original, '#middle', 'middle');
