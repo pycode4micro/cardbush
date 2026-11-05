@@ -123,6 +123,7 @@ test('CardBush compatible provider negotiates the version and preserves live mod
   await pause();socket.open();
   const create=socket.sent[0];assert.equal(create.protocol,CARDBUSH_REALTIME_PROTOCOL);assert.equal(create.session.model,'voice/demo');
   assert.ok(create.session.instructions.includes('Nova'));assert.ok(create.session.tools.some(t=>t.name==='page_write'));
+  assert.match(create.session.instructions,/报告正文和明细表只放在文件中。语音只讲关键结论和执行结果/);
   assert.deepEqual(connected,{url:'ws://127.0.0.1:8765/realtime',headers:{}});
   socket.event({type:'session.created',protocol:CARDBUSH_REALTIME_PROTOCOL});await pending;
   f.service.save({...defaults,model:'another-model'});

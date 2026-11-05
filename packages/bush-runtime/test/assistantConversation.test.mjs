@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { ConversationJournal } from '../dist/conversationJournal.js';
 import { AssistantConversation } from '../dist/assistantConversation.js';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry, SubagentTaskStore } from '../dist/index.js';
-import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION as id } from '@cardbush/bush-protocol';
+import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION as id, REPORT_DELIVERY_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import { withToolDisplayTitle } from '../dist/toolDisplay.js';
 
 const temporary = () => mkdtempSync(join(tmpdir(), 'assistant-conversation-'));
@@ -366,6 +366,7 @@ test('assistant dispatch/await stay nonblocking; only Markdown and final replies
     assert.equal(tasks[0].status, 'running', 'main response finishes while child still executes');
     assert.equal(round, 3); assistant.command(command); await new Promise(r => setTimeout(r, 20)); assert.equal(round, 3, 'retry does not re-execute');
     assert.deepEqual(seen[0].tools.map(tool => tool.name).sort(), ['page_write', 'subagent', 'tasks']);
+    assert.ok(seen[0].messages.some(m => m.role === 'system' && m.content.includes(REPORT_DELIVERY_INSTRUCTIONS)));
     assert.ok(!journal.read(id).some(item => item.content === '我会检查文件。'), 'loop commentary is not a page message');
     tasks[0].status = 'completed'; tasks[0].finalResponse = '文件正常';
     await until(() => journal.read(id).some(item => item.source === 'page'));

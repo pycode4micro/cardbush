@@ -162,7 +162,7 @@ test('runtime child receives a restriction result and finishes without starting 
   assert.deepEqual(child.messages.slice(0, parent.messages.length), parent.messages);
   const appended = child.messages.slice(parent.messages.length);
   assert.equal(appended[0].name, 'delivery_guidance');
-  assert.match(appended[0].content, /Reports, research documents and backtest analyses belong in verified files/);
+  assert.ok(appended[0].content.includes(REPORT_DELIVERY_INSTRUCTIONS));
   assert.match(appended[0].content, /read_source_memos must bind it to this turn/);
   assert.equal(appended[1].name, 'individuation_preference');
   assert.equal(appended[1].content, individuationPreferenceText());

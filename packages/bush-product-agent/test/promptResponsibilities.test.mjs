@@ -50,8 +50,9 @@ test('system policy keeps cross-tool obligations without a second tool manual', 
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /direct calls for simple work.*script orchestration.*filter or combine/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Inspect each failure in a batch/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /verified files.*exact Tool-returned reference or absolute path/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Reports, research documents and backtest analyses belong in verified files/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Keep report bodies and long tables out of Tool-loop messages/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Deliver every report, including research and backtests, as a verified file in the requested format/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Keep report bodies and long tables out of Tool-loop messages, chat pages and final replies/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /final reply gives only key findings, execution status and a verified file link or attachment/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /After file verification, call summary_for_user alone/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Prefer task_id for the same assignment; agent_id starts fresh/);
   assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /mcp_search|read_archived_tool_result|edit_file|terminal_poll|completion_notification|context_pressure|solution_selection|await_subagents|resume_task_id|_display_title|run_skill|update_goal|system_prompt/);
