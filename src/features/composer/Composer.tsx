@@ -111,6 +111,7 @@ import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from '../
 import { openInspector } from '../inspector/inspectorEvents';
 import { SkillIcon } from '../skills/SkillIcon';
 import { skillReference } from '../skills/skillReferences';
+import { catalogSkills, resolveResourceMentions } from '../../../electron/composerResourceCatalog';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
@@ -156,7 +157,7 @@ export type ContextWindowUsage = {
   measuredAt?: string;
 };
 
-type ComposerCommandMode = 'slash' | 'plugin' | 'mention' | 'style';
+type ComposerCommandMode = 'slash' | 'mention' | 'skills' | 'plugins' | 'style';
 
 type ComposerCommandState = {
   mode: ComposerCommandMode;
@@ -541,6 +542,7 @@ export function Composer({
   const delegationCommand = teamWorkspace.command ? `/${teamWorkspace.command}` : '';
   const selectedTeam = teamAvailable ? teamWorkspace.choices.find((team) => team.id === teamWorkspace.selectedId) : undefined;
   const draftTeam = selectedTeamReference(draft);
+  const skillInsertion = useRef({ start: 0, end: 0 });
   const teamInsertionCaret = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -635,10 +637,23 @@ export function Composer({
 
   async function submit(immediate = false) {
     if (submissionPending || currentSubmission() || inputReadOnly || currentAttachmentUploads() > 0) return;
-    const styleCommand = styleAvailable ? detectComposerCommand(draft, draft.length) : null;
-    if (styleCommand?.mode === 'style') {
-      if (commandState?.mode === 'style' && commandItems.length) applyCommand(commandItems[Math.min(commandIndex, commandItems.length - 1)]);
-      else { setCommandState(styleCommand); focusComposer(); }
+    const picker = detectComposerCommand(draft, draft.length);
+    if (picker && (picker.mode === 'skills' || picker.mode === 'plugins' || (styleAvailable && picker.mode === 'style'))) {
+      if (commandState?.mode === picker.mode && commandItems.length) applyCommand(commandItems[Math.min(commandIndex, commandItems.length - 1)]);
+      else { setCommandState(picker); focusComposer(); }
+      return;
+    }
+    if (draft.trim() === '/plugin') {
+      onDraftChange('/plugin ');
+      setCommandState({ mode: 'plugins', start: 0, end: '/plugin '.length, query: '' });
+      focusComposer('/plugin '.length);
+      return;
+    }
+    if (draft.trim() === '/skill') {
+      skillInsertion.current = { start: 0, end: draft.length };
+      setCommandState(null);
+      setPopoverAnchor(null);
+      setActiveMenu('skills');
       return;
     }
     if (!runtimeReady) {
@@ -664,7 +679,8 @@ export function Composer({
     // not silently switch workflows when the workspace default changes later.
     const prompt = !draftTeam && selectedTeam
       ? withTeamReference(draft, { kind: 'team', id: selectedTeam.id, title: selectedTeam.name }).content : draft;
-    const value = [...attachmentPaths, prompt.trimEnd()].filter(Boolean).join('\n');
+    const resolvedPrompt = resolveResourceMentions(prompt, mentionChoices);
+    const value = [...attachmentPaths, resolvedPrompt.trimEnd()].filter(Boolean).join('\n');
     const submittedDraft = currentSubmittedDraft();
     const submission = { alreadyRunning: sending };
     setStartingSubmission(submission);
@@ -1026,11 +1042,13 @@ export function Composer({
     }
     const before = draft.slice(0, state.start);
     const after = draft.slice(state.end);
+    if (replacement.endsWith(' ') && /^\s/.test(after)) replacement = replacement.trimEnd();
     const next = `${before}${replacement}${after}`;
     const nextCaret = before.length + replacement.length;
     if (next !== draft) commandSelection.current = { draft: next, caret: nextCaret };
     onDraftChange(next);
     setCommandState(null);
+    if (replacement === '/plugin ') setCommandState({ mode: 'plugins', start: before.length, end: nextCaret, query: '' });
     if (replacement === '/style ') setCommandState({ mode: 'style', start: before.length, end: before.length + replacement.length, query: '' });
     if (next === draft) focusComposer(nextCaret);
   }
@@ -1060,12 +1078,30 @@ export function Composer({
     focusComposer(next.caret);
   }
 
-  const pluginCommandItems = useMemo<ComposerCommandItem[]>(() => plugins.map(plugin => ({
-    id: `$${plugin.id}`, title: plugin.name, category: 'plugins',
+  const pluginReferenceItems = useMemo<ComposerCommandItem[]>(() => plugins.map(plugin => ({
+    id: `plugin:${plugin.id}`, title: plugin.name, category: 'plugins',
     subtitle: `${plugin.enabled ? '' : uiText(language)('composer.disabled')}${plugin.description}`,
     icon: <PluginGlyph plugin={plugin} />, value: `${pluginReference(plugin)} `,
     searchText: `${plugin.id} ${plugin.name} ${plugin.description} ${plugin.keywords.join(' ')}`,
   })), [plugins, language]);
+
+  const skillCatalog = useMemo(() => catalogSkills(skills, pluginCommands).map(({ id, path, skill, command }) => {
+    const summary: SkillSummary = { ...skill, name: id, displayName: skill?.displayName || command?.name, path: path ?? '', description: skill?.description || command?.description || '' };
+    return summary;
+  }), [skills, pluginCommands]);
+  const skillReferenceItems = useMemo<ComposerCommandItem[]>(() => skillCatalog
+    .filter(skill => !disabledSkillNames.has(skill.name) && !disabledSkillNames.has(skill.name.split(':').at(-1)!)
+      && skill.invocationMode !== 'model' && skill.invocationMode !== 'disabled')
+    .map(skill => ({
+      id: `skill:${skill.name}`, title: skill.displayName || skill.name, category: 'skills',
+      subtitle: localizedContent({ zh: skill.descriptionZh, en: skill.description }, language) ?? '',
+      icon: <SkillIcon skill={skill} compact />, value: skillReference(skill) + ' ',
+      searchText: [skill.name, skill.displayName, skill.description, skill.descriptionZh].filter(Boolean).join(' '),
+    })), [skillCatalog, disabledSkillNames, language]);
+
+  const mentionChoices = useMemo(() => [...skillReferenceItems, ...pluginReferenceItems].map(item => ({
+    id: item.id.slice(item.id.indexOf(':') + 1), value: item.value!.trimEnd(),
+  })), [skillReferenceItems, pluginReferenceItems]);
 
   const slashCommands = useMemo<ComposerCommandItem[]>(
     () => {
@@ -1115,6 +1151,8 @@ export function Composer({
           },
           searchText: uiText(language)('composer.skill_skill_skills'),
         },
+        { id: '/plugin', title: uiText(language)('appCenterModel.plugins'), subtitle: uiText(language)('composer.choosePluginReference'),
+          icon: <Puzzle size={16} />, value: '/plugin ' },
         {
           id: '/collect',
           title: uiText(language)('composer.collectAsASkill'),
@@ -1133,27 +1171,13 @@ export function Composer({
           searchText: uiText(language)('composer.new_new_conversation'),
         },
       ];
-      commands.push(...pluginCommandItems);
-      commands.push(...pluginCommands.filter(command => command.kind !== 'skill' || (!disabledSkillNames.has(command.id) && !disabledSkillNames.has(command.id.split(':').at(-1)!))).map(command => {
+      commands.push(...pluginCommands.filter(command => command.kind !== 'skill').map(command => {
         const plugin = plugins.find(plugin => plugin.id === command.pluginId);
-        const skill = skills.find(skill => skill.path === command.path || skill.name === command.id);
-        return {
-          id: `/${command.id}`, title: skill?.displayName || command.name || command.id.split(':').slice(-1)[0],
-          category: command.kind === 'skill' ? 'skills' as const : 'commands' as const,
+        return { id: `/${command.id}`, title: command.name || command.id, category: 'commands' as const,
           subtitle: [plugin?.name, command.description, command.argumentHint].filter(Boolean).join(' · '),
-          icon: skill?.logoPath || skill?.logoDarkPath ? <SkillIcon skill={skill} compact /> : <PluginGlyph plugin={plugin} />,
-          value: `/${command.id} `, searchText: `${command.id} ${skill?.displayName || ''} ${command.description} ${plugin?.name || ''}`,
-        };
+          icon: <PluginGlyph plugin={plugin} />, value: `/${command.id} `,
+          searchText: [command.id, command.description, plugin?.name].filter(Boolean).join(' ') };
       }));
-      const commandPaths = new Set(pluginCommands.map(command => command.path));
-      commands.push(...skills.filter(skill => !commandPaths.has(skill.path) && !pluginCommands.some(command => command.id === skill.name) &&
-        !disabledSkillNames.has(skill.name) && skill.invocationMode !== 'model' && skill.invocationMode !== 'disabled').map(skill => ({
-          id: `skill:${skill.name}`, title: skill.displayName || skill.name, category: 'skills' as const,
-          subtitle: [skill.sourceLabel, localizedContent({ zh: skill.descriptionZh, en: skill.description }, language)].filter(Boolean).join(' · '),
-          icon: <SkillIcon skill={skill} compact />,
-          value: `${skillReference(skill)} `,
-          searchText: `${skill.name} ${skill.displayName || ''} ${skill.description} ${skill.descriptionZh || ''}`,
-        })));
       return commands.filter(command => (goalAvailable || command.id !== '/goal') && (teamAvailable || command.id !== delegationCommand));
     },
     [
@@ -1164,10 +1188,7 @@ export function Composer({
       language,
       onCreateConversation,
       pluginCommands,
-      pluginCommandItems,
       plugins,
-      skills,
-      disabledSkillNames,
     ],
   );
 
@@ -1181,6 +1202,7 @@ export function Composer({
       icon: (conversationStyle.override ?? '') === option.value ? <Check size={16}/> : <MessageSquare size={16}/>,
       run: () => conversationStyle.select(option.value || null),
     })) : []) : commandState.mode === 'mention' ? [
+      ...skillReferenceItems, ...pluginReferenceItems,
       ...applications.map(app => ({ id: `application:${app.id}`, category: 'apps' as const, title: app.title, subtitle: app.description,
         icon: <ApplicationIcon app={app} size={18}/>, value: `${promptReferenceMarkdown(applicationReference(app))} `,
         searchText: uiText(language)('composer.app_application_value1_value2', { value1: app.title, value2: app.description }) })),
@@ -1218,11 +1240,12 @@ export function Composer({
             turnId: message.turnId!, messageId: message.messageId!, title })} `,
           searchText: uiText(language)('composer.turn_user_instruction_value1_value2', { value1: turnLabel, value2: message.content }) };
       }).reverse(),
-    ] : commandState.mode === 'plugin' ? pluginCommandItems : slashCommands;
+    ] : commandState.mode === 'skills' ? skillReferenceItems : commandState.mode === 'plugins' ? pluginReferenceItems : slashCommands;
     const order = ['actions', 'apps', 'ssh', 'files', 'browser', 'extracts', 'turns', 'plugins', 'skills', 'commands'];
-    return rankComposerCommandItems(host ? items.filter(item => item.category !== 'ssh') : items, commandState.query).slice(0, 50)
-      .sort((a, b) => order.indexOf(a.category || 'actions') - order.indexOf(b.category || 'actions'));
-  }, [commandState, styleAvailable, conversationStyle, slashCommands, pluginCommandItems, referenceContext, extraction?.permanent, language, sshConnections, host, applications]);
+    const ranked = rankComposerCommandItems(host ? items.filter(item => item.category !== 'ssh') : items, commandState.query);
+    const ordered = commandState.query ? ranked : [...ranked].sort((a, b) => order.indexOf(a.category || 'actions') - order.indexOf(b.category || 'actions'));
+    return ordered.slice(0, 50);
+  }, [commandState, styleAvailable, conversationStyle, slashCommands, skillReferenceItems, pluginReferenceItems, referenceContext, extraction?.permanent, language, sshConnections, host, applications]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -1243,7 +1266,11 @@ export function Composer({
       if (openingTeam) teamInsertionCaret.current = commandState?.start ?? draft.length;
       // The Team search box owns keyboard navigation. Do not steal its focus
       // on the next animation frame after React mounts the picker.
-      removeCommandToken(!openingTeam);
+      const openingSkills = item.id === '/skill';
+      if (openingSkills && commandState) {
+        skillInsertion.current = { start: commandState.start, end: commandState.end };
+        setCommandState(null);
+      } else removeCommandToken(!openingTeam);
       void item.run();
       return;
     }
@@ -1431,7 +1458,15 @@ export function Composer({
               simpleModels={simple}
               language={language}
               contextWindow={contextWindow ?? contextWindowMetrics(undefined, selectedModelConfig?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS, selectedModelConfig?.maxCompletionTokens)}
-              skills={skills}
+              skills={skillCatalog}
+              onReferenceSkill={skill => {
+                const { start, end } = skillInsertion.current;
+                const value = skillReference(skill) + (/^\s/.test(draft.slice(end)) ? '' : ' ');
+                const next = draft.slice(0, start) + value + draft.slice(end);
+                commandSelection.current = { draft: next, caret: start + value.length };
+                onDraftChange(next);
+                setActiveMenu(null);
+              }}
               disabledSkillNames={disabledSkillNames}
               selectedModel={selectedModel}
               availableModels={availableModels}
@@ -1467,6 +1502,7 @@ export function Composer({
                 setActiveMenu(null);
                 setPopoverAnchor(null);
                 if (activeMenu === 'teams') focusComposer(teamInsertionCaret.current);
+                if (activeMenu === 'skills') focusComposer(skillInsertion.current.end);
               }}
               anchor={popoverAnchor}
             />
@@ -1538,7 +1574,7 @@ export function Composer({
           richReferences={host ? 'applications' : true}
           ref={textareaRef}
           plugins={plugins}
-          skills={skills}
+          skills={skillCatalog}
           pluginCommands={pluginCommands}
           language={language}
           autoFocus={autoFocus && !presentation?.preview}
@@ -1750,7 +1786,7 @@ function ComposerCommandPalette({
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const listRef = useRef<HTMLDivElement>(null);
-  const emptyLabel = mode === 'style' ? (uiText(language)('composer.noMatchingStylesAddOneInSettings')) : mode === 'mention' ? (uiText(language)('composer.noMatchingAppsOrReferences')) : mode === 'plugin' ? (uiText(language)('composer.noMatchingInstalledPlugins')) : uiText(language)('composer.noMatchingQuickActions');
+  const emptyLabel = mode === 'plugins' ? uiText(language)('composer.noMatchingInstalledPlugins') : mode === 'skills' ? uiText(language)('composer.noSkillsAvailable') : mode === 'style' ? (uiText(language)('composer.noMatchingStylesAddOneInSettings')) : mode === 'mention' ? (uiText(language)('composer.noMatchingAppsOrReferences')) : uiText(language)('composer.noMatchingQuickActions');
   const categories = ({ ssh: uiText(language)('agentConnectionForm.sshConnections'), actions: uiText(language)('composer.actions'), apps: uiText(language)('composer.applications'), plugins: uiText(language)('appCenterModel.plugins'), skills: uiText(language)('composer.skills'), commands: uiText(language)('composer.pluginCommands'), files: uiText(language)('composer.add'), browser: uiText(language)('composer.cardbushBrowser'), extracts: uiText(language)('composer.savedConversationExtracts'), turns: uiText(language)('composer.thisConversationUserInstructions') });
   useLayoutEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
@@ -1765,7 +1801,7 @@ function ComposerCommandPalette({
   return (
     <div className="composer-command-palette">
       <header>
-        <strong>{mode === 'style' ? (uiText(language)('composer.conversationStyles')) : mode === 'mention' ? (uiText(language)('composer.reference')) : mode === 'plugin' ? (uiText(language)('appCenterModel.plugins')) : uiText(language)('composer.quickActions')}</strong>
+        <strong>{mode === 'plugins' ? uiText(language)('appCenterModel.plugins') : mode === 'skills' ? uiText(language)('composer.skills') : mode === 'style' ? (uiText(language)('composer.conversationStyles')) : mode === 'mention' ? (uiText(language)('composer.reference')) : uiText(language)('composer.quickActions')}</strong>
         <span>{uiText(language)('composer.typeToFilter')}</span>
       </header>
       <div className="composer-command-list" ref={listRef}>
@@ -1835,7 +1871,7 @@ function scoreSlashCommand(
   query: string,
 ): [number, number, number] | null {
   const source = item.searchText ?? `${item.id} ${item.title} ${item.subtitle}`;
-  const commandName = normalizeCommandQuery(item.id.replace(/^[/$]+/, ''));
+  const commandName = normalizeCommandQuery(item.id.replace(/^(?:skill:|plugin:|application:|[/$@])/, ''));
   const compactSource = normalizeCommandQuery(source);
   if (!query) {
     return [0, 0, commandName.length];
@@ -1874,13 +1910,11 @@ export function detectComposerCommand(
   if (styleMatch?.index != null) {
     return { mode: 'style', start: styleMatch.index + styleMatch[1].length, end: safeCaret, query: styleMatch[2] ?? '' };
   }
-  const mentionMatch = beforeCaret.match(/(^|\s)@([^\s@/\\:]*)$/);
+  const skillListMatch = beforeCaret.match(/(^|\s)\/(skill|plugin)[ \t]+([^\s/@\\]*)$/i);
+  if (skillListMatch?.index != null) return { mode: skillListMatch[2].toLowerCase() === 'skill' ? 'skills' : 'plugins', start: skillListMatch.index + skillListMatch[1].length, end: safeCaret, query: skillListMatch[3] };
+  const mentionMatch = beforeCaret.match(/(^|\s)@([^\s@/\\]*)$/);
   if (mentionMatch?.index != null) {
     return { mode: 'mention', start: mentionMatch.index + mentionMatch[1].length, end: safeCaret, query: mentionMatch[2] };
-  }
-  const pluginMatch = beforeCaret.match(/(^|\s)\$([^\s$]*)$/);
-  if (pluginMatch?.index != null) {
-    return { mode: 'plugin', start: pluginMatch.index + pluginMatch[1].length, end: safeCaret, query: pluginMatch[2] };
   }
   const slashMatch = beforeCaret.match(/(^| )\/([^\s/]*)$/);
   if (!slashMatch || slashMatch.index == null) {
@@ -1924,6 +1958,7 @@ function ComposerPopover({
   reasoningMode,
   referencePlanAvailable,
   referencePlanMode,
+  onReferenceSkill,
   onToggleSkill,
   onSelectModel,
   onConfigureModels,
@@ -1955,6 +1990,7 @@ function ComposerPopover({
   reasoningMode: 'effort' | 'adaptive' | 'budget';
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
+  onReferenceSkill: (skill: SkillSummary) => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onSelectModel: (model: string) => void;
   onConfigureModels: () => void;
@@ -1968,6 +2004,10 @@ function ComposerPopover({
   onClose: () => void;
   anchor: ComposerPopoverAnchor | null;
 }) {
+  const skillList = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (menu === 'skills') skillList.current?.querySelector<HTMLButtonElement>('.skill-popover-main:enabled')?.focus();
+  }, [menu]);
   const memory = useIndividuation();
   const models = availableModels;
   const pickerMenu = menu === 'models';
@@ -2108,14 +2148,22 @@ function ComposerPopover({
       )}
       {menu === 'teams' && <ComposerTeamPicker language={language} selectedId={selectedTeamId} onSelect={onSelectTeam} onClose={onClose} />}
       {menu === 'skills' && (
-        <div className="popover-list skill-popover-list">
+        <div className="popover-list skill-popover-list" ref={skillList} onKeyDown={event => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+          const rows = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('.skill-popover-main:enabled'));
+          if (!rows.length) return;
+          event.preventDefault();
+          const current = rows.indexOf(document.activeElement as HTMLButtonElement);
+          rows[(current + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length].focus();
+        }}>
           {skills.length === 0 ? (
             <p className="composer-popover-empty">
               {uiText(language)('composer.noSkillsAvailable')}
             </p>
           ) : (
             skills.map((skill) => {
-              const enabled = !disabledSkillNames.has(skill.name);
+              const switchName = disabledSkillNames.has(skill.name.split(':').at(-1)!) ? skill.name.split(':').at(-1)! : skill.name;
+              const enabled = !disabledSkillNames.has(switchName);
               return (
                 <div
                   className={`skill-popover-row ${enabled ? '' : 'disabled'}`}
@@ -2124,7 +2172,8 @@ function ComposerPopover({
                   <button
                     className="skill-popover-main"
                     type="button"
-                    onClick={() => onToggleSkill(skill.name, !enabled)}
+                    disabled={!enabled || skill.invocationMode === 'model' || skill.invocationMode === 'disabled'}
+                    onClick={() => onReferenceSkill(skill)}
                   >
                     <SkillIcon skill={skill} compact />
                     <span>
@@ -2142,7 +2191,7 @@ function ComposerPopover({
                         ? uiText(language)('composer.disableThisSkill')
                         : uiText(language)('composer.enableThisSkill')
                     }
-                    onClick={() => onToggleSkill(skill.name, !enabled)}
+                    onClick={() => onToggleSkill(switchName, !enabled)}
                   >
                     {enabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
                     <span>

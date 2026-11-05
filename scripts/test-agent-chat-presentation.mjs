@@ -756,7 +756,8 @@ test('memory switches complete local commands and arguments without reading the 
 function completionFixture(t, platform = 'linux') {
   const root = platform === 'win32' ? 'C:\\work' : '/work', separator = platform === 'win32' ? '\\' : '/';
   const path = name => root + separator + name.replaceAll('/', separator);
-  const catalog = { pluginCommands: [{ id: 'video:edit', description: '剪辑视频', path: path('plugins/video/SKILL.md') }],
+  const catalog = { plugins: [{ id: 'studio', name: 'Studio', manifestPath: path('plugins/studio/plugin.json') }],
+    pluginCommands: [{id:'video:cuts',name:'cuts',kind:'skill',path:path('plugins/video/cuts/SKILL.md')},{ id: 'video:edit', description: '剪辑视频', path: path('plugins/video/SKILL.md') }],
     skills: [{ name: 'notes', description: '整理笔记', path: path('skills/notes/SKILL.md') },
       { name: 'hidden', path: path('hidden/SKILL.md'), invocationMode: 'model' }] };
   const entries = [
@@ -783,16 +784,39 @@ function completionFixture(t, platform = 'linux') {
 test('slash hints include the actual Agent catalog and preserve plugin invocation versus ordinary Skill references', async t => {
   const f = completionFixture(t), choices = await f.suggest('/');
   assert.ok(choices.items.some(item => item.value === '/video:edit '));
-  assert.ok(choices.items.some(item => item.value === '/notes '));
+  assert.ok(!choices.items.some(item => item.value === '/notes ' || item.value === '/video:cuts '));
+  assert.ok(choices.items.some(item => item.value === '/skill '));
+  const list = await f.suggest('/skill notes'), refs = await f.suggest('use @notes');
+  assert.equal(applyChatSuggestion('/skill notes', list).line, '@notes ');
+  assert.equal(applyChatSuggestion('use @notes', refs).line, 'use ' + list.items[0].value);
+  assert.ok((await f.suggest('@video:cu')).items[0].value === '@video:cuts ');
+  assert.equal((await f.suggest('@笔记')).items[0].value, '@notes ');
+  assert.ok((await f.suggest('@studio')).items[0].value === '@studio ');
+  assert.deepEqual((await f.suggest('/plugin ')).items.map(item => item.value), ['@studio ']);
+  assert.equal((await f.suggest('/skill hidden')).items.length, 0);
+  assert.equal((await f.engine.prepare('/notes example', new AbortController().signal)).text,'/notes example');
   assert.ok(!choices.items.some(item => item.value.includes('hidden')));
   assert.deepEqual((await f.suggest('/e')).items.map(item => item.value), ['/exit'], 'remote catalog uses the same prefix filter as local hints');
   assert.deepEqual((await f.suggest('/q')).items.map(item => item.value), ['/quit']);
   assert.deepEqual((await f.suggest('/model Second')).items.map(item => item.value), ['id-second']);
   assert.equal((await f.engine.prepare('/video:edit 按原要求处理', new AbortController().signal)).text, '/video:edit 按原要求处理');
-  const prepared = await f.engine.prepare('/notes 记录内容', new AbortController().signal);
-  assert.equal(prepared.text, '[notes](</work/skills/notes/SKILL.md>) 记录内容');
-  assert.equal(prepared.userMessageMetadata.composerReferenceContent, '/notes 记录内容');
+  const prepared = await f.engine.prepare('@notes 记录内容', new AbortController().signal);
+  assert.equal(prepared.text, '[@notes](</work/skills/notes/SKILL.md>) 记录内容');
+  assert.equal(prepared.userMessageMetadata.composerReferenceContent, '@notes 记录内容');
   assert.equal(f.calls.filter(call => call.operation === 'conversation.catalog').length, 1, 'rapid hints share the catalog cache');
+});
+
+test('a skill, plugin and file with the same name retain separate identities when selected', async t => {
+  const f = completionFixture(t);
+  f.catalog.skills.push({ name: 'other.txt', path: f.path('skills/other/SKILL.md') });
+  f.catalog.plugins.push({ id: 'other.txt', name: 'Other', manifestPath: f.path('plugins/other/plugin.json') });
+  const skill = (await f.suggest('/skill other.txt')).items[0];
+  const plugin = (await f.suggest('/plugin other.txt')).items[0];
+  const file = (await f.suggest('@other.txt')).items.find(item => item.description === 'File');
+  assert.equal(file.value, '@"other.txt" ');
+  const prepared = await f.engine.prepare(skill.value + plugin.value + file.value, new AbortController().signal);
+  assert.equal(prepared.text, '[@other.txt](</work/skills/other/SKILL.md>) [@other.txt](</work/plugins/other/plugin.json>) @"other.txt" ');
+  assert.deepEqual(prepared.files, [f.path('other.txt')]);
 });
 
 test('at mentions and paths complete inside sentences, with quoted names and the remote platform path rules', async t => {

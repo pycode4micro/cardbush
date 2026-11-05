@@ -207,6 +207,19 @@ test('skill tokens preserve full paths, surrounding text and escaped labels with
   for (const part of parts) assert.equal(content.slice(part.start, part.start + part.text.length), part.text);
 });
 
+test('desktop and CLI expand exact catalog mentions without executing examples or guessing collisions', () => {
+  const { resolveResourceMentions, resourceMention } = load('electron/composerResourceCatalog.ts');
+  const skill = resourceMention('demo:review', 'C:/tools/review/SKILL.md');
+  const plugin = resourceMention('review', 'D:/other/plugin.json');
+  const choices = [{id:'demo:review',value:skill}, {id:'review',value:plugin}];
+  assert.equal(resolveResourceMentions('use @demo:review now',choices),'use '+skill+' now');
+  assert.equal(resolveResourceMentions('@demo:review, please check @demo:review.',choices),skill+', please check '+skill+'.');
+  assert.equal(resolveResourceMentions('@review',choices),'@review');
+  for (const example of ['a@demo:review', '`@demo:review`', '```text\n@demo:review\n```', skill, '@demo:review/more', '@unknown', '/demo:review']) {
+    assert.equal(resolveResourceMentions(example,choices),example);
+  }
+});
+
 test('skill identity follows the referenced path, including before the catalog loads', () => {
   const first = { name: 'same-name', path: 'C:/CardBush/skills/a/SKILL.md' };
   const other = { name: 'same-name', path: 'C:/Other Host/skills/a/SKILL.md' };

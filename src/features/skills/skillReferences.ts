@@ -1,3 +1,4 @@
+import { resourceMention } from '../../../electron/composerResourceCatalog';
 import type { PluginCommandSummary, SkillSummary } from '../../types';
 import { isAbsoluteLocalPath } from '../../shared/localPaths';
 
@@ -5,9 +6,7 @@ export type SkillLinkReference = { title: string; path: string };
 export type SkillPromptPart = { text: string; start: number; skillReference?: SkillLinkReference; skill?: SkillSummary; skillCommand?: PluginCommandSummary };
 
 export function skillReference(skill: Pick<SkillSummary, 'name' | 'path'>): string {
-  const label = skill.name.replace(/([\\\[\]])/g, '\\$1');
-  const path = skill.path.replaceAll('\\', '/').replaceAll('>', '%3E').replaceAll('<', '%3C');
-  return `[${label}](<${path}>)`;
+  return resourceMention(skill.name, skill.path);
 }
 
 /** Display Skill links and catalog-backed invocations as tokens without changing
@@ -43,7 +42,7 @@ export function skillPromptParts(value: string, skills: SkillSummary[], commands
     if (precedingSlashes % 2) continue;
     const path = (match[5] ?? match[6]).replace(/%3C/gi, '<').replace(/%3E/gi, '>');
     if (!isAbsoluteLocalPath(path) || !/[\\/]SKILL\.md$/i.test(path) || /[\x00-\x1f\x7f]/.test(path)) continue;
-    const title = match[4].replace(/\\([\\\[\]])/g, '$1');
+    const title = match[4].replace(/^@/, '').replace(/\\([\\\[\]])/g, '$1');
     if (!title.trim()) continue;
     if (match.index > cursor) parts.push({ text: value.slice(cursor, match.index), start: cursor });
     parts.push({ text: match[0], start: match.index, skillReference: { title, path }, skill: byPath.get(pathKey(path)) });

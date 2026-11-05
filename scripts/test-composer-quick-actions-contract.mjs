@@ -44,15 +44,15 @@ const slashBlock = source.match(
 assert.ok(slashBlock, 'slash quick-action block is missing');
 assert.deepEqual(
   [...slashBlock.matchAll(/id:\s*'([^']+)'/g)].map((match) => match[1]),
-  ['/style', '/model', '/goal', '/skill', '/collect', '/new'],
+  ['/style', '/model', '/goal', '/skill', '/plugin', '/collect', '/new'],
 );
 assert.match(slashBlock, /id: delegationCommand/);
-assert.match(slashBlock, /模型切换/);
-assert.match(slashBlock, /目标/);
-assert.match(slashBlock, /技能/);
-assert.match(slashBlock, /新会话/);
+assert.match(slashBlock, /composer\.model_switch_model/);
+assert.match(slashBlock, /turnRuntimeDetails\.goal/);
+assert.match(slashBlock, /composer\.skills/);
+assert.match(slashBlock, /composer\.newConversation/);
 const goalCommandBlock = slashBlock.match(
-  /id:\s*'\/goal'[\s\S]*?searchText:\s*'\/goal 目标 goal'/,
+  /id:\s*'\/goal'[\s\S]*?searchText:[^\n]*'composer\.goal_goal'/,
 )?.[0] ?? '';
 assert.ok(goalCommandBlock, 'the /goal quick action is missing');
 assert.match(goalCommandBlock, /icon:\s*<Target/);
@@ -67,7 +67,7 @@ assert.doesNotMatch(
   'the /goal quick action must not bypass the conversation',
 );
 const modelCommandBlock = slashBlock.match(
-  /id:\s*'\/model'[\s\S]*?searchText:\s*'\/model 模型切换 switch model'/,
+  /id:\s*'\/model'[\s\S]*?searchText:[^\n]*'composer\.model_switch_model'/,
 )?.[0] ?? '';
 assert.ok(modelCommandBlock, 'the /model quick action is missing');
 assert.match(modelCommandBlock, /icon:\s*<Box/);
@@ -103,7 +103,7 @@ for (const content of ['/model', '/goal task', '/skill', '/collect', '/new', '[s
   assert.equal(attachmentExports.splitExplicitAttachmentMentions(content).paths.length, 0,
     'commands and skill links must remain prompt text, not file attachments');
 }
-assert.match(slashBlock, /id: '\/style', title: '\/style', subtitle: language === 'zh' \? '选择当前会话的对话风格'/, 'the style command keeps its descriptive subtitle');
+assert.match(slashBlock, /id: '\/style', title: '\/style', subtitle: uiText\(language\)\('composer\.chooseAStyleForThisChat'\)/, 'the style command keeps its descriptive subtitle');
 assert.match(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
 assert.match(source, /referenceableUserMessages\(referenceContext.messages, referenceContext.sessionId\)/);
 assert.match(
@@ -111,7 +111,7 @@ assert.match(
   /selectedModelConfig\s*\? selectedModelConfig\.modelName/,
   'the outer model label shows only the model name',
 );
-assert.match(source, /const \[fileAttachments, setFileAttachments\] = useConversationViewState/);
+assert.match(source, /const \[fileAttachments, setFileAttachments, currentFiles\] = useConversationViewState/);
 assert.match(
   source,
   /const attachmentPaths = \[\.\.\.imageAttachments, \.\.\.fileAttachments\][\s\S]*?\.map\(\(item\) => `@\$\{item\.path\}`\)/,
@@ -200,10 +200,10 @@ assert.match(source, /event\.key === 'Enter' \|\| \(event\.key === 'Tab' && keyb
 assert.match(source, /aria-activedescendant=/);
 assert.match(source, /role="listbox"/);
 assert.match(stylesSource, /\.composer-team-picker \.popover-row\.keyboard-active/);
-assert.match(source, /停止生成/);
+assert.match(source, /composer\.stopGenerating|composer\.stopGeneration/);
 assert.match(source, /<Square size=\{10\} fill="currentColor"/);
 assert.doesNotMatch(source, /<Pause\b/);
-assert.match(source, /aria-label=\{sendButtonLabel\}/);
+assert.match(source, /aria-label=\{[^}]*sendButtonLabel\}/);
 assert.match(
   stylesSource,
   /\.composer-actions \.send-button\s*\{[\s\S]*?width:\s*28px;[\s\S]*?height:\s*28px;[\s\S]*?border-radius:\s*50%/,
@@ -286,9 +286,9 @@ assert.equal(detect('user@example.com'), null);
 assert.equal(detect('https://example.com/@user'), null);
 assert.equal(detect('@C:\\folder'), null, 'native attachment path syntax does not open the picker');
 assert.equal(detect('@/tmp/file'), null);
-assert.deepEqual(detect('$'), { mode: 'plugin', start: 0, end: 1, query: '' });
-assert.deepEqual(detect('请用 $seedream'), { mode: 'plugin', start: 3, end: 12, query: 'seedream' });
-assert.deepEqual(detect('请用\n$个人'), { mode: 'plugin', start: 3, end: 6, query: '个人' });
+assert.equal(detect('$'), null);
+assert.equal(detect('请用 $seedream'), null);
+assert.deepEqual(detect('请用 @demo:review'), { mode: 'mention', start: 3, end: 15, query: 'demo:review' });
 assert.equal(detect('price$5'), null);
 assert.equal(detect('$seedream '), null);
 

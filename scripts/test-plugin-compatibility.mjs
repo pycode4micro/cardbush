@@ -41,11 +41,15 @@ try {
   assert.equal(denied.error.code, 'plugin_command_invocation_disabled');
   assert.equal((await host.runModelTurn(request(registry, 'manual', '$compat:manual "some files"'))).payload.status, 'completed');
   assert.ok(observed.at(-1).messages.some(message => message.role === 'tool' && /Check "some files"/.test(message.content)));
-  assert.equal((await host.runModelTurn(request(registry, 'fork', '/compat:forked changes'))).payload.status, 'completed');
+  for (const [session, text] of [['ref', '[@compat:forked](</skills/forked/SKILL.md>) changes'], ['slash-skill', '/compat:forked changes']]) {
+    assert.equal((await host.runModelTurn(request(registry, session, text))).payload.status, 'completed');
+    assert.ok(!observed.at(-1).messages.some(message => message.role === 'tool'), 'references do not run a Skill before the model reads the user request');
+  }
+  assert.equal((await host.runModelTurn(request(registry, 'fork', '$compat:forked changes'))).payload.status, 'completed');
   const child = observed.find(req => req.metadata.agentRole === 'child');
   assert.deepEqual(child.tools.map(tool => tool.name).filter(name => name !== 'checkpoint_context'), ['read_file']);
   assert.ok(child.messages.some(message => /actual evidence/.test(message.content)));
-  assert.ok(!child.messages.some(message => message.content === '/compat:forked changes'));
+  assert.ok(!child.messages.some(message => message.content === '$compat:forked changes'));
   assert.ok(observed.at(-1).messages.some(message => message.role === 'tool' && /Reviewed in isolation/.test(message.content)));
   // Standard OpenAI packages resolve declared MCP dependencies without running anything at inspection time.
   const portable = join(root, 'portable');

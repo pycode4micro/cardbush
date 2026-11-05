@@ -396,7 +396,7 @@ While running, Enter queues the next turn; Ctrl+Enter sends guidance immediately
 Use /steer TEXT for the same action if your terminal does not distinguish Ctrl+Enter.
 The live input keeps drafts while responses stream. Approval prompts temporarily
 take over input and restore the draft afterwards. Esc / Ctrl+C stops the current task.
-Type / for command and Skill suggestions. Use @ for workspace files and folders;
+Type / for commands and /skill or /plugin to browse resources. Use @ to reference skills, plugins, or workspace files and folders;
 quote paths with spaces, e.g. @"folder/file name.txt".
 Slash commands prefer exact names and prefixes, then ordered fuzzy matches.
 Enter confirms the selected command (e.g. /q selects /quit); Tab only fills it.
@@ -531,6 +531,30 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
     const references = new AgentChatReferences(client, io, options.openArtifact);
     io.setReferenceRenderer(references);
     let referenceTurn: string | undefined;
+    async function resourceListCommand(text: string, pick: boolean) {
+      const match = /^\/(skill|plugin)(?:\s+(.*))?$/.exec(text.trim());
+      if (!match) return false;
+      const t = uiText(CLI_UI_LANGUAGE);
+      const kind = match[1] === 'skill' ? 'skill' : 'plugin';
+      const title = t(kind === 'skill' ? 'composer.skills' : 'appCenterModel.plugins');
+      io.commitInput(text);
+      let items;
+      try { items = await completion!.resourceSuggestions(match[2] ?? '', kind, lifetime.signal); }
+      catch (error) {
+        lifetime.signal.throwIfAborted();
+        io.status(terminalText(error instanceof Error ? error.message : String(error)) + '\n');
+        return true;
+      }
+      if (!items.length) { io.status(t(match[1] === 'skill' ? 'composer.noSkillsAvailable' : 'composer.noMatchingInstalledPlugins') + '\n'); return true; }
+      if (!pick || !io.selectionMenus) for (const item of items) io.status(item.label + '\n');
+      if (pick && io.selectionMenus) {
+        const answer = await io.ask(title, lifetime.signal, { choices: items,
+          picker: { title, cancelValue: '/cancel' } });
+        const chosen = items.find(item => item.value.trim() === answer?.trim() || item.label === answer?.trim());
+        if (chosen) io.restoreDraft(chosen.value);
+      } else if (!pick && prompt === undefined) io.restoreDraft('/' + match[1] + ' ');
+      return true;
+    }
     const referenceScope = () => references.setScope({ sessionId: session!.sessionId, turnId: referenceTurn,
       workspace: chatSessionWorkspace(session!),
       platform: info.platform, local, hyperlinks: io.hyperlinks });
@@ -589,6 +613,7 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       waitingSubmissions++;
       inputWork = inputWork.then(async () => {
         const command = text.trim();
+        if (await resourceListCommand(text, false)) return;
         if (await referenceCommand(text)) return;
         if (await toolCommand(text)) return;
         if (command === '/help') { io.commitInput(text); io.status(help); io.status(uiText(CLI_UI_LANGUAGE)('cliWebhook.usage') + '\n'); return; }
@@ -770,6 +795,10 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
       if (input) { for (const id of input.jobs) queued.add(id); if (input.text === null && input.jobs.length) continue; }
       const text = prompt ?? (input ? input.text : await io.ask('❯ ', lifetime.signal, true));
       if (text === null) break;
+      if (await resourceListCommand(text, prompt === undefined)) {
+        if (prompt !== undefined) break;
+        continue;
+      }
       if (prompt === undefined && await referenceCommand(text)) continue;
       if (prompt === undefined && await toolCommand(text)) continue;
       if (prompt === undefined && isChatExitCommand(text)) {

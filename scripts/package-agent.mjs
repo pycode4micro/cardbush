@@ -11,7 +11,7 @@ const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/
   'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
   'dist-electron/agentLocalRuntime.mjs', 'dist-electron/agentLocalRuntimeHost.mjs', 'dist-electron/agentServer.mjs',
   'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',
-  'dist-electron/agentChatTerminal.mjs', 'dist-electron/agentChatPresentation.mjs', 'dist-electron/agentChatInput.mjs', 'dist-electron/agentChatCompletion.mjs', 'dist-electron/agentChatViewport.mjs', 'packages/bush-protocol/dist/transcriptPresentation.js',
+  'dist-electron/agentChatTerminal.mjs', 'dist-electron/agentChatPresentation.mjs', 'dist-electron/agentChatInput.mjs', 'dist-electron/agentChatCompletion.mjs', 'dist-electron/composerResourceCatalog.js', 'dist-electron/agentChatViewport.mjs', 'packages/bush-protocol/dist/transcriptPresentation.js',
   'dist-electron/rotatingLog.js', 'dist-electron/pluginTroubleshooting.mjs', 'dist-electron/agentHttpClient.mjs',
   'dist-electron/agentService.mjs', 'dist-electron/agentBundledAssets.mjs', 'dist-electron/agentDesktopProbe.mjs', 'dist-electron/runtimeHostWorker.mjs',
   'dist-electron/agentInteractiveDesktopCli.mjs', 'dist-electron/agentDesktopBridge.mjs', 'dist-electron/desktopMcpServer.mjs',

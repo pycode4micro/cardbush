@@ -1,10 +1,10 @@
+import { resourceMention } from '../../../electron/composerResourceCatalog';
 import { uiText } from '../../i18n';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import type { PluginTroubleshootingContext } from '../../../electron/pluginTroubleshooting.mjs';
 
 export function pluginReference(plugin: Pick<CardbushAppPlugin, 'id' | 'manifestPath'>): string {
-  const path = plugin.manifestPath?.replaceAll('\\', '/').replaceAll('>', '%3E').replaceAll('<', '%3C');
-  return path ? `[$${plugin.id}](<${path}>)` : `$${plugin.id}`;
+  return resourceMention(plugin.id, plugin.manifestPath);
 }
 
 export function pluginPrompt(plugin: CardbushAppPlugin, prompt: string): string {
@@ -16,7 +16,7 @@ export type PluginPromptPart = { text: string; start: number; plugin?: CardbushA
 
 /** An explicit $id link to a plugin manifest remains a plugin reference before catalog loading. */
 export function pluginReferenceFromLink(label: string, path: string): PluginLinkReference | null {
-  if (!/^\$[A-Za-z0-9][A-Za-z0-9._-]*$/.test(label) ||
+  if (!/^[@$][A-Za-z0-9][A-Za-z0-9._-]*$/.test(label) ||
     !/^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(path) || !/[\\/]plugin\.json$/i.test(path)) return null;
   return { id: label.slice(1), manifestPath: path };
 }
@@ -33,14 +33,13 @@ export function findReferencedPlugin(reference: PluginLinkReference, plugins: Ca
 /** Parse explicit references; only catalog-backed identities acquire plugin metadata. */
 export function pluginPromptParts(value: string, plugins: CardbushAppPlugin[]): PluginPromptPart[] {
   const parts: PluginPromptPart[] = [];
-  const references = new Map(plugins.map(plugin => [pluginReference(plugin), plugin]));
-  const pattern = /\[(\$[A-Za-z0-9][A-Za-z0-9._-]*)\]\(<([^>\r\n]+)>\)/g;
+
+  const pattern = /\[([@$][A-Za-z0-9][A-Za-z0-9._-]*)\]\(<([^>\r\n]+)>\)/g;
   let cursor = 0;
   for (const match of value.matchAll(pattern)) {
-    const plugin = references.get(match[0]);
-    const reference = plugin ? { id: plugin.id, manifestPath: plugin.manifestPath }
-      : pluginReferenceFromLink(match[1], match[2].replace(/%3C/gi, '<').replace(/%3E/gi, '>'));
+    const reference = pluginReferenceFromLink(match[1], match[2].replace(/%3C/gi, '<').replace(/%3E/gi, '>'));
     if (!reference) continue;
+    const plugin = findReferencedPlugin(reference, plugins);
     if (match.index > cursor) parts.push({ text: value.slice(cursor, match.index), start: cursor });
     parts.push({ text: match[0], start: match.index, plugin, reference });
     cursor = match.index + match[0].length;

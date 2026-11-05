@@ -23,8 +23,8 @@ export function SkillCommandReference({ command, path, children }: { command: st
 export function SkillPromptFallback({ content, commands = [] }: { content: string; commands?: PluginCommandSummary[] }) {
   const invocation = skillMarkdownPresentation(content, commands).invocation;
   return <>{skillPromptParts(content, [], commands).map(part => <Fragment key={part.start}>
-    {part.skillCommand && part.skillReference && part.start === invocation?.start
-      ? <SkillCommandReference command={part.text} path={part.skillReference.path}>{part.skillReference.title}</SkillCommandReference>
+    {part.skillReference && (part.text.startsWith('[@') || part.skillCommand && part.start === invocation?.start)
+      ? <SkillCommandReference command={part.text} path={part.skillReference.path}>{part.text.startsWith('[@') ? '@' + part.skillReference.title : part.skillReference.title}</SkillCommandReference>
       : <PromptReferenceFallback content={part.text}/>}
   </Fragment>)}</>;
 }

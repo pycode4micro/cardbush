@@ -70,7 +70,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
       const childDenial = command.context === 'fork' ? childAgentDispatchDenial(context.turn?.request) : undefined;
       if (childDenial) return deny(childDenial.code, childDenial.message);
       const userInvoked = context.turn?.request.metadata.pluginCommandUserCallId === context.toolCall.id && context.turn.request.metadata.pluginCommandUserId === command.id;
-      if (userInvoked ? !command.userInvocable : command.disableModelInvocation) return deny('plugin_command_invocation_disabled', userInvoked ? '此命令不允许通过用户输入直接调用。' : '此命令只能由用户通过 /命令名 调用。');
+      if (userInvoked ? !command.userInvocable : command.disableModelInvocation) return deny('plugin_command_invocation_disabled', userInvoked ? '此命令不允许通过用户输入直接调用。' : options.skill ? '此技能需要用户显式调用。' : '此命令只能由用户通过 /命令名 调用。');
       const disabled = stringArray(context.turn?.request.metadata.disabledSkills), allowed = context.turn?.request.metadata.allowedSkills;
       if (options.skill && (disabled.includes(command.name) || disabled.includes(command.id) || (Array.isArray(allowed) && !allowed.includes(command.name) && !allowed.includes(command.id)))) return deny('plugin_skill_disabled', '此技能已停用或不在当前任务允许的技能范围内。');
       const missing = (command.dependencyServers ?? []).filter(server => !context.turn?.request.tools.some(tool => registry.resolve(tool.name)?.mcpHook?.server === server));

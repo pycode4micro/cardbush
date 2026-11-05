@@ -10,11 +10,11 @@ export function PluginReferenceLink({ reference }: { reference: PluginLinkRefere
   const logo = plugin?.logoPath || plugin?.logoDarkPath || '';
   const [failedLogo, setFailedLogo] = useState('');
   return <a className="plugin-reference-token" data-plugin-id={reference.id}
-    href={fileUrl(reference.manifestPath)} title={`$${reference.id}\n${reference.manifestPath}`}
+    href={fileUrl(reference.manifestPath)} title={`@${reference.id}\n${reference.manifestPath}`}
     onClick={event => { event.preventDefault(); openInspector(reference.manifestPath, name); }}>
     {logo && failedLogo !== logo
       ? <img src={fileUrl(logo)} alt="" draggable={false} onError={() => setFailedLogo(logo)} />
-      : <span className="composer-plugin-fallback" aria-hidden="true">$</span>}
+      : <span className="composer-plugin-fallback" aria-hidden="true">@</span>}
     <span>{name}</span>
   </a>;
 }

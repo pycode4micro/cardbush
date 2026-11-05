@@ -348,7 +348,7 @@ export class NativeChatTerminal implements ChatTerminal {
         ? this.#hintHelp(suggestions) : '  No matches; keep typing to filter'), width), 'dim'));
     } else if (this.#chatPrompt) lines.push(this.#style(terminalClip(this.#turn
       ? '  Enter queue · Ctrl+Enter guide now · /steer · Esc stop'
-      : '  Enter send · / commands · @ files · Tab complete', width), 'dim'));
+      : '  Enter send · / commands · @ references · Tab complete', width), 'dim'));
     return { lines, cursor };
   }
   setSuggestionSource(source: ChatSuggestionSource) { this.#suggestionSource = source; }

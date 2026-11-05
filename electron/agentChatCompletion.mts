@@ -1,3 +1,4 @@
+import { catalogSkills, resolveResourceMentions, resourceMention, resourceMentionTargets } from './composerResourceCatalog.js';
 import { posix, win32 } from 'node:path';
 import { uiText } from '@cardbush/platform/i18n';
 import { CLI_UI_LANGUAGE } from './agentChatWebhooks.mjs';
@@ -13,8 +14,8 @@ export type ChatSuggestions = { start: number; end: number; items: ChatSuggestio
 export type ChatSuggestionSource = (line: string, cursor: number, signal: AbortSignal) => Promise<ChatSuggestions | undefined>;
 type Model = { id: string; modelName: string };
 type Skill = { name: string; path: string; description?: string; invocationMode?: string };
-type Command = { id: string; path?: string; name?: string; description?: string; argumentHint?: string };
-type Catalog = { skills: Skill[]; pluginCommands: Command[] };
+type Command = { id: string; kind?: string; path?: string; name?: string; description?: string; argumentHint?: string };
+type Catalog = { skills: Skill[]; pluginCommands: Command[]; plugins?: {id: string; name: string; manifestPath: string}[] };
 type Context = { sessionId: string; workspace?: string; platform: string; models: Model[] };
 export const chatExitCommands = ['/exit', '/quit'] as const;
 export const isChatExitCommand = (text: string) => chatExitCommands.some(command => command === text.trim());
@@ -34,11 +35,12 @@ const commands: ChatChoice[] = [
   { value: '/new', description: 'Start a new session' },
   { value: '/steer ', label: '/steer', description: 'Guide the running task immediately (Ctrl+Enter)' },
   { value: '/shell ', label: '/shell', description: 'Open a local shell, or run /shell COMMAND / !COMMAND' },
+  { value: '/skill ', label: '/skill', description: uiText(CLI_UI_LANGUAGE)('composer.viewAndChooseSkillsEnabledForThis') },
+  { value: '/plugin ', label: '/plugin', description: uiText(CLI_UI_LANGUAGE)('composer.choosePluginReference') },
   ...chatExitCommands.map(value => ({ value, description: 'Exit and show the resume command' })),
 ];
 const safe = (value: string) => !/[\x00-\x1f\x7f-\x9f]/.test(value);
 const commandId = (value: string) => /^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_-]+)?$/.test(value);
-const skillLink = (skill: Skill) => `[${skill.name.replace(/([\\[\]])/g, '\\$1')}](<${skill.path.replaceAll('\\', '/').replaceAll('<', '%3C').replaceAll('>', '%3E')}>)`;
 const matches = (item: ChatChoice, query: string) => `${item.value} ${item.label ?? ''}`.toLowerCase().includes(query.toLowerCase());
 const matchesInOrder = (value: string, query: string) => {
   let next = 0;
@@ -138,7 +140,7 @@ export class AgentChatCompletion {
     void record.value.catch(() => { if (this.#cache.get(key) === record) this.#cache.delete(key); });
     return record.value;
   }
-  #catalog() { return this.#cached('catalog', signal => this.client.call('conversation.catalog', {}, signal) as Promise<Catalog>, 30_000); }
+  #catalog() { return this.#cached('catalog', signal => this.client.call('conversation.catalog', { includePlugins: true }, signal) as Promise<Catalog>, 30_000); }
   #paths() { return this.#context.platform === 'win32' ? win32 : posix; }
   #inside(path: string) {
     const root = this.#context.workspace;
@@ -158,18 +160,35 @@ export class AgentChatCompletion {
       return { entries, truncated: offset !== undefined };
     });
   }
+  #resources(catalog: Catalog) {
+    const items = catalogSkills(catalog.skills, catalog.pluginCommands)
+      .filter(({ id, path, skill }) => commandId(id) && safe(path ?? '') && !['model', 'disabled'].includes(skill?.invocationMode ?? ''))
+      .map(({ id, path, skill, command }) => ({ id, kind: 'skill', value: resourceMention(id, path), label: '@' + id, description: skill?.description || command?.description }));
+    for (const plugin of catalog.plugins ?? []) {
+      if (commandId(plugin.id) && safe(plugin.manifestPath)) items.push({id: plugin.id, kind: 'plugin', value: resourceMention(plugin.id, plugin.manifestPath), label: '@' + plugin.id, description: plugin.name});
+    }
+    return items;
+  }
+  async resourceSuggestions(query: string, kind: 'skill' | 'plugin' | undefined, signal: AbortSignal): Promise<ChatChoice[]> {
+    const items = this.#resources(await this.#catalog());
+    signal.throwIfAborted();
+    const targets = resourceMentionTargets(items);
+    const search = query.trim().toLowerCase();
+    return items.filter(item => (!kind || item.kind === kind) &&
+      (item.id.toLowerCase().includes(search) || item.description?.toLowerCase().includes(search)))
+      .sort((a, b) => Number(b.id.toLowerCase().startsWith(search)) - Number(a.id.toLowerCase().startsWith(search)))
+      .map(item => ({ ...item, value: (targets.get(item.id) === item.value ? item.label : item.value) + ' ' }));
+  }
   #extra(catalog: Catalog): ChatChoice[] {
-    const commands = catalog.pluginCommands.filter(item => commandId(item.id));
-    const paths = new Set(commands.map(item => item.path));
-    return [
-      ...commands.map(item => ({ value: `/${item.id} `, label: `/${item.id}`, description: [item.description, item.argumentHint].filter(Boolean).join(' · ') })),
-      ...catalog.skills.filter(skill => commandId(skill.name) && safe(skill.path) && !paths.has(skill.path) &&
-        !commands.some(command => command.id === skill.name) && !['model', 'disabled'].includes(skill.invocationMode ?? ''))
-        .map(skill => ({ value: `/${skill.name} `, label: `/${skill.name}`, description: skill.description })),
-    ];
+    return catalog.pluginCommands.filter(item => item.kind !== 'skill' && commandId(item.id))
+      .map(item => ({ value: `/${item.id} `, label: `/${item.id}`, description: [item.description, item.argumentHint].filter(Boolean).join(' · ') }));
   }
   suggest: ChatSuggestionSource = async (line, cursor, signal) => {
     signal.throwIfAborted();
+    const before = line.slice(0, cursor);
+    const list = /^(\s*)\/(skill|plugin)[ \t]+([^\s]*)$/.exec(before);
+    if (list) return { start: list[1].length, end: cursor + (/^\S*/.exec(line.slice(cursor))?.[0].length ?? 0),
+      items: await this.resourceSuggestions(list[3], list[2] === 'skill' ? 'skill' : 'plugin', signal) };
     const command = commandSuggestions(line, cursor, this.#context.models);
     if (command) {
       if (/^\s*\/(?:model|habit|prediction)\s+/.test(line.slice(0, cursor))) return command;
@@ -181,8 +200,10 @@ export class AgentChatCompletion {
     if (chatShellCommand(line) !== undefined) return;
     const token = pathToken(line, cursor);
     if (!token) return;
-    const empty = { start: token.start, end: token.end, items: [] };
-    if (!this.#context.workspace) return { ...empty, notice: 'This session has no browsable workspace' };
+    const references = token.mention && !token.quote && /^[\p{L}\p{N}_.:-]*$/u.test(token.path)
+      ? await this.resourceSuggestions(token.path, undefined, signal).catch(() => { signal.throwIfAborted(); return []; }) : [];
+    const empty = { start: token.start, end: token.end, items: references };
+    if (!this.#context.workspace) return references.length ? empty : { ...empty, notice: 'This session has no browsable workspace' };
     const paths = this.#paths(), input = token.path.replaceAll('\\', paths.sep);
     const separator = Math.max(input.lastIndexOf('/'), input.lastIndexOf(paths.sep));
     const parent = separator >= 0 ? input.slice(0, separator + 1) : '';
@@ -195,26 +216,25 @@ export class AgentChatCompletion {
       const prefix = (value: string) => insensitive ? value.toLowerCase() : value;
       const items = page.entries.filter(entry => safe(entry.name) && !/["']/.test(entry.name) && prefix(entry.name).startsWith(prefix(name))).map(entry => {
         const path = parent.replaceAll('\\', '/') + entry.name + (entry.kind === 'folder' ? '/' : '');
-        const quote = token.quote || (/\s/.test(path) ? '"' : '');
+        const resourceHasName = references.some(item => item.label === '@' + path || item.label?.endsWith(':' + path));
+        const quote = token.quote || (/\s/.test(path) || resourceHasName ? '"' : '');
         const value = (token.mention ? '@' : '') + quote + path + quote + (entry.kind === 'file' ? ' ' : '');
         return { value, label: entry.name + (entry.kind === 'folder' ? '/' : ''), description: entry.kind === 'folder' ? 'Folder' : 'File',
           cursor: value.length - (entry.kind === 'folder' && quote ? 1 : 0) };
       });
-      return { ...empty, items, ...(page.truncated ? { notice: 'Showing the first 2,000 entries; enter a subfolder to narrow the search' } : {}) };
+      return { ...empty, items: [...references, ...items], ...(page.truncated ? { notice: 'Showing the first 2,000 entries; enter a subfolder to narrow the search' } : {}) };
     } catch { signal.throwIfAborted(); return { ...empty, notice: 'Cannot read this folder; keep typing or try again later' }; }
   };
   async prepare(text: string, signal: AbortSignal) {
     let content = text;
-    const invocation = /^(\s*)\/([A-Za-z0-9_.:-]+)(?=\s|$)/.exec(content);
-    if (invocation && !commands.some(command => command.value.trim() === '/' + invocation[2])) {
-      const catalog = await this.#catalog().catch(() => undefined); signal.throwIfAborted();
-      const plugin = catalog?.pluginCommands.some(command => command.id === invocation[2]);
-      const skill = !plugin && catalog?.skills.find(skill => skill.name === invocation[2] && safe(skill.path) && !['model', 'disabled'].includes(skill.invocationMode ?? ''));
-      if (skill) content = content.slice(0, invocation[1].length) + skillLink(skill) + content.slice(invocation[0].length);
+    if (/(?:^|\s)@[\w.-]/.test(text)) {
+      const catalog = await this.#catalog().catch(() => undefined);
+      signal.throwIfAborted();
+      if (catalog) content = resolveResourceMentions(text, this.#resources(catalog));
     }
     const files = new Set<string>();
     let fence = ''; const paths = this.#paths();
-    if (this.#context.workspace) for (const line of text.split(/\r?\n/)) {
+    if (this.#context.workspace) for (const line of content.split(/\r?\n/)) {
       const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
       if (marker && (!fence || marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim())) { fence = fence ? '' : marker[1]; continue; }
       if (fence) continue;

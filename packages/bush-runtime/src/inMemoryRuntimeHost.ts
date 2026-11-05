@@ -2560,7 +2560,11 @@ export class InMemoryRuntimeHost {
           const currentInput = input.sessionCommit?.inputMessages.map(item => item.message) ?? request.messages;
           const userMessage = [...currentInput].reverse().find(message => message.role === 'user');
           const parsedInvocation = !child && userMessage ? parsePluginCommandInvocation(userMessage.content) : undefined;
-          const matches = parsedInvocation ? [...pluginExtensions.commands ?? [], ...pluginExtensions.skills ?? []].filter(component => component.id === parsedInvocation.command || component.name === parsedInvocation.command) : [];
+          const skills = pluginExtensions.skills ?? [];
+          const commands = pluginExtensions.commands ?? [];
+          // Legacy dollar invocations remain explicit. Slash dispatch is reserved for commands.
+          const candidates = userMessage?.content.trimStart().startsWith('$') ? [...commands, ...skills] : commands.filter(command => command.kind !== 'skill');
+          const matches = parsedInvocation ? candidates.filter(component => component.id === parsedInvocation.command || component.name === parsedInvocation.command) : [];
           const initialHookMessages: string[] = [];
           if (!child) {
             const backgroundResults = await this.#pluginBackground.results(request.sessionId);
@@ -2587,7 +2591,7 @@ export class InMemoryRuntimeHost {
             messages.push(message); generatedMessages.push({ messageId: `msg_plugin_start_${request.turnId}_${index}`, createdAt: this.#sessionNow(), message });
           }
           if (matches.length > 1) return await finalize({ status: 'failed', reason: 'ambiguous_plugin_invocation', details: { candidates: matches.map(component => component.id) } });
-          const invocation = parsedInvocation && (matches.length || parsedInvocation.command.includes(':')) ? { ...parsedInvocation, command: matches[0]?.id ?? parsedInvocation.command } : undefined;
+          const invocation = parsedInvocation && (matches.length || (parsedInvocation.command.includes(':') && !skills.some(skill => skill.id === parsedInvocation.command))) ? { ...parsedInvocation, command: matches[0]?.id ?? parsedInvocation.command } : undefined;
           if (invocation && request.metadata.pluginCommandCompletedTurn !== request.turnId && !generatedMessages.some(message => message.messageId === `msg_plugin_command_${request.turnId}`)) {
             const call = { protocol: 'bush.tool_call.v1' as const, id: `plugin_command_${randomUUID()}`, name: matches[0]?.kind === 'skill' ? 'run_skill' : 'run_plugin_command', argumentsText: JSON.stringify(invocation) };
             request.metadata.pluginCommandUserCallId = call.id;

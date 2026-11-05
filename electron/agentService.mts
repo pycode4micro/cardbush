@@ -514,7 +514,10 @@ export class AgentService {
           return readProductSkill([{ path: join(this.bundledRoot, 'skills'), source: 'bundled' }, { path: join(this.#extensionRoot, 'skills'), source: 'user' }], name);
         }
         const skills = await listProductSkills([{ path: join(this.bundledRoot, 'skills'), source: 'bundled' }, { path: join(this.#extensionRoot, 'skills'), source: 'user' }]);
-        return { skills: [...skills.map(skill => ({ ...skill, logoPath: '', logoDarkPath: '' })), ...extensions.skills.map(skill => ({ name: skill.id, path: skill.path, description: skill.description }))],
+        const apps = data.includePlugins === true ? await this.#product({ kind: 'apps.get' }) as { plugins: { id: string; name: string; manifestPath: string; installed: boolean }[] } : undefined;
+        return { plugins: apps?.plugins.filter(plugin => plugin.installed).map(({ id, name, manifestPath }) => ({ id, name, manifestPath })),
+          skills: [...skills.map(skill => ({ ...skill, logoPath: '', logoDarkPath: '' })), ...extensions.skills.map(skill => ({ name: skill.id, path: skill.path, description: skill.description,
+            invocationMode: skill.userInvocable ? skill.disableModelInvocation ? 'manual' : 'both' : skill.disableModelInvocation ? 'disabled' : 'model' }))],
           pluginCommands: extensions.commands.filter(command => command.userInvocable).map(command => ({ id: command.id, pluginId: command.pluginId, name: command.name, path: command.path, description: command.description, argumentHint: command.argumentHint, kind: command.kind ?? 'command' })) };
       }
       case 'files.read': case 'files.upload': case 'files.list': case 'files.pasted-text': {

@@ -7,6 +7,11 @@ const source = readFileSync('src/features/plugins/pluginPrompts.ts', 'utf8');
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
 const exports = {};
 new Function('exports', 'require', outputText)(exports, specifier => {
+  if (specifier === '../../../electron/composerResourceCatalog') {
+    const shared = {};
+    new Function('exports', ts.transpileModule(readFileSync('electron/composerResourceCatalog.ts', 'utf8'), { compilerOptions: {module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022} }).outputText)(shared);
+    return shared;
+  }
   if (specifier === '../../i18n') return i18n;
   throw new Error(`Unexpected source dependency: ${specifier}`);
 });
@@ -14,7 +19,8 @@ const { pluginReference, pluginPrompt, pluginPromptParts, pluginTroubleshootingP
 const plugin = { id: 'example.tools', name: '同名插件', version: '1.2.3', manifestPath: 'C:\\Plugin Packages\\example\\.codex-plugin\\plugin.json', config: { env: { API_KEY: 'do-not-send-config' } } };
 const other = { ...plugin, id: 'other', manifestPath: 'C:/other/plugin.json' };
 const reference = pluginReference(plugin);
-assert.equal(reference, '[$example.tools](<C:/Plugin Packages/example/.codex-plugin/plugin.json>)');
+assert.equal(reference, '[@example.tools](<C:/Plugin Packages/example/.codex-plugin/plugin.json>)');
+assert.equal(pluginPromptParts(reference.replace('[@', '[$'), [plugin])[0].plugin, plugin);
 const draft = `说明 ${reference} 完成任务\n${pluginReference(other)} 第二项`;
 const parts = pluginPromptParts(draft, [plugin, other]);
 assert.equal(parts.map(part => part.text).join(''), draft, 'authored text and reference positions are lossless');
@@ -65,7 +71,7 @@ const withContext = pluginTroubleshootingPrompt(plugin, { id: context.serviceId,
   configurationRevision: 7, restartAttempts: 3, toolCount: 0, error: 'password="two secret words" https://user:pass@example.test/mcp?ticket=PRIVATE_TICKET#PRIVATE_FRAGMENT',
 }, 'zh', context);
 const evidence = JSON.parse(withContext.slice(withContext.indexOf('\n{') + 1));
-assert.ok(withContext.startsWith('[$example.tools](<C:/CardBush/plugins/example/plugin.json>)'), 'fresh host identity replaces the stale catalog path in the draft');
+assert.ok(withContext.startsWith('[@example.tools](<C:/CardBush/plugins/example/plugin.json>)'), 'fresh host identity replaces the stale catalog path in the draft');
 assert.equal(evidence.version, context.version, 'version labels never change installation ownership');
 assert.equal(evidence.pluginRoot, context.pluginRoot);
 assert.deepEqual(evidence.configuredLaunch, context.configuredLaunch);
@@ -95,7 +101,8 @@ const splitOutbound = new Function('splitExplicitAttachmentMentions', 'isImagePa
   }).outputText)(localPaths.splitExplicitAttachmentMentions, localPaths.isImagePath);
 for (const scriptPath of ['C:\\Plugin Packages\\工具\\launch-hidden.ps1', '/opt/plugin/launch.sh', '\\\\server\\share\\launch.cmd']) {
   const launch = { ...context.configuredLaunch, args: ['-File', scriptPath] };
-  const draft = pluginTroubleshootingPrompt(plugin, { id: context.serviceId, name: 'Example', state: 'unavailable' }, 'zh', { ...context, configuredLaunch: launch });
+  assert.equal(pluginPromptParts(reference.replace('[@', '[$'), [plugin])[0].plugin, plugin);
+const draft = pluginTroubleshootingPrompt(plugin, { id: context.serviceId, name: 'Example', state: 'unavailable' }, 'zh', { ...context, configuredLaunch: launch });
   const outbound = splitOutbound(draft);
   assert.equal(outbound.userInput, draft);
   assert.equal(outbound.displayInput, draft);

@@ -1691,6 +1691,12 @@ test('local CLI shares desktop model and Skill settings without adopting desktop
   const env = { CARDBUSH_CLI_DATA_DIR: dataRoot, CARDBUSH_CLI_PROFILE_DIR: profile };
   const local = await cli(t, [], { env, cwd: f.cwd, interactive: true });
   await until(() => local.stderr, text => text.includes('❯ '));
+  local.child.stdin.write('/skill fixture-local\n');
+  await until(() => local.stderr, text => text.includes('@fixture-local'));
+  local.child.stdin.write('\r');
+  await until(() => local.stderr, text => /❯ @fixture-local/.test(stripVTControlCharacters(text)));
+  assert.equal(f.calls.length, 0, 'choosing a Skill restores a draft without a model turn');
+  local.child.stdin.write('\x15');
   local.child.stdin.write('/exit\n');
   const result = await local.result;
   assert.equal(result.code, 0, result.stderr); assert.equal(f.calls.length, 0, 'idle startup never calls a model');
@@ -1698,6 +1704,10 @@ test('local CLI shares desktop model and Skill settings without adopting desktop
   assert.equal(await readFile(join(profile, 'runtime-state', 'sentinel'), 'utf8'), 'DESKTOP_STATE');
   await assert.rejects(readFile(join(profile, 'agent.json')), { code: 'ENOENT' });
   await assert.rejects(readFile(join(dataRoot, 'config', 'models.json')), { code: 'ENOENT' });
+  const sent = await cli(t, ['--prompt', 'Inspect @fixture-local please'], { env, cwd: f.cwd }).result;
+  assert.equal(sent.code, 0, sent.stderr);
+  assert.ok(JSON.stringify(f.calls).includes('[@fixture-local](<' + join(skillRoot, 'SKILL.md').replaceAll('\\','/') + '>)'),
+    'an actual CLI turn carries the selected Skill identity and host path');
   await localStopped(dataRoot);
   const service = await AgentService.open({ dataRoot, local: true, localProfileRoot: profile });
   try {

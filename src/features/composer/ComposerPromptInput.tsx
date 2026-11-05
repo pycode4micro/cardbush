@@ -15,9 +15,11 @@ import { useComposerCodeHighlights } from './useComposerCodeHighlights';
 type ComposerPromptPart = PluginPromptPart & SkillPromptPart & { contextReference?: PromptReference };
 
 const emptySkills: SkillSummary[] = [];
-const emptyCommands: PluginCommandSummary[] = [];
-const isReference = (part: ComposerPromptPart) => Boolean(part.plugin || part.contextReference || part.skillReference);
-const referenceTitle = (part: ComposerPromptPart) => part.plugin?.name || part.skill?.displayName || part.skillReference?.title || part.contextReference?.title || '';
+const isReference = (part: ComposerPromptPart) => Boolean(part.reference || part.contextReference || part.skillReference);
+function referenceTitle(part: ComposerPromptPart) {
+  const title = part.plugin?.name || part.reference?.id || part.skill?.displayName || part.skillReference?.title || part.contextReference?.title || '';
+  return part.text.startsWith('[@') && (part.reference || part.skillReference) ? '@' + title : title;
+}
 
 export interface ComposerPromptInputHandle {
   focus(): void;
@@ -41,7 +43,7 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   onChange(value: string, caret: number): void;
   onSelectionChange(caret: number): void;
   onKeyDown(event: KeyboardEvent<HTMLElement>): void;
-}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, pluginCommands = emptyCommands, language, autoFocus, readOnly = false, richReferences = true, ariaLabel, ariaDescribedBy, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
+}>(function ComposerPromptInput({ value, plugins, skills = emptySkills, language, autoFocus, readOnly = false, richReferences = true, ariaLabel, ariaDescribedBy, placeholder, onChange, onSelectionChange, onKeyDown }, ref) {
   const host = useContext(ConversationHostContext);
   const { sessionId } = useContext(ComposerReferenceContext);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -53,11 +55,11 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   const removedSelection = useRef<{ value: string; caret: number } | null>(null);
   const change = useRef(onChange);
   change.current = onChange;
-  const parsedParts = skillPromptParts(value, skills, pluginCommands).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
+  const parsedParts = skillPromptParts(value, skills).flatMap<ComposerPromptPart>(skillPart => skillPart.skillReference ? [skillPart]
     : pluginPromptParts(skillPart.text, plugins).flatMap<ComposerPromptPart>(part => part.reference ? [{ ...part, start: skillPart.start + part.start }]
       : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: skillPart.start + part.start + contextPart.start, contextReference: contextPart.reference }))));
   // Remote application references and catalog-backed Skill commands need no local file resolver.
-  const parts = richReferences === 'applications' ? parsedParts.map(part => part.skillCommand || ['application', 'team'].includes(part.contextReference?.kind ?? '') ? part : { text: part.text, start: part.start }) : parsedParts;
+  const parts = richReferences === 'applications' ? parsedParts.map(part => part.skillReference || part.reference || ['application', 'team'].includes(part.contextReference?.kind ?? '') ? part : { text: part.text, start: part.start }) : parsedParts;
   const rich = Boolean(richReferences) && parts.some(isReference);
   useImperativeHandle(ref, () => ({
     focus: () => focusEditor(rich ? editor.current : textarea.current),
@@ -102,9 +104,9 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
       const reference = part.contextReference;
       const title = referenceTitle(part);
       const chip = document.createElement('span');
-      chip.className = part.plugin ? 'composer-plugin-token' : part.skillReference ? 'composer-context-token composer-skill-token' : 'composer-context-token';
+      chip.className = part.reference ? 'composer-plugin-token' : part.skillReference ? 'composer-context-token composer-skill-token' : 'composer-context-token';
       chip.contentEditable = 'false';
-      if (part.plugin) chip.dataset.pluginReference = part.text;
+      if (part.reference) chip.dataset.pluginReference = part.text;
       else if (part.skillReference) chip.dataset.skillReference = part.text;
       else chip.dataset.contextReference = part.text;
       chip.title = part.skillCommand ? [part.text, part.skillReference?.path].filter(Boolean).join('\n')

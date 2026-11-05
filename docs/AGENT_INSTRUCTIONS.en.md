@@ -17,7 +17,7 @@ A running turn uses its starting snapshot. New turns reread the files; subtasks 
 UI entry points:
 
 - Add: files, folders and task plans.
-- Skills: Settings → Plugins → Skills, or `/skill` in the composer.
+- Skills: Settings → Plugins → Skills, or enter `/skill` in the desktop composer or CLI to browse skills and `/plugin` to browse installed plugins. Choosing a skill inserts a reference into the draft. Type `@skill-name` or `@plugin-name` to select a resource directly. Use `/` for commands.
 - Collect a workflow as a Skill: type `/collect`, then Enter, Tab or the collection action. The composer inserts a request to summarize the current conversation into an installable skill; edit before sending.
 - Git branches: project workspace details, selectable before a task starts and locked during execution.
 - Vision: Settings → Models → Model input, retaining the existing global-switch scope.

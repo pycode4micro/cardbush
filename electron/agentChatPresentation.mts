@@ -86,7 +86,7 @@ export function chatHeader(value: ChatIdentity, columns: number, color: boolean)
     row('/artifact turn files  /source supporting evidence'),
     row('/session switch chat  /tools execution details'),
     row('/shell native shell   !command run a local command'),
-    row('/ commands & skills   @ workspace files   Tab complete'),
+    row('/ commands   @ skills, plugins & files   Tab complete'),
   ].join('\n') + '\n' + border('╰' + '─'.repeat(width - 2) + '╯') + '\n' +
     (value.workspace && terminalWidth(value.workspace) > inside ? terminalStyle(`  Workspace: ${terminalText(value.workspace)}\n`, 'dim', color) : '') +
     terminalStyle(`  Session: ${terminalText(value.sessionId)}\n`, 'dim', color);

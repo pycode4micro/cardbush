@@ -363,6 +363,11 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         command={String(node.properties['data-skill-command'])} path={String(node.properties['data-skill-path'] ?? '')}>{children}</SkillCommandReference>;
       const reference = parseMarkdownReference(href);
       if (reference) return <MarkdownReference reference={reference} language={language} rich={richFileReferences}>{children}</MarkdownReference>;
+      const label = reactNodeText(children);
+      if (label.startsWith('@') && href) {
+        const path = referenceMode === 'remote' ? remoteMarkdownPath(href, workspaceRoot) : markdownLocalFileReference(href, workspaceRoot)?.path;
+        if (path && /[\\/]SKILL\.md$/i.test(path)) return <SkillCommandReference command={label} path={path}>{children}</SkillCommandReference>;
+      }
       if (referenceMode === 'remote' && href && !/^(https?:\/\/|#)/i.test(href)) {
         const path = host?.fileReferencePath ? host.fileReferencePath(href) : remoteMarkdownPath(href, workspaceRoot);
         return host && path ? <ConversationFileReference path={path} language={language}>{children}</ConversationFileReference> : <span>{children}</span>;

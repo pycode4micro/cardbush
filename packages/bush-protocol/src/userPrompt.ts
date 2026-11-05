@@ -34,7 +34,7 @@ function legacySelection(text: string): UserPrompt | undefined {
 
 /** Older plugin-repair actions also inserted their complete diagnostic snapshot into the bubble. */
 function legacyPluginDiagnostics(text: string): UserPrompt | undefined {
-  const ref = /^(\[\$[A-Za-z0-9][A-Za-z0-9._-]*\]\(<[^>\r\n]+>\)|\$[A-Za-z0-9][A-Za-z0-9._-]*) /.exec(text);
+  const ref = /^(\[[@$][A-Za-z0-9][A-Za-z0-9._-]*\]\(<[^>\r\n]+>\)|[@$][A-Za-z0-9][A-Za-z0-9._-]*) /.exec(text);
   if (!ref) return;
   const body = text.slice(ref[0].length);
   const zh = body.startsWith('请用中文汇报进度和最终结果。请排查这个插件在 CardBush 中的连接异常。先读取插件清单和安装说明，');
