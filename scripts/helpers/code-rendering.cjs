@@ -6,6 +6,7 @@ module.exports = async ({ run, until, window, root }) => {
   const sizing = await window.webContents.insertCSS('.app { width:100%!important; }');
   const code = 'for (int p = 0; p < _w; p++) {\n    byte* s = src + p*4;\n\n    byte* dd = d + p*3; dd[0]=s[0];\n}\n';
   const content = [
+    '**视频还没有生成。**已找到资料。', '', '**请确认：**按这版脚本。', '',
     '关键词：`user_id`、``包含 `反引号` 的关键词``、**`优先处理`**；普通强调：**重要**。', '',
     '字面符号：\\`普通文本\\`；未闭合：`保留原文', '',
     '复现结果：', '```', 'C:/fixture/mjpeg-out.png', '第 4 段实际全黑', '```', '',
@@ -14,22 +15,30 @@ module.exports = async ({ run, until, window, root }) => {
   ].join('\n');
   await run(`
     window.codeFixtureContent = ${JSON.stringify(content)};
-    window.renderCodeFixture = (language = 'zh', role = 'assistant') => renderView(
+    window.renderCodeFixture = (language = 'zh', role = 'assistant', status = 'completed', content = codeFixtureContent) => renderView(
       h(views.MessageFileReferenceScope, { workspaceRoot: 'C:/fixture' },
         h(views.MessageBubble, { language, sending: false, activeTurnId: '', activeAssistantMessageId: '', message: {
-          id: role + '-code-fixture', role, status: 'completed', content: codeFixtureContent,
+          id: role + '-code-fixture', role, status, content,
           metadata: { transcript_kind: 'assistant_final' } } })));
     window.copiedCode = '';
     window.codeCopyFeedback = 0;
     window.onCodeCopyFeedback = () => { codeCopyFeedback++; };
     addEventListener('cardbush-copy-feedback', onCodeCopyFeedback);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { copiedCode = text; } } });
-    renderCodeFixture();
+    renderCodeFixture('zh', 'assistant', 'streaming', '**视频还没有生成。');
   `);
+  await until("document.querySelector('.markdown-content p')?.textContent.includes('视频还没有生成。') && !document.querySelector('.markdown-content strong')", 'unclosed emphasis streams as text');
+  await run("renderCodeFixture('zh', 'assistant', 'streaming')");
+  const hasBoldLabels = `(() => {
+    const [first, second] = document.querySelectorAll('.markdown-content strong');
+    return first?.textContent === '视频还没有生成。' && second?.textContent === '请确认：';
+  })()`;
+  await until(hasBoldLabels, 'Chinese emphasis closes as soon as the delimiters arrive');
   for (const [theme, language] of [['theme-dark', 'zh'], ['theme-bright', 'en']]) {
     await run(`viewTheme = ${JSON.stringify(theme)}; renderCodeFixture(${JSON.stringify(language)})`);
     await until("document.querySelector('code.language-csharp .token.keyword')?.textContent === 'for'", 'C# syntax tokens render');
     await until("document.querySelector('.local-file-type-icon.csharp')?.textContent === 'C#'", 'C# file badge renders');
+    assert.equal(await run(hasBoldLabels), true, 'completed replies keep the same bold boundaries');
     assert.deepEqual(await run("Array.from(document.querySelectorAll('.markdown-code-language'), node => node.textContent)"),
       [language === 'zh' ? '纯文本' : 'Plain text', 'C#']);
     assert.equal(await run("document.querySelector('code.language-csharp').textContent"), code, 'highlighter preserves whitespace and blank lines');

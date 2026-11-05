@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import { fileMemoReference, parseFileMemoReference } from '@cardbush/bush-protocol';
 import remarkGfm from 'remark-gfm';
+import remarkCjkFriendly from 'remark-cjk-friendly';
 
 const sourcePath = path.join(
   process.cwd(),
@@ -33,6 +34,21 @@ const appStyles = readSourceFile(
 const { normalizeExecutionNarrationForDisplay, normalizeMarkdownContentForDisplay, remarkAutolinkBoundaries } = await loadChatTranscript({
   source: `export * from ${JSON.stringify(sourcePath)};`,
 });
+const remarkPlugins = [remarkGfm, remarkCjkFriendly, remarkAutolinkBoundaries];
+
+const emphasisCases = [
+  ['**视频还没有生成。**已找到资料', '<p><strong>视频还没有生成。</strong>已找到资料</p>'],
+  ['**请确认：**按这版脚本', '<p><strong>请确认：</strong>按这版脚本</p>'],
+  ['先**「确认」**再继续', '<p>先<strong>「确认」</strong>再继续</p>'],
+  ['**xxx** and ~~old~~', '<p><strong>xxx</strong> and <del>old</del></p>'],
+  ['\\*\\*请确认：\\*\\*按原文', '<p>**请确认：**按原文</p>'],
+  ['`**请确认：**按原文`', '<p><code>**请确认：**按原文</code></p>'],
+  ['```md\n**请确认：**按原文\n```', '<pre><code class="language-md">**请确认：**按原文\n</code></pre>'],
+];
+for (const [input, expected] of emphasisCases) {
+  const html = renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins }, normalizeMarkdownContentForDisplay(input)));
+  assert.equal(html, expected, input);
+}
 
 const cases = [
   {
@@ -215,7 +231,7 @@ const linkCases = [
 for (const testCase of linkCases) {
   const hrefs = [];
   const html = renderToStaticMarkup(createElement(ReactMarkdown, {
-    remarkPlugins: [remarkGfm, remarkAutolinkBoundaries],
+    remarkPlugins,
     components: {
       a: ({ node: _node, ...props }) => {
         hrefs.push(props.href);
@@ -300,7 +316,7 @@ for (const memoReference of [fileMemoReference({ sessionId: '会话', turnId: 't
 for (const content of [`[文件](${memoReference})`, `![图片](${memoReference})`, `[文件][memo]\n\n[memo]: ${memoReference}`]) {
   const references = [];
   renderToStaticMarkup(createElement(ReactMarkdown, {
-    remarkPlugins: [remarkGfm, remarkAutolinkBoundaries],
+    remarkPlugins,
     urlTransform: url => parseFileMemoReference(url) ? url : defaultUrlTransform(url),
     components: {
       a: ({ href }) => { references.push(href); return null; },
@@ -310,4 +326,4 @@ for (const content of [`[文件](${memoReference})`, `![图片](${memoReference}
   assert.deepEqual(references, [memoReference], 'Markdown parsing must preserve the exact tool-returned reference');
 }
 }
-console.log(`markdown format tests passed (${cases.length} formatting, ${linkCases.length} rendered links, 6 memo references)`);
+console.log(`markdown format tests passed (${cases.length} formatting, ${emphasisCases.length} emphasis, ${linkCases.length} rendered links, 6 memo references)`);

@@ -324,9 +324,10 @@ function remoteMarkdownPath(value: string | undefined, workspaceRoot: string) {
 }
 
 const LazyMarkdownContent = recoverableLazy('markdown', async () => {
-  const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }, { scrollMarkdownAnchor }] = await Promise.all([
+  const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }, { default: remarkCjkFriendly }, { scrollMarkdownAnchor }] = await Promise.all([
     import('react-markdown'),
     import('remark-gfm'),
+    import('remark-cjk-friendly'),
     import('../mdPresentation/markdownAnchors'),
   ]);
 
@@ -552,7 +553,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     const markdown = useMemo(() => skillMarkdownPresentation(normalizeMarkdownContentForDisplay(content), skillCommands), [content, skillCommands]);
     const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode, compactImages }), [workspaceRoot, pathAliases, language, referenceMode, compactImages]);
     const remarkPlugins = useMemo(() => {
-      const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm];
+      const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkCjkFriendly];
       if (streaming) plugins.push(remarkStreamingTables);
       plugins.push(remarkAutolinkBoundaries);
       // URL boundary repair can reparse the document. Enrich references only
