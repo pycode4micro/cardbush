@@ -24,6 +24,7 @@ export function registerAsyncInteraction(registry: ToolRegistry, solutions: Runt
   registry.register<SolutionSelectionInput>({
     definition: { name: 'request_user_input_async', description: 'Ask necessary, self-contained questions and immediately continue independent work. Prefer one; group at most three related questions in questions, each with a unique id, prompt and 1–3 concise options. The UI permits free text and submits all answers together. Returns a task_id; the actual answers arrive separately. Do not start steps that depend on the answers, infer approval from elapsed time, repeat a dismissed question, or use this for permissions or progress updates.', inputSchema: solutionToolInputSchema },
     manifest: interactionManifest('solution.request_async'), nestedCallable: false, visibleToChild: false,
+    modelAvailable: request => request.metadata.userQuestionDelivery !== 'final_reply',
     decodeInput: value => {
       const input = value as Record<string, unknown>;
       if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => key !== 'questions') || !Array.isArray(input.questions)) throw new Error('Use questions with id, prompt and options.');

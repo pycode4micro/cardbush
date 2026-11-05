@@ -58,3 +58,4 @@ export * from './attachments.js';
 export * from './providerActivity.js';
 export * from './agentDeliveryInstructions.js';
 export * from './bridgePlugins.js';
+export * from './webhookTurnPolicy.js';

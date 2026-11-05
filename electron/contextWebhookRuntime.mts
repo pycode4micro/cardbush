@@ -1,4 +1,4 @@
-import { createTurnTimeContext, runtimeSessionTurnRequestSchema, runtimeProviderBindingRefSchema, assistantProfileSchema, type SessionSnapshot, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
+import { applyWebhookTurnPolicy, createTurnTimeContext, runtimeSessionTurnRequestSchema, runtimeProviderBindingRefSchema, assistantProfileSchema, type SessionSnapshot, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { WebhookBinding } from './contextWebhookTypes.js';
@@ -51,7 +51,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
   const sessionId = binding.sessionId, turnId = `webhook-${id}`, inputId = `webhook-input-${id}`;
   const snapshot = await runtime.command('runtime.get_session', { sessionId }) as SessionSnapshot | null;
   if (!snapshot) throw new WebhookError('context_deleted', 404);
-  let parent = structuredClone(binding.parent);
+  let parent = applyWebhookTurnPolicy(structuredClone(binding.parent));
   parent.requestId = turnId; parent.turnId = turnId;
   delete parent.metadata.botSourceRef;
   if (sourceRef) parent.metadata.botSourceRef = sourceRef;
@@ -67,7 +67,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
     if (journal.generation !== binding.generation) throw new WebhookError('context_reset', 409);
     if (!journal.entries.some((entry: { id: string }) => entry.id === inputId)) {
       if (recovering) return { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
-      parent = await runtime.prepareParent?.(parent, signal) ?? parent;
+      parent = applyWebhookTurnPolicy(await runtime.prepareParent?.(parent, signal) ?? parent);
       await runtime.command('runtime.assistant_conversation', { action: 'turn', sessionId, generation: binding.generation,
         profile: binding.profile, parent: { ...parent, metadata: { ...parent.metadata, assistantOutputMode: 'text' } },
         entry: { id: inputId, originTurnId: turnId, role: 'user', source: 'text', visibility: 'conversation', content: message.text, createdAt,
@@ -89,7 +89,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
   const resultFrom = (state: SessionSnapshot) => contextWebhookTurnResult(state, turnId);
   const existing = resultFrom(snapshot); if (existing) return existing;
   if (recovering) return { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
-  parent = await runtime.prepareParent?.(parent, signal) ?? parent;
+  parent = applyWebhookTurnPolicy(await runtime.prepareParent?.(parent, signal) ?? parent);
   await runtime.command('runtime.run_session_turn', parent);
   const finished = await runtime.command('runtime.get_session', { sessionId }) as SessionSnapshot | null;
   return finished && resultFrom(finished) || { status: 'interrupted', reply: '', errorCode: 'response_unavailable' };

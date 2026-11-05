@@ -154,6 +154,8 @@ for (const kind of ['conversation', 'assistant']) test(`${kind}: real model tool
     call: (sessionId, input, signal, files) => gateway.botRequest({ action: 'call', sessionId, input, files }, signal),
   }, provider: { async *stream(input) {
     calls.push(input);
+    assert.equal(input.permissionMode, 'all_free');
+    assert.equal(input.requestCapabilities.interactiveRequests, false);
     const state = JSON.parse(input.messages.filter(m => m.name === 'bot_context').at(-1).content.split('\n').at(-1));
     assert.equal(state.source.botName, 'Selected Bot'); assert.equal(state.source.senderId, 'original-user');
     assert.equal(state.source.available, true);
@@ -246,20 +248,24 @@ test('Assistant identifies local input after webhook history and refreshes live 
   const latest = () => JSON.parse(calls.at(-1).messages.filter(m => m.name === 'bot_context').at(-1).content.split('\n').at(-1));
   const settled = async () => { await until(() => !assistant.command({ action: 'read', sessionId }).busy);
     assert.equal(assistant.command({ action: 'read', sessionId }).error, ''); };
-  const parent = { ...request(sessionId), metadata: { botSourceRef: ref } }, profile = assistantProfileSchema.parse({});
+  const parent = { ...request(sessionId), permissionMode: 'task_free', metadata: { botSourceRef: ref } }, profile = assistantProfileSchema.parse({});
   try {
     assistant.command({ action: 'turn', sessionId, parent, profile, entry: { id: 'old-webhook', role: 'user', source: 'text',
       visibility: 'conversation', createdAt: new Date().toISOString(), content: 'Hello from the bot.', botSourceRef: ref } });
     await settled(); assert.equal(latest().messageSource.kind, 'webhook'); assert.equal(latest().available, true);
+    assert.equal(calls.at(-1).permissionMode, 'all_free');
     online = false;
     assistant.command({ action: 'retry', sessionId, parent, profile }); await settled();
     assert.equal(latest().messageSource.sourceRef, ref); assert.equal(latest().available, false, 'retry must refresh consumed input');
+    assert.equal(calls.at(-1).permissionMode, 'all_free');
     assistant.command({ action: 'turn', sessionId, parent, profile, entry: { id: 'local-question', role: 'user', source: 'text',
       visibility: 'conversation', createdAt: new Date().toISOString(), content: 'Is my webhook connected?' } });
     await settled();
     assert.deepEqual(latest().messageSource, { kind: 'local' }); assert.equal(latest().source, undefined);
     assert.equal(latest().connections[0].status, 'offline');
     assert.equal(calls.at(-1).metadata.botSourceRef, undefined); assert.deepEqual(calls.at(-1).metadata.botSourceRefs, []);
+    assert.equal(calls.at(-1).permissionMode, 'task_free', 'a later local message keeps local permissions');
+    assert.ok(!calls.at(-1).messages[0].content.includes('question in your final reply'));
     online = true; disconnectDuringRound = true;
     const before = calls.length;
     assistant.command({ action: 'retry', sessionId, parent, profile }); await settled();

@@ -3950,6 +3950,14 @@ export class InMemoryRuntimeHost {
   }
 
   #modelToolDefinitions(request: ModelRequest) {
+    const tools = this.#sessionModelToolDefinitions(request);
+    // Channel restrictions apply to the current projection, including old cached
+    // declarations. Keep the durable contract intact for subsequent local input.
+    return request.metadata.userQuestionDelivery === 'final_reply'
+      ? tools.filter(tool => tool.name !== 'request_user_input_async') : tools;
+  }
+
+  #sessionModelToolDefinitions(request: ModelRequest) {
     if (isSshExecution(request.metadata) && request.metadata.runtimeTask !== 'internal') {
       if (request.metadata.toolExecutionPolicy === 'none') return [];
       const maintenance = this.#contextCompactionAuthorizations.has(JSON.stringify([request.sessionId, request.turnId]));

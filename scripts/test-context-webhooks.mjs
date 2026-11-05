@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { createServer, request as httpRequest, Agent } from 'node:http';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { InMemoryRuntimeHost, SessionStore, ToolRegistry } from '../packages/bush-runtime/dist/index.js';
-import { assistantProfileSchema } from '@cardbush/bush-protocol';
+import { InMemoryRuntimeHost, InMemoryRuntimeEventLog, SessionStore, ToolRegistry } from '../packages/bush-runtime/dist/index.js';
+import { applyWebhookTurnPolicy, assistantProfileSchema } from '@cardbush/bush-protocol';
 import { ContextWebhookHost } from '../dist-electron/contextWebhookHost.mjs';
 import { runContextWebhook } from '../dist-electron/contextWebhookRuntime.mjs';
 import { renderWebhookBody, webhookConfigSchema, incomingMessage } from '../dist-electron/contextWebhookProtocol.mjs';
@@ -73,6 +73,9 @@ test('desktop HTTP binding continues the existing Runtime history, routes callba
     const result = await until(async () => { const value = await bot.read('first'); return value.status === 'completed' && value; });
     assert.equal(result.sessionId, 'existing'); assert.equal(result.reply, 'The word was olive.');
     assert.equal(calls.length, 2); assert.match(JSON.stringify(calls[1].messages), /Remember olive/);
+    assert.equal(calls[0].permissionMode, 'task_free'); assert.equal(calls[1].permissionMode, 'all_free');
+    assert.equal(calls[1].requestCapabilities.interactiveRequests, false);
+    assert.equal(savedBinding.parent.permissionMode, 'task_free', 'binding preparation does not mutate local settings');
     const clock = calls[1].messages.find(m => m.name === 'turn_runtime_context');
     assert.equal(clock.visibility, 'internal');
     assert.match(clock.content, /Snapshot at message submission \(UTC\):/);
@@ -106,6 +109,8 @@ test('Assistant webhook uses the same journal, correlates replies and rejects a 
     const selected = { ...binding(sessionId), kind: 'assistant', generation: 0, profile: assistantProfileSchema.parse({}) };
     const result = await runContextWebhook(bridge, selected, message('a'), 'unique', false, new AbortController().signal);
     assert.equal(result.status, 'completed'); assert.match(result.reply, /olive/); assert.match(JSON.stringify(calls[0].messages), /Remember olive/);
+    assert.equal(calls[0].permissionMode, 'all_free'); assert.equal(calls[0].requestCapabilities.interactiveRequests, false);
+    assert.match(calls[0].messages[0].content, /question in your final reply/);
     const journal = await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId });
     assert.ok(journal.entries.find(e => e.role === 'assistant').responseTo.includes('webhook-input-unique'));
     const clocks = calls[0].messages.filter(m => m.name === 'turn_runtime_context');
@@ -116,6 +121,57 @@ test('Assistant webhook uses the same journal, correlates replies and rejects a 
     await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });
     await assert.rejects(runContextWebhook(bridge, selected, message('b'), 'next', false, new AbortController().signal), /context_reset/);
   } finally { await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
+});
+
+test('legacy webhook bindings use full access, deny question cards and continue from a final-reply question', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-policy-')), log = new InMemoryRuntimeEventLog(), registry = new ToolRegistry();
+  const calls = []; let executions = 0;
+  registry.register({ definition: { name: 'fixture_operation', description: 'An operation requiring permission.', inputSchema: { type: 'object', properties: {} } },
+    manifest: { effect_kind: 'mutation', operation: 'fixture.write', risk: 'medium', owner: 'runtime', dispatch_scope: 'session', mutating: true },
+    decodeInput: value => value,
+    authorize: () => ({ kind: 'ask', request: { reason: 'Fixture authorization', actions: ['write'], targets: [], capabilityIds: ['fixture:write'] } }),
+    execute: () => { executions++; return { written: true }; } });
+  const runtime = new InMemoryRuntimeHost({ dataRoot: root, eventLog: log, toolRegistry: registry, provider: { async *stream(input) {
+    calls.push(input);
+    if (input.turnId === 'local') {
+      assert.equal(input.permissionMode, 'task_free'); assert.equal(input.requestCapabilities.interactiveRequests, true);
+      assert.ok(input.tools.some(tool => tool.name === 'request_user_input_async'), 'the first webhook turn must not remove questions from the durable local catalog');
+      yield* answer(input, 'Local conversation.'); return;
+    }
+    assert.equal(input.permissionMode, 'all_free'); assert.equal(input.requestCapabilities.interactiveRequests, false);
+    assert.ok(!input.tools.some(tool => tool.name === 'request_user_input_async'));
+    assert.match(input.messages.find(m => m.name === 'webhook_delivery_policy').content, /question in your final reply/);
+    const call = calls.length === 1 ? { name: 'fixture_operation', args: {} } : calls.length === 2
+      ? { name: 'request_user_input_async', args: { questions: [{ id: 'color', prompt: 'Which color?', options: ['Blue', 'Green'] }] } } : undefined;
+    if (call) {
+      const base = { protocol: 'bush.model_event.v1', requestId: input.requestId, createdAt: new Date().toISOString() };
+      yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'call-' + calls.length, nameDelta: call.name, argumentsDelta: JSON.stringify(call.args) };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' };
+    } else yield* answer(input, calls.length === 3 ? 'Which color should I use, blue or green?' : 'I will use blue.');
+  } } });
+  const bridge = { command: (kind, payload) => runtime.sendCommand({ kind, payload }) };
+  try {
+    await bridge.command('runtime.create_session', { sessionId: 'existing' });
+    const selected = binding(); selected.parent.tools = await bridge.command('runtime.get_tool_catalog', {});
+    selected.parent.requestCapabilities = { vision: true, interactiveRequests: true };
+    selected.parent.prefixMessages = [{ role: 'system', content: 'Fixture policy.' }];
+    selected.parent.metadata.systemPolicy = { id: 'fixture', version: '1' };
+    const original = structuredClone(selected);
+    const applied = applyWebhookTurnPolicy(selected.parent);
+    assert.equal(applied.requestCapabilities.vision, true); assert.deepEqual(applyWebhookTurnPolicy(applied), applied);
+    const first = await runContextWebhook(bridge, selected, message('q', 'Prepare a design.'), 'question', false, new AbortController().signal);
+    assert.equal(first.status, 'completed'); assert.equal(first.reply, 'Which color should I use, blue or green?');
+    assert.equal(executions, 1);
+    assert.ok(!log.replay('existing', 'webhook-question').some(e => ['permission_requested', 'solution_selection_requested'].includes(e.kind)));
+    assert.deepEqual(await bridge.command('runtime.list_solution_selections', { sessionId: 'existing' }), []);
+    const next = await runContextWebhook(bridge, selected, message('a', 'Blue.'), 'answer', false, new AbortController().signal);
+    assert.equal(next.status, 'completed'); assert.equal(next.reply, 'I will use blue.');
+    assert.ok(calls.at(-1).messages.some(m => m.role === 'assistant' && m.content === first.reply));
+    assert.ok(calls.at(-1).messages.some(m => m.role === 'user' && m.content === 'Blue.'));
+    assert.deepEqual(selected, original, 'legacy saved data and local preferences remain unchanged');
+    await runtime.runSessionTurn({ ...selected.parent, requestId: 'local', turnId: 'local',
+      inputMessages: [{ messageId: 'local', message: { role: 'user', content: 'Continue here.' } }] });
+  } finally { await bridge.command('runtime.shutdown', {}); await rm(root, { recursive: true, force: true }); }
 });
 
 test('delivery retry does not call the model again; disabled/deleted bindings stop accepting messages', { timeout: 20000 }, async () => {

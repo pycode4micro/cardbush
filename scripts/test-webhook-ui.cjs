@@ -83,6 +83,8 @@ function run() {
       await click('.webhook-pair-action'); await until('!!document.querySelector("[data-connection]")');
       assert.equal(await read('fixture.commands.find(c=>c.action==="approve_pairing").binding.sessionId'), 'existing-chat');
       assert.equal(await read('fixture.connections.length'), 1);
+      assert.equal(await read('fixture.prepared[0].permissionMode'), 'all_free');
+      assert.equal(await read('fixture.prepared[0].interactiveRequestsEnabled'), false);
       await until('document.querySelector("[data-connection] [role=status]").textContent===fixture.t("zh")("webhook.offline")');
       assert.equal(await read('document.querySelector(".webhook-service-list h3").textContent'), await read('fixture.t("zh")("webhook.savedServices")'));
       await read("fixture.connections[0].status='connected';void 0");

@@ -12,6 +12,7 @@ import { localPairingSchema, localPairingConfig, assertLocalPairingRequest, read
 import { botCapabilitiesSchema, type BotCapabilities, type BotContext, type BotSource, type BotFileAccess } from '@cardbush/bush-protocol';
 import { snapshotWebhookFiles, readBotAcknowledgement } from './contextWebhookFiles.mjs';
 import { bridgePluginsSchema, bridgeToolCallSchema, bridgeFilePaths, bridgeToolName, type BridgePlugin, type BridgeToolCall } from '@cardbush/bush-protocol';
+import { applyWebhookTurnPolicy } from '@cardbush/bush-protocol';
 
 type Connection = ContextWebhookConfig & { id: string; token: string; binding: WebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
   bot?: { capabilities: BotCapabilities; expiresAt: number; plugins?: BridgePlugin[]; instanceId?: string } };
@@ -269,7 +270,7 @@ export class ContextWebhookHost {
     const previous = config.id ? state.connections.find(c => c.id === config.id) : undefined;
     if (config.id && (!previous || previous.binding.sessionId !== binding.sessionId || previous.binding.kind !== binding.kind)) throw new WebhookError('binding_mismatch');
     if (!previous && state.connections.length >= 32) throw new WebhookError('connection_limit');
-    const parent = { ...binding.parent, inputMessages: [{ messageId: 'binding', message: { role: 'user' as const, content: 'Webhook binding' } }] };
+    const parent = applyWebhookTurnPolicy({ ...binding.parent, inputMessages: [{ messageId: 'binding', message: { role: 'user' as const, content: 'Webhook binding' } }] });
     delete parent.supersession;
     const next: Connection = { ...config, id: previous?.id ?? randomUUID(), token: previous?.token ?? randomBytes(32).toString('hex'),
       binding: { ...binding, parent }, lastReceivedAt: previous?.lastReceivedAt, lastDeliveredAt: previous?.lastDeliveredAt };
