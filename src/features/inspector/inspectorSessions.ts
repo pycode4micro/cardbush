@@ -1,4 +1,4 @@
-import { inspectorTabsReducer, type InspectorTabsAction, type InspectorTabsState } from './inspectorTabs';
+import { inspectorTabsReducer, type InspectorHistoryTab, type InspectorResourceTab, type InspectorTabsAction, type InspectorTabsState } from './inspectorTabs';
 import { onConversationDraftAdopted } from '../../shared/conversationDraft';
 
 export function localInspectorWorkspace(sessionId: string) { return `local:${JSON.stringify(sessionId)}`; }
@@ -27,6 +27,7 @@ export const emptyInspectorSessions: InspectorSessionsState = { workspaces: {}, 
 export type InspectorSessionsAction =
   | ({ type: 'adopt-draft' } & InspectorDraftAdoption)
   | { type: 'tabs'; workspaceId: string; action: InspectorTabsAction }
+  | { type: 'navigate-start'; workspaceId: string; tabId: string; pages: (InspectorHistoryTab | InspectorResourceTab)[] }
   | { type: 'open-state'; workspaceId: string; update: boolean | ((open: boolean) => boolean) }
   | { type: 'bind-browser'; workspaceId: string; ids: string[] }
   | { type: 'dispose'; ids: ReadonlySet<string> }
@@ -98,6 +99,25 @@ export function inspectorSessionsReducer(state: InspectorSessionsState, action: 
   }
   const visible = inspectorSession(state, action.workspaceId);
   const own = state.workspaces[action.workspaceId] ?? { tabs: [], activeId: '', open: visible.open };
+  if (action.type === 'navigate-start') {
+    const [first, ...others] = action.pages;
+    const source = visible.tabs.find(tab => tab.id === action.tabId);
+    if (!first || source?.kind !== 'resource' || source.pageId) return state;
+    const owner = inspectorTabOwner(state, source.id)!;
+    const original = state.workspaces[owner];
+    const replacement = { ...first, id: source.id, pageId: first.id };
+    const workspaces = { ...state.workspaces,
+      [owner]: { ...original, tabs: original.tabs.map(tab => tab.id === source.id ? replacement : tab) },
+    };
+    workspaces[action.workspaceId] = { ...(workspaces[action.workspaceId] ?? own), activeId: source.id };
+    let next = { ...state, workspaces };
+    for (const tab of others) {
+      next = inspectorSessionsReducer(next, {
+        type: 'tabs', workspaceId: action.workspaceId, action: { type: 'open', tab, activate: false },
+      });
+    }
+    return next;
+  }
   if (action.type === 'open-state') {
     const open = typeof action.update === 'function' ? action.update(visible.open) : action.update;
     return { ...state, workspaces: { ...state.workspaces, [action.workspaceId]: { ...own, open } } };
@@ -125,9 +145,11 @@ export function inspectorSessionsReducer(state: InspectorSessionsState, action: 
     if (!visible.tabs.some(tab => tab.id === update.id)) return state;
     return { ...state, workspaces: { ...state.workspaces, [action.workspaceId]: { ...own, activeId: update.id } } };
   }
-  const owner = inspectorTabOwner(state, update.tab.id);
+  const targetId = visible.tabs.some(tab => tab.id === update.tab.id) ? update.tab.id
+    : visible.tabs.find(tab => 'pageId' in tab && tab.pageId === update.tab.id)?.id ?? update.tab.id;
+  const owner = inspectorTabOwner(state, targetId);
   if (owner && owner !== action.workspaceId) {
-    if (state.lockedIds.has(update.tab.id)) {
+    if (state.lockedIds.has(targetId)) {
       // Refresh the original page; selecting a lock must not adopt it into a
       // second conversation where it would linger after unlocking.
       const original = state.workspaces[owner];

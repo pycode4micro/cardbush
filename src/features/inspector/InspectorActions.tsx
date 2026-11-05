@@ -13,6 +13,7 @@ import type { SavedInspectorLayout } from './savedInspectorLayouts';
 /** Local new-tab content; navigation continues in the same browser tab. */
 export function InspectorActions({
   language,
+  tabId,
   filesAvailable,
   shadowUnavailableReason,
   onOpenReview,
@@ -27,11 +28,12 @@ export function InspectorActions({
   onOpenLayout,
 }: {
   language: AppLanguage;
+  tabId?: string;
   filesAvailable: boolean;
   shadowUnavailableReason: string;
   onOpenReview?: () => void;
-  onOpenHistory?: () => void;
-  onOpenFiles: () => void;
+  onOpenHistory?: (tabId?: string) => void;
+  onOpenFiles: (tabId?: string) => void;
   onOpenShadow: () => void;
   onAddPage?: () => void;
   onOpenBookmark?: (url: string) => void;
@@ -56,14 +58,14 @@ export function InspectorActions({
       id: 'history', icon: <Clock3 size={16} aria-hidden="true" />,
       label: uiText(language)('browserMenu.history'), shortcut: '', keyShortcut: undefined,
       description: uiText(language)('inspectorActions.browseTurnDetailsAndToolActivity'),
-      unavailable: '', onClick: onOpenHistory,
+      unavailable: '', onClick: () => onOpenHistory(tabId),
     }] : []),
     {
       id: 'files', icon: <FolderOpen size={16} aria-hidden="true" />,
       label: uiText(language)('inspectorActions.files'), shortcut: shortcuts.label('openFiles'), keyShortcut: shortcuts.aria('openFiles'),
       description: uiText(language)('inspectorActions.chooseOneOrMoreFiles'),
       unavailable: filesAvailable ? '' : uiText(language)('inspectorActions.localFileSelectionIsUnavailable'),
-      onClick: onOpenFiles,
+      onClick: () => onOpenFiles(tabId),
     },
     {
       id: 'shadow', icon: <ShadowCloneIcon size={16} />,

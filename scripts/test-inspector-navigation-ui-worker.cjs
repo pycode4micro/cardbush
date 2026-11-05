@@ -41,9 +41,10 @@ app.whenReady().then(async () => {
     await window.loadFile(join(directory,'index.html'));
     await until('Boolean(window.navigation)');
     await click('#add');
-    await click('[data-inspector-action="history"]');
+    const historyTab = await read('navigation.activeId');
+    await click('.right-inspector-tab-page.active [data-inspector-action="history"]');
     await until('document.querySelectorAll(".work-summary-inspector-turn").length===9');
-    assert.equal(await read('document.querySelectorAll("[role=tab]").length'),2,'new tab and history participate in the tab strip');
+    assert.deepEqual(await read('navigation.tabs.map(tab => tab.id)'), [historyTab], 'history occupies the original tab');
     await read('document.getElementById("conversation-scroll").scrollTop=300; void 0');
     for (const theme of ['dark','bright']) {
       await read('document.querySelector(".app").className='+JSON.stringify('app theme-'+theme)+'; void 0');
@@ -78,17 +79,22 @@ app.whenReady().then(async () => {
     await until('!document.querySelector(".work-summary-turn-selector-menu")');
     assert.equal(await read('document.activeElement===document.querySelector(".work-summary-turn-selector > button")'),true);
 
-    await click('#add'); await click('[data-inspector-action="files"]');
+    await click('#add');
+    const fileTab = await read('navigation.activeId');
+    await click('.right-inspector-tab-page.active [data-inspector-action="files"]');
     await until('document.querySelector(".markdown-inspector-preview")?.textContent.includes("预览内容")');
+    assert.deepEqual(await read('navigation.tabs.map(tab => tab.id)'), [historyTab, fileTab], 'file preview fills the new tab beside history');
+    assert.equal(await read('navigation.activeId'), fileTab);
     await read('window.fileNode=document.querySelector(".markdown-inspector-preview"); window.initialFileReads=fileReads; void 0');
     await click('#add');
+    const browserTab = await read('navigation.activeId');
     await until('document.querySelector("webview")?.getWebContentsId?.()>0 && document.querySelector(".right-inspector-tab-page.active .right-inspector-preview.ready")');
     await read('window.browserId=document.querySelector("webview").getWebContentsId(); void 0');
-    await click('#add'); await click('[data-inspector-action="review"]');
+    await click('#add'); await click('.right-inspector-tab-page.active [data-inspector-action="review"]');
     await until('document.querySelectorAll(".change-review-file-item").length===2');
     await read('document.querySelectorAll(".change-review-file-item")[1].click(); window.reviewNode=document.querySelector(".change-review-dialog"); void 0');
     await until('document.querySelector(".change-review-file-item.active")?.title==="C:/fixture/second.ts"');
-    await select('history:a');
+    await select(historyTab);
     assert.equal(await read('document.querySelector(".work-summary-turn-inspector")===historyNode && historyNode.scrollTop===historyPosition'),true,'history position survives other tab kinds');
     await click('.work-summary-turn-selector > button');
     await select('review:a');
@@ -100,20 +106,20 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".change-review-file-item.active").title==="C:/fixture/second.ts"');
     await read('navigation.refreshReports(); void 0'); await pause(100);
     assert.equal(await read('document.querySelector(".change-review-file-item.active").title'),'C:/fixture/second.ts','a live report refresh must not reapply an old file request');
-    await select('history:a');
+    await select(historyTab);
     await read('navigation.openReview("C:/fixture/first.ts"); void 0');
     await until('document.querySelector(".change-review-file-item.active").title==="C:/fixture/first.ts"');
     assert.equal(await read('document.querySelector(".change-review-dialog")===reviewNode'),true,'reopening a requested file selects it without remounting the review');
     await read('document.querySelectorAll(".change-review-file-item")[1].click(); void 0');
-    await select('file');
+    await select(fileTab);
     assert.equal(await read('document.querySelector(".markdown-inspector-preview")===fileNode && fileReads===initialFileReads'),true,'file preview stays mounted and is not re-read');
-    await select('browser');
+    await select(browserTab);
     assert.equal(await read('document.querySelector("webview").getWebContentsId()===browserId'),true,'history must not recreate the browser guest');
 
-    await click('#add'); await click('[data-inspector-action="shadow"]');
+    await click('#add'); await click('.right-inspector-tab-page.active [data-inspector-action="shadow"]');
     await until('document.querySelector(".shadow-window-shell textarea") && !document.querySelector(".shadow-window-shell textarea").disabled');
     await read('window.shadowNode=document.querySelector(".shadow-window-shell"); window.initialShadowCreates=shadowCreates; const input=shadowNode.querySelector("textarea"); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(input,"保留此草稿"); input.dispatchEvent(new Event("input",{bubbles:true})); void 0');
-    await select('history:a'); await select('shadow:a');
+    await select(historyTab); await select('shadow:a');
     assert.equal(await read('document.querySelector(".shadow-window-shell")===shadowNode && shadowNode.querySelector("textarea").value==="保留此草稿" && shadowCreates===initialShadowCreates'),true,'Shadow draft and runtime context survive tab switches');
     await read('navigation.setSession("b"); navigation.openHistory("turn-5","b"); void 0');
     await until('document.querySelector(".right-inspector-tab-page.active")?.dataset.inspectorPageId==="history:b"');
@@ -145,14 +151,14 @@ app.whenReady().then(async () => {
 
     await read('navigation.openTab({id:"subagent:a:child",kind:"subagent",title:"子任务",detail:{kind:"subagent-task",sessionId:"a",task:{taskId:"child",status:"running",raw:{}}}}); void 0');
     await until('window.taskReads>0 && document.querySelector(".subagent-conversation-heading small")?.textContent==="运行中"');
-    await select('history:a'); await pause(100);
+    await select(historyTab); await pause(100);
     const reads=await read('window.taskReads');
     await read('window.runtimeTask={...runtimeTask,status:"completed",revision:2,completedAt:"2026-09-11T14:05:00Z",finalResponse:"任务完成"}; void 0');
     await pause(2700);
     assert.equal(await read('window.taskReads'),reads,'inactive child page must not poll');
     await select('subagent:a:child');
     await until('document.querySelector(".subagent-conversation-heading small")?.textContent==="已完成"');
-    await select('history:a');
+    await select(historyTab);
     await read('navigation.setLanguage("en"); document.querySelector(".right-inspector").style.width="380px"; document.querySelector(".right-inspector").style.flex="0 0 380px"; document.querySelector(".right-inspector").style.setProperty("--side-panel-width","380px"); void 0');
     await pause(250);
     await click('.right-inspector-tab-page.active .work-summary-turn-selector > button');

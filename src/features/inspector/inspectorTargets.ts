@@ -1,6 +1,20 @@
 import { basename, fileUrl, isAbsoluteLocalPath, resourceTargetKind, stripWrappingQuotes } from '../../shared/localPaths';
 import { resolveFilePreview } from './filePreviewRegistry';
 import type { InspectorMediaType, InspectorOpenDetail } from './inspectorEvents';
+import type { InspectorResourceTab } from './inspectorTabs';
+
+export function inspectorResourceTab(detail: InspectorOpenDetail, workspaceId: string): InspectorResourceTab {
+  const target = stripWrappingQuotes(detail.target.trim());
+  return {
+    id: detail.newTab ? `browser:${crypto.randomUUID()}` : `resource:${workspaceId}:${inspectorTargetIdentity(target)}`,
+    kind: 'resource',
+    detail: {
+      target,
+      ...(detail.title?.trim() ? { title: detail.title.trim() } : {}),
+      ...(detail.mediaType ? { mediaType: detail.mediaType } : {}),
+    },
+  };
+}
 
 export function inspectorTargetIdentity(target: string) {
   const value = stripWrappingQuotes(target.trim());

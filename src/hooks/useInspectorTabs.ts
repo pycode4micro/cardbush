@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useReducer, type SetStateAction } from 'react';
-import type { InspectorTab } from '../features/inspector/inspectorTabs';
+import type { InspectorHistoryTab, InspectorResourceTab, InspectorTab } from '../features/inspector/inspectorTabs';
 import { emptyInspectorSessions, inspectorSession, inspectorSessionsReducer, inspectorTabOwner, onInspectorDraftAdopted, retainedInspectorTabs } from '../features/inspector/inspectorSessions';
 import { useInspectorSessionRef } from '../features/inspector/useInspectorSessionState';
 
@@ -12,6 +12,8 @@ export function useInspectorTabs(workspaceId = 'shared') {
   // a stable React key. Keep retained pages ordered independently of ownership.
   const allTabs = useMemo(() => retainedInspectorTabs(state).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), [state]);
   const openTab = useCallback((tab: InspectorTab, owner = workspace.workspaceId, activate = true) => dispatch({ type: 'tabs', workspaceId: owner, action: { type: 'open', tab, activate } }), [workspace]);
+  const navigateStartPage = useCallback((tabId: string, pages: (InspectorResourceTab | InspectorHistoryTab)[]) =>
+    dispatch({ type: 'navigate-start', workspaceId: workspace.workspaceId, tabId, pages }), [workspace]);
   const activateTab = useCallback((id: string, owner = workspace.workspaceId) => dispatch({ type: 'tabs', workspaceId: owner, action: { type: 'activate', id } }), [workspace]);
   const closeTabs = useCallback((ids: ReadonlySet<string>, owner = workspace.workspaceId) => dispatch({ type: 'tabs', workspaceId: owner, action: { type: 'close', ids } }), [workspace]);
   const setOpen = useCallback((update: SetStateAction<boolean>, owner = workspace.workspaceId) => dispatch({ type: 'open-state', workspaceId: owner, update }), [workspace]);
@@ -24,6 +26,6 @@ export function useInspectorTabs(workspaceId = 'shared') {
     tabs: visible.tabs, activeId: visible.activeId, open: visible.open,
     activeTab: visible.tabs.find(tab => tab.id === visible.activeId) ?? null,
     allTabs, lockedIds: state.lockedIds, toggleLock, ownerOfTab, disposeTabs,
-    openTab, activateTab, closeTabs, setOpen, bindBrowserTabs, snapshot,
+    openTab, navigateStartPage, activateTab, closeTabs, setOpen, bindBrowserTabs, snapshot,
   };
 }

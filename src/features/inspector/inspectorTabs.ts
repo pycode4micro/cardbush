@@ -4,7 +4,9 @@ import type { AppLanguage } from '../../types';
 import type { WorkSummaryInspectorDetail } from '../subagents/subagentObservabilityEvents';
 import type { InspectorOpenDetail } from './inspectorEvents';
 
-export type InspectorResourceTab = { id: string; kind: 'resource'; detail: InspectorOpenDetail };
+// A start-page tool keeps the physical tab ID (and its tile/lock). pageId is
+// the destination's ordinary lookup ID for later opens from the conversation.
+export type InspectorResourceTab = { id: string; pageId?: string; kind: 'resource'; detail: InspectorOpenDetail };
 export type InspectorReviewTab = {
   id: string; kind: 'review'; conversationId: string; initialFilePath: string; title: string;
   selectionRequestId?: string;
@@ -13,7 +15,7 @@ export type InspectorShadowTab = {
   id: string; kind: 'shadow'; context: ShadowConversationContext; title: string;
 };
 export type InspectorHistoryTab = {
-  id: string; kind: 'history'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'turn-history' }>; title: string;
+  id: string; pageId?: string; kind: 'history'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'turn-history' }>; title: string;
 };
 export type InspectorSubagentTab = {
   id: string; kind: 'subagent'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'subagent-task' }>; title: string;
@@ -58,7 +60,8 @@ export function inspectorTabsReducer(state: InspectorTabsState, action: Inspecto
   }
   if (action.type === 'open') {
     const next = action.tab;
-    const index = state.tabs.findIndex(tab => tab.id === next.id || (
+    const direct = state.tabs.findIndex(tab => tab.id === next.id);
+    const index = direct >= 0 ? direct : state.tabs.findIndex(tab => ('pageId' in tab && tab.pageId === next.id) || (
       tab.kind === 'subagent' && next.kind === 'subagent' && tab.detail.sessionId === next.detail.sessionId &&
       tab.detail.task.remote?.connectionId === next.detail.task.remote?.connectionId &&
       (['childSessionId', 'taskId', 'toolCallId', 'childTurnId'] as const).some(key =>
@@ -66,9 +69,10 @@ export function inspectorTabsReducer(state: InspectorTabsState, action: Inspecto
     ));
     if (index < 0) return { tabs: [...state.tabs, action.tab], activeId: action.activate === false ? state.activeId : action.tab.id };
     const previous = state.tabs[index];
-    const tab = previous.kind === 'resource' && next.kind === 'resource'
-      ? { ...next, detail: { ...previous.detail, ...next.detail, title: next.detail.title || previous.detail.title } }
-      : { ...next, id: previous.id };
+    const tab = { ...next, id: previous.id, ...('pageId' in previous ? { pageId: previous.pageId } : {}) };
+    if (previous.kind === 'resource' && tab.kind === 'resource') {
+      tab.detail = { ...previous.detail, ...tab.detail, title: tab.detail.title || previous.detail.title };
+    }
     const tabs = [...state.tabs];
     tabs[index] = tab;
     return { tabs, activeId: action.activate === false ? state.activeId : tab.id };

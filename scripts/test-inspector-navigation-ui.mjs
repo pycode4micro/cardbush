@@ -48,6 +48,7 @@ const appSource = await readFile('src/App.tsx', 'utf8');
 assert.doesNotMatch(appSource, /\[workSummaryInspector|displayedWorkSummaryInspector|active && displayedReviewConversation/);
 assert.match(appSource, /useInspectorTabs\(inspectorWorkspaceId\)/, 'tab selection belongs to the active conversation');
 assert.match(appSource, /<InspectorTabPages tabs=\{retainedInspectorTabs\}/, 'inactive conversations keep their mounted pages');
+assert.match(appSource, /startPage=\{<InspectorActions [^>]*tabId=\{tab\.id\}/, 'start-page actions receive the clicked tile ID even in split view');
 assert.match(appSource, /reviewConversationsById\.get\(tab\.conversationId\)/);
 
 const parent = resolve('tmp');
@@ -105,14 +106,14 @@ function Harness() {
       <div className="right-inspector-viewport"><div className="right-inspector-content">
       <header className="right-inspector-toolbar with-tabs">
         <div className="right-inspector-tabs" role="tablist">{tabs.tabs.map(tab=><button key={tab.id} data-tab={tab.id} role="tab" aria-selected={tab.id===tabs.activeId} onClick={()=>{tabs.activateTab(tab.id);}}>{tab.kind}</button>)}</div>
-        <button id="add" className="right-inspector-new-tab" onClick={()=>openResource('browser','about:blank')}>+</button>
+        <button id="add" className="right-inspector-new-tab" onClick={()=>openResource(crypto.randomUUID(),'about:blank')}>+</button>
       </header>
       <div className="right-inspector-body"><InspectorTabPages tabs={tabs.tabs} activeId={tabs.activeId}>{(tab,active)=>
         tab.kind==='history'||tab.kind==='subagent'?<WorkSummaryInspector active={active} language={language} detail={tab.detail} messages={messages}/>
         :tab.kind==='resource'?<InspectorWebview identity={tab.id} target={tab.detail.target} source={tab.detail.target} language={language} onOpenTarget={noop} onNavigationStateChange={noop}
-          startPage={<InspectorActions language={language} filesAvailable shadowUnavailableReason=""
-            onOpenHistory={()=>openHistory()} onOpenReview={()=>openReview()}
-            onOpenFiles={()=>openResource('file','C:/fixture.md')} onOpenShadow={openShadow}/>}/>
+          startPage={<InspectorActions language={language} tabId={tab.id} filesAvailable shadowUnavailableReason=""
+            onOpenHistory={id=>tabs.navigateStartPage(id,[workSummaryInspectorTab({kind:'turn-history',sessionId:currentSession},language)])} onOpenReview={()=>openReview()}
+            onOpenFiles={id=>tabs.navigateStartPage(id,[{id:'file',kind:'resource',detail:{target:'C:/fixture.md'}}])} onOpenShadow={openShadow}/>}/>
         :tab.kind==='shadow'?<ShadowWindow embedded context={tab.context}/>
         :<ConversationChangeDialog embedded language={language} conversation={{id:tab.conversationId,title:'审查源会话',preview:'',updatedAt:'',projectDir:'C:/fixture'}} reports={liveReports}
            initialFilePath={tab.initialFilePath} selectionRequestId={tab.selectionRequestId}

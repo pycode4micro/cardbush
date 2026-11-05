@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
@@ -10,7 +10,11 @@ function load(file) {
   file = resolve(file); if (cache.has(file)) return cache.get(file);
   const exports = {}; cache.set(file, exports);
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  new Function('exports', 'require', code)(exports, spec => spec.startsWith('.') ? load(resolve(dirname(file), spec + '.ts')) : createRequire(file)(spec));
+  new Function('exports', 'require', code)(exports, spec => {
+    if (!spec.startsWith('.')) return createRequire(file)(spec);
+    const target = resolve(dirname(file), spec);
+    return load(existsSync(target + '.ts') ? target + '.ts' : resolve(target, 'index.ts'));
+  });
   return exports;
 }
 const { emptyInspectorSessions, inspectorSessionsReducer: reduce, inspectorSession: view, retainedInspectorTabs: retained,
@@ -18,6 +22,45 @@ const { emptyInspectorSessions, inspectorSessionsReducer: reduce, inspectorSessi
 const resource = id => ({ id, kind: 'resource', detail: { target: 'https://example.com/' + id } });
 const open = (state, workspaceId, id) => reduce(reduce(state, { type: 'tabs', workspaceId, action: { type: 'open', tab: resource(id) } }), { type: 'open-state', workspaceId, update: true });
 const act = (state, workspaceId, action) => reduce(state, { type: 'tabs', workspaceId, action });
+
+test('start-page navigation preserves the source slot and opens additional files in the background', () => {
+  const workspaceId = local('a'), tabId = 'blank';
+  let state = open(open(open(emptyInspectorSessions, workspaceId, 'left'), workspaceId, tabId), workspaceId, 'right');
+  state = act(state, workspaceId, { type: 'activate', id: tabId });
+  const navigate = (current, pages) => reduce(current, { type: 'navigate-start', workspaceId, tabId, pages });
+  const file = { id: 'file:notes', kind: 'resource', detail: { target: 'C:/notes.md' } };
+  const extra = { id: 'file:more', kind: 'resource', detail: { target: 'C:/more.txt' } };
+  assert.equal(navigate(state, []), state, 'cancelling the file picker preserves the start page');
+  const closed = act(state, workspaceId, { type: 'close', ids: new Set([tabId]) });
+  assert.equal(navigate(closed, [file, extra]), closed, 'a late file selection cannot resurrect a closed tab');
+  state = navigate(state, [file, extra]);
+  const result = view(state, workspaceId);
+  assert.deepEqual(result.tabs.map(tab => tab.id), ['left', tabId, 'right', extra.id]);
+  assert.equal(result.activeId, tabId);
+  assert.deepEqual(result.tabs[1].detail, file.detail, 'the former start-page title is discarded');
+  assert.equal(navigate(state, [extra]), state, 'a second picker cannot replace the newly opened file');
+  state = act(state, workspaceId, { type: 'open', tab: file });
+  assert.equal(view(state, workspaceId).activeId, tabId);
+  assert.equal(view(state, workspaceId).tabs.length, 4, 'reopening the same file reuses its preview');
+  state = open(state, workspaceId, 'another-start');
+  const neighbor = view(state, workspaceId).tabs[1];
+  state = reduce(state, { type: 'navigate-start', workspaceId, tabId: 'another-start', pages: [file] });
+  assert.equal(view(state, workspaceId).activeId, 'another-start', 'an explicit click opens in this slot even with the same file alongside');
+  assert.equal(view(state, workspaceId).tabs[1], neighbor, 'the already open preview is retained in its original slot');
+});
+
+test('history opens in the clicked shared tab and remains reachable through its ordinary history ID', () => {
+  let state = open(open(emptyInspectorSessions, 'a', 'blank'), 'b', 'neighbor');
+  state = reduce(state, { type: 'toggle-lock', id: 'blank' });
+  const history = { id: 'history:b', kind: 'history', detail: { kind: 'turn-history', sessionId: 'b' }, title: 'History' };
+  state = reduce(state, { type: 'navigate-start', workspaceId: 'b', tabId: 'blank', pages: [history] });
+  assert.equal(owner(state, 'blank'), 'a');
+  assert.deepEqual(view(state, 'b').tabs.map(tab => tab.id), ['neighbor', 'blank']);
+  state = act(state, 'b', { type: 'open', tab: { ...history, detail: { ...history.detail, turnId: 'turn' } } });
+  assert.equal(view(state, 'b').activeId, 'blank');
+  assert.equal(view(state, 'a').tabs[0].detail.turnId, 'turn');
+  assert.equal(retained(state).length, 2);
+});
 
 test('background browser tabs are retained without selecting a tab or opening the inspector', () => {
   let state = act(emptyInspectorSessions, 'one', {type:'open', tab:resource('background'), activate:false});
