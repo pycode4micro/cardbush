@@ -9,10 +9,16 @@ export const LIST_RUNTIME_SESSION_SUMMARIES_COMMAND = 'runtime.list_session_summ
 export const GET_RUNTIME_SESSION_HISTORY_COMMAND = 'runtime.get_session_history' as const;
 export const SESSION_HISTORY_PAGE_SIZE = 20;
 
+/** Durable Shadow context is fetched on demand, never copied into list/index rows. */
+export function sessionSummaryMetadata(metadata: Record<string, unknown>) {
+  const { sourceActiveTurn: _active, sourceModelMessages: _model, ...summary } = metadata;
+  return summary;
+}
+
 export const sessionSummarySchema = z.object({
   sessionId: z.string().min(1), revision: z.number().int().nonnegative(),
   createdAt: z.string().min(1), updatedAt: z.string().min(1),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).transform(sessionSummaryMetadata).optional(),
   turnCount: z.number().int().nonnegative(), firstUserText: z.string().max(4000), preview: z.string().max(512),
   latestTurn: z.object({ turnId: z.string(), turnSequence: z.number().int().positive(),
     status: sessionTurnStatusSchema, reason: z.string(), completedAt: z.string(),
@@ -82,7 +88,7 @@ export function summarizeSession(snapshot: SessionSnapshot): SessionSummary {
   const excerpts = snapshot.turns.flatMap(turn => turn.messages.flatMap(entry => superseded.has(entry.messageId) ? [] : sessionMessageExcerpt(entry)));
   const last = snapshot.turns.at(-1);
   return { sessionId: snapshot.sessionId, revision: snapshot.revision, createdAt: snapshot.createdAt, updatedAt: snapshot.updatedAt,
-    ...(snapshot.metadata ? { metadata: snapshot.metadata } : {}), turnCount: snapshot.turns.length,
+    ...(snapshot.metadata ? { metadata: sessionSummaryMetadata(snapshot.metadata) } : {}), turnCount: snapshot.turns.length,
     firstUserText: excerpts.find(entry => entry.role === 'user')?.text ?? '',
     preview: [...excerpts].reverse().find(entry => entry.role === 'assistant')?.text ?? '',
     ...(last ? { latestTurn: { turnId: last.turnId, turnSequence: last.turnSequence, status: last.status,

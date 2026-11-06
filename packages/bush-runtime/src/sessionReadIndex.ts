@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import {
-  BUSH_SESSION_SNAPSHOT_PROTOCOL, sessionEventSchema, sessionMessageExcerpt, sessionSummarySchema,
+  BUSH_SESSION_SNAPSHOT_PROTOCOL, sessionEventSchema, sessionMessageExcerpt, sessionSummarySchema, sessionSummaryMetadata,
   type SessionEvent, type SessionSummary, type SessionHistoryRequest, type SessionHistoryPage,
   turnToolHandoffSchema, type TurnToolHandoff,
 } from '@cardbush/bush-protocol';
@@ -13,7 +13,7 @@ type TurnLocation = { turnId: string; sequence: number; createdAt: string; start
   contextSummary?: string; contextToolHandoff?: TurnToolHandoff };
 type Excerpt = { id: string; role: 'user' | 'assistant'; text: string };
 type Index = {
-  version: 1; through: number; mtimeMs: number; prefix: string; summary: SessionSummary;
+  version: 2; through: number; mtimeMs: number; prefix: string; summary: SessionSummary;
   historyRevision: number; turns: TurnLocation[]; excerpts: Excerpt[]; superseded: string[]; eventIds: string[]; messageIds: string[];
 };
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -109,7 +109,7 @@ export class SessionReadIndex {
       const event = decodeSessionRecord(line.text, index?.summary.sessionId);
       if (!index) {
         if (event.kind !== 'session_created' || event.sequence !== 1 || !journal.endsWith(digest(event.sessionId) + '.jsonl')) throw Error('Session journal identity mismatch.');
-        index = { version: 1, through: 0, mtimeMs: 0, prefix: '', historyRevision: 0, turns: [], excerpts: [], superseded: [], eventIds: [], messageIds: [],
+        index = { version: 2, through: 0, mtimeMs: 0, prefix: '', historyRevision: 0, turns: [], excerpts: [], superseded: [], eventIds: [], messageIds: [],
           summary: { sessionId: event.sessionId, revision: 0, createdAt: event.createdAt, updatedAt: event.createdAt,
             turnCount: 0, firstUserText: '', preview: '' } };
       }
@@ -168,7 +168,7 @@ function applyEvent(index: Index, event: SessionEvent, start: number, end: numbe
   };
   if (event.kind === 'session_created' && index.summary.revision !== 0) throw Error('Session may only be created once.');
   if (event.kind === 'session_created' || event.kind === 'session_metadata_updated') {
-    if (event.payload.metadata) index.summary.metadata = event.payload.metadata; else delete index.summary.metadata;
+    if (event.payload.metadata) index.summary.metadata = sessionSummaryMetadata(event.payload.metadata); else delete index.summary.metadata;
   }
   if (event.kind === 'turn_committed') {
     const turn = event.payload;
@@ -209,7 +209,7 @@ function applyEvent(index: Index, event: SessionEvent, start: number, end: numbe
 }
 
 function validIndex(index: Index | undefined, journal: string): index is Index {
-  return !!index && index.version === 1 && sessionSummarySchema.safeParse(index.summary).success &&
+  return !!index && index.version === 2 && sessionSummarySchema.safeParse(index.summary).success &&
     journal.endsWith(digest(index.summary.sessionId) + '.jsonl') && Number.isSafeInteger(index.through) && index.through > 0 &&
     Number.isFinite(index.mtimeMs) && typeof index.prefix === 'string' && Number.isSafeInteger(index.historyRevision) && index.historyRevision >= 0 &&
     Array.isArray(index.turns) && index.turns.length === index.summary.turnCount && index.turns.every((turn, i) =>

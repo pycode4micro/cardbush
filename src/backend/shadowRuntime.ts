@@ -1,5 +1,5 @@
 import { uiText } from '../i18n';
-import { activeSessionTurnSchema, type RuntimeEvent } from '@cardbush/bush-protocol';
+import { activeSessionTurnSchema, modelMessageSchema, sessionSummaryMetadata, type RuntimeEvent } from '@cardbush/bush-protocol';
 import { resolveConversationStyle } from '../features/settings/conversationStyle';
 import { readIndividuation } from '../features/settings/individuation';
 import {
@@ -14,7 +14,7 @@ import type {
 } from './api';
 import { resolveProductModel } from './runtimeChat';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
-import { projectRuntimeSessionMessage, projectRuntimeTurnMessages, restoreRuntimeTurnAttachmentMetadata } from './runtimeSessionMessageProjection';
+import { projectRuntimeTurnMessages, restoreRuntimeTurnAttachmentMetadata } from './runtimeSessionMessageProjection';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { runtimeHistoryToolExecution } from './runtimeHistoryToolExecution';
 
@@ -40,9 +40,9 @@ export async function createRuntimeShadowConversation(input: {
   const id = `shadow_${input.clientConversationId.trim() || crypto.randomUUID()}`;
   const runtimeSessionId = `shadow:${crypto.randomUUID()}`;
   try {
-    const source = await runtime.client.getLiveSession(input.sessionId);
-    if (!source) throw new Error(uiText()('shadowRuntime.the_source_conversation_does_not_exist'));
     const requestedTurnId = input.sourceTurnId?.trim() ?? '';
+    const source = await runtime.client.getLiveSession(input.sessionId, undefined, requestedTurnId || undefined);
+    if (!source) throw new Error(uiText()('shadowRuntime.the_source_conversation_does_not_exist'));
     const requestedTurnIndex = requestedTurnId
       ? source.turns.findIndex((turn) => turn.turnId === requestedTurnId)
       : -1;
@@ -51,12 +51,16 @@ export async function createRuntimeShadowConversation(input: {
       : source.turns.at(-1);
     const sourceActiveTurn = source.activeTurn && (!requestedTurnId || requestedTurnId === source.activeTurn.turnId)
       ? source.activeTurn : undefined;
+    if ((requestedTurnId && requestedTurnIndex < 0 && !sourceActiveTurn) || (!sourceTurn && !sourceActiveTurn)) {
+      throw new Error(uiText()('shadowRuntime.source_turn_not_ready'));
+    }
     const sourceTurnId = sourceActiveTurn?.turnId ?? sourceTurn?.turnId ?? '';
     const sourceThroughTurnSequence = sourceTurn?.turnSequence ?? 0;
     const sourceMessageIds = new Set(
       source.turns
         .filter((turn) => turn.turnSequence <= sourceThroughTurnSequence)
-        .flatMap((turn) => turn.messages.map((message) => message.messageId)),
+        .flatMap((turn) => turn.messages.map((message) => message.messageId))
+        .concat(sourceActiveTurn?.messages.map(message => message.messageId) ?? []),
     );
     const sourceSupersededMessageIds = [...source.supersededMessageIds, ...sourceActiveTurn?.supersededMessageIds ?? []].filter((messageId) =>
       sourceMessageIds.has(messageId)
@@ -73,6 +77,7 @@ export async function createRuntimeShadowConversation(input: {
         sourceThroughTurnSequence,
         sourceSupersededMessageIds,
         sourceActiveTurn,
+        sourceModelMessages: source.modelContext,
         sourceSessionRevision: source.revision,
         shadowMode: input.mode,
         projectDir: String(source.metadata?.projectDir ?? ''),
@@ -99,6 +104,7 @@ export async function createRuntimeShadowConversation(input: {
         sourceThroughTurnSequence,
         sourceSupersededMessageIds,
         sourceActiveTurn,
+        sourceModelMessages: source.modelContext,
         mode: input.mode,
       },
     };
@@ -112,9 +118,11 @@ export async function createRuntimeShadowConversation(input: {
         return projectRuntimeTurnMessages({ ...restored, messages: restored.messages.filter(item =>
           !excluded.has(item.messageId) && !isInternalRuntimeMessage(item)) }, source.sessionId);
       });
-    sourceMessages.push(...(sourceActiveTurn?.messages ?? [])
-      .filter(item => !isInternalRuntimeMessage(item))
-      .map(item => projectRuntimeSessionMessage(item, source.sessionId)));
+    if (sourceActiveTurn) {
+      const restored = restoreRuntimeTurnAttachmentMetadata(sourceActiveTurn);
+      sourceMessages.push(...projectRuntimeTurnMessages({ ...restored, messages: restored.messages.filter(item =>
+        !excluded.has(item.messageId) && !isInternalRuntimeMessage(item)) }, source.sessionId));
+    }
     const toolIdsByTurn = new Map<string, Set<string>>();
     for (const message of sourceMessages) {
       if (message.role !== 'tool' || !message.turnId || !message.metadata?.toolCallId) continue;
@@ -258,7 +266,9 @@ export async function streamRuntimeShadowConversationMessage(
         ? state.raw.sourceSupersededMessageIds.map(String)
         : source.supersededMessageIds,
     );
-    const sourceMessages = [...sourceTurns.flatMap((turn) => turn.messages), ...sourceActiveTurn?.messages ?? []]
+    const sourceMessages = Array.isArray(state.raw.sourceModelMessages)
+      ? state.raw.sourceModelMessages.map(message => modelMessageSchema.parse(message))
+      : [...sourceTurns.flatMap((turn) => turn.messages), ...sourceActiveTurn?.messages ?? []]
       .filter((item) => !frozenSuperseded.has(item.messageId))
       .map((item) => item.message);
     const readOnly = state.mode === 'readonly';
@@ -372,7 +382,7 @@ export async function streamRuntimeShadowConversationMessage(
 
 function publicRecord(state: ShadowState): ShadowConversationRecord {
   const { runtimeSessionId: _runtimeSessionId, ...record } = state;
-  return record;
+  return structuredClone({ ...record, raw: sessionSummaryMetadata(record.raw) });
 }
 
 async function resolveShadowState(
@@ -381,9 +391,10 @@ async function resolveShadowState(
 ): Promise<ShadowState | undefined> {
   const cached = conversations.get(conversationId);
   if (cached) return cached;
-  const session = (await client.listSessionSummaries()).find((candidate) =>
+  const summary = (await client.listSessionSummaries()).find((candidate) =>
     candidate.metadata?.shadowConversationId === conversationId &&
     candidate.metadata?.temporary === true);
+  const session = summary ? await client.getSession(summary.sessionId) : undefined;
   const sourceSessionId = String(session?.metadata?.shadowOfSessionId ?? '').trim();
   if (!session || !sourceSessionId) return undefined;
   const now = session.updatedAt;
@@ -405,6 +416,7 @@ async function resolveShadowState(
       sourceSessionRevision: Number(session.metadata?.sourceSessionRevision),
       sourceThroughTurnSequence: Number(session.metadata?.sourceThroughTurnSequence),
       sourceActiveTurn: session.metadata?.sourceActiveTurn,
+      sourceModelMessages: session.metadata?.sourceModelMessages,
       sourceSupersededMessageIds: Array.isArray(session.metadata?.sourceSupersededMessageIds)
         ? session.metadata.sourceSupersededMessageIds.map(String)
         : [],

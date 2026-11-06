@@ -7,6 +7,8 @@ import type {
 import type { ChatAttachment, ChatMessage } from '../types';
 
 type RuntimeCommittedTurn = RuntimeSessionSnapshot['turns'][number];
+type RuntimeProjectionTurn = Pick<RuntimeCommittedTurn, 'turnId' | 'turnSequence' | 'createdAt' | 'messages'> &
+  Partial<Pick<RuntimeCommittedTurn, 'completedAt' | 'status' | 'reason' | 'planWaiting'>>;
 
 /**
  * Older committed Turns predate durable UI attachment metadata. Their local
@@ -15,9 +17,9 @@ type RuntimeCommittedTurn = RuntimeSessionSnapshot['turns'][number];
  * messages are hidden. This is a projection-only compatibility path: it does
  * not mutate the session log or the model-facing transcript.
  */
-export function restoreRuntimeTurnAttachmentMetadata(
-  turn: RuntimeCommittedTurn,
-): RuntimeCommittedTurn {
+export function restoreRuntimeTurnAttachmentMetadata<T extends Pick<RuntimeCommittedTurn, 'messages'>>(
+  turn: T,
+): T {
   let pendingPaths: string[] = [];
   let changed = false;
   const messages = turn.messages.map((message) => {
@@ -58,7 +60,7 @@ export function restoreRuntimeTurnAttachmentMetadata(
  * message seals the preceding assistant reply as user-visible output.
  */
 export function projectRuntimeTurnMessages(
-  turn: RuntimeCommittedTurn,
+  turn: RuntimeProjectionTurn,
   sessionId: string,
 ): ChatMessage[] {
   // The model journal retains the real checkpoint exchange. The existing
@@ -69,7 +71,7 @@ export function projectRuntimeTurnMessages(
       message.message.name === 'subagent_result'))) };
   let assistantSegmentIndex = 0;
   let segmentStartedAt = turn.createdAt;
-  const lastAssistantIndex = findLastAssistantIndex(turn.messages);
+  const lastAssistantIndex = turn.completedAt ? findLastAssistantIndex(turn.messages) : -1;
   // User messages retain their enqueue time. Only the Runtime Turn's clock
   // measures execution, including when a queued message starts much later.
   const turnStartedAt = turn.createdAt;
@@ -150,7 +152,7 @@ export function projectRuntimeTurnMessages(
       if (durationMs != null) {
         metadata.cardbush_turn_duration_ms = durationMs;
       }
-      segmentStartedAt = segmentCompletedAt;
+      segmentStartedAt = segmentCompletedAt ?? segmentStartedAt;
     }
 
     return {
@@ -164,7 +166,7 @@ export function projectRuntimeTurnMessages(
 export function projectRuntimeSessionMessage(
   message: RuntimeSessionMessage,
   sessionId: string,
-  turn?: RuntimeCommittedTurn,
+  turn?: RuntimeProjectionTurn,
 ): ChatMessage {
   const role =
     message.message.role === 'developer' ? 'system' : message.message.role;
@@ -173,7 +175,7 @@ export function projectRuntimeSessionMessage(
   if (prompt) Object.assign(metadata, promptContextMetadata(prompt));
   if (message.message.role === 'assistant') {
     metadata.toolCalls = message.message.toolCalls;
-    if (turn) {
+    if (turn?.status) {
       // Committed history must retain the same terminal reason as the live
       // event, including on a cold load without any event replay.
       metadata.status = turn.status;
@@ -199,7 +201,7 @@ export function projectRuntimeSessionMessage(
     conversationId: sessionId,
     turnId: message.turnId,
     createdAt: message.createdAt,
-    ...(role === 'assistant' && turn ? { status: turn.status } : {}),
+    ...(role === 'assistant' && turn?.status ? { status: turn.status } : {}),
     turnSequence: message.turnSequence,
     messageIndex: message.messageIndex,
     ...(attachments.length > 0
@@ -350,7 +352,8 @@ function findLastAssistantIndex(messages: RuntimeSessionMessage[]): number {
   return -1;
 }
 
-function timestampDuration(startedAt: string, completedAt: string): number | undefined {
+function timestampDuration(startedAt: string, completedAt: string | undefined): number | undefined {
+  if (!completedAt) return undefined;
   const started = Date.parse(startedAt);
   const completed = Date.parse(completedAt);
   return Number.isFinite(started) && Number.isFinite(completed) && completed >= started

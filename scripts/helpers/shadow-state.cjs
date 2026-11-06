@@ -56,6 +56,26 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('finishShadowMode()');
   await until('document.querySelector(".shadow-mode-fork") !== null && !document.querySelector(".shadow-window-mode-switch button").disabled', 'Fork ready');
   assert.equal(await animation(), 'none');
+  await run(`window.closedShadows=[]; window.heldShadowReplies=[];
+    shadowFixture.closeShadowConversation=async id=>closedShadows.push(id);
+    shadowFixture.streamShadowConversationMessage=request=>new Promise(resolve=>heldShadowReplies.push({request,resolve}));
+    typeShadowDraft('Old in-flight question'); document.querySelector('.shadow-window-send').click();`);
+  await until('heldShadowReplies.length===1', 'old Shadow turn remains in flight');
+  await run(`shadowFixture.createShadowConversation=async input=>({id:input.clientConversationId,mode:input.mode,
+    sourceTurnId:'next-source-turn',workspaceDir:'D:/fixture',sourceMessages:[{id:'next-source-user',role:'user',content:'Next frozen source'}]});
+    renderView(h(views.ShadowWindow,{context:{...shadowContext,sessionId:'next-source',sourceTurnId:'next-source-turn'},embedded:true}));`);
+  await until("document.body.textContent.includes('Next frozen source') && !document.querySelector('.shadow-window-composer textarea').disabled", 'replacement context initialized');
+  assert.equal(await run('closedShadows.length'), 1, 'replaced Shadow session is closed');
+  assert.equal(await run("document.body.textContent.includes('Old in-flight question') || document.body.textContent.includes('Shadow fixture completed')"), false, 'replacement clears both prior histories');
+  await run("typeShadowDraft('New question'); document.querySelector('.shadow-window-send').click()");
+  await until('heldShadowReplies.length===2', 'new Shadow turn starts');
+  await run("heldShadowReplies[0].request.onDelta('Late old output'); heldShadowReplies[0].resolve()");
+  await pause();
+  assert.equal(await run("!!document.querySelector('.shadow-window-send.stop')"), true, 'old completion cannot clear the new running state');
+  assert.equal(await run("document.body.textContent.includes('Late old output')"), false);
+  await run("heldShadowReplies[1].request.onDone({content:'New reply',createdAt:new Date().toISOString()}); heldShadowReplies[1].resolve()");
+  await until("!!document.querySelector('.shadow-window-send:not(.stop)')", 'new turn completes independently');
+  await run("shadowFixture.createShadowConversation=async input=>({id:input.clientConversationId,mode:input.mode,sourceTurnId:'source-turn',workspaceDir:'D:/fixture'}); void 0");
   // Real loading indicators in the shared composer still animate explicitly.
   await run(`
     const loading = document.createElement('button'); loading.className = 'send-button fixture-loading'; loading.disabled = true;

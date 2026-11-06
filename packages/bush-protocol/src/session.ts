@@ -232,6 +232,8 @@ export const sessionSnapshotSchema = z.object({
   updatedAt: z.string().min(1),
   turns: z.array(committedTurnSchema),
   activeTurn: activeSessionTurnSchema.optional(),
+  // Opt-in frozen projection, computed by the Runtime; never a journal row.
+  modelContext: z.array(modelMessageSchema).optional(),
   supersededMessageIds: z.array(z.string().min(1)),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
@@ -271,6 +273,7 @@ export const runtimeSessionIdentitySchema = z.object({
 export const runtimeSessionReadRequestSchema = runtimeSessionIdentitySchema.extend({
   messageProjection: z.enum(["full", "conversation"]).default("full"),
   includeActiveTurn: z.boolean().default(false),
+  throughTurnId: z.string().min(1).optional(),
 });
 
 export type RuntimeSessionReadRequest = z.infer<

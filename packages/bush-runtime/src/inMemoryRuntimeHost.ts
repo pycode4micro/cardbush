@@ -1309,7 +1309,7 @@ export class InMemoryRuntimeHost {
           const active = [...this.#activeTurns].map(key => JSON.parse(key) as [string, string])
             .find(([sessionId, turnId]) => sessionId === input.sessionId &&
               !snapshot.turns.some(turn => turn.turnId === turnId));
-          if (active) snapshot.activeTurn = this.#recovery.readActiveTurn(...active);
+          Object.assign(snapshot, this.#recovery.readSessionContext(snapshot, active?.[1], input.throughTurnId));
         }
         if (snapshot) snapshot.metadata = await this.#sessionPresentationMetadata(input.sessionId, snapshot.metadata, snapshot.turns.at(-1));
         if (!snapshot || input.messageProjection === "full") return snapshot ?? null;

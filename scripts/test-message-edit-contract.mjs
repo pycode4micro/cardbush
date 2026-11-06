@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import * as protocol from '@cardbush/bush-protocol';
 
 import ts from 'typescript';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
@@ -103,6 +104,7 @@ const projectionModule = { exports: {} };
 vm.runInNewContext(projectionTranspiled.outputText, {
   module: projectionModule,
   exports: projectionModule.exports,
+  require: name => { assert.equal(name, '@cardbush/bush-protocol'); return protocol; },
   Date,
   Set,
 });

@@ -21,6 +21,27 @@ async function fixture(t, options = {}) {
   return { root, persistence, store };
 }
 
+test('Shadow frozen context stays out of memory and durable list indexes, but full reads restore it', async t => {
+  const f = await fixture(t), memory = new SessionStore();
+  const metadata = { title: 'Shadow', temporary: true, shadowConversationId: 'shadow-id',
+    sourceActiveTurn: { messages: ['private raw context'.repeat(1000)] },
+    sourceModelMessages: [{ role: 'user', content: 'private compact context'.repeat(1000) }] };
+  for (const store of [memory, f.store]) {
+    store.ensureSession('shadow', metadata);
+    const [summary] = await store.listSummaries();
+    assert.equal(summary.metadata.shadowConversationId, 'shadow-id');
+    assert.equal(summary.metadata.sourceActiveTurn, undefined);
+    assert.equal(summary.metadata.sourceModelMessages, undefined);
+    assert.deepEqual(store.snapshot('shadow').metadata, metadata);
+  }
+  const file = (await readdir(f.root)).find(file => file.endsWith('.session-index'));
+  assert.doesNotMatch(await readFile(join(f.root, file), 'utf8'), /private raw context|private compact context/);
+  f.persistence.close();
+  const reopened = new FileSessionEventPersistence({ root: f.root }); t.after(() => reopened.close());
+  assert.equal((await reopened.listSummaries())[0].metadata.sourceActiveTurn, undefined);
+  assert.deepEqual(new SessionStore({ persistence: reopened }).snapshot('shadow').metadata, metadata);
+});
+
 test('100-session lists contain bounded excerpts and never hydrate the SessionStore', async t => {
   const f = await fixture(t), large = 'input '.repeat(1800);
   for (let i = 0; i < 100; i++) f.store.commitTurn(`s-${i}`, turn(1, large));

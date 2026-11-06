@@ -1873,13 +1873,22 @@ test('live snapshots freeze the first running Turn without interrupting model or
     assert.equal(first.activeTurn.turnId, request.turnId);
     assert.equal(first.activeTurn.messages.at(-1).message.content, 'Current task');
     assert.equal((await read(false)).activeTurn, undefined, 'ordinary history reads stay unchanged');
+    assert.equal((await read(false)).modelContext, undefined, 'ordinary reads do not duplicate model context');
+    assert.ok(first.modelContext.some(message => message.content === 'Current task'));
+    assert.ok(first.modelContext.every(message => message.role !== 'system'), 'parent system policy is not inherited');
+    const missing = await host.sendCommand({ kind: GET_RUNTIME_SESSION_COMMAND,
+      payload: { sessionId: request.sessionId, includeActiveTurn: true, throughTurnId: 'unavailable' } });
+    assert.equal(missing.modelContext, undefined);
+    assert.equal(missing.activeTurn, undefined);
     firstModel.release(); await waitFor(() => stage === 'tool');
     const duringTool = await read(true);
     assert.ok(duringTool.activeTurn.messages.every(item => item.message.role !== 'tool' && !(item.message.toolCalls?.length)), 'no unfinished exchange is replayed');
+    assert.ok(duringTool.modelContext.every(message => message.role !== 'tool' && !message.toolCalls?.length));
     assert.equal(settled, false);
     tool.release(); await waitFor(() => stage === 'final-model');
     const completed = await read(true);
     assert.ok(completed.activeTurn.messages.some(item => item.message.role === 'tool' && item.message.content.includes('Completed observation')));
+    assert.ok(completed.modelContext.some(message => message.role === 'tool' && message.content.includes('Completed observation')));
     finalModel.release(); assert.equal((await running).payload.status, 'completed');
     assert.equal(completed.activeTurn.messages.some(item => item.message.content === 'Later final answer'), false, 'snapshot remains frozen');
     const finished = await read(true);

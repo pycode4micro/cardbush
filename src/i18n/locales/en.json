@@ -4100,6 +4100,7 @@
     "shadowRuntime.restart_cardbush_to_use_the_updated_shadow": "Restart CardBush to use the updated Shadow execution policy.",
     "shadowRuntime.the_source_conversation_is_no_longer_available": "The source conversation is no longer available.",
     "shadowRuntime.the_source_turn_used_by_this_shadow": "The source Turn used by this Shadow is no longer available.",
+    "shadowRuntime.source_turn_not_ready": "The selected turn is not available yet. Wait for it to start, then open Shadow again.",
     "shadowRuntime.shadow_turn_ended_without_a_terminal_fact": "Shadow Turn ended without a terminal fact.",
     "shadowRuntime.shadow_turn_returned_no_assistant_response": "Shadow Turn returned no assistant response.",
     "watchLocalConversation.invalid_host_conversation_status": "Invalid host conversation status",

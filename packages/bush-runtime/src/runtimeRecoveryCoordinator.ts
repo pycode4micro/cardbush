@@ -8,7 +8,9 @@ import {
   type RuntimeCheckpoint,
   type RuntimeRecoveryInspection,
   type RuntimeSessionCommitCheckpoint,
+  type SessionSnapshot,
 } from "@cardbush/bush-protocol";
+import { assembleContext, projectActiveTurnContext } from './contextAssembler.js';
 
 import type { RuntimeCheckpointStore } from "./runtimeCheckpointStore.js";
 import type {
@@ -107,9 +109,27 @@ export class RuntimeRecoveryCoordinator {
   }
 
   /** Freeze completed exchanges only; never copy an outstanding tool call. */
-  readActiveTurn(sessionId: string, turnId: string) {
-    const commit = this.#checkpoints.load(sessionId, turnId)?.sessionCommit;
-    if (!commit) return undefined;
+  readSessionContext(session: SessionSnapshot, activeTurnId?: string, throughTurnId?: string): Pick<SessionSnapshot, 'activeTurn' | 'modelContext'> {
+    const commit = activeTurnId ? this.#checkpoints.load(session.sessionId, activeTurnId)?.sessionCommit : undefined;
+    const selected = throughTurnId ? session.turns.find(turn => turn.turnId === throughTurnId) : undefined;
+    if (throughTurnId && !selected && (!commit || activeTurnId !== throughTurnId)) return {};
+    const committed = selected ?? session.turns.at(-1);
+    const active = commit && activeTurnId && (!throughTurnId || throughTurnId === activeTurnId)
+      ? this.#freezeActiveTurn(commit, activeTurnId) : undefined;
+    const checkpoint = active ? commit?.activeContextCheckpoint : undefined;
+    const current = active && commit ? projectActiveTurnContext({ turnId: active.turnId,
+      inputMessages: active.messages.slice(0, commit.inputMessages.length),
+      generatedMessages: active.messages.slice(commit.inputMessages.length), checkpoint }) : [];
+    const modelContext = assembleContext({ session: { ...session,
+      supersededMessageIds: [...session.supersededMessageIds, ...active?.supersededMessageIds ?? []] },
+      throughTurnSequence: committed?.turnSequence ?? 0, current,
+      coveredTurnIds: checkpoint?.projectionVersion === 'exchange_v1' ? checkpoint.coveredTurnIds : undefined,
+      coveredMessageIds: checkpoint?.projectionVersion === 'exchange_v1' ? checkpoint.coveredMessageIds : undefined,
+    }).messages;
+    return { ...(active ? { activeTurn: active } : {}), modelContext };
+  }
+
+  #freezeActiveTurn(commit: RuntimeSessionCommitCheckpoint, turnId: string) {
     const entries = [...commit.inputMessages, ...commit.generatedMessages];
     let boundary = entries.length;
     for (let index = 0; index < entries.length; index++) {

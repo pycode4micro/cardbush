@@ -48,7 +48,7 @@ function fixture({ legacyRuntime = false } = {}) {
   const client = {
     getSession: async id => sessions.get(id),
     getLiveSession: async id => structuredClone(sessions.get(id)),
-    listSessionSummaries: async () => [...sessions.values()],
+    listSessionSummaries: async () => [...sessions.values()].map(session => ({ ...session, metadata: protocol.sessionSummaryMetadata(session.metadata ?? {}) })),
     listTurnToolExecutionSummaries: async ({ turnId }) => ['read', 'after-snapshot'].map(id => ({ turnId, toolCall: { id, name: 'read_file' } })),
     createSession: async input => sessions.set(input.sessionId, { ...input, revision: 1, turns: [], supersededMessageIds: [] }),
     deleteSession: async id => sessions.delete(id),
@@ -83,7 +83,7 @@ function fixture({ legacyRuntime = false } = {}) {
   const reload = () => {
     const module = { exports: {} };
     vm.runInNewContext(compiled, { module, exports: module.exports,
-      require: name => imports[name] ?? require(name), crypto: { randomUUID }, AbortController, setTimeout,
+      require: name => imports[name] ?? require(name), crypto: { randomUUID }, AbortController, setTimeout, structuredClone,
     });
     return module.exports;
   };
@@ -101,8 +101,48 @@ function fixture({ legacyRuntime = false } = {}) {
   const call = (turn, name) => coordinator.execute({ id: 'call-' + name, name, argumentsText: '{}' },
     { requestId: turn.requestId, sessionId: turn.sessionId, turnId: turn.turnId, round: 1, ordinal: 0 },
     undefined, { request: { ...turn, messages: [...turn.prefixMessages, ...turn.inputMessages.map(item => item.message)] }, contextMessages: [] });
-  return { registry, shadow, sessions, send, call, executed, hooks, requests, reload };
+  return { registry, shadow, sessions, send, call, executed, hooks, requests, reload, client };
 }
+
+test('Shadow refuses an unavailable requested Turn and an empty parent without creating an orphan', async () => {
+  const f = fixture();
+  const create = sourceTurnId => f.shadow.createRuntimeShadowConversation({ sessionId: 'source', sourceTurnId,
+    clientConversationId: randomUUID(), mode: 'readonly' });
+  await assert.rejects(create('not-admitted-yet'), /source_turn/);
+  f.sessions.get('source').turns = [];
+  await assert.rejects(create(), /source_turn/);
+  assert.equal(f.sessions.size, 1);
+});
+
+test('Shadow freezes the Runtime model projection instead of restoring compacted raw history', async () => {
+  const f = fixture(), source = f.sessions.get('source');
+  source.modelContext = [{ role: 'user', name: 'turn_context_summary', visibility: 'internal', content: 'Compact source evidence' }];
+  const conversation = await f.shadow.createRuntimeShadowConversation({ sessionId: 'source', clientConversationId: randomUUID(), mode: 'readonly' });
+  assert.equal((await f.send(conversation)).prefixMessages.at(-1).content, 'Compact source evidence');
+  source.modelContext[0].content = 'Later changed projection';
+  const reloaded = f.reload();
+  await reloaded.streamRuntimeShadowConversationMessage({ conversationId: conversation.id, content: 'Continue',
+    clientMessageId: randomUUID(), modelConfig: { id: 'fixture' } });
+  assert.equal(f.requests.at(-1).prefixMessages.at(-1).content, 'Compact source evidence');
+  await reloaded.closeRuntimeShadowConversation(conversation.id);
+});
+
+test('live Shadow transcript restores attachments and guidance but hides maintenance prose', async () => {
+  const f = fixture(), createdAt = new Date().toISOString();
+  f.sessions.get('source').activeTurn = { turnId: 'live', turnSequence: 2, createdAt, supersededMessageIds: [], messages: [
+    { message: { role: 'user', content: 'Current image', images: [{ url: 'D:/image.png' }] } },
+    { message: { role: 'assistant', content: 'Before guidance', toolCalls: [] } },
+    { message: { role: 'user', name: 'turn_guidance', content: 'New detail' } },
+    { message: { role: 'assistant', content: 'Private compaction prose', toolCalls: [] }, metadata: { runtimeMaintenance: 'context_compaction' } },
+  ].map((fact, messageIndex) => ({ ...fact, messageIndex, messageId: `live-${messageIndex}`, turnId: 'live', turnSequence: 2, createdAt })) };
+  const conversation = await f.shadow.createRuntimeShadowConversation({ sessionId: 'source', sourceTurnId: 'live',
+    clientConversationId: randomUUID(), mode: 'readonly' });
+  const messages = conversation.sourceMessages;
+  assert.equal(messages.find(message => message.content === 'Current image').attachments?.[0]?.path, 'D:/image.png');
+  assert.equal(messages.find(message => message.content === 'Before guidance').metadata?.sealed_by_client_message_id, 'live-2');
+  assert.ok(!messages.some(message => message.content === 'Private compaction prose'));
+  await f.shadow.closeRuntimeShadowConversation(conversation.id);
+});
 
 for (const firstTurn of [true, false]) test(`Shadow freezes a running ${firstTurn ? 'first' : 'later'} Turn across completion and reload`, async () => {
   const f = fixture(), source = f.sessions.get('source');

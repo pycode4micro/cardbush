@@ -4058,6 +4058,7 @@
     "shadowRuntime.restart_cardbush_to_use_the_updated_shadow": "请重启 CardBush 以使用更新后的 Shadow 执行策略。",
     "shadowRuntime.the_source_conversation_is_no_longer_available": "来源会话已不可用。",
     "shadowRuntime.the_source_turn_used_by_this_shadow": "此 Shadow 引用的来源轮次已不可用。",
+    "shadowRuntime.source_turn_not_ready": "所选轮次暂不可用，请等待该轮开始后重新打开 Shadow。",
     "shadowRuntime.shadow_turn_ended_without_a_terminal_fact": "Shadow 本轮运行已结束，但未收到结束状态。",
     "shadowRuntime.shadow_turn_returned_no_assistant_response": "Shadow 本轮运行未返回助手回复。",
     "watchLocalConversation.invalid_host_conversation_status": "主机会话状态无效。",

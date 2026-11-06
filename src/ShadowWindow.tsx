@@ -172,9 +172,17 @@ export function ShadowWindow({
 
   const initializeConversation = useCallback(async (payload: ShadowConversationContext) => {
     const generation = ++initializationGenerationRef.current;
+    const previous = conversationRef.current;
+    conversationRef.current = null;
     abortRef.current?.abort();
     abortRef.current = null;
     busyRef.current = false;
+    modeSwitchingRef.current = false;
+    setModeSwitching(false);
+    setConversation(null);
+    setSourceMessages([]);
+    setShadowMessages([]);
+    setDraft('');
     setBusy(false);
     setActiveAssistantMessageId('');
     autoFollowTranscriptRef.current = true;
@@ -182,6 +190,8 @@ export function ShadowWindow({
     setInitializing(true);
     setError('');
     try {
+      if (previous) await closeShadowConversation(previous.id);
+      if (generation !== initializationGenerationRef.current) return;
       const next = await createShadowConversation({
         sessionId: payload.sessionId,
         sourceTurnId: payload.sourceTurnId,
@@ -304,8 +314,10 @@ export function ShadowWindow({
         setError(reason instanceof Error ? reason.message : String(reason));
       }
     } finally {
-      modeSwitchingRef.current = false;
-      setModeSwitching(false);
+      if (conversationRef.current?.id === current.id) {
+        modeSwitchingRef.current = false;
+        setModeSwitching(false);
+      }
     }
   }, [initializing]);
 
@@ -371,16 +383,18 @@ export function ShadowWindow({
         },
       });
     } catch (reason) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && conversationRef.current?.id === current.id) {
         setError((reason as { code?: string })?.code === 'shadow_runtime_update_required'
           ? uiText(context.language)('shadow.runtimeUpdate')
           : reason instanceof Error ? reason.message : String(reason));
       }
     } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-      busyRef.current = false;
-      setBusy(false);
-      setActiveAssistantMessageId((current) => current === assistantId ? '' : current);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        busyRef.current = false;
+        setBusy(false);
+        setActiveAssistantMessageId((current) => current === assistantId ? '' : current);
+      }
     }
   }, [context, draft, initializing]);
 
