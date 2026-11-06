@@ -213,3 +213,19 @@ test('UI closure and replacement never retarget returned grants to a new guest a
     await assert.rejects(f.call(scope, 'tabs.activate', { tabId: replacement.id }), { code: 'cardbush_page_not_authorized' });
   }
 });
+
+
+test('environment observes authorized tabs without binding, presentation or debugger actions', async () => {
+  const f = fixture(), a = f.register('mine'), b = f.register('unrelated');
+  await f.bind('owner', a);
+  await f.bind('other', b);
+  const before = f.actions.length;
+  const state = f.browser.environment('owner');
+  assert.equal(state.bound, true);
+  assert.deepEqual(state.tabs.map(tab => tab.tabId), ['mine']);
+  assert.equal(state.tabs[0].authorized, true);
+  assert.equal(f.actions.length, before);
+  assert.deepEqual(f.browser.environment('fresh').tabs, []);
+  assert.equal(f.browser.hasScope('fresh'), false);
+  assert.doesNotMatch(JSON.stringify(state), /https:|targetKey|guestId/);
+});

@@ -1,3 +1,4 @@
+import { browserConnectionEnvironment } from './browserEnvironment';
 import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, windowsReleaseSupported, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
@@ -2034,6 +2035,13 @@ function showMainWindow() {
   mainWindow.moveTop();
 }
 
+async function voiceEnvironmentCommand(kind: string, payload: unknown) {
+  const controller = runtimeHostController;
+  if (!controller) throw Error('Runtime unavailable.');
+  const response = await controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind, payload } });
+  if (response.type !== 'command_response' || !response.ok) throw Error('Environment unavailable.');
+  return response.result;
+}
 const desktopVoiceHost = registerVoiceIpc(() => mainWindow, {
   packaged: cardbushRuntimeIsPackaged, appPath: app.getAppPath(), resourcesPath: process.resourcesPath,
 }, {
@@ -2043,6 +2051,10 @@ const desktopVoiceHost = registerVoiceIpc(() => mainWindow, {
   speech: (input, init) => modelFetch(input, init),
   realtimeProxy: async () => { const network = await pluginNetworking(); return network.endpoint(network.modelConfiguration()); },
   realtimeDiagnostic: entry => appendDebugLog('realtime-voice',entry),
+  environment: {
+    observe: input => voiceEnvironmentCommand('runtime.observe_agent', input),
+    read: sessionId => voiceEnvironmentCommand('runtime.get_environment', { sessionId }),
+  },
   uiLanguage: () => nativeUiLanguage ?? app.getLocale(),
 });
 
@@ -4360,6 +4372,14 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal, onAccepted: () => void) => {
+        if (operation === 'environment.snapshot') {
+          const sessionId = (payload as { sessionId?: unknown })?.sessionId;
+          if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw Error('Invalid environment scope.');
+          const [browser, ssh, agents] = await Promise.all([browserUseRouterPromise, sshConnectionsPromise, agentConnectionsPromise]);
+          return { browser: { ...browser?.environment(sessionId), external: browserConnectionEnvironment(browserConnectorBroker?.status()) },
+            terminals: (ssh?.listTerminals(sessionId).sessions ?? []).map(({ terminalSessionId, uri, state, cwd }) => ({ terminalSessionId, uri, state, cwd })),
+            workers: (await agents?.list() ?? []).map(({ id, name, connected, connectionState }) => ({ id, name, connected, connectionState })) };
+        }
         if (operation === 'webhook.bot') return (await contextWebhookHost()).botRequest(payload, signal);
         if (operation === 'browser.inherit-scope') {
           const input = payload as { parentSessionId: string; childSessionId: string };

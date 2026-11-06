@@ -83,7 +83,7 @@ export class EmbodiedHost {
 }
 
 /** Headless equivalent of safeStorage. The private service directory owns this key. */
-export async function createHeadlessRealtimeVoice(root: string, proxy: () => Promise<string> = async () => '') {
+export async function createHeadlessRealtimeVoice(root: string, proxy: () => Promise<string> = async () => '', environment?: import('./realtimeVoiceService.js').RealtimeEnvironmentHost) {
   const file = join(root, 'config', 'voice-secret.key'); await mkdir(join(root, 'config'), { recursive: true, mode: 0o700 });
   try { await writeFile(file, randomBytes(32), { mode: 0o600, flag: 'wx' }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
@@ -91,6 +91,7 @@ export async function createHeadlessRealtimeVoice(root: string, proxy: () => Pro
   return new RealtimeVoiceService(join(root, 'voice-realtime-settings.json'), {
     encrypt(value) { const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv); return Buffer.concat([iv, cipher.update(value, 'utf8'), cipher.final(), cipher.getAuthTag()]).toString('base64'); },
     decrypt(value) { const bytes = Buffer.from(value, 'base64'); if (bytes.length < 28) throw Error('Invalid voice credential.'); const cipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12)); cipher.setAuthTag(bytes.subarray(-16)); return Buffer.concat([cipher.update(bytes.subarray(12, -16)), cipher.final()]).toString('utf8'); },
+    environment,
     connect: async (url, headers) => connectRealtimeVoice(await proxy(), url, headers),
   });
 }

@@ -167,6 +167,13 @@ export class IntegratedBrowser {
       return this.page(entry, scope, presentation);
     });
   }
+  environment(scopeId: string) {
+    const scope = this.scopes.get(scopeId);
+    return { available: !!this.options.defaultOwner(), bound: !!scope, selectedTabId: scope?.selected || null,
+      tabs: [...scope?.entries.values() ?? []].map(entry => ({ tabId: entry.tabId,
+        available: !this.options.getContents(entry.guestId)?.isDestroyed() && !!this.options.getContents(entry.guestId),
+        authorized: this.entries.get(this.key(entry.ownerId, entry.tabId))?.targetKey === entry.targetKey })) };
+  }
   hasScope(scopeId: string): boolean { return this.scopes.has(scopeId); }
   /** Trusted task ownership determines where pages appear, independently of browser grants. */
   registerDelegation(parentId: string, childId: string): void {

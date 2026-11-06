@@ -1,52 +1,50 @@
-# Runtime environment and Agent lifecycle
+# Runtime environment: state, execution and plugin boundaries
 
-The Runtime owns one `RuntimeEnvironment`. `environment.agents` observes all local execution instances: ordinary parents, Assistant, children, Shadow, Team/plugin roles, automation and internal tasks. Installed Agent definitions are capability catalog entries, not live executions.
+`RuntimeEnvironment` is a read-only projection. `AgentExecutionRegistry` owns local execution lifetimes; resource managers own connections, processes and authorization scopes. Tools perform actions against those same owners. An environment read must never connect, select a browser, execute a tool, install a plugin, dispatch a task or grant permission.
 
-## Ownership
+## Ownership and delivery
 
-- `AgentExecutionRegistry` owns execution facts, keyed by session and execution ID: ancestry, workspace, lifecycle, read-only guard and scheduling policy. It stores no prompts, credentials or tool results.
-- `RuntimeEnvironment` aggregates facts and registered sources. It creates model observations and serves `runtime.get_environment`. It neither runs agents nor grants permissions.
-- `RuntimeConversations` owns mailboxes and bounded coordination wakes. Its compatibility presence list projects the shared registry; it no longer maintains another copy of execution status.
-- The turn engine, Assistant, tool permission brokers and other resource owners remain responsible for execution, cancellation and cleanup. Their adapters register/update facts. Resource snapshots are read through source functions, not copied into UI-specific stores.
-- AgentChatroom remains an optional plugin. Membership, invitations and peer messages belong to that plugin. Registration is not room membership or consent to communicate.
+The host injects a read interface into the environment instead of exposing the registry for mutation. Closing observation sources does not close agents. Ordinary parents, children, Shadow, Team, Assistant, Webhook, automation and internal model tasks use the shared execution registry. Real-time voice reports its call lifetime through the private host command `runtime.observe_agent`; voice compaction and spoken summaries register their independent execution IDs. Concurrent text and voice work in one conversation remain separate leases; an old call closing cannot stop a newer call or text turn. Voice host commands are not model tools and are rejected by the public Agent `runtime.command` endpoint.
 
-The registry uses `queued`, `running`, `waiting`, `completed`, `failed` and `stopped`. Terminal updates are lease-specific: a late completion cannot stop a newer execution. Assistant has a distinct observation lease for each pump, without changing existing tool receipt or request IDs. Reset/deletion removes its observations; shutdown clears the registry. At most 256 inactive execution records are retained; active executions are not evicted. Mailboxes and extension context are pruned with retained executions.
+Remote executions are projected from the existing delegation task ledger, with `hostId`, `transport: remote` and `observationStatus`. Remote read-only policy is unknown (null) until supplied by its owner. They are last-known observations, not proof that a Worker is currently reachable. There is no remote polling or second presence map. Related agents are limited to the current family/project/workspace; at most 64 items are delivered, prioritizing current and active executions. Prompts, transcripts, results and credentials are not agent facts.
 
-Automatic wake eligibility is separate from presence. Children, Shadow, automation, plugin hooks, internal tasks and Assistant are still registered even when independent room notifications cannot start a new turn. Existing parent ownership, tool admission, explicit stop and three-wake coordination limits remain enforced.
+| Section | Source and meaning |
+| --- | --- |
+| `host`, `workspace` | Current Runtime platform and execution directories |
+| `agents` | Local execution registry plus related remote delegation records |
+| `capabilities` | Request permission mode, interactive requests and read-only state; unknown values are null |
+| `sandbox` | The same pure command sandbox evaluator used during execution, including host-required mode and automatic-mode full-access exemption; host network means no additional command sandbox restriction, not proven network reachability |
+| `services` | Bot source/connection observations, registered MCP catalog identifiers, current MCP App view status |
+| `mcp` | Existing MCP manager health and update state, without schemas, configuration or error bodies |
+| `processes` | Current session's local terminals and current turn's background jobs |
+| `hostResources` | Existing browser connection status, integrated browser authorized tab identities, session-owned SSH terminals and configured Worker connection state |
+| `plugins` | Namespaced state sources contributed by enabled native plugins |
 
-## Reading and injecting facts
+Desktop and CLI/service workers share these projections. A headless service reports no integrated browser, but reports its external connector's actual status. Browser state does not imply permission to call a browser tool, authorize unrelated tabs, or prove network access. Reading a fresh session does not create a binding. Saved Worker configuration is not reported as a live connection. SSH and browser summaries omit command output, page URLs/content, secret tokens and debugging handles.
 
-App and CLI hosts use the same Runtime command:
+Product turns append an internal user `runtime_environment` message at normal model boundaries; Assistant uses the same source. The first message is a snapshot, subsequent messages contain changed sections only, and removed sources emit null. After compaction loses the structured baseline, the next read supplies a fresh snapshot. The frozen text-model system prefix remains unchanged. An automatic sandbox with no observed request policy remains unknown instead of assuming a permission mode. Pure maintenance tasks register presence without adding unrelated context. Realtime speech transports attach bounded observations as explicitly marked data through their provider context interface, refresh on connection and natural speech boundaries, and never manufacture a response to refresh state.
 
-```json
-{"kind":"runtime.get_environment","payload":{"sessionId":"session-id"}}
+Plugin collaboration messages use `conversations.notify` / `agent_peer_context`, not environment state. MCP App user context and durable events retain their own internal user messages. These data channels cannot grant authorization or override the user's task.
+
+## Plugin registration
+
+Trusted native plugins use a single extension factory for tools and status sources:
+
+```ts
+export default function create(api: RuntimeExtensionApi): RuntimeExtension {
+  api.tools.register(toolUsingConnectionManager);
+  const unregister = api.environment.register('connection', ({ request, signal }) => {
+    // Pure projection from the same manager used by the tool. Scope to request.sessionId.
+    return connectionManager.status(request.sessionId, signal);
+  });
+  return { id: 'example', features: [], commands: {}, dispose: unregister };
+}
 ```
 
-`ProtocolRuntimeClient.getEnvironment(sessionId)` validates the response. Trusted native extensions can call `api.environment.read(sessionId)`. The snapshot protocol is `bush.runtime_environment.v1`, with these sections:
+This appears as `sections.plugins.example.connection`. Installation stages tools and sources together. Invalid/colliding registrations cannot leave orphan state. Enable/disable, replacement and uninstall affect both catalogs. A slow response from an obsolete generation is discarded, including disable/re-enable while a read is pending. Plugins cannot replace core host sections. Registration is for trusted native code, not a sandbox or permission grant; status callbacks must not perform actions, return instructions or expose secrets.
 
-| Section | Contents |
-| --- | --- |
-| `host` | Current process platform and architecture |
-| `workspace` | Bound source project and execution directory |
-| `agents` | Self, related instances, counts and bounded plugin coordination context |
-| `services` | Current Bot connection/source facts, registered MCP servers and MCP App context |
-| `processes` | Session-owned terminal identity/state and current background tool jobs; no raw commands or output |
-| `capabilities` | Effective request permission mode, interactive-request availability and read-only guard; unknown is `null` |
-
-The Agent section includes only the current family and matching source project/workspace. At most 64 related instances and 16,000 characters of coordination context are projected, with counts/truncation reported. The current Agent and active executions take priority over completed records. This is local to one Runtime host. Remote worker sessions are not fabricated as local running agents. Registered MCP servers describe a catalog, not a successful live browser connection or permission to call every tool.
-
-Product requests enable `metadata.environmentContext`; children and Shadow inherit the product request. Assistant uses the same environment directly. Low-level model calls/internal tasks can opt in when environment observations are relevant, while pure transformations need not pay for unrelated context. All executions are registered regardless of whether observations are requested.
-
-At a normal model boundary the environment appends an internal **user** message named `runtime_environment`. The first observation is a snapshot; later messages contain only changed sections. Unchanged facts add no message. Removed sources emit `null`. Historical messages and the frozen system prefix are never rewritten. After compaction removes structured observations, a fresh snapshot is supplied. Observations cannot trigger another turn or bypass a safe tool boundary.
-
-These messages are host facts, not human requests or authorization. Peer text remains untrusted task data. Historical message timestamps and authored message source identity remain attached to their inputs; current Bot availability belongs to the environment. Durable MCP App events and collaboration messages remain event streams, distinct from current state.
-
-## Adding a source or execution adapter
-
-Use `environmentSources: { sectionName: async ({request, signal}) => jsonFacts }` when constructing a host. Sources should be scoped, bounded, cancellation-aware and free of secrets. Each observation has a one-second deadline and a 65,536-character JSON limit. Failed, timed-out or non-serializable sources become `{ "status": "unavailable" }`; cancellation still cancels the request. Oversized observations include `reason: "snapshot_too_large"`. Sources cannot replace the reserved core sections. Refreshing a source must not start work.
-
-New execution mechanisms use the registry lifecycle (`begin`, `update`/`observe`, `forget`) and keep their own resource controls. Do not create another presence map or infer execution from a saved configuration. Use exact execution IDs for asynchronous completion. Scheduling/messaging adapters continue to enforce their existing authority separately.
+Host adapters use `environmentSources: { name: ({request, signal}) => jsonFacts }`. Each source has a one-second deadline and a 65,536-character JSON limit. Plugin namespaces allow at most 16 sources and a combined 65,536-character snapshot. Requests are cloned before delivery, so a source cannot mutate a turn. Failed, timed-out, nonserializable or oversized sources report unavailable, and request cancellation still propagates. Sources should cooperate with cancellation and return small structured summaries.
 
 ## Verification
 
-`packages/bush-runtime/test/runtimeEnvironment.test.mjs` covers lifecycle, stale completion, bounded retention, scope/privacy, incremental facts, cancellation, the read API, actual concurrent parent/Shadow execution, and Assistant registration. Existing conversation, permission, MCP App, child/Team, recovery, AgentChatroom and CLI tests verify their own execution contracts through the shared state.
+`runtimeEnvironment.test.mjs` covers shared lifetimes, simultaneous voice/text work, stale completion, related remote identity, plugin admission/revocation, prompt separation, bounds, cancellation, sandbox policy and real concurrent parent/Shadow execution. Browser and voice host tests exercise owner-derived snapshots and lifecycle callbacks without connecting production accounts. Broader Runtime, CLI and App regressions verify existing execution and presentation contracts.

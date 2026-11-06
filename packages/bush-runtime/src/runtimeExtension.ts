@@ -1,3 +1,4 @@
+import type { EnvironmentSource } from './runtimeEnvironment.js';
 import type { ChildTurnRunner, SubagentPermissionPolicy } from './childTurn.js';
 import type { SubagentTaskStore } from './subagentTaskStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
@@ -14,7 +15,11 @@ export interface RuntimeExtensionApi {
   hasActiveTurns: () => boolean;
   permissionPolicy: SubagentPermissionPolicy;
   conversations: RuntimeConversationsApi;
-  environment: { read(sessionId: string, signal?: AbortSignal): Promise<RuntimeEnvironmentSnapshot> };
+  environment: {
+    read(sessionId: string, signal?: AbortSignal): Promise<RuntimeEnvironmentSnapshot>;
+    /** Register bounded, read-only status. Never connect, execute tools or return instructions/secrets here. */
+    register(name: string, source: EnvironmentSource): () => void;
+  };
 }
 
 export interface RuntimeExtension {

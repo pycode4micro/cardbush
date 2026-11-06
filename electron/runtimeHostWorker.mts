@@ -867,6 +867,10 @@ host = new InMemoryRuntimeHost({
   // Desktop, server Agent and CLI share this worker and compaction policy.
   // Product prompts no longer request tool_summary; reuse recorded tool facts.
   preferRecordedToolHandoffs: true,
+  environmentSources: {
+    hostResources: ({ request, signal }) => mcpHost.request('environment.snapshot', { sessionId: request.sessionId }, signal),
+    mcp: () => ({ servers: (mcp?.snapshot()?.servers ?? []).map(server => ({ id: server.id, health: server.health, updateState: server.updateState })) }),
+  },
   commandSandbox: commandSandboxConfiguration(process.env),
   loadCommandSandbox: () => loadCommandSandboxConfiguration(process.env, process.env.CARDBUSH_SANDBOX_SETTINGS_PATH),
   // Only the desktop host implements ssh.workspace. A service's local tasks

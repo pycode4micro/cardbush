@@ -1,3 +1,4 @@
+import { browserConnectionEnvironment } from './browserEnvironment.js';
 import { uiText } from '@cardbush/platform/i18n';
 import { AgentWebhooks } from './agentWebhooks.mjs';
 import { contextWebhookTurnResult, type runContextWebhook } from './contextWebhookRuntime.mjs';
@@ -196,6 +197,8 @@ export class AgentService {
     this.runtime = new AgentRuntimeHost(env, async (operation, payload, signal, onAccepted) => {
       const data = payload as Record<string, unknown>;
       if (operation === 'webhook.bot' && this.#webhooks) return this.#webhooks.botRequest(payload, signal);
+      if (operation === 'environment.snapshot') return { browser: { integrated: { available: false }, external: browserConnectionEnvironment(this.#browserConnector?.status().connector) },
+        workers: (await (await this.#workers)?.list() ?? []).map(({ id, name, connected, connectionState }) => ({ id, name, connected, connectionState })) };
       if (this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
         return callWebRemoteAgent(this.#webPolicy?.remoteAgents, operation, payload, signal, onAccepted);
       if (this.#local && !this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
@@ -338,7 +341,8 @@ export class AgentService {
           const model = networkProxySchema.parse(await readFile(join(configurationRoot, 'config', 'network.json'), 'utf8').then(text => JSON.parse(text), (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return { mode: 'system' }; }));
           owner.#network.setModel(model);
           return owner.#network.endpoint(model);
-        });
+        }, { observe: input => owner.#command('runtime.observe_agent', input),
+          read: sessionId => owner.#command('runtime.get_environment', { sessionId }) });
         service.#embodied = new EmbodiedHost(root, voice, {
           command: (kind, payload) => owner.#command(kind, payload), product: async () => owner.product,
           instructions: () => readAgentInstructionDocuments(owner.instructions),
@@ -793,7 +797,7 @@ export class AgentService {
       case 'runtime.command': {
         const kind = z.string().regex(/^(runtime|plugin)\./).parse(data.kind);
         // Execution always enters the service queue, not a transport-owned promise.
-        if (/^runtime\.(run_|resume_|shutdown|upsert_provider|remove_provider|apply_mcp|prepare_plugin)/.test(kind)) throw new Error('Use the Agent service operation for this command.');
+        if (/^runtime\.(run_|resume_|shutdown|observe_agent|upsert_provider|remove_provider|apply_mcp|prepare_plugin)/.test(kind)) throw new Error('Use the Agent service operation for this command.');
         if (kind === 'runtime.delete_session') this.#idle(id.parse((data.payload as Record<string, unknown>)?.sessionId));
         else if (/clear_sessions|switch_workspace|collect_cache|(?:revert|restore|update)_workspace/.test(kind)) this.#idle();
         if (kind === 'runtime.get_session_history') {

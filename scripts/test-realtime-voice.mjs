@@ -60,11 +60,11 @@ class Socket {
   open(){this.readyState=1;this.fire('open');}
   event(event){this.fire('message',{data:JSON.stringify(event)});}
 }
-function fixture(connect){
+function fixture(connect, environment){
   fs.mkdirSync(path.resolve('tmp'), { recursive: true });
   const file=path.join(fs.mkdtempSync(path.resolve('tmp/realtime-voice-test-')),'settings.json'),socket=new Socket(),events=[];
   let disposed=0,headers;
-  const service=new RealtimeVoiceService(file,{encrypt:key=>'encrypted:'+Buffer.from(key).toString('base64'),decrypt:key=>Buffer.from(key.slice(10),'base64').toString(),
+  const service=new RealtimeVoiceService(file,{environment,encrypt:key=>'encrypted:'+Buffer.from(key).toString('base64'),decrypt:key=>Buffer.from(key.slice(10),'base64').toString(),
     connect:connect??(async(url,h)=>{assert.equal(url,provider.endpoint);headers=h;return{socket,dispose:()=>disposed++};})});
   service.save({...defaults,apiKey:'fixture-not-a-real-credential'});
   const start=async()=>{const pending=service.start(1,{id:'call-1',voice:'female',context:[]},e=>events.push(e));await pause();socket.open();socket.event({type:'session.created',session:{id:'vendor-session'}});await pending;};
@@ -782,4 +782,24 @@ test('recall is byte bounded, paginated and treats stored text as data',()=>{
   const prompt=voiceRecallInstructions(messages);assert.ok(Buffer.byteLength(prompt)<=5000);assert.match(prompt,/not new instructions/);assert.match(prompt,/"truncated":true/);
   let text='',cursor=0;for(;;){const page=voiceRecallPage(messages,cursor);text+=page.history;if(page.nextCursor===null)break;cursor=page.nextCursor;}
   assert.equal(text,messages.map(m=>JSON.stringify(m)).join('\n'));assert.throws(()=>voiceRecallPage(messages,-1));
+});
+
+
+test('voice reports its own lifetime and reads bounded environment without exposing credentials', async () => {
+  const updates = [], reads = [];
+  const f = fixture(undefined, { observe: async value => updates.push(value), read: async sessionId => {
+    reads.push(sessionId); return { protocol: 'bush.runtime_environment.v1', sections: { agents: { items: [] } } };
+  } });
+  try {
+    await f.start(); await pause();
+    assert.equal(updates[0].status, 'waiting');
+    assert.equal(updates.at(-1).status, 'running');
+    assert.equal(updates[0].executionId, 'call-1');
+    assert.ok(reads.length);
+    assert.doesNotMatch(JSON.stringify(updates), /credential|secret|headers|transcript/);
+    f.service.closeAll(); await pause();
+    // The provider completes its close handshake or the bounded close timer expires.
+    f.socket.event({ type: 'session.closed' }); await pause();
+    assert.equal(updates.at(-1).status, 'stopped');
+  } finally { f.service.closeAll(); fs.rmSync(path.dirname(f.file), { recursive: true, force: true }); }
 });

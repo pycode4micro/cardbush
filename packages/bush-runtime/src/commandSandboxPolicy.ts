@@ -1,7 +1,8 @@
+import type { ModelRequest } from '@cardbush/bush-protocol';
 import { isAbsolute } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import type { ToolAdmissionContext } from './toolRegistry.js';
-import { workspaceRoot } from './workspaceAccessPolicy.js';
+import { workspaceRootFromMetadata } from './workspaceAccessPolicy.js';
 import { sandboxError, type ExecutionSandboxPolicy } from './executionSandbox.js';
 
 /** Supplied by the host at startup, never by a turn or a model tool call. */
@@ -53,8 +54,12 @@ export async function loadCommandSandboxConfiguration(env: NodeJS.ProcessEnv, se
 }
 
 export function commandSandboxPolicy(configuration: CommandSandboxConfiguration, context: ToolAdmissionContext<unknown>): ExecutionSandboxPolicy | undefined {
-  if (configuration.mode === 'off' || (configuration.mode === 'auto' && context.turn?.request.permissionMode === 'all_free')) return;
-  const workspace = workspaceRoot(context);
+  return commandSandboxPolicyForRequest(configuration, context.turn?.request);
+}
+
+export function commandSandboxPolicyForRequest(configuration: CommandSandboxConfiguration, request?: Pick<ModelRequest, 'permissionMode' | 'metadata'>): ExecutionSandboxPolicy | undefined {
+  if (configuration.mode === 'off' || (configuration.mode === 'auto' && request?.permissionMode === 'all_free')) return;
+  const workspace = workspaceRootFromMetadata(request?.metadata ?? {});
   // Approving a cwd, choosing all_free, or supplying taskRoots does not expand
   // the host sandbox. Additional directories need host configuration.
   return {

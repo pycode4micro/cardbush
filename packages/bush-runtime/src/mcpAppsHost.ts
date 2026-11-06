@@ -161,6 +161,13 @@ export class McpAppsHost {
     }
     throw new Error('Unsupported MCP interface operation.');
   }
+  /** Current owner state only; excludes plugin documents, view tokens and action inputs. */
+  environment(session: string) {
+    return [...this.instances.values()].filter(instance => instance.sessionId === session &&
+      Date.now() - instance.touched <= 30 * 60_000 && sameConnection(instance, this.registry.resolve(instance.source)))
+      .map(instance => ({ viewId: instance.viewId, server: instance.server, source: instance.source,
+        initialized: !!instance.initialized, busy: instance.busy, waitingForPermission: !!instance.permission }));
+  }
   async context(session: string): Promise<string | undefined> {
     await this.contextWrites.get(this.file(session, 'context'));
     if (!existsSync(this.file(session, 'context'))) return undefined;

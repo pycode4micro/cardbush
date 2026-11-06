@@ -28,6 +28,11 @@ export class BrowserUseRouter {
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
   }
+  environment(scope: string) {
+    const route = this.routes.get(scope) ?? (this.integrated.hasScope(scope) ? 'cardbush' : null);
+    return { selected: route, websiteAuthorization: 'connection', tabIsolation: 'session',
+      integrated: this.integrated.environment(scope), external: { status: route === 'external' ? 'unknown' : 'not_selected' } };
+  }
   private save(scope: string, route: 'cardbush' | 'external') {
     if (!this.routes.has(scope) && this.routes.size >= 4096) throw new Error('Browser Use session route limit reached.');
     const previous = this.routes.get(scope);

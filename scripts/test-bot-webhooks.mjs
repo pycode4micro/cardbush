@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { fixturePlugin, bridgeModelStep } from './helpers/bridge-plugin-fixture.mjs';
+import { fixturePlugin, bridgeModelStep, bridgeMessageSource } from './helpers/bridge-plugin-fixture.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm, lstat, realpath, mkdir, symlink } from 'node:fs/promises';
 import { renameSync, symlinkSync } from 'node:fs';
@@ -156,9 +156,9 @@ for (const kind of ['conversation', 'assistant']) test(`${kind}: real model tool
     calls.push(input);
     assert.equal(input.permissionMode, 'all_free');
     assert.equal(input.requestCapabilities.interactiveRequests, false);
-    const state = JSON.parse(input.messages.filter(m => m.name === 'bot_context').at(-1).content.split('\n').at(-1));
-    assert.equal(state.source.botName, 'Selected Bot'); assert.equal(state.source.senderId, 'original-user');
-    assert.equal(state.source.available, true);
+    const source = bridgeMessageSource(input.messages);
+    assert.equal(source.botName, 'Selected Bot'); assert.equal(source.senderId, 'original-user');
+    assert.equal(source.available, true);
     if (kind === 'assistant' && input.sessionId === sessionId && input.metadata.agentRole !== 'child') {
       yield* answer(input, input.messages.some(m => m.role === 'tool' && m.toolCallId === 'delegate-file') ? undefined
         : { id: 'delegate-file', name: 'subagent', arguments: { prompt: 'Send the requested report file through the current source bridge plugin.' } });

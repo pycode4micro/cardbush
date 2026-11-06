@@ -1,3 +1,4 @@
+import type { AgentExecutionRegistry } from './agentExecutionRegistry.js';
 import { applyWebhookTurnPolicy, WEBHOOK_FINAL_REPLY_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, botContextMessage, createTurnTimeContext, promptModelContent, type BotContext } from '@cardbush/bush-protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -55,6 +56,7 @@ export class AssistantConversation {
     delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
     environment?: RuntimeEnvironment;
+    agents?: AgentExecutionRegistry;
     management?: AssistantManagement;
     prepareParent?: (parent: RuntimeSessionTurnRequest, signal: AbortSignal) => Promise<RuntimeSessionTurnRequest>;
     snapshotImage?: (source: string, signal: AbortSignal) => Promise<string>;
@@ -114,12 +116,12 @@ export class AssistantConversation {
     const controller = this.controller = new AbortController();
     const execution = { ...configured.parent, turnId: `assistant_${randomUUID()}`,
       metadata: { ...configured.parent.metadata, personalAssistant: true } };
-    this.deps.environment?.agents.begin(execution, 'running');
+    this.deps.agents?.begin(execution, 'running');
     let failed = false;
     try { await settleAtAbort(this.respond(configured, controller.signal, execution.turnId), controller.signal, 'Assistant reply stopped.'); }
     catch (error) { failed = true; if (!this.stopped && !controller.signal.aborted) this.error = error instanceof Error ? error.message : String(error); }
     finally {
-      this.deps.environment?.agents.update(execution.sessionId, execution.turnId,
+      this.deps.agents?.update(execution.sessionId, execution.turnId,
         controller.signal.aborted ? 'stopped' : failed ? 'failed' : 'completed');
       if (this.controller === controller) {
       this.busy = false; this.retry = undefined; this.controller = undefined;
@@ -210,7 +212,7 @@ export class AssistantConversation {
     if (activeSources.size === 1 && activeSources.values().next().value) parent.metadata.botSourceRef = activeSources.values().next().value;
     if (activeSources.size) parent = applyWebhookTurnPolicy(parent);
     signal.throwIfAborted();
-    this.deps.environment?.agents.begin({ ...parent, turnId: executionId, metadata: { ...parent.metadata, personalAssistant: true } }, 'running');
+    this.deps.agents?.begin({ ...parent, turnId: executionId, metadata: { ...parent.metadata, personalAssistant: true } }, 'running');
     const botContexts = new Map<string | undefined, BotContext>();
     if (!this.deps.environment && this.deps.botContext) for (const ref of new Set(remaining.filter(item => item.role === 'user').flatMap(sourceRefs))) {
       botContexts.set(ref, await this.deps.botContext(ref, signal));
@@ -443,7 +445,7 @@ export class AssistantConversation {
     this.pending = true; void this.pump();
   }
   forget(sessionId: string) {
-    this.deps.environment?.forget(sessionId);
+    this.deps.agents?.forget(sessionId);
     if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
     if (sessionId === PERSONAL_ASSISTANT_SESSION) this.deps.management?.reset();
     this.journal.forget(sessionId);

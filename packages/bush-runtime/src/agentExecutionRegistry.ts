@@ -25,7 +25,7 @@ export class AgentExecutionRegistry {
       projectDir: text(metadata.projectDir), workspaceDir: text(metadata.workspaceDir) ?? text(metadata.projectDir),
       status: previous && active(previous) && status === 'queued' ? previous.status : status,
       readOnly: metadata.shadowReadOnly === true || metadata.shadowMode === 'readonly' || metadata.registeredAgentReadOnly === true,
-      canDelegate: role === 'root',
+      canDelegate: role === 'root' && metadata.runtimeTask !== 'internal',
       permissionMode: input.permissionMode, interactiveRequests: input.requestCapabilities?.interactiveRequests,
       // Registration is unconditional. Scheduling authority is a separate policy.
       canWake: role === 'root' && !metadata.automationRunId && !metadata.pluginHookEvaluation &&
@@ -67,8 +67,14 @@ export class AgentExecutionRegistry {
     }
     return structuredClone([...latest.values()]);
   }
+  /** All live leases; a voice call and a text turn may share a conversation. */
+  executions(): RuntimeAgentFact[] {
+    const latest = this.list();
+    return structuredClone([...this.facts.values()].filter(fact => active(fact) ||
+      latest.some(item => item.agentId === fact.agentId && item.executionId === fact.executionId)));
+  }
   related(session: string): RuntimeAgentFact[] {
-    const all = this.list(), self = all.find(fact => fact.agentId === session);
+    const all = this.executions(), self = all.find(fact => fact.agentId === session);
     if (!self) return [];
     const root = (fact: RuntimeAgentFact) => {
       const seen = new Set<string>();

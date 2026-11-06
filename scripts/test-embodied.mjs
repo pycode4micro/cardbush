@@ -174,6 +174,7 @@ test('independent Agent: device -> provider -> existing assistant Runtime -> chi
   try {
     service = await AgentService.open({ dataRoot: root, name: 'embodied-fixture', env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
     await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture', baseURL: `http://127.0.0.1:${model.address().port}/v1` }] } });
+    await assert.rejects(service.call('runtime.command', { kind: 'runtime.observe_agent', payload: {} }), /Use the Agent service operation/);
     const device = (action, input) => service.call('devices.command', { action, input });
     await device('voice.save', { ...defaultRealtimeVoiceSettings, provider: 'cardbush', model: 'fixture', apiKey: 'fixture-provider-credential', endpoint: `ws://127.0.0.1:${voice.address().port}/realtime` });
     assert.ok(!(await readFile(join(root, 'voice-realtime-settings.json'), 'utf8')).includes('fixture-provider-credential'));

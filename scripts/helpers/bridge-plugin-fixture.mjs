@@ -5,13 +5,29 @@ export const fixturePlugin = { id: 'fixture', name: 'Fixture bridge', version: '
 
 // Deterministic model behaviour; the real runtime still searches, loads, admits
 // and invokes the independently registered plugin through its normal tools.
-export function bridgeModelStep(history, file, prefix = 'bridge') {
+export function bridgeMessageSource(history) {
   const strings = [];
   const visit = value => { if (typeof value === 'string') strings.push(value); else if (value && typeof value === 'object') Object.values(value).forEach(visit); };
   visit(history);
-  const source = strings.filter(text => text.includes('Bot connection and message source supplied by the host')).flatMap(text => text.split('\n').map(line => {
-    try { return JSON.parse(line).source; } catch { return undefined; }
-  })).filter(Boolean).at(-1);
+  let services, observedEnvironment = false;
+  for (const text of strings) for (const line of text.split('\n')) {
+    try {
+      const fact = JSON.parse(line);
+      if (fact.protocol !== 'bush.runtime_environment.v1') continue;
+      if (fact.kind === 'snapshot') { services = undefined; observedEnvironment = true; }
+      if (Object.hasOwn(fact.sections ?? {}, 'services')) { services = fact.sections.services; observedEnvironment = true; }
+    } catch { /* Ordinary model input is not an environment fact. */ }
+  }
+  const source = observedEnvironment ? services?.bots?.find(entry => entry.sourceRef &&
+    entry.context?.source?.sourceRef === entry.sourceRef)?.context.source
+    : strings.filter(text => text.includes('Bot connection and message source supplied by the host')).flatMap(text => text.split('\n').map(line => {
+      try { return JSON.parse(line).source; } catch { return undefined; }
+    })).filter(Boolean).at(-1);
+  return source;
+}
+
+export function bridgeModelStep(history, file, prefix = 'bridge') {
+  const source = bridgeMessageSource(history);
   if (!source) return;
   const target = source.plugins?.flatMap(plugin => plugin.tools).find(name => name.endsWith('__send_file'));
   if (!target) throw Error('fixture_missing_bridge_plugin');

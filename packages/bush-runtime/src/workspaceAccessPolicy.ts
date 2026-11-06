@@ -118,7 +118,10 @@ export async function resolveToolPath(
 }
 
 export function workspaceRoot(context: ToolAdmissionContext<unknown>): string | undefined {
-  const metadata = context.turn?.request.metadata ?? {};
+  return workspaceRootFromMetadata(context.turn?.request.metadata ?? {});
+}
+
+export function workspaceRootFromMetadata(metadata: Record<string, unknown>): string | undefined {
   const candidate = [metadata.workspaceDir, metadata.projectDir, metadata.sessionWorkspaceDir]
     .find((value) => typeof value === "string" && value.trim());
   return typeof candidate === "string" ? resolve(candidate) : undefined;

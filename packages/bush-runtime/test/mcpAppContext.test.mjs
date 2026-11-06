@@ -31,7 +31,7 @@ test('UI observations append once at round boundaries without changing earlier c
     } else { yield event(1, 'text_delta', { delta: '根据观察继续，由模型决定何时结束。' }); yield event(2, 'response_completed', { finishReason: 'stop' }); }
   } } });
   const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',
-    messages: [{ role: 'system', content: 'Stable prefix' }, { role: 'user', content: 'Open the fixture' }],
+    messages: [{ role: 'system', content: 'Stable prefix' }, { role: 'user', content: 'Open the fixture' }], metadata: { environmentContext: true },
     tools: registry.definitions().filter(tool => !['mcp_search', 'call_tool'].includes(tool.name)) });
   assert.equal(terminal.payload.status, 'completed'); assert.equal(requests.length, 4); assert.equal(calls, 1); assert.equal(reads, 1);
   const statusMessage = requests[2].messages.find(message => message.role === 'tool' && message.toolCallId === 'c1');
@@ -40,10 +40,15 @@ test('UI observations append once at round boundaries without changing earlier c
   assert.equal(observations.length, 1); assert.equal(observations[0].visibility, 'internal');
   assert.deepEqual(JSON.parse(observations[0].content).events.map(event => event.event), ['resource_loading', 'resource_loaded', 'frame_loaded', 'initialized']);
   assert.equal(requests[3].messages.filter(message => message.name === 'mcp_app_observations').length, 1, 'unchanged observations do not get resent');
-  const pluginContext = requests[2].messages.filter(message => message.name === 'runtime_environment');
+  const pluginContext = requests[2].messages.filter(message => message.name === 'mcp_app_context');
   assert.equal(pluginContext.length, 1); assert.equal(pluginContext[0].visibility, 'internal');
-  assert.match(JSON.parse(pluginContext[0].content).sections.services.apps, /"selected":"B"/);
-  assert.equal(requests[3].messages.filter(message => message.name === 'runtime_environment').length, 1, 'unchanged environment remains one immutable message');
+  assert.match(pluginContext[0].content, /"selected":"B"/);
+  const environment = requests[2].messages.filter(message => message.name === 'runtime_environment');
+  const state = JSON.parse(environment.at(-1).content).sections.services.apps;
+  assert.equal(state[0].initialized, true);
+  assert.doesNotMatch(JSON.stringify(state), /selected|token|structuredContent/);
+  assert.equal(requests[3].messages.filter(message => message.name === 'mcp_app_context').length, 1, 'unchanged plugin context remains one immutable message');
+  assert.equal(requests[3].messages.filter(message => message.name === 'runtime_environment').length, environment.length, 'unchanged state is not resent');
   for (let i = 1; i < requests.length; i++) {
     assert.deepEqual(requests[i].tools, requests[0].tools);
     assert.deepEqual(requests[i].messages.slice(0, requests[i - 1].messages.length), requests[i - 1].messages, 'old context is unchanged');
