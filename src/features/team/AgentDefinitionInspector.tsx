@@ -61,8 +61,8 @@ export function AgentDefinitionInspector({ detail, language, active = true }: { 
       {employee && <>
         <details><summary>{uiText(language)('agentDefinitionInspector.systemPrompt')}</summary><pre>{employee.system_prompt}</pre></details>
         <details><summary>{uiText(language)('agentDefinitionInspector.toolsHooksAndGuards')}</summary>
-          <h4>{uiText(language)('agentDefinitionInspector.allowedTools')}</h4><pre>{employee.allowed_tools?.join('\n') || (employee.allowed_tools ? uiText(language)('cardlingWindow.none') : uiText(language)('agentDefinitionInspector.inheritAvailableTools'))}</pre>
-          <h4>{uiText(language)('agentDefinitionInspector.hooks')}</h4><pre>{employee.hooks.join('\n') || uiText(language)('cardlingWindow.none')}</pre>
+          <h4>{uiText(language)('agentDefinitionInspector.allowedTools')}</h4><pre>{employee.allowed_tools?.join('\n') || (employee.allowed_tools ? uiText(language)('common.none') : uiText(language)('agentDefinitionInspector.inheritAvailableTools'))}</pre>
+          <h4>{uiText(language)('agentDefinitionInspector.hooks')}</h4><pre>{employee.hooks.join('\n') || uiText(language)('common.none')}</pre>
           <h4>{uiText(language)('agentDefinitionInspector.guard')}</h4><pre>{employee.guards.includes('read_only') ? uiText(language)('messageBubble.readOnly') : uiText(language)('agentDefinitionInspector.noAdditionalGuards')}</pre>
         </details>
         {!!employee.settings && <details><summary>{uiText(language)('agentDefinitionInspector.executionSettings')}</summary><pre>{JSON.stringify(employee.settings, null, 2)}</pre></details>}

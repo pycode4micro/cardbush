@@ -511,7 +511,6 @@ export function ShadowWindow({
                     onRetryMessage={ignoreAsync}
                     onRetryGuidance={ignoreAsync}
                     onRevertChangeReport={ignoreAsync}
-                    onOpenScene={() => undefined}
 
                   />
                 </div>

@@ -55,5 +55,6 @@ module.exports = async ({ run, until, clickText, selected, win, teams }) => {
   await clickText('保存到流程'); await until('document.querySelector(".canvas-document-editor [role=alert]")?.textContent.includes("Definition changed")');
   assert.equal(teams[0].revision, 3); assert.equal(teams[0].definition.nodes[0].prompt, '别处更新');
   assert.ok(await run('document.querySelector(".md-source").value.includes("再次修改")'), 'Team version conflicts preserve the editable draft');
+  await require('./canvas-document-editor.cjs')({ run, until, clickText, win });
   console.log('Canvas Markdown passed: real files, source lines, autosave, multi-document selection, retained conflict drafts, Team save and concurrent revision protection.');
 };

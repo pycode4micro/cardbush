@@ -106,7 +106,7 @@ const host: any = { id: 'store-demo', plugins: [], pluginCommands: [], uploadFil
 const model: any = { id: 'demo', provider: 'custom', modelName: t('示例', 'Demo'), enabled: true, apiKey: '', hasApiKey: false };
 const settings: any = { conversationStyle: readConversationStyle(), managedModelConfigs: [model],
   terminal: { runtime: 'powershell' }, browser: {}, proxy: {}, thinking: { visible: true },
-  guidance: { deliveryMode: 'queue' }, user: {}, font: {}, companion: {}, importedThemeStyle: null };
+  guidance: { deliveryMode: 'queue' }, user: {}, font: {}, importedThemeStyle: null };
 const chatProps: any = {
   language, theme, title: t('把会议记录整理为行动清单', 'Turn meeting notes into actions'),
   sidebarCollapsed: false, windowMaximized: false, inspectorOpen: false, activeConversationId: 'meeting',

@@ -43,3 +43,4 @@ voice-speaker-profile.json.*.tmp
 /packages/cardbush-platform/src/i18n/generatedMessages.ts
 /packages/cardbush-platform/src/i18n/generatedPacks/
 /packages/cardbush-platform/src/templates/generatedTemplates.ts
+/packages/cardbush-platform/src/prompts/generatedPrompts.ts

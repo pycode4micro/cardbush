@@ -5,14 +5,14 @@
 @import './inspector.css';
 @import './welcome.css';
 @import './transcript.css';
-@import './scenes.css';
+@import './message-bubbles.css';
 @import './markdown.css';
 @import './execution.css';
 @import './runtime-rail.css';
 @import './composer.css';
 @import './feature-panels.css';
 @import './settings.css';
-@import './cardling.css';
+@import './reduced-motion.css';
 @import './dialogs.css';
 @import './secondary-surfaces.css';
 @import './settings-controls.css';

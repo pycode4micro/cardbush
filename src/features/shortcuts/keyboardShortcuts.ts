@@ -24,7 +24,7 @@ export const shortcutDefinitions = [
   { id: 'openProject', group: 'application', contexts: appContexts, defaultBinding: { key: 'o', ctrl: true },
     title: 'conversationSearchDialog.openFolder', description: 'keyboardShortcuts.chooseAFolderToAddAsA' },
   { id: 'openSettings', group: 'application', contexts: appContexts, defaultBinding: { key: ',', ctrl: true },
-    title: 'cardlingWindow.settings', description: 'keyboardShortcuts.openApplicationSettings' },
+    title: 'common.settings', description: 'keyboardShortcuts.openApplicationSettings' },
   { id: 'showShortcuts', group: 'application', contexts: appContexts, defaultBinding: { key: '/', ctrl: true },
     title: 'keyboardShortcuts.showKeyboardShortcuts', description: 'keyboardShortcuts.viewAndCustomizeKeyboardShortcuts' },
   { id: 'toggleSidebar', group: 'application', contexts: appContexts, defaultBinding: { key: 'b', ctrl: true },

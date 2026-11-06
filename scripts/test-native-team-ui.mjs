@@ -14,15 +14,14 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { TeamWorkspace } from '${local('src/features/team/TeamWorkspace.tsx')}';
 import { NativeTeamSidebar } from '${local('src/features/team/TeamSidebar.tsx')}';
-import { MdPresentationApp } from '${local('src/features/mdPresentation/MdPresentationApp.tsx')}';
-import { BushItSidebar } from '${local('src/features/mdPresentation/BushItSidebar.tsx')}';
+import { takeBushItDocumentRequest } from '${local('src/features/mdPresentation/bushItDocuments.ts')}';
 import * as pages from '${local('src/features/mdPresentation/bushItPageStore.ts')}';
 import { publishFileEditEvent } from '${local('src/backend/fileEditEvents.ts')}';
 import { useTeamWorkspace, useTeamChoices, refreshTeamWorkspace } from '${local('src/features/team/teamWorkspaceStore.ts')}';
 import { saveComponents, useComponents } from '${local('src/features/components/componentStore.ts')}';
 import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
-window.pages=pages; window.saveComponents=saveComponents; window.publishFileEditEvent=publishFileEditEvent; window.records = { agents: [], teams: [], runs: [] }; window.calls = []; window.sessionInputs=[];window.fixtureConversations={};window.workspaceCalls=[];
+window.saveComponents=saveComponents; window.publishFileEditEvent=publishFileEditEvent; window.records = { agents: [], teams: [], runs: [] }; window.calls = []; window.sessionInputs=[];window.fixtureConversations={};window.workspaceCalls=[];
 window.refreshTeamWorkspace=refreshTeamWorkspace;
 const TeamChoiceProbe=React.memo(function TeamChoiceProbe(){window.teamChoiceState=useTeamChoices();window.teamChoiceRenders=(window.teamChoiceRenders||0)+1;return null;});
 window.fileResult=null; window.fileCalls=[]; window.cardbushDesktop={ensureTaskWorkspace:async id=>{workspaceCalls.push(id);return 'D:/task-workspaces/'+id},markdownFile:async input=>{fileCalls.push(input);if(input.action==='save')return {path:'D:/workflow.md',text:input.text,revision:'file-v1'};return fileResult;}};
@@ -42,14 +41,14 @@ window.command = async ({kind,payload:input}) => {
   if(input.action==='stop') { records.runs.find(run=>run.id===input.run_id).status='stopped'; return {stopped:true}; }
   throw Error('Unexpected command: '+JSON.stringify(input));
 };
-function Fixture(){ window.teamState=useTeamWorkspace(); window.pageState=pages.useBushItPages(); window.componentState=useComponents(); const [mode,setMode]=React.useState('team'); window.setApp=setMode;
-  React.useEffect(()=>{const listener=event=>setMode(event.detail.id==='builtin:md-presentation'?'md':'team');window.addEventListener('cardbush-open-application',listener);return()=>window.removeEventListener('cardbush-open-application',listener);},[]);
-  const practice=team=>window.practiced=structuredClone(team);
+function Fixture(){ window.teamState=useTeamWorkspace(); window.componentState=useComponents();
+  React.useEffect(()=>{const listener=event=>{ if(event.detail.id==='builtin:md-presentation')window.documentRequest=takeBushItDocumentRequest(); };window.addEventListener('cardbush-open-application',listener);return()=>window.removeEventListener('cardbush-open-application',listener);},[]);
+
   const [portal,setPortal]=React.useState(null);window.setCreationPortal=setPortal;
   const [inspector,setInspector]=React.useState(null);
   const inspectorContext=React.useCallback(value=>{window.creationInspector=value;setInspector(value);},[]);
   const changed=React.useCallback(()=>{window.conversationRefreshes=(window.conversationRefreshes||0)+1},[]);
-  return <div className="app theme-dark" data-inspector-session={inspector?.sessionId} style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}><TeamChoiceProbe/>{mode==='team'?<><NativeTeamSidebar language="zh" onBack={()=>setMode('md')}/><TeamWorkspace language="zh" chatOptions={{onInspectorContext:inspectorContext,composerPortalTarget:portal,onConversationChanged:changed}} onOpenConversation={id=>window.openedConversation=id}/></>:<><BushItSidebar language="zh" onBack={()=>setMode('team')}/><MdPresentationApp language="zh" onPractice={practice} onToggleInspector={()=>window.inspectorOpened=true} onInspectorContext={inspectorContext} onConversationChanged={changed} composerPortalTarget={portal}/></>}</div>; }
+  return <div className="app theme-dark" data-inspector-session={inspector?.sessionId} style={{display:'flex',height:'100vh',background:'var(--surface)',overflow:'hidden','--sidebar-width':'240px'}}><TeamChoiceProbe/><NativeTeamSidebar language="zh" onBack={()=>{}}/><TeamWorkspace language="zh" chatOptions={{onInspectorContext:inspectorContext,composerPortalTarget:portal,onConversationChanged:changed}} onOpenConversation={id=>window.openedConversation=id}/></div>; }
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 try {
@@ -66,7 +65,6 @@ try {
       if (id === '../../hooks/useCardbushChat' && importer?.endsWith('CreationConversation.tsx')) return '\0creation-chat-hook';
       // The shared ChatPanel/runtime has its own tests. Keep file-to-conversation
       // integration deterministic without calling a paid provider here.
-      if (id === './CreationConversation' && importer?.endsWith('MdPresentationApp.tsx')) return '\0creation-chat';
       if (id === '../mdPresentation/CreationConversation' && importer?.endsWith('TeamGraphWorkspace.tsx')) return '\0creation-chat';
     },
     load(id) {

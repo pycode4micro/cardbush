@@ -156,5 +156,5 @@ function UndockedVoiceCall({ session, language }: { session: VoiceSession; langu
       onPointerUp={() => { drag.current = undefined; }} onLostPointerCapture={() => { drag.current = undefined; }} onPointerCancel={() => { drag.current = undefined; }}
       onKeyDown={event => { const delta = { ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -16], ArrowDown: [0, 16] }[event.key]; const rect = box.current?.getBoundingClientRect(); if (delta && rect) { event.preventDefault(); move(rect.left + delta[0], rect.top + delta[1]); } }}><GripVertical/></button>
     <VoiceComposerPanel session={session} language={language}/></div>,
-    document.querySelector('.app, .cardling-desktop') ?? document.body);
+    document.querySelector('.app') ?? document.body);
 }

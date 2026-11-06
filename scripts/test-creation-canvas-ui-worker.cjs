@@ -69,6 +69,10 @@ app.whenReady().then(async () => {
   const design = async input => { const result = await run(`testBridge.design(${JSON.stringify(input)})`); assert.equal(result.kind, 'returned', JSON.stringify(result)); return result.result; };
   try {
     await win.loadFile(join(directory, 'app/index.html')); await until('!!document.querySelector("[data-canvas-item=document]")');
+    if (process.env.CARDBUSH_CANVAS_CASE === 'document-editor') {
+      await require('./helpers/canvas-document-editor.cjs')({ run, until, clickText, win });
+      return;
+    }
     if (process.env.CARDBUSH_CANVAS_PREVIEW) {
       const preview = await readCanvas(resolve(process.env.CARDBUSH_CANVAS_PREVIEW));
       await run(`canvasStore.acceptCanvas(${JSON.stringify(preview)})`);

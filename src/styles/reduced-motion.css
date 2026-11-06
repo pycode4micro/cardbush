@@ -1,0 +1,36 @@
+@media (prefers-reduced-motion: reduce) {
+  :where(html:not([data-motion-preference="off"])) .message-list-item.user-message-entering .user-bubble,
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking,
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-process.running-mask .assistant-thinking-label,
+  :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop,
+  :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop svg,
+  :where(html:not([data-motion-preference="off"])) .message-actions button.feedback-pop::after {
+    animation: none;
+  }
+
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking,
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-process.running-mask .assistant-thinking-label {
+    background-image: none;
+    color: var(--text-soft);
+    -webkit-text-fill-color: var(--text-soft);
+  }
+
+  /* The reel is functional state continuity, not decorative motion. Keep the
+     same short vertical hand-off so status changes never become a flash. */
+  :where(html:not([data-motion-preference="off"])) .runtime-screen-track.rolling {
+    transition-duration: 420ms !important;
+  }
+
+  /* These spinners communicate live execution state rather than decoration.
+     Keep a slower, steady rotation when the OS reduces motion so they do not
+     become indistinguishable from a stalled task. */
+  :where(html:not([data-motion-preference="off"])) .assistant-thinking-process.running-mask .assistant-thinking-model.fallback svg,
+  :where(html:not([data-motion-preference="off"])) .runtime-plan-detail .runtime-plan-spinner,
+  :where(html:not([data-motion-preference="off"])) .composer-runtime-screen.running .runtime-screen-line.processing > svg,
+  :where(html:not([data-motion-preference="off"])) .runtime-context-compaction-spinner {
+    animation-name: cardbush-spin !important;
+    animation-duration: 1.8s !important;
+    animation-timing-function: linear !important;
+    animation-iteration-count: infinite !important;
+  }
+}

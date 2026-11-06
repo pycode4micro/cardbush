@@ -71,7 +71,7 @@ const original=[{id:'old',role:'user',content:'',attachments:[{id:'a',type:'imag
  {id:'new',role:'assistant',content:'![第二张](<'+files.second.replaceAll('\\\\','/')+'>)\\n[外部图片](<'+files.external.replaceAll('\\\\','/')+'>)',
  loopHistory:[{id:'loop',role:'assistant',content:'',toolExecutions:[{id:'tool',name:'inject_image_input',state:'completed',summary:'image',output:'',success:true,durationMs:0,createdAt:'2026-09-16T00:00:00Z',contentOffset:0,metadata:{},artifacts:[artifact]}]}]}];
 const no=()=>{};
-const messageProps={language:'zh',sending:false,activeTurnId:'',activeAssistantMessageId:'',onRegenerate:no,onEditUserMessage:no,onRetryGuidance:no,onRevertChangeReport:no,onOpenScene:no};
+const messageProps={language:'zh',sending:false,activeTurnId:'',activeAssistantMessageId:'',onRegenerate:no,onEditUserMessage:no,onRetryGuidance:no,onRevertChangeReport:no};
 function Fixture(){const [messages,setMessages]=React.useState(original),[session,setSession]=React.useState('session-a'),[mode,setMode]=React.useState('chat'),[open,setOpen]=React.useState(false),[theme,setTheme]=React.useState('theme-dark'),[inlineContent,setInlineContent]=React.useState('');
 window.galleryControls={setMessages,setSession,setMode,setOpen,setTheme,setInlineContent,original,collect:sessionGalleryImages,galleryImage};
 return <div className={'app '+theme}><ImageGalleryProvider sessionId={session} messages={messages} workspaceRoot={project} language="zh">

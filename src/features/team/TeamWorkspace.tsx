@@ -29,7 +29,7 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
     if (error && typeof error === 'object' && 'issues' in error && Array.isArray(error.issues)) return error.issues.map(issue => String(issue.message)).join(' · ');
     return message;
   };
-  const statusLabel = (status: string) => ({ pending: uiText(language)('teamWorkspace.pending'), running: uiText(language)('cardlingWindow.running'), completed: uiText(language)('automationPanel.completed'),
+  const statusLabel = (status: string) => ({ pending: uiText(language)('teamWorkspace.pending'), running: uiText(language)('common.running'), completed: uiText(language)('automationPanel.completed'),
     failed: uiText(language)('automationPanel.failed'), stopped: uiText(language)('automationPanel.stopped'), interrupted: uiText(language)('teamWorkspace.interrupted') }[status] ?? status);
   useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refreshTeamWorkspace(false, true); }, 4000); return () => window.clearInterval(timer); }, []);
   const perform = async (operation: () => Promise<unknown>) => {

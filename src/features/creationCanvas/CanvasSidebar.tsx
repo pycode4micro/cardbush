@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { acceptCanvas, archiveCanvas, createCanvas, selectCanvas, useCanvases } from './canvasStore';
 import { AppCenterDock } from '../appCenter/AppCenter';
 import { canvasErrorMessage } from './canvasErrors';
-import '../mdPresentation/bush-it-sidebar.css';
+import './canvasSidebar.css';
 import './creationCanvas.css';
 
 export function CanvasSidebar({ language, onBack, onSelect, softVisible = true }: { language: string; onBack: () => void; onSelect?: () => void; softVisible?: boolean }) {

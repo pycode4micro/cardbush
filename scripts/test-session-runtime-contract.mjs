@@ -20,11 +20,7 @@ assert.doesNotMatch(api, /export async function fetchSessionScenes/);
 assert.doesNotMatch(api, /export async function fetchSessionScene\b/);
 assert.doesNotMatch(api, /SessionSceneRecord/);
 assert.doesNotMatch(api, /export async function sendSceneEvent/);
-assert.match(
-  app,
-  /latestCardlingSceneFromMessages/,
-  'Interactive scenes must be projected from typed tool execution facts',
-);
+assert.doesNotMatch(app, /latestCardlingSceneFromMessages|CardlingScenePanel/, 'retired scenes must not scan or mount in conversations');
 
 const helperStart = hook.indexOf('const refreshMeasuredContextWindowUsage');
 const helperEndMatch = hook.slice(helperStart).match(/\r?\n\r?\n  useEffect\(/);

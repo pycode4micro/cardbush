@@ -663,7 +663,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       items.push({
         key: 'diff',
         icon: <Code2 size={15} />,
-        label: uiText(language)('cardlingWindow.viewDiff'),
+        label: uiText(language)('common.viewDiff'),
         onClick: options.onOpenChanges,
       });
     }

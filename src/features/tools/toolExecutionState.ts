@@ -111,7 +111,7 @@ export function activeToolStatusLabel(
     return uiText(language)('automationPanel.queued');
   }
   if (state === 'running') {
-    return uiText(language)('cardlingWindow.running');
+    return uiText(language)('common.running');
   }
   return undefined;
 }

@@ -8,7 +8,7 @@ import type { MarkdownSelection } from '../mdPresentation/MarkdownSourceEditor';
 import { canvasFileTarget, editableCanvasMarkdown } from './canvasModel';
 import { requestTeamDocument } from '../team/teamWorkspaceNavigation';
 
-const DocumentPage = lazy(() => import('../mdPresentation/MdPresentationApp').then(module => ({ default: module.BushItDocumentPage })));
+const DocumentPage = lazy(() => import('../mdPresentation/BushItDocumentPage').then(module => ({ default: module.BushItDocumentPage })));
 
 /** File editing keeps the existing drafts, autosave, conflict handling and source editor. */
 export function CanvasMarkdownWorkspace({ snapshot, itemId, pageId, language, sessionId, root, team, onTeamSaved, onSelect, onBack, onNewFile, onSelection, onKeepDraft }: {

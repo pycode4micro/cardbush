@@ -2,7 +2,6 @@ import { uiText } from '../../i18n';
 import { WebhookConnectionButton } from '../webhooks/WebhookConnectionButton';
 import { readUserPrompt, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
 import { useConversationViewState, conversationViewKey } from '../../shared/conversationViewState';
-import { Sparkles } from 'lucide-react';
 import { VoiceConversation } from '../voice/VoiceConversation';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
 import { QuickInputStatus } from '../composer/QuickInputStatus';
@@ -99,14 +98,6 @@ import {
 import { summarizeChangeReports, type ConversationChangeReport } from '../tools';
 import { recentReviewTurns } from '../sidebar/reviewModel';
 import { goalToolUpdateFromExecution } from '../../shared/goalState';
-import { CardlingScenePanel } from '../cardling/CardlingScenePanel';
-import {
-  cardlingSceneKey,
-  cardlingSceneRevisionKey,
-  latestCardlingSceneFromMessages,
-  sceneAutoPlayEnabled,
-  type CardlingScene,
-} from '../cardling/scene';
 import type {
   AppLanguage,
   AppSettingsState,
@@ -625,13 +616,6 @@ export function ChatPanel({
   ]);
   const [composerDockHeight, setComposerDockHeight] = useState(0);
   const [quickContextBottomInset, setQuickContextBottomInset] = useState(0);
-  const [activeScene, setActiveScene] = useState<CardlingScene | null>(null);
-  const [availableScene, setAvailableScene] = useState<CardlingScene | null>(null);
-  const [activeSceneInitialAutoPlay, setActiveSceneInitialAutoPlay] = useState(false);
-  const activeSceneKeyRef = useRef('');
-  const activeSceneRevisionRef = useRef('');
-  const dismissedSceneKeysRef = useRef(new Set<string>());
-  const autoPlayedSceneKeysRef = useRef(new Set<string>());
   const streamStatusHeight = 0;
   const setScrollBottomVisible = useCallback((visible: boolean) => {
     if (showScrollBottomRef.current === visible) return;
@@ -818,62 +802,6 @@ export function ChatPanel({
     },
     [],
   );
-
-  const nextSceneInitialAutoPlay = useCallback(
-    (scene: CardlingScene, allowAutoPlay: boolean) => {
-      const key = cardlingSceneKey(scene);
-      if (
-        !allowAutoPlay ||
-        !sceneAutoPlayEnabled(scene) ||
-        autoPlayedSceneKeysRef.current.has(key)
-      ) {
-        return false;
-      }
-      autoPlayedSceneKeysRef.current.add(key);
-      return true;
-    },
-    [],
-  );
-
-  const showScene = useCallback(
-    (scene: CardlingScene, options?: { autoPlay?: boolean }) => {
-      const key = cardlingSceneKey(scene);
-      const revision = cardlingSceneRevisionKey(scene);
-      setAvailableScene((current) =>
-        current && cardlingSceneRevisionKey(current) === revision ? current : scene,
-      );
-      if (activeSceneKeyRef.current !== key) {
-        activeSceneKeyRef.current = key;
-        activeSceneRevisionRef.current = revision;
-        setActiveSceneInitialAutoPlay(
-          nextSceneInitialAutoPlay(scene, Boolean(options?.autoPlay)),
-        );
-        setActiveScene(scene);
-      } else if (activeSceneRevisionRef.current !== revision) {
-        activeSceneRevisionRef.current = revision;
-        setActiveSceneInitialAutoPlay(false);
-        setActiveScene(scene);
-      }
-    },
-    [nextSceneInitialAutoPlay],
-  );
-
-  const openScene = useCallback((scene: CardlingScene) => {
-    dismissedSceneKeysRef.current.delete(cardlingSceneKey(scene));
-    showScene(scene);
-  }, [showScene]);
-
-  const closeScene = useCallback(() => {
-    setActiveScene((current) => {
-      if (current) {
-        dismissedSceneKeysRef.current.add(cardlingSceneKey(current));
-      }
-      activeSceneKeyRef.current = '';
-      activeSceneRevisionRef.current = '';
-      return null;
-    });
-    setActiveSceneInitialAutoPlay(false);
-  }, []);
 
   const positionMessageAtReadingAnchor = useCallback(
     (messageId: string) => {
@@ -1940,58 +1868,6 @@ export function ChatPanel({
     if (!loading && !showWelcome) reconcileTranscriptLayout();
   }, [renderMessages, sending, loading, showWelcome, reconcileTranscriptLayout, scrollMountRevision]);
 
-  useEffect(() => {
-    setActiveScene(null);
-    setAvailableScene(null);
-    setActiveSceneInitialAutoPlay(false);
-    activeSceneKeyRef.current = '';
-    activeSceneRevisionRef.current = '';
-  }, [activeConversationId]);
-
-  useEffect(() => {
-    const receiveSceneEvent = (event: Event) => {
-      if (!(event instanceof CustomEvent) || !event.detail || typeof event.detail !== 'object') {
-        return;
-      }
-      const detail = event.detail as Record<string, unknown>;
-      const sessionId = String(detail.sessionId ?? detail.session_id ?? '').trim();
-      const sceneId = String(detail.sceneId ?? detail.scene_id ?? '').trim();
-      const type = String(detail.type ?? '');
-      if (!sceneId || sessionId !== activeConversationId) return;
-      if (type === 'scene_closed') {
-        setAvailableScene((current) => current?.sceneId === sceneId ? null : current);
-        setActiveScene((current) => current?.sceneId === sceneId ? null : current);
-        return;
-      }
-      // Scene content is restored from streamed Runtime artifacts below. This
-      // event only carries lifecycle identity and never triggers another service.
-    };
-    window.addEventListener('cardbush:scene-event', receiveSceneEvent);
-    return () => window.removeEventListener('cardbush:scene-event', receiveSceneEvent);
-  }, [activeConversationId]);
-
-  useEffect(() => {
-    const latestScene = latestCardlingSceneFromMessages(renderMessages);
-    if (!latestScene) {
-      return;
-    }
-    const key = cardlingSceneKey(latestScene);
-    setAvailableScene(latestScene);
-    if (activeSceneKeyRef.current === key) {
-      showScene(latestScene);
-      return;
-    }
-    const sceneTurnId = latestScene.turnId?.trim() ?? '';
-    const currentTurnId = activeTurnId.trim();
-    if (!sending || !sceneTurnId || !currentTurnId || sceneTurnId !== currentTurnId) {
-      return;
-    }
-    if (dismissedSceneKeysRef.current.has(key)) {
-      return;
-    }
-    showScene(latestScene, { autoPlay: true });
-  }, [activeTurnId, renderMessages, sending, showScene]);
-
   const applyQuickLoad = useCallback(
     (payload: QuickLoadPayload) => {
       const loaded = quickPayloadText(payload);
@@ -2457,7 +2333,6 @@ export function ChatPanel({
         onRetryMessage={onRetryMessage}
         onRetryGuidance={onRetryGuidance}
         onRevertChangeReport={onRevertChangeReport}
-        onOpenScene={openScene}
       />
       {guidanceActivities.has(message.id) && <GuidanceActivity message={message}
         conversationId={activeConversationId} turnId={activeTurnId} language={language}
@@ -2482,7 +2357,7 @@ export function ChatPanel({
     activeAssistantForRender, lastAssistantByTurn, runtimeSessionId, latestCompletedMessageId, activeConversationId,
     thinkingVisible, readOnlyActions, guidanceAvailable, completedGuidanceTurnMessages, language, reversibleTurnIds,
     executingModel, selectedModelConfig?.modelName, selectedModel, activeGoal, onRegenerate, onEditUserMessage,
-    onRetryMessage, onRetryGuidance, onRevertChangeReport, openScene, guidanceActivities, stopping, goalMessageId,
+    onRetryMessage, onRetryGuidance, onRevertChangeReport, guidanceActivities, stopping, goalMessageId,
     activeGoalRounds, goalCancelling, goalWaiting, onCancelGoal]);
   // Scroll controls and composer geometry can update without changing a single
   // message. Retain the row elements instead of rebuilding the whole history.
@@ -2786,28 +2661,8 @@ export function ChatPanel({
             <MessageListFooter />
           </div>
         )}
-        {activeScene && (
-          <CardlingScenePanel
-            scene={activeScene}
-            language={language}
-            initialAutoPlay={activeSceneInitialAutoPlay}
-            llmRunning={sending}
-            activeTurnId={activeTurnId}
-            onSendFeedbackToLlm={async text => { await onSend(text); }}
-            onClose={closeScene}
-          />
-        )}
-        {!activeScene && availableScene && !loading && (
-          <button
-            className="scene-reopen-button"
-            type="button"
-            onClick={() => openScene(availableScene)}
-            title={uiText(language)('chatPanel.continueInteractiveScene')}
-          >
-            <Sparkles size={15} />
-            <span>{uiText(language)('chatPanel.scene')}</span>
-          </button>
-        )}
+
+
         {!showWelcome && !quickInputTarget && (pendingInteraction || interactionContent) && (
           <div
             className={`composer-dock interaction-only ${pendingInteraction?.type === 'solution_selection' ? 'solution-only' : 'permission-only'}`}

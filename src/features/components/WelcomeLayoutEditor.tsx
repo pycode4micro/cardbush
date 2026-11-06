@@ -271,7 +271,7 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
         </div>
         {menu === 'undo' && <div className="welcome-layout-menu">
           <button type="button" onClick={() => { update(initial.welcomeLayout); setMenu(null); }}><RotateCcw size={14}/>{uiText(language)('welcomeLayoutEditor.resetToStartingLayout')}</button>
-          <button type="button" className="danger" onClick={() => { update({ items: [] }); setMenu(null); }}><Trash2 size={14}/>{uiText(language)('cardlingSceneHost.clear')}</button>
+          <button type="button" className="danger" onClick={() => { update({ items: [] }); setMenu(null); }}><Trash2 size={14}/>{uiText(language)('common.clear')}</button>
         </div>}
       </div>
       <button type="button" className="welcome-layout-pill" onClick={onClose}>{uiText(language)('agentConnectionForm.cancel')}</button>

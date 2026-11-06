@@ -64,7 +64,6 @@ Historical investigations, benchmark results and licensing records retain their 
 | Conversation extraction and Fork | [English](host/CONVERSATION_EXTRACTION.en.md) | [简体中文](host/CONVERSATION_EXTRACTION.md) |
 | Independent Bot MCP boundary | [English](host/CARDBUSH_APP_HOST.md) | [简体中文](host/CARDBUSH_APP_HOST.zh-CN.md) |
 | CardBush Apps MCP boundary | [English](host/CARDBUSH_APPS_MCP.md) | [简体中文](host/CARDBUSH_APPS_MCP.zh-CN.md) |
-| Cardling Companion System | [English](companion/cardling-system.md) | [简体中文](companion/cardling-system.zh-CN.md) |
 | CardBush embodied voice integration | [English](../EMBODIED_INTEGRATION.en.md) | [简体中文](../EMBODIED_INTEGRATION.zh-CN.md) |
 
 ## Deployment, security and releases

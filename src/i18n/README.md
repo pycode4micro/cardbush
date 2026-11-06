@@ -37,6 +37,14 @@ Keep React form layout in a separate template component and inject typed values 
 
 Static native HTML shells and their scripts live in `assets/templates/*.html` and `*.js.template`. The platform build compiles them into both ESM and CommonJS outputs; installed apps do not read the source tree or depend on the current working directory. Do not edit generated template modules. Use `renderHtmlTemplate` from `@cardbush/platform/templates`: `{{text:name}}` escapes plain values; `{{json:name}}` serializes a value as a safe JavaScript literal, including script-closing characters; `{{html:name}}` accepts an explicitly supplied, trusted renderer fragment via the third argument. Missing or unexpected variables fail, and substitutions are never evaluated recursively. Pass the selected language to previews, canvas exports and OAuth pages. Translations and user data remain text, including when they contain markup.
 
+## Runtime status and model policies
+
+Assistant reads accept the current UI language. Retain owned failures as message keys and variables until each read, so switching language also updates an existing error. Preserve provider errors as external data. Subagent fallback names use the shared locale resolver; explicit or persisted names remain unchanged. The CLI stays English and does not need a language selector.
+
+MCP App shells, styles and bridge scripts also use `assets/templates` (`.html`, `.js.template`, `.css.template`). Inject translated host messages and safely serialized widget data. Keep iframe sandboxing, host-message validation and CSP enforcement in place; provider HTML remains untrusted sandbox content. Retired features must be removed with their private resources rather than migrated into new templates.
+
+Model policies live separately in `assets/prompts/*.md`, exposed through `renderPromptTemplate` from `@cardbush/platform/prompts`. `{{value:name}}` inserts plain text without recursive interpretation. Do not route policy text through UI translations or change message roles/order during extraction. The builder normalizes line endings and removes the resource's final newline; leading and other trailing whitespace remain significant. Resources ship in ESM/CommonJS, without runtime filesystem reads. Update the intentional policy digest fixture when changing policy text, and retain the semantic policy tests.
+
 ## Appearance states
 
 CSS owns visual variants. Use semantic classes or `data-*` attributes for state, and CSS custom properties for dimensions, palette, spacing and icon sizes. Do not select hardcoded colors, font/icon sizes, visibility or transforms with JSX ternaries.
@@ -50,6 +58,7 @@ Keep behavior, measured coordinates, dynamic canvas dimensions and imported docu
 - `npm run test:ui-localization`: all shipped messages and placeholders, plurals, fallback, malformed inputs, isolated third-language discovery, shared ESM/CommonJS catalogs, and source guards across App/Web/native UI.
 - `npm run test:web-admin-ui`: actual Web forms, live language switching, draft retention, submissions/retries, narrow windows and text escaping with isolated mock services.
 - `npm run test:html-templates`: packaged templates, strict variables, text escaping and localized preview/OAuth output.
+- `npm run test:nonweb-templates`: policy text preservation, ESM/CommonJS packaging and MCP input escaping. Run `node scripts/test-mcp-apps-ui.mjs` for actual sandbox communication.
 - `npm run test:app-views`: conversation, welcome/first send, queue images, streaming, sidebar and previews.
 - `node scripts/test-window-menu.mjs` and `node scripts/run-settings-context-ui-test.mjs`: native menus, language switching and responsive settings.
 - `npm run build` and `npx tsc --noEmit -p tsconfig.json`: production and type checks.

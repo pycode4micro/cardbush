@@ -13,7 +13,8 @@ export async function conversationJournalCommand<T = unknown>(payload: unknown):
   try { return await runtime.client.command({ kind: ASSISTANT_CONVERSATION_COMMAND, payload }, value => value as T); }
   finally { runtime.dispose(); }
 }
-export const readConversationJournal = (sessionId: string, after = 0) => conversationJournalCommand<ConversationJournalSnapshot>({ action: 'read', sessionId, after });
+export const readConversationJournal = (sessionId: string, after = 0, language = typeof document === 'undefined' ? undefined : document.documentElement.lang) =>
+  conversationJournalCommand<ConversationJournalSnapshot>({ action: 'read', sessionId, after, language });
 export async function appendConversationEntry(sessionId: string, entry: ConversationEntry, generation?: number) {
   await conversationJournalCommand({ action: 'append', sessionId, entry, generation });
   window.dispatchEvent(new CustomEvent('cardbush:conversation-entry', { detail: { sessionId, entry } }));

@@ -774,7 +774,7 @@ export function CacheMaintenancePanel({
               ) : (
                 <Trash2 size={14} />
               )}
-              {uiText(language)('cardlingSceneHost.clear')}
+              {uiText(language)('common.clear')}
             </button>
           </div>
           <div className="maintenance-action-row">
@@ -797,7 +797,7 @@ export function CacheMaintenancePanel({
               }
             >
               {busyTarget === 'logs' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-              {uiText(language)('cardlingSceneHost.clear')}
+              {uiText(language)('common.clear')}
             </button>
           </div>
           <div className="maintenance-action-row">

@@ -128,7 +128,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
       if (employee) { runningEmployees += Number(running); failedEmployees += Number(failed); }
       else { runningAgents += Number(running); failedAgents += Number(failed); }
       const status = task ? subagentTaskPresentation(task, language).label :
-        running ? (uiText(language)('cardlingWindow.running')) : failed ? (uiText(language)('loopExecutionPreviews.failed')) :
+        running ? (uiText(language)('common.running')) : failed ? (uiText(language)('loopExecutionPreviews.failed')) :
         stopped ? (uiText(language)('automationPanel.stopped')) : returnedStatus === 'completed' ? (uiText(language)('automationPanel.completed')) : (uiText(language)('loopExecutionPreviews.dispatched'));
       const title = task ? employeeTaskTitle(task, language) : typeof member?.agentName === 'string' ? member.agentName : activity?.name || activity?.id || (uiText(language)('employeePresentation.subagent'));
       const Icon = running ? LoaderCircle : failed ? TriangleAlert : stopped ? CircleStop : task?.status === 'completed' || returnedStatus === 'completed' ? CheckCircle2 : GitFork;

@@ -41,7 +41,7 @@ test('empty and reasoning-only truncated replies fail visibly and retry preserve
         yield event(request, 1, 'response_completed', { finishReason: 'stop' });
       }
     } });
-    f.send(); await until(() => !f.read().busy);
+    f.send({ metadata: { uiLanguage: 'zh' } }); await until(() => !f.read().busy);
     assert.equal(requests[0].maxOutputTokens, 128000);
     assert.equal(f.read().canRetry, true);
     assert.match(f.read().error, finishReason === 'length' ? /输出达到上限/ : /未返回回复/);
@@ -51,6 +51,27 @@ test('empty and reasoning-only truncated replies fail visibly and retry preserve
     assert.equal(f.read().canRetry, false); assert.equal(f.read().error, '');
     assert.deepEqual(f.journal.read(id).map(entry => entry.content), ['Inspect the files', 'Recovered reply']);
   }
+});
+
+test('retained assistant failures follow the reading locale without another model request', async t => {
+  let calls = 0;
+  const f = fixture(t, { async *stream(request) { calls++; yield event(request, 0, 'response_completed', { finishReason: 'stop' }); } });
+  f.send({ metadata: { uiLanguage: 'zh-CN' } }); await until(() => !f.read().busy);
+  assert.match(f.read().error, /未返回回复/);
+  const read = language => f.assistant.command({ action: 'read', sessionId: id, language });
+  assert.match(read('en-US').error, /returned no reply/);
+  assert.match(read('zh-CN').error, /未返回回复/);
+  assert.match(read('invalid_locale!').error, /returned no reply/);
+  f.assistant.command({ action: 'stop', sessionId: id });
+  assert.match(read('en').error, /Reply stopped/); assert.match(read('zh').error, /已停止回复/);
+  assert.equal(calls, 1); assert.equal(f.journal.read(id).length, 1);
+});
+
+test('a reopened assistant reports unfinished input in the requested locale', t => {
+  const f = fixture(t, { async *stream() { throw Error('Read must never start inference'); } });
+  f.journal.append(id, { id: 'saved', role: 'user', content: 'Continue', source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() });
+  assert.match(f.assistant.command({ action: 'read', sessionId: id, language: 'en' }).error, /previous reply did not complete/);
+  assert.match(f.assistant.command({ action: 'read', sessionId: id, language: 'zh' }).error, /上次回复未完成/);
 });
 
 test('stopping an uncooperative provider releases busy and ignores late output after retry', async t => {
@@ -63,7 +84,7 @@ test('stopping an uncooperative provider releases busy and ignores late output a
     yield event(request, 1, 'response_completed', { finishReason: 'stop' });
   } });
   t.after(release);
-  f.send(); await until(() => attempts === 1);
+  f.send({ metadata: { uiLanguage: 'zh' } }); await until(() => attempts === 1);
   f.assistant.command({ action: 'stop', sessionId: id });
   await until(() => !f.read().busy);
   assert.equal(f.read().canRetry, true); assert.match(f.read().error, /已停止/);
@@ -99,7 +120,7 @@ test('an unfinished persisted message offers recovery after restarting assistant
   const restored = new AssistantConversation(f.journal, { provider: { async *stream() {} }, checkpoint: () => ({}),
     exists: () => true, tasks: () => [], delegate: async () => ({}) });
   t.after(() => restored.close());
-  const snapshot = restored.command({ action: 'read', sessionId: id });
+  const snapshot = restored.command({ action: 'read', sessionId: id, language: 'zh' });
   assert.equal(snapshot.canRetry, true); assert.equal(snapshot.busy, false);
   assert.match(snapshot.error, /上次回复未完成/);
 });

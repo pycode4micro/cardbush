@@ -2,8 +2,6 @@ export {};
 import type { PluginMarketSource, PluginMarketCatalog, PluginMarketPreview, PluginMarketPresentation, PluginMarketInstallProgress, PluginMarketInstallResult } from '../../electron/pluginMarketplaceTypes';
 
 import type {
-  CardlingDesktopAction,
-  CardlingDesktopState,
   ManagedModelConfig,
   ReasoningLevel,
   RuntimeStartupStatus,
@@ -390,20 +388,6 @@ declare global {
       startImageGallery: (root: string, recursive: boolean) => Promise<{ id: string; images: Array<{ path: string; name: string }>; done: boolean; skipped: number }>;
       nextImageGallery: (id: string) => ReturnType<NonNullable<Window['cardbushDesktop']>['startImageGallery']>;
       closeImageGallery: (id: string) => Promise<void>;
-      setCardlingState: (payload: CardlingDesktopState) => Promise<void>;
-      onCardlingState: (
-        callback: (payload: CardlingDesktopState) => void,
-      ) => () => void;
-      setCardlingExpanded: (expanded: boolean) => Promise<void>;
-      startCardlingDrag: (cursorX: number, cursorY: number) => Promise<void>;
-      endCardlingDrag: () => Promise<void>;
-      moveCardlingBy: (deltaX: number, deltaY: number) => Promise<void>;
-      resetCardlingPosition: () => Promise<void>;
-      cardlingAction: (action: CardlingDesktopAction) => Promise<void>;
-      onCardlingAction: (
-        callback: (action: CardlingDesktopAction) => void,
-      ) => () => void;
-      onCardlingCollapse: (callback: () => void) => () => void;
       localApplications?: {
         refreshIcons: (paths: string[]) => Promise<Record<string, string>>;
         pick: (language: string) => Promise<import('../shared/localApplications').LocalApplication | null>;

@@ -19,8 +19,8 @@ export function confirmAction(options: Confirmation): Promise<boolean> {
   if (open) return Promise.resolve(false);
   open = true;
   const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  const surface = previous?.closest('.app, .cardling-desktop')
-    ?? document.querySelector('.app, .cardling-desktop') ?? document.body;
+  const surface = previous?.closest('.app')
+    ?? document.querySelector('.app') ?? document.body;
   const container = document.createElement('div');
   surface.append(container);
   const root = createRoot(container);

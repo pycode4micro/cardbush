@@ -121,7 +121,7 @@ app.whenReady().then(async () => {
       const noop = () => {};
       window.fixtureModel = { id: 'fixture', provider: 'deepseek', modelName: 'deepseek-v4.1-flash-expires-on-0910', baseUrl: 'https://api.deepseek.com', apiKey: '', hasApiKey: true, maxContextTokens: 400000, maxCompletionTokens: 128000 };
       window.settingsProps = { active: true, onReady: noop, language: 'zh', languageMode: 'zh', systemLanguage: 'zh', themePreference: 'dark',
-        settings: { conversationStyle: views.readConversationStyle(), managedModelConfigs: [fixtureModel, { ...fixtureModel, id: 'vision', modelName: 'deepseek-v4-flash-vision-exp' }], terminal: { runtime: 'powershell' }, browser: {}, proxy: { mode:'none', httpProxy:'', httpsProxy:'', noProxy:'' }, thinking: {visible:true}, guidance: {deliveryMode:'queue'}, user: {}, font: {}, companion: {} },
+        settings: { conversationStyle: views.readConversationStyle(), managedModelConfigs: [fixtureModel, { ...fixtureModel, id: 'vision', modelName: 'deepseek-v4-flash-vision-exp' }], terminal: { runtime: 'powershell' }, browser: {}, proxy: { mode:'none', httpProxy:'', httpsProxy:'', noProxy:'' }, thinking: {visible:true}, guidance: {deliveryMode:'queue'}, user: {}, font: {} },
         selectedModel: 'fixture', availableModels: [fixtureModel], backendCapabilities: {terminalRuntimes:['powershell','wsl'], runtimeAssetResetCategories:[], browserPrivacyMode:false, reasoningStream:true}, runtimeBusy: false, conversations: [], skills: [], disabledSkillNames: new Set(),
         initialSection: 'instructions', initialPluginTab: 'plugins', onBack: noop,
         onThemePreferenceChange: value => { settingsProps.themePreference = value; renderSettings(); },

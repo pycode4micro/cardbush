@@ -13,8 +13,7 @@ module.exports = async ({ run, until, pause }) => {
     window.feedbackHost = undefined;
     window.renderFeedback = () => renderView(h(views.ConversationHostContext.Provider,{value:feedbackHost},h(views.MessageBubble,{
       message:feedbackMessage,language:'zh',sending:false,activeTurnId:'',activeAssistantMessageId:'',keepActionsVisible:true,
-      onRegenerate:async()=>{},onEditUserMessage:async()=>{},onRetryGuidance:async()=>{},onRevertChangeReport:async()=>{},onOpenScene:()=>{}
-    })));
+      onRegenerate:async()=>{},onEditUserMessage:async()=>{},onRetryGuidance:async()=>{},onRevertChangeReport:async()=>{}})));
     views.saveIndividuation({habits:true});renderFeedback();
   `);
   await until("!!document.querySelector('.feedback-up')", 'rating controls');

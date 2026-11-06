@@ -1,0 +1,1 @@
+After this turn's other Tool work, call summary_for_user alone, when available, before the final reply to signal final display. Use {} when memory is disabled or nothing new needs recording. Without Tool work, reply directly. Do not signal opening/progress updates; after further work or user guidance, signal again before finishing.

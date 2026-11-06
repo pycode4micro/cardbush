@@ -1,3 +1,4 @@
+import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
 import { randomUUID, createHash } from "node:crypto";
 import { withToolFailureFacts } from './toolFailureFacts.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -46,7 +47,7 @@ function interactionMessageId(context: ToolHandlerContext<unknown>): string {
 
 function fallbackSubagentName(sessionId: string, language: unknown) {
   // The child session survives follow-ups; task IDs and assignment messages do not.
-  return `${language === 'en' ? 'Subagent' : '子 Agent'} ${sessionId.slice(-8)}`;
+  return uiText(resolveUiLanguage(language))('runtime.subagentName', { id: sessionId.slice(-8) });
 }
 
 export interface RemoteSubagentBridge {
@@ -340,7 +341,7 @@ export function registerSubagentTool(
           return options.remoteAgents!.run({ ...remote, taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
             sessionId: childSessionId, turnId: childTurnId, prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${context.input.prompt}`,
             ...(context.input.delivery === 'queue' ? { queue: true } : {}),
-            permissionMode, permissionRouting: route === 'parent' ? 'parent' : 'user', language: String(parent.metadata.uiLanguage || 'zh'),
+            permissionMode, permissionRouting: route === 'parent' ? 'parent' : 'user', language: resolveUiLanguage(parent.metadata.uiLanguage),
           }, context.signal, () => {
             if (tasks.get(context.sessionId, taskId)?.remoteAcceptedAt) return;
             tasks.acceptRemote(context.sessionId, taskId);

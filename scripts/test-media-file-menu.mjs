@@ -23,7 +23,7 @@ import {fileUrl} from '${local('src/shared/localPaths.ts')}';
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}';
 window.files=${JSON.stringify(files)}; const ipc=window.require('electron').ipcRenderer;
 window.cardbushDesktop={showFileContextMenu:(...args)=>ipc.invoke('shell:file-context-menu',...args),showErrorDialog:args=>ipc.invoke('test:error',args),inspectLocalReference:async path=>({path,name:'海报 #1.png',kind:'file'})};
-const no=async()=>{}; const props={language:'zh',sending:false,activeTurnId:'',activeAssistantMessageId:'',onRegenerate:no,onEditUserMessage:no,onRetryGuidance:no,onRevertChangeReport:no,onOpenScene:no};
+const no=async()=>{}; const props={language:'zh',sending:false,activeTurnId:'',activeAssistantMessageId:'',onRegenerate:no,onEditUserMessage:no,onRetryGuidance:no,onRevertChangeReport:no};
 function Fixture(){const [mode,setMode]=React.useState('chat');window.setMode=setMode;return <div className="app theme-dark" style={{padding:24,height:'100vh',overflow:'auto'}}>
 {mode==='chat'?<><MessageBubble {...props} message={{id:'answer',role:'assistant',content:['视频说明',files.video,'海报说明',files.image,'音频说明',files.audio,'结束说明'].join('\\n')}}/><MessageBubble {...props} message={{id:'user',role:'user',content:'文档',attachments:[{id:'doc',type:'document',path:files.document,name:'交付.txt',size:8}]}}/></>
 :mode==='remote'?<ImagePreviewDialog image={{src:'data:image/png;base64,${png}',name:'embedded.png'}} language="zh" onClose={()=>setMode('chat')}/>

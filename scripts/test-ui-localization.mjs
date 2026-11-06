@@ -73,6 +73,7 @@ test('the complete App keeps translated literals and conditional appearance valu
     && !file.replaceAll('\\', '/').startsWith('i18n/') && !file.replaceAll('\\', '/').startsWith('features/pre_test/')).map(file => path.join('src', file));
   files.push(...(await readdir('web', { recursive: true })).filter(file => /\.(?:ts|tsx)$/.test(file)).map(file => path.join('web', file)));
   files.push('electron/main.ts', 'electron/fileContextMenu.ts', 'electron/localApplications.ts', 'electron/windowsApplicationShortcuts.ts');
+  files.push('packages/bush-runtime/src/assistantConversation.ts', 'packages/bush-runtime/src/subagentTool.ts', 'packages/bush-runtime/src/runtimeUiError.ts');
   for (const file of files) {
     const text = await readFile(file, 'utf8');
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);

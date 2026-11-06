@@ -2,7 +2,7 @@ import type { MessageKey } from '../../i18n';
 import { uiText, uiLanguages } from '../../i18n';
 import type { SettingsSection } from '../../types';
 
-export type VisibleSettingsSection = Exclude<SettingsSection, 'companion' | 'subagents' | 'instructions' | 'about'>;
+export type VisibleSettingsSection = Exclude<SettingsSection, 'subagents' | 'instructions' | 'about'>;
 type LocalizedText = MessageKey;
 
 export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
@@ -82,6 +82,6 @@ export function settingsSectionMatchesQuery(section: VisibleSettingsSection, que
 
 export function visibleSettingsSection(value: SettingsSection): VisibleSettingsSection {
   if (value === 'about') return 'diagnostics';
-  if (value === 'instructions' || value === 'companion' || value === 'subagents') return 'profile';
+  if (value === 'instructions' || value === 'subagents') return 'profile';
   return value;
 }

@@ -46,7 +46,6 @@ test('production renderers load only the code needed by their window', async t =
   const main = entry('main');
   const boot = closure(main);
   const app = closure(main, owner('/src/App.tsx'));
-  const cardling = closure(main, owner('/src/CardlingWindow.tsx'));
   const shadow = closure(main, owner('/src/ShadowWindow.tsx'));
   const office = closure(entry('officePreview'));
   const model = closure(entry('modelPreview'));
@@ -57,19 +56,19 @@ test('production renderers load only the code needed by their window', async t =
       `${name} must not download or initialize unrelated state owners`);
   };
   excludes('bootstrap', boot, /\/src\/(?:App\.tsx|CardlingWindow\.tsx|ShadowWindow\.tsx|backend\/|hooks\/)/);
-  excludes('companion', cardling, /\/src\/(?:App\.tsx|ShadowWindow\.tsx|backend\/|hooks\/|runtime-client\/)/);
   excludes('shadow', shadow, /\/src\/(?:App\.tsx|CardlingWindow\.tsx|hooks\/useCardbushChat\.ts)/);
   excludes('Office preview', office, /\/src\/(?:App\.tsx|backend\/|hooks\/|runtime-client\/)|\/node_modules\/(?:react|react-dom|zod)\//);
   excludes('3D preview', model, /\/src\/(?:App\.tsx|backend\/|hooks\/|runtime-client\/)|\/node_modules\/(?:react|react-dom|zod)\//);
   excludes('3D loading/error shell', model, /\/node_modules\/three\//);
   excludes('3D scene engine', scene, /\/src\/(?:App\.tsx|backend\/|hooks\/|runtime-client\/)|\/node_modules\/(?:react|react-dom|zod)\//);
   excludes('workspace', app, /\/src\/(?:CardlingWindow\.tsx|features\/(?:SettingsView|agents\/AgentsView)\.tsx)|\/node_modules\/(?:three|@file-viewer)\//);
-  const optionalPanels = /\/src\/features\/(?:subagents\/(?:SubagentConversation|SubagentTaskInspector)\.tsx|agents\/agentConversationBackend\.ts|cardling\/(?:CardlingSceneHost\.tsx|runtime\.ts))/;
+  const optionalPanels = /\/src\/features\/(?:subagents\/(?:SubagentConversation|SubagentTaskInspector)\.tsx|agents\/agentConversationBackend\.ts)/;
   excludes('workspace optional panels', app, optionalPanels);
   excludes('workspace execution history', app, /\/src\/features\/chat\/TurnHistoryInspector\.tsx$/);
   excludes('read-only turn history', history, optionalPanels);
   // ?url modules are inert asset addresses, not an initialized decoder.
   excludes('Office loading shell', office, /\/node_modules\/(?:styled-exceljs|@file-viewer\/renderer-(?:spreadsheet|pptx|ppt))\/[^?]+$/);
+  excludes('retired Cardling', chunks, /\/src\/(?:CardlingWindow\.tsx|features\/cardling\/)/);
   excludes('browser dependencies', chunks, /\/node_modules\/zod\/.*\.cjs$/);
   assert.equal(warnings.some(log => log.code === 'INEFFECTIVE_DYNAMIC_IMPORT'), false,
     'a module must not be both eagerly imported and presented as a deferred boundary');
@@ -77,7 +76,7 @@ test('production renderers load only the code needed by their window', async t =
   // without raising the warning threshold or partitioning by arbitrary size.
   assert.deepEqual(chunks.filter(chunk => Buffer.byteLength(chunk.code) > 500_000).map(chunk => chunk.name), [],
     'oversized production chunks need an explicit feature/library boundary');
-  for (const [name, group] of Object.entries({ bootstrap: boot, workspace: app, companion: cardling, shadow, office, model, history, scene })) {
+  for (const [name, group] of Object.entries({ bootstrap: boot, workspace: app, shadow, office, model, history, scene })) {
     const bytes = group.reduce((total, chunk) => total + Buffer.byteLength(chunk.code), 0);
     t.diagnostic(`${name}: ${(bytes / 1024).toFixed(1)} KiB JS in ${group.length} static chunks (minified, before compression)`);
   }

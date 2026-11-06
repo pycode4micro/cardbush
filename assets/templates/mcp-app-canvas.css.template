@@ -1,0 +1,1 @@
+:where(html){background-color:transparent;color:var(--color-text-primary,CanvasText);font-family:var(--font-sans,system-ui);color-scheme:light}:where(html[data-cardbush-theme="dark"]){color-scheme:dark}:where(body){margin:0;background-color:transparent}:where(button,input,select,textarea){font:inherit;color:inherit}

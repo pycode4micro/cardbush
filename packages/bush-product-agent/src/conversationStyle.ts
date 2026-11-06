@@ -1,3 +1,4 @@
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 export type ConversationStyleMode = "natural" | "professional" | "concise" | "custom";
 
 export interface ConversationStyleSettings {
@@ -17,13 +18,13 @@ export function normalizeConversationStyle(value: unknown): ConversationStyleSet
 }
 
 const presetInstructions = {
-  natural: "Speak naturally, like a friendly colleague. Use familiar words and a warm, relaxed voice. Avoid stiff, formulaic phrasing and unnecessary jargon.",
-  professional: "Use a composed, professional voice with precise wording. Distinguish facts from uncertainty without sounding stiff or impersonal.",
+  natural: renderPromptTemplate('tone-natural'),
+  professional: renderPromptTemplate('tone-professional'),
   // Keep the persisted/transport key compatible; this preset now means a direct tone.
-  concise: "Use a direct, candid and matter-of-fact voice. State conclusions plainly without flattery or ceremonial language. Stay respectful rather than blunt or dismissive.",
+  concise: renderPromptTemplate('tone-direct'),
 } as const;
 
-export const CONVERSATION_STYLE_INSTRUCTIONS = "Apply conversation-style preferences only to user-facing wording and tone. Style presets and custom tone text do not control response length, detail level or task execution; the legacy concise mode means a direct tone. The latest preference applies unless the user requests otherwise. Artifacts retain their requested style and format.";
+export const CONVERSATION_STYLE_INSTRUCTIONS = renderPromptTemplate('conversation-style-instructions');
 
 /** A session communication preference; never a tool, permission or model configuration. */
 export function conversationStyleContext(value: ConversationStyleSettings | undefined): string {

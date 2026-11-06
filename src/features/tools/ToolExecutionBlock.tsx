@@ -6,7 +6,6 @@ import {
   Network,
   Play,
   RefreshCw,
-  Sparkles,
   WrapText,
 } from 'lucide-react';
 import {
@@ -29,10 +28,6 @@ import { WorkspaceRevertAvailability } from './workspaceRevertAvailability';
 import { ConversationHostContext } from '../conversationHost';
 import { TerminalTaskStatus } from './TerminalTaskStatus';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
-import {
-  cardlingSceneFromToolExecution,
-  type CardlingScene,
-} from '../cardling/scene';
 import { copyText } from '../messageFeedback';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { PlanningAssessmentNotice, planningAssessmentFromExecution } from './PlanningAssessmentNotice';
@@ -71,7 +66,6 @@ export function ToolExecutionBlock({
   historyLabel = !active,
   showImagePreviews = true,
   onRevertChangeReport,
-  onOpenScene,
 }: {
   executions: ChatToolExecution[];
   language: AppLanguage;
@@ -83,7 +77,6 @@ export function ToolExecutionBlock({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenScene: (scene: CardlingScene) => void;
 }) {
   const canRevertWorkspace = useContext(WorkspaceRevertAvailability);
   const host = useContext(ConversationHostContext);
@@ -329,7 +322,6 @@ export function ToolExecutionBlock({
               message={message}
               language={language}
               active={active}
-              onOpenScene={onOpenScene}
               showImagePreviews={showImagePreviews}
             />
           ))}
@@ -701,7 +693,7 @@ function stringArray(value: unknown) {
 }
 
 function ToolExecutionRow({
-  execution, message, language, active, expanded, onToggle, onOpenScene,
+  execution, message, language, active, expanded, onToggle,
   detailsDeferred, detailsStatus, onRetryDetails,
   showImagePreviews,
 }: {
@@ -711,7 +703,6 @@ function ToolExecutionRow({
   active: boolean;
   expanded: boolean;
   onToggle: () => void;
-  onOpenScene: (scene: CardlingScene) => void;
   detailsDeferred: boolean;
   detailsStatus?: 'loading' | 'loaded' | 'failed';
   onRetryDetails: () => void;
@@ -746,7 +737,7 @@ function ToolExecutionRow({
           ) : isContextCompactionPresentationExecution(execution) ? (
             <RuntimeContextCompactionDetail execution={execution} active={active} language={language} embedded />
           ) : (
-            <ToolExecutionDetail execution={execution} message={message} language={language} onOpenScene={onOpenScene} showImagePreviews={showImagePreviews} />
+            <ToolExecutionDetail execution={execution} message={message} language={language} showImagePreviews={showImagePreviews} />
           )}
         </div>
       )}
@@ -758,18 +749,15 @@ function ToolExecutionDetail({
   execution,
   message,
   language,
-  onOpenScene,
   showImagePreviews,
 }: {
   execution: ChatToolExecution;
   message: ChatMessage;
   language: AppLanguage;
-  onOpenScene: (scene: CardlingScene) => void;
   showImagePreviews: boolean;
 }) {
   const host = useContext(ConversationHostContext);
   const [outputWrapped, setOutputWrapped] = useState(false);
-  const scene = cardlingSceneFromToolExecution(execution, message);
   const summary = execution.summary.trim();
   const hasSummary = summary && summary !== execution.name && summary !== displayToolName(execution.name, language);
   const error = asRecord(execution.metadata.error);
@@ -837,16 +825,7 @@ function ToolExecutionDetail({
       {auditSignals && (
         <SubagentAuditSignalsPanel signals={auditSignals} language={language} />
       )}
-      {!host && scene && (
-        <button
-          className="tool-scene-open"
-          type="button"
-          onClick={() => onOpenScene(scene)}
-        >
-          <Sparkles size={14} />
-          <span>{uiText(language)('toolExecutionBlock.openInteractiveScene')}</span>
-        </button>
-      )}
+
       <SubagentChildTools
         executions={childExecutions}
         language={language}

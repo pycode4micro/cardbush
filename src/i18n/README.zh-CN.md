@@ -37,6 +37,14 @@ React 表单布局放在独立模板组件，通过类型化的数据和回调�
 
 原生静态 HTML 外壳和交互脚本放在 `assets/templates/*.html`、`*.js.template`，平台构建将其编入 ESM 和 CommonJS 产物。发行程序不读取源码目录，不依赖当前工作目录；不要手改生成模块。使用 `@cardbush/platform/templates` 的 `renderHtmlTemplate`：`{{text:name}}` 转义普通值，`{{json:name}}` 生成安全的 JavaScript 字面量并转义脚本闭合字符，`{{html:name}}` 仅接收第三个参数显式提供的可信渲染片段。缺少变量、多余变量都会报错，替换不递归执行。预览、画布导出和 OAuth 页显式传递当前语言；翻译与用户数据即使包含标签也仍按文本处理。
 
+## 运行时状态与模型策略
+
+Assistant 读取请求携带当前界面语言；应用自有错误保留消息键和变量，在每次读取时解析，使已出现的错误也能随语言切换。外部服务错误保持原文。子 Agent 的默认名称使用统一语言解析器，显式或已保存的名称不改写。CLI 保持英文，不要求增加语言选择器。
+
+MCP App 的页面壳、样式及桥接脚本也使用 `assets/templates`（`.html`、`.js.template`、`.css.template`），注入翻译后的宿主消息与安全序列化的组件数据。继续保留 iframe 沙箱、宿主消息校验和 CSP；平台提供的 HTML 仍属于沙箱内的不可信内容。下线功能应连同专用资源一起删除，不应再迁入新模板。
+
+模型策略单独放在 `assets/prompts/*.md`，通过 `@cardbush/platform/prompts` 的 `renderPromptTemplate` 使用。`{{value:name}}` 只插入纯文本，不递归解释；不要把策略混入 UI 语言包，抽离时不能改变消息角色和拼接顺序。构建器统一换行并去掉资源末尾的一个换行，其余首尾空白仍有意义。资源随 ESM/CommonJS 发行，无需运行时读取文件系统。有意修改策略时同步更新策略摘要夹具，并保留语义策略测试。
+
 ## 外观归属
 
 视觉变体由 CSS 定义，状态使用语义 class/data-*，尺寸、配色、间距和图标使用 CSS 变量。禁止在 JSX 三元表达式中选择硬编码颜色、字号、显示或变换。
@@ -48,6 +56,7 @@ React 表单布局放在独立模板组件，通过类型化的数据和回调�
 - `npm run test:ui-localization`：键、变量、复数、回退、异常输入、隔离第三语言发现、ESM/CommonJS 目录及 App/Web/原生源码约束。
 - `npm run test:web-admin-ui`：隔离模拟服务下的真实 Web 表单、即时切换语言、草稿保留、提交/重试、窄窗口和文本转义。
 - `npm run test:html-templates`：发行模板、变量约束、转义及预览/OAuth 多语言输出。
+- `npm run test:nonweb-templates`：策略原文一致性、ESM/CommonJS 打包及 MCP 输入转义。`node scripts/test-mcp-apps-ui.mjs` 验证真实沙箱通信。
 - `npm run test:app-views`：对话、欢迎/首次发送、队列图片、流式、侧栏和预览。
 - `node scripts/test-window-menu.mjs`、`node scripts/run-settings-context-ui-test.mjs`：原生菜单、语言切换和响应式设置。
 - `npm run build`、`npx tsc --noEmit -p tsconfig.json`：生产构建和类型检查。

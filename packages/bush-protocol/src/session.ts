@@ -1,3 +1,4 @@
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { z } from "zod";
 
 import { cacheChainStateSchema, providerInputProjectionSchema } from "./cacheChain.js";
@@ -363,4 +364,4 @@ export const assembleRuntimeSessionContextRequestSchema = z.object({
   maxSummaryTurns: z.number().int().nonnegative().optional(),
 });
 
-export const CHECKPOINT_CONTINUATION_INSTRUCTIONS = "A checkpoint_context call and its receipt preserve intermediate context, not a final answer. Its summaries replace only the covered history; legacy active_turn_checkpoint has the same purpose. Continue the latest user request from its unresolved work and exact next action. Preserve completed operations and do not repeat external side effects. Historical checkpoints and continuation instructions belong to their original Turns; later user requests determine the current task. If the current request is complete, return its final answer.";
+export const CHECKPOINT_CONTINUATION_INSTRUCTIONS = renderPromptTemplate('checkpoint-continuation-instructions');

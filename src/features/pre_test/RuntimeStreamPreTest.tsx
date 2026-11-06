@@ -155,7 +155,6 @@ function RuntimeFixturePreTest({ language }: { language: AppLanguage }) {
                 onEditUserMessage={async () => undefined}
                 onRetryGuidance={async () => undefined}
                 onRevertChangeReport={async () => undefined}
-                onOpenScene={() => undefined}
               />
             </div>
           ) : (
@@ -368,7 +367,6 @@ function ConnectedRuntimeLivePreTest({
                 onEditUserMessage={async () => undefined}
                 onRetryGuidance={async () => undefined}
                 onRevertChangeReport={async () => undefined}
-                onOpenScene={() => undefined}
               />
             </div>
           )}

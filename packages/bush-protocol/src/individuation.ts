@@ -1,3 +1,4 @@
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { z } from 'zod';
 
 export const DEFAULT_SUMMARY_TOKEN_THRESHOLD = 10_000;
@@ -22,7 +23,7 @@ export function normalizeIndividuation(value: unknown): IndividuationSettings {
 
 // Keep the signal contract consistent across stable policies, per-turn guidance
 // (including frozen/child sessions) and independently discovered tool schemas.
-export const FINAL_RESPONSE_SIGNAL_INSTRUCTIONS = `After this turn's other Tool work, call summary_for_user alone, when available, before the final reply to signal final display. Use {} when memory is disabled or nothing new needs recording. Without Tool work, reply directly. Do not signal opening/progress updates; after further work or user guidance, signal again before finishing.`;
+export const FINAL_RESPONSE_SIGNAL_INSTRUCTIONS = renderPromptTemplate('final-response-signal-instructions');
 
 export function individuationPreferenceText(value: unknown): string {
   const state = normalizeIndividuation(value);

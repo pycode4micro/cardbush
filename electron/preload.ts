@@ -4,36 +4,6 @@ import type { AgentInstructionDocument } from '@cardbush/bush-product-agent' wit
 import type { readTextPreviewResult } from './textPreview';
 import type { TerminalRuntime } from '@cardbush/platform' with { 'resolution-mode': 'import' };
 
-type CardlingDesktopState = {
-  enabled: boolean;
-  language: string;
-  theme: 'bright' | 'dark';
-  settings: {
-    size: 'compact' | 'normal' | 'large';
-    opacity: number;
-    motion: 'full' | 'reduced' | 'off';
-  };
-  status: 'idle' | 'thinking' | 'tool' | 'waiting' | 'queued' | 'complete' | 'error';
-  sending: boolean;
-  queuedMessageCount: number;
-  pendingInteraction: boolean;
-  activeChangeCount: number;
-  activeChangeFileCount: number;
-  error: string | null;
-  miniChat: {
-    title: string;
-    lastUser: string;
-    lastAssistant: string;
-  };
-};
-
-type CardlingDesktopAction =
-  | 'settings'
-  | 'changes'
-  | 'revertChanges'
-  | 'openMain'
-  | { type: 'miniChatSend'; text: string };
-
 type SessionAttentionPayload = {
   sessionId: string;
   title: string;
@@ -96,13 +66,6 @@ type ShadowWindowPayload = {
   projectDir: string;
   initialMode: 'readonly' | 'fork';
 };
-
-// did-finish-load can precede a deferred window's React subscription. Keep only
-// the latest state, so the companion also starts correctly after a slow load.
-let latestCardlingState: CardlingDesktopState | undefined;
-ipcRenderer.on('cardling:state', (_event, payload: CardlingDesktopState) => {
-  latestCardlingState = payload;
-});
 
 const desktopApi = {
   embodied: { command: (input: { action: string; input?: unknown }): Promise<unknown> => ipcRenderer.invoke('embodied:command', input) },
@@ -574,40 +537,6 @@ const desktopApi = {
   startImageGallery: (root: string, recursive: boolean) => ipcRenderer.invoke('image:gallery-start', root, recursive),
   nextImageGallery: (id: string) => ipcRenderer.invoke('image:gallery-next', id),
   closeImageGallery: (id: string) => ipcRenderer.invoke('image:gallery-close', id) as Promise<void>,
-  setCardlingState: (payload: CardlingDesktopState) =>
-    ipcRenderer.invoke('cardling:update-state', payload) as Promise<void>,
-  onCardlingState: (callback: (payload: CardlingDesktopState) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: CardlingDesktopState) => {
-      callback(payload);
-    };
-    ipcRenderer.on('cardling:state', listener);
-    if (latestCardlingState) callback(latestCardlingState);
-    return () => ipcRenderer.removeListener('cardling:state', listener);
-  },
-  setCardlingExpanded: (expanded: boolean) =>
-    ipcRenderer.invoke('cardling:set-expanded', expanded) as Promise<void>,
-  startCardlingDrag: (cursorX: number, cursorY: number) =>
-    ipcRenderer.invoke('cardling:drag-start', cursorX, cursorY) as Promise<void>,
-  endCardlingDrag: () =>
-    ipcRenderer.invoke('cardling:drag-end') as Promise<void>,
-  moveCardlingBy: (deltaX: number, deltaY: number) =>
-    ipcRenderer.invoke('cardling:move-by', deltaX, deltaY) as Promise<void>,
-  resetCardlingPosition: () =>
-    ipcRenderer.invoke('cardling:reset-position') as Promise<void>,
-  cardlingAction: (action: CardlingDesktopAction) =>
-    ipcRenderer.invoke('cardling:action', action) as Promise<void>,
-  onCardlingAction: (callback: (action: CardlingDesktopAction) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, action: CardlingDesktopAction) => {
-      callback(action);
-    };
-    ipcRenderer.on('cardling:action', listener);
-    return () => ipcRenderer.removeListener('cardling:action', listener);
-  },
-  onCardlingCollapse: (callback: () => void) => {
-    const listener = () => callback();
-    ipcRenderer.on('cardling:collapse', listener);
-    return () => ipcRenderer.removeListener('cardling:collapse', listener);
-  },
   localApplications: {
     pick: (language: string) => ipcRenderer.invoke('app-center:pick-local', language) as Promise<import('./localApplications').LocalApplication | null>,
     refreshIcons: (paths: string[]) => ipcRenderer.invoke('app-center:refresh-local-icons', paths) as Promise<Record<string, string>>,

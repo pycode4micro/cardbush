@@ -56,7 +56,7 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       native('paste', 'applicationMenus.paste', undefined, 'Ctrl + V'),
       native('delete', 'appCenter.delete'), separator,
       native('selectAll', 'applicationMenus.select_all', undefined, 'Ctrl + A'), separator,
-      item('openSettings', 'cardlingWindow.settings', actions.openSettings, 'openSettings'),
+      item('openSettings', 'common.settings', actions.openSettings, 'openSettings'),
     ] },
     { id: 'view', label: uiText(language)('applicationMenus.view'), items: [
       item('toggleSidebar', 'keyboardShortcuts.toggleSidebar', actions.toggleSidebar, 'toggleSidebar', { checked: state.sidebarVisible }),

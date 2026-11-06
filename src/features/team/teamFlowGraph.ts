@@ -16,7 +16,7 @@ export function teamGraphDocument(workflow: TeamWorkflow, agents: RegisteredAgen
 }
 
 export function teamStatusLabel(status: string, language: string) {
-  const labels: Record<string, MessageKey> = { idle: 'teamWorkflowLibrary.notRun' as const, pending: 'cardlingWindow.waiting' as const, running: 'cardlingWindow.running' as const,
+  const labels: Record<string, MessageKey> = { idle: 'teamWorkflowLibrary.notRun' as const, pending: 'common.waiting' as const, running: 'common.running' as const,
     completed: 'automationPanel.completed' as const, failed: 'automationPanel.failed' as const, stopped: 'automationPanel.stopped' as const, interrupted: 'browserLibraryDialog.interrupted' as const };
   return (labels[status] && uiText(language)(labels[status])) ?? status;
 }

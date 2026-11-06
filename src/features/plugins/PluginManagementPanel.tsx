@@ -542,7 +542,7 @@ export function PluginManagementPanel({
           {!host.remote && <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{uiText(language)('accountsPanel.accounts')}</button>}
         </div>
         {tab !== 'accounts' && <div className="plugin-hub-actions">
-          <button type="button" title={uiText(language)('pluginManagementPanel.pluginSettings')} onClick={() => setPage({ kind: 'network' })}>{uiText(language)('cardlingWindow.settings')}</button>
+          <button type="button" title={uiText(language)('pluginManagementPanel.pluginSettings')} onClick={() => setPage({ kind: 'network' })}>{uiText(language)('common.settings')}</button>
           <button className="plugin-mcp-manage-button" type="button" onClick={() => setPage({ kind: 'manage', tab: 'mcp' })}>
             <Server size={17} /><span>{uiText(language)('pluginManagementPanel.mcpServers')}</span>
           </button>

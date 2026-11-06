@@ -58,3 +58,27 @@
 - `scripts/test-web-plugin.mjs` 是 Linux 部署集成测试，依赖 `/opt/cardbush-python` 及 `dir_fd`、`O_NOFOLLOW` 等 POSIX 文件安全能力。这台 Windows 未完成其全链路验证；没有通过删除断言或放宽文件安全实现使其伪通过。测试的工具列表断言更新为现有公开工具的精确集合。发布 Linux Web 镜像前仍应在该镜像执行此测试。
 
 这里记录的是本次全仓清单检查及已确认项的清理结果，不是对所有动态执行路径永远无孤儿代码的证明。未来下线功能应按 `AGENTS.md` 同步检查入口、专用资源和测试，而不是继续积累旧副本。
+
+## 后续检查：非 Web 模块与实际产品入口
+
+日期：2026-11-06。后续检查基线：`18bad65b3501de11da6f61bdc2a4c8e1ee3a02d7`。以下为该基线之后的增量，不计入上面的 16 个文件和语言包数量。
+
+这次还检查了入口是否真正启用、事件是否仍有生产者、引用是否仅来自旧测试。发现仅靠“源码中还有引用”会漏掉已下线功能：Cardling 的 App 状态始终发送 `enabled: false`，场景消费者也已没有注册工具生产事件。旧 Markdown 独立应用只剩测试在装配，实际产品已使用 Canvas。
+
+| 确认的残留 | 处理与保留边界 |
+| --- | --- |
+| Cardling 桌面窗口 | 删除 `CardlingWindow.tsx`、Electron 窗口/拖动/位置逻辑、IPC、preload API/监听器、类型、设置读写及 renderer 路由 |
+| Cardling 场景链路 | 删除 `features/cardling`、无生产者的 scene 回调及聊天扫描/覆盖层；同步删除专用样式和失效说明文档 |
+| 旧 Markdown 独立应用 | 删除 `MdPresentationApp` 外壳、`BushItSidebar` 和 `CreationFileTree`。仍在当前画布使用的文档编辑组件迁到 `BushItDocumentPage.tsx`，保留草稿、自动保存、冲突处理、实时编辑和 Team 文档保存 |
+| 无调用的转导出 | 删除 `src/i18n/catalog.ts`、`src/features/voice/realtimeAgentError.ts`；平台语言包和 Runtime 的真实错误处理实现继续保留 |
+| 旧文件中夹带的共享样式 | 聊天气泡规则迁到 `message-bubbles.css`，减少动画规则迁到 `reduced-motion.css`，Canvas 侧栏规则迁到 `canvasSidebar.css`，检查器规则归回 `inspector.css`；不能随旧功能整文件丢弃 |
+
+中英文语言包各移除 159 个旧键，其中 7 个仍在使用的通用标签改为 `common.*`；另新增 15 个 Runtime/MCP 文案键。没有删除用户原有配置文件、文档或历史记录。
+
+再次核实并保留的入口包括 Team 工作流、实时语音桥、Office Workers、Agent/Worker/Bot Gateway CLI、Web Tenant Broker，以及由 Vite 插件注入的 Office 适配模块。`companionTools` 是 Skill 配套工具元数据，不属于 Cardling。`useCreationLiveEdit` 和 `TeamDocumentEditor` 由迁移后的当前文档组件调用，也不是孤儿模块。
+
+非 Web 解耦同时完成：26 份系统提示词和行为策略迁到 `assets/prompts`；MCP App 文档、桥脚本与画布样式迁到 `assets/templates`。提示词使用纯文本插值，界面模板使用转义文本、安全 JSON 和显式 HTML 边界；资源随平台包发布。Assistant 的应用自有状态保留消息键，读取时按语言解析；CLI 保持英文。
+
+回归使用临时配置和测试文件。旧独立应用外壳的专属导航测试随入口删除；仍有效的富文本、引用链接、输入法、菜单和流式编辑/人工接管检查迁到当前 Canvas。预加载和构建边界测试明确验证 Cardling 不再暴露。覆盖提示词原文摘要与变量契约、Assistant/子 Agent/协议、当前 Canvas/Team/MCP App、完整 App 视图、语言包、设置、原生菜单、主窗口与 Shadow 启动，以及桌面/Node/Web 类型检查和生产构建。
+
+该结论覆盖已检查的源码和装配入口；不以单次静态扫描声称整个仓库不再存在任何闲置分支。

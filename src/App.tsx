@@ -143,7 +143,7 @@ import {
 } from './features/sidebar';
 import { refreshTeamWorkspace, useTeamChoices } from './features/team/teamWorkspaceStore';
 import { NativeTeamSidebar } from './features/team/TeamSidebar';
-import { CanvasSidebar as BushItSidebar } from './features/creationCanvas/CanvasSidebar';
+import { CanvasSidebar } from './features/creationCanvas/CanvasSidebar';
 import { basename, fileUrl, samePath } from './shared/localPaths';
 import {
   themeAccentColor,
@@ -1194,31 +1194,6 @@ function CardbushApp() {
     );
   }, [openWorkSummaryTab]);
 
-  useEffect(() => {
-    void window.cardbushDesktop?.setCardlingState?.({
-      enabled: false,
-      language: 'zh',
-      theme: 'dark',
-      settings: {
-        size: 'normal',
-        opacity: 0.95,
-        motion: 'off',
-      },
-      status: 'idle',
-      sending: false,
-      queuedMessageCount: 0,
-      pendingInteraction: false,
-      activeChangeCount: 0,
-      activeChangeFileCount: 0,
-      error: null,
-      miniChat: {
-        title: '',
-        lastUser: '',
-        lastAssistant: '',
-      },
-    }).catch(() => undefined);
-  }, []);
-
   const setThemePreference = (value: ThemePreference) => {
     setThemePreferenceState(value);
     window.localStorage.setItem('cardbush_theme_mode', value);
@@ -2232,7 +2207,7 @@ function CardbushApp() {
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}
                 />
               ) : section === 'md-presentation' ? (
-                <BushItSidebar language={language} onBack={() => setSection('chat')} softVisible={sidebarPresence.visible}
+                <CanvasSidebar language={language} onBack={() => setSection('chat')} softVisible={sidebarPresence.visible}
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}/>
               ) : (
                 <ChatSidebar

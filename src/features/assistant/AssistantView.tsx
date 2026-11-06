@@ -127,9 +127,9 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
   const refresh = useCallback(() => {
     if (refreshing.current) return refreshing.current;
     refreshing.current = (async () => {
-      let result = await assistantBackend.read(cursor.current);
+      let result = await assistantBackend.read(cursor.current, language);
       const reset = result.cursor < cursor.current || result.generation !== generation.current;
-      if (reset) result = await assistantBackend.read(0);
+      if (reset) result = await assistantBackend.read(0, language);
       generation.current = result.generation;
       if (!reactionPending.current) setReactions(current => JSON.stringify(current) === JSON.stringify(result.reactions ?? {}) ? current : result.reactions ?? {});
       if (reset && historyLoaded.current) { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); setReactions(result.reactions ?? {}); closeMessageMenu(); }
@@ -148,7 +148,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
       setCanRetry(result.canRetry === true);
     })().finally(() => { refreshing.current = undefined; });
     return refreshing.current;
-  }, [animateEntries, closeMessageMenu]);
+  }, [animateEntries, closeMessageMenu, language]);
   useEffect(() => {
     const reset = () => { sendingRequest.current = undefined; setSubmitting(false); setSubmitted([]); setManagement(undefined); setDraft(''); setQuote(undefined); setReactions({}); closeMessageMenu(); setError(''); setRuntimeError(''); setRetry(null); setArriving(new Set()); void refresh().then(() => refresh()).catch(error => setError(String(error))); };
     window.addEventListener('cardbush:assistant-reset', reset);

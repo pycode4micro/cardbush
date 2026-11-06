@@ -80,7 +80,6 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
                   onEditUserMessage={async () => undefined}
                   onRetryGuidance={async () => undefined}
                   onRevertChangeReport={async () => undefined}
-                  onOpenScene={() => undefined}
                 />
               ))}
               {messages.map((message) => (
@@ -95,7 +94,6 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
                   onEditUserMessage={async () => undefined}
                   onRetryGuidance={async () => undefined}
                   onRevertChangeReport={async () => undefined}
-                  onOpenScene={() => undefined}
                 />
               ))}
             </div>

@@ -1302,3 +1302,13 @@ body.right-inspector-resizing .right-inspector-resizer {
       visibility 0s;
   }
 }
+
+.right-inspector-start {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-items: center;
+  padding: 24px clamp(20px, 4vw, 48px);
+  overflow: auto;
+}

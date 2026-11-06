@@ -18,6 +18,7 @@ import{teamToMarkdown}from'${local('src/features/team/teamMarkdown.ts')}';
 import{canvasFileTarget}from'${local('src/features/creationCanvas/canvasModel.ts')}';
 import'${local('src/styles/theme.css')}';import'${local('src/styles/app.css')}';
 window.canvasPendingWrites=0;
+import {publishFileEditEvent} from '${local('src/backend/fileEditEvents.ts')}';window.publishFileEditEvent=publishFileEditEvent;
 window.cardbushDesktop={...window.testBridge,getPathForFile:()=>'',creationCanvas:async input=>{
   const writing=['save','freeze','unfreeze'].includes(input.action);if(writing)window.canvasPendingWrites++;
   try{return await window.testBridge.creationCanvas(input);}finally{if(writing)window.canvasPendingWrites--;}

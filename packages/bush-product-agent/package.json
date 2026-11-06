@@ -17,7 +17,8 @@
     "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@cardbush/bush-protocol": "^0.1.0"
+    "@cardbush/bush-protocol": "^0.1.0",
+    "@cardbush/platform": "*"
   },
   "license": "Apache-2.0"
 }

@@ -38,7 +38,7 @@ window.renderFixture = (active, phase = 'mixed', language = 'zh') => {
   <MessageBubble message={{id:'progress',turnId:'fixture-turn',role:'assistant',content:window.fixtureNarration,status:active?'running':'completed',
     toolExecutions,metadata:{cardbush_turn_started_at:startedAt}}}
    language={language} sending={active} activeTurnId={active?'fixture-turn':''} activeAssistantMessageId={active?'progress':''}
-   onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/>
+   onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no}/>
   <McpActivationStatus target={target} isActive={active} language={language}/>
  </main></div>);
 };
@@ -49,7 +49,7 @@ window.renderFailure = language => {
  const no = async () => {};
  failureRoot.render(<div className="app theme-dark" style={{minWidth:0,width:'100%',padding:24,boxSizing:'border-box'}}>
   <MessageBubble message={{id:'failure',role:'assistant',content:'',status:'failed',metadata:{stop_reason:'invalid_request_error',stop_details:{status:400,message:'400 Tool names must be unique.'}}}}
-   language={language} sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/>
+   language={language} sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no}/>
  </div>);
 };
 window.renderPlan = (reason, status = 'completed', theme = 'theme-dark') => {
@@ -61,7 +61,7 @@ window.renderPlan = (reason, status = 'completed', theme = 'theme-dark') => {
   <MessageBubble message={{id:'plan',role:'assistant',content:'准备成果已保存。',status,
    taskPlan:{protocol:'bush.task_plan.v1',planId:'plan',sessionId:'session',nodes,active:true,explanation:''},
    metadata:{stop_reason:reason}}}
-   language="zh" sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/>
+   language="zh" sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no}/>
  </div>);
 };
 window.renderFixture(true);

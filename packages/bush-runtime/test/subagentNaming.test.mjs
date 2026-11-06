@@ -88,6 +88,7 @@ test('unsupported memory fails before dispatch and a corrected named clean call 
 
 test('unnamed children use their role or a stable identity, never assignment text', async () => {
   const f = fixture();
+  f.request.metadata.uiLanguage = 'zh-CN';
   const result = await f.invoke({ prompt: 'Draft three palettes', mode: 'clean', system_prompt: '你是服装视觉与材质设计。后面是完整任务配置。', allowed_tools: [] });
   assert.equal(result.result.agentName, '服装视觉与材质设计');
   const first = await f.invoke({ prompt: 'Review compatibility\nPrivate supporting details' });
@@ -95,7 +96,7 @@ test('unnamed children use their role or a stable identity, never assignment tex
   const second = await f.invoke({ prompt: 'A different assignment', task_id: first.result.taskId });
   assert.equal(second.result.agentName, first.result.agentName);
   assert.equal(second.result.childSessionId, first.result.childSessionId);
-  f.request.metadata.uiLanguage = 'en';
+  f.request.metadata.uiLanguage = 'en-GB';
   const another = await f.invoke({ prompt: 'Review compatibility\nOther private details' });
   assert.equal(another.result.agentName, `Subagent ${another.result.childSessionId.slice(-8)}`);
   assert.notEqual(another.result.agentName, first.result.agentName);
@@ -107,6 +108,16 @@ test('unnamed children use their role or a stable identity, never assignment tex
   const record = { toolCall: { name: 'subagent', argumentsText: JSON.stringify({ prompt: 'Private assignment text' }) } };
   assert.equal(agentToolActivity(record).name, undefined, 'running activity does not invent a name from the prompt');
   assert.equal(agentToolActivity({ ...record, result: first.result }).name, first.result.agentName);
+});
+
+test('unnamed children with absent or unsupported locales use the shared English fallback', async () => {
+  for (const language of [undefined, 'unsupported_locale']) {
+    const f = fixture();
+    if (language) f.request.metadata.uiLanguage = language;
+    const result = await f.invoke({ prompt: 'Review compatibility' });
+    assert.equal(result.kind, 'returned');
+    assert.equal(result.result.agentName, `Subagent ${result.result.childSessionId.slice(-8)}`);
+  }
 });
 
 test('invalid labels never start a child', async () => {

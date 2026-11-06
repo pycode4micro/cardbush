@@ -1,5 +1,5 @@
 import { defaultHostTerminalRuntime, normalizeHostTerminalRuntime } from '../../backend/hostPlatform';
-import { type AppSettingsState, type CompanionMotionMode, type CompanionSettings, type CompanionSize, type TerminalRuntime } from '../../types';
+import { type AppSettingsState, type TerminalRuntime } from '../../types';
 import { APPEARANCE_STORAGE_KEY, normalizeAppearance, readAppearance } from '../appearance/appearancePreferences';
 import { normalizeImportedThemeStyle } from '../appearance/importedThemeStyle';
 import { importedThemeStyleStorageKey, readImportedThemeStyle } from '../appearance/themePreferences';
@@ -30,12 +30,6 @@ const defaultAppSettings: AppSettingsState = {
   },
   managedModelConfigs: [],
   importedThemeStyle: null,
-  companionEnabled: true,
-  companion: {
-    size: 'normal',
-    opacity: 0.95,
-    motion: 'full',
-  },
   font: {
     family: '',
     displayName: '',
@@ -86,9 +80,6 @@ export function readInitialAppSettings(): AppSettingsState {
     },
     managedModelConfigs: readManagedModelConfigs(),
     importedThemeStyle: readImportedThemeStyle(),
-    companionEnabled:
-      window.localStorage.getItem('cardbush_cardling_enabled') !== 'false',
-    companion: readCompanionSettings(),
     font: {
       family: window.localStorage.getItem('cardbush_font_family') ?? '',
       displayName: window.localStorage.getItem('cardbush_font_display_name') ?? '',
@@ -140,8 +131,6 @@ export function normalizeAppSettings(settings: AppSettingsState): AppSettingsSta
       settings.managedModelConfigs,
     ),
     importedThemeStyle: normalizeImportedThemeStyle(settings.importedThemeStyle),
-    companionEnabled: settings.companionEnabled !== false,
-    companion: normalizeCompanionSettings(settings.companion),
     font: {
       family: settings.font.family.trim(),
       displayName: settings.font.displayName.trim(),
@@ -237,16 +226,6 @@ export function persistAppSettings(settings: AppSettingsState) {
   } else {
     window.localStorage.removeItem(importedThemeStyleStorageKey);
   }
-  window.localStorage.setItem(
-    'cardbush_cardling_enabled',
-    String(settings.companionEnabled),
-  );
-  window.localStorage.setItem('cardbush_cardling_size', settings.companion.size);
-  window.localStorage.setItem(
-    'cardbush_cardling_opacity',
-    String(settings.companion.opacity),
-  );
-  window.localStorage.setItem('cardbush_cardling_motion', settings.companion.motion);
   window.localStorage.setItem('cardbush_font_family', settings.font.family);
   window.localStorage.setItem(
     'cardbush_font_display_name',
@@ -260,39 +239,4 @@ export function persistAppSettings(settings: AppSettingsState) {
     'cardbush_user_avatar_image',
     settings.user.avatarImagePath ?? '',
   );
-}
-
-function readCompanionSettings(): CompanionSettings {
-  return normalizeCompanionSettings({
-    size: window.localStorage.getItem('cardbush_cardling_size') as CompanionSize,
-    opacity: Number(window.localStorage.getItem('cardbush_cardling_opacity')),
-    motion: window.localStorage.getItem('cardbush_cardling_motion') as CompanionMotionMode,
-  });
-}
-
-function normalizeCompanionSettings(
-  value?: Partial<CompanionSettings>,
-): CompanionSettings {
-  const size = normalizeCompanionSize(value?.size);
-  const motion = normalizeCompanionMotion(value?.motion);
-  const opacity = Number(value?.opacity);
-  return {
-    size,
-    motion,
-    opacity: Number.isFinite(opacity)
-      ? Math.max(0.55, Math.min(1, Math.round(opacity * 100) / 100))
-      : defaultAppSettings.companion.opacity,
-  };
-}
-
-function normalizeCompanionSize(value?: string): CompanionSize {
-  return value === 'compact' || value === 'large' || value === 'normal'
-    ? value
-    : defaultAppSettings.companion.size;
-}
-
-function normalizeCompanionMotion(value?: string): CompanionMotionMode {
-  return value === 'full' || value === 'reduced' || value === 'off'
-    ? value
-    : defaultAppSettings.companion.motion;
 }

@@ -1403,26 +1403,6 @@
   font-family: Consolas, "Courier New", monospace;
 }
 
-.tool-scene-open {
-  width: fit-content;
-  min-height: 30px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 8px;
-  padding: 0 10px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
-  border-radius: 9px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  font-weight: 800;
-}
-
-.tool-scene-open:hover {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
 .tool-runtime-profile,
 .tool-worker-profile,
 .tool-planning-assessment {

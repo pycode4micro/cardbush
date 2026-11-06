@@ -64,7 +64,6 @@
 | 对话提取和 Fork | [English](host/CONVERSATION_EXTRACTION.en.md) | [简体中文](host/CONVERSATION_EXTRACTION.md) |
 | 独立 Bot MCP 边界 | [English](host/CARDBUSH_APP_HOST.md) | [简体中文](host/CARDBUSH_APP_HOST.zh-CN.md) |
 | CardBush Apps MCP 边界 | [English](host/CARDBUSH_APPS_MCP.md) | [简体中文](host/CARDBUSH_APPS_MCP.zh-CN.md) |
-| Cardling 桌面伙伴 | [English](companion/cardling-system.md) | [简体中文](companion/cardling-system.zh-CN.md) |
 | CardBush 具身语音接入 | [English](../EMBODIED_INTEGRATION.en.md) | [简体中文](../EMBODIED_INTEGRATION.zh-CN.md) |
 
 ## 部署、安全与发布

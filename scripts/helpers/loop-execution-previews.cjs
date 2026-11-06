@@ -47,11 +47,10 @@ module.exports = async ({run, until, pause, window, root}) => {
       loopReply={...loopReply,status};
       const messages=views.normalizeChatMessagesForDisplay([loopInput,loopReply,loopResult]);
       renderView(h('div',{style:{width:'100%'}},messages.map(message=>h(views.MessageBubble,{key:message.id,message,language:'zh',
-        sending:status==='streaming',activeTurnId:status==='streaming'?'loop-turn':'',activeAssistantMessageId:'loop-reply',
-        onOpenScene:()=>{},onRevertChangeReport:async()=>{}}))));
+        sending:status==='streaming',activeTurnId:status==='streaming'?'loop-turn':'',activeAssistantMessageId:'loop-reply',onRevertChangeReport:async()=>{}}))));
     };
     window.showArchivedLoop=()=>renderView(h(views.AssistantLoopHistoryBlock,{history:[{...loopReply,status:'completed'}],
-      language:'zh',active:false,onOpenScene:()=>{},onRevertChangeReport:async()=>{}}));
+      language:'zh',active:false,onRevertChangeReport:async()=>{}}));
     showLoop();
   `);
   await until("document.querySelector('.loop-subagent-preview')?.textContent.includes('运行中') && !document.querySelector('.loop-subagent-preview').disabled", 'child execution preview follows the actual running task');

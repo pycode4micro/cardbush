@@ -46,10 +46,9 @@ window.addEventListener('unhandledrejection', (event) => {
 
 const rendererWindow = new URLSearchParams(window.location.search).get('window');
 const language = resolveUiLanguage(navigator.language);
-// Select the window before importing its state owners. Companion and shadow
+// Select the window before importing its state owners. Shadow
 // windows must not initialize or download the main workspace just to render.
 const RootWindow = recoverableLazy('window', async () => {
-  if (rendererWindow === 'cardling') return { default: (await import('./CardlingWindow')).CardlingWindow };
   if (rendererWindow === 'shadow') return { default: (await import('./ShadowWindow')).ShadowWindow };
   return { default: (await import('./App')).App };
 }, (_props, retry) => <DeferredModuleNotice language={language} retry={retry} />);

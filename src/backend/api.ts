@@ -187,7 +187,6 @@ export interface ChatStreamRequest {
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
   onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
-  onSceneEvent?: (event: SceneStreamEvent) => void;
 }
 
 export type ChatStreamEventHandlers = Pick<
@@ -212,7 +211,6 @@ export type ChatStreamEventHandlers = Pick<
   | 'onContextWindowUsage'
   | 'onCapabilityCandidates'
   | 'onWorkflowEvent'
-  | 'onSceneEvent'
 > & {
   onReplayReset?: (payload: Record<string, unknown>) => void;
   onEventCursor?: (cursor: {
@@ -273,7 +271,6 @@ export interface ControlStreamRequest {
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
   onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
-  onSceneEvent?: (event: SceneStreamEvent) => void;
 }
 
 export interface EditMessageRequest extends ControlStreamRequest {
@@ -314,7 +311,6 @@ export interface SendGuidanceRequest {
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
   onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
-  onSceneEvent?: (event: SceneStreamEvent) => void;
 }
 
 export interface ShadowConversationRecord {
@@ -357,19 +353,6 @@ export interface TeamWorkflowStreamEvent {
   nodeId: string;
   status: string;
   summary: string;
-  raw: Record<string, unknown>;
-}
-
-export interface SceneStreamEvent {
-  type: 'scene_presented' | 'scene_updated' | 'scene_closed';
-  sceneId: string;
-  sessionId: string;
-  turnId: string;
-  revision?: number;
-  status: string;
-  title: string;
-  summary: string;
-  scene?: Record<string, unknown>;
   raw: Record<string, unknown>;
 }
 

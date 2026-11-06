@@ -17,7 +17,6 @@ const continuations = new Map<string, { controller: AbortController; turnId: str
 const CONTINUATION_CHANGED = 'cardbush:automation-continuation-changed';
 const notifyContinuation = () => window.dispatchEvent(new Event(CONTINUATION_CHANGED));
 const ignoreAsync = async () => undefined;
-const ignore = () => undefined;
 type MessageState = Record<string, ChatMessage[]>;
 
 export function AutomationRunPanel({ jobId, runId, language, active = true, onOpenConversation }: {
@@ -187,7 +186,7 @@ export function AutomationRunPanel({ jobId, runId, language, active = true, onOp
     <div className="automation-run-transcript message-list" ref={scroll} onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.clientHeight - node.scrollTop < 70; }}>
       <MessageFileReferenceScope workspaceRoot={detail?.workspaceDir || detail?.projectDir}><div className="message-list-content">
         {rendered.map(message => <div className="message-list-item" key={message.id}><MessageBubble message={message} language={language} sending={sending} activeTurnId={turnId} activeAssistantMessageId="" selectedModel={detail?.modelName ?? detail?.model}
-          readOnlyActions onRegenerate={ignoreAsync} onEditUserMessage={ignoreAsync} onRetryMessage={ignoreAsync} onRetryGuidance={ignoreAsync} onRevertChangeReport={ignoreAsync} onOpenScene={ignore}/></div>)}
+          readOnlyActions onRegenerate={ignoreAsync} onEditUserMessage={ignoreAsync} onRetryMessage={ignoreAsync} onRetryGuidance={ignoreAsync} onRevertChangeReport={ignoreAsync}/></div>)}
         {!rendered.length && <p className="automation-hint">{detail?.run.status === 'queued' ? (uiText(language)('automationRunPanel.waitingToExecuteTheConversationWillAppear')) : (uiText(language)('automationRunPanel.thisExecutionHasNoConversationContentYet'))}</p>}
         {detail?.run.error && <p className="automation-error">{detail.run.error}</p>}
         {error && <p className="automation-error" role="alert">{error}</p>}

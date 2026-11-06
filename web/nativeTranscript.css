@@ -1,6 +1,6 @@
 /* Electron's rendering styles; the website supplies only its palette and reading width. */
 @import '../src/styles/transcript.css';
-@import '../src/styles/scenes.css';
+@import '../src/styles/message-bubbles.css';
 @import '../src/styles/markdown.css';
 @import '../src/styles/execution.css';
 @import '../src/styles/dialogs.css';

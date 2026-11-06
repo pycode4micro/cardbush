@@ -13,7 +13,6 @@ import { generatedImagePath, hasDeferredImageArtifacts, webTurnArtifacts } from 
 import { downloadArtifactArchive } from './artifactDownload';
 
 const noAction = async () => {};
-const noScene = () => {};
 
 function HistoryMessage({ eager, role, children }: { eager: boolean; role: string; children: ReactNode }) {
   const element = useRef<HTMLDivElement>(null), [visible, setVisible] = useState(eager);
@@ -122,7 +121,7 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
     <MessageBubble message={message} language={language} sending={Boolean(activeId)} activeTurnId={activeId ? job?.turnId ?? '' : ''}
       activeAssistantMessageId={activeId} activeConversationId={selected ?? ''} selectedModel={modelName}
       keepActionsVisible={message.id === latestAssistant || Boolean(job && !activeId)} readOnlyActions canRevertWorkspace={false}
-      onRegenerate={noAction} onEditUserMessage={noAction} onRetryGuidance={noAction} onRevertChangeReport={noAction} onOpenScene={noScene}/>
+      onRegenerate={noAction} onEditUserMessage={noAction} onRetryGuidance={noAction} onRevertChangeReport={noAction}/>
   </div>;
   return <ConversationHostContext.Provider value={host}><MessageFileReferenceScope workspaceRoot="/data/workspaces">
     <div className="native-transcript">

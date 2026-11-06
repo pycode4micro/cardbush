@@ -25,17 +25,6 @@ html,
   background: var(--cardbush-window-bg);
 }
 
-html[data-cardling-window="true"],
-html[data-cardling-window="true"] body,
-html[data-cardling-window="true"] #root {
-  background: transparent !important;
-}
-
-html[data-cardling-window="true"] body::before,
-html[data-cardling-window="true"] body::after {
-  content: none !important;
-}
-
 button,
 input,
 textarea,
@@ -79,8 +68,7 @@ button {
   border: 0;
 }
 
-.app,
-.cardling-desktop {
+.app {
   --app-font-family: "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", Arial, sans-serif;
   --bg: #f5f3ef;
   --surface: #ffffff;

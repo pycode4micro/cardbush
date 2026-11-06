@@ -47,7 +47,7 @@ export const assistantProfileSchema = z.object({
 }).strict();
 export type AssistantProfile = z.infer<typeof assistantProfileSchema>;
 export const assistantConversationRequestSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('read'), sessionId: z.string().min(1), after: z.number().int().nonnegative().default(0) }).strict(),
+  z.object({ action: z.literal('read'), sessionId: z.string().min(1), after: z.number().int().nonnegative().default(0), language: z.string().max(80).optional() }).strict(),
   z.object({ action: z.literal('reset'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION) }).strict(),
   z.object({ action: z.literal('react'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION), messageId: z.string().min(1).max(220),
     reaction: assistantReactionSchema.nullable(), generation: z.number().int().nonnegative() }).strict(),

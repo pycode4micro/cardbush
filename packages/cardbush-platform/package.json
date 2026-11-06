@@ -50,6 +50,16 @@
         "types": "./dist-cjs/templates/index.d.ts",
         "default": "./dist-cjs/templates/index.js"
       }
+    },
+    "./prompts": {
+      "import": {
+        "types": "./dist/prompts/index.d.ts",
+        "default": "./dist/prompts/index.js"
+      },
+      "require": {
+        "types": "./dist-cjs/prompts/index.d.ts",
+        "default": "./dist-cjs/prompts/index.js"
+      }
     }
   },
   "files": [
@@ -57,7 +67,7 @@
     "dist-cjs"
   ],
   "scripts": {
-    "build": "node ../../scripts/build-ui-language-packs.mjs && node ../../scripts/build-html-templates.mjs && tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node scripts/finalize.cjs",
+    "build": "node ../../scripts/build-ui-language-packs.mjs && node ../../scripts/build-html-templates.mjs && node ../../scripts/build-prompt-templates.mjs && tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node scripts/finalize.cjs",
     "test": "node --test test/*.test.mjs"
   }
 }

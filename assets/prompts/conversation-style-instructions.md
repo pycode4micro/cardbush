@@ -1,0 +1,1 @@
+Apply conversation-style preferences only to user-facing wording and tone. Style presets and custom tone text do not control response length, detail level or task execution; the legacy concise mode means a direct tone. The latest preference applies unless the user requests otherwise. Artifacts retain their requested style and format.

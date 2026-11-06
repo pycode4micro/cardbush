@@ -41,24 +41,15 @@ async function run() {
   ipcMain.handle('debug:append-log', (_event, _category, payload) => { errors.push(payload); return ''; });
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   for (const [mode, selector] of [
-    ['main', '.app'], ['cardling', '.cardling-desktop'], ['shadow', '.shadow-window-shell'],
+    ['main', '.app'], ['shadow', '.shadow-window-shell'],
   ]) {
     const win = new BrowserWindow({ show: false, width: 1100, height: 800, webPreferences: {
       contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false,
-      ...(mode === 'cardling' ? { preload: path.resolve('dist-electron/preload.js') } : {}),
     } });
     const failures = [];
     win.webContents.on('console-message', ({ level, message }) => {
       if (level === 'error' && /Uncaught|ReferenceError|SyntaxError|TypeError|Minified React error/.test(message)) failures.push(message);
     });
-    if (mode === 'cardling') {
-      win.webContents.on('dom-ready', () => win.webContents.send('cardling:state', {
-        enabled: true, language: 'en', theme: 'bright', settings: { size: 'normal', opacity: 1, motion: 'off' },
-        status: 'complete', sending: false, queuedMessageCount: 0, pendingInteraction: false,
-        activeChangeCount: 0, activeChangeFileCount: 0, error: null,
-        miniChat: { title: 'Fixture', lastUser: '', lastAssistant: 'Ready.' },
-      }));
-    }
     try {
       await win.loadFile(path.resolve('dist/index.html'), { query: { window: mode } });
       const end = Date.now() + 8000;
@@ -69,37 +60,39 @@ async function run() {
       }
       await pause(100);
       if (mode === 'main') {
-        const read = code => win.webContents.executeJavaScript(code);
+        const read = code => win.webContents.executeJavaScript(code).catch(cause => {
+          throw new Error(`Production window script failed: ${code}; renderer errors: ${failures.join('\n')}`, { cause });
+        });
         const until = async code => { const end = Date.now() + 6000; while (!await read(code)) { if (Date.now() >= end) throw Error('Your Friends production integration timed out: ' + code); await pause(25); } };
         await until('document.querySelector("[data-nav-section=your-friends]")');
         await read('document.querySelector("[data-nav-section=your-friends]").click();void 0');
         await until('document.querySelector(".your-friends[data-phase=open]")');
         assert.equal(await read('document.querySelector(".desktop-shell").inert'), true);
         assert.equal(await read('!!document.querySelector(".window-frame")'), true, 'native window frame remains mounted');
-        await read('document.querySelector(".friends-header nav button:last-child").click();void 0');
-        await until('document.querySelector(".friends-dialog[open]")');
-        await read('document.querySelector(".friends-dialog .settings-switch input").click();void 0');
-        await read('document.querySelector(".friends-dialog header button").click();void 0');
+        assert.equal(await read('!!document.querySelector(".friends-header nav")'), false, 'onboarding does not expose completed-profile navigation');
         await read('document.querySelector(".friends-back").click();void 0');
         await until('!document.querySelector(".your-friends")');
         assert.equal(await read('document.querySelector(".desktop-shell").inert'), false);
         assert.equal(await read('document.activeElement.dataset.navSection'), 'your-friends');
+        // Startup loading uses an isolated saved profile. Settings gestures are
+        // covered by test-your-friends-ui after its real onboarding sequence.
+        await read(`localStorage.setItem('cardbush_your_friends_v1', JSON.stringify({ version: 2,
+          id: 'primary-friend', name: '', startup: true, motion: true, tone: 'lilac',
+          introduction: { step: 0, answers: {} }, delegation: { beforeExecution: 'ask', report: 'always' }, events: [] })); void 0`);
         await win.reload();
         await until('document.querySelector(".your-friends[data-phase=open]")');
-        assert.ok(await read('document.querySelector(".friends-introduction")'), 'saved default startup resumes introduction');
+        assert.ok(await read('document.querySelector(".friends-onboarding")'), 'saved default startup resumes introduction');
         await read('document.querySelector(".friends-back").click();void 0');
         await until('!document.querySelector(".your-friends")');
         assert.equal(await read('document.activeElement.dataset.navSection'), 'your-friends', 'default entry has a valid return focus');
       }
       assert.deepEqual(failures, [], `${mode} must evaluate its split chunks without runtime errors`);
-      if (mode === 'cardling') assert.equal(await win.webContents.executeJavaScript('document.documentElement.lang'), 'en',
-        'the early host snapshot must reach the deferred companion');
     } finally {
       win.destroy();
     }
   }
   assert.deepEqual(errors, []);
   clearTimeout(deadline);
-  console.log('Production window entries passed: workspace, Your Friends entry/return/default startup, companion, shadow and early companion state.');
+  console.log('Production window entries passed: workspace, Your Friends entry/return/default startup, and Shadow.');
   app.exit(0);
 }

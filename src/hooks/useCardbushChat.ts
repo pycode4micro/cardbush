@@ -22,7 +22,6 @@ import { RuntimeRemoteError } from '@cardbush/bush-runtime-electron';
 import { useCapabilityCatalogRefresh } from './useCapabilityCatalogRefresh';
 import {
   isPendingInteractionConflictError,
-  type SceneStreamEvent,
   type TeamWorkflowStreamEvent,
   type ExperimentalGoal,
   type SessionLatestTurn,
@@ -1509,11 +1508,6 @@ export function useCardbushChat(
           detail: { ...event, sessionId: event.sessionId || normalizedSessionId },
         }));
       },
-      onSceneEvent: (event) => {
-        window.dispatchEvent(new CustomEvent('cardbush:scene-event', {
-          detail: { ...event, sessionId: event.sessionId || normalizedSessionId },
-        }));
-      },
       onReplayReset: () => {
         delete goalTurnCursorRef.current[normalizedTurnId];
       },
@@ -2742,11 +2736,6 @@ export function useCardbushChat(
               detail: { ...event, sessionId: event.sessionId || sessionId },
             }));
           },
-          onSceneEvent: (event) => {
-            window.dispatchEvent(new CustomEvent('cardbush:scene-event', {
-              detail: { ...event, sessionId: event.sessionId || sessionId },
-            }));
-          },
         });
         await terminalAttentionPromise;
         if (finalSnapshotPromise) {
@@ -3071,7 +3060,6 @@ export function useCardbushChat(
           onThinking: (event: import('../types').ThinkingStreamEvent) => void;
           onConnectionState: (update: RuntimeConnectionUpdate) => void;
           onWorkflowEvent: (event: TeamWorkflowStreamEvent) => void;
-          onSceneEvent: (event: SceneStreamEvent) => void;
         },
       ) => Promise<void>;
     }) => {
@@ -3303,11 +3291,6 @@ export function useCardbushChat(
           },
           onWorkflowEvent: (event) => {
             window.dispatchEvent(new CustomEvent('cardbush:workflow-event', {
-              detail: { ...event, sessionId: event.sessionId || sessionId },
-            }));
-          },
-          onSceneEvent: (event) => {
-            window.dispatchEvent(new CustomEvent('cardbush:scene-event', {
               detail: { ...event, sessionId: event.sessionId || sessionId },
             }));
           },

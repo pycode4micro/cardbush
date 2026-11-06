@@ -67,7 +67,6 @@ import type {
   ChatToolExecution,
   PluginCommandSummary,
 } from '../../types';
-import type { CardlingScene } from '../cardling/scene';
 import { openInspector } from '../inspector/inspectorEvents';
 import { WorkspaceChangeStateContext, workspaceChangeReverted } from '../tools/WorkspaceChangeStateContext';
 import { AssistantThinkingProcessLine, AssistantThinkingScope } from './AssistantThinkingProcessLine';
@@ -734,7 +733,6 @@ function MessageBubbleView({
   onEditUserMessage,
   onRetryMessage = async () => undefined,
   onRevertChangeReport,
-  onOpenScene,
 }: {
   message: ChatMessage;
   changeSummaryMessages?: ChatMessage[];
@@ -758,7 +756,6 @@ function MessageBubbleView({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenScene: (scene: CardlingScene) => void;
 }) {
   const host = useContext(ConversationHostContext);
   const feedbackId = host ? `${host.id}:${message.id}` : message.id;
@@ -1230,7 +1227,6 @@ function MessageBubbleView({
           active={isActiveAssistantTurn}
           selectedModel={selectedModel}
           onRevertChangeReport={onRevertChangeReport}
-          onOpenScene={onOpenScene}
         />
       ) : toolExecutions.length > 0 ? (
         <AssistantMessageContent
@@ -1248,7 +1244,6 @@ function MessageBubbleView({
           selectedModel={selectedModel}
           showThinkingPlaceholder={isActiveAssistantTurn}
           onRevertChangeReport={onRevertChangeReport}
-          onOpenScene={onOpenScene}
         />
       ) : assistantContent ? (
         <>
@@ -1270,7 +1265,6 @@ function MessageBubbleView({
           language={language}
           active={isActiveAssistantTurn}
           onRevertChangeReport={onRevertChangeReport}
-          onOpenScene={onOpenScene}
         />
       )}
     </>
@@ -1343,7 +1337,6 @@ function MessageBubbleView({
                     archivedPlan={taskPlan}
                     language={language}
                     onRevertChangeReport={onRevertChangeReport}
-                    onOpenScene={onOpenScene}
                   /> : taskPlan && <TaskPlanBlock plan={taskPlan} language={language} />}
                 </AssistantCompletedDisclosure>
               ) : showAssistantProgress && (
@@ -1618,7 +1611,6 @@ function AssistantActiveTranscript({
   active,
   selectedModel,
   onRevertChangeReport,
-  onOpenScene,
 }: {
   messages: ChatMessage[];
   language: AppLanguage;
@@ -1628,7 +1620,6 @@ function AssistantActiveTranscript({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenScene: (scene: CardlingScene) => void;
 }) {
   const visibleMessages = messages.filter(hasVisibleLoopHistoryMessage);
   const runningExecution = visibleMessages.flatMap(message => message.toolExecutions ?? [])
@@ -1637,7 +1628,7 @@ function AssistantActiveTranscript({
     <div className="assistant-active-transcript">
       {visibleMessages.map(segment => <AssistantTranscriptSegment key={segment.id}
         message={segment} language={language} active={active}
-        onRevertChangeReport={onRevertChangeReport} onOpenScene={onOpenScene} />)}
+        onRevertChangeReport={onRevertChangeReport} />)}
       {/* One stable tail slot: queued/running/thinking changes its text, never
           removes a row of height or reparents the preceding media. */}
       {active && <AssistantThinkingProcessLine key="activity" language={language}
@@ -1657,14 +1648,14 @@ function activeAssistantTranscriptMessages(
 }
 
 const AssistantTranscriptSegment = memo(function AssistantTranscriptSegment({
-  message, language, active, onRevertChangeReport, onOpenScene,
+  message, language, active, onRevertChangeReport,
 }: Pick<Parameters<typeof AssistantMessageContent>[0],
-  'message' | 'language' | 'active' | 'onRevertChangeReport' | 'onOpenScene'>) {
+  'message' | 'language' | 'active' | 'onRevertChangeReport'>) {
   return <section className="assistant-active-transcript-segment" data-segment-id={message.id}>
     <AssistantSegmentAttachments message={message} language={language} />
     <AssistantMessageContent content={message.content} executions={message.toolExecutions ?? []}
       language={language} message={message} active={active} historyLabel={false}
-      onRevertChangeReport={onRevertChangeReport} onOpenScene={onOpenScene} />
+      onRevertChangeReport={onRevertChangeReport} />
   </section>;
 });
 
@@ -1678,7 +1669,6 @@ function AssistantMessageContent({
   selectedModel = '',
   showThinkingPlaceholder = false,
   onRevertChangeReport,
-  onOpenScene,
 }: {
   content: string;
   executions: ChatToolExecution[];
@@ -1692,7 +1682,6 @@ function AssistantMessageContent({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenScene: (scene: CardlingScene) => void;
 }) {
   const sortedExecutions = [...executions].sort(compareToolExecutionOrder);
   const displayContent = sortedExecutions.some(hasExplicitToolContentOffset)
@@ -1725,7 +1714,6 @@ function AssistantMessageContent({
         active={active}
         historyLabel={historyLabel}
         onRevertChangeReport={onRevertChangeReport}
-        onOpenScene={onOpenScene}
       />,
     );
     blocks.push(<LoopExecutionPreviews key={`previews-${groupKey}`} executions={group.executions}
@@ -2410,7 +2398,6 @@ export function AssistantLoopHistoryBlock({
   language,
   active = false,
   onRevertChangeReport = async () => undefined,
-  onOpenScene = () => undefined,
 }: {
   history: ChatMessage[];
   archivedPlan?: NonNullable<ChatMessage['taskPlan']>;
@@ -2420,7 +2407,6 @@ export function AssistantLoopHistoryBlock({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenScene?: (scene: CardlingScene) => void;
 }) {
   const [presentTranscript] = useState(createAssistantTranscriptProjector);
   const visibleHistory = presentTranscript(history).filter(hasVisibleLoopHistoryMessage);
@@ -2456,7 +2442,6 @@ export function AssistantLoopHistoryBlock({
             language={language}
             active={active}
             onRevertChangeReport={onRevertChangeReport}
-            onOpenScene={onOpenScene}
           />
         ))}
       </div>
@@ -2471,7 +2456,6 @@ const AssistantLoopHistoryItem = memo(function AssistantLoopHistoryItem({
   language,
   active,
   onRevertChangeReport,
-  onOpenScene,
 }: {
   message: ChatMessage;
   language: AppLanguage;
@@ -2480,7 +2464,6 @@ const AssistantLoopHistoryItem = memo(function AssistantLoopHistoryItem({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenScene: (scene: CardlingScene) => void;
 }) {
   const executions = message.toolExecutions ?? [];
 
@@ -2497,7 +2480,6 @@ const AssistantLoopHistoryItem = memo(function AssistantLoopHistoryItem({
           message={message}
           active={active}
           onRevertChangeReport={onRevertChangeReport}
-          onOpenScene={onOpenScene}
         />
       ) : message.content ? (
         <MessageInlineMediaContent content={message.content} language={language} />
@@ -2971,8 +2953,7 @@ function sameMessageBubbleProps(
     previous.onEditUserMessage !== next.onEditUserMessage ||
     previous.onRetryMessage !== next.onRetryMessage ||
     previous.onRetryGuidance !== next.onRetryGuidance ||
-    previous.onRevertChangeReport !== next.onRevertChangeReport ||
-    previous.onOpenScene !== next.onOpenScene
+    previous.onRevertChangeReport !== next.onRevertChangeReport
   ) {
     return false;
   }

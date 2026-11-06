@@ -173,7 +173,7 @@ export const ConversationSearchDialog = memo(function ConversationSearchDialog({
           title={item.title} onPointerMove={() => setSelectedKey(`chat:${item.conversation.id}`)}
           onMouseDown={event => event.preventDefault()} onClick={() => activate(index)}>
           <span className="conversation-search-icon">{runningConversationIds?.has(item.conversation.id)
-            ? <LoaderCircle size={14} className="spin" aria-label={uiText(language)('cardlingWindow.running')} /> : <MessageSquare size={14} aria-hidden="true" />}</span>
+            ? <LoaderCircle size={14} className="spin" aria-label={uiText(language)('common.running')} /> : <MessageSquare size={14} aria-hidden="true" />}</span>
           <span className="conversation-search-title">{item.title}</span>
           {item.projectTitle && <span className="conversation-search-project" title={item.projectDir || item.projectTitle}>{item.projectTitle}</span>}
           {index < 9 && <kbd aria-hidden="true">{uiText(language)('conversationSearchDialog.ctrl')}{index + 1}</kbd>}

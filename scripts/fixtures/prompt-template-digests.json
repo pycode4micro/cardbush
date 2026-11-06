@@ -1,0 +1,147 @@
+[
+  {
+    "name": "communication-instructions",
+    "slots": [
+      "conversationStyleInstructions"
+    ],
+    "sha256": "32bf0c57c23d78efa969b99df97181d2985bd455107353c486035a40e8f0667c"
+  },
+  {
+    "name": "local-deliverable-instructions",
+    "slots": [
+      "reportDeliveryInstructions"
+    ],
+    "sha256": "a79a679db9d03308aa91c58e0684a78d9538b95d7d70820e032b352ce4553f6b"
+  },
+  {
+    "name": "root-agent-system-prompt",
+    "slots": [
+      "communicationInstructions",
+      "checkpointContinuationInstructions",
+      "finalResponseSignalInstructions",
+      "localDeliverableInstructions"
+    ],
+    "sha256": "74bcbe480ae01a797fd1a61e9138acc6bc450a6cd1890d8aab631f8844a8c3ac"
+  },
+  {
+    "name": "goal-continuation-prompt",
+    "slots": [],
+    "sha256": "bc390ec6b406d71325374b871b3839f16bd19cdd576b2c6a590b95aa2aaa4679"
+  },
+  {
+    "name": "conversation-style-instructions",
+    "slots": [],
+    "sha256": "5f5caa43f85970dad2083f70ee11bc878d29da4de7e4403c9708e391be193061"
+  },
+  {
+    "name": "report-delivery-instructions",
+    "slots": [],
+    "sha256": "23e1f5be84a01dbfd022f3e4316ca687d7e647b6862aa43baf8ccb1ab07e6732"
+  },
+  {
+    "name": "task-continuation-instructions",
+    "slots": [],
+    "sha256": "3becff3ee6c1de904e008237c1f8861e972aac2f03472bd0a83d4890cb7fabf7"
+  },
+  {
+    "name": "source-binding-instructions",
+    "slots": [],
+    "sha256": "e9aef5c1130ed6c5cb9bf53d8677962ba7e75d6a18be57843765ed8bbfb931e0"
+  },
+  {
+    "name": "checkpoint-continuation-instructions",
+    "slots": [],
+    "sha256": "63d5933e5fe842f9b076c08379f54c2cf1e0d284669abb55419d07b854695ead"
+  },
+  {
+    "name": "final-response-signal-instructions",
+    "slots": [],
+    "sha256": "1cff668e8b1c8e784a781261275b084171835351f1cfc8021a7e83bad8c12387"
+  },
+  {
+    "name": "webhook-final-reply-instructions",
+    "slots": [],
+    "sha256": "ebc054e9b6dd4d4c7fd62871584cc0a3429b58e01449723eb504d0f456b3ae32"
+  },
+  {
+    "name": "preview-selection-instructions",
+    "slots": [],
+    "sha256": "3fea8a36e42568bdae3e226a3617abbf81a6e3ce32c25fd04d1b8f6a6ab548f1"
+  },
+  {
+    "name": "assistant-system",
+    "slots": [
+      "name",
+      "persona",
+      "host"
+    ],
+    "sha256": "2ea5d4f7976badb3cd4909899bc214537cbf20edf0cfdae5ff8f8b7c47782282"
+  },
+  {
+    "name": "assistant-memory",
+    "slots": [],
+    "sha256": "df6d98ecdb396879949334901f52db2611f1dde4b7a51150498b877c8785b87e"
+  },
+  {
+    "name": "assistant-report",
+    "slots": [],
+    "sha256": "90b302ccc7592c90238f819d01d22737e119075d57d05fbd6dc1d2187bfaad6b"
+  },
+  {
+    "name": "assistant-execution",
+    "slots": [],
+    "sha256": "6687188b66e49789b3879dfed1899bd1cfd3b4583d2b261b7bc516c4401f4124"
+  },
+  {
+    "name": "assistant-management",
+    "slots": [],
+    "sha256": "fe6b518631b14694ac75882f8c52bef7740f5d2c6aa910103bb6ff4f8b5a3124"
+  },
+  {
+    "name": "tone-natural",
+    "slots": [],
+    "sha256": "b52699683b489f3fb3e857c6e50ea910abba3ca8d35518c7708f7b4b233f15fe"
+  },
+  {
+    "name": "tone-professional",
+    "slots": [],
+    "sha256": "f114dc09ce850ce9ec5287382c0844e076ee43237fef669b7b0dbbe71bd33b75"
+  },
+  {
+    "name": "tone-direct",
+    "slots": [],
+    "sha256": "f3417c9e8ae1a1ed6a24003359fb350dfc119c71ce6e0116510afc0ef08bf44e"
+  },
+  {
+    "name": "source-enabled",
+    "slots": [],
+    "sha256": "ba01bad10490285727ddeaf3eeefd3e2e6785d296361940282ff96390c18a357"
+  },
+  {
+    "name": "source-disabled",
+    "slots": [],
+    "sha256": "e3997447c604db855ad6e9334ebdf25cc4ef307fe884366bb0ab12f12c89663c"
+  },
+  {
+    "name": "realtime-context-compaction",
+    "slots": [],
+    "sha256": "86d32bc8e784c1633889add3868fdb3523a8477a91fd9dfe707047b075728426"
+  },
+  {
+    "name": "memory-review",
+    "slots": [],
+    "sha256": "fe1d483f6d204b3ca78626b6598b643f8ec5d4619990c71f1ff942510f5c3260"
+  },
+  {
+    "name": "memory-consolidation",
+    "slots": [],
+    "sha256": "ce8e899435300505161553389b9b0eaea35163991bd2f28525529fb07389d0a7"
+  },
+  {
+    "name": "realtime-task-summary",
+    "slots": [
+      "language"
+    ],
+    "sha256": "198c15642f8354f6c2d802027f71c36c9d6da65de0c5fb1724a67c9db3a5d1b9"
+  }
+]

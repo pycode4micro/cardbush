@@ -34,7 +34,6 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
-  screen,
   session,
   shell,
   safeStorage,
@@ -144,8 +143,6 @@ const cancelRuntimeToolCommand = 'runtime.cancel_tool' as const;
 // high-resolution PNG. Keep the multi-resolution ICO for Shell metadata and
 // shortcuts, where Windows explicitly requires an .ico file.
 const logoAssetNames = ['cardbush-logo.png', 'cardbush-logo-backup.png', 'cardbush.ico'];
-const cardlingExpandedSize = { width: 380, height: 468 };
-const cardlingCollapsedHitSize = { width: 104, height: 104 };
 const ignoredProjectSearchDirs = new Set([
   '.git',
   '.hg',
@@ -260,7 +257,6 @@ function browserUseRouter() {
   })();
 }
 let disposeCapabilityCatalogWatcher: (() => void) | undefined;
-let cardlingWindow: BrowserWindow | null = null;
 type ShadowWindowMode = 'readonly' | 'fork';
 type ShadowWindowPayload = {
   windowId: string;
@@ -334,23 +330,11 @@ let packagedSmokeRendererReadyResolve: (() => void) | null = null;
 const packagedSmokeRendererReady = new Promise<void>((resolve) => {
   packagedSmokeRendererReadyResolve = resolve;
 });
-let cardlingExpanded = false;
-let cardlingApplyingBounds = false;
 if (process.platform === 'win32') {
   app.setName(cardbushDisplayName);
   app.setAppUserModelId(cardbushAppUserModelId);
 }
 const applicationInstance = installApplicationInstance(app, showMainWindow);
-let cardlingApplyingBoundsTimer: ReturnType<typeof setTimeout> | null = null;
-let cardlingDragState: {
-  offsetX: number;
-  offsetY: number;
-  width: number;
-  height: number;
-  interval: ReturnType<typeof setInterval>;
-  timeout: ReturnType<typeof setTimeout>;
-} | null = null;
-let lastCardlingState: CardlingDesktopState | null = null;
 let sessionAttentionCount = 0;
 const sessionAttentionOpenQueue = new SessionAttentionOpenQueue();
 const sessionAttentionNotificationGate = new SessionAttentionNotificationGate();
@@ -365,32 +349,7 @@ const terminalSessions = new Map<
   }
 >();
 
-
-
-type CardlingDesktopState = {
-  enabled: boolean;
-  language: string;
-  theme: 'bright' | 'dark';
-  settings: {
-    size: 'compact' | 'normal' | 'large';
-    opacity: number;
-    motion: 'full' | 'reduced' | 'off';
-  };
-  status: 'idle' | 'thinking' | 'tool' | 'waiting' | 'queued' | 'complete' | 'error';
-  sending: boolean;
-  queuedMessageCount: number;
-  pendingInteraction: boolean;
-  activeChangeCount: number;
-  activeChangeFileCount: number;
-  error: string | null;
-  miniChat?: {
-    title?: string;
-    lastUser?: string;
-    lastAssistant?: string;
-  };
-};
-
-type AppThemeMode = CardlingDesktopState['theme'];
+type AppThemeMode = 'bright' | 'dark';
 
 const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
   // Six-digit opaque backing colors are also used when native material is
@@ -407,13 +366,6 @@ const windowAppearanceControllers = new WeakMap<BrowserWindow, WindowAppearanceC
 const windowAppearanceStates = new WeakMap<BrowserWindow, WindowAppearanceState>();
 const windowScrollDiagnostics = new WeakMap<BrowserWindow, WindowScrollDiagnostics>();
 let windowCompositionTraceSequence = 0;
-
-type CardlingDesktopAction =
-  | 'settings'
-  | 'changes'
-  | 'revertChanges'
-  | 'openMain'
-  | { type?: string; text?: string };
 
 type ProjectFileSearchResult = {
   name: string;
@@ -1245,65 +1197,7 @@ async function openFileWithChooser(targetPath: string) {
   });
 }
 
-function createCardlingWindow() {
-  if (cardlingWindow != null && !cardlingWindow.isDestroyed()) {
-    return cardlingWindow;
-  }
-  const bounds = cardlingBoundsForSize(cardlingExpandedSize);
-  cardlingWindow = new BrowserWindow({
-    ...bounds,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    hasShadow: false,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    focusable: false,
-    show: false,
-    title: 'Kabu',
-    icon: loadCardbushIcon(64),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  cardlingWindow.setAlwaysOnTop(true, 'screen-saver');
-  cardlingWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  applyCardlingShape();
-  cardlingWindow.on('moved', () => {
-    if (!cardlingApplyingBounds) {
-      saveCardlingAnchor();
-    }
-  });
-  cardlingWindow.on('blur', () => {
-    if (!cardlingExpanded || cardlingWindow == null || cardlingWindow.isDestroyed()) {
-      return;
-    }
-    sendToLiveRenderer(cardlingWindow, 'cardling:collapse');
-  });
-  cardlingWindow.on('closed', () => {
-    stopCardlingDrag(false);
-    if (cardlingApplyingBoundsTimer != null) {
-      clearTimeout(cardlingApplyingBoundsTimer);
-      cardlingApplyingBoundsTimer = null;
-    }
-    cardlingApplyingBounds = false;
-    cardlingWindow = null;
-  });
-  cardlingWindow.webContents.on('did-finish-load', () => {
-    sendCardlingState();
-  });
-  loadRenderer(cardlingWindow, 'cardling');
-  return cardlingWindow;
-}
-
-function loadRenderer(target: BrowserWindow, mode: 'main' | 'cardling' | 'shadow') {
+function loadRenderer(target: BrowserWindow, mode: 'main' | 'shadow') {
   installWindowVisibilityEvents(target);
   if (devServerUrl) {
     const url = new URL(devServerUrl);
@@ -1319,294 +1213,6 @@ function loadRenderer(target: BrowserWindow, mode: 'main' | 'cardling' | 'shadow
     return;
   }
   target.loadFile(indexPath);
-}
-
-function sendCardlingState() {
-  if (
-    cardlingWindow == null ||
-    cardlingWindow.isDestroyed() ||
-    cardlingWindow.webContents.isDestroyed() ||
-    lastCardlingState == null
-  ) {
-    return;
-  }
-  sendToLiveRenderer(cardlingWindow, 'cardling:state', lastCardlingState);
-}
-
-function sanitizeCardlingState(payload: CardlingDesktopState): CardlingDesktopState {
-  return {
-    enabled: payload.enabled !== false,
-    language: resolveUiLanguage(payload.language),
-    theme:
-      payload.theme === 'bright' ||
-      payload.theme === 'dark'
-        ? payload.theme
-        : 'dark',
-    settings: {
-      size:
-        payload.settings?.size === 'compact' || payload.settings?.size === 'large'
-          ? payload.settings.size
-          : 'normal',
-      opacity: clampNumber(payload.settings?.opacity, 0.55, 1, 0.95),
-      motion:
-        payload.settings?.motion === 'reduced' || payload.settings?.motion === 'off'
-          ? payload.settings.motion
-          : 'full',
-    },
-    status: normalizeCardlingStatus(payload.status),
-    sending: Boolean(payload.sending),
-    queuedMessageCount: Math.max(0, Math.round(Number(payload.queuedMessageCount) || 0)),
-    pendingInteraction: Boolean(payload.pendingInteraction),
-    activeChangeCount: Math.max(0, Math.round(Number(payload.activeChangeCount) || 0)),
-    activeChangeFileCount: Math.max(0, Math.round(Number(payload.activeChangeFileCount) || 0)),
-    error: typeof payload.error === 'string' && payload.error.trim() ? payload.error : null,
-    miniChat: {
-      title: clippedCardlingText(payload.miniChat?.title, 80),
-      lastUser: clippedCardlingText(payload.miniChat?.lastUser, 160),
-      lastAssistant: clippedCardlingText(payload.miniChat?.lastAssistant, 360),
-    },
-  };
-}
-
-function clippedCardlingText(value: unknown, maxLength: number) {
-  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
-}
-
-function normalizeCardlingStatus(value: string): CardlingDesktopState['status'] {
-  const allowed = new Set<CardlingDesktopState['status']>([
-    'idle',
-    'thinking',
-    'tool',
-    'waiting',
-    'queued',
-    'complete',
-    'error',
-  ]);
-  return allowed.has(value as CardlingDesktopState['status'])
-    ? (value as CardlingDesktopState['status'])
-    : 'idle';
-}
-
-function clampNumber(value: number, min: number, max: number, fallback: number) {
-  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
-}
-
-function setCardlingWindowBounds(bounds: Electron.Rectangle, persistAnchor = false) {
-  if (cardlingWindow == null || cardlingWindow.isDestroyed()) {
-    return;
-  }
-  const next = safeCardlingBounds(bounds);
-  if (next == null) {
-    return;
-  }
-  if (cardlingApplyingBoundsTimer != null) {
-    clearTimeout(cardlingApplyingBoundsTimer);
-    cardlingApplyingBoundsTimer = null;
-  }
-  cardlingApplyingBounds = true;
-  cardlingWindow.setBounds(next, false);
-  applyCardlingShape();
-  if (persistAnchor) {
-    saveCardlingAnchor(next);
-  }
-  cardlingApplyingBoundsTimer = setTimeout(() => {
-    cardlingApplyingBounds = false;
-    cardlingApplyingBoundsTimer = null;
-  }, 120);
-}
-
-function resizeCardlingWindow(expanded: boolean) {
-  if (cardlingWindow == null || cardlingWindow.isDestroyed()) {
-    return;
-  }
-  const current = cardlingWindow.getBounds();
-  if (current.width !== cardlingExpandedSize.width || current.height !== cardlingExpandedSize.height) {
-    const next = ensureBoundsInDisplay({
-      width: cardlingExpandedSize.width,
-      height: cardlingExpandedSize.height,
-      x: current.x + current.width - cardlingExpandedSize.width,
-      y: current.y + current.height - cardlingExpandedSize.height,
-    });
-    setCardlingWindowBounds(next);
-  }
-  applyCardlingShape(expanded);
-}
-
-function applyCardlingShape(expanded = cardlingExpanded) {
-  if (cardlingWindow == null || cardlingWindow.isDestroyed()) {
-    return;
-  }
-  const bounds = cardlingWindow.getBounds();
-  try {
-    if (expanded) {
-      cardlingWindow.setShape([{ x: 0, y: 0, width: bounds.width, height: bounds.height }]);
-      return;
-    }
-    cardlingWindow.setShape([
-      {
-        x: Math.max(0, bounds.width - cardlingCollapsedHitSize.width),
-        y: Math.max(0, bounds.height - cardlingCollapsedHitSize.height),
-        width: Math.min(cardlingCollapsedHitSize.width, bounds.width),
-        height: Math.min(cardlingCollapsedHitSize.height, bounds.height),
-      },
-    ]);
-  } catch {
-    // setShape is best-effort; if unavailable the transparent window still works.
-  }
-}
-
-function startCardlingDrag(cursorX?: number, cursorY?: number) {
-  if (cardlingWindow == null || cardlingWindow.isDestroyed()) {
-    return;
-  }
-  stopCardlingDrag(false);
-  const bounds = cardlingWindow.getBounds();
-  const cursor =
-    Number.isFinite(cursorX) && Number.isFinite(cursorY)
-      ? { x: Math.round(Number(cursorX)), y: Math.round(Number(cursorY)) }
-      : screen.getCursorScreenPoint();
-  if (cardlingApplyingBoundsTimer != null) {
-    clearTimeout(cardlingApplyingBoundsTimer);
-    cardlingApplyingBoundsTimer = null;
-  }
-  cardlingApplyingBounds = true;
-  cardlingDragState = {
-    offsetX: cursor.x - bounds.x,
-    offsetY: cursor.y - bounds.y,
-    width: bounds.width,
-    height: bounds.height,
-    interval: setInterval(updateCardlingDragPosition, 16),
-    timeout: setTimeout(() => stopCardlingDrag(true), 30000),
-  };
-  updateCardlingDragPosition();
-}
-
-function updateCardlingDragPosition() {
-  if (
-    cardlingDragState == null ||
-    cardlingWindow == null ||
-    cardlingWindow.isDestroyed()
-  ) {
-    stopCardlingDrag(false);
-    return;
-  }
-  const cursor = screen.getCursorScreenPoint();
-  const next = ensureBoundsInDisplay({
-    width: cardlingDragState.width,
-    height: cardlingDragState.height,
-    x: cursor.x - cardlingDragState.offsetX,
-    y: cursor.y - cardlingDragState.offsetY,
-  });
-  const current = cardlingWindow.getBounds();
-  if (current.x === next.x && current.y === next.y) {
-    return;
-  }
-  cardlingWindow.setBounds(next, false);
-}
-
-function stopCardlingDrag(persistAnchor = true) {
-  if (cardlingDragState != null) {
-    clearInterval(cardlingDragState.interval);
-    clearTimeout(cardlingDragState.timeout);
-    cardlingDragState = null;
-  }
-  cardlingApplyingBounds = false;
-  if (persistAnchor) {
-    saveCardlingAnchor();
-  }
-}
-
-function cardlingBoundsForSize(size: { width: number; height: number }) {
-  const anchor = readCardlingAnchor();
-  if (anchor) {
-    return ensureBoundsInDisplay({
-      width: size.width,
-      height: size.height,
-      x: anchor.right - size.width,
-      y: anchor.bottom - size.height,
-    });
-  }
-  const workArea = screen.getPrimaryDisplay().workArea;
-  return ensureBoundsInDisplay({
-    width: size.width,
-    height: size.height,
-    x: workArea.x + workArea.width - size.width - 24,
-    y: workArea.y + workArea.height - size.height - 64,
-  });
-}
-
-function ensureBoundsInDisplay(bounds: Electron.Rectangle) {
-  const width = Math.max(1, Math.round(Number(bounds.width) || 1));
-  const height = Math.max(1, Math.round(Number(bounds.height) || 1));
-  const fallbackPoint = screen.getCursorScreenPoint();
-  const x = Number.isFinite(bounds.x) ? Math.round(bounds.x) : fallbackPoint.x;
-  const y = Number.isFinite(bounds.y) ? Math.round(bounds.y) : fallbackPoint.y;
-  const normalized = { width, height, x, y };
-  const display =
-    screen.getDisplayMatching(normalized) ||
-    screen.getDisplayNearestPoint({ x, y }) ||
-    screen.getPrimaryDisplay();
-  const area = display.workArea;
-  return {
-    width,
-    height,
-    x: Math.max(area.x, Math.min(area.x + area.width - width, x)),
-    y: Math.max(area.y, Math.min(area.y + area.height - height, y)),
-  };
-}
-
-function safeCardlingBounds(bounds: Electron.Rectangle) {
-  const next = ensureBoundsInDisplay(bounds);
-  if (
-    !Number.isFinite(next.x) ||
-    !Number.isFinite(next.y) ||
-    !Number.isFinite(next.width) ||
-    !Number.isFinite(next.height)
-  ) {
-    return null;
-  }
-  return next;
-}
-
-function cardlingStatePath() {
-  return path.join(app.getPath('userData'), 'cardling-window.json');
-}
-
-function readCardlingAnchor() {
-  try {
-    const raw = fs.readFileSync(cardlingStatePath(), 'utf8');
-    const decoded = JSON.parse(raw) as { right?: unknown; bottom?: unknown };
-    const right = Number(decoded.right);
-    const bottom = Number(decoded.bottom);
-    if (Number.isFinite(right) && Number.isFinite(bottom)) {
-      return { right, bottom };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function saveCardlingAnchor(bounds = cardlingWindow?.getBounds()) {
-  if (!bounds) {
-    return;
-  }
-  try {
-    fs.mkdirSync(path.dirname(cardlingStatePath()), { recursive: true });
-    fs.writeFileSync(
-      cardlingStatePath(),
-      JSON.stringify({
-        right: bounds.x + bounds.width,
-        bottom: bounds.y + bounds.height,
-      }),
-    );
-  } catch {
-    // Position persistence is best-effort; failure should not affect the app.
-  }
 }
 
 function createTray() {
@@ -1652,7 +1258,6 @@ function requestAppQuit() {
     tray.destroy();
     tray = null;
   }
-  stopCardlingDrag(false);
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.close();
@@ -2077,7 +1682,7 @@ ipcMain.handle('window:close-to-tray', () => {
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 ipcMain.handle('window:is-visible', event => {
   const target = BrowserWindow.fromWebContents(event.sender);
-  if (!target || (target !== mainWindow && target !== cardlingWindow &&
+  if (!target || (target !== mainWindow &&
       target !== shadowWindows.get(event.sender.id)?.window) ||
       event.senderFrame !== event.sender.mainFrame) throw Error('Window visibility is only available to its application renderer.');
   return isWindowVisible(target);
@@ -3505,105 +3110,6 @@ ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
     return;
   }
   if (mainWindow && !guest.isDestroyed()) showWindowPopupMenu(mainWindow, Menu.buildFromTemplate(template));
-});
-
-ipcMain.handle('cardling:update-state', (event, payload: CardlingDesktopState) => {
-  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow !== mainWindow) {
-    return;
-  }
-  lastCardlingState = sanitizeCardlingState(payload);
-  if (!lastCardlingState.enabled) {
-    cardlingWindow?.hide();
-    return;
-  }
-  const window = createCardlingWindow();
-  sendCardlingState();
-  if (!window.isVisible()) {
-    window.showInactive();
-  }
-});
-
-ipcMain.handle('cardling:set-expanded', (event, expanded: boolean) => {
-  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow !== cardlingWindow || cardlingWindow == null) {
-    return;
-  }
-  cardlingExpanded = expanded;
-  if (expanded) {
-    resizeCardlingWindow(true);
-    cardlingWindow.setFocusable(true);
-    cardlingWindow.focus();
-    return;
-  }
-  cardlingWindow.setFocusable(false);
-  resizeCardlingWindow(false);
-});
-
-ipcMain.handle('cardling:move-by', (event, deltaX: number, deltaY: number) => {
-  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow !== cardlingWindow || cardlingWindow == null) {
-    return;
-  }
-  const bounds = cardlingWindow.getBounds();
-  const next = ensureBoundsInDisplay({
-    ...bounds,
-    x: bounds.x + Math.round(Number(deltaX) || 0),
-    y: bounds.y + Math.round(Number(deltaY) || 0),
-  });
-  setCardlingWindowBounds(next, true);
-});
-
-ipcMain.handle('cardling:drag-start', (event, cursorX?: number, cursorY?: number) => {
-  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow !== cardlingWindow) {
-    return;
-  }
-  startCardlingDrag(cursorX, cursorY);
-});
-
-ipcMain.handle('cardling:drag-end', (event) => {
-  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow !== cardlingWindow) {
-    return;
-  }
-  stopCardlingDrag(true);
-});
-
-ipcMain.handle('cardling:reset-position', (event) => {
-  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow !== mainWindow) {
-    return;
-  }
-  try {
-    fs.rmSync(cardlingStatePath(), { force: true });
-  } catch {
-    // Best-effort cleanup.
-  }
-  if (cardlingWindow != null && !cardlingWindow.isDestroyed()) {
-    const bounds = cardlingBoundsForSize(cardlingExpandedSize);
-    setCardlingWindowBounds(bounds, true);
-  }
-});
-
-ipcMain.handle('cardling:action', (event, action: CardlingDesktopAction) => {
-  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow !== cardlingWindow || mainWindow == null || mainWindow.isDestroyed()) {
-    return;
-  }
-  if (typeof action === 'object' && action?.type === 'miniChatSend') {
-    sendToLiveRenderer(mainWindow, 'cardling:action', {
-      type: 'miniChatSend',
-      text: typeof action.text === 'string' ? action.text : '',
-    });
-    return;
-  }
-  if (action === 'openMain') {
-    showMainWindow();
-    return;
-  }
-  showMainWindow();
-  sendToLiveRenderer(mainWindow, 'cardling:action', action);
 });
 
 ipcMain.handle('shell:open-path', (event, targetPath: string) => {

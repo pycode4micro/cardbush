@@ -21,7 +21,6 @@ export type SettingsSection =
   | 'usage'
   | 'browser'
   | 'computer-use'
-  | 'companion'
   | 'runtime'
   | 'ssh'
   | 'proxy'
@@ -70,16 +69,6 @@ export type TerminalRuntime = import('@cardbush/platform/contracts').TerminalRun
 export type RuntimeAssetCategory = 'prompts' | 'skills';
 export type McpTransport = 'stdio' | 'sse' | 'streamable_http' | 'http';
 type ChatRole = 'user' | 'assistant' | 'system' | 'guidance' | 'tool';
-export type CompanionSize = 'compact' | 'normal' | 'large';
-export type CompanionMotionMode = 'full' | 'reduced' | 'off';
-export type CompanionStatus =
-  | 'idle'
-  | 'thinking'
-  | 'tool'
-  | 'waiting'
-  | 'queued'
-  | 'complete'
-  | 'error';
 
 interface ProxySettings {
   mode: ProxyMode;
@@ -253,12 +242,6 @@ interface UserProfile {
   avatarImagePath?: string;
 }
 
-export interface CompanionSettings {
-  size: CompanionSize;
-  opacity: number;
-  motion: CompanionMotionMode;
-}
-
 interface BrowserSettings {
   privacyMode: boolean;
 }
@@ -306,34 +289,6 @@ export interface RuntimeConnectionUpdate {
   createdAt: string;
 }
 
-export interface CardlingDesktopState {
-  enabled: boolean;
-  language: AppLanguage;
-  theme: ThemeMode;
-  settings: CompanionSettings;
-  status: CompanionStatus;
-  sending: boolean;
-  queuedMessageCount: number;
-  pendingInteraction: boolean;
-  activeChangeCount: number;
-  activeChangeFileCount: number;
-  error: string | null;
-  miniChat: CardlingMiniChatState;
-}
-
-interface CardlingMiniChatState {
-  title: string;
-  lastUser: string;
-  lastAssistant: string;
-}
-
-export type CardlingDesktopAction =
-  | 'settings'
-  | 'changes'
-  | 'revertChanges'
-  | 'openMain'
-  | { type: 'miniChatSend'; text: string };
-
 export interface AppSettingsState {
   individuation?: import('@cardbush/bush-protocol').IndividuationSettings;
   appearance?: import('./features/appearance/appearancePreferences').AppearancePreferences;
@@ -345,8 +300,6 @@ export interface AppSettingsState {
   terminal: TerminalSettings;
   managedModelConfigs: ManagedModelConfig[];
   importedThemeStyle: ImportedThemeStyle | null;
-  companionEnabled: boolean;
-  companion: CompanionSettings;
   font: AppFontSettings;
   user: UserProfile;
 }

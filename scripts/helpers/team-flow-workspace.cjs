@@ -117,5 +117,6 @@ module.exports = async ({ read, until, frame, click, action, fill, key, pointerC
   writeFileSync(resolve('tmp/team-flow-narrow.png'), (await capture()).toPNG());
   win.setSize(1120,1000); await read("document.querySelector('.app').className='app theme-dark'"); await frame();
   await read('document.querySelector(".team-flow-menu").open=true'); await frame();
-  await click('在创作中编辑 Markdown'); await until('document.querySelector(".md-article")?.textContent.includes("保留这段理由")');
+  await click('在创作中编辑 Markdown'); await until('window.documentRequest?.source.includes("保留这段理由")');
+  assert.equal(await read('documentRequest.team.id'), target.teamId, 'the current Canvas handoff retains workflow identity');
 };

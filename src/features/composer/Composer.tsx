@@ -585,7 +585,7 @@ export function Composer({
       : cancelReady
         ? uiText(language)('composer.stopGenerating')
         : uiText(language)('composer.waitingForTaskToStart')
-    : uiText(language)('cardlingWindow.send');
+    : uiText(language)('common.send');
 
   useEffect(() => {
     if (!sending || !cancelEnabled) {

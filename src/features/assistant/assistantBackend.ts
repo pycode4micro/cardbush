@@ -15,7 +15,7 @@ let contextVersion = 0;
 /** Keep UI, conversational inference and the existing execution Agent independently replaceable. */
 export const assistantBackend = {
   ensure: (name: string) => createConversation({ sessionId, title: name, metadata: { personalAssistant: true } }),
-  read: (after = 0) => readConversationJournal(sessionId, after),
+  read: (after = 0, language?: string) => readConversationJournal(sessionId, after, language),
   async react(messageId: string, reaction: import('@cardbush/bush-protocol').AssistantReaction | null) {
     const version = contextVersion;
     const { generation } = await assistantBackend.read();

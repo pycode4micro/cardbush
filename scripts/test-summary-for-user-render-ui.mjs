@@ -32,7 +32,7 @@ window.show = (phase, content = '最终答复第一段') => {
   const message = messages.at(-1);
   root.render(<MessageBubble message={message} language="zh" sending={sending} activeTurnId={sending?'t':''}
     activeAssistantMessageId={sending?message.id:''} onRegenerate={noop} onEditUserMessage={noop}
-    onRetryGuidance={noop} onRevertChangeReport={noop} onOpenScene={noop}/>);
+    onRetryGuidance={noop} onRevertChangeReport={noop}/>);
 };
 const show = window.show;
 window.show = (...args) => { try { return show(...args); } catch (error) { console.error(error.stack); throw error; } };
@@ -46,7 +46,7 @@ window.showJournal = (phase, content, options = {}) => {
   const message = messages.find(item=>item.id===reply.id);
   root.render(message ? <MessageBubble message={message} language={options.language || 'zh'} sending={Boolean(options.mainTurnActive)}
     activeTurnId={options.mainTurnActive?'unrelated-runtime-turn':''} activeAssistantMessageId={options.mainTurnActive?'unrelated-runtime-message':''}
-    onRegenerate={noop} onEditUserMessage={noop} onRetryGuidance={noop} onRevertChangeReport={noop} onOpenScene={noop}/> : null);
+    onRegenerate={noop} onEditUserMessage={noop} onRetryGuidance={noop} onRevertChangeReport={noop}/> : null);
 };
 `;
 try {

@@ -265,7 +265,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       window.inputBubbleMessage = { id: 'skill-message', role: 'user', content: inputBubbleContent };
       window.inputBubbleProps = { message: inputBubbleMessage, language: 'zh', sending: false,
         activeTurnId: '', activeAssistantMessageId: '', onRegenerate: async () => {},
-        onEditUserMessage: async () => {}, onRetryGuidance: async () => {}, onRevertChangeReport: async () => {}, onOpenScene: () => {} };
+        onEditUserMessage: async () => {}, onRetryGuidance: async () => {}, onRevertChangeReport: async () => {}};
       window.inputSkillOpened = []; window.inputLocalSkillOpened = [];
       window.inputObserveSkillOpen = event => inputLocalSkillOpened.push(event.detail.target);
       addEventListener('cardbush:open-inspector', inputObserveSkillOpen);

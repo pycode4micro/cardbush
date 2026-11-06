@@ -3,7 +3,7 @@ import { uiText } from '../../i18n';
 import type { AppLanguage, SubagentTaskSnapshot, SubagentTaskStatus } from '../../types';
 
 const taskStates = {
-  running: { tone: 'running', labelKey: 'cardlingWindow.running' as const },
+  running: { tone: 'running', labelKey: 'common.running' as const },
   completed: { tone: 'complete', labelKey: 'automationPanel.completed' as const },
   failed: { tone: 'failed', labelKey: 'loopExecutionPreviews.failed' as const },
   stopped: { tone: 'stopped', labelKey: 'automationPanel.stopped' as const },

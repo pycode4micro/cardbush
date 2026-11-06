@@ -30,8 +30,7 @@ try {
       <div className="message-list" style={{width:'100%',height:'100%',overflow:'auto',display:'block',padding:0}}>
         <div className="assistant-bubble" data-message-id={window.messageId}><h3 style={{fontSize:15,margin:'0 0 20px'}}>检查本地服务</h3>
           <ToolExecutionBlock executions={window.executions} active={window.active} language={window.language}
-            message={{id:window.messageId,conversationId:window.fixtureSession,turnId:'turn',createdAt:'2026-09-10T00:00:00Z',role:'assistant',content:''}}
-            onOpenScene={()=>{}} onRevertChangeReport={async()=>{}} />
+            message={{id:window.messageId,conversationId:window.fixtureSession,turnId:'turn',createdAt:'2026-09-10T00:00:00Z',role:'assistant',content:''}} onRevertChangeReport={async()=>{}} />
         </div>
       </div>
     </div>);

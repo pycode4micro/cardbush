@@ -1,6 +1,7 @@
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 /** Shared by product turns and clean/fork child assignments, including continuations. */
-export const REPORT_DELIVERY_INSTRUCTIONS = `Deliver every report, including research and backtests, as a verified file in the requested format. Keep report bodies and long tables out of Tool-loop messages, chat pages and final replies. For reports, the final reply gives only key findings, execution status and a verified file link or attachment. State any failed step. After file verification, call summary_for_user alone when available. Embed actual HTML/media only. Link scripts and data as files.`;
+export const REPORT_DELIVERY_INSTRUCTIONS = renderPromptTemplate('report-delivery-instructions');
 
-export const TASK_CONTINUATION_INSTRUCTIONS = `For follow-up work on the same assignment, prefer the existing subagent task_id and retained child context; inspect its conversation if needed. Reusing agent_id starts a new clean conversation. Start fresh for independent assignments or incompatible information/time boundaries; historical backtests must not inherit later evidence. Keep Team nodes isolated: share explicit inputs, verified artifact references and upstream results; resume unfinished Team work through team. To read a Team node conversation, use tasks(action=conversation, task_ids=[run_id], node_ids=[node_id]) and follow nextCursor. If the saved schema lacks node_ids for conversation, load get_tool_schema(name="tasks") and invoke the current schema through call_tool.`;
+export const TASK_CONTINUATION_INSTRUCTIONS = renderPromptTemplate('task-continuation-instructions');
 
-export const SOURCE_BINDING_INSTRUCTIONS = `Before reusing a prior Source marker, read_source_memos must bind it to this turn; never copy a bare number from history. Source mode does not replace ordinary file, media or web references.`;
+export const SOURCE_BINDING_INSTRUCTIONS = renderPromptTemplate('source-binding-instructions');

@@ -31,7 +31,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
         h('div', { style: { padding: 24, width: '100%' } },
           h(views.MessageBubble, { message, language: undoLanguage, sending: false,
             activeTurnId: '', activeAssistantMessageId: '', onRegenerate: async()=>{}, onEditUserMessage: async()=>{},
-            onRetryGuidance: async()=>{}, onRevertChangeReport: act, onOpenScene: ()=>{} }),
+            onRetryGuidance: async()=>{}, onRevertChangeReport: act}),
           h('aside', { className: 'right-inspector', style: { height: 430, width: '100%', marginTop: 20, maxWidth: 'none', flex: 'none' } },
             h(views.ConversationChangeDialog, { embedded: true, language: undoLanguage,
               conversation: { id: undoSession, title: 'Undo fixture' }, reports, notice: '',
@@ -101,7 +101,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
         activeTurnId: status === 'running' ? 'one' : '', activeAssistantMessageId: 'terminal-answer',
         onRegenerate: async()=>{}, onEditUserMessage: async()=>{}, onRetryGuidance: async()=>{},
         onRevertChangeReport: async (report, source) => terminalRevertCalls.push({ report, turnId: source.turnId }),
-        onOpenChangeReview: file => terminalReviewCalls.push(file ?? 'all'), onOpenScene: ()=>{} }));
+        onOpenChangeReview: file => terminalReviewCalls.push(file ?? 'all')}));
     };
     showTerminalChanges('running');
   `);
@@ -152,7 +152,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
         changeSummaryMessages: artifactMessages, language: 'zh', sending: false, keepActionsVisible: true,
         activeTurnId: '', activeAssistantMessageId: '',
         readOnlyActions: readOnly, onRegenerate: async()=>{}, onEditUserMessage: async()=>{}, onRetryGuidance: async()=>{},
-        onRevertChangeReport: async()=>{throw Error('The file changed after this turn.');}, onOpenScene: ()=>{} }))));
+        onRevertChangeReport: async()=>{throw Error('The file changed after this turn.');}}))));
     showArtifacts();
   `);
   await until(`document.querySelectorAll('.turn-artifacts-trigger').length === 2`, 'separate artifact entries');
