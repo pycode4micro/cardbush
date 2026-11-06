@@ -212,6 +212,13 @@ app.whenReady().then(async () => {
     await click(settingsButton); await until('document.querySelector(".assistant-settings-dialog:modal")');
     assert.equal(await read('document.activeElement.name'), 'assistant-name');
     assert.deepEqual(await read('document.querySelector(".composer-surface").getBoundingClientRect().toJSON()'), bounds, 'modal does not move the conversation/composer');
+    assert.equal(await read('document.querySelector("textarea[name=assistant-persona]").value'), '');
+    assert.match(await read('document.querySelector("textarea[name=assistant-persona]").placeholder'), /温和、可靠/);
+    await read('fixture.language("en");void 0');
+    await until('document.querySelector("textarea[name=assistant-persona]")?.placeholder.includes("Warm, reliable")');
+    assert.equal(await read('document.querySelector("textarea[name=assistant-persona]").value'), '');
+    await read('fixture.language("zh");void 0');
+    await until('document.querySelector("textarea[name=assistant-persona]")?.placeholder.includes("温和、可靠")');
     await fill(dialog+' input[name="assistant-name"]', '尚未保存的名称');
     await fill(dialog+' textarea', '尚未保存的交流方式');
     const cancelAvatarPicker = () => read('document.querySelector(".assistant-settings-dialog input[type=file]").dispatchEvent(new Event("cancel",{bubbles:true}));void 0');

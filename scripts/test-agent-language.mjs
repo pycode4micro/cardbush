@@ -103,7 +103,7 @@ test('children inherit human language evidence and fallback even when assignment
     assert.ok(child.prefixMessages.some(m => m.content.includes('Mode: professional')));
     assert.ok(child.prefixMessages.some(m => m.content.includes('ui_language_fallback: zh')));
     if (inherit) assert.deepEqual(child.prefixMessages, context.turn.contextMessages);
-    assert.equal(child.inputMessages.at(-1).message.content, '你当前处于子agent状态\n\nVerify the MCP source. Report in Chinese.');
+    assert.equal(child.inputMessages.at(-1).message.content, 'You are currently a child Agent.\n\nVerify the MCP source. Report in Chinese.');
     assert.equal(child.prefixMessages.some(m => m.content === parent.inputMessages.at(-1).message.content), inherit);
   }
 });
@@ -118,4 +118,26 @@ test('continuations are internal; explicit language and artifact requests remain
     assert.equal(turn.inputMessages.at(-1).message.visibility, undefined);
     assertOneCommunicationPolicy(turn.prefixMessages);
   }
+});
+
+test('new built-in model declarations use English descriptions while display titles remain bilingual', async t => {
+  const { InMemoryRuntimeHost } = await import('../packages/bush-runtime/dist/index.js');
+  const { withToolDisplayTitle, toolCallDisplay } = await import('../packages/bush-runtime/dist/toolDisplay.js');
+  const registry = new ToolRegistry();
+  const host = new InMemoryRuntimeHost({ toolRegistry: registry, registerDefaultWorkspaceTools: false });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const definitions = registry.definitions();
+  assert.ok(definitions.some(tool => tool.name === 'subagent'));
+  assert.ok(definitions.some(tool => tool.name === 'summary_for_user'));
+  for (const definition of definitions) {
+    assert.doesNotMatch(JSON.stringify(withToolDisplayTitle(definition)), /\p{Script=Han}/u, definition.name);
+  }
+  const native = { name: 'read_fixture', description: 'Read fixture', inputSchema: { type: 'object' } };
+  const presented = withToolDisplayTitle(native);
+  assert.deepEqual(presented.inputSchema.properties._display_title.required, ['zh', 'en']);
+  const title = { zh: '检查文件', en: 'Check files' };
+  const display = toolCallDisplay({ name: native.name, argumentsText: JSON.stringify({ _display_title: title }) }, native);
+  assert.equal(display.title, 'Check files');
+  assert.deepEqual(display.titles, title);
+  assert.doesNotMatch(GOAL_CONTINUATION_PROMPT, /\p{Script=Han}/u);
 });

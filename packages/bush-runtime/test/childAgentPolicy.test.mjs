@@ -55,7 +55,7 @@ test('inherited child input extends the exact cached prefix with frozen definiti
     { role: 'user', name: 'delivery_guidance', visibility: 'internal',
       content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') },
     { role: 'user', name: 'individuation_preference', visibility: 'internal', content: individuationPreferenceText() },
-    { role: 'user', content: '你当前处于子agent状态\n\n请验证修改；我将处理界面，接口结果稍后提供。' },
+    { role: 'user', content: 'You are currently a child Agent.\n\n请验证修改；我将处理界面，接口结果稍后提供。' },
   ]);
   const tracker = new CacheChainTracker();
   const baseline = tracker.observe(parent);
@@ -166,5 +166,5 @@ test('runtime child receives a restriction result and finishes without starting 
   assert.match(appended[0].content, /read_source_memos must bind it to this turn/);
   assert.equal(appended[1].name, 'individuation_preference');
   assert.equal(appended[1].content, individuationPreferenceText());
-  assert.ok(appended[2].content.startsWith('你当前处于子agent状态\n'));
+  assert.ok(appended[2].content.startsWith('You are currently a child Agent.\n'));
 });

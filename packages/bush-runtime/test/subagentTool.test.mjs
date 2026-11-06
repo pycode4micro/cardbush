@@ -82,9 +82,9 @@ test("forks the exact pre-dispatch context and tool declarations and returns the
     "evidence",
   ]);
   assert.deepEqual(childRequest.inputMessages.filter(item => item.message.visibility !== 'internal').map((item) => item.message.content), [
-    "你当前处于子agent状态\n\nbounded assignment",
+    "You are currently a child Agent.\n\nbounded assignment",
   ]);
-  assert.equal(childRequest.inputMessages.at(-1).message.content, '你当前处于子agent状态\n\nbounded assignment');
+  assert.equal(childRequest.inputMessages.at(-1).message.content, 'You are currently a child Agent.\n\nbounded assignment');
   assert.match(childRequest.inputMessages.find(item => item.message.name === 'individuation_preference').message.content,
     /habits disabled; next-step prediction disabled/);
   assert.deepEqual(childRequest.tools, parentRequest.tools);
@@ -380,7 +380,7 @@ test("keeps the parent non-blocking while sibling Subagents run and joins before
           ...base,
           sequence: 1,
           kind: "text_delta",
-          delta: request.messages.at(-1).content.replace(/^你当前处于子agent状态\n\n/, '').replace("task", "result"),
+          delta: request.messages.at(-1).content.replace(/^You are currently a child Agent.\n\n/, '').replace("task", "result"),
         };
         yield { ...base, sequence: 2, kind: "response_completed", finishReason: "stop" };
         return;

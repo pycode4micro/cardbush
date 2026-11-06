@@ -1,1 +1,1 @@
-检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。
+Check whether the current goal is complete. If it is not, continue working toward it. If it is complete or genuinely blocked, report the accurate status through update_goal.

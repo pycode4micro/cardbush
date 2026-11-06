@@ -2,6 +2,8 @@
   "locale": "en",
   "name": "English",
   "messages": {
+    "assistantSettingsDialog.defaultPersona": "Warm, reliable and natural. Allow time to pause and think.",
+    "realtimeVoiceSettingsPanel.defaultInstructions": "Speak naturally at a normal pace. Allow pauses and follow the user’s language.",
     "cliWebhook.usage": "/webhook connects a Bot to this session. Commands: status, start, connect [ID], disconnect [ID], stop. Advanced: port NUMBER.",
     "cliWebhook.description": "Connect a Bot to this session for conversation and tool file delivery",
     "cliWebhook.stopped": "CLI Webhook service stopped for all CLI sessions. Saved connections remain; /webhook start restores them.",

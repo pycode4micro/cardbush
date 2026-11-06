@@ -24,7 +24,7 @@ export interface RealtimeVoiceSelection { provider: RealtimeVoiceSettings['provi
 export const defaultRealtimeVoiceSettings: RealtimeVoiceSettings = {
   mode: 'realtime', provider: 'volcengine', hasApiKey: false,
   femaleVoice: 'zh_female_vv_jupiter_bigtts', maleVoice: 'zh_male_yunzhou_jupiter_bigtts',
-  instructions: '自然交流，使用正常语速，给用户留出思考和停顿的时间。跟随用户使用中文或英文。',
+  instructions: '',
 };
 export type RealtimeVoiceSettingsInput = Omit<RealtimeVoiceSettings, 'hasApiKey' | 'profiles'> & { apiKey?: string };
 export interface RealtimeToolCall { id: string; name: string; arguments: string }

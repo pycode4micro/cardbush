@@ -13,7 +13,7 @@ const { mcpAppDocument } = await loadChatTranscript({
   globals: { document: { documentElement: { lang: 'en' } } },
 });
 
-test('model policies preserve their pre-extraction text, slots and CommonJS packaging', async () => {
+test('model policies match reviewed text, slots and CommonJS packaging', async () => {
   const fixtures = JSON.parse(await readFile(new URL('./fixtures/prompt-template-digests.json', import.meta.url), 'utf8'));
   const native = createRequire(import.meta.url)('@cardbush/platform/prompts');
   for (const { name, slots, sha256 } of fixtures) {
@@ -47,4 +47,17 @@ test('UI bridge sources cannot reintroduce embedded document shells', async () =
     const source = await readFile(file, 'utf8');
     assert.doesNotMatch(source, /<(?:!doctype|style|script)[\s>]/i, file);
   }
+});
+
+test('all shipped model templates are English while interpolated user content stays verbatim', async () => {
+  const { readdir } = await import('node:fs/promises');
+  for (const file of await readdir('assets/prompts')) {
+    if (!file.endsWith('.md')) continue;
+    const source = await readFile(`assets/prompts/${file}`, 'utf8');
+    assert.doesNotMatch(source, /\p{Script=Han}/u, file);
+  }
+  const persona = '保持中文原文 $& {{value:name}}';
+  const output = renderPromptTemplate('assistant-system', { name: '小树', persona, host: 'local' });
+  assert.ok(output.includes(persona));
+  assert.ok(output.includes('小树'));
 });

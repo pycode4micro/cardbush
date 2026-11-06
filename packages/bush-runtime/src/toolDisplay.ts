@@ -23,7 +23,7 @@ export function withToolDisplayTitle(definition: ToolDefinition): ToolDefinition
       type: 'object',
       description: 'Bilingual UI action purpose; no status, reasoning, counters, secrets or success claims. Reuse for repeated checks; batches: outer call only, never third-party arguments.',
       properties: {
-        zh: { type: 'string', description: '简体中文，通常 6–16 字。' },
+        zh: { type: 'string', description: 'Simplified Chinese, usually 6–16 characters.' },
         en: { type: 'string', description: 'Equivalent English, 2–8 words.' },
       },
       required: ['zh', 'en'],

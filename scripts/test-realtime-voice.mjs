@@ -123,7 +123,7 @@ test('CardBush compatible provider negotiates the version and preserves live mod
   await pause();socket.open();
   const create=socket.sent[0];assert.equal(create.protocol,CARDBUSH_REALTIME_PROTOCOL);assert.equal(create.session.model,'voice/demo');
   assert.ok(create.session.instructions.includes('Nova'));assert.ok(create.session.tools.some(t=>t.name==='page_write'));
-  assert.match(create.session.instructions,/报告正文和明细表只放在文件中。语音只讲关键结论和执行结果/);
+  assert.match(create.session.instructions,/Keep report bodies and detailed tables in files\. Voice replies give only key findings and execution results/);
   assert.deepEqual(connected,{url:'ws://127.0.0.1:8765/realtime',headers:{}});
   socket.event({type:'session.created',protocol:CARDBUSH_REALTIME_PROTOCOL});await pending;
   f.service.save({...defaults,model:'another-model'});
@@ -464,7 +464,12 @@ test('personal voice session advertises page_write and custom persona without ch
   const ordinary=provider.start(defaults,'female').session;
   const personal=provider.start(defaults,'female',{name:'Lumi',persona:'安静、可靠'}).session;
   assert.equal(ordinary.tools.length,4);assert.equal(personal.tools.length,5);
-  assert.ok(!ordinary.instructions.includes('你是 CardBush'));
+  assert.doesNotMatch(ordinary.instructions, /\p{Script=Han}/u);
+  assert.match(ordinary.instructions, /Follow the user's language/);
+  assert.ok(personal.instructions.includes('安静、可靠'));
+  const custom=provider.start({...defaults,instructions:'保留自定义语音 {{value:name}}'},'female').session;
+  assert.ok(custom.instructions.includes('保留自定义语音 {{value:name}}'));
+  assert.ok(!custom.instructions.includes("Follow the user's language, whether Chinese or English"));
   assert.match(personal.instructions,/Lumi/);assert.match(personal.instructions,/page_write/);
 });
 

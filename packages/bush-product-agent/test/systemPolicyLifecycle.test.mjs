@@ -202,3 +202,35 @@ for (const version of ['2', '7', '8', '9']) test(`obsolete policy ${version} is 
   assert.equal((await host.runSessionTurn(request('fresh'))).payload.status, 'completed');
   assert.equal(store.modelContract('policy').version, '10');
 });
+
+
+test('language-only updates preserve old session contracts and bind English descriptions for new sessions', async t => {
+  const { withToolDisplayTitle } = await import('../../bush-runtime/dist/toolDisplay.js');
+  const f = fixture(t);
+  let { host, store, request } = f.open();
+  const initial = request('seed');
+  const oldTools = initial.tools.map(withToolDisplayTitle);
+  const oldRead = oldTools.find(tool => tool.name === 'read_fixture');
+  oldRead.inputSchema.properties._display_title.properties.zh.description = '简体中文，通常 6–16 字。';
+  store.ensureSession('policy');
+  store.bindModelContract('policy', { policyId: 'cardbush.product', version: '10', system: initial.prefixMessages[0], tools: oldTools });
+  const saved = structuredClone(store.modelContract('policy'));
+  await host.runSessionTurn(request('continued'));
+  await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+  ({ host, store, request } = f.open());
+  await host.runSessionTurn(request('restarted'));
+  store.ensureSession('language-fork'); store.fork('policy', 'language-fork');
+  await host.runSessionTurn(request('forked', { sessionId: 'language-fork' }));
+  const tracker = new CacheChainTracker();
+  for (const observed of f.observed) {
+    assert.deepEqual(observed.tools, saved.tools);
+    assert.equal(tracker.observe(observed).frozenPrefixBreak, false);
+  }
+  assert.deepEqual(store.modelContract('policy'), saved);
+  assert.equal(f.facts.filter(fact => fact.sessionId === 'policy' && fact.kind === 'model_contract_bound').length, 1);
+  await host.runSessionTurn(request('fresh', { sessionId: 'language-new' }));
+  const newRead = f.observed.at(-1).tools.find(tool => tool.name === 'read_fixture');
+  assert.equal(newRead.inputSchema.properties._display_title.properties.zh.description, 'Simplified Chinese, usually 6–16 characters.');
+  assert.deepEqual(newRead.inputSchema.properties._display_title.required, ['zh', 'en']);
+  assert.deepEqual(store.modelContract('policy'), saved, 'a fresh binding must not migrate historical records');
+});

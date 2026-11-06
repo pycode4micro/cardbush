@@ -67,6 +67,14 @@ app.whenReady().then(async () => {
   try {
     await win.loadFile(path.join(directory,'index.html'));await until('document.querySelector(".voice-settings")');
     assert.equal(await read('!!document.querySelector(".app .voice-settings")'),true,'settings inherit application theme');
+    await until('document.querySelector(".voice-realtime-prompt textarea")?.disabled===false');
+    assert.equal(await read('document.querySelector(".voice-realtime-prompt textarea").value'),'');
+    assert.match(await read('document.querySelector(".voice-realtime-prompt textarea").placeholder'),/自然交流/);
+    await read('fixture.language("en");void 0');
+    await until('document.querySelector(".voice-realtime-prompt textarea")?.placeholder.includes("Speak naturally")');
+    assert.equal(await read('document.querySelector(".voice-realtime-prompt textarea").value'),'');
+    await read('fixture.language("zh");void 0');
+    await until('document.querySelector(".voice-realtime-prompt textarea")?.placeholder.includes("自然交流")');
     assert.equal(await read('document.querySelector("[role=combobox][aria-label=通话模式]").value'),'realtime');
     await until('(async()=>document.querySelector(".realtime-voice-picker [role=combobox]").value===(await cardbushDesktop.voice.realtime.settings()).maleVoice)()');
     assert.equal(await read(`document.querySelector('input[aria-label="API Key"]').type`),'password');

@@ -505,3 +505,22 @@ test('reset forgets memory and isolates late replies and transcripts without del
     assert.equal(journal.read(id).filter(message=>message.role==='assistant').length,1);
   }finally{old.resolve();fresh.resolve();assistant.close();}
 });
+
+test('assistant defaults are English model instructions and custom personas remain unmodified', async () => {
+  for (const persona of ['', '温和、可靠、自然地交流。尊重用户的停顿和思考时间。', '  自定义角色 {{value:host}}  ']) {
+    const journal = new ConversationJournal(temporary()), requests = [];
+    const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
+      delegate: async () => { throw Error('No delegation expected'); }, provider: { async *stream(request) {
+        requests.push(request); yield* response(request, { text: '已完成。' });
+      } } });
+    try {
+      assistant.command({ action: 'turn', sessionId: id, entry: entry('language'), parent: parent(), profile: assistantProfileSchema.parse({ persona }) });
+      await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
+      assert.equal(assistant.command({ action: 'read', sessionId: id }).error, '');
+      const system = requests[0].messages.find(message => message.role === 'system').content;
+      if (persona) assert.ok(system.includes(persona));
+      else { assert.doesNotMatch(system, /\p{Script=Han}/u); assert.match(system, /Respect the user's pauses and thinking time/); }
+      assert.ok(requests[0].messages.some(message => message.role === 'user' && message.content.includes('请帮我检查文件')));
+    } finally { assistant.close(); }
+  }
+});

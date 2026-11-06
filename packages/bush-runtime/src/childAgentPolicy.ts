@@ -1,7 +1,7 @@
 import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, type ModelRequest } from '@cardbush/bush-protocol';
 import type { ToolRegistration } from './toolRegistry.js';
 
-export const CHILD_AGENT_ASSIGNMENT_PREFIX = '你当前处于子agent状态';
+export { CHILD_AGENT_ASSIGNMENT_PREFIX } from '@cardbush/bush-protocol';
 
 export function childAgentDispatchDenial(request?: Pick<ModelRequest, 'metadata'>) {
   if (request?.metadata.agentRole !== 'child') return undefined;

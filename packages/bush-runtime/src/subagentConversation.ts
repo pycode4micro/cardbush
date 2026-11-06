@@ -1,5 +1,5 @@
 import type { RuntimeSessionTurnRequest, SessionSnapshot, SessionMessage } from '@cardbush/bush-protocol';
-import { CHILD_AGENT_ASSIGNMENT_PREFIX } from './childAgentPolicy.js';
+import { childAgentAssignmentText } from '@cardbush/bush-protocol';
 
 export function childConversationReadHint(taskId?: string): string {
   const target = taskId ? JSON.stringify(taskId) : 'task_id';
@@ -53,11 +53,11 @@ export function childConversationPage(session: SessionSnapshot | ChildConversati
   let budget = 16000;
   while (index < source.length && budget > 0 && messages.length < 40) {
     const entry = source[index];
-    const legacyAssignment = entry.message.role === 'user' && entry.message.content.startsWith(CHILD_AGENT_ASSIGNMENT_PREFIX + '\n');
-    const content = legacyAssignment ? entry.message.content.slice(CHILD_AGENT_ASSIGNMENT_PREFIX.length).trimStart() : entry.message.content;
+    const assignment = entry.message.role === 'user' ? childAgentAssignmentText(entry.message.content) : undefined;
+    const content = assignment ?? entry.message.content;
     const part = content.slice(offset, offset + budget);
     messages.push({ messageId: entry.messageId, turnId: entry.turnId, role: entry.message.role,
-      author: entry.message.role === 'user' ? (entry.metadata?.subagentAuthor === 'parent' || legacyAssignment ? 'parent_agent' : 'user') : 'child_agent',
+      author: entry.message.role === 'user' ? (entry.metadata?.subagentAuthor === 'parent' || assignment !== undefined ? 'parent_agent' : 'user') : 'child_agent',
       createdAt: entry.createdAt, content: part, contentOffset: offset, complete: offset + part.length >= content.length,
     });
     budget -= part.length;

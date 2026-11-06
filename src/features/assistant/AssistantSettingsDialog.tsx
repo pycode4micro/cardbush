@@ -55,7 +55,7 @@ export function AssistantSettingsDialog({ language, onClose }: { language: strin
         <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; void choose(file); }}/>
       </div>
       <label>{uiText(language)('agentConnectionForm.name')}<input ref={nameInput} name="assistant-name" value={name} maxLength={60} onChange={event => { setName(event.target.value); setError(''); }}/></label>
-      <label>{uiText(language)('assistantSettingsDialog.personaAndConversationStyle')}<textarea name="assistant-persona" value={persona} maxLength={2000} rows={5} onChange={event => setPersona(event.target.value)}/></label>
+      <label>{uiText(language)('assistantSettingsDialog.personaAndConversationStyle')}<textarea name="assistant-persona" value={persona} placeholder={uiText(language)('assistantSettingsDialog.defaultPersona')} maxLength={2000} rows={5} onChange={event => setPersona(event.target.value)}/></label>
       <p className="assistant-settings-note">{uiText(language)('assistantSettingsDialog.personaChangesApplyToTheNextCall')}</p>
       {error && <p className="assistant-settings-error" role="alert">{error}</p>}
       <footer><button type="button" onClick={onClose}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit" disabled={loading}>{uiText(language)('appCenter.save')}</button></footer>

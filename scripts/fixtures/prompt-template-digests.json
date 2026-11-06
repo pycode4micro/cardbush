@@ -26,7 +26,7 @@
   {
     "name": "goal-continuation-prompt",
     "slots": [],
-    "sha256": "bc390ec6b406d71325374b871b3839f16bd19cdd576b2c6a590b95aa2aaa4679"
+    "sha256": "dbb622005b6e7358361527608f1dcf3e7689e12fdd0d1c94dc13ac14965d9232"
   },
   {
     "name": "conversation-style-instructions",
@@ -66,7 +66,7 @@
   {
     "name": "preview-selection-instructions",
     "slots": [],
-    "sha256": "3fea8a36e42568bdae3e226a3617abbf81a6e3ce32c25fd04d1b8f6a6ab548f1"
+    "sha256": "db23475671d33b7dae16fe480015df63eadf7e269d7790794bb39e85f627d402"
   },
   {
     "name": "assistant-system",
@@ -143,5 +143,43 @@
       "language"
     ],
     "sha256": "198c15642f8354f6c2d802027f71c36c9d6da65de0c5fb1724a67c9db3a5d1b9"
+  },
+  {
+    "name": "assistant-default-persona",
+    "slots": [],
+    "sha256": "f1afeb8d3ce234d8b56dc42198c9a3606e600f7464ce4328d0cd339a01af0646"
+  },
+  {
+    "name": "child-agent-assignment-prefix",
+    "slots": [],
+    "sha256": "18b664d87ae07e365fd6268d31e17390f0d71af34e03b2e151f67cdb1aaf746e"
+  },
+  {
+    "name": "next-step-prediction-text-description",
+    "slots": [],
+    "sha256": "6a248feaa688541f21d30c55849050ef59ef31b974ba8f2d84c971203574e338"
+  },
+  {
+    "name": "realtime-assistant-persona",
+    "slots": [
+      "name",
+      "persona"
+    ],
+    "sha256": "1f006a19aa09c20516b92796fe3afcd750b2e05f668d015c477e593d54b08e39"
+  },
+  {
+    "name": "realtime-default-instructions",
+    "slots": [],
+    "sha256": "beec2868cb860fd92cf04543b01d49be4a8eb39dab8d417fd53f24d33e7c88e9"
+  },
+  {
+    "name": "realtime-execution-instructions",
+    "slots": [],
+    "sha256": "52aef65206dee815c0a88085a55d9e9760d3d0d22455689e3c531d009c2bbd86"
+  },
+  {
+    "name": "subagent-name-description",
+    "slots": [],
+    "sha256": "a4006bf348c1dcf9d736f7c435cfe0be9cb9632711a01491f61a147565551af5"
   }
 ]

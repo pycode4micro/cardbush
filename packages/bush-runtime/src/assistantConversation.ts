@@ -245,7 +245,7 @@ export class AssistantConversation {
     // Commit the reference and consumed input together. Retries/restart keep the
     // same delivered prefix; reset cannot resurrect an in-flight recall.
     history.append(incoming, remaining.map(item => item.id));
-    const system: ModelMessage = { role: 'system', content: renderPromptTemplate('assistant-system', { name: profile.name, persona: profile.persona, host: profile.targetAgent ? 'remote ' + JSON.stringify(profile.targetAgent) : 'local' }) };
+    const system: ModelMessage = { role: 'system', content: renderPromptTemplate('assistant-system', { name: profile.name, persona: profile.persona.trim() ? profile.persona : renderPromptTemplate('assistant-default-persona'), host: profile.targetAgent ? 'remote ' + JSON.stringify(profile.targetAgent) : 'local' }) };
     if (this.deps.memory) system.content += renderPromptTemplate('assistant-memory');
     system.content += '\n' + REPORT_DELIVERY_INSTRUCTIONS + renderPromptTemplate('assistant-report');
     if (activeSources.size || parent.prefixMessages.some(message => message.role === 'developer' && message.name === 'webhook_delivery_policy')) system.content += '\n' + WEBHOOK_FINAL_REPLY_INSTRUCTIONS;

@@ -1,3 +1,4 @@
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { z } from 'zod';
 
 /** A saved forecast for an editable draft, never a queued request or authorization. */
@@ -8,7 +9,7 @@ export const nextStepPredictionSchema = z.object({
 });
 export type NextStepPrediction = z.infer<typeof nextStepPredictionSchema>;
 
-export const NEXT_STEP_PREDICTION_TEXT_DESCRIPTION = 'One short message the USER could send next to the assistant, in the user\'s voice and language (at most 320 characters). Ground it in the latest exchange. Example: "帮我运行这个示例流程。" / "Run this example workflow for me." Never write "用户可能…" / "The user may…", an assistant plan ("I will…"), explanations, role labels or alternative next steps. Put applicability conditions in applies_when. Do not invent missing requirements or approvals. If no single useful next request is clear, omit prediction entirely; do not use an empty object.';
+export const NEXT_STEP_PREDICTION_TEXT_DESCRIPTION = renderPromptTemplate('next-step-prediction-text-description');
 
 /** A conservative presentation check, not an inference of intent or permission.
  * Historical memory may legitimately contain narration. Keep that record, but

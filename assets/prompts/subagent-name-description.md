@@ -1,0 +1,1 @@
+Short responsibility label in the user's language, e.g. visual designer or API reviewer; put assignment details in prompt. New ad-hoc children only. Omit when task_id or agent_id is supplied: follow-ups and registered employees keep their existing name. This labels the task without changing its instructions or permissions.

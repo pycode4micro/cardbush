@@ -65,7 +65,7 @@ test('ordinary dispatch defaults to fork and retains the exact parent prefix and
     content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') });
   assert.deepEqual(f.requests[0].inputMessages[1].message, { role: 'user', name: 'individuation_preference', visibility: 'internal',
     content: individuationPreferenceText() });
-  assert.match(f.requests[0].inputMessages[2].message.content, /^你当前处于子agent状态\n\n我继续实现/);
+  assert.match(f.requests[0].inputMessages[2].message.content, /^You are currently a child Agent.\n\n我继续实现/);
 });
 
 test('explicit clean supplies the actual system and user messages without inherited history or fallback policy', async () => {
@@ -80,7 +80,7 @@ test('explicit clean supplies the actual system and user messages without inheri
     { role: 'user', name: 'delivery_guidance', visibility: 'internal', content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') },
     { role: 'user', name: 'individuation_preference', visibility: 'internal',
       content: individuationPreferenceText() },
-    { role: 'user', content: `你当前处于子agent状态\n\n${clean.prompt}` },
+    { role: 'user', content: `You are currently a child Agent.\n\n${clean.prompt}` },
   ]);
   assert.deepEqual(child.tools, []);
   assert.deepEqual(child.metadata.childToolAllowlist, []);

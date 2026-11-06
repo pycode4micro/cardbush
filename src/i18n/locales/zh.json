@@ -2,6 +2,8 @@
   "locale": "zh",
   "name": "中文",
   "messages": {
+    "assistantSettingsDialog.defaultPersona": "温和、可靠、自然地交流，尊重停顿和思考时间。",
+    "realtimeVoiceSettingsPanel.defaultInstructions": "自然交流，使用正常语速，留出思考和停顿的时间，跟随用户使用的语言。",
     "cliWebhook.usage": "/webhook 将 Bot 连接到当前会话。命令：status、start、connect [ID]、disconnect [ID]、stop。高级设置：port 端口号。",
     "cliWebhook.description": "将 Bot 连接到当前会话，支持对话和工具发送文件",
     "cliWebhook.stopped": "已停止所有 CLI 会话的 Webhook 服务，连接配置保留；用 /webhook start 恢复。",

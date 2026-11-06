@@ -36,7 +36,7 @@ export function RealtimeVoiceSettingsPanel({ language, legacyVoice='female' }: {
       {value.hasApiKey&&<label className="voice-help"><input type="checkbox" disabled={!loaded||busy} checked={remove} onChange={event=>{setRemove(event.target.checked);setKey('');setSaved(false);}}/>{uiText(language)('realtimeVoiceSettingsPanel.removeSavedKey')}</label>}
       <p className="voice-help">{uiText(language)('realtimeVoiceSettingsPanel.profilesAndEncryptedKeysAreStoredSeparately')}</p>
       <RealtimeVoicePicker key={value.provider} language={language} value={selectedValue} disabled={!loaded||busy} onChange={(voiceId,customVoices)=>change({voiceId,...(customVoices?{customVoices}:{})})}/>
-      <label className="voice-realtime-prompt">{uiText(language)('realtimeVoiceSettingsPanel.conversationInstructionsUpTo2000Characters')}<textarea rows={5} maxLength={2000} value={value.instructions} disabled={!loaded||busy} onChange={event=>change({instructions:event.target.value})}/></label>
+      <label className="voice-realtime-prompt">{uiText(language)('realtimeVoiceSettingsPanel.conversationInstructionsUpTo2000Characters')}<textarea rows={5} maxLength={2000} value={value.instructions} placeholder={uiText(language)('realtimeVoiceSettingsPanel.defaultInstructions')} disabled={!loaded||busy} onChange={event=>change({instructions:event.target.value})}/></label>
       <p className="voice-help">{uiText(language)('realtimeVoiceSettingsPanel.theVoiceModelDelegatesTasksToThe')}</p>
     </>}
     {error&&<p className="voice-error" role="alert">{error}</p>}

@@ -1,5 +1,5 @@
 import { uiText } from '../../i18n';
-import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
+import { childAgentAssignmentText, readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { createPortal } from 'react-dom';
 import { EmployeeIcon, employeeTaskTitle, isEmployeeTask } from '../team/employeePresentation';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -231,11 +231,11 @@ export function childConversationMessages(messages: ChatMessage[], task: Subagen
     .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
   const result = messages.map(message => {
     if (message.role !== 'user') return message;
-    const legacy = message.content.startsWith('你当前处于子agent状态\n');
+    const assignment = childAgentAssignmentText(message.content);
     const author = message.metadata?.subagent_author ?? message.metadata?.subagentAuthor;
-    const parent = legacy || author === 'parent' ||
+    const parent = assignment !== undefined || author === 'parent' ||
       (!author && assignments.some(assignment => message.turnId === assignment.childTurnId && message.content === assignment.requestPrompt));
-    return { ...message, content: legacy ? message.content.replace(/^你当前处于子agent状态\s*\n+/, '') : message.content,
+    return { ...message, content: assignment ?? message.content,
       metadata: { ...message.metadata, subagent_author: parent ? 'parent' : 'user' } };
   });
   // Active turns are not committed yet. Show both initial and resumed assignments
