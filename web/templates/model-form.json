@@ -1,0 +1,22 @@
+{
+  "efforts": {
+    "default": "web.providerDefault",
+    "none": "web.none",
+    "low": "composer.low",
+    "medium": "composer.medium",
+    "high": "composer.high",
+    "xhigh": "web.extraHigh",
+    "max": "composer.max"
+  },
+  "protocols": {
+    "openai_responses": "OpenAI Responses",
+    "openai_chat_completions": "OpenAI Chat Completions",
+    "anthropic_messages": "Anthropic Messages"
+  },
+  "defaults": {
+    "baseURL": "https://ark.cn-beijing.volces.com/api/v3",
+    "apiProtocol": "openai_responses",
+    "reasoningEffort": "medium",
+    "imageModel": "doubao-seedream-5-0-flash-260915"
+  }
+}

@@ -1,0 +1,13 @@
+
+    <div class="office-reader-toolbar" role="toolbar" aria-label="{{text:toolbar}}">
+      {{html:navigation}}
+      <div class="reader-group zoom-controls" aria-label="{{text:zoom}}">
+        <button type="button" data-action="zoom-out" aria-label="{{text:zoomOut}}">−</button>
+        <button type="button" class="zoom-value" data-action="zoom-reset" data-zoom-value aria-label="{{text:zoomReset}}">100%</button>
+        <button type="button" data-action="zoom-in" aria-label="{{text:zoomIn}}">＋</button>
+      </div>
+      <button type="button" data-action="fit">{{text:fitLabel}}</button>
+      {{html:viewOptions}}
+      <span class="reader-spacer"></span>
+      <span class="office-status" aria-live="polite">100%</span>
+    </div>

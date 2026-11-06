@@ -1,0 +1,112 @@
+(() => {
+  const readerKind = {{json:readerKind}};
+  const root = document.documentElement;
+  const state = { zoom: 1, slide: 0, sheet: 0 };
+  const statusNodes = () => document.querySelectorAll('.office-status');
+  const setStatus = (value) => statusNodes().forEach((node) => { node.textContent = value; });
+  globalThis.cardbushSetOfficeStatus = setStatus;
+  const applyZoom = () => {
+    root.style.setProperty('--office-user-zoom', String(state.zoom));
+    document.querySelectorAll('.docx-wrapper').forEach((wrapper) => {
+      const fitScale = Number(wrapper.dataset.fitScale) || 1;
+      wrapper.style.zoom = String(fitScale * state.zoom);
+    });
+    const zoomLabel = Math.round(state.zoom * 100) + '%';
+    document.querySelectorAll('[data-zoom-value]').forEach((node) => { node.textContent = zoomLabel; });
+    setStatus(zoomLabel);
+    window.dispatchEvent(new Event('office:viewport-change'));
+  };
+  globalThis.cardbushApplyOfficeZoom = applyZoom;
+  const showSheet = (index) => {
+    const sheets = [...document.querySelectorAll('[data-sheet]')];
+    if (!sheets.length) return;
+    state.sheet = Math.max(0, Math.min(index, sheets.length - 1));
+    sheets.forEach((sheet, sheetIndex) => { sheet.hidden = sheetIndex !== state.sheet; });
+    document.querySelectorAll('[data-sheet-index]').forEach((button) => {
+      const active = Number(button.dataset.sheetIndex) === state.sheet;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+    const activeButton = document.querySelector('[data-sheet-index="' + state.sheet + '"]');
+    setStatus(activeButton ? activeButton.textContent.trim() : {{json:sheetNumber}}.replace('{index}', String(state.sheet + 1)));
+  };
+  const showSlide = (index) => {
+    const slides = [...document.querySelectorAll('[data-slide]')];
+    if (!slides.length) return;
+    state.slide = Math.max(0, Math.min(index, slides.length - 1));
+    slides.forEach((slide, slideIndex) => { slide.hidden = slideIndex !== state.slide; });
+    document.querySelectorAll('[data-slide-counter]').forEach((node) => {
+      node.textContent = (state.slide + 1) + ' / ' + slides.length;
+    });
+    setStatus({{json:slideNumber}}.replace('{index}', String(state.slide + 1)).replace('{count}', String(slides.length)));
+    requestAnimationFrame(() => window.dispatchEvent(new Event('office:viewport-change')));
+  };
+  globalThis.cardbushSlidesReady = () => showSlide(state.slide);
+  document.addEventListener('click', (event) => {
+    const sheetTab = event.target.closest('[data-sheet-index]');
+    if (sheetTab) {
+      showSheet(Number(sheetTab.dataset.sheetIndex));
+      return;
+    }
+    const cell = event.target.closest('td[data-cell]');
+    if (cell) {
+      document.querySelectorAll('td.selected').forEach((node) => node.classList.remove('selected'));
+      cell.classList.add('selected');
+      const worksheet = cell.closest('.worksheet');
+      const formulaValue = worksheet?.querySelector('.excel-formula-bar div');
+      if (formulaValue) formulaValue.textContent = cell.dataset.cell + '    ' + cell.textContent;
+      setStatus(cell.dataset.cell);
+      return;
+    }
+    const command = event.target.closest('button[data-action]');
+    if (!command) return;
+    const action = command.dataset.action;
+    if (action === 'zoom-in') state.zoom = Math.min(2, Math.round((state.zoom + 0.1) * 10) / 10);
+    if (action === 'zoom-out') state.zoom = Math.max(0.5, Math.round((state.zoom - 0.1) * 10) / 10);
+    if (action === 'zoom-reset' || action === 'fit') state.zoom = 1;
+    if (action === 'zoom-in' || action === 'zoom-out' || action === 'zoom-reset' || action === 'fit') applyZoom();
+    if (action === 'previous-slide') showSlide(state.slide - 1);
+    if (action === 'next-slide') showSlide(state.slide + 1);
+    if (action === 'toggle-gridlines') {
+      document.body.classList.toggle('hide-gridlines');
+      command.setAttribute('aria-pressed', String(!document.body.classList.contains('hide-gridlines')));
+      setStatus(document.body.classList.contains('hide-gridlines') ? {{json:gridHidden}} : {{json:gridShown}});
+    }
+    if (action === 'toggle-formula') {
+      document.body.classList.toggle('hide-formula-bars');
+      document.querySelectorAll('[data-action="toggle-formula"]').forEach((button) => button.setAttribute('aria-pressed', String(!document.body.classList.contains('hide-formula-bars'))));
+      setStatus(document.body.classList.contains('hide-formula-bars') ? {{json:formulaHidden}} : {{json:formulaShown}});
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && (event.key === '+' || event.key === '=' || event.key === '-')) {
+      event.preventDefault();
+      state.zoom = event.key === '-'
+        ? Math.max(0.5, Math.round((state.zoom - 0.1) * 10) / 10)
+        : Math.min(2, Math.round((state.zoom + 0.1) * 10) / 10);
+      applyZoom();
+      return;
+    }
+    if (modifier && event.key === '0') {
+      event.preventDefault();
+      state.zoom = 1;
+      applyZoom();
+      return;
+    }
+    if (readerKind !== 'slides' || modifier || event.altKey) return;
+    if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+      event.preventDefault();
+      showSlide(state.slide - 1);
+    }
+    if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ') {
+      event.preventDefault();
+      showSlide(state.slide + 1);
+    }
+    if (event.key === 'Home') showSlide(0);
+    if (event.key === 'End') showSlide(Number.MAX_SAFE_INTEGER);
+  });
+  if (readerKind === 'workbook') showSheet(0);
+  if (readerKind === 'slides') globalThis.cardbushSlidesReady();
+  applyZoom();
+})();

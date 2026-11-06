@@ -1,3 +1,5 @@
+import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
+import { renderHtmlTemplate } from '@cardbush/platform/templates';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -36,7 +38,7 @@ export async function readCanvas(file: string): Promise<CanvasSnapshot> {
 }
 
 export class CreationCanvasFiles {
-  constructor(private choose: (action: 'open' | 'export' | 'repository') => Promise<string | undefined>) {}
+  constructor(private choose: (action: 'open' | 'export' | 'repository') => Promise<string | undefined>, private language: () => string = () => 'en') {}
   async command(input: CanvasFileRequest): Promise<CanvasFileResponse> {
     if (!input || typeof input !== 'object') throw Error('Invalid canvas request.');
     if (input.action === 'open') { const selected = await this.choose('open'); return selected ? readCanvas(selected) : null; }
@@ -52,14 +54,14 @@ export class CreationCanvasFiles {
     if (input.action === 'save' || input.action === 'freeze' || input.action === 'unfreeze') {
       return withCanvasFileLock(input.path, async () => {
         const current = await readCanvas(input.path);
-        if (current.revision !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: 画板已有新修改，请刷新后重试。');
+        if (current.revision !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: ' + uiText(this.language())('template.canvasChanged'));
         let document: CreationCanvas;
         if (input.action === 'save') {
           document = creationCanvasSchema.parse(input.document);
           assertCanvasVersionsUnchanged(current.document, document);
         } else {
           const item = current.document.items.find(item => item.id === input.itemId);
-          if (!item) throw Error('画板区域已移除。 / Region no longer exists.');
+          if (!item) throw Error(uiText(this.language())('template.regionGone'));
           const replacement = input.action === 'unfreeze' ? releaseCanvasVersion(item) : await captureCanvasVersion(item, input.path, {
             read: async file => { if ((await fs.stat(file)).size > 128 * 1024 * 1024) throw Error('File exceeds 128 MiB.'); return fs.readFile(file); },
             write: async (file, bytes) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, bytes, { flag: 'wx' }); },
@@ -69,7 +71,7 @@ export class CreationCanvasFiles {
         const content = serialize(document);
         const temporary = `${input.path}.${randomUUID()}.tmp`;
         try { await fs.writeFile(temporary, content, { flag: 'wx' }); await replaceFileWithRetry(temporary, input.path, async () => {
-          if (digest(await fs.readFile(input.path, 'utf8')) !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: 画板已有新修改，请刷新后重试。');
+          if (digest(await fs.readFile(input.path, 'utf8')) !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: ' + uiText(this.language())('template.canvasChanged'));
         }); }
         finally { await fs.unlink(temporary).catch(() => {}); }
         return readCanvas(input.path);
@@ -85,18 +87,18 @@ export class CreationCanvasFiles {
     }
     if (input.action === 'export') {
       const current = await readCanvas(input.path);
-      if (current.revision !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: 请刷新画板后重新导出。');
+      if (current.revision !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: ' + uiText(this.language())('template.canvasExportChanged'));
       const directory = await this.choose('export');
-      return directory ? { path: await exportCanvas(current, directory) } : null;
+      return directory ? { path: await exportCanvas(current, directory, this.language()) } : null;
     }
     throw Error('Unknown canvas action.');
   }
 }
 
 /** Copies only referenced files and their explicit local resource dependencies. */
-export async function exportCanvas(snapshot: CanvasSnapshot, parent: string) {
+export async function exportCanvas(snapshot: CanvasSnapshot, parent: string, language = 'en') {
   if (!path.isAbsolute(parent)) throw Error('Choose an export folder.');
-  const name = (snapshot.document.title || '创作空间').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 60).replace(/[. ]+$/, '') || 'Canvas';
+  const name = (snapshot.document.title || uiText(language)('template.canvasFolder')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 60).replace(/[. ]+$/, '') || 'Canvas';
   const folder = await fs.mkdtemp(path.join(parent, name + '-'));
   const assets = path.join(folder, 'assets'); await fs.mkdir(assets);
   const copied = new Map<string, string>(); let bytes = 0;
@@ -140,13 +142,13 @@ export async function exportCanvas(snapshot: CanvasSnapshot, parent: string) {
         : await copy(item.reference.source, path.dirname(snapshot.path));
     }
     await fs.writeFile(path.join(folder, CANVAS_FILE_NAME), serialize(document));
-    await fs.writeFile(path.join(folder, 'index.html'), canvasExportHtml(document));
-    await fs.writeFile(path.join(folder, 'README.txt'), '在 CardBush 创作中打开 space.canvas.json 可继续编辑完整画板。\nindex.html 可在浏览器查看 HTML、图片、PDF 和媒体；Office 文件请在 CardBush 中查看。\n外部网页仍需要联网。文件选区为带来源信息的快照。\n');
+    await fs.writeFile(path.join(folder, 'index.html'), canvasExportHtml(document, language));
+    await fs.writeFile(path.join(folder, 'README.txt'), uiText(language)('template.canvasReadme'));
     return folder;
   } catch (error) { await fs.rm(folder, { recursive: true, force: true }); throw error; }
 }
 
-function canvasExportHtml(document: CreationCanvas) {
+function canvasExportHtml(document: CreationCanvas, language: string) {
   const items = document.items.map(item => {
     const frame = item.frame;
     const url = item.kind === 'file' ? escapeHtml(/^(?:https?:|data:)/i.test(item.source) ? item.source : item.source.split('/').map(encodeURIComponent).join('/')) : '';
@@ -157,8 +159,11 @@ function canvasExportHtml(document: CreationCanvas) {
       : /\.(mp4|webm|mov)$/.test(extension) ? `<video controls src="${url}"></video>`
       : /\.(mp3|wav|ogg|m4a|flac)$/.test(extension) ? `<audio controls src="${url}"></audio>`
       : /\.(pdf|html?)$/.test(extension) ? `<iframe sandbox="allow-scripts" src="${url}"></iframe>`
-      : `<a href="${url}">${escapeHtml(item.title || '打开文件 / Open file')}</a>`;
+      : `<a href="${url}">${escapeHtml(item.title || uiText(language)('template.openFile'))}</a>`;
     return `<section style="left:${frame.x}px;top:${frame.y}px;width:${frame.width}px;height:${frame.height}px">${content}</section>`;
   }).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(document.title)}</title><style>body{margin:0;background:${document.background};color:#eee;font:16px system-ui}main{position:relative;width:${document.width}px;height:${document.height}px}section{position:absolute;overflow:auto}iframe,img,video{width:100%;height:100%;object-fit:contain;border:0}pre{white-space:pre-wrap;margin:20px}a{color:#9cc7ff}</style></head><body><main>${items}</main></body></html>`;
+  return renderHtmlTemplate('canvas-export', { language: resolveUiLanguage(language), title: document.title,
+    background: document.background,
+    width: document.width,
+    height: document.height }, { items: items });
 }

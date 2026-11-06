@@ -1,3 +1,4 @@
+import { uiText } from '@cardbush/platform/i18n';
 export type User = { id: string; username: string; display_name: string; role: string; is_active: boolean; department_id: string | null; department_name?: string | null; company_id?: string | null; company_name?: string | null; deleted_at?: string | null };
 export type Company = { id: string; name: string; description: string; department_count: number; member_count: number };
 export type Department = { id: string; name: string; description: string | null; company_id: string; company_name: string; is_active: boolean; member_count: number };
@@ -28,7 +29,7 @@ export async function api<T>(path: string, method = 'GET', data?: unknown, signa
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     if (response.status === 401 && !path.endsWith('/login') && epoch === identityEpoch) window.dispatchEvent(new Event('cardbush:logged-out'));
-    throw new ApiError(body?.error ?? '连接失败，请稍后重试。', response.status);
+    throw new ApiError(body?.error ?? uiText()("web.connectionFailedPleaseTryAgainLater"), response.status);
   }
   return body as T;
 }

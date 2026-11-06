@@ -1,3 +1,5 @@
+import { uiText } from '@cardbush/platform/i18n';
+import { renderHtmlTemplate } from '@cardbush/platform/templates';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -132,39 +134,28 @@ export async function readTextPreviewResult(filePath: string) {
   }
 }
 
-export async function renderTextFilePreview(filePath: string, previewError = '') {
+export async function renderTextFilePreview(filePath: string, previewError = '', language = 'en') {
+  const nativeText = () => uiText(language);
   const { bytes, truncated } = await readPreviewBytes(filePath);
   let text: string;
   let notice: string;
   try {
     const decoded = decodeTextPreview(bytes, filePath, truncated);
     text = decoded.content;
-    notice = [decoded.encoding.toUpperCase(), truncated ? '文件较大，仅显示前 2 MiB。' : '文本预览'].join(' · ');
+    notice = [decoded.encoding.toUpperCase(), truncated ? nativeText()("template.textTruncated") : nativeText()("template.textPreview")].join(' · ');
   } catch (error) {
     if (!(error instanceof TextPreviewError)) throw error;
     text = Array.from(bytes.subarray(0, 4096))
       .map((value, index) => `${index % 16 === 0 ? `\n${index.toString(16).padStart(8, '0')}  ` : ''}${value.toString(16).padStart(2, '0')} `)
       .join('').trim();
     notice = error.code === 'text_preview_binary'
-      ? '检测到二进制内容，以下显示前 4 KiB 十六进制数据。'
-      : '无法可靠解码文本，以下显示前 4 KiB 十六进制数据。';
+      ? nativeText()("template.binary")
+      : nativeText()("template.undecodable");
   }
-  if (previewError) notice = `专用预览加载失败：${previewError} · ${notice}`;
-  return `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="color-scheme" content="dark light">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-<title>${escapePreviewHtml(path.basename(filePath))}</title>
-<style>
-:root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background:#1c1b19; color:#dedbd4; }
-body { margin:0; min-height:100vh; background:#1c1b19; }
-header { position:sticky; top:0; padding:10px 14px; background:#2b2b2b; border-bottom:1px solid rgba(255,255,255,.08); z-index:1; }
-header strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12px system-ui,sans-serif; }
-header small { display:block; margin-top:4px; color:#99958d; font:11px system-ui,sans-serif; }
-pre { margin:0; padding:14px; overflow:auto; color:#d7d3cb; font-size:12px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
-</style></head><body><header><strong>${escapePreviewHtml(filePath)}</strong><small>${escapePreviewHtml(notice)}</small></header><pre>${escapePreviewHtml(text)}</pre></body></html>`;
-}
-
-function escapePreviewHtml(value: string) {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+  if (previewError) notice = nativeText()('template.previewFailed', { error: previewError, notice });
+  return renderHtmlTemplate('text-preview', { title: path.basename(filePath),
+    path: filePath,
+    notice,
+    content: text,
+    language: language });
 }

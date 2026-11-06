@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="{{text:language}}" data-app="{{text:app}}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: cardbush-file:; font-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+  <title>{{text:title}}</title>
+  <style>
+    :root { --office-accent: #185abd; --office-user-zoom: 1; --reader-chrome-height: 96px; --reader-gutter: clamp(14px, 2.8vw, 32px); color-scheme: light; font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif; color: #242424; background: #eef0f3; }
+    :root[data-app="excel"] { --office-accent: #107c41; }
+    :root[data-app="powerpoint"] { --office-accent: #c43e1c; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html { scrollbar-color: #c3c7ce transparent; scrollbar-width: thin; }
+    body { margin: 0; min-width: 280px; overflow-wrap: anywhere; background: #eef0f3; }
+    button { touch-action: manipulation; }
+    .office-chrome { position: sticky; top: 0; z-index: 20; color: #fff; background: #20242a; border-top: 3px solid var(--office-accent); box-shadow: 0 3px 14px rgba(23,27,32,.18); }
+    .document-header { height: 48px; display: flex; align-items: center; gap: 11px; padding: 0 14px; }
+    .office-mark { width: 28px; height: 28px; display: grid; flex: 0 0 auto; place-items: center; color: #fff; background: var(--office-accent); border-radius: 7px; font-size: 14px; font-weight: 750; box-shadow: inset 0 0 0 1px rgba(255,255,255,.22); }
+    .document-heading { min-width: 0; display: grid; gap: 1px; }
+    .document-heading { flex: 1; }
+    .document-header h1 { margin: 0; overflow: hidden; font-size: 13px; font-weight: 620; letter-spacing: .01em; text-overflow: ellipsis; white-space: nowrap; }
+    .document-header p { margin: 0; color: rgba(255,255,255,.6); font-size: 10.5px; }
+    .readonly-badge { flex: 0 0 auto; padding: 4px 9px; color: rgba(255,255,255,.74); background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); border-radius: 999px; font-size: 10px; font-weight: 600; }
+    .office-reader-toolbar { height: 45px; display: flex; align-items: center; gap: 7px; padding: 6px 12px; overflow-x: auto; color: #34383f; background: rgba(255,255,255,.98); border-top: 1px solid rgba(255,255,255,.06); }
+    .office-reader-toolbar button { min-width: 32px; height: 31px; padding: 0 10px; color: #34383f; background: transparent; border: 1px solid transparent; border-radius: 8px; font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; transition: color 120ms ease, background 120ms ease, border-color 120ms ease; }
+    .office-reader-toolbar button:hover { color: var(--office-accent); background: #f1f3f5; border-color: #e1e4e8; }
+    .office-reader-toolbar button:focus-visible { outline: 2px solid color-mix(in srgb, var(--office-accent) 70%, white); outline-offset: 1px; }
+    .office-reader-toolbar button[aria-pressed="true"] { color: var(--office-accent); background: color-mix(in srgb, var(--office-accent) 9%, white); border-color: color-mix(in srgb, var(--office-accent) 24%, white); }
+    .reader-group { display: inline-flex; align-items: center; gap: 2px; }
+    .reader-divider { width: 1px; height: 20px; flex: 0 0 auto; margin: 0 2px; background: #dde0e4; }
+    .reader-spacer { flex: 1; min-width: 10px; }
+    .zoom-controls { padding: 2px; background: #f4f5f7; border-radius: 9px; }
+    .zoom-controls button { height: 27px; padding: 0 8px; }
+    .zoom-controls .zoom-value { min-width: 54px; font-variant-numeric: tabular-nums; }
+    .office-status { color: #777d85; font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .slide-counter { min-width: 52px; color: #555b63; text-align: center; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+    main { min-height: calc(100vh - var(--reader-chrome-height)); padding: var(--reader-gutter); }
+    .word-document, .legacy-section, .legacy-binary { max-width: 900px; margin: 0 auto; padding: clamp(28px, 5vw, 58px) clamp(24px, 6vw, 72px); background: #fff; border: 1px solid #dfe2e7; border-radius: 5px; box-shadow: 0 12px 36px rgba(42,48,56,.1); font-size: 15px; line-height: 1.72; }
+    .word-document img { max-width: 100%; height: auto; }
+    .word-document table { width: 100%; border-collapse: collapse; }
+    .word-document td, .word-document th { padding: 6px 8px; border: 1px solid #d9d5cd; }
+    .word-document p:first-child, .legacy-section p:first-child { margin-top: 0; }
+    .legacy-section { margin-bottom: 12px; padding-top: 18px; padding-bottom: 18px; color: #6e685f; }
+    .legacy-binary { display: grid; gap: 8px; }
+    .legacy-binary p { margin: 0; padding-bottom: 7px; border-bottom: 1px solid #efede8; overflow-wrap: anywhere; }
+    .preview-warnings { max-width: 860px; margin: 0 auto 12px; padding: 8px 12px; color: #75673e; background: #fff8df; border: 1px solid #eadca9; border-radius: 7px; font-size: 12px; }
+    .docx-container { min-height: 240px; overflow: visible; background: transparent; }
+    .docx-container .docx-wrapper { display: flex !important; flex-direction: column; align-items: center; gap: 18px; padding: 0 !important; background: transparent !important; transform-origin: top center; }
+    .docx-container section.docx { margin: 0 !important; border: 1px solid #cfd3d8; border-radius: 3px; box-shadow: 0 10px 34px rgba(35,40,47,.13) !important; }
+    .office-loading { min-height: 260px; display: grid; place-items: center; color: #666; font-size: 12px; }
+    .sheet-navigation { position: sticky; top: var(--reader-chrome-height); z-index: 4; display: flex; gap: 4px; margin: calc(0px - var(--reader-gutter)); margin-bottom: 0; padding: 7px 10px; overflow-x: auto; background: rgba(247,248,250,.96); border-bottom: 1px solid #d7dade; backdrop-filter: blur(10px); }
+    .sheet-navigation button { padding: 6px 15px; color: #4a4f56; background: transparent; border: 1px solid transparent; border-radius: 7px; white-space: nowrap; font: inherit; font-size: 11px; cursor: pointer; }
+    .sheet-navigation button:hover { background: #eceff2; }
+    .sheet-navigation button.active { color: #107c41; background: #fff; border-color: #dadddf; box-shadow: 0 1px 4px rgba(0,0,0,.06); font-weight: 650; }
+    .workbook { min-width: 0; }
+    .worksheet { scroll-margin-top: calc(var(--reader-chrome-height) + 44px); margin: 0 calc(0px - var(--reader-gutter)) calc(0px - var(--reader-gutter)); background: #fff; }
+    .worksheet-title { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 10px; background: #fff; border-bottom: 1px solid #ddd; }
+    .worksheet h2 { margin: 0; font-size: 11.5px; font-weight: 600; }
+    .excel-grid-icon { color: #107c41; font-size: 16px; }
+    .excel-formula-bar { height: 30px; display: grid; grid-template-columns: 44px 1fr; align-items: center; color: #777; background: #fff; border-bottom: 1px solid #d5d5d5; font-size: 11px; }
+    .excel-formula-bar span { text-align: center; font-family: Georgia,serif; font-style: italic; }
+    .excel-formula-bar div { height: 22px; display: flex; align-items: center; padding: 0 8px; border-left: 1px solid #d5d5d5; }
+    .table-scroll { max-height: calc(100vh - 196px); overflow: auto; overscroll-behavior: contain; background: #fff; scrollbar-color: #c3c7ce transparent; scrollbar-width: thin; }
+    table { border-spacing: 0; border-collapse: separate; }
+    .worksheet table { table-layout: fixed; min-width: 100%; zoom: var(--office-user-zoom); }
+    .worksheet th, .worksheet td { height: 20px; min-width: 24px; max-width: 420px; padding: 2px 5px; overflow: hidden; border-right: 1px solid #d9d9d9; border-bottom: 1px solid #d9d9d9; font-family: Calibri,"Microsoft YaHei",sans-serif; font-size: 11pt; text-align: left; text-overflow: ellipsis; white-space: pre; }
+    .worksheet td:hover, .worksheet td.selected { outline: 2px solid #107c41; outline-offset: -2px; }
+    .hide-formula-bars .excel-formula-bar { display: none; }
+    .hide-gridlines .worksheet th, .hide-gridlines .worksheet td { border-color: transparent; }
+    .worksheet thead th { position: sticky; top: 0; z-index: 2; min-width: 44px; height: 22px; color: #555; background: #f2f2f2; text-align: center; font-size: 10px; font-weight: 400; }
+    .worksheet .row-number { position: sticky; left: 0; z-index: 1; min-width: 44px; width: 44px; color: #555; background: #f2f2f2; text-align: center; font-size: 10px; font-weight: 400; }
+    .worksheet thead .row-number { z-index: 3; }
+    .excel-row-heading { width: 44px; }
+    .limit-notice { color: #8a6a25; font-size: 11.5px; }
+    .empty-sheet { color: #8a857c; font-style: italic; }
+    .app-powerpoint main { display: grid; min-height: calc(100vh - var(--reader-chrome-height)); place-items: center; overflow: hidden; background: #30343a; }
+    .slide-deck { display: block; width: min(100%, 1180px); min-width: 0; margin: 0 auto; }
+    .slide-stage { position: relative; width: 100%; min-width: 0; padding: clamp(8px, 1.4vw, 14px); background: #202329; border: 1px solid #444950; border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.28); }
+    .slide-stage-number { position: absolute; z-index: 2; left: 20px; bottom: 18px; min-width: 26px; padding: 3px 7px; color: rgba(255,255,255,.82); background: rgba(20,22,25,.72); border-radius: 999px; font-size: 10px; text-align: center; backdrop-filter: blur(5px); }
+    .slide-stage-canvas { position: relative; width: 100%; min-width: 0; aspect-ratio: 16 / 9; overflow: hidden; background: #fff; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+    .slide-stage-canvas > .slide-container { max-width: none !important; }
+    .empty-state { min-height: 240px; display: grid; place-content: center; padding: 30px; color: #777168; text-align: center; }
+    @media (max-width: 560px) { :root { --reader-chrome-height: 92px; --reader-gutter: 10px; } .document-header { height: 45px; padding: 0 10px; } .office-reader-toolbar { height: 44px; padding-inline: 8px; } .readonly-badge, .office-status { display: none; } .word-document { padding: 26px 20px; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body class="app-{{text:app}}">
+  <div class="office-chrome">
+    <header class="document-header"><span class="office-mark">{{text:appMark}}</span><div class="document-heading"><h1>{{text:title}}</h1><p>{{text:appName}} · {{text:subtitle}}</p></div><span class="readonly-badge">{{text:readOnly}}</span></header>
+    {{html:toolbar}}
+  </div>
+  <main aria-label="{{text:contentLabel}}">{{html:body}}</main>
+  {{html:scripts}}
+</body>
+</html>

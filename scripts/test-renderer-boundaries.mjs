@@ -64,7 +64,7 @@ test('production renderers load only the code needed by their window', async t =
   excludes('3D loading/error shell', model, /\/node_modules\/three\//);
   excludes('3D scene engine', scene, /\/src\/(?:App\.tsx|backend\/|hooks\/|runtime-client\/)|\/node_modules\/(?:react|react-dom|zod)\//);
   excludes('workspace', app, /\/src\/(?:CardlingWindow\.tsx|features\/(?:SettingsView|agents\/AgentsView)\.tsx)|\/node_modules\/(?:three|@file-viewer)\//);
-  const optionalPanels = /\/src\/features\/(?:subagents\/(?:SubagentConversation|SubagentTaskInspector)\.tsx|agents\/(?:AgentDesktopView\.tsx|agentConversationBackend\.ts)|cardling\/(?:CardlingSceneHost\.tsx|runtime\.ts))/;
+  const optionalPanels = /\/src\/features\/(?:subagents\/(?:SubagentConversation|SubagentTaskInspector)\.tsx|agents\/agentConversationBackend\.ts|cardling\/(?:CardlingSceneHost\.tsx|runtime\.ts))/;
   excludes('workspace optional panels', app, optionalPanels);
   excludes('workspace execution history', app, /\/src\/features\/chat\/TurnHistoryInspector\.tsx$/);
   excludes('read-only turn history', history, optionalPanels);

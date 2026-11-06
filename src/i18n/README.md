@@ -29,6 +29,14 @@ Interpolation is plain, nonrecursive text. Use `{{` and `}}` for literal braces.
 
 Pass the current language into components/helpers and hook dependencies. Components without a language prop use `useUiLanguage` under `UiLanguageProvider`. `uiText()` reads the document language when called, and defaults to English outside a document; use it for action-time errors, not module-level translated constants. The App publishes the selected language through the main-window-only `app:set-ui-language` channel; native dialogs and tray menus use it immediately, with the OS locale as the startup fallback. File/application actions can also carry an explicit language. Store keys for reusable label tables and resolve them during rendering so language changes update mounted controls.
 
+## Web and document templates
+
+The Web entry uses `web/Language.tsx` and the same language packs. Its selector is populated from `uiLanguages`; the selected locale updates mounted components and the document language. Persist only the language identifier, not translated text. Shared non-React helpers import `@cardbush/platform/i18n` and resolve messages when called.
+
+Keep React form layout in a separate template component and inject typed values and callbacks. For example, `web/ModelAdmin.tsx` owns requests/state, `web/templates/ModelAdmin.template.tsx` owns layout, and `model-form.json` contains reusable field choices/defaults and message keys. Do not replace React with runtime HTML or JSX evaluation.
+
+Static native HTML shells and their scripts live in `assets/templates/*.html` and `*.js.template`. The platform build compiles them into both ESM and CommonJS outputs; installed apps do not read the source tree or depend on the current working directory. Do not edit generated template modules. Use `renderHtmlTemplate` from `@cardbush/platform/templates`: `{{text:name}}` escapes plain values; `{{json:name}}` serializes a value as a safe JavaScript literal, including script-closing characters; `{{html:name}}` accepts an explicitly supplied, trusted renderer fragment via the third argument. Missing or unexpected variables fail, and substitutions are never evaluated recursively. Pass the selected language to previews, canvas exports and OAuth pages. Translations and user data remain text, including when they contain markup.
+
 ## Appearance states
 
 CSS owns visual variants. Use semantic classes or `data-*` attributes for state, and CSS custom properties for dimensions, palette, spacing and icon sizes. Do not select hardcoded colors, font/icon sizes, visibility or transforms with JSX ternaries.
@@ -39,7 +47,9 @@ Keep behavior, measured coordinates, dynamic canvas dimensions and imported docu
 
 ## Verification
 
-- `npm run test:ui-localization`: all shipped messages and placeholders, plurals, fallback, malformed inputs, isolated third-language discovery, shared ESM/CommonJS catalogs, and source guards across App/native UI.
+- `npm run test:ui-localization`: all shipped messages and placeholders, plurals, fallback, malformed inputs, isolated third-language discovery, shared ESM/CommonJS catalogs, and source guards across App/Web/native UI.
+- `npm run test:web-admin-ui`: actual Web forms, live language switching, draft retention, submissions/retries, narrow windows and text escaping with isolated mock services.
+- `npm run test:html-templates`: packaged templates, strict variables, text escaping and localized preview/OAuth output.
 - `npm run test:app-views`: conversation, welcome/first send, queue images, streaming, sidebar and previews.
 - `node scripts/test-window-menu.mjs` and `node scripts/run-settings-context-ui-test.mjs`: native menus, language switching and responsive settings.
 - `npm run build` and `npx tsc --noEmit -p tsconfig.json`: production and type checks.

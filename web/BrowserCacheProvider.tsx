@@ -1,3 +1,4 @@
+import { uiText } from '../src/i18n';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { AccountCache, cacheLimits } from './browserCache';
 import { personalFilePath } from './personalFiles';
@@ -35,9 +36,9 @@ class PersonalImages {
       this.abort.signal.throwIfAborted();
       const response = await fetch(`/api/web/v1/files/view?path=${encodeURIComponent(path)}`, { credentials: 'same-origin', cache: 'no-store', signal: this.abort.signal, headers: { 'X-CardBush-User': this.cache.owner } });
       if (response.status === 401 && this.cache.valid()) window.dispatchEvent(new Event('cardbush:logged-out'));
-      if (!response.ok || !/^image\/(png|jpeg|webp)$/.test(response.headers.get('Content-Type') ?? '') || Number(response.headers.get('Content-Length')) > cacheLimits.imageBytes) throw new Error('图片暂时无法读取');
+      if (!response.ok || !/^image\/(png|jpeg|webp)$/.test(response.headers.get('Content-Type') ?? '') || Number(response.headers.get('Content-Length')) > cacheLimits.imageBytes) throw new Error(uiText()("web.theImageCannotBeReadRightNow"));
       blob = await response.blob();
-      if (blob.size > cacheLimits.imageBytes) throw new Error('图片过大');
+      if (blob.size > cacheLimits.imageBytes) throw new Error(uiText()("web.theImageIsTooLarge"));
       this.cache.put(`image:${path}`, blob, 'image');
       } finally { const next = this.waiters.shift(); if (next) next(); else this.fetching--; }
     }
@@ -72,7 +73,7 @@ export function seedCachedImage(cache: AccountCache, path: string, blob: Blob) {
 export function peekCachedImage(cache: AccountCache, source: string) { const path = personalFilePath(source); return path ? images(cache).peek(path) : undefined; }
 export async function acquireCachedImage(cache: AccountCache, source: string) {
   const path = personalFilePath(source);
-  if (!path) throw new Error('只能查看当前账号的个人图片。');
+  if (!path) throw new Error(uiText()("web.onlyThisAccountSPersonalImagesCanBeViewed"));
   const result = await images(cache).acquire(path);
   return { source: result.src, blob: result.blob, dispose: result.release };
 }

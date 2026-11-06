@@ -1,3 +1,4 @@
+import { uiText, type MessageKey } from '@cardbush/platform/i18n';
 import type { ChatAttachment, ChatMessage, ChatToolExecution } from '../src/types';
 import { projectRuntimeTurnMessages, markRuntimeSupersededMessages } from '../src/backend/runtimeSessionMessageProjection';
 import { attachHistoryToolExecutions } from '../src/backend/historyToolAssociation';
@@ -20,15 +21,19 @@ export function webToolExecution(record: Parameters<typeof runtimeHistoryToolExe
 }
 const emptyTurn = (): LiveTurn => ({ segments: {}, tools: {} });
 const working = (status: string) => status === 'queued' || status === 'running';
-const webToolTitle = (name: string) => ({
-  inject_image_input: '查看图片', checkpoint_context: '整理上下文',
-  mcp__plugin_volcengine_images_images__seedream_capabilities: '查看图片生成功能',
-  mcp__plugin_volcengine_images_images__seedream_create_task: '提交图片生成',
-  mcp__plugin_volcengine_images_images__seedream_get_task: '查看图片生成进度',
-  mcp__plugin_volcengine_images_images__generation_wait_tasks: '等待图片生成',
-  mcp__plugin_volcengine_images_images__image_convert: '转换图片尺寸与格式',
-  mcp__plugin_volcengine_images_images__image_stitch: '多图组合拼接',
-} as Record<string, string>)[name];
+const webToolTitles: Record<string, MessageKey> = {
+  inject_image_input: "web.viewImage", checkpoint_context: "modelActivity.compactingContext",
+  mcp__plugin_volcengine_images_images__seedream_capabilities: "web.viewImageGenerationCapabilities",
+  mcp__plugin_volcengine_images_images__seedream_create_task: "web.submitImageGeneration",
+  mcp__plugin_volcengine_images_images__seedream_get_task: "web.checkImageGenerationProgress",
+  mcp__plugin_volcengine_images_images__generation_wait_tasks: "web.waitForImageGeneration",
+  mcp__plugin_volcengine_images_images__image_convert: "web.convertImageDimensionsAndFormat",
+  mcp__plugin_volcengine_images_images__image_stitch: "web.combineImages",
+};
+const webToolTitle = (name: string) => {
+  const key = webToolTitles[name];
+  return key ? uiText()(key) : undefined;
+};
 
 export function webAttachments(items: unknown): ChatAttachment[] {
   if (!Array.isArray(items)) return [];

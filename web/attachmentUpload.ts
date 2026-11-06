@@ -1,3 +1,4 @@
+import { uiText } from '@cardbush/platform/i18n';
 export const uploadLimits = {
   fileBytes: 16 * 1024 * 1024,
   sourceImageBytes: 64 * 1024 * 1024,
@@ -15,8 +16,8 @@ export type PreparedAttachment = { file: File; note?: string };
 export function fileSize(bytes: number) {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
-const unsupported = () => new Error('请选择静态 PNG/JPG/WebP 图片、文本、PDF 或 Office 文件；不支持视频。');
-const animated = () => new Error('暂不支持动图，请选择其中一帧或上传静态图片。');
+const unsupported = () => new Error(uiText()("web.selectAStaticPngJpgWebpImageTextPdfOrOfficeFile"));
+const animated = () => new Error(uiText()("web.animatedImagesAreNotSupportedSelectAFrameOrUploadAStatic"));
 
 /** Inspect the original before any canvas conversion, so animations and disguised videos stay rejected. */
 export async function readImageInfo(file: Blob, signal: AbortSignal): Promise<ImageInfo> {
@@ -71,7 +72,7 @@ export async function readImageInfo(file: Blob, signal: AbortSignal): Promise<Im
     }
   }
   if (!width || !height || !mime) throw unsupported();
-  if (width * height > uploadLimits.sourceImagePixels) throw new Error('图片分辨率过高（超过 6400 万像素），请截取需要的区域后再粘贴。');
+  if (width * height > uploadLimits.sourceImagePixels) throw new Error(uiText()("web.theImageExceeds64MegapixelsCropTheRelevantAreaBeforePasting"));
   return { width, height, mime };
 }
 
@@ -92,7 +93,7 @@ async function decodeImage(file: File, signal: AbortSignal) {
     await new Promise<void>((resolve, reject) => {
       const finish = (error?: unknown) => { image.onload = image.onerror = null; signal.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
       const abort = () => { image.src = ''; finish(signal.reason); };
-      image.onload = () => finish(); image.onerror = () => finish(new Error('图片无法读取，请重新复制或选择原图片文件。'));
+      image.onload = () => finish(); image.onerror = () => finish(new Error(uiText()("web.theImageCannotBeReadCopyItAgainOrSelectTheOriginal")));
       signal.addEventListener('abort', abort, { once: true }); image.src = url;
     });
     signal.throwIfAborted();
@@ -107,7 +108,7 @@ async function optimizeImage(file: File, info: ImageInfo, signal: AbortSignal): 
     let size = fitImageSize(decoded.width, decoded.height);
     const encode = (type: string, quality?: number): Promise<Blob> => {
       signal.throwIfAborted();
-      if (canvas instanceof HTMLCanvasElement) return new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('图片优化失败，请截取需要的区域后重试。')), type, quality));
+      if (canvas instanceof HTMLCanvasElement) return new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error(uiText()("web.imageOptimizationFailedCropTheRelevantAreaAndTryAgain"))), type, quality));
       return canvas.convertToBlob({ type, quality });
     };
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -115,7 +116,7 @@ async function optimizeImage(file: File, info: ImageInfo, signal: AbortSignal): 
       const draw = () => {
         canvas.width = size.width; canvas.height = size.height;
         const context = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
-        if (!context) throw new Error('当前浏览器无法处理大图，请截取需要的区域后重试。');
+        if (!context) throw new Error(uiText()("web.thisBrowserCannotProcessLargeImagesCropTheRelevantAreaAndTry"));
         context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
         context.drawImage(decoded.image, 0, 0, size.width, size.height);
       };
@@ -132,37 +133,37 @@ async function optimizeImage(file: File, info: ImageInfo, signal: AbortSignal): 
       signal.throwIfAborted();
       if (result.size > 0 && result.size <= uploadLimits.targetImageBytes) {
         const ext = result.type === 'image/webp' ? '.webp' : '.png';
-        return new File([result], (file.name.replace(/\.[^.]+$/, '') || '粘贴图片').slice(0, 140) + ext, { type: result.type, lastModified: file.lastModified });
+        return new File([result], (file.name.replace(/\.[^.]+$/, '') || uiText()("web.pastedImage")).slice(0, 140) + ext, { type: result.type, lastModified: file.lastModified });
       }
       const scale = Math.min(0.85, Math.sqrt(uploadLimits.targetImageBytes / result.size) * 0.92);
       size = { width: Math.max(1, Math.floor(size.width * scale)), height: Math.max(1, Math.floor(size.height * scale)) };
     }
-    throw new Error('图片优化后仍然过大，请截取需要的区域后重试。');
+    throw new Error(uiText()("web.theOptimizedImageIsStillTooLargeCropTheRelevantAreaAnd"));
   } finally { decoded.close(); canvas.width = canvas.height = 1; }
 }
 
 export async function prepareAttachment(file: File, signal: AbortSignal, progress: (text: string) => void): Promise<PreparedAttachment> {
   signal.throwIfAborted();
-  if (!file.size) throw new Error('附件为空，请重新选择文件。');
+  if (!file.size) throw new Error(uiText()("web.theAttachmentIsEmptySelectAFileAgain"));
   if (file.type.startsWith('video/')) throw unsupported();
   const image = /\.(png|jpe?g|webp)$/i.test(file.name) || /^image\/(png|jpeg|webp)$/.test(file.type);
   if (!image) {
     if (!/\.(txt|md|csv|tsv|json|log|pdf|docx|xlsx|pptx)$/i.test(file.name)) throw unsupported();
-    if (file.size > uploadLimits.fileBytes) throw new Error(`文件为 ${fileSize(file.size)}，文档最大支持 16 MB，请拆分后上传。`);
-    if (file.name.length > 160) throw new Error('文件名过长，请缩短文件名后上传。');
+    if (file.size > uploadLimits.fileBytes) throw new Error(uiText()("web.theFileIsDocumentsMustBeUnder16MbSplitTheFile", { size: fileSize(file.size) }));
+    if (file.name.length > 160) throw new Error(uiText()("web.theFilenameIsTooLongShortenItBeforeUploading"));
     return { file };
   }
-  if (file.size > uploadLimits.sourceImageBytes) throw new Error(`图片为 ${fileSize(file.size)}，超过 64 MB，请截取需要的区域后再粘贴。`);
-  progress(`正在检查图片 · ${file.name || '粘贴图片'}`);
+  if (file.size > uploadLimits.sourceImageBytes) throw new Error(uiText()("web.theImageIsExceeding64MbCropTheRelevantAreaBeforePasting", { size: fileSize(file.size) }));
+  progress(uiText()("web.checkingImage", { name: file.name || uiText()("web.pastedImage") }));
   const info = await readImageInfo(file, signal), size = fitImageSize(info.width, info.height);
   if (file.size <= uploadLimits.targetImageBytes && size.width === info.width && size.height === info.height) {
     const ext = info.mime === 'image/jpeg' ? '.jpg' : info.mime === 'image/webp' ? '.webp' : '.png';
-    const name = (file.name.replace(/\.[^.]+$/, '') || '粘贴图片').slice(0, 140) + ext;
+    const name = (file.name.replace(/\.[^.]+$/, '') || uiText()("web.pastedImage")).slice(0, 140) + ext;
     return { file: name === file.name && file.type === info.mime ? file : new File([file], name, { type: info.mime, lastModified: file.lastModified }) };
   }
-  progress(`正在优化大图 · ${file.name || '粘贴图片'}（${fileSize(file.size)}）`);
+  progress(uiText()("web.optimizingLargeImage", { name: file.name || uiText()("web.pastedImage"), size: fileSize(file.size) }));
   const optimized = await optimizeImage(file, info, signal);
-  return { file: optimized, note: `已优化 · ${fileSize(file.size)} → ${fileSize(optimized.size)}` };
+  return { file: optimized, note: uiText()("web.optimized", { before: fileSize(file.size), after: fileSize(optimized.size) }) };
 }
 
 type ChunkReply<T> = { nextOffset: number; attachment?: T };
@@ -192,9 +193,9 @@ export async function uploadInChunks<T>(file: File, signal: AbortSignal,
       }
     }
     signal.throwIfAborted();
-    if (!reply || reply.nextOffset !== next) throw new Error('上传进度异常，请重新上传这个附件。');
+    if (!reply || reply.nextOffset !== next) throw new Error(uiText()("web.uploadProgressIsInvalidUploadThisAttachmentAgain"));
     offset = next; attachment = reply.attachment ?? attachment; progress(Math.round(offset / file.size * 100));
   }
-  if (!attachment) throw new Error('附件未保存完成，请重新上传。');
+  if (!attachment) throw new Error(uiText()("web.theAttachmentWasNotSavedCompletelyPleaseUploadItAgain"));
   return attachment;
 }

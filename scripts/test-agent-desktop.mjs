@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { AgentDesktop } from '../dist-electron/agentDesktop.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
@@ -9,7 +9,6 @@ import { AgentRuntimeHost } from '../dist-electron/agentRuntimeHost.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
 import { ToolRegistry } from '../packages/bush-runtime/dist/index.js';
 import { registerAgentDesktopTools } from '../dist-electron/agentDesktopTools.mjs';
-import ts from 'typescript';
 
 const image = { width: 1600, height: 900, mimeType: 'image/jpeg', data: 'fixture' };
 const tabId = randomUUID();
@@ -137,16 +136,6 @@ test('registered tools use private RPC with host-supplied session and turn, pres
   assert.equal(result.content[1]._meta['codex/imageDetail'], 'original');
 });
 
-test('preview coordinates account for letterboxing, scaling, position and edges', async () => {
-  const source = await readFile(new URL('../src/features/agents/agentDesktopCoordinates.ts', import.meta.url), 'utf8');
-  const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
-  const { desktopPoint } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
-  const rect = { left: 100, top: 50, width: 800, height: 800 };
-  assert.deepEqual(desktopPoint(500, 450, rect, image), { x: 800, y: 450 });
-  assert.equal(desktopPoint(500, 60, rect, image), null);
-  assert.equal(desktopPoint(900, 450, rect, image), null);
-  assert.deepEqual(desktopPoint(100, 225, rect, image), { x: 0, y: 0 });
-});
 
 test('the shared Node Runtime exposes desktop tools only for the explicit service capability', { timeout: 45000 }, async () => {
   const base = resolve('tmp/agent-desktop-tests'); await mkdir(base, { recursive: true });

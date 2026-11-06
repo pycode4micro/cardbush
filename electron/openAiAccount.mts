@@ -20,7 +20,7 @@ export class OpenAiAccount {
   constructor(private readonly options: {
     read: () => Promise<unknown>; write: (value: unknown) => Promise<unknown>;
     openUrl: (url: string) => Promise<unknown>; changed: () => void;
-    fetch?: typeof fetch; now?: () => number;
+    fetch?: typeof fetch; now?: () => number; language?: () => string;
     startLogin?: (signal: AbortSignal) => Promise<Login>;
   }) {}
   private now() { return this.options.now?.() ?? Date.now(); }
@@ -70,7 +70,7 @@ export class OpenAiAccount {
     const promise = (async () => {
       let login: Login | undefined;
       try {
-        login = await (this.options.startLogin?.(combined) ?? startOpenAiLogin({ fetch: this.options.fetch, signal: combined }));
+        login = await (this.options.startLogin?.(combined) ?? startOpenAiLogin({ fetch: this.options.fetch, signal: combined, language: this.options.language?.() }));
         combined.throwIfAborted();
         await this.options.openUrl(login.authorizationUrl);
         const tokens = await login.result;

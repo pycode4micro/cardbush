@@ -1,3 +1,4 @@
+import { uiText } from '@cardbush/platform/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Conversation, type ConversationPage } from './api';
 import { useAccountCache } from './BrowserCacheProvider';
@@ -22,7 +23,7 @@ export function useConversationList(archive: boolean, query: string, onError: (m
       setItems(previous => more ? [...new Map([...previous, ...page.items].map(item => [item.id, item])).values()] : page.items);
       if (!more) cache.put(key, page, 'list');
       for (const item of page.items) cache.allowSession(item.id);
-    }).catch(error => { if (!controller.signal.aborted && cache.valid() && version === revision.current) onError(error instanceof Error ? error.message : '会话列表读取失败。'); })
+    }).catch(error => { if (!controller.signal.aborted && cache.valid() && version === revision.current) onError(error instanceof Error ? error.message : uiText()("web.couldNotLoadTheConversationList")); })
       .finally(() => { if (request.current?.controller === controller) { request.current = null; setLoading(false); } });
     request.current = { controller, promise }; await promise;
   }, [cache, onError]);

@@ -2573,7 +2573,7 @@ ipcMain.handle('creation:canvas', async (event, input: import('./creationCanvasF
         : { title: nativeText()('main.save_creation_workspace_to_folder'), properties: ['openDirectory', 'createDirectory'] };
       const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
       return result.canceled ? undefined : result.filePaths[0];
-    });
+    }, () => nativeUiLanguage ?? app.getLocale());
   }
   return canvasFiles.command(input);
 });
@@ -2912,6 +2912,7 @@ function openAiDesktop() {
     fetch: modelFetch,
     openUrl: url => shell.openExternal(url),
     changed: notifyAccountsChanged,
+    language: () => nativeUiLanguage ?? app.getLocale(),
   }));
 }
 let siwcAccountsPromise: Promise<import('./siwcAccounts.mjs', { with: { 'resolution-mode': 'import' } }).SiwcAccounts> | undefined;
@@ -4846,7 +4847,7 @@ function registerLocalFileProtocol() {
         let previewHtml: string;
         try {
           await checkOfficePreviewAdmission(officePath);
-          const preview = await runHostCommand({ executable: process.execPath, args: [path.join(__dirname, 'officePreviewWorker.js'), officePath],
+          const preview = await runHostCommand({ executable: process.execPath, args: [path.join(__dirname, 'officePreviewWorker.js'), officePath, nativeUiLanguage ?? app.getLocale()],
             cwd: path.dirname(officePath), env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, signal: request.signal,
             memoryCeilingBytes: 512 * 1024 ** 2, maxOutputBytes: 24 * 1024 ** 2, timeoutMs: 20_000 });
           if (preview.exitCode !== 0) throw new Error(preview.stderr || '预览未完成，可在外部应用打开文件。');
@@ -4855,6 +4856,7 @@ function registerLocalFileProtocol() {
           previewHtml = await renderTextFilePreview(
             officePath,
             error instanceof Error ? error.message : String(error),
+            nativeUiLanguage ?? app.getLocale(),
           );
         }
         return new Response(previewHtml, {
@@ -4870,7 +4872,7 @@ function registerLocalFileProtocol() {
         if (!stats.isFile()) {
           return new Response('Not found', { status: 404 });
         }
-        return new Response(await renderTextFilePreview(textPath), {
+        return new Response(await renderTextFilePreview(textPath, '', nativeUiLanguage ?? app.getLocale()), {
           headers: {
             'content-type': 'text/html; charset=utf-8',
             'cache-control': 'no-store',

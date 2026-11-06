@@ -1,0 +1,75 @@
+const assert = require('node:assert/strict');
+const { join, resolve } = require('node:path');
+const { app, BrowserWindow } = require('electron');
+const directory = resolve(process.argv[2]);
+app.disableHardwareAcceleration();
+app.setPath('userData', join(directory, 'profile'));
+const deadline = setTimeout(() => app.exit(1), 50000);
+app.whenReady().then(async () => {
+  const win = new BrowserWindow({ show: false, width: 1000, height: 900, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true, backgroundThrottling: false } });
+  const read = code => win.webContents.executeJavaScript(code);
+  const until = async code => {
+    const end = Date.now() + 6000;
+    while (!await read(`Boolean(${code})`)) {
+      if (Date.now() > end) throw Error(code + '\n' + await read('document.body.innerText'));
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
+  };
+  const set = (selector, value) => read(`(()=>{const node=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(node.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype,'value').set.call(node,${JSON.stringify(value)});node.dispatchEvent(new Event(node.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);
+  const clickText = text => read(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw Error('Missing button');b.click();})()`);
+  try {
+    await win.loadFile(join(directory, 'index.html'));
+    await until("document.querySelector('.model-card')");
+    assert.equal(await read("document.querySelector('.model-card img')"), null);
+    assert.ok(await read("document.body.textContent.includes('<img src=x onerror=alert(1)>')"));
+    await clickText('Edit');
+    await until("document.querySelector('form input[name=name]')");
+    await set('[role=dialog] input[name=name]', 'Edited model');
+    await set('.web-language select', 'zh');
+    await until("document.querySelector('[role=dialog] h2')?.textContent==='编辑模型'");
+    assert.equal(await read("document.querySelector('input[name=name]').value"), 'Edited model');
+    assert.equal(await read("document.querySelector('select[name=reasoningEffort] option[value=medium]').textContent"), '中');
+    assert.ok(await read("document.querySelector('input[name=apiKey]').placeholder.includes('留空')"));
+    await set('.web-language select', 'en');
+    await until("document.querySelector('[role=dialog] h2')?.textContent==='Edit model'");
+    assert.equal(await read("document.querySelector('select[name=reasoningEffort] option[value=medium]').textContent"), 'Medium');
+    await read("document.querySelector('[role=dialog] form').requestSubmit();undefined");
+    await until("!document.querySelector('[role=dialog]') && document.querySelector('.model-card h3').textContent==='Edited model'");
+    const saved = await read("calls.find(c=>c.input?.action==='save').input");
+    assert.equal(saved.model.apiKey, ''); assert.equal(saved.model.maxContextTokens, 530000);
+    assert.equal(saved.model.maxOutputTokens, 128000); assert.equal(saved.model.reasoningEffort, 'medium');
+    assert.equal(saved.model.enabled, true); assert.equal(saved.revision, 1);
+    await set('.web-language select', 'zh');
+    await until("document.querySelector('.form-notice')?.textContent.includes('已保存')");
+    await set('.web-language select', 'en');
+    await until("document.querySelector('.form-notice')?.textContent.includes('Saved')");
+    await clickText('Add model');
+    await until("document.querySelector('[role=dialog] input[name=model]')");
+    await set('[role=dialog] input[name=name]', 'New model'); await set('[role=dialog] input[name=model]', 'model-new'); await set('[role=dialog] input[name=apiKey]', 'fixture-key');
+    await read("window.failNext=true;document.querySelector('[role=dialog] form').requestSubmit();undefined");
+    await until("document.querySelector('[role=dialog] [role=alert]')?.textContent==='fixture conflict'");
+    assert.equal(await read("document.querySelector('input[name=name]').value"), 'New model');
+    win.setSize(390, 844);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.ok(await read('document.documentElement.scrollWidth <= innerWidth + 1'), 'narrow viewport must not overflow horizontally');
+    await read("document.querySelector('[role=dialog] form').requestSubmit();undefined");
+    await until("!document.querySelector('[role=dialog]') && document.querySelectorAll('.model-card').length===2");
+    const created = await read("calls.filter(c=>c.input?.action==='save').at(-1).input.model");
+    assert.equal(created.model, 'model-new'); assert.equal(created.apiKey, 'fixture-key');
+    win.setSize(1000, 900);
+    await read('showOrganization();undefined');
+    await until("document.querySelector('.user-table')");
+    assert.ok(await read("document.querySelector('.user-table').textContent.includes('System administrator')"));
+    await set('.web-language select', 'zh');
+    await until("document.querySelector('.user-table').textContent.includes('系统管理员')");
+    await clickText('远程 Agent');
+    await until("document.querySelector('.remote-agent-admin')");
+    await clickText('注册远程 Agent');
+    await until("document.querySelector('[role=dialog]')");
+    await set('.web-language select', 'en');
+    await until("document.querySelector('[role=dialog] h2').textContent==='Register remote Agent'");
+    assert.equal(await read("localStorage.getItem('cardbush-web-language')"), 'en');
+    console.log('Web admin UI passed: language switching, draft retention, model save/error handling, escaped data, narrow layout, organization roles and remote Agent form.');
+    win.destroy(); clearTimeout(deadline); app.exit(0);
+  } catch (error) { console.error(error); win.destroy(); clearTimeout(deadline); app.exit(1); }
+});

@@ -29,6 +29,14 @@ return <button aria-label={t('image.preview', { name })}>{t('common.close')}</bu
 
 组件/辅助函数和 Hook 依赖传递当前语言，无语言参数的组件使用 UiLanguageProvider 下的 useUiLanguage。uiText() 在调用时读 document 语言，无 document 默认英文，适合动作发生时解析错误，不应生成模块级翻译常量。主窗口专属 app:set-ui-language 更新原生弹窗/托盘，启动前回退 OS locale。文件/应用动作也可显式携带语言。可复用标签表保存键、渲染时解析，确保已挂载控件响应切换。
 
+## Web 与文档模板
+
+Web 入口通过 `web/Language.tsx` 复用同一套语言包，选择器来自 `uiLanguages`，切换后更新已挂载组件和 document 语言。只保存语言标识，不保存翻译结果。非 React 的共享辅助函数引用 `@cardbush/platform/i18n`，在调用时解析文案。
+
+React 表单布局放在独立模板组件，通过类型化的数据和回调注入。例如 `web/ModelAdmin.tsx` 负责请求与状态，`web/templates/ModelAdmin.template.tsx` 负责布局，`model-form.json` 保存可复用选项、默认值和消息键。不要用运行时 HTML 或 JSX 求值取代 React。
+
+原生静态 HTML 外壳和交互脚本放在 `assets/templates/*.html`、`*.js.template`，平台构建将其编入 ESM 和 CommonJS 产物。发行程序不读取源码目录，不依赖当前工作目录；不要手改生成模块。使用 `@cardbush/platform/templates` 的 `renderHtmlTemplate`：`{{text:name}}` 转义普通值，`{{json:name}}` 生成安全的 JavaScript 字面量并转义脚本闭合字符，`{{html:name}}` 仅接收第三个参数显式提供的可信渲染片段。缺少变量、多余变量都会报错，替换不递归执行。预览、画布导出和 OAuth 页显式传递当前语言；翻译与用户数据即使包含标签也仍按文本处理。
+
 ## 外观归属
 
 视觉变体由 CSS 定义，状态使用语义 class/data-*，尺寸、配色、间距和图标使用 CSS 变量。禁止在 JSX 三元表达式中选择硬编码颜色、字号、显示或变换。
@@ -37,7 +45,9 @@ return <button aria-label={t('image.preview', { name })}>{t('common.close')}</bu
 
 ## 验证
 
-- `npm run test:ui-localization`：键、变量、复数、回退、异常输入、隔离第三语言发现、ESM/CommonJS 目录及 App/原生源码约束。
+- `npm run test:ui-localization`：键、变量、复数、回退、异常输入、隔离第三语言发现、ESM/CommonJS 目录及 App/Web/原生源码约束。
+- `npm run test:web-admin-ui`：隔离模拟服务下的真实 Web 表单、即时切换语言、草稿保留、提交/重试、窄窗口和文本转义。
+- `npm run test:html-templates`：发行模板、变量约束、转义及预览/OAuth 多语言输出。
 - `npm run test:app-views`：对话、欢迎/首次发送、队列图片、流式、侧栏和预览。
 - `node scripts/test-window-menu.mjs`、`node scripts/run-settings-context-ui-test.mjs`：原生菜单、语言切换和响应式设置。
 - `npm run build`、`npx tsc --noEmit -p tsconfig.json`：生产构建和类型检查。

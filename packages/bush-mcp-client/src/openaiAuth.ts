@@ -1,3 +1,5 @@
+import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
+import { renderHtmlTemplate } from '@cardbush/platform/templates';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { OPENAI_HOSTED_PROTOCOL, type OpenAiAccess } from '@cardbush/bush-protocol';
@@ -59,9 +61,11 @@ export async function exchangeOpenAiToken(parameters: URLSearchParams, request: 
   if (!response.ok) { await response.body?.cancel(); if ([400, 401].includes(response.status)) throw new OpenAiAuthError('OpenAI authorization expired or was rejected. Sign in again.'); throw new OpenAiHttpError(response.status); }
   return decodeOpenAiTokens(await readOpenAiJson(response));
 }
-export async function startOpenAiLogin({ fetch: request = globalThis.fetch, ports = [1455, 1457], timeoutMs = 600_000, signal }: {
-  fetch?: typeof fetch; ports?: number[]; timeoutMs?: number; signal?: AbortSignal;
+export async function startOpenAiLogin({ fetch: request = globalThis.fetch, ports = [1455, 1457], timeoutMs = 600_000, signal, language: requestedLanguage = 'en' }: {
+  fetch?: typeof fetch; ports?: number[]; timeoutMs?: number; signal?: AbortSignal; language?: string;
 } = {}) {
+  const language = resolveUiLanguage(requestedLanguage);
+  const nativeText = () => uiText(language);
   signal?.throwIfAborted();
   const state = randomBytes(32).toString('base64url'), verifier = randomBytes(32).toString('base64url');
   const lifetime = new AbortController();
@@ -72,23 +76,25 @@ export async function startOpenAiLogin({ fetch: request = globalThis.fetch, port
   const server = createServer((incoming, response) => {
     const reply = (status: number, message: string) => response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
       'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'" }).end(
-      `<!doctype html><html lang="zh"><meta charset="utf-8"><title>CardBush · OpenAI</title><body style="font:16px system-ui;padding:48px;max-width:650px"><h1>CardBush · OpenAI</h1><p>${message}</p><p>可关闭此页面，返回 CardBush 查看连接状态。</p></body></html>`);
+      renderHtmlTemplate('oauth-result', { message: message,
+    language: language,
+    callbackReturn: nativeText()("template.callbackReturn") }));
     const expected = new URL(redirectUri);
-    if (incoming.method !== 'GET' || incoming.headers.origin || incoming.headers.host !== expected.host || (incoming.url?.length ?? 0) > 16_384) { reply(400, '请求无效。'); incoming.resume(); return; }
+    if (incoming.method !== 'GET' || incoming.headers.origin || incoming.headers.host !== expected.host || (incoming.url?.length ?? 0) > 16_384) { reply(400, nativeText()("template.oauth.invalidRequest")); incoming.resume(); return; }
     let url;
-    try { url = new URL(incoming.url!, redirectUri); } catch { reply(400, '请求无效。'); return; }
-    if (url.origin !== expected.origin || url.pathname !== expected.pathname) { reply(404, '页面不存在。'); return; }
+    try { url = new URL(incoming.url!, redirectUri); } catch { reply(400, nativeText()("template.oauth.invalidRequest")); return; }
+    if (url.origin !== expected.origin || url.pathname !== expected.pathname) { reply(404, nativeText()("template.oauth.notFound")); return; }
     const provided = Buffer.from(url.searchParams.get('state') ?? ''), required = Buffer.from(state);
-    if (provided.length !== required.length || !timingSafeEqual(provided, required)) { reply(400, '登录状态校验失败，请重新发起登录。'); return; }
-    if (settled || exchanging) { reply(409, '此次登录已处理。'); return; }
-    if (url.searchParams.has('error')) { settled = true; reply(400, '登录未完成或被拒绝。'); rejectLogin(new OpenAiAuthError('OpenAI login was declined or failed.')); return; }
-    const code = url.searchParams.get('code'); if (!code) { reply(400, '缺少授权码。'); return; }
+    if (provided.length !== required.length || !timingSafeEqual(provided, required)) { reply(400, nativeText()("template.oauth.invalidState")); return; }
+    if (settled || exchanging) { reply(409, nativeText()("template.oauth.handled")); return; }
+    if (url.searchParams.has('error')) { settled = true; reply(400, nativeText()("template.oauth.declined")); rejectLogin(new OpenAiAuthError('OpenAI login was declined or failed.')); return; }
+    const code = url.searchParams.get('code'); if (!code) { reply(400, nativeText()("template.oauth.missingCode")); return; }
     exchanging = true;
     void exchangeOpenAiToken(new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri,
       client_id: OPENAI_HOSTED_PROTOCOL.clientId, code_verifier: verifier }), request, lifetime.signal).then(tokens => {
       lifetime.signal.throwIfAborted(); settled = true;
-      reply(200, 'OpenAI 授权已完成。'); resolveLogin(tokens);
-    }).catch(error => { settled = true; reply(502, '授权未完成，请返回 CardBush 查看错误。'); rejectLogin(error); });
+      reply(200, nativeText()("template.oauth.authorized")); resolveLogin(tokens);
+    }).catch(error => { settled = true; reply(502, nativeText()("template.oauth.failed")); rejectLogin(error); });
   });
   let bound = false;
   for (const port of ports) {

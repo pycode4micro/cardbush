@@ -27,7 +27,9 @@ test('native image plugin installation, restricted schema, durable async task an
     round++;
     const names=body.tools.map(tool=>tool.name ?? tool.function?.name);
     if(round<12) for(const name of ['seedream_create_task','seedream_get_task','generation_wait_tasks','image_convert','image_stitch'])assert.ok(names.includes(prefix+name),JSON.stringify(names));
-    assert.equal(names.length,round<12?12:6);assert.ok(!names.includes('terminal_exec'));
+    const expected = ['read_file', 'inject_image_input', 'request_user_input_async', 'checkpoint_context', 'search_skills', 'run_skill', 'list_subagent_options', 'subagent', 'tasks'];
+    if (round < 12) expected.push(...['seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks', 'image_convert', 'image_stitch'].map(name => prefix + name));
+    assert.deepEqual([...names].sort(), expected.sort());
     if(round===2){const db=new DatabaseSync(join(root,'plugin-state/images/jobs.sqlite3'),{readOnly:true});taskId=db.prepare('SELECT id FROM jobs').get().id;db.close();}
     let item;
     if(round<3)item={id:'call-'+round,call_id:'call-'+round,type:'function_call',name:prefix+(round===1?'seedream_create_task':'generation_wait_tasks'),arguments:JSON.stringify(round===1?{request:{prompt:'A red square',size:'1K'},request_id:'web-native-test-001'}:{tasks:[{kind:'seedream',task_id:taskId}],timeout_seconds:10,mode:'all'}),status:'completed'};

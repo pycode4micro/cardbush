@@ -4,6 +4,9 @@ import path from 'node:path';
 
 const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
 const preview = read('electron', 'officePreview.ts');
+const previewTemplate = read('assets', 'templates', 'office-preview.html');
+const toolbarMarkup = ['office-toolbar', 'office-slide-navigation', 'office-sheet-options'].map(name => read('assets', 'templates', name + '.html')).join('\n');
+const interactions = read('assets', 'templates', 'office-reader-script.js.template');
 const main = read('electron', 'main.ts');
 const inspector = read('scripts', 'inspect-office-preview.cjs');
 const previewEntry = read('src', 'officePreviewMain.ts');
@@ -16,15 +19,15 @@ assert.match(preview, /'\.doc'/);
 assert.match(preview, /'\.xls'/);
 assert.match(preview, /'\.ppt'/);
 assert.match(preview, /officeReaderToolbarMarkup/);
-assert.match(preview, /role="toolbar" aria-label="只读阅读工具"/);
-assert.match(preview, /class="readonly-badge">只读预览/);
-assert.match(preview, /aria-label="[^"\n]*只读内容"/);
-assert.match(preview, /data-action="zoom-in"/);
-assert.match(preview, /data-action="fit"/);
-assert.match(preview, /data-action="previous-slide"/);
+assert.match(toolbarMarkup, /role="toolbar" aria-label="\{\{text:toolbar\}\}"/);
+assert.match(previewTemplate, /class="readonly-badge">\{\{text:readOnly\}\}/);
+assert.match(previewTemplate, /aria-label="\{\{text:contentLabel\}\}"/);
+assert.match(toolbarMarkup, /data-action="zoom-in"/);
+assert.match(toolbarMarkup, /data-action="fit"/);
+assert.match(toolbarMarkup, /data-action="previous-slide"/);
 assert.match(preview, /data-sheet-index/);
-assert.match(preview, /event\.key === 'PageDown'/);
-assert.match(preview, /event\.key === '0'/);
+assert.match(interactions, /event\.key === 'PageDown'/);
+assert.match(interactions, /event\.key === '0'/);
 assert.doesNotMatch(preview, /data-ribbon-(?:tab|panel)/);
 assert.doesNotMatch(preview, /class="office-(?:ribbon|commandbar)"/);
 assert.doesNotMatch(preview, /contenteditable/i);
@@ -67,7 +70,6 @@ assert.equal(packageJson.dependencies['@file-viewer/renderer-ppt'], '3.0.0');
 assert.equal(packageJson.dependencies['@file-viewer/renderer-spreadsheet'], '3.0.0');
 assert.equal(packageJson.dependencies['@file-viewer/renderer-pptx'], '3.0.0');
 
-const toolbarMarkup = preview.match(/function officeReaderToolbarMarkup[\s\S]*?function officeInteractionScript/)?.[0] ?? '';
 const actions = [...toolbarMarkup.matchAll(/data-action="([^"]+)"/g)].map((match) => match[1]);
 assert.deepEqual(
   [...new Set(actions)].sort(),

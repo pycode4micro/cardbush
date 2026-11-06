@@ -71,6 +71,7 @@ test('interpolation is literal, nonrecursive and rejects incomplete contracts', 
 test('the complete App keeps translated literals and conditional appearance values out of components', async () => {
   const files = (await readdir('src', { recursive: true })).filter(file => /\.(?:ts|tsx)$/.test(file)
     && !file.replaceAll('\\', '/').startsWith('i18n/') && !file.replaceAll('\\', '/').startsWith('features/pre_test/')).map(file => path.join('src', file));
+  files.push(...(await readdir('web', { recursive: true })).filter(file => /\.(?:ts|tsx)$/.test(file)).map(file => path.join('web', file)));
   files.push('electron/main.ts', 'electron/fileContextMenu.ts', 'electron/localApplications.ts', 'electron/windowsApplicationShortcuts.ts');
   for (const file of files) {
     const text = await readFile(file, 'utf8');

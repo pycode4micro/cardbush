@@ -1,3 +1,4 @@
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, mkdir, readdir, rm } from 'node:fs/promises';
@@ -172,9 +173,7 @@ test('a genuinely missing embedded resource still blocks an incomplete fixed ver
 });
 
 test('canvas file errors show a useful filename without the IPC envelope or system path', async () => {
-  const source = await readFile(new URL('../src/features/creationCanvas/canvasErrors.ts', import.meta.url), 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const { canvasErrorMessage } = await import('data:text/javascript;base64,' + Buffer.from(output).toString('base64'));
+  const { canvasErrorMessage } = await loadChatTranscript({ source: 'export { canvasErrorMessage } from '+JSON.stringify(new URL('../src/features/creationCanvas/canvasErrors.ts', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'))+';' });
   const error = "Error invoking remote method 'creation:canvas': Error: ENOENT: no such file or directory, stat 'C:\\workspace\\图片路径.png'";
   const text = canvasErrorMessage(error, 'zh');
   assert.match(text, /找不到文件「图片路径.png」/); assert.doesNotMatch(text, /Error|ENOENT|workspace|creation:canvas/);

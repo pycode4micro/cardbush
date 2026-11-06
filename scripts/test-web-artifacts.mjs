@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
-const ui = await loadChatTranscript({ conditions: ['node'], globals: { TextEncoder, TextDecoder, process: { env: { NODE_ENV: 'production' } } }, source: `export * from ${JSON.stringify(path.resolve('web/artifacts.ts'))}; export { webToolExecution } from ${JSON.stringify(path.resolve('web/transcript.ts'))};` });
+const ui = await loadChatTranscript({ conditions: ['node'], globals: { document: { documentElement: { lang: 'zh' } }, TextEncoder, TextDecoder, process: { env: { NODE_ENV: 'production' } } }, source: `export * from ${JSON.stringify(path.resolve('web/artifacts.ts'))}; export { webToolExecution } from ${JSON.stringify(path.resolve('web/transcript.ts'))};` });
 const image = '/data/workspaces/generated/针织 开衫.png';
 const name = 'mcp__plugin_volcengine_images_images__generation_wait_tasks';
 const message = (extra = {}) => ({ id:'reply', role:'assistant', content:'', turnId:'turn-a', conversationId:'session-a', ...extra });

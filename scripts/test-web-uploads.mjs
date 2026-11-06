@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { before, after } from 'node:test';
 import sharp from 'sharp';
 import { fileSize, fitImageSize, prepareAttachment, readImageInfo, uploadInChunks, uploadLimits } from '../web/attachmentUpload.ts';
 
@@ -125,3 +125,8 @@ test('lossy optimization bounds the NAS PNG copy and always releases bitmap and 
   await assert.rejects(prepareAttachment(file,controller.signal,()=>{}),{name:'AbortError'});
   assert.equal(closed,2);assert.equal(canvas,undefined);
 });
+
+// Tests exercise Chinese UI errors without changing any stored user preference.
+const priorDocument = globalThis.document;
+before(() => { globalThis.document = { documentElement: { lang: 'zh' } }; });
+after(() => { if (priorDocument === undefined) delete globalThis.document; else globalThis.document = priorDocument; });

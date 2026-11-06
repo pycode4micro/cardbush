@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="{{text:language}}"><head><meta charset="utf-8"><meta name="color-scheme" content="dark light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>{{text:title}}</title>
+<style>
+:root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background:#1c1b19; color:#dedbd4; }
+body { margin:0; min-height:100vh; background:#1c1b19; }
+header { position:sticky; top:0; padding:10px 14px; background:#2b2b2b; border-bottom:1px solid rgba(255,255,255,.08); z-index:1; }
+header strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12px system-ui,sans-serif; }
+header small { display:block; margin-top:4px; color:#99958d; font:11px system-ui,sans-serif; }
+pre { margin:0; padding:14px; overflow:auto; color:#d7d3cb; font-size:12px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
+</style></head><body><header><strong>{{text:path}}</strong><small>{{text:notice}}</small></header><pre>{{text:content}}</pre></body></html>

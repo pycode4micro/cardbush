@@ -230,7 +230,8 @@ test('real filesystem previews share decoding, truncation, directory rejection a
     await assert.rejects(readTextPreview(join(directory, 'missing.txt')), { code: 'ENOENT' });
     await writeFile(target, Buffer.from([0, 0, 0, 0]));
     await assert.rejects(readTextPreview(target), /text_preview_binary/);
-    assert.match(await renderTextFilePreview(target), /十六进制数据/);
+    assert.match(await renderTextFilePreview(target, '', 'zh'), /十六进制数据/);
+    assert.match(await renderTextFilePreview(target, '', 'en'), /hexadecimal/);
 
     for (const encoding of ['utf-8', 'utf-16le']) {
       const bomLength = encoding === 'utf-8' ? 3 : 2;
