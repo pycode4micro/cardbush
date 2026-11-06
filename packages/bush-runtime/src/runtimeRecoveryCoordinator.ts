@@ -106,6 +106,33 @@ export class RuntimeRecoveryCoordinator {
       item.messageId === messageId && item.message.role === 'user' && item.message.visibility !== 'internal') ?? null;
   }
 
+  /** Freeze completed exchanges only; never copy an outstanding tool call. */
+  readActiveTurn(sessionId: string, turnId: string) {
+    const commit = this.#checkpoints.load(sessionId, turnId)?.sessionCommit;
+    if (!commit) return undefined;
+    const entries = [...commit.inputMessages, ...commit.generatedMessages];
+    let boundary = entries.length;
+    for (let index = 0; index < entries.length; index++) {
+      const message = entries[index]!.message;
+      if (message.role !== 'assistant' || !message.toolCalls.length) continue;
+      const remaining = new Set(message.toolCalls.map(call => call.id));
+      let next = index + 1;
+      while (next < entries.length && entries[next]!.message.role === 'tool') {
+        const receipt = entries[next++]!.message;
+        if (receipt.role === 'tool') remaining.delete(receipt.toolCallId);
+      }
+      if (remaining.size) { boundary = index; break; }
+      index = next - 1;
+    }
+    return {
+      turnId, turnSequence: commit.turnSequence, createdAt: commit.createdAt,
+      supersededMessageIds: commit.supersession?.messageIds ?? [],
+      messages: entries.slice(0, boundary).map((entry, messageIndex) => ({
+        ...entry, turnId, turnSequence: commit.turnSequence, messageIndex,
+      })),
+    };
+  }
+
   #inspectState(
     sessionId: string,
     turnId: string,

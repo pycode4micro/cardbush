@@ -1,5 +1,5 @@
 import { uiText } from '../i18n';
-import type { RuntimeEvent } from '@cardbush/bush-protocol';
+import { activeSessionTurnSchema, type RuntimeEvent } from '@cardbush/bush-protocol';
 import { resolveConversationStyle } from '../features/settings/conversationStyle';
 import { readIndividuation } from '../features/settings/individuation';
 import {
@@ -13,6 +13,10 @@ import type {
   ShadowConversationStreamRequest,
 } from './api';
 import { resolveProductModel } from './runtimeChat';
+import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
+import { projectRuntimeSessionMessage, projectRuntimeTurnMessages, restoreRuntimeTurnAttachmentMetadata } from './runtimeSessionMessageProjection';
+import { attachHistoryToolExecutions } from './historyToolAssociation';
+import { runtimeHistoryToolExecution } from './runtimeHistoryToolExecution';
 
 interface ShadowState extends ShadowConversationRecord {
   runtimeSessionId: string;
@@ -36,7 +40,7 @@ export async function createRuntimeShadowConversation(input: {
   const id = `shadow_${input.clientConversationId.trim() || crypto.randomUUID()}`;
   const runtimeSessionId = `shadow:${crypto.randomUUID()}`;
   try {
-    const source = await runtime.client.getSession(input.sessionId);
+    const source = await runtime.client.getLiveSession(input.sessionId);
     if (!source) throw new Error(uiText()('shadowRuntime.the_source_conversation_does_not_exist'));
     const requestedTurnId = input.sourceTurnId?.trim() ?? '';
     const requestedTurnIndex = requestedTurnId
@@ -45,14 +49,16 @@ export async function createRuntimeShadowConversation(input: {
     const sourceTurn = requestedTurnIndex >= 0
       ? source.turns[requestedTurnIndex]
       : source.turns.at(-1);
-    const sourceTurnId = sourceTurn?.turnId ?? '';
+    const sourceActiveTurn = source.activeTurn && (!requestedTurnId || requestedTurnId === source.activeTurn.turnId)
+      ? source.activeTurn : undefined;
+    const sourceTurnId = sourceActiveTurn?.turnId ?? sourceTurn?.turnId ?? '';
     const sourceThroughTurnSequence = sourceTurn?.turnSequence ?? 0;
     const sourceMessageIds = new Set(
       source.turns
         .filter((turn) => turn.turnSequence <= sourceThroughTurnSequence)
         .flatMap((turn) => turn.messages.map((message) => message.messageId)),
     );
-    const sourceSupersededMessageIds = source.supersededMessageIds.filter((messageId) =>
+    const sourceSupersededMessageIds = [...source.supersededMessageIds, ...sourceActiveTurn?.supersededMessageIds ?? []].filter((messageId) =>
       sourceMessageIds.has(messageId)
     );
     await runtime.client.createSession({
@@ -66,6 +72,7 @@ export async function createRuntimeShadowConversation(input: {
         sourceTurnId,
         sourceThroughTurnSequence,
         sourceSupersededMessageIds,
+        sourceActiveTurn,
         sourceSessionRevision: source.revision,
         shadowMode: input.mode,
         projectDir: String(source.metadata?.projectDir ?? ''),
@@ -91,11 +98,37 @@ export async function createRuntimeShadowConversation(input: {
         sourceSessionRevision: source.revision,
         sourceThroughTurnSequence,
         sourceSupersededMessageIds,
+        sourceActiveTurn,
         mode: input.mode,
       },
     };
     conversations.set(id, state);
-    return publicRecord(state);
+    const excluded = new Set(sourceSupersededMessageIds);
+    // Display exactly the same frozen boundary as the model, even if the
+    // parent finishes or accepts another request before the window mounts.
+    const sourceMessages = source.turns.filter(turn => turn.turnSequence <= sourceThroughTurnSequence)
+      .flatMap(turn => {
+        const restored = restoreRuntimeTurnAttachmentMetadata(turn);
+        return projectRuntimeTurnMessages({ ...restored, messages: restored.messages.filter(item =>
+          !excluded.has(item.messageId) && !isInternalRuntimeMessage(item)) }, source.sessionId);
+      });
+    sourceMessages.push(...(sourceActiveTurn?.messages ?? [])
+      .filter(item => !isInternalRuntimeMessage(item))
+      .map(item => projectRuntimeSessionMessage(item, source.sessionId)));
+    const toolIdsByTurn = new Map<string, Set<string>>();
+    for (const message of sourceMessages) {
+      if (message.role !== 'tool' || !message.turnId || !message.metadata?.toolCallId) continue;
+      const ids = toolIdsByTurn.get(message.turnId) ?? new Set<string>();
+      ids.add(String(message.metadata.toolCallId));
+      toolIdsByTurn.set(message.turnId, ids);
+    }
+    const executions = (await Promise.all([...toolIdsByTurn].map(async ([turnId, ids]) => {
+      const records = await runtime.client.listTurnToolExecutionSummaries({ sessionId: source.sessionId, turnId }).catch(() => []);
+      // A live tool may finish during this read. Only receipts in the frozen
+      // snapshot belong in Shadow's transcript, even within the same Turn.
+      return records.filter(record => ids.has(record.toolCall.id)).map(runtimeHistoryToolExecution);
+    }))).flat();
+    return { ...publicRecord(state), sourceMessages: attachHistoryToolExecutions(sourceMessages, executions) };
   } finally {
     runtime.dispose();
   }
@@ -212,7 +245,10 @@ export async function streamRuntimeShadowConversationMessage(
             ? Math.max(0, source.turns.findIndex((turn) => turn.turnId === state.sourceTurnId)) + 1
             : source.turns.length,
         );
-    if (state.sourceTurnId && !sourceTurns.some((turn) => turn.turnId === state.sourceTurnId)) {
+    const sourceActiveTurn = state.raw.sourceActiveTurn == null ? undefined
+      : activeSessionTurnSchema.parse(state.raw.sourceActiveTurn);
+    if (state.sourceTurnId && sourceActiveTurn?.turnId !== state.sourceTurnId &&
+        !sourceTurns.some((turn) => turn.turnId === state.sourceTurnId)) {
       state.status = 'stale';
       state.updatedAt = new Date().toISOString();
       throw new Error(uiText()('shadowRuntime.the_source_turn_used_by_this_shadow'));
@@ -222,7 +258,7 @@ export async function streamRuntimeShadowConversationMessage(
         ? state.raw.sourceSupersededMessageIds.map(String)
         : source.supersededMessageIds,
     );
-    const sourceMessages = sourceTurns.flatMap((turn) => turn.messages)
+    const sourceMessages = [...sourceTurns.flatMap((turn) => turn.messages), ...sourceActiveTurn?.messages ?? []]
       .filter((item) => !frozenSuperseded.has(item.messageId))
       .map((item) => item.message);
     const readOnly = state.mode === 'readonly';
@@ -368,6 +404,7 @@ async function resolveShadowState(
       restored: true,
       sourceSessionRevision: Number(session.metadata?.sourceSessionRevision),
       sourceThroughTurnSequence: Number(session.metadata?.sourceThroughTurnSequence),
+      sourceActiveTurn: session.metadata?.sourceActiveTurn,
       sourceSupersededMessageIds: Array.isArray(session.metadata?.sourceSupersededMessageIds)
         ? session.metadata.sourceSupersededMessageIds.map(String)
         : [],

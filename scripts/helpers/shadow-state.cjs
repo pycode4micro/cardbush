@@ -4,9 +4,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run(`
     window.crypto.randomUUID ??= () => require('node:crypto').randomUUID();
     window.shadowFixture = {
-      createShadowConversation: async input => ({ id: input.clientConversationId, mode: input.mode, sourceTurnId: 'source-turn', workspaceDir: 'D:/fixture' }),
+      createShadowConversation: async input => ({ id: input.clientConversationId, mode: input.mode, sourceTurnId: 'source-turn', workspaceDir: 'D:/fixture',
+        sourceMessages: [{ id: 'live-source-user', role: 'user', content: 'Current running task', turnId: 'source-turn' }] }),
       closeShadowConversation: async () => {},
-      fetchSessionMessages: async () => ({ messages: [] }),
+      fetchSessionMessages: async () => { throw Error('Frozen source must not be replaced by newer parent history'); },
       updateShadowConversationMode: (id, mode) => new Promise(resolve => { window.finishShadowMode = () => resolve({ id, mode, workspaceDir: 'D:/fixture' }); }),
       streamShadowConversationMessage: request => new Promise(resolve => {
         window.appendShadowReply = request.onDelta;
@@ -25,6 +26,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     };
     void 0;
   `);
+  await until("document.body.textContent.includes('Current running task')", 'running first Turn is visible immediately');
+  // The remaining scenarios also exercise compatibility with older records.
+  await run("shadowFixture.createShadowConversation = async input => ({id:input.clientConversationId,mode:input.mode,sourceTurnId:'source-turn',workspaceDir:'D:/fixture'}); shadowFixture.fetchSessionMessages=async()=>({messages:[]}); void 0");
   await until('document.querySelector(".shadow-window-composer textarea")?.disabled === false', 'Shadow history initialized');
   const send = '.shadow-window-send';
   const animation = () => run(`getComputedStyle(document.querySelector('${send} svg')).animationName`);

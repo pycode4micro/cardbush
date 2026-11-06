@@ -44,11 +44,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run(`document.querySelector('[data-inspector-action=${id}]').click()`);
   }
   assert.deepEqual(await run('inspectorActions'), ['review', 'files', 'shadow']);
-  await run(`Object.assign(startProps, { filesAvailable: false, shadowUnavailableReason: '当前任务结束后可创建 Shadow 对话' }); showInspectorStart()`);
+  await run(`Object.assign(startProps, { filesAvailable: false, shadowUnavailableReason: 'Shadow is unavailable in this runtime' }); showInspectorStart()`);
   await until("document.querySelector('[data-inspector-action=shadow]').disabled", 'unavailable actions');
   await run("document.querySelector('[data-inspector-action=files]').click(); document.querySelector('[data-inspector-action=shadow]').click()");
   assert.deepEqual(await run('inspectorActions'), ['review', 'files', 'shadow'], 'unavailable actions do not dispatch');
-  assert.equal(await run("document.querySelector('[data-inspector-action=shadow]').title"), '当前任务结束后可创建 Shadow 对话');
+  assert.equal(await run("document.querySelector('[data-inspector-action=shadow]').title"), 'Shadow is unavailable in this runtime');
   assert.equal(await run("document.querySelector('.inspector-bookmark-entry').disabled"), false);
   await run(`window.viewTheme = 'theme-dark'; Object.assign(startProps, { filesAvailable: true, shadowUnavailableReason: '' }); showInspectorStart()`);
   await pause();

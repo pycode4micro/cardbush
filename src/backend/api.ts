@@ -321,6 +321,7 @@ export interface ShadowConversationRecord {
   id: string;
   sessionId: string;
   sourceTurnId: string;
+  sourceMessages?: ChatMessage[];
   workspaceDir: string;
   agentName: string;
   mode: 'readonly' | 'fork';

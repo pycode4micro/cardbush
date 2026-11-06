@@ -6,12 +6,22 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import ts from 'typescript';
 import * as productAgent from '@cardbush/bush-product-agent';
+import * as protocol from '@cardbush/bush-protocol';
 import { InMemoryRuntimeHost, ToolExecutionCoordinator, ToolRegistry } from '@cardbush/bush-runtime';
 
 const require = createRequire(import.meta.url);
 const compiled = ts.transpileModule(fs.readFileSync('src/backend/shadowRuntime.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const projectionModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/backend/runtimeSessionMessageProjection.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { module: projectionModule, exports: projectionModule.exports,
+  require: name => name === '@cardbush/bush-protocol' ? protocol : require(name) });
+const associationModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/backend/historyToolAssociation.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { module: associationModule, exports: associationModule.exports });
 
 function fixture({ legacyRuntime = false } = {}) {
   const requests = [], executed = [], hooks = [], sessions = new Map();
@@ -37,6 +47,9 @@ function fixture({ legacyRuntime = false } = {}) {
         { messageId: 'original-result', message: { role: 'assistant', content: 'Original result' } }] }] });
   const client = {
     getSession: async id => sessions.get(id),
+    getLiveSession: async id => structuredClone(sessions.get(id)),
+    listSessionSummaries: async () => [...sessions.values()],
+    listTurnToolExecutionSummaries: async ({ turnId }) => ['read', 'after-snapshot'].map(id => ({ turnId, toolCall: { id, name: 'read_file' } })),
     createSession: async input => sessions.set(input.sessionId, { ...input, revision: 1, turns: [], supersededMessageIds: [] }),
     deleteSession: async id => sessions.delete(id),
     updateSessionMetadata: async input => { Object.assign(sessions.get(input.sessionId), { metadata: input.metadata }); },
@@ -54,17 +67,27 @@ function fixture({ legacyRuntime = false } = {}) {
       return { kind: 'turn_terminal', createdAt, payload: { status: 'completed', finalMessageId: request.turnId } };
     },
   };
-  const module = { exports: {} };
   const imports = {
     '@cardbush/bush-product-agent': productAgent,
-    '../features/settings/conversationStyle': { readConversationStyle: () => undefined },
+    '@cardbush/bush-protocol': protocol,
+    '../i18n': { uiText: () => key => key },
+    '../features/settings/conversationStyle': { resolveConversationStyle: () => undefined },
+    '../features/settings/individuation': { readIndividuation: () => undefined },
+    './runtimeMessageVisibility': { isInternalRuntimeMessage: protocol.isInternalSessionMessage },
+    './runtimeSessionMessageProjection': projectionModule.exports,
+    './historyToolAssociation': associationModule.exports,
+    './runtimeHistoryToolExecution': { runtimeHistoryToolExecution: record => ({ id: record.toolCall.id, turnId: record.turnId, name: record.toolCall.name, state: 'completed' }) },
     '../runtime-client/ElectronRuntimeSession': { createDesktopRuntimeSession: () => ({ client, dispose() {} }) },
     './runtimeChat': { resolveProductModel: async () => ({ model: 'fixture' }) },
   };
-  vm.runInNewContext(compiled, { module, exports: module.exports,
-    require: name => imports[name] ?? require(name), crypto: { randomUUID }, AbortController, setTimeout,
-  });
-  const shadow = module.exports;
+  const reload = () => {
+    const module = { exports: {} };
+    vm.runInNewContext(compiled, { module, exports: module.exports,
+      require: name => imports[name] ?? require(name), crypto: { randomUUID }, AbortController, setTimeout,
+    });
+    return module.exports;
+  };
+  const shadow = reload();
   const coordinator = new ToolExecutionCoordinator({ registry,
     permissions: { request: async () => { throw Error('Unexpected permission request'); } },
     hooks: { before: async ({ toolCall }) => { hooks.push(toolCall.name); return { messages: [] }; },
@@ -78,8 +101,49 @@ function fixture({ legacyRuntime = false } = {}) {
   const call = (turn, name) => coordinator.execute({ id: 'call-' + name, name, argumentsText: '{}' },
     { requestId: turn.requestId, sessionId: turn.sessionId, turnId: turn.turnId, round: 1, ordinal: 0 },
     undefined, { request: { ...turn, messages: [...turn.prefixMessages, ...turn.inputMessages.map(item => item.message)] }, contextMessages: [] });
-  return { registry, shadow, sessions, send, call, executed, hooks, requests };
+  return { registry, shadow, sessions, send, call, executed, hooks, requests, reload };
 }
+
+for (const firstTurn of [true, false]) test(`Shadow freezes a running ${firstTurn ? 'first' : 'later'} Turn across completion and reload`, async () => {
+  const f = fixture(), source = f.sessions.get('source');
+  if (firstTurn) source.turns = [];
+  const createdAt = new Date().toISOString(), turnSequence = firstTurn ? 1 : 2;
+  const active = { turnId: 'running-turn', turnSequence, createdAt, supersededMessageIds: [],
+    messages: [
+      { role: 'user', content: 'Current task', images: [] },
+      { role: 'assistant', content: 'Checked the file', toolCalls: [{ id: 'read', name: 'read_file', argumentsText: '{}' }] },
+      { role: 'tool', content: 'Frozen file result', toolCallId: 'read' },
+    ].map((message, messageIndex) => ({ message, messageId: `active-${messageIndex}`, turnId: 'running-turn', turnSequence, messageIndex, createdAt })) };
+  source.activeTurn = active;
+  const conversation = await f.shadow.createRuntimeShadowConversation({ sessionId: 'source', sourceTurnId: active.turnId,
+    clientConversationId: randomUUID(), mode: 'readonly' });
+  assert.equal(conversation.sourceTurnId, active.turnId);
+  assert.ok(conversation.sourceMessages.some(message => message.content === 'Current task'));
+  assert.equal(JSON.stringify(conversation.sourceMessages.flatMap(message => message.toolExecutions ?? []).map(tool => tool.id)), '["read"]', 'tool cards include frozen receipts only');
+  const before = await f.send(conversation);
+  assert.ok(before.prefixMessages.some(message => message.content === 'Frozen file result'));
+  source.turns.push({ ...active, messages: [...active.messages, { messageId: 'later', message: { role: 'assistant', content: 'Later final answer' } }] });
+  delete source.activeTurn;
+  source.revision++;
+  source.supersededMessageIds = ['original-input'];
+  const after = await f.send(conversation);
+  assert.equal(JSON.stringify(after.prefixMessages), JSON.stringify(before.prefixMessages));
+  const restored = f.reload();
+  await restored.streamRuntimeShadowConversationMessage({ conversationId: conversation.id, content: 'Continue',
+    clientMessageId: randomUUID(), modelConfig: { id: 'fixture' } });
+  assert.equal(JSON.stringify(f.requests.at(-1).prefixMessages), JSON.stringify(before.prefixMessages));
+  await restored.closeRuntimeShadowConversation(conversation.id);
+});
+
+test('selecting a historical Turn excludes a newer live Turn', async () => {
+  const f = fixture();
+  f.sessions.get('source').activeTurn = { turnId: 'newer-turn', messages: [], supersededMessageIds: [] };
+  const conversation = await f.shadow.createRuntimeShadowConversation({ sessionId: 'source', sourceTurnId: 'source-turn', clientConversationId: randomUUID(), mode: 'readonly' });
+  assert.equal(conversation.sourceTurnId, 'source-turn');
+  assert.equal(conversation.raw.sourceActiveTurn, undefined);
+  assert.equal((await f.send(conversation)).prefixMessages.at(-1).content, 'Original result');
+  await f.shadow.closeRuntimeShadowConversation(conversation.id);
+});
 
 test('Shadow mode switches preserve declarations and enforce child state at execution', async () => {
   const f = fixture();

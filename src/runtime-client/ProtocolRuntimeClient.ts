@@ -167,6 +167,13 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     );
   }
 
+  getLiveSession(sessionId: string, signal?: AbortSignal): Promise<SessionSnapshot | null> {
+    return this.command(
+      { kind: GET_RUNTIME_SESSION_COMMAND, payload: runtimeSessionReadRequestSchema.parse({ sessionId, includeActiveTurn: true }) },
+      input => input == null ? null : sessionSnapshotSchema.parse(input), signal,
+    );
+  }
+
   listTurnEvents(input: { sessionId: string; turnId: string; afterSequence?: number }, signal?: AbortSignal): Promise<RuntimeEvent[]> {
     const payload = { ...runtimeTurnIdentitySchema.parse(input), ...runtimeEventCursorSchema.parse(input) };
     return this.command({ kind: LIST_RUNTIME_TURN_EVENTS_COMMAND, payload },

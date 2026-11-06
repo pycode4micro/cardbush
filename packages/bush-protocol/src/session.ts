@@ -215,6 +215,15 @@ export const sessionEventSchema = z.discriminatedUnion("kind", [
 
 export type SessionEvent = z.infer<typeof sessionEventSchema>;
 
+/** A read-only checkpoint of an unfinished Turn, never a committed history row. */
+export const activeSessionTurnSchema = z.object({
+  turnId: z.string().min(1),
+  turnSequence: z.number().int().positive(),
+  createdAt: z.string().min(1),
+  messages: z.array(sessionMessageSchema),
+  supersededMessageIds: z.array(z.string().min(1)),
+});
+
 export const sessionSnapshotSchema = z.object({
   protocol: z.literal(BUSH_SESSION_SNAPSHOT_PROTOCOL),
   sessionId: z.string().min(1),
@@ -222,6 +231,7 @@ export const sessionSnapshotSchema = z.object({
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
   turns: z.array(committedTurnSchema),
+  activeTurn: activeSessionTurnSchema.optional(),
   supersededMessageIds: z.array(z.string().min(1)),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
@@ -260,6 +270,7 @@ export const runtimeSessionIdentitySchema = z.object({
  */
 export const runtimeSessionReadRequestSchema = runtimeSessionIdentitySchema.extend({
   messageProjection: z.enum(["full", "conversation"]).default("full"),
+  includeActiveTurn: z.boolean().default(false),
 });
 
 export type RuntimeSessionReadRequest = z.infer<

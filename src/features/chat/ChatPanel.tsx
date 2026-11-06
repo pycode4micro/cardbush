@@ -584,7 +584,7 @@ export function ChatPanel({
     }
     return '';
   })();
-  const shadowCanActivate = shadowAvailable && !sending && Boolean(activeConversationId) &&
+  const shadowCanActivate = shadowAvailable && Boolean(activeConversationId) &&
     Boolean(selectedModelConfig) && Boolean(window.cardbushDesktop?.openShadowWindow) &&
     messages.some((message) => message.role === 'user');
 

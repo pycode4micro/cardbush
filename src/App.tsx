@@ -1045,7 +1045,6 @@ function CardbushApp() {
   const inspectorConversationId = section === 'team' ? teamInspector?.sessionId || '' : section === 'md-presentation' ? creationSessionId : chat.activeConversationId;
   const inspectorConversation = activeCreationInspector?.conversation ?? (section === 'team' ? null : chat.activeConversation);
   const inspectorMessages = activeCreationInspector?.messages ?? (section === 'team' ? [] : chat.activeMessages);
-  const inspectorBusy = activeCreationInspector?.busy ?? chat.sending;
   const inspectorSelectedModel = activeCreationInspector?.selectedModel ?? chat.selectedModel;
   const inspectorTurnId = activeCreationInspector?.activeTurnId ?? chat.activeTurnId;
   const inspectorReasoningLevel = activeCreationInspector?.reasoningLevel ?? chat.reasoningLevel;
@@ -1059,18 +1058,15 @@ function CardbushApp() {
   const inspectorShadowAvailable =
     (section === 'chat' || Boolean(activeCreationInspector)) &&
     backendCapabilities.shadowConversationActivation &&
-    !inspectorBusy &&
     Boolean(inspectorConversationId) &&
     Boolean(selectedInspectorModelConfig) &&
     inspectorMessages.some((message) => message.role === 'user');
   const inspectorShadowUnavailableReason = inspectorShadowAvailable ? ''
     : !backendCapabilities.shadowConversationActivation
       ? uiText(language)('app.shadowChatIsUnavailableInThisRuntime')
-      : inspectorBusy
-        ? uiText(language)('app.shadowChatIsAvailableAfterTheCurrent')
-        : !selectedInspectorModelConfig
-          ? uiText(language)('app.selectAnAvailableModelFirst')
-          : uiText(language)('app.completeAConversationTurnToCreateA');
+      : !selectedInspectorModelConfig
+        ? uiText(language)('app.selectAnAvailableModelFirst')
+        : uiText(language)('app.sendAMessageToCreateAShadow');
   const openInspectorFiles = useCallback(async (startTabId?: string) => {
     const paths = await window.cardbushDesktop?.pickAttachments?.().catch(() => []);
     if (!paths?.length) return;

@@ -195,6 +195,10 @@ export function ShadowWindow({
       conversationRef.current = next;
       setConversation(next);
       setMode(next.mode);
+      if (next.sourceMessages) {
+        setSourceMessages(next.sourceMessages);
+        return;
+      }
       const history = await fetchSessionMessages(payload.sessionId, {
         includeSuperseded: false,
       });

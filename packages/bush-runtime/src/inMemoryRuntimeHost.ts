@@ -1271,6 +1271,14 @@ export class InMemoryRuntimeHost {
       case GET_RUNTIME_SESSION_COMMAND: {
         const input = runtimeSessionReadRequestSchema.parse(command.payload);
         const snapshot = this.#sessions.snapshot(input.sessionId);
+        // Read history and the live checkpoint synchronously, before yielding to
+        // presentation metadata. A concurrent commit must not duplicate a Turn.
+        if (snapshot && input.includeActiveTurn && input.messageProjection === 'full') {
+          const active = [...this.#activeTurns].map(key => JSON.parse(key) as [string, string])
+            .find(([sessionId, turnId]) => sessionId === input.sessionId &&
+              !snapshot.turns.some(turn => turn.turnId === turnId));
+          if (active) snapshot.activeTurn = this.#recovery.readActiveTurn(...active);
+        }
         if (snapshot) snapshot.metadata = await this.#sessionPresentationMetadata(input.sessionId, snapshot.metadata, snapshot.turns.at(-1));
         if (!snapshot || input.messageProjection === "full") return snapshot ?? null;
         return conversationSessionSnapshot(snapshot);

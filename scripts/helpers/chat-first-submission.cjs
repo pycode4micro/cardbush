@@ -89,6 +89,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const beforeClick=await run('firstSends');
   await run('document.querySelector(".send-button").click()');
   await until(`firstSends === ${beforeClick+1}`,'idle session change cannot swallow the first click');
+  await run(`window.originalShadowOpen=cardbushDesktop.openShadowWindow; window.openedLiveShadows=[];
+    cardbushDesktop.openShadowWindow=async context=>openedLiveShadows.push(context);
+    updateChat({activeConversationId:'running-shadow-parent',activeTurnId:'running-shadow-turn',sending:true,shadowAvailable:true,
+      selectedModelConfig:chatProps.availableModels[0],
+      messages:[{id:'running-shadow-user',role:'user',content:'Current running task',turnId:'running-shadow-turn'}]});`);
+  await until('!!document.querySelector(".tool-chip:has(.shadow-clone-icon)")', 'Shadow is available during the first running Turn');
+  await run('document.querySelector(".tool-chip:has(.shadow-clone-icon)").click()');
+  await until('openedLiveShadows.length===1', 'running parent opens an independent Shadow');
+  assert.equal(await run('openedLiveShadows[0].sourceTurnId'), 'running-shadow-turn');
+  assert.equal(await run('chatProps.sending'), true, 'opening Shadow does not stop the parent');
+  await run('cardbushDesktop.openShadowWindow=originalShadowOpen; updateChat({shadowAvailable:false,sending:false});');
   fs.writeFileSync(path.join(root,'tmp','first-submission-frames.json'),JSON.stringify(results,null,2));
   console.log('First submission passed: stable input/focus, admission controls, duplicate guard, fixed backdrop and bottom shortcut across 11 standard/simple, multiline, custom, zoom, early-acknowledgement, click and native-pointer cases; session switching and rejection remain isolated.');
 };

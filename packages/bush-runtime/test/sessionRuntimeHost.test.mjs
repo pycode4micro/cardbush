@@ -1841,6 +1841,55 @@ test('user reference reads share the durable fact before and after commit, inclu
   assert.equal(await readUser('reference-user'), null, 'a durable checkpoint cannot resurrect a replaced user instruction');
 });
 
+test('live snapshots freeze the first running Turn without interrupting model or tool execution', async () => {
+  const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
+  const firstModel = gate(), tool = gate(), finalModel = gate();
+  let stage = '', calls = 0, executions = 0, settled = false;
+  const registry = new ToolRegistry().register({
+    definition: ordinaryToolDefinition(),
+    manifest: { effect_kind: 'observation', operation: 'fixture.read', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
+    decodeInput: input => input,
+    execute: async () => { executions++; stage = 'tool'; await tool.promise; return { result: 'Completed observation' }; },
+  });
+  const host = new InMemoryRuntimeHost({ toolRegistry: registry, provider: { async *stream(request) {
+    if (++calls === 1) {
+      stage = 'first-model'; await firstModel.promise;
+      yield event(request.requestId, 0, 'tool_call_delta', { index: 0, toolCallId: 'live-call', nameDelta: 'ordinary_tool', argumentsDelta: '{}' });
+      yield event(request.requestId, 1, 'response_completed', { finishReason: 'tool_calls' });
+    } else {
+      stage = 'final-model'; await finalModel.promise;
+      yield event(request.requestId, 0, 'text_delta', { delta: 'Later final answer' });
+      yield event(request.requestId, 1, 'response_completed', { finishReason: 'stop' });
+    }
+  } } });
+  const request = sessionRequest('live-request', 'live-turn', 'live-user', 'Current task');
+  request.tools = [ordinaryToolDefinition()];
+  const running = host.runSessionTurn(request).then(result => { settled = true; return result; });
+  const read = includeActiveTurn => host.sendCommand({ kind: GET_RUNTIME_SESSION_COMMAND, payload: { sessionId: request.sessionId, includeActiveTurn } });
+  try {
+    await waitFor(() => stage === 'first-model');
+    const first = await read(true);
+    assert.equal(first.turns.length, 0);
+    assert.equal(first.activeTurn.turnId, request.turnId);
+    assert.equal(first.activeTurn.messages.at(-1).message.content, 'Current task');
+    assert.equal((await read(false)).activeTurn, undefined, 'ordinary history reads stay unchanged');
+    firstModel.release(); await waitFor(() => stage === 'tool');
+    const duringTool = await read(true);
+    assert.ok(duringTool.activeTurn.messages.every(item => item.message.role !== 'tool' && !(item.message.toolCalls?.length)), 'no unfinished exchange is replayed');
+    assert.equal(settled, false);
+    tool.release(); await waitFor(() => stage === 'final-model');
+    const completed = await read(true);
+    assert.ok(completed.activeTurn.messages.some(item => item.message.role === 'tool' && item.message.content.includes('Completed observation')));
+    finalModel.release(); assert.equal((await running).payload.status, 'completed');
+    assert.equal(completed.activeTurn.messages.some(item => item.message.content === 'Later final answer'), false, 'snapshot remains frozen');
+    const finished = await read(true);
+    assert.equal(finished.activeTurn, undefined);
+    assert.equal(finished.turns.length, 1);
+    assert.equal(executions, 1, 'reading the live snapshot never executes a tool');
+    assert.equal(calls, 2, 'reading does not cancel or restart model requests');
+  } finally { firstModel.release(); tool.release(); finalModel.release(); await running; }
+});
+
 function sessionRequest(requestId, turnId, messageId, content) {
   return {
     protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,
