@@ -2,6 +2,7 @@ import { LIST_RUNTIME_SESSION_SUMMARIES_COMMAND, GET_RUNTIME_SESSION_HISTORY_COM
   sessionSummarySchema, sessionHistoryPageSchema, sessionHistoryRequestSchema,
   type SessionSummary, type SessionHistoryRequest, type SessionHistoryPage } from '@cardbush/bush-protocol';
 import {
+  GET_RUNTIME_ENVIRONMENT_COMMAND, runtimeEnvironmentSnapshotSchema, runtimeEnvironmentReadSchema,
   RUNTIME_TERMINAL_CONTROL_COMMAND, runtimeTerminalControlSchema, runtimeTerminalStatusSchema,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND, LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND,
   runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema, type RuntimeSolutionAnswer,
@@ -115,6 +116,10 @@ import {
   type RuntimeTransport,
 } from './RuntimeClient';
 export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
+  getEnvironment(sessionId: string, signal?: AbortSignal) {
+    return this.command({ kind: GET_RUNTIME_ENVIRONMENT_COMMAND, payload: runtimeEnvironmentReadSchema.parse({ sessionId }) },
+      value => runtimeEnvironmentSnapshotSchema.parse(value), signal);
+  }
   terminalControl(input: { sessionId: string; terminalSessionId: string; action: 'status' | 'stop' }, signal?: AbortSignal) {
     return this.command({ kind: RUNTIME_TERMINAL_CONTROL_COMMAND, payload: runtimeTerminalControlSchema.parse(input) },
       value => runtimeTerminalStatusSchema.parse(value), signal);

@@ -211,6 +211,7 @@ function createBaseProductAgentTurnRequest(
     permissionMode: input.permissionMode,
     metadata: {
       source: "cardbush_product_agent",
+      environmentContext: true,
       systemPolicy: { id: 'cardbush.product', version: '10' },
       mcpCatalogUpdates: 'additions',
       individuation: normalizeIndividuation(input.individuation),

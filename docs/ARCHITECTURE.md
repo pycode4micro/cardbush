@@ -17,6 +17,8 @@ SSH 项目无需远端 CardBush 服务。通过 SSH 接入独立 Agent 则是将
 
 ## 共享核心与宿主
 
+本地执行实例统一登记到环境感知的 `agents` 项。父 Agent、Assistant、Shadow、子 Agent、Team、自动化及内部任务共享执行事实；运行调度、环境聚合、协作消息各自保留职责。接口、状态范围和增量上下文规则见 [Runtime 环境与 Agent 生命周期](RUNTIME_ENVIRONMENT.md)。
+
 ```mermaid
 flowchart TD
   UI[本地对话、输入框、预览和设置组件] --> Adapter[本地后端与子任务检查适配]

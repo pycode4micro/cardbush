@@ -6,6 +6,8 @@ This describes current source; installed packages can lag. Historical investigat
 
 ## Execution hosts
 
+Local execution instances share the `agents` section of the Runtime environment. Execution scheduling, environment observations and collaboration delivery have separate owners. See [Runtime environment and Agent lifecycle](RUNTIME_ENVIRONMENT.md) for the registry, scopes and incremental context protocol.
+
 | Mode | Loop/model | Files/commands | Lifetime |
 | --- | --- | --- | --- |
 | Desktop conversation | Desktop-owned Runtime | Local workspace or explicitly authorized tool environment | App lifetime. |

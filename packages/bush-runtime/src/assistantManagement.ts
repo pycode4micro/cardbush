@@ -14,11 +14,13 @@ const allowed = new Set<string>(ASSISTANT_MANAGEMENT_TOOLS);
 export class AssistantManagement {
   private pending = new Map<string, AssistantManagementSnapshot['permissions'][number]>();
   private identities = new Map<string, ToolExecutionIdentity>();
+  private executions = new Map<string, string>();
   private permissions: RuntimePermissionBroker;
   constructor(private options: {
     registry: ToolRegistry; executions: ToolExecutionStore; capabilities: RuntimeCapabilityStore;
     coordination: () => CoordinationStore; automation?: AutomationScheduler;
     hooks?: (request: ModelRequest) => ToolExecutionHooks;
+    onPermissionState?: (sessionId: string, executionId: string, waiting: boolean) => void;
   }) {
     this.permissions = new RuntimePermissionBroker({
       onRequested: request => {
@@ -27,10 +29,21 @@ export class AssistantManagement {
           sessionId: identity.sessionId, turnId: identity.turnId,
           request: { reason: request.reason, actions: request.actions, targets: request.targets,
             requestedCapabilityIds: request.capabilityIds, scope: request.scope } });
+        this.permissionState(identity, request.toolCallId);
       },
-      onAnswered: answer => { this.pending.delete(answer.permissionId); },
-      onCancelled: request => { this.pending.delete(request.permissionId); },
+      onAnswered: answer => this.clearPermission(answer.permissionId),
+      onCancelled: request => this.clearPermission(request.permissionId),
     });
+  }
+  private clearPermission(permissionId: string) {
+    const pending = this.pending.get(permissionId);
+    this.pending.delete(permissionId);
+    if (pending) this.permissionState(pending, pending.toolCallId);
+  }
+  private permissionState(identity: { sessionId: string }, toolCallId: string) {
+    const executionId = this.executions.get(toolCallId);
+    if (executionId) this.options.onPermissionState?.(identity.sessionId, executionId,
+      [...this.pending.values()].some(item => this.executions.get(item.toolCallId) === executionId));
   }
   definitions(parent: RuntimeSessionTurnRequest) {
     if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' || parent.metadata.toolExecutionPolicy === 'none') return [];
@@ -63,6 +76,7 @@ export class AssistantManagement {
     }
     const identity = { requestId: request.requestId, sessionId: parent.sessionId, turnId: parent.turnId, round: round + 1, ordinal };
     this.identities.set(call.id, identity);
+    if (typeof parent.metadata.environmentExecutionId === 'string') this.executions.set(call.id, parent.metadata.environmentExecutionId);
     try {
       const coordinator = new ToolExecutionCoordinator({ registry: this.options.registry, permissions: this.permissions, capabilities: this.options.capabilities,
         hooks: this.options.hooks?.(executionRequest), observer: { completed: (call, identity, result) => this.options.executions.record(call, identity, result) } });
@@ -76,6 +90,6 @@ export class AssistantManagement {
       const rendered = this.options.registry.projectModelPage(call.name, outcome.result, 12000, call)
         ?? projectMcpDiscoveryResult(JSON.stringify(outcome.result), 12000);
       return rendered ? JSON.parse(rendered) : outcome.result;
-    } finally { this.identities.delete(call.id); }
+    } finally { this.identities.delete(call.id); this.executions.delete(call.id); }
   }
 }

@@ -97,6 +97,11 @@ export class InMemoryRuntimeEventLog {
       }))];
   }
   readonly #streams = new Map<string, TurnEventStream>();
+  readonly #observers = new Set<(event: RuntimeEvent) => void>();
+  observe(listener: (event: RuntimeEvent) => void): () => void {
+    this.#observers.add(listener);
+    return () => { this.#observers.delete(listener); };
+  }
   readonly #eventIds = new Set<string>();
   readonly #createEventId: (context: RuntimeEventIdContext) => string;
   readonly #now: () => string;
@@ -134,6 +139,7 @@ export class InMemoryRuntimeEventLog {
     this.#eventIds.add(eventId);
     stream.events.push(event);
     stream.activity.observe(event);
+    for (const observer of this.#observers) observer(event);
     for (const listener of stream.listeners) {
       listener(event);
     }

@@ -17,9 +17,10 @@ const batch = { questions: [
 const identity = { requestId: 'request-a', sessionId: 'session-a', turnId: 'turn-a' };
 const answerFor = (request, answer) => ({ selectionId: request.selectionId, sessionId: request.sessionId, turnId: request.turnId, ...answer });
 
-test('accepts only 1–3 distinct brief plain text solutions, without recommendation metadata', () => {
+test('accepts free text or up to three distinct brief plain text solutions, without recommendation metadata', () => {
   assert.deepEqual(solutionSelectionInputSchema.parse(input), input);
-  for (const candidate of [ { ...input, options: [] }, { ...input, options: ['一', '二', '三', '四'] },
+  assert.deepEqual(solutionSelectionInputSchema.parse({ ...input, options: [] }), { ...input, options: [] });
+  for (const candidate of [ { ...input, options: ['一', '二', '三', '四'] },
     { ...input, options: [{ label: '保留', recommended: true }] }, { ...input, recommended: 0 },
     { ...input, prompt: '字'.repeat(501) }, { ...input, options: ['字'.repeat(121)] },
     { ...input, options: ['保留', '保留'] }, { ...input, prompt: '一\n二' } ]) {
@@ -65,10 +66,12 @@ test('dismissal is a cancellation result, stopping aborts the wait, and other se
 
 test('batch input rejects ambiguous formats, duplicate IDs, empty and oversized questions', () => {
   assert.deepEqual(solutionSelectionInputSchema.parse(batch), batch);
+  const freeText = { questions: [{ ...batch.questions[0], options: [] }] };
+  assert.deepEqual(solutionSelectionInputSchema.parse(freeText), freeText);
   for (const value of [ {}, { prompt: input.prompt }, { options: input.options }, { ...input, ...batch },
     { questions: [] }, { questions: Array.from({ length: 4 }, (_, i) => ({ ...batch.questions[0], id: String(i) })) },
     { questions: [batch.questions[0], batch.questions[0]] }, { questions: [{ ...batch.questions[0], id: ' ' }] },
-    { questions: [{ ...batch.questions[0], options: [] }] }, { questions: [{ ...batch.questions[0], id: 'x'.repeat(81) }] },
+    { questions: [{ ...batch.questions[0], id: 'x'.repeat(81) }] },
     { questions: [{ ...batch.questions[0], options: ['same', 'same'] }] } ]) {
     assert.equal(solutionSelectionInputSchema.safeParse(value).success, false, JSON.stringify(value));
   }

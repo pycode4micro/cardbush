@@ -50,6 +50,7 @@ async function fixture(t) {
   t.after(async () => { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await scheduler.close(); persistence.close?.();
     assert.ok(root.startsWith(join(tmpdir(), 'assistant-management-'))); await rm(root, { recursive: true, force: true }); });
   return { root, registry, scheduler, runs, requests, results, hooks, faults, executions, coordination, persistence, read, command, begin, complete, parent,
+    environment: () => host.readEnvironment(id),
     executed: () => executed, invoke: async (name, args, patch) => complete(await begin(name, args, patch)),
     answer: (permission, decision) => host.sendCommand({ kind: 'runtime.answer_permission', payload: { protocol: 'bush.runtime_permission_answer.v1', permissionId: permission.permissionId,
       answerId: randomUUID(), decision, ...(['allow_once', 'allow_session'].includes(decision) ? { grantedCapabilityIds: permission.request.requestedCapabilityIds } : {}) } }) };
@@ -129,8 +130,10 @@ for (const decision of ['deny', 'cancel', 'allow_once', 'allow_session', 'reset'
   const permission = (await f.read()).management.permissions[0];
   assert.equal(permission.sessionId, id); assert.equal(permission.toolCallId, call);
   assert.deepEqual(permission.request.requestedCapabilityIds, ['schedule.create']);
+  assert.equal((await f.environment()).sections.agents.self.status, 'waiting');
   if (decision === 'reset') await f.command({ action: 'reset' }); else await f.answer(permission, decision);
   await f.complete(call);
+  assert.equal((await f.environment()).sections.agents.self?.status, decision === 'reset' ? undefined : 'completed');
   assert.equal((await f.read()).management.permissions.length, 0);
   const granted = decision.startsWith('allow');
   assert.equal((await f.scheduler.list()).jobs.length, granted ? 1 : 0);

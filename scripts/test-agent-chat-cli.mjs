@@ -1762,7 +1762,7 @@ test('simultaneous local windows share one host, run independent sessions, and f
   const alpha = jobs.find(job => job.text === 'window alpha'), beta = jobs.find(job => job.text === 'window beta');
   assert.notEqual(alpha.sessionId, beta.sessionId);
   assert.equal(alpha.status, 'running'); assert.equal(beta.status, 'running');
-  assert.match(JSON.stringify(f.calls[1].input), /workspace_agents/);
+  assert.match(JSON.stringify(f.calls[1].input), /runtime_environment/);
   assert.ok(JSON.stringify(f.calls[1].input).includes(alpha.sessionId), 'peer discovery reaches another CLI window');
   a.child.stdin.write('\x03');
   await until(() => client.call('chat.jobs', { sessionId: alpha.sessionId }), rows => rows[0].status === 'stopped');

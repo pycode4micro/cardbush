@@ -67,6 +67,8 @@ export { withToolDisplayTitle } from './toolDisplay.js';
 export { withCanvasFileLock } from './canvasFileLock.js';
 export * from './subagentObservation.js';
 export * from './subagentInteractions.js';
+export * from './runtimeEnvironment.js';
+export * from './agentExecutionRegistry.js';
 export * from './localSubagentInteractions.js';
 export { captureCanvasVersion, releaseCanvasVersion, resourceFormat, rewriteCanvasResources } from './canvasVersions.js';
 export { withWorkspaceFileAccess, openWorkspaceFile } from './workspaceFileAccess.js';

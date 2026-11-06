@@ -218,6 +218,8 @@ import { observationControl } from './subagentInteractions.js';
 import { childFinalMessageIds, childConversationReadHint, continueChildConversation, type ChildConversationSource } from './subagentConversation.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
 import { RuntimeConversations, type RuntimeConversation } from './runtimeConversations.js';
+import { RuntimeEnvironment, type EnvironmentSource } from './runtimeEnvironment.js';
+import { GET_RUNTIME_ENVIRONMENT_COMMAND, runtimeEnvironmentReadSchema } from '@cardbush/bush-protocol';
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
 import { parseSshWorkspace } from '@cardbush/bush-protocol';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
@@ -316,6 +318,7 @@ export interface InMemoryRuntimeHostOptions {
   loadSearchResultLimit?: SearchResultLimitProvider;
   additionalSupportedCommands?: string[];
   additionalFeatures?: string[];
+  environmentSources?: Record<string, EnvironmentSource>;
   dataRoot?: string;
 }
 
@@ -424,6 +427,8 @@ export class InMemoryRuntimeHost {
   }>>();
   readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
   readonly #conversations: RuntimeConversations;
+  readonly #environment = new RuntimeEnvironment();
+  readonly #stopEnvironmentObservation: () => void;
   readonly #contextCompactionAuthorizations = new Map<string, { state: ContextCompactionState; format: ContextCheckpointFormat }>();
   #shuttingDown = false;
   #cacheMaintenance: Promise<void> | undefined;
@@ -446,7 +451,7 @@ export class InMemoryRuntimeHost {
       signal: (sessionId, turnId) => this.#turnSignals.wake(sessionId, turnId, 'peer_message'),
       run: request => this.runSessionTurn(request),
       error: error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))),
-    });
+    }, this.#environment.agents);
     this.#remoteWorkspace = options.remoteWorkspace;
     this.#remoteAgents = options.remoteAgents;
     this.#workspaceRedo = new WorkspaceRedoStore(options.dataRoot ? join(options.dataRoot, 'workspace-redo') : undefined);
@@ -457,6 +462,7 @@ export class InMemoryRuntimeHost {
     this.#requestBackgroundPermission = options.requestBackgroundPermission;
     this.#eventLog =
       options.eventLog ?? new InMemoryRuntimeEventLog(options.eventLogOptions);
+    this.#stopEnvironmentObservation = this.#eventLog.observe(event => this.#environment.agents.observe(event));
     if (
       options.maxAttempts !== undefined &&
       options.maxAttempts !== null &&
@@ -482,6 +488,7 @@ export class InMemoryRuntimeHost {
     this.#botMessaging = options.botMessaging;
     this.#bridgePlugins = new BridgePluginTools(this.#toolRegistry, options.botMessaging, id => this.#botRootSession(id));
     this.#assistantManagement = new AssistantManagement({ registry: this.#toolRegistry, executions: this.#toolExecutions,
+      onPermissionState: (sessionId, executionId, waiting) => this.#environment.agents.update(sessionId, executionId, waiting ? 'waiting' : 'running'),
       capabilities: this.#capabilityGrants, coordination: () => this.#coordination, automation: options.automation,
       hooks: request => this.#managementToolHooks(request) });
     this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal')), {
@@ -493,6 +500,7 @@ export class InMemoryRuntimeHost {
       management: this.#assistantManagement,
       prepareParent: (parent, signal) => this.#bridgePlugins.prepare(parent, signal),
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
+      environment: this.#environment,
       ...(options.botMessaging ? { botContext: (sourceRef: string | undefined, signal: AbortSignal) => this.#readBotContext(PERSONAL_ASSISTANT_SESSION, sourceRef, signal) } : {}),
       snapshotImage: (source, signal) => this.#modelImages.snapshot(source, signal),
     });
@@ -789,7 +797,29 @@ export class InMemoryRuntimeHost {
     if (options.remoteWorkspace) taskTools.addSource(async context => terminalHandles(context,
       (await options.remoteWorkspace!.request('terminals', { owner: context.sessionId }, context.signal)).sessions, false));
     taskTools.register(this.#toolRegistry);
+    this.#environment.register('services', async ({ request, signal }) => {
+      const refs = Array.isArray(request.metadata.botSourceRefs) ? request.metadata.botSourceRefs.filter((ref): ref is string => typeof ref === 'string') : [];
+      const sourceRef = typeof request.metadata.botSourceRef === 'string' ? request.metadata.botSourceRef : undefined;
+      const bots = await Promise.all((refs.length ? refs : [sourceRef]).map(async ref => ({
+        ...(ref ? { sourceRef: ref } : {}), context: await this.#observeBotContext(request.sessionId, ref, signal),
+      })));
+      const registeredMcpServers = [...new Set(this.#toolRegistry.definitions().flatMap(tool => {
+        const registration = this.#toolRegistry.resolve(tool.name);
+        if (registration?.mcpHook?.modelVisible === false || (registration?.registrationOwner?.startsWith('bridge:') &&
+          registration.registrationOwner !== `bridge:${this.#botRootSession(request.sessionId)}`)) return [];
+        const server = registration?.mcpHook?.server;
+        return server ? [server] : [];
+      }))].sort();
+      return { bots, registeredMcpServers, apps: await this.#mcpApps.context(request.sessionId) || null,
+        botRouting: 'Use the current sourceRef for this request. Discover connected bridge plugins with mcp_search, load schemas with get_tool_schema and invoke through call_tool only for requested actions. Saved connections are not necessarily online. Do not substitute another sender or platform. send_to_bot is retired.' };
+    });
+    this.#environment.register('processes', ({ request }) => ({
+      terminals: this.#workspaceTerminals.list(request.sessionId).map(({ terminalSessionId, state, pid, cwd }) => ({ terminalSessionId, state, pid, cwd })),
+      background: this.#backgroundTools.list(request.sessionId, request.turnId).map(job => ({ id: job.id, name: job.name, status: job.status })),
+    }));
+    for (const [section, source] of Object.entries(options.environmentSources ?? {})) this.#environment.register(section, source);
     this.#extensionApi = {
+      environment: { read: (sessionId, signal) => this.readEnvironment(sessionId, signal) },
       conversations: { list: () => this.#conversations.list(), notify: (id, notice) => this.#conversations.notify(id, notice),
         dismiss: (id, key) => this.#conversations.dismiss(id, key),
         wait: (id, turn, event, signal) => this.#turnSignals.wait(id, turn, [event], 'any', signal) },
@@ -847,6 +877,7 @@ export class InMemoryRuntimeHost {
         ].includes(kind),
       ),
       supportedCommands: [
+        GET_RUNTIME_ENVIRONMENT_COMMAND,
         AGENT_REGISTRY_COMMAND,
         TEAM_WORKFLOW_COMMAND,
         PERSONALIZATION_COMMAND,
@@ -986,7 +1017,7 @@ export class InMemoryRuntimeHost {
       }));
       this.#extensions.set(extension.id, entry);
       this.#toolRegistry.setOwnerEnabled(owner, options.enabled === true);
-      if (prior) this.#retireExtension(prior);
+      if (prior) { this.#environment.revokeAgentContext(extension.id); this.#retireExtension(prior); }
       if (entry.enabled) this.#refreshConversationExtension(entry);
       return extension.id;
     } catch (error) {
@@ -1043,7 +1074,7 @@ export class InMemoryRuntimeHost {
     if (!entry) throw new Error(`Runtime extension ${id} is not available in this host.`);
     const wasEnabled = entry.enabled;
     entry.enabled = enabled;
-    if (!enabled) this.#conversations.revoke(`${id}:`);
+    if (!enabled) { this.#conversations.revoke(`${id}:`); this.#environment.revokeAgentContext(id); }
     this.#toolRegistry.setOwnerEnabled(runtimeExtensionOwner(id), enabled);
     if (enabled && !wasEnabled) this.#refreshConversationExtension(entry);
   }
@@ -1055,6 +1086,7 @@ export class InMemoryRuntimeHost {
       for (const fact of this.#conversations.list()) {
         if (fact.status !== 'running' || entry.retired || !entry.enabled) continue;
         const messages = await this.#useExtension(entry, () => entry.extension.conversationContext!(fact));
+        if (!entry.retired && entry.enabled) this.#environment.setAgentContext(fact.agentId, fact.turnId, entry.extension.id, messages.map(message => message.content));
         if (!entry.retired && entry.enabled) messages.forEach((message, index) => this.#conversations.notify(fact.agentId, {
           key: `${entry.extension.id}:catalog:${index}`, content: message.content,
         }));
@@ -1490,6 +1522,8 @@ export class InMemoryRuntimeHost {
           this.#eventLog.replay(input.sessionId, input.turnId),
         );
       }
+      case GET_RUNTIME_ENVIRONMENT_COMMAND:
+        return this.readEnvironment(runtimeEnvironmentReadSchema.parse(command.payload).sessionId, signal);
       case GET_RUNTIME_TOOL_CATALOG_COMMAND:
         return this.#toolRegistry.definitions();
       case GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND:
@@ -1639,6 +1673,8 @@ export class InMemoryRuntimeHost {
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
         this.#conversations.close();
+        this.#stopEnvironmentObservation();
+        this.#environment.close();
         await this.#teams.close();
         this.#assistant.close();
         for (const controller of this.#voiceMaintenance.values()) controller.abort();
@@ -1720,7 +1756,31 @@ export class InMemoryRuntimeHost {
     input: ModelRequest,
     options: { signal?: AbortSignal; execution?: RuntimeExecutionOptions } = {},
   ): Promise<RuntimeEvent> {
-    return this.#withTurnAdmission(input.sessionId, () => this.#runModelTurn(input, options));
+    return this.#withAgentExecution(input, options.signal,
+      () => this.#withTurnAdmission(input.sessionId, () => this.#runModelTurn(input, options)));
+  }
+
+  async readEnvironment(sessionId: string, signal?: AbortSignal) {
+    const session = this.#sessions.snapshot(sessionId), fact = this.#environment.agents.get(sessionId);
+    if (!session && !fact) throw new Error('Environment session is unavailable.');
+    return this.#environment.snapshot({ sessionId, turnId: fact?.executionId ?? 'environment',
+      metadata: { ...session?.metadata, projectDir: fact?.projectDir ?? session?.metadata?.projectDir,
+        workspaceDir: fact?.workspaceDir ?? session?.metadata?.workspaceDir } }, signal);
+  }
+
+  async #withAgentExecution(input: ModelRequest | RuntimeSessionTurnRequest, signal: AbortSignal | undefined, run: () => Promise<RuntimeEvent>) {
+    const previous = this.#environment.agents.get(input.sessionId, input.turnId);
+    if (previous && ['queued', 'running', 'waiting'].includes(previous.status)) throw new Error('Agent execution is already active.');
+    if (previous && this.#eventLog.isTerminal(input.sessionId, input.turnId)) throw new Error(`Turn ${input.turnId} is already terminal.`);
+    this.#environment.agents.begin(input);
+    try {
+      const result = await run();
+      if (result.kind === 'turn_terminal') this.#environment.agents.observe(result);
+      return result;
+    } catch (error) {
+      this.#environment.agents.update(input.sessionId, input.turnId, signal?.aborted ? 'stopped' : 'failed');
+      throw error;
+    }
   }
 
   /** Internal tasks use the normal Turn engine without creating a user Session.
@@ -1730,14 +1790,14 @@ export class InMemoryRuntimeHost {
     const request = modelRequestSchema.parse({ ...input, metadata: { ...input.metadata,
       runtimeTask: 'internal', ...(input.tools.length ? {} : { toolExecutionPolicy: 'none' }),
     } });
-    const terminal = await this.#withTurnAdmission(request.sessionId, () => this.#runModelTurn(request, {
+    const terminal = await this.#withAgentExecution(request, options.signal, () => this.#withTurnAdmission(request.sessionId, () => this.#runModelTurn(request, {
       signal: options.signal, execution: options,
       internalTask: { acceptResult: async (text, signal) => {
         try { await options.acceptResult(text, signal); }
         catch (error) { rejected = true; rejection = error; throw error; }
       } },
       onFinalized: (_payload, _messages, observedUsage) => { usage = observedUsage; },
-    }));
+    })));
     if (rejected) throw rejection;
     if (terminal.kind !== 'turn_terminal') throw new Error('Internal task did not produce a terminal Runtime event.');
     return { terminal, usage };
@@ -1747,7 +1807,7 @@ export class InMemoryRuntimeHost {
     input: RuntimeSessionTurnRequest,
     options: { signal?: AbortSignal } = {},
   ): Promise<RuntimeEvent> {
-    return this.#withTurnAdmission(input.sessionId, async () => {
+    return this.#withAgentExecution(input, options.signal, () => this.#withTurnAdmission(input.sessionId, async () => {
       const session = this.#sessions.snapshot(input.sessionId);
       const isChild = session?.metadata?.agentRole === 'child' || typeof session?.metadata?.delegationOwner === 'string';
       if ((isChild || input.metadata?.agentRole === 'child') && ((this.#sessionAdmissions.get(input.sessionId) ?? 0) > 1 || this.hasActiveSession(input.sessionId))) {
@@ -1785,7 +1845,7 @@ export class InMemoryRuntimeHost {
           status: options.signal?.aborted ? 'stopped' : 'failed', finalResponse: '', errorMessage: error instanceof Error ? error.message : String(error), usage: {} });
         throw error;
       }
-    });
+    }));
   }
 
   #publishQueuedGuidance({ requestId, sessionId, turnId }: RuntimeEventIdentity) {
@@ -1843,6 +1903,9 @@ export class InMemoryRuntimeHost {
   }
   async #readBotContext(sessionId: string, sourceRef?: string, signal?: AbortSignal) {
     await this.#bridgePlugins.sync(sessionId, signal);
+    return this.#observeBotContext(sessionId, sourceRef, signal);
+  }
+  async #observeBotContext(sessionId: string, sourceRef?: string, signal?: AbortSignal) {
     try { return await this.#botMessaging?.context(this.#botRootSession(sessionId), sourceRef, signal) ?? unavailableBotContext(); }
     catch { signal?.throwIfAborted(); return unavailableBotContext('bot_status_unavailable'); }
   }
@@ -1875,7 +1938,7 @@ export class InMemoryRuntimeHost {
       const sourceRef = typeof candidate.metadata.botSourceRef === 'string' ? candidate.metadata.botSourceRef : undefined;
       const state = await this.#readBotContext(contextSession, sourceRef, options.signal);
       authoredInput.metadata = { ...authoredInput.metadata, botContext: state };
-      candidate.inputMessages.splice(candidate.inputMessages.indexOf(authoredInput), 0, {
+      if (!candidate.metadata.environmentContext) candidate.inputMessages.splice(candidate.inputMessages.indexOf(authoredInput), 0, {
         messageId: `${authoredInput.messageId}:bot-context`, createdAt: authoredInput.createdAt,
         message: { role: 'user', name: 'bot_context', visibility: 'internal', content: botContextMessage(state, sourceRef) },
       });
@@ -1944,17 +2007,15 @@ export class InMemoryRuntimeHost {
     let conversationStopped = true;
     try {
       if (conversation) {
+        const observations: string[] = [];
         for (const entry of this.#extensions.values()) if (entry.enabled && entry.extension.conversationContext) {
           try {
             const context = await this.#useExtension(entry, () => entry.extension.conversationContext!(conversation));
-            for (const message of context) {
-              const internal: ModelMessage = { role: 'user', name: 'workspace_agents', visibility: 'internal', content: message.content };
-              prepared.modelRequest.messages.push(internal);
-              prepared.sessionCommit.inputMessages.push({ messageId: `peers_${randomUUID()}`, createdAt: prepared.sessionCommit.createdAt, message: internal });
-              prepared.sessionCommit.initialMessageCount++;
-            }
+            this.#environment.setAgentContext(conversation.agentId, conversation.turnId, entry.extension.id, context.map(message => message.content));
+            observations.push(...context.map(message => message.content));
           } catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
         }
+        if (observations.length) prepared.modelRequest.metadata.environmentContext = true;
         await this.#publishConversation(conversation);
       }
       if (authoredInput && candidate.metadata.agentRole !== 'child' && !candidate.metadata.pluginHookEvaluation && !candidate.metadata.shadowMode) {
@@ -2035,6 +2096,7 @@ export class InMemoryRuntimeHost {
       throw new Error(`Turn ${request.turnId} already exists.`);
     }
     const turnController = new AbortController();
+    this.#environment.agents.begin(request, 'running');
     const detachAbort = forwardAbort(options.signal, turnController);
     const execution = new RuntimeTurnExecution(turnController, options.execution);
     this.#activeTurns.add(turnKey);
@@ -2143,7 +2205,7 @@ export class InMemoryRuntimeHost {
       ...recovery.checkpoint.request,
       messages,
     }));
-    return this.#continueModelTurn({
+    return this.#withAgentExecution(request, options.signal, () => this.#continueModelTurn({
       request,
       identity: recovery.identity,
       messages,
@@ -2160,7 +2222,7 @@ export class InMemoryRuntimeHost {
             sessionCommit,
           )
         : undefined,
-    });
+    }));
   }
 
   async #continueModelTurn(input: {
@@ -2183,6 +2245,7 @@ export class InMemoryRuntimeHost {
     const workspace = !input.internalTask && await this.#taskWorkspaces?.descriptor(request.sessionId);
     if (workspace && workspace.workspaceDir !== executionWorkspace(request.metadata)) request.metadata = { ...request.metadata, workspaceDir: workspace.workspaceDir,
       projectDir: workspace.sourceDir, taskRoots: [workspace.workspaceDir] };
+    this.#environment.agents.begin(request, 'running');
     const sshOnly = !input.internalTask && isSshExecution(request.metadata);
     if (sshOnly) {
       request.tools = sshExecutionTools(request.tools);
@@ -2655,11 +2718,7 @@ export class InMemoryRuntimeHost {
         if (backgroundStop) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: backgroundStop } });
         if (!input.internalTask && !compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           const context = await this.#mcpApps.context(request.sessionId);
-          const lastContext = [...messages].reverse().find(message => message.role === 'user' && message.name === 'mcp_app_context');
-          if (context && context !== lastContext?.content) {
-            const message: ModelMessage = { role: 'user', name: 'mcp_app_context', visibility: 'internal', content: context };
-            messages.push(message); generatedMessages.push({ messageId: `msg_mcp_context_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
-          }
+          if (context) request.metadata.environmentContext = true;
           const last = [...messages].reverse().find(message => message.role === 'user' && message.name === 'mcp_app_observations');
           let cursor = 0;
           try { cursor = last ? Number(JSON.parse(last.content).cursor) || 0 : 0; } catch { /* Older context has no observation cursor. */ }
@@ -2685,6 +2744,14 @@ export class InMemoryRuntimeHost {
             generatedMessages,
             readyAtRoundBoundary,
           );
+        }
+
+        if ((request.metadata.environmentContext === true || this.#environment.hasAgentContext(request.sessionId)) && !compactionTransaction && !activeContextCompaction) {
+          const observation = await this.#environment.message(request, messages, input.signal);
+          if (observation) {
+            messages.push(observation);
+            generatedMessages.push({ messageId: `environment_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message: observation });
+          }
         }
 
         // Session projection and recovery journals are separate durable stores.

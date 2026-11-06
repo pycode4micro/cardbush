@@ -162,7 +162,7 @@ test('forked builtin roles stay read-only while a plugin named Plan follows its 
       } },
     });
     t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
-    const terminal = await host.runModelTurn(request(registry, { permissionMode: 'all_free', messages: [{ role: 'user', content: '/demo:role' }] }));
+    const terminal = await host.runModelTurn(request(registry, { permissionMode: 'all_free', messages: [{ role: 'user', content: '$demo:role' }] }));
     assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
     assert.ok(childRounds > 0); assert.equal(changes, expectedChanges);
   });
@@ -187,7 +187,7 @@ test('Background child continues after parent completion and asks through its ow
     } },
   });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
-  const terminal = await host.runModelTurn(request(registry, { messages: [{ role: 'user', content: '/demo:job' }] }));
+  const terminal = await host.runModelTurn(request(registry, { messages: [{ role: 'user', content: '$demo:job' }] }));
   assert.equal(terminal.payload.status, 'completed'); assert.equal(changed, 0);
   for (let i = 0; !releaseChild && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5)); assert.ok(releaseChild); releaseChild();
   let task;

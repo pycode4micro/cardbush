@@ -17,6 +17,7 @@ import type { AssistantManagement } from './assistantManagement.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { settleAtAbort } from './abortSettlement.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
+import type { RuntimeEnvironment } from './runtimeEnvironment.js';
 
 const conversationalTools: ToolDefinition[] = [assistantPageTool, ...conversationalSubagentTools];
 
@@ -53,6 +54,7 @@ export class AssistantConversation {
     delegate(input: unknown): Promise<unknown>;
     delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
+    environment?: RuntimeEnvironment;
     management?: AssistantManagement;
     prepareParent?: (parent: RuntimeSessionTurnRequest, signal: AbortSignal) => Promise<RuntimeSessionTurnRequest>;
     snapshotImage?: (source: string, signal: AbortSignal) => Promise<string>;
@@ -110,9 +112,16 @@ export class AssistantConversation {
     this.busy = true; this.pending = false; this.error = ''; this.retry = undefined;
     const configured = this.configured;
     const controller = this.controller = new AbortController();
-    try { await settleAtAbort(this.respond(configured, controller.signal), controller.signal, 'Assistant reply stopped.'); }
-    catch (error) { if (!this.stopped && !controller.signal.aborted) this.error = error instanceof Error ? error.message : String(error); }
-    finally { if (this.controller === controller) {
+    const execution = { ...configured.parent, turnId: `assistant_${randomUUID()}`,
+      metadata: { ...configured.parent.metadata, personalAssistant: true } };
+    this.deps.environment?.agents.begin(execution, 'running');
+    let failed = false;
+    try { await settleAtAbort(this.respond(configured, controller.signal, execution.turnId), controller.signal, 'Assistant reply stopped.'); }
+    catch (error) { failed = true; if (!this.stopped && !controller.signal.aborted) this.error = error instanceof Error ? error.message : String(error); }
+    finally {
+      this.deps.environment?.agents.update(execution.sessionId, execution.turnId,
+        controller.signal.aborted ? 'stopped' : failed ? 'failed' : 'completed');
+      if (this.controller === controller) {
       this.busy = false; this.retry = undefined; this.controller = undefined;
       try { if (!controller.signal.aborted && !this.stopped) this.deps.memory?.schedule(configured.parent); }
       catch (error) { this.error ||= error instanceof Error ? error.message : String(error); }
@@ -141,7 +150,7 @@ export class AssistantConversation {
       return prediction && prediction.expiresAt > Date.now() ? { ...prediction, id: `${latest.id}:${prediction.id}` } : undefined;
     }
   }
-  private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal) {
+  private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal, executionId: string) {
     parent = await this.deps.prepareParent?.(parent, signal) ?? parent;
     const id = PERSONAL_ASSISTANT_SESSION;
     const memoryTools = this.deps.memory?.definitions() ?? [];
@@ -195,18 +204,20 @@ export class AssistantConversation {
     const handledInputs = activeInputs.length ? activeInputs : entries.filter(item => item.role === 'user').slice(-1);
     const activeSources = new Set(handledInputs
       .flatMap(sourceRefs).filter((ref): ref is string => typeof ref === 'string'));
-    parent = { ...parent, metadata: { ...parent.metadata } };
+    parent = { ...parent, metadata: { ...parent.metadata, environmentExecutionId: executionId } };
     delete parent.metadata.botSourceRef;
     parent.metadata.botSourceRefs = [...activeSources];
     if (activeSources.size === 1 && activeSources.values().next().value) parent.metadata.botSourceRef = activeSources.values().next().value;
     if (activeSources.size) parent = applyWebhookTurnPolicy(parent);
+    signal.throwIfAborted();
+    this.deps.environment?.agents.begin({ ...parent, turnId: executionId, metadata: { ...parent.metadata, personalAssistant: true } }, 'running');
     const botContexts = new Map<string | undefined, BotContext>();
-    if (this.deps.botContext) for (const ref of new Set(remaining.filter(item => item.role === 'user').flatMap(sourceRefs))) {
+    if (!this.deps.environment && this.deps.botContext) for (const ref of new Set(remaining.filter(item => item.role === 'user').flatMap(sourceRefs))) {
       botContexts.set(ref, await this.deps.botContext(ref, signal));
     }
     const incoming: ModelMessage[] = remaining.filter(item => !item.id.startsWith('memory-')).flatMap((item): ModelMessage[] => item.role === 'assistant' ? [{ role: 'assistant', content: item.content, toolCalls: [] }] : [{
         role: 'user', name: 'turn_runtime_context', visibility: 'internal',
-        content: createTurnTimeContext({ createdAt: item.createdAt }),
+        content: createTurnTimeContext({ createdAt: item.createdAt }) + (this.deps.environment ? '\nMessage source (routing data): ' + JSON.stringify({ sourceRefs: sourceRefs(item).map(ref => ref ?? null) }) : ''),
       }, ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!, ref) }] : []), {
         role: 'user' as const,
         ...(['text', 'voice'].includes(item.source) ? {} : { name: 'background_task_result', visibility: 'internal' as const }),
@@ -246,11 +257,13 @@ export class AssistantConversation {
           const previous = history.read().messages.reverse().find(item => item.role === 'user' && item.name === 'individuation_preference');
           if (previous?.content !== preference) history.append([{ role: 'user', name: 'individuation_preference', visibility: 'internal', content: preference }]);
         }
+        const environment = await this.deps.environment?.message(parent, history.read().messages, signal);
+        if (environment) history.append([environment]);
         const state = history.read();
         // Retries and subsequent model rounds must not reuse a persisted online
         // snapshot after a bridge stops. Preserve the journal as historical evidence.
         const currentBots: ModelMessage[] = [];
-        if (this.deps.botContext) for (const ref of new Set(handledInputs.flatMap(sourceRefs))) {
+        if (!this.deps.environment && this.deps.botContext) for (const ref of new Set(handledInputs.flatMap(sourceRefs))) {
           currentBots.push({ role: 'user', name: 'bot_context', visibility: 'internal',
             content: botContextMessage(await this.deps.botContext(ref, signal), ref) });
         }
@@ -430,6 +443,7 @@ export class AssistantConversation {
     this.pending = true; void this.pump();
   }
   forget(sessionId: string) {
+    this.deps.environment?.forget(sessionId);
     if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
     if (sessionId === PERSONAL_ASSISTANT_SESSION) this.deps.management?.reset();
     this.journal.forget(sessionId);

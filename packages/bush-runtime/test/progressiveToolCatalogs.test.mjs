@@ -70,11 +70,11 @@ test('background task discovery omits large answers; selected read and wait pres
   const second = await call(registry, 'tasks', { action: 'list', offset: page.next_offset });
   assert.equal(second.tasks.length, 14);
   assert.equal(second.next_offset, null);
-  for (const action of ['inspect', 'wait']) {
-    const read = await call(registry, 'tasks', { action, task_ids: ['task-3'] });
+  for (const [tool, input] of [['tasks', { action: 'inspect' }], ['await', {}]]) {
+    const read = await call(registry, tool, { ...input, task_ids: ['task-3'] });
     assert.equal(read.tasks.length, 1);
     assert.equal(read.tasks[0].result.finalResponse, answer);
-    await assert.rejects(call(registry, 'tasks', { action, task_ids: ['task-34'] }), /not available in this conversation/);
+    await assert.rejects(call(registry, tool, { ...input, task_ids: ['task-34'] }), /not available in this conversation/);
   }
   await assert.rejects(call(registry, 'tasks', { action: 'inspect' }), /task_ids are required/);
   assert.equal(tasks.get('session', 'task-3').finalResponse, answer, 'discovery never rewrites the saved answer');

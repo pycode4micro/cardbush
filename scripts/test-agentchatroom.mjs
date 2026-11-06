@@ -294,7 +294,9 @@ test('actual Runtime delivers peer context at safe boundaries and wakes only joi
   };
   await host.runSessionTurn(request('b'));
   assert.equal(joinedB.room_id, room_id);
-  assert.match(observed.find(req => req.sessionId === 'b').messages.find(message => message.name === 'workspace_agents').content, /"agent_id":"a"/);
+  const environment = JSON.parse(observed.find(req => req.sessionId === 'b').messages.find(message => message.name === 'runtime_environment').content);
+  assert.ok(environment.sections.agents.items.some(fact => fact.agentId === 'a'));
+  assert.match(environment.sections.agents.coordination.join('\n'), /"agent_id":"a"/);
   gate.resolve(); await runningA;
   const aRequests = observed.filter(req => req.sessionId === 'a');
   assert.ok(aRequests.some(req => req.messages.some(message => message.name === 'agent_peer_context' && message.visibility === 'internal')));
@@ -377,8 +379,10 @@ test('a real forked child joins with user consent, exchanges messages and stays 
   const task = tasks.list('parent')[0]; assert.ok(task); assert.equal(task.status, 'completed');
   const childRequests = seen.filter(item => item.sessionId === task.childSessionId);
   assert.ok(childRequests.some(item => item.messages.some(message => message.name === 'agent_peer_context' && message.content.includes('unread_room_messages'))));
-  // A fork may inherit the parent's prior workspace snapshot; it must not get its own before joining.
-  assert.ok(!childRequests[0].messages.some(message => message.name === 'workspace_agents' && message.content.includes(`"self":"${task.childSessionId}"`)));
+  // Presence is available to every child; collaboration membership still requires joining.
+  const childEnvironment = childRequests[0].messages.filter(message => message.name === 'runtime_environment').map(message => JSON.parse(message.content)).find(fact => fact.sessionId === task.childSessionId);
+  assert.equal(childEnvironment.sections.agents.self.agentId, task.childSessionId);
+  assert.ok(!childEnvironment.sections.agents.coordination.some(content => content.includes(`"self":"${task.childSessionId}"`)));
   const history = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: task.childSessionId } });
   assert.equal(history.turns.length, 1);
   assert.equal((await host.runSessionTurn(request('after-child'))).payload.status, 'completed');

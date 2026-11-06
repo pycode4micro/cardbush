@@ -1,5 +1,7 @@
 # 项目 Agent 协作
 
+执行状态现由统一[环境感知模块](RUNTIME_ENVIRONMENT.md)登记；`RuntimeConversations` 保留消息邮箱和有界唤醒，其在线列表读取同一份执行事实。插件原有 `workspace_agents` 上下文合并到 `runtime_environment.sections.agents.coordination`。登记不代表加入房间、获得通信授权或允许空闲唤醒；Shadow 和自动化仍遵守插件原有调用限制。
+
 [English](AGENT_CHATROOM.md) · [简体中文](AGENT_CHATROOM.zh-CN.md)
 
 AgentChatroom 是默认安装的**内置原生插件**，经普通插件目录和 Runtime 扩展加载器装载，可在插件设置中停用。它只公开一个延迟发现工具 `agentchatroom`：通过 `get_tool_schema` 加载定义，通过 `call_tool` 调用。默认 Provider 工具声明不增加同级 Agent 消息工具。
@@ -15,11 +17,11 @@ AgentChatroom 是默认安装的**内置原生插件**，经普通插件目录�
 
 子会话默认不进入房间；明确的用户授权可允许加入和沟通。房间消息不能分派或恢复子任务，也不能读取其他会话的记录。子会话读取复用相同的所有权检查和本地/远程读取器；中间推理与工具活动保持私有。旧的七个聊天室工具名保留兼容处理器，新目录只展示统一入口。子会话记录通过 `tasks` 读取，不再注册独立的 `read_subagent_conversation` 工具。热刷新保留已暴露的旧聊天室 schema，不向新会话增加旧名称。
 
-`RuntimeTurnSignals` 统一管理本轮等待、超时、取消及用户/同伴唤醒原因；子任务、后台工具和房间等待共用它。执行器负责任务生命周期，AgentChatroom 负责日志、成员和游标，`RuntimeConversations` 负责会话在线状态与独立会话的有限空闲唤醒。不另建 Agent loop 或通用跨 Agent 消息工具。
+`RuntimeTurnSignals` 统一管理本轮等待、超时、取消及用户/同伴唤醒原因；子任务、后台工具和房间等待共用它。执行器负责任务生命周期，AgentChatroom 负责日志、成员和游标，`RuntimeConversations` 负责消息邮箱与独立会话的有限空闲唤醒。不另建 Agent loop 或通用跨 Agent 消息工具。
 
 ## 发现与范围
 
-Runtime 持有会话、活动 turn 与工作区事实，在普通独立会话中追加 `workspace_agents` **内部 user 消息**，包含自身 ID、相关同伴、成员关系、未读数、邀请及发现说明，不包含他人记录或房间凭据。新相关会话会向运行中的同伴发送合并后的在线状态观察。启用或替换插件在模型边界刷新上下文，不改写 system 前缀。
+Runtime 持有会话、活动 turn 与工作区事实，通过 **内部 user 环境观察**的 `agents` 项提供自身 ID、相关同伴，以及有权获得的插件协作上下文：成员关系、未读数、邀请及发现说明。不包含他人记录或房间凭据。新相关会话会向运行中的同伴发送合并后的在线状态观察。启用或替换插件在模型边界刷新上下文，不改写 system 前缀。
 
 源项目和 Git worktree 通过规范化的 Git common directory 共享协作范围，实际写入目录不变。普通目录按规范路径匹配（Windows 统一大小写），SSH 根保留主机和路径，无工作区会话各自独立。发现仅限一个 Runtime 宿主，不枚举其他设备或任意无关项目。
 

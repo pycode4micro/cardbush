@@ -40,9 +40,10 @@ test('UI observations append once at round boundaries without changing earlier c
   assert.equal(observations.length, 1); assert.equal(observations[0].visibility, 'internal');
   assert.deepEqual(JSON.parse(observations[0].content).events.map(event => event.event), ['resource_loading', 'resource_loaded', 'frame_loaded', 'initialized']);
   assert.equal(requests[3].messages.filter(message => message.name === 'mcp_app_observations').length, 1, 'unchanged observations do not get resent');
-  const pluginContext = requests[2].messages.filter(message => message.name === 'mcp_app_context');
-  assert.equal(pluginContext.length, 1); assert.equal(pluginContext[0].visibility, 'internal'); assert.match(pluginContext[0].content, /"selected":"B"/);
-  assert.equal(requests[3].messages.filter(message => message.name === 'mcp_app_context').length, 1, 'unchanged plugin context remains one immutable message');
+  const pluginContext = requests[2].messages.filter(message => message.name === 'runtime_environment');
+  assert.equal(pluginContext.length, 1); assert.equal(pluginContext[0].visibility, 'internal');
+  assert.match(JSON.parse(pluginContext[0].content).sections.services.apps, /"selected":"B"/);
+  assert.equal(requests[3].messages.filter(message => message.name === 'runtime_environment').length, 1, 'unchanged environment remains one immutable message');
   for (let i = 1; i < requests.length; i++) {
     assert.deepEqual(requests[i].tools, requests[0].tools);
     assert.deepEqual(requests[i].messages.slice(0, requests[i - 1].messages.length), requests[i - 1].messages, 'old context is unchanged');

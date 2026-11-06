@@ -14,7 +14,7 @@ function fixture() {
   return { bus, runs, signals, errors };
 }
 
-test('presence has no prompts, marks delegated sessions and excludes shadow and automation turns', () => {
+test('presence has no prompts and includes Shadow, automation and hooks with separate wake policy', () => {
   const f = fixture(); f.bus.begin(request());
   for (const metadata of [{ agentRole: 'child' }, { parentSessionId: 'a' }]) {
     assert.equal(f.bus.begin(request('child', metadata)).delegated, true);
@@ -23,13 +23,15 @@ test('presence has no prompts, marks delegated sessions and excludes shadow and 
   assert.equal(f.bus.begin(delegated).delegated, true);
   const child = request('session-child'); child.sessionMetadata.agentRole = 'child';
   assert.equal(f.bus.begin(child).delegated, true);
-  for (const metadata of [{ shadowMode: 'fork' }, { automationRunId: 'job' }, { pluginHookEvaluation: true }]) {
-    assert.equal(f.bus.begin(request('excluded', metadata)), undefined);
+  for (const [index, metadata] of [{ shadowMode: 'fork' }, { automationRunId: 'job' }, { pluginHookEvaluation: true }].entries()) {
+    const id = `registered-${index}`;
+    assert.equal(f.bus.begin(request(id, metadata)).agentId, id);
+    assert.equal(f.bus.agents.get(id).canWake, false);
   }
-  assert.equal(f.bus.list().length, 4);
+  assert.equal(f.bus.list().length, 7);
   assert.equal(f.bus.list().find(fact => fact.agentId === 'a').delegated, undefined);
   assert.doesNotMatch(JSON.stringify(f.bus.list()), /Own task|inputMessages|prefixMessages/);
-  f.bus.begin(request('a', { shadowMode: 'fork' })); assert.equal(f.bus.list().length, 3);
+  f.bus.begin(request('a', { shadowMode: 'fork' })); assert.equal(f.bus.list().length, 7);
   f.bus.close();
 });
 

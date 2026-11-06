@@ -1,7 +1,7 @@
 import type { ChildTurnRunner, SubagentPermissionPolicy } from './childTurn.js';
 import type { SubagentTaskStore } from './subagentTaskStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
-import type { ModelMessage } from '@cardbush/bush-protocol';
+import type { ModelMessage, RuntimeEnvironmentSnapshot } from '@cardbush/bush-protocol';
 import type { RuntimeConversation, RuntimeConversationsApi } from './runtimeConversations.js';
 
 /** Versioned API for installed, trusted native plugins. It is not a sandbox. */
@@ -14,6 +14,7 @@ export interface RuntimeExtensionApi {
   hasActiveTurns: () => boolean;
   permissionPolicy: SubagentPermissionPolicy;
   conversations: RuntimeConversationsApi;
+  environment: { read(sessionId: string, signal?: AbortSignal): Promise<RuntimeEnvironmentSnapshot> };
 }
 
 export interface RuntimeExtension {

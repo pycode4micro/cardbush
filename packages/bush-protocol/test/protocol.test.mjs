@@ -102,6 +102,7 @@ test("conversation and Tool summary reads are explicit projections with full def
   assert.deepEqual(runtimeSessionReadRequestSchema.parse({ sessionId: "session_1" }), {
     sessionId: "session_1",
     messageProjection: "full",
+    includeActiveTurn: false,
   });
   assert.equal(
     runtimeSessionReadRequestSchema.parse({
