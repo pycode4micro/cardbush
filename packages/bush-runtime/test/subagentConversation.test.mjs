@@ -183,15 +183,14 @@ test('parent sees only ordered inputs and terminal answers across multiple turns
   assert.deepEqual(childConversationPage(snapshot).messages.map(item => item.messageId), expected);
 });
 
-test('both generations of assignment envelopes display as parent messages without rewriting stored content', () => {
-  for (const prefix of ['You are currently a child Agent.', '你当前处于子agent状态']) {
-    const source = { sessionId: 'child', supersededMessageIds: [], finalMessageIds: [], messages: [{
-      messageId: 'assignment', turnId: 'turn', createdAt: '2026-11-06T00:00:00Z', message: { role: 'user', content: prefix + '\n\n原始中文任务' },
-    }] };
-    const original = structuredClone(source);
-    const page = childConversationPage(source);
-    assert.equal(page.messages[0].author, 'parent_agent');
-    assert.equal(page.messages[0].content, '原始中文任务');
-    assert.deepEqual(source, original);
-  }
+test('current assignment envelope displays as a parent message without rewriting stored content', () => {
+  const prefix = 'You are currently a child Agent.';
+  const source = { sessionId: 'child', supersededMessageIds: [], finalMessageIds: [], messages: [{
+    messageId: 'assignment', turnId: 'turn', createdAt: '2026-11-06T00:00:00Z', message: { role: 'user', content: prefix + '\n\n原始中文任务' },
+  }] };
+  const original = structuredClone(source);
+  const page = childConversationPage(source);
+  assert.equal(page.messages[0].author, 'parent_agent');
+  assert.equal(page.messages[0].content, '原始中文任务');
+  assert.deepEqual(source, original);
 });

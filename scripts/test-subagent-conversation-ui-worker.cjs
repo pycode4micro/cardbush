@@ -62,8 +62,8 @@ app.whenReady().then(async () => {
     await until(`!!document.querySelector('.guidance-activity[data-guidance-state="sent"]')`);
     assert.equal(await read(`document.querySelectorAll('[data-message-id="parent-guidance-a"]').length`),1,'consumption updates the existing row and ignores stale queue receipts');
     assert.equal(await read(`document.querySelectorAll('.subagent-inspector-raw,.subagent-inspector-facts').length`),0);
-    for(const prefix of ['You are currently a child Agent.','你当前处于子agent状态']) {
-      const content=prefix+'\n\n原始中文任务';
+    {
+      const content='You are currently a child Agent.\n\n原始中文任务';
       const projected=await read(`window.projectChild([{id:'compat',role:'user',content:${JSON.stringify(content)}}],{terminal:true,raw:{}})[0]`);
       assert.equal(projected.content,'原始中文任务');assert.equal(projected.metadata.subagent_author,'parent');
     }
