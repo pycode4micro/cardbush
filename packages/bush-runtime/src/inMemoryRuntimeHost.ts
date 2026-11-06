@@ -7,6 +7,8 @@ import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks }
 import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
+import { FriendsRuntime } from './friendsRuntime.js';
+import { FRIENDS_COMMAND, FRIENDS_SESSION, type FriendsSnapshot } from '@cardbush/bush-protocol';
 import { AssistantManagement } from './assistantManagement.js';
 import { ConversationJournal } from './conversationJournal.js';
 import { restoreSessionModelPolicy, systemPolicyIdentity } from './sessionModelPolicy.js';
@@ -395,6 +397,7 @@ export class InMemoryRuntimeHost {
   readonly #subagentTasks: SubagentTaskStore;
   #realtimeAgents?: RealtimeAgentDispatcher;
   readonly #assistant: AssistantConversation;
+  readonly #friends: FriendsRuntime;
   readonly #assistantManagement: AssistantManagement;
   readonly #remoteAgents?: InMemoryRuntimeHostOptions['remoteAgents'];
   #voiceMaintenance = new Map<string, AbortController>();
@@ -830,6 +833,34 @@ export class InMemoryRuntimeHost {
       background: this.#backgroundTools.list(request.sessionId, request.turnId).map(job => ({ id: job.id, name: job.name, status: job.status })),
     }));
     for (const [section, source] of Object.entries(options.environmentSources ?? {})) this.#environment.register(section, source);
+    this.#friends = new FriendsRuntime(join(runtimeDataRoot, 'friends', 'events.json'), {
+      tools: this.#toolRegistry,
+      onError: error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))),
+      run: async (request, signal) => {
+        const terminal = await this.runModelTurn(request, { signal });
+        const messageId = terminal.kind === 'turn_terminal' ? terminal.payload.finalMessageId : undefined;
+        const segments = new Map<string, string>();
+        for (const event of this.events(request.sessionId, request.turnId)) {
+          if (event.kind === 'assistant_segment_completed' && event.payload.messageId === messageId && event.payload.finalResponse !== false) {
+            segments.set(event.payload.segmentId, event.payload.content);
+          }
+        }
+        return { terminal, text: [...segments.values()].join('') };
+      },
+      interactions: () => {
+        const active = this.#friends.store.select(state => state.active);
+        const pending = new Map<string, FriendsSnapshot['permissions'][number]>();
+        for (const event of active ? this.events(FRIENDS_SESSION, active.turnId) : []) {
+          if (event.kind === 'permission_requested') pending.set(event.payload.permissionId, {
+            sessionId: event.sessionId, turnId: event.turnId, permissionId: event.payload.permissionId,
+            toolCallId: event.payload.toolCallId ?? event.payload.permissionId, request: event.payload,
+          });
+          else if (event.kind === 'permission_answered' || event.kind === 'permission_rejected' || event.kind === 'permission_cancelled' || event.kind === 'permission_expired') pending.delete(event.payload.permissionId);
+        }
+        return { permissions: [...pending.values()], solutions: this.#solutions.list(FRIENDS_SESSION) };
+      },
+    });
+    this.#environment.register('friends', () => this.#friends.environment());
     this.#extensionApi = {
       environment: { read: (sessionId, signal) => this.readEnvironment(sessionId, signal) },
       conversations: { list: () => this.#conversations.list(), notify: (id, notice) => this.#conversations.notify(id, notice),
@@ -889,6 +920,7 @@ export class InMemoryRuntimeHost {
         ].includes(kind),
       ),
       supportedCommands: [
+        FRIENDS_COMMAND,
         GET_RUNTIME_ENVIRONMENT_COMMAND,
         OBSERVE_RUNTIME_AGENT_COMMAND,
         AGENT_REGISTRY_COMMAND,
@@ -1579,6 +1611,9 @@ export class InMemoryRuntimeHost {
         }
         return this.#assistant.command(input);
       }
+      case FRIENDS_COMMAND:
+        if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
+        return this.#friends.command(command.payload);
       case REALTIME_AGENT_TOOL_COMMAND: {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
         const input = realtimeAgentToolRequestSchema.parse(command.payload);
@@ -1707,6 +1742,7 @@ export class InMemoryRuntimeHost {
       }
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
+        await this.#friends.close();
         this.#conversations.close();
         this.#stopEnvironmentObservation();
         this.#environment.close();
@@ -4691,6 +4727,7 @@ export class InMemoryRuntimeHost {
   }
 
   async #deleteSession(sessionId: string) {
+    if (sessionId === FRIENDS_SESSION) await this.#friends.disconnect();
     this.#assistant.forget(sessionId);
     this.#conversations.forget(sessionId);
     await this.#subagentResume.remove(sessionId);

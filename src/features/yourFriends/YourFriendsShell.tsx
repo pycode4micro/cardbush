@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { ArrowLeft, ArrowUp, Check, ChevronRight, Circle, History, Palette, Settings2, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, ArrowUp, History, Palette, Settings2, X } from 'lucide-react';
 import { uiText, type MessageKey } from '../../i18n';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from '../composer/ComposerPromptInput';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
@@ -10,18 +10,23 @@ import type { FriendAppearance } from './friendDesign';
 import { YourFriendsSettings } from './YourFriendsSettings';
 import { circleGeometry, confirmFriendIntroduction, introductionSteps, readFriendsDraft, recordFriendEvent, saveFriendsDraft,
   updateFriendsState, useFriendsState } from './friendsStore';
+import type { ChatStreamRequest } from '../../backend/api';
+import type { FriendInput } from '@cardbush/bush-protocol';
+import { friendsBackend } from './friendsBackend';
+import { useFriendsExecution } from './useFriendsExecution';
+import { FriendsExecutionView } from './FriendsExecutionView';
+import { OPEN_INSPECTOR_EVENT } from '../inspector/inspectorEvents';
 import './yourFriends.css';
 import './friendsTransition.css';
 import './friendsOnboarding.css';
 
-const exampleFile = 'SettingsToolbar.tsx';
 const panelTitles: Record<'events' | 'settings' | 'appearance', MessageKey> = {
   events: 'yourFriends.events', settings: 'yourFriends.settings', appearance: 'yourFriends.designAppearance',
 };
 
-/** Profile and events stay local; appearance generation explicitly uses the configured model. */
-export function YourFriendsShell({ language, origin, onClose, generateAppearance }: {
-  language: string; origin?: { x: number; y: number }; onClose(): void; generateAppearance?: FriendAppearanceGenerator;
+/** Recognition stays local; accepted work events are owned by Runtime. */
+export function YourFriendsShell({ language, origin, onClose, generateAppearance, prepare }: {
+  language: string; origin?: { x: number; y: number }; onClose(): void; generateAppearance?: FriendAppearanceGenerator; prepare?: () => Promise<ChatStreamRequest>;
 }) {
   const t = uiText(language), state = useFriendsState(), shortcuts = useKeyboardShortcuts();
   const number = new Intl.NumberFormat(language);
@@ -34,13 +39,30 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   const [phase, setPhase] = useState<'opening' | 'open' | 'closing'>(origin ? 'opening' : 'open');
   const [geometry, setGeometry] = useState<ReturnType<typeof circleGeometry>>();
   const [panel, setPanel] = useState<keyof typeof panelTitles | null>(null), [selectedId, setSelectedId] = useState('');
-  const [relatesTo, setRelatesTo] = useState<string>(), [demoStep, setDemoStep] = useState<number | null>(null);
+  const [relatesTo, setRelatesTo] = useState<string>();
+  const execution = useFriendsExecution(ready);
+  const pendingInput = useRef<FriendInput | undefined>(undefined);
+  const draftRef = useRef(draft); draftRef.current = draft;
+  const selected = execution.snapshot?.events.find(event => event.id === selectedId && !event.archived);
+  useEffect(() => {
+    if (!selectedId) { const event = execution.snapshot?.events.filter(event => !event.archived).at(-1); if (event) setSelectedId(event.id); }
+  }, [execution.snapshot, selectedId]);
+  const manage = async (action: 'pause' | 'resume' | 'archive' | 'restore', id: string) => {
+    try { execution.setSnapshot(await friendsBackend.manage(action, id)); setError(''); }
+    catch { setError(t('yourFriends.executionActionFailed')); }
+  };
   const root = useRef<HTMLDivElement>(null), stage = useRef<HTMLDivElement>(null), input = useRef<ComposerPromptInputHandle>(null);
   const titleId = useId(), noticeId = useId(), submitting = useRef(false), close = useRef(onClose);
   const focusInputAfterDialog = useRef(false);
   close.current = onClose;
-  const selected = state.events.find(event => event.id === selectedId && !event.archived);
-  const related = state.events.find(event => event.id === relatesTo);
+  useEffect(() => {
+    if (!ready) return;
+    // Artifact links use the shared App inspector; reveal it when a link opens.
+    const revealInspector = () => setPhase('closing');
+    window.addEventListener(OPEN_INSPECTOR_EVENT, revealInspector);
+    return () => window.removeEventListener(OPEN_INSPECTOR_EVENT, revealInspector);
+  }, [ready]);
+  const related = execution.snapshot?.events.find(event => event.id === relatesTo);
   const save = (change: Parameters<typeof updateFriendsState>[0]) => {
     try { updateFriendsState(change); setError(''); return true; } catch { setError(t('yourFriends.saveError')); return false; }
   };
@@ -82,17 +104,33 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
     if (!panel && focusInputAfterDialog.current) { focusInputAfterDialog.current = false; input.current?.focus(); }
   }, [panel]);
   useEffect(() => { stage.current?.scrollTo({ top: 0 }); }, [state.introduction.step, ready, selectedId]);
-  useEffect(() => { if (demoStep !== null) root.current?.querySelector('.friends-demo')?.scrollIntoView({ block: 'nearest' }); }, [demoStep]);
 
   const submit = () => {
     if (submitting.current || !draft.trim() || designing || (!ready && !step)) return false;
     if (draft.length > 8000) { setError(t('yourFriends.inputTooLong', { count: number.format(8000) })); return false; }
     submitting.current = true;
+    if (ready) {
+      const outgoing = pendingInput.current?.text === draft && pendingInput.current.relatesTo === relatesTo
+        ? pendingInput.current : { id: crypto.randomUUID(), text: draft, createdAt: new Date().toISOString(), ...(relatesTo ? { relatesTo } : {}) };
+      pendingInput.current = outgoing;
+      void (async () => {
+        try {
+          if (!prepare) throw Error('FRIENDS_TRANSPORT_UNAVAILABLE');
+          await friendsBackend.configure(await prepare(), state, language);
+          const accepted = await friendsBackend.submit(outgoing);
+          execution.setSnapshot(accepted); setSelectedId(accepted.events.find(event => event.inputs.some(input => input.id === outgoing.id))?.id || outgoing.id);
+          if (draftRef.current === outgoing.text) { setDraft(''); saveFriendsDraft(null, 'event'); }
+          setRelatesTo(undefined); pendingInput.current = undefined; setError('');
+        } catch { setError(t('yourFriends.executionActionFailed')); }
+        finally { submitting.current = false; }
+      })();
+      return false;
+    }
     try {
       // Clear the persisted draft first: if saving the event fails, restore it below.
       saveFriendsDraft(null, draftScope);
       const event = recordFriendEvent(draft, ready ? undefined : step, relatesTo);
-      setSelectedId(event.id); setDraft(''); setRelatesTo(undefined); setError(''); setDemoStep(null); return true;
+      setSelectedId(event.id); setDraft(''); setRelatesTo(undefined); setError(''); return true;
     } catch {
       try { saveFriendsDraft(draft, draftScope); } catch { /* The visible input remains available to copy. */ }
       setError(t('yourFriends.saveError')); return false;
@@ -136,7 +174,7 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
     }}>
     <header className="friends-header" inert={phase !== 'open'}>
       <button className="friends-icon friends-back" type="button" onClick={leave} aria-label={t('yourFriends.back')} title={t('yourFriends.back')}><ArrowLeft/></button>
-      <div className="friends-brand"><span id={titleId}>{name}</span>{ready && <span className="friends-preview">{t('yourFriends.preview')}</span>}</div>
+      <div className="friends-brand"><span id={titleId}>{name}</span></div>
       {ready && <nav aria-label={t('yourFriends.navigation')}>
         <button type="button" className="friends-icon" data-panel="appearance" disabled={designing} onClick={() => setPanel('appearance')} aria-label={t('yourFriends.designAppearance')} title={t('yourFriends.designAppearance')}><Palette/></button>
         <button type="button" className="friends-icon" data-panel="events" onClick={() => setPanel('events')} aria-label={t('yourFriends.events')} title={t('yourFriends.events')}><History/></button>
@@ -148,27 +186,16 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
         {ready && <div className="friends-presence"><i/>{t('yourFriends.here')}</div>}
         {!ready ? <FriendsOnboarding language={language} state={state} draft={draft} error={error}
           renderInput={send => renderInput(send, false)} onSubmit={submit} onSave={save} onApply={appearance => applyAppearance(appearance, true)}
-          onFinish={finishIntroduction} generate={generateAppearance}/> : <section className="friends-event-stage" aria-live="polite">
-          <h1>{t(selected ? 'yourFriends.receivedTitle' : 'yourFriends.readyTitle', { name })}</h1>
-          <p className="friends-lead">{t(selected ? 'yourFriends.receivedDescription' : 'yourFriends.readyDescription')}</p>
-          {selected && <div className="friends-card friends-receipt"><span className="friends-status"><Circle/>{t('yourFriends.recorded')}</span><p>{t('yourFriends.eventSaved', { time: new Intl.DateTimeFormat(language, { hour: 'numeric', minute: '2-digit' }).format(new Date(selected.createdAt)) })}</p><button type="button" className="friends-text-button" onClick={() => setPanel('events')}>{t('yourFriends.viewEvent')}<ChevronRight/></button></div>}
-          {demoStep === null ? <button className="friends-demo-invite" type="button" onClick={() => setDemoStep(0)}><Sparkles/><span>{t('yourFriends.tryDemo')}</span><ChevronRight/></button> : <div className="friends-card friends-demo">
-            <span className="friends-preview">{t('yourFriends.example')}</span><h2>{t('yourFriends.demoTitle')}</h2><p>{t('yourFriends.demoDisclosure')}</p>
-            <ol className="friends-flow">{(['yourFriends.demoLocate', 'yourFriends.demoChange', 'yourFriends.demoVerify'] as const).map((key, index) => <li key={key} data-complete={index <= demoStep}>{index <= demoStep ? <Check/> : <Circle/>}{t(key)}</li>)}</ol>
-            <p className="friends-demo-conclusion">{t((['yourFriends.demoLocateResult', 'yourFriends.demoChangeResult', 'yourFriends.demoVerifyResult'] as const)[demoStep])}</p>
-            {demoStep >= 1 && <div className="friends-artifact"><span>{exampleFile}</span><pre><code><span className="friends-deletion">{'− const title = defaultMessages.settings;\n'}</span><span className="friends-addition">{"+ const title = t('settings.title');"}</span></code></pre></div>}
-            <div className="friends-step-actions">{demoStep < 2 && <button type="button" className="friends-primary" onClick={() => setDemoStep(demoStep + 1)}>{t('yourFriends.demoNext')}<ChevronRight/></button>}
-              <button type="button" className="friends-text-button" onClick={() => setDemoStep(null)}>{t('yourFriends.closeExample')}</button></div>
-          </div>}
-        </section>}
+          onFinish={finishIntroduction} generate={generateAppearance}/> : <FriendsExecutionView event={selected} snapshot={execution.snapshot} language={language} refresh={execution.refresh} manage={(action, id) => void manage(action, id)}/>}
       </div>
     </div>
     <footer className="friends-input-dock" inert={phase !== 'open'}>
       <div className="friends-input-inner">
-        {ready && related && <div className="friends-relation"><span>{t('yourFriends.continuing', { text: related.text })}</span><button type="button" className="friends-icon" aria-label={t('yourFriends.removeRelation')} onClick={() => setRelatesTo(undefined)}><X/></button></div>}
+        {ready && related && <div className="friends-relation"><span>{t('yourFriends.continuing', { text: related.title })}</span><button type="button" className="friends-icon" aria-label={t('yourFriends.removeRelation')} onClick={() => setRelatesTo(undefined)}><X/></button></div>}
+        {ready && (execution.error || execution.snapshot?.configured === false) && <p role="alert" className="your-friends-error">{t('yourFriends.runtimeUnavailable')}</p>}
         {ready && error && <p role="alert" className="your-friends-error">{error}</p>}
         {ready && renderInput(submit, true)}
-        <p className="friends-footnote" id={noticeId}>{t('yourFriends.previewNotice')}</p>
+        <p className="friends-footnote" id={noticeId}>{t(ready ? 'yourFriends.runtimeNotice' : 'yourFriends.previewNotice')}</p>
       </div>
     </footer>
     {panel && <FriendsDialog kind={panel} title={t(panelTitles[panel])} closeLabel={t('yourFriends.close')} onClose={() => setPanel(null)}>
@@ -179,12 +206,20 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
       </> : panel === 'settings' ? <><YourFriendsSettings language={language}/><p className="friends-aside">{t('yourFriends.localData')}</p>
         {ready && <button type="button" className="friends-text-button" onClick={() => { save(current => ({ ...current, introduction: { ...current.introduction, step: introductionSteps.length, confirmedAt: undefined } })); setPanel(null); }}>{t('yourFriends.reviewIdentity')}</button>}</> : <>
         <p className="friends-aside">{t('yourFriends.eventsDescription')}</p>
-        {!state.events.length && <p className="friends-empty">{t('yourFriends.noEvents')}</p>}
+        {!state.events.length && !execution.snapshot?.events.length && <p className="friends-empty">{t('yourFriends.noEvents')}</p>}
+        <ol className="friends-event-list">{[...(execution.snapshot?.events ?? [])].reverse().map(event => <li key={event.id} data-archived={event.archived}>
+          <div className="friends-event-meta"><span>{t(event.archived ? 'yourFriends.archived' : `yourFriends.status.${event.status}`)}</span><time dateTime={event.updatedAt}>{new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(event.updatedAt))}</time></div>
+          <p>{event.title}</p>{event.inputs.map(input => <p key={input.id}>{input.text}</p>)}
+          <div className="friends-event-actions">
+            {!event.archived && <button className="friends-text-button" type="button" onClick={() => { setSelectedId(event.id); setPanel(null); }}>{t('yourFriends.viewEvent')}</button>}
+            <button className="friends-text-button" type="button" onClick={() => { setRelatesTo(event.id); focusInputAfterDialog.current = true; setPanel(null); }}>{t('yourFriends.continue')}</button>
+            <button className="friends-text-button" type="button" onClick={() => void manage(event.archived ? 'restore' : 'archive', event.id)}>{t(event.archived ? 'yourFriends.restore' : 'yourFriends.archive')}</button>
+          </div>
+        </li>)}</ol>
         <ol className="friends-event-list">{[...state.events].reverse().map(event => <li key={event.id} data-archived={event.archived}>
           <div className="friends-event-meta"><span>{t(event.archived ? 'yourFriends.archived' : event.kind === 'introduction' ? 'yourFriends.introductionEvent' : 'yourFriends.recorded')}</span><time dateTime={event.createdAt}>{new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(event.createdAt))}</time></div>
           <p>{event.text}</p>{event.relatesTo && <small>{t('yourFriends.relatedEvent', { text: state.events.find(item => item.id === event.relatesTo)?.text || '' })}</small>}
-          <div className="friends-event-actions">{ready && !event.archived && <button className="friends-text-button" type="button" onClick={() => { setSelectedId(event.id); setPanel(null); setDemoStep(null); }}>{t('yourFriends.viewEvent')}</button>}
-            {ready && <button className="friends-text-button" type="button" onClick={() => { setRelatesTo(event.id); focusInputAfterDialog.current = true; setPanel(null); }}>{t('yourFriends.continue')}</button>}
+          <div className="friends-event-actions">
             <button className="friends-text-button" type="button" onClick={() => save(current => ({ ...current, events: current.events.map(item => item.id === event.id ? { ...item, archived: !item.archived } : item) }))}>{t(event.archived ? 'yourFriends.restore' : 'yourFriends.archive')}</button></div>
         </li>)}</ol>
       </>}

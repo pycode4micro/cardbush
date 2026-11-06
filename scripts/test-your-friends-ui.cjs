@@ -16,12 +16,24 @@ async function buildFixture(directory) {
   const file = value => JSON.stringify(path.resolve(value).replaceAll('\\', '/'));
   const result = await build({ configFile: false, logLevel: 'error', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [react(), {
     name: 'friends-fixture', enforce: 'pre', resolveId(source, importer) {
+      if (source === './friendsBackend') return '\0friends-backend.ts';
       if (source.endsWith('__friends_fixture__.tsx')) return '\0friends-fixture.tsx';
       if (source === '../appCenter/AppCenter' && importer?.endsWith('ChatSidebar.tsx')) return '\0friends-dock.ts';
       if (source === '../automations/useAutomationUnreadCount') return '\0friends-unread.ts';
     }, load(id) {
       if (id === '\0friends-dock.ts') return 'export const AppCenterDock=()=>null;';
       if (id === '\0friends-unread.ts') return 'export const useAutomationUnreadCount=()=>0;';
+      if (id === '\0friends-backend.ts') return `
+        const empty=()=>({configured:true,events:[],detections:[],permissions:[],solutions:[]});
+        const read=()=>JSON.parse(localStorage.getItem('fixture-friends-runtime')||JSON.stringify(empty()));
+        const save=state=>{localStorage.setItem('fixture-friends-runtime',JSON.stringify(state));return state;};
+        export const friendsBackend={read:async()=>read(),configure:async()=>{},
+          submit:async input=>{const state=read();if(state.events.some(e=>e.inputs.some(i=>i.id===input.id)))return state;
+            let event=input.relatesTo?state.events.find(e=>e.id===input.relatesTo):undefined;
+            if(!event){event={id:input.id,title:'Fixture event',intent:input.text,origin:'user',inputs:[],revision:1,archived:false,createdAt:input.createdAt};state.events.push(event);}
+            event.inputs.push(input);event.updatedAt=input.createdAt;event.status='completed';event.result={text:'Fixture execution result.',turnId:'fixture-turn',createdAt:input.createdAt};return save(state);},
+          manage:async(action,id)=>{const state=read(),event=state.events.find(e=>e.id===id);if(action==='archive'||action==='restore')event.archived=action==='archive';else event.status=action==='pause'?'paused':'queued';return save(state);}
+        };`;
       if (id !== '\0friends-fixture.tsx') return;
       return `import React,{useState,useRef,useLayoutEffect} from 'react';import {createRoot} from 'react-dom/client';
         import {YourFriendsShell} from ${file('src/features/yourFriends/YourFriendsShell.tsx')};
@@ -32,7 +44,7 @@ async function buildFixture(directory) {
         import {validFriendSvg} from ${file('src/features/yourFriends/friendDesign.ts')};
         import {uiText} from ${file('src/i18n/index.ts')};import {UiLanguageProvider} from ${file('src/i18n/react.tsx')};
         import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};import ${file('src/styles/appearance.css')};
-        window.fixture={store,t:uiText,validFriendSvg,requests:[],hold:false,fail:false};const noop=()=>{};
+        window.fixture={store,t:uiText,validFriendSvg,requests:[],hold:false,fail:false,runtime:()=>JSON.parse(localStorage.getItem('fixture-friends-runtime')||'{"events":[]}')};const noop=()=>{};
         fixture.design={name:'夜航',description:'认知资料中的安静陪伴与运动兴趣，作为设计参考。',svg:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240"><path fill="#9ab5d0" d="M48 80Q40 32 80 62Q120 40 160 62Q200 32 192 80L184 166Q120 216 56 166Z"/><ellipse fill="#fff3da" cx="120" cy="130" rx="52" ry="46"/><circle fill="#344157" cx="99" cy="118" r="5"/><circle fill="#344157" cx="141" cy="118" r="5"/><path fill="#d5a77d" d="M112 132L128 132L120 143Z"/></svg>'};
         fixture.generate=(input,signal)=>generateFriendAppearance(input,async()=>({sessionId:'model-settings-owner',model:'configured-test-model',userInput:'',projectDir:'must-not-inherit',teamInstructions:'must-not-inherit'}),signal,{
           createConversation:async options=>{fixture.created=options;return {id:options.sessionId};},
@@ -52,7 +64,7 @@ async function buildFixture(directory) {
                 onSectionChange={section=>{if(section==='your-friends')enter();}} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop}
                 onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
               <section className="fixture-settings"><YourFriendsSettings language={language}/><textarea aria-label="fixture draft" defaultValue="retained workspace draft"/></section>
-            </main>{open&&<YourFriendsShell language={language} origin={origin} generateAppearance={fixture.generate} onClose={()=>setOpen(false)}/>}
+            </main>{open&&<YourFriendsShell language={language} origin={origin} prepare={async()=>({model:'fixture',sessionId:'your-friends',userInput:''})} generateAppearance={fixture.generate} onClose={()=>setOpen(false)}/>}
           </div></UiLanguageProvider>;
         }createRoot(document.getElementById('root')).render(<Fixture/>);`;
     },
@@ -278,33 +290,31 @@ function runFixture() {
       // User events preserve exact text; the stage only shows the relevant acknowledgement.
       const utterance = '  明天有 NBA 比赛时告诉我。\n喜欢看精彩的比赛。  ';
       await fill('.friends-input-surface textarea', utterance); await click('.friends-send');
-      await until('document.querySelector(".friends-receipt")');
-      assert.equal(await read('fixture.store.readFriendsState().events.at(-1).text'), utterance);
+      await until('document.querySelector(".friends-result")');
+      assert.equal(await read('fixture.runtime().events.at(-1).inputs.at(-1).text'), utterance);
       assert.equal(await read('document.querySelector(".friends-stage").textContent.includes("明天有 NBA")'), false);
       await click('.friends-header [data-panel="events"]'); await until('document.querySelector(".friends-dialog[open]")');
-      assert.equal(await read('document.querySelector(".friends-event-list li:first-child p").textContent'), utterance);
+      assert.equal(await read('document.querySelector(".friends-event-list li:first-child p:nth-of-type(2)").textContent'), utterance);
       await textButton('.friends-event-list li:first-child', 'yourFriends.continue');
       await until('!document.querySelector(".friends-dialog")');
       await until('document.activeElement===document.querySelector(".friends-input-surface textarea")');
       await fill('.friends-input-surface textarea', '优先关注湖人。'); await click('.friends-send');
-      assert.ok(await read('fixture.store.readFriendsState().events.at(-1).relatesTo===fixture.store.readFriendsState().events.at(-2).id'));
+      await until('fixture.runtime().events.at(-1).inputs.length===2');
+      assert.ok(await read('fixture.runtime().events.at(-1).inputs.at(-1).relatesTo===fixture.runtime().events.at(-1).id'));
       await click('.friends-header [data-panel="events"]'); await textButton('.friends-event-list li:first-child', 'yourFriends.archive');
-      assert.equal(await read('fixture.store.readFriendsState().events.at(-1).archived'), true);
+      await until('fixture.runtime().events.at(-1).archived');
       await click('.friends-dialog header button');
       // Quota failures must keep text, leave the event log untouched and recover on retry.
-      const before = await read('fixture.store.readFriendsState().events.length');
+      const before = await read('fixture.runtime().events.length');
       await read(`fixture.originalSet=Storage.prototype.setItem;Storage.prototype.setItem=function(){throw new DOMException('fixture quota','QuotaExceededError');};void 0`);
       await fill('.friends-input-surface textarea', '保存失败时保留我'); await click('.friends-send');
-      assert.equal(await read('fixture.store.readFriendsState().events.length'), before);
+      assert.equal(await read('fixture.runtime().events.length'), before);
       assert.equal(await read('document.querySelector(".friends-input-surface textarea").value'), '保存失败时保留我');
       assert.ok(await read('document.querySelector(".friends-input-dock [role=alert]")'));
       await read('Storage.prototype.setItem=fixture.originalSet;void 0'); await click('.friends-send');
-      await until(`fixture.store.readFriendsState().events.length===${before + 1}`);
-      // Progressive example has an explicit disclosure and never produces user events.
-      await click('.friends-demo-invite'); await click('.friends-demo .friends-primary'); await click('.friends-demo .friends-primary');
-      assert.equal(await read('document.querySelectorAll(".friends-artifact").length'), 1);
-      assert.equal(await read('fixture.store.readFriendsState().events.length'), before + 1);
-      assert.ok(await read('document.querySelector(".friends-demo").textContent.includes("不会读取或修改")'));
+      await until(`fixture.runtime().events.length===${before + 1}`);
+      assert.equal(await read('document.querySelectorAll(".friends-demo,.friends-artifact").length'), 0, 'execution examples are replaced by Runtime results');
+      assert.equal(await read('document.querySelector(".friends-result").textContent'), 'Fixture execution result.');
       await capture('event-bright');
       await read('fixture.theme("dark");void 0'); await capture('event-dark');
       const confirmed = await read('fixture.store.readFriendsState().introduction.confirmedAt');
@@ -331,7 +341,7 @@ function runFixture() {
       await win.setContentSize(1120, 850);
       await click('.friends-apply-design');
       assert.equal(await read('fixture.store.readFriendsState().introduction.confirmedAt'), confirmed);
-      assert.equal(await read('fixture.store.readFriendsState().events.length'), before + 1);
+      assert.equal(await read('fixture.runtime().events.length'), before + 1);
       assert.equal(await read('fixture.store.readFriendsState().appearance.character'), 'cat');
       assert.equal(await read('!!document.querySelector(".friends-stage .friend-avatar")'), false, 'even selected presets only appear inside the designer');
       assert.equal(await read('document.querySelector(".friends-input-dock").parentElement===document.querySelector(".friends-stage").parentElement'), true, 'input is outside the stage');
@@ -355,10 +365,14 @@ function runFixture() {
       assert.ok(await read(`(()=>{const r=document.querySelector('.friends-input-surface').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;})()`));
       await capture('event-narrow-en');
       await read('fixture.store.updateFriendsState(s=>({...s,name:"团子"}));void 0');
+      // Artifact navigation reveals the shared App inspector instead of opening it behind the overlay.
+      await read('window.dispatchEvent(new CustomEvent("cardbush:open-inspector",{detail:{target:"C:/fixture/report.txt"}}));void 0');
+      await until('!document.querySelector(".your-friends")');
+      assert.equal(await read('fixture.runtime().events.length'), before + 1);
       // Reload uses the saved default destination, profile, name and immutable event history.
       await win.reload(); await until('document.querySelector(".your-friends[data-phase=open]")');
       assert.equal(await read('document.querySelector(".friends-brand>span").textContent'), '团子');
-      assert.equal(await read('fixture.store.readFriendsState().events.length'), before + 1);
+      assert.equal(await read('fixture.runtime().events.length'), before + 1);
       assert.equal(await read('fixture.store.readFriendsState().appearance.character'), 'cat');
       // Model output is an inert, bounded SVG image; reject executable or remote content.
       assert.ok(await read(`(()=>{const check=fixture.validFriendSvg,wrap=s=>'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">'+s+'</svg>';return check(fixture.design.svg)&&[
@@ -466,7 +480,7 @@ function runFixture() {
         }
       }
       assert.deepEqual(errors, []);
-      console.log('Your Friends UI passed: focused sequential onboarding, transition focus and repeated-click guard, boundary notes, recognition before generation, progressive preview/apply/redesign, cancellation/failure, optional presets, no placeholder or home avatar, theme inheritance, startup/interruption/reduced motion, inert SVG validation, v1 migration, IME, confirmations, failed saves, language and single-viewport layouts. Screenshots: ' + directory);
+      console.log('Your Friends UI passed: Runtime event delivery and related evidence, idempotent submission, archive, artifact navigation, onboarding, recognition before generation, appearance editing, cancellation/failure, optional presets, no placeholder or home avatar, theme inheritance, startup/interruption/reduced motion, inert SVG validation, v1 migration, IME, confirmations, failed saves, language and single-viewport layouts. Screenshots: ' + directory);
     } finally { win.destroy(); clearTimeout(deadline); }
     app.quit();
   }).catch(error => { console.error(error); clearTimeout(deadline); app.exit(1); });

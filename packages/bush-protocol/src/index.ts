@@ -60,3 +60,4 @@ export * from './agentDeliveryInstructions.js';
 export * from './bridgePlugins.js';
 export * from './webhookTurnPolicy.js';
 export * from './childAgentAssignment.js';
+export * from './friends.js';
