@@ -155,8 +155,8 @@ export async function closeRuntimeShadowConversation(conversationId: string): Pr
         new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
       ]);
     }
-    conversations.delete(conversationId);
     await runtime.client.deleteSession(state.runtimeSessionId);
+    conversations.delete(conversationId);
   } finally {
     runtime.dispose();
   }

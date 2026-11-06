@@ -241,3 +241,17 @@ test('new Shadow assets never start a Turn against an old host without execution
   assert.equal(f.requests.length, 0);
   await f.shadow.closeRuntimeShadowConversation(conversation.id);
 });
+
+test('failed Shadow cleanup preserves its frozen state for retry', async () => {
+  const f = fixture();
+  const conversation = await f.shadow.createRuntimeShadowConversation({ sessionId: 'source', clientConversationId: randomUUID(), mode: 'readonly' });
+  const remove = f.client.deleteSession;
+  f.client.deleteSession = async () => { throw Error('Temporary cleanup failure'); };
+  await assert.rejects(f.shadow.closeRuntimeShadowConversation(conversation.id), /Temporary cleanup failure/);
+  f.client.listSessionSummaries = async () => { throw Error('Should not need to rediscover an unclosed Shadow'); };
+  const request = await f.send(conversation);
+  assert.ok(request.prefixMessages.some(message => message.content === 'Original result'));
+  f.client.deleteSession = remove;
+  await f.shadow.closeRuntimeShadowConversation(conversation.id);
+  assert.equal(f.sessions.size, 1);
+});

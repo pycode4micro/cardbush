@@ -163,6 +163,37 @@ test('host, extensions, parent and live Shadow read the same facts without alter
   assert.ok(sessions.snapshot('root').turns[0].messages.some(entry => entry.message.name === 'runtime_environment'), 'observation survives replay');
 });
 
+for (const mode of ['readonly', 'fork']) test(`closing a completed ${mode} Shadow removes its agent fact while its parent and sibling run`, async t => {
+  const gates = new Map(), sessions = new SessionStore();
+  const host = new InMemoryRuntimeHost({ sessionStore: sessions, registerDefaultWorkspaceTools: false,
+    provider: { async *stream(req) { const gate = Promise.withResolvers(); gates.set(req.sessionId, gate); await gate.promise; yield* answer(req); } } });
+  const jobs = [];
+  t.after(async () => { for (const gate of gates.values()) gate.resolve(); await Promise.allSettled(jobs); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); });
+  const metadata = { parentSessionId: 'root', agentRole: 'child', shadowMode: mode,
+    shadowOfSessionId: 'root', shadowConversationId: 'shadow-window', temporary: true };
+  sessions.ensureSession('shadow', metadata);
+  sessions.ensureSession('delegated', { parentSessionId: 'root', agentRole: 'child' });
+  for (const [id, meta] of [['root', {}], ['sibling', { parentSessionId: 'root', agentRole: 'child' }], ['shadow', metadata]]) {
+    jobs.push(host.runSessionTurn(request(id, meta)));
+    await until(() => gates.has(id));
+  }
+  const remove = sessionId => host.sendCommand({ kind: 'runtime.delete_session', payload: { sessionId } });
+  await assert.rejects(remove('shadow'), /Wait for this conversation/, 'an executing Shadow still protects itself');
+  await assert.rejects(remove('delegated'), /Wait for this conversation/, 'normal delegated children retain the parent guard');
+  gates.get('shadow').resolve(); assert.equal((await jobs[2]).payload.status, 'completed');
+  assert.equal((await host.readEnvironment('root')).sections.agents.items.find(f => f.agentId === 'shadow').status, 'completed');
+  assert.equal((await remove('shadow')).deleted, true);
+  assert.equal(sessions.snapshot('shadow'), undefined);
+  const facts = (await host.readEnvironment('root')).sections.agents.items;
+  assert.equal(facts.some(f => f.agentId === 'shadow'), false, 'deleted Shadow is absent from environment');
+  for (const id of ['root', 'sibling']) {
+    assert.equal(facts.find(f => f.agentId === id)?.status, 'running');
+    assert.equal(host.hasActiveSession(id), true);
+    gates.get(id).resolve();
+  }
+  for (const pending of jobs) assert.equal((await pending).payload.status, 'completed');
+});
+
 test('Assistant registers its own parent execution and refreshes environment in the shared journal', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-assistant-environment-')), env = new RuntimeEnvironment(), gate = Promise.withResolvers();
   const seen = []; const assistant = new AssistantConversation(new ConversationJournal(root), {

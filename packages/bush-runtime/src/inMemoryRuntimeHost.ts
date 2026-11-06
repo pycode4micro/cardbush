@@ -4596,10 +4596,16 @@ export class InMemoryRuntimeHost {
     const related = new Set([sessionId]);
     const sessions = await this.#sessions.listMetadata(signal);
     signal?.throwIfAborted();
+    const target = sessions.find(session => session.sessionId === sessionId)?.metadata;
+    // A human-opened Shadow owns an independent, temporary lifetime. Closing
+    // it must not wait for the source turn (or siblings sharing that source).
+    // Ordinary delegated children still protect their active parent workflow.
+    const shadow = target?.temporary === true && typeof target.shadowConversationId === 'string' &&
+      target.shadowOfSessionId === target.parentSessionId && ['readonly', 'fork'].includes(String(target.shadowMode));
     // A child can be admitted before it has a persisted session snapshot.
     for (const id of related) {
       const parent = sessions.find(session => session.sessionId === id)?.metadata?.parentSessionId;
-      if (typeof parent === 'string') related.add(parent);
+      if (!shadow && typeof parent === 'string') related.add(parent);
       for (const child of sessions) if (child.metadata?.parentSessionId === id) related.add(child.sessionId);
       for (const task of this.#subagentTasks.list(id)) related.add(task.childSessionId);
     }
