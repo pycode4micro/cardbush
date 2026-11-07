@@ -10,7 +10,7 @@ import { PERSONAL_ASSISTANT_SESSION as id, ASSISTANT_MANAGEMENT_TOOLS, assistant
 
 const until = async check => { for (let i = 0; i < 500; i++) { if (await check()) return; await new Promise(r => setTimeout(r, 10)); } assert.fail('condition timed out'); };
 const manifest = { effect_kind: 'observation', operation: 'test', risk: 'low', owner: 'fixture', dispatch_scope: 'session', mutating: false };
-async function fixture(t) {
+async function fixture(t, now) {
   const root = await mkdtemp(join(tmpdir(), 'assistant-management-')), registry = new ToolRegistry(), sessions = new SessionStore(), executions = new ToolExecutionStore();
   sessions.ensureSession(id);
   await mkdir(join(root, 'skills', 'sheets'), { recursive: true });
@@ -21,7 +21,7 @@ async function fixture(t) {
     manifest, decodeInput: x => x, execute: () => { executed++; return {}; }, mcpHook: { server: 'fixture', tool: visible ? 'report' : 'hidden', modelVisible: visible, call: async () => ({}) } });
   const runs = [], requests = [], results = new Map(), hooks = [], faults = {}, persistence = new FileCoordinationPersistence({ root: join(root, 'coordination') });
   const coordination = new CoordinationStore({ persistence });
-  const scheduler = new AutomationScheduler({ path: join(root, 'automations.json'), canRun: () => true, sessionExists: key => key === id,
+  const scheduler = new AutomationScheduler({ path: join(root, 'automations.json'), now, canRun: () => true, sessionExists: key => key === id,
     run: async (job, run, ctx) => { runs.push({ job, run, ctx }); return { status: 'completed', reason: 'done', summary: 'Saved report' }; } });
   const host = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: sessions, toolRegistry: registry, toolExecutionStore: executions, coordinationStore: coordination, automation: scheduler,
     loadPluginExtensions: async () => ({ commands: [{ id: 'fixture:report', name: 'report', description: 'Prepare a report', path: join(root, 'command.md'), pluginId: 'fixture', userInvocable: true }], skills: [], agents: [], hooks }),
@@ -41,6 +41,9 @@ async function fixture(t) {
     tools: registry.definitions(), metadata: { workspaceDir: root, planEnabled: true, mcpToolDiscovery: true }, permissionMode: 'task_free', requestCapabilities: { interactiveRequests: true, vision: false } });
   const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
   const read = () => command({ action: 'read' });
+  const events = payload => host.sendCommand({ kind: 'runtime.friends', payload });
+  const configureEvents = () => events({ action: 'configure', parent: parent(), assistant: assistantProfileSchema.parse({}),
+    profile: { name: 'Assistant', recognition: {}, language: 'en', timeZone: 'Asia/Shanghai', confirmedAt: new Date(0).toISOString() } });
   const begin = async (name, args, patch = {}) => {
     sequence++; const callId = `call-${sequence}`; batch = [{ id: callId, name, args }];
     await command({ action: 'turn', entry: { id: `input-${sequence}`, content: 'Manage the requested work.', role: 'user', source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() },
@@ -49,18 +52,27 @@ async function fixture(t) {
   const complete = async callId => { await until(async () => !(await read()).busy); assert.equal((await read()).error, ''); return results.get(callId); };
   t.after(async () => { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await scheduler.close(); persistence.close?.();
     assert.ok(root.startsWith(join(tmpdir(), 'assistant-management-'))); await rm(root, { recursive: true, force: true }); });
-  return { root, registry, scheduler, runs, requests, results, hooks, faults, executions, coordination, persistence, read, command, begin, complete, parent,
+  return { root, registry, scheduler, runs, requests, results, hooks, faults, executions, coordination, persistence, read, command, begin, complete, parent, configureEvents,
+    readEvents: () => events({ action: 'read' }),
     environment: () => host.readEnvironment(id),
     executed: () => executed, invoke: async (name, args, patch) => complete(await begin(name, args, patch)),
     answer: (permission, decision) => host.sendCommand({ kind: 'runtime.answer_permission', payload: { protocol: 'bush.runtime_permission_answer.v1', permissionId: permission.permissionId,
       answerId: randomUUID(), decision, ...(['allow_once', 'allow_session'].includes(decision) ? { grantedCapabilityIds: permission.request.requestedCapabilityIds } : {}) } }) };
 }
 const schedule = { action: 'create', name: 'Report', prompt: 'Read the fixture project and save report.html; return its path.', time_zone: 'Asia/Shanghai', trigger: { kind: 'once', at: '2099-10-30T10:00:00+08:00' } };
+const reminder = { action: 'create', text: 'Remind me to review the report.', at: schedule.trigger.at };
+async function seedExistingSchedule(f) {
+  await f.scheduler.remember(f.parent());
+  return f.scheduler.manage({ action: 'create', definition: {
+    name: schedule.name, sessionId: id, prompt: schedule.prompt, trigger: schedule.trigger, timeZone: schedule.time_zone,
+  } });
+}
 
-test('assistant saves and manages schedules using full execution settings, reads results and preserves them across context reset', async t => {
+test('assistant manages existing schedules using saved execution settings, reads results and preserves them across context reset', async t => {
   const f = await fixture(t);
-  const created = await f.invoke('schedule_task', schedule);
+  const created = await seedExistingSchedule(f);
   assert.equal(created.state, 'active', JSON.stringify(created));
+  assert.equal((await f.invoke('schedule_task', { action: 'list' })).jobs[0].id, created.id);
   const schemas = f.requests[0].tools.map(tool => tool.name);
   for (const name of ASSISTANT_MANAGEMENT_TOOLS) assert.ok(schemas.includes(name), name);
   for (const name of ['call_tool', 'get_tool_schema', 'mcp__fixture__report', 'terminal_exec', 'update_goal']) assert.ok(!schemas.includes(name), name);
@@ -86,6 +98,36 @@ test('assistant saves and manages schedules using full execution settings, reads
   assert.equal((await f.invoke('schedule_task', { action: 'delete', job_id: 'foreign-or-missing' })).status, 'failed');
   await f.invoke('schedule_task', { action: 'delete', job_id: created.id });
   assert.deepEqual((await f.scheduler.list()).jobs.map(job => job.id), [foreign.id]);
+});
+
+test('new assistant reminders and subscriptions register only as events while a pre-existing timer still fires once', async t => {
+  let time = Date.parse('2099-10-29T00:00:00Z');
+  const f = await fixture(t, () => time);
+  await f.configureEvents();
+  const old = await seedExistingSchedule(f);
+  const blocked = await f.invoke('schedule_task', schedule);
+  assert.equal(blocked.status, 'failed');
+  assert.match(blocked.error, /assistant_event/);
+  const actions = f.requests[0].tools.find(tool => tool.name === 'schedule_task').inputSchema.properties.action.enum;
+  assert.ok(!actions.includes('create'));
+  assert.ok(f.registry.resolve('schedule_task').definition.inputSchema.properties.action.enum.includes('create'), 'ordinary conversation catalog still supports creation');
+
+  const once = await f.invoke('assistant_event', reminder);
+  const recurring = { action: 'subscribe', text: 'Remind me to review the report every Friday at 10:00 Asia/Shanghai.', topic: 'Friday report', at: '2099-10-30T10:00:00+08:00' };
+  const subscription = await f.invoke('assistant_event', recurring);
+  assert.equal((await f.invoke('assistant_event', recurring)).eventId, subscription.eventId);
+  const state = await f.readEvents();
+  assert.deepEqual(state.events.map(event => [event.id, Boolean(event.subscription), event.status]),
+    [[once.eventId, false, 'watching'], [subscription.eventId, true, 'watching']]);
+  assert.deepEqual(state.detections.map(detection => detection.at), [reminder, recurring].map(input => new Date(input.at).toISOString()));
+  assert.deepEqual((await f.scheduler.list()).jobs.map(job => job.id), [old.id]);
+
+  time = Date.parse(old.nextRunAt);
+  await f.scheduler.tick(); await until(async () => (await f.scheduler.list()).jobs[0].state === 'completed');
+  await f.scheduler.tick();
+  assert.deepEqual(f.runs.map(run => run.job.id), [old.id]);
+  assert.equal(f.runs[0].ctx.metadata.workspaceDir, f.root);
+  assert.equal((await f.invoke('scheduled_results', {})).results[0].jobId, old.id);
 });
 
 test('capability discovery respects enabled tools and visibility without executing or delegating catalog entries', async t => {
@@ -122,55 +164,55 @@ test('overall plan uses revision checks and durable projection, then clears dura
 });
 
 for (const decision of ['deny', 'cancel', 'allow_once', 'allow_session', 'reset']) test(`management permission ${decision} follows the host broker and records the actual outcome`, async t => {
-  const f = await fixture(t);
-  f.registry.resolve('schedule_task').authorize = () => ({ kind: 'ask', request: { reason: 'Schedule needs approval', actions: ['schedule.create'], targets: [{ kind: 'path', value: f.root }], capabilityIds: ['schedule.create'] } });
-  const call = await f.begin('schedule_task', schedule);
+  const f = await fixture(t); await f.configureEvents();
+  f.registry.resolve('assistant_event').authorize = () => ({ kind: 'ask', request: { reason: 'Reminder needs approval', actions: ['event.create'], targets: [{ kind: 'path', value: f.root }], capabilityIds: ['event.create'] } });
+  const call = await f.begin('assistant_event', reminder);
   await until(async () => { const state = await f.read(); if (!state.busy) assert.fail(JSON.stringify(f.results.get(call))); return state.management.permissions.length === 1; });
-  assert.equal((await f.scheduler.list()).jobs.length, 0);
+  assert.equal((await f.readEvents()).events.length, 0);
   const permission = (await f.read()).management.permissions[0];
   assert.equal(permission.sessionId, id); assert.equal(permission.toolCallId, call);
-  assert.deepEqual(permission.request.requestedCapabilityIds, ['schedule.create']);
+  assert.deepEqual(permission.request.requestedCapabilityIds, ['event.create']);
   assert.equal((await f.environment()).sections.agents.self.status, 'waiting');
   if (decision === 'reset') await f.command({ action: 'reset' }); else await f.answer(permission, decision);
   await f.complete(call);
   assert.equal((await f.environment()).sections.agents.self?.status, decision === 'reset' ? undefined : 'completed');
   assert.equal((await f.read()).management.permissions.length, 0);
   const granted = decision.startsWith('allow');
-  assert.equal((await f.scheduler.list()).jobs.length, granted ? 1 : 0);
+  assert.equal((await f.readEvents()).events.length, granted ? 1 : 0);
   await until(() => f.executions.get(id, 't-1', call));
   assert.equal(f.executions.get(id, 't-1', call).outcome, granted ? 'returned' : decision === 'deny' ? 'failed' : 'cancelled');
   if (decision === 'allow_session') {
-    const second = await f.invoke('schedule_task', { ...schedule, name: 'Second report' }); assert.ok(second.id);
+    const second = await f.invoke('assistant_event', { ...reminder, text: 'Second reminder' }); assert.ok(second.eventId);
     assert.equal((await f.read()).management.permissions.length, 0);
   }
 });
 
 test('full-control management uses ordinary admission semantics without creating a human permission card', async t => {
-  const f = await fixture(t);
-  f.registry.resolve('schedule_task').authorize = () => ({ kind: 'ask', request: { reason: 'Schedule needs approval', actions: ['schedule.create'], targets: [{ kind: 'path', value: f.root }], capabilityIds: ['schedule.create'] } });
-  const created = await f.invoke('schedule_task', schedule, { permissionMode: 'all_free' });
-  assert.ok(created.id); assert.equal((await f.read()).management.permissions.length, 0);
+  const f = await fixture(t); await f.configureEvents();
+  f.registry.resolve('assistant_event').authorize = () => ({ kind: 'ask', request: { reason: 'Reminder needs approval', actions: ['event.create'], targets: [{ kind: 'path', value: f.root }], capabilityIds: ['event.create'] } });
+  const created = await f.invoke('assistant_event', reminder, { permissionMode: 'all_free' });
+  assert.ok(created.eventId); assert.equal((await f.read()).management.permissions.length, 0);
 });
 
 test('trusted pre-tool policy still blocks assistant management even with full control', async t => {
-  const f = await fixture(t), script = join(f.root, 'block.cjs');
+  const f = await fixture(t), script = join(f.root, 'block.cjs'); await f.configureEvents();
   await writeFile(script, `console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'Blocked by fixture policy'}}));`);
   const command = `"${process.execPath}" "${script}"`;
-  f.hooks.push({ id: 'block-schedule', pluginId: 'fixture', root: f.root, event: 'PreToolUse', matcher: 'schedule_task', dialect: 'claude', type: 'command', trusted: true, command, commandWindows: command, timeout: 10 });
-  const result = await f.invoke('schedule_task', schedule, { permissionMode: 'all_free' });
+  f.hooks.push({ id: 'block-event', pluginId: 'fixture', root: f.root, event: 'PreToolUse', matcher: 'assistant_event', dialect: 'claude', type: 'command', trusted: true, command, commandWindows: command, timeout: 10 });
+  const result = await f.invoke('assistant_event', reminder, { permissionMode: 'all_free' });
   assert.equal(result.status, 'failed'); assert.match(result.error, /Blocked by fixture policy/);
-  assert.equal((await f.scheduler.list()).jobs.length, 0);
+  assert.equal((await f.readEvents()).events.length, 0);
 });
 
-test('retrying a reply after scheduling retains the receipt and never resubmits the job', async t => {
-  const f = await fixture(t); f.faults.reply = true;
-  const call = await f.begin('schedule_task', schedule);
+test('retrying a reply after registration retains the receipt and never resubmits the event', async t => {
+  const f = await fixture(t); await f.configureEvents(); f.faults.reply = true;
+  const call = await f.begin('assistant_event', reminder);
   await until(async () => !(await f.read()).busy);
   assert.match((await f.read()).error, /Fixture reply interrupted/);
-  const job = (await f.scheduler.list()).jobs[0]; assert.ok(job);
+  const event = (await f.readEvents()).events[0]; assert.ok(event);
   assert.equal(f.executions.get(id, 't-1', call).outcome, 'returned');
   await f.command({ action: 'retry', parent: f.parent(), profile: assistantProfileSchema.parse({}) });
   await f.complete(call);
-  assert.deepEqual((await f.scheduler.list()).jobs.map(item => item.id), [job.id]);
-  assert.ok(f.requests.at(-1).messages.some(item => item.role === 'tool' && item.toolCallId === call && JSON.parse(item.content).id === job.id));
+  assert.deepEqual((await f.readEvents()).events.map(item => item.id), [event.id]);
+  assert.ok(f.requests.at(-1).messages.some(item => item.role === 'tool' && item.toolCallId === call && JSON.parse(item.content).eventId === event.id));
 });

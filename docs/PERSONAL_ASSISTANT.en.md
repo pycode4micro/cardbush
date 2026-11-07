@@ -43,7 +43,8 @@ The assistant uses `subagent`, `tasks`, Team and `page_write` to delegate, conti
 
 Text conversations and the transcription–Agent–speech path also provide direct management tools without starting a child:
 
-- `schedule_task` creates, reads, edits, pauses, resumes, deletes, runs or stops this assistant's schedules using the existing Automations page and scheduler. Saved jobs retain the full model, workspace, execution tools and permission settings. Timed work runs in an isolated conversation without chat history, so prompts must be self-contained. Saving a job does not mean it has executed; CardBush must be running for scheduled execution.
+- Register new reminders with `assistant_event`. Use `create` for a one-time reminder and `subscribe` for recurring reminders or ongoing updates. Supply the first check with its UTC offset and include the requested cadence and delivery requirements in the event text.
+- Use `schedule_task` to find, edit, pause, resume, delete, run or stop this assistant's existing schedules. They run with their saved model, workspace, tools and permissions while CardBush is running. Their results are available in the scheduled-results inbox.
 - `scheduled_results` pages through the scheduled-results inbox or reads specific runs. Reading neither marks results read nor reruns work.
 - `search_skills`, `list_plugin_commands` and `mcp_search` discover the current Runtime's capabilities, respecting tool settings, Skill scopes and plugin visibility. Discovery neither executes a plugin nor grants permission, and local results do not establish remote worker capabilities.
 - `update_task_plan` maintains the parent's overall plan in Work summary, with persistence across refresh and restart. Child progress remains separate. Explicitly resetting the assistant clears the plan but preserves saved schedules.

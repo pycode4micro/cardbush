@@ -7,6 +7,7 @@ import type { ToolExecutionStore } from './toolExecutionStore.js';
 import type { CoordinationStore } from './coordinationStore.js';
 import type { AutomationScheduler } from './automationScheduler.js';
 import { projectMcpDiscoveryResult } from './mcpToolDiscovery.js';
+import { presentExistingScheduleActions } from './extendedBuiltins.js';
 
 const allowed = new Set<string>(ASSISTANT_MANAGEMENT_TOOLS);
 
@@ -52,7 +53,7 @@ export class AssistantManagement {
       && this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
         if (tool.name === 'mcp_search') return { ...tool, description: 'Discover MCP tool names and summaries available on this Runtime for delegation. Start with query keywords or *; optionally narrow by server. Continue with next_cursor as cursor without query/server. Try alternate queries before concluding a capability is unavailable. This query executes no target and grants no permission. Delegate actual execution to a child; schema loading and generic invocation are not available in this assistant scope. Local results do not establish remote worker capabilities.' };
         if (tool.name === 'search_skills') return { ...tool, description: 'Discover installed Skills on this Runtime by capability or name; query=* lists visible Skills. Results include descriptions, mainResource and optional plugin invocation IDs. Continue with next_offset as offset and the same query. Use these facts to choose a child for execution; reading instructions and invoking Skills belong to that child. Local results do not establish remote worker capabilities.' };
-        return tool;
+        return presentExistingScheduleActions(tool);
       });
   }
   snapshot(): AssistantManagementSnapshot {
@@ -69,7 +70,7 @@ export class AssistantManagement {
     const executionRequest: ModelRequest = { ...request, tools: [...parent.tools, ...this.definitions(parent).filter(tool => !parent.tools.some(item => item.name === tool.name))], requestCapabilities: parent.requestCapabilities };
     if (call.name === 'schedule_task') {
       const action = JSON.parse(call.argumentsText).action;
-      if (action === 'create' || action === 'update') {
+      if (action === 'update') {
         await this.options.automation?.remember(parent);
         signal.throwIfAborted();
       }

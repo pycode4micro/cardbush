@@ -1,4 +1,5 @@
 import { AutomationClock } from './automationClock.js';
+import { presentExistingScheduleActions } from './extendedBuiltins.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
@@ -356,7 +357,7 @@ export class AssistantEvents {
     } catch (error) { this.deps.onError?.(error); }
   }
   private definitions(parent: RuntimeSessionTurnRequest): ToolDefinition[] {
-    return [...parent.tools.filter(tool => !tool.name.startsWith('friends_')),
+    return [...parent.tools.filter(tool => !tool.name.startsWith('friends_')).map(presentExistingScheduleActions),
       ...this.deps.tools.definitions().filter(tool => tool.name.startsWith('friends_'))];
   }
   private async resolveRoute(ref: string) {
