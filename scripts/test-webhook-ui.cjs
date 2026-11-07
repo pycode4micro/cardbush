@@ -45,7 +45,7 @@ async function build(directory) {
           if(input.action==='delete')fixture.connections=fixture.connections.filter(c=>c.id!==input.id);
           if(input.action==='listener'){fixture.host=input.host;fixture.port=input.port;}
           if(input.action==='test')return {delivered:true};
-          return {host:fixture.host,port:fixture.port,listening:true,pairings:fixture.pairings,connections:fixture.connections.filter(c=>c.sessionId===(input.sessionId??input.binding?.sessionId))};
+          return {host:fixture.host,port:fixture.port,listening:true,pairings:fixture.pairings,onlineElsewhere:fixture.onlineElsewhere??[],connections:fixture.connections.filter(c=>c.sessionId===(input.sessionId??input.binding?.sessionId))};
         }}};
         Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{fixture.copied=text}}});
         function Fixture(){const [language,setLanguage]=useState('zh'),[theme,setTheme]=useState('dark'),[sessionId,setSession]=useState('existing-chat');
@@ -76,7 +76,11 @@ function run() {
       assert.equal(await read('document.querySelector("[data-webhook-connect]").disabled'), false);
       await click('[data-webhook-connect]'); await until('!!document.querySelector(".webhook-empty")');
       assert.equal(await read('document.querySelectorAll(".webhook-dialog input,.webhook-dialog textarea").length'), 0, 'first connection requires no address/token form');
-      await read("fixture.pairings=[{requestId:crypto.randomUUID(),name:'Local Bot',replyUrl:'http://127.0.0.1:4792/reply'}];void 0");
+      await read("fixture.onlineElsewhere=[{id:'wx',name:'Weixin',contextTitle:'Assistant'},{id:'fs',name:'Feishu',contextTitle:'Product research'}];void 0");
+      await until('document.querySelectorAll("[data-bound-elsewhere]").length===2');
+      assert.deepEqual(await read('Array.from(document.querySelectorAll("[data-bound-elsewhere] span"),node=>node.textContent)'), ['Assistant','Product research']);
+      assert.equal(await read('!!document.querySelector(".webhook-empty,[data-bound-elsewhere] button")'), false);
+      await read("fixture.onlineElsewhere=[];fixture.pairings=[{requestId:crypto.randomUUID(),name:'Local Bot',replyUrl:'http://127.0.0.1:4792/reply'}];void 0");
       await until('!!document.querySelector("[data-pairing]")');
       assert.equal(await read('fixture.prepared.length'), 0, 'discovery does not prepare a model or export context');
       fs.writeFileSync(path.join(directory, 'quick-connect-dark.png'), (await win.webContents.capturePage()).toPNG());

@@ -64,6 +64,8 @@ test('generic file push binds source, checks capabilities, persists idempotency 
     const a = await connect('Weixin', 'same-chat'), b = await connect('Feishu', 'same-chat');
     const statuses = async () => (await gateway.command({ action: 'read', sessionId: 'same-chat' })).connections.map(c => c.status);
     assert.deepEqual(await statuses(), ['offline', 'offline'], 'saved and enabled is not online');
+    const discover = sessionId => gateway.command({ action: 'read', sessionId });
+    assert.deepEqual((await discover('another-chat')).onlineElsewhere, []);
     const savedContext = await gateway.botRequest({ action: 'context', sessionId: 'same-chat' });
     assert.equal(savedContext.reason, 'bot_offline');
     assert.deepEqual(savedContext.connections.map(c => c.status), ['offline', 'offline']);
@@ -73,6 +75,12 @@ test('generic file push binds source, checks capabilities, persists idempotency 
     for (const c of [a, b]) assert.equal((await post(c, '/capabilities', { protocol: 'cardbush.webhook.v1', capabilities: { files: c === a, maxFileBytes: 1000 }, plugins: [fixturePlugin] })).status, 200);
     const state = await gateway.botRequest({ action: 'context', sessionId: 'same-chat' });
     assert.deepEqual(await statuses(), ['connected', 'connected']);
+    const other = await discover('another-chat');
+    assert.deepEqual(other.connections, []);
+    assert.deepEqual(other.pairings, []);
+    assert.deepEqual(other.onlineElsewhere, [a, b].map(c => ({ id: c.id, name: c.name, contextTitle: 'same-chat' })),
+      'active bridges are visible elsewhere without returning credentials or pretending there is a pending pairing');
+    assert.deepEqual((await discover('same-chat')).onlineElsewhere, []);
     assert.equal(state.targets.length, 2); assert.ok(!JSON.stringify(state).includes('callback-secret')); assert.ok(!JSON.stringify(state).includes(a.token));
     const sourceA = state.targets.find(t => t.botName === 'Weixin'), sourceB = state.targets.find(t => t.botName === 'Feishu');
     const catalog = await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' });
@@ -83,6 +91,7 @@ test('generic file push binds source, checks capabilities, persists idempotency 
       requestId, arguments: { file, ...extra } });
     const later = Date.now() + 120001, clock = t.mock.method(Date, 'now', () => later);
     assert.deepEqual(await statuses(), ['offline', 'offline'], 'UI and model use the same heartbeat expiry');
+    assert.deepEqual((await discover('another-chat')).onlineElsewhere, []);
     assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'same-chat', sourceRef: sourceA.sourceRef })).source.reason, 'bot_offline');
     assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' }), []);
     clock.mock.restore();

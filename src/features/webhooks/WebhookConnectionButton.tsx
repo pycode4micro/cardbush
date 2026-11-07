@@ -73,7 +73,15 @@ function QuickWebhookDialog(props: Props & { onClose(): void }) {
         <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'delete', id: connection.id, sessionId: props.sessionId }))}>{t('webhook.delete')}</button>
       </div>)}
     </section>}
-    {snapshot && !snapshot.pairings?.length && !snapshot.connections.length && <div className="webhook-empty" role="status">{t('webhook.localEmpty')}</div>}
+    {!!snapshot?.onlineElsewhere?.length && <section className="webhook-service-list" aria-label={t('webhook.onlineElsewhere')}>
+      <h3>{t('webhook.onlineElsewhere')}</h3>
+      {snapshot.onlineElsewhere.map(service => <div key={service.id} className="webhook-service" data-bound-elsewhere>
+        <div className="webhook-service-name"><Webhook aria-hidden="true"/><div><strong>{service.name}</strong><span>{service.contextTitle}</span></div></div>
+      </div>)}
+      <p className="webhook-note">{t('webhook.pairAgain')}</p>
+    </section>}
+    {snapshot?.listening && !snapshot.error && !error && !snapshot.pairings?.length && !snapshot.connections.length && !snapshot.onlineElsewhere?.length &&
+      <div className="webhook-empty" role="status">{t('webhook.localEmpty')}</div>}
     {error && <p role="alert">{t('webhook.operationFailed', { code: error })}</p>}
   </SettingsFormDialog>;
 }

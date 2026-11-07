@@ -87,6 +87,9 @@ export class ContextWebhookHost {
     return { listening: Boolean(address), host: this.state.host, port, error: this.listenerError,
       pairings: this.state.pairings.filter(p => p.status === 'pending' && p.expiresAt > Date.now())
         .map(p => ({ requestId: p.requestId, name: p.name, replyUrl: p.replyUrl })),
+      onlineElsewhere: this.state.connections
+        .filter(c => owner(c.binding.sessionId) !== owner(sessionId) && this.connectionStatus(c) === 'connected')
+        .map(c => ({ id: c.id, name: c.name, contextTitle: c.binding.title || owner(c.binding.sessionId) })),
       connections: this.state.connections.filter(c => owner(c.binding.sessionId) === owner(sessionId)).map(c => ({ ...this.config(c), id: c.id,
         sessionId, kind: c.binding.kind === 'friends' ? 'assistant' : c.binding.kind, token: c.token, endpoint: `http://${host}:${port}/api/webhooks/v1/${c.id}/messages`,
         status: this.connectionStatus(c),
