@@ -20,6 +20,11 @@
 .assistant-composer-tools button:hover { background:var(--surface-hover,#8882); }
 .assistant-body,.assistant-chat { display:flex; flex:1; min-height:0; min-width:0; }
 .assistant-chat { display:block; }
+.assistant-composer-dock { --composer-backdrop-fade:12px; }
+.assistant-messages .message-list-content { padding-bottom:var(--assistant-dock-height, 32px); }
+/* Reserve the dock once. Inter-message spacing belongs between rows only. */
+.assistant-messages .assistant-message-row:last-child > :is(.assistant-message,.assistant-task-bubble) { margin-bottom:0; }
+.assistant-messages .assistant-activity-row:last-child { padding-bottom:0; }
 .assistant-message-row { width:min(100%,var(--chat-track-width,704px)); margin:0 auto; content-visibility:visible; }
 .assistant-message { display:flex; flex-direction:column; margin:0 0 22px; max-width:92%; min-width:0; width:fit-content; }
 .assistant-text-bubble { padding:14px 18px; border-radius:22px; background:var(--surface-strong, var(--surface, #8882)); overflow-wrap:anywhere; min-width:0; max-width:100%; }
@@ -35,12 +40,13 @@
 /* The quick transcript sits on a raised surface; give replies their own bubble
    in either theme, including when portaled outside the assistant view. */
 .quick-input-transcript .assistant-message-assistant>.assistant-text-bubble { background:color-mix(in srgb,var(--text) 6%,var(--surface-strong)); border:1px solid color-mix(in srgb,var(--text) 10%,transparent); }
-.assistant-message-user { margin-left:auto; }
+.assistant-message-user { position:relative; margin-left:auto; }
 .assistant-message-user:has(>.user-message-attachments) { width:100%; align-items:flex-end; }
 .assistant-message-user>.assistant-text-bubble { width:fit-content; background:color-mix(in srgb,var(--accent, #7297bd) 40%,var(--surface,#8882)); }
 .assistant-message-user p { margin:0; white-space:pre-wrap; line-height:1.65; }
 .assistant-time-separator { width:min(100%,var(--chat-track-width,704px)); margin:8px auto 18px; text-align:center; color:var(--text-soft); font-size:11px; line-height:1.5; }
 .assistant-message-delivery,.assistant-message-retry { align-self:flex-end; margin:5px 14px 0; font:inherit; font-size:11px; color:var(--text-soft); }
+.assistant-message-delivery { position:absolute; top:100%; right:0; }
 .assistant-message-retry { padding:0; background:transparent; border:0; color:var(--danger); cursor:pointer; }
 .assistant-message-retry:hover { text-decoration:underline; }
 .assistant-message-retry:disabled { opacity:.5; cursor:default; }
@@ -102,9 +108,9 @@
   .assistant-actions .settings-dropdown { max-width:95px; }
   .assistant-view .topbar { gap:4px; }
 }
-.assistant-message-user.assistant-message-arriving>:is(.assistant-text-bubble,.user-message-attachments) { transform-origin:bottom right; animation:assistant-bubble-send .36s cubic-bezier(.22,1,.36,1) both; }
+.assistant-message-user.assistant-message-arriving>:is(.assistant-text-bubble,.user-message-attachments) { animation:assistant-bubble-send .36s cubic-bezier(.22,1,.36,1) both; }
 .assistant-message-assistant.assistant-message-arriving>div { transform-origin:bottom left; animation:assistant-bubble-receive .4s cubic-bezier(.22,1,.36,1) both; }
-@keyframes assistant-bubble-send { from { opacity:0; transform:translate3d(0,14px,0) scale(.97); } to { opacity:1; transform:none; } }
+@keyframes assistant-bubble-send { from { opacity:0; } to { opacity:1; } }
 @keyframes assistant-bubble-receive { from { opacity:0; transform:translate3d(0,9px,0) scale(.985); } to { opacity:1; transform:none; } }
 @media (prefers-reduced-motion:reduce) { .assistant-bulb,.assistant-message-arriving>:is(div,section),.assistant-settings-dialog[open] { animation:none!important; transition:none; } }
 

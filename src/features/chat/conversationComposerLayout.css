@@ -1,3 +1,4 @@
+.chat-panel { --composer-backdrop-fade: 32px; }
 .chat-panel.composer-layout-managed .composer-dock:not(.interaction-only) {
   left: var(--flow-composer-left, 12px);
   right: auto;
@@ -11,7 +12,6 @@
   background: none;
 }
 .chat-panel:not(.composer-anchored) .composer-dock:not(.interaction-only) {
-  --composer-backdrop-fade: 32px;
   padding-top: var(--composer-backdrop-fade);
   background: none;
 }

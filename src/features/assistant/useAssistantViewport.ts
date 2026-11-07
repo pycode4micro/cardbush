@@ -139,8 +139,9 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
         body.style.setProperty('--composer-surface-center-x', `${(rect.left + rect.width / 2 - bounds.left) / scaleX}px`);
       }
       body.style.setProperty('--message-list-scrollbar-inset', `${Math.max(0, scroller.offsetWidth - scroller.clientWidth)}px`);
-      content.style.paddingBottom = `${portaled || layout.anchored ? 32 : dock.offsetHeight + 16}px`;
-      trace('measure', { paddingBottom: content.style.paddingBottom });
+      if (portaled || layout.anchored) content.style.removeProperty('--assistant-dock-height');
+      else content.style.setProperty('--assistant-dock-height', `${dock.offsetHeight}px`);
+      trace('measure', { dockHeight: dock.offsetHeight });
       // Markdown mounts and image dimensions may settle after the entry itself.
       // Complete that positioning before paint too, instead of animating a
       // partly hidden bubble out from underneath the composer.

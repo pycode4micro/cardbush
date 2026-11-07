@@ -79,13 +79,16 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
   const draftRef = useRef(draft); draftRef.current = draft;
   const [runtimeError, setRuntimeError] = useState('');
   const [canRetry, setCanRetry] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [submission, setSubmission] = useState<'send' | 'retry'>();
+  const submitting = submission !== undefined;
   const [nextStepPrediction, setNextStepPrediction] = useState<ConversationJournalSnapshot['nextStepPrediction']>();
   const [eventNeedsResponse, setEventNeedsResponse] = useState(false);
   const [management, setManagement] = useState<ConversationJournalSnapshot['management']>();
   const overallPlan = management?.plan?.plan;
   const taskPlan = useMemo(() => overallPlan && { ...overallPlan, planId: overallPlan.plan_id, sessionId: overallPlan.session_id }, [overallPlan]);
-  const replying = (busy || submitting) && !error && !runtimeError;
+  // Keep the indicator with its submitted bubble until the journal takes over.
+  const pendingReply = submission === 'retry' || submitted.some(item => item.state !== 'failed');
+  const replying = (busy || pendingReply) && !error && !runtimeError;
   const [retry, setRetry] = useState<ConversationJournalSnapshot['retry']>(null);
   const [settings, setSettings] = useState(false);
   useEffect(() => { if (!active) setSettings(false); }, [active]);
@@ -153,7 +156,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
     return refreshing.current;
   }, [animateEntries, closeMessageMenu, language]);
   useEffect(() => {
-    const reset = () => { sendingRequest.current = undefined; setSubmitting(false); setSubmitted([]); setManagement(undefined); setDraft(''); setQuote(undefined); setReactions({}); closeMessageMenu(); setError(''); setRuntimeError(''); setRetry(null); setArriving(new Set()); void refresh().then(() => refresh()).catch(error => setError(String(error))); };
+    const reset = () => { sendingRequest.current = undefined; setSubmission(undefined); setSubmitted([]); setManagement(undefined); setDraft(''); setQuote(undefined); setReactions({}); closeMessageMenu(); setError(''); setRuntimeError(''); setRetry(null); setArriving(new Set()); void refresh().then(() => refresh()).catch(error => setError(String(error))); };
     window.addEventListener('cardbush:assistant-reset', reset);
     return () => window.removeEventListener('cardbush:assistant-reset', reset);
   }, [refresh, closeMessageMenu]);
@@ -186,7 +189,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
     if (!failed) { setQuote(undefined); quoteRef.current = undefined; }
     sendingRequest.current = request;
     viewport.prepareSend();
-    setSubmitting(true); setError(''); setRuntimeError('');
+    setSubmission('send'); setError(''); setRuntimeError('');
     let entry: ConversationEntry | undefined;
     try {
       const prior = failed?.entry ? failed : submittedRef.current.find(item => item.state === 'failed' && JSON.stringify(item.prompt) === JSON.stringify(text) && JSON.stringify(item.entry.replyTo) === JSON.stringify(replyTo));
@@ -212,7 +215,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
       if (!failed && !quoteRef.current && !draftRef.current && quoteVersion === quoteRevision.current) setQuote(replyTo);
       setError(error instanceof Error ? error.message : String(error)); return false;
     } finally {
-      if (sendingRequest.current === request) { sendingRequest.current = undefined; setSubmitting(false); }
+      if (sendingRequest.current === request) { sendingRequest.current = undefined; setSubmission(undefined); }
     }
   };
   const focusComposer = () => (composerPortalTarget ?? composerDock.current)?.querySelector<HTMLElement>('.composer-surface textarea,.composer-prompt-editor[contenteditable=true]')?.focus();
@@ -237,10 +240,10 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
   usePublishRegionConversation({ scope: localInspectorWorkspace('personal-assistant'), busy, error: error || runtimeError, messages: pageMessages, send }, active);
   const retryReply = async () => {
     viewport.prepareSend();
-    setSubmitting(true); setError(''); setRuntimeError('');
+    setSubmission('retry'); setError(''); setRuntimeError('');
     try { await assistantBackend.retry(await prepareRef.current()); await refresh(); }
     catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
-    finally { setSubmitting(false); }
+    finally { setSubmission(undefined); }
   };
   // Both sides of the call remain available to inference and speech, independently of the page.
   const speechMessages = (items: ConversationEntry[]) => journalMessages(items.filter(entry => entry.source !== 'page' && entry.source !== 'task')
