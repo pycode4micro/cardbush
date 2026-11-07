@@ -29,6 +29,7 @@ export const conversationEntrySchema = z.object({
   eventId: z.string().min(1).max(220).optional(),
   originTurnId: z.string().min(1).max(220).optional(),
   botSourceRef: z.string().min(1).max(100).optional(),
+  botRecipientKey: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   promptContext: z.array(z.object({ kind: z.enum(['preview-selection', 'editing-location', 'plugin-diagnostics']),
     content: z.string().max(256000), requestId: z.string().optional() }).strict()).max(16).optional(),
   attachments: z.array(z.object({

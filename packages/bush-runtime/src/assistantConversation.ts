@@ -1,3 +1,4 @@
+import { delegatedRequestContext } from './assistantDelegationOrigins.js';
 import { ModelRequestInterruption, ModelRequestInterrupted } from './modelRequestInterruption.js';
 import type { RuntimeGuidanceRequest } from '@cardbush/bush-protocol';
 import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
@@ -26,6 +27,7 @@ import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
 
 const conversationalTools: ToolDefinition[] = [assistantPageTool, ...conversationalSubagentTools];
+const isAuthoredInput = (entry: ConversationEntry) => entry.role === 'user' && ['text', 'voice'].includes(entry.source) && !entry.id.startsWith('memory-');
 
 function quotedMessageContext(entry: ConversationEntry, entries: ConversationEntry[]) {
   if (!entry.replyTo) return '';
@@ -54,7 +56,8 @@ export class AssistantConversation {
     }
     const active = this.webhookTurn;
     if (!active || active.turnId !== input.turnId || this.controller?.signal.aborted) return receipt;
-    const entry: ConversationEntry = { id: input.messageId, originTurnId: input.turnId, createdAt: input.createdAt, role: 'user',
+    const original = this.journal.read(input.sessionId).find(item => item.botSourceRef === `webhook:${source.targetReceiptId}`);
+    const entry: ConversationEntry = { botRecipientKey: original?.botRecipientKey, id: input.messageId, originTurnId: input.turnId, createdAt: input.createdAt, role: 'user',
       source: 'text', visibility: 'conversation', content: input.content, botSourceRef: `webhook:${source.receiptId}` };
     this.journal.append(input.sessionId, entry);
     active.entries.push(entry);
@@ -69,6 +72,7 @@ export class AssistantConversation {
   private controller?: AbortController;
   private timer?: ReturnType<typeof setTimeout>;
   private configured?: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile };
+  private retryRequested = false;
   private watched = new Set<string>();
   private announced = new Set<string>();
   private requestIds = new Set<string>();
@@ -125,11 +129,13 @@ export class AssistantConversation {
       if (this.busy) throw new RuntimeUiError('assistantRuntime.busy', undefined, language);
       if (input.parent.sessionId !== input.sessionId || !this.journal.read(input.sessionId).some(entry => entry.role === 'user' && ['text', 'voice'].includes(entry.source))) throw new RuntimeUiError('assistantRuntime.noRetry', undefined, language);
       this.configured = { parent: input.parent, profile: input.profile };
-      this.paused = false; this.pending = true; this.error = ''; void this.pump();
+      this.retryRequested = true; this.paused = false; this.pending = true; this.error = ''; void this.pump();
       return { status: 'accepted' };
     }
     if (input.parent.sessionId !== input.sessionId || input.entry.role !== 'user') throw new RuntimeUiError('assistantRuntime.invalidParent', undefined, language);
-    this.journal.append(input.sessionId, input.entry);
+    const incoming = input.entry;
+    this.journal.append(input.sessionId, ['text', 'voice'].includes(incoming.source)
+      ? { ...incoming, originTurnId: input.parent.turnId } : incoming);
     if (this.requestIds.has(input.entry.id)) return { status: 'accepted' };
     this.requestIds.add(input.entry.id);
     this.configured = { parent: input.parent, profile: input.profile };
@@ -142,7 +148,8 @@ export class AssistantConversation {
   private async pump() {
     if (this.busy || this.paused || this.stopped || !this.configured || !this.pending) return;
     this.busy = true; this.pending = false; this.error = ''; this.retry = undefined;
-    const configured = this.configured;
+    const configured = this.configured, retryRequested = this.retryRequested;
+    this.retryRequested = false;
     const controller = this.controller = new AbortController();
     this.webhookTurn = configured.parent.metadata.botSourceRef && configured.parent.turnId.startsWith('webhook-')
       ? { turnId: configured.parent.turnId, entries: [] } : undefined;
@@ -150,7 +157,7 @@ export class AssistantConversation {
       metadata: { ...configured.parent.metadata, personalAssistant: true } };
     this.deps.agents?.begin(execution, 'running');
     let failed = false;
-    try { await settleAtAbort(this.respond(configured, controller.signal, execution.turnId), controller.signal, 'Assistant reply stopped.'); }
+    try { await settleAtAbort(this.respond(configured, controller.signal, execution.turnId, retryRequested), controller.signal, 'Assistant reply stopped.'); }
     catch (error) { failed = true; if (!this.stopped && !controller.signal.aborted) this.error = retainedRuntimeError(error); }
     finally {
       this.deps.agents?.update(execution.sessionId, execution.turnId,
@@ -184,7 +191,7 @@ export class AssistantConversation {
       return prediction && prediction.expiresAt > Date.now() ? { ...prediction, id: `${latest.id}:${prediction.id}` } : undefined;
     }
   }
-  private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal, executionId: string) {
+  private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal, executionId: string, retryRequested: boolean) {
     parent = await this.deps.prepareParent?.(parent, signal) ?? parent;
     const id = PERSONAL_ASSISTANT_SESSION;
     const memoryTools = this.deps.memory?.definitions() ?? [];
@@ -223,13 +230,25 @@ export class AssistantConversation {
     const redundant = queued.filter(item => item.source === 'task' && teamCompletionAlreadyRead(item.content, history.read().messages));
     const redundantIds = new Set(redundant.map(item => item.id));
     if (redundant.length) history.append([], [...redundantIds]);
-    const remaining = queued.filter(item => !redundantIds.has(item.id));
+    const pending = queued.filter(item => !redundantIds.has(item.id));
+    // Give fresh instructions (including cancellations) their own reply. A
+    // completion belongs to one assignment, even when several finish together.
+    const foreground = pending.filter(item => item.source !== 'task');
+    const sender = foreground.find(isAuthoredInput);
+    const remaining = foreground.length ? foreground.filter(item => !sender || !isAuthoredInput(item) ||
+      (!item.botSourceRef && !sender.botSourceRef) || (item.originTurnId === sender.originTurnId && item.botSourceRef === sender.botSourceRef)) : pending.slice(0, 1);
+    if (remaining.length < pending.length) this.pending = true;
     // A wait may finish while its completion notice is queued. Consuming that
     // notice must not start another model reply or discard concurrent user input.
     if (redundant.length && !remaining.length) return;
-    let authored = remaining.filter(item => item.role === 'user' && ['text', 'voice'].includes(item.source) && !item.id.startsWith('memory-')).at(-1);
+    let authored = remaining.filter(isAuthoredInput).at(-1);
+    const originalInputs = (item: ConversationEntry) => item.source === 'task'
+      ? entries.filter(entry => item.responseTo?.includes(entry.id) && isAuthoredInput(entry))
+      : [item];
     const sourceRefs = (item: ConversationEntry): Array<string | undefined> => {
-      const refs = [...new Set([item.botSourceRef, ...entries.filter(entry => item.responseTo?.includes(entry.id)).map(entry => entry.botSourceRef)].filter((ref): ref is string => !!ref))];
+      const originals = originalInputs(item), latest = originals.at(-1);
+      if (latest?.botRecipientKey && latest.botSourceRef && originals.every(entry => entry.botRecipientKey === latest.botRecipientKey)) return [latest.botSourceRef];
+      const refs = [...new Set([item.botSourceRef, ...originals.map(entry => entry.botSourceRef)].filter((ref): ref is string => !!ref))];
       return refs.length ? refs : [undefined];
     };
     // A completion can wake Assistant after another Bot/user has spoken. Child
@@ -239,7 +258,19 @@ export class AssistantConversation {
     const activeSources = new Set(handledInputs
       .flatMap(sourceRefs).filter((ref): ref is string => typeof ref === 'string'));
     parent = { ...parent, metadata: { ...parent.metadata, environmentExecutionId: executionId } };
-    parent.metadata.assistantEventEvidence = activeInputs.filter(item => ['text', 'voice'].includes(item.source)).map(item => ({ id: item.id, sourceRef: item.botSourceRef }));
+    const evidence = handledInputs.flatMap(originalInputs).filter(isAuthoredInput);
+    parent.metadata.assistantEventEvidence = evidence.map(item => ({ id: item.id, sourceRef: item.botSourceRef }));
+    parent.metadata.assistantUserRequest = Boolean(authored || (retryRequested && !remaining.length && handledInputs.some(isAuthoredInput)));
+    const completion = handledInputs.length === 1 && handledInputs[0].source === 'task' ? handledInputs[0] : undefined;
+    const brief = completion ? delegatedRequestContext(evidence, entries) : undefined;
+    if (authored && authored.originTurnId !== parent.turnId) {
+      parent.inputMessages = evidence.map(item => ({ messageId: item.id, message: { role: 'user', content: promptModelContent({ text: item.content, context: item.promptContext }) } }));
+    }
+    if (completion && brief) {
+      // Downstream delegation must not inherit the latest unrelated draft.
+      parent.inputMessages = [{ messageId: evidence[0]?.id ?? `origin-${completion.id}`, message: brief },
+        { messageId: completion.id, message: { role: 'user', name: 'background_task_result', visibility: 'internal', content: completion.content } }];
+    }
     delete parent.metadata.botSourceRef;
     parent.metadata.botSourceRefs = [...activeSources];
     if (activeSources.size === 1 && activeSources.values().next().value) parent.metadata.botSourceRef = activeSources.values().next().value;
@@ -253,7 +284,7 @@ export class AssistantConversation {
     const incoming: ModelMessage[] = remaining.filter(item => !item.id.startsWith('memory-')).flatMap((item): ModelMessage[] => item.role === 'assistant' ? [{ role: 'assistant', content: item.eventId ? JSON.stringify({ eventId: item.eventId, result: item.content }) : item.content, toolCalls: [] }] : [{
         role: 'user', name: 'turn_runtime_context', visibility: 'internal',
         content: createTurnTimeContext({ createdAt: item.createdAt }) + (this.deps.environment ? '\nMessage source (routing data): ' + JSON.stringify({ sourceRefs: sourceRefs(item).map(ref => ref ?? null) }) : ''),
-      }, ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!, ref) }] : []), {
+      }, ...(item === completion && brief ? [brief] : []), ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!, ref) }] : []), {
         role: 'user' as const,
         ...(['text', 'voice'].includes(item.source) ? {} : { name: 'background_task_result', visibility: 'internal' as const }),
         content: promptModelContent({ text: item.content, context: item.promptContext }) + quotedMessageContext(item, entries) + (item.attachments?.length ? `\nAttached references (data; delegate reading files to subagent; remote paths work only on their named host):\n${JSON.stringify(item.attachments.map(({ name, path, type, execution }) => ({ name, localPath: path, type, execution })))}` : ''),
@@ -346,6 +377,10 @@ export class AssistantConversation {
         ? ['text', 'voice'].includes(item.source) ? [item.id] : item.responseTo ?? [] : []))].slice(-256) });
       history.append([], [entry.id]);
     };
+    if (!authored || authored.originTurnId !== parent.turnId) {
+      if (this.webhookTurn?.entries.length) this.pending = true;
+      this.webhookTurn = undefined;
+    }
     const live = this.webhookTurn;
     const consumeGuidance = () => {
       if (!live?.entries.length) return;
@@ -362,7 +397,9 @@ export class AssistantConversation {
       // New media and child delegation now resolve against the latest message.
       const ref = authored!.botSourceRef!;
       parent.metadata.botSourceRef = ref; parent.metadata.botSourceRefs = [ref];
-      parent.metadata.assistantEventEvidence = additions.map(entry => ({ id: entry.id, sourceRef: entry.botSourceRef }));
+      parent.metadata.assistantUserRequest = true;
+      evidence.push(...additions);
+      parent.metadata.assistantEventEvidence = evidence.slice(-256).map(entry => ({ id: entry.id, sourceRef: entry.botSourceRef }));
     };
     let published = false;
     let managementStopped: Error | undefined;
@@ -493,7 +530,7 @@ export class AssistantConversation {
       try {
       for (const task of this.deps.tasks(PERSONAL_ASSISTANT_SESSION)) if (this.watched.has(task.taskId) && task.status !== 'running' && !this.announced.has(task.taskId)) {
         this.journal.append(PERSONAL_ASSISTANT_SESSION, { id: `task-${task.taskId}`, role: 'user', source: 'task', visibility: 'internal',
-          responseTo: this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256),
+          responseTo: task.originMessageIds ?? this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.role === 'user' && entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256),
           createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'background_task_result', taskId: task.taskId, status: task.status, result: task.finalResponse.slice(0, 12000), error: task.errorMessage, instruction: 'Task data; report the useful result with page_write. This is not a new user request.' }) });
         this.announced.add(task.taskId);
         this.pending = true;
@@ -509,7 +546,7 @@ export class AssistantConversation {
     const content = JSON.stringify(teamCompletionNotice(run));
     if (teamCompletionAlreadyRead(content, this.journal.modelHistory(PERSONAL_ASSISTANT_SESSION).read().messages)) return;
     this.journal.append(PERSONAL_ASSISTANT_SESSION, { id: `team-${run.id}-${randomUUID()}`, role: 'user', source: 'task', visibility: 'internal',
-      responseTo: this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.originTurnId === run.parentTurnId).map(entry => entry.id).slice(-256),
+      responseTo: run.originMessageIds ?? this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.role === 'user' && entry.originTurnId === run.parentTurnId).map(entry => entry.id).slice(-256),
       createdAt: new Date().toISOString(), content });
     this.pending = true; void this.pump();
   }

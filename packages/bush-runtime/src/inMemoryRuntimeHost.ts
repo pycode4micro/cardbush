@@ -735,6 +735,7 @@ export class InMemoryRuntimeHost {
         readChildConversation: sessionId => this.#childConversation(sessionId),
         saveChildRequest: request => this.#subagentResume.save(request),
         loadChildRequest: session => this.#sessions.hasSession(session) ? this.#subagentResume.load(session) : Promise.resolve(undefined),
+        eventWorkSignal: request => this.#assistantEvents.workSignal(request),
         runBackground: (session, turn, taskId, run) => this.#pluginBackground.start(session, turn, taskId, run),
         onAsyncResult: ({ parentSessionId, parentTurnId, taskId, result }) => {
           const key = JSON.stringify([parentSessionId, parentTurnId]);
@@ -749,6 +750,7 @@ export class InMemoryRuntimeHost {
       if (!subagents) throw new Error('The native subagent dispatcher is unavailable.');
       return subagents.dispatch(context, input);
     }, { directory: options.dataRoot ? join(runtimeDataRoot, 'teams') : undefined,
+      eventWorkSignal: request => this.#assistantEvents.workSignal(request),
       readConversation: subagents?.readConversation,
       resolveNodeTaskId: (run, node) => {
         const matches = this.#subagentTasks.list(run.parentSessionId).filter(task => task.origin === 'team'
@@ -763,7 +765,11 @@ export class InMemoryRuntimeHost {
           this.#assistant.notifyTeamResult(result);
           const notice = teamCompletionNotice(result);
           const message = { role: 'user' as const, name: 'subagent_result' as const, content: JSON.stringify(notice) };
-          for (const key of this.#activeTurns) if (JSON.parse(key)[0] === run.parentSessionId) this.#trackAgentGuidance(key, `${run.id}-${notice.result_version}`, Promise.resolve(message));
+          for (const key of this.#activeTurns) {
+            const [sessionId, turnId] = JSON.parse(key);
+            if (sessionId !== run.parentSessionId || (sessionId === FRIENDS_SESSION && turnId !== run.parentTurnId)) continue;
+            this.#trackAgentGuidance(key, `${run.id}-${notice.result_version}`, Promise.resolve(message));
+          }
         }).catch(error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))));
       } });
     this.#teams.register(this.#toolRegistry);

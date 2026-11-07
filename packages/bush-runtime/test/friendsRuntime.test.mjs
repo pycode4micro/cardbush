@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { InMemoryRuntimeHost, ToolRegistry, SessionStore } from '../dist/index.js';
-import { FRIENDS_COMMAND, FRIENDS_SESSION } from '@cardbush/bush-protocol';
+import { AssistantEvents } from '../dist/assistantEvents.js';
+import { FRIENDS_COMMAND, FRIENDS_SESSION, PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 
 const now = () => new Date().toISOString();
 const modelEvent = (request, sequence, kind, extra = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId, sequence, createdAt: now(), kind, ...extra });
@@ -408,4 +409,97 @@ test('Assistant-owned event pins the selected notification account even after it
     assert.deepEqual(request.metadata.botSourceRefs, ['webhook:work']);
     assert.ok(!JSON.stringify(request.messages).includes('Secret chat context'));
   }
+});
+
+test('deleting a routed reminder cancels its durable wake and outbox across a next-day restart', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-events-delete-')), path = join(root, 'events.json');
+  const start = Date.parse('2026-11-07T10:00:00Z'), tomorrow = start + 86400000;
+  let clock = start;
+  const notices = [], runs = [];
+  const configure = { action: 'configure', assistant: { name: 'Assistant' },
+    profile: { name: 'Assistant', language: 'en', timeZone: 'UTC', confirmedAt: now(), recognition: {} },
+    parent: { protocol: 'bush.session_turn_request.v1', sessionId: PERSONAL_ASSISTANT_SESSION, requestId: 'config', turnId: 'config',
+      model: 'fixture', tools: [], metadata: {}, permissionMode: 'task_free', prefixMessages: [], inputMessages: [{ messageId: 'config', message: { role: 'user', content: 'configure' } }] } };
+  const open = () => {
+    const tools = new ToolRegistry();
+    const events = new AssistantEvents(path, { tools, now: () => clock, publish: notice => notices.push(notice),
+      botContext: async sourceRef => ({ source: { sourceRef, connectionId: 'bot', senderId: sourceRef.split('/')[0], conversationId: 'room' } }),
+      run: async request => {
+        runs.push(request.metadata.friendsEventId);
+        await tools.resolve('friends_decide').execute({ turnId: request.turnId, sessionId: FRIENDS_SESSION,
+          input: { ...decide('completed').input, notifyUser: true } });
+        return { terminal: { kind: 'turn_terminal', payload: { status: 'completed' } }, text: 'Due' };
+      } });
+    const call = (action, source, args = {}, user = true) => {
+      const tool = tools.resolve('assistant_event');
+      return tool.execute({ sessionId: PERSONAL_ASSISTANT_SESSION, toolCall: { id: crypto.randomUUID() },
+        turn: { request: { turnId: 'test', metadata: { assistantUserRequest: user, botSourceRef: source } } },
+        input: tool.decodeInput({ action, ...args }) });
+    };
+    return { events, call };
+  };
+  let instance = open();
+  t.after(async () => { await instance.events.close(); await rm(root, { recursive: true, force: true }); });
+  await instance.events.command(configure);
+  const reminder = { text: 'Check tomorrow', at: new Date(tomorrow).toISOString() };
+  const first = await instance.call('create', 'a/1', reminder), other = await instance.call('create', 'b/1', reminder);
+  await assert.rejects(instance.call('delete', 'b/1', { eventId: first.eventId }), /NOT_FOUND/);
+  await assert.rejects(instance.call('delete', 'a/1', { eventId: first.eventId }, false), /USER_REQUEST_REQUIRED/);
+  await instance.events.command({ action: 'archive', eventId: first.eventId });
+  assert.deepEqual(await instance.call('list', 'a/2'), []);
+  assert.deepEqual((await instance.call('list', 'a/2', { include_archived: true })).map(e => [e.id, e.archived]), [[first.eventId, true]]);
+  await instance.events.disconnect();
+  await instance.events.store.change(state => { state.notifications = [{ eventId: first.eventId, turnId: 'old', createdAt: now(), text: 'Undelivered' }]; });
+  assert.equal((await instance.call('delete', 'a/2', { eventId: first.eventId })).status, 'deleted');
+  assert.deepEqual((await instance.events.snapshot()).events.map(event => event.id), [other.eventId]);
+  await instance.events.close(); clock = tomorrow + 1000;
+  instance = open(); await instance.events.command(configure);
+  await until(() => instance.events.snapshot(), state => state.events[0]?.status === 'completed');
+  assert.deepEqual(runs, [other.eventId]); assert.deepEqual(notices.map(notice => notice.eventId), [other.eventId]);
+  assert.deepEqual((await instance.events.snapshot()).detections, []);
+});
+
+test('deleting an active event interrupts its pending inputs and ignores a late completion', async t => {
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const f = await fixture(t, async (request, round, signal) => {
+    if (data(request).event.id.startsWith('webhook-input-')) { entered.resolve(signal); await release.promise; }
+    return simple(request, round);
+  });
+  await f.configure(); await until(f.read, state => state.events[0]?.status === 'completed');
+  const receiptId = crypto.randomUUID(), eventId = 'webhook-input-' + receiptId;
+  await f.command({ action: 'receive_webhook', receiptId, createdAt: now(), text: 'Check an item' });
+  try {
+    const signal = await entered.promise;
+    await f.send('more-input', 'One more observation', eventId);
+    await f.command({ action: 'delete', eventId });
+    assert.ok(signal.aborted);
+    assert.deepEqual(await f.command({ action: 'read_webhook', receiptId }), { status: 'interrupted', reply: '', errorCode: 'friends_deleted' });
+  } finally { release.resolve(); }
+  await f.send('still-works');
+  await until(f.read, state => state.events.find(e => e.id === 'still-works')?.status === 'completed');
+  const saved = JSON.parse(await readFile(join(f.root, 'friends/events.json'), 'utf8'));
+  assert.ok(![...saved.events, ...saved.signals, ...saved.detections, ...(saved.notifications ?? [])].some(item => item.id === eventId || item.eventId === eventId));
+});
+
+test('deleting the owner stops a detached child even after its event turn has completed', async t => {
+  const release = Promise.withResolvers();
+  let childSignal;
+  const f = await fixture(t, async (request, round, signal) => {
+    if (request.metadata.agentRole === 'child') {
+      childSignal = signal;
+      await release.promise;
+      return { text: 'Late child result' };
+    }
+    if (data(request).event.id === 'child-owner' && round === 1) return { calls: [{ name: 'subagent',
+      input: { prompt: 'Inspect fixture data', run_in_background: true } }] };
+    return round === 1 || (data(request).event.id === 'child-owner' && round === 2)
+      ? { calls: [decide('completed')] } : { text: 'Event turn finished.' };
+  });
+  try {
+    await f.configure(); await until(f.read, s => s.events[0]?.status === 'completed');
+    await f.send('child-owner'); await until(f.read, s => childSignal && s.events.find(e => e.id === 'child-owner')?.status === 'completed');
+    assert.equal(childSignal.aborted, false);
+    await f.command({ action: 'delete', eventId: 'child-owner' });
+    assert.equal(childSignal.aborted, true);
+  } finally { release.resolve(); }
 });

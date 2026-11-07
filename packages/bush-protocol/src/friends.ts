@@ -26,7 +26,7 @@ export const friendsCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('submit'), input: friendInputSchema }),
   z.object({ action: z.literal('receive_webhook'), receiptId: z.string().uuid(), createdAt: z.string().datetime(), text: webhookText, recipientKey: friendDeliveryRouteSchema.shape.recipientKey }).strict(),
   z.object({ action: z.literal('read_webhook'), receiptId: z.string().uuid() }).strict(),
-  z.object({ action: z.enum(['pause', 'resume', 'archive', 'restore']), eventId: z.string().min(1) }),
+  z.object({ action: z.enum(['pause', 'resume', 'archive', 'restore', 'delete']), eventId: z.string().min(1) }),
 ]);
 export type FriendInput = z.infer<typeof friendInputSchema>;
 export type FriendsProfile = z.infer<typeof friendsProfileSchema>;

@@ -232,6 +232,9 @@ test('Assistant background completion retains Bot A after a newer message from B
     await submit('user-a', 'webhook:bot-a'); await submit('user-b', 'webhook:bot-b');
     await submit('finished-a', undefined, { source: 'task', visibility: 'internal', responseTo: ['user-a'] });
     assert.equal(delegated.length, 1); assert.equal(delegated[0].parent.metadata.botSourceRef, 'webhook:bot-a');
+    assert.deepEqual(delegated[0].parent.inputMessages.map(item => item.messageId), ['user-a', 'finished-a']);
+    assert.deepEqual(JSON.parse(delegated[0].parent.inputMessages[0].message.content).laterUserMessages, []);
+    assert.deepEqual(delegated[0].parent.metadata.assistantEventEvidence, [{ id: 'user-a', sourceRef: 'webhook:bot-a' }]);
     assert.match(calls.at(-1).messages.filter(m => m.name === 'bot_context').at(-1).content, /webhook:bot-a/);
     assert.equal(new ConversationJournal(root).read(sessionId).find(entry => entry.id === 'user-a').botSourceRef, 'webhook:bot-a');
   } finally { assistant.close(); await rm(root, { recursive: true, force: true }); }

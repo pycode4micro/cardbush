@@ -53,11 +53,12 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
   const sessionId = binding.sessionId, turnId = `webhook-${id}`, inputId = `webhook-input-${id}`;
   const snapshot = await runtime.command('runtime.get_session', { sessionId }) as SessionSnapshot | null;
   if (!snapshot) throw new WebhookError('context_deleted', 404);
+  const recipientKey = origin && message.senderId && message.conversationId ? webhookHash([origin.connectionId, message.senderId, message.conversationId]) : undefined;
   if (binding.kind === 'friends') {
     const read = (): Promise<FriendsWebhookReceipt | null> => runtime.command(FRIENDS_COMMAND, { action: 'read_webhook', receiptId: id });
     let receipt: FriendsWebhookReceipt | null = recovering ? await read() : await runtime.command(FRIENDS_COMMAND, {
       action: 'receive_webhook', receiptId: id, text: message.text, createdAt: origin?.createdAt ?? new Date().toISOString(),
-      ...(origin && message.senderId && message.conversationId ? { recipientKey: webhookHash([origin.connectionId, message.senderId, message.conversationId]) } : {}),
+      ...(recipientKey ? { recipientKey } : {}),
     });
     while (receipt?.status === 'pending') { await delay(500, undefined, { signal }); receipt = await read(); }
     return receipt ? { ...receipt, status: receipt.status } : { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
@@ -82,7 +83,7 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Webhoo
       await runtime.command('runtime.assistant_conversation', { action: 'turn', sessionId, generation: binding.generation,
         profile: binding.profile, parent: { ...parent, metadata: { ...parent.metadata, assistantOutputMode: 'text' } },
         entry: { id: inputId, originTurnId: turnId, role: 'user', source: 'text', visibility: 'conversation', content: message.text, createdAt,
-          ...(sourceRef ? { botSourceRef: sourceRef } : {}) } });
+          ...(sourceRef ? { botSourceRef: sourceRef } : {}), ...(recipientKey ? { botRecipientKey: recipientKey } : {}) } });
     }
     for (;;) {
       signal.throwIfAborted(); journal = await read();

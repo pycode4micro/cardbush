@@ -1,3 +1,4 @@
+import { assistantDelegationOrigins } from './assistantDelegationOrigins.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
 import { randomUUID, createHash } from "node:crypto";
@@ -10,7 +11,7 @@ import {
   registeredAgentSchema,
   resolveSubagentName,
   SUBAGENT_NAME_MAX_LENGTH,
-  type SessionSnapshot,
+  type ModelRequest, type SessionSnapshot,
   type RemoteSubagentRequest,
   type RemoteSubagentResult,
   type RuntimeGuidanceRequest,
@@ -124,6 +125,7 @@ export function registerSubagentTool(
     localControl?: (task: SubagentTask, control: RemoteControl, signal?: AbortSignal) => Promise<unknown>;
     reconcileChild?: (task: SubagentTask) => void;
     loadPluginAgents?: () => Promise<PluginAgent[]>;
+    eventWorkSignal?: (request?: ModelRequest) => AbortSignal | undefined;
     runBackground?: <T>(session: string, turn: string, taskId: string, run: (signal: AbortSignal) => Promise<T>) => Promise<T>;
     saveChildRequest?: (request: Parameters<SubagentChildRunner>[0]) => Promise<void>;
     loadChildRequest?: (sessionId: string) => Promise<Parameters<SubagentChildRunner>[0] | undefined>;
@@ -248,6 +250,11 @@ export function registerSubagentTool(
   return { dispatch, reconcile, control: (context, control) => { assertParentAgent(context.turn?.request); reconcile(context.sessionId); return interactions.control(context, control); }, ...(options.readChildConversation || options.remoteAgents?.read ? { readConversation } : {}) };
 
   async function dispatch(context: ToolHandlerContext<SubagentInput>, execution: SubagentExecutionOptions = {}, queued = false): Promise<unknown> {
+      const eventWork = options.eventWorkSignal?.(context.turn?.request);
+      if (eventWork) {
+        eventWork.throwIfAborted();
+        context = { ...context, signal: context.signal ? AbortSignal.any([context.signal, eventWork]) : eventWork };
+      }
       if (!context.turn) throw new Error("Subagent dispatch requires the parent Turn context.");
       assertParentAgent(context.turn.request);
       reconcile(context.sessionId);
@@ -325,7 +332,7 @@ export function registerSubagentTool(
           ? parent.permissionMode ?? 'task_free' : policy?.childPermissionMode ?? options.permissionPolicy?.childPermissionMode ?? 'task_free';
         const childSessionId = previous?.childSessionId ?? `delegated-${taskId}`;
         const childTurnId = `turn-${taskId}`;
-        tasks.start({ taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId, childSessionId, childTurnId,
+        tasks.start({ taskId, ...assistantDelegationOrigins(context.turn?.request), parentSessionId: context.sessionId, parentTurnId: context.turnId, childSessionId, childTurnId,
           agentName: previous?.agentName ?? worker?.name ?? resolveSubagentName({ name: context.input.name ?? target.name }) ?? fallbackSubagentName(childSessionId, parent.metadata.uiLanguage),
           prompt: context.input.prompt, inheritContext: false, inheritedMessageCount: 0, remote,
           ...(execution.team ? { origin: 'team', teamId: execution.team.id, teamMemberId: execution.team.nodeId } : {}),
@@ -463,7 +470,7 @@ export function registerSubagentTool(
       const preceding = previous && tasks.list(context.sessionId).filter(task => task.childSessionId === previous.childSessionId && task.status === 'running').at(-1);
       if (preceding && !queued) throw new Error('This child session is still running.');
 
-      tasks.start({ taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
+      tasks.start({ taskId, ...assistantDelegationOrigins(context.turn?.request), parentSessionId: context.sessionId, parentTurnId: context.turnId,
         agentName,
         childSessionId, childTurnId, background, agentProfileId: registered ? `registered:${registered.definition.id}` : profile?.id, prompt: context.input.prompt, inheritContext, inheritedMessageCount: saved?.prefixMessages.length ?? inherited.length,
         ...(execution.team ? { origin: 'team', teamId: execution.team.id, teamMemberId: execution.team.nodeId } : {}),
@@ -488,7 +495,7 @@ export function registerSubagentTool(
           return runChild(request, childSignal);
         },
         childRequest,
-        signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+        signal: AbortSignal.any([controller.signal, ...(signal ? [signal] : []), ...(eventWork ? [eventWork] : [])]),
         childTurnId,
         tasks,
         parentSessionId: context.sessionId,

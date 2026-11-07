@@ -65,6 +65,7 @@ export class SubagentTaskStore {
     taskId: string;
     parentSessionId: string;
     parentTurnId: string;
+    originMessageIds?: string[];
     childSessionId: string;
     childTurnId: string;
     prompt: string;

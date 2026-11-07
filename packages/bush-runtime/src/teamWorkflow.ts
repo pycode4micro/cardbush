@@ -1,7 +1,8 @@
+import { assistantDelegationOrigins } from './assistantDelegationOrigins.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { join } from 'node:path';
-import { creationCanvasSchema, teamWorkflowSchema, teamRunSchema, type TeamWorkflow, type TeamRun } from '@cardbush/bush-protocol';
+import { creationCanvasSchema, teamWorkflowSchema, teamRunSchema, type ModelRequest, type TeamWorkflow, type TeamRun } from '@cardbush/bush-protocol';
 import { DefinitionStore } from './definitionStore.js';
 import type { RegisteredAgentStore } from './registeredAgents.js';
 import type { SubagentDispatcher, SubagentInput } from './subagentTool.js';
@@ -41,6 +42,7 @@ export class TeamWorkflowManager {
   private closed = false;
   constructor(private readonly agents: RegisteredAgentStore, private readonly dispatch: Dispatch,
     private readonly options: { directory?: string; onResult?: (run: TeamRun, result: Promise<TeamRun>) => void;
+      eventWorkSignal?: (request?: ModelRequest) => AbortSignal | undefined;
       readConversation?: SubagentDispatcher['readConversation'];
       resolveNodeTaskId?: (run: TeamRun, node: TeamRun['nodes'][number]) => string | undefined } = {}) {
     this.definitions = new DefinitionStore(value => teamWorkflowSchema.parse(value), options.directory && join(options.directory, 'definitions'));
@@ -207,7 +209,7 @@ export class TeamWorkflowManager {
       if (prior) return this.result(await this.readRun(id, context.sessionId));
       const canvas = input.canvas_path ? await this.canvasContext(input.canvas_path, context) : undefined;
       const now = new Date().toISOString();
-      const run: TeamRun = { id, teamId: team.definition.id, teamRevision: team.revision, parentSessionId: context.sessionId, parentTurnId: context.turnId,
+      const run: TeamRun = { id, ...assistantDelegationOrigins(context.turn.request), teamId: team.definition.id, teamRevision: team.revision, parentSessionId: context.sessionId, parentTurnId: context.turnId,
         status: 'running', input: input.input!, createdAt: now, updatedAt: now, workflow: team.definition, agents: await this.resolveAgents(team.definition),
         ...(canvas ? { canvas: { path: canvas.path, assignments: Object.fromEntries(team.definition.nodes.map(node => [node.id, canvas.document.items.filter(item => !item.fixed && item.assignment?.teamId === team.definition.id && item.assignment.nodeId === node.id).map(item => item.id)])) } } : {}),
         nodes: team.definition.nodes.map(node => ({ id: node.id, status: 'pending', output: '', error: '' })), error: '' };
@@ -219,6 +221,7 @@ export class TeamWorkflowManager {
     if (this.active.has(run.id)) return { run_id: run.id, status: 'running' };
     if (this.closed || !context.turn) throw new Error('Team execution is unavailable.');
     await this.resolveAgents(run.workflow);
+    Object.assign(run, assistantDelegationOrigins(context.turn.request));
     run.status = 'running'; run.error = '';
     for (const node of run.nodes) if (node.status !== 'completed') { node.status = 'pending'; node.error = ''; }
     await this.launch(run, context);
@@ -229,11 +232,14 @@ export class TeamWorkflowManager {
     // A frozen caller policy and a private cancellation owner; never retain its mutable conversation.
     const request = structuredClone(context.turn!.request);
     request.messages = [];
-    const scoped: Context = { ...context, signal: controller.signal, turn: { request, contextMessages: [], signal: controller.signal } };
+    const owner = this.options.eventWorkSignal?.(request);
+    const signal = owner ? AbortSignal.any([controller.signal, owner]) : controller.signal;
+    signal.throwIfAborted();
+    const scoped: Context = { ...context, signal, turn: { request, contextMessages: [], signal } };
     const initialized = this.persist(run);
     const promise = initialized.then(async () => {
-      try { await this.schedule(run, scoped, controller.signal); }
-      catch (error) { run.status = controller.signal.aborted ? 'stopped' : 'failed'; run.error = error instanceof Error ? error.message : String(error); }
+      try { await this.schedule(run, scoped, signal); }
+      catch (error) { run.status = signal.aborted ? 'stopped' : 'failed'; run.error = error instanceof Error ? error.message : String(error); }
       finally { await this.persist(run); }
       return structuredClone(run);
     }).finally(() => this.active.delete(run.id));

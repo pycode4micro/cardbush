@@ -57,6 +57,7 @@ export const workflowNodeStateSchema = z.object({
 export const teamRunSchema = z.object({
   id: z.string().min(1), teamId: id, teamRevision: z.number().int().positive(),
   parentSessionId: z.string().min(1), parentTurnId: z.string().min(1),
+  originMessageIds: z.array(z.string().min(1).max(220)).max(256).optional(),
   status: z.enum(['running', 'completed', 'failed', 'stopped', 'interrupted']),
   input: z.string(), createdAt: z.string(), updatedAt: z.string(),
   canvas: z.object({ path: z.string().min(1).max(8192), assignments: z.record(z.string(), z.array(z.string()).max(100)) }).strict().optional(),

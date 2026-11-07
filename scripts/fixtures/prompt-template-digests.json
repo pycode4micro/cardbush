@@ -81,7 +81,7 @@
   {
     "name": "assistant-events-enabled",
     "slots": [],
-    "sha256": "d72b269cb21a8ed596155964dee1fceeac05f6b56562007e28479128c5687490"
+    "sha256": "5a9e868dfcf561b3b2026cdc8c300e058d0850418ff8ff0d2b3e3b8bca9cb8ba"
   },
   {
     "name": "assistant-events-requested-only",

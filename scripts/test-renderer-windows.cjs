@@ -75,10 +75,27 @@ async function run() {
         assert.equal(await read('!!document.querySelector("[data-nav-section=your-friends]")'), false);
         await read('document.querySelector("[data-nav-section=assistant]").click();void 0');
         await until('document.querySelector("[data-assistant-events]")');
-        await read('document.querySelector("[data-assistant-events]").click();void 0');
+        await read(`window.eventActions=[];window.testEvents=['first','second'].map(id=>({id,title:'Reminder '+id,status:'watching',inputs:[]}));
+          window.cardbushDesktop={...window.cardbushDesktop,runtime:{command:async request=>{
+            const {kind,payload}=request.command;
+            if(kind!=='runtime.friends')throw Error('No fixture for '+kind);
+            if(payload.action==='delete'){eventActions.push(payload);testEvents=testEvents.filter(event=>event.id!==payload.eventId);}
+            return {protocol:request.protocol,operationId:request.operationId,type:'command_response',ok:true,
+              result:{configured:true,events:testEvents,detections:[],permissions:[],solutions:[]}};
+          }}};
+          document.querySelector('[data-assistant-events]').click();void 0`);
         await until('document.querySelector(".assistant-events-dialog[open]")');
         assert.ok(await read('!!document.querySelector(".assistant-events-dialog textarea")'));
         assert.ok(await read('document.querySelector(".assistant-events-dialog details").textContent.includes("Original evidence")'));
+        const picker = '.assistant-events-dialog [role=combobox]';
+        await until(`document.querySelector('${picker}')`);
+        await read(`document.querySelector('${picker}').click();void 0`);
+        await read(`Array.from(document.querySelectorAll('.assistant-events-dialog [role=option]')).find(node=>node.textContent.includes('Reminder first')).click();void 0`);
+        await until('document.querySelector(".event-overview h3")?.textContent==="Reminder first"');
+        await read('document.querySelector(".event-actions [data-action=delete]").click();void 0');
+        await until('!document.querySelector(".event-overview") && eventActions.length===1');
+        assert.deepEqual(await read('eventActions'), [{ action: 'delete', eventId: 'first' }]);
+        assert.deepEqual(await read('testEvents.map(event=>event.id)'), ['second']);
         await read('document.querySelector(".assistant-events-dialog .settings-dialog-header button").click();void 0');
         await until('!document.querySelector(".assistant-events-dialog")');
         assert.ok(await read('!!document.querySelector("[data-assistant-events]")'));

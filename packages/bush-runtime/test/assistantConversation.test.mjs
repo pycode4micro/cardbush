@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, appendFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { delegatedRequestContext } from '../dist/assistantDelegationOrigins.js';
 import { ConversationJournal } from '../dist/conversationJournal.js';
 import { AssistantConversation } from '../dist/assistantConversation.js';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry, SubagentTaskStore } from '../dist/index.js';
@@ -112,6 +113,16 @@ test('assistant distinguishes malformed arguments, foreign tasks and disabled de
   } finally { assistant.close(); }
 });
 
+test('a delayed result gets later corrections only from its originating bridge account and chat', () => {
+  const original = { ...entry('original'), botSourceRef: 'webhook:1', botRecipientKey: 'account-room-A' };
+  const newer = { ...entry('correction', 'Cancel the check'), botSourceRef: 'webhook:2', botRecipientKey: 'account-room-A' };
+  const other = { ...entry('foreign'), botSourceRef: 'webhook:3', botRecipientKey: 'account-room-B' };
+  const journal = [original, other, entry('desktop'), newer];
+  const brief = JSON.parse(delegatedRequestContext([original], journal).content);
+  assert.deepEqual(brief.laterUserMessages.map(item => item.messageId), ['correction']);
+  assert.deepEqual(JSON.parse(delegatedRequestContext([], journal).content).requests, []);
+});
+
 test('text assistant dispatch reaches the actual child loop and reports completion asynchronously', async () => {
   const sessions = new SessionStore(), registry = new ToolRegistry(), tasks = new SubagentTaskStore(), childGate = gate(), childRequests = [];
   sessions.ensureSession(id);
@@ -126,7 +137,18 @@ test('text assistant dispatch reaches the actual child loop and reports completi
       if (index === 0) yield* response(request, { calls: [{ id: 'real-dispatch', name: 'subagent', args: {
         prompt: 'Read only: inspect the plugin parameters', _display_title: { zh: '检查插件参数', en: 'Inspect plugin parameters' } } }] });
       else if (index === 1) yield* response(request, { text: '已交给后台处理。' });
-      else yield* response(request, { text: '后台已核实插件参数。' });
+      else if (!request.messages.some(message => message.name === 'background_task_result')) {
+        yield* response(request, { text: '已了解新话题。' });
+      } else {
+        const original = request.messages.findLast(message => message.name === 'delegated_user_request');
+        assert.equal(original.role, 'user'); assert.equal(original.visibility, 'internal');
+        assert.deepEqual(JSON.parse(original.content).requests.map(({ messageId, text }) => ({ messageId, text })),
+          [{ messageId: 'actual-child', text: '请帮我检查文件' }]);
+        assert.deepEqual(JSON.parse(original.content).laterUserMessages.map(item => item.messageId), ['new-topic']);
+        assert.deepEqual(request.metadata.assistantEventEvidence.map(item => item.id), ['actual-child']);
+        assert.equal(request.metadata.assistantUserRequest, false);
+        yield* response(request, { text: '后台已核实插件参数。' });
+      }
     } } });
   const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
   try {
@@ -138,8 +160,12 @@ test('text assistant dispatch reaches the actual child loop and reports completi
     assert.equal(childRequests[0].model, 'fixture');
     assert.equal(childRequests[0].permissionMode, 'task_free');
     assert.ok(childRequests[0].messages.some(message => message.content.includes('Read only: inspect')));
+    await command({ action: 'turn', entry: entry('new-topic', '换一个话题'), parent: { ...parent(registry), turnId: 'second-turn' }, profile: assistantProfileSchema.parse({}) });
+    await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '已了解新话题。'));
     childGate.resolve();
     await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '后台已核实插件参数。'));
+    const result = (await command({ action: 'read' })).entries.find(item => item.content === '后台已核实插件参数。');
+    assert.deepEqual(result.responseTo, ['actual-child']);
     assert.equal(tasks.list(id)[0].status, 'completed');
     assert.equal((await command({ action: 'read' })).error, '');
   } finally { childGate.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }

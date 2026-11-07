@@ -33,6 +33,7 @@
     "assistant.events.source": "Use the originating conversation",
     "assistant.events.savedDestination": "Previously selected conversation",
     "assistant.events.target": "{bot} · {conversation} · {sender}",
+    "assistant.events.delete": "Delete event",
     "assistant.events.create": "New event",
     "assistant.events.intent": "What should the assistant follow up on?",
     "assistant.events.switch": "Switch event",

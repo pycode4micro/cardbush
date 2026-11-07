@@ -7,7 +7,7 @@ import { FriendsEventDetails, FriendsExecutionRequests } from './EventDetails';
 import type { previousEventHistory } from './eventPreferences';
 import './assistantEventsDialog.css';
 
-const actions = { pause: 'yourFriends.pauseExecution', resume: 'yourFriends.resumeExecution', archive: 'yourFriends.archive', restore: 'yourFriends.restore' } as const;
+const actions = { pause: 'yourFriends.pauseExecution', resume: 'yourFriends.resumeExecution', archive: 'yourFriends.archive', restore: 'yourFriends.restore', delete: 'assistant.events.delete' } as const;
 type Action = keyof typeof actions;
 type Props = {
   language: string; snapshot?: FriendsSnapshot; event?: FriendsWorkEvent; draft: string;
@@ -22,7 +22,7 @@ export function AssistantEventsDialogView({ language, snapshot, event, draft, hi
   const createLabel = t('assistant.events.create');
   const submitLabel = event ? t('yourFriends.continue') : createLabel;
   const entries = snapshot?.events ?? [];
-  const eventActions: Action[] = event ? ['pause', 'resume', event.archived ? 'restore' : 'archive'] : [];
+  const eventActions: Action[] = event ? ['pause', 'resume', event.archived ? 'restore' : 'archive', 'delete'] : [];
   const switchLabel = t('assistant.events.switch');
   const footer = <>
     {entries.length > 0 && <SettingsDropdown label={switchLabel} disabled={pending} value={event?.id ?? ''} onChange={onSelect}
@@ -38,7 +38,7 @@ export function AssistantEventsDialogView({ language, snapshot, event, draft, hi
     {event && <section className="event-overview">
       <FriendsEventDetails event={event} snapshot={snapshot} language={language}/>
       <div className="event-actions">{eventActions.map(action =>
-        <button type="button" key={action} disabled={pending || (action === 'resume' && event.status === 'running')} onClick={() => onManage(action)}>{t(actions[action])}</button>)}</div>
+        <button type="button" key={action} data-action={action} disabled={pending || (action === 'resume' && event.status === 'running')} onClick={() => onManage(action)}>{t(actions[action])}</button>)}</div>
     </section>}
     <label className="event-input"><span>{event ? submitLabel : t('assistant.events.intent')}</span>
       <textarea disabled={pending} rows={3} maxLength={8000} value={draft} onChange={e => onEdit(e.target.value)}

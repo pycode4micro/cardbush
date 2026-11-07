@@ -22,6 +22,7 @@ export class AssistantEvents {
   private wake = () => this.kick();
   private execution?: Promise<void>;
   private controller?: AbortController;
+  private readonly eventWork = new Map<string, AbortController>();
   private closed = false;
   private configured = false;
   private stagedDecision?: z.infer<typeof decisionSchema>;
@@ -162,8 +163,23 @@ export class AssistantEvents {
         } else this.enqueue(state, event.id, 'input', command.input.id);
       });
     } else {
+      let deletedRun: AbortController | undefined;
       await this.store.change(state => {
         const event = this.event(state, command.eventId);
+        if (command.action === 'delete') {
+          if (delivery?.route && !this.matchesRoute(event, delivery.route)) throw Error('FRIENDS_EVENT_NOT_FOUND');
+          const signals = state.signals.filter(signal => signal.eventId === event.id);
+          settleFriendsWebhook(state, signals.map(signal => signal.id), { status: 'interrupted', reply: '', errorCode: 'friends_deleted' });
+          state.signals = state.signals.filter(signal => signal.eventId !== event.id);
+          state.detections = state.detections.filter(timer => timer.eventId !== event.id);
+          state.notifications = state.notifications?.filter(notice => notice.eventId !== event.id);
+          state.events = state.events.filter(item => item.id !== event.id);
+          if (state.active?.eventId === event.id) {
+            deletedRun = this.controller;
+            delete state.active;
+          }
+          return;
+        }
         if (command.action === 'archive' || command.action === 'restore') event.archived = command.action === 'archive';
         else if (command.action === 'pause') this.pause(state, event);
         else {
@@ -173,6 +189,11 @@ export class AssistantEvents {
         }
         this.touch(event);
       });
+      if (command.action === 'delete') {
+        this.eventWork.get(command.eventId)?.abort();
+        this.eventWork.delete(command.eventId);
+      }
+      deletedRun?.abort();
       if (command.action === 'pause' && this.store.peek().active?.eventId === command.eventId) this.controller?.abort();
     }
     this.kick(); return this.snapshot();
@@ -251,6 +272,7 @@ export class AssistantEvents {
         detections: state.detections.filter(d => d.eventId === event.id) };
     });
     if (!activation) { await this.publishNotifications(); return; }
+    if (this.store.select(state => state.active?.turnId) !== activation.turnId) return;
     const controller = this.controller = new AbortController(); this.stagedDecision = undefined;
     const { profile } = activation.configuration;
     const sourceRef = activation.event.deliveryRoute?.sourceRef;
@@ -279,6 +301,7 @@ export class AssistantEvents {
       const decision = this.stagedDecision as z.infer<typeof decisionSchema> | undefined;
       if (!decision || !result.text.trim()) throw Error('FRIENDS_RESULT_INCOMPLETE');
       await this.store.change(state => {
+        if (state.active?.turnId !== activation.turnId) return;
         const event = this.event(state, activation.event.id);
         if (event.status === 'paused') return;
         state.signals = state.signals.filter(signal => !activation.signals.some(consumed => consumed.id === signal.id));
@@ -295,6 +318,7 @@ export class AssistantEvents {
       });
     } catch (error) {
       await this.store.change(state => {
+        if (state.active?.turnId !== activation.turnId) return;
         const event = this.event(state, activation.event.id);
         event.status = controller.signal.aborted || this.closed ? 'paused' : 'failed';
         event.error = error instanceof Error ? error.message : 'FRIENDS_EXECUTION_FAILED';
@@ -327,12 +351,24 @@ export class AssistantEvents {
     const recipientKey = createHash('sha256').update(JSON.stringify([source.connectionId, source.senderId, source.conversationId])).digest('hex');
     return { sourceRef: ref, recipientKey };
   }
+  /** Detached children can outlive one activation, but never their owning event. */
+  workSignal(request?: ModelRequest) {
+    if (request?.sessionId !== FRIENDS_SESSION || request.metadata.friendsExecution !== true) return;
+    const id = request.metadata.friendsEventId;
+    if (typeof id !== 'string' || !this.store.select(state => state.events.some(event => event.id === id))) return AbortSignal.abort();
+    let owner = this.eventWork.get(id);
+    if (!owner) { owner = new AbortController(); this.eventWork.set(id, owner); }
+    return owner.signal;
+  }
+  private matchesRoute(event: FriendsWorkEvent, route: NonNullable<FriendsWorkEvent['deliveryRoute']>) {
+    return event.deliveryRoute?.sourceRef === route.sourceRef || Boolean(route.recipientKey && event.deliveryRoute?.recipientKey === route.recipientKey);
+  }
   private registerAssistantTool() {
-    const schema = z.object({ action: z.enum(['list', 'read', 'create', 'continue', 'pause', 'resume']),
-      eventId: z.string().min(1).optional(), text: z.string().trim().min(1).max(8000).optional(),
+    const schema = z.object({ action: z.enum(['list', 'read', 'create', 'continue', 'pause', 'resume', 'delete']),
+      include_archived: z.boolean().optional(), eventId: z.string().min(1).optional(), text: z.string().trim().min(1).max(8000).optional(),
       at: z.string().datetime({ offset: true }).optional(), source_ref: z.string().min(1).max(100).optional() }).strict();
     this.deps.tools.register({
-      definition: { name: 'assistant_event', description: 'Manage the personal assistant’s durable proactive events. Create with a self-contained intent, optionally at an absolute time. Continue, read, pause or resume by eventId. Events use their own evidence. Notification routing inherits the current message, or an explicitly selected verified source_ref for a local request.', inputSchema: z.toJSONSchema(schema) },
+      definition: { name: 'assistant_event', description: 'Manage the personal assistant’s durable proactive events. Create with a self-contained intent, optionally at an absolute time. Continue, read, pause, resume or permanently delete by eventId. Pause a temporary stop. Delete only on an explicit user request for one identifiable event. Ask which event if ambiguous. List with include_archived to locate archived events. Events use their own evidence. Notification routing inherits the current message, or an explicitly selected verified source_ref for a local request.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'mutation', operation: 'assistant.event', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       modelAvailable: request => request.sessionId === PERSONAL_ASSISTANT_SESSION && request.metadata.agentRole !== 'child',
       decodeInput: value => schema.parse(value),
@@ -346,9 +382,8 @@ export class AssistantEvents {
         const ref = input.source_ref ?? refs[0];
         const route = ref ? await this.resolveRoute(ref) : undefined;
         if (ref && !route) throw Error('bridge_source_unavailable');
-        const events = (await this.store.read()).events.filter(event => !refs.length ||
-          event.deliveryRoute?.sourceRef === ref || (route?.recipientKey && event.deliveryRoute?.recipientKey === route.recipientKey));
-        if (input.action === 'list') return events.filter(event => !event.archived).slice(-100).map(({ id, title, status }) => ({ id, title, status }));
+        const events = (await this.store.read()).events.filter(event => !refs.length || (route && this.matchesRoute(event, route)));
+        if (input.action === 'list') return events.filter(event => input.include_archived || !event.archived).slice(-100).map(({ id, title, status, archived }) => ({ id, title, status, ...(archived ? { archived } : {}) }));
         const event = events.find(item => item.id === input.eventId);
         if (input.action !== 'create' && !event) throw Error('FRIENDS_EVENT_NOT_FOUND');
         if (input.action === 'read') return event;
@@ -357,25 +392,37 @@ export class AssistantEvents {
           const id = 'event-' + createHash('sha256').update(JSON.stringify([turn.request.turnId, toolCall.id])).digest('hex');
           const previous = events.flatMap(item => item.inputs).find(item => item.id === id);
           const inputs = Array.isArray(meta.assistantEventEvidence) ? meta.assistantEventEvidence : [];
+          if (meta.assistantUserRequest === false && !inputs.length) throw Error('ASSISTANT_EVENT_ORIGIN_REQUIRED');
           const source = inputs.filter(item => item && item.sourceRef === ref).at(-1);
           await this.command({ action: 'submit', input: { id, text: input.text, createdAt: previous?.createdAt ?? new Date(this.clock()).toISOString(),
             ...(input.action === 'continue' ? { relatesTo: event!.id } : {}) } }, { route, at: input.at && new Date(input.at).toISOString(), fromAssistant: true, sourceMessageId: source?.id });
           return { eventId: input.action === 'create' ? id : event!.id, status: 'accepted' };
+        }
+        if (input.action === 'delete') {
+          if (meta.assistantUserRequest !== true) throw Error('ASSISTANT_EVENT_USER_REQUEST_REQUIRED');
+          await this.command({ action: 'delete', eventId: event!.id }, { route });
+          return { eventId: event!.id, status: 'deleted' };
         }
         await this.command({ action: input.action, eventId: event!.id });
         return { eventId: event!.id, status: 'accepted' };
       },
     });
   }
+  private changeFromTurn<T>(turnId: string, change: (state: FriendsState) => T) {
+    return this.store.change(state => {
+      if (state.active?.turnId !== turnId) throw Error('FRIENDS_ACTIVE_EXECUTION_REQUIRED');
+      return change(state);
+    });
+  }
   private registerTools() {
-    const register = <Schema extends z.ZodType>(name: string, description: string, schema: Schema, execute: (input: z.infer<Schema>) => Promise<unknown>, mutating = true) => this.deps.tools.register({
+    const register = <Schema extends z.ZodType>(name: string, description: string, schema: Schema, execute: (input: z.infer<Schema>, turnId: string) => Promise<unknown>, mutating = true) => this.deps.tools.register({
       definition: { name, description, inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: mutating ? 'mutation' : 'observation', operation: name, risk: 'low', owner: 'friends', dispatch_scope: 'turn', mutating },
       modelAvailable: request => request.sessionId === FRIENDS_SESSION && request.metadata.friendsExecution === true,
       decodeInput: input => schema.parse(input),
       execute: context => {
         if (this.closed || context.sessionId !== FRIENDS_SESSION || context.turnId !== this.store.select(state => state.active?.turnId)) throw Error('FRIENDS_ACTIVE_EXECUTION_REQUIRED');
-        return execute(context.input);
+        return execute(context.input, context.turnId);
       },
     });
     register('friends_read_events', 'Read one explicitly related event by eventId, or list a bounded page of event titles and states with an empty eventId. This is state, not conversation history. Do not scan unrelated events.',
@@ -387,12 +434,12 @@ export class AssistantEvents {
           nextOffset: input.offset + 20 < events.length ? input.offset + 20 : null };
       }, false);
     register('friends_pause_event', 'Pause future execution of a specific event. Keeps its original evidence and results. Does not delete history or grant permissions.',
-      z.object({ eventId: z.string().min(1) }).strict(), async input => this.store.change(state => {
+      z.object({ eventId: z.string().min(1) }).strict(), async (input, turnId) => this.changeFromTurn(turnId, state => {
         if (state.active?.eventId === input.eventId) throw Error('FRIENDS_USE_DECISION_FOR_CURRENT_EVENT');
         const event = this.relatedEvent(state, input.eventId); this.pause(state, event); this.touch(event);
         return { status: 'paused', eventId: event.id };
       }));
-    register('friends_create_event', 'Create a separate durable event grounded in confirmed recognition, user instructions, applicable habits or verified feedback. Habits are optional. Use a stable logicalKey for idempotency. Automatic activations can create at most one new event; creation grants no execution permission.', createSchema, async input => this.store.change(state => {
+    register('friends_create_event', 'Create a separate durable event grounded in confirmed recognition, user instructions, applicable habits or verified feedback. Habits are optional. Use a stable logicalKey for idempotency. Automatic activations can create at most one new event; creation grants no execution permission.', createSchema, async (input, turnId) => this.changeFromTurn(turnId, state => {
       const route = this.event(state, state.active!.eventId).deliveryRoute;
       const preferredRef = route?.sourceRef ?? state.configuration?.assistant?.proactive?.notificationSourceRef;
       const old = this.relatedEvents(state).find(event => event.logicalKey === input.logicalKey &&
@@ -406,7 +453,7 @@ export class AssistantEvents {
       // Creation alone does not execute work. A detector or an explicit resume wakes it.
       event.status = 'paused'; state.events.push(event); return { status: 'created', event };
     }));
-    register('friends_watch_time', 'Register one future absolute ISO time with a timezone for an event. Replaces its previous timer. No model requests occur while waiting.', watchSchema, async input => this.store.change(state => {
+    register('friends_watch_time', 'Register one future absolute ISO time with a timezone for an event. Replaces its previous timer. No model requests occur while waiting.', watchSchema, async (input, turnId) => this.changeFromTurn(turnId, state => {
       const event = this.relatedEvent(state, input.eventId);
       if (Date.parse(input.at) <= this.clock()) throw Error('FRIENDS_FUTURE_TIME_REQUIRED');
       const old = state.detections.find(d => d.eventId === event.id);
@@ -419,14 +466,17 @@ export class AssistantEvents {
       if (state.active?.eventId !== event.id) event.status = 'watching';
       this.touch(event); return { status: 'registered', detection };
     }));
-    register('friends_decide', 'Record the current event disposition and a short factual basis, not private reasoning. habitRefs may be empty when no applicable habit exists. This does not publish a result or bypass tool permissions.', decisionSchema, async input => {
+    register('friends_decide', 'Record the current event disposition and a short factual basis, not private reasoning. habitRefs may be empty when no applicable habit exists. This does not publish a result or bypass tool permissions.', decisionSchema, async (input, turnId) => {
       const state = await this.store.read();
+      if (state.active?.turnId !== turnId) throw Error('FRIENDS_ACTIVE_EXECUTION_REQUIRED');
       if (input.disposition === 'watching' && !state.detections.some(d => d.eventId === state.active?.eventId)) throw Error('FRIENDS_WATCH_REQUIRES_DETECTION');
       this.stagedDecision = input; return { status: 'recorded', delivery: 'awaiting_runtime_completion' };
     });
   }
   async disconnect() {
     this.configured = false; this.scheduler.cancel(this.wake); this.controller?.abort();
+    for (const owner of this.eventWork.values()) owner.abort();
+    this.eventWork.clear();
     await this.execution;
   }
   async close() { this.closed = true; await this.disconnect(); }

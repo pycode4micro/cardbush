@@ -102,3 +102,4 @@
 .assistant-events-dialog .event-actions button:hover:enabled { background: var(--surface-hover); }
 .assistant-events-dialog .event-actions button:disabled { opacity: .55; cursor: default; }
 .assistant-events-dialog :is(.event-error, .your-friends-error) { margin: 0; color: var(--danger); font-size: 13px; }
+.assistant-events-dialog .event-actions button[data-action="delete"] { color: var(--danger); }

@@ -24,6 +24,7 @@ export const subagentTaskSchema = z.object({
   taskId: z.string().min(1),
   parentSessionId: z.string().min(1),
   parentTurnId: z.string().min(1),
+  originMessageIds: z.array(z.string().min(1).max(220)).max(256).optional(),
   childSessionId: z.string().min(1),
   childTurnId: z.string().min(1),
   prompt: z.string().min(1),
