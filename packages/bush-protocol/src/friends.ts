@@ -33,6 +33,7 @@ export type FriendsProfile = z.infer<typeof friendsProfileSchema>;
 export type FriendEventStatus = 'queued' | 'running' | 'watching' | 'waiting_user' | 'completed' | 'paused' | 'failed';
 export interface FriendsWorkEvent {
   id: string; logicalKey: string; origin: 'user' | 'agent' | 'system'; title: string; intent: string;
+  subscription?: true;
   inputs: z.infer<typeof friendEvidenceSchema>[]; deliveryRoute?: z.infer<typeof friendDeliveryRouteSchema>; status: FriendEventStatus; archived: boolean; revision: number; createdAt: string; updatedAt: string;
   result?: { text: string; turnId: string; createdAt: string };
   decision?: { disposition: 'completed' | 'watching' | 'waiting_user'; basis: string; habitRefs: Array<{ id: string; revision: number }> };

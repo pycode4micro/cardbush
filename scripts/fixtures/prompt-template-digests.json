@@ -81,12 +81,12 @@
   {
     "name": "assistant-events-enabled",
     "slots": [],
-    "sha256": "5a9e868dfcf561b3b2026cdc8c300e058d0850418ff8ff0d2b3e3b8bca9cb8ba"
+    "sha256": "e02f46fff8f8a816b7bdf5b247cb447ef9ec695f27465432923ce02eb57a8768"
   },
   {
     "name": "assistant-events-requested-only",
     "slots": [],
-    "sha256": "c2a725ecd149954b27c83ac98e06d85f148aa4c9630cf696bc3bfce8728d00cd"
+    "sha256": "ef7250a5b48e971a53685e3d58618c7dab317f61a2e2a78904fda5a33f54f5e3"
   },
   {
     "name": "assistant-memory",
@@ -201,7 +201,7 @@
   {
     "name": "friends-system",
     "slots": [],
-    "sha256": "909e286c8b7df0b4a9ca7a9b71e2d3150979acef05bc1e713d68d063368b892a"
+    "sha256": "36cd7ce9a1d5d6030ae02996c64d9adc37edd612ca5170a3cf075dbb9246df1d"
   },
   {
     "name": "friends-startup",

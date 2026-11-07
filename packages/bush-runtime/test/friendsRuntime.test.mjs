@@ -411,15 +411,16 @@ test('Assistant-owned event pins the selected notification account even after it
   }
 });
 
+const assistantConfiguration = () => ({ action: 'configure', assistant: { name: 'Assistant' },
+    profile: { name: 'Assistant', language: 'en', timeZone: 'UTC', confirmedAt: now(), recognition: {} },
+    parent: { protocol: 'bush.session_turn_request.v1', sessionId: PERSONAL_ASSISTANT_SESSION, requestId: 'config', turnId: 'config',
+      model: 'fixture', tools: [], metadata: {}, permissionMode: 'task_free', prefixMessages: [], inputMessages: [{ messageId: 'config', message: { role: 'user', content: 'configure' } }] } });
+
 test('deleting a routed reminder cancels its durable wake and outbox across a next-day restart', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-events-delete-')), path = join(root, 'events.json');
   const start = Date.parse('2026-11-07T10:00:00Z'), tomorrow = start + 86400000;
   let clock = start;
   const notices = [], runs = [];
-  const configure = { action: 'configure', assistant: { name: 'Assistant' },
-    profile: { name: 'Assistant', language: 'en', timeZone: 'UTC', confirmedAt: now(), recognition: {} },
-    parent: { protocol: 'bush.session_turn_request.v1', sessionId: PERSONAL_ASSISTANT_SESSION, requestId: 'config', turnId: 'config',
-      model: 'fixture', tools: [], metadata: {}, permissionMode: 'task_free', prefixMessages: [], inputMessages: [{ messageId: 'config', message: { role: 'user', content: 'configure' } }] } };
   const open = () => {
     const tools = new ToolRegistry();
     const events = new AssistantEvents(path, { tools, now: () => clock, publish: notice => notices.push(notice),
@@ -440,9 +441,17 @@ test('deleting a routed reminder cancels its durable wake and outbox across a ne
   };
   let instance = open();
   t.after(async () => { await instance.events.close(); await rm(root, { recursive: true, force: true }); });
-  await instance.events.command(configure);
+  await instance.events.command(assistantConfiguration());
   const reminder = { text: 'Check tomorrow', at: new Date(tomorrow).toISOString() };
-  const first = await instance.call('create', 'a/1', reminder), other = await instance.call('create', 'b/1', reminder);
+  const subscription = { ...reminder, topic: 'Fixture releases' };
+  const first = await instance.call('subscribe', 'a/1', subscription);
+  const separate = await instance.call('subscribe', 'b/1', subscription);
+  assert.notEqual(first.eventId, separate.eventId, 'separate accounts can follow the same topic independently');
+  await instance.call('delete', 'b/1', { eventId: separate.eventId });
+  const other = await instance.call('create', 'b/1', reminder);
+  const repeated = await instance.call('subscribe', 'a/2', subscription);
+  assert.equal(repeated.eventId, first.eventId, 'the same recipient reconnects with a new receipt');
+  assert.equal(repeated.status, 'exists');
   await assert.rejects(instance.call('delete', 'b/1', { eventId: first.eventId }), /NOT_FOUND/);
   await assert.rejects(instance.call('delete', 'a/1', { eventId: first.eventId }, false), /USER_REQUEST_REQUIRED/);
   await instance.events.command({ action: 'archive', eventId: first.eventId });
@@ -453,7 +462,7 @@ test('deleting a routed reminder cancels its durable wake and outbox across a ne
   assert.equal((await instance.call('delete', 'a/2', { eventId: first.eventId })).status, 'deleted');
   assert.deepEqual((await instance.events.snapshot()).events.map(event => event.id), [other.eventId]);
   await instance.events.close(); clock = tomorrow + 1000;
-  instance = open(); await instance.events.command(configure);
+  instance = open(); await instance.events.command(assistantConfiguration());
   await until(() => instance.events.snapshot(), state => state.events[0]?.status === 'completed');
   assert.deepEqual(runs, [other.eventId]); assert.deepEqual(notices.map(notice => notice.eventId), [other.eventId]);
   assert.deepEqual((await instance.events.snapshot()).detections, []);
@@ -502,4 +511,64 @@ test('deleting the owner stops a detached child even after its event turn has co
     await f.command({ action: 'delete', eventId: 'child-owner' });
     assert.equal(childSignal.aborted, true);
   } finally { release.resolve(); }
+});
+
+test('one subscription renews across deliveries and restart, stays quiet without news, and stops on deletion', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-subscription-'));
+  const day = 86400000, start = Date.parse('2026-11-07T10:00:00Z');
+  let time = start, scheduled, observation = 'edition 1';
+  const deliveries = [], activations = [];
+  const clock = {
+    schedule(wake, delay) { scheduled = { wake, at: time + delay }; },
+    cancel(wake) { if (scheduled?.wake === wake) scheduled = undefined; },
+  };
+  const intent = 'Keep following new editions. Deliver each new edition and check again at the next daily release.';
+  const open = () => {
+    const tools = new ToolRegistry();
+    const service = new AssistantEvents(join(root, 'events.json'), { tools, clock, now: () => time,
+      publish: notice => deliveries.push(notice),
+      run: async request => {
+        const { event } = data(request);
+        assert.equal(event.intent, intent); assert.equal(event.subscription, true);
+        activations.push(event.id);
+        const context = { turnId: request.turnId, sessionId: FRIENDS_SESSION };
+        await assert.rejects(tools.resolve('friends_decide').execute({ ...context, input: decide('completed').input }), /next check/);
+        await tools.resolve('friends_watch_time').execute({ ...context, input: { eventId: event.id, at: new Date(time + day).toISOString() } });
+        await tools.resolve('friends_decide').execute({ ...context, input: { disposition: 'watching', basis: observation,
+          habitRefs: [], notifyUser: event.decision?.basis !== observation } });
+        return { terminal: { kind: 'turn_terminal', payload: { status: 'completed' } }, text: observation };
+      } });
+    const manage = args => {
+      const tool = tools.resolve('assistant_event');
+      return tool.execute({ sessionId: PERSONAL_ASSISTANT_SESSION, toolCall: { id: crypto.randomUUID() },
+        turn: { request: { turnId: 'chat', metadata: { assistantUserRequest: true } } }, input: tool.decodeInput(args) });
+    };
+    return { service, manage };
+  };
+  let instance = open();
+  t.after(async () => { await instance.service.close(); await rm(root, { recursive: true, force: true }); });
+  await instance.service.command(assistantConfiguration());
+  const command = { action: 'subscribe', topic: 'New editions', text: intent, at: new Date(time + day).toISOString() };
+  const [a, b] = await Promise.all([instance.manage(command), instance.manage(command)]);
+  const eventId = a.eventId; assert.equal(b.eventId, eventId);
+  assert.deepEqual([a.status, b.status].sort(), ['accepted', 'exists']);
+  assert.deepEqual((await instance.manage({ action: 'list' })).map(e => [e.id, e.subscription]), [[eventId, true]]);
+  const nextRelease = async () => {
+    const due = time + day;
+    await until(async () => scheduled, job => job?.at === due);
+    time = due; scheduled.wake();
+    await until(() => instance.service.snapshot(), state => state.events.length === 1 && state.events[0].status === 'watching' &&
+      state.detections.length === 1 && state.detections[0].eventId === eventId && Date.parse(state.detections[0].at) === time + day);
+    await until(async () => scheduled, job => job?.at === time + day);
+  };
+  await nextRelease(); assert.deepEqual(deliveries.map(d => d.text), ['edition 1']);
+  await instance.service.close(); instance = open(); await instance.service.command(assistantConfiguration());
+  await nextRelease(); assert.deepEqual(deliveries.map(d => d.text), ['edition 1']);
+  observation = 'edition 2'; await nextRelease();
+  assert.deepEqual(deliveries.map(d => [d.eventId, d.text]), [[eventId, 'edition 1'], [eventId, 'edition 2']]);
+  await instance.manage({ action: 'delete', eventId });
+  await instance.service.close(); time += 2 * day; instance = open(); await instance.service.command(assistantConfiguration());
+  const state = await instance.service.snapshot();
+  assert.deepEqual(state.events, []); assert.deepEqual(state.detections, []);
+  assert.deepEqual(activations, [eventId, eventId, eventId]); assert.equal(deliveries.length, 2);
 });

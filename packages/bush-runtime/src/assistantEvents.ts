@@ -2,17 +2,18 @@ import { AutomationClock } from './automationClock.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
-import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, friendsCommandSchema, applyWebhookTurnPolicy, type BotContext, type FriendsSnapshot, type FriendsWorkEvent,
+import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, friendsCommandSchema, applyWebhookTurnPolicy, type BotContext, type FriendInput, type FriendsSnapshot, type FriendsWorkEvent,
   type FriendsConnectionStatus, type ModelRequest, type RuntimeEvent, type RuntimeSessionTurnRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AssistantEventStore, settleFriendsWebhook, type FriendsState } from './assistantEventStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
 
 const text = z.string().trim().min(1).max(4000);
-const decisionSchema = z.object({ disposition: z.enum(['completed', 'watching', 'waiting_user']), basis: text, notifyUser: z.boolean().optional(),
+const decisionSchema = z.object({ disposition: z.enum(['completed', 'watching', 'waiting_user']), basis: text, notifyUser: z.boolean().optional(), endSubscription: z.boolean().optional(),
   habitRefs: z.array(z.object({ id: z.string().min(1), revision: z.number().int().positive() }).strict()).max(20) }).strict();
-const createSchema = z.object({ logicalKey: z.string().trim().min(1).max(160), title: text.max(160), intent: text }).strict();
+const createSchema = z.object({ logicalKey: z.string().trim().min(1).max(160), title: text.max(160), intent: text, subscription: z.boolean().optional() }).strict();
 const watchSchema = z.object({ eventId: z.string().min(1), at: z.string().datetime({ offset: true }) }).strict();
 const emptyInteractions = () => ({ permissions: [], solutions: [] });
+type Delivery = { route?: FriendsWorkEvent['deliveryRoute']; at?: string; fromAssistant?: boolean; sourceMessageId?: string; subscriptionTopic?: string };
 type Runner = (request: ModelRequest, signal: AbortSignal) => Promise<{ terminal: RuntimeEvent; text: string }>;
 
 /** Event state and dispatch only. Tools, model execution and permissions belong to Runtime. */
@@ -49,7 +50,7 @@ export class AssistantEvents {
       watching: this.configured ? state.detections.filter(d => state.events.some(event => event.id === d.eventId && !['paused', 'failed'].includes(event.status))).length : 0,
       active: state.active ? { eventId: state.active.eventId, turnId: state.active.turnId } : null }));
   }
-  async command(value: unknown, delivery?: { route?: FriendsWorkEvent['deliveryRoute']; at?: string; fromAssistant?: boolean; sourceMessageId?: string }) {
+  async command(value: unknown, delivery?: Delivery) {
     const command = friendsCommandSchema.parse(value);
     if (command.action === 'read') return this.snapshot();
     if (command.action === 'status') { await this.store.ready; return this.environment(); }
@@ -131,37 +132,8 @@ export class AssistantEvents {
       await this.publishNotifications();
       this.configured = true;
     } else if (command.action === 'submit') {
-      if (!this.configured) throw Error('FRIENDS_NOT_CONFIGURED');
-      await this.store.change(state => {
-        const evidence = { ...command.input, ...(delivery?.fromAssistant ? { authoredBy: 'assistant' as const,
-          ...(delivery.sourceMessageId ? { sourceMessageId: delivery.sourceMessageId } : {}) } : {}) };
-        const duplicate = state.events.flatMap(event => event.inputs).find(input => input.id === command.input.id);
-        if (duplicate) {
-          if (JSON.stringify(duplicate) !== JSON.stringify(evidence)) throw Error('FRIENDS_INPUT_ID_CONFLICT');
-          return;
-        }
-        if (state.signals.length >= 100) throw Error('FRIENDS_QUEUE_FULL');
-        let event = command.input.relatesTo ? state.events.find(event => event.id === command.input.relatesTo || event.inputs.some(input => input.id === command.input.relatesTo)) : undefined;
-        if (command.input.relatesTo && !event) throw Error('FRIENDS_EVENT_NOT_FOUND');
-        if (!event) {
-          if (state.events.some(item => item.id === command.input.id)) throw Error('FRIENDS_INPUT_ID_CONFLICT');
-          this.capacity(state);
-          event = this.newEvent(command.input.id, command.input.text.slice(0, 160), command.input.text, delivery?.fromAssistant ? 'agent' : 'user', command.input.id);
-          state.events.push(event);
-        }
-        if (event.inputs.length >= 100) throw Error('FRIENDS_EVENT_INPUT_LIMIT');
-        if (!command.input.relatesTo) {
-          const route = delivery?.route ?? state.configuration?.defaultRoute;
-          if (route) event.deliveryRoute = route;
-        }
-        event.inputs.push(evidence); event.archived = false; delete event.error;
-        if (event.status !== 'running') event.status = 'queued';
-        this.touch(event);
-        if (delivery?.at) {
-          event.status = 'watching';
-          state.detections.push({ id: `detection-${randomUUID()}`, eventId: event.id, at: delivery.at });
-        } else this.enqueue(state, event.id, 'input', command.input.id);
-      });
+      await this.submit(command.input, delivery);
+      return this.snapshot();
     } else {
       let deletedRun: AbortController | undefined;
       await this.store.change(state => {
@@ -197,6 +169,49 @@ export class AssistantEvents {
       if (command.action === 'pause' && this.store.peek().active?.eventId === command.eventId) this.controller?.abort();
     }
     this.kick(); return this.snapshot();
+  }
+  private async submit(input: FriendInput, delivery?: Delivery) {
+    if (this.closed) throw Error('FRIENDS_CLOSED');
+    if (!this.configured) throw Error('FRIENDS_NOT_CONFIGURED');
+    const receipt = await this.store.change(state => {
+      const evidence = { ...input, ...(delivery?.fromAssistant ? { authoredBy: 'assistant' as const,
+        ...(delivery.sourceMessageId ? { sourceMessageId: delivery.sourceMessageId } : {}) } : {}) };
+      const previous = state.events.find(event => event.inputs.some(item => item.id === input.id));
+      const duplicate = previous?.inputs.find(item => item.id === input.id);
+      if (previous && duplicate) {
+        if (JSON.stringify(duplicate) !== JSON.stringify(evidence)) throw Error('FRIENDS_INPUT_ID_CONFLICT');
+        return { eventId: previous.id, status: 'accepted' };
+      }
+      const route = delivery?.route ?? state.configuration?.defaultRoute;
+      const topic = delivery?.subscriptionTopic;
+      if (topic) {
+        const existing = state.events.find(event => event.subscription && event.title === topic && event.status !== 'completed' &&
+          (route ? this.matchesRoute(event, route) : !event.deliveryRoute));
+        if (existing) return { eventId: existing.id, status: 'exists', eventStatus: existing.status };
+      }
+      if (delivery?.at && Date.parse(delivery.at) <= this.clock()) throw Error('FRIENDS_INPUT_INVALID');
+      if (state.signals.length >= 100) throw Error('FRIENDS_QUEUE_FULL');
+      let event = input.relatesTo ? state.events.find(event => event.id === input.relatesTo || event.inputs.some(item => item.id === input.relatesTo)) : undefined;
+      if (input.relatesTo && !event) throw Error('FRIENDS_EVENT_NOT_FOUND');
+      if (!event) {
+        if (state.events.some(item => item.id === input.id)) throw Error('FRIENDS_INPUT_ID_CONFLICT');
+        this.capacity(state);
+        event = this.newEvent(topic ?? input.id, topic ?? input.text.slice(0, 160), input.text, delivery?.fromAssistant ? 'agent' : 'user', input.id);
+        if (topic) event.subscription = true;
+        state.events.push(event);
+      }
+      if (event.inputs.length >= 100) throw Error('FRIENDS_EVENT_INPUT_LIMIT');
+      if (!input.relatesTo && route) event.deliveryRoute = route;
+      event.inputs.push(evidence); event.archived = false; delete event.error;
+      if (event.status !== 'running') event.status = 'queued';
+      this.touch(event);
+      if (delivery?.at) {
+        event.status = 'watching';
+        state.detections.push({ id: `detection-${randomUUID()}`, eventId: event.id, at: delivery.at });
+      } else this.enqueue(state, event.id, 'input', input.id);
+      return { eventId: event.id, status: 'accepted' };
+    });
+    this.kick(); return receipt;
   }
   async snapshot(): Promise<FriendsSnapshot> {
     const state = await this.store.read();
@@ -364,11 +379,11 @@ export class AssistantEvents {
     return event.deliveryRoute?.sourceRef === route.sourceRef || Boolean(route.recipientKey && event.deliveryRoute?.recipientKey === route.recipientKey);
   }
   private registerAssistantTool() {
-    const schema = z.object({ action: z.enum(['list', 'read', 'create', 'continue', 'pause', 'resume', 'delete']),
-      include_archived: z.boolean().optional(), eventId: z.string().min(1).optional(), text: z.string().trim().min(1).max(8000).optional(),
+    const schema = z.object({ action: z.enum(['list', 'read', 'create', 'subscribe', 'continue', 'pause', 'resume', 'delete']),
+      topic: z.string().trim().min(1).max(160).optional(), include_archived: z.boolean().optional(), eventId: z.string().min(1).optional(), text: z.string().trim().min(1).max(8000).optional(),
       at: z.string().datetime({ offset: true }).optional(), source_ref: z.string().min(1).max(100).optional() }).strict();
     this.deps.tools.register({
-      definition: { name: 'assistant_event', description: 'Manage the personal assistant’s durable proactive events. Create with a self-contained intent, optionally at an absolute time. Continue, read, pause, resume or permanently delete by eventId. Pause a temporary stop. Delete only on an explicit user request for one identifiable event. Ask which event if ambiguous. List with include_archived to locate archived events. Events use their own evidence. Notification routing inherits the current message, or an explicitly selected verified source_ref for a local request.', inputSchema: z.toJSONSchema(schema) },
+      definition: { name: 'assistant_event', description: 'Manage the personal assistant’s durable proactive events. Use create for one outcome. Use subscribe for ongoing informational updates: provide a stable short topic, a self-contained text describing what to report across updates, and optionally at for the first check. Reuse the same subscription on its delivery route. Continue, read, pause, resume or permanently delete by eventId. Pause a temporary stop. Delete only on an explicit user request for one identifiable event. Ask which event if ambiguous. List with include_archived to locate archived events. Events use their own evidence. Notification routing inherits the current message, or an explicitly selected verified source_ref for a local request.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'mutation', operation: 'assistant.event', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       modelAvailable: request => request.sessionId === PERSONAL_ASSISTANT_SESSION && request.metadata.agentRole !== 'child',
       decodeInput: value => schema.parse(value),
@@ -383,20 +398,21 @@ export class AssistantEvents {
         const route = ref ? await this.resolveRoute(ref) : undefined;
         if (ref && !route) throw Error('bridge_source_unavailable');
         const events = (await this.store.read()).events.filter(event => !refs.length || (route && this.matchesRoute(event, route)));
-        if (input.action === 'list') return events.filter(event => input.include_archived || !event.archived).slice(-100).map(({ id, title, status, archived }) => ({ id, title, status, ...(archived ? { archived } : {}) }));
+        if (input.action === 'list') return events.filter(event => input.include_archived || !event.archived).slice(-100).map(({ id, title, status, archived, subscription }) => ({ id, title, status, ...(subscription ? { subscription } : {}), ...(archived ? { archived } : {}) }));
         const event = events.find(item => item.id === input.eventId);
-        if (input.action !== 'create' && !event) throw Error('FRIENDS_EVENT_NOT_FOUND');
+        const creating = input.action === 'create' || input.action === 'subscribe';
+        if (!creating && !event) throw Error('FRIENDS_EVENT_NOT_FOUND');
         if (input.action === 'read') return event;
-        if (input.action === 'create' || input.action === 'continue') {
-          if (!input.text || (input.at && (input.action !== 'create' || Date.parse(input.at) <= this.clock()))) throw Error('FRIENDS_INPUT_INVALID');
+        if (creating || input.action === 'continue') {
+          if (!input.text || (input.action === 'subscribe' && !input.topic) || (input.at && !creating)) throw Error('FRIENDS_INPUT_INVALID');
           const id = 'event-' + createHash('sha256').update(JSON.stringify([turn.request.turnId, toolCall.id])).digest('hex');
           const previous = events.flatMap(item => item.inputs).find(item => item.id === id);
           const inputs = Array.isArray(meta.assistantEventEvidence) ? meta.assistantEventEvidence : [];
           if (meta.assistantUserRequest === false && !inputs.length) throw Error('ASSISTANT_EVENT_ORIGIN_REQUIRED');
           const source = inputs.filter(item => item && item.sourceRef === ref).at(-1);
-          await this.command({ action: 'submit', input: { id, text: input.text, createdAt: previous?.createdAt ?? new Date(this.clock()).toISOString(),
-            ...(input.action === 'continue' ? { relatesTo: event!.id } : {}) } }, { route, at: input.at && new Date(input.at).toISOString(), fromAssistant: true, sourceMessageId: source?.id });
-          return { eventId: input.action === 'create' ? id : event!.id, status: 'accepted' };
+          return this.submit({ id, text: input.text, createdAt: previous?.createdAt ?? new Date(this.clock()).toISOString(),
+            ...(input.action === 'continue' ? { relatesTo: event!.id } : {}) }, { route, at: input.at && new Date(input.at).toISOString(),
+            fromAssistant: true, sourceMessageId: source?.id, subscriptionTopic: input.action === 'subscribe' ? input.topic : undefined });
         }
         if (input.action === 'delete') {
           if (meta.assistantUserRequest !== true) throw Error('ASSISTANT_EVENT_USER_REQUEST_REQUIRED');
@@ -439,7 +455,7 @@ export class AssistantEvents {
         const event = this.relatedEvent(state, input.eventId); this.pause(state, event); this.touch(event);
         return { status: 'paused', eventId: event.id };
       }));
-    register('friends_create_event', 'Create a separate durable event grounded in confirmed recognition, user instructions, applicable habits or verified feedback. Habits are optional. Use a stable logicalKey for idempotency. Automatic activations can create at most one new event; creation grants no execution permission.', createSchema, async (input, turnId) => this.changeFromTurn(turnId, state => {
+    register('friends_create_event', 'Create a separate durable event grounded in confirmed recognition, user instructions, applicable habits or verified feedback. Habits are optional. Set subscription=true when the same event should keep reporting future developments. Use a stable logicalKey for idempotency. Automatic activations can create at most one new event; creation grants no execution permission.', createSchema, async (input, turnId) => this.changeFromTurn(turnId, state => {
       const route = this.event(state, state.active!.eventId).deliveryRoute;
       const preferredRef = route?.sourceRef ?? state.configuration?.assistant?.proactive?.notificationSourceRef;
       const old = this.relatedEvents(state).find(event => event.logicalKey === input.logicalKey &&
@@ -448,6 +464,7 @@ export class AssistantEvents {
       if (this.automaticActivation && state.events.some(event => event.origin === 'agent' && !this.activationEventIds.has(event.id))) throw Error('FRIENDS_DISCOVERY_EVENT_LIMIT');
       this.capacity(state);
       const event = this.newEvent(input.logicalKey, input.title, input.intent, 'agent');
+      if (input.subscription) event.subscription = true;
       const delivery = route ?? state.configuration?.defaultRoute;
       if (delivery) event.deliveryRoute = { ...delivery };
       // Creation alone does not execute work. A detector or an explicit resume wakes it.
@@ -466,11 +483,14 @@ export class AssistantEvents {
       if (state.active?.eventId !== event.id) event.status = 'watching';
       this.touch(event); return { status: 'registered', detection };
     }));
-    register('friends_decide', 'Record the current event disposition and a short factual basis, not private reasoning. habitRefs may be empty when no applicable habit exists. This does not publish a result or bypass tool permissions.', decisionSchema, async (input, turnId) => {
+    register('friends_decide', 'Record the current event disposition and a short factual basis, not private reasoning. habitRefs may be empty when no applicable habit exists. For subscriptions, use watching after each delivery. To complete one, set endSubscription only when its ongoing scope has ended. This does not publish a result or bypass tool permissions.', decisionSchema, async (input, turnId) => {
       const state = await this.store.read();
       if (state.active?.turnId !== turnId) throw Error('FRIENDS_ACTIVE_EXECUTION_REQUIRED');
       if (input.disposition === 'watching' && !state.detections.some(d => d.eventId === state.active?.eventId)) throw Error('FRIENDS_WATCH_REQUIRES_DETECTION');
-      this.stagedDecision = input; return { status: 'recorded', delivery: 'awaiting_runtime_completion' };
+      if (input.disposition === 'completed' && this.event(state, state.active.eventId).subscription && !input.endSubscription)
+        throw Error('Subscription remains active. Schedule its next check and decide watching, or set endSubscription when the topic itself has ended.');
+      const { endSubscription: _ended, ...decision } = input;
+      this.stagedDecision = decision; return { status: 'recorded', delivery: 'awaiting_runtime_completion' };
     });
   }
   async disconnect() {

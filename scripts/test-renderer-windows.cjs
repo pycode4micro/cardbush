@@ -75,7 +75,7 @@ async function run() {
         assert.equal(await read('!!document.querySelector("[data-nav-section=your-friends]")'), false);
         await read('document.querySelector("[data-nav-section=assistant]").click();void 0');
         await until('document.querySelector("[data-assistant-events]")');
-        await read(`window.eventActions=[];window.testEvents=['first','second'].map(id=>({id,title:'Reminder '+id,status:'watching',inputs:[]}));
+        await read(`window.eventActions=[];window.testEvents=['first','second'].map(id=>({id,title:'Reminder '+id,status:'watching',subscription:id==='first',inputs:[]}));
           window.cardbushDesktop={...window.cardbushDesktop,runtime:{command:async request=>{
             const {kind,payload}=request.command;
             if(kind!=='runtime.friends')throw Error('No fixture for '+kind);
@@ -92,6 +92,8 @@ async function run() {
         await read(`document.querySelector('${picker}').click();void 0`);
         await read(`Array.from(document.querySelectorAll('.assistant-events-dialog [role=option]')).find(node=>node.textContent.includes('Reminder first')).click();void 0`);
         await until('document.querySelector(".event-overview h3")?.textContent==="Reminder first"');
+        const subscriptionLabel = await read('document.querySelector(".friends-event-details .friends-aside").textContent');
+        assert.ok(/长期订阅|Ongoing subscription/.test(subscriptionLabel), subscriptionLabel);
         await read('document.querySelector(".event-actions [data-action=delete]").click();void 0');
         await until('!document.querySelector(".event-overview") && eventActions.length===1');
         assert.deepEqual(await read('eventActions'), [{ action: 'delete', eventId: 'first' }]);

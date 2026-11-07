@@ -12,7 +12,7 @@ const stateSchema = z.object({
   discoveryStarted: z.literal(true).optional(),
   configuration: z.object({ parent: runtimeSessionTurnRequestSchema.extend({ inputMessages: z.tuple([]) }), profile: friendsProfileSchema, assistant: assistantProfileSchema.optional(), defaultRoute: friendDeliveryRouteSchema.optional() }).optional(),
   events: z.array(z.object({ id, logicalKey: id, origin: z.enum(['user', 'agent', 'system']), title: z.string(), intent: z.string(),
-    inputs: z.array(friendEvidenceSchema), deliveryRoute: friendDeliveryRouteSchema.optional(), status: z.enum(['queued', 'running', 'watching', 'waiting_user', 'completed', 'paused', 'failed']),
+    subscription: z.literal(true).optional(), inputs: z.array(friendEvidenceSchema), deliveryRoute: friendDeliveryRouteSchema.optional(), status: z.enum(['queued', 'running', 'watching', 'waiting_user', 'completed', 'paused', 'failed']),
     archived: z.boolean(), revision: z.number().int().positive(), createdAt: timestamp, updatedAt: timestamp,
     result: z.object({ text: z.string(), turnId: id, createdAt: timestamp }).optional(),
     decision: z.object({ disposition: z.enum(['completed', 'watching', 'waiting_user']), basis: z.string(),
