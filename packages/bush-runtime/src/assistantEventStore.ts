@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { friendEvidenceSchema, friendDeliveryRouteSchema, friendsWebhookReceiptSchema, type FriendsWebhookReceipt, friendsProfileSchema, runtimeSessionTurnRequestSchema,
+import { friendEvidenceSchema, friendDeliveryRouteSchema, friendsWebhookReceiptSchema, type FriendsWebhookReceipt, assistantProfileSchema, type AssistantProfile, friendsProfileSchema, runtimeSessionTurnRequestSchema,
   type FriendsDetection, type FriendsProfile, type FriendsWorkEvent, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 
 const timestamp = z.string().datetime();
@@ -10,7 +10,7 @@ const id = z.string().min(1);
 const stateSchema = z.object({
   version: z.literal(1),
   discoveryStarted: z.literal(true).optional(),
-  configuration: z.object({ parent: runtimeSessionTurnRequestSchema.extend({ inputMessages: z.tuple([]) }), profile: friendsProfileSchema }).optional(),
+  configuration: z.object({ parent: runtimeSessionTurnRequestSchema.extend({ inputMessages: z.tuple([]) }), profile: friendsProfileSchema, assistant: assistantProfileSchema.optional(), defaultRoute: friendDeliveryRouteSchema.optional() }).optional(),
   events: z.array(z.object({ id, logicalKey: id, origin: z.enum(['user', 'agent', 'system']), title: z.string(), intent: z.string(),
     inputs: z.array(friendEvidenceSchema), deliveryRoute: friendDeliveryRouteSchema.optional(), status: z.enum(['queued', 'running', 'watching', 'waiting_user', 'completed', 'paused', 'failed']),
     archived: z.boolean(), revision: z.number().int().positive(), createdAt: timestamp, updatedAt: timestamp,
@@ -20,6 +20,7 @@ const stateSchema = z.object({
     error: z.string().optional(), interruptedTurnId: id.optional(),
   })),
   detections: z.array(z.object({ id, eventId: id, at: timestamp })),
+  notifications: z.array(z.object({ eventId: id, turnId: id, text: z.string(), createdAt: timestamp })).optional(),
   webhookReceipts: z.record(id, friendsWebhookReceiptSchema).optional(),
   signals: z.array(z.object({ id, eventId: id, kind: z.enum(['input', 'clock', 'startup', 'resume']), createdAt: timestamp })),
   active: z.object({ eventId: id, turnId: id, signalIds: z.array(id) }).optional(),
@@ -28,8 +29,9 @@ const stateSchema = z.object({
 export interface FriendsState {
   version: 1;
   discoveryStarted?: true;
-  configuration?: { parent: RuntimeSessionTurnRequest; profile: FriendsProfile };
+  configuration?: { parent: RuntimeSessionTurnRequest; profile: FriendsProfile; assistant?: AssistantProfile; defaultRoute?: FriendsWorkEvent['deliveryRoute'] };
   events: FriendsWorkEvent[];
+  notifications?: Array<{ eventId: string; turnId: string; text: string; createdAt: string }>;
   webhookReceipts?: Record<string, FriendsWebhookReceipt>;
   detections: FriendsDetection[];
   signals: Array<{ id: string; eventId: string; kind: 'input' | 'clock' | 'startup' | 'resume'; createdAt: string }>;
@@ -37,7 +39,7 @@ export interface FriendsState {
 }
 
 /** One durable owner; rendering and environment observation never write state. */
-export class FriendsStore {
+export class AssistantEventStore {
   private value: FriendsState = { version: 1, events: [], detections: [], signals: [] };
   private queue: Promise<unknown> = Promise.resolve();
   readonly ready: Promise<void>;

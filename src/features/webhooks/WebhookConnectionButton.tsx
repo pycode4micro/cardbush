@@ -11,11 +11,11 @@ const defaultBody = contextWebhookBody;
 const defaults = (): ContextWebhookConfig => ({ name: 'Webhook', enabled: true, url: '', headers: {}, parameters: {}, body: defaultBody,
   incoming: contextWebhookIncoming });
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
-const prepareWebhookBinding = async (prepare: () => Promise<ChatStreamRequest>, kind: WebhookBinding['kind'], sessionId: string, title: string): Promise<WebhookBinding> =>
-  kind === 'friends' ? { kind, sessionId, title } : (await import('./webhookBinding')).prepareWebhookBinding(prepare, kind, sessionId, title);
+const prepareWebhookBinding = async (prepare: () => Promise<ChatStreamRequest>, kind: Exclude<WebhookBinding['kind'], 'friends'>, sessionId: string, title: string): Promise<WebhookBinding> =>
+  (await import('./webhookBinding')).prepareWebhookBinding(prepare, kind, sessionId, title);
 const connectionStatusKey = (connection: ContextWebhookConnection) => !connection.enabled ? 'webhook.disabled'
   : connection.status === 'connected' ? 'webhook.connected' : 'webhook.offline';
-type Props = { language: string; sessionId: string; title: string; kind: WebhookBinding['kind']; prepare?: () => Promise<ChatStreamRequest> };
+type Props = { language: string; sessionId: string; title: string; kind: Exclude<WebhookBinding['kind'], 'friends'>; prepare?: () => Promise<ChatStreamRequest> };
 export function WebhookConnectionButton(props: Props) {
   const [open, setOpen] = useState(false), t = uiText(props.language);
   const available = Boolean(props.sessionId && props.prepare && window.cardbushDesktop?.webhooks);

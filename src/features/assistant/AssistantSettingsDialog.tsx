@@ -1,3 +1,5 @@
+import { EventPreferenceFields } from './events/EventPreferenceFields';
+import { emptyEventPreferences } from './events/eventPreferences';
 import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useEffect, useRef, useState } from 'react';
@@ -9,6 +11,7 @@ export function AssistantSettingsDialog({ language, onClose }: { language: strin
   const dialog = useRef<HTMLDialogElement>(null), nameInput = useRef<HTMLInputElement>(null), fileInput = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(() => readAssistantProfile().name), [persona, setPersona] = useState(() => readAssistantProfile().persona);
   const [avatar, setAvatar] = useState(readAssistantAvatar), [loading, setLoading] = useState(false), [error, setError] = useState('');
+  const [proactive, setProactive] = useState(() => readAssistantProfile().proactive ?? emptyEventPreferences());
   const request = useRef(0);
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -28,7 +31,7 @@ export function AssistantSettingsDialog({ language, onClose }: { language: strin
     const previousAvatar = readAssistantAvatar();
     try {
       saveAssistantAvatar(avatar);
-      try { saveAssistantProfile({ ...readAssistantProfile(), name: name.trim(), persona }); }
+      try { saveAssistantProfile({ ...readAssistantProfile(), name: name.trim(), persona, proactive }); }
       catch (error) { saveAssistantAvatar(previousAvatar); throw error; }
       onClose();
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
@@ -57,6 +60,7 @@ export function AssistantSettingsDialog({ language, onClose }: { language: strin
       <label>{uiText(language)('agentConnectionForm.name')}<input ref={nameInput} name="assistant-name" value={name} maxLength={60} onChange={event => { setName(event.target.value); setError(''); }}/></label>
       <label>{uiText(language)('assistantSettingsDialog.personaAndConversationStyle')}<textarea name="assistant-persona" value={persona} placeholder={uiText(language)('assistantSettingsDialog.defaultPersona')} maxLength={2000} rows={5} onChange={event => setPersona(event.target.value)}/></label>
       <p className="assistant-settings-note">{uiText(language)('assistantSettingsDialog.personaChangesApplyToTheNextCall')}</p>
+      <EventPreferenceFields language={language} value={proactive} change={setProactive}/>
       {error && <p className="assistant-settings-error" role="alert">{error}</p>}
       <footer><button type="button" onClick={onClose}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit" disabled={loading}>{uiText(language)('appCenter.save')}</button></footer>
     </form>

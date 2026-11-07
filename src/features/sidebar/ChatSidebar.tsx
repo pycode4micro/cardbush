@@ -1,5 +1,4 @@
 import { uiText } from '../../i18n';
-import { useFriendsState } from '../yourFriends/friendsStore';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
 import { AppCenterDock } from '../appCenter/AppCenter';
@@ -35,7 +34,6 @@ import {
   RotateCcw,
   RotateCw,
   Search,
-  Smile,
   Trash2,
   X,
 } from 'lucide-react';
@@ -265,7 +263,6 @@ export const ChatSidebar = memo(function ChatSidebar({
 }) {
   const sidebarRenderStartedAt = performance.now();
   const assistantActions = useAssistantActions(language), assistantProfile = assistantActions.profile;
-  const friends = useFriendsState();
   useLayoutEffect(() => {
     recordUiPerformanceMetric('sidebar_commit_ms', {
       sessionId: activeConversationId,
@@ -839,15 +836,13 @@ export const ChatSidebar = memo(function ChatSidebar({
             ])
           }
         />
-        <NavRow icon={<AssistantBulb size={18}/>} label={assistantProfile.name} active={section === 'assistant'} onClick={() => onSectionChange('assistant')}
+        <NavRow navSection="assistant" icon={<AssistantBulb size={18}/>} label={assistantProfile.name} active={section === 'assistant'} onClick={() => onSectionChange('assistant')}
           onContextMenu={event => openContextMenu(event, 'nav:assistant', assistantActions.items)}
           trailing={<span className="assistant-muted-indicators">
             {assistantActions.resetting && <LoaderCircle className="spin" size={12}/>}
             {assistantProfile.microphoneMuted && <MicOff size={12} aria-label={uiText(language)('chatSidebar.microphoneMuted')}/>}
             {assistantProfile.outputMuted && <VolumeX size={12} aria-label={uiText(language)('chatSidebar.speechMuted')}/>}
           </span>}/>
-        <NavRow icon={<Smile/>} label={friends.name || uiText(language)('yourFriends.title')} active={section === 'your-friends'}
-          navSection="your-friends" onClick={() => onSectionChange('your-friends')}/>
       </nav>
 
       <div className="sidebar-scroll">

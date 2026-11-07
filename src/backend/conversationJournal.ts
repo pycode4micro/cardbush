@@ -5,6 +5,7 @@ import type { ChatMessage } from '../types';
 
 export interface ConversationJournalSnapshot { entries: ConversationEntry[]; cursor: number; busy: boolean; error: string; canRetry?: boolean; workingTasks?: number; generation?: number;
   reactions?: Record<string, import('@cardbush/bush-protocol').AssistantReaction>;
+  eventNeedsResponse?: boolean;
   management?: AssistantManagementSnapshot;
   nextStepPrediction?: NextStepPrediction;
   retry?: { attempt: number; maxAttempts: number; nextRetryMs: number; code: string; createdAt: string } | null }

@@ -1,7 +1,6 @@
 import { uiLanguages, uiText } from '../../i18n';
 import type { AppLanguage, AppLanguageMode, AppSettingsState } from '../../types';
 import { SettingsCard, SettingsSelect, SettingsSwitch } from './SettingsControls';
-import { YourFriendsSettings } from '../yourFriends/YourFriendsSettings';
 
 export function SettingsGeneralPanel({ language, languageMode, systemLanguage, settings, reasoningStreamAvailable, onLanguageModeChange, onSettingsChange }: {
   language: AppLanguage; languageMode: AppLanguageMode; systemLanguage: AppLanguage;
@@ -16,7 +15,6 @@ export function SettingsGeneralPanel({ language, languageMode, systemLanguage, s
         {uiLanguages.map(pack => <option key={pack.locale} value={pack.locale}>{pack.name}</option>)}
       </SettingsSelect>
     </SettingsCard>
-    <YourFriendsSettings language={language}/>
     <SettingsCard title={uiText(language)('settingsGeneralPanel.conversationInteraction')}>
       <SettingsSelect name="guidance-delivery-mode" title={uiText(language)('settingsGeneralPanel.messagesSentDuringATask')}
         subtitle={settings.guidance.deliveryMode === 'immediate'

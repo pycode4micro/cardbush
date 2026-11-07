@@ -1,3 +1,4 @@
+import { inheritedPreferences } from './events/eventPreferences';
 import { useSyncExternalStore } from 'react';
 import { assistantProfileSchema, type AssistantProfile } from '@cardbush/bush-protocol';
 
@@ -9,7 +10,12 @@ export const useAssistantWorking = () => useSyncExternalStore(listener => { list
 let profile: AssistantProfile;
 export function readAssistantProfile(): AssistantProfile {
   if (!profile) {
-    try { profile = assistantProfileSchema.parse({ ...JSON.parse(localStorage.getItem(key) ?? '{}'), targetAgent: '' }); }
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) ?? '{}');
+      const inherited = !saved.proactive ? inheritedPreferences() : undefined;
+      profile = assistantProfileSchema.parse({ ...saved, ...(inherited ? { proactive: inherited } : {}), targetAgent: '' });
+      if (inherited) { try { localStorage.setItem(key, JSON.stringify(profile)); } catch { /* Retry migration on the next launch. */ } }
+    }
     catch { profile = assistantProfileSchema.parse({}); }
   }
   return profile;

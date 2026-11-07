@@ -75,7 +75,7 @@
       "persona",
       "host"
     ],
-    "sha256": "2ea5d4f7976badb3cd4909899bc214537cbf20edf0cfdae5ff8f8b7c47782282"
+    "sha256": "bc311e69081f03768dad885277b8c0bc17877f159751c532db67250c0461ee03"
   },
   {
     "name": "assistant-memory",
@@ -185,12 +185,12 @@
   {
     "name": "friends-bridge-delivery",
     "slots": [],
-    "sha256": "e21f287b99928182b5e160113748413fcf947635437a173ffb2ea166b5ab2ea8"
+    "sha256": "26ece682497c3465d7fc270dd7de7d71f03f6a8cf847bb06cacf1db021f3ccba"
   },
   {
     "name": "friends-system",
     "slots": [],
-    "sha256": "76d76239dc761ed2c1194430cfb91f80e4e8b61f078120b9ba9503999a254249"
+    "sha256": "909e286c8b7df0b4a9ca7a9b71e2d3150979acef05bc1e713d68d063368b892a"
   },
   {
     "name": "friends-startup",

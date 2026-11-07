@@ -1,7 +1,8 @@
+import { AssistantEventsDialog } from './events/AssistantEventsDialog';
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { Settings2, UsersRound } from 'lucide-react';
+import { CalendarClock, Settings2, UsersRound } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry, type AssistantReaction } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
 import { journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
@@ -80,6 +81,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
   const [canRetry, setCanRetry] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [nextStepPrediction, setNextStepPrediction] = useState<ConversationJournalSnapshot['nextStepPrediction']>();
+  const [eventNeedsResponse, setEventNeedsResponse] = useState(false);
   const [management, setManagement] = useState<ConversationJournalSnapshot['management']>();
   const overallPlan = management?.plan?.plan;
   const taskPlan = useMemo(() => overallPlan && { ...overallPlan, planId: overallPlan.plan_id, sessionId: overallPlan.session_id }, [overallPlan]);
@@ -142,6 +144,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
       if (reset) setEntries(result.entries);
       else if (result.entries.length) setEntries(current => [...current, ...result.entries.filter(entry => !current.some(old => old.id === entry.id))]);
       if (result.entries.length) setSubmitted(current => current.filter(item => !result.entries.some(entry => entry.id === item.entry.id)));
+      setEventNeedsResponse(result.eventNeedsResponse === true);
       setBusy(result.busy); setAssistantWorking(result.busy || Boolean(result.workingTasks)); setRuntimeError(result.error); setRetry(result.retry);
       setNextStepPrediction(current => JSON.stringify(current) === JSON.stringify(result.nextStepPrediction) ? current : result.nextStepPrediction);
       setManagement(current => JSON.stringify(current) === JSON.stringify(result.management) ? current : result.management);
@@ -249,10 +252,12 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
     send: text => voice.snapshot().mode === 'call' ? submit(text, true) : send(text) };
   target.refresh = () => ({ ...target, contextGeneration: generation.current, messages: speechMessages(entriesRef.current),
     historyMessages: journalMessages(entriesRef.current.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busyRef.current });
+  const [eventsOpen, setEventsOpen] = useState(false);
   const headerControls = <div className="assistant-actions">
     <div className="assistant-composer-tools">
       <button type="button" title={uiText(language)('teamSidebar.manageAgents')} onClick={onManageHosts}><UsersRound size={17}/></button>
       <button type="button" title={uiText(language)('assistantSettingsDialog.assistantSettings')} onClick={() => setSettings(true)}><Settings2 size={18}/></button>
+      <button type="button" data-assistant-events aria-label={uiText(language)('assistant.events.title')} title={uiText(language)('assistant.events.title')} onClick={() => setEventsOpen(true)}><CalendarClock/></button>
     </div>
   </div>;
   const renderTimelineItem = (item: typeof timeline[number]) => {
@@ -311,6 +316,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
       titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantBulb size={22} working={busy}/></span>}
       workspaceControl={headerControls} conversationContentAvailable={timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
+    {eventsOpen && active && <AssistantEventsDialog language={language} close={() => setEventsOpen(false)}/>}
     {settings && active && <AssistantSettingsDialog language={language} onClose={() => setSettings(false)}/>}
     {messageMenu && active && <AssistantMessageMenu key={messageMenu.entry.id} target={messageMenu} language={language} reaction={reactions[messageMenu.entry.id]} pending={reacting}
       onClose={closeMessageMenu} onReply={excerpt => {
@@ -323,6 +329,7 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
     {(error || runtimeError) && <RuntimeStatusBanner language={language} tone="error" message={assistantErrorText(error || runtimeError, language)}
       actionLabel={canRetry ? uiText(language)('assistantView.retryReply') : undefined} onAction={canRetry ? retryReply : undefined}
       onDismiss={() => { setError(''); setRuntimeError(''); }}/>}
+    {eventNeedsResponse && <div className="assistant-event-response" role="status"><button type="button" onClick={() => setEventsOpen(true)}>{uiText(language)('assistant.events.respond')}</button></div>}
     {retry && !error && !runtimeError && <ConversationConnectionNotice language={language}
       update={{ ...retry, sessionId, state: 'retrying', source: 'provider', reason: retry.code }}/>}
     <div className="assistant-body"><div className="assistant-chat chat-body" ref={chatBody} style={{ '--work-summary-anchor-right': `${summary.workSummaryAnchorRight}px` } as CSSProperties}>

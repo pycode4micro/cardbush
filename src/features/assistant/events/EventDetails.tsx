@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import type { FriendsSnapshot, FriendsWorkEvent } from '@cardbush/bush-protocol';
-import { uiText } from '../../i18n';
-import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages/MessageBubble';
-import { InteractionCard } from '../interactions/InteractionCard';
-import { solutionInteractionAnswer } from '../interactions/solutionSelectionModel';
-import { createRuntimeInteractions } from '../../runtime-client/RuntimeInteractionBridge';
-import { friendsBackend } from './friendsBackend';
+import { uiText } from '../../../i18n';
+import { MarkdownContent, MessageFileReferenceScope } from '../../chatMessages/MessageBubble';
+import { InteractionCard } from '../../interactions/InteractionCard';
+import { solutionInteractionAnswer } from '../../interactions/solutionSelectionModel';
+import { createRuntimeInteractions } from '../../../runtime-client/RuntimeInteractionBridge';
+import { eventBackend } from './eventBackend';
 
 export function FriendsEventDetails({ event, snapshot, language }: {
   event?: FriendsWorkEvent; snapshot?: FriendsSnapshot; language: string;
@@ -18,7 +18,7 @@ export function FriendsEventDetails({ event, snapshot, language }: {
     {event.result && <><h3>{t('yourFriends.latestResult')}</h3><div className="friends-result"><MessageFileReferenceScope workspaceRoot={snapshot?.workspaceDir}>
       <MarkdownContent content={event.result.text} language={language}/>
     </MessageFileReferenceScope></div></>}
-    {event.inputs.length > 0 && <><h3>{t('yourFriends.originalInputs')}</h3>{event.inputs.map(input => <p className="friends-original-input" key={input.id}>{input.text}</p>)}</>}
+    {event.inputs.length > 0 && <><h3>{t(event.inputs.some(input => input.authoredBy === 'assistant') ? 'assistant.events.evidence' : 'yourFriends.originalInputs')}</h3>{event.inputs.map(input => <p className="friends-original-input" key={input.id}>{input.text}</p>)}</>}
   </div>;
 }
 
@@ -29,7 +29,7 @@ export function FriendsExecutionRequests({ snapshot, language, refresh }: {
   const interactions = useMemo(() => {
     const bridge = createRuntimeInteractions();
     return { bridge, permissions: snapshot?.permissions.flatMap(permission => {
-      const interaction = bridge.registerRuntimePermission({ ...permission, answer: friendsBackend.answerPermission });
+      const interaction = bridge.registerRuntimePermission({ ...permission, answer: eventBackend.answerPermission });
       return interaction ? [{ permission, interaction }] : [];
     }) ?? [], solutions: snapshot?.solutions.map(request => bridge.registerRuntimeSolution(request)) ?? [] };
   }, [snapshot?.permissions, snapshot?.solutions, language]);
@@ -40,7 +40,7 @@ export function FriendsExecutionRequests({ snapshot, language, refresh }: {
         if (decision === 'allow_once' || decision === 'allow_session' || decision === 'deny') { await interactions.bridge.answerRuntimeInteraction(permission.permissionId, decision); await refresh(); }
       }} onCancel={async () => { await interactions.bridge.answerRuntimeInteraction(permission.permissionId, 'cancel'); await refresh(); }}/>)}
     {interactions.solutions.map(interaction => <InteractionCard key={interaction.id} language={language} interaction={interaction}
-      onReply={async answers => { await friendsBackend.answerSolution(solutionInteractionAnswer(interaction, answers)); await refresh(); }}
-      onCancel={async () => { await friendsBackend.answerSolution({ selectionId: interaction.id, sessionId: interaction.sessionId!, turnId: interaction.turnId!, kind: 'cancel' }); await refresh(); }}/>)}
+      onReply={async answers => { await eventBackend.answerSolution(solutionInteractionAnswer(interaction, answers)); await refresh(); }}
+      onCancel={async () => { await eventBackend.answerSolution({ selectionId: interaction.id, sessionId: interaction.sessionId!, turnId: interaction.turnId!, kind: 'cancel' }); await refresh(); }}/>)}
   </div>;
 }

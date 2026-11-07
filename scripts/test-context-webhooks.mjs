@@ -33,7 +33,7 @@ function client(connection) {
     read: async id => { const response = await fetch(`${connection.endpoint}/${encodeURIComponent(id)}`, { headers }); return response.json(); } };
 }
 
-test('Friends: inbound evidence, source-bound follow-up and proactive notification use the live bridge; offline is not installation state', { timeout: 30000 }, async () => {
+test('Assistant adopts saved Friends bindings and events; isolated notices keep the originating account across conversations and disconnect', { timeout: 30000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'friends-bridge-')), received = [], requests = [], turns = new Map();
   const receiver = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -49,6 +49,17 @@ test('Friends: inbound evidence, source-bound follow-up and proactive notificati
     catalog: (sessionId, signal) => gateway.botRequest({ action: 'catalog', sessionId }, signal),
     call: (sessionId, input, signal, files) => gateway.botRequest({ action: 'call', sessionId, input, files }, signal),
   }, provider: { async *stream(req) {
+    if (req.sessionId === 'personal-assistant') {
+      const alreadyHandled = turns.has(req.turnId); turns.set(req.turnId, 1); requests.push(req);
+      const latest = req.messages.filter(m => m.role === 'user' && !m.name).at(-1)?.content;
+      const final = latest === 'Schedule my update.' ? 'Which detail?' : 'Recorded.';
+      if (alreadyHandled || !['Schedule my update.', 'Confirmed detail.'].includes(latest)) { yield* answer(req, final); return; }
+      const original = (await friends({ action: 'read' })).events.find(e => e.intent === 'Schedule my update.');
+      const args = latest === 'Schedule my update.' ? { action: 'create', text: latest } : { action: 'continue', eventId: original.id, text: latest };
+      const base = { protocol: 'bush.model_event.v1', requestId: req.requestId, createdAt: new Date().toISOString() };
+      yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: randomUUID(), nameDelta: 'assistant_event', argumentsDelta: JSON.stringify(args) };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
+    }
     const { event, signals } = JSON.parse(req.messages.find(m => m.name === 'friends_event_data').content);
     const round = (turns.get(req.turnId) ?? 0) + 1; turns.set(req.turnId, round); requests.push(req);
     const decision = disposition => ['friends_decide', { disposition, basis: 'Fixture evidence.', habitRefs: [] }];
@@ -91,41 +102,65 @@ test('Friends: inbound evidence, source-bound follow-up and proactive notificati
       body: { eventId: '{{eventId}}', id: '{{messageId}}', text: '{{reply}}', sender: '{{senderId}}', room: '{{conversationId}}' } });
     await assert.rejects(gateway.command({ action: 'save', binding: { ...selected, kind: 'conversation', parent }, config: cfg }));
     const [connection] = (await gateway.command({ action: 'save', binding: selected, config: cfg })).connections;
+    await bridge.command('runtime.create_session', { sessionId: 'personal-assistant' });
+    const assistant = assistantProfileSchema.parse({ name: 'Unified assistant', proactive: { recognition: { context: 'Fixture daily routine' },
+      beforeExecution: 'within-scope', report: 'always', confirmedAt: new Date().toISOString() } });
+    const before = (await friends({ action: 'read' })).events;
+    await friends({ action: 'configure', assistant, parent: { ...parent, sessionId: 'personal-assistant' },
+      profile: { name: assistant.name, recognition: assistant.proactive.recognition, confirmedAt: assistant.proactive.confirmedAt,
+        timeZone: 'UTC', language: 'en', interactionPreferences: { beforeExecution: 'within-scope', report: 'always' } } });
+    assert.deepEqual((await friends({ action: 'read' })).events, before);
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).connections[0].id, connection.id);
     const bot = client(connection), instanceId = randomUUID(), leaseUrl = connection.endpoint.replace(/\/messages$/, '/capabilities');
     const headers = { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' };
     const plugin = { id: 'fixture', version: '1', name: 'Messaging fixture', description: 'Notification transport', tools: [
       { name: 'send_text', description: 'Send text to the originating recipient.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }] };
     assert.equal((await fetch(leaseUrl, { method: 'POST', headers, body: JSON.stringify({ protocol: 'cardbush.webhook.v1', capabilities: { text: true }, plugins: [plugin], instanceId }) })).status, 200);
     assert.equal((await gateway.botRequest({ action: 'context', sessionId })).reason, 'bot_recipient_unavailable');
-    const push = async (messageId, text, senderId) => {
+    const push = async (messageId, text, senderId, transport = bot) => {
       const body = { messageId, text, senderId, conversationId: 'shared-room' };
-      assert.equal((await bot.send(body)).status, 202);
-      return until(async () => { const value = await bot.read(messageId); return value.status === 'completed' && value; });
+      assert.equal((await transport.send(body)).status, 202);
+      return until(async () => { const value = await transport.read(messageId); assert.ok(!['failed', 'interrupted'].includes(value.status), JSON.stringify(value));
+        return value.status === 'completed' && value; });
     };
     const first = await push('first', 'Schedule my update.', 'alice');
     assert.equal(first.reply, 'Which detail?');
     await friends({ action: 'submit', input: { id: 'local-notice', text: 'Send me the update.', createdAt: new Date().toISOString() } });
     await until(() => received.some(body => body.arguments?.text === 'From desktop.'));
     assert.equal(received.find(body => body.arguments?.text === 'From desktop.').senderId, 'alice');
-    await push('second', 'Unrelated message.', 'bob');
+    const second = (await gateway.command({ action: 'save', config: { ...cfg, name: 'Weixin work' }, binding: {
+      kind: 'assistant', sessionId: 'personal-assistant', title: 'Work', parent: { ...parent, sessionId: 'personal-assistant',
+        tools: parent.tools.filter(t => t.name !== 'assistant_event'), metadata: { mcpCatalogUpdates: 'additions' } }, profile: assistant, generation: 0 } })).connections.find(c => c.id !== connection.id);
+    assert.ok(second);
+    const workHeaders = { Authorization: `Bearer ${second.token}`, 'Content-Type': 'application/json' }, workLease = second.endpoint.replace(/\/messages$/, '/capabilities');
+    assert.equal((await fetch(workLease, { headers: workHeaders, method: 'POST', body: JSON.stringify({ protocol: 'cardbush.webhook.v1', capabilities: { text: true }, plugins: [plugin], instanceId }) })).status, 200);
+    await push('second', 'Unrelated message.', 'bob', client(second));
+    const workRequest = requests.find(req => req.sessionId === 'personal-assistant' && req.messages.some(m => m.content === 'Unrelated message.'));
+    assert.ok(workRequest.tools.some(tool => tool.name === 'assistant_event'), 'an already paired Assistant bot can manage new events');
     await push('third', 'Confirmed detail.', 'alice');
     await push('first', 'Schedule my update.', 'alice');
     const events = (await friends({ action: 'read' })).events, original = events.find(e => e.intent === 'Schedule my update.');
     assert.deepEqual(original.inputs.map(i => i.text), ['Schedule my update.', 'Confirmed detail.']);
-    assert.equal(events.find(e => e.intent === 'Unrelated message.').inputs.length, 1);
+    assert.ok(original.inputs.every(i => i.authoredBy === 'assistant' && i.sourceMessageId), 'delegated event intents retain provenance without becoming user-authored quotes');
+    assert.ok(!events.some(e => e.intent === 'Unrelated message.'), 'an ordinary chat message cannot become unrelated event evidence');
     await until(() => received.some(body => body.arguments?.text === 'Your scheduled notice.'));
     const sent = received.filter(body => body.type === 'tool.call' && body.arguments.text === 'Your scheduled notice.');
     assert.equal(sent.length, 1); assert.equal(sent[0].senderId, 'alice'); assert.equal(sent[0].messageId, 'first');
     assert.equal(sent[0].conversationId, 'shared-room'); assert.equal(sent[0].arguments.text, 'Your scheduled notice.');
     await until(() => received.filter(body => body.id).length === 3);
     assert.deepEqual(received.filter(body => body.id === 'first').map(body => [body.sender, body.text]), [['alice', 'Which detail?']]);
-    assert.equal((await friends({ action: 'read_webhook', receiptId: original.inputs[0].botSourceRef.slice(8) })).reply, 'Which detail?');
+    const journal = await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId: 'personal-assistant' });
+    assert.ok(journal.entries.some(e => e.eventId === original.id && e.role === 'assistant'));
+    assert.ok(journal.entries.some(e => e.content === 'Unrelated message.' && e.role === 'user'));
+    assert.ok(requests.filter(req => req.metadata.friendsExecution).every(req => !JSON.stringify(req.messages).includes('Unrelated message.')));
+    assert.equal((await bot.read('first')).reply, 'Which detail?');
     assert.equal((await runContextWebhook(bridge, selected, message('missing'), randomUUID(), true, new AbortController().signal)).status, 'interrupted');
-    const inbound = requests.find(req => req.metadata.botSourceRef), timed = requests.find(req => req.metadata.botSourceRefs);
+    const inbound = requests.find(req => req.metadata.botSourceRef), timed = requests.find(req => req.metadata.friendsExecution && req.metadata.botSourceRefs);
     assert.equal(inbound.permissionMode, 'all_free'); assert.equal(inbound.requestCapabilities.interactiveRequests, false);
     assert.equal(timed.permissionMode, 'task_free'); assert.equal(timed.requestCapabilities.interactiveRequests, true);
-    assert.deepEqual(timed.metadata.botSourceRefs, [original.inputs[0].botSourceRef]);
+    assert.deepEqual(timed.metadata.botSourceRefs, [original.deliveryRoute.sourceRef]);
     assert.equal((await fetch(leaseUrl, { headers, method: 'DELETE', body: JSON.stringify({ protocol: 'cardbush.webhook.v1', instanceId }) })).status, 200);
+    assert.equal((await fetch(workLease, { headers: workHeaders, method: 'DELETE', body: JSON.stringify({ protocol: 'cardbush.webhook.v1', instanceId }) })).status, 200);
     await friends({ action: 'submit', input: { id: 'offline-check', text: 'Can I receive notifications?', createdAt: new Date().toISOString() } });
     await until(async () => (await friends({ action: 'read' })).events.find(e => e.id === 'offline-check')?.status === 'completed');
     const offline = requests.find(req => req.metadata.friendsEventId === 'offline-check');

@@ -319,11 +319,15 @@ test('async questions use the common answer broker and cannot be answered from a
     return { text: 'Answer received.' };
   });
   await f.configure(); const pending = await until(f.read, state => state.solutions.length === 1);
+  await f.host.sendCommand({ kind: 'runtime.create_session', payload: { sessionId: 'personal-assistant' } });
+  const status = () => f.host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { action: 'read', sessionId: 'personal-assistant' } });
+  assert.equal((await status()).eventNeedsResponse, true, 'the Assistant exposes the pending event interaction');
   const question = pending.solutions[0];
   const payload = { selectionId: question.selectionId, sessionId: FRIENDS_SESSION, turnId: question.turnId,
     kind: 'answers', answers: [{ questionId: 'format', kind: 'option', optionIndex: 0 }] };
   await assert.rejects(() => f.host.sendCommand({ kind: 'runtime.answer_solution_selection', payload: { ...payload, sessionId: 'personal-assistant' } }), /different session/);
   await f.host.sendCommand({ kind: 'runtime.answer_solution_selection', payload }); waiting.resolve();
+  assert.equal((await status()).eventNeedsResponse, false);
   const done = await until(f.read, state => state.events[0]?.status === 'completed');
   assert.equal(done.solutions.length, 0);
   assert.ok(f.requests.some(request => request.messages.some(message => message.name === 'background_tool_result' && message.content.includes('Text'))));
@@ -353,4 +357,55 @@ test('user input IDs cannot replace technical events or suppress system signals'
   await f.send('startup', 'An independent input with a reserved-looking ID');
   await until(f.read, state => state.events.find(event => event.id === 'startup')?.status === 'completed');
   assert.equal((await f.read()).events.length, 2);
+});
+
+test('Assistant adopts persisted detections, archived work and recognition without replaying them', async t => {
+  const old = await fixture(t, async (req, round) => {
+    if (data(req).event.id !== 'original-watch') return simple(req, round);
+    if (round === 1) return { calls: [{ name: 'friends_watch_time', input: { eventId: 'original-watch', at: '2099-03-04T05:00:00Z' } }, decide('watching')] };
+    return { text: 'Monitoring the original event.' };
+  }, { keep: true });
+  await old.configure({ recognition: { context: 'First confirmed routine' } });
+  await until(old.read, s => s.events[0]?.status === 'completed');
+  await old.send('original-watch', 'Follow the original schedule');
+  await until(old.read, s => s.events.some(e => e.id === 'original-watch' && e.status === 'watching'));
+  await old.command({ action: 'archive', eventId: 'original-watch' });
+  const previous = await old.read(); await old.close();
+  const merged = await fixture(t, simple, { root: old.root });
+  const prefs = await merged.command({ action: 'preferences' });
+  assert.deepEqual(prefs.recognition, { context: 'First confirmed routine' });
+  const { configuration } = JSON.parse(await readFile(join(old.root, 'friends/events.json'), 'utf8'));
+  await merged.command({ action: 'configure', parent: { ...configuration.parent, sessionId: 'personal-assistant',
+    model: 'current-assistant-model', inputMessages: [{ messageId: 'bootstrap', message: { role: 'user', content: 'Bootstrap' } }] },
+    profile: configuration.profile, assistant: { name: 'Existing Assistant', proactive: prefs } });
+  const after = await merged.read(), binding = await merged.command({ action: 'binding' });
+  assert.deepEqual(after.events, previous.events); assert.deepEqual(after.detections, previous.detections);
+  assert.equal(binding.parent.model, 'current-assistant-model');
+  assert.equal(binding.profile.name, 'Existing Assistant'); assert.equal(merged.requests.length, 0);
+});
+
+test('Assistant-owned event pins the selected notification account even after its preference changes', async t => {
+  const sources = new Map(['personal', 'work'].map(id => ['webhook:' + id, {
+    sourceRef: 'webhook:' + id, connectionId: id, senderId: 'same-user', conversationId: 'same-chat', available: true }]));
+  const fixtureHost = { botMessaging: { catalog: async () => [], context: async (_root, ref) => ({ discovery: 'mcp_search', available: true,
+    source: sources.get(ref), targets: [...sources.values()] }), call: async () => { throw Error('Unexpected platform call'); } } };
+  const f = await fixture(t, async (req, round) => {
+    if (data(req).event.id === 'pinned' && round === 1 && data(req).signals[0].kind === 'input') return { calls: [
+      { name: 'friends_watch_time', input: { eventId: 'pinned', at: '2099-03-04T05:00:00Z' } }, decide('watching')] };
+    return simple(req, round);
+  }, { host: fixtureHost });
+  const configure = ref => f.command({ action: 'configure', assistant: { name: 'Assistant',
+    proactive: { recognition: {}, beforeExecution: 'ask', report: 'always', notificationSourceRef: ref } },
+    profile: { name: 'Assistant', recognition: {}, language: 'en', timeZone: 'UTC', confirmedAt: now() },
+    parent: { protocol: 'bush.session_turn_request.v1', requestId: 'setup', sessionId: 'personal-assistant', turnId: 'setup',
+      model: 'fixture', tools: [], prefixMessages: [], inputMessages: [{ messageId: 'private-chat', message: { role: 'user', content: 'Secret chat context' } }], metadata: {}, permissionMode: 'task_free' } });
+  await configure('webhook:work'); assert.equal(f.requests.length, 0, 'preparing the Assistant does not invent a user event');
+  await f.send('pinned'); await until(f.read, s => s.events.find(e => e.id === 'pinned')?.status === 'watching');
+  await configure('webhook:personal'); await f.command({ action: 'resume', eventId: 'pinned' });
+  const done = await until(f.read, s => s.events.find(e => e.id === 'pinned')?.status === 'completed');
+  assert.ok(done.events[0].deliveryRoute.recipientKey);
+  for (const request of f.requests) {
+    assert.deepEqual(request.metadata.botSourceRefs, ['webhook:work']);
+    assert.ok(!JSON.stringify(request.messages).includes('Secret chat context'));
+  }
 });

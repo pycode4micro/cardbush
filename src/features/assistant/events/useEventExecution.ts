@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FriendsSnapshot } from '@cardbush/bush-protocol';
-import { friendsBackend } from './friendsBackend';
+import { eventBackend } from './eventBackend';
 
-export function useFriendsExecution(enabled: boolean) {
+export function useEventExecution(enabled: boolean) {
   const [snapshot, setSnapshot] = useState<FriendsSnapshot>();
   const [error, setError] = useState(false);
   const mounted = useRef(true), refreshTask = useRef<Promise<void> | undefined>(undefined);
   const refresh = useCallback(() => {
-    return refreshTask.current ??= friendsBackend.read().then(value => {
+    return refreshTask.current ??= eventBackend.read().then(value => {
       if (mounted.current) { setSnapshot(previous => JSON.stringify(previous) === JSON.stringify(value) ? previous : value); setError(false); }
     }, () => { if (mounted.current) setError(true); }).finally(() => { refreshTask.current = undefined; });
   }, []);

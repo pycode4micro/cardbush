@@ -56,7 +56,7 @@ export class BridgePluginTools {
       const singleRecipient = !active.length && metadata.botRequiresSingleRecipient === true;
       const state = await bridge.context(root, singleRecipient ? undefined : ref, context.signal);
       if (!ref || singleRecipient) {
-        const sources = state.targets.filter(source => source.connectionId === entry.connectionId && source.available);
+        const sources = state.targets.filter(source => source.available && (singleRecipient || source.connectionId === entry.connectionId));
         if (sources.length !== 1) return fail('bridge_source_required');
         if (ref && ref !== sources[0]!.sourceRef) return fail('bridge_source_mismatch');
         ref = sources[0]!.sourceRef;

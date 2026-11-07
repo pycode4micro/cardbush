@@ -1,3 +1,4 @@
+import { FRIENDS_SESSION, PERSONAL_ASSISTANT_SESSION, FRIENDS_COMMAND } from '@cardbush/bush-protocol';
 import { createServer, type Server } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -14,6 +15,8 @@ import { snapshotWebhookFiles, readBotAcknowledgement } from './contextWebhookFi
 import { bridgePluginsSchema, bridgeToolCallSchema, bridgeFilePaths, bridgeToolName, type BridgePlugin, type BridgeToolCall } from '@cardbush/bush-protocol';
 import { applyWebhookTurnPolicy } from '@cardbush/bush-protocol';
 
+// Old encrypted records keep receipt and token identity across the Assistant merge.
+const owner = (id: string) => id === FRIENDS_SESSION ? PERSONAL_ASSISTANT_SESSION : id;
 type Connection = ContextWebhookConfig & { id: string; token: string; binding: WebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
   bot?: { capabilities: BotCapabilities; expiresAt: number; plugins?: BridgePlugin[]; instanceId?: string } };
 type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: WebhookBinding;
@@ -84,8 +87,8 @@ export class ContextWebhookHost {
     return { listening: Boolean(address), host: this.state.host, port, error: this.listenerError,
       pairings: this.state.pairings.filter(p => p.status === 'pending' && p.expiresAt > Date.now())
         .map(p => ({ requestId: p.requestId, name: p.name, replyUrl: p.replyUrl })),
-      connections: this.state.connections.filter(c => c.binding.sessionId === sessionId).map(c => ({ ...this.config(c), id: c.id,
-        sessionId, kind: c.binding.kind, token: c.token, endpoint: `http://${host}:${port}/api/webhooks/v1/${c.id}/messages`,
+      connections: this.state.connections.filter(c => owner(c.binding.sessionId) === owner(sessionId)).map(c => ({ ...this.config(c), id: c.id,
+        sessionId, kind: c.binding.kind === 'friends' ? 'assistant' : c.binding.kind, token: c.token, endpoint: `http://${host}:${port}/api/webhooks/v1/${c.id}/messages`,
         status: this.connectionStatus(c),
         pending: this.state.receipts.filter(r => r.connectionId === c.id && (!terminal(r.status) || !r.delivered)).length,
         lastReceivedAt: c.lastReceivedAt, lastDeliveredAt: c.lastDeliveredAt, lastError: c.lastError })) };
@@ -132,7 +135,7 @@ export class ContextWebhookHost {
         tools: plugin.tools.map(tool => bridgeToolName(connection.id, plugin.id, tool.name)) })) ?? [] };
   }
   private botContext(sessionId: string, sourceRef?: string): BotContext {
-    const records = this.state.receipts.filter(r => r.binding.sessionId === sessionId), seen = new Set<string>(), targets: BotSource[] = [];
+    const records = this.state.receipts.filter(r => owner(r.binding.sessionId) === owner(sessionId)), seen = new Set<string>(), targets: BotSource[] = [];
     for (const record of [...records].reverse()) {
       const key = JSON.stringify([record.connectionId, record.message.senderId, record.message.conversationId]);
       if (seen.has(key)) continue; seen.add(key);
@@ -142,7 +145,7 @@ export class ContextWebhookHost {
     const record = sourceRef && records.find(r => `webhook:${r.id}` === sourceRef);
     const source = record ? this.botSource(record) : undefined;
     const available = sourceRef ? source?.available === true : targets.length > 0;
-    const connections = this.state.connections.filter(c => c.binding.sessionId === sessionId)
+    const connections = this.state.connections.filter(c => owner(c.binding.sessionId) === owner(sessionId))
       .map(c => ({ connectionId: c.id, botName: c.name, status: this.connectionStatus(c) }));
     const connected = connections.some(c => c.status === 'connected');
     return { discovery: 'mcp_search', available, ...(source ? { source } : {}), targets, connections,
@@ -254,7 +257,7 @@ export class ContextWebhookHost {
     }
     if (request.action === 'delete') {
       await this.write(state => {
-        const connection = state.connections.find(c => c.id === request.id && c.binding.sessionId === request.sessionId);
+        const connection = state.connections.find(c => c.id === request.id && owner(c.binding.sessionId) === owner(request.sessionId));
         if (!connection) throw new WebhookError('connection_not_found', 404);
         state.connections = state.connections.filter(c => c !== connection);
       });
@@ -268,7 +271,7 @@ export class ContextWebhookHost {
   }
   private saveConnection(state: State, config: ContextWebhookConfig, binding: WebhookBinding) {
     const previous = config.id ? state.connections.find(c => c.id === config.id) : undefined;
-    if (config.id && (!previous || previous.binding.sessionId !== binding.sessionId || previous.binding.kind !== binding.kind)) throw new WebhookError('binding_mismatch');
+    if (config.id && (!previous || owner(previous.binding.sessionId) !== owner(binding.sessionId) || (previous.binding.kind !== binding.kind && !(previous.binding.kind === 'friends' && binding.kind === 'assistant')))) throw new WebhookError('binding_mismatch');
     if (!previous && state.connections.length >= 32) throw new WebhookError('connection_limit');
     // Friends resolves the current configuration at event activation; a bridge owns only the destination.
     if (binding.kind !== 'friends') {
@@ -288,7 +291,7 @@ export class ContextWebhookHost {
     if (!connection) return { ...result, status: 'revoked' };
     const view = this.snapshot(connection.binding.sessionId).connections.find(c => c.id === connection.id)!;
     return { ...result, connection: { id: connection.id, endpoint: view.endpoint, token: connection.token,
-      sessionId: connection.binding.sessionId, title: connection.binding.title } };
+      sessionId: owner(connection.binding.sessionId), title: connection.binding.title } };
   }
   private listen(): Promise<void> {
     // Local discovery is available before the first connection is configured.
@@ -354,7 +357,7 @@ export class ContextWebhookHost {
           json(200, { protocol: contextWebhookProtocol, status: 'connected', leaseSeconds: 45, features: ['bridge_plugins'] }); return;
         }
         if (req.method === 'GET' && !match![2]) {
-          json(200, { protocol: contextWebhookProtocol, type: 'connection.info', sessionId: connection.binding.sessionId, title: connection.binding.title }); return;
+          json(200, { protocol: contextWebhookProtocol, type: 'connection.info', sessionId: owner(connection.binding.sessionId), title: connection.binding.title }); return;
         }
         if (req.method === 'GET' && match![2]) {
           const messageId = decodeURIComponent(match![2]); const record = this.state.receipts.find(r => r.connectionId === connection.id && r.message.messageId === messageId);
@@ -372,6 +375,12 @@ export class ContextWebhookHost {
           if (state.receipts.filter(r => !terminal(r.status)).length >= 128) throw new WebhookError('queue_full', 429);
           // A connection survives Assistant resets and Runtime restarts. Only a new
           // message adopts the current context; queued/recovered receipts stay pinned.
+          if (current.binding.kind === 'friends') {
+            const assistant = await this.runtime.command(FRIENDS_COMMAND, { action: 'binding' });
+            if (!assistant?.parent || !assistant.profile) throw new WebhookError('service_unavailable', 503);
+            current.binding = { kind: 'assistant', sessionId: PERSONAL_ASSISTANT_SESSION,
+              title: assistant.profile.name, parent: assistant.parent, profile: assistant.profile, generation: 0 };
+          }
           if (current.binding.kind === 'assistant') {
             const { generation } = await this.runtime.command('runtime.assistant_conversation', {
               action: 'read', sessionId: current.binding.sessionId, after: Number.MAX_SAFE_INTEGER })

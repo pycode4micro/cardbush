@@ -63,31 +63,25 @@ async function run() {
         const read = code => win.webContents.executeJavaScript(code).catch(cause => {
           throw new Error(`Production window script failed: ${code}; renderer errors: ${failures.join('\n')}`, { cause });
         });
-        const until = async code => { const end = Date.now() + 6000; while (!await read(code)) { if (Date.now() >= end) throw Error('Your Friends production integration timed out: ' + code); await pause(25); } };
-        await until('document.querySelector("[data-nav-section=your-friends]")');
-        await read('document.querySelector("[data-nav-section=your-friends]").click();void 0');
-        await until('document.querySelector(".your-friends[data-phase=open]")');
-        assert.equal(await read('document.querySelector(".desktop-shell").inert'), true);
-        assert.equal(await read('!!document.querySelector(".window-frame")'), true, 'native window frame remains mounted');
-        assert.ok(await read('!!document.querySelector(".friends-onboarding")'), 'new profiles begin with recognition');
-        assert.equal(await read('!!document.querySelector(".friends-header nav")'), false, 'initialization keeps secondary navigation hidden');
-        await read('document.querySelector(".friends-back").click();void 0');
-        await until('!document.querySelector(".your-friends")');
-        assert.equal(await read('document.querySelector(".desktop-shell").inert'), false);
-        assert.equal(await read('document.activeElement.dataset.navSection'), 'your-friends');
-        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: ',', modifiers: ['control'] });
-        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['control'] });
-        await until('document.querySelector(".settings-shell:not(.settings-inactive) input[placeholder=\\"Your Friends\\"]")');
-        await read('document.querySelector(".settings-shell input[placeholder=\\"Your Friends\\"]").closest(".settings-card").querySelector(".settings-switch input").click();void 0');
-        await until('JSON.parse(localStorage.getItem("cardbush_your_friends_v1")).startup===true');
-        await read('document.querySelector(".settings-shell .back-button").click();void 0');
-        await until('!document.querySelector(".settings-shell:not(.settings-inactive)")');
-        await win.reload();
-        await until('document.querySelector(".your-friends[data-phase=open]")');
-        assert.ok(await read('!!document.querySelector(".friends-onboarding")'), 'saved default startup resumes introduction');
-        await read('document.querySelector(".friends-back").click();void 0');
-        await until('!document.querySelector(".your-friends")');
-        assert.equal(await read('document.activeElement.dataset.navSection'), 'your-friends', 'default entry has a valid return focus');
+        const until = async code => { const end = Date.now() + 6000; while (!await read(code)) { if (Date.now() >= end) throw Error('Assistant event integration timed out: ' + code); await pause(25); } };
+        await read(`localStorage.setItem('cardbush_personal_assistant_v1', JSON.stringify({name:'Existing assistant',persona:'Existing persona'}));
+          localStorage.setItem('cardbush_your_friends_v1', JSON.stringify({version:2, introduction:{confirmedAt:'2026-11-01T01:00:00Z', answers:{context:'Migrated routine'}},
+            delegation:{beforeExecution:'ask',report:'always'},events:[{id:'previous-note',text:'Original evidence',createdAt:'2026-11-01T01:00:00Z',archived:false}]}));void 0`);
+        await win.loadFile(path.resolve('dist/index.html'), { query: { window: mode } });
+        await until('document.querySelector("[data-nav-section=assistant]")');
+        const migrated = await read('JSON.parse(localStorage.getItem("cardbush_personal_assistant_v1"))');
+        assert.equal(migrated.name, 'Existing assistant'); assert.equal(migrated.persona, 'Existing persona');
+        assert.equal(migrated.proactive.recognition.context, 'Migrated routine'); assert.equal(migrated.proactive.report, 'always');
+        assert.equal(await read('!!document.querySelector("[data-nav-section=your-friends]")'), false);
+        await read('document.querySelector("[data-nav-section=assistant]").click();void 0');
+        await until('document.querySelector("[data-assistant-events]")');
+        await read('document.querySelector("[data-assistant-events]").click();void 0');
+        await until('document.querySelector(".assistant-events-dialog[open]")');
+        assert.ok(await read('!!document.querySelector(".assistant-events-dialog textarea")'));
+        assert.ok(await read('document.querySelector(".assistant-events-dialog details").textContent.includes("Original evidence")'));
+        await read('document.querySelector(".assistant-events-dialog .settings-dialog-header button").click();void 0');
+        await until('!document.querySelector(".assistant-events-dialog")');
+        assert.ok(await read('!!document.querySelector("[data-assistant-events]")'));
       }
       assert.deepEqual(failures, [], `${mode} must evaluate its split chunks without runtime errors`);
     } finally {
@@ -96,6 +90,6 @@ async function run() {
   }
   assert.deepEqual(errors, []);
   clearTimeout(deadline);
-  console.log('Production window entries passed: workspace, Your Friends entry/return/default startup, and Shadow.');
+  console.log('Production window entries passed: workspace, Assistant event entry and return, and Shadow.');
   app.exit(0);
 }

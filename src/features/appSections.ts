@@ -3,7 +3,6 @@ import type { AppSection } from '../types';
 
 export const sectionLabels: Record<AppSection, MessageKey> = {
   assistant: 'appSections.assistant',
-  'your-friends': 'yourFriends.title',
   components: 'appCenterModel.components',
   chat: 'appSections.chat',
   plugins: 'appCenterModel.plugins',

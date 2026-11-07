@@ -4,7 +4,7 @@
 
 ## 微信和飞书快捷接入
 
-如果目标是 Friends，请先完成认知确认，在 **Friends 自己的右上角 → 连接服务** 中配对。绑在 Assistant 或普通会话的桥不会自动共享。更换已有微信桥的绑定时，先停止该桥，运行 `cardbush-bridge connect weixin`，在 Friends 确认，再运行 `cardbush-bridge start weixin`。从希望接收通知的微信对话给 Bot 发第一条消息，以建立收件人。Friends 将来信记为事件，事件结果回原对话；需要主动通知时才调用在线桥的发送工具。飞书业务插件的读写设置或可见群列表不是消息桥的绑定状态。
+主动事件和对话共用 Assistant 的「连接服务」。可以绑定多个微信号；从外部发起的事件沿原连接和收件人回复，本地事件可在 Assistant 设置中选择默认通知对话。已有 Friends 桥在升级后沿用原令牌、消息回执和来源，无需再次配对。
 
 1. **在运行目标 CardBush 的机器上操作。** App 打开目标会话或 Assistant；CLI 先在目标交互式会话输入 `/webhook start`。远程 worker 中的 `127.0.0.1` 指向 worker 自己；Assistant 需要执行本机命令时可以委派给有本机工具的子任务。宿主没有终端工具时，把下面的命令交给用户在该机执行。
 2. **先检查再启动。** 查看当前轮 `bot_context.connections`（若有），并在本机运行 `cardbush-bridge status weixin --json` 或 `cardbush-bridge status feishu --json`。目标会话已有同名在线连接时直接验收；已保存但离线时启动原桥。进程已运行时优先检查现有绑定，避免再开一个实例。只读发现请求可确认本机是否有协议宿主：

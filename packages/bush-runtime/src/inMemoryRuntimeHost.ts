@@ -7,7 +7,7 @@ import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks }
 import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
-import { FriendsRuntime } from './friendsRuntime.js';
+import { AssistantEvents } from './assistantEvents.js';
 import { FRIENDS_COMMAND, FRIENDS_SESSION, type FriendsSnapshot } from '@cardbush/bush-protocol';
 import { AssistantManagement } from './assistantManagement.js';
 import { ConversationJournal } from './conversationJournal.js';
@@ -397,7 +397,7 @@ export class InMemoryRuntimeHost {
   readonly #subagentTasks: SubagentTaskStore;
   #realtimeAgents?: RealtimeAgentDispatcher;
   readonly #assistant: AssistantConversation;
-  readonly #friends: FriendsRuntime;
+  readonly #assistantEvents: AssistantEvents;
   readonly #assistantManagement: AssistantManagement;
   readonly #remoteAgents?: InMemoryRuntimeHostOptions['remoteAgents'];
   #voiceMaintenance = new Map<string, AbortController>();
@@ -511,8 +511,23 @@ export class InMemoryRuntimeHost {
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks'].includes(tool.name)),
+      eventNeedsResponse: () => {
+        const turnId = this.#assistantEvents.store.select(state => state.active?.turnId);
+        return Boolean(turnId && this.#agentExecutions.get(FRIENDS_SESSION, turnId)?.status === 'waiting');
+      },
+      eventPreferences: () => this.#assistantEvents.store.select(state => state.configuration?.assistant?.proactive),
       management: this.#assistantManagement,
-      prepareParent: (parent, signal) => this.#bridgePlugins.prepare(parent, signal),
+      prepareParent: (parent, signal) => {
+        // Previously paired desktop bridges saved their tool catalog. Reconcile the
+        // event tool with today's Assistant configuration on a normal open catalog.
+        if (parent.metadata.userQuestionDelivery === 'final_reply' && parent.metadata.mcpCatalogUpdates === 'additions' &&
+          parent.tools.some(tool => tool.name === 'schedule_task') && !parent.tools.some(tool => tool.name === 'assistant_event') &&
+          !(parent.metadata.disabledTools as string[] | undefined)?.includes('assistant_event')) {
+          const added = this.#assistantEvents.store.select(state => state.configuration?.parent.tools.find(tool => tool.name === 'assistant_event'));
+          if (added) parent = { ...parent, tools: [...parent.tools, added] };
+        }
+        return this.#bridgePlugins.prepare(parent, signal);
+      },
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
       environment: this.#environment,
       agents: this.#agentExecutions,
@@ -833,8 +848,15 @@ export class InMemoryRuntimeHost {
       background: this.#backgroundTools.list(request.sessionId, request.turnId).map(job => ({ id: job.id, name: job.name, status: job.status })),
     }));
     for (const [section, source] of Object.entries(options.environmentSources ?? {})) this.#environment.register(section, source);
-    this.#friends = new FriendsRuntime(join(runtimeDataRoot, 'friends', 'events.json'), {
-      tools: this.#toolRegistry,
+    this.#assistantEvents = new AssistantEvents(join(runtimeDataRoot, 'friends', 'events.json'), {
+      tools: this.#toolRegistry, clock: options.automation?.clock,
+      botContext: ref => this.#observeBotContext(PERSONAL_ASSISTANT_SESSION, ref),
+      publish: notice => {
+        this.#assistant.journal.append(PERSONAL_ASSISTANT_SESSION, {
+          id: notice.turnId, originTurnId: notice.turnId, eventId: notice.eventId, role: 'assistant', source: 'page', visibility: 'conversation',
+          content: notice.text.slice(0, 64000), createdAt: notice.createdAt,
+        });
+      },
       onError: error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))),
       run: async (request, signal) => {
         const terminal = await this.runModelTurn(request, { signal });
@@ -848,7 +870,7 @@ export class InMemoryRuntimeHost {
         return { terminal, text: [...segments.values()].join('') };
       },
       interactions: () => {
-        const active = this.#friends.store.select(state => state.active);
+        const active = this.#assistantEvents.store.select(state => state.active);
         const pending = new Map<string, FriendsSnapshot['permissions'][number]>();
         for (const event of active ? this.events(FRIENDS_SESSION, active.turnId) : []) {
           if (event.kind === 'permission_requested') pending.set(event.payload.permissionId, {
@@ -860,7 +882,7 @@ export class InMemoryRuntimeHost {
         return { permissions: [...pending.values()], solutions: this.#solutions.list(FRIENDS_SESSION) };
       },
     });
-    this.#environment.register('friends', () => this.#friends.environment());
+    this.#environment.register('friends', () => this.#assistantEvents.environment());
     this.#extensionApi = {
       environment: { read: (sessionId, signal) => this.readEnvironment(sessionId, signal) },
       conversations: { list: () => this.#conversations.list(), notify: (id, notice) => this.#conversations.notify(id, notice),
@@ -1613,7 +1635,7 @@ export class InMemoryRuntimeHost {
       }
       case FRIENDS_COMMAND:
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
-        return this.#friends.command(command.payload);
+        return this.#assistantEvents.command(command.payload);
       case REALTIME_AGENT_TOOL_COMMAND: {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
         const input = realtimeAgentToolRequestSchema.parse(command.payload);
@@ -1742,7 +1764,7 @@ export class InMemoryRuntimeHost {
       }
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
-        await this.#friends.close();
+        await this.#assistantEvents.close();
         this.#conversations.close();
         this.#stopEnvironmentObservation();
         this.#environment.close();
@@ -1967,6 +1989,7 @@ export class InMemoryRuntimeHost {
   #botRootSession(id: string): string {
     const seen = new Set<string>();
     while (!seen.has(id) && seen.size < 32) {
+      if (id === FRIENDS_SESSION) return PERSONAL_ASSISTANT_SESSION;
       seen.add(id);
       const parent = this.#sessions.snapshot(id)?.metadata?.parentSessionId;
       if (typeof parent !== 'string' || !parent) return id;
@@ -4727,7 +4750,7 @@ export class InMemoryRuntimeHost {
   }
 
   async #deleteSession(sessionId: string) {
-    if (sessionId === FRIENDS_SESSION) await this.#friends.disconnect();
+    if (sessionId === FRIENDS_SESSION) await this.#assistantEvents.disconnect();
     this.#assistant.forget(sessionId);
     this.#conversations.forget(sessionId);
     await this.#subagentResume.remove(sessionId);

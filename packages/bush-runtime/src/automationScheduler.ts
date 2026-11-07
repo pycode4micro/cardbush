@@ -1,3 +1,4 @@
+import { AutomationClock } from './automationClock.js';
 import { mkdir, readFile, rename, writeFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { blobCacheEntries } from './cacheMaintenance.js';
@@ -29,7 +30,7 @@ export class AutomationScheduler {
   private state: State = { version: 1, jobs: [], contexts: {}, jobContexts: {} };
   private readonly ready: Promise<void>;
   private queue: Promise<unknown> = Promise.resolve();
-  private timer?: ReturnType<typeof setTimeout>;
+  readonly clock = new AutomationClock();
   private closed = false;
   private started = false;
   private ticking = false;
@@ -290,9 +291,9 @@ export class AutomationScheduler {
   }
   start() { if (this.started || this.closed) return; this.started = true; this.schedule(); }
   private schedule() {
-    this.timer = setTimeout(() => { void this.tick().catch(error => this.options.onError?.(error)).finally(() => { if (!this.closed) this.schedule(); }); }, 1000);
-    this.timer.unref?.();
+    this.clock.schedule(this.wake, 1000);
   }
+  private wake = () => { void this.tick().catch(error => this.options.onError?.(error)).finally(() => { if (!this.closed) this.schedule(); }); };
   async tick() {
     if (this.ticking || this.closed) return;
     this.ticking = true;
@@ -351,5 +352,5 @@ export class AutomationScheduler {
       if (job.trigger.kind === 'interval' && job.nextRunAt && Date.parse(job.nextRunAt) <= this.now()) job.nextRunAt = nextInterval(job, this.now());
     }); } catch (caught) { this.options.onError?.(caught); }
   }
-  async close() { this.closed = true; clearTimeout(this.timer); for (const controller of this.running.values()) controller.abort(); await Promise.allSettled([...this.executions]); await this.queue; }
+  async close() { this.closed = true; this.clock.cancel(this.wake); for (const controller of this.running.values()) controller.abort(); await Promise.allSettled([...this.executions]); await this.queue; }
 }
