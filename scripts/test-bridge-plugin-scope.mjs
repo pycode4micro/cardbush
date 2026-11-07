@@ -30,11 +30,14 @@ test('bridge plugins use ordinary search, isolate sessions and sources, refresh 
     assert.equal((await prepare(metadata)).tools.length, 0, 'scoped requests cannot gain ungranted capabilities');
   assert.equal((await prepare({ agentRole: 'child' }, [registry.resolve(names[0]).definition])).tools.length, 1);
   assert.equal((await prepare({ disabledTools: names })).tools.length, 0);
+  assert.equal((await prepare({ botDeliveryLocalOnly: true }, [registry.resolve(names[0]).definition])).tools.length, 0);
   const coordinator = new ToolExecutionCoordinator({ registry });
   const execute = (sessionId, name, args, metadata = {}) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'call', name, argumentsText: JSON.stringify(args) },
     { requestId: 'r', sessionId, turnId: 't', round: 1, ordinal: 1 }, undefined,
     { request: { protocol: 'bush.model_request.v1', requestId: 'r', sessionId, turnId: 't', model: 'fixture', messages: [], tools: registry.definitions(), permissionMode: 'all_free', metadata }, contextMessages: [] });
   assert.equal((await execute('a', 'mcp_search', { query: 'create_card' })).result.matches.length, 2);
+  assert.equal((await execute('a', 'mcp_search', { query: 'create_card' }, { botDeliveryLocalOnly: true })).result.matches.length, 0);
+  assert.equal((await execute('a', names[0], { title: 'local reminder' }, { botDeliveryLocalOnly: true })).kind, 'failed');
   assert.equal((await execute('b', 'mcp_search', { query: '*' })).result.matches.length, 0, 'another conversation cannot discover these plugins');
   assert.equal((await execute('child-a', 'mcp_search', { query: '*' })).result.matches.length, 2, 'authorized children retain the root connection scope');
   assert.equal((await execute('a', names[1], { title: 'wrong platform' }, { botSourceRef: 'source-a' })).error.code, 'bridge_source_mismatch');

@@ -20,6 +20,12 @@ export const eventRecurrenceSchema = z.object({
 }).strict().refine(rule => !rule.weekdays || (rule.unit === 'week' && new Set(rule.weekdays).size === rule.weekdays.length),
   'Use distinct weekdays with a weekly rule.');
 export type EventRecurrence = z.infer<typeof eventRecurrenceSchema>;
+const predicateCode = z.string().min(1).max(8000).describe('Synchronous JavaScript function body. Use observation, return exactly 0 or 1.');
+export const eventPredicateSchema = z.discriminatedUnion('source', [
+  z.object({ source: z.literal('interval'), everySeconds: z.int().min(1).max(86400), code: predicateCode }).strict(),
+  z.object({ source: z.literal('runtime'), code: predicateCode }).strict(),
+]);
+export type EventPredicate = z.infer<typeof eventPredicateSchema>;
 export const friendInputSchema = z.object({ id: z.string().min(1).max(160), text: z.string().min(1).max(8000).refine(value => Boolean(value.trim())),
   createdAt: z.string().datetime(), relatesTo: z.string().min(1).max(160).optional() }).strict();
 const webhookText = z.string().min(1).max(32000).refine(value => Boolean(value.trim()));
@@ -50,6 +56,10 @@ export interface FriendsWorkEvent {
   id: string; logicalKey: string; origin: 'user' | 'agent' | 'system'; title: string; intent: string;
   subscription?: true;
   recurrence?: EventRecurrence;
+  trigger?: EventPredicate;
+  triggerMatched?: boolean;
+  currentInputId?: string;
+  reminderText?: string;
   inputs: z.infer<typeof friendEvidenceSchema>[]; deliveryRoute?: z.infer<typeof friendDeliveryRouteSchema>; status: FriendEventStatus; archived: boolean; revision: number; createdAt: string; updatedAt: string;
   result?: { text: string; turnId: string; createdAt: string };
   decision?: { disposition: 'completed' | 'watching' | 'waiting_user'; basis: string; habitRefs: Array<{ id: string; revision: number }> };

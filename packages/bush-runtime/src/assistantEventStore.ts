@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { eventRecurrenceSchema, friendEvidenceSchema, friendDeliveryRouteSchema, friendsWebhookReceiptSchema, type FriendsWebhookReceipt, assistantProfileSchema, type AssistantProfile, friendsProfileSchema, runtimeSessionTurnRequestSchema,
+import { eventPredicateSchema, eventRecurrenceSchema, friendEvidenceSchema, friendDeliveryRouteSchema, friendsWebhookReceiptSchema, type FriendsWebhookReceipt, assistantProfileSchema, type AssistantProfile, friendsProfileSchema, runtimeSessionTurnRequestSchema,
   type FriendsDetection, type FriendsProfile, type FriendsWorkEvent, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 
 const timestamp = z.string().datetime();
@@ -12,6 +12,7 @@ const stateSchema = z.object({
   discoveryStarted: z.literal(true).optional(),
   configuration: z.object({ parent: runtimeSessionTurnRequestSchema.extend({ inputMessages: z.tuple([]) }), profile: friendsProfileSchema, assistant: assistantProfileSchema.optional(), defaultRoute: friendDeliveryRouteSchema.optional() }).optional(),
   events: z.array(z.object({ id, logicalKey: id, origin: z.enum(['user', 'agent', 'system']), title: z.string(), intent: z.string(),
+    trigger: eventPredicateSchema.optional(), triggerMatched: z.boolean().optional(), currentInputId: id.optional(), reminderText: z.string().min(1).max(8000).optional(),
     subscription: z.literal(true).optional(), recurrence: eventRecurrenceSchema.optional(), inputs: z.array(friendEvidenceSchema), deliveryRoute: friendDeliveryRouteSchema.optional(), status: z.enum(['queued', 'running', 'watching', 'waiting_user', 'completed', 'paused', 'failed']),
     archived: z.boolean(), revision: z.number().int().positive(), createdAt: timestamp, updatedAt: timestamp,
     result: z.object({ text: z.string(), turnId: id, createdAt: timestamp }).optional(),
@@ -22,7 +23,8 @@ const stateSchema = z.object({
   detections: z.array(z.object({ id, eventId: id, at: timestamp })),
   notifications: z.array(z.object({ eventId: id, turnId: id, text: z.string(), createdAt: timestamp })).optional(),
   webhookReceipts: z.record(id, friendsWebhookReceiptSchema).optional(),
-  signals: z.array(z.object({ id, eventId: id, kind: z.enum(['input', 'clock', 'startup', 'resume']), createdAt: timestamp })),
+  signals: z.array(z.object({ id, eventId: id, kind: z.enum(['input', 'clock', 'predicate', 'startup', 'resume']), createdAt: timestamp,
+    observation: z.object({ nowMs: z.number(), kind: z.string(), toolName: z.string().optional(), status: z.string().optional() }).optional() })),
   active: z.object({ eventId: id, turnId: id, signalIds: z.array(id) }).optional(),
 });
 
@@ -34,7 +36,8 @@ export interface FriendsState {
   notifications?: Array<{ eventId: string; turnId: string; text: string; createdAt: string }>;
   webhookReceipts?: Record<string, FriendsWebhookReceipt>;
   detections: FriendsDetection[];
-  signals: Array<{ id: string; eventId: string; kind: 'input' | 'clock' | 'startup' | 'resume'; createdAt: string }>;
+  signals: Array<{ id: string; eventId: string; kind: 'input' | 'clock' | 'predicate' | 'startup' | 'resume'; createdAt: string;
+    observation?: { nowMs: number; kind: string; toolName?: string; status?: string } }>;
   active?: { eventId: string; turnId: string; signalIds: string[] };
 }
 

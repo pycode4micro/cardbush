@@ -17,6 +17,8 @@ type Arguments = Record<string, unknown>;
 export class BridgePluginTools {
   constructor(private registry: ToolRegistry, private bridge: BotMessagingBridge | undefined, private rootSession: (id: string) => string) {}
   async prepare<T extends { sessionId: string; tools: ModelRequest['tools']; metadata: ModelRequest['metadata'] }>(request: T, signal?: AbortSignal): Promise<T> {
+    if (request.metadata.botDeliveryLocalOnly === true) return { ...request,
+      tools: request.tools.filter(tool => tool.name !== 'send_to_bot' && !tool.name.startsWith('mcp__bridge_')) };
     await this.sync(request.sessionId, signal);
     const scope = { ...request, protocol: 'bush.model_request.v1', messages: [] } as unknown as ModelRequest;
     const prior = new Set(request.tools.map(tool => tool.name));
@@ -42,7 +44,7 @@ export class BridgePluginTools {
     const name = bridgeToolName(entry.connectionId, entry.plugin.id, tool.name);
     const validate = new Ajv({ strict: false, allErrors: false }).compile(tool.inputSchema);
     const admissions = new WeakMap<Arguments, { input: BridgeToolCall; files: BotFileAccess[] }>();
-    const available = (request: ModelRequest) => this.rootSession(request.sessionId) === root && entry.expiresAt > Date.now() &&
+    const available = (request: ModelRequest) => request.metadata.botDeliveryLocalOnly !== true && this.rootSession(request.sessionId) === root && entry.expiresAt > Date.now() &&
       !(request.metadata.disabledTools as string[] | undefined)?.includes(name);
     const resolve = async (context: ToolAdmissionContext<Arguments>) => {
       if (!context.turn || !available(context.turn.request)) return fail('bridge_tool_unavailable');

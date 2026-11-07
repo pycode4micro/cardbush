@@ -447,6 +447,7 @@ export class InMemoryRuntimeHost {
     },
   });
   readonly #stopEnvironmentObservation: () => void;
+  readonly #stopEventTriggers: () => void;
   readonly #contextCompactionAuthorizations = new Map<string, { state: ContextCompactionState; format: ContextCheckpointFormat }>();
   #shuttingDown = false;
   #cacheMaintenance: Promise<void> | undefined;
@@ -520,6 +521,10 @@ export class InMemoryRuntimeHost {
         return Boolean(turnId && this.#agentExecutions.get(FRIENDS_SESSION, turnId)?.status === 'waiting');
       },
       eventPreferences: () => this.#assistantEvents.store.select(state => state.configuration?.assistant?.proactive),
+      observeOutcome: (observation, identity) => {
+        if (this.#assistantEvents.hasRuntimeObservers())
+          void this.#assistantEvents.observeRuntime(observation, identity).catch(error => options.onRecoveryError?.(error));
+      },
       management: this.#assistantManagement,
       prepareParent: (parent, signal) => {
         // Previously paired desktop bridges saved their tool catalog. Reconcile the
@@ -840,13 +845,14 @@ export class InMemoryRuntimeHost {
     this.#environment.register('services', async ({ request, signal }) => {
       const refs = Array.isArray(request.metadata.botSourceRefs) ? request.metadata.botSourceRefs.filter((ref): ref is string => typeof ref === 'string') : [];
       const sourceRef = typeof request.metadata.botSourceRef === 'string' ? request.metadata.botSourceRef : undefined;
-      const bots = await Promise.all((refs.length ? refs : [sourceRef]).map(async ref => ({
+      const localOnly = request.metadata.botDeliveryLocalOnly === true;
+      const bots = localOnly ? [] : await Promise.all((refs.length ? refs : [sourceRef]).map(async ref => ({
         ...(ref ? { sourceRef: ref } : {}), context: await this.#observeBotContext(request.sessionId, ref, signal),
       })));
       const registeredMcpServers = [...new Set(this.#toolRegistry.definitions().flatMap(tool => {
         const registration = this.#toolRegistry.resolve(tool.name);
         if (registration?.mcpHook?.modelVisible === false || (registration?.registrationOwner?.startsWith('bridge:') &&
-          registration.registrationOwner !== `bridge:${this.#botRootSession(request.sessionId)}`)) return [];
+          (localOnly || registration.registrationOwner !== `bridge:${this.#botRootSession(request.sessionId)}`))) return [];
         const server = registration?.mcpHook?.server;
         return server ? [server] : [];
       }))].sort();
@@ -893,6 +899,17 @@ export class InMemoryRuntimeHost {
       },
     });
     this.#environment.register('friends', () => this.#assistantEvents.environment());
+    this.#stopEventTriggers = this.#eventLog.observe(event => {
+      if (event.kind !== 'tool_failed' && event.kind !== 'tool_returned' && event.kind !== 'turn_terminal') return;
+      // Observe Assistant-owned work only. Deliveries and their descendants
+      // cannot trigger themselves; tool arguments, outputs and paths stay private.
+      if (!this.#assistantEvents.hasRuntimeObservers() ||
+        (event.sessionId !== PERSONAL_ASSISTANT_SESSION && this.#botRootSession(event.sessionId, false) !== PERSONAL_ASSISTANT_SESSION)) return;
+      const observation = event.kind === 'turn_terminal' ? { kind: event.kind, status: event.payload.status }
+        : { kind: event.kind, toolName: event.payload.toolName, status: event.kind === 'tool_failed' || event.payload.resultError ? 'failed' : 'completed' };
+      void this.#assistantEvents.observeRuntime({ ...observation, nowMs: Date.parse(event.createdAt) }, event.eventId)
+        .catch(error => options.onRecoveryError?.(error));
+    });
     this.#extensionApi = {
       environment: { read: (sessionId, signal) => this.readEnvironment(sessionId, signal) },
       conversations: { list: () => this.#conversations.list(), notify: (id, notice) => this.#conversations.notify(id, notice),
@@ -1787,6 +1804,7 @@ export class InMemoryRuntimeHost {
         await this.#assistantEvents.close();
         this.#conversations.close();
         this.#stopEnvironmentObservation();
+        this.#stopEventTriggers();
         this.#environment.close();
         this.#agentExecutions.close();
         await this.#teams.close();
@@ -2006,10 +2024,10 @@ export class InMemoryRuntimeHost {
     return { sessionId, messages, supersededMessageIds: session.supersededMessageIds, finalMessageIds: childFinalMessageIds(session) };
   }
 
-  #botRootSession(id: string): string {
+  #botRootSession(id: string, includeEvents = true): string {
     const seen = new Set<string>();
     while (!seen.has(id) && seen.size < 32) {
-      if (id === FRIENDS_SESSION) return PERSONAL_ASSISTANT_SESSION;
+      if (id === FRIENDS_SESSION) return includeEvents ? PERSONAL_ASSISTANT_SESSION : FRIENDS_SESSION;
       seen.add(id);
       const parent = this.#sessions.snapshot(id)?.metadata?.parentSessionId;
       if (typeof parent !== 'string' || !parent) return id;

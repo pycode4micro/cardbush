@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { InMemoryRuntimeHost, ToolRegistry, SessionStore } from '../dist/index.js';
+import { InMemoryRuntimeHost, InMemoryRuntimeEventLog, ToolRegistry, SessionStore } from '../dist/index.js';
 import { AssistantEvents } from '../dist/assistantEvents.js';
 import { FRIENDS_COMMAND, FRIENDS_SESSION, PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 
@@ -415,6 +415,153 @@ const assistantConfiguration = () => ({ action: 'configure', assistant: { name: 
     profile: { name: 'Assistant', language: 'en', timeZone: 'UTC', confirmedAt: now(), recognition: {} },
     parent: { protocol: 'bush.session_turn_request.v1', sessionId: PERSONAL_ASSISTANT_SESSION, requestId: 'config', turnId: 'config',
       model: 'fixture', tools: [], metadata: {}, permissionMode: 'task_free', prefixMessages: [], inputMessages: [{ messageId: 'config', message: { role: 'user', content: 'configure' } }] } });
+
+function eventTool(registry, args) {
+  const tool = registry.resolve('assistant_event');
+  return tool.execute({ sessionId: PERSONAL_ASSISTANT_SESSION, toolCall: { id: crypto.randomUUID() },
+    turn: { request: { turnId: 'user-turn', metadata: { assistantUserRequest: true } } }, input: tool.decodeInput(args) });
+}
+
+test('local predicate sees only Assistant-owned outcome metadata and wakes without a clock', async t => {
+  const log = new InMemoryRuntimeEventLog(), sessions = new SessionStore();
+  for (const [id, parent] of [['other', undefined], ['local-child', PERSONAL_ASSISTANT_SESSION], ['event-child', FRIENDS_SESSION]]) {
+    sessions.ensureSession(id, parent ? { parentSessionId: parent } : {});
+  }
+  const f = await fixture(t, simple, { host: { eventLog: log, sessionStore: sessions } });
+  await f.command(assistantConfiguration());
+  const trigger = { source: 'runtime', code: "return Number(observation.kind === 'turn_terminal' && observation.status === 'failed' && Object.keys(observation).sort().join(',') === 'kind,nowMs,status')" };
+  const { eventId } = await eventTool(f.registry, { action: 'subscribe', topic: 'Failure', text: 'Report a failed turn.', trigger, destination: 'here', reminderText: 'Failed.' });
+  const emit = (id, status = 'failed') => log.append({ sessionId: id, turnId: crypto.randomUUID(), requestId: crypto.randomUUID() },
+    { kind: 'turn_terminal', payload: { status, reason: 'private details', details: { private: true } } });
+  emit('other'); emit(FRIENDS_SESSION); emit('event-child'); emit('local-child', 'completed');
+  await sleep(60);
+  assert.equal((await f.read()).events[0].result, undefined);
+  emit('local-child');
+  const state = await until(f.read, s => s.events[0].result?.text === 'Failed.');
+  assert.deepEqual(state.detections, []); assert.equal(state.events[0].status, 'watching');
+  assert.equal(f.requests.length, 0);
+  await eventTool(f.registry, { action: 'pause', eventId }); emit('local-child');
+  assert.equal((await f.read()).events[0].status, 'paused');
+  await eventTool(f.registry, { action: 'delete', eventId }); emit('local-child');
+  assert.equal((await f.read()).events.length, 0);
+});
+
+test('edited reminders keep the same pending clock and exact chat wording across restart and time-only edits', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-edited-event-'));
+  let time = Date.parse('2026-11-01T00:00Z'), timer;
+  const clock = { schedule(wake, delay) { timer = { wake, at: time + delay }; }, cancel(wake) { if (timer?.wake === wake) timer = undefined; } };
+  const notices = [], calls = [];
+  const configure = assistantConfiguration();
+  configure.assistant.proactive = { notificationSourceRef: 'saved-external', recognition: {}, beforeExecution: 'ask', report: 'always' };
+  const open = () => {
+    const tools = new ToolRegistry();
+    const events = new AssistantEvents(join(root, 'events.json'), { tools, clock, now: () => time, publish: notice => notices.push(notice),
+      run: async request => {
+        calls.push(request); await tools.resolve('friends_decide').execute({ turnId: request.turnId, sessionId: FRIENDS_SESSION,
+          input: { ...decide('watching').input, notifyUser: true } });
+        return { terminal: { kind: 'turn_terminal', payload: { status: 'completed' } }, text: 'fresh result' };
+      } });
+    return { events, manage: args => eventTool(tools, args) };
+  };
+  let current = open();
+  t.after(async () => { await current.events.close(); await rm(root, { recursive: true, force: true }); });
+  await current.events.command(configure);
+  const original = { unit: 'week', interval: 1, startLocal: '2026-11-02T09:00', timeZone: 'America/New_York' };
+  const first = await current.manage({ action: 'subscribe', topic: 'Reports', text: 'Original New York rule', recurrence: original, reminderText: 'old words', destination: 'here' });
+  const eventId = first.eventId;
+  const revised = { unit: 'minute', interval: 5, startLocal: '2026-11-01T08:05', timeZone: 'Asia/Shanghai' };
+  const edit = await current.manage({ action: 'continue', eventId, text: 'Report on the local five-minute schedule.', recurrence: revised });
+  assert.equal((await current.manage({ action: 'read', eventId })).reminderText, 'old words');
+  const before = (await current.events.snapshot()).detections;
+  await current.manage({ action: 'continue', eventId, text: 'Report using the revised words.', reminderText: '  新原文。  ' });
+  assert.deepEqual((await current.events.snapshot()).detections, before);
+  await current.events.close(); current = open(); await current.events.command(configure);
+  const fireAt = async (at, expectedNotices) => {
+    await until(async () => timer, value => value?.at === Date.parse(at));
+    time = Date.parse(at); timer.wake();
+    await until(async () => notices, value => value.length === expectedNotices);
+  };
+  await fireAt(edit.nextAt, 1);
+  assert.equal(notices[0].text, '  新原文。  '); assert.deepEqual(calls, []);
+  const record = await current.manage({ action: 'read', eventId });
+  assert.equal(record.inputs.length, 3); assert.equal(record.logicalKey, 'Reports'); assert.equal(record.deliveryRoute, undefined);
+  await current.manage({ action: 'continue', eventId, text: 'Generate the current report.', reminderText: null });
+  await fireAt(record.nextAt, 2);
+  const request = calls[0], evidence = data(request);
+  assert.equal(request.metadata.botDeliveryLocalOnly, true);
+  assert.ok(!request.messages.some(m => m.content.includes('If no bridge is bound')));
+  assert.equal(evidence.destination, 'conversation');
+  assert.deepEqual(evidence.event.inputs.map(input => input.text), ['Generate the current report.']);
+  assert.ok(!JSON.stringify(evidence).includes('Original New York rule')); assert.equal(notices[1].text, 'fresh result');
+});
+
+test('a content edit while a one-time reminder is firing publishes only the latest words', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-inflight-reminder-')), tools = new ToolRegistry(), notices = [];
+  const service = new AssistantEvents(join(root, 'events.json'), { tools, publish: notice => notices.push(notice),
+    run: async (_request, signal) => {
+      await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+      return { terminal: { kind: 'turn_terminal', payload: { status: 'completed' } }, text: 'Obsolete result' };
+    } });
+  t.after(async () => { await service.close(); await rm(root, { recursive: true, force: true }); });
+  await service.command(assistantConfiguration());
+  const { eventId } = await eventTool(tools, { action: 'create', text: 'Generate a local reminder',
+    destination: 'here', at: new Date(Date.now() + 200).toISOString() });
+  await until(() => service.snapshot(), s => s.active?.eventId === eventId);
+  await eventTool(tools, { action: 'continue', eventId, text: 'Use these words', reminderText: 'Latest words' });
+  await until(async () => notices, n => n.length > 0);
+  assert.deepEqual(notices.map(n => n.text), ['Latest words']);
+  assert.equal((await service.snapshot()).events[0].status, 'completed');
+});
+
+test('interval predicates keep their edge over restart and isolate a failed program', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-predicate-edges-'));
+  let time = 0, timer;
+  const notices = [], clock = { schedule(wake, delay) { timer = { wake, at: time + delay }; }, cancel(wake) { if (timer?.wake === wake) timer = undefined; } };
+  const open = () => {
+    const registry = new ToolRegistry();
+    const events = new AssistantEvents(join(root, 'events.json'), { tools: registry, clock, now: () => time,
+      run: () => assert.fail('A local literal reminder must not start inference'), publish: notice => notices.push(notice) });
+    return { events, manage: args => eventTool(registry, args) };
+  };
+  let current = open();
+  t.after(async () => { await current.events.close(); await rm(root, { recursive: true, force: true }); });
+  await current.events.command(assistantConfiguration());
+  const rule = { action: 'subscribe', topic: 'Edge', text: 'Report on entry.', reminderText: 'Entered',
+    trigger: { source: 'interval', everySeconds: 1, code: 'return Number(Math.floor(observation.nowMs / 1000) % 4 < 3);' } };
+  const { eventId } = await current.manage(rule);
+  const bad = await current.manage({ ...rule, topic: 'Invalid result', trigger: { ...rule.trigger, code: 'return true;' } });
+  const advance = async (nextTime, expectedNotices) => {
+    await until(async () => timer, t => t?.at === nextTime);
+    time = nextTime; timer.wake();
+    await until(async () => timer, t => t?.at === time + 1000);
+    assert.equal(notices.length, expectedNotices);
+  };
+  await advance(1000, 1);
+  assert.equal((await current.manage({ action: 'read', eventId: bad.eventId })).error, 'EVENT_TRIGGER_EXPECTED_ZERO_OR_ONE');
+  await current.events.close(); current = open(); await current.events.command(assistantConfiguration());
+  await advance(2000, 1); await advance(3000, 1); await advance(4000, 2);
+  await current.manage({ action: 'pause', eventId });
+  assert.deepEqual((await current.events.snapshot()).detections, []);
+  await current.manage({ action: 'delete', eventId }); await current.events.close();
+  current = open(); await current.events.command(assistantConfiguration());
+  assert.deepEqual((await current.events.snapshot()).detections, []);
+});
+
+test('event agents can register local code for newly created events without a date', async t => {
+  const trigger = { source: 'runtime', code: "return Number(observation.kind === 'tool_failed');" };
+  const f = await fixture(t, async (request, round) => {
+    if (round === 1) return { calls: [{ name: 'friends_create_event', input: { title: 'Failures', logicalKey: 'failures', intent: 'Observe failures', subscription: true } }] };
+    if (round === 2) {
+      const child = (await f.read()).events.find(event => event.logicalKey === 'failures');
+      return { calls: [{ name: 'friends_watch_time', input: { eventId: child.id, trigger, reminderText: 'Failed tool' } }, decide('completed')] };
+    }
+    return { text: 'Registered.' };
+  });
+  await f.command(assistantConfiguration()); await f.send('register-code');
+  const state = await until(f.read, s => s.events.some(e => e.id === 'register-code' && e.status === 'completed'));
+  const child = state.events.find(e => e.logicalKey === 'failures');
+  assert.deepEqual(child.trigger, trigger); assert.equal(child.status, 'watching'); assert.deepEqual(state.detections, []);
+});
 
 test('deleting a routed reminder cancels its durable wake and outbox across a next-day restart', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-events-delete-')), path = join(root, 'events.json');

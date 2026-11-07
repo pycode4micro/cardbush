@@ -100,6 +100,17 @@ test('assistant manages existing schedules using saved execution settings, reads
   assert.deepEqual((await f.scheduler.list()).jobs.map(job => job.id), [foreign.id]);
 });
 
+test('a foreground Assistant registration can trigger on its own successful tool receipt without a timer or inference', async t => {
+  const f = await fixture(t); await f.configureEvents();
+  const receipt = await f.invoke('assistant_event', { action: 'create', text: 'Report the next successful event tool receipt',
+    destination: 'here', reminderText: 'Received.',
+    trigger: { source: 'runtime', code: "return Number(observation.kind === 'tool_returned' && observation.toolName === 'assistant_event' && observation.status === 'completed')" } });
+  await until(async () => (await f.read()).entries.some(entry => entry.eventId === receipt.eventId && entry.content === 'Received.'));
+  const event = await f.invoke('assistant_event', { action: 'read', eventId: receipt.eventId });
+  assert.equal(event.status, 'completed'); assert.equal(event.nextAt, null); assert.equal(event.result.text, 'Received.');
+  assert.equal(f.requests.filter(request => request.metadata.friendsExecution).length, 0);
+});
+
 test('new assistant reminders and subscriptions register only as events while a pre-existing timer still fires once', async t => {
   let time = Date.parse('2099-10-29T00:00:00Z');
   const f = await fixture(t, () => time);

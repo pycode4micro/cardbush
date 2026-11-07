@@ -5,6 +5,7 @@ import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
 import { RuntimeUiError, retainedRuntimeError } from './runtimeUiError.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import type { AgentExecutionRegistry } from './agentExecutionRegistry.js';
+import type { PredicateObservation } from './eventPredicate.js';
 import { applyWebhookTurnPolicy, WEBHOOK_FINAL_REPLY_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, botContextMessage, createTurnTimeContext, promptModelContent, type BotContext } from '@cardbush/bush-protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -88,6 +89,7 @@ export class AssistantConversation {
     agents?: AgentExecutionRegistry;
     management?: AssistantManagement;
     eventNeedsResponse?: () => boolean;
+    observeOutcome?: (observation: PredicateObservation, identity: string) => void;
     eventPreferences?: () => AssistantProfile['proactive'];
     prepareParent?: (parent: RuntimeSessionTurnRequest, signal: AbortSignal) => Promise<RuntimeSessionTurnRequest>;
     snapshotImage?: (source: string, signal: AbortSignal) => Promise<string>;
@@ -160,8 +162,11 @@ export class AssistantConversation {
     try { await settleAtAbort(this.respond(configured, controller.signal, execution.turnId, retryRequested), controller.signal, 'Assistant reply stopped.'); }
     catch (error) { failed = true; if (!this.stopped && !controller.signal.aborted) this.error = retainedRuntimeError(error); }
     finally {
-      this.deps.agents?.update(execution.sessionId, execution.turnId,
-        controller.signal.aborted ? 'stopped' : failed ? 'failed' : 'completed');
+      const status = controller.signal.aborted ? 'stopped' : failed ? 'failed' : 'completed';
+      this.deps.agents?.update(execution.sessionId, execution.turnId, status);
+      const sources = configured.parent.metadata.botSourceRefs;
+      if (!configured.parent.metadata.botSourceRef && !(Array.isArray(sources) && sources.length))
+        this.deps.observeOutcome?.({ nowMs: Date.now(), kind: 'turn_terminal', status }, execution.turnId);
       if (this.controller === controller) {
       this.webhookTurn = undefined; this.busy = false; this.retry = undefined; this.controller = undefined;
       try { if (!controller.signal.aborted && !this.stopped) this.deps.memory?.schedule(configured.parent); }
@@ -449,6 +454,7 @@ export class AssistantConversation {
       let memoryQueue: Promise<unknown> = Promise.resolve();
       let delegationQueue: Promise<unknown> = Promise.resolve();
       let managementQueue: Promise<unknown> = Promise.resolve();
+      const failures = new Set<string>();
       const results = await Promise.all(toolCalls.map(async (call, ordinal) => {
         try {
           signal.throwIfAborted();
@@ -512,6 +518,7 @@ export class AssistantConversation {
           }
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify(output) };
         } catch (error) {
+          failures.add(call.id);
           const code = error instanceof z.ZodError || error instanceof SyntaxError ? 'invalid_tool_arguments'
             : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'assistant_tool_failed';
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify({ status: 'failed', code, error: error instanceof Error ? error.message : String(error) }) };
@@ -519,6 +526,11 @@ export class AssistantConversation {
       }));
       signal.throwIfAborted();
       history.append(results);
+      if (!activeSources.size) for (const call of toolCalls) {
+        const failed = failures.has(call.id);
+        this.deps.observeOutcome?.({ nowMs: Date.now(), kind: failed ? 'tool_failed' : 'tool_returned',
+          toolName: call.name, status: failed ? 'failed' : 'completed' }, executionId + ':' + call.id);
+      }
       if (managementStopped) throw managementStopped;
     }
     throw new RuntimeUiError('assistantRuntime.roundLimit');
