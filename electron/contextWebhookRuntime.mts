@@ -1,15 +1,17 @@
-import { applyWebhookTurnPolicy, createTurnTimeContext, runtimeSessionTurnRequestSchema, runtimeProviderBindingRefSchema, assistantProfileSchema, type SessionSnapshot, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
+import { FRIENDS_COMMAND, FRIENDS_SESSION, PERSONAL_ASSISTANT_SESSION, applyWebhookTurnPolicy, createTurnTimeContext, runtimeSessionTurnRequestSchema, runtimeProviderBindingRefSchema, assistantProfileSchema, type FriendsWebhookReceipt, type SessionSnapshot, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { WebhookBinding } from './contextWebhookTypes.js';
 import type { WebhookMessage } from './contextWebhookProtocol.mjs';
-import { WebhookError } from './contextWebhookProtocol.mjs';
+import { WebhookError, webhookHash } from './contextWebhookProtocol.mjs';
 
-export const webhookBindingSchema = z.object({
+export const webhookBindingSchema = z.union([z.object({
   kind: z.enum(['conversation', 'assistant']), sessionId: z.string().min(1).max(220), title: z.string().max(300),
   parent: runtimeSessionTurnRequestSchema, profile: assistantProfileSchema.optional(), generation: z.number().int().nonnegative().optional(),
 }).strict().refine(value => value.parent.sessionId === value.sessionId && (value.kind === 'assistant'
-  ? value.sessionId === 'personal-assistant' && Boolean(value.profile) && value.generation !== undefined : value.sessionId !== 'personal-assistant'));
+  ? value.sessionId === PERSONAL_ASSISTANT_SESSION && Boolean(value.profile) && value.generation !== undefined
+  : value.sessionId !== PERSONAL_ASSISTANT_SESSION && value.sessionId !== FRIENDS_SESSION)),
+  z.object({ kind: z.literal('friends'), sessionId: z.literal(FRIENDS_SESSION), title: z.string().max(300) }).strict()]);
 export type WebhookResult = { status: 'completed' | 'failed' | 'interrupted' | 'stopped'; reply: string; errorCode?: string };
 export type WebhookRuntime = { command(kind: string, payload: unknown): Promise<any>;
   prepareParent?(parent: RuntimeSessionTurnRequest, signal: AbortSignal): Promise<RuntimeSessionTurnRequest> };
@@ -47,10 +49,19 @@ export function contextWebhookTurnResult(state: SessionSnapshot, turnId: string)
 
 /** Uses the bound desktop identity. The external request never supplies policy, model or session. */
 export async function runContextWebhook(runtime: WebhookRuntime, binding: WebhookBinding, message: WebhookMessage,
-  id: string, recovering: boolean, signal: AbortSignal, sourceRef?: string): Promise<WebhookResult> {
+  id: string, recovering: boolean, signal: AbortSignal, sourceRef?: string, origin?: { connectionId: string; createdAt: string }): Promise<WebhookResult> {
   const sessionId = binding.sessionId, turnId = `webhook-${id}`, inputId = `webhook-input-${id}`;
   const snapshot = await runtime.command('runtime.get_session', { sessionId }) as SessionSnapshot | null;
   if (!snapshot) throw new WebhookError('context_deleted', 404);
+  if (binding.kind === 'friends') {
+    const read = (): Promise<FriendsWebhookReceipt | null> => runtime.command(FRIENDS_COMMAND, { action: 'read_webhook', receiptId: id });
+    let receipt: FriendsWebhookReceipt | null = recovering ? await read() : await runtime.command(FRIENDS_COMMAND, {
+      action: 'receive_webhook', receiptId: id, text: message.text, createdAt: origin?.createdAt ?? new Date().toISOString(),
+      ...(origin && message.senderId && message.conversationId ? { recipientKey: webhookHash([origin.connectionId, message.senderId, message.conversationId]) } : {}),
+    });
+    while (receipt?.status === 'pending') { await delay(500, undefined, { signal }); receipt = await read(); }
+    return receipt ? { ...receipt, status: receipt.status } : { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
+  }
   let parent = applyWebhookTurnPolicy(structuredClone(binding.parent));
   parent.requestId = turnId; parent.turnId = turnId;
   delete parent.metadata.botSourceRef;

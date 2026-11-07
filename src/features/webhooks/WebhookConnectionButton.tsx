@@ -4,7 +4,6 @@ import { uiText } from '../../i18n';
 import type { ChatStreamRequest } from '../../backend/api';
 import type { ContextWebhookApi, ContextWebhookConfig, ContextWebhookConnection, ContextWebhookSnapshot, WebhookBinding } from '../../../electron/contextWebhookTypes';
 import { SettingsFormDialog } from '../settings/SettingsFormDialog';
-import { prepareWebhookBinding } from './webhookBinding';
 import './webhooks.css';
 import { contextWebhookBody, contextWebhookIncoming, contextWebhookPort } from '../../../electron/contextWebhookDefaults';
 
@@ -12,6 +11,8 @@ const defaultBody = contextWebhookBody;
 const defaults = (): ContextWebhookConfig => ({ name: 'Webhook', enabled: true, url: '', headers: {}, parameters: {}, body: defaultBody,
   incoming: contextWebhookIncoming });
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
+const prepareWebhookBinding = async (prepare: () => Promise<ChatStreamRequest>, kind: WebhookBinding['kind'], sessionId: string, title: string): Promise<WebhookBinding> =>
+  kind === 'friends' ? { kind, sessionId, title } : (await import('./webhookBinding')).prepareWebhookBinding(prepare, kind, sessionId, title);
 const connectionStatusKey = (connection: ContextWebhookConnection) => !connection.enabled ? 'webhook.disabled'
   : connection.status === 'connected' ? 'webhook.connected' : 'webhook.offline';
 type Props = { language: string; sessionId: string; title: string; kind: WebhookBinding['kind']; prepare?: () => Promise<ChatStreamRequest> };

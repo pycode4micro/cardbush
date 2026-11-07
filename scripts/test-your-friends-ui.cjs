@@ -52,6 +52,10 @@ async function buildFixture(directory) {
         import {uiText} from ${file('src/i18n/index.ts')};import {UiLanguageProvider} from ${file('src/i18n/react.tsx')};
         import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};import ${file('src/styles/appearance.css')};
         window.fixture={store,t:uiText,validFriendSvg,requests:[],hold:false,fail:false,runtime:()=>JSON.parse(localStorage.getItem('fixture-friends-runtime')||'{"events":[]}')};const noop=()=>{};
+        window.cardbushDesktop={webhooks:{command:async req=>{
+          fixture.webhookRequest=req;if(req.action==='approve_pairing')fixture.bridgeBinding=req.binding;
+          return {listening:true,connections:[],pairings:fixture.bridgeBinding?[]:[{requestId:'fixture',name:'Test bridge'}]};
+        }}};
         fixture.design={name:'夜航',description:'认知资料中的安静陪伴与运动兴趣，作为设计参考。',svg:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240"><path fill="#9ab5d0" d="M48 80Q40 32 80 62Q120 40 160 62Q200 32 192 80L184 166Q120 216 56 166Z"/><ellipse fill="#fff3da" cx="120" cy="130" rx="52" ry="46"/><circle fill="#344157" cx="99" cy="118" r="5"/><circle fill="#344157" cx="141" cy="118" r="5"/><path fill="#d5a77d" d="M112 132L128 132L120 143Z"/></svg>'};
         fixture.generate=(input,signal)=>generateFriendAppearance(input,async()=>({sessionId:'model-settings-owner',model:'configured-test-model',userInput:'',projectDir:'must-not-inherit',teamInstructions:'must-not-inherit'}),signal,{
           createConversation:async options=>{fixture.created=options;return {id:options.sessionId};},
@@ -298,6 +302,13 @@ function runFixture() {
       await click('.friends-confirm:last-of-type input'); await click('.friends-review .friends-primary');
       await until('fixture.store.readFriendsState().introduction.confirmedAt');
       await until('fixture.configurations>0&&document.querySelector(".friends-event-stage[data-status=waiting_user]")');
+      await click('.friends-header [data-webhook-connect]');
+      await until('document.querySelector(".webhook-quick-dialog[open]")&&fixture.webhookRequest?.sessionId==="your-friends"');
+      await click('.webhook-quick-dialog .webhook-pair-action');
+      await until('fixture.bridgeBinding?.kind==="friends"&&fixture.bridgeBinding.sessionId==="your-friends"');
+      assert.equal(await read('"parent" in fixture.bridgeBinding'), false, 'pairing Friends does not copy or replace its model configuration');
+      await click('.webhook-quick-dialog .settings-dialog-footer button:last-child');
+      assert.ok(await read('document.querySelector(".your-friends[data-phase=open]")'));
       assert.equal(await read('fixture.runtime().events[0].inputs.length'), 0, 'recognition starts work without inventing or waiting for a user message');
       assert.equal(await read('document.querySelector(".friends-result-preview").textContent'), 'A concrete first proposal.');
       await textButton('.friends-event-stage', 'yourFriends.continue');

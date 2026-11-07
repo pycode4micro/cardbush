@@ -12,7 +12,8 @@ import { YourFriendsSettings } from './YourFriendsSettings';
 import { circleGeometry, confirmFriendIntroduction, introductionSteps, readFriendsDraft, recordFriendEvent, saveFriendsDraft,
   updateFriendsState, useFriendsState } from './friendsStore';
 import type { ChatStreamRequest } from '../../backend/api';
-import type { FriendInput } from '@cardbush/bush-protocol';
+import { FRIENDS_SESSION, type FriendInput } from '@cardbush/bush-protocol';
+import { WebhookConnectionButton } from '../webhooks/WebhookConnectionButton';
 import { friendsBackend } from './friendsBackend';
 import { useFriendsExecution } from './useFriendsExecution';
 import { FriendsExecutionView } from './FriendsExecutionView';
@@ -189,6 +190,7 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
       <button className="friends-icon friends-back" type="button" onClick={leave} aria-label={t('yourFriends.back')} title={t('yourFriends.back')}><ArrowLeft/></button>
       <div className="friends-brand"><span id={titleId}>{name}</span></div>
       {ready && <nav aria-label={t('yourFriends.navigation')}>
+        <WebhookConnectionButton kind="friends" sessionId={FRIENDS_SESSION} title={name} language={language} prepare={execution.snapshot?.configured ? prepare : undefined}/>
         <button type="button" className="friends-icon" data-panel="appearance" disabled={designing} onClick={() => setPanel('appearance')} aria-label={t('yourFriends.designAppearance')} title={t('yourFriends.designAppearance')}><Palette/></button>
         <button type="button" className="friends-icon" data-panel="events" onClick={() => setPanel('events')} aria-label={t('yourFriends.events')} title={t('yourFriends.events')}><History/></button>
         <button type="button" className="friends-icon" data-panel="settings" onClick={() => setPanel('settings')} aria-label={t('yourFriends.settings')} title={t('yourFriends.settings')}><Settings2/></button>

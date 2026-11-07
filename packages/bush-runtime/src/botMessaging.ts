@@ -53,10 +53,12 @@ export class BridgePluginTools {
       if (explicit && active.length && !active.includes(explicit)) return fail('bridge_source_mismatch');
       let ref = explicit ?? (active.length === 1 ? active[0] : undefined);
       if (!ref && active.length > 1) return fail('bridge_source_ambiguous');
-      const state = await bridge.context(root, ref, context.signal);
-      if (!ref) {
+      const singleRecipient = !active.length && metadata.botRequiresSingleRecipient === true;
+      const state = await bridge.context(root, singleRecipient ? undefined : ref, context.signal);
+      if (!ref || singleRecipient) {
         const sources = state.targets.filter(source => source.connectionId === entry.connectionId && source.available);
         if (sources.length !== 1) return fail('bridge_source_required');
+        if (ref && ref !== sources[0]!.sourceRef) return fail('bridge_source_mismatch');
         ref = sources[0]!.sourceRef;
       }
       const source = state.source ?? state.targets.find(source => source.sourceRef === ref);
@@ -102,7 +104,7 @@ export class BridgePluginTools {
       execute: async context => {
         const admitted = admissions.get(context.input);
         if (!admitted) return fail('workspace_authorization_changed');
-        await resolve(context);
+        if ((await resolve(context)).sourceRef !== admitted.input.sourceRef) return fail('bridge_source_mismatch');
         const paths = bridgeFilePaths(tool, admitted.input.arguments);
         for (const [index, file] of admitted.files.entries()) if (await resolveToolPath(context, paths[index]!) !== file.path) return fail('workspace_authorization_changed');
         let index = 0;

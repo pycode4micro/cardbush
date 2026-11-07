@@ -3,7 +3,7 @@ import type { AssistantProfile, BotConnectionStatus, RuntimeSessionTurnRequest }
 export type WebhookBinding = {
   kind: 'conversation' | 'assistant'; sessionId: string; title: string;
   parent: RuntimeSessionTurnRequest; profile?: AssistantProfile; generation?: number;
-};
+} | { kind: 'friends'; sessionId: string; title: string };
 export type ContextWebhookConfig = {
   id?: string; name: string; enabled: boolean; url: string;
   headers: Record<string, string>; parameters: Record<string, unknown>; body: unknown;

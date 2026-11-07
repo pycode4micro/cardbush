@@ -271,6 +271,29 @@ test('interrupted execution stays paused across restart until an explicit resume
   assert.equal((await b.read()).events[0].interruptedTurnId, undefined);
 });
 
+test('recovery freezes an interrupted bridge receipt; explicit local resume never gets inbound permissions or emits a second reply', async t => {
+  const first = await fixture(t, simple, { keep: true }); await first.configure();
+  await until(first.read, s => s.events[0]?.status === 'completed');
+  const receiptId = crypto.randomUUID(), id = `webhook-input-${receiptId}`;
+  const input = { action: 'receive_webhook', receiptId, text: 'Fixture update', createdAt: now() };
+  await first.command(input); await until(first.read, s => s.events.find(e => e.id === id)?.status === 'completed'); await first.close();
+  const path = join(first.root, 'friends/events.json'), disk = JSON.parse(await readFile(path, 'utf8'));
+  disk.events.find(e => e.id === id).status = 'running';
+  disk.webhookReceipts[id] = { status: 'pending', reply: '' };
+  disk.active = { eventId: id, turnId: 'uncertain-execution', signalIds: [`input:${id}`] };
+  disk.signals = [{ id: `input:${id}`, eventId: id, kind: 'input', createdAt: now() }];
+  await writeFile(path, JSON.stringify(disk));
+  const restarted = await fixture(t, simple, { root: first.root });
+  const interrupted = { status: 'interrupted', reply: '', errorCode: 'runtime_restart_interrupted' };
+  assert.deepEqual(await restarted.command({ action: 'read_webhook', receiptId }), interrupted);
+  await restarted.configure(); assert.deepEqual(await restarted.command(input), interrupted); assert.equal(restarted.requests.length, 0);
+  await restarted.command({ action: 'resume', eventId: id });
+  await until(restarted.read, s => s.events.find(e => e.id === id)?.status === 'completed');
+  assert.equal(restarted.requests[0].permissionMode, 'task_free');
+  assert.deepEqual(restarted.requests[0].metadata.botSourceRefs, [`webhook:${receiptId}`]);
+  assert.deepEqual(await restarted.command({ action: 'read_webhook', receiptId }), interrupted);
+});
+
 test('invalid persisted state fails closed without being replaced by an empty store', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-friends-test-')); await mkdir(join(root, 'friends'));
   const path = join(root, 'friends/events.json'), invalid = JSON.stringify({ version: 1, events: [], signals: [{ id: 'bad', eventId: 'missing' }], detections: [] });

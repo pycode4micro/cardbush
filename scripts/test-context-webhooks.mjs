@@ -7,7 +7,7 @@ import { createServer, request as httpRequest, Agent } from 'node:http';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { InMemoryRuntimeHost, InMemoryRuntimeEventLog, SessionStore, ToolRegistry } from '../packages/bush-runtime/dist/index.js';
-import { applyWebhookTurnPolicy, assistantProfileSchema } from '@cardbush/bush-protocol';
+import { applyWebhookTurnPolicy, assistantProfileSchema, FRIENDS_COMMAND, FRIENDS_SESSION } from '@cardbush/bush-protocol';
 import { ContextWebhookHost } from '../dist-electron/contextWebhookHost.mjs';
 import { runContextWebhook } from '../dist-electron/contextWebhookRuntime.mjs';
 import { renderWebhookBody, webhookConfigSchema, incomingMessage } from '../dist-electron/contextWebhookProtocol.mjs';
@@ -32,6 +32,110 @@ function client(connection) {
   return { send: value => fetch(connection.endpoint, { method: 'POST', headers, body: JSON.stringify(value) }),
     read: async id => { const response = await fetch(`${connection.endpoint}/${encodeURIComponent(id)}`, { headers }); return response.json(); } };
 }
+
+test('Friends: inbound evidence, source-bound follow-up and proactive notification use the live bridge; offline is not installation state', { timeout: 30000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'friends-bridge-')), received = [], requests = [], turns = new Map();
+  const receiver = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw); received.push(body);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ protocol: 'cardbush.webhook.v1', eventId: body.eventId, status: 'accepted' }));
+  });
+  receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
+  let gateway;
+  const sessionId = FRIENDS_SESSION, registry = new ToolRegistry();
+  const runtime = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry, sessionStore: new SessionStore(), botMessaging: {
+    context: (sessionId, sourceRef, signal) => gateway.botRequest({ action: 'context', sessionId, sourceRef }, signal),
+    catalog: (sessionId, signal) => gateway.botRequest({ action: 'catalog', sessionId }, signal),
+    call: (sessionId, input, signal, files) => gateway.botRequest({ action: 'call', sessionId, input, files }, signal),
+  }, provider: { async *stream(req) {
+    const { event, signals } = JSON.parse(req.messages.find(m => m.name === 'friends_event_data').content);
+    const round = (turns.get(req.turnId) ?? 0) + 1; turns.set(req.turnId, round); requests.push(req);
+    const decision = disposition => ['friends_decide', { disposition, basis: 'Fixture evidence.', habitRefs: [] }];
+    let call, final = 'Recorded.';
+    if (event.intent === 'Schedule my update.' && event.inputs.length === 1) {
+      if (round === 1) call = ['friends_create_event', { logicalKey: 'notification', title: 'Requested notice', intent: 'Notify the original recipient.' }];
+      if (round === 2) {
+        const child = (await friends({ action: 'read' })).events.find(e => e.logicalKey === 'notification');
+        call = ['friends_watch_time', { eventId: child.id, at: new Date(Date.now() + 2500).toISOString() }];
+      }
+      if (round === 3) call = decision('waiting_user');
+      final = 'Which detail?';
+    } else if (signals.some(s => s.kind === 'clock') || event.id === 'local-notice') {
+      const observations = req.messages.flatMap(m => m.content.split('\n').flatMap(line => {
+        try { return JSON.parse(line).sections?.services?.bots ?? []; } catch { return []; }
+      }));
+      const context = observations.at(-1).context, source = context.source ?? context.targets[0];
+      const name = source.plugins[0].tools[0];
+      if (round === 1) call = ['mcp_search', { query: name }];
+      if (round === 2) call = ['get_tool_schema', { name }];
+      if (round === 3) call = ['call_tool', { name, arguments: { text: event.id === 'local-notice' ? 'From desktop.' : 'Your scheduled notice.' } }];
+      if (round === 4) call = decision('completed');
+    } else if (round === 1) call = decision('completed');
+    if (!call) { yield* answer(req, final); return; }
+    const base = { protocol: 'bush.model_event.v1', requestId: req.requestId, createdAt: new Date().toISOString() };
+    yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `call-${req.turnId}-${round}`, nameDelta: call[0], argumentsDelta: JSON.stringify(call[1]) };
+    yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' };
+  } } });
+  const bridge = { command: (kind, payload) => runtime.sendCommand({ kind, payload }) };
+  const friends = payload => bridge.command(FRIENDS_COMMAND, payload);
+  try {
+    gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+    await bridge.command('runtime.create_session', { sessionId });
+    const parent = { ...request(sessionId), tools: await bridge.command('runtime.get_tool_catalog', {}), requestCapabilities: { vision: false, interactiveRequests: true } };
+    await friends({ action: 'configure', parent, profile: { name: 'Fixture', language: 'en', timeZone: 'UTC', recognition: {}, confirmedAt: new Date().toISOString() } });
+    await until(async () => (await friends({ action: 'read' })).events[0]?.status === 'completed');
+    assert.match(JSON.stringify(requests[0].messages), /bot_not_connected/);
+    const selected = { kind: 'friends', sessionId, title: 'Friends' };
+    const cfg = config({ name: 'Weixin fixture', url: `http://127.0.0.1:${receiver.address().port}/reply`,
+      body: { eventId: '{{eventId}}', id: '{{messageId}}', text: '{{reply}}', sender: '{{senderId}}', room: '{{conversationId}}' } });
+    await assert.rejects(gateway.command({ action: 'save', binding: { ...selected, kind: 'conversation', parent }, config: cfg }));
+    const [connection] = (await gateway.command({ action: 'save', binding: selected, config: cfg })).connections;
+    const bot = client(connection), instanceId = randomUUID(), leaseUrl = connection.endpoint.replace(/\/messages$/, '/capabilities');
+    const headers = { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' };
+    const plugin = { id: 'fixture', version: '1', name: 'Messaging fixture', description: 'Notification transport', tools: [
+      { name: 'send_text', description: 'Send text to the originating recipient.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }] };
+    assert.equal((await fetch(leaseUrl, { method: 'POST', headers, body: JSON.stringify({ protocol: 'cardbush.webhook.v1', capabilities: { text: true }, plugins: [plugin], instanceId }) })).status, 200);
+    assert.equal((await gateway.botRequest({ action: 'context', sessionId })).reason, 'bot_recipient_unavailable');
+    const push = async (messageId, text, senderId) => {
+      const body = { messageId, text, senderId, conversationId: 'shared-room' };
+      assert.equal((await bot.send(body)).status, 202);
+      return until(async () => { const value = await bot.read(messageId); return value.status === 'completed' && value; });
+    };
+    const first = await push('first', 'Schedule my update.', 'alice');
+    assert.equal(first.reply, 'Which detail?');
+    await friends({ action: 'submit', input: { id: 'local-notice', text: 'Send me the update.', createdAt: new Date().toISOString() } });
+    await until(() => received.some(body => body.arguments?.text === 'From desktop.'));
+    assert.equal(received.find(body => body.arguments?.text === 'From desktop.').senderId, 'alice');
+    await push('second', 'Unrelated message.', 'bob');
+    await push('third', 'Confirmed detail.', 'alice');
+    await push('first', 'Schedule my update.', 'alice');
+    const events = (await friends({ action: 'read' })).events, original = events.find(e => e.intent === 'Schedule my update.');
+    assert.deepEqual(original.inputs.map(i => i.text), ['Schedule my update.', 'Confirmed detail.']);
+    assert.equal(events.find(e => e.intent === 'Unrelated message.').inputs.length, 1);
+    await until(() => received.some(body => body.arguments?.text === 'Your scheduled notice.'));
+    const sent = received.filter(body => body.type === 'tool.call' && body.arguments.text === 'Your scheduled notice.');
+    assert.equal(sent.length, 1); assert.equal(sent[0].senderId, 'alice'); assert.equal(sent[0].messageId, 'first');
+    assert.equal(sent[0].conversationId, 'shared-room'); assert.equal(sent[0].arguments.text, 'Your scheduled notice.');
+    await until(() => received.filter(body => body.id).length === 3);
+    assert.deepEqual(received.filter(body => body.id === 'first').map(body => [body.sender, body.text]), [['alice', 'Which detail?']]);
+    assert.equal((await friends({ action: 'read_webhook', receiptId: original.inputs[0].botSourceRef.slice(8) })).reply, 'Which detail?');
+    assert.equal((await runContextWebhook(bridge, selected, message('missing'), randomUUID(), true, new AbortController().signal)).status, 'interrupted');
+    const inbound = requests.find(req => req.metadata.botSourceRef), timed = requests.find(req => req.metadata.botSourceRefs);
+    assert.equal(inbound.permissionMode, 'all_free'); assert.equal(inbound.requestCapabilities.interactiveRequests, false);
+    assert.equal(timed.permissionMode, 'task_free'); assert.equal(timed.requestCapabilities.interactiveRequests, true);
+    assert.deepEqual(timed.metadata.botSourceRefs, [original.inputs[0].botSourceRef]);
+    assert.equal((await fetch(leaseUrl, { headers, method: 'DELETE', body: JSON.stringify({ protocol: 'cardbush.webhook.v1', instanceId }) })).status, 200);
+    await friends({ action: 'submit', input: { id: 'offline-check', text: 'Can I receive notifications?', createdAt: new Date().toISOString() } });
+    await until(async () => (await friends({ action: 'read' })).events.find(e => e.id === 'offline-check')?.status === 'completed');
+    const offline = requests.find(req => req.metadata.friendsEventId === 'offline-check');
+    assert.match(JSON.stringify(offline.messages), /bot_offline/); assert.ok(!offline.tools.some(t => t.name.startsWith('mcp__bridge_')));
+    assert.equal((await bridge.command('runtime.get_session', { sessionId })).turns.length, 0, 'Friends does not turn events into a chat transcript');
+  } finally {
+    await gateway?.close(); await bridge.command('runtime.shutdown', {}); receiver.closeAllConnections();
+    await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('parameter mapping and JSON templates preserve escaped values and reject unsafe paths/headers', () => {
   const mapping = { messageId: 'event.id', text: 'event.body.text', senderId: 'event.sender', conversationId: 'event.chat' };

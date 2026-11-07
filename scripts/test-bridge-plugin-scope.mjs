@@ -14,9 +14,11 @@ test('bridge plugins use ordinary search, isolate sessions and sources, refresh 
   let catalog = [connectionA, connectionB].map((connectionId, index) => ({ connectionId, sessionId: 'a', expiresAt: Date.now() + 60000,
     revision: String(index + 1).repeat(64), plugin: plugin(index ? 'platform_b' : 'platform_a') }));
   const source = ref => ({ sourceRef: ref, connectionId: ref === 'source-a' ? connectionA : connectionB, available: true, capabilities: { text: true } });
+  let extraRecipient = false;
   const plugins = new BridgePluginTools(registry, {
     catalog: async sessionId => catalog.filter(item => item.sessionId === sessionId),
-    context: async (sessionId, ref) => ({ discovery: 'mcp_search', available: true, source: ref ? source(ref) : undefined, targets: [source('source-a'), source('source-b')] }),
+    context: async (sessionId, ref) => ({ discovery: 'mcp_search', available: true, source: ref ? source(ref) : undefined, targets: [source('source-a'), source('source-b'),
+      ...(extraRecipient ? [{ ...source('source-a'), sourceRef: 'another-recipient' }] : [])] }),
     call: async (sessionId, input) => { calls.push({ sessionId, input }); return { status: 'accepted' }; },
   }, id => id === 'child-a' ? 'a' : id);
   await plugins.sync('a');
@@ -39,6 +41,10 @@ test('bridge plugins use ordinary search, isolate sessions and sources, refresh 
   assert.equal((await execute('a', names[0], { title: 'spoof', source_ref: 'source-b' }, { botSourceRef: 'source-a' })).error.code, 'bridge_source_mismatch');
   assert.equal((await execute('b', names[0], { title: 'foreign session' })).kind, 'failed');
   assert.equal(calls.length, 0);
+  extraRecipient = true;
+  assert.equal((await execute('a', names[0], { title: 'do not guess', source_ref: 'source-a' }, { botRequiresSingleRecipient: true })).error.code, 'bridge_source_required');
+  assert.equal(calls.length, 0);
+  extraRecipient = false;
   assert.equal((await execute('a', names[0], { title: 123 }, { botSourceRef: 'source-a' })).error.code, 'tool_arguments_schema_invalid');
   assert.equal((await execute('a', names[0], { title: 'ambiguous' }, { botSourceRefs: ['source-a','source-b'] })).error.code, 'bridge_source_ambiguous');
   assert.equal((await execute('a', names[0], { title: 'card' }, { botSourceRef: 'source-a' })).kind, 'returned');

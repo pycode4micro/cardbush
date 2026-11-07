@@ -183,6 +183,11 @@
     "sha256": "a4006bf348c1dcf9d736f7c435cfe0be9cb9632711a01491f61a147565551af5"
   },
   {
+    "name": "friends-bridge-delivery",
+    "slots": [],
+    "sha256": "e21f287b99928182b5e160113748413fcf947635437a173ffb2ea166b5ab2ea8"
+  },
+  {
     "name": "friends-system",
     "slots": [],
     "sha256": "76d76239dc761ed2c1194430cfb91f80e4e8b61f078120b9ba9503999a254249"

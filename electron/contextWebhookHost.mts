@@ -270,10 +270,13 @@ export class ContextWebhookHost {
     const previous = config.id ? state.connections.find(c => c.id === config.id) : undefined;
     if (config.id && (!previous || previous.binding.sessionId !== binding.sessionId || previous.binding.kind !== binding.kind)) throw new WebhookError('binding_mismatch');
     if (!previous && state.connections.length >= 32) throw new WebhookError('connection_limit');
-    const parent = applyWebhookTurnPolicy({ ...binding.parent, inputMessages: [{ messageId: 'binding', message: { role: 'user' as const, content: 'Webhook binding' } }] });
-    delete parent.supersession;
+    // Friends resolves the current configuration at event activation; a bridge owns only the destination.
+    if (binding.kind !== 'friends') {
+      const parent = applyWebhookTurnPolicy({ ...binding.parent, inputMessages: [{ messageId: 'binding', message: { role: 'user' as const, content: 'Webhook binding' } }] });
+      delete parent.supersession; binding = { ...binding, parent };
+    }
     const next: Connection = { ...config, id: previous?.id ?? randomUUID(), token: previous?.token ?? randomBytes(32).toString('hex'),
-      binding: { ...binding, parent }, lastReceivedAt: previous?.lastReceivedAt, lastDeliveredAt: previous?.lastDeliveredAt };
+      binding, lastReceivedAt: previous?.lastReceivedAt, lastDeliveredAt: previous?.lastDeliveredAt };
     if (previous && webhookHash([previous.url, previous.headers]) === webhookHash([config.url, config.headers])) next.bot = previous.bot;
     state.connections = [...state.connections.filter(c => c.id !== next.id), next]; return next;
   }
@@ -411,7 +414,8 @@ export class ContextWebhookHost {
     this.running.add(record.id);
     try {
       await this.write(state => { const r = state.receipts.find(r => r.id === record.id)!; r.status = 'running'; r.sequence++; });
-      const result = await (this.options.execute ?? runContextWebhook)(this.runtime, record.binding, record.message, record.id, recovering, this.abort.signal, `webhook:${record.id}`);
+      const result = await (this.options.execute ?? runContextWebhook)(this.runtime, record.binding, record.message, record.id, recovering, this.abort.signal, `webhook:${record.id}`,
+        { connectionId: record.connectionId, createdAt: record.createdAt });
       if (this.abort.signal.aborted) return;
       if (result.reply.length > 128000) throw new WebhookError('reply_too_large');
       await this.write(state => { const r = state.receipts.find(r => r.id === record.id)!; Object.assign(r, result); r.sequence++; });
@@ -454,7 +458,7 @@ export class ContextWebhookHost {
     }
     this.followupCursor = journal.cursor;
     for (const record of records) {
-      if (record.status !== 'completed' || record.binding.generation !== journal.generation
+      if (record.status !== 'completed' || record.binding.kind !== 'assistant' || record.binding.generation !== journal.generation
         || !this.state.connections.some(c => c.id === record.connectionId && c.enabled)) continue;
       const reply = [...this.followupEntries.get(`webhook-input-${record.id}`)?.values() ?? []].join('\n\n');
       if (!reply || reply === record.reply || reply.length > 128000) continue;

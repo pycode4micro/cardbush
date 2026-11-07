@@ -5,7 +5,7 @@ import { assistantBackend } from '../assistant/assistantBackend';
 import { readAssistantProfile } from '../assistant/assistantProfile';
 import type { WebhookBinding } from '../../../electron/contextWebhookTypes';
 
-export async function prepareWebhookBinding(prepare: () => Promise<ChatStreamRequest>, kind: WebhookBinding['kind'], sessionId: string, title: string): Promise<WebhookBinding> {
+export async function prepareWebhookBinding(prepare: () => Promise<ChatStreamRequest>, kind: Exclude<WebhookBinding['kind'], 'friends'>, sessionId: string, title: string): Promise<WebhookBinding> {
   const config = await prepare();
   if (config.sessionId !== sessionId) throw Error('context_changed');
   const profile = kind === 'assistant' ? readAssistantProfile() : undefined;
