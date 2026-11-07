@@ -5,6 +5,21 @@ import type { RuntimeSolutionSelection } from './solutionSelection.js';
 
 export const FRIENDS_COMMAND = 'runtime.friends' as const;
 export const FRIENDS_SESSION = 'your-friends' as const;
+export const eventRecurrenceSchema = z.object({
+  unit: z.enum(['minute', 'hour', 'day', 'week', 'month', 'year']),
+  interval: z.int().positive().describe('Repeat every this many units. Use 1 for every unit.'),
+  startLocal: z.string().regex(/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/)
+    .refine(value => z.iso.date().safeParse(value.slice(0, 10)).success, 'Use a valid calendar date.')
+    .describe('First eligible local date and wall time, YYYY-MM-DDTHH:mm, in timeZone.'),
+  timeZone: z.string().min(1).max(100).refine(zone => {
+    try { new Intl.DateTimeFormat('en', { timeZone: zone }); return true; }
+    catch { return false; }
+  }, 'Use an IANA time zone such as Asia/Shanghai, UTC, or an explicit UTC offset.'),
+  weekdays: z.array(z.int().min(1).max(7)).min(1).max(7).optional()
+    .describe('Weekly rules only. ISO weekdays, Monday=1 through Sunday=7. Defaults to the start weekday.'),
+}).strict().refine(rule => !rule.weekdays || (rule.unit === 'week' && new Set(rule.weekdays).size === rule.weekdays.length),
+  'Use distinct weekdays with a weekly rule.');
+export type EventRecurrence = z.infer<typeof eventRecurrenceSchema>;
 export const friendInputSchema = z.object({ id: z.string().min(1).max(160), text: z.string().min(1).max(8000).refine(value => Boolean(value.trim())),
   createdAt: z.string().datetime(), relatesTo: z.string().min(1).max(160).optional() }).strict();
 const webhookText = z.string().min(1).max(32000).refine(value => Boolean(value.trim()));
@@ -34,6 +49,7 @@ export type FriendEventStatus = 'queued' | 'running' | 'watching' | 'waiting_use
 export interface FriendsWorkEvent {
   id: string; logicalKey: string; origin: 'user' | 'agent' | 'system'; title: string; intent: string;
   subscription?: true;
+  recurrence?: EventRecurrence;
   inputs: z.infer<typeof friendEvidenceSchema>[]; deliveryRoute?: z.infer<typeof friendDeliveryRouteSchema>; status: FriendEventStatus; archived: boolean; revision: number; createdAt: string; updatedAt: string;
   result?: { text: string; turnId: string; createdAt: string };
   decision?: { disposition: 'completed' | 'watching' | 'waiting_user'; basis: string; habitRefs: Array<{ id: string; revision: number }> };

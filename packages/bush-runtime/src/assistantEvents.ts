@@ -3,18 +3,20 @@ import { presentExistingScheduleActions } from './extendedBuiltins.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
-import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, friendsCommandSchema, applyWebhookTurnPolicy, type BotContext, type FriendInput, type FriendsSnapshot, type FriendsWorkEvent,
+import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, friendsCommandSchema, eventRecurrenceSchema, applyWebhookTurnPolicy, type EventRecurrence, type BotContext, type FriendInput, type FriendsSnapshot, type FriendsWorkEvent,
   type FriendsConnectionStatus, type ModelRequest, type RuntimeEvent, type RuntimeSessionTurnRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AssistantEventStore, settleFriendsWebhook, type FriendsState } from './assistantEventStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
+import { nextEventOccurrence } from './eventRecurrence.js';
 
 const text = z.string().trim().min(1).max(4000);
 const decisionSchema = z.object({ disposition: z.enum(['completed', 'watching', 'waiting_user']), basis: text, notifyUser: z.boolean().optional(), endSubscription: z.boolean().optional(),
   habitRefs: z.array(z.object({ id: z.string().min(1), revision: z.number().int().positive() }).strict()).max(20) }).strict();
 const createSchema = z.object({ logicalKey: z.string().trim().min(1).max(160), title: text.max(160), intent: text, subscription: z.boolean().optional() }).strict();
-const watchSchema = z.object({ eventId: z.string().min(1), at: z.string().datetime({ offset: true }) }).strict();
+const watchSchema = z.object({ eventId: z.string().min(1), at: z.string().datetime({ offset: true }).optional(), recurrence: eventRecurrenceSchema.optional() })
+  .strict().refine(watch => Boolean(watch.at) !== Boolean(watch.recurrence), 'Provide either at or recurrence.');
 const emptyInteractions = () => ({ permissions: [], solutions: [] });
-type Delivery = { route?: FriendsWorkEvent['deliveryRoute']; at?: string; fromAssistant?: boolean; sourceMessageId?: string; subscriptionTopic?: string };
+type Delivery = { route?: FriendsWorkEvent['deliveryRoute']; at?: string; recurrence?: EventRecurrence; fromAssistant?: boolean; sourceMessageId?: string; subscriptionTopic?: string };
 type Runner = (request: ModelRequest, signal: AbortSignal) => Promise<{ terminal: RuntimeEvent; text: string }>;
 
 /** Event state and dispatch only. Tools, model execution and permissions belong to Runtime. */
@@ -157,8 +159,15 @@ export class AssistantEvents {
         else if (command.action === 'pause') this.pause(state, event);
         else {
           if (event.status === 'running') return;
-          event.status = 'queued'; delete event.error;
-          this.enqueue(state, event.id, 'resume', randomUUID());
+          if (event.recurrence && !event.interruptedTurnId && event.status !== 'failed') {
+            if (event.status === 'watching') return;
+            this.armRecurrence(state, event.id, event.recurrence);
+            event.status = state.signals.some(signal => signal.eventId === event.id) ? 'queued' : 'watching';
+          } else {
+            event.status = 'queued';
+            this.enqueue(state, event.id, 'resume', randomUUID());
+          }
+          delete event.error;
         }
         this.touch(event);
       });
@@ -181,19 +190,19 @@ export class AssistantEvents {
       const duplicate = previous?.inputs.find(item => item.id === input.id);
       if (previous && duplicate) {
         if (JSON.stringify(duplicate) !== JSON.stringify(evidence)) throw Error('FRIENDS_INPUT_ID_CONFLICT');
-        return { eventId: previous.id, status: 'accepted' };
+        return { eventId: previous.id, status: 'accepted', ...this.scheduleReceipt(state, previous) };
       }
       const route = delivery?.route ?? state.configuration?.defaultRoute;
       const topic = delivery?.subscriptionTopic;
       if (topic) {
         const existing = state.events.find(event => event.subscription && event.title === topic && event.status !== 'completed' &&
           (route ? this.matchesRoute(event, route) : !event.deliveryRoute));
-        if (existing) return { eventId: existing.id, status: 'exists', eventStatus: existing.status };
+        if (existing) return { eventId: existing.id, status: 'exists', eventStatus: existing.status, ...this.scheduleReceipt(state, existing) };
       }
       if (delivery?.at && Date.parse(delivery.at) <= this.clock()) throw Error('FRIENDS_INPUT_INVALID');
       if (state.signals.length >= 100) throw Error('FRIENDS_QUEUE_FULL');
       let event = input.relatesTo ? state.events.find(event => event.id === input.relatesTo || event.inputs.some(item => item.id === input.relatesTo)) : undefined;
-      if (input.relatesTo && !event) throw Error('FRIENDS_EVENT_NOT_FOUND');
+      if (input.relatesTo && (!event || (delivery?.route && !this.matchesRoute(event, delivery.route)))) throw Error('FRIENDS_EVENT_NOT_FOUND');
       if (!event) {
         if (state.events.some(item => item.id === input.id)) throw Error('FRIENDS_INPUT_ID_CONFLICT');
         this.capacity(state);
@@ -203,7 +212,19 @@ export class AssistantEvents {
       }
       if (event.inputs.length >= 100) throw Error('FRIENDS_EVENT_INPUT_LIMIT');
       if (!input.relatesTo && route) event.deliveryRoute = route;
-      event.inputs.push(evidence); event.archived = false; delete event.error;
+      event.inputs.push(evidence); event.archived = false;
+      if (delivery?.recurrence) {
+        if (state.active?.eventId === event.id) throw Error('This event is executing. Retry the schedule change after it finishes.');
+        this.registerRecurrence(event, delivery.recurrence);
+        this.clearClock(state, event.id);
+        if (event.status !== 'paused' && event.status !== 'failed') {
+          this.armRecurrence(state, event.id, delivery.recurrence, this.clock() - 1);
+          event.status = state.signals.some(signal => signal.eventId === event.id) ? 'queued' : 'watching';
+        }
+        this.touch(event);
+        return { eventId: event.id, status: 'accepted', ...this.scheduleReceipt(state, event) };
+      }
+      delete event.error;
       if (event.status !== 'running') event.status = 'queued';
       this.touch(event);
       if (delivery?.at) {
@@ -235,8 +256,34 @@ export class AssistantEvents {
   }
   private pause(state: FriendsState, event: FriendsWorkEvent) {
     event.status = 'paused';
+    if (event.recurrence) this.clearClock(state, event.id);
     settleFriendsWebhook(state, state.signals.filter(s => s.eventId === event.id).map(s => s.id),
       { status: 'interrupted', reply: '', errorCode: 'friends_paused' });
+  }
+  private clearClock(state: FriendsState, eventId: string) {
+    state.detections = state.detections.filter(timer => timer.eventId !== eventId);
+    state.signals = state.signals.filter(signal => signal.eventId !== eventId || signal.kind !== 'clock');
+  }
+  private registerRecurrence(event: FriendsWorkEvent, rule: EventRecurrence) {
+    // Validate the interval as well as the first instant before saving the rule,
+    // even when registration edits a paused subscription.
+    const first = nextEventOccurrence(rule, this.clock() - 1);
+    nextEventOccurrence(rule, Date.parse(first));
+    event.subscription = true;
+    event.recurrence = rule;
+  }
+  private armRecurrence(state: FriendsState, eventId: string, rule: EventRecurrence, after = this.clock()) {
+    const at = nextEventOccurrence(rule, after);
+    const current = state.detections.find(timer => timer.eventId === eventId);
+    if (current?.at === at) return current;
+    const detection = { id: `detection-${randomUUID()}`, eventId, at };
+    state.detections = state.detections.filter(timer => timer.eventId !== eventId);
+    state.detections.push(detection);
+    return detection;
+  }
+  private scheduleReceipt(state: FriendsState, event: FriendsWorkEvent) {
+    if (!event.recurrence) return {};
+    return { recurrence: event.recurrence, nextAt: state.detections.find(timer => timer.eventId === event.id)?.at ?? null };
   }
   private relatedEvents(state: FriendsState) {
     const route = state.events.find(event => event.id === state.active?.eventId)?.deliveryRoute;
@@ -269,9 +316,27 @@ export class AssistantEvents {
   }
   private async dispatch() {
     await this.store.change(state => {
-      const due = state.detections.filter(d => Date.parse(d.at) <= this.clock() && !['paused', 'failed'].includes(this.event(state, d.eventId).status));
-      for (const detection of due) { this.enqueue(state, detection.eventId, 'clock', detection.id); this.event(state, detection.eventId).status = 'queued'; }
+      const now = this.clock();
+      const due = state.detections.filter(d => Date.parse(d.at) <= now && !['paused', 'failed'].includes(this.event(state, d.eventId).status));
       state.detections = state.detections.filter(d => !due.includes(d));
+      for (const detection of due) {
+        const event = this.event(state, detection.eventId);
+        if (!state.signals.some(signal => signal.eventId === event.id && signal.kind === 'clock')) {
+          this.enqueue(state, event.id, 'clock', detection.id);
+        }
+        event.status = 'queued';
+        if (event.recurrence) {
+          try { this.armRecurrence(state, event.id, event.recurrence, now); }
+          catch (error) {
+            // A rule at the calendar limit must not strand other due events.
+            if (!(error instanceof RangeError)) throw error;
+            this.clearClock(state, event.id);
+            event.status = 'failed';
+            event.error = 'FRIENDS_RECURRENCE_OUT_OF_RANGE';
+            this.touch(event);
+          }
+        }
+      }
     });
     if (this.closed || !this.configured) return;
     const activation = await this.store.change(state => {
@@ -326,6 +391,9 @@ export class AssistantEvents {
         settleFriendsWebhook(state, activation.signals.map(s => s.id), { status: 'completed', reply: result.text });
         event.status = state.signals.some(signal => signal.eventId === event.id) ? 'queued' : decision.disposition;
         if (decision.disposition !== 'watching') state.detections = state.detections.filter(detection => detection.eventId !== event.id);
+        else if (event.recurrence && !state.detections.some(timer => timer.eventId === event.id && Date.parse(timer.at) > this.clock())) {
+          this.armRecurrence(state, event.id, event.recurrence);
+        }
         delete event.error; delete event.interruptedTurnId; delete state.active; this.touch(event);
         if (activation.configuration.assistant && !activation.inbound &&
           (decision.disposition === 'waiting_user' || profile.interactionPreferences?.report === 'always' || decision.notifyUser)) {
@@ -337,6 +405,7 @@ export class AssistantEvents {
         if (state.active?.turnId !== activation.turnId) return;
         const event = this.event(state, activation.event.id);
         event.status = controller.signal.aborted || this.closed ? 'paused' : 'failed';
+        if (event.recurrence) this.clearClock(state, event.id);
         event.error = error instanceof Error ? error.message : 'FRIENDS_EXECUTION_FAILED';
         settleFriendsWebhook(state, activation.signals.map(s => s.id), { status: event.status === 'paused' ? 'interrupted' : 'failed', reply: '', errorCode: 'friends_execution_incomplete' });
         event.interruptedTurnId = activation.turnId;
@@ -382,7 +451,10 @@ export class AssistantEvents {
   private registerAssistantTool() {
     const schema = z.object({ action: z.enum(['list', 'read', 'create', 'subscribe', 'continue', 'pause', 'resume', 'delete']),
       topic: z.string().trim().min(1).max(160).optional(), include_archived: z.boolean().optional(), eventId: z.string().min(1).optional(), text: z.string().trim().min(1).max(8000).optional(),
-      at: z.string().datetime({ offset: true }).optional(), source_ref: z.string().min(1).max(100).optional() }).strict();
+      at: z.string().datetime({ offset: true }).optional(),
+      recurrence: eventRecurrenceSchema.optional().describe('Fixed cadence for subscribe, or an explicitly requested schedule change with continue. Use instead of at. Runtime calculates each due time.'),
+      source_ref: z.string().min(1).max(100).optional() }).strict().refine(input =>
+        !input.recurrence || (!input.at && ['subscribe', 'continue'].includes(input.action)), 'Use recurrence with subscribe or continue, without at.');
     this.deps.tools.register({
       definition: { name: 'assistant_event', description: 'Manage the personal assistant’s durable proactive events. Use create for one outcome. Use subscribe for ongoing informational updates: provide a stable short topic, a self-contained text describing what to report across updates, and optionally at for the first check. Reuse the same subscription on its delivery route. Continue, read, pause, resume or permanently delete by eventId. Pause a temporary stop. Delete only on an explicit user request for one identifiable event. Ask which event if ambiguous. List with include_archived to locate archived events. Events use their own evidence. Notification routing inherits the current message, or an explicitly selected verified source_ref for a local request.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'mutation', operation: 'assistant.event', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
@@ -398,12 +470,13 @@ export class AssistantEvents {
         const ref = input.source_ref ?? refs[0];
         const route = ref ? await this.resolveRoute(ref) : undefined;
         if (ref && !route) throw Error('bridge_source_unavailable');
-        const events = (await this.store.read()).events.filter(event => !refs.length || (route && this.matchesRoute(event, route)));
+        const snapshot = await this.store.read();
+        const events = snapshot.events.filter(event => !refs.length || (route && this.matchesRoute(event, route)));
         if (input.action === 'list') return events.filter(event => input.include_archived || !event.archived).slice(-100).map(({ id, title, status, archived, subscription }) => ({ id, title, status, ...(subscription ? { subscription } : {}), ...(archived ? { archived } : {}) }));
         const event = events.find(item => item.id === input.eventId);
         const creating = input.action === 'create' || input.action === 'subscribe';
         if (!creating && !event) throw Error('FRIENDS_EVENT_NOT_FOUND');
-        if (input.action === 'read') return event;
+        if (input.action === 'read' && event) return { ...event, ...this.scheduleReceipt(snapshot, event) };
         if (creating || input.action === 'continue') {
           if (!input.text || (input.action === 'subscribe' && !input.topic) || (input.at && !creating)) throw Error('FRIENDS_INPUT_INVALID');
           const id = 'event-' + createHash('sha256').update(JSON.stringify([turn.request.turnId, toolCall.id])).digest('hex');
@@ -413,7 +486,7 @@ export class AssistantEvents {
           const source = inputs.filter(item => item && item.sourceRef === ref).at(-1);
           return this.submit({ id, text: input.text, createdAt: previous?.createdAt ?? new Date(this.clock()).toISOString(),
             ...(input.action === 'continue' ? { relatesTo: event!.id } : {}) }, { route, at: input.at && new Date(input.at).toISOString(),
-            fromAssistant: true, sourceMessageId: source?.id, subscriptionTopic: input.action === 'subscribe' ? input.topic : undefined });
+            recurrence: input.recurrence, fromAssistant: true, sourceMessageId: source?.id, subscriptionTopic: input.action === 'subscribe' ? input.topic : undefined });
         }
         if (input.action === 'delete') {
           if (meta.assistantUserRequest !== true) throw Error('ASSISTANT_EVENT_USER_REQUEST_REQUIRED');
@@ -471,8 +544,18 @@ export class AssistantEvents {
       // Creation alone does not execute work. A detector or an explicit resume wakes it.
       event.status = 'paused'; state.events.push(event); return { status: 'created', event };
     }));
-    register('friends_watch_time', 'Register one future absolute ISO time with a timezone for an event. Replaces its previous timer. No model requests occur while waiting.', watchSchema, async (input, turnId) => this.changeFromTurn(turnId, state => {
+    register('friends_watch_time', 'Register a structured recurrence for a fixed cadence or an absolute ISO time (at) for an adaptive check. Fixed schedules renew locally. Waiting uses no model requests.', watchSchema, async (input, turnId) => this.changeFromTurn(turnId, state => {
       const event = this.relatedEvent(state, input.eventId);
+      if (input.recurrence) {
+        if (event.recurrence && this.automaticActivation) throw Error('The fixed recurrence is already managed locally. Use watching for this delivery.');
+        this.registerRecurrence(event, input.recurrence);
+        const detection = this.armRecurrence(state, event.id, input.recurrence);
+        if (state.active?.eventId !== event.id) event.status = 'watching';
+        this.touch(event);
+        return { status: 'registered', detection, recurrence: event.recurrence };
+      }
+      if (event.recurrence) throw Error('A local recurrence owns the next check. Use watching for this delivery.');
+      if (!input.at) throw Error('FRIENDS_FUTURE_TIME_REQUIRED');
       if (Date.parse(input.at) <= this.clock()) throw Error('FRIENDS_FUTURE_TIME_REQUIRED');
       const old = state.detections.find(d => d.eventId === event.id);
       if (old?.at === new Date(input.at).toISOString()) {
@@ -487,11 +570,13 @@ export class AssistantEvents {
     register('friends_decide', 'Record the current event disposition and a short factual basis, not private reasoning. habitRefs may be empty when no applicable habit exists. For subscriptions, use watching after each delivery. To complete one, set endSubscription only when its ongoing scope has ended. This does not publish a result or bypass tool permissions.', decisionSchema, async (input, turnId) => {
       const state = await this.store.read();
       if (state.active?.turnId !== turnId) throw Error('FRIENDS_ACTIVE_EXECUTION_REQUIRED');
-      if (input.disposition === 'watching' && !state.detections.some(d => d.eventId === state.active?.eventId)) throw Error('FRIENDS_WATCH_REQUIRES_DETECTION');
-      if (input.disposition === 'completed' && this.event(state, state.active.eventId).subscription && !input.endSubscription)
+      const event = this.event(state, state.active.eventId);
+      if (input.disposition === 'watching' && !event.recurrence && !state.detections.some(d => d.eventId === event.id)) throw Error('FRIENDS_WATCH_REQUIRES_DETECTION');
+      if (input.disposition === 'completed' && event.subscription && !event.recurrence && !input.endSubscription)
         throw Error('Subscription remains active. Schedule its next check and decide watching, or set endSubscription when the topic itself has ended.');
       const { endSubscription: _ended, ...decision } = input;
-      this.stagedDecision = decision; return { status: 'recorded', delivery: 'awaiting_runtime_completion' };
+      const disposition = event.recurrence && input.disposition === 'completed' && !input.endSubscription ? 'watching' : input.disposition;
+      this.stagedDecision = { ...decision, disposition }; return { status: 'recorded', delivery: 'awaiting_runtime_completion' };
     });
   }
   async disconnect() {

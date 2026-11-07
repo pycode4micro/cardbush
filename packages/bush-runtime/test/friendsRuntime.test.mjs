@@ -572,3 +572,72 @@ test('one subscription renews across deliveries and restart, stays quiet without
   assert.deepEqual(state.events, []); assert.deepEqual(state.detections, []);
   assert.deepEqual(activations, [eventId, eventId, eventId]); assert.equal(deliveries.length, 2);
 });
+
+test('one fixed subscription renews locally, coalesces downtime, reschedules in place and cancels durably', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-fixed-event-'));
+  let time = Date.parse('2026-11-07T00:00Z'), timer;
+  const runs = [];
+  const clock = {
+    schedule(wake, delay) { timer = { wake, at: time + delay }; },
+    cancel(wake) { if (timer?.wake === wake) timer = undefined; },
+  };
+  const recurrence = { unit: 'week', interval: 1, startLocal: '2026-11-09T09:00', timeZone: 'Asia/Shanghai' };
+  const subscribe = { action: 'subscribe', topic: 'Weekly report', text: 'Send my weekly report.', recurrence };
+  const open = () => {
+    const tools = new ToolRegistry();
+    const service = new AssistantEvents(join(root, 'events.json'), { tools, clock, now: () => time,
+      run: async request => {
+        const { event, detections, signals } = data(request);
+        runs.push([event.id, signals.map(signal => signal.kind)]);
+        assert.equal(detections.length, 1, 'the host persisted the next occurrence before invoking the model');
+        const context = { turnId: request.turnId, sessionId: FRIENDS_SESSION };
+        await assert.rejects(tools.resolve('friends_watch_time').execute({ ...context, input: { eventId: event.id, at: '2099-01-01T00:00:00Z' } }), /recurrence/);
+        await tools.resolve('friends_decide').execute({ ...context, input: decide('completed').input });
+        return { terminal: { kind: 'turn_terminal', payload: { status: 'completed' } }, text: 'This occurrence finished.' };
+      } });
+    const manage = (args, callId = crypto.randomUUID()) => {
+      const tool = tools.resolve('assistant_event');
+      return tool.execute({ sessionId: PERSONAL_ASSISTANT_SESSION, toolCall: { id: callId },
+        turn: { request: { turnId: 'chat', metadata: { assistantUserRequest: true } } }, input: tool.decodeInput(args) });
+    };
+    return { service, manage };
+  };
+  let instance = open();
+  t.after(async () => { await instance.service.close(); await rm(root, { recursive: true, force: true }); });
+  await instance.service.command(assistantConfiguration());
+  const callId = crypto.randomUUID();
+  const first = await instance.manage(subscribe, callId);
+  const eventId = first.eventId;
+  assert.equal(first.nextAt, '2026-11-09T01:00:00.000Z');
+  assert.deepEqual(await instance.manage(subscribe, callId), first);
+  assert.equal((await instance.manage(subscribe)).status, 'exists');
+  assert.equal(runs.length, 0);
+  const waitForTimer = at => until(async () => timer, value => value?.at === Date.parse(at));
+  const fire = async (at, next) => {
+    await waitForTimer(at);
+    time = Date.parse(at); timer.wake();
+    await waitForTimer(next);
+  };
+  await fire('2026-11-09T01:00Z', '2026-11-16T01:00Z');
+  await fire('2026-11-16T01:00Z', '2026-11-23T01:00Z');
+  await instance.service.close();
+  time = Date.parse('2026-12-09T15:00Z');
+  instance = open(); await instance.service.command(assistantConfiguration());
+  await waitForTimer('2026-12-14T01:00Z');
+  assert.deepEqual(runs, Array.from({ length: 3 }, () => [eventId, ['clock']]));
+  await instance.manage({ action: 'pause', eventId });
+  assert.equal((await instance.service.snapshot()).detections.length, 0);
+  time = Date.parse('2026-12-22T12:00Z');
+  const revised = { ...recurrence, startLocal: '2026-11-10T11:00' };
+  const edit = await instance.manage({ action: 'continue', eventId, text: 'Change to Tuesdays at 11:00.', recurrence: revised });
+  assert.equal(edit.nextAt, null, 'editing a paused subscription leaves it paused');
+  await instance.manage({ action: 'resume', eventId });
+  await waitForTimer('2026-12-29T03:00Z');
+  assert.equal(runs.length, 3, 'resuming a fixed clock does not run a delivery early');
+  assert.deepEqual((await instance.manage({ action: 'read', eventId })).recurrence, revised);
+  await instance.manage({ action: 'delete', eventId }); await instance.service.close();
+  time = Date.parse('2027-01-10T00:00Z'); instance = open();
+  await instance.service.command(assistantConfiguration());
+  assert.deepEqual((await instance.service.snapshot()).detections, []);
+  assert.equal(runs.length, 3);
+});

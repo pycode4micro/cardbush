@@ -34,6 +34,7 @@
     "assistant.events.savedDestination": "Previously selected conversation",
     "assistant.events.target": "{bot} · {conversation} · {sender}",
     "assistant.events.subscriptionStatus": "Ongoing subscription · {status}",
+    "assistant.events.nextOccurrence": "Next trigger: {time} ({zone})",
     "assistant.events.delete": "Delete event",
     "assistant.events.create": "New event",
     "assistant.events.intent": "What should the assistant follow up on?",

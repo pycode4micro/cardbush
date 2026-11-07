@@ -13,8 +13,15 @@ export function FriendsEventDetails({ event, snapshot, language }: {
   const t = uiText(language);
   if (!event) return <p className="friends-empty">{t('yourFriends.noEvents')}</p>;
   const status = t(`yourFriends.status.${event.status}`);
+  const due = event.recurrence && snapshot?.detections.find(timer => timer.eventId === event.id);
   return <div className="friends-event-details">
     <h3>{event.title}</h3><p className="friends-aside">{event.subscription ? t('assistant.events.subscriptionStatus', { status }) : status}</p>
+    {due && event.recurrence && event.status !== 'failed' && event.status !== 'paused' && <p className="friends-aside">
+      {t('assistant.events.nextOccurrence', {
+        time: new Intl.DateTimeFormat(language, { timeZone: event.recurrence.timeZone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(due.at)),
+        zone: event.recurrence.timeZone,
+      })}
+    </p>}
     {event.error && <p className="your-friends-error" role="alert">{t(event.interruptedTurnId ? 'yourFriends.executionInterrupted' : 'yourFriends.executionFailed')} <code>{event.error}</code></p>}
     {event.result && <><h3>{t('yourFriends.latestResult')}</h3><div className="friends-result"><MessageFileReferenceScope workspaceRoot={snapshot?.workspaceDir}>
       <MarkdownContent content={event.result.text} language={language}/>

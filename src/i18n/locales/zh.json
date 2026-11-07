@@ -34,6 +34,7 @@
     "assistant.events.savedDestination": "已选择的通知对话",
     "assistant.events.target": "{bot} · {conversation} · {sender}",
     "assistant.events.subscriptionStatus": "长期订阅 · {status}",
+    "assistant.events.nextOccurrence": "下次触发：{time}（{zone}）",
     "assistant.events.delete": "删除事件",
     "assistant.events.create": "新建事件",
     "assistant.events.intent": "希望 Assistant 跟进什么事？",

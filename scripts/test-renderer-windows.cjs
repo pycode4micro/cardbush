@@ -76,12 +76,13 @@ async function run() {
         await read('document.querySelector("[data-nav-section=assistant]").click();void 0');
         await until('document.querySelector("[data-assistant-events]")');
         await read(`window.eventActions=[];window.testEvents=['first','second'].map(id=>({id,title:'Reminder '+id,status:'watching',subscription:id==='first',inputs:[]}));
+          testEvents[0].recurrence={unit:'week',interval:1,startLocal:'2026-11-09T09:00',timeZone:'Asia/Shanghai'};
           window.cardbushDesktop={...window.cardbushDesktop,runtime:{command:async request=>{
             const {kind,payload}=request.command;
             if(kind!=='runtime.friends')throw Error('No fixture for '+kind);
             if(payload.action==='delete'){eventActions.push(payload);testEvents=testEvents.filter(event=>event.id!==payload.eventId);}
             return {protocol:request.protocol,operationId:request.operationId,type:'command_response',ok:true,
-              result:{configured:true,events:testEvents,detections:[],permissions:[],solutions:[]}};
+              result:{configured:true,events:testEvents,detections:testEvents.filter(e=>e.recurrence).map(e=>({id:'timer',eventId:e.id,at:'2026-11-09T01:00:00Z'})),permissions:[],solutions:[]}};
           }}};
           document.querySelector('[data-assistant-events]').click();void 0`);
         await until('document.querySelector(".assistant-events-dialog[open]")');
@@ -94,6 +95,9 @@ async function run() {
         await until('document.querySelector(".event-overview h3")?.textContent==="Reminder first"');
         const subscriptionLabel = await read('document.querySelector(".friends-event-details .friends-aside").textContent');
         assert.ok(/长期订阅|Ongoing subscription/.test(subscriptionLabel), subscriptionLabel);
+        const nextTrigger = await read('document.querySelector(".friends-event-details .friends-aside:nth-of-type(2)").textContent');
+        assert.match(nextTrigger, /9:00/);
+        assert.match(nextTrigger, /Asia\/Shanghai/);
         await read('document.querySelector(".event-actions [data-action=delete]").click();void 0');
         await until('!document.querySelector(".event-overview") && eventActions.length===1');
         assert.deepEqual(await read('eventActions'), [{ action: 'delete', eventId: 'first' }]);

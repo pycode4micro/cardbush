@@ -130,6 +130,23 @@ test('new assistant reminders and subscriptions register only as events while a 
   assert.equal((await f.invoke('scheduled_results', {})).results[0].jobId, old.id);
 });
 
+test('assistant registers and edits a local calendar rule through ordinary tool admission', async t => {
+  const f = await fixture(t); await f.configureEvents();
+  const recurrence = { unit: 'week', interval: 1, startLocal: '2099-04-06T09:00', timeZone: 'Asia/Shanghai' };
+  const registration = { action: 'subscribe', text: 'Send the weekly report.', topic: 'Reports', recurrence };
+  const receipt = await f.invoke('assistant_event', registration);
+  assert.equal(receipt.nextAt, '2099-04-06T01:00:00.000Z', JSON.stringify(receipt));
+  const revised = { ...recurrence, timeZone: '+05:30' };
+  const edit = { action: 'continue', eventId: receipt.eventId, text: 'Use the new time zone.', recurrence: revised };
+  assert.equal((await f.invoke('assistant_event', edit)).nextAt, '2099-04-06T03:30:00.000Z');
+  assert.equal((await f.invoke('assistant_event', { ...edit, recurrence: { ...revised, interval: Number.MAX_SAFE_INTEGER } })).status, 'failed');
+  assert.equal((await f.invoke('assistant_event', { ...registration, at: schedule.trigger.at })).status, 'failed');
+  const snapshot = await f.readEvents();
+  assert.deepEqual(snapshot.events.map(event => event.recurrence), [revised]);
+  assert.equal(snapshot.detections.length, 1);
+  assert.equal((await f.scheduler.list()).jobs.length, 0);
+});
+
 test('capability discovery respects enabled tools and visibility without executing or delegating catalog entries', async t => {
   const f = await fixture(t);
   assert.equal((await f.invoke('search_skills', { query: 'spreadsheet' })).matches[0].name, 'sheets');
