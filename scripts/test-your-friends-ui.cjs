@@ -24,20 +24,27 @@ async function buildFixture(directory) {
       if (id === '\0friends-dock.ts') return 'export const AppCenterDock=()=>null;';
       if (id === '\0friends-unread.ts') return 'export const useAutomationUnreadCount=()=>0;';
       if (id === '\0friends-backend.ts') return `
-        const empty=()=>({configured:true,events:[],detections:[],permissions:[],solutions:[]});
+        const empty=()=>({configured:false,events:[],detections:[],permissions:[],solutions:[]});
         const read=()=>JSON.parse(localStorage.getItem('fixture-friends-runtime')||JSON.stringify(empty()));
         const save=state=>{localStorage.setItem('fixture-friends-runtime',JSON.stringify(state));return state;};
-        export const friendsBackend={read:async()=>read(),configure:async()=>{},
+        export const friendsBackend={read:async()=>read(),status:async()=>({configured:read().configured}),configure:async(_config,profile)=>{
+          fixture.configurations=(fixture.configurations||0)+1;const state=read();
+          if(!state.configured){state.configured=true;const at=profile.introduction.confirmedAt;
+            state.events.push({id:'fixture-startup',logicalKey:'startup',title:'A first event',intent:'Start from recognition',origin:'system',inputs:[],revision:1,archived:false,createdAt:at,updatedAt:at,status:'waiting_user',
+              result:{text:'A concrete first proposal.',turnId:'startup-turn',createdAt:at}});save(state);}},
           submit:async input=>{const state=read();if(state.events.some(e=>e.inputs.some(i=>i.id===input.id)))return state;
             let event=input.relatesTo?state.events.find(e=>e.id===input.relatesTo):undefined;
             if(!event){event={id:input.id,title:'Fixture event',intent:input.text,origin:'user',inputs:[],revision:1,archived:false,createdAt:input.createdAt};state.events.push(event);}
             event.inputs.push(input);event.updatedAt=input.createdAt;event.status='completed';event.result={text:'Fixture execution result.',turnId:'fixture-turn',createdAt:input.createdAt};return save(state);},
-          manage:async(action,id)=>{const state=read(),event=state.events.find(e=>e.id===id);if(action==='archive'||action==='restore')event.archived=action==='archive';else event.status=action==='pause'?'paused':'queued';return save(state);}
+          manage:async(action,id)=>{const state=read(),event=state.events.find(e=>e.id===id);if(action==='archive'||action==='restore')event.archived=action==='archive';else event.status=action==='pause'?'paused':'queued';return save(state);},
+          answerPermission:async answer=>{fixture.permissionAnswer=answer;const state=read();state.permissions=state.permissions.filter(p=>p.permissionId!==answer.permissionId);save(state);},
+          answerSolution:async answer=>{fixture.solutionAnswer=answer;const state=read();state.solutions=state.solutions.filter(s=>s.selectionId!==answer.selectionId);save(state);}
         };`;
       if (id !== '\0friends-fixture.tsx') return;
       return `import React,{useState,useRef,useLayoutEffect} from 'react';import {createRoot} from 'react-dom/client';
         import {YourFriendsShell} from ${file('src/features/yourFriends/YourFriendsShell.tsx')};
         import {YourFriendsSettings} from ${file('src/features/yourFriends/YourFriendsSettings.tsx')};
+        import {FriendsRuntimeConnection} from ${file('src/features/yourFriends/FriendsRuntimeConnection.tsx')};
         import {ChatSidebar} from ${file('src/features/sidebar/ChatSidebar.tsx')};
         import * as store from ${file('src/features/yourFriends/friendsStore.ts')};
         import {generateFriendAppearance} from ${file('src/features/yourFriends/generateFriendAppearance.ts')};
@@ -59,6 +66,7 @@ async function buildFixture(directory) {
           const enter=()=>{entry.current=document.querySelector('[data-nav-section="your-friends"]');const r=entry.current.getBoundingClientRect();setOrigin({x:r.left+r.width/2,y:r.top+r.height/2});setOpen(true);};
           fixture.open=enter;
           return <UiLanguageProvider language={language}><div className={'app theme-'+theme}>
+            <FriendsRuntimeConnection language={language} enabled={true} configuration={null} prepare={async()=>({model:'fixture',sessionId:'your-friends',userInput:''})}/>
             <div className="window-frame"/><main className="desktop-shell" inert={open?true:undefined} aria-hidden={open}>
               <ChatSidebar language={language} section={open?'your-friends':'assistant'} activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
                 onSectionChange={section=>{if(section==='your-friends')enter();}} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop}
@@ -83,7 +91,10 @@ function runFixture() {
     const win = new BrowserWindow({ show: false, width: 1120, height: 850, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false, offscreen: true } });
     win.webContents.session.setPermissionRequestHandler((_, __, callback) => callback(false));
     const errors = []; win.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
-    const read = code => win.webContents.executeJavaScript(code);
+    const read = async code => {
+      try { return await win.webContents.executeJavaScript(code); }
+      catch (cause) { throw new Error('Renderer expression failed: ' + code + '\n' + errors.join('\n'), { cause }); }
+    };
     const until = async code => { for (let i = 0; i < 120; i++) { if (await read(code)) return; await pause(25); } throw Error('Timed out: ' + code + '\n' + await read('document.body.innerText') + '\n' + errors.join('\n')); };
     const settle = () => until('!document.querySelector(".friends-onboarding-scene:not([data-phase=idle])")');
     const click = async selector => { await settle(); await read(`document.querySelector(${JSON.stringify(selector)}).click();void 0`); await settle(); };
@@ -95,7 +106,7 @@ function runFixture() {
       await pause(100);
       await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       const failures = await read(`(()=>{const root=document.querySelector(${JSON.stringify(scope)}), failures=[];
-        const containers=['.friends-stage','.friends-story','.friends-onboarding','.friends-onboarding-scene','.friends-onboarding-question','.friends-review','.friends-appearance-editor','.friends-design-workspace','.friends-design-step','.friends-generated-preview','.friends-design-controls','.friends-dialog-body','.friends-text-viewport'];
+        const containers=['.friends-stage','.friends-story','.friends-event-stage','.friends-onboarding','.friends-onboarding-scene','.friends-onboarding-question','.friends-review','.friends-appearance-editor','.friends-design-workspace','.friends-design-step','.friends-generated-preview','.friends-design-controls','.friends-dialog-body','.friends-text-viewport'];
         for(const node of [root,...root.querySelectorAll(containers.join(','))]){
           if(node.scrollHeight>node.clientHeight+2||node.scrollWidth>node.clientWidth+2)failures.push(node.className+': overflow '+node.scrollHeight+'/'+node.clientHeight+' '+node.scrollWidth+'/'+node.clientWidth);
         }
@@ -286,15 +297,56 @@ function runFixture() {
       assert.equal(await read('document.querySelector(".friends-review .friends-primary").disabled'), true, 'profile confirmation cannot grant boundaries');
       await click('.friends-confirm:last-of-type input'); await click('.friends-review .friends-primary');
       await until('fixture.store.readFriendsState().introduction.confirmedAt');
+      await until('fixture.configurations>0&&document.querySelector(".friends-event-stage[data-status=waiting_user]")');
+      assert.equal(await read('fixture.runtime().events[0].inputs.length'), 0, 'recognition starts work without inventing or waiting for a user message');
+      assert.equal(await read('document.querySelector(".friends-result-preview").textContent'), 'A concrete first proposal.');
+      await textButton('.friends-event-stage', 'yourFriends.continue');
+      assert.equal(await read('document.activeElement===document.querySelector(".friends-input-surface textarea")'), true);
+      assert.ok(await read('document.querySelector(".friends-relation").textContent.includes("A first event")'), 'reply stays explicitly related to the initiated event');
+      await click('.friends-relation button');
       assert.equal(await read('!!document.querySelector(".friends-stage .friend-avatar")'), false, 'the home view does not display a character, including a generated one');
       // User events preserve exact text; the stage only shows the relevant acknowledgement.
-      const utterance = '  明天有 NBA 比赛时告诉我。\n喜欢看精彩的比赛。  ';
+      const utterance = '  明天有 NBA 比赛时告诉我。\n喜欢看精彩的比赛。  \n' + 'A long event keeps every detail accessible.\n'.repeat(70);
       await fill('.friends-input-surface textarea', utterance); await click('.friends-send');
-      await until('document.querySelector(".friends-result")');
+      await until('document.querySelector(".friends-result-preview")');
       assert.equal(await read('fixture.runtime().events.at(-1).inputs.at(-1).text'), utterance);
       assert.equal(await read('document.querySelector(".friends-stage").textContent.includes("明天有 NBA")'), false);
       await click('.friends-header [data-panel="events"]'); await until('document.querySelector(".friends-dialog[open]")');
+      await read(`document.querySelector('.friends-dialog header button').dispatchEvent(new Event('cancel',{bubbles:true,cancelable:true}));void 0`);
+      assert.ok(await read('document.querySelector(".friends-dialog[open]")!==null'),'child cancellation keeps the Friends dialog open');
       assert.equal(await read('document.querySelector(".friends-event-list li:first-child p:nth-of-type(2)").textContent'), utterance);
+      // Long event content scrolls independently; the close control stays reachable.
+      for (const [theme, language, width, height] of [['bright', 'zh', 1120, 850], ['dark', 'en', 390, 480]]) {
+        await win.setContentSize(width, height);
+        await read(`fixture.theme(${JSON.stringify(theme)});fixture.language(${JSON.stringify(language)});void 0`);
+        await pause(120);
+        const closeBounds = () => read(`(()=>{const button=document.querySelector('.friends-dialog > header button'),r=button.getBoundingClientRect();
+          return {x:r.x,y:r.y,width:r.width,height:r.height,label:button.getAttribute('aria-label'),
+            visible:r.top>=0&&r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,
+            hittable:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button')===button};})()`);
+        const beforeScroll = await closeBounds();
+        await read(`(()=>{const body=document.querySelector('.friends-dialog-body');body.scrollTop=body.scrollHeight;})()`);
+        await until('document.querySelector(".friends-dialog-body").scrollTop>0');
+        const afterScroll = await closeBounds();
+        assert.ok(Math.abs(beforeScroll.y-afterScroll.y)<1, 'event scrolling cannot move the close control');
+        assert.ok(afterScroll.visible && afterScroll.hittable, 'close is visible and receives pointer input at the end of a long event');
+        assert.equal(afterScroll.label, await read(`fixture.t(${JSON.stringify(language)})('yourFriends.close')`));
+        await capture('events-scrolled-' + theme);
+        const x = Math.round(afterScroll.x+afterScroll.width/2), y = Math.round(afterScroll.y+afterScroll.height/2);
+        win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+        win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+        await until('!document.querySelector(".friends-dialog")');
+        await click('.friends-header [data-panel="events"]');
+      }
+      await win.setContentSize(1120, 850);
+      await read('fixture.theme("bright");fixture.language("zh");void 0');
+      await read('document.querySelector(".friends-event-list li:first-child .friends-event-actions").scrollIntoView();void 0');
+      await textButton('.friends-event-list li:first-child', 'yourFriends.viewEvent');
+      await until('document.querySelector(".friends-dialog[data-panel=details]")');
+      assert.equal(await read('document.querySelector(".friends-dialog-body").scrollTop'), 0, 'opening details starts at the top, independently of history scrolling');
+      assert.equal(await read('document.querySelector(".friends-original-input").textContent'), utterance);
+      await click('.friends-dialog > header button');
+      await click('.friends-header [data-panel="events"]');
       await textButton('.friends-event-list li:first-child', 'yourFriends.continue');
       await until('!document.querySelector(".friends-dialog")');
       await until('document.activeElement===document.querySelector(".friends-input-surface textarea")');
@@ -314,9 +366,85 @@ function runFixture() {
       await read('Storage.prototype.setItem=fixture.originalSet;void 0'); await click('.friends-send');
       await until(`fixture.runtime().events.length===${before + 1}`);
       assert.equal(await read('document.querySelectorAll(".friends-demo,.friends-artifact").length'), 0, 'execution examples are replaced by Runtime results');
-      assert.equal(await read('document.querySelector(".friends-result").textContent'), 'Fixture execution result.');
+      assert.equal(await read('document.querySelector(".friends-result-preview").textContent'), 'Fixture execution result.');
       await capture('event-bright');
       await read('fixture.theme("dark");void 0'); await capture('event-dark');
+      // A full Markdown result never grows the home surface; details retain every paragraph and table row.
+      const savedRuntime = await read('fixture.runtime()');
+      const setRuntime = state => read(`localStorage.setItem('fixture-friends-runtime',${JSON.stringify(JSON.stringify(state))});void 0`);
+      const result = 'A **complete** report with `keywords` and [sources](https://example.com).\n\n| Event | Detail |\n| --- | --- |\n'
+        + '| NBA | The complete event detail stays readable. |\n'.repeat(100) + '\nFinal result sentinel.';
+      const completed = structuredClone(savedRuntime);
+      completed.events.at(-1).result.text = result;
+      await setRuntime(completed);
+      await until('document.querySelector(".friends-result-preview")?.textContent.includes("A complete report")');
+      assert.equal(await read('document.querySelector(".friends-stage .friends-result")'), null);
+      assert.equal(await read('document.querySelector(".friends-result-preview").textContent'), 'A complete report with keywords and sources.');
+      await fitsViewport('.your-friends', 'long Markdown stays outside the main surface');
+      await fitsMinimumWindow('.your-friends', 'completed result preview');
+      await fill('.friends-input-surface textarea', 'A long draft remains editable.\n'.repeat(60));
+      await win.setContentSize(390, 480);
+      await fitsViewport('.your-friends', 'long result and long draft at a narrow window');
+      await capture('result-single-viewport');
+      await click('.friends-view-details');
+      await until('document.querySelector(".friends-dialog[data-panel=details] .friends-result table")');
+      assert.ok(await read('document.querySelector(".friends-result").textContent.includes("Final result sentinel.")'));
+      assert.equal(await read('document.querySelector(".friends-result code").textContent'), 'keywords');
+      assert.equal(await read('document.querySelectorAll(".friends-result tbody tr").length'), 100);
+      await read('document.querySelector(".friends-dialog-body").scrollTop=100000;void 0');
+      assert.ok(await read(`(()=>{const b=document.querySelector('.friends-dialog > header button'),r=b.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button')===b;})()`));
+      await click('.friends-dialog > header button');
+      await fill('.friends-input-surface textarea', '');
+      // A background loop takes precedence over the previously selected completed event.
+      const running = structuredClone(completed), sourceEvent = running.events.at(-1);
+      const activeEvent = { ...sourceEvent, id: 'background-event', origin: 'agent', title: 'Background event with a long title. '.repeat(30), status: 'running',
+        result: { ...sourceEvent.result, text: 'Stale result from the previous run.' } };
+      running.events.push(activeEvent); running.active = { eventId: activeEvent.id, turnId: 'active-turn' };
+      await setRuntime(running);
+      await until('document.querySelector(".friends-event-stage[data-status=running][data-working=true]")');
+      assert.equal(await read('document.querySelector(".friends-stage .friends-result-preview")'), null, 'a running loop cannot display the stale result');
+      assert.equal(await read('document.querySelector(".friends-event-stage h1").textContent'), await read('fixture.t("zh")("yourFriends.status.running")'));
+      await fitsMinimumWindow('.your-friends', 'running status');
+      await capture('running-status');
+      await textButton('.friends-event-stage', 'yourFriends.pauseExecution');
+      await until('document.querySelector(".friends-event-stage[data-status=paused]")');
+      assert.equal(await read('fixture.runtime().events.at(-1).status'), 'paused');
+      await textButton('.friends-event-stage', 'yourFriends.resumeExecution');
+      await until('document.querySelector(".friends-event-stage[data-status=queued]")');
+      // Requests remain explicit and actionable; closing their panel cannot silently answer them.
+      const awaiting = structuredClone(running);
+      awaiting.permissions = [{ permissionId: 'friends-permission', sessionId: 'your-friends', turnId: 'active-turn', toolCallId: 'permission-call',
+        request: { reason: 'Review this exact file access. '.repeat(20), actions: ['read'], targets: [{ kind: 'filesystem_path', value: 'C:/fixture/report.txt' }], requestedCapabilityIds: ['fs.read'] } }];
+      awaiting.solutions = [{ selectionId: 'friends-question', sessionId: 'your-friends', turnId: 'active-turn', toolCallId: 'question-call', createdAt: sourceEvent.createdAt,
+        prompt: 'Which event should I prioritize?', options: ['NBA', 'Games'], blocking: true }];
+      await setRuntime(awaiting);
+      await until('document.querySelector(".friends-respond")');
+      await fitsMinimumWindow('.your-friends', 'pending response');
+      await click('.friends-respond');
+      await until('document.querySelector(".friends-dialog[data-panel=requests] .permission-request-card")');
+      await click('.friends-dialog > header button');
+      assert.equal(await read('fixture.permissionAnswer ?? null'), null);
+      assert.equal(await read('fixture.solutionAnswer ?? null'), null);
+      await click('.friends-respond');
+      assert.equal(await read('document.querySelector(".permission-actions button > span").textContent'), await read('fixture.t("zh")("permission.allow_once")'));
+      await click('.permission-actions button:first-child');
+      await until('!document.querySelector(".permission-request-card")');
+      assert.equal(await read('fixture.permissionAnswer.permissionId'), 'friends-permission');
+      assert.equal(await read('fixture.permissionAnswer.decision'), 'allow_once');
+      assert.deepEqual(await read('fixture.permissionAnswer.grantedCapabilityIds'), ['fs.read']);
+      await click('.solution-selection-options button:last-child');
+      await until('!document.querySelector(".solution-selection-card")');
+      assert.deepEqual(await read('fixture.solutionAnswer'), { selectionId: 'friends-question', sessionId: 'your-friends', turnId: 'active-turn', kind: 'option', optionIndex: 1 });
+      await click('.friends-dialog > header button');
+      await until('document.querySelector(".friends-event-stage[data-status=running]")');
+      // Completion of that loop stays selected instead of falling back to the old event.
+      const finished = structuredClone(running); delete finished.active;
+      finished.events.at(-1).status = 'completed'; finished.events.at(-1).result.text = 'Background event finished.';
+      await setRuntime(finished);
+      await until('document.querySelector(".friends-result-preview")?.textContent==="Background event finished."');
+      await fitsViewport('.your-friends', 'background completion');
+      await setRuntime(savedRuntime);
+      await until('document.querySelector(".friends-result-preview")?.textContent==="Fixture execution result."');
       const confirmed = await read('fixture.store.readFriendsState().introduction.confirmedAt');
       await click('.friends-header [data-panel="appearance"]');
       await click('.friends-design-method[data-mode="builtin"]');
@@ -373,6 +501,7 @@ function runFixture() {
       await win.reload(); await until('document.querySelector(".your-friends[data-phase=open]")');
       assert.equal(await read('document.querySelector(".friends-brand>span").textContent'), '团子');
       assert.equal(await read('fixture.runtime().events.length'), before + 1);
+      assert.equal(await read('fixture.runtime().events.filter(event=>event.id==="fixture-startup").length'), 1, 'reopening does not repeat initial discovery');
       assert.equal(await read('fixture.store.readFriendsState().appearance.character'), 'cat');
       // Model output is an inert, bounded SVG image; reject executable or remote content.
       assert.ok(await read(`(()=>{const check=fixture.validFriendSvg,wrap=s=>'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">'+s+'</svg>';return check(fixture.design.svg)&&[
@@ -480,7 +609,7 @@ function runFixture() {
         }
       }
       assert.deepEqual(errors, []);
-      console.log('Your Friends UI passed: Runtime event delivery and related evidence, idempotent submission, archive, artifact navigation, onboarding, recognition before generation, appearance editing, cancellation/failure, optional presets, no placeholder or home avatar, theme inheritance, startup/interruption/reduced motion, inert SVG validation, v1 migration, IME, confirmations, failed saves, language and single-viewport layouts. Screenshots: ' + directory);
+      console.log('Your Friends UI passed: fixed home viewport, active loop priority, full result details, explicit permission/question replies, Runtime event delivery and related evidence, idempotent submission, archive, artifact navigation, onboarding, recognition before generation, appearance editing, cancellation/failure, optional presets, no placeholder or home avatar, theme inheritance, startup/interruption/reduced motion, inert SVG validation, v1 migration, IME, confirmations, failed saves, language and single-viewport layouts. Screenshots: ' + directory);
     } finally { win.destroy(); clearTimeout(deadline); }
     app.quit();
   }).catch(error => { console.error(error); clearTimeout(deadline); app.exit(1); });

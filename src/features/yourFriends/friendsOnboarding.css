@@ -96,11 +96,12 @@
   .friends-appearance-editor[data-view="presets"] .friends-generated-preview { display: none; }
   .friends-appearance-editor .friends-design-feedback textarea { height: 80px; }
   .friends-appearance-editor:has(.friends-design-error) .friends-design-feedback textarea { height: 48px; }
-  .friends-appearance-editor .friends-design-error { flex: 0 0 64px; height: 64px; min-height: 64px; }
+  .friends-appearance-editor .friends-design-error { --friend-error-height: 64px; flex: 0 0 var(--friend-error-height); height: var(--friend-error-height); min-height: var(--friend-error-height); }
   .friends-appearance-editor .friends-design-explanation h2 { -webkit-line-clamp: 1; }
   .friends-onboarding-progress { height: 18px; margin-top: 4px; }
 }
 
 @media (max-height: 560px) {
   .friends-onboarding-scene, .friends-design-step { gap: 8px; }
+  .friends-appearance-editor .friends-design-error { --friend-error-height: 56px; }
 }

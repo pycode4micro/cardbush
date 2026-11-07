@@ -8,7 +8,9 @@ export const FRIENDS_SESSION = 'your-friends' as const;
 export const friendInputSchema = z.object({ id: z.string().min(1).max(160), text: z.string().min(1).max(8000).refine(value => Boolean(value.trim())),
   createdAt: z.string().datetime(), relatesTo: z.string().min(1).max(160).optional() }).strict();
 export const friendsProfileSchema = z.object({ name: z.string().max(60), language: z.string().min(1), timeZone: z.string().min(1),
-  recognition: z.record(z.string(), z.string().max(8000)), confirmedAt: z.string().datetime() }).strict();
+  recognition: z.record(z.string(), z.string().max(8000)), confirmedAt: z.string().datetime(),
+  interactionPreferences: z.object({ beforeExecution: z.enum(['ask', 'within-scope']), report: z.enum(['always', 'important']) }).strict().optional(),
+}).strict();
 export const friendsCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('read') }),
   z.object({ action: z.literal('status') }),

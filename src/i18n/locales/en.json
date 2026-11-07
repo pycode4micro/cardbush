@@ -26,7 +26,7 @@
     "yourFriends.cancelPreferences": "Not now",
     "yourFriends.addDesignPreferences": "Add design preferences",
     "yourFriends.refineAppearance": "Refine this design",
-    "yourFriends.readyToBeginPrompt": "Your profile and appearance are ready. Confirm them to enter your space.",
+    "yourFriends.readyToBeginPrompt": "After you confirm, I will start with one thing you care about and get to know you over time.",
     "yourFriends.readyToBegin": "Ready when you are",
     "yourFriends.returnToConfirmation": "Back to confirmation",
     "yourFriends.reviewSectionProgress": "{section} · {current} / {total}",
@@ -68,7 +68,6 @@
     "yourFriends.events": "Events",
     "yourFriends.settings": "Space settings",
     "yourFriends.close": "Close",
-    "yourFriends.here": "Available to talk",
     "yourFriends.gettingAcquainted": "Understanding your preferences",
     "yourFriends.introductionProgress": "Setup · {current} / {total}",
     "yourFriends.addressTitle": "What should we call you?",
@@ -4566,8 +4565,8 @@
     "common.none": "None",
     "common.waiting": "Waiting",
     "common.clear": "Clear",
-    "yourFriends.runtimeReady": "Ready when you are",
-    "yourFriends.runtimeDescription": "Tell me what needs attention. I will work from the event.",
+    "yourFriends.runtimeReady": "Start with one small thing",
+    "yourFriends.runtimeDescription": "I will suggest a next step from the interests and daily life you shared, then build on your feedback.",
     "yourFriends.runtimeNotice": "Cardbush owns event execution. Registered watches remain when you leave this page.",
     "yourFriends.runtimeUnavailable": "Execution status is unavailable. Please try again shortly.",
     "yourFriends.executionActionFailed": "The action did not complete. Your input is retained; please retry.",
@@ -4582,6 +4581,14 @@
     "yourFriends.status.completed": "Completed",
     "yourFriends.status.paused": "Paused",
     "yourFriends.status.failed": "Execution incomplete",
-    "yourFriends.eventProgress": "Event progress"
+    "yourFriends.eventProgress": "Event progress",
+    "yourFriends.eventDetails": "Event details",
+    "yourFriends.latestResult": "Latest result",
+    "yourFriends.originalInputs": "Your original input",
+    "yourFriends.awaitingResponse": "Waiting for your response",
+    "yourFriends.respond": "Review and respond",
+    "yourFriends.viewDetails": "View details",
+    "yourFriends.workingDescription": "Working on this event. I will ask when your input is needed.",
+    "yourFriends.noPendingRequests": "Nothing needs your response right now."
   }
 }

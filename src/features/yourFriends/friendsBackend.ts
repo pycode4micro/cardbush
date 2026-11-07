@@ -21,7 +21,8 @@ export const friendsBackend = {
       const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, sessionId: FRIENDS_SESSION, userInput: '', uiLanguage: language }, runtime);
       await command({ action: 'configure', parent, profile: { name: state.name, language,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        recognition: state.introduction.answers, confirmedAt: state.introduction.confirmedAt } });
+        recognition: state.introduction.answers, confirmedAt: state.introduction.confirmedAt,
+        interactionPreferences: { beforeExecution: state.delegation.beforeExecution, report: state.delegation.report } } });
     } finally { runtime.dispose(); }
   },
   submit: (input: FriendInput) => command({ action: 'submit', input }),

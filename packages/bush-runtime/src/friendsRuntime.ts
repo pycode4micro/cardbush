@@ -23,6 +23,8 @@ export class FriendsRuntime {
   private closed = false;
   private configured = false;
   private stagedDecision?: z.infer<typeof decisionSchema>;
+  private activationEventIds = new Set<string>();
+  private automaticActivation = false;
   private clock: () => number;
   constructor(path: string, private deps: {
     tools: ToolRegistry; run: Runner; now?: () => number;
@@ -54,9 +56,16 @@ export class FriendsRuntime {
         const parent = { ...command.parent, inputMessages: [] };
         state.configuration = { parent, profile: command.profile };
         if (first) {
-          const event = this.newEvent('startup', command.profile.name || FRIENDS_SESSION, 'Review confirmed recognition and applicable saved habits.', 'system');
+          const event = this.newEvent('startup', command.profile.name || FRIENDS_SESSION, renderPromptTemplate('friends-startup'), 'system');
           state.events.push(event); this.enqueue(state, event.id, 'startup', 'startup');
+        } else if (!state.discoveryStarted && !state.active && !state.signals.length && !state.detections.length &&
+          state.events.length === 1 && state.events[0].logicalKey === 'startup' && !state.events[0].inputs.length && !state.events[0].archived && state.events[0].status === 'completed') {
+          // One upgrade activation for an old setup that finished without starting
+          // any work. Never replay failed/paused work or pending questions.
+          const event = this.newEvent('recognition-discovery', command.profile.name || FRIENDS_SESSION, renderPromptTemplate('friends-startup'), 'system');
+          state.events.push(event); this.enqueue(state, event.id, 'startup', 'recognition-discovery');
         }
+        state.discoveryStarted = true;
       });
       this.configured = true;
     } else if (command.action === 'submit') {
@@ -148,6 +157,8 @@ export class FriendsRuntime {
       const turnId = `friends-${randomUUID()}`;
       state.active = { eventId: event.id, turnId, signalIds: signals.map(signal => signal.id) };
       event.status = 'running'; this.touch(event);
+      this.activationEventIds = new Set(state.events.map(item => item.id));
+      this.automaticActivation = !signals.some(signal => signal.kind === 'input' || signal.kind === 'resume');
       return { event, signals, turnId, configuration: state.configuration,
         detections: state.detections.filter(d => d.eventId === event.id) };
     });
@@ -223,9 +234,10 @@ export class FriendsRuntime {
         const event = this.event(state, input.eventId); event.status = 'paused'; this.touch(event);
         return { status: 'paused', eventId: event.id };
       }));
-    register('friends_create_event', 'Create a separate durable work event. Use a stable logicalKey for idempotency. New work must follow an actual instruction or applicable saved habit.', createSchema, async input => this.store.change(state => {
+    register('friends_create_event', 'Create a separate durable event grounded in confirmed recognition, user instructions, applicable habits or verified feedback. Habits are optional. Use a stable logicalKey for idempotency. Automatic activations can create at most one new event; creation grants no execution permission.', createSchema, async input => this.store.change(state => {
       const old = state.events.find(event => event.logicalKey === input.logicalKey);
       if (old) return { status: 'exists', event: old };
+      if (this.automaticActivation && state.events.some(event => event.origin === 'agent' && !this.activationEventIds.has(event.id))) throw Error('FRIENDS_DISCOVERY_EVENT_LIMIT');
       this.capacity(state);
       const event = this.newEvent(input.logicalKey, input.title, input.intent, 'agent');
       // Creation alone does not execute work. A detector or an explicit resume wakes it.
@@ -244,7 +256,7 @@ export class FriendsRuntime {
       if (state.active?.eventId !== event.id) event.status = 'watching';
       this.touch(event); return { status: 'registered', detection };
     }));
-    register('friends_decide', 'Record the current event disposition and a short factual habit assessment, not private reasoning. This does not publish a result or bypass tool permissions.', decisionSchema, async input => {
+    register('friends_decide', 'Record the current event disposition and a short factual basis, not private reasoning. habitRefs may be empty when no applicable habit exists. This does not publish a result or bypass tool permissions.', decisionSchema, async input => {
       const state = await this.store.read();
       if (input.disposition === 'watching' && !state.detections.some(d => d.eventId === state.active?.eventId)) throw Error('FRIENDS_WATCH_REQUIRES_DETECTION');
       this.stagedDecision = input; return { status: 'recorded', delivery: 'awaiting_runtime_completion' };

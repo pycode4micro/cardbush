@@ -1,0 +1,1 @@
+Begin from the user's confirmed recognition, even when no saved habits exist. Take the initiative with one concrete, modest event or a focused proposal with choices. Respect interaction preferences and actual permissions, learn missing details through the event, and expand gradually from real feedback. Do not wait for a generic user task or manufacture an initial habit profile.

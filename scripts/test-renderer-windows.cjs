@@ -69,19 +69,22 @@ async function run() {
         await until('document.querySelector(".your-friends[data-phase=open]")');
         assert.equal(await read('document.querySelector(".desktop-shell").inert'), true);
         assert.equal(await read('!!document.querySelector(".window-frame")'), true, 'native window frame remains mounted');
-        assert.equal(await read('!!document.querySelector(".friends-header nav")'), false, 'onboarding does not expose completed-profile navigation');
+        assert.ok(await read('!!document.querySelector(".friends-onboarding")'), 'new profiles begin with recognition');
+        assert.equal(await read('!!document.querySelector(".friends-header nav")'), false, 'initialization keeps secondary navigation hidden');
         await read('document.querySelector(".friends-back").click();void 0');
         await until('!document.querySelector(".your-friends")');
         assert.equal(await read('document.querySelector(".desktop-shell").inert'), false);
         assert.equal(await read('document.activeElement.dataset.navSection'), 'your-friends');
-        // Startup loading uses an isolated saved profile. Settings gestures are
-        // covered by test-your-friends-ui after its real onboarding sequence.
-        await read(`localStorage.setItem('cardbush_your_friends_v1', JSON.stringify({ version: 2,
-          id: 'primary-friend', name: '', startup: true, motion: true, tone: 'lilac',
-          introduction: { step: 0, answers: {} }, delegation: { beforeExecution: 'ask', report: 'always' }, events: [] })); void 0`);
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: ',', modifiers: ['control'] });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['control'] });
+        await until('document.querySelector(".settings-shell:not(.settings-inactive) input[placeholder=\\"Your Friends\\"]")');
+        await read('document.querySelector(".settings-shell input[placeholder=\\"Your Friends\\"]").closest(".settings-card").querySelector(".settings-switch input").click();void 0');
+        await until('JSON.parse(localStorage.getItem("cardbush_your_friends_v1")).startup===true');
+        await read('document.querySelector(".settings-shell .back-button").click();void 0');
+        await until('!document.querySelector(".settings-shell:not(.settings-inactive)")');
         await win.reload();
         await until('document.querySelector(".your-friends[data-phase=open]")');
-        assert.ok(await read('document.querySelector(".friends-onboarding")'), 'saved default startup resumes introduction');
+        assert.ok(await read('!!document.querySelector(".friends-onboarding")'), 'saved default startup resumes introduction');
         await read('document.querySelector(".friends-back").click();void 0');
         await until('!document.querySelector(".your-friends")');
         assert.equal(await read('document.activeElement.dataset.navSection'), 'your-friends', 'default entry has a valid return focus');

@@ -181,5 +181,15 @@
     "name": "subagent-name-description",
     "slots": [],
     "sha256": "a4006bf348c1dcf9d736f7c435cfe0be9cb9632711a01491f61a147565551af5"
+  },
+  {
+    "name": "friends-system",
+    "slots": [],
+    "sha256": "76d76239dc761ed2c1194430cfb91f80e4e8b61f078120b9ba9503999a254249"
+  },
+  {
+    "name": "friends-startup",
+    "slots": [],
+    "sha256": "b1d80f3270c687e5283e27ec72d53152b03b628a14b30e356681d8b8982d9258"
   }
 ]

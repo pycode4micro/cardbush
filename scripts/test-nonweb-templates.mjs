@@ -27,6 +27,20 @@ test('model policies match reviewed text, slots and CommonJS packaging', async (
   assert.throws(() => renderPromptTemplate('goal-continuation-prompt', { extra: 'x' }), /Unexpected/);
 });
 
+test('Friends starts from recognition and learns gradually without making habits or model polling prerequisites', () => {
+  const policy = renderPromptTemplate('friends-system');
+  assert.match(policy, /not a prerequisite for starting/);
+  assert.match(policy, /without waiting for the user to type a task/);
+  assert.match(policy, /habitRefs may be empty/);
+  assert.match(policy, /at most one new event/);
+  assert.match(policy, /Silence, your own suggestions, a timer firing and successful execution are not evidence/);
+  assert.match(policy, /summary_for_user or revise_memory tools only when enabled/);
+  assert.match(policy, /not tool permission grants/);
+  assert.match(policy, /Waiting does not require model polling/);
+  assert.doesNotMatch(policy, /Do not create or revise habits as part of this integration/);
+  assert.match(renderPromptTemplate('friends-startup'), /even when no saved habits exist/);
+});
+
 
 test('MCP document keeps host CSP first and treats provider inputs as inert JSON', () => {
   const hostile = '</script><script>compromised=true</script>\n$&{{json:theme}}';

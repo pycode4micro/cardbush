@@ -9,6 +9,7 @@ const timestamp = z.string().datetime();
 const id = z.string().min(1);
 const stateSchema = z.object({
   version: z.literal(1),
+  discoveryStarted: z.literal(true).optional(),
   configuration: z.object({ parent: runtimeSessionTurnRequestSchema.extend({ inputMessages: z.tuple([]) }), profile: friendsProfileSchema }).optional(),
   events: z.array(z.object({ id, logicalKey: id, origin: z.enum(['user', 'agent', 'system']), title: z.string(), intent: z.string(),
     inputs: z.array(friendInputSchema), status: z.enum(['queued', 'running', 'watching', 'waiting_user', 'completed', 'paused', 'failed']),
@@ -25,6 +26,7 @@ const stateSchema = z.object({
 
 export interface FriendsState {
   version: 1;
+  discoveryStarted?: true;
   configuration?: { parent: RuntimeSessionTurnRequest; profile: FriendsProfile };
   events: FriendsWorkEvent[];
   detections: FriendsDetection[];

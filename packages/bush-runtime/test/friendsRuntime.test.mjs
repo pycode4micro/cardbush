@@ -31,17 +31,105 @@ async function fixture(t, handle, options = {}) {
     } }, ...options.host });
   const command = payload => host.sendCommand({ kind: FRIENDS_COMMAND, payload });
   const read = () => command({ action: 'read' });
-  const configure = () => command({ action: 'configure', profile: { name: 'Fixture friend', language: 'zh', timeZone: 'Asia/Shanghai', recognition: { context: 'Only fixture work.' }, confirmedAt: now() },
+  const configure = (profile = {}, parent = {}) => command({ action: 'configure', profile: { name: 'Fixture friend', language: 'zh', timeZone: 'Asia/Shanghai', recognition: { context: 'Only fixture work.' }, confirmedAt: now(), ...profile },
     parent: { protocol: 'bush.session_turn_request.v1', requestId: 'configuration', sessionId: FRIENDS_SESSION, turnId: 'configuration',
       model: 'fixture', tools: registry.definitions().filter(tool => !tool.name.startsWith('friends_')), prefixMessages: [],
       inputMessages: [{ messageId: 'old-input', message: { role: 'user', content: 'UNRELATED_CHAT_MUST_NOT_BE_INHERITED' } }], metadata: {}, permissionMode: 'task_free',
-      requestCapabilities: { interactiveRequests: true, vision: false } } });
+      requestCapabilities: { interactiveRequests: true, vision: false }, ...parent } });
   const send = (id, text = 'Do this event', relatesTo) => command({ action: 'submit', input: { id, text, createdAt: '2026-11-06T02:00:00.000Z', ...(relatesTo ? { relatesTo } : {}) } });
   const close = () => host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
   t.after(async () => { await close(); if (!options.keep) { assert.equal(dirname(resolve(root)), resolve(tmpdir())); await rm(root, { recursive: true, force: true }); } });
   return { root, host, registry, requests, command, read, configure, send, close };
 }
 const simple = async (_request, round) => round === 1 ? { calls: [decide('completed')] } : { text: 'A real terminal result.' };
+
+test('confirmed recognition starts an event with no habit or user input; reconnecting and waiting do not repeat inference', async t => {
+  const f = await fixture(t, async (request, round) => {
+    if (round === 1) return { calls: [{ name: 'check_habit', input: { topics: ['fixture sport'] } }] };
+    if (round === 2) return { calls: [{ name: 'friends_create_event', input: { logicalKey: 'first-observation', title: 'One modest observation', intent: 'Observe the explicitly agreed fixture interest once.' } }] };
+    if (round === 3) {
+      const event = (await f.read()).events.find(event => event.logicalKey === 'first-observation');
+      return { calls: [{ name: 'friends_watch_time', input: { eventId: event.id, at: new Date(Date.now() + 60_000).toISOString() } }, decide('completed')] };
+    }
+    return { text: 'One agreed observation is registered. Further events depend on feedback.' };
+  }, { keep: true });
+  const profile = { recognition: { context: 'I follow fixture sport; check once at the agreed time.' }, interactionPreferences: { beforeExecution: 'within-scope', report: 'important' } };
+  await f.configure(profile, { metadata: { individuation: { habits: false, predictions: false } } });
+  const state = await until(f.read, state => state.events[0]?.status === 'completed');
+  assert.equal(state.events.length, 2); assert.equal(state.events[1].status, 'watching');
+  assert.ok(state.events.every(event => event.inputs.length === 0));
+  assert.deepEqual(state.events[0].decision.habitRefs, []);
+  assert.equal(state.detections.length, 1);
+  assert.deepEqual(data(f.requests[0]).profile.interactionPreferences, profile.interactionPreferences);
+  assert.match(data(f.requests[0]).event.intent, /even when no saved habits exist/);
+  assert.ok(f.requests.some(request => request.messages.some(message => message.role === 'tool' && /"memories"\s*:\s*\[\]/.test(message.content))));
+  const count = f.requests.length;
+  await f.configure(profile); await f.configure(profile); await f.read(); await sleep(40);
+  assert.equal(f.requests.length, count, 'reading and reconnecting cannot create a discovery loop');
+  await f.close();
+  const restarted = await fixture(t, simple, { root: f.root });
+  await restarted.configure(profile); await sleep(40);
+  assert.equal(restarted.requests.length, 0, 'durable discovery does not replay after restart');
+  assert.equal((await restarted.read()).detections.length, 1);
+});
+
+test('automatic discovery allows one new event and idempotent reuse, while explicit user batches remain possible', async t => {
+  const create = key => ({ name: 'friends_create_event', input: { logicalKey: key, title: key, intent: 'Fixture event.' } });
+  const f = await fixture(t, async (request, round) => {
+    if (data(request).signals.some(signal => signal.kind === 'input')) return round === 1 ? { calls: [create('requested-one'), create('requested-two'), decide('completed')] } : { text: 'Both requested events recorded.' };
+    if (round === 1) return { calls: [create('first')] };
+    if (round === 2) return { calls: [create('first'), create('too-many')] };
+    return round === 3 ? { calls: [decide('completed')] } : { text: 'One exploratory event recorded.' };
+  });
+  await f.configure(); await until(f.read, state => state.events[0]?.status === 'completed');
+  assert.deepEqual((await f.read()).events.map(event => event.logicalKey), ['startup', 'first']);
+  assert.ok(f.requests.some(request => JSON.stringify(request.messages).includes('FRIENDS_DISCOVERY_EVENT_LIMIT')));
+  const eventId = (await f.read()).events.find(event => event.logicalKey === 'first').id;
+  await f.send('batch', 'Create both explicitly requested fixture events.', eventId);
+  await until(f.read, state => state.events.find(event => event.id === eventId)?.status === 'completed');
+  assert.ok((await f.read()).events.some(event => event.logicalKey === 'requested-one'));
+  assert.ok((await f.read()).events.some(event => event.logicalKey === 'requested-two'));
+});
+
+test('a timed activation of a user-created event also expands by at most one new event', async t => {
+  const f = await fixture(t, async (request, round) => {
+    const context = data(request);
+    if (context.event.id !== 'scheduled') return simple(request, round);
+    if (round > 1) return { text: 'The concrete observation is handled.' };
+    if (context.signals.some(signal => signal.kind === 'input')) return { calls: [
+      { name: 'friends_watch_time', input: { eventId: context.event.id, at: new Date(Date.now() + 200).toISOString() } }, decide('watching')] };
+    return { calls: ['clock-one', 'clock-two'].map(key => ({ name: 'friends_create_event', input: { logicalKey: key, title: key, intent: 'One related opportunity.' } })).concat(decide('completed')) };
+  });
+  await f.configure(); await until(f.read, state => state.events[0]?.status === 'completed');
+  await f.send('scheduled', 'Observe this event at its agreed time.');
+  await until(f.read, state => state.events.find(event => event.id === 'scheduled')?.status === 'completed');
+  assert.deepEqual((await f.read()).events.filter(event => event.origin === 'agent').map(event => event.logicalKey), ['clock-one']);
+});
+
+test('an old empty completed setup receives one discovery activation, while paused or pending work stays untouched', async t => {
+  const old = await fixture(t, simple, { keep: true });
+  await old.configure(); await until(old.read, state => state.events[0]?.status === 'completed'); await old.close();
+  const path = join(old.root, 'friends/events.json'), seed = JSON.parse(await readFile(path, 'utf8'));
+  delete seed.discoveryStarted;
+  await writeFile(path, JSON.stringify(seed));
+  const upgraded = await fixture(t, simple, { root: old.root, keep: true });
+  await upgraded.configure(); await until(upgraded.read, state => state.events[1]?.status === 'completed');
+  assert.equal((await upgraded.read()).events[1].logicalKey, 'recognition-discovery');
+  const count = upgraded.requests.length;
+  await upgraded.configure(); await sleep(30); assert.equal(upgraded.requests.length, count); await upgraded.close();
+  for (const status of ['paused', 'failed', 'waiting_user', 'archived', 'answered']) {
+    const root = await mkdtemp(join(tmpdir(), 'cardbush-friends-test-'));
+    const unchanged = structuredClone(seed);
+    if (status === 'archived') unchanged.events[0].archived = true;
+    else if (status === 'answered') unchanged.events[0].inputs.push({ id: 'answered', text: 'No more suggestions for now.', createdAt: now(), relatesTo: unchanged.events[0].id });
+    else unchanged.events[0].status = status;
+    await mkdir(join(root, 'friends')); await writeFile(join(root, 'friends/events.json'), JSON.stringify(unchanged));
+    const f = await fixture(t, simple, { root }); await f.configure(); await sleep(20);
+    assert.equal(f.requests.length, 0, status); assert.deepEqual((await f.read()).events, unchanged.events);
+  }
+  // The final fixture owns cleanup of the shared temporary root.
+  await fixture(t, simple, { root: old.root });
+});
 
 test('accepted inputs are durable before inference, and each activation uses event evidence rather than chat history', async t => {
   const release = Promise.withResolvers(), entered = Promise.withResolvers();

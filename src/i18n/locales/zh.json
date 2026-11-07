@@ -26,7 +26,7 @@
     "yourFriends.cancelPreferences": "暂不补充",
     "yourFriends.addDesignPreferences": "补充设计偏好",
     "yourFriends.refineAppearance": "调整这个形象",
-    "yourFriends.readyToBeginPrompt": "认知资料和形象已经就绪，确认后进入你的空间。",
+    "yourFriends.readyToBeginPrompt": "确认后，我会从你关心的一件事开始，在相处中慢慢了解你。",
     "yourFriends.readyToBegin": "准备好了",
     "yourFriends.returnToConfirmation": "返回确认",
     "yourFriends.reviewSectionProgress": "{section} · {current} / {total}",
@@ -68,7 +68,6 @@
     "yourFriends.events": "事件",
     "yourFriends.settings": "空间设置",
     "yourFriends.close": "关闭",
-    "yourFriends.here": "随时交流",
     "yourFriends.gettingAcquainted": "了解你的偏好",
     "yourFriends.introductionProgress": "初始设置 · {current} / {total}",
     "yourFriends.addressTitle": "怎么称呼你？",
@@ -4523,8 +4522,8 @@
     "common.none": "无",
     "common.waiting": "等待",
     "common.clear": "清空",
-    "yourFriends.runtimeReady": "可以开始了",
-    "yourFriends.runtimeDescription": "告诉我一件需要处理的事，我会围绕事件推进。",
+    "yourFriends.runtimeReady": "从一件小事开始",
+    "yourFriends.runtimeDescription": "我会从你分享的日常和兴趣出发，主动提出下一步，再根据你的反馈慢慢拓展。",
     "yourFriends.runtimeNotice": "事件由 Cardbush 执行。离开此页面后，已登记的关注仍会保留。",
     "yourFriends.runtimeUnavailable": "暂时无法读取执行状态，请稍后重试。",
     "yourFriends.executionActionFailed": "操作未完成，输入已保留，请重试。",
@@ -4539,6 +4538,14 @@
     "yourFriends.status.completed": "已完成",
     "yourFriends.status.paused": "已暂停",
     "yourFriends.status.failed": "执行未完成",
-    "yourFriends.eventProgress": "这件事的进展"
+    "yourFriends.eventProgress": "这件事的进展",
+    "yourFriends.eventDetails": "事件详情",
+    "yourFriends.latestResult": "最近一次结果",
+    "yourFriends.originalInputs": "你的原话",
+    "yourFriends.awaitingResponse": "需要你回应",
+    "yourFriends.respond": "查看并回应",
+    "yourFriends.viewDetails": "查看详情",
+    "yourFriends.workingDescription": "正在推进这件事，有需要会向你确认。",
+    "yourFriends.noPendingRequests": "暂时没有需要你回应的事项。"
   }
 }

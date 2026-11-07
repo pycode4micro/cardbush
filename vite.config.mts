@@ -33,6 +33,12 @@ export default defineConfig({
       output: {
         codeSplitting: {
           groups: [
+            {
+              name: 'your-friends',
+              test: /[\\/]src[\\/]features[\\/]yourFriends[\\/]/,
+              priority: 20,
+              entriesAware: true,
+            },
             ...languageLocales.map(locale => ({
               name: `ui-language-${locale}`,
               test: new RegExp(`[\\\\/]i18n[\\\\/]generatedPacks[\\\\/]${locale}\\.js$`),

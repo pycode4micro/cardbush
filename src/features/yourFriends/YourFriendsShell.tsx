@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { ArrowLeft, ArrowUp, History, Palette, Settings2, X } from 'lucide-react';
 import { uiText, type MessageKey } from '../../i18n';
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from '../composer/ComposerPromptInput';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { FriendsOnboarding } from './FriendsOnboarding';
@@ -15,13 +16,15 @@ import type { FriendInput } from '@cardbush/bush-protocol';
 import { friendsBackend } from './friendsBackend';
 import { useFriendsExecution } from './useFriendsExecution';
 import { FriendsExecutionView } from './FriendsExecutionView';
+import { FriendsEventDetails, FriendsExecutionRequests } from './FriendsExecutionDetails';
 import { OPEN_INSPECTOR_EVENT } from '../inspector/inspectorEvents';
 import './yourFriends.css';
 import './friendsTransition.css';
 import './friendsOnboarding.css';
 
-const panelTitles: Record<'events' | 'settings' | 'appearance', MessageKey> = {
+const panelTitles: Record<'events' | 'settings' | 'appearance' | 'details' | 'requests', MessageKey> = {
   events: 'yourFriends.events', settings: 'yourFriends.settings', appearance: 'yourFriends.designAppearance',
+  details: 'yourFriends.eventDetails', requests: 'yourFriends.awaitingResponse',
 };
 
 /** Recognition stays local; accepted work events are owned by Runtime. */
@@ -40,13 +43,18 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   const [geometry, setGeometry] = useState<ReturnType<typeof circleGeometry>>();
   const [panel, setPanel] = useState<keyof typeof panelTitles | null>(null), [selectedId, setSelectedId] = useState('');
   const [relatesTo, setRelatesTo] = useState<string>();
+  const [detailId, setDetailId] = useState('');
   const execution = useFriendsExecution(ready);
   const pendingInput = useRef<FriendInput | undefined>(undefined);
   const draftRef = useRef(draft); draftRef.current = draft;
-  const selected = execution.snapshot?.events.find(event => event.id === selectedId && !event.archived);
+  const events = execution.snapshot?.events ?? [];
+  const active = events.find(event => event.id === execution.snapshot?.active?.eventId);
+  const selected = active ?? events.find(event => !event.archived && ['running', 'queued'].includes(event.status))
+    ?? events.find(event => event.id === selectedId && !event.archived) ?? events.filter(event => !event.archived).at(-1);
+  const openDetails = (id: string) => { setDetailId(id); setPanel('details'); };
   useEffect(() => {
-    if (!selectedId) { const event = execution.snapshot?.events.filter(event => !event.archived).at(-1); if (event) setSelectedId(event.id); }
-  }, [execution.snapshot, selectedId]);
+    if (active) setSelectedId(active.id);
+  }, [active?.id]);
   const manage = async (action: 'pause' | 'resume' | 'archive' | 'restore', id: string) => {
     try { execution.setSnapshot(await friendsBackend.manage(action, id)); setError(''); }
     catch { setError(t('yourFriends.executionActionFailed')); }
@@ -54,6 +62,11 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
   const root = useRef<HTMLDivElement>(null), stage = useRef<HTMLDivElement>(null), input = useRef<ComposerPromptInputHandle>(null);
   const titleId = useId(), noticeId = useId(), submitting = useRef(false), close = useRef(onClose);
   const focusInputAfterDialog = useRef(false);
+  const continueEvent = (id: string) => {
+    setRelatesTo(id);
+    if (panel) { focusInputAfterDialog.current = true; setPanel(null); }
+    else input.current?.focus();
+  };
   close.current = onClose;
   useEffect(() => {
     if (!ready) return;
@@ -183,10 +196,10 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
     </header>
     <div className="friends-stage" ref={stage} inert={phase !== 'open'}>
       <div className="friends-story">
-        {ready && <div className="friends-presence"><i/>{t('yourFriends.here')}</div>}
         {!ready ? <FriendsOnboarding language={language} state={state} draft={draft} error={error}
           renderInput={send => renderInput(send, false)} onSubmit={submit} onSave={save} onApply={appearance => applyAppearance(appearance, true)}
-          onFinish={finishIntroduction} generate={generateAppearance}/> : <FriendsExecutionView event={selected} snapshot={execution.snapshot} language={language} refresh={execution.refresh} manage={(action, id) => void manage(action, id)}/>}
+          onFinish={finishIntroduction} generate={generateAppearance}/> : <FriendsExecutionView event={selected} snapshot={execution.snapshot} language={language}
+            manage={(action, id) => void manage(action, id)} onDetails={openDetails} onRespond={() => setPanel('requests')} onContinue={continueEvent}/>}
       </div>
     </div>
     <footer className="friends-input-dock" inert={phase !== 'open'}>
@@ -198,8 +211,10 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
         <p className="friends-footnote" id={noticeId}>{t(ready ? 'yourFriends.runtimeNotice' : 'yourFriends.previewNotice')}</p>
       </div>
     </footer>
-    {panel && <FriendsDialog kind={panel} title={t(panelTitles[panel])} closeLabel={t('yourFriends.close')} onClose={() => setPanel(null)}>
-      {panel === 'appearance' ? <>
+    {panel && <FriendsDialog key={`${panel}:${detailId}`} kind={panel} title={t(panelTitles[panel])} closeLabel={t('yourFriends.close')} onClose={() => setPanel(null)}>
+      {panel === 'details' ? <FriendsEventDetails event={events.find(event => event.id === detailId)} snapshot={execution.snapshot} language={language}/>
+      : panel === 'requests' ? <FriendsExecutionRequests snapshot={execution.snapshot} language={language} refresh={execution.refresh}/>
+      : panel === 'appearance' ? <>
         {!state.introduction.answers.context?.trim() && <p className="friends-aside">{t('yourFriends.designNeedsContext')}</p>}
         <FriendAppearanceEditor language={language} state={state} generate={generateAppearance} onApply={appearance => applyAppearance(appearance)} onChange={change => save(current => ({ ...current, ...change }))}/>
         {error && <p className="your-friends-error" role="alert">{error}</p>}
@@ -211,8 +226,8 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
           <div className="friends-event-meta"><span>{t(event.archived ? 'yourFriends.archived' : `yourFriends.status.${event.status}`)}</span><time dateTime={event.updatedAt}>{new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(event.updatedAt))}</time></div>
           <p>{event.title}</p>{event.inputs.map(input => <p key={input.id}>{input.text}</p>)}
           <div className="friends-event-actions">
-            {!event.archived && <button className="friends-text-button" type="button" onClick={() => { setSelectedId(event.id); setPanel(null); }}>{t('yourFriends.viewEvent')}</button>}
-            <button className="friends-text-button" type="button" onClick={() => { setRelatesTo(event.id); focusInputAfterDialog.current = true; setPanel(null); }}>{t('yourFriends.continue')}</button>
+            <button className="friends-text-button" type="button" onClick={() => openDetails(event.id)}>{t('yourFriends.viewEvent')}</button>
+            <button className="friends-text-button" type="button" onClick={() => continueEvent(event.id)}>{t('yourFriends.continue')}</button>
             <button className="friends-text-button" type="button" onClick={() => void manage(event.archived ? 'restore' : 'archive', event.id)}>{t(event.archived ? 'yourFriends.restore' : 'yourFriends.archive')}</button>
           </div>
         </li>)}</ol>
@@ -230,7 +245,7 @@ export function YourFriendsShell({ language, origin, onClose, generateAppearance
 function FriendsDialog({ kind, title, closeLabel, onClose, children }: { kind: string; title: string; closeLabel: string; onClose(): void; children: ReactNode }) {
   const dialog = useRef<HTMLDialogElement>(null), id = useId();
   useLayoutEffect(() => { const element = dialog.current!; element.showModal(); return () => element.close(); }, []);
-  return <dialog ref={dialog} className="friends-dialog" data-panel={kind} aria-labelledby={id} onCancel={event => { event.preventDefault(); onClose(); }}>
+  return <dialog ref={dialog} className="friends-dialog" data-panel={kind} aria-labelledby={id} onCancel={dialogEventHandler(event => { event.preventDefault(); onClose(); })}>
     <header><h2 id={id}>{title}</h2><button className="friends-icon" type="button" onClick={onClose} aria-label={closeLabel}><X/></button></header>
     <div className="friends-dialog-body">{children}</div>
   </dialog>;
