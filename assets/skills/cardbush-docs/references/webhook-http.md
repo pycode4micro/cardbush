@@ -23,6 +23,8 @@
 
 ## 2. 从外部发起一轮对话
 
+要补充正在执行的任务，用新的消息 ID 从同一连接发送普通消息，保留相同的发送者和对话 ID。宿主将其追加到原轮，工具执行期间在安全返回后继续。重复投递同一条消息时使用原 ID；补充回执与原任务最终答复分别关联各自的消息 ID。
+
 向返回的 **endpoint 原样 POST**（路径形如 `/api/webhooks/v1/{connectionId}/messages`），使用 `Authorization: Bearer <连接令牌>`、`Content-Type: application/json`。默认字段示例：
 
 ```json

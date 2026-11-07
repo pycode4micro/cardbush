@@ -452,7 +452,7 @@ export class AgentService {
         return { kind: 'conversation', sessionId, title: String(snapshot.metadata?.title ?? sessionId).slice(0, 300),
           parent: applyWebhookTurnPolicy(runtimeSessionTurnRequestSchema.parse({ protocol: 'bush.session_turn_request.v1', requestId: 'webhook-binding', turnId: 'webhook-binding', sessionId,
             model: selected.modelId, tools: [], prefixMessages: [], inputMessages: [{ messageId: 'binding', message: { role: 'user', content: 'webhook-binding' } }], permissionMode: selected.permissionMode,
-            metadata: { agentWebhookSettings: selected } })) } satisfies WebhookBinding;
+            metadata: { agentWebhookSettings: selected, uiLanguage: selected.language } })) } satisfies WebhookBinding;
       });
     }
     if (operation.startsWith('desktop.')) {

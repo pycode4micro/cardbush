@@ -27,10 +27,17 @@ for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers
   const file = join(root, 'contract.txt'), bytes = Buffer.from('微信/飞书桥原样接入 CLI\n'); await writeFile(file, bytes);
   const uploads = [], sent = [], calls = []; let service, bridge, connecting;
   const cancel = new AbortController();
+  const reasoning = Promise.withResolvers(); let interrupted = false;
   const model = createServer(async (req, res) => {
     req.setEncoding('utf8'); let raw = ''; for await (const chunk of req) raw += chunk; const body = JSON.parse(raw);
     if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end('{"input_tokens":100}'); return; }
-    calls.push(body); const strings = []; const visit = x => { if (typeof x === 'string') strings.push(x); else if (x && typeof x === 'object') Object.values(x).forEach(visit); }; visit(body.input);
+    calls.push(body);
+    if (calls.length === 1) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' }); res.flushHeaders();
+      res.on('close', () => { interrupted = true; }); reasoning.resolve();
+      return;
+    }
+    const strings = []; const visit = x => { if (typeof x === 'string') strings.push(x); else if (x && typeof x === 'object') Object.values(x).forEach(visit); }; visit(body.input);
     const sourceRef = strings.join('\n').match(/"sourceRef"\s*:\s*"(webhook:[a-f0-9-]{36})"/)?.[1];
     const send = bridgeModelStep(body.input, file), n = calls.length;
     const item = send ? { id: 'function-' + n, call_id: send.id, type: 'function_call', name: send.name, status: 'completed',
@@ -64,12 +71,18 @@ for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers
     await service.call('webhooks.command', { action: 'connect', sessionId: 'chosen', id: pending.requestId,
       settings: { modelId: 'fixture', permissionMode: 'all_free', language: 'zh' } });
     bridge.config = await connecting; await bridge.advertise();
-    if (platform === 'weixin') await bridge.ingest({ msgs: [{ message_type: 1, message_id: 'external-once', from_user_id: 'owner', context_token: 'original-context', item_list: [{ type: 1, text_item: { text: '用工具把测试文件发给我。' } }] }] });
-    else await bridge.ingest({ sender: { sender_type: 'user', sender_id: { open_id: 'owner' } }, message: { message_id: 'external-once', chat_id: 'oc_origin', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({ text: '用工具把测试文件发给我。' }) } });
-    await until(async () => { await bridge.processOnce(); return sent.some(s => s[0] === 'file') && sent.some(s => s[0] === 'text'); });
+    const ingest = async (id, text) => {
+      if (platform === 'weixin') await bridge.ingest({ msgs: [{ message_type: 1, message_id: id, from_user_id: 'owner', context_token: id + '-context', item_list: [{ type: 1, text_item: { text } }] }] });
+      else await bridge.ingest({ sender: { sender_type: 'user', sender_id: { open_id: 'owner' } }, message: { message_id: id, chat_id: 'oc_origin', chat_type: 'p2p', message_type: 'text', content: JSON.stringify({ text }) } });
+    };
+    await ingest('original', '看看测试文件。'); await bridge.processOnce(); await reasoning.promise;
+    await ingest('supplement', '补充：用工具把测试文件发给我。');
+    await until(async () => { await bridge.processOnce(); return sent.some(s => s[0] === 'file') && sent.filter(s => s[0] === 'text').length === 2; });
+    assert.ok(interrupted, 'the earlier model stream was interrupted by an ordinary platform message');
+    assert.ok(JSON.stringify(calls[1].input).includes('补充：用工具把测试文件发给我。'));
     assert.deepEqual(uploads, [bytes]); assert.equal(sent.filter(s => s[0] === 'file').length, 1);
     assert.equal(sent.find(s => s[0] === 'file')[1], platform === 'weixin' ? 'owner' : 'oc_origin');
-    if (platform === 'weixin') assert.equal(sent.find(s => s[0] === 'file')[2], 'original-context');
+    if (platform === 'weixin') assert.equal(sent.find(s => s[0] === 'file')[2], 'supplement-context');
     assert.equal((await service.call('chat.jobs', { sessionId: 'chosen' })).length, 1);
     assert.ok(calls.every(call => !call.tools.some(t => t.name === 'send_to_bot')));
     assert.ok(JSON.stringify(calls).includes('bridge-schema-call'), 'plugin schema is loaded through discovery');

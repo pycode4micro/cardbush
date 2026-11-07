@@ -4053,6 +4053,7 @@
     "webhook.manual": "Manual setup (advanced)",
     "webhook.onlineElsewhere": "Online services bound to other conversations",
     "webhook.pairAgain": "To route future messages to this conversation, start pairing again in the bridge service, then choose Connect here.",
+    "webhook.guidanceAccepted": "Your follow-up was added to the current task.",
     "webhook.localEmpty": "No services are waiting to pair. Start pairing in the bridge service to see its request here.",
     "browser.extension.connection.title": "Browser connection",
     "browser.extension.connection.heading": "Connect to CardBush",

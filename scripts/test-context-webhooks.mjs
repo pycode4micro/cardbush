@@ -172,6 +172,102 @@ test('Assistant adopts saved Friends bindings and events; isolated notices keep 
   }
 });
 
+for (const kind of ['conversation', 'assistant']) for (const phase of ['reasoning', 'tool']) {
+  test(`${kind}: a second message from the same bridge chat steers running ${phase} and sends the task result once`, { timeout: 30000 }, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'webhook-guidance-'));
+    const sessionId = kind === 'assistant' ? 'personal-assistant' : 'guided-session';
+    const entered = Promise.withResolvers(), release = Promise.withResolvers();
+    const requests = [], delivered = [], registry = new ToolRegistry();
+    let gateway, toolCalls = 0, cancelled = false;
+    const name = 'search_skills';
+    registry.register({ definition: { name, description: 'Wait for a controlled fixture observation.', inputSchema: { type: 'object', properties: {} } },
+      manifest: { effect_kind: 'observation', operation: name, risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
+      decodeInput: value => value, execute: async ({ signal }) => {
+        toolCalls++; entered.resolve(); await release.promise; assert.ok(!signal?.aborted);
+        return { evidence: 'completed observation' };
+      } });
+    const receiver = createServer(async (req, res) => { let raw = ''; for await (const chunk of req) raw += chunk;
+      delivered.push(JSON.parse(raw)); res.end('{}'); });
+    receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
+    const runtime = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry, sessionStore: new SessionStore(),
+      provider: { async *stream(request, { signal }) {
+        requests.push(request);
+        if (requests.length === 1 && phase === 'reasoning') {
+          entered.resolve(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); cancelled = true;
+          yield* answer(request, 'Obsolete answer'); return;
+        }
+        if (requests.length === 1 && phase === 'tool') {
+          const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+          yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'slow-observation', nameDelta: name, argumentsDelta: '{}' };
+          yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
+        }
+        yield* answer(request, request.turnId === requests[0].turnId ? 'Only the first two pages.' : 'A separate reply.');
+      } } });
+    const bridge = { command: (kind, payload) => runtime.sendCommand({ kind, payload }) };
+    try {
+      await bridge.command('runtime.create_session', { sessionId });
+      gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
+      const selected = { ...binding(sessionId), kind, ...(kind === 'assistant' ? { profile: assistantProfileSchema.parse({}), generation: 0 } : {}) };
+      selected.parent.tools = [registry.resolve(name).definition];
+      const connection = (await gateway.command({ action: 'save', binding: selected, config: config({ url: `http://127.0.0.1:${receiver.address().port}/reply` }) })).connections[0];
+      const bot = client(connection);
+      assert.equal((await bot.send(message('original', 'Prepare a PDF.'))).status, 202);
+      await entered.promise;
+      assert.equal((await bot.send({ ...message('other', 'Different sender'), senderId: 'other-person' })).status, 202);
+      assert.equal((await bot.send(message('edit', 'Only the first two pages, please.'))).status, 202);
+      const ack = await until(async () => { const receipt = await bot.read('edit'); return receipt.status === 'completed' && receipt; });
+      assert.equal((await bot.send(message('edit', 'Only the first two pages, please.'))).status, 202);
+      if (phase === 'tool') {
+        assert.equal(toolCalls, 1); assert.equal(requests.length, 1, 'tool still owns its execution; no second model round yet');
+        if (kind === 'assistant') assert.ok((await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId })).entries.some(e => e.content === 'Only the first two pages, please.'));
+        release.resolve();
+      }
+      const done = await until(async () => { const receipt = await bot.read('original'); return receipt.status === 'completed' && receipt; });
+      assert.equal(done.reply, 'Only the first two pages.');
+      assert.equal(cancelled, phase === 'reasoning');
+      const resumed = requests[1];
+      assert.equal(resumed.turnId, requests[0].turnId);
+      assert.equal(resumed.messages.filter(m => m.role === 'user' && m.content === 'Only the first two pages, please.').length, 1);
+      assert.equal(resumed.metadata.botSourceRef, 'webhook:' + ack.eventId.split(':')[0]);
+      assert.ok(!resumed.messages.some(m => m.content === 'Different sender'));
+      if (phase === 'tool') assert.ok(resumed.messages.some(m => m.role === 'tool' && m.content.includes('completed observation')));
+      await until(async () => (await bot.read('other')).status === 'completed');
+      await until(() => delivered.length === 3);
+      assert.equal(delivered.filter(item => item.text === done.reply).length, 1, 'only the original receipt delivers the combined final');
+      assert.notEqual(ack.reply, done.reply);
+    } finally { release.resolve(); await gateway?.close(); await bridge.command('runtime.shutdown', {}); receiver.closeAllConnections();
+      await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
+  });
+}
+
+test('webhook guidance stays within the original bridge, sender and chat and never replays an uncertain append as a turn', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-scope-')), entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const turns = [], appends = [];
+  const runtime = { command: async (kind, payload) => {
+    if (kind === 'runtime.enqueue_guidance') { appends.push(payload); throw Error('lost IPC reply'); }
+    return {};
+  } };
+  const host = await new ContextWebhookHost(root, secrets, runtime, { port: 0, execute: async (_runtime, _binding, msg) => {
+    turns.push(msg.messageId); if (msg.messageId === 'original') { entered.resolve(); await release.promise; }
+    return { status: 'completed', reply: msg.text };
+  } }).start();
+  try {
+    const bind = async name => client((await host.command({ action: 'save', binding: binding(), config: config({ name }) })).connections.find(c => c.name === name));
+    const a = await bind('Account A'), b = await bind('Account B');
+    await a.send(message('original')); await entered.promise;
+    await b.send(message('other-account')); await a.send({ ...message('other-room'), conversationId: 'different-room' });
+    await a.send({ messageId: 'anonymous', text: 'Unidentified' });
+    await a.send(message('supplement'));
+    const interrupted = await until(async () => { const r = await a.read('supplement'); return r.status === 'interrupted' && r; });
+    assert.equal(interrupted.errorCode, 'guidance_submission_unknown');
+    release.resolve();
+    await until(async () => (await a.read('anonymous')).status === 'completed');
+    assert.deepEqual(turns, ['original', 'other-account', 'other-room', 'anonymous']);
+    assert.deepEqual(appends.map(g => g.webhook.messageId), ['supplement']);
+    assert.equal((await (await a.send(message('supplement'))).json()).status, 'interrupted');
+  } finally { release.resolve(); await host.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test('parameter mapping and JSON templates preserve escaped values and reject unsafe paths/headers', () => {
   const mapping = { messageId: 'event.id', text: 'event.body.text', senderId: 'event.sender', conversationId: 'event.chat' };
   assert.deepEqual(incomingMessage({ event: { id: 23, body: { text: 'hello' }, sender: 'u' } }, mapping), { messageId: '23', text: 'hello', senderId: 'u', conversationId: undefined });
@@ -319,7 +415,7 @@ test('Assistant webhook reset isolates running and queued receipts from subseque
     const bot = client(connection);
     assert.equal((await bot.send(message('running', 'Old running request.'))).status, 202);
     await until(() => calls.length === 1);
-    assert.equal((await bot.send(message('queued', 'Old queued request.'))).status, 202);
+    assert.equal((await bot.send({ ...message('queued', 'Old queued request.'), senderId: 'another-user' })).status, 202);
     assert.equal((await bot.read('queued')).status, 'accepted');
     await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });
     assert.equal((await bot.send(message('fresh', 'Fresh request.'))).status, 202);
@@ -329,7 +425,7 @@ test('Assistant webhook reset isolates running and queued receipts from subseque
       assert.equal(rejected.errorCode, 'context_reset');
     }
     await until(async () => (await bot.read('fresh')).status === 'completed');
-    const duplicate = await (await bot.send(message('queued', 'Old queued request.'))).json();
+    const duplicate = await (await bot.send({ ...message('queued', 'Old queued request.'), senderId: 'another-user' })).json();
     assert.equal(duplicate.status, 'failed'); assert.equal(duplicate.errorCode, 'context_reset');
     assert.equal((await bot.send(message('queued', 'Changed old request.'))).status, 409);
     assert.equal(calls.length, 2, 'old queued requests are never executed in the new context');

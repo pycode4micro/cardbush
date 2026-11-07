@@ -4010,6 +4010,7 @@
     "webhook.manual": "手动配置（高级）",
     "webhook.onlineElsewhere": "已绑定到其他会话的在线服务",
     "webhook.pairAgain": "要把后续消息转到当前会话，请在对应的桥服务中重新发起配对，再在这里点击连接。",
+    "webhook.guidanceAccepted": "已收到补充，正在当前任务中处理。",
     "webhook.localEmpty": "当前没有待配对的服务。请在桥服务中发起配对，连接申请会出现在这里。",
     "browser.extension.connection.title": "浏览器连接",
     "browser.extension.connection.heading": "连接到 CardBush",

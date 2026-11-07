@@ -13,6 +13,9 @@ export const runtimeGuidanceRequestSchema = z.object({
   content: z.string().trim().min(1),
   // Omission preserves the existing round-boundary delivery used by older clients.
   mode: z.enum(['append_context', 'interrupt_and_continue']).optional(),
+  // Trusted host routing for a supplement to an exact webhook-originated turn.
+  webhook: z.object({ targetReceiptId: z.string().uuid(), receiptId: z.string().uuid(), generation: z.number().int().nonnegative().optional(),
+    messageId: z.string().min(1).max(200), senderId: z.string().min(1).max(200), conversationId: z.string().min(1).max(200) }).strict().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   createdAt: z.string().min(1),
 });

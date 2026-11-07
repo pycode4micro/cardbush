@@ -1,3 +1,5 @@
+import { createTurnTimeContext } from '@cardbush/bush-protocol';
+import type { RuntimeGuidanceRequest } from '@cardbush/bush-protocol';
 import { remoteAgentFacts, registerSandboxEnvironment } from './environmentResources.js';
 import { AgentExecutionRegistry } from './agentExecutionRegistry.js';
 import { ASSISTANT_CONVERSATION_COMMAND, assistantConversationRequestSchema } from '@cardbush/bush-protocol';
@@ -415,6 +417,7 @@ export class InMemoryRuntimeHost {
   readonly #workspaceObservations: WorkspaceObservationStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
+  readonly #finalizingTurns = new Set<string>();
   readonly #activeTurnControllers = new Map<string, AbortController>();
   readonly #modelRequests = new ModelRequestInterruption();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
@@ -429,6 +432,7 @@ export class InMemoryRuntimeHost {
     createdAt: string;
     metadata?: Record<string, unknown>;
     mode?: 'append_context' | 'interrupt_and_continue';
+    webhook?: RuntimeGuidanceRequest['webhook'];
   }>>();
   readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
   readonly #conversations: RuntimeConversations;
@@ -1705,6 +1709,14 @@ export class InMemoryRuntimeHost {
         return this.#solutions.list(runtimeSessionIdentitySchema.parse(command.payload).sessionId);
       case ENQUEUE_RUNTIME_GUIDANCE_COMMAND: {
         const guidance = runtimeGuidanceRequestSchema.parse(command.payload);
+        if (guidance.webhook) {
+          if (guidance.turnId !== `webhook-${guidance.webhook.targetReceiptId}` || guidance.messageId !== `webhook-input-${guidance.webhook.receiptId}`)
+            throw Error('invalid_webhook_guidance');
+          if (guidance.sessionId === PERSONAL_ASSISTANT_SESSION) return this.#assistant.guide(guidance);
+          guidance.metadata = { ...guidance.metadata, botSourceRef: `webhook:${guidance.webhook.receiptId}`,
+            timeContext: createTurnTimeContext({ createdAt: guidance.createdAt }),
+            externalMessage: { messageId: guidance.webhook.messageId, senderId: guidance.webhook.senderId, conversationId: guidance.webhook.conversationId } };
+        }
         const key = JSON.stringify([guidance.sessionId, guidance.turnId]);
         if (this.#automation) {
           try { guidance.metadata = { ...guidance.metadata, automationReminder: await this.#automation.reminder() }; }
@@ -1717,7 +1729,9 @@ export class InMemoryRuntimeHost {
           return { protocol: guidance.protocol, sessionId: guidance.sessionId, turnId: guidance.turnId,
             messageId: guidance.messageId, accepted: true, queueDepth: this.#guidanceQueues.get(key)?.length ?? 0 };
         }
-        if (!this.#activeTurns.has(key)) {
+        if (!this.#activeTurns.has(key) || (guidance.webhook && this.#finalizingTurns.has(key))) {
+          if (guidance.webhook) return { protocol: guidance.protocol, sessionId: guidance.sessionId, turnId: guidance.turnId,
+            messageId: guidance.messageId, accepted: false, queueDepth: 0 };
           // A background child may have acknowledged dispatch but still be preparing
           // its workspace. Accept parent guidance into its normal queue immediately.
           const parent = guidance.metadata?.realtimeParentSessionId;
@@ -1737,7 +1751,7 @@ export class InMemoryRuntimeHost {
             messageId: guidance.messageId,
             content: guidance.content,
             createdAt: guidance.createdAt,
-            mode: guidance.mode,
+            mode: guidance.mode, webhook: guidance.webhook,
             metadata: { ...guidance.metadata, guidance_mode: guidance.mode ?? 'append_context' },
           });
           this.#guidanceQueues.set(key, queue);
@@ -2234,6 +2248,7 @@ export class InMemoryRuntimeHost {
         sessionCommit: options.sessionCommit,
       });
     } catch (error) {
+      this.#finalizingTurns.delete(turnKey);
       this.#activeTurns.delete(turnKey);
       this.#activeTurnControllers.delete(turnKey);
       detachAbort();
@@ -2288,6 +2303,7 @@ export class InMemoryRuntimeHost {
         throw new Error('Restart internal tasks through their owner to obtain a fresh validated source snapshot.');
       }
     } catch (error) {
+      this.#finalizingTurns.delete(turnKey);
       this.#activeTurns.delete(turnKey);
       this.#activeTurnControllers.delete(turnKey);
       detachAbort();
@@ -2632,7 +2648,7 @@ export class InMemoryRuntimeHost {
         }
         if (compactStart.stopTurn !== undefined) return compactStart.stopTurn;
       }
-      messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
+      messages = this.#appendQueuedTurnGuidance({ request, turnKey, identity, round, messages, generatedMessages }).messages;
       providerState = freshResponseChain();
       this.#recovery.save({ request, messages, nextRound: round + 1,
         cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
@@ -2666,6 +2682,7 @@ export class InMemoryRuntimeHost {
       activeContextCompaction = undefined;
     };
     const finalize = async (payload: TurnTerminalPayload): Promise<RuntimeEvent> => {
+      this.#finalizingTurns.add(turnKey);
       let workspace: WorkspaceDescriptor | undefined;
       if (input.finalizeWorkspace) {
         try {
@@ -2805,7 +2822,7 @@ export class InMemoryRuntimeHost {
         // Also drain at entry: guidance can arrive during preflight/retry recovery,
         // before there is a model request to interrupt. Maintenance is atomic.
         if (!compactionTransaction && !activeContextCompaction) {
-          messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
+          messages = this.#appendQueuedTurnGuidance({ request, turnKey, identity, round, messages, generatedMessages }).messages;
         }
         if (!input.internalTask && !compactionTransaction && !activeContextCompaction && request.metadata.agentRole !== 'child') {
           try {
@@ -3213,7 +3230,7 @@ export class InMemoryRuntimeHost {
             }
             providerState = freshResponseChain();
           }
-          messages = this.#appendQueuedTurnGuidance({ turnKey, identity, round, messages, generatedMessages }).messages;
+          messages = this.#appendQueuedTurnGuidance({ request, turnKey, identity, round, messages, generatedMessages }).messages;
           this.#recovery.save({ request, messages, nextRound: round + 1,
             cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
           retryAfterModelRecovery = true;
@@ -3903,7 +3920,7 @@ export class InMemoryRuntimeHost {
             messages.length,
           );
           const appliedGuidance = this.#appendQueuedTurnGuidance({
-            turnKey,
+            request, turnKey,
             identity,
             round,
             messages,
@@ -3994,6 +4011,9 @@ export class InMemoryRuntimeHost {
             messages.push(message); generatedMessages.push({ messageId: `msg_plugin_stop_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
             continue;
           }
+          // Guidance can arrive while validating files or running the Stop hook.
+          const late = this.#appendQueuedTurnGuidance({ request, turnKey, identity, round, messages, generatedMessages });
+          if (late.count) { messages = late.messages; continue; }
           // Completion ends this response, not the plan. Only explicit updates change plan states.
           const activePlan = request.metadata.planEnabled === true
             ? this.#coordination.getPlan(request.sessionId)
@@ -4092,7 +4112,7 @@ export class InMemoryRuntimeHost {
           );
         }
         const appliedGuidance = this.#appendQueuedTurnGuidance({
-          turnKey,
+          request, turnKey,
           identity,
           round,
           messages,
@@ -4128,6 +4148,7 @@ export class InMemoryRuntimeHost {
       this.#pendingAgentGuidance.delete(turnKey);
       this.#toolLoops.delete(toolLoop);
       this.#contextCompactionAuthorizations.delete(turnKey);
+      this.#finalizingTurns.delete(turnKey);
       this.#activeTurns.delete(turnKey);
       this.#activeTurnControllers.delete(turnKey);
       input.execution.dispose();
@@ -4458,6 +4479,7 @@ export class InMemoryRuntimeHost {
   }
 
   #appendQueuedTurnGuidance(input: {
+    request: ModelRequest;
     turnKey: string;
     identity: RuntimeEventIdentity;
     round: number;
@@ -4484,12 +4506,20 @@ export class InMemoryRuntimeHost {
     const guidanceMessages = queued.flatMap((guidance) => {
       // The product supplies a snapshot of this new user input. Append it once
       // beside the guidance, without rewriting earlier clocks or visible text.
+      if (guidance.webhook) {
+        const ref = `webhook:${guidance.webhook.receiptId}`;
+        input.request.metadata.botSourceRef = ref;
+        input.request.metadata.botSourceRefs = [ref];
+      }
       const timeContext = guidance.metadata?.timeContext;
-      const context: ModelMessage[] = typeof timeContext === 'string' && timeContext ? [{
+      const context: Extract<ModelMessage, { role: 'user' }>[] = typeof timeContext === 'string' && timeContext ? [{
         role: 'user', name: 'turn_runtime_context', visibility: 'internal', content: timeContext,
       }] : [];
+      if (guidance.webhook && !input.request.metadata.environmentContext && typeof guidance.metadata?.webhookContext === 'string') {
+        context.push({ role: 'user', name: 'bot_context', visibility: 'internal', content: guidance.metadata.webhookContext });
+      }
       for (const message of context) input.generatedMessages.push({
-        messageId: `${guidance.messageId}:turn-context`, createdAt: guidance.createdAt, message,
+        messageId: `${guidance.messageId}:${message.name === 'bot_context' ? 'bot-context' : 'turn-context'}`, createdAt: guidance.createdAt, message,
       });
       const message: ModelMessage = {
         role: "user",

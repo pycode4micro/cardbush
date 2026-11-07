@@ -1,3 +1,5 @@
+import { ModelRequestInterruption, ModelRequestInterrupted } from './modelRequestInterruption.js';
+import type { RuntimeGuidanceRequest } from '@cardbush/bush-protocol';
 import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
 import { RuntimeUiError, retainedRuntimeError } from './runtimeUiError.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
@@ -38,6 +40,26 @@ function quotedMessageContext(entry: ConversationEntry, entries: ConversationEnt
 
 /** A small conversational parent. Execution still uses the existing Runtime child dispatcher. */
 export class AssistantConversation {
+  private readonly reasoning = new ModelRequestInterruption();
+  private webhookTurn?: { turnId: string; entries: ConversationEntry[] };
+  guide(input: RuntimeGuidanceRequest) {
+    const source = input.webhook!;
+    const receipt = { protocol: input.protocol, sessionId: input.sessionId, turnId: input.turnId, messageId: input.messageId,
+      accepted: false, queueDepth: 0, modelRequestInterrupted: false };
+    if (source.generation !== this.generation || this.stopped) return receipt;
+    const existing = this.journal.read(input.sessionId).find(entry => entry.id === input.messageId);
+    if (existing) {
+      if (existing.content !== input.content || existing.originTurnId !== input.turnId || existing.botSourceRef !== `webhook:${source.receiptId}`) throw Error('guidance_identity_conflict');
+      return { ...receipt, accepted: true };
+    }
+    const active = this.webhookTurn;
+    if (!active || active.turnId !== input.turnId || this.controller?.signal.aborted) return receipt;
+    const entry: ConversationEntry = { id: input.messageId, originTurnId: input.turnId, createdAt: input.createdAt, role: 'user',
+      source: 'text', visibility: 'conversation', content: input.content, botSourceRef: `webhook:${source.receiptId}` };
+    this.journal.append(input.sessionId, entry);
+    active.entries.push(entry);
+    return { ...receipt, accepted: true, queueDepth: active.entries.length, modelRequestInterrupted: this.reasoning.interrupt(input.turnId) };
+  }
   private busy = false;
   private pending = false;
   private paused = false;
@@ -122,6 +144,8 @@ export class AssistantConversation {
     this.busy = true; this.pending = false; this.error = ''; this.retry = undefined;
     const configured = this.configured;
     const controller = this.controller = new AbortController();
+    this.webhookTurn = configured.parent.metadata.botSourceRef && configured.parent.turnId.startsWith('webhook-')
+      ? { turnId: configured.parent.turnId, entries: [] } : undefined;
     const execution = { ...configured.parent, turnId: `assistant_${randomUUID()}`,
       metadata: { ...configured.parent.metadata, personalAssistant: true } };
     this.deps.agents?.begin(execution, 'running');
@@ -132,7 +156,7 @@ export class AssistantConversation {
       this.deps.agents?.update(execution.sessionId, execution.turnId,
         controller.signal.aborted ? 'stopped' : failed ? 'failed' : 'completed');
       if (this.controller === controller) {
-      this.busy = false; this.retry = undefined; this.controller = undefined;
+      this.webhookTurn = undefined; this.busy = false; this.retry = undefined; this.controller = undefined;
       try { if (!controller.signal.aborted && !this.stopped) this.deps.memory?.schedule(configured.parent); }
       catch (error) { this.error ||= retainedRuntimeError(error); }
       if (this.pending && !this.stopped) void this.pump();
@@ -203,7 +227,7 @@ export class AssistantConversation {
     // A wait may finish while its completion notice is queued. Consuming that
     // notice must not start another model reply or discard concurrent user input.
     if (redundant.length && !remaining.length) return;
-    const authored = remaining.filter(item => item.role === 'user' && ['text', 'voice'].includes(item.source) && !item.id.startsWith('memory-')).at(-1);
+    let authored = remaining.filter(item => item.role === 'user' && ['text', 'voice'].includes(item.source) && !item.id.startsWith('memory-')).at(-1);
     const sourceRefs = (item: ConversationEntry): Array<string | undefined> => {
       const refs = [...new Set([item.botSourceRef, ...entries.filter(entry => item.responseTo?.includes(entry.id)).map(entry => entry.botSourceRef)].filter((ref): ref is string => !!ref))];
       return refs.length ? refs : [undefined];
@@ -314,16 +338,43 @@ export class AssistantConversation {
         ? ['text', 'voice'].includes(item.source) ? [item.id] : item.responseTo ?? [] : []))].slice(-256) });
       history.append([], [entry.id]);
     };
+    const live = this.webhookTurn;
+    const consumeGuidance = () => {
+      if (!live?.entries.length) return;
+      const additions = live.entries.splice(0);
+      for (const entry of additions) {
+        if (!remaining.some(item => item.id === entry.id)) {
+          history.append([{ role: 'user', name: 'turn_runtime_context', visibility: 'internal', content: createTurnTimeContext({ createdAt: entry.createdAt }) },
+            { role: 'user', content: entry.content }], [entry.id]);
+          remaining.push(entry); handledInputs.push(entry);
+        }
+        authored = entry;
+      }
+      // The webhook host already matched the bridge, sender and external chat.
+      // New media and child delegation now resolve against the latest message.
+      const ref = authored!.botSourceRef!;
+      parent.metadata.botSourceRef = ref; parent.metadata.botSourceRefs = [ref];
+      parent.metadata.assistantEventEvidence = additions.map(entry => ({ id: entry.id, sourceRef: entry.botSourceRef }));
+    };
     let published = false;
     let managementStopped: Error | undefined;
     for (let round = 0; round < 10; round++) {
       signal.throwIfAborted();
+      consumeGuidance();
       const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1',
         requestId: randomUUID(), messages: await context(), tools, requestCapabilities: { vision: parent.requestCapabilities?.vision === true, interactiveRequests: false },
         metadata: { ...parent.metadata, personalAssistant: true } };
-      const result = await executeBufferedModelRound(this.deps.provider, request,
-        { signal, wait: this.deps.wait, onRetry: status => { this.retry = status; } });
+      if (live?.entries.length) { round--; continue; }
+      let result: Awaited<ReturnType<typeof executeBufferedModelRound>>;
+      try {
+        result = await this.reasoning.run(parent.turnId, signal, attempt => executeBufferedModelRound(this.deps.provider, request,
+          { signal: attempt, wait: this.deps.wait, onRetry: status => { if (!attempt.aborted) this.retry = status; } }));
+      } catch (error) {
+        if (!(error instanceof ModelRequestInterrupted)) throw error;
+        this.retry = undefined; round--; continue;
+      }
       signal.throwIfAborted();
+      if (live?.entries.length) { round--; continue; }
       const retried = Boolean(this.retry);
       this.retry = undefined;
       if (result.status !== 'completed') {
@@ -345,6 +396,7 @@ export class AssistantConversation {
       if (!toolCalls.length) {
         const spoken = parent.metadata.assistantOutputMode === 'voice';
         const text = result.text.trim() || (spoken && published ? uiText(resolveUiLanguage(parent.metadata.uiLanguage))('assistantRuntime.published') : '');
+        this.webhookTurn = undefined;
         if (text && (spoken || !published || text !== this.journal.read(id).at(-1)?.content)) publish({
           id: `text-${randomUUID()}`, role: 'assistant', content: text, createdAt: new Date().toISOString(), source: spoken ? 'voice' : 'text', visibility: spoken ? 'internal' : 'conversation' });
         return;
@@ -455,7 +507,7 @@ export class AssistantConversation {
   }
   forget(sessionId: string) {
     this.deps.agents?.forget(sessionId);
-    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
+    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.webhookTurn = undefined; this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
     if (sessionId === PERSONAL_ASSISTANT_SESSION) this.deps.management?.reset();
     this.journal.forget(sessionId);
   }

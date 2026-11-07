@@ -1,3 +1,4 @@
+import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
 import { FRIENDS_SESSION, PERSONAL_ASSISTANT_SESSION, FRIENDS_COMMAND } from '@cardbush/bush-protocol';
 import { createServer, type Server } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -13,13 +14,14 @@ import { localPairingSchema, localPairingConfig, assertLocalPairingRequest, read
 import { botCapabilitiesSchema, type BotCapabilities, type BotContext, type BotSource, type BotFileAccess } from '@cardbush/bush-protocol';
 import { snapshotWebhookFiles, readBotAcknowledgement } from './contextWebhookFiles.mjs';
 import { bridgePluginsSchema, bridgeToolCallSchema, bridgeFilePaths, bridgeToolName, type BridgePlugin, type BridgeToolCall } from '@cardbush/bush-protocol';
-import { applyWebhookTurnPolicy } from '@cardbush/bush-protocol';
+import { applyWebhookTurnPolicy, botContextMessage } from '@cardbush/bush-protocol';
 
 // Old encrypted records keep receipt and token identity across the Assistant merge.
 const owner = (id: string) => id === FRIENDS_SESSION ? PERSONAL_ASSISTANT_SESSION : id;
 type Connection = ContextWebhookConfig & { id: string; token: string; binding: WebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
   bot?: { capabilities: BotCapabilities; expiresAt: number; plugins?: BridgePlugin[]; instanceId?: string } };
 type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: WebhookBinding;
+  guidanceFor?: string;
   status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
 type BotDelivery = { id: string; sessionId: string; sourceRef: string; requestId: string; inputHash: string; fingerprint: string;
   status: 'pending' | 'accepted' | 'unknown'; createdAt: string; code?: string; result?: unknown };
@@ -37,6 +39,7 @@ export class ContextWebhookHost {
   private writes: Promise<unknown> = Promise.resolve();
   private commands: Promise<unknown> = Promise.resolve();
   private workers = new Set<string>();
+  private guiding = new Set<string>();
   private deliveries = new Set<string>();
   private running = new Set<string>();
   private abort = new AbortController();
@@ -392,6 +395,14 @@ export class ContextWebhookHost {
           }
           const record: Receipt = { id: randomUUID(), connectionId: connection.id, message, fingerprint, binding: structuredClone(current.binding),
             status: 'accepted', reply: '', createdAt: new Date().toISOString(), delivered: false, sequence: 1, attempts: 0 };
+          const outstanding = state.receipts.filter(r => !r.guidanceFor && !terminal(r.status) && r.binding.sessionId === record.binding.sessionId);
+          const head = outstanding.find(r => this.running.has(r.id)) ??
+            outstanding.find(r => state.connections.some(c => c.enabled && c.id === r.connectionId));
+          if (head && record.binding.kind !== 'friends' && head.binding.kind === record.binding.kind &&
+            head.binding.generation === record.binding.generation && head.connectionId === record.connectionId &&
+            message.senderId && message.senderId === head.message.senderId && message.conversationId && message.conversationId === head.message.conversationId) {
+            record.guidanceFor = head.id;
+          }
           state.receipts.push(record); current.lastReceivedAt = record.createdAt;
           return this.receipt(record);
         });
@@ -413,6 +424,18 @@ export class ContextWebhookHost {
     if (!this.checkingFollowups) { this.checkingFollowups = true; void this.followups().catch(() => {}).finally(() => { this.checkingFollowups = false; }); }
     for (const record of this.state.receipts) {
       const connection = this.state.connections.find(c => c.id === record.connectionId && c.enabled); if (!connection) continue;
+      if (record.guidanceFor && !terminal(record.status)) {
+        if (!this.guiding.has(record.guidanceFor)) {
+          const target = record.guidanceFor;
+          this.guiding.add(target);
+          void this.guide(record, target).catch(() => {}).finally(() => {
+            this.guiding.delete(target);
+            const current = this.state.receipts.find(r => r.id === record.id);
+            if (current && (terminal(current.status) || !current.guidanceFor)) this.pump();
+          });
+        }
+        continue;
+      }
       if (!terminal(record.status) && !this.workers.has(record.binding.sessionId)) {
         this.workers.add(record.binding.sessionId);
         void this.run(record).finally(() => { this.workers.delete(record.binding.sessionId); });
@@ -420,6 +443,47 @@ export class ContextWebhookHost {
         this.deliveries.add(record.id); void this.deliver(record, connection).finally(() => this.deliveries.delete(record.id));
       }
     }
+  }
+  private async guide(record: Receipt, targetId: string) {
+    const previousAttempt = record.status === 'running';
+    const target = this.state.receipts.find(r => r.id === targetId);
+    const sessionId = record.binding.sessionId, turnId = `webhook-${targetId}`, messageId = `webhook-input-${record.id}`;
+    // Persist the reservation before RPC. After a crash an uncertain append must
+    // never turn into an independent request with the same side effects.
+    await this.write(state => { const item = state.receipts.find(r => r.id === record.id)!; item.status = 'running'; });
+    let accepted = false, unknown = false;
+    try {
+      if (target && (!terminal(target.status) || previousAttempt)) {
+        const receipt = await this.runtime.command('runtime.enqueue_guidance', {
+          protocol: 'bush.runtime_guidance.v1', sessionId, turnId, messageId, content: record.message.text,
+          mode: 'interrupt_and_continue', createdAt: record.createdAt,
+          metadata: record.binding.kind !== 'friends' && !record.binding.parent.metadata.environmentContext ? {
+            webhookContext: botContextMessage(this.botContext(sessionId, `webhook:${record.id}`), `webhook:${record.id}`),
+          } : undefined,
+          webhook: { targetReceiptId: targetId, receiptId: record.id, generation: record.binding.kind === 'assistant' ? record.binding.generation : undefined,
+            messageId: record.message.messageId, senderId: record.message.senderId, conversationId: record.message.conversationId },
+        });
+        accepted = receipt?.accepted === true;
+        if (!accepted && receipt?.accepted !== false) unknown = true;
+      }
+    } catch { unknown = true; }
+    if (this.abort.signal.aborted) return;
+    await this.write(state => {
+      const item = state.receipts.find(r => r.id === record.id)!;
+      const currentTarget = state.receipts.find(r => r.id === targetId);
+      if (accepted) {
+        const language = item.binding.kind !== 'friends' ? item.binding.parent.metadata.uiLanguage : undefined;
+        Object.assign(item, { status: 'completed', reply: uiText(resolveUiLanguage(language))('webhook.guidanceAccepted') });
+      } else if (unknown || previousAttempt) {
+        Object.assign(item, { status: 'interrupted', errorCode: 'guidance_submission_unknown' });
+      } else {
+        // The model may not have started yet, or may have finished between
+        // receipt admission and RPC. Only a definitive rejection permits fallback.
+        item.status = 'accepted';
+        if (!currentTarget || terminal(currentTarget.status)) delete item.guidanceFor;
+      }
+      item.sequence++;
+    });
   }
   private async run(record: Receipt) {
     const recovering = record.status === 'running' && !this.running.has(record.id);
@@ -459,7 +523,7 @@ export class ContextWebhookHost {
       this.followupCursor = 0; this.followupEntries.clear(); this.followupGeneration = journal.generation; return;
     }
     this.followupGeneration = journal.generation;
-    const records = this.state.receipts.filter(r => r.binding.kind === 'assistant');
+    const records = this.state.receipts.filter(r => r.binding.kind === 'assistant' && !r.guidanceFor);
     // Only fetch newly appended entries; a connected bot must not repeatedly copy the entire Assistant history.
     const wanted = new Set(records.map(r => `webhook-input-${r.id}`));
     for (const entry of journal.entries) {
