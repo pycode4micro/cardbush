@@ -797,6 +797,17 @@ test("keeps a spawned terminal session available when the waiting Tool is cancel
   assert.equal(stopped.result.state, "stopped");
 });
 
+test("a verified collector cannot leave a terminal running after its sample window", async t => {
+  const root = temporaryRoot(t), setup = tools(root);
+  const result = await setup.execute('collector', 'terminal_exec', {
+    command: 'node -e "setInterval(()=>{},1000)"', cwd: root, yield_time_ms: 100,
+  }, { eventCollector: true });
+  assert.equal(result.kind, 'failed');
+  assert.match(result.error.message, /verified wait window/);
+  const listed = await setup.execute('collector', 'terminal_list', {});
+  assert.deepEqual(listed.result.sessions, []);
+});
+
 test("uses absolute filesystem paths safely when a Turn has no workspace", async (t) => {
   const external = temporaryRoot(t);
   const path = join(external, "desktop-file.txt");

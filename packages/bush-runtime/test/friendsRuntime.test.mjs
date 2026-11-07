@@ -6,6 +6,7 @@ import { join, dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { InMemoryRuntimeHost, InMemoryRuntimeEventLog, ToolRegistry, SessionStore } from '../dist/index.js';
 import { AssistantEvents } from '../dist/assistantEvents.js';
+import { CollectorReadError } from '../dist/eventCollector.js';
 import { FRIENDS_COMMAND, FRIENDS_SESSION, PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 
 const now = () => new Date().toISOString();
@@ -561,6 +562,76 @@ test('event agents can register local code for newly created events without a da
   const state = await until(f.read, s => s.events.some(e => e.id === 'register-code' && e.status === 'completed'));
   const child = state.events.find(e => e.logicalKey === 'failures');
   assert.deepEqual(child.trigger, trigger); assert.equal(child.status, 'watching'); assert.deepEqual(state.detections, []);
+});
+
+test('verified collector baseline, changed keys, evidence and cancellation survive polling and restart without idle inference', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-collector-'));
+  let now = 0, timer, version = 'v1', value = '09:00', game = 'g1', pending, reading, unavailable = false;
+  const calls = [], notices = [];
+  const clock = { schedule(wake, delay) { timer = { wake, at: now + delay }; }, cancel(wake) { if (timer?.wake === wake) timer = undefined; } };
+  const collector = { resolve: async () => ({ version, toolCallId: 'sample', sample: { id: 'g1', start: '09:00' }, read: async signal => {
+    reading = signal;
+    if (unavailable) throw new CollectorReadError('Source offline');
+    if (pending) await pending.promise;
+    return { id: game, start: value, privateField: 'never forward raw samples' };
+  } }) };
+  const open = () => {
+    const tools = new ToolRegistry();
+    const service = new AssistantEvents(join(root, 'events.json'), { tools, clock, collector, now: () => now, publish: n => notices.push(n),
+      run: async request => {
+        calls.push(data(request));
+        await tools.resolve('friends_decide').execute({ turnId: request.turnId, sessionId: FRIENDS_SESSION,
+          input: { ...decide('watching').input, notifyUser: true } });
+        return { terminal: { kind: 'turn_terminal', payload: { status: 'completed' } }, text: data(request).signals[0].observation.evidence };
+      } });
+    return { service, manage: args => eventTool(tools, args) };
+  };
+  let current = open();
+  t.after(async () => { pending?.resolve(); await current.service.close(); await rm(root, { recursive: true, force: true }); });
+  await current.service.command(assistantConfiguration());
+  const rule = { source: 'collector', taskId: 'sample-task', tool: 'verified_read', everySeconds: 1,
+    code: `const {id, start} = observation.value, key = id + ":" + start;
+      if (!observation.previousKey?.startsWith(id + ":")) return remember(key);
+      return match(key, "Start " + start);` };
+  const registration = { action: 'subscribe', topic: 'Times', text: 'Report a time change', trigger: rule };
+  await assert.rejects(current.manage({ ...registration, action: 'create' }), /ongoing collector/);
+  await assert.rejects(current.manage({ ...registration, trigger: { ...rule, once: true } }), /stop after one match/);
+  await assert.rejects(current.manage({ ...registration, trigger: { ...rule, code: 'return true;' } }), /ZERO_OR_ONE/);
+  const { eventId } = await current.manage(registration);
+  const advance = async (at, expectedCalls) => {
+    await until(async () => timer, t => t?.at === at);
+    now = at; timer.wake();
+    await until(async () => timer, t => t?.at === at + 1000);
+    assert.equal(calls.length, expectedCalls);
+  };
+  await advance(1000, 0); value = '11:00'; await advance(2000, 1);
+  assert.equal(notices[0].text, 'Start 11:00'); assert.ok(!JSON.stringify(calls[0]).includes('never forward raw samples'));
+  await current.service.close(); current = open(); await current.service.command(assistantConfiguration());
+  await advance(3000, 1); value = '13:00'; await advance(4000, 2);
+  assert.equal(notices[1].text, 'Start 13:00');
+  unavailable = true; now = 5000; timer.wake();
+  await until(async () => timer, t => t?.at === 35_000);
+  assert.equal((await current.service.snapshot()).events[0].collectorFailures, 1);
+  unavailable = false; game = 'g2'; value = '08:00'; await advance(35_000, 2);
+  assert.equal((await current.service.snapshot()).events[0].triggerKey, 'g2:08:00');
+  assert.equal((await current.service.snapshot()).events[0].error, undefined);
+  pending = Promise.withResolvers(); reading = undefined; now = 36_000; timer.wake();
+  await until(async () => reading, Boolean);
+  await current.manage({ action: 'pause', eventId }); assert.ok(reading.aborted);
+  pending.resolve(); pending = undefined; await current.manage({ action: 'resume', eventId });
+  version = 'new tool revision';
+  await until(async () => timer, t => t?.at === 37_000);
+  now = 37_000; timer.wake();
+  const after = await until(() => current.service.snapshot(), s => s.events[0].status === 'failed');
+  assert.deepEqual(after.detections, []); assert.equal(after.events[0].error, 'EVENT_COLLECTOR_SOURCE_CHANGED');
+  assert.equal(calls.length, 2);
+  const once = await current.manage({ action: 'create', text: 'Report once.', reminderText: 'Once.',
+    trigger: { ...rule, once: true, initial: 'notify', code: 'return match(observation.value.id, "Observed");' } });
+  await until(async () => timer, t => t?.at === 38_000);
+  now = 38_000; timer.wake();
+  await until(() => current.service.snapshot(), s => s.events.find(e => e.id === once.eventId)?.status === 'completed');
+  assert.equal(notices.at(-1).text, 'Once.');
+  assert.deepEqual((await current.service.snapshot()).detections, []);
 });
 
 test('deleting a routed reminder cancels its durable wake and outbox across a next-day restart', async t => {

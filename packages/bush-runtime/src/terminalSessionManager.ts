@@ -96,6 +96,7 @@ export class TerminalSessionManager {
     command: string;
     cwd: string;
     yieldTimeMs: number;
+    foregroundOnly?: boolean;
     signal?: AbortSignal;
     shell: TerminalShell;
     sandbox?: ExecutionSandboxPolicy;
@@ -239,7 +240,12 @@ export class TerminalSessionManager {
     });
 
     ready();
-    await this.#waitForExit(terminal, input.yieldTimeMs, input.signal);
+    try {
+      await this.#waitForExit(terminal, input.yieldTimeMs, input.signal);
+      if (input.foregroundOnly && terminal.state === 'running') throw Error('Collector command exceeded its verified wait window.');
+    } finally {
+      if (input.foregroundOnly && terminal.state === 'running') await this.stop(input.ownerSessionId, sessionId);
+    }
     const result = this.#consume(terminal);
     if (terminal.state !== "running") this.#sessions.delete(terminal.sessionId);
     return result;

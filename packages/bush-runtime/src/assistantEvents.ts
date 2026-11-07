@@ -8,7 +8,8 @@ import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, friendsCommandSchema, even
 import { AssistantEventStore, settleFriendsWebhook, type FriendsState } from './assistantEventStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
 import { nextEventOccurrence } from './eventRecurrence.js';
-import { predicateEngine, evaluatePredicate, type PredicateObservation } from './eventPredicate.js';
+import { predicateEngine, evaluatePredicate, type PredicateObservation, type CollectorMatch } from './eventPredicate.js';
+import { CollectorReadError, type CollectorRule, type CollectorSource, type EventCollector } from './eventCollector.js';
 
 const text = z.string().trim().min(1).max(4000);
 const decisionSchema = z.object({ disposition: z.enum(['completed', 'watching', 'waiting_user']), basis: text, notifyUser: z.boolean().optional(), endSubscription: z.boolean().optional(),
@@ -21,6 +22,7 @@ const watchSchema = z.object({ eventId: z.string().min(1), at: z.string().dateti
 const emptyInteractions = () => ({ permissions: [], solutions: [] });
 type Delivery = { route?: FriendsWorkEvent['deliveryRoute']; scopedRoute?: boolean; here?: boolean; reminderText?: string | null; title?: string; trigger?: EventPredicate; at?: string; recurrence?: EventRecurrence; fromAssistant?: boolean; sourceMessageId?: string; subscriptionTopic?: string };
 type Runner = (request: ModelRequest, signal: AbortSignal) => Promise<{ terminal: RuntimeEvent; text: string }>;
+type VerifiedCollector = { version: string; matched: boolean; toolCallId: string; key?: string };
 
 /** Event state and dispatch only. Tools, model execution and permissions belong to Runtime. */
 export class AssistantEvents {
@@ -30,6 +32,7 @@ export class AssistantEvents {
   private execution?: Promise<void>;
   private controller?: AbortController;
   private readonly eventWork = new Map<string, AbortController>();
+  private probes = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private closed = false;
   private configured = false;
   private stagedDecision?: z.infer<typeof decisionSchema>;
@@ -37,7 +40,7 @@ export class AssistantEvents {
   private automaticActivation = false;
   private clock: () => number;
   constructor(path: string, private deps: {
-    tools: ToolRegistry; run: Runner; now?: () => number; clock?: AutomationClock;
+    tools: ToolRegistry; run: Runner; now?: () => number; clock?: AutomationClock; collector?: Pick<EventCollector, 'resolve'>;
     botContext?: (ref?: string) => Promise<BotContext>;
     publish?: (notice: NonNullable<FriendsState['notifications']>[number]) => void;
     interactions?: () => Pick<FriendsSnapshot, 'permissions' | 'solutions'>;
@@ -139,6 +142,7 @@ export class AssistantEvents {
         if (discover) state.discoveryStarted = true;
       });
       await this.publishNotifications();
+      for (const probe of this.probes.values()) probe.controller.abort();
       this.configured = true;
     } else if (command.action === 'submit') {
       await this.submit(command.input, delivery);
@@ -165,10 +169,11 @@ export class AssistantEvents {
         else if (command.action === 'pause') this.pause(state, event);
         else {
           if (event.status === 'running') return;
-          if ((event.recurrence || event.trigger) && !event.interruptedTurnId && event.status !== 'failed') {
+          if ((event.recurrence || event.trigger) && !event.interruptedTurnId && (event.status !== 'failed' || event.trigger?.source === 'collector')) {
             if (event.status === 'watching') return;
             if (event.recurrence) this.armRecurrence(state, event.id, event.recurrence);
             else this.armPredicate(state, event);
+            delete event.collectorFailures;
             event.status = state.signals.some(signal => signal.eventId === event.id) ? 'queued' : 'watching';
           } else if (event.status === 'paused' && !event.interruptedTurnId && state.detections.some(timer => timer.eventId === event.id)) {
             event.status = 'watching';
@@ -189,7 +194,7 @@ export class AssistantEvents {
     }
     this.kick(); return this.snapshot();
   }
-  private async submit(input: FriendInput, delivery?: Delivery) {
+  private async submit(input: FriendInput, delivery?: Delivery, verified?: VerifiedCollector) {
     if (this.closed) throw Error('FRIENDS_CLOSED');
     if (!this.configured) throw Error('FRIENDS_NOT_CONFIGURED');
     let supersededRun: AbortController | undefined;
@@ -246,9 +251,8 @@ export class AssistantEvents {
         event.currentInputId = input.id;
         if (input.relatesTo) event.title = delivery.title ?? input.text.slice(0, 160);
         if (replacing) {
-          delete event.recurrence; delete event.trigger; delete event.triggerMatched;
+          delete event.recurrence; this.setTrigger(event, delivery.trigger, verified);
           if (delivery.recurrence) this.registerRecurrence(event, delivery.recurrence);
-          if (delivery.trigger) event.trigger = delivery.trigger;
           this.clearClock(state, event.id);
           if (delivery.at) state.detections.push({ id: `detection-${randomUUID()}`, eventId: event.id, at: delivery.at });
           else if (event.status !== 'paused') {
@@ -302,10 +306,41 @@ export class AssistantEvents {
     state.detections = state.detections.filter(timer => timer.eventId !== eventId);
     state.signals = state.signals.filter(signal => signal.eventId !== eventId || (signal.kind !== 'clock' && signal.kind !== 'predicate'));
   }
-  private armPredicate(state: FriendsState, event: FriendsWorkEvent) {
-    if (event.trigger?.source !== 'interval') return;
-    const at = new Date(this.clock() + event.trigger.everySeconds * 1000).toISOString();
+  private armPredicate(state: FriendsState, event: FriendsWorkEvent, retryDelay = 0) {
+    if (!event.trigger || event.trigger.source === 'runtime') return;
+    const at = new Date(this.clock() + Math.max(retryDelay, event.trigger.everySeconds * 1000)).toISOString();
     state.detections.push({ id: `probe-${randomUUID()}`, eventId: event.id, at });
+  }
+  private setTrigger(event: FriendsWorkEvent, trigger?: EventPredicate, verified?: VerifiedCollector) {
+    delete event.trigger; delete event.triggerMatched; delete event.triggerKey; delete event.collectorVersion; delete event.collectorFailures;
+    if (!trigger) return;
+    if (trigger.source === 'collector') {
+      if (!verified) throw Error('Verify the collector before registration.');
+      if (trigger.once) delete event.subscription;
+      else event.subscription = true;
+      trigger = { ...trigger, toolCallId: verified.toolCallId };
+      event.collectorVersion = verified.version;
+      if (trigger.initial !== 'notify') {
+        event.triggerMatched = verified.matched;
+        if (verified.key) event.triggerKey = verified.key;
+      }
+    }
+    event.trigger = trigger;
+  }
+  private resolveCollector(rule: CollectorRule, parent: RuntimeSessionTurnRequest, owner?: string, ownerTurn?: string): Promise<CollectorSource> {
+    if (!this.deps.collector) throw Error('Local collector execution is unavailable on this host.');
+    return this.deps.collector.resolve(rule, parent, owner, ownerTurn);
+  }
+  private async verifyTrigger(trigger: EventPredicate, owner: string, turnId: string) {
+    const engine = await predicateEngine();
+    evaluatePredicate(engine, trigger.code);
+    if (trigger.source !== 'collector') return;
+    const parent = this.store.select(s => s.configuration?.parent);
+    if (!parent) throw Error('FRIENDS_NOT_CONFIGURED');
+    const source = await this.resolveCollector(trigger, parent, owner, turnId);
+    let key: string | undefined;
+    const matched = evaluatePredicate(engine, trigger.code, { nowMs: this.clock(), kind: 'collector', value: source.sample }, m => { key = m.key; });
+    return { version: source.version, matched, key, toolCallId: source.toolCallId };
   }
   private registerRecurrence(event: FriendsWorkEvent, rule: EventRecurrence) {
     // Validate the interval as well as the first instant before saving the rule,
@@ -344,13 +379,17 @@ export class AssistantEvents {
   }
   private kick() {
     this.scheduler.cancel(this.wake);
+    for (const [id, probe] of this.probes) {
+      if (!this.store.select(s => s.detections.some(d => d.id === id))) probe.controller.abort();
+    }
     if (this.closed || !this.configured || this.execution) return;
     this.execution = this.dispatch().catch(error => { this.configured = false; this.deps.onError?.(error); }).finally(() => {
       this.execution = undefined;
       if (this.closed || !this.configured) return;
       const state = this.store.peek();
       const runnable = state.signals.some(signal => !['paused', 'failed'].includes(this.event(state, signal.eventId).status));
-      const due = state.detections.filter(d => !['paused', 'failed'].includes(this.event(state, d.eventId).status)).map(d => Date.parse(d.at));
+      const due = state.detections.filter(d => !this.probes.has(d.id) && !['paused', 'failed'].includes(this.event(state, d.eventId).status) &&
+        !(this.probes.size >= 4 && this.event(state, d.eventId).trigger?.source === 'collector')).map(d => Date.parse(d.at));
       if (state.notifications?.length && this.deps.publish) due.push(this.clock() + 30_000);
       if (!runnable && !due.length) return;
       const delay = runnable ? 10 : Math.min(2_147_483_647, Math.max(10, Math.min(...due) - this.clock()));
@@ -359,6 +398,19 @@ export class AssistantEvents {
   }
   private async dispatch() {
     const checkTime = this.clock();
+    const collectors = this.store.select(state => state.detections.flatMap(d => {
+      if (Date.parse(d.at) > checkTime || this.probes.has(d.id)) return [];
+      const event = this.event(state, d.eventId);
+      return state.configuration && event.trigger?.source === 'collector' && event.status === 'watching'
+        ? [{ detection: d, trigger: event.trigger, version: event.collectorVersion, parent: state.configuration.parent }] : [];
+    }).slice(0, Math.max(0, 4 - this.probes.size)));
+    for (const item of collectors) {
+      const controller = new AbortController();
+      const done = this.pollCollector(item, controller.signal).catch(error => this.deps.onError?.(error)).finally(() => {
+        this.probes.delete(item.detection.id); this.kick();
+      });
+      this.probes.set(item.detection.id, { controller, done });
+    }
     const needsEngine = this.store.select(state => state.detections.some(timer => Date.parse(timer.at) <= checkTime &&
       state.events.some(event => event.id === timer.eventId && !['paused', 'failed'].includes(event.status) && event.trigger?.source === 'interval')));
     const engine = needsEngine ? await predicateEngine() : undefined;
@@ -366,7 +418,7 @@ export class AssistantEvents {
       const now = this.clock();
       const due = state.detections.filter(d => {
         const event = this.event(state, d.eventId);
-        return Date.parse(d.at) <= now && !['paused', 'failed'].includes(event.status) && (!event.trigger || engine);
+        return Date.parse(d.at) <= now && !['paused', 'failed'].includes(event.status) && event.trigger?.source !== 'collector' && (!event.trigger || engine);
       });
       state.detections = state.detections.filter(d => !due.includes(d));
       for (const detection of due) {
@@ -487,22 +539,60 @@ export class AssistantEvents {
     } finally { if (this.controller === controller) this.controller = undefined; this.stagedDecision = undefined; }
     await this.publishNotifications();
   }
+  private async pollCollector(item: { detection: { id: string; eventId: string }; trigger: CollectorRule; version?: string; parent: RuntimeSessionTurnRequest }, cancelled: AbortSignal) {
+    const { detection, parent, trigger } = item;
+    const signal = AbortSignal.any([cancelled, AbortSignal.timeout(30_000)]);
+    let value: unknown, failure: string | undefined, retry = false;
+    const engine = await predicateEngine();
+    try {
+      const source = await this.resolveCollector(trigger, parent);
+      if (source.version !== item.version) throw Error('EVENT_COLLECTOR_SOURCE_CHANGED');
+      signal.throwIfAborted();
+      value = await source.read(signal);
+      signal.throwIfAborted();
+    } catch (error) {
+      failure = error instanceof Error && /^[a-z][a-z0-9_]{1,100}$/i.test(error.message) ? error.message : 'EVENT_COLLECTOR_READ_FAILED';
+      retry = error instanceof CollectorReadError || signal.aborted && !cancelled.aborted;
+    }
+    await this.store.change(state => {
+      if (cancelled.aborted || !this.configured || !state.detections.some(d => d.id === detection.id)) return;
+      const event = this.event(state, detection.eventId);
+      if (event.status !== 'watching') return;
+      state.detections = state.detections.filter(d => d.id !== detection.id);
+      if (failure) {
+        event.collectorFailures = (event.collectorFailures ?? 0) + 1;
+        if (retry && event.collectorFailures < 3) this.armPredicate(state, event, 30_000 * event.collectorFailures);
+        else { event.status = 'failed'; event.error = failure; }
+        this.touch(event); return;
+      }
+      delete event.collectorFailures; delete event.error;
+      this.checkPredicate(state, event, engine, { nowMs: this.clock(), kind: 'collector' }, detection.id, { value });
+      if (event.status === 'watching' || event.subscription && event.status === 'queued') this.armPredicate(state, event);
+    });
+  }
   private checkPredicate(state: FriendsState, event: FriendsWorkEvent, engine: Awaited<ReturnType<typeof predicateEngine>>,
-    observation: PredicateObservation, identity: string) {
+    observation: PredicateObservation, identity: string, sample?: { value: unknown }) {
     const trigger = event.trigger!;
     let matched: boolean;
-    try { matched = evaluatePredicate(engine, trigger.code, observation); }
+    let match: CollectorMatch | undefined;
+    try {
+      matched = evaluatePredicate(engine, trigger.code,
+        sample ? { ...observation, ...sample, previousKey: event.triggerKey } : observation,
+        sample ? m => { match = m; } : undefined);
+    }
     catch (error) {
       this.clearClock(state, event.id);
       event.status = 'failed'; event.error = error instanceof Error ? error.message : 'EVENT_TRIGGER_EXECUTION_FAILED';
       this.touch(event); return;
     }
-    const fire = matched && (trigger.source === 'runtime' || !event.triggerMatched);
-    if (trigger.source === 'interval') event.triggerMatched = matched;
+    const fire = matched && (trigger.source === 'runtime' || (match ? match.key !== event.triggerKey : !event.triggerMatched));
+    if (trigger.source !== 'runtime') event.triggerMatched = matched;
+    if (match) event.triggerKey = match.key;
     if (!fire) return;
     const id = 'predicate:' + event.id + ':' + identity;
     if (state.signals.some(signal => signal.id === id || (signal.eventId === event.id && signal.kind === 'predicate' && !state.active?.signalIds.includes(signal.id)))) return;
-    state.signals.push({ id, eventId: event.id, kind: 'predicate', createdAt: new Date(observation.nowMs).toISOString(), observation });
+    state.signals.push({ id, eventId: event.id, kind: 'predicate', createdAt: new Date(observation.nowMs).toISOString(),
+      observation: match ? { ...observation, evidence: match.evidence } : observation });
     if (event.status !== 'running') event.status = 'queued';
   }
   private listensToRuntime(event: FriendsWorkEvent) {
@@ -562,7 +652,7 @@ export class AssistantEvents {
       topic: z.string().trim().min(1).max(160).optional(), include_archived: z.boolean().optional(), eventId: z.string().min(1).optional(), text: z.string().trim().min(1).max(8000).optional(),
       at: z.string().datetime({ offset: true }).optional(),
       recurrence: eventRecurrenceSchema.optional().describe('Fixed cadence for subscribe, or an explicitly requested schedule change with continue. Use instead of at. Runtime calculates each due time.'),
-      trigger: eventPredicateSchema.optional().describe('Agent-authored local JavaScript condition, no date required. interval receives observation.nowMs; runtime receives terminal/tool outcome metadata of local Assistant work. Return 0 or 1. No I/O or tools.'),
+      trigger: eventPredicateSchema.optional().describe('Agent-authored local condition without a date. interval sees time, runtime sees local outcome metadata, collector reuses a successful child tool receipt and sees fresh observation.value. Return 0, 1, or return match(stableKey, conciseEvidence) for a qualifying collector update.'),
       reminderText: reminderTextSchema,
       destination: z.enum(['here','external']).optional().describe('here means the originating conversation. Use external only for an explicitly requested bridge.'),
       source_ref: z.string().min(1).max(100).optional() }).strict().refine(input =>
@@ -598,18 +688,21 @@ export class AssistantEvents {
         if (creating || input.action === 'continue') {
           if (!input.text || (input.action === 'subscribe' && !input.topic)) throw Error('FRIENDS_INPUT_INVALID');
           if (input.trigger) {
+            if (input.trigger.source === 'collector' && (input.action === 'create' && !input.trigger.once || input.action === 'subscribe' && input.trigger.once))
+              throw Error('Use subscribe with a stable topic for an ongoing collector. Use create with trigger.once=true only when the user wants to stop after one match.');
             if (input.trigger.source === 'runtime' && (route || (event?.deliveryRoute && input.destination !== 'here'))) throw Error('Runtime observations belong to the local Assistant conversation.');
-            evaluatePredicate(await predicateEngine(), input.trigger.code);
+            if (input.trigger.source === 'collector' && (refs.length || meta.toolExecutionPolicy === 'web_restricted')) throw Error('Collectors require a local registration.');
           }
           const id = 'event-' + createHash('sha256').update(JSON.stringify([turn.request.turnId, toolCall.id])).digest('hex');
           const previous = events.flatMap(item => item.inputs).find(item => item.id === id);
           const inputs = Array.isArray(meta.assistantEventEvidence) ? meta.assistantEventEvidence : [];
           if (meta.assistantUserRequest === false && !inputs.length) throw Error('ASSISTANT_EVENT_ORIGIN_REQUIRED');
+          const verified = input.trigger && !previous ? await this.verifyTrigger(input.trigger, PERSONAL_ASSISTANT_SESSION, turn.request.turnId) : undefined;
           const source = inputs.filter(item => item && item.sourceRef === ref).at(-1);
           return this.submit({ id, text: input.text, createdAt: previous?.createdAt ?? new Date(this.clock()).toISOString(),
             ...(input.action === 'continue' ? { relatesTo: event!.id } : {}) }, { route, at: input.at && new Date(input.at).toISOString(),
             recurrence: input.recurrence, trigger: input.trigger, reminderText: input.reminderText, title: input.topic,
-            here: input.destination === 'here' || (!ref && creating), scopedRoute: refs.length > 0, fromAssistant: true, sourceMessageId: source?.id, subscriptionTopic: input.action === 'subscribe' ? input.topic : undefined });
+            here: input.destination === 'here' || (!ref && creating), scopedRoute: refs.length > 0, fromAssistant: true, sourceMessageId: source?.id, subscriptionTopic: input.action === 'subscribe' ? input.topic : undefined }, verified);
         }
         if (input.action === 'delete') {
           if (meta.assistantUserRequest !== true) throw Error('ASSISTANT_EVENT_USER_REQUEST_REQUIRED');
@@ -666,7 +759,7 @@ export class AssistantEvents {
       event.status = 'paused'; state.events.push(event); return { status: 'created', event };
     }));
     register('friends_watch_time', 'Register one local detector: an absolute time, a recurrence, or an agent-authored JavaScript trigger without a date. Waiting uses no model requests.', watchSchema, async (input, turnId) => {
-      if (input.trigger) evaluatePredicate(await predicateEngine(), input.trigger.code);
+      const verified = input.trigger ? await this.verifyTrigger(input.trigger, FRIENDS_SESSION, turnId) : undefined;
       return this.changeFromTurn(turnId, state => {
         const event = this.relatedEvent(state, input.eventId);
         if (input.reminderText !== undefined) {
@@ -677,8 +770,8 @@ export class AssistantEvents {
         if (input.trigger) {
           if (input.trigger.source === 'runtime' && event.deliveryRoute) throw Error('Runtime observations belong to the local Assistant conversation.');
           if ((event.recurrence || event.trigger) && this.automaticActivation) throw Error('A local detector is already registered. Use watching for its next observation.');
-          delete event.recurrence; delete event.triggerMatched;
-          event.trigger = input.trigger;
+          delete event.recurrence;
+          this.setTrigger(event, input.trigger, verified);
           this.clearClock(state, event.id);
           this.armPredicate(state, event);
           if (state.active?.eventId !== event.id) event.status = 'watching';
@@ -687,7 +780,7 @@ export class AssistantEvents {
         }
         if (event.trigger) {
           if (this.automaticActivation) throw Error('This event already has a local trigger program. Use watching for its next observation.');
-          delete event.trigger; delete event.triggerMatched;
+          this.setTrigger(event);
           this.clearClock(state, event.id);
         }
         if (input.recurrence) {
@@ -726,9 +819,11 @@ export class AssistantEvents {
   }
   async disconnect() {
     this.configured = false; this.scheduler.cancel(this.wake); this.controller?.abort();
+    for (const probe of this.probes.values()) probe.controller.abort();
     for (const owner of this.eventWork.values()) owner.abort();
     this.eventWork.clear();
     await this.execution;
+    await Promise.all([...this.probes.values()].map(probe => probe.done));
   }
   async close() { this.closed = true; await this.disconnect(); }
 }

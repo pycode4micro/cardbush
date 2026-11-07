@@ -592,6 +592,7 @@ export function registerWorkspaceTools(
         command: context.input.command,
         cwd,
         yieldTimeMs: context.input.yieldTimeMs,
+        foregroundOnly: context.turn?.request.metadata.eventCollector === true,
         signal: context.signal,
         shell: context.input.shell,
         sandbox: authorizedCommandSandbox(plan, context.capabilityIds),

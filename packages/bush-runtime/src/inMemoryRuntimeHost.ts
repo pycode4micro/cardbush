@@ -10,6 +10,7 @@ import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
 import { AssistantEvents } from './assistantEvents.js';
+import { EventCollector } from './eventCollector.js';
 import { FRIENDS_COMMAND, FRIENDS_SESSION, type FriendsSnapshot } from '@cardbush/bush-protocol';
 import { AssistantManagement } from './assistantManagement.js';
 import { ConversationJournal } from './conversationJournal.js';
@@ -865,6 +866,18 @@ export class InMemoryRuntimeHost {
     }));
     for (const [section, source] of Object.entries(options.environmentSources ?? {})) this.#environment.register(section, source);
     this.#assistantEvents = new AssistantEvents(join(runtimeDataRoot, 'friends', 'events.json'), {
+      collector: new EventCollector({ registry: this.#toolRegistry, capabilities: this.#capabilityGrants, executions: this.#toolExecutions,
+        tasks: (owner, id) => this.#subagentTasks.get(owner, id),
+        loadChild: async session => {
+          if (!this.#sessions.hasSession(session)) return;
+          const saved = await this.#subagentResume.load(session);
+          const workspace = saved && await this.#taskWorkspaces?.descriptor(session);
+          if (saved && workspace) saved.metadata = { ...saved.metadata, workspaceDir: workspace.workspaceDir,
+            projectDir: workspace.sourceDir, taskRoots: [workspace.workspaceDir] };
+          return saved;
+        },
+        messages: (session, turn) => this.#sessions.snapshot(session)?.turns.find(item => item.turnId === turn)?.messages.map(item => item.message) ?? [],
+        hooks: request => this.#managementToolHooks(request) }),
       tools: this.#toolRegistry, clock: options.automation?.clock,
       botContext: ref => this.#observeBotContext(PERSONAL_ASSISTANT_SESSION, ref),
       publish: notice => {

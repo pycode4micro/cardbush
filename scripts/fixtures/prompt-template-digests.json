@@ -106,7 +106,7 @@
   {
     "name": "assistant-management",
     "slots": [],
-    "sha256": "e3d7c3225d9ee0e78a82ca04e33552356e120c8bf1edc947d9ee888e3415750f"
+    "sha256": "5f2b331e5385ba424da535db1b38f93afe6baea0a5cada9cffe1d7d38d62efbe"
   },
   {
     "name": "tone-natural",
@@ -201,7 +201,7 @@
   {
     "name": "friends-system",
     "slots": [],
-    "sha256": "8a54c69cb8b4cf6c0ecca8f2ccc4e2fba09e19d8865fb5d001b6d542c07e667d"
+    "sha256": "0ed17ef951f094ab13a856ec5924c49bf7f9c7dc8e0620fd3ea7ba613f615019"
   },
   {
     "name": "friends-startup",

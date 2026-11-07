@@ -13,6 +13,7 @@ const stateSchema = z.object({
   configuration: z.object({ parent: runtimeSessionTurnRequestSchema.extend({ inputMessages: z.tuple([]) }), profile: friendsProfileSchema, assistant: assistantProfileSchema.optional(), defaultRoute: friendDeliveryRouteSchema.optional() }).optional(),
   events: z.array(z.object({ id, logicalKey: id, origin: z.enum(['user', 'agent', 'system']), title: z.string(), intent: z.string(),
     trigger: eventPredicateSchema.optional(), triggerMatched: z.boolean().optional(), currentInputId: id.optional(), reminderText: z.string().min(1).max(8000).optional(),
+    triggerKey: z.string().max(256).optional(), collectorVersion: z.string().optional(), collectorFailures: z.int().nonnegative().optional(),
     subscription: z.literal(true).optional(), recurrence: eventRecurrenceSchema.optional(), inputs: z.array(friendEvidenceSchema), deliveryRoute: friendDeliveryRouteSchema.optional(), status: z.enum(['queued', 'running', 'watching', 'waiting_user', 'completed', 'paused', 'failed']),
     archived: z.boolean(), revision: z.number().int().positive(), createdAt: timestamp, updatedAt: timestamp,
     result: z.object({ text: z.string(), turnId: id, createdAt: timestamp }).optional(),
@@ -24,7 +25,7 @@ const stateSchema = z.object({
   notifications: z.array(z.object({ eventId: id, turnId: id, text: z.string(), createdAt: timestamp })).optional(),
   webhookReceipts: z.record(id, friendsWebhookReceiptSchema).optional(),
   signals: z.array(z.object({ id, eventId: id, kind: z.enum(['input', 'clock', 'predicate', 'startup', 'resume']), createdAt: timestamp,
-    observation: z.object({ nowMs: z.number(), kind: z.string(), toolName: z.string().optional(), status: z.string().optional() }).optional() })),
+    observation: z.object({ nowMs: z.number(), kind: z.string(), toolName: z.string().optional(), status: z.string().optional(), evidence: z.string().max(4000).optional() }).optional() })),
   active: z.object({ eventId: id, turnId: id, signalIds: z.array(id) }).optional(),
 });
 
@@ -37,7 +38,7 @@ export interface FriendsState {
   webhookReceipts?: Record<string, FriendsWebhookReceipt>;
   detections: FriendsDetection[];
   signals: Array<{ id: string; eventId: string; kind: 'input' | 'clock' | 'predicate' | 'startup' | 'resume'; createdAt: string;
-    observation?: { nowMs: number; kind: string; toolName?: string; status?: string } }>;
+    observation?: { nowMs: number; kind: string; toolName?: string; status?: string; evidence?: string } }>;
   active?: { eventId: string; turnId: string; signalIds: string[] };
 }
 

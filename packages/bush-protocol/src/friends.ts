@@ -24,6 +24,13 @@ const predicateCode = z.string().min(1).max(8000).describe('Synchronous JavaScri
 export const eventPredicateSchema = z.discriminatedUnion('source', [
   z.object({ source: z.literal('interval'), everySeconds: z.int().min(1).max(86400), code: predicateCode }).strict(),
   z.object({ source: z.literal('runtime'), code: predicateCode }).strict(),
+  z.object({ source: z.literal('collector'), everySeconds: z.int().min(1).max(86400),
+    taskId: z.string().min(1).max(220).describe('Completed local child task which verified this source.'),
+    tool: z.string().min(1).max(200).describe('Exact read tool or terminal_exec used for the successful sample.'),
+    toolCallId: z.string().min(1).max(220).optional().describe('Required if several successful calls to this tool exist in the child turn.'),
+    once: z.literal(true).optional().describe('Use only for an explicitly one-time first match. Omit for a continuing watch.'),
+    initial: z.enum(['baseline', 'notify']).optional().describe('Default baseline seeds the verified sample. notify allows the first matching poll to deliver.'),
+    code: predicateCode }).strict(),
 ]);
 export type EventPredicate = z.infer<typeof eventPredicateSchema>;
 export const friendInputSchema = z.object({ id: z.string().min(1).max(160), text: z.string().min(1).max(8000).refine(value => Boolean(value.trim())),
@@ -58,6 +65,9 @@ export interface FriendsWorkEvent {
   recurrence?: EventRecurrence;
   trigger?: EventPredicate;
   triggerMatched?: boolean;
+  triggerKey?: string;
+  collectorVersion?: string;
+  collectorFailures?: number;
   currentInputId?: string;
   reminderText?: string;
   inputs: z.infer<typeof friendEvidenceSchema>[]; deliveryRoute?: z.infer<typeof friendDeliveryRouteSchema>; status: FriendEventStatus; archived: boolean; revision: number; createdAt: string; updatedAt: string;
