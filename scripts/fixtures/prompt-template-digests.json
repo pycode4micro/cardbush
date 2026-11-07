@@ -73,9 +73,20 @@
     "slots": [
       "name",
       "persona",
-      "host"
+      "host",
+      "eventPolicy"
     ],
-    "sha256": "bc311e69081f03768dad885277b8c0bc17877f159751c532db67250c0461ee03"
+    "sha256": "ae10c935f89656bca0e8e80d08a02176318768694d6541dad45dfc6b86225d5b"
+  },
+  {
+    "name": "assistant-events-enabled",
+    "slots": [],
+    "sha256": "d72b269cb21a8ed596155964dee1fceeac05f6b56562007e28479128c5687490"
+  },
+  {
+    "name": "assistant-events-requested-only",
+    "slots": [],
+    "sha256": "c2a725ecd149954b27c83ac98e06d85f148aa4c9630cf696bc3bfce8728d00cd"
   },
   {
     "name": "assistant-memory",
@@ -95,7 +106,7 @@
   {
     "name": "assistant-management",
     "slots": [],
-    "sha256": "fe6b518631b14694ac75882f8c52bef7740f5d2c6aa910103bb6ff4f8b5a3124"
+    "sha256": "f31bfccc7e00facc3b3b336f4b2f54e000ee29499317df96d6a22994970ba429"
   },
   {
     "name": "tone-natural",

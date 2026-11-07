@@ -506,6 +506,40 @@ test('reset forgets memory and isolates late replies and transcripts without del
   }finally{old.resolve();fresh.resolve();assistant.close();}
 });
 
+test('ordinary chat follows the current initiative setting even when a saved profile still has it enabled', async () => {
+  const requests = [], settings = { recognition: { boundaries: '晚上十点后免打扰' }, beforeExecution: 'within-scope', report: 'important', notificationSourceRef: 'test-route' };
+  const confirmed = { ...settings, confirmedAt: '2026-11-07T00:00:00.000Z' };
+  const saved = assistantProfileSchema.parse({ proactive: confirmed });
+  let current;
+  const assistant = new AssistantConversation(new ConversationJournal(temporary()), {
+    exists: () => true, tasks: () => [], checkpoint: () => ({}), eventPreferences: () => current,
+    delegate: async () => { throw Error('Unexpected delegation'); },
+    provider: { async *stream(request) { requests.push(request); yield* response(request, { text: '收到。' }); } },
+  });
+  try {
+    const cases = [
+      { preference: undefined, profile: assistantProfileSchema.parse({}), enabled: false },
+      { preference: confirmed, profile: saved, enabled: true },
+      { preference: settings, profile: saved, enabled: false },
+    ];
+    for (const [index, { preference, profile, enabled }] of cases.entries()) {
+      current = preference;
+      assistant.command({ action: 'turn', sessionId: id, entry: entry('preference-' + index, '样衣已寄出，买手还没确认收到。'), parent: parent(), profile });
+      await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
+      assert.equal(requests.length, index + 1, 'initiative is part of the ordinary model request');
+      const messages = requests[index].messages, system = messages.find(m => m.role === 'system').content;
+      assert.ok(system.includes(`Proactive follow-ups in ordinary chat are ${enabled ? 'enabled' : 'disabled'}.`));
+      assert.equal(system.includes('whether a later check would help'), enabled, 'an opted-out turn never receives suggestions for taking initiative');
+      assert.ok(!system.includes(settings.recognition.boundaries));
+      const supplied = messages.find(m => m.name === 'confirmed_preferences');
+      if (preference) {
+        assert.equal(supplied.role, 'user'); assert.equal(supplied.visibility, 'internal');
+        assert.deepEqual(JSON.parse(supplied.content), enabled ? confirmed : { report: settings.report, notificationSourceRef: settings.notificationSourceRef });
+      } else assert.equal(supplied, undefined);
+    }
+  } finally { assistant.close(); }
+});
+
 test('assistant defaults are English model instructions and custom personas remain unmodified', async () => {
   for (const persona of ['', '温和、可靠、自然地交流。尊重用户的停顿和思考时间。', '  自定义角色 {{value:host}}  ']) {
     const journal = new ConversationJournal(temporary()), requests = [];

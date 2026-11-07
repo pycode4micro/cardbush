@@ -71,7 +71,7 @@ test('all shipped model templates are English while interpolated user content st
     assert.doesNotMatch(source, /\p{Script=Han}/u, file);
   }
   const persona = '保持中文原文 $& {{value:name}}';
-  const output = renderPromptTemplate('assistant-system', { name: '小树', persona, host: 'local' });
+  const output = renderPromptTemplate('assistant-system', { name: '小树', persona, host: 'local', eventPolicy: renderPromptTemplate('assistant-events-enabled') });
   assert.ok(output.includes(persona));
   assert.ok(output.includes('小树'));
 });
