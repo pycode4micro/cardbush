@@ -111,12 +111,10 @@
 .assistant-composer-tools [data-assistant-events] svg { width: 18px; height: 18px; }
 .assistant-event-preferences { margin-block: 12px; }
 .assistant-event-preferences summary { cursor: pointer; }
-.assistant-event-preferences label, .assistant-events-dialog label { display: grid; gap: 6px; margin-block: 10px; }
+.assistant-event-preferences label { display: grid; gap: 6px; margin-block: 10px; }
 .assistant-event-preferences label:has(input[type=checkbox]) { display: flex; align-items:center; }
 .assistant-event-preferences input[type=checkbox] { width: auto; }
-.assistant-events-dialog select, .assistant-events-dialog textarea, .assistant-event-preferences select { max-width: 100%; font: inherit; color: inherit; background: var(--surface); }
-.assistant-event-actions { display:flex; flex-wrap:wrap; gap:8px; }
-.assistant-events-dialog .friends-original-input { white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant-event-preferences select { max-width: 100%; font: inherit; color: inherit; background: var(--surface); }
 .assistant-settings-dialog:has(.assistant-event-preferences[open]) { overflow-y: auto; max-height: 90vh; }
 .assistant-event-response { align-self: center; margin-block: 6px; }
 .assistant-event-response button { color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
