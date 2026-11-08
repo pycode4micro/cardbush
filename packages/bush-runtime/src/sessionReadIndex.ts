@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import {
-  BUSH_SESSION_SNAPSHOT_PROTOCOL, sessionEventSchema, sessionMessageExcerpt, sessionSummarySchema, sessionSummaryMetadata,
+  BUSH_SESSION_SNAPSHOT_PROTOCOL, sessionEventSchema, sessionMessageExcerpt, latestAssistantExcerpt, sessionSummarySchema, sessionSummaryMetadata,
   type SessionEvent, type SessionSummary, type SessionHistoryRequest, type SessionHistoryPage,
   turnToolHandoffSchema, type TurnToolHandoff,
 } from '@cardbush/bush-protocol';
@@ -93,7 +93,11 @@ export class SessionReadIndex {
     if (!index) {
       try {
         const saved = JSON.parse(await readFile(sidecar, 'utf8'));
-        if (saved.checksum === digest(JSON.stringify(saved.index)) && validIndex(saved.index, journal)) index = saved.index;
+        if (saved.checksum === digest(JSON.stringify(saved.index)) && validIndex(saved.index, journal)) {
+          index = saved.index as Index;
+          // Existing indexes can end with an empty tool-call message. Their excerpts are sufficient.
+          if (!index.summary.preview.trim()) index.summary.preview = latestAssistantExcerpt(index.excerpts);
+        }
       } catch { signal?.throwIfAborted(); } // The derived cache must never block the canonical journal.
     }
     if (index && (index.through > source.size || (index.through === source.size && index.mtimeMs !== source.mtimeMs) ||
@@ -119,7 +123,7 @@ export class SessionReadIndex {
     const superseded = new Set(index.superseded);
     index.excerpts = index.excerpts.filter(entry => !superseded.has(entry.id));
     index.summary.firstUserText = index.excerpts.find(entry => entry.role === 'user')?.text ?? '';
-    index.summary.preview = [...index.excerpts].reverse().find(entry => entry.role === 'assistant')?.text ?? '';
+    index.summary.preview = latestAssistantExcerpt(index.excerpts);
     index.mtimeMs = source.mtimeMs;
     index.prefix = await prefixHash(journal, index.through);
     signal?.throwIfAborted();

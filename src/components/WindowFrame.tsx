@@ -200,6 +200,7 @@ export function WindowFrame(props: Props) {
         setMenuInput('keyboard');
       }
     }}>
+    <div className="window-navigation">
     <WindowBackButton language={language} fallback={props.onBack} beforeBack={close}/>
     {!sidebarCollapsed && <span className="window-brand">{uiText(language)('windowSidebarToggle.cardbush')}</span>}
     {menus.length > 0 && <button type="button" className="frame-chip desktop-menu-toggle no-drag" aria-label={uiText(language)('windowFrame.applicationMenu')}
@@ -210,6 +211,7 @@ export function WindowFrame(props: Props) {
         }
       }}
       onClick={event => open ? close() : void openMenu(menus[0].id, event.currentTarget, event.detail === 0 ? 'first' : undefined)}><MoreHorizontal/></button>}
+    </div>
 
     {open && <div className="window-menu-dismiss-layer no-drag" aria-hidden="true" onPointerDown={event => { event.preventDefault(); close(); }} />}
     {open && activeMenu && popup(activeMenu.items, open, false, activeMenu.label)}

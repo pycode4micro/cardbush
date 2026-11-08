@@ -1336,6 +1336,7 @@ export function runtimeConversation(
     id: snapshot.sessionId,
     title,
     preview: summary.preview,
+    assistantPreview: summary.preview,
     updatedAt: snapshot.updatedAt,
     ...(projectId ? { projectId } : {}),
     ...(projectDir ? { projectDir } : {}),

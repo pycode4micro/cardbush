@@ -83,6 +83,14 @@ export function finalReplySessionSnapshot(snapshot: SessionSnapshot): SessionSna
   }) };
 }
 
+export function latestAssistantExcerpt(excerpts: readonly { role: string; text: string }[]): string {
+  for (let i = excerpts.length - 1; i >= 0; i--) {
+    const entry = excerpts[i]!;
+    if (entry.role === 'assistant' && entry.text.trim()) return entry.text;
+  }
+  return '';
+}
+
 export function summarizeSession(snapshot: SessionSnapshot): SessionSummary {
   const superseded = new Set(snapshot.supersededMessageIds);
   const excerpts = snapshot.turns.flatMap(turn => turn.messages.flatMap(entry => superseded.has(entry.messageId) ? [] : sessionMessageExcerpt(entry)));
@@ -90,7 +98,7 @@ export function summarizeSession(snapshot: SessionSnapshot): SessionSummary {
   return { sessionId: snapshot.sessionId, revision: snapshot.revision, createdAt: snapshot.createdAt, updatedAt: snapshot.updatedAt,
     ...(snapshot.metadata ? { metadata: sessionSummaryMetadata(snapshot.metadata) } : {}), turnCount: snapshot.turns.length,
     firstUserText: excerpts.find(entry => entry.role === 'user')?.text ?? '',
-    preview: [...excerpts].reverse().find(entry => entry.role === 'assistant')?.text ?? '',
+    preview: latestAssistantExcerpt(excerpts),
     ...(last ? { latestTurn: { turnId: last.turnId, turnSequence: last.turnSequence, status: last.status,
       reason: last.reason, completedAt: last.completedAt, ...(last.planWaiting ? { planWaiting: last.planWaiting } : {}) } } : {}) };
 }

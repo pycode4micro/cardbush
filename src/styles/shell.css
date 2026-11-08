@@ -144,6 +144,8 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   isolation: isolate;
 }
 
+.window-navigation { display: contents; }
+
 .window-frame[data-native-controls="true"] {
   /* Keep menu content out of native caption hit targets at any DPI / zoom. */
   padding-left: calc(14px + env(titlebar-area-x, 0px));

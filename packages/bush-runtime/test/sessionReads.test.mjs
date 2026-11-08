@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { mkdtemp, mkdir, rm, readdir, writeFile, appendFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,6 +21,30 @@ async function fixture(t, options = {}) {
   t.after(async () => { persistence.close(); assert.equal(dirname(resolve(root)), resolve(tmpdir())); await rm(root, { recursive: true, force: true }); });
   return { root, persistence, store };
 }
+
+test('session previews retain the latest assistant text across empty tool output and saved indexes', async t => {
+  const f = await fixture(t);
+  const toolOnly = turn(2);
+  toolOnly.messages[1].message.content = '';
+  for (const store of [f.store, new SessionStore()]) {
+    store.ensureSession('preview');
+    store.commitTurn('preview', turn(1));
+    store.commitTurn('preview', toolOnly);
+    assert.equal((await store.listSummaries())[0].preview, 'answer 1');
+    assert.equal(summarizeSession(store.snapshot('preview')).preview, 'answer 1');
+  }
+  f.persistence.close();
+  const sidecar = join(f.root, (await readdir(f.root)).find(file => file.endsWith('.session-index')));
+  const saved = JSON.parse(await readFile(sidecar, 'utf8'));
+  saved.index.summary.preview = '';
+  saved.checksum = createHash('sha256').update(JSON.stringify(saved.index)).digest('hex');
+  await writeFile(sidecar, JSON.stringify(saved));
+  const reopened = new FileSessionEventPersistence({root: f.root});
+  try {
+    const reader = new SessionStore({persistence: reopened});
+    assert.equal((await reader.listSummaries())[0].preview, 'answer 1');
+  } finally { reopened.close(); }
+});
 
 test('Shadow frozen context stays out of memory and durable list indexes, but full reads restore it', async t => {
   const f = await fixture(t), memory = new SessionStore();

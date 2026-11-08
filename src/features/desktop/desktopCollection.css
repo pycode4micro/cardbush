@@ -1,13 +1,42 @@
 /* Native caption hit targets stay above the workspace. The rail paints continuously behind them. */
-.app[data-desktop-workspace] { --rail-divider: color-mix(in srgb,var(--text) 11%,transparent); }
+.app[data-desktop-workspace] {
+  --rail-divider: color-mix(in srgb,var(--text) 11%,transparent);
+  --workspace-bar-height: max(60px, var(--window-frame-height));
+  --header-rail-width: var(--sidebar-width);
+  --header-glass: color-mix(in srgb, var(--surface) 64%, transparent);
+}
+.app[data-desktop-workspace]:has(> .sidebar-is-collapsed) { --header-rail-width: 48px; }
+.app[data-desktop-workspace][data-floating-assistant] { --workspace-bar-height: var(--window-frame-height); }
+.app[data-desktop-workspace]:not([data-floating-assistant]) .window-navigation {
+  display:flex; align-items:center; align-self:stretch; gap:8px; min-width:max-content;
+  flex:0 0 calc(var(--header-rail-width) - 10px); box-sizing:border-box;
+}
+.app[data-desktop-workspace] .window-navigation .desktop-menu-toggle { margin-inline-start:auto; margin-inline-end:8px; }
+.app[data-desktop-workspace]:not([data-floating-assistant]) > .window-frame::before {
+  content:""; position:absolute; inset-block-start:0; inset-inline:var(--header-rail-width) 0;
+  height:var(--workspace-bar-height); z-index:-1; pointer-events:none;
+  background:var(--header-glass); backdrop-filter:blur(24px) saturate(1.25);
+  box-shadow:inset 0 -1px var(--rail-divider);
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .app[data-desktop-workspace] { --header-glass: var(--surface); }
+}
+@media (max-width: 700px) {
+  .app[data-desktop-workspace] { --workspace-bar-height: max(50px, var(--window-frame-height)); }
+  .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .window-navigation {
+    flex-basis:auto;
+  }
+}
 .app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; padding-inline-start:calc(10px + env(titlebar-area-x, 0px)); background:transparent; border:0; box-shadow:none; }
 .app[data-desktop-workspace] > .desktop-shell { height:100%; flex:1; inset-block-start:0; border:0; border-radius:0; background:var(--surface); }
-.app[data-desktop-workspace] .desktop-shell > .main-stage { margin-top:var(--window-frame-height); border-radius:0; box-shadow:none; }
-.app[data-desktop-workspace] .desktop-shell > :is(.right-inspector,.right-inspector-resizer) { margin-top:var(--window-frame-height); }
+.app[data-desktop-workspace] .desktop-shell > .main-stage { margin-top:var(--workspace-bar-height); border-radius:0; box-shadow:none; }
+.app[data-desktop-workspace] .desktop-shell > :is(.right-inspector,.right-inspector-resizer) { margin-top:var(--workspace-bar-height); }
 .app[data-desktop-workspace] .desktop-shell > .sidebar { box-sizing:border-box; padding-top:var(--window-frame-height); border-inline-end:1px solid var(--rail-divider); border-radius:0; }
 html[data-window-material="mica"] .app[data-desktop-workspace] > .desktop-shell { background:transparent; }
 html[data-window-material] .app[data-desktop-workspace] > .window-frame { border:0; background:transparent; box-shadow:none; }
-.app[data-desktop-workspace] > .desktop-shell::before { content:""; position:absolute; pointer-events:none; inset:0 0 auto var(--layout-sidebar-space); height:var(--window-frame-height); background:var(--surface); }
+.app[data-desktop-workspace] .desktop-shell > .main-stage:has(> .desktop-library) { margin-top:0; }
+.app[data-desktop-workspace] .main-stage > .desktop-library { padding-block-start:calc(var(--workspace-bar-height) + var(--library-inset)); scroll-padding-top:var(--workspace-bar-height); }
+.app[data-desktop-workspace] .desktop-shell > .settings-shell { top:var(--workspace-bar-height); }
 .app[data-desktop-workspace] .nav-row { position:relative; border-radius:5px; min-height:35px; }
 .app[data-desktop-workspace] .nav-row.active { background:color-mix(in srgb,var(--text) 7%,transparent); color:var(--text); }
 .app[data-desktop-workspace] .nav-row.active::before { content:""; position:absolute; inset-block:10px; inset-inline-start:0; width:3px; border-radius:3px; background:var(--accent); }
@@ -17,7 +46,7 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .section-heading-icon svg { width:15px; height:15px; }
 .desktop-search,.desktop-filter { display:flex; align-items:center; gap:9px; color:var(--text-mid); background:color-mix(in srgb,var(--surface) 65%,transparent); border:1px solid var(--rail-divider,var(--border)); border-bottom-color:var(--text-soft); border-radius:5px; }
 .desktop-search { padding:7px 10px; width:100%; margin:0 0 12px; font:inherit; text-align:start; }
-.desktop-library { height:100%; min-height:0; overflow:auto; container-type:inline-size; padding:clamp(20px,3.5vw,54px); box-sizing:border-box; color:var(--text); background:var(--surface); scrollbar-gutter:stable; }
+.desktop-library { height:100%; min-height:0; overflow:auto; container-type:inline-size; --library-inset:clamp(20px,3.5vw,54px); padding:var(--library-inset); box-sizing:border-box; color:var(--text); background:var(--surface); scrollbar-gutter:stable; }
 .desktop-library *, .desktop-library *::before { box-sizing:border-box; }
 .desktop-library h1,.desktop-library h2,.desktop-library p { margin:0; }
 .desktop-library h1 { font-size:clamp(30px,3vw,45px); line-height:1.12; letter-spacing:-.045em; font-weight:740; overflow-wrap:anywhere; }

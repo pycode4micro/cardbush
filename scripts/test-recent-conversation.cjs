@@ -52,6 +52,10 @@ async function run() {
     ].map((message, index) => ({ messageId: turnId + '-' + index, turnId, turnSequence: i, messageIndex: index, createdAt: stamp, message,
       ...(index === 0 && image ? { metadata: { attachments: [{ id: 'cover-' + i, name: image, type: 'image',
         path: path.join(project, 'src/features/desktop/art', image) }] } } : {}) }));
+    if (i === 45) messages.push({messageId:'tool-call',turnId,turnSequence:i,messageIndex:2,createdAt:stamp,
+      message:{role:'assistant',content:'',toolCalls:[{id:'receipt',name:'fixture',argumentsText:'{}'}]}},
+      {messageId:'tool-receipt',turnId,turnSequence:i,messageIndex:3,createdAt:stamp,
+      message:{role:'tool',name:'fixture',toolCallId:'receipt',content:'Internal tool receipt'}});
     store.commitTurn(sessionId, { turnId, turnSequence: i, createdAt: stamp, completedAt: stamp, status: 'completed', reason: 'stop', usage: {}, messages });
   }
   store.ensureSession('local-hidden', { title: 'Hidden session', hidden: true });
@@ -70,8 +74,30 @@ async function run() {
   const click = async selector => { await visible(selector); await read('document.querySelector(' + JSON.stringify(selector) + ').click();void 0'); };
   await visible('[data-desktop-page="overview"]');
   await visible('.recent-bar-chat');
-  assert.equal(await read("document.querySelector('.recent-bar-chat span').textContent"), '设计评审记录');
+  assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), '设计评审记录');
+  await wait(() => read("document.querySelector('.recent-chat-copy small')?.textContent === " + JSON.stringify(examples.get(45)[1])), 'latest assistant output appears before opening the navigator').catch(async cause => {
+    throw Error('Unexpected assistant preview: ' + await read("document.querySelector('.recent-chat-copy')?.textContent"), {cause});
+  });
   assert.equal(await read("Boolean(document.querySelector('.recent-turn-scroll'))"), false);
+  const title = () => read("document.querySelector('.recent-chat-copy strong').textContent");
+  const direction = await read("document.querySelector('[data-recent-step=previous]').disabled ? 'next' : 'previous'");
+  await click('[data-recent-step=' + direction + ']');
+  await wait(async () => await title() !== '设计评审记录', 'previous or next selects an adjacent chat');
+  await visible('[data-desktop-page=overview]');
+  assert.equal(await read("!!document.querySelector('.recent-chat-copy small')"), false, 'a chat with no assistant output shows only its title');
+  await click('[data-recent-step=' + (direction === 'previous' ? 'next' : 'previous') + ']');
+  await wait(async () => await title() === '设计评审记录', 'opposite navigation restores the chat');
+  await visible('.recent-chat-copy small');
+  const bounds = () => read("Array.from(document.querySelectorAll('.recent-bar button.no-drag')).every(button => {const r=button.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=24;})");
+  assert.ok(await bounds());
+  fs.writeFileSync(path.join(project, 'tmp/conversation-glass-bar.png'), (await win.webContents.capturePage()).toPNG());
+  win.setContentSize(1400, 600); await pause(180);
+  await read("document.querySelector('.desktop-library').scrollTop=270;void 0");
+  await pause(120);
+  assert.ok(await read("document.querySelector('.window-frame').getBoundingClientRect().top===0 && document.querySelector('.desktop-library').getBoundingClientRect().top<2"));
+  fs.writeFileSync(path.join(project, 'tmp/conversation-glass-scrolled.png'), (await win.webContents.capturePage()).toPNG());
+  win.setContentSize(1400, 800);
+  await read("document.querySelector('.desktop-library').scrollTop=0;void 0");
   await click('.recent-bar-list');
   await visible('.recent-turn-text');
   assert.equal(await read("document.querySelectorAll('.recent-turn-text').length"), 20, 'only the tail page is loaded initially');
@@ -99,6 +125,14 @@ async function run() {
   await wait(() => read("!document.querySelector('.recent-turn-drawer:popover-open')"), 'dismiss with Escape');
   await click('.recent-bar-chat');
   await visible('[data-message-id="' + targetId + '"]');
+  await click('[data-recent-step=' + direction + ']');
+  await wait(async () => await title() !== '设计评审记录', 'in chat, transport switches the active conversation');
+  const otherTitle = await title();
+  await wait(() => read("Array.from(document.querySelectorAll('.main-stage .topbar h1')).some(h => h.checkVisibility() && h.textContent === " + JSON.stringify(otherTitle) + ")"), 'the conversation and title bar agree').catch(async cause => {
+    throw Error('Expected ' + otherTitle + ', got ' + await read("Array.from(document.querySelectorAll('.topbar h1')).map(h=>h.textContent).join(', ')"), {cause});
+  });
+  await click('[data-recent-step=' + (direction === 'previous' ? 'next' : 'previous') + ']');
+  await wait(async () => await title() === '设计评审记录', 'return to the original conversation');
   // Browsing another session does not change the page or register it as visited.
   await click('[data-nav-section=home]');
   assert.equal(await read("document.querySelectorAll('.sidebar .conversation-row').length"), 0);
@@ -108,7 +142,7 @@ async function run() {
   await click('[data-recent-session=local-empty]');
   await visible('[data-desktop-page=overview]');
   await wait(() => read("!!document.querySelector('.recent-turn-scroll p:not([role])')"), 'empty chat has no turns');
-  assert.equal(await read("document.querySelector('.recent-bar-chat span').textContent"), '设计评审记录');
+  assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), '设计评审记录');
   await click('[data-recent-tab=sessions]');
   const earlierRow = '[data-recent-session=local-earlier]';
   await visible(earlierRow);
@@ -119,18 +153,19 @@ async function run() {
   await visible('[data-desktop-page=overview]');
   await click('[data-turn-message=other-user]');
   await visible('[data-message-id=other-user]');
-  await wait(() => read("document.querySelector('.recent-bar-chat span')?.textContent === 'Earlier conversation'"), 'last visit overrides background activity');
+  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === 'Earlier conversation'"), 'last visit overrides background activity');
   await click('[data-nav-section=home]');
   win.webContents.reload();
   await visible('[data-desktop-page="overview"]');
-  await wait(() => read("document.querySelector('.recent-bar-chat span')?.textContent === 'Earlier conversation'"), 'last visit survives reload');
+  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === 'Earlier conversation'"), 'last visit survives reload');
+  win.setSize(480, 650); await pause(200); assert.ok(await bounds(), 'toolbar controls fit at minimum width');
   win.setSize(590, 650);
   await click('.recent-bar-list');
   await visible('[data-turn-message=other-user]');
   assert.ok(await read("(() => {const p=document.querySelector('.recent-turn-drawer').getBoundingClientRect();const a=document.querySelector('.recent-bar-chat').getBoundingClientRect(),b=document.querySelector('.recent-bar-list').getBoundingClientRect();return p.left>=0 && p.right<=innerWidth && a.width>0 && a.right<=b.left})()"));
   await click('.recent-bar-list');
   await read("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['local-earlier']));window.dispatchEvent(new Event('cardbush-conversation-archives-changed'));void 0");
-  await wait(() => read("document.querySelector('.recent-bar-chat span')?.textContent === '设计评审记录'"), 'archived and hidden sessions are excluded');
+  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === '设计评审记录'"), 'archived and hidden sessions are excluded');
   console.log('Recent conversation navigation passed: Home and Explore, paging and exact turn, resume, Escape, reload, empty state, archive and narrow layout.');
   app.quit();
 }

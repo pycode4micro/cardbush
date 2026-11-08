@@ -3,6 +3,7 @@ import { uiText } from '../../i18n';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
 import { useConversationArchives } from '../sidebar/conversationArchives';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
+import { isBackendSupersededMessage } from '../chatMessages/transcript/messageFacts';
 import { normalizeChatMessagesForDisplay } from '../chatMessages/transcript/messageProjection';
 import { indexContextTurns, quickTurnPreviewMessages } from '../chat/quickContextIndex';
 import { RecentConversationBarView, TurnListView, type RecentTab } from './RecentConversationBarView';
@@ -10,6 +11,20 @@ import './recentConversationBar.css';
 
 const lastVisitKey = 'cardbush_last_opened_conversation';
 const pageSize = 40;
+
+// Streaming and restored histories can fold earlier assistant segments into a tool-only row.
+function latestAssistantOutput(messages?: ChatMessage[]): string {
+  if (!messages) return '';
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (isBackendSupersededMessage(message) || message.role !== 'assistant') continue;
+    const text = conversationDisplayTitle(message.content.slice(0, 600));
+    if (text) return text;
+    const preceding = latestAssistantOutput(message.loopHistory);
+    if (preceding) return preceding;
+  }
+  return '';
+}
 
 export function useRecentConversation(conversations: ConversationSummary[], visibleChatId: string) {
   const archived = useConversationArchives();
@@ -32,18 +47,38 @@ export type RecentListOutlet = {
 type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
 type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
 type Props = HistoryActions & {
-  language: AppLanguage; conversation: ConversationSummary; conversations: ConversationSummary[];
+  language: AppLanguage; conversation: ConversationSummary; conversations: ConversationSummary[]; inConversation?: boolean;
   transcripts: Record<string, ChatMessage[]>; pageFor(id: string): Page;
   open(id: string, message?: ChatMessage): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ language, conversation, conversations, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
+export function RecentConversationBar({ language, conversation, conversations, inConversation = false, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<RecentTab>('turns');
-  const [selectedId, setSelectedId] = useState(conversation.id);
+  const [selectedId, setSelectedId] = useState('');
+  const [browsedId, setBrowsedId] = useState('');
   const panel = useRef<HTMLElement>(null);
   const id = useId(), archived = useConversationArchives();
-  const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? conversation;
+  useLayoutEffect(() => {
+    panel.current?.hidePopover();
+    setSelectedId('');
+    setBrowsedId('');
+  }, [conversation.id]);
+  const timeline = useMemo(() => conversations.filter(item => !item.metadata?.hidden && !archived.has(item.id))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)), [conversations, archived]);
+  const current = (!inConversation && timeline.find(item => item.id === browsedId)) || conversation;
+  const position = timeline.findIndex(item => item.id === current.id);
+  const previous = position >= 0 ? timeline[position + 1] : undefined;
+  const next = position > 0 ? timeline[position - 1] : undefined;
+  const switchConversation = (target: ConversationSummary) => {
+    if (inConversation) open(target.id);
+    else setBrowsedId(target.id);
+    setSelectedId('');
+  };
+  const currentMessages = transcripts[current.id];
+  const output = useMemo(() => latestAssistantOutput(currentMessages) || conversationDisplayTitle(current.assistantPreview ?? ''),
+    [currentMessages, current.assistantPreview]);
+  const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? current;
   const name = (item: ConversationSummary) => conversationDisplayTitle(item.title) || uiText(language)('composer.newConversation');
   const enter = useCallback((id: string, message?: ChatMessage) => {
     panel.current?.hidePopover();
@@ -53,9 +88,10 @@ export function RecentConversationBar({ language, conversation, conversations, t
     setSelectedId(id); setTab('turns');
     panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="turns"]')?.focus({ preventScroll: true });
   }, []);
-  return <RecentConversationBarView language={language} title={name(conversation)} selectedTitle={name(selected)} panelId={id}
-    panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={() => enter(conversation.id)}
-    onToggle={value => { setExpanded(value); if (!value) { setTab('turns'); setSelectedId(conversation.id); } }}>
+  return <RecentConversationBarView language={language} title={name(current)} output={output} selectedTitle={name(selected)} panelId={id}
+    previous={previous && (() => switchConversation(previous))} next={next && (() => switchConversation(next))}
+    panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={() => enter(current.id)}
+    onToggle={value => { setExpanded(value); if (!value) { setTab('turns'); setSelectedId(''); } }}>
     {expanded && (tab === 'sessions'
       ? <RecentSessions selectedId={selected.id} register={onRecentList} select={browse} enter={enter}/>
       : <TurnList key={selected.id} language={language} sessionId={selected.id} messages={transcripts[selected.id]}

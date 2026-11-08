@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode, type Ref } from 'react';
-import { ChevronRight, List, MessageSquare } from 'lucide-react';
+import { List, MessageSquare, SkipBack, SkipForward } from 'lucide-react';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
 import { uiText } from '../../i18n';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
@@ -7,15 +7,23 @@ import { fileUrl } from '../../shared/localPaths';
 
 export type RecentTab = 'turns' | 'sessions';
 
-export function RecentConversationBarView({ language, title, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
-  language: AppLanguage; title: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
+export function RecentConversationBarView({ language, title, output, previous, next, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
+  language: AppLanguage; title: string; output: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
+  previous?: () => void; next?: () => void;
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; onOpen(): void; children: ReactNode;
 }) {
   const t = uiText(language), tabId = useId();
   const tabs = [{ id: 'turns', label: t('recentBar.turns') }, { id: 'sessions', label: t('recentBar.sessions') }] as const;
   return <div className="recent-bar window-drag">
-    <button className="recent-bar-chat no-drag" type="button" onClick={onOpen} aria-label={t('recentBar.open', { title })} title={t('recentBar.open', { title })}>
-      <MessageSquare aria-hidden="true"/><span>{title}</span><ChevronRight aria-hidden="true"/>
+    <div className="recent-bar-transport">
+      <button className="no-drag" type="button" data-recent-step="previous" disabled={!previous} onClick={previous}
+        aria-label={t('recentBar.previousChat')} title={t('recentBar.previousChat')}><SkipBack aria-hidden="true"/></button>
+      <button className="no-drag" type="button" data-recent-step="next" disabled={!next} onClick={next}
+        aria-label={t('recentBar.nextChat')} title={t('recentBar.nextChat')}><SkipForward aria-hidden="true"/></button>
+    </div>
+    <button className="recent-bar-chat no-drag" type="button" onClick={onOpen} aria-describedby={output ? panelId + '-output' : undefined} aria-label={t('recentBar.open', { title })} title={t('recentBar.open', { title })}>
+      <MessageSquare className="recent-chat-mark" aria-hidden="true"/>
+      <span className="recent-chat-copy"><strong>{title}</strong>{output && <small id={panelId + '-output'}>{output}</small>}</span>
     </button>
     <button className="recent-bar-list no-drag" type="button" popoverTarget={panelId}
       aria-controls={panelId} aria-expanded={expanded} aria-label={t('recentBar.navigator')} title={t('recentBar.navigator')}><List/></button>

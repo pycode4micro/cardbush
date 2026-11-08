@@ -139,7 +139,7 @@ app.whenReady().then(async () => {
             {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
             {id:'material',label:'切换材质',onSelect:() => setMaterial(material === 'auto' ? 'solid' : 'auto')},
           ]}] }, h(views.RecentConversationBar, {language:'zh',conversation:{id:'fixture',title:'Conversation',updatedAt:'',preview:''},
-            conversations:[],transcripts:{},pageFor:()=>({hasMore:false,loadingOlder:false,historyError:''}),onRecentList:noop,read:noop,earlier:noop,open:noop})),
+            conversations:[],transcripts:{},pageFor:()=>({hasMore:false,loadingOlder:false,historyError:''}),onRecentList:noop,read:async()=>[],earlier:noop,open:noop})),
         h('main', { className:'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : ''), 'data-sidebar-layout':'docked','data-settings-visible':settings || undefined },
           h(views.WindowSidebarToggle, {language:'zh',collapsed,onToggle:() => setCollapsed(!collapsed)}),
           h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},

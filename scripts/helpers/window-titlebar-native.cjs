@@ -34,9 +34,11 @@ module.exports = async ({ win, run, until, pause, root }) => {
       const width = (innerWidth - area.right) / 3;
       const bar = document.querySelector('.recent-bar').getBoundingClientRect();
       const chat = document.querySelector('.recent-bar-chat').getBoundingClientRect();
+      const transport = document.querySelector('.recent-bar-transport').getBoundingClientRect();
       const list = document.querySelector('.recent-bar-list').getBoundingClientRect();
       const y = bar.y + bar.height / 2;
-      return [{name:'drag-left', x:(bar.left + chat.left) / 2, y}, {name:'drag-right', x:(chat.right + list.left) / 2, y},
+      return [{name:'drag-left', x:(transport.right + chat.left) / 2, y}, {name:'drag-right', x:(chat.right + list.left) / 2, y},
+        center('[data-recent-step=previous]', 'previous-conversation'), center('[data-recent-step=next]', 'next-conversation'),
         center('.recent-bar-chat', 'recent-chat-button'), center('.recent-bar-list', 'turn-list-button'), center('.window-sidebar-toggle', 'sidebar-button'),
         center('.frame-chip', 'menu-button'),
         ...['minimize', 'maximize', 'close'].map((name, index) => ({

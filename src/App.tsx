@@ -2146,8 +2146,8 @@ function CardbushApp() {
         onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
       >
         {!floating && recentConversation && <RecentConversationBar
-          key={JSON.stringify([recentConversation.id, currentPage.section])}
-          language={language} conversation={recentConversation} conversations={chat.conversations}
+          key={currentPage.section}
+          language={language} conversation={recentConversation} conversations={chat.conversations} inConversation={section === 'chat' && !settingsOpen}
           transcripts={chat.messagesByConversation} onRecentList={setRecentList}
           pageFor={chat.historyPages.forSession} read={chat.loadSessionHistory}
           earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>}
