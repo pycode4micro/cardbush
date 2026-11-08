@@ -1,3 +1,4 @@
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import { uiText } from '@cardbush/platform/i18n';
 import type { AgentSendInput } from './agentTypes.js';
 import type { ChatClient } from './agentLocalChat.mjs';
@@ -12,7 +13,8 @@ export type CliWebhookState = { enabled: boolean; listening: boolean; host: stri
 type Settings = Pick<AgentSendInput, 'modelId' | 'permissionMode' | 'language' | 'reasoningEffort'>;
 
 export async function chatWebhookCommand(text: string, client: Pick<ChatClient, 'call'>, io: ChatTerminal, signal: AbortSignal,
-  sessionId: string, settings: Settings, language = CLI_UI_LANGUAGE): Promise<CliWebhookState | undefined> {
+  settings: Settings, language = CLI_UI_LANGUAGE): Promise<CliWebhookState | undefined> {
+  const sessionId = PERSONAL_ASSISTANT_SESSION;
   const match = /^\s*\/webhook(?:\s+(\S+))?(?:\s+(\S+))?\s*$/.exec(text);
   const t = uiText(language);
   if (!match) { io.status(t('cliWebhook.usage') + '\n'); return; }
@@ -52,23 +54,4 @@ export async function chatWebhookCommand(text: string, client: Pick<ChatClient, 
     const message = error instanceof Error ? error.message : '';
     io.status(t('cliWebhook.failed', { code: /^[a-z0-9_]+$/i.test(message) ? message : 'webhook_unavailable' }) + '\n');
   }
-}
-
-/** Wake the prompt for externally submitted jobs, including fast completed turns.
- * The prompt's own AbortSignal preserves the live editor draft. */
-export async function askWithWebhookJobs(client: Pick<ChatClient, 'call'>, io: ChatTerminal, sessionId: string,
-  observed: ReadonlySet<string>, signal: AbortSignal): Promise<{ text: string | null; jobs: string[] }> {
-  const wake = new AbortController(), stop = new AbortController(); let jobs: string[] = [];
-  const poll = async () => {
-    const { setTimeout: delay } = await import('node:timers/promises');
-    while (!stop.signal.aborted && !signal.aborted) {
-      await delay(700, undefined, { signal: AbortSignal.any([stop.signal, signal]) });
-      const current = await client.call('chat.jobs', { sessionId }, AbortSignal.any([stop.signal, signal])) as Array<{ id: string; botSourceRef?: string }>;
-      jobs = current.filter(job => job.botSourceRef && !observed.has(job.id)).map(job => job.id);
-      if (jobs.length) { wake.abort(); return; }
-    }
-  };
-  const monitor = poll().catch(() => {});
-  try { return { text: await io.ask('❯ ', AbortSignal.any([signal, wake.signal]), true), jobs }; }
-  finally { stop.abort(); await monitor; }
 }

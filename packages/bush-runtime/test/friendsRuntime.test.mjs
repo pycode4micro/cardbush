@@ -872,3 +872,14 @@ test('one fixed subscription renews locally, coalesces downtime, reschedules in 
   assert.deepEqual((await instance.service.snapshot()).detections, []);
   assert.equal(runs.length, 3);
 });
+
+test('registered form of address reaches an isolated event without copying habit memory', async t => {
+  const f = await fixture(t, simple);
+  const profile = { preferredName:'Lin', habits:'Short updates on Fridays.' };
+  await f.host.sendCommand({kind:'runtime.personalization',payload:{action:'save_profile',previous:null,profile}});
+  await f.configure(); await f.send('profile-check');
+  await until(f.read,s=>s.events.some(e=>e.status==='completed'));
+  const input=f.requests[0].messages.find(m=>m.name==='registered_user_profile');
+  assert.equal(input.role,'user');
+  assert.deepEqual(JSON.parse(input.content),{preferredName:profile.preferredName});
+});

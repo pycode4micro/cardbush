@@ -5,7 +5,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.setSize(1120, 780);
   window.webContents.focus();
   for (const file of ['src/features/appCenter/app-center.css', 'src/components/global-tooltip.css']) await window.webContents.insertCSS(fs.readFileSync(path.join(root, file), 'utf8'));
-  await window.webContents.insertCSS('.app { width: 100% !important; } .test-center-layout{display:flex;height:calc(100vh - 36px)}.test-center-layout>.chat-panel{flex:1;min-width:0}');
+  await window.webContents.insertCSS('.app { width: 100% !important; } .test-center-layout{display:flex;height:calc(100vh - 36px)}.test-center-layout>.app-center-dock{position:fixed;left:10px;bottom:8px;width:220px;z-index:2}.test-center-layout>.chat-panel{flex:1;min-width:0}');
   const localAppIcon = 'data:image/png;base64,' + fs.readFileSync(path.join(root, 'assets/plugins/browser/extension/icons/cardbush-32.png')).toString('base64');
   await run(`
     window.centerEvents=[]; window.centerSent=[];
@@ -27,7 +27,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       {sidebarVisible:true,inspectorVisible:false,native:false,externalLinks:false});
     window.mountCenter=()=>renderView(h(views.ConversationHostContext.Provider,{value:centerHost},h(views.AppCenterProvider,{language:'zh',onNavigate:(app,environment)=>centerEvents.push(['navigate',app.id,environment])},
       h(views.GlobalTooltip),h(views.WindowFrame,{language:'zh',sidebarCollapsed:false,onToggleSidebar:()=>{},menus:centerMenus,onError:error=>failures.push(String(error))}),
-      h('div',{className:'test-center-layout'},h(views.ChatSidebar,centerSidebarProps),h('main',{className:'main-stage'},h(views.ChatPanel,chatProps))))));
+      h('div',{className:'test-center-layout'},h(views.AppCenterDock,{language:'zh'}),h(views.ChatSidebar,centerSidebarProps),h('main',{className:'main-stage'},h(views.ChatPanel,chatProps))))));
     Object.assign(chatProps,{language:'zh',loading:false,historyLoading:false,draft:'',availableModels:[{id:'fixture',modelName:'fixture',provider:'fixture',enabled:true}],
       onDraftChange:draft=>{chatProps.draft=draft;mountCenter();},onSend:async text=>{centerSent.push(text);chatProps.draft='';mountCenter();}});
     window.viewTheme='theme-bright'; mountCenter();

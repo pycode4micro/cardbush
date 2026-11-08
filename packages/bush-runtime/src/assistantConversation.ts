@@ -79,6 +79,7 @@ export class AssistantConversation {
   private requestIds = new Set<string>();
   private generation = 0;
   constructor(readonly journal: ConversationJournal, private deps: {
+    preferredName?: (signal: AbortSignal) => Promise<string | undefined>;
     provider: ModelProvider; checkpoint: () => ToolDefinition;
     exists(id: string): boolean;
     tasks(id: string): SubagentTask[];
@@ -321,6 +322,8 @@ export class AssistantConversation {
         report: preferences.report, notificationSourceRef: preferences.notificationSourceRef,
       }),
     }] : [];
+    const preferredName = await this.deps.preferredName?.(signal);
+    if (preferredName !== undefined) incomingPreferences.push({ role: 'user', name: 'registered_user_profile', visibility: 'internal', content: JSON.stringify({ preferredName }) });
     if (this.deps.memory) system.content += renderPromptTemplate('assistant-memory');
     system.content += '\n' + REPORT_DELIVERY_INSTRUCTIONS + renderPromptTemplate('assistant-report');
     if (activeSources.size || parent.prefixMessages.some(message => message.role === 'developer' && message.name === 'webhook_delivery_policy')) system.content += '\n' + WEBHOOK_FINAL_REPLY_INSTRUCTIONS;

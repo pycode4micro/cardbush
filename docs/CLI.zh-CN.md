@@ -56,7 +56,7 @@ cardbush --version
 | `/habit [on\|off\|status]` | 管理当前会话的可选习惯记忆。 |
 | `/prediction [on\|off\|status]` | 管理当前会话的下一步预测。 |
 | `/browser` | 查看与管理浏览器连接。 |
-| `/webhook` | 将外部 Bot 连接到当前会话，支持对话和工具发送文件。 |
+| `/webhook` | 管理 Assistant 的 Bot 连接。 |
 | `/logs` | 展示诊断日志路径。 |
 | `/shell [COMMAND]`、`!COMMAND` | 执行本机 Shell 命令，退出原生 Shell 后回到对话。 |
 | `/help`、`/quit`、`/exit` | 帮助与退出。 |
@@ -93,34 +93,11 @@ cardbush serve --help
 
 ## Webhook Bot 连接
 
-CLI 与 App 复用同一个通用 Webhook 宿主、自动发现、配对、能力声明和文件协议。微信桥、飞书桥无需修改代码；各平台账号和 SDK 继续留在独立桥服务中。
+在交互式 CLI 中输入 `/webhook`，启动桥并选中它。绑定目标始终是该宿主的 Assistant（`personal-assistant`）。外部来信进入 Assistant 日志，保留来源，文件发送由 Assistant 委派子 Agent 调用对应桥的工具。普通 CLI 会话可以管理配对，其历史、草稿和任务与 Assistant 独立。
 
-1. 启动 `cardbush`，新建或恢复想绑定的会话，选择模型和权限。
-2. 输入 `/webhook` 启动本机接口。
-3. 在另一个终端启动独立 Bot 桥。回到 CLI 选择“刷新”，再选择该服务，即绑定当前会话。
-4. 从 Bot 发送文字；需要文件时说“把报告作为文件发给我”。
+`/webhook status` 查看 Assistant 的连接，`/webhook disconnect` 移除一个连接，`/webhook stop` 停止本机监听。App 和 CLI 使用同一协议，分别保存数据。默认端口为 4791，同时运行两个宿主时可用 `/webhook port 6112` 更改 CLI 端口，并设置桥的 `CARDBUSH_WEBHOOK_URL`。
 
-地址和令牌自动交换，不需要填写 JSON。CLI 默认端口为 **4791**。App 和 CLI 保有各自的会话与连接数据，同一端口只由一个宿主监听；使用默认接入流程时，先退出正在占用 4791 的 App 或其他宿主。端口占用会明确提示，不会自动绑定到错误的上下文。
-
-已经绑定过 App 的桥切换到 CLI 时，在桥目录运行 `npm run connect`，重新在 CLI 选择服务，随后 `npm start`。保留原有平台登录信息；桥重新获得 CLI 的连接令牌。
-
-```text
-/webhook                 # 发现服务并绑定当前会话
-/webhook status          # 查看本机监听和当前会话连接
-/webhook disconnect      # 选择并移除当前会话的一个连接
-/webhook stop            # 停止这个 CLI Runtime 的所有 Webhook 连接入口，保留配置
-/webhook start           # 恢复服务及已保存的绑定
-```
-
-连接使用绑定时的模型、思考强度和权限；每次执行重新准备模型，不保存过期的 Runtime provider 引用。需要改用另一模型或权限时重新绑定。Bot 消息进入现有会话队列，保留工作区与历史；终端会显示后台来信任务，等待审批时可在终端处理，不会由桥自动放行。消息来源由宿主附加，桥自带插件自动进入 `mcp_search`，工具按原始来源执行，断开后不可用。常驻 `send_to_bot` 已移除。
-
-启用后，关闭 CLI 窗口不会结束 Webhook 服务。重新运行 `cardbush --resume SESSION_ID` 可以继续观察任务；不再使用时执行 `/webhook stop`。电脑重启后需重新启动 CLI，恢复已保存的连接；这里不安装开机任务。账号模型原有的桌面授权要求不变。
-
-需要 App 与 CLI 同时接入不同 Bot 时，可在 CLI 用 `/webhook port 6112` 指定另一端口，然后在相应桥终端设置 `CARDBUSH_WEBHOOK_URL=http://127.0.0.1:6112`，再运行桥的 `npm run connect`。这是通用端口配置，无须平台专用改动。切换端口后须重新配对以更新地址。
-
-新入口与 App 使用 `/api/webhooks/v1`。旧 `cardbush bots --config …` 继续保留原有 `/api/bots/v1` 接口；微信桥、飞书桥应使用 `/webhook` 流程。文件大小、回执含义和幂等要求见 [桥插件协议](WEBHOOK_BOT_PROTOCOL.md)。
-
-源码更新后运行 `npm run build:agent`，停止旧的 Webhook 服务并关闭旧 CLI 窗口，再启动新 CLI。npm 安装用户需要包含此功能的新构建；更新源码不会自动更新全局 npm 包。
+旧的普通会话绑定已停用。让桥重新发起配对，然后选择 Assistant。独立 Bot 网关已下线。
 
 ## Browser Use
 

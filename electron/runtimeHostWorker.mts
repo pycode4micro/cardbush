@@ -146,14 +146,16 @@ let effectiveMcpContent = '';
 let sourceMcpRevision = 0;
 // These bundled stdio servers expose tools. A timer delivering an exact local
 // reminder does not need their five processes or their stdio supervisors.
-let deferResidentTools = process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1';
+let residentMode = process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1';
+const desktopAssistant = residentMode || (!process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1');
+let deferResidentTools = residentMode;
 let deferredMcpSource: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
 let residentToolStartup: Promise<void> | undefined;
 let residentDesktopToolsUsed = false;
 let residentToolReleaseTimer: ReturnType<typeof setTimeout> | undefined;
 
 function scheduleResidentToolRelease() {
-  if (!residentDesktopToolsUsed || deferResidentTools) return;
+  if (!residentMode || !residentDesktopToolsUsed || deferResidentTools) return;
   clearTimeout(residentToolReleaseTimer);
   residentToolReleaseTimer = setTimeout(() => {
     void releaseIdleDocumentTools().catch(error => console.warn('[resident-tools]', errorMessage(error)));
@@ -174,7 +176,7 @@ async function releaseIdleDocumentTools() {
 }
 
 function prepareResidentTools(): Promise<void> | undefined {
-  if (process.env.CARDBUSH_ASSISTANT_BACKGROUND !== '1') return;
+  if (!residentMode) return;
   if (!deferResidentTools) { scheduleResidentToolRelease(); return residentToolStartup; }
   deferResidentTools = false;
   residentDesktopToolsUsed = true;
@@ -335,14 +337,22 @@ async function executeRuntimeCommand(
   command: { kind: string; payload: unknown },
   signal: AbortSignal,
 ) {
-  if (command.kind === 'runtime.assistant_window_closed' && process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1') {
+  if (desktopAssistant && command.kind === 'runtime.sync_assistant_residency') {
+    const enabled = await mcpHost.request<boolean>('assistant.is-resident', {});
+    if (!enabled && deferResidentTools) await prepareResidentTools();
+    residentMode = enabled;
+    if (enabled && !deferResidentTools) residentDesktopToolsUsed = true;
+    if (!enabled) clearTimeout(residentToolReleaseTimer);
+    return { resident: enabled };
+  }
+  if (command.kind === 'runtime.assistant_window_closed' && residentMode) {
     scheduleResidentToolRelease();
     return { accepted: true };
   }
   if ([GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND, GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
     'runtime.mcp_login', 'runtime.mcp_reconnect', 'runtime.prepare_plugin_uninstall', 'runtime.prepare_plugin_update'].includes(command.kind))
     await prepareResidentTools();
-  if (command.kind === 'runtime.assistant_background_start' && process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1') {
+  if (command.kind === 'runtime.assistant_background_start' && residentMode) {
     const { prepareWebhookParentModels } = await import('./contextWebhookRuntime.mjs');
     return host.restoreAssistantEvents(parent => prepareWebhookParentModels(parent,
       modelId => mcpHost.request('subagent.prepare-model', { modelId }, signal), signal), signal);
@@ -417,7 +427,7 @@ async function executeRuntimeCommand(
       const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
         ...source, servers: [...source.servers, ...pluginServers],
       }));
-      if (process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1') deferredMcpSource = source;
+      if (desktopAssistant) deferredMcpSource = source;
       if (deferResidentTools) {
         const standalone = new Set(source.servers.map(server => server.id));
         combined.servers = combined.servers.filter(server => {
@@ -934,9 +944,9 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 }
 
 host = new InMemoryRuntimeHost({
-  ...(process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1' ? {
+  ...(desktopAssistant ? {
     prepareToolCatalog: prepareResidentTools,
-    onAssistantAttention: notice => { void mcpHost.request('assistant.attention', notice).catch(error => console.warn('[assistant-notification]', error)); },
+    onAssistantAttention: notice => { if (residentMode) void mcpHost.request('assistant.attention', notice).catch(error => console.warn('[assistant-notification]', error)); },
   } : {}),
   // Desktop, server Agent and CLI share this worker and compaction policy.
   // Product prompts no longer request tool_summary; reuse recorded tool facts.

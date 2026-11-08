@@ -89,7 +89,7 @@ app.whenReady().then(async () => {
       return;
     }
     assert.match(await run('document.querySelector(".canvas-markdown").textContent'), /Preserve my writing/);
-    await require('./helpers/sidebar-app-dock.cjs')({read:run,frame:()=>run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'),win,sidebar:'.canvas-sidebar'});
+    await require('./helpers/sidebar-profile.cjs')({read:run,frame:()=>run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'),win,sidebar:'.canvas-sidebar'});
     assert.equal(await run(`canvasFileTarget('图 #1%25.png','C:/root #1/space.canvas.json')`), 'C:/root #1/图 #1%25.png');
     await clickText('新建画板'); await until('!!document.querySelector(".canvas-empty") && !!canvasStore.getCanvases().canvases.find(c=>c.id===canvasStore.getCanvases().selectedId)?.path');
     assert.equal(await run('document.querySelector(".creation-canvas-app").textContent.includes("项目")'), false);

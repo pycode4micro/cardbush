@@ -75,7 +75,7 @@
 
 中英文语言包各移除 159 个旧键，其中 7 个仍在使用的通用标签改为 `common.*`；另新增 15 个 Runtime/MCP 文案键。没有删除用户原有配置文件、文档或历史记录。
 
-再次核实并保留的入口包括 Team 工作流、实时语音桥、Office Workers、Agent/Worker/Bot Gateway CLI、Web Tenant Broker，以及由 Vite 插件注入的 Office 适配模块。`companionTools` 是 Skill 配套工具元数据，不属于 Cardling。`useCreationLiveEdit` 和 `TeamDocumentEditor` 由迁移后的当前文档组件调用，也不是孤儿模块。
+再次核实并保留的入口包括 Team 工作流、实时语音桥、Office Workers、Agent/Worker CLI、Web Tenant Broker，以及由 Vite 插件注入的 Office 适配模块。`companionTools` 是 Skill 配套工具元数据，不属于 Cardling。`useCreationLiveEdit` 和 `TeamDocumentEditor` 由迁移后的当前文档组件调用，也不是孤儿模块。
 
 非 Web 解耦同时完成：26 份系统提示词和行为策略迁到 `assets/prompts`；MCP App 文档、桥脚本与画布样式迁到 `assets/templates`。提示词使用纯文本插值，界面模板使用转义文本、安全 JSON 和显式 HTML 边界；资源随平台包发布。Assistant 的应用自有状态保留消息键，读取时按语言解析；CLI 保持英文。
 

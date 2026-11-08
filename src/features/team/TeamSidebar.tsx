@@ -4,7 +4,7 @@ import { Plus, GitBranch, Files, FolderOpen, History, RefreshCw, Search, UsersRo
 import type { AppLanguage } from '../../types';
 import { refreshTeamWorkspace, useTeamWorkspace } from './teamWorkspaceStore';
 import { requestTeamDocument, showTeamWorkspaceTab, useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
-import { AppCenterDock } from '../appCenter/AppCenter';
+import { ProfileMenu } from '../profile/ProfileMenu';
 import './team-workspace.css';
 
 export function NativeTeamSidebar({ language, onSelect, softVisible = true }: { language: AppLanguage; onSelect?: () => void; onOpenSettings?: () => void; softVisible?: boolean }) {
@@ -43,7 +43,7 @@ export function NativeTeamSidebar({ language, onSelect, softVisible = true }: { 
         <button type="button" aria-current={navigation.tab === 'agents' ? 'page' : undefined} onClick={() => { showTeamWorkspaceTab('agents'); onSelect?.(); }}><UsersRound size={16}/>{uiText(language)('teamSidebar.manageAgents')}</button>
         <button type="button" disabled={navigation.busy} onClick={() => { setQuery(''); requestTeamDocument({ kind: 'open' }); onSelect?.(); }}><FolderOpen size={16}/>{uiText(language)('teamSidebar.importMarkdown')}</button>
       </details>
-      <div className="sidebar-footer"><AppCenterDock language={language}/></div>
+      <div className="sidebar-footer"><ProfileMenu language={language}/></div>
     </div>
   </aside>;
 }

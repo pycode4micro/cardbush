@@ -295,3 +295,29 @@ test('host hints contain no text; changed references invalidate and restore the 
   await host.runSessionTurn(request('three'));
   const restored=JSON.parse(seen.at(-1).messages.filter(row=>row.name==='memory_state_updates').at(-1).content);assert.equal(restored.changes[0].state,'active');
 });
+
+test('the registered profile shares one user-owned habit with recall, survives restart and rejects stale edits',async t=>{
+  const {store,path,tool}=await fixture(t);
+  const first={preferredName:'Lin',habits:'Send a short weekly update.'};
+  assert.equal(await store.personalProfile(),null);
+  await store.savePersonalProfile(first,null);
+  const saved=new IndividuationStore(path);
+  assert.deepEqual(await saved.personalProfile(),first);
+  const found=await tool('check_habit',{kind:'habit',mode:'list'});
+  assert.equal(found.memories.length,1);
+  assert.equal(found.memories[0].text,first.habits);
+  const records=await store.list(on);
+  assert.equal(records.records[0].origin,'user');
+  const changed={preferredName:'Jo',habits:'Prefer email.'};
+  await saved.savePersonalProfile(changed,first);
+  await saved.savePersonalProfile(changed,first);
+  await assert.rejects(store.savePersonalProfile(first,null),/personal_profile_changed/);
+  assert.deepEqual((await saved.list(on)).records.map(row=>row.text),[changed.habits]);
+  const row=(await saved.list(on)).records[0];
+  const correction=await saved.change({action:'supersede',id:row.id,revision:row.revision,reason:'edited',replacement:{kind:'habit',text:'Notify only on Fridays.'}},on,{sessionId:'settings',turnId:'fix',operationId:'fix'},'user','');
+  assert.equal(correction.status,'ok');
+  const updated=await saved.personalProfile();
+  assert.equal(updated.habits,'Notify only on Fridays.');
+  await store.savePersonalProfile({preferredName:'',habits:''},updated);
+  assert.deepEqual((await saved.list(on)).records,[]);
+});

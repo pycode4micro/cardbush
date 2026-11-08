@@ -5,7 +5,7 @@ const { resolve } = require('node:path');
 module.exports = async ({ read, until, frame, click, action, fill, key, pointerClick, capture, win }) => {
   const chooseView = async value => { await action('查看流程或运行'); await read(`document.querySelector('.settings-dropdown-popover:popover-open [role=option][value="${value}"]').click()`); await frame(); };
   await until('!!document.querySelector(".team-flow-workspace") && !!window.creationInspector && !teamState.loading');
-  await require('./sidebar-app-dock.cjs')({read,frame,win,sidebar:'.native-team-sidebar'});
+  await require('./sidebar-profile.cjs')({read,frame,win,sidebar:'.native-team-sidebar'});
   assert.equal(await read('document.querySelectorAll(".md-source,.md-node-editor").length'), 0);
   assert.equal(await read('records.teams.length'), 0, 'opening the workspace does not save a dummy team');
   assert.equal(await read('sessionInputs.length'), 0, 'opening a workflow only reserves its draft ID');

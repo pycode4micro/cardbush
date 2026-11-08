@@ -36,3 +36,10 @@ export function bridgeModelStep(history, file, prefix = 'bridge') {
   if (!past.includes(`${prefix}-schema-call`)) return { id: `${prefix}-schema-call`, name: 'get_tool_schema', arguments: { name: target } };
   if (!past.includes(`${prefix}-file-call`)) return { id: `${prefix}-file-call`, name: 'call_tool', arguments: { name: target, arguments: { file, request_id: `${prefix}-file` } } };
 }
+
+// The parent searches for capabilities and delegates execution. The child loads and calls the bridge tool.
+export function assistantBridgeStep(request, file, prefix = 'bridge') {
+  if (request.tools.some(t => t.name === 'call_tool')) return bridgeModelStep(request.input,file,prefix);
+  if (!bridgeMessageSource(request.input) || JSON.stringify(request.input).includes(prefix+'-delegate')) return;
+  return {id:prefix+'-delegate',name:'subagent',arguments:{prompt:'Send the requested file through its source bridge: '+file}};
+}

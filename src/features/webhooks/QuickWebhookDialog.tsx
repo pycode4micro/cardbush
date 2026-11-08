@@ -1,3 +1,4 @@
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Plus, Webhook } from 'lucide-react';
 import { uiText } from '../../i18n';
@@ -11,23 +12,12 @@ const defaultBody = contextWebhookBody;
 const defaults = (): ContextWebhookConfig => ({ name: 'Webhook', enabled: true, url: '', headers: {}, parameters: {}, body: defaultBody,
   incoming: contextWebhookIncoming });
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
-const prepareWebhookBinding = async (prepare: () => Promise<ChatStreamRequest>, kind: Exclude<WebhookBinding['kind'], 'friends'>, sessionId: string, title: string): Promise<WebhookBinding> =>
-  (await import('./webhookBinding')).prepareWebhookBinding(prepare, kind, sessionId, title);
+const prepareWebhookBinding = async (prepare: () => Promise<ChatStreamRequest>, title: string): Promise<WebhookBinding> =>
+  (await import('./webhookBinding')).prepareWebhookBinding(prepare, title);
 const connectionStatusKey = (connection: ContextWebhookConnection) => !connection.enabled ? 'webhook.disabled'
   : connection.status === 'connected' ? 'webhook.connected' : 'webhook.offline';
-type Props = { language: string; sessionId: string; title: string; kind: Exclude<WebhookBinding['kind'], 'friends'>; prepare?: () => Promise<ChatStreamRequest> };
-export function WebhookConnectionButton(props: Props) {
-  const [open, setOpen] = useState(false), t = uiText(props.language);
-  const available = Boolean(props.sessionId && props.prepare && window.cardbushDesktop?.webhooks);
-  useEffect(() => setOpen(false), [props.sessionId]);
-  return <>
-    <button type="button" className="topbar-inspector-action icon-only webhook-connect-button" data-webhook-connect
-      disabled={!available} aria-label={t('webhook.open')} title={t(available ? 'webhook.open' : 'webhook.unavailable')}
-      onClick={() => setOpen(true)}><Webhook aria-hidden="true"/></button>
-    {open && available && <QuickWebhookDialog key={props.sessionId} {...props} onClose={() => setOpen(false)}/>}
-  </>;
-}
-function QuickWebhookDialog(props: Props & { onClose(): void }) {
+type Props = { language: string; title: string; prepare: () => Promise<ChatStreamRequest> };
+export function QuickWebhookDialog(props: Props & { onClose(): void }) {
   const t = uiText(props.language), mounted = useRef(true), operation = useRef(false);
   const [snapshot, setSnapshot] = useState<ContextWebhookSnapshot>(), [manual, setManual] = useState<string | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -35,13 +25,13 @@ function QuickWebhookDialog(props: Props & { onClose(): void }) {
   useEffect(() => {
     mounted.current = true;
     const refresh = async () => {
-      try { const next = await command({ action: 'read', sessionId: props.sessionId }) as ContextWebhookSnapshot;
+      try { const next = await command({ action: 'read', sessionId: PERSONAL_ASSISTANT_SESSION }) as ContextWebhookSnapshot;
         if (mounted.current) setSnapshot(next); }
       catch { if (mounted.current) setError('webhook_unavailable'); }
     };
     void refresh(); const timer = setInterval(() => void refresh(), 1500);
     return () => { mounted.current = false; clearInterval(timer); };
-  }, [props.sessionId, manual]);
+  }, [manual]);
   const perform = async (work: () => Promise<unknown>) => {
     if (operation.current) return; operation.current = true; setBusy(true); setError('');
     try { const next = await work(); if (mounted.current) setSnapshot(next as ContextWebhookSnapshot); }
@@ -61,8 +51,8 @@ function QuickWebhookDialog(props: Props & { onClose(): void }) {
       {snapshot.pairings.map(pairing => <div key={pairing.requestId} className="webhook-service" data-pairing={pairing.requestId}>
         <div className="webhook-service-name"><Webhook aria-hidden="true"/><div><strong>{pairing.name}</strong><span>{t('webhook.localService')}</span></div></div>
         <button type="button" disabled={busy} className="webhook-pair-action" onClick={() => void perform(async () => command({ action: 'approve_pairing', requestId: pairing.requestId,
-          binding: await prepareWebhookBinding(props.prepare!, props.kind, props.sessionId, props.title) }))}>{t('webhook.connect')}</button>
-        <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'reject_pairing', requestId: pairing.requestId, sessionId: props.sessionId }))}>{t('webhook.dismiss')}</button>
+          binding: await prepareWebhookBinding(props.prepare, props.title) }))}>{t('webhook.connect')}</button>
+        <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'reject_pairing', requestId: pairing.requestId, sessionId: PERSONAL_ASSISTANT_SESSION }))}>{t('webhook.dismiss')}</button>
       </div>)}
     </section>}
     {!!snapshot?.connections.length && <section className="webhook-service-list" aria-label={t('webhook.savedServices')}>
@@ -70,22 +60,16 @@ function QuickWebhookDialog(props: Props & { onClose(): void }) {
       {snapshot.connections.map(connection => <div key={connection.id} className="webhook-service" data-connection={connection.id} data-status={connection.status}>
         <div className="webhook-service-name"><Webhook aria-hidden="true"/><div><strong>{connection.name}</strong><span role="status">{t(connectionStatusKey(connection))}</span></div></div>
         <button type="button" disabled={busy} onClick={() => setManual(connection.id)}>{t('webhook.manage')}</button>
-        <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'delete', id: connection.id, sessionId: props.sessionId }))}>{t('webhook.delete')}</button>
+        <button type="button" disabled={busy} onClick={() => void perform(() => command({ action: 'delete', id: connection.id, sessionId: PERSONAL_ASSISTANT_SESSION }))}>{t('webhook.delete')}</button>
       </div>)}
     </section>}
-    {!!snapshot?.onlineElsewhere?.length && <section className="webhook-service-list" aria-label={t('webhook.onlineElsewhere')}>
-      <h3>{t('webhook.onlineElsewhere')}</h3>
-      {snapshot.onlineElsewhere.map(service => <div key={service.id} className="webhook-service" data-bound-elsewhere>
-        <div className="webhook-service-name"><Webhook aria-hidden="true"/><div><strong>{service.name}</strong><span>{service.contextTitle}</span></div></div>
-      </div>)}
-      <p className="webhook-note">{t('webhook.pairAgain')}</p>
-    </section>}
-    {snapshot?.listening && !snapshot.error && !error && !snapshot.pairings?.length && !snapshot.connections.length && !snapshot.onlineElsewhere?.length &&
+
+    {snapshot?.listening && !snapshot.error && !error && !snapshot.pairings?.length && !snapshot.connections.length &&
       <div className="webhook-empty" role="status">{t('webhook.localEmpty')}</div>}
     {error && <p role="alert">{t('webhook.operationFailed', { code: error })}</p>}
   </SettingsFormDialog>;
 }
-export function WebhookConnectionDialog({ language, sessionId, title, kind, prepare, onClose, initialId }: Props & { onClose(): void; initialId?: string }) {
+function WebhookConnectionDialog({ language, title, prepare, onClose, initialId }: Props & { onClose(): void; initialId?: string }) {
   const t = uiText(language), mounted = useRef(true), operation = useRef(false);
   const [snapshot, setSnapshot] = useState<ContextWebhookSnapshot>();
   const [config, setConfig] = useState<ContextWebhookConfig>(defaults);
@@ -108,7 +92,7 @@ export function WebhookConnectionDialog({ language, sessionId, title, kind, prep
     let initial = true;
     const refresh = async () => {
       try {
-        const next = await command({ action: 'read', sessionId }) as ContextWebhookSnapshot;
+        const next = await command({ action: 'read', sessionId: PERSONAL_ASSISTANT_SESSION }) as ContextWebhookSnapshot;
         if (!mounted.current) return;
         setSnapshot(next);
         if (initial) { initial = false; choose(initialId === undefined ? next.connections[0] : next.connections.find(c => c.id === initialId)); setHost(next.host); setPort(String(next.port)); }
@@ -117,7 +101,7 @@ export function WebhookConnectionDialog({ language, sessionId, title, kind, prep
     };
     void refresh(); const timer = setInterval(() => void refresh(), 3000);
     return () => { mounted.current = false; clearInterval(timer); };
-  }, [sessionId]);
+  }, []);
   const draft = (): ContextWebhookConfig => {
     try { return { ...config, headers: JSON.parse(headers), parameters: JSON.parse(parameters), body: JSON.parse(body), incoming: JSON.parse(mapping) }; }
     catch { throw Error('invalid_json'); }
@@ -131,7 +115,7 @@ export function WebhookConnectionDialog({ language, sessionId, title, kind, prep
     finally { operation.current = false; if (mounted.current) setBusy(false); }
   };
   const save = () => perform(async () => {
-    const value = draft(); const binding = await prepareWebhookBinding(prepare!, kind, sessionId, title);
+    const value = draft(); const binding = await prepareWebhookBinding(prepare, title);
     const next = await command({ action: 'save', config: value, binding }) as ContextWebhookSnapshot;
     if (!mounted.current) return;
     const connection = next.connections.find(c => c.id === value.id) ?? next.connections.at(-1);
@@ -141,7 +125,7 @@ export function WebhookConnectionDialog({ language, sessionId, title, kind, prep
   return <SettingsFormDialog className="webhook-dialog" title={t('webhook.title')} description={t('webhook.binding', { title })}
     language={language} busy={busy} onCancel={onClose} onSubmit={save} footer={<>
       {selected && <button type="button" className="webhook-delete" disabled={busy || loading} onClick={() => void perform(async () => {
-        const next = await command({ action: 'delete', id: selected.id, sessionId }) as ContextWebhookSnapshot;
+        const next = await command({ action: 'delete', id: selected.id, sessionId: PERSONAL_ASSISTANT_SESSION }) as ContextWebhookSnapshot;
         setSnapshot(next); choose(next.connections[0]); setNotice('webhook.deleted');
       })}>{t('webhook.delete')}</button>}
       <button type="button" disabled={busy || loading || !config.url} onClick={() => void perform(async () => {
@@ -181,7 +165,7 @@ export function WebhookConnectionDialog({ language, sessionId, title, kind, prep
           <option value="127.0.0.1">127.0.0.1</option><option value="0.0.0.0">0.0.0.0</option><option value="::1">::1</option>
         </select></label><label>{t('webhook.port')}<input type="number" min={1024} max={65535} value={port} onChange={event => setPort(event.target.value)}/></label></div>
         <button type="button" onClick={() => void perform(async () => {
-          const next = await command({ action: 'listener', sessionId, host, port: Number(port) }) as ContextWebhookSnapshot;
+          const next = await command({ action: 'listener', sessionId: PERSONAL_ASSISTANT_SESSION, host, port: Number(port) }) as ContextWebhookSnapshot;
           setSnapshot(next); setNotice('webhook.listenerSaved');
         })}>{t('webhook.applyListener')}</button>
         <p className="webhook-note">{t('webhook.networkHelp')}</p>

@@ -3,7 +3,7 @@ import { uiText } from '../../i18n';
 import { FolderOpen, Plus, RotateCcw, Search, Square, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { acceptCanvas, archiveCanvas, createCanvas, selectCanvas, useCanvases } from './canvasStore';
-import { AppCenterDock } from '../appCenter/AppCenter';
+import { ProfileMenu } from '../profile/ProfileMenu';
 import { canvasErrorMessage } from './canvasErrors';
 import './canvasSidebar.css';
 import './creationCanvas.css';
@@ -29,7 +29,7 @@ export function CanvasSidebar({ language, onSelect, softVisible = true }: { lang
         <button onClick={() => void open()}><FolderOpen size={16}/>{uiText(language)('canvasSidebar.openCanvas')}</button>
         {!trash && <button onClick={() => setTrash(true)}><Trash2 size={15}/>{uiText(language)('canvasSidebar.trash')}</button>}
       </details>
-      <div className="sidebar-footer"><AppCenterDock language={language}/></div>
+      <div className="sidebar-footer"><ProfileMenu language={language}/></div>
     </div>
   </aside>;
 }

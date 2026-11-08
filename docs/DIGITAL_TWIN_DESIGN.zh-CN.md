@@ -305,7 +305,7 @@ UI 实现必须遵循 [i18n 约束](../src/i18n/README.md)：所有自有文案�
 | [runtimePermissionBroker.ts](../packages/bush-runtime/src/runtimePermissionBroker.ts)、[localSubagentInteractions.ts](../packages/bush-runtime/src/localSubagentInteractions.ts) | 既有权限 broker；子任务的父级委托／人工路由 | 接入分身 principal、持续委托与撤权；保留操作绑定和远端准入，不能另造独立审批队列 |
 | [subagentTool.ts](../packages/bush-runtime/src/subagentTool.ts)、[子 Agent 配置](SUBAGENT_PERMISSIONS.zh-CN.md) | fork／clean、任务续接和子 Agent 权限基线；注册子 Agent 关闭独立 habit／prediction 能力 | 新增分身任务的最小必要上下文策略。普通 fork 会复制历史，仅关闭记忆检索并不能阻止画像随历史下发 |
 | [pluginSkills.ts](../packages/bush-runtime/src/pluginSkills.ts)、[pluginAcquisition.ts](../electron/pluginAcquisition.ts) | 现有 skill、插件发现和安装基础 | 新增学习建议、暂存、验证、生效、回滚的受控管理能力；不能只新增 prompt 而没有真实管理接口 |
-| [botGateway.mts](../electron/botGateway.mts)、[botGatewayConfig.mts](../electron/botGatewayConfig.mts) | 通用 webhook／WebSocket 网关与渠道配置基础 | 复用适配边界，补交付策略与回执；并不意味着已接入微信，仍须具体插件、账号和可达性验证 |
+| [Assistant Webhook](WEBHOOK_BOT_PROTOCOL.md) | 通用 HTTP 消息和平台桥 | 通过 Assistant 收发消息并委派桥工具。 |
 | [AssistantView.tsx](../src/features/assistant/AssistantView.tsx)、[AutomationPanel.tsx](../src/features/automations/AutomationPanel.tsx) | 助手、权限卡、任务与自动化界面 | 增加访谈、事件时间线、画像和能力成长入口，复用状态与详情组件 |
 
 既有助手直接管理工具是有限白名单，包含排期与目录检索等管理能力；终端与文件工作继续交给子任务。新增 `detector`、`twin_profile`、`learning_proposal` 等管理接口时，通过原 `ToolExecutionCoordinator` 的声明、准入、权限和回执路径实现，不能暴露通用越权执行入口。

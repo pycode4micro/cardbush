@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { MAX_MEMORY_NOTE_TOKENS, type IndividuationSettings, type PersonalizationStatus, type SummaryForUserInput,
-  type MemoryNote, type CheckHabitInput, type MemoryRead, type MemoryChange, type AssistantFeedbackInput } from '@cardbush/bush-protocol';
+  type PersonalProfile, type MemoryNote, type CheckHabitInput, type MemoryRead, type MemoryChange, type AssistantFeedbackInput } from '@cardbush/bush-protocol';
 import { feedbackRecordId, writeAssistantFeedback } from './individuationFeedback.js';
 import { boundedMemoryText, memoryHash, memoryTerms, memoryTokens } from './individuationText.js';
 import { activeMemory, memoryView, memoryMetadata as metadata, initializeMemoryJournal, getMemoryRow,
@@ -67,6 +67,7 @@ export class IndividuationStore {
           created INTEGER NOT NULL,updated INTEGER NOT NULL,observations INTEGER NOT NULL DEFAULT 1,
           hits INTEGER NOT NULL DEFAULT 0,misses INTEGER NOT NULL DEFAULT 0,metadata TEXT NOT NULL DEFAULT '{}');
         CREATE INDEX IF NOT EXISTS memory_kind ON memory_records(kind,updated DESC);
+        CREATE TABLE IF NOT EXISTS personal_profile(id INTEGER PRIMARY KEY CHECK(id=1), preferred_name TEXT NOT NULL, habit_id TEXT);
         CREATE TABLE IF NOT EXISTS memory_terms(record_id TEXT REFERENCES memory_records(id) ON DELETE CASCADE,term TEXT,PRIMARY KEY(term,record_id));
         CREATE TABLE IF NOT EXISTS memory_origins(record_id TEXT REFERENCES memory_records(id) ON DELETE CASCADE,owner TEXT,PRIMARY KEY(record_id,owner));
         CREATE TABLE IF NOT EXISTS memory_reviews(id TEXT PRIMARY KEY,outcome TEXT,reason TEXT,updated INTEGER);
@@ -114,6 +115,55 @@ export class IndividuationStore {
     }
     db.exec('UPDATE memory_state SET revision=revision+1 WHERE id=1'); return {id,changed:true};
   }
+  private profileState(db: DatabaseSync, now: number) {
+    const row = db.prepare('SELECT preferred_name,habit_id FROM personal_profile WHERE id=1').get();
+    if (!row) return { profile: null, habit: undefined };
+    let habit = row.habit_id ? getMemoryRow(db, String(row.habit_id)) : undefined;
+    const visited = new Set<string>();
+    // A correction made in Memory settings replaces the record. Follow its current version.
+    while (habit?.state === 'superseded' && !visited.has(habit.id)) {
+      visited.add(habit.id);
+      habit = getMemoryRow(db, JSON.parse(habit.replaced_by)[0] ?? '');
+    }
+    if (habit && (habit.kind !== 'habit' || !activeMemory(habit, now))) habit = undefined;
+    return { profile: { preferredName: String(row.preferred_name), habits: habit?.text ?? '' }, habit };
+  }
+
+  async preferredName(signal?: AbortSignal): Promise<string | undefined> {
+    if (!existsSync(this.path)) return;
+    return this.transaction(db => db.prepare('SELECT preferred_name FROM personal_profile WHERE id=1').get()?.preferred_name as string | undefined, signal);
+  }
+
+  async personalProfile(signal?: AbortSignal): Promise<PersonalProfile | null> {
+    if (!existsSync(this.path)) return null;
+    return this.transaction((db, now) => this.profileState(db, now).profile, signal);
+  }
+
+  async savePersonalProfile(next: PersonalProfile, previous: PersonalProfile | null, signal?: AbortSignal) {
+    return this.transaction((db, now) => {
+      const { profile, habit } = this.profileState(db, now);
+      if (profile?.preferredName === next.preferredName && profile.habits === next.habits) return next;
+      if (previous?.preferredName !== profile?.preferredName || previous?.habits !== profile?.habits)
+        throw new Error('personal_profile_changed');
+      let id = habit?.id ?? null;
+      if ((habit?.text ?? '') !== next.habits) {
+        id = next.habits ? 'habit_' + randomUUID() : null;
+        if (id) {
+          this.insert(db, 'habit', next.habits, 1, {sessionId:'personal-profile',turnId:id}, now, {}, id);
+          db.prepare("UPDATE memory_records SET origin='user',confirmed=? WHERE id=?").run(now,id);
+        }
+        if (habit) {
+          db.prepare("UPDATE memory_records SET state=?,updated=?,revision=revision+1,replaced_by=? WHERE id=?")
+            .run(id ? 'superseded' : 'retracted', now, JSON.stringify(id ? [id] : []), habit.id);
+          db.exec('UPDATE memory_state SET revision=revision+1 WHERE id=1');
+        }
+      }
+      db.prepare('INSERT INTO personal_profile VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET preferred_name=excluded.preferred_name,habit_id=excluded.habit_id')
+        .run(next.preferredName,id);
+      return next;
+    },signal);
+  }
+
   private full(db: DatabaseSync, additional=1) {
     const total=db.prepare("SELECT COUNT(*) count FROM memory_records WHERE kind!='evidence' AND state='active' AND (expires IS NULL OR expires>?)").get(this.now())!;
     return additional>0 && Number(total.count)+additional>MAX_ACTIVE_MEMORY_RECORDS;

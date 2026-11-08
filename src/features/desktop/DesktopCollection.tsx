@@ -44,5 +44,5 @@ export function DesktopExplore({language}: {language: AppLanguage}) {
   ].filter(group => group.entries.length);
   return <ExploreView language={language} groups={groups} query={query} onQuery={setQuery}
     featured={needle ? [] : ['builtin:md-presentation','builtin:team'].flatMap(id => apps.find(app => app.id === id) ?? [])}
-    onManage={center.manage} onLaunch={center.launch}/>;
+    onLaunch={center.launch}/>;
 }

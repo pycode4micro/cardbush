@@ -1,8 +1,11 @@
 import type { AssistantProfile, BotConnectionStatus, RuntimeSessionTurnRequest } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 export type WebhookBinding = {
-  kind: 'conversation' | 'assistant'; sessionId: string; title: string;
-  parent: RuntimeSessionTurnRequest; profile?: AssistantProfile; generation?: number;
+  kind: 'assistant'; sessionId: 'personal-assistant'; title: string;
+  parent: RuntimeSessionTurnRequest; profile: AssistantProfile; generation: number;
+};
+export type StoredWebhookBinding = WebhookBinding | {
+  kind: 'conversation'; sessionId: string; title: string; parent: RuntimeSessionTurnRequest;
 } | { kind: 'friends'; sessionId: string; title: string };
 export type ContextWebhookConfig = {
   id?: string; name: string; enabled: boolean; url: string;

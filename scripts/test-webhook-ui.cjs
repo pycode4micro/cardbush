@@ -25,8 +25,8 @@ async function build(directory) {
       if (id === '\0assistant.ts') return 'export const assistantBackend={ensure:async()=>{},read:async()=>({generation:3})};';
       if (id !== '\0fixture.tsx') return;
       return `import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
-        import {WebhookConnectionButton} from ${file('src/features/webhooks/WebhookConnectionButton.tsx')};
-        import {TopBar} from ${file('src/components/TopBar.tsx')};
+        import {ProfileCenter} from ${file('src/features/profile/ProfileCenter.tsx')};
+        import {ProfileMenu} from ${file('src/features/profile/ProfileMenu.tsx')};
         import {uiText} from ${file('src/i18n/index.ts')};
         import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
         window.fixture={t:uiText,commands:[],prepared:[],disposed:0,connections:[],pairings:[],host:'127.0.0.1',port:4791};
@@ -50,9 +50,8 @@ async function build(directory) {
         Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{fixture.copied=text}}});
         function Fixture(){const [language,setLanguage]=useState('zh'),[theme,setTheme]=useState('dark'),[sessionId,setSession]=useState('existing-chat');
           fixture.language=setLanguage;fixture.theme=setTheme;fixture.session=setSession;
-          return <div className={'app theme-'+theme}><section className="chat-panel"><TopBar language={language} title={sessionId}
-            connectionControl={<WebhookConnectionButton language={language} title={sessionId} sessionId={sessionId} kind={sessionId==='personal-assistant'?'assistant':'conversation'}
-              prepare={async()=>({sessionId,model:'configured-model',userInput:''})}/>}/></section></div>;
+          const prepare=async()=>({sessionId:'personal-assistant',model:'configured-model',userInput:''});
+          return <div className={'app theme-'+theme} data-current-page={sessionId}><ProfileCenter language={language} ready={false} floating={false} prepare={prepare} settings={()=>{}} switchWindow={async()=>{}}><ProfileMenu language={language}/></ProfileCenter></div>;
         }createRoot(document.getElementById('root')).render(<Fixture/>);`;
     },
   }], build: { write: false, minify: false, lib: { entry: path.resolve('src/__webhook_fixture__.tsx'), name: 'WebhookFixture', formats: ['iife'] } } });
@@ -72,20 +71,16 @@ function run() {
     const fill = (name, value) => read(`(()=>{const n=document.querySelector('[name="${name}"]');Object.getOwnPropertyDescriptor(n instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     const button = key => read(`Array.from(document.querySelectorAll('.webhook-dialog button')).find(b=>b.textContent.trim()===fixture.t(document.documentElement.lang||'zh')(${JSON.stringify(key)})).click();void 0`);
     try {
-      await win.loadFile(path.join(directory, 'index.html')); await until('!!document.querySelector("[data-webhook-connect]")');
-      assert.equal(await read('document.querySelector("[data-webhook-connect]").disabled'), false);
-      await click('[data-webhook-connect]'); await until('!!document.querySelector(".webhook-empty")');
+      await win.loadFile(path.join(directory, 'index.html')); await until('!!document.querySelector("[data-profile-action=webhook]")');
+      assert.equal(await read('document.querySelector("[data-profile-action=webhook]").disabled'), false);
+      await click('.profile-trigger'); await click('[data-profile-action=webhook]'); await until('!!document.querySelector(".webhook-empty")');
       assert.equal(await read('document.querySelectorAll(".webhook-dialog input,.webhook-dialog textarea").length'), 0, 'first connection requires no address/token form');
-      await read("fixture.onlineElsewhere=[{id:'wx',name:'Weixin',contextTitle:'Assistant'},{id:'fs',name:'Feishu',contextTitle:'Product research'}];void 0");
-      await until('document.querySelectorAll("[data-bound-elsewhere]").length===2');
-      assert.deepEqual(await read('Array.from(document.querySelectorAll("[data-bound-elsewhere] span"),node=>node.textContent)'), ['Assistant','Product research']);
-      assert.equal(await read('!!document.querySelector(".webhook-empty,[data-bound-elsewhere] button")'), false);
       await read("fixture.onlineElsewhere=[];fixture.pairings=[{requestId:crypto.randomUUID(),name:'Local Bot',replyUrl:'http://127.0.0.1:4792/reply'}];void 0");
       await until('!!document.querySelector("[data-pairing]")');
       assert.equal(await read('fixture.prepared.length'), 0, 'discovery does not prepare a model or export context');
       fs.writeFileSync(path.join(directory, 'quick-connect-dark.png'), (await win.webContents.capturePage()).toPNG());
       await click('.webhook-pair-action'); await until('!!document.querySelector("[data-connection]")');
-      assert.equal(await read('fixture.commands.find(c=>c.action==="approve_pairing").binding.sessionId'), 'existing-chat');
+      assert.equal(await read('fixture.commands.find(c=>c.action==="approve_pairing").binding.sessionId'), 'personal-assistant');
       assert.equal(await read('fixture.connections.length'), 1);
       assert.equal(await read('fixture.prepared[0].permissionMode'), 'all_free');
       assert.equal(await read('fixture.prepared[0].interactiveRequestsEnabled'), false);
@@ -110,7 +105,7 @@ function run() {
       await button('webhook.delete'); await until('!document.querySelector("[data-connection]")');
       await read('fixture.prepared=[];fixture.disposed=0;fixture.commands=[];void 0'); win.setContentSize(980,800);
       await button('webhook.manual'); await until('!!document.querySelector(".webhook-dialog fieldset:not(:disabled)")');
-      assert.ok(await read('document.querySelector(".settings-dialog-header").textContent.includes("existing-chat")'));
+      assert.ok(await read('document.querySelector(".settings-dialog-header").textContent.includes("assistant")'));
       await fill('webhook-name', 'My bot'); await fill('webhook-url', 'https://bot.example/reply');
       await click('.webhook-dialog details summary'); await fill('webhook-headers', '{"Authorization":"Bearer custom"}');
       await fill('webhook-parameters', '{"room":"my-room"}');
@@ -119,7 +114,7 @@ function run() {
       await button('webhook.save'); await until('!!document.querySelector(".webhook-endpoint")');
       assert.equal(await read('document.querySelector(".webhook-endpoint .webhook-status").textContent'), await read('fixture.t("zh")("webhook.offline")'));
       const saved = await read('fixture.commands.find(c=>c.action==="save")');
-      assert.equal(saved.binding.sessionId, 'existing-chat'); assert.equal(saved.binding.parent.model, 'configured-model');
+      assert.equal(saved.binding.sessionId, 'personal-assistant'); assert.equal(saved.binding.parent.model, 'configured-model');
       assert.equal(saved.config.parameters.room, 'my-room'); assert.equal(saved.config.incoming.text, 'event.content');
       assert.equal(await read('fixture.disposed'), 1);
       await click('.webhook-endpoint > label:last-of-type button'); await until('!!fixture.copied');
@@ -137,20 +132,17 @@ function run() {
       for (const language of ['zh', 'en']) for (const theme of ['dark', 'bright']) {
         win.setContentSize(390, 740);
         await read(`fixture.language('${language}');fixture.theme('${theme}');document.documentElement.lang='${language}';void 0`); await pause(100);
-        assert.equal(await read(`document.querySelector('[data-webhook-connect]').getAttribute('aria-label')===fixture.t('${language}')('webhook.open')`), true);
+        assert.equal(await read(`document.querySelector('[data-profile-action=webhook]').textContent===fixture.t('${language}')('profile.webhook')`), true);
         assert.equal(await read(`(()=>{const d=document.querySelector('.webhook-dialog').getBoundingClientRect();return d.left>=0&&d.right<=innerWidth&&d.top>=0&&d.bottom<=innerHeight&&document.querySelector('.settings-dialog-body').scrollWidth<=document.querySelector('.settings-dialog-body').clientWidth})()`), true, 'dialog fits narrow viewport');
         fs.writeFileSync(path.join(directory, `${language}-${theme}.png`), (await win.webContents.capturePage()).toPNG());
       }
-      await read("fixture.session('personal-assistant');void 0"); await until('!document.querySelector(".webhook-dialog")');
-      await click('[data-webhook-connect]'); await until('!!document.querySelector(".webhook-quick-dialog")'); await button('webhook.manual');
-      await until('!!document.querySelector(".webhook-dialog fieldset:not(:disabled)")');
-      assert.equal(await read('!!document.querySelector(".webhook-endpoint")'), false, 'connection list is scoped to current context');
-      await button('webhook.save'); await until('!!document.querySelector(".webhook-endpoint")');
-      assert.equal(await read('fixture.commands.filter(c=>c.action==="save").at(-1).binding.generation'), 3);
-      await click('.webhook-toggle input'); await button('webhook.save'); await until('fixture.connections.find(c=>c.kind==="assistant")?.enabled===false');
+      await read("fixture.session('another-chat');void 0");
+      await until('document.querySelector(".webhook-dialog .webhook-endpoint")');
+      assert.equal(await read("fixture.commands.filter(c=>c.action==='save').at(-1).binding.generation"),3);
+      assert.ok(await read("fixture.connections.every(c=>c.kind==='assistant' && c.sessionId==='personal-assistant')"));
+      await click('.webhook-toggle input');await button('webhook.save');await until('fixture.connections.some(c=>c.enabled===false)');
       await until('document.querySelector(".webhook-dialog").getAttribute("aria-busy")==="false"');
-      await button('webhook.delete'); await until('!document.querySelector(".webhook-endpoint")');
-      assert.equal(await read('fixture.connections.length'), 1, 'deleting Assistant connection preserves ordinary connection');
+      await button('webhook.delete');await until('!document.querySelector(".webhook-endpoint")');
       assert.deepEqual(errors, []);
       console.log('Webhook UI passed: existing context/model, custom fields, copy, test, invalid JSON, disable/delete, context switch, language and narrow themes. Screenshots: '+directory);
     } finally { win.destroy(); clearTimeout(timeout); }

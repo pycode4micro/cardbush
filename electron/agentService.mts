@@ -1,9 +1,8 @@
 import { browserConnectionEnvironment } from './browserEnvironment.js';
 import { uiText } from '@cardbush/platform/i18n';
 import { AgentWebhooks } from './agentWebhooks.mjs';
-import { contextWebhookTurnResult, type runContextWebhook } from './contextWebhookRuntime.mjs';
-import { applyWebhookTurnPolicy, runtimeSessionTurnRequestSchema } from '@cardbush/bush-protocol';
-import { WebhookError } from './contextWebhookProtocol.mjs';
+import { prepareWebhookParentModels } from './contextWebhookRuntime.mjs';
+import { applyWebhookTurnPolicy, assistantProfileSchema, PERSONAL_ASSISTANT_SESSION, runtimeSessionTurnRequestSchema } from '@cardbush/bush-protocol';
 import type { WebhookBinding } from './contextWebhookTypes.js';
 import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
 import { remoteControlSchema, validateRemoteResponse, SUBAGENT_INTERACTION_OPERATIONS, type RemoteControl } from '@cardbush/bush-protocol';
@@ -241,7 +240,9 @@ export class AgentService {
       } });
     this.#marketplaces = new AgentPluginMarketplaces(extensionRoot, bundled, (pluginId, replace) => this.product.replacePlugin(pluginId, replace), env, configurationRoot);
     if (this.#toolsEnabled && !this.#webRestricted) this.#webhooks = new AgentWebhooks(root,
-      { command: (kind, payload) => this.#command(kind, payload) }, (...args) => this.#runWebhook(...args), options.webhookPort);
+      { command: (kind, payload) => this.#command(kind, payload),
+        prepareParent: (parent, signal) => prepareWebhookParentModels(parent, id => this.product.resolveSubagentModel(id), signal) },
+      options.webhookPort);
   }
 
   static async open(options: AgentServiceOptions) {
@@ -305,6 +306,9 @@ export class AgentService {
         if (receipt) guidanceReceipts.set(job.id, receipt);
       }
       await service.#write(next => {
+        for (const job of next.jobs) if (job.botSourceRef && job.status === 'queued') {
+          job.status = 'interrupted'; job.error = 'assistant_only'; job.completedAt = new Date().toISOString();
+        }
         if (options.name?.trim()) next.name = options.name.trim();
         // A crash is not permission to repeat side effects. Queued work can resume;
         // interrupted turns remain inspectable through the Runtime recovery API.
@@ -441,18 +445,26 @@ export class AgentService {
       if (!this.#webhooks) throw Error('webhook_unavailable');
       const { settings, ...request } = data;
       return this.#webhooks.command(request, async () => {
-        const sessionId = id.parse(request.sessionId);
-        const selected = z.object({ modelId: id, permissionMode: sendSchema.shape.permissionMode, language: sendSchema.shape.language,
-          reasoningEffort: reasoningEffortSchema.nullish() }).strict().parse(settings);
-        selected.permissionMode = 'all_free';
-        const snapshot = await this.#command('runtime.get_session', { sessionId }) as SessionSnapshot | null;
-        if (!snapshot) throw new WebhookError('context_deleted');
-        // Validate the selected model now; resolve a fresh provider binding for every queued turn.
-        await this.product.resolveSubagentModel(selected.modelId);
-        return { kind: 'conversation', sessionId, title: String(snapshot.metadata?.title ?? sessionId).slice(0, 300),
-          parent: applyWebhookTurnPolicy(runtimeSessionTurnRequestSchema.parse({ protocol: 'bush.session_turn_request.v1', requestId: 'webhook-binding', turnId: 'webhook-binding', sessionId,
-            model: selected.modelId, tools: [], prefixMessages: [], inputMessages: [{ messageId: 'binding', message: { role: 'user', content: 'webhook-binding' } }], permissionMode: selected.permissionMode,
-            metadata: { agentWebhookSettings: selected, uiLanguage: selected.language } })) } satisfies WebhookBinding;
+        const sessionId = PERSONAL_ASSISTANT_SESSION;
+        const selected = z.object({
+          modelId: id, permissionMode: sendSchema.shape.permissionMode, language: sendSchema.shape.language,
+          reasoningEffort: reasoningEffortSchema.nullish(),
+        }).strict().parse(settings);
+        if (!await this.#command('runtime.get_session', { sessionId })) {
+          await this.#command('runtime.create_session', { sessionId, metadata: { personalAssistant: true, hidden: true, title: 'Assistant' } });
+        }
+        const model = await this.product.resolveSubagentModel(selected.modelId) as { model: string; binding: RuntimeProviderBindingRef };
+        const journal = await this.#command('runtime.assistant_conversation', { action: 'read', sessionId, after: Number.MAX_SAFE_INTEGER }) as { generation: number };
+        const tools = await this.#command('runtime.get_tool_catalog') as ToolDefinition[];
+        const saved = await this.#command('runtime.friends', { action: 'binding' }) as { profile?: unknown } | null;
+        const profile = assistantProfileSchema.parse(saved?.profile ?? {});
+        const parent = runtimeSessionTurnRequestSchema.parse({
+          protocol: 'bush.session_turn_request.v1', requestId: 'webhook-binding', turnId: 'webhook-binding', sessionId,
+          model: model.model, providerBinding: model.binding, reasoningEffort: selected.reasoningEffort ?? undefined, tools, prefixMessages: [],
+          inputMessages: [{ messageId: 'binding', message: { role: 'user', content: 'Webhook binding' } }], permissionMode: 'all_free',
+          metadata: { environmentContext: true, uiLanguage: selected.language, individuation: this.#state.sessions?.[sessionId]?.individuation },
+        });
+        return { kind: 'assistant', sessionId, title: profile.name, profile, generation: journal.generation, parent: applyWebhookTurnPolicy(parent) } satisfies WebhookBinding;
       });
     }
     if (operation.startsWith('desktop.')) {
@@ -829,47 +841,21 @@ export class AgentService {
     }
   }
 
-  async #enqueue(value: AgentSendInput, botSourceRef?: string) {
+  async #enqueue(value: AgentSendInput) {
     if (this.#closing) throw Error('webhook_host_closed');
     if (!await this.#command('runtime.get_session', { sessionId: value.sessionId })) throw new Error('Unknown conversation.');
     await this.#write(state => {
       const existing = state.jobs.find(job => job.id === value.requestId);
       if (existing) {
-        if (JSON.stringify(existing.input) !== JSON.stringify(value) || existing.botSourceRef !== botSourceRef) throw new Error('Request ID was already used for different content.');
+        if (JSON.stringify(existing.input) !== JSON.stringify(value) || existing.botSourceRef) throw new Error('Request ID was already used for different content.');
         return;
       }
       const manualRelease = !value.queueOnly && !this.#busy.has(value.sessionId) && !state.jobs.some(job => job.sessionId === value.sessionId && job.status === 'running');
       state.jobs.push({ id: value.requestId, sessionId: value.sessionId, turnId: value.turnId ?? `turn-${randomUUID()}`, input: value,
-        createdAt: new Date().toISOString(), status: 'queued', manualRelease, ...(botSourceRef ? { botSourceRef } : {}) });
+        createdAt: new Date().toISOString(), status: 'queued', manualRelease });
     });
     this.#pump(); return publicJob(this.#state.jobs.find(job => job.id === value.requestId)!);
   }
-  #runWebhook: typeof runContextWebhook = async (_runtime, binding, message, receiptId, recovering, signal, sourceRef) => {
-    if (!sourceRef || binding.kind !== 'conversation') throw new WebhookError('invalid_binding');
-    const requestId = `webhook-${receiptId}`;
-    let job = this.#state.jobs.find(item => item.id === requestId);
-    if (!job) {
-      if (recovering) return { status: 'interrupted', reply: '', errorCode: 'submission_unknown' };
-      const selected = binding.parent.metadata.agentWebhookSettings as Pick<AgentSendInput, 'modelId' | 'permissionMode' | 'language' | 'reasoningEffort'>;
-      const input = sendSchema.parse({ ...selected, permissionMode: 'all_free', requestId, turnId: requestId, sessionId: binding.sessionId, text: message.text, queueOnly: true,
-        individuation: this.#state.sessions?.[binding.sessionId]?.individuation,
-        userMessageMetadata: { externalMessage: { messageId: message.messageId, senderId: message.senderId, conversationId: message.conversationId } } });
-      const pending = this.#mutations.then(() => { signal.throwIfAborted(); return this.#enqueue(input, sourceRef); });
-      this.#mutations = pending.catch(() => undefined); await pending;
-    }
-    for (;;) {
-      signal.throwIfAborted(); job = this.#state.jobs.find(item => item.id === requestId);
-      if (!job || job.sessionId !== binding.sessionId || job.botSourceRef !== sourceRef) throw new WebhookError('source_unavailable');
-      if (!['queued', 'running'].includes(job.status)) {
-        const snapshot = await this.#command('runtime.get_session', { sessionId: job.sessionId }) as SessionSnapshot | null;
-        const result = snapshot && contextWebhookTurnResult(snapshot, job.turnId);
-        return { status: job.status as 'completed' | 'failed' | 'interrupted' | 'stopped', reply: result?.reply ?? '',
-          ...(job.status === 'completed' ? {} : { errorCode: 'turn_failed' }) };
-      }
-      await delay(200, undefined, { signal });
-    }
-  };
-
   async #pruneSessionHistory(target?: string) {
     // Runtime deletion can partially fail. Keep service state for every session
     // still present; otherwise old queue entries can resurrect deleted history.
@@ -992,10 +978,6 @@ export class AgentService {
         request.tools = [];
         request.metadata = { ...request.metadata, toolExecutionPolicy: 'none' };
         request.prefixMessages.push({ role: 'developer', content: 'This deployment supports text conversations only. All tools, plugins, shell commands, file access, web browsing, subagents and scheduled tasks are disabled. Answer in conversation using the supplied context; never claim to have executed a tool or completed an external action.' });
-      }
-      if (job.botSourceRef) {
-        request = applyWebhookTurnPolicy(request);
-        request.metadata.botSourceRef = job.botSourceRef;
       }
       if (job.input.supersession) request.supersession = job.input.supersession;
       if (job.delegation) {

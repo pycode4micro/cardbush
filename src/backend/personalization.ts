@@ -1,4 +1,4 @@
-import { PERSONALIZATION_COMMAND, personalizationStatusSchema, memoryListSchema, memoryHistorySchema, memoryMutationSchema,
+import { personalProfileSchema, type PersonalProfile, PERSONALIZATION_COMMAND, personalizationStatusSchema, memoryListSchema, memoryHistorySchema, memoryMutationSchema,
   type IndividuationSettings, type MemoryChange, type MemoryList, type MemoryHistory, type MemoryMutation, type PersonalizationStatus, type AssistantFeedbackInput } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 
@@ -8,6 +8,10 @@ async function command(input:unknown,connectionId='') {
   try { return await runtime.client.command({kind:PERSONALIZATION_COMMAND,payload:input},value=>value); }
   finally { runtime.dispose(); }
 }
+export const readPersonalProfile = async () => personalProfileSchema.nullable().parse(await command({ action: 'read_profile' }));
+export const savePersonalProfile = async (profile: PersonalProfile, previous: PersonalProfile | null) =>
+  personalProfileSchema.parse(await command({ action: 'save_profile', profile, previous }));
+
 export async function personalizationCommand(input:{action:'status'|'summarize';settings:IndividuationSettings;modelId?:string},connectionId='') {
   return personalizationStatusSchema.parse(await command(input,connectionId));
 }

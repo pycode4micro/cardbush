@@ -25,12 +25,8 @@ async function buildFixture(directory) {
     name: 'assistant-fixture', enforce: 'pre', resolveId(source, importer) {
       if (source.endsWith('__assistant_fixture__.tsx')) return '\0assistant-fixture.tsx';
       if (source === './assistantBackend' || source.endsWith('/assistantBackend.ts')) return '\0assistant-backend.ts';
-      if (source === '../appCenter/AppCenter' && importer?.endsWith('ChatSidebar.tsx')) return '\0assistant-dock.ts';
-      if (source === '../automations/useAutomationUnreadCount') return '\0assistant-unread.ts';
       if (source === '../subagents/useLoopSubagentTasks' && importer?.endsWith('AssistantView.tsx')) return '\0assistant-tasks.ts';
     }, load(id) {
-      if (id === '\0assistant-dock.ts') return 'export const AppCenterDock=()=>null;';
-      if (id === '\0assistant-unread.ts') return 'export const useAutomationUnreadCount=()=>0;';
       if (id === '\0assistant-tasks.ts') return `import {useEffect,useState} from 'react';export function useLoopSubagentTasks(){const [,update]=useState(0);useEffect(()=>{const refresh=()=>update(v=>v+1);window.addEventListener('fixture-tasks',refresh);return()=>window.removeEventListener('fixture-tasks',refresh);},[]);return fixture.tasks??[];}`;
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions,chatAttachmentsFromOutbound} from ${file('src/shared/chatAttachments.ts')};
@@ -55,6 +51,7 @@ async function buildFixture(directory) {
           }};`;
       if (id === '\0assistant-fixture.tsx') return `
         import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
+        import {ProfileCenter} from ${file('src/features/profile/ProfileCenter.tsx')};
         import {AssistantView} from ${file('src/features/assistant/AssistantView.tsx')};
         import {uiText} from ${file('src/i18n/index.ts')};
         import {saveComponents,useComponents} from ${file('src/features/components/componentStore.ts')};
@@ -87,7 +84,7 @@ async function buildFixture(directory) {
         function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile(),collection=useComponents();
           fixture.setLayout=(width,flow={afterSend:'bottom',output:'above'})=>saveComponents({...collection,welcomeLayout:width?{viewportHeight:752,items:[{componentId:'system-input',x:(100-width)/2,y:260,width,height:52,inputStyle:'simple',composerFlow:flow}]}:undefined},collection.revision);
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
-          return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost language="zh">
+          return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost language="zh"><ProfileCenter language={language} ready={false} floating={false} prepare={noop} settings={noop} switchWindow={noop}>
             <ChatSidebar language="zh" section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
               onSectionChange={noop} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
@@ -95,7 +92,7 @@ async function buildFixture(directory) {
               composerControls={controls} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:''};}} onManageHosts={()=>fixture.managed=true} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
               composerPortalTarget={portal?target:null} browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
             {portal&&<aside ref={setTarget} className="inspector-quick-input" style={{position:"fixed",bottom:20,left:300,width:450,zIndex:30}}/>}
-          </ApplicationVoiceHost></div>;
+          </ProfileCenter></ApplicationVoiceHost></div>;
         }createRoot(document.getElementById('root')).render(<Fixture/>);`;
     },
   }], build: { write: false, minify: false, lib: { entry: path.resolve('src/__assistant_fixture__.tsx'), name: 'AssistantFixture', formats: ['iife'] } } });
@@ -206,10 +203,9 @@ app.whenReady().then(async () => {
     await fill('.assistant-composer-dock textarea', '继续聊聊'); await click('.assistant-composer-dock .send-button[aria-label="发送"]');
     await until('document.querySelectorAll(".assistant-message-user").length===2'); assert.equal(await read('fixture.sent.length'), 1);
     assert.equal(await read('getComputedStyle(document.querySelector(".assistant-message-row:last-child .assistant-message-user>div")).animationName'), 'assistant-bubble-send');
-    const settingsButton = 'button[title="助手设置"]', dialog = '.assistant-settings-dialog';
+    const openSettings = async () => { await click('.profile-trigger'); await click('[data-profile-action=assistant]'); }, dialog = '.assistant-settings-dialog';
     const bounds = await read('document.querySelector(".composer-surface").getBoundingClientRect().toJSON()');
-    await read('document.querySelector(\'button[title="助手设置"]\').focus();void 0');
-    await click(settingsButton); await until('document.querySelector(".assistant-settings-dialog:modal")');
+    await openSettings(); await until('document.querySelector(".assistant-settings-dialog:modal")');
     assert.equal(await read('document.activeElement.name'), 'assistant-name');
     assert.deepEqual(await read('document.querySelector(".composer-surface").getBoundingClientRect().toJSON()'), bounds, 'modal does not move the conversation/composer');
     assert.equal(await read('document.querySelector("textarea[name=assistant-persona]").value'), '');
@@ -240,9 +236,9 @@ app.whenReady().then(async () => {
     await fill(dialog+' input[name="assistant-name"]', 'Cancelled');
     win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
     await until('!document.querySelector(".assistant-settings-dialog")');
-    assert.equal(await read('document.activeElement.title'), '助手设置', 'closing returns keyboard focus');
+    assert.equal(await read('document.activeElement.title'), '个人资料', 'closing returns focus to the profile trigger');
     assert.equal(await read('document.querySelector(".assistant-view .topbar h1").textContent'), 'assistant');
-    await click(settingsButton); await selectAvatar(); await until('document.querySelector(".assistant-avatar-preview img")');
+    await openSettings(); await selectAvatar(); await until('document.querySelector(".assistant-avatar-preview img")');
     await fill(dialog+' input[name="assistant-name"]', 'Lumi'); await fill(dialog+' textarea', '温和、可靠');
     win.webContents.invalidate(); await pause(250);
     fs.writeFileSync(path.join(directory, 'assistant-settings-dark.png'), (await win.webContents.capturePage()).toPNG());
@@ -253,12 +249,12 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll(".assistant-avatar img").length===2');
     assert.equal(await read('document.querySelector(".assistant-avatar img").src'), await read('localStorage.cardbush_personal_assistant_avatar_v1'));
     assert.equal(await read('JSON.stringify(JSON.parse(localStorage.cardbush_personal_assistant_v1)).includes("data:image")'), false, 'avatar stays out of the inference profile');
-    await click(settingsButton); await click('.assistant-avatar-reset'); await click(dialog+' .assistant-settings-close');
+    await openSettings(); await click('.assistant-avatar-reset'); await click(dialog+' .assistant-settings-close');
     assert.equal(await read('document.querySelectorAll(".assistant-avatar img").length'), 2, 'cancelled restore preserves saved avatar');
-    await click(settingsButton); assert.equal(await read('!!document.querySelector(".assistant-avatar-preview img")'), true);
+    await openSettings(); assert.equal(await read('!!document.querySelector(".assistant-avatar-preview img")'), true);
     await click('.assistant-avatar-reset'); await click(dialog+' button[type=submit]');
     await until('!document.querySelector(".assistant-avatar")'); assert.equal(await read('localStorage.cardbush_personal_assistant_avatar_v1'), undefined);
-    await click(settingsButton); await read('fixture.hide();void 0'); await until('!document.querySelector(".assistant-settings-dialog")');
+    await openSettings(); await read('fixture.hide();void 0'); assert.ok(await read('!!document.querySelector(".assistant-settings-dialog:modal")')); await click(dialog+' .assistant-settings-close');
     await read('fixture.show();void 0'); await until('!document.querySelector(".assistant-view").hidden');
     assert.equal(await read('!!document.querySelector(\'.nav-row[title="Lumi"]\')'), true);
     assert.equal(await read('document.querySelector(".assistant-actions [role=combobox]")===null'), true, 'Assistant no longer mixes local conversation with a separate execution-host selector');

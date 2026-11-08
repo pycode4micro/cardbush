@@ -1,3 +1,4 @@
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -6,14 +7,14 @@ import { ContextWebhookHost } from './contextWebhookHost.mjs';
 import { contextWebhookPort } from './contextWebhookDefaults.js';
 import { writePrivateJson } from './atomicJsonFile.mjs';
 import type { ContextWebhookSnapshot, WebhookBinding } from './contextWebhookTypes.js';
-import type { runContextWebhook, WebhookRuntime } from './contextWebhookRuntime.mjs';
+import type { WebhookRuntime } from './contextWebhookRuntime.mjs';
 
 /** Shared App protocol; this adapter owns only headless lifetime and management. */
 export class AgentWebhooks {
   #host?: Promise<ContextWebhookHost>;
   #commands: Promise<unknown> = Promise.resolve();
   #closed = false;
-  constructor(readonly root: string, readonly runtime: WebhookRuntime, readonly execute: typeof runContextWebhook, readonly port?: number) {}
+  constructor(readonly root: string, readonly runtime: WebhookRuntime, readonly port?: number) {}
   get keepAlive() { return Boolean(this.#host); }
   async restore() {
     const config = await readFile(join(this.root, 'webhooks', 'host.json'), 'utf8').then(JSON.parse,
@@ -25,7 +26,7 @@ export class AgentWebhooks {
     return this.#host ??= (async () => {
       const directory = join(this.root, 'webhooks'); secureConfigDirectory(directory); assertPrivateConfigFile(join(directory, 'state.json'));
       const host = new ContextWebhookHost(this.root, { encrypt: protectSecret, decrypt: unprotectSecret }, this.runtime,
-        { execute: this.execute, ...(this.port === undefined ? {} : { port: this.port }) });
+        { port: this.port });
       try { await host.start(); await writePrivateJson(join(directory, 'host.json'), { enabled: true }); return host; }
       catch (error) { await host.close(); this.#host = undefined; throw error; }
     })();
@@ -44,6 +45,7 @@ export class AgentWebhooks {
     const request = z.object({ action: z.enum(['read', 'start', 'stop', 'connect', 'disconnect', 'listener']), sessionId: z.string().min(1).max(160),
       id: z.string().uuid().optional(), port: z.number().int().min(1024).max(65535).optional() }).strict().parse(input);
     if (this.#closed) throw Error('webhook_host_closed');
+    if (request.sessionId !== PERSONAL_ASSISTANT_SESSION) throw Error('assistant_only');
     if (request.action === 'stop') {
       secureConfigDirectory(join(this.root, 'webhooks')); await writePrivateJson(join(this.root, 'webhooks', 'host.json'), { enabled: false });
       const host = this.#host; this.#host = undefined; await (await host)?.close();

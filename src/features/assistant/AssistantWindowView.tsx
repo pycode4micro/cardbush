@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, type ComponentProps, type ReactNode } from 'react';
+import { ProfileCenter } from '../profile/ProfileCenter';
 import { GlobalTooltip } from '../../components/GlobalTooltip';
 import { uiText } from '../../i18n';
 import { UiLanguageProvider } from '../../i18n/react';
@@ -21,15 +22,19 @@ function ResidentDialog({ title, language, close, children }: { title: string; l
   </dialog>;
 }
 
-export function AssistantWindowView({ assistant, events, theme, appearance, modelPanel, closeModels, detail, closeDetail }: {
+export function AssistantWindowView({ assistant, events, ready, onProfileDialog, theme, appearance, modelPanel, closeModels, detail, closeDetail }: {
   assistant: ComponentProps<typeof AssistantView>; events: ComponentProps<typeof AssistantEventConnection>;
-  theme: string; appearance: Record<string, string>; modelPanel?: ModelPanel; closeModels(): void;
+  ready: boolean; onProfileDialog(open: boolean): void; theme: string; appearance: Record<string, string>; modelPanel?: ModelPanel; closeModels(): void;
   detail?: WorkSummaryInspectorDetail; closeDetail(): void;
 }) {
   const { language } = assistant, t = uiText(language);
   return <UiLanguageProvider language={language}><ApplicationVoiceHost language={language}>
     <main className={`app resident-assistant ${theme}`} lang={language} style={appearance}>
-      <AssistantView {...assistant} />
+      <ProfileCenter language={language} ready={ready} onDialogChange={onProfileDialog} prepare={assistant.prepare} floating
+        settings={() => window.cardbushDesktop?.openAssistantWorkspace?.('settings')}
+        switchWindow={async () => { await window.cardbushDesktop?.assistantMode?.('workspace'); }}>
+        <AssistantView {...assistant} compactProfileMenu/>
+      </ProfileCenter>
       <AssistantEventConnection {...events} />
       {modelPanel && <ResidentDialog title={t('settingsNavigation.models')} language={language} close={closeModels}><ModelsSettingsPanel {...modelPanel}/></ResidentDialog>}
       {detail && <ResidentDialog title={t('resident.executionDetails')} language={language} close={closeDetail}>

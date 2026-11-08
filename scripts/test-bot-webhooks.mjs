@@ -53,37 +53,33 @@ test('generic file push binds source, checks capabilities, persists idempotency 
     res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ protocol: 'cardbush.webhook.v1', eventId: payload.eventId, status: 'accepted' }));
   });
   receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
-  const runtime = { command: async () => ({}) }, options = { port: 0, execute: async () => ({ status: 'completed', reply: 'OK' }) };
+  const runtime = { command: async () => ({ generation: 0 }) }, options = { port: 0, execute: async () => ({ status: 'completed', reply: 'OK' }) };
   try {
     gateway = await new ContextWebhookHost(root, cipher, runtime, options).start();
     const connect = async (name, sessionId) => {
       const saved = await gateway.command({ action: 'save', config: config(name, `http://127.0.0.1:${receiver.address().port}/reply`),
-        binding: { kind: 'conversation', sessionId, title: sessionId, parent: request(sessionId) } });
+        binding: { kind: 'assistant', profile:{name:'Assistant'},generation:0,sessionId, title: sessionId, parent: request(sessionId) } });
       return saved.connections.find(c => c.name === name);
     };
-    const a = await connect('Weixin', 'same-chat'), b = await connect('Feishu', 'same-chat');
-    const statuses = async () => (await gateway.command({ action: 'read', sessionId: 'same-chat' })).connections.map(c => c.status);
+    const a = await connect('Weixin', 'personal-assistant'), b = await connect('Feishu', 'personal-assistant');
+    const statuses = async () => (await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).connections.map(c => c.status);
     assert.deepEqual(await statuses(), ['offline', 'offline'], 'saved and enabled is not online');
     const discover = sessionId => gateway.command({ action: 'read', sessionId });
-    assert.deepEqual((await discover('another-chat')).onlineElsewhere, []);
-    const savedContext = await gateway.botRequest({ action: 'context', sessionId: 'same-chat' });
+    await assert.rejects(discover('another-chat'),/assistant_only/);
+    const savedContext = await gateway.botRequest({ action: 'context', sessionId: 'personal-assistant' });
     assert.equal(savedContext.reason, 'bot_offline');
     assert.deepEqual(savedContext.connections.map(c => c.status), ['offline', 'offline']);
     const post = (c, suffix, body) => fetch(c.endpoint.replace(/\/messages$/, suffix), { method: 'POST', headers: { Authorization: `Bearer ${c.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     for (const c of [a, b]) assert.equal((await post(c, '/messages', { messageId: c.name, senderId: c.name + '-user', conversationId: c.name + '-room', text: 'Forward my file.' })).status, 202);
-    assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'same-chat' })).available, false);
+    assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'personal-assistant' })).available, false);
     for (const c of [a, b]) assert.equal((await post(c, '/capabilities', { protocol: 'cardbush.webhook.v1', capabilities: { files: c === a, maxFileBytes: 1000 }, plugins: [fixturePlugin] })).status, 200);
-    const state = await gateway.botRequest({ action: 'context', sessionId: 'same-chat' });
+    const state = await gateway.botRequest({ action: 'context', sessionId: 'personal-assistant' });
     assert.deepEqual(await statuses(), ['connected', 'connected']);
-    const other = await discover('another-chat');
-    assert.deepEqual(other.connections, []);
-    assert.deepEqual(other.pairings, []);
-    assert.deepEqual(other.onlineElsewhere, [a, b].map(c => ({ id: c.id, name: c.name, contextTitle: 'same-chat' })),
-      'active bridges are visible elsewhere without returning credentials or pretending there is a pending pairing');
-    assert.deepEqual((await discover('same-chat')).onlineElsewhere, []);
+    await assert.rejects(discover('another-chat'),/assistant_only/);
+    assert.deepEqual((await discover('personal-assistant')).onlineElsewhere, []);
     assert.equal(state.targets.length, 2); assert.ok(!JSON.stringify(state).includes('callback-secret')); assert.ok(!JSON.stringify(state).includes(a.token));
     const sourceA = state.targets.find(t => t.botName === 'Weixin'), sourceB = state.targets.find(t => t.botName === 'Feishu');
-    const catalog = await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' });
+    const catalog = await gateway.botRequest({ action: 'catalog', sessionId: 'personal-assistant' });
     assert.equal(catalog.length, 2);
     assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'another-chat' }), []);
     const callInput = (source, requestId, file, extra = {}) => ({ connectionId: source.connectionId, pluginId: 'fixture',
@@ -91,12 +87,12 @@ test('generic file push binds source, checks capabilities, persists idempotency 
       requestId, arguments: { file, ...extra } });
     const later = Date.now() + 120001, clock = t.mock.method(Date, 'now', () => later);
     assert.deepEqual(await statuses(), ['offline', 'offline'], 'UI and model use the same heartbeat expiry');
-    assert.deepEqual((await discover('another-chat')).onlineElsewhere, []);
-    assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'same-chat', sourceRef: sourceA.sourceRef })).source.reason, 'bot_offline');
-    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' }), []);
+    await assert.rejects(discover('another-chat'),/assistant_only/);
+    assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'personal-assistant', sourceRef: sourceA.sourceRef })).source.reason, 'bot_offline');
+    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'personal-assistant' }), []);
     clock.mock.restore();
     const file = join(root, 'real-file.txt'), bytes = Buffer.from('实际文件内容\n'); await writeFile(file, bytes);
-    const send = async (source, requestId, extra = {}, sessionId = 'same-chat') => {
+    const send = async (source, requestId, extra = {}, sessionId = 'personal-assistant') => {
       const path = await realpath(file), info = await lstat(path, { bigint: true });
       return gateway.botRequest({ action: 'call', sessionId, files: [{ path, identity: `${info.dev}:${info.ino}` }], input: callInput(source, requestId, path, extra) });
     };
@@ -106,14 +102,14 @@ test('generic file push binds source, checks capabilities, persists idempotency 
     assert.deepEqual(received[0].bytes, bytes); assert.equal(received[0].payload.senderId, 'Weixin-user');
     assert.deepEqual(received[0].payload.arguments, { file: { part: 'file_0' } }, 'the bridge never receives a local file path');
     assert.deepEqual(received[0].payload.parameters, {}, 'connection parameters remain available to generic bridge handlers');
-    assert.equal((await gateway.botRequest({ action: 'call', sessionId: 'same-chat', input: { ...callInput(sourceA, 'wrong-platform', file), connectionId: b.id } })).code, 'bridge_source_unavailable');
+    assert.equal((await gateway.botRequest({ action: 'call', sessionId: 'personal-assistant', input: { ...callInput(sourceA, 'wrong-platform', file), connectionId: b.id } })).code, 'bridge_source_unavailable');
     assert.equal(received[0].payload.messageId, 'Weixin'); assert.equal(received[0].authorization, 'Bearer callback-secret');
     assert.equal((await send(sourceA, 'file-1')).eventId, delivered.eventId); assert.equal(received.length, 1);
     assert.equal((await send(sourceA, 'file-1', { text: 'changed' })).code, 'request_id_conflict');
     await writeFile(file, Buffer.alloc(1001)); assert.equal((await send(sourceA, 'too-large')).code, 'file_too_large');
     const oldPath = await realpath(file), oldIdentity = await lstat(oldPath, { bigint: true });
     renameSync(file, file + '.previous'); await writeFile(file, 'replacement');
-    assert.equal((await gateway.botRequest({ action: 'call', sessionId: 'same-chat', files: [{ path: oldPath, identity: `${oldIdentity.dev}:${oldIdentity.ino}` }],
+    assert.equal((await gateway.botRequest({ action: 'call', sessionId: 'personal-assistant', files: [{ path: oldPath, identity: `${oldIdentity.dev}:${oldIdentity.ino}` }],
       input: callInput(sourceA, 'replaced-file', oldPath) })).code, 'workspace_authorization_changed');
     assert.equal(received.length, 1, 'a replaced file must not reach the callback');
     await rm(file); renameSync(file + '.previous', file);
@@ -122,33 +118,33 @@ test('generic file push binds source, checks capabilities, persists idempotency 
     assert.equal((await send(sourceA, 'retry-same')).status, 'accepted');
     assert.equal(received.at(-1).payload.eventId, received.at(-2).payload.eventId, 'uncertain retries use the same external event ID');
     await gateway.close(); gateway = await new ContextWebhookHost(root, cipher, runtime, options).start();
-    a.endpoint = (await gateway.command({ action: 'read', sessionId: 'same-chat' })).connections.find(c => c.id === a.id).endpoint;
+    a.endpoint = (await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).connections.find(c => c.id === a.id).endpoint;
     assert.deepEqual(await statuses(), ['offline', 'offline']);
-    assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'same-chat', sourceRef: sourceA.sourceRef })).source.reason, 'bot_offline');
-    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' }), [], 'restart requires a fresh bridge heartbeat');
+    assert.equal((await gateway.botRequest({ action: 'context', sessionId: 'personal-assistant', sourceRef: sourceA.sourceRef })).source.reason, 'bot_offline');
+    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'personal-assistant' }), [], 'restart requires a fresh bridge heartbeat');
     const instanceId = '11111111-1111-4111-8111-111111111111';
     await post(a, '/capabilities', { protocol: 'cardbush.webhook.v1', instanceId, capabilities: { files: true, maxFileBytes: 1000 }, plugins: [fixturePlugin] });
     assert.equal((await send(sourceA, 'file-1')).eventId, delivered.eventId); assert.equal(received.length, 3);
     const withdraw = id => fetch(a.endpoint.replace(/\/messages$/, '/capabilities'), { method: 'DELETE', headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ protocol: 'cardbush.webhook.v1', instanceId: id }) });
     await withdraw('22222222-2222-4222-8222-222222222222');
-    assert.equal((await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' })).length, 1, 'an old process cannot revoke a newer bridge lease');
+    assert.equal((await gateway.botRequest({ action: 'catalog', sessionId: 'personal-assistant' })).length, 1, 'an old process cannot revoke a newer bridge lease');
     await withdraw(instanceId);
     assert.deepEqual(await statuses(), ['offline', 'offline'], 'graceful exit keeps configuration but withdraws live connection');
-    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'same-chat' }), []);
+    assert.deepEqual(await gateway.botRequest({ action: 'catalog', sessionId: 'personal-assistant' }), []);
     assert.equal((await send(sourceA, 'after-close')).code, 'bridge_source_unavailable');
     await gateway.command({ action: 'save', config: { ...config('Feishu', b.url), id: b.id, enabled: false },
-      binding: { kind: 'conversation', sessionId: 'same-chat', title: 'same-chat', parent: request('same-chat') } });
+      binding: { kind:'assistant',profile:{name:'Assistant'},generation:0,sessionId:'personal-assistant', title: 'personal-assistant', parent: request('personal-assistant') } });
     assert.deepEqual(await statuses(), ['offline', 'disabled']);
-    await gateway.command({ action: 'delete', sessionId: 'same-chat', id: a.id });
+    await gateway.command({ action: 'delete', sessionId: 'personal-assistant', id: a.id });
     assert.equal((await send(sourceA, 'revoked')).code, 'bridge_source_unavailable'); assert.equal(received.length, 3);
   } finally { await gateway?.close(); receiver.closeAllConnections(); await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });
 
-for (const kind of ['conversation', 'assistant']) test(`${kind}: real model tool dispatch sends the requested file using per-message Bot provenance`, async () => {
+test(`Assistant: real model tool dispatch sends the requested file using per-message Bot provenance`, async () => {
   const root = await mkdtemp(join(tmpdir(), 'bot-runtime-')), sent = [], calls = []; let gateway;
   const file = join(root, 'report.txt'); await writeFile(file, 'report fixture');
-  const sessionId = kind === 'assistant' ? 'personal-assistant' : 'conversation';
+  const sessionId = 'personal-assistant';
   const receiver = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     if (!(req.headers['content-type'] ?? '').startsWith('multipart/')) { res.end('{}'); return; }
@@ -168,7 +164,7 @@ for (const kind of ['conversation', 'assistant']) test(`${kind}: real model tool
     const source = bridgeMessageSource(input.messages);
     assert.equal(source.botName, 'Selected Bot'); assert.equal(source.senderId, 'original-user');
     assert.equal(source.available, true);
-    if (kind === 'assistant' && input.sessionId === sessionId && input.metadata.agentRole !== 'child') {
+    if (input.sessionId === sessionId && input.metadata.agentRole !== 'child') {
       yield* answer(input, input.messages.some(m => m.role === 'tool' && m.toolCallId === 'delegate-file') ? undefined
         : { id: 'delegate-file', name: 'subagent', arguments: { prompt: 'Send the requested report file through the current source bridge plugin.' } });
     } else yield* answer(input, bridgeModelStep(input.messages, file));
@@ -179,7 +175,7 @@ for (const kind of ['conversation', 'assistant']) test(`${kind}: real model tool
     gateway = await new ContextWebhookHost(root, cipher, bridge, { port: 0 }).start();
     const definitions = await bridge.command('runtime.get_tool_catalog', {});
     const saved = await gateway.command({ action: 'save', config: config('Selected Bot', `http://127.0.0.1:${receiver.address().port}/reply`),
-      binding: { kind, sessionId, title: 'Context', parent: { ...request(sessionId), tools: definitions, metadata: { mcpCatalogUpdates: 'additions' } }, ...(kind === 'assistant' ? { profile: assistantProfileSchema.parse({}), generation: 0 } : {}) } });
+      binding: { kind: 'assistant', sessionId, title: 'Context', parent: { ...request(sessionId), tools: definitions, metadata: { mcpCatalogUpdates: 'additions' } }, profile: assistantProfileSchema.parse({}), generation: 0 } });
     const connection = saved.connections[0], headers = { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' };
     await fetch(connection.endpoint.replace(/\/messages$/, '/capabilities'), { method: 'POST', headers, body: JSON.stringify({ protocol: 'cardbush.webhook.v1', capabilities: { files: true }, plugins: [fixturePlugin] }) });
     assert.equal((await fetch(connection.endpoint, { method: 'POST', headers, body: JSON.stringify({ messageId: 'requested-file', senderId: 'original-user', conversationId: 'original-room', text: 'Send the report.' }) })).status, 202);
@@ -195,14 +191,12 @@ for (const kind of ['conversation', 'assistant']) test(`${kind}: real model tool
     assert.ok(calls.every(call => !call.tools.some(tool => tool.name === 'send_to_bot')), 'no permanent forwarding tool');
     assert.ok(JSON.stringify(calls).includes('bridge-schema-call'), 'schema discovery precedes execution');
     assert.ok(!JSON.stringify(calls).includes(connection.token)); assert.ok(!JSON.stringify(calls).includes('callback-secret'));
-    if (kind === 'assistant') {
-      const state = await gateway.botRequest({ action: 'context', sessionId });
-      await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });
-      const declaration = (await gateway.botRequest({ action: 'catalog', sessionId }))[0];
-      const refused = await gateway.botRequest({ action: 'call', sessionId, input: { connectionId: declaration.connectionId, pluginId: 'fixture',
-        revision: declaration.revision, tool: 'send_file', sourceRef: state.targets[0].sourceRef, requestId: 'after-reset', arguments: { file } } });
-      assert.equal(refused.code, 'context_reset'); assert.equal(sent.length, 1);
-    }
+    const state = await gateway.botRequest({ action: 'context', sessionId });
+    await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId });
+    const declaration = (await gateway.botRequest({ action: 'catalog', sessionId }))[0];
+    const refused = await gateway.botRequest({ action: 'call', sessionId, input: { connectionId: declaration.connectionId, pluginId: 'fixture',
+      revision: declaration.revision, tool: 'send_file', sourceRef: state.targets[0].sourceRef, requestId: 'after-reset', arguments: { file } } });
+    assert.equal(refused.code, 'context_reset'); assert.equal(sent.length, 1);
   } finally { await gateway?.close(); await bridge.command('runtime.shutdown', {}); receiver.closeAllConnections(); await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });
 

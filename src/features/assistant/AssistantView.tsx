@@ -1,8 +1,9 @@
+import { ProfileMenu } from '../profile/ProfileMenu';
 import { AssistantEventsDialog } from './events/AssistantEventsDialog';
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { CalendarClock, Settings2, UsersRound } from 'lucide-react';
+import { UsersRound } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry, type AssistantReaction } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
 import { journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
@@ -13,8 +14,6 @@ import type { VoiceTarget } from '../voice/voiceSession';
 import { MarkdownContent, MessageFileAttachmentStrip, MessageImageStrip } from '../chatMessages/MessageBubble';
 import { AssistantComposer, type AssistantComposerControls } from './AssistantComposer';
 import { AssistantBulb } from './AssistantBulb';
-import { AssistantSettingsDialog } from './AssistantSettingsDialog';
-import { WebhookConnectionButton } from '../webhooks/WebhookConnectionButton';
 import { readAssistantProfile, saveAssistantProfile, useAssistantProfile, setAssistantWorking } from './assistantProfile';
 import { TopBar } from '../../components/TopBar';
 import { ScrollBottomButton } from '../chat/ScrollBottomButton';
@@ -41,9 +40,9 @@ const sessionId = PERSONAL_ASSISTANT_SESSION;
 // Also hide transcripts saved by older versions, without deleting conversational memory.
 const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'sending' | 'accepted' | 'failed' };
-export function AssistantView({ active, language, prepare, onManageHosts, composerControls,
+export function AssistantView({ active, language, compactProfileMenu = false, prepare, onManageHosts, composerControls,
   inspectorOpen = false, onToggleInspector, browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
-  active: boolean; language: string;
+  active: boolean; language: string; compactProfileMenu?: boolean;
   prepare(): Promise<ChatStreamRequest>; onManageHosts(): void;
   composerControls: AssistantComposerControls;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
@@ -90,8 +89,6 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
   const pendingReply = submission === 'retry' || submitted.some(item => item.state !== 'failed');
   const replying = (busy || pendingReply) && !error && !runtimeError;
   const [retry, setRetry] = useState<ConversationJournalSnapshot['retry']>(null);
-  const [settings, setSettings] = useState(false);
-  useEffect(() => { if (!active) setSettings(false); }, [active]);
   const prepareRef = useRef(prepare); prepareRef.current = prepare;
   useEffect(() => {
     let cancelled = false;
@@ -257,10 +254,9 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
     historyMessages: journalMessages(entriesRef.current.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busyRef.current });
   const [eventsOpen, setEventsOpen] = useState(false);
   const headerControls = <div className="assistant-actions">
+    {compactProfileMenu && <ProfileMenu compact language={language}/>}
     <div className="assistant-composer-tools">
       <button type="button" title={uiText(language)('teamSidebar.manageAgents')} onClick={onManageHosts}><UsersRound size={17}/></button>
-      <button type="button" title={uiText(language)('assistantSettingsDialog.assistantSettings')} onClick={() => setSettings(true)}><Settings2 size={18}/></button>
-      <button type="button" data-assistant-events aria-label={uiText(language)('assistant.events.title')} title={uiText(language)('assistant.events.title')} onClick={() => setEventsOpen(true)}><CalendarClock/></button>
     </div>
   </div>;
   const renderTimelineItem = (item: typeof timeline[number]) => {
@@ -315,12 +311,10 @@ export function AssistantView({ active, language, prepare, onManageHosts, compos
   return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>
     <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
-      connectionControl={<WebhookConnectionButton language={language} kind="assistant" sessionId={sessionId} title={profile.name} prepare={prepare}/>}
       titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantBulb size={22} working={busy}/></span>}
       workspaceControl={headerControls} conversationContentAvailable={timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
     {eventsOpen && active && <AssistantEventsDialog language={language} close={() => setEventsOpen(false)}/>}
-    {settings && active && <AssistantSettingsDialog language={language} onClose={() => setSettings(false)}/>}
     {messageMenu && active && <AssistantMessageMenu key={messageMenu.entry.id} target={messageMenu} language={language} reaction={reactions[messageMenu.entry.id]} pending={reacting}
       onClose={closeMessageMenu} onReply={excerpt => {
         const replyTo = { messageId: messageMenu.entry.id, ...(excerpt ? { excerpt } : {}) };

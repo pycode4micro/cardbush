@@ -39,6 +39,7 @@ export function AssistantWindow() {
   const [permission, setPermission] = useState(() => readInitialPermissionMode());
   const [routing, setRouting] = useState(() => readInitialSubagentPermissionRouting());
   const [plan, setPlan] = useState(() => readInitialReferencePlanMode());
+  const [profileDialog, setProfileDialog] = useState(false);
   const [retainDraft, setRetainDraft] = useState(false);
   const [editingModels, setEditingModels] = useState(false);
   const [detail, setDetail] = useState<WorkSummaryInspectorDetail>();
@@ -66,8 +67,8 @@ export function AssistantWindow() {
       teamModeEnabled: capabilities.teamMode && Boolean(team.selectedId), teamId: team.selectedId, teamInstructions: team.instructions };
   }, [models, model.selectedModel, language, disabledSkills, permission, routing, plan, capabilities, visualInput, team.selectedId, team.instructions]);
   useLayoutEffect(() => {
-    void window.cardbushDesktop?.retainAssistantWindow?.(retainDraft || usingVoice || editingModels || Boolean(detail));
-  }, [retainDraft, usingVoice, editingModels, detail]);
+    void window.cardbushDesktop?.retainAssistantWindow?.(profileDialog || retainDraft || usingVoice || editingModels || Boolean(detail));
+  }, [profileDialog, retainDraft, usingVoice, editingModels, detail]);
   useEffect(() => {
     const open = (event: Event) => setDetail((event as CustomEvent<WorkSummaryInspectorDetail>).detail);
     window.addEventListener(OPEN_WORK_SUMMARY_INSPECTOR_EVENT, open);
@@ -84,7 +85,7 @@ export function AssistantWindow() {
   }, [language, settings]);
   useEffect(() => { document.title = profile.name; }, [profile.name]);
 
-  return <AssistantWindowView theme={themeClassNames(theme)} appearance={appearanceVariables(appearance, theme, settings.importedThemeStyle, settings.font.family)}
+  return <AssistantWindowView onProfileDialog={setProfileDialog} ready={startup.phase === 'ready'} theme={themeClassNames(theme)} appearance={appearanceVariables(appearance, theme, settings.importedThemeStyle, settings.font.family)}
     events={{ prepare, language, configuration: prepare, enabled: Boolean(model.selectedModel) && startup.phase === 'ready' }}
     modelPanel={editingModels ? { language, models: { models, defaultModelId: defaultModel }, defaultSelection: true,
       onRefresh: async () => { const value = await fetchModelConfigs(); setModels(value.models); setDefaultModel(value.defaultModelId); },

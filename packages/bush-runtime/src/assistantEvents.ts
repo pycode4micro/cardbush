@@ -41,6 +41,7 @@ export class AssistantEvents {
   private automaticActivation = false;
   private clock: () => number;
   constructor(path: string, private deps: {
+    preferredName?: (signal: AbortSignal) => Promise<string | undefined>;
     tools: ToolRegistry; run: Runner; now?: () => number; clock?: AutomationClock; collector?: Pick<EventCollector, 'resolve'>;
     botContext?: (ref?: string) => Promise<BotContext>;
     publish?: (notice: NonNullable<FriendsState['notifications']>[number]) => void;
@@ -520,6 +521,8 @@ export class AssistantEvents {
         }) }],
     };
     try {
+      const preferredName = await this.deps.preferredName?.(controller.signal);
+      if (preferredName !== undefined) request.messages.push({ role: 'user', name: 'registered_user_profile', visibility: 'internal', content: JSON.stringify({ preferredName }) });
       const result = await this.deps.run(request, controller.signal);
       if (controller.signal.aborted) throw Error('FRIENDS_PAUSED');
       if (result.terminal.kind !== 'turn_terminal' || result.terminal.payload.status !== 'completed') throw Error('FRIENDS_EXECUTION_INCOMPLETE');

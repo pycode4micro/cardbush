@@ -91,7 +91,7 @@ async function run() {
     assert.equal(prepared, before, 'recovery only reads the existing result without resolving or replaying a model request');
     await bridge.command('runtime.create_session', { sessionId: 'conversation' }); controller.stop();
     const conversation = { kind: 'conversation', sessionId: 'conversation', title: 'Conversation', parent: { ...parent, sessionId: 'conversation' } };
-    assert.equal((await runContextWebhook(bridge, conversation, message, 'conversation', false, signal)).status, 'completed');
+    await assert.rejects(runContextWebhook(bridge, conversation, message, 'conversation', false, signal),/assistant_only/);
     // The actual HTTP host must also refresh Assistant context independently of saved model bindings.
     const secrets = { encrypt: value => Buffer.from(value).toString('base64'), decrypt: value => Buffer.from(value, 'base64').toString() };
     gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();

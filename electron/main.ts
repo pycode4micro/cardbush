@@ -299,6 +299,8 @@ let tray: Tray | null = null;
 let assistantResident = false;
 let assistantNextLaunch = false;
 let floatingAssistant = false;
+let residentReturnPage: 'home' | 'explore' = 'home';
+let workspaceWindowState: { bounds: Electron.Rectangle; maximized: boolean; fullscreen: boolean; alwaysOnTop: boolean } | undefined;
 let retainAssistantWindow = false;
 let residentBootTimer: ReturnType<typeof setTimeout> | undefined;
 const residentPreferencePath = () => path.join(app.getPath('userData'), 'assistant-resident.json');
@@ -590,7 +592,7 @@ function traceMainWindowComposition(
   }
 }
 
-function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' } = {}) {
+function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' | 'settings' | 'explore' } = {}) {
   if (mainWindow != null && !mainWindow.isDestroyed()) {
     return mainWindow;
   }
@@ -624,6 +626,7 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' }
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
   floatingAssistant = floating;
+  workspaceWindowState = undefined;
   retainAssistantWindow = false;
   installAppSessionPermissions(window);
   windowScrollDiagnostics.set(window, new WindowScrollDiagnostics(window, appLogsDir()));
@@ -1262,7 +1265,7 @@ function createTray() {
   tray.setToolTip('cardbush');
   updateTrayMenu();
   tray.on('double-click', () => showMainWindow());
-  if (assistantResident) tray.on('click', () => showMainWindow());
+  tray.on('click', () => { if (assistantResident) showMainWindow(); });
 }
 
 let nativeUiLanguage: string | undefined;
@@ -1693,7 +1696,12 @@ function showMainWindow() {
   mainWindow.moveTop();
 }
 
-function openResidentWorkspace(page: 'team' | 'home') {
+function syncAssistantResidency() {
+  void runtimeHostController?.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+    command: { kind: 'runtime.sync_assistant_residency', payload: {} } }).catch(error => console.warn('[assistant-mode]', error));
+}
+
+function openResidentWorkspace(page: 'team' | 'home' | 'settings' | 'explore') {
   if (!assistantResident) return;
   if (mainWindow && floatingAssistant) {
     if (retainAssistantWindow || desktopVoiceHost.hasActiveCall(mainWindow.webContents.id)) {
@@ -1707,6 +1715,7 @@ function openResidentWorkspace(page: 'team' | 'home') {
     void startRuntimeServices().catch(() => undefined);
     createWindow({ workspace: page });
     assistantResident = false;
+    syncAssistantResidency();
     updateTrayMenu();
   }
   else showMainWindow();
@@ -1751,6 +1760,45 @@ ipcMain.handle('window:close-to-tray', () => {
   if (assistantResident && floatingAssistant) mainWindow?.close();
   else mainWindow?.hide();
 });
+ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown, idlePage: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('invalid_window_sender');
+  const win = mainWindow!;
+  if (action === 'startup' && typeof enabled === 'boolean') {
+    await saveResidentPreference(enabled);
+    updateTrayMenu();
+  } else if (action === 'float' && !floatingAssistant && !workspaceWindowState) {
+    if ((idlePage === 'home' || idlePage === 'explore') && !desktopVoiceHost.hasActiveCall(win.webContents.id)) {
+      // An untouched workspace has no editor or browser state to retain.
+      residentReturnPage = idlePage;
+      setImmediate(() => {
+        if (win !== mainWindow || win.isDestroyed() || isQuitting) return;
+        assistantResident = true;
+        syncAssistantResidency();
+        win.destroy();
+        createWindow();
+        updateTrayMenu();
+      });
+      return { floating: true, nextLaunch: assistantNextLaunch };
+    }
+    workspaceWindowState = { bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullscreen: win.isFullScreen(), alwaysOnTop: win.isAlwaysOnTop() };
+    if (workspaceWindowState.fullscreen) win.setFullScreen(false);
+    if (workspaceWindowState.maximized) win.unmaximize();
+    win.setSize(500, 640);
+    win.setAlwaysOnTop(true);
+    win.show(); win.focus();
+  } else if (action === 'workspace' && floatingAssistant) {
+    setImmediate(() => openResidentWorkspace(residentReturnPage));
+  } else if (action === 'workspace' && workspaceWindowState) {
+    const previous = workspaceWindowState;
+    workspaceWindowState = undefined;
+    win.setAlwaysOnTop(previous.alwaysOnTop);
+    win.setBounds(previous.bounds);
+    if (previous.maximized) win.maximize();
+    if (previous.fullscreen) win.setFullScreen(true);
+  } else if (!['read','workspace','float'].includes(String(action))) throw Error('invalid_assistant_mode');
+  return { floating: floatingAssistant || Boolean(workspaceWindowState), nextLaunch: assistantNextLaunch };
+});
 ipcMain.handle('assistant:window-retained', (event, retained: unknown) => {
   assertMainWindowSender(event.sender.id);
   if (!assistantResident || !floatingAssistant || typeof retained !== 'boolean') return;
@@ -1761,7 +1809,7 @@ ipcMain.handle('assistant:window-retained', (event, retained: unknown) => {
 });
 ipcMain.handle('assistant:open-workspace', (event, page: unknown) => {
   assertMainWindowSender(event.sender.id);
-  if (page === 'team') openResidentWorkspace(page);
+  if (page === 'team' || page === 'home' || page === 'settings') openResidentWorkspace(page);
 });
 
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
@@ -3563,9 +3611,9 @@ app.whenReady().then(async () => {
   void ensureLegacyProductSkillsMigrated();
   if (!assistantResident || fs.existsSync(path.join(app.getPath('userData'), 'webhooks', 'state.json')))
     void contextWebhookHost().catch(() => console.warn('[webhooks] startup unavailable'));
+  powerMonitor.on('resume', () => { if (assistantResident && !runtimeHostController) void scheduleResidentBoot(); });
   if (assistantResident) {
     void scheduleResidentBoot();
-    powerMonitor.on('resume', () => { if (assistantResident && !runtimeHostController) void scheduleResidentBoot(); });
     if (fs.existsSync(path.join(app.getPath('userData'), 'embodied', 'devices.json')))
       void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
   } else void startRuntimeServices();
@@ -4011,6 +4059,7 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal, onAccepted: () => void) => {
+        if (operation === 'assistant.is-resident') return assistantResident;
         if (operation === 'assistant.is-background') return assistantResident && !mainWindow && !isQuitting;
         if (operation === 'assistant.attention') {
           const notice = payload as { id: string; text?: string; interaction: boolean };

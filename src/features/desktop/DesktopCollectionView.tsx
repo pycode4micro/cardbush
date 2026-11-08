@@ -1,9 +1,9 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
-import { ArrowUpRight, Blocks, ChevronRight, Folder, MessageSquare, Plus, Search, SlidersHorizontal, Waves } from 'lucide-react';
+import { ArrowUpRight, Blocks, ChevronRight, Folder, MessageSquare, Plus, Search, Waves } from 'lucide-react';
 import type { EventPresentation, FriendsSnapshot, FriendsWorkEvent } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
 import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types';
-import { ApplicationIcon } from '../appCenter/AppCenter';
+import { AppCenterDock, ApplicationIcon } from '../appCenter/AppCenter';
 import type { ApplicationEntry } from '../appCenter/appCenterModel';
 import { FriendsEventDetails, FriendsExecutionRequests } from '../assistant/events/EventDetails';
 import { HtmlComponentSurface } from '../components/HtmlComponentSurface';
@@ -117,12 +117,12 @@ export function DesktopHomeView(p: HomeProps) {
 }
 type ExploreProps = {
   language: AppLanguage; groups: {label:string; entries:ApplicationEntry[]}[]; featured: ApplicationEntry[]; query:string;
-  onQuery(query:string):void; onManage():void; onLaunch(app:ApplicationEntry):void;
+  onQuery(query:string):void; onLaunch(app:ApplicationEntry):void;
 };
 export function ExploreView(p: ExploreProps) {
   const t = uiText(p.language);
   return <section className="desktop-library desktop-explore" aria-label={t('appCenter.appCenter')} data-desktop-page="explore">
-    <header className="desktop-page-heading"><h1>{t('appCenter.appCenter')}</h1><button className="desktop-manage" onClick={p.onManage}><SlidersHorizontal/>{t('desktop.manageApps')}</button></header>
+    <header className="desktop-page-heading"><h1>{t('appCenter.appCenter')}</h1><AppCenterDock language={p.language}/></header>
     <label className="desktop-filter"><Search/><input type="search" aria-label={t('appCenter.searchApps')} placeholder={t('appCenter.searchApps')} value={p.query} onChange={event => p.onQuery(event.target.value)}/></label>
     {p.featured.length > 0 && <div className="desktop-discover-covers">{p.featured.map((app,index) =>
       <button type="button" key={app.id} onClick={() => p.onLaunch(app)}><strong>{app.title}</strong><small>{app.description}</small><span aria-hidden="true" data-cover={index ? 'fold' : 'tide'}/></button>)}</div>}

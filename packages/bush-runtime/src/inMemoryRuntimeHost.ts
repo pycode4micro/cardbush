@@ -518,6 +518,14 @@ export class InMemoryRuntimeHost {
       },
       capabilities: this.#capabilityGrants, coordination: () => this.#coordination, automation: options.automation,
       hooks: request => this.#managementToolHooks(request) });
+    const readPreferredName = async (signal: AbortSignal) => {
+      try { return await this.#memory.store.preferredName(signal); }
+      catch (error) {
+        signal.throwIfAborted();
+        options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error)));
+        return undefined;
+      }
+    };
     this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal'), (session, entry) => {
       if (session === PERSONAL_ASSISTANT_SESSION && entry.role === 'assistant' && entry.visibility === 'conversation' && entry.content)
         options.onAssistantAttention?.({ id: entry.id, text: entry.content.slice(0, 500), interaction: false });
@@ -548,6 +556,7 @@ export class InMemoryRuntimeHost {
         }
         return this.#bridgePlugins.prepare(parent, signal);
       },
+      preferredName: readPreferredName,
       memory: new AssistantMemory(this.#memory, this.#toolRegistry, options.onRecoveryError),
       environment: this.#environment,
       agents: this.#agentExecutions,
@@ -876,6 +885,7 @@ export class InMemoryRuntimeHost {
     }));
     for (const [section, source] of Object.entries(options.environmentSources ?? {})) this.#environment.register(section, source);
     this.#assistantEvents = new AssistantEvents(join(runtimeDataRoot, 'friends', 'events.json'), {
+      preferredName: readPreferredName,
       collector: new EventCollector({ registry: this.#toolRegistry, capabilities: this.#capabilityGrants, executions: this.#toolExecutions,
         prepareToolCatalog: options.prepareToolCatalog,
         tasks: (owner, id) => this.#subagentTasks.get(owner, id),
@@ -1336,8 +1346,14 @@ export class InMemoryRuntimeHost {
       case TEAM_WORKFLOW_COMMAND:
         return this.#teams.configure(command.payload);
       case PERSONALIZATION_COMMAND: {
-        const payload = command.payload as { action?: unknown; settings?: unknown; model?: unknown;cursor?:number;includeInactive?:boolean;change?:unknown;changeId?:string;operationId?:string;feedback?:unknown };
+        const payload = command.payload as { action?: unknown; settings?: unknown; profile?: unknown; previous?: unknown; model?: unknown;cursor?:number;includeInactive?:boolean;change?:unknown;changeId?:string;operationId?:string;feedback?:unknown };
         const settings = individuationSettingsSchema.parse(payload.settings ?? {});
+        if (payload.action === 'read_profile') return this.#memory.store.personalProfile(signal);
+        if (payload.action === 'save_profile') {
+          const { personalProfileUpdateSchema } = await import('@cardbush/bush-protocol');
+          const { profile, previous } = personalProfileUpdateSchema.parse({ profile: payload.profile, previous: payload.previous });
+          return this.#memory.store.savePersonalProfile(profile, previous, signal);
+        }
         if(payload.action==='feedback') {
           const input=assistantFeedbackInputSchema.parse(payload.feedback);
           if(!payload.operationId?.trim()||payload.operationId.length>120)throw new Error('A stable feedback operation ID is required.');

@@ -74,7 +74,7 @@ async function run() {
         assert.equal(migrated.proactive.recognition.context, 'Migrated routine'); assert.equal(migrated.proactive.report, 'always');
         assert.equal(await read('!!document.querySelector("[data-nav-section=your-friends]")'), false);
         await read('document.querySelector("[data-nav-section=assistant]").click();void 0');
-        await until('document.querySelector("[data-assistant-events]")');
+        await until('document.querySelector("[data-profile-action=events]")');
         await read(`window.eventActions=[];window.testEvents=['first','second'].map(id=>({id,title:'Reminder '+id,status:'watching',subscription:id==='first',inputs:[]}));
           testEvents[0].recurrence={unit:'week',interval:1,startLocal:'2026-11-09T09:00',timeZone:'Asia/Shanghai'};
           window.cardbushDesktop={...window.cardbushDesktop,runtime:{command:async request=>{
@@ -84,7 +84,7 @@ async function run() {
             return {protocol:request.protocol,operationId:request.operationId,type:'command_response',ok:true,
               result:{configured:true,events:testEvents,detections:testEvents.filter(e=>e.recurrence).map(e=>({id:'timer',eventId:e.id,at:'2026-11-09T01:00:00Z'})),permissions:[],solutions:[]}};
           }}};
-          document.querySelector('[data-assistant-events]').click();void 0`);
+          document.querySelector('.profile-trigger').click();document.querySelector('[data-profile-action=events]').click();void 0`);
         await until('document.querySelector(".assistant-events-dialog[open]")');
         assert.ok(await read('!!document.querySelector(".assistant-events-dialog textarea")'));
         assert.ok(await read('document.querySelector(".assistant-events-dialog details").textContent.includes("Original evidence")'));
@@ -104,7 +104,7 @@ async function run() {
         assert.deepEqual(await read('testEvents.map(event=>event.id)'), ['second']);
         await read('document.querySelector(".assistant-events-dialog .settings-dialog-header button").click();void 0');
         await until('!document.querySelector(".assistant-events-dialog")');
-        assert.ok(await read('!!document.querySelector("[data-assistant-events]")'));
+        assert.ok(await read('!!document.querySelector("[data-profile-action=events]")'));
       }
       assert.deepEqual(failures, [], `${mode} must evaluate its split chunks without runtime errors`);
     } finally {

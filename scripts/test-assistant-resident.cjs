@@ -9,7 +9,8 @@ if (typeof electron === 'string') {
   const base = path.join(project, 'tmp');
   fs.mkdirSync(base, { recursive: true });
   const root = fs.mkdtempSync(path.join(base, 'assistant-resident-'));
-  for (const mode of ['workspace', 'resident']) {
+  const modes = process.argv.includes('--profile') ? ['workspace'] : ['workspace', 'resident'];
+  for (const mode of modes) {
     const profile = path.join(root, mode);
     fs.mkdirSync(profile);
     const env = { ...process.env, APPDATA: profile, LOCALAPPDATA: profile, USERPROFILE: profile, HOME: profile,
@@ -19,7 +20,7 @@ if (typeof electron === 'string') {
     if (result.error) throw result.error;
     assert.equal(result.status, 0, mode);
   }
-  const stats = Object.fromEntries(['workspace', 'resident'].map(k => [k, JSON.parse(fs.readFileSync(path.join(root, k, 'metrics.json'), 'utf8'))]));
+  const stats = Object.fromEntries(modes.map(k => [k, JSON.parse(fs.readFileSync(path.join(root, k, 'metrics.json'), 'utf8'))]));
   console.log(JSON.stringify(stats)); console.log(root);
 } else {
   run().catch(error => { console.error(error); electron.app.exit(1); });
@@ -87,7 +88,7 @@ async function run() {
     if (process.platform === 'win32') assert.equal(stats.delivered.stdioSupervisors, 0, 'local reminders do not start stdio tool processes');
     notice.emit('click');
     const win = await wait(() => BrowserWindow.getAllWindows()[0], 'notification opened Assistant');
-    await wait(() => win.webContents.executeJavaScript('Boolean(document.querySelector(".resident-assistant [data-assistant-events]"))'), 'floating Assistant');
+    await wait(() => win.webContents.executeJavaScript('Boolean(document.querySelector(".resident-assistant .profile-trigger"))'), 'floating Assistant');
     assert.equal(win.isAlwaysOnTop(), true);
     await wait(() => win.webContents.executeJavaScript('document.querySelector(".assistant-messages")?.innerText.includes("Resident reminder")'), 'same journal');
     assert.equal(await win.webContents.executeJavaScript('!!document.querySelector("[data-nav-section]")'), false);
@@ -134,6 +135,8 @@ async function run() {
     await wait(() => win.webContents.executeJavaScript('window.cardbushDesktop.runtimeStartupStatus().then(s=>s.phase==="ready")'), 'runtime ready');
     await sleep(1500); stats.open = take(); win.close(); await sleep(1500); stats.idle = take();
     assert.equal(stats.idle.windows, 1);
+    win.show();
+    await require('./helpers/personal-profile.cjs')({ win, BrowserWindow, tray, wait, root, project });
   }
   fs.writeFileSync(path.join(root, 'metrics.json'), JSON.stringify(stats, null, 2));
   menu.items.at(-1).click();

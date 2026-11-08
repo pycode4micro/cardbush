@@ -188,8 +188,10 @@ const desktopApi = {
     },
   },
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
+  assistantMode: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean, idlePage?: 'home' | 'explore') =>
+    ipcRenderer.invoke('assistant:mode', action, enabled, idlePage) as Promise<{ floating: boolean; nextLaunch: boolean }>,
   retainAssistantWindow: (retained: boolean) => ipcRenderer.invoke('assistant:window-retained', retained) as Promise<void>,
-  openAssistantWorkspace: (page: 'team') => ipcRenderer.invoke('assistant:open-workspace', page) as Promise<void>,
+  openAssistantWorkspace: (page: 'team' | 'home' | 'settings') => ipcRenderer.invoke('assistant:open-workspace', page) as Promise<void>,
   ensureTaskWorkspace: (sessionId: string) =>
     ipcRenderer.invoke('workspace:ensure-task-directory', sessionId) as Promise<string>,
   runtimeStartupStatus: () =>

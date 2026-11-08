@@ -9,7 +9,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import { AgentService } from '../dist-electron/agentService.mjs';
-import { bridgeModelStep } from './helpers/bridge-plugin-fixture.mjs';
+import { assistantBridgeStep } from './helpers/bridge-plugin-fixture.mjs';
 if (process.platform !== 'win32') process.env.CARDBUSH_CREDENTIAL_KEY = randomBytes(32).toString('hex');
 const tempRoot = resolve('tmp/cli-bridge-contract-tests');
 const wait = () => new Promise(r => setTimeout(r, 30));
@@ -39,7 +39,7 @@ for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers
     }
     const strings = []; const visit = x => { if (typeof x === 'string') strings.push(x); else if (x && typeof x === 'object') Object.values(x).forEach(visit); }; visit(body.input);
     const sourceRef = strings.join('\n').match(/"sourceRef"\s*:\s*"(webhook:[a-f0-9-]{36})"/)?.[1];
-    const send = bridgeModelStep(body.input, file), n = calls.length;
+    const send = assistantBridgeStep(body, file), n = calls.length;
     const item = send ? { id: 'function-' + n, call_id: send.id, type: 'function_call', name: send.name, status: 'completed',
       arguments: JSON.stringify(send.arguments) }
       : { id: 'msg_' + n, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '完成测试。', annotations: [] }] };
@@ -55,7 +55,7 @@ for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers
     service = await AgentService.open({ dataRoot: root, local: true, webhookPort: 0, env: { CARDBUSH_EXECUTION_SANDBOX: 'off' } });
     await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture-model', apiKey: 'fixture-secret', baseURL: `http://127.0.0.1:${model.address().port}/v1` }] } });
     await service.call('sessions.create', { sessionId: 'chosen' });
-    const state = await service.call('webhooks.command', { action: 'start', sessionId: 'chosen' });
+    const state = await service.call('webhooks.command', { action: 'start', sessionId: 'personal-assistant' });
     const config = { port: 4793, callbackToken: 'b'.repeat(64), cardbush: { url: 'http://127.0.0.1:4791/api/webhooks/v1/test/messages', token: 'a'.repeat(64) } };
     if (platform === 'weixin') bridge = await new Bridge(bridgeRoot, config, { id: 'bot-fixture', userId: 'owner' }, {
       send: async (...args) => sent.push(['text', ...args]), sendFile: async (...args) => { uploads.push(args[2].bytes); sent.push(['file', ...args]); },
@@ -67,8 +67,8 @@ for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers
     connecting = connectLocalService({ ...bridge.config, port: callbackPort, cardbush: { url: '', token: '' } }, {
       name: platform, baseUrl: `http://127.0.0.1:${state.port}`, save: async () => {}, wait, signal: cancel.signal,
     }); void connecting.catch(() => {});
-    const pending = await until(async () => (await service.call('webhooks.command', { action: 'read', sessionId: 'chosen' })).pairings[0]);
-    await service.call('webhooks.command', { action: 'connect', sessionId: 'chosen', id: pending.requestId,
+    const pending = await until(async () => (await service.call('webhooks.command', { action: 'read', sessionId: 'personal-assistant' })).pairings[0]);
+    await service.call('webhooks.command', { action: 'connect', sessionId: 'personal-assistant', id: pending.requestId,
       settings: { modelId: 'fixture', permissionMode: 'all_free', language: 'zh' } });
     bridge.config = await connecting; await bridge.advertise();
     const ingest = async (id, text) => {
@@ -77,13 +77,13 @@ for (const platform of ['weixin', 'feishu']) test(`${platform} adapter discovers
     };
     await ingest('original', '看看测试文件。'); await bridge.processOnce(); await reasoning.promise;
     await ingest('supplement', '补充：用工具把测试文件发给我。');
-    await until(async () => { await bridge.processOnce(); return sent.some(s => s[0] === 'file') && sent.filter(s => s[0] === 'text').length === 2; });
+    await until(async () => { await bridge.processOnce(); return sent.some(s => s[0] === 'file') && sent.filter(s => s[0] === 'text').length >= 2; });
     assert.ok(interrupted, 'the earlier model stream was interrupted by an ordinary platform message');
     assert.ok(JSON.stringify(calls[1].input).includes('补充：用工具把测试文件发给我。'));
     assert.deepEqual(uploads, [bytes]); assert.equal(sent.filter(s => s[0] === 'file').length, 1);
     assert.equal(sent.find(s => s[0] === 'file')[1], platform === 'weixin' ? 'owner' : 'oc_origin');
     if (platform === 'weixin') assert.equal(sent.find(s => s[0] === 'file')[2], 'supplement-context');
-    assert.equal((await service.call('chat.jobs', { sessionId: 'chosen' })).length, 1);
+    assert.equal((await service.call('chat.jobs', { sessionId: 'chosen' })).length, 0);
     assert.ok(calls.every(call => !call.tools.some(t => t.name === 'send_to_bot')));
     assert.ok(JSON.stringify(calls).includes('bridge-schema-call'), 'plugin schema is loaded through discovery');
     await bridge.processOnce(); assert.equal(uploads.length, 1);

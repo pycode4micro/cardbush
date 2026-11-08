@@ -43,6 +43,11 @@ const defaultAppSettings: AppSettingsState = {
   },
 };
 
+export function previousUserName() {
+  const name = localStorage.getItem('cardbush_user_name')?.trim();
+  return name && name !== defaultAppSettings.user.name ? name : '';
+}
+
 export function readInitialAppSettings(): AppSettingsState {
   return normalizeAppSettings({
     appearance: readAppearance(),

@@ -1,3 +1,4 @@
+import { ProfileCenter } from './features/profile/ProfileCenter';
 import { AssistantEventConnection } from './features/assistant/events/AssistantEventConnection';
 import { UiLanguageProvider } from './i18n/react';
 import { uiText } from './i18n';
@@ -288,16 +289,18 @@ function CardbushApp() {
   );
   const [appSettings, setAppSettings] = useAppSettings();
   const requestedWorkspace = new URLSearchParams(window.location.search).get('workspace');
-  const [section, setSection] = useState<AppSection>(requestedWorkspace === 'team' ? 'team' : 'home');
+  const [floating, setFloating] = useState(false);
+  const [section, setSection] = useState<AppSection>(requestedWorkspace === 'team' || requestedWorkspace === 'explore' ? requestedWorkspace : 'home');
+  const workspaceVisited = useRef(false);
   const [homePage, setHomePage] = useState<HomePage>({ kind: 'overview' });
   const { compactLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
   );
   const [windowMaximized, setWindowMaximized] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(requestedWorkspace === 'settings');
   const [conversationPromptFocus, setConversationPromptFocus] = useState(0);
-  const [settingsMounted, setSettingsMounted] = useState(false);
+  const [settingsMounted, setSettingsMounted] = useState(requestedWorkspace === 'settings');
   const [settingsReady, setSettingsReady] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>('general');
@@ -1955,6 +1958,17 @@ function CardbushApp() {
     openChangeReviewInspector(conversationId);
     if (compactLayout) collapseSidebar();
   }, [openChangeReviewInspector, compactLayout, collapseSidebar]);
+  useEffect(() => {
+    if ((section !== 'home' && section !== 'explore') || settingsOpen || retainedInspectorTabs.length)
+      workspaceVisited.current = true;
+  }, [section, settingsOpen, retainedInspectorTabs.length]);
+  const inWorkspace = async (action: () => void) => {
+    if (floating) {
+      await window.cardbushDesktop!.assistantMode!('workspace');
+      setFloating(false);
+    }
+    action();
+  };
   const handleSidebarOpenSettings = useCallback(() => {
     openSettings();
   }, [openSettings]);
@@ -2071,9 +2085,19 @@ function CardbushApp() {
       style={appStyle}
       data-translucent-sidebar={appearance.translucentSidebar}
       data-desktop-workspace=""
+      data-floating-assistant={floating || undefined}
       data-pointer-cursor={appearance.pointerCursor}
       data-diff-indicators={appearance.diffIndicators}
     >
+      <ProfileCenter language={language} ready={runtimeStartup.phase === 'ready'} floating={floating} prepare={chat.prepareAssistantRequest}
+        settings={() => inWorkspace(() => openSettings())}
+        switchWindow={async () => {
+          const idlePage = !workspaceVisited.current && !chat.processingConversationIds.size && !Object.values(draftsByConversation).some(Boolean)
+            && ((section === 'home' && homePage.kind === 'overview') || section === 'explore') ? section : undefined;
+          const mode = await window.cardbushDesktop!.assistantMode!(floating ? 'workspace' : 'float', undefined, idlePage);
+          setFloating(mode.floating);
+          if (mode.floating) setSettingsOpen(false);
+        }}>
       <AppCenterProvider language={language} onExplore={openExplore} onNavigate={(application, environmentId) => {
 
         if (application.kind === 'web') { setSettingsOpen(false); openInspectorTarget({ target: application.target, title: application.title }); return; }
@@ -2090,7 +2114,7 @@ function CardbushApp() {
         language={language}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={toggleSidebar}
-        menus={windowMenus}
+        menus={floating ? [] : windowMenus}
         onBack={pageNavigation.canGoBack ? pageNavigation.back : settingsOpen ? () => setSettingsOpen(false) : undefined}
         onForward={pageNavigation.canGoForward ? pageNavigation.forward : undefined}
         onInspectorHistory={(direction, tabId = activeInspectorTabIdentity) => {
@@ -2221,19 +2245,19 @@ function CardbushApp() {
               />
             </>
           )}
-          <section ref={mainStageRef} className="main-stage" inert={inspectorControlsVisible || compactLayout && (!sidebarCollapsed || inspectorOpen) ? true : undefined}>
-            <AssistantView active={section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
-              inspectorOpen={inspectorOpen} onToggleInspector={toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
-              composerPortalTarget={section === 'assistant' && quickInputOpen ? quickInputTarget : null}
+          <section ref={mainStageRef} className="main-stage" inert={!floating && (inspectorControlsVisible || compactLayout && (!sidebarCollapsed || inspectorOpen)) ? true : undefined}>
+            <AssistantView compactProfileMenu={floating} active={floating || section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
+              inspectorOpen={!floating && inspectorOpen} onToggleInspector={floating ? undefined : toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
+              composerPortalTarget={!floating && section === 'assistant' && quickInputOpen ? quickInputTarget : null}
               subagentObservabilityAvailable={backendCapabilities.subagentObservability && backendCapabilities.subagentObservabilityProtocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL}
               composerControls={{ ...assistantModel, availableModels,
-                onConfigureModels: () => openSettings('models'), referencePlanMode: chat.referencePlanMode, onReferencePlanModeChange: chat.setReferencePlanMode,
+                onConfigureModels: () => { void inWorkspace(() => openSettings('models')).catch(error => showUiError(uiText(language)('profile.modeFailed'), errorMessage(error))); }, referencePlanMode: chat.referencePlanMode, onReferencePlanModeChange: chat.setReferencePlanMode,
                 permissionMode: chat.permissionMode, onPermissionModeChange: chat.setPermissionMode,
                 subagentPermissionRouting: chat.subagentPermissionRouting, onSubagentPermissionRoutingChange: chat.setSubagentPermissionRouting,
                 reasoningLevelAvailable: backendCapabilities.reasoningLevelSelection,
                 reasoningLevels: backendCapabilities.reasoningLevels,
                 skills: chat.skills, disabledSkillNames, onToggleSkill: toggleSkillEnabled }}
-              onManageHosts={() => { showTeamWorkspaceTab('agents'); setSection('team'); }}/>
+              onManageHosts={() => { void inWorkspace(() => { showTeamWorkspaceTab('agents'); setSection('team'); }).catch(error => showUiError(uiText(language)('profile.modeFailed'), errorMessage(error))); }}/>
               <HtmlComponentContext.Provider value={{ revision: chat.activeConversationId || '__new__', sessionId: chat.activeConversationId, language, running: chat.sending,
                 draft: activeDraft, notice: chat.error || chat.notice || undefined,
                 selectSuggestion: suggestion => { if (suggestion.sessionId) openConversation(suggestion.sessionId); else setActiveDraft(suggestion.text); },
@@ -2254,7 +2278,6 @@ function CardbushApp() {
                 language={language}
                 theme={theme}
                 title={chat.activeConversation?.title ?? 'cardbush'}
-                prepareWebhook={chat.prepareWebhookRequest}
                 sidebarCollapsed={sidebarCollapsed}
                 windowMaximized={windowMaximized}
                 inspectorOpen={inspectorOpen}
@@ -2861,6 +2884,7 @@ function CardbushApp() {
       <CopyToastHost language={language} />
       <McpUserRequests language={language} />
       </AppCenterProvider>
+      </ProfileCenter>
     </div>
     </ImageGalleryProvider>
     </ApplicationVoiceHost>

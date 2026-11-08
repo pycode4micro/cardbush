@@ -1,0 +1,41 @@
+.profile-menu { width: 100%; min-width: 0; }
+.profile-trigger, .profile-popover button { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: inherit; text-align: start; cursor: pointer; }
+.profile-trigger { padding: 7px 10px; font-weight: 550; }
+.profile-trigger > span:nth-child(2), .profile-popover strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-trigger > svg { margin-inline-start: auto; width: 14px; color: var(--text-soft); }
+.profile-symbol, .profile-avatar { display: grid; flex: none; place-items: center; border-radius: 50%; background: color-mix(in srgb,var(--text) 8%,transparent); }
+.profile-symbol { width: 26px; height: 26px; }
+.profile-symbol svg { width: 16px; height: 16px; }
+.profile-popover { position: fixed; inset: auto; left: max(8px,anchor(left)); bottom: calc(anchor(top) + 6px); margin: 0; box-sizing: border-box; width: clamp(220px,anchor-size(width),288px); max-width: calc(100vw - 16px); max-height: calc(100dvh - 78px); overflow: auto; padding: 8px; color: var(--text); background: var(--menu-surface); border: 1px solid var(--menu-border); border-radius: 13px; box-shadow: var(--menu-shadow); }
+.profile-popover header { position: relative; }
+.profile-popover header > [data-profile-action=edit] { flex-direction: column; gap: 4px; padding: 9px 4px; align-items: center; }
+.profile-popover strong { max-width: 100%; }
+.profile-avatar { width: 44px; height: 44px; margin-bottom: 3px; }
+.profile-avatar svg { width: 24px; height: 24px; }
+.profile-popover small { color: var(--text-soft); }
+.profile-menu-group { border-top: 1px solid var(--menu-border); padding-top: 5px; margin-top: 5px; }
+.profile-menu-group button { padding: 7px 9px; font-size: 13px; }
+.profile-menu-group svg { flex: none; width: 16px; height: 16px; }
+.profile-popover .profile-settings { position: absolute; top: 0; right: 0; width: 30px; height: 30px; justify-content: center; color: var(--text-soft); }
+.profile-settings svg { width: 16px; height: 16px; }
+.profile-switch { flex: none; width: 24px; padding: 3px; margin-inline-start: auto; border-radius: 12px; background: color-mix(in srgb,var(--text) 21%,transparent); }
+.profile-switch::before { content: ''; display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--surface); }
+[aria-checked=true] > .profile-switch { background: var(--accent); }
+[aria-checked=true] > .profile-switch::before { margin-inline-start: auto; }
+.profile-popover button:disabled { opacity: .48; cursor: default; }
+.profile-trigger:hover, .profile-popover button:not(:disabled):hover { background: var(--menu-hover); }
+.profile-menu[data-compact] { width: auto; }
+.profile-menu[data-compact] .profile-trigger { padding: 3px; }
+.profile-menu[data-compact] .profile-popover { inset: auto 8px auto auto; top: calc(anchor(bottom) + 6px); width: 250px; }
+.profile-editor label { display: grid; gap: 7px; }
+.profile-editor :is(input,textarea) { width: 100%; box-sizing: border-box; padding: 9px 11px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
+.profile-editor textarea { resize: vertical; }
+
+.app[data-floating-assistant] > .desktop-shell { display: flex; }
+.app[data-floating-assistant] > .desktop-shell > :not(.main-stage),
+.app[data-floating-assistant] .window-frame :is(.desktop-menu-toggle,.window-sidebar-toggle,.window-history-controls) { display: none; }
+.app[data-floating-assistant] > .desktop-shell > .main-stage { position: relative; inset: auto; width: 100%; min-width: 0; max-width: none; flex: 1; display: flex; visibility: visible; transform: none; opacity: 1; pointer-events: auto; }
+.desktop-page-heading .app-center-dock { flex-direction: row-reverse; width: auto; max-width: 70%; }
+.desktop-page-heading .app-center-launcher.desktop-manage { width: auto; }
+.desktop-page-heading .app-center-shortcuts { margin: 0; }
+.app[data-floating-assistant] .main-stage > :not(.assistant-view) { display: none; }

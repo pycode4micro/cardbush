@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, request as httpRequest, Agent } from 'node:http';
@@ -18,7 +18,13 @@ const request = (sessionId, text = 'hello', turnId = 'initial') => ({ protocol: 
 const config = (extra = {}) => ({ name: 'External bot', enabled: true, url: '', headers: {}, parameters: {},
   body: { text: '{{reply}}', id: '{{messageId}}', status: '{{status}}', eventId: '{{eventId}}' },
   incoming: { messageId: 'messageId', text: 'text', senderId: 'senderId', conversationId: 'conversationId' }, ...extra });
-const binding = (sessionId = 'existing') => ({ kind: 'conversation', sessionId, title: 'Existing conversation', parent: request(sessionId) });
+const binding = (sessionId = 'personal-assistant') => ({ kind: 'assistant', sessionId, title: 'Assistant', parent: request(sessionId), profile:assistantProfileSchema.parse({}),generation:0 });
+async function seedConnections(root,connections,receipts=[]) {
+  await mkdir(join(root,'webhooks'),{recursive:true});
+  await writeFile(join(root,'webhooks','state.json'), JSON.stringify({version:1,encrypted:secrets.encrypt(JSON.stringify({
+    version:1,host:'127.0.0.1',port:4791,connections,receipts,pairings:[],botDeliveries:[],
+  }))}));
+}
 const message = (messageId, text = 'Continue') => ({ messageId, text, senderId: 'u-1', conversationId: 'remote-chat' });
 const until = async fn => { for (let n = 0; n < 160; n++) { const value = await fn(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } throw Error('Timed out'); };
 async function* answer(request, text) {
@@ -96,19 +102,26 @@ test('Assistant adopts saved Friends bindings and events; isolated notices keep 
     const parent = { ...request(sessionId), tools: await bridge.command('runtime.get_tool_catalog', {}), requestCapabilities: { vision: false, interactiveRequests: true } };
     await friends({ action: 'configure', parent, profile: { name: 'Fixture', language: 'en', timeZone: 'UTC', recognition: {}, confirmedAt: new Date().toISOString() } });
     await until(async () => (await friends({ action: 'read' })).events[0]?.status === 'completed');
-    assert.match(JSON.stringify(requests[0].messages), /bot_not_connected/);
+    const startup = requests[0].messages.find(entry => entry.name === 'runtime_environment');
+    assert.deepEqual(JSON.parse(startup.content).sections.services.bots, [], 'local-only startup has no delivery route');
+    assert.equal((await gateway.botRequest({ action: 'context', sessionId })).reason, 'bot_not_connected');
     const selected = { kind: 'friends', sessionId, title: 'Friends' };
     const cfg = config({ name: 'Weixin fixture', url: `http://127.0.0.1:${receiver.address().port}/reply`,
       body: { eventId: '{{eventId}}', id: '{{messageId}}', text: '{{reply}}', sender: '{{senderId}}', room: '{{conversationId}}' } });
     await assert.rejects(gateway.command({ action: 'save', binding: { ...selected, kind: 'conversation', parent }, config: cfg }));
-    const [connection] = (await gateway.command({ action: 'save', binding: selected, config: cfg })).connections;
+    await assert.rejects(gateway.command({action:'save',binding:selected,config:cfg}), /assistant_only/);
+    await gateway.close();
+    await seedConnections(root,[{...cfg,id:randomUUID(),token:'a'.repeat(64),binding:selected}]);
+    gateway = await new ContextWebhookHost(root,secrets,bridge,{port:0}).start();
+    const [connection] = (await gateway.command({action:'read',sessionId:'personal-assistant'})).connections;
     await bridge.command('runtime.create_session', { sessionId: 'personal-assistant' });
     const assistant = assistantProfileSchema.parse({ name: 'Unified assistant', proactive: { recognition: { context: 'Fixture daily routine' },
       beforeExecution: 'within-scope', report: 'always', confirmedAt: new Date().toISOString() } });
     const before = (await friends({ action: 'read' })).events;
-    await friends({ action: 'configure', assistant, parent: { ...parent, sessionId: 'personal-assistant' },
+    const configure = assistant => friends({ action: 'configure', assistant, parent: { ...parent, sessionId: 'personal-assistant' },
       profile: { name: assistant.name, recognition: assistant.proactive.recognition, confirmedAt: assistant.proactive.confirmedAt,
         timeZone: 'UTC', language: 'en', interactionPreferences: { beforeExecution: 'within-scope', report: 'always' } } });
+    await configure(assistant);
     assert.deepEqual((await friends({ action: 'read' })).events, before);
     assert.equal((await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).connections[0].id, connection.id);
     const bot = client(connection), instanceId = randomUUID(), leaseUrl = connection.endpoint.replace(/\/messages$/, '/capabilities');
@@ -125,6 +138,8 @@ test('Assistant adopts saved Friends bindings and events; isolated notices keep 
     };
     const first = await push('first', 'Schedule my update.', 'alice');
     assert.equal(first.reply, 'Which detail?');
+    const [recipient] = await friends({ action: 'targets' });
+    await configure({ ...assistant, proactive: { ...assistant.proactive, notificationSourceRef: recipient.sourceRef } });
     await friends({ action: 'submit', input: { id: 'local-notice', text: 'Send me the update.', createdAt: new Date().toISOString() } });
     await until(() => received.some(body => body.arguments?.text === 'From desktop.'));
     assert.equal(received.find(body => body.arguments?.text === 'From desktop.').senderId, 'alice');
@@ -154,7 +169,7 @@ test('Assistant adopts saved Friends bindings and events; isolated notices keep 
     assert.ok(journal.entries.some(e => e.content === 'Unrelated message.' && e.role === 'user'));
     assert.ok(requests.filter(req => req.metadata.friendsExecution).every(req => !JSON.stringify(req.messages).includes('Unrelated message.')));
     assert.equal((await bot.read('first')).reply, 'Which detail?');
-    assert.equal((await runContextWebhook(bridge, selected, message('missing'), randomUUID(), true, new AbortController().signal)).status, 'interrupted');
+    await assert.rejects(runContextWebhook(bridge, selected, message('missing'), randomUUID(), true, new AbortController().signal), /assistant_only/);
     const inbound = requests.find(req => req.metadata.botSourceRef), timed = requests.find(req => req.metadata.friendsExecution && req.metadata.botSourceRefs);
     assert.equal(inbound.permissionMode, 'all_free'); assert.equal(inbound.requestCapabilities.interactiveRequests, false);
     assert.equal(timed.permissionMode, 'task_free'); assert.equal(timed.requestCapabilities.interactiveRequests, true);
@@ -172,10 +187,10 @@ test('Assistant adopts saved Friends bindings and events; isolated notices keep 
   }
 });
 
-for (const kind of ['conversation', 'assistant']) for (const phase of ['reasoning', 'tool']) {
-  test(`${kind}: a second message from the same bridge chat steers running ${phase} and sends the task result once`, { timeout: 30000 }, async () => {
+for (const phase of ['reasoning', 'tool']) {
+  test(`Assistant: a second message from the same bridge chat steers running ${phase} and sends the task result once`, { timeout: 30000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'webhook-guidance-'));
-    const sessionId = kind === 'assistant' ? 'personal-assistant' : 'guided-session';
+    const sessionId = 'personal-assistant';
     const entered = Promise.withResolvers(), release = Promise.withResolvers();
     const requests = [], delivered = [], registry = new ToolRegistry();
     let gateway, toolCalls = 0, cancelled = false;
@@ -207,7 +222,7 @@ for (const kind of ['conversation', 'assistant']) for (const phase of ['reasonin
     try {
       await bridge.command('runtime.create_session', { sessionId });
       gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
-      const selected = { ...binding(sessionId), kind, ...(kind === 'assistant' ? { profile: assistantProfileSchema.parse({}), generation: 0 } : {}) };
+      const selected = binding(sessionId);
       selected.parent.tools = [registry.resolve(name).definition];
       const connection = (await gateway.command({ action: 'save', binding: selected, config: config({ url: `http://127.0.0.1:${receiver.address().port}/reply` }) })).connections[0];
       const bot = client(connection);
@@ -219,7 +234,7 @@ for (const kind of ['conversation', 'assistant']) for (const phase of ['reasonin
       assert.equal((await bot.send(message('edit', 'Only the first two pages, please.'))).status, 202);
       if (phase === 'tool') {
         assert.equal(toolCalls, 1); assert.equal(requests.length, 1, 'tool still owns its execution; no second model round yet');
-        if (kind === 'assistant') assert.ok((await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId })).entries.some(e => e.content === 'Only the first two pages, please.'));
+        assert.ok((await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId })).entries.some(e => e.content === 'Only the first two pages, please.'));
         release.resolve();
       }
       const done = await until(async () => { const receipt = await bot.read('original'); return receipt.status === 'completed' && receipt; });
@@ -245,7 +260,7 @@ test('webhook guidance stays within the original bridge, sender and chat and nev
   const turns = [], appends = [];
   const runtime = { command: async (kind, payload) => {
     if (kind === 'runtime.enqueue_guidance') { appends.push(payload); throw Error('lost IPC reply'); }
-    return {};
+    return { generation: 0 };
   } };
   const host = await new ContextWebhookHost(root, secrets, runtime, { port: 0, execute: async (_runtime, _binding, msg) => {
     turns.push(msg.messageId); if (msg.messageId === 'original') { entered.resolve(); await release.promise; }
@@ -280,18 +295,19 @@ test('parameter mapping and JSON templates preserve escaped values and reject un
   assert.equal(webhookConfigSchema.safeParse(config({ url: 'http://example.com/reply' })).success, false);
 });
 
-test('desktop HTTP binding continues the existing Runtime history, routes callbacks, and survives restart without rerunning', { timeout: 30000 }, async () => {
+test('desktop HTTP binding isolates ordinary Runtime history, routes callbacks, and survives restart without rerunning', { timeout: 30000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'context-webhook-')), calls = [], delivered = [];
   const receiver = createServer(async (req, res) => { let text = ''; for await (const part of req) text += part;
     delivered.push({ body: JSON.parse(text), authorization: req.headers.authorization }); res.writeHead(200).end(); });
   receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
-  const runtime = new InMemoryRuntimeHost({ sessionStore: new SessionStore(), provider: { async *stream(input) {
+  const runtime = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: new SessionStore(), provider: { async *stream(input) {
     calls.push(input); yield* answer(input, calls.length === 1 ? 'I remember olive.' : 'The word was olive.');
   } } });
   const bridge = { command: (kind, payload) => runtime.sendCommand({ kind, payload }) };
   let gateway;
   try {
     await runtime.runSessionTurn(request('existing', 'Remember olive.'));
+    await bridge.command('runtime.create_session',{sessionId:'personal-assistant'});
     gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
     const savedBinding = binding();
     savedBinding.parent.inputMessages.unshift({ messageId: 'old-clock', message: { role: 'user', name: 'turn_runtime_context',
@@ -306,8 +322,8 @@ test('desktop HTTP binding continues the existing Runtime history, routes callba
     assert.equal((await bot.send(message('first'))).status, 202);
     assert.equal((await bot.send(message('first', 'different'))).status, 409);
     const result = await until(async () => { const value = await bot.read('first'); return value.status === 'completed' && value; });
-    assert.equal(result.sessionId, 'existing'); assert.equal(result.reply, 'The word was olive.');
-    assert.equal(calls.length, 2); assert.match(JSON.stringify(calls[1].messages), /Remember olive/);
+    assert.equal(result.sessionId, 'personal-assistant'); assert.equal(result.reply, 'The word was olive.');
+    assert.equal(calls.length, 2); assert.doesNotMatch(JSON.stringify(calls[1].messages), /Remember olive/);
     assert.equal(calls[0].permissionMode, 'task_free'); assert.equal(calls[1].permissionMode, 'all_free');
     assert.equal(calls[1].requestCapabilities.interactiveRequests, false);
     assert.equal(savedBinding.parent.permissionMode, 'task_free', 'binding preparation does not mutate local settings');
@@ -320,13 +336,13 @@ test('desktop HTTP binding continues the existing Runtime history, routes callba
     await until(() => delivered.length); assert.equal(delivered[0].body.receiver, 'room-1'); assert.equal(delivered[0].authorization, 'Bearer external-private');
     const disk = await readFile(join(root, 'webhooks/state.json'), 'utf8'); assert.ok(!disk.includes(connection.token) && !disk.includes('external-private'));
     await gateway.close(); gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
-    const reopened = (await gateway.command({ action: 'read', sessionId: 'existing' })).connections[0];
+    const reopened = (await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).connections[0];
     assert.equal((await client(reopened).send(message('first'))).status, 202); assert.equal(calls.length, 2);
-    assert.deepEqual((await gateway.command({ action: 'read', sessionId: 'another' })).connections, []);
+    await assert.rejects(gateway.command({ action: 'read', sessionId: 'another' }),/assistant_only/);
     await assert.rejects(gateway.command({ action: 'save', config: config({ id: reopened.id }), binding: binding('another') }));
-    await gateway.command({ action: 'delete', id: reopened.id, sessionId: 'existing' });
+    await gateway.command({ action: 'delete', id: reopened.id, sessionId: 'personal-assistant' });
     assert.equal((await client(reopened).send(message('after-delete'))).status, 401, 'deletion revokes message access while local discovery stays available');
-    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).listening, true);
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).listening, true);
   } finally { await gateway?.close(); await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); receiver.closeAllConnections();
     await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });
@@ -439,11 +455,14 @@ test('Assistant webhook reset isolates running and queued receipts from subseque
 
 test('Assistant webhook admission remains retryable when the current context cannot be read', async () => {
   const root = await mkdtemp(join(tmpdir(), 'webhook-assistant-admission-')), sessionId = 'personal-assistant';
-  let gateway, unavailable = true, calls = 0;
+  let gateway, readState = 'offline', calls = 0;
   const runtime = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: new SessionStore(), toolRegistry: new ToolRegistry(),
     provider: { async *stream(input) { calls++; yield* answer(input, 'Received once.'); } } });
   const bridge = { async command(kind, payload) {
-    if (unavailable && kind === 'runtime.assistant_conversation' && payload.action === 'read') throw Error('Runtime transport temporarily unavailable.');
+    if (kind === 'runtime.assistant_conversation' && payload.action === 'read') {
+      if (readState === 'offline') throw Error('Runtime transport temporarily unavailable.');
+      if (readState === 'incomplete') return {};
+    }
     return runtime.sendCommand({ kind, payload });
   } };
   try {
@@ -453,16 +472,18 @@ test('Assistant webhook admission remains retryable when the current context can
       ...binding(sessionId), kind: 'assistant', generation: 0, profile: assistantProfileSchema.parse({}) } })).connections[0];
     const bot = client(connection), failed = await bot.send(message('retry'));
     assert.equal(failed.status, 503); assert.deepEqual(await failed.json(), { error: { code: 'service_unavailable' } });
+    readState = 'incomplete';
+    assert.equal((await bot.send(message('retry'))).status, 503, 'a partial runtime reply must not invalidate the saved binding');
     const state = JSON.parse(secrets.decrypt(JSON.parse(await readFile(join(root, 'webhooks/state.json'), 'utf8')).encrypted));
     assert.deepEqual(state.receipts, [], 'a failed admission must not consume the bridge message ID');
-    await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId }); unavailable = false;
+    await bridge.command('runtime.assistant_conversation', { action: 'reset', sessionId }); readState = 'ready';
     assert.equal((await bot.send(message('retry'))).status, 202);
     await until(async () => (await bot.read('retry')).status === 'completed');
     assert.equal(calls, 1);
   } finally { await gateway?.close(); await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
 });
 
-test('legacy webhook bindings use full access, deny question cards and continue from a final-reply question', async () => {
+test('webhook child turns use full access, deny question cards and continue from a final-reply question', async () => {
   const root = await mkdtemp(join(tmpdir(), 'webhook-policy-')), log = new InMemoryRuntimeEventLog(), registry = new ToolRegistry();
   const calls = []; let executions = 0;
   registry.register({ definition: { name: 'fixture_operation', description: 'An operation requiring permission.', inputSchema: { type: 'object', properties: {} } },
@@ -491,19 +512,26 @@ test('legacy webhook bindings use full access, deny question cards and continue 
   const bridge = { command: (kind, payload) => runtime.sendCommand({ kind, payload }) };
   try {
     await bridge.command('runtime.create_session', { sessionId: 'existing' });
-    const selected = binding(); selected.parent.tools = await bridge.command('runtime.get_tool_catalog', {});
+    const selected = {parent:request('existing')}; selected.parent.tools = await bridge.command('runtime.get_tool_catalog', {});
     selected.parent.requestCapabilities = { vision: true, interactiveRequests: true };
     selected.parent.prefixMessages = [{ role: 'system', content: 'Fixture policy.' }];
     selected.parent.metadata.systemPolicy = { id: 'fixture', version: '1' };
     const original = structuredClone(selected);
+    const runChild = async (input, id) => {
+      const turnId='webhook-'+id;
+      await runtime.runSessionTurn(applyWebhookTurnPolicy({...selected.parent,turnId,requestId:turnId,inputMessages:[{messageId:id,message:{role:'user',content:input.text}}]}));
+      const session=await bridge.command('runtime.get_session',{sessionId:'existing'});
+      const turn=session.turns.find(t=>t.turnId===turnId);
+      return {status:turn.status,reply:turn.messages.filter(m=>m.message.role==='assistant' && !m.message.toolCalls?.length).at(-1)?.message.content};
+    };
     const applied = applyWebhookTurnPolicy(selected.parent);
     assert.equal(applied.requestCapabilities.vision, true); assert.deepEqual(applyWebhookTurnPolicy(applied), applied);
-    const first = await runContextWebhook(bridge, selected, message('q', 'Prepare a design.'), 'question', false, new AbortController().signal);
+    const first = await runChild(message('q', 'Prepare a design.'),'question');
     assert.equal(first.status, 'completed'); assert.equal(first.reply, 'Which color should I use, blue or green?');
     assert.equal(executions, 1);
     assert.ok(!log.replay('existing', 'webhook-question').some(e => ['permission_requested', 'solution_selection_requested'].includes(e.kind)));
     assert.deepEqual(await bridge.command('runtime.list_solution_selections', { sessionId: 'existing' }), []);
-    const next = await runContextWebhook(bridge, selected, message('a', 'Blue.'), 'answer', false, new AbortController().signal);
+    const next = await runChild(message('a', 'Blue.'),'answer');
     assert.equal(next.status, 'completed'); assert.equal(next.reply, 'I will use blue.');
     assert.ok(calls.at(-1).messages.some(m => m.role === 'assistant' && m.content === first.reply));
     assert.ok(calls.at(-1).messages.some(m => m.role === 'user' && m.content === 'Blue.'));
@@ -517,7 +545,7 @@ test('delivery retry does not call the model again; disabled/deleted bindings st
   const root = await mkdtemp(join(tmpdir(), 'webhook-retry-')); let deliveries = 0, executions = 0;
   const receiver = createServer((req, res) => { req.resume(); res.writeHead(++deliveries === 1 ? 503 : 200).end(); });
   receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
-  const gateway = await new ContextWebhookHost(root, secrets, { command: async () => ({}) }, { port: 0,
+  const gateway = await new ContextWebhookHost(root, secrets, { command: async () => ({ generation: 0 }) }, { port: 0,
     execute: async () => { executions++; return { status: 'completed', reply: 'done' }; } }).start();
   try {
     const cfg = config({ url: `http://127.0.0.1:${receiver.address().port}/` });
@@ -525,15 +553,15 @@ test('delivery retry does not call the model again; disabled/deleted bindings st
     await client(connection).send(message('retry')); await until(() => deliveries >= 2); assert.equal(executions, 1);
     await gateway.command({ action: 'save', config: { ...cfg, id: connection.id, enabled: false }, binding: binding() });
     assert.equal((await client(connection).send(message('after-disable'))).status, 401);
-    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).listening, true);
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).listening, true);
   } finally { await gateway.close(); receiver.closeAllConnections(); await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
 });
 
 test('generic local pairing exchanges parameters only after desktop authorization and survives restart', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'webhook-pairing-')), runtime = { command: async () => ({}) }; let gateway;
+  const root = await mkdtemp(join(tmpdir(), 'webhook-pairing-')), runtime = { command: async () => ({ generation: 0 }) }; let gateway;
   try {
     gateway = await new ContextWebhookHost(root, secrets, runtime, { port: 0 }).start();
-    let view = await gateway.command({ action: 'read', sessionId: 'chosen-session' });
+    let view = await gateway.command({ action: 'read', sessionId: 'personal-assistant' });
     let base = `http://127.0.0.1:${view.port}`;
     assert.equal(view.listening, true, 'first-time discovery needs no saved connection');
     assert.equal((await (await fetch(base + '/api/webhooks/v1/discovery')).json()).protocol, 'cardbush.webhook.v1');
@@ -552,31 +580,31 @@ test('generic local pairing exchanges parameters only after desktop authorizatio
     assert.equal((await post({ ...body, sessionId: 'unapproved' })).status, 400);
     assert.equal((await post(body)).status, 202); assert.equal((await post(body)).status, 202);
     const waiting = await (await poll()).json(); assert.equal(waiting.status, 'pending'); assert.equal(waiting.connection, undefined);
-    view = await gateway.command({ action: 'read', sessionId: 'chosen-session' });
+    view = await gateway.command({ action: 'read', sessionId: 'personal-assistant' });
     assert.equal(view.connections.length, 0); assert.equal(view.pairings.length, 1);
     assert.equal(JSON.stringify(view.pairings).includes('private-callback'), false);
     await gateway.close(); gateway = await new ContextWebhookHost(root, secrets, runtime, { port: 0 }).start();
-    base = `http://127.0.0.1:${(await gateway.command({ action: 'read', sessionId: 'chosen-session' })).port}`;
+    base = `http://127.0.0.1:${(await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).port}`;
     assert.equal((await (await poll()).json()).status, 'pending');
-    view = await gateway.command({ action: 'approve_pairing', requestId: body.requestId, binding: binding('chosen-session') });
-    const grant = await (await poll()).json(); assert.equal(grant.status, 'connected'); assert.equal(grant.connection.sessionId, 'chosen-session');
+    view = await gateway.command({ action: 'approve_pairing', requestId: body.requestId, binding: binding('personal-assistant') });
+    const grant = await (await poll()).json(); assert.equal(grant.status, 'connected'); assert.equal(grant.connection.sessionId, 'personal-assistant');
     assert.equal(grant.connection.token, view.connections[0].token); assert.equal(view.pairings.length, 0);
     assert.equal(view.connections[0].headers.Authorization, body.replyHeaders.Authorization);
     assert.equal(view.connections[0].body.sequence, '{{sequence}}');
     assert.equal((await fetch(base + '/api/webhooks/v1/pairings/' + body.requestId, { headers: { Authorization: 'Bearer ' + 'b'.repeat(64) } })).status, 401);
-    await assert.rejects(gateway.command({ action: 'approve_pairing', requestId: body.requestId, binding: binding('another-session') }), /pairing_already_handled/);
+    await assert.rejects(gateway.command({ action: 'approve_pairing', requestId: body.requestId, binding: binding() }), /pairing_already_handled/);
     const info = await fetch(grant.connection.endpoint, { headers: { Authorization: 'Bearer ' + grant.connection.token } });
     assert.equal((await info.json()).type, 'connection.info');
-    await gateway.command({ action: 'delete', id: grant.connection.id, sessionId: 'chosen-session' });
+    await gateway.command({ action: 'delete', id: grant.connection.id, sessionId: 'personal-assistant' });
     assert.equal((await (await poll()).json()).status, 'revoked');
     const rejected = { ...body, requestId: randomUUID() }; await post(rejected);
-    await gateway.command({ action: 'reject_pairing', requestId: rejected.requestId, sessionId: 'chosen-session' });
+    await gateway.command({ action: 'reject_pairing', requestId: rejected.requestId, sessionId: 'personal-assistant' });
     assert.equal((await (await fetch(base + '/api/webhooks/v1/pairings/' + rejected.requestId, { headers })).json()).status, 'rejected');
     const expired = { ...body, requestId: randomUUID() }; await post(expired);
     t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * 60000 + 1 });
     assert.equal((await fetch(base + '/api/webhooks/v1/pairings/' + expired.requestId, { headers })).status, 410);
-    await assert.rejects(gateway.command({ action: 'approve_pairing', requestId: expired.requestId, binding: binding('chosen-session') }), /pairing_expired/);
-    assert.deepEqual((await gateway.command({ action: 'read', sessionId: 'chosen-session' })).pairings, []);
+    await assert.rejects(gateway.command({ action: 'approve_pairing', requestId: expired.requestId, binding: binding('personal-assistant') }), /pairing_expired/);
+    assert.deepEqual((await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).pairings, []);
     assert.ok(!(await readFile(join(root, 'webhooks/state.json'), 'utf8')).includes(grant.connection.token));
   } finally { await gateway?.close(); await rm(root, { recursive: true, force: true }); }
 });
@@ -587,19 +615,19 @@ test('late service registration and temporary port contention recover without re
   const port = occupied.address().port; let gateway;
   try {
     gateway = await new ContextWebhookHost(root, secrets, { command: async () => { throw Error('Runtime still starting'); } }, { port }).start();
-    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).error, 'listener_failed');
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).error, 'listener_failed');
     await new Promise(resolve => occupied.close(resolve));
-    await until(async () => (await gateway.command({ action: 'read', sessionId: 'existing' })).listening);
+    await until(async () => (await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).listening);
     const base = `http://127.0.0.1:${port}`;
     assert.equal((await fetch(base + '/api/webhooks/v1/discovery')).status, 200);
-    const view = await gateway.command({ action: 'read', sessionId: 'existing' });
+    const view = await gateway.command({ action: 'read', sessionId: 'personal-assistant' });
     assert.equal(view.error, undefined); assert.deepEqual(view.pairings, []);
     const requestId = randomUUID();
     const response = await fetch(base + '/api/webhooks/v1/pairings', { method: 'POST',
       headers: { Authorization: 'Bearer ' + 'a'.repeat(64), 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId, name: 'Started after desktop' }) });
     assert.equal(response.status, 202);
-    assert.equal((await gateway.command({ action: 'read', sessionId: 'existing' })).pairings[0].requestId, requestId);
+    assert.equal((await gateway.command({ action: 'read', sessionId: 'personal-assistant' })).pairings[0].requestId, requestId);
   } finally { occupied.close(); await gateway?.close(); await rm(root, { recursive: true, force: true }); }
 });
 
@@ -631,4 +659,24 @@ test('Assistant background task completion updates only its originating Webhook 
     assert.ok(final.sequence > initial.sequence); assert.ok(final.reply.startsWith(initial.reply));
     assert.equal(final.senderId, 'u-1'); assert.equal(final.conversationId, 'remote-chat');
   } finally { release(); await gateway?.close(); await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
+});
+
+test('ordinary credentials are retired before listener admission, job recovery or plugin discovery',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'retired-webhooks-')), id=randomUUID(), token='d'.repeat(64);
+  const old={kind:'conversation',sessionId:'ordinary',title:'Previous conversation',parent:request('ordinary')};
+  const receipt={id:randomUUID(),binding:old,connectionId:id,message:message('pending'),status:'running',reply:'',createdAt:new Date().toISOString(),sequence:1,delivered:false};
+  await seedConnections(root,[{...config(),id,token,binding:old}],[receipt]);
+  let calls=0;
+  const host=await new ContextWebhookHost(root,secrets,{command:async()=>{calls++;return {}}},{port:0}).start();
+  try {
+    const state=await host.command({action:'read',sessionId:'personal-assistant'});assert.equal(state.connections.length,0);
+    await assert.rejects(host.command({action:'save',config:config(),binding:old}),/assistant_only/);
+    await assert.rejects(host.command({action:'approve_pairing',requestId:randomUUID(),binding:old}),/assistant_only/);
+    const url='http://127.0.0.1:'+state.port+'/api/webhooks/v1/'+id,headers={Authorization:'Bearer '+token};
+    for(const path of ['/messages','/capabilities'])assert.equal((await fetch(url+path,{method:'POST',headers,body:'{}'})).status,401);
+    assert.deepEqual(await host.botRequest({action:'catalog',sessionId:'ordinary'}),[]);
+    assert.equal((await host.botRequest({action:'context',sessionId:'ordinary',sourceRef:'webhook:'+receipt.id})).available,false);
+    const stored=JSON.parse(secrets.decrypt(JSON.parse(await readFile(join(root,'webhooks/state.json'),'utf8')).encrypted));
+    assert.equal(stored.connections[0].enabled,false);assert.equal(stored.receipts[0].status,'interrupted');assert.equal(calls,0);
+  } finally {await host.close();await rm(root,{recursive:true,force:true});}
 });

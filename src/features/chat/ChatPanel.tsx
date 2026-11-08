@@ -1,5 +1,4 @@
 import { uiText } from '../../i18n';
-import { WebhookConnectionButton } from '../webhooks/WebhookConnectionButton';
 import { readUserPrompt, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
 import { useConversationViewState, conversationViewKey } from '../../shared/conversationViewState';
 import { VoiceConversation } from '../voice/VoiceConversation';
@@ -232,7 +231,6 @@ export function ChatPanel({
   draft,
   onDraftChange,
   headerActions,
-  prepareWebhook,
   composerAccessory,
   welcomeWorkspaceControl,
   transcriptFooter,
@@ -350,7 +348,6 @@ export function ChatPanel({
   draft: string;
   onDraftChange: (value: string) => void;
   headerActions?: ReactNode;
-  prepareWebhook?: () => Promise<import('../../backend/api').ChatStreamRequest>;
   composerAccessory?: ReactNode;
   welcomeWorkspaceControl?: ReactNode;
   transcriptFooter?: ReactNode;
@@ -2423,7 +2420,6 @@ export function ChatPanel({
         workSummaryHoverProps={workSummaryHoverProps}
         inspectorOpen={inspectorOpen}
         workspaceControl={headerActions}
-        connectionControl={!host && <WebhookConnectionButton key={activeConversationId} language={language} kind="conversation" sessionId={activeConversationId} title={title} prepare={prepareWebhook}/>}
         onToggleWorkSummary={workSummaryAvailable && renderMessages.length > 0
           ? toggleWorkSummary
           : undefined}

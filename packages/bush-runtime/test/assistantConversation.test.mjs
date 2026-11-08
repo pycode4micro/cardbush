@@ -584,3 +584,20 @@ test('assistant defaults are English model instructions and custom personas rema
     } finally { assistant.close(); }
   }
 });
+
+test('Assistant reads the current registered profile even with proactive events disabled', async () => {
+  const requests=[], journal=new ConversationJournal(temporary());
+  const registered={preferredName:'Lin',habits:'Keep updates short.'};
+  const assistant=new AssistantConversation(journal,{exists:()=>true,tasks:()=>[],delegate:async()=>({}),
+    checkpoint:()=>({name:'checkpoint_context',description:'',parameters:{}}),preferredName:async()=>registered.preferredName,
+    provider:{async *stream(request){requests.push(request);yield* response(request,{text:'Done'});}}});
+  try {
+    for(const key of ['first','second']){
+      assistant.command({action:'turn',sessionId:id,entry:entry(key),parent:parent(new ToolRegistry()),profile:{name:'Fixture'}});
+      await until(()=>requests.length===(key==='first'?1:2)&&!assistant.command({action:'read',sessionId:id}).busy);
+      const input=requests.at(-1).messages.find(m=>m.name==='registered_user_profile');
+      assert.equal(input.role,'user');assert.deepEqual(JSON.parse(input.content),{preferredName:registered.preferredName});
+      registered.preferredName='Lee';
+    }
+  } finally {assistant.close();}
+});

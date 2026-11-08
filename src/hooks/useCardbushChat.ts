@@ -4370,7 +4370,6 @@ export function useCardbushChat(
     sendVoiceMessage,
     voiceAgent,
     prepareAssistantRequest: () => prepareVoiceRequest('personal-assistant'),
-    prepareWebhookRequest: () => prepareVoiceRequest(),
     retryFailedUserMessage,
     regenerateAssistantMessage,
     editUserMessageAndRegenerate,

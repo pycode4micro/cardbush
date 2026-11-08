@@ -1,7 +1,8 @@
+import { useAutomationUnreadCount } from '../automations/useAutomationUnreadCount';
 import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Pin, Search, Settings, Trash2, UsersRound, X } from 'lucide-react';
+import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Pin, Search, Settings, SlidersHorizontal, Trash2, UsersRound, X } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import { PluginGlyph } from '../plugins/PluginGlyph';
@@ -48,7 +49,8 @@ function ShortcutItems({ language, unread = 0 }: { language: AppLanguage; unread
   })}</>;
 }
 
-export function AppCenterDock({ language, unread = 0 }: { language: AppLanguage; unread?: number }) {
+export function AppCenterDock({ language }: { language: AppLanguage }) {
+  const unread = useAutomationUnreadCount();
   const center = useContext(AppCenterContext), prefs = useAppCenterPreferences(), shortcuts = useKeyboardShortcuts();
   const [hoverExpanded, setHoverExpanded] = useState(false), hoverTimer = useRef<number | undefined>(undefined);
   const [keyboardExpanded, setKeyboardExpanded] = useState(false), dock = useRef<HTMLDivElement>(null);
@@ -74,10 +76,10 @@ export function AppCenterDock({ language, unread = 0 }: { language: AppLanguage;
       hoverTimer.current = window.setTimeout(() => { hoverTimer.current = undefined; setHoverExpanded(false); }, shortcutHoverHoldMs);
     }}
     onDragOver={allowDrop} onDrop={event => center.drop(event)}>
-    <button type="button" className="app-center-launcher" onClick={center.open} aria-haspopup={center.page ? undefined : 'dialog'} data-shortcut="openAppCenter"
-      title={uiText(language)('appCenter.appCenter')}
-      aria-label={uiText(language)('appCenter.appCenter')} aria-keyshortcuts={shortcuts.aria('openAppCenter')}>
-      <LayoutGrid size={18} aria-hidden="true"/>
+    <button type="button" className={center.page ? "app-center-launcher desktop-manage" : "app-center-launcher"} onClick={center.page ? center.manage : center.open} aria-haspopup="dialog" data-shortcut="openAppCenter"
+      title={uiText(language)(center.page ? 'desktop.manageApps' : 'appCenter.appCenter')}
+      aria-label={uiText(language)(center.page ? 'desktop.manageApps' : 'appCenter.appCenter')} aria-keyshortcuts={shortcuts.aria('openAppCenter')}>
+      {center.page ? <><SlidersHorizontal aria-hidden="true"/>{uiText(language)('desktop.manageApps')}</> : <LayoutGrid size={18} aria-hidden="true"/>}
     </button>
     <div className="app-center-shortcuts" aria-label={uiText(language)('appCenter.appShortcuts')}>
       <ShortcutItems language={language} unread={unread}/>

@@ -1,4 +1,3 @@
-.webhook-connect-button svg { width: 17px; height: 17px; }
 .webhook-dialog { --webhook-gap: 14px; --webhook-accent: var(--accent, var(--text)); width: min(540px, calc(100vw - 24px)); color: var(--text); }
 .webhook-dialog fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: var(--webhook-gap); }
 .webhook-dialog label { min-width: 0; display: grid; gap: 7px; font-size: 13px; }

@@ -32,7 +32,7 @@ module.exports = async ({ run, until, clickText, selected, win, teams }) => {
   const manifest = await run(`testBridge.creationCanvas({action:'read',path:${JSON.stringify((await selected()).path)}})`);
   assert.ok(manifest.document.items.some(item => item.kind === 'markdown' && item.markdown.includes('不要覆盖我的修改')), 'conflicted draft remains accessible as a separate canvas document');
   assert.equal(await readFile(first.file.path, 'utf8'), '# Agent 新版本\n\n外部修改');
-  await run('document.querySelector(".canvas-document-tabs>button").click()');
+  await run('document.querySelector("[data-history-action=back]:enabled").click()');
   await until('!document.querySelector(".canvas-document-workspace")');
   await run(`document.querySelector('[data-canvas-item="${firstItem}"] [aria-label="编辑 Markdown"]').click()`);
   await until('document.querySelector(".canvas-document-editor").textContent.includes("Agent 新版本")');

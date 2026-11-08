@@ -8,14 +8,16 @@ The lightbulb below New conversation opens a persistent conversation, initially 
 
 ## Getting started
 
-For a background Assistant, select **Start in Assistant tray mode** in the system tray menu, quit from that menu, and reopen CardBush. When CardBush is closed, the `--assistant-only` launch option also selects this mode for one run. Click the tray icon or an Assistant notification to open the always-on-top window. It shares conversations, models, permissions and events with the workspace.
+Open **Personal profile → Edit profile** at the bottom of the sidebar to register your preferred name and habits. Assistant conversations and proactive events use the registered name. Habits are saved in local Habit memory and can be retrieved when that memory is enabled. Webhook connections in the profile menu always bind to Assistant.
+
+Select **Open floating Assistant** for an immediate switch. For a background Assistant on the next launch, enable **Start only Assistant next time** in the profile menu, quit from that menu, and reopen CardBush. When CardBush is closed, the `--assistant-only` launch option also selects this mode for one run. Click the tray icon or an Assistant notification to open the always-on-top window. It shares conversations, models, permissions and events with the workspace.
 
 Background startup creates no workspace window. Runtime starts ahead of the next scheduled event or when needed. Closing an idle floating window releases its renderer. Once started, Runtime continues to handle events and delegated work. Drafts, attachments, voice activity and model editing keep the window available in the background. Choose **Open cardbush** in the tray menu to switch to the full workspace for the current run.
 
 Verbatim local reminders can deliver a system notification directly. Bundled document and desktop tools connect when the tool catalog, a tool-enabled run or a collector first needs them. Once the floating window closes and the Assistant stays idle, background cleanup releases the document tools. An active desktop tool service retains its session safety state.
 
 1. Configure a text model in Settings → Models, then open the lightbulb. Text conversation needs no realtime voice service.
-2. Assistant settings in the title bar change name, role, communication style or avatar. PNG/JPG/WebP avatars up to 8 MB stay local; restore the default bulb at any time. Role changes affect subsequent text requests and the next call; an active call retains its initial persona.
+2. Assistant settings in the profile menu change name, role, communication style or avatar. PNG/JPG/WebP avatars up to 8 MB stay local; restore the default bulb at any time. Role changes affect subsequent text requests and the next call; an active call retains its initial persona.
 3. Execution defaults to Local. Connect a deployed service through Connect SSH / Manage hosts following [Agent services](AGENT_SERVICES.en.md), then select it as execution host. Saving an SSH project alone does not create an independent Agent service.
 4. Model selection, attachments, drag/drop, pasted images and browser references reuse the ordinary composer. See [Realtime voice](REALTIME_VOICE.en.md) and [Local voice](LOCAL_VOICE_MODELS.en.md).
 

@@ -15,6 +15,7 @@ import*as pages from'${local('src/features/mdPresentation/bushItPageStore.ts')}'
 import{refreshCreationFile}from'${local('src/features/mdPresentation/creationFiles.ts')}';
 import{openBushItDocument}from'${local('src/features/mdPresentation/bushItDocuments.ts')}';
 import{teamToMarkdown}from'${local('src/features/team/teamMarkdown.ts')}';
+import{WindowBackButton}from'${local('src/components/WindowFrame.tsx')}';
 import{canvasFileTarget}from'${local('src/features/creationCanvas/canvasModel.ts')}';
 import'${local('src/styles/theme.css')}';import'${local('src/styles/app.css')}';
 window.canvasPendingWrites=0;
@@ -26,7 +27,7 @@ window.cardbushDesktop={...window.testBridge,getPathForFile:()=>'',creationCanva
 window.canvasPages=pages;window.refreshCreationFile=refreshCreationFile;window.canvasOpenDocument=openBushItDocument;
 window.canvasTeamMarkdown=teamToMarkdown;
 if(!localStorage.getItem('fixture-seeded')){localStorage.setItem('fixture-seeded','true');localStorage.setItem('cardbush.bush-it.pages.v1',JSON.stringify({pages:[{id:'legacy',source:'# Legacy note\\n\\nPreserve my writing',updatedAt:1}],selectedId:'legacy'}));}
-function Fixture(){const[language,setLanguage]=useState("zh"),[theme,setTheme]=useState("dark");window.canvasAppearance=(language,theme)=>{setLanguage(language);setTheme(theme);};return <div className={"app theme-"+theme} style={{height:'100vh',display:'flex'}}><CanvasSidebar language={language} onBack={()=>{}}/><CreationCanvasApp language={language}/></div>;}createRoot(document.getElementById('root')).render(<Fixture/>);
+function Fixture(){const[language,setLanguage]=useState("zh"),[theme,setTheme]=useState("dark");window.canvasAppearance=(language,theme)=>{setLanguage(language);setTheme(theme);};return <div className={"app theme-"+theme} style={{height:'100vh',display:'flex'}}><div style={{position:"fixed",top:0,left:0}}><WindowBackButton language={language}/></div><CanvasSidebar language={language}/><CreationCanvasApp language={language}/></div>;}createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 const chat = `import React,{useEffect,useRef}from'react';export function CreationConversation(props){const latest=useRef(props);latest.current=props;window.canvasSend=async input=>{const prompt=await latest.current.beforeSend(input);window.lastCanvasPrompt=prompt;latest.current.preparation?.onCreated?.({id:props.sessionId});return true;};useEffect(()=>{props.onInspectorContext?.({sessionId:props.sessionId,root:props.root,messages:[],busy:false,appendDraft:text=>{window.canvasDraft=text;},send:input=>window.canvasSend(input)});return()=>props.onInspectorContext?.(null);},[props.sessionId,props.onInspectorContext]);return null;}`;
 try {

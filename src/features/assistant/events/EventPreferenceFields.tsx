@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AssistantEventPreferences } from '@cardbush/bush-protocol';
 import { uiText } from '../../../i18n';
 import { eventBackend } from './eventBackend';
-const fields = { address: 'yourFriends.reviewAddress', context: 'yourFriends.reviewContext', judgment: 'yourFriends.reviewJudgment',
+const fields = { context: 'yourFriends.reviewContext', judgment: 'yourFriends.reviewJudgment',
   communication: 'yourFriends.reviewCommunication', boundaries: 'yourFriends.reviewBoundaries', appearance: 'yourFriends.reviewAppearance' } as const;
 
 export function EventPreferenceFields({ language, value, change }: { language: string; value: AssistantEventPreferences; change(value: AssistantEventPreferences): void }) {

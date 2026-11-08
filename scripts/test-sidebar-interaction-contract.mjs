@@ -124,7 +124,7 @@ assert.match(
   'Native window controls must use a neutral Windows-style hover surface',
 );
 assert.match(stylesSource, /\.window-button\.danger:hover\s*\{[\s\S]*?background:\s*#c42b1c/);
-assert.match(sidebarSource, /className="sidebar-footer"[\s\S]*?<AppCenterDock/,
+assert.match(sidebarSource, /className="sidebar-footer"[\s\S]*?<ProfileMenu/,
   'Application navigation lives in the sidebar footer dock');
 assert.doesNotMatch(sidebarSource, /onSectionChange\('(plugins|automations)'\)/,
   'Application entries must not be duplicated above the sidebar sections');

@@ -1,7 +1,7 @@
 import { uiText } from '../../i18n';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
-import { AppCenterDock } from '../appCenter/AppCenter';
+import { ProfileMenu } from '../profile/ProfileMenu';
 import { setConversationsArchived, useConversationArchives } from './conversationArchives';
 import { showUiError } from '../../shared/showUiError';
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionMenuIcon } from '../chat/ConversationExtraction';
@@ -73,7 +73,6 @@ import type {
   ProjectItem,
   SessionAttentionState,
 } from '../../types';
-import { useAutomationUnreadCount } from '../automations/useAutomationUnreadCount';
 import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
 import { conversationProjectDir, conversationWorkspaceRoot } from '../conversationWorkspace';
 import { ReviewFilePreview } from './ReviewFilePreview';
@@ -273,7 +272,6 @@ export const ChatSidebar = memo(function ChatSidebar({
     });
   });
   const searchLabel = uiText(language)('conversationSearchDialog.searchChats');
-  const unreadAutomations = useAutomationUnreadCount();
   const archivedConversationIds = useConversationArchives();
   const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
   const extraction = useContext(ConversationExtractionContext);
@@ -941,7 +939,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       </div>
 
       <div className="sidebar-footer">
-        <AppCenterDock language={language} unread={unreadAutomations}/>
+        <ProfileMenu language={language}/>
       </div>
       </div>
       {contextMenu && (

@@ -7,8 +7,8 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { writePrivateJson } from './atomicJsonFile.mjs';
 import { webhookConfigSchema, WebhookError, incomingMessage, webhookHash, deliverWebhook, type WebhookMessage } from './contextWebhookProtocol.mjs';
-import { webhookBindingSchema, runContextWebhook, type WebhookRuntime, type WebhookResult } from './contextWebhookRuntime.mjs';
-import type { ContextWebhookConfig, ContextWebhookSnapshot, WebhookBinding } from './contextWebhookTypes.js';
+import { storedWebhookBindingSchema, webhookBindingSchema, runContextWebhook, type WebhookRuntime, type WebhookResult } from './contextWebhookRuntime.mjs';
+import type { ContextWebhookConfig, ContextWebhookSnapshot, StoredWebhookBinding, WebhookBinding } from './contextWebhookTypes.js';
 import { contextWebhookPort, contextWebhookProtocol } from './contextWebhookDefaults.js';
 import { localPairingSchema, localPairingConfig, assertLocalPairingRequest, readWebhookJson, type LocalWebhookPairing } from './contextWebhookPairing.mjs';
 import { botCapabilitiesSchema, type BotCapabilities, type BotContext, type BotSource, type BotFileAccess } from '@cardbush/bush-protocol';
@@ -18,9 +18,9 @@ import { applyWebhookTurnPolicy, botContextMessage } from '@cardbush/bush-protoc
 
 // Old encrypted records keep receipt and token identity across the Assistant merge.
 const owner = (id: string) => id === FRIENDS_SESSION ? PERSONAL_ASSISTANT_SESSION : id;
-type Connection = ContextWebhookConfig & { id: string; token: string; binding: WebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
+type Connection = ContextWebhookConfig & { id: string; token: string; binding: StoredWebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
   bot?: { capabilities: BotCapabilities; expiresAt: number; plugins?: BridgePlugin[]; instanceId?: string } };
-type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: WebhookBinding;
+type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: StoredWebhookBinding;
   guidanceFor?: string;
   status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
 type BotDelivery = { id: string; sessionId: string; sourceRef: string; requestId: string; inputHash: string; fingerprint: string;
@@ -51,17 +51,34 @@ export class ContextWebhookHost {
   constructor(private root: string, private secrets: { encrypt(value: string): string; decrypt(value: string): string },
     private runtime: WebhookRuntime, private options: { port?: number; execute?: typeof runContextWebhook } = {}) {}
   async start() {
+    let retired = false;
     try {
       const saved = JSON.parse(await readFile(join(this.root, 'webhooks', 'state.json'), 'utf8'));
       const state = JSON.parse(this.secrets.decrypt(saved.encrypted)) as State;
       if (state.version !== 1 || !Array.isArray(state.connections) || !Array.isArray(state.receipts)) throw new WebhookError('storage_invalid');
-      for (const c of state.connections) { webhookConfigSchema.parse(this.config(c)); webhookBindingSchema.parse(c.binding); }
+      for (const connection of state.connections) {
+        webhookConfigSchema.parse(this.config(connection));
+        storedWebhookBindingSchema.parse(connection.binding);
+        if (connection.binding.kind === 'conversation' && connection.enabled) {
+          connection.enabled = false;
+          retired = true;
+        }
+      }
+      for (const receipt of state.receipts) {
+        if (receipt.binding.kind !== 'assistant' && !terminal(receipt.status)) {
+          receipt.status = 'interrupted';
+          retired = true;
+          receipt.errorCode = 'assistant_only';
+          receipt.sequence++;
+        }
+      }
       state.pairings ??= [];
       state.botDeliveries ??= [];
       for (const delivery of state.botDeliveries) if (delivery.status === 'pending') delivery.status = 'unknown';
       this.state = state;
       for (const connection of this.state.connections) delete connection.bot;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    if (retired) await this.write(() => {});
     if (this.options.port !== undefined) this.state.port = this.options.port;
     await this.listen();
     this.timer = setInterval(() => this.pump(), 1000); this.timer.unref(); this.pump();
@@ -84,17 +101,15 @@ export class ContextWebhookHost {
       conversationId: record.message.conversationId ?? '', senderId: record.message.senderId ?? '',
       status: record.status, reply: record.reply, errorCode: record.errorCode ?? '' };
   }
-  private snapshot(sessionId: string): ContextWebhookSnapshot {
+  private snapshot(): ContextWebhookSnapshot {
     const address = this.server?.address(); const port = address && typeof address === 'object' ? address.port : this.state.port;
     const host = this.state.host === '0.0.0.0' ? '127.0.0.1' : this.state.host.includes(':') ? `[${this.state.host}]` : this.state.host;
     return { listening: Boolean(address), host: this.state.host, port, error: this.listenerError,
       pairings: this.state.pairings.filter(p => p.status === 'pending' && p.expiresAt > Date.now())
         .map(p => ({ requestId: p.requestId, name: p.name, replyUrl: p.replyUrl })),
-      onlineElsewhere: this.state.connections
-        .filter(c => owner(c.binding.sessionId) !== owner(sessionId) && this.connectionStatus(c) === 'connected')
-        .map(c => ({ id: c.id, name: c.name, contextTitle: c.binding.title || owner(c.binding.sessionId) })),
-      connections: this.state.connections.filter(c => owner(c.binding.sessionId) === owner(sessionId)).map(c => ({ ...this.config(c), id: c.id,
-        sessionId, kind: c.binding.kind === 'friends' ? 'assistant' : c.binding.kind, token: c.token, endpoint: `http://${host}:${port}/api/webhooks/v1/${c.id}/messages`,
+      onlineElsewhere: [],
+      connections: this.state.connections.filter(c => c.binding.kind !== 'conversation').map(c => ({ ...this.config(c), id: c.id,
+        sessionId: PERSONAL_ASSISTANT_SESSION, kind: 'assistant', token: c.token, endpoint: `http://${host}:${port}/api/webhooks/v1/${c.id}/messages`,
         status: this.connectionStatus(c),
         pending: this.state.receipts.filter(r => r.connectionId === c.id && (!terminal(r.status) || !r.delivered)).length,
         lastReceivedAt: c.lastReceivedAt, lastDeliveredAt: c.lastDeliveredAt, lastError: c.lastError })) };
@@ -111,6 +126,11 @@ export class ContextWebhookHost {
       z.object({ action: z.literal('call'), sessionId: z.string().min(1), input: bridgeToolCallSchema,
         files: z.array(z.object({ path: z.string().min(1), identity: z.string().regex(/^\d+:\d+$/) }).strict()).max(8).optional() }).strict(),
     ]).parse(value);
+    if (owner(request.sessionId) !== PERSONAL_ASSISTANT_SESSION) {
+      if (request.action === 'catalog') return [];
+      if (request.action === 'context') return { discovery:'mcp_search', available:false, reason:'bot_not_connected', targets:[], connections:[] };
+      return { status:'failed', code:'bridge_source_unavailable' };
+    }
     if (request.action === 'context') return this.botContext(request.sessionId, request.sourceRef);
     if (request.action === 'catalog') return this.pluginCatalog(request.sessionId);
     if (request.action === 'call') {
@@ -141,7 +161,7 @@ export class ContextWebhookHost {
         tools: plugin.tools.map(tool => bridgeToolName(connection.id, plugin.id, tool.name)) })) ?? [] };
   }
   private botContext(sessionId: string, sourceRef?: string): BotContext {
-    const records = this.state.receipts.filter(r => owner(r.binding.sessionId) === owner(sessionId)), seen = new Set<string>(), targets: BotSource[] = [];
+    const records = this.state.receipts.filter(r => r.binding.kind !== 'conversation' && owner(r.binding.sessionId) === owner(sessionId)), seen = new Set<string>(), targets: BotSource[] = [];
     for (const record of [...records].reverse()) {
       const key = JSON.stringify([record.connectionId, record.message.senderId, record.message.conversationId]);
       if (seen.has(key)) continue; seen.add(key);
@@ -151,7 +171,7 @@ export class ContextWebhookHost {
     const record = sourceRef && records.find(r => `webhook:${r.id}` === sourceRef);
     const source = record ? this.botSource(record) : undefined;
     const available = sourceRef ? source?.available === true : targets.length > 0;
-    const connections = this.state.connections.filter(c => owner(c.binding.sessionId) === owner(sessionId))
+    const connections = this.state.connections.filter(c => c.binding.kind !== 'conversation' && owner(c.binding.sessionId) === owner(sessionId))
       .map(c => ({ connectionId: c.id, botName: c.name, status: this.connectionStatus(c) }));
     const connected = connections.some(c => c.status === 'connected');
     return { discovery: 'mcp_search', available, ...(source ? { source } : {}), targets, connections,
@@ -224,6 +244,8 @@ export class ContextWebhookHost {
     return this.botReceipt(this.state.botDeliveries.find(item => item.id === delivery.id)!);
   }
   private async execute(input: unknown) {
+    const binding = (input as { binding?: WebhookBinding } | null)?.binding;
+    if (binding && (binding.kind !== 'assistant' || binding.sessionId !== PERSONAL_ASSISTANT_SESSION)) throw new WebhookError('assistant_only', 403);
     const request = z.discriminatedUnion('action', [
       z.object({ action: z.literal('read'), sessionId: z.string().min(1) }).strict(),
       z.object({ action: z.literal('save'), config: webhookConfigSchema, binding: webhookBindingSchema }).strict(),
@@ -233,7 +255,8 @@ export class ContextWebhookHost {
       z.object({ action: z.literal('reject_pairing'), requestId: z.string().uuid(), sessionId: z.string().min(1) }).strict(),
       z.object({ action: z.literal('listener'), host: z.enum(['127.0.0.1', '0.0.0.0', '::1']), port: z.number().int().min(1024).max(65535), sessionId: z.string().min(1) }).strict(),
     ]).parse(input);
-    if (request.action === 'read') return this.snapshot(request.sessionId);
+    if ('sessionId' in request && request.sessionId !== PERSONAL_ASSISTANT_SESSION) throw new WebhookError('assistant_only', 403);
+    if (request.action === 'read') return this.snapshot();
     if (request.action === 'approve_pairing' || request.action === 'reject_pairing') {
       if (request.action === 'approve_pairing' && !await this.runtime.command('runtime.get_session', { sessionId: request.binding.sessionId })) throw new WebhookError('context_deleted');
       await this.write(state => {
@@ -246,7 +269,7 @@ export class ContextWebhookHost {
           pending.status = 'connected'; pending.connectionId = connection.id;
         }
       });
-      return this.snapshot(request.action === 'approve_pairing' ? request.binding.sessionId : request.sessionId);
+      return this.snapshot();
     }
     if (request.action === 'test') {
       if (!request.config.url) throw new WebhookError('reply_url_required');
@@ -259,7 +282,7 @@ export class ContextWebhookHost {
       await this.write(state => { state.host = request.host; state.port = request.port; });
       await this.closeListener(); await this.listen();
       if (this.listenerError) { await this.write(state => Object.assign(state, previous)); await this.listen(); throw new WebhookError('listener_failed'); }
-      return this.snapshot(request.sessionId);
+      return this.snapshot();
     }
     if (request.action === 'delete') {
       await this.write(state => {
@@ -273,19 +296,16 @@ export class ContextWebhookHost {
       await this.write(state => this.saveConnection(state, config, binding));
     }
     await this.listen(); this.pump();
-    return this.snapshot(request.action === 'save' ? request.binding.sessionId : request.sessionId);
+    return this.snapshot();
   }
   private saveConnection(state: State, config: ContextWebhookConfig, binding: WebhookBinding) {
     const previous = config.id ? state.connections.find(c => c.id === config.id) : undefined;
     if (config.id && (!previous || owner(previous.binding.sessionId) !== owner(binding.sessionId) || (previous.binding.kind !== binding.kind && !(previous.binding.kind === 'friends' && binding.kind === 'assistant')))) throw new WebhookError('binding_mismatch');
-    if (!previous && state.connections.length >= 32) throw new WebhookError('connection_limit');
-    // Friends resolves the current configuration at event activation; a bridge owns only the destination.
-    if (binding.kind !== 'friends') {
-      const parent = applyWebhookTurnPolicy({ ...binding.parent, inputMessages: [{ messageId: 'binding', message: { role: 'user' as const, content: 'Webhook binding' } }] });
-      delete parent.supersession; binding = { ...binding, parent };
-    }
+    if (!previous && state.connections.filter(c => c.binding.kind !== 'conversation').length >= 32) throw new WebhookError('connection_limit');
+    const parent = applyWebhookTurnPolicy({ ...binding.parent, inputMessages: [{ messageId: 'binding', message: { role: 'user' as const, content: 'Webhook binding' } }] });
+    delete parent.supersession;
     const next: Connection = { ...config, id: previous?.id ?? randomUUID(), token: previous?.token ?? randomBytes(32).toString('hex'),
-      binding, lastReceivedAt: previous?.lastReceivedAt, lastDeliveredAt: previous?.lastDeliveredAt };
+      binding: { ...binding, parent }, lastReceivedAt: previous?.lastReceivedAt, lastDeliveredAt: previous?.lastDeliveredAt };
     if (previous && webhookHash([previous.url, previous.headers]) === webhookHash([config.url, config.headers])) next.bot = previous.bot;
     state.connections = [...state.connections.filter(c => c.id !== next.id), next]; return next;
   }
@@ -295,7 +315,7 @@ export class ContextWebhookHost {
     const result = { protocol: contextWebhookProtocol, requestId: pairing.requestId, status: pairing.status };
     if (pairing.status !== 'connected') return result;
     if (!connection) return { ...result, status: 'revoked' };
-    const view = this.snapshot(connection.binding.sessionId).connections.find(c => c.id === connection.id)!;
+    const view = this.snapshot().connections.find(c => c.id === connection.id)!;
     return { ...result, connection: { id: connection.id, endpoint: view.endpoint, token: connection.token,
       sessionId: owner(connection.binding.sessionId), title: connection.binding.title } };
   }
@@ -387,18 +407,19 @@ export class ContextWebhookHost {
             current.binding = { kind: 'assistant', sessionId: PERSONAL_ASSISTANT_SESSION,
               title: assistant.profile.name, parent: assistant.parent, profile: assistant.profile, generation: 0 };
           }
-          if (current.binding.kind === 'assistant') {
-            const { generation } = await this.runtime.command('runtime.assistant_conversation', {
-              action: 'read', sessionId: current.binding.sessionId, after: Number.MAX_SAFE_INTEGER })
-              .catch(() => { throw new WebhookError('service_unavailable', 503); });
-            current.binding = { ...current.binding, generation };
-          }
+          if (current.binding.kind !== 'assistant' || current.binding.parent.sessionId !== PERSONAL_ASSISTANT_SESSION)
+            throw new WebhookError('assistant_only', 403);
+          const journal = await this.runtime.command('runtime.assistant_conversation', {
+            action: 'read', sessionId: PERSONAL_ASSISTANT_SESSION, after: Number.MAX_SAFE_INTEGER })
+            .catch(() => { throw new WebhookError('service_unavailable', 503); });
+          if (!Number.isSafeInteger(journal?.generation) || journal.generation < 0) throw new WebhookError('service_unavailable', 503);
+          current.binding = { ...current.binding, generation: journal.generation };
           const record: Receipt = { id: randomUUID(), connectionId: connection.id, message, fingerprint, binding: structuredClone(current.binding),
             status: 'accepted', reply: '', createdAt: new Date().toISOString(), delivered: false, sequence: 1, attempts: 0 };
           const outstanding = state.receipts.filter(r => !r.guidanceFor && !terminal(r.status) && r.binding.sessionId === record.binding.sessionId);
           const head = outstanding.find(r => this.running.has(r.id)) ??
             outstanding.find(r => state.connections.some(c => c.enabled && c.id === r.connectionId));
-          if (head && record.binding.kind !== 'friends' && head.binding.kind === record.binding.kind &&
+          if (head && head.binding.kind === 'assistant' && record.binding.kind === 'assistant' &&
             head.binding.generation === record.binding.generation && head.connectionId === record.connectionId &&
             message.senderId && message.senderId === head.message.senderId && message.conversationId && message.conversationId === head.message.conversationId) {
             record.guidanceFor = head.id;
@@ -423,6 +444,7 @@ export class ContextWebhookHost {
     if (!this.server && Date.now() >= this.listenerRetryAt) void this.listen();
     if (!this.checkingFollowups) { this.checkingFollowups = true; void this.followups().catch(() => {}).finally(() => { this.checkingFollowups = false; }); }
     for (const record of this.state.receipts) {
+      if (record.binding.kind !== 'assistant') continue;
       const connection = this.state.connections.find(c => c.id === record.connectionId && c.enabled); if (!connection) continue;
       if (record.guidanceFor && !terminal(record.status)) {
         if (!this.guiding.has(record.guidanceFor)) {

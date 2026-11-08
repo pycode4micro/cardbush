@@ -21,6 +21,7 @@ directories:
 files:
   - dist/**/*
   - dist-electron/**/*
+  - "!dist-electron/botGateway*.mjs*"
   - '!dist-electron/productA2A.js'
   - '!dist-electron/browserBootstrapRegistration.js'
   # Exclude artifacts left by builds before the native Team replacement.

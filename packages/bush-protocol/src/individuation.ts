@@ -107,9 +107,19 @@ export const memoryHistorySchema = z.object({
 });
 export type MemoryHistory = z.infer<typeof memoryHistorySchema>;
 
+export const personalProfileSchema = z.object({
+  preferredName: z.string().trim().max(80),
+  habits: z.string().trim().max(1600),
+}).strict();
+export type PersonalProfile = z.infer<typeof personalProfileSchema>;
+export const personalProfileUpdateSchema = z.object({
+  profile: personalProfileSchema, previous: personalProfileSchema.nullable(),
+}).strict();
+
 export const PERSONALIZATION_COMMAND = 'runtime.personalization' as const;
 export const personalizationCommandSchema = z.object({
-  action: z.enum(['status', 'summarize', 'list', 'history', 'change', 'undo', 'purge_history', 'feedback']),
+  action: z.enum(['status', 'summarize', 'list', 'history', 'change', 'undo', 'purge_history', 'feedback', 'read_profile', 'save_profile']),
+  profile: personalProfileSchema.optional(), previous: personalProfileSchema.nullable().optional(),
   settings: individuationSettingsSchema.default(() => normalizeIndividuation(undefined)),
   modelId: z.string().trim().min(1).max(300).optional(),
   cursor:z.number().int().nonnegative().optional(),
