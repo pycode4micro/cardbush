@@ -169,8 +169,10 @@ async function run() {
     assert.deepEqual(await material(), {bar:'none',drawer:'none'});
   } finally { win.webContents.debugger.detach(); }
   await click('.window-sidebar-toggle');
-  win.setContentSize(1400, 800);
+  win.setContentSize(1180, 760);
   await read("document.querySelector('.desktop-library').scrollTop=0;void 0");
+  await require('./helpers/recent-featured-shelf.cjs')({win, read, wait, visible, project});
+  win.setContentSize(1400, 800);
   await click('.recent-bar-list');
   await visible('.recent-turn-text');
   assert.equal(await read("document.querySelectorAll('.recent-turn-text').length"), 20, 'only the tail page is loaded initially');
@@ -270,7 +272,7 @@ async function run() {
   win.setSize(590, 650);
   await click('.recent-bar-list');
   await visible('[data-turn-message=other-user]');
-  assert.ok(await read("(() => {const p=document.querySelector('.recent-turn-drawer').getBoundingClientRect();const a=document.querySelector('.recent-bar-chat').getBoundingClientRect(),b=document.querySelector('.recent-bar-list').getBoundingClientRect();return p.left>=0 && p.right<=innerWidth && a.width>0 && a.right<=b.left})()"));
+  await wait(() => read("(() => {const p=document.querySelector('.recent-turn-drawer').getBoundingClientRect();const a=document.querySelector('.recent-bar-chat').getBoundingClientRect(),b=document.querySelector('.recent-bar-list').getBoundingClientRect();return p.left>=0 && p.right<=innerWidth && a.width>0 && a.right<=b.left})()"), 'the open drawer settles within the narrow viewport');
   await click('.recent-bar-list');
   await read("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['local-earlier']));window.dispatchEvent(new Event('cardbush-conversation-archives-changed'));void 0");
   await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === '设计评审记录'"), 'archived and hidden sessions are excluded');

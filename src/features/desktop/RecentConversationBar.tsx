@@ -41,11 +41,40 @@ type Props = HistoryActions & {
 
 export function RecentConversationBar({ actions, language, conversation, conversations, inConversation = false, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [present, setPresent] = useState(false);
+  const toggleVersion = useRef(0);
   const [tab, setTab] = useState<RecentTab>('turns');
   const [selectedId, setSelectedId] = useState('');
   const [browsedId, setBrowsedId] = useState('');
   const panel = useRef<HTMLElement>(null);
   const id = useId(), archived = useConversationArchives();
+  useLayoutEffect(() => {
+    const node = panel.current!;
+    const docked = window.matchMedia('(min-width: 1050px)');
+    const syncMode = () => {
+      const open = node.matches(':popover-open');
+      node.popover = docked.matches ? 'manual' : 'auto';
+      if (open && !node.matches(':popover-open')) node.showPopover();
+    };
+    // A docked list stays available while browsing the adjacent shelf.
+    // Narrow overlays retain the browser's light-dismiss and Escape handling.
+    const dismissDocked = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || !docked.matches || !node.matches(':popover-open')) return;
+      if (document.querySelector('dialog:modal, [popover]:popover-open:not(.recent-turn-drawer)') ||
+        Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).some(dialog => dialog.checkVisibility())) return;
+      const wasFocused = node.contains(document.activeElement);
+      node.hidePopover();
+      if (wasFocused) node.parentElement?.querySelector<HTMLButtonElement>('.recent-bar-list')?.focus();
+      event.preventDefault();
+    };
+    syncMode();
+    docked.addEventListener('change', syncMode);
+    window.addEventListener('keydown', dismissDocked);
+    return () => {
+      docked.removeEventListener('change', syncMode);
+      window.removeEventListener('keydown', dismissDocked);
+    };
+  }, []);
   useLayoutEffect(() => {
     panel.current?.hidePopover();
     setSelectedId('');
@@ -72,11 +101,24 @@ export function RecentConversationBar({ actions, language, conversation, convers
     setSelectedId(id); setTab('turns');
     panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="turns"]')?.focus({ preventScroll: true });
   }, []);
+  const togglePanel = (open: boolean) => {
+    const version = ++toggleVersion.current;
+    setExpanded(open);
+    if (open) { setPresent(true); return; }
+    // Keep the current list visible until the native popover has slid out of the top layer.
+    const finish = () => {
+      if (version !== toggleVersion.current || !panel.current || panel.current.matches(':popover-open')) return;
+      setPresent(false); setTab('turns'); setSelectedId('');
+    };
+    const animations = panel.current?.getAnimations();
+    if (animations?.length) void Promise.allSettled(animations.map(animation => animation.finished)).then(finish);
+    else finish();
+  };
   return <RecentConversationBarView actions={actions} language={language} title={current ? compactConversationTitle(name(current)) : ''} selectedTitle={selected ? name(selected) : ''} panelId={id}
     previous={previous && (() => switchConversation(previous))} next={next && (() => switchConversation(next))}
     panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={current ? () => enter(current.id) : undefined}
-    onToggle={value => { setExpanded(value); if (!value) { setTab('turns'); setSelectedId(''); } }}>
-    {expanded && selected && (tab === 'sessions'
+    onToggle={togglePanel}>
+    {present && selected && (tab === 'sessions'
       ? <RecentSessions selectedId={selected.id} register={onRecentList} select={browse} enter={enter}/>
       : <TurnList key={selected.id} language={language} sessionId={selected.id} messages={transcripts[selected.id]}
           page={pageFor(selected.id)} read={read} earlier={earlier} select={message => enter(selected.id, message)}/>)}

@@ -46,10 +46,13 @@
   position: fixed; inset: var(--workspace-bar-height, var(--window-frame-height)) 0 0 auto; margin: 0;
   width: var(--recent-drawer-width, min(336px, 100vw)); height: auto; max-height: none; max-width: 100vw; padding: 0;
   box-sizing: border-box; border: 0; border-inline-start: 1px solid var(--border);
-  color: var(--text); background: var(--surface); box-shadow: -8px 6px 26px var(--shadow);
+  color: var(--text); background: color-mix(in srgb, var(--surface) 97%, var(--text)); box-shadow: -8px 6px 26px var(--shadow);
+  flex-direction: column; translate: 100% 0; pointer-events: none;
+  transition: translate var(--panel-motion-duration) var(--panel-motion-ease),
+    display var(--panel-motion-duration) allow-discrete, overlay var(--panel-motion-duration) allow-discrete;
 }
-.recent-turn-drawer:popover-open { display: flex; flex-direction: column; }
-.recent-turn-drawer { background: color-mix(in srgb, var(--surface) 97%, var(--text)); }
+.recent-turn-drawer:popover-open { display: flex; translate: 0 0; pointer-events: auto; }
+@starting-style { .recent-turn-drawer:popover-open { translate: 100% 0; } }
 .recent-tabs { display: flex; margin: 9px 10px 6px; padding: 3px; border-radius: 7px; background: color-mix(in srgb, var(--text) 6%, transparent); }
 .recent-tabs button { flex: 1; border: 0; border-radius: 5px; padding: 5px; font-size: 12px; background: transparent; color: var(--text-mid); }
 .recent-tabs button[aria-selected="true"] { color: var(--text); background: var(--surface); box-shadow: 0 1px 3px var(--shadow); font-weight: 600; }
@@ -72,6 +75,9 @@
 .recent-turn-more { width: 100%; padding: 9px; margin-top: 6px; border: 1px solid var(--border); border-radius: 6px; background: transparent; }
 .recent-turn-more:hover { background: var(--surface-hover); }
 @media (min-width: 1050px) {
+  .app[data-desktop-workspace] > .desktop-shell {
+    transition: margin-inline-end var(--panel-motion-duration) var(--panel-motion-ease);
+  }
   .app[data-desktop-workspace]:has(.recent-turn-drawer:popover-open) > .window-frame::after {
     content: ''; position: absolute; inset: 0 0 auto auto; width: var(--recent-drawer-width); height:var(--workspace-bar-height);
     z-index: -1; pointer-events: none; background: var(--surface);
@@ -79,4 +85,7 @@
   .app[data-desktop-workspace]:has(.recent-turn-drawer:popover-open) > .desktop-shell {
     margin-inline-end: var(--recent-drawer-width);
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recent-turn-drawer, .app[data-desktop-workspace] > .desktop-shell { transition: none; }
 }

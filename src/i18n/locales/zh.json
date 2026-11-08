@@ -6,6 +6,8 @@
     "desktop.events": "事件",
     "desktop.search": "搜索",
     "desktop.breadcrumb": "页面层级",
+    "desktop.previousFeatured": "上一组精选卡片",
+    "desktop.nextFeatured": "下一组精选卡片",
     "desktop.featured": "工作区精选",
     "desktop.openAssistant": "打开助手",
     "desktop.openProjects": "浏览项目",

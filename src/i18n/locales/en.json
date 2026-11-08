@@ -6,6 +6,8 @@
     "desktop.events": "Events",
     "desktop.search": "Search",
     "desktop.breadcrumb": "Page hierarchy",
+    "desktop.previousFeatured": "Previous featured cards",
+    "desktop.nextFeatured": "Next featured cards",
     "desktop.featured": "Workspace highlights",
     "desktop.openAssistant": "Open Assistant",
     "desktop.openProjects": "Browse projects",

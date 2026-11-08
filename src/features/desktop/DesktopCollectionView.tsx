@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, type ReactNode, type UIEvent } from 'react';
-import { ArrowUpRight, Blocks, ChevronRight, Folder, MessageSquare, Plus, Search, Waves } from 'lucide-react';
+import { useLayoutEffect, useRef, useState, type ReactNode, type UIEvent } from 'react';
+import { ArrowUpRight, Blocks, ChevronLeft, ChevronRight, Folder, MessageSquare, Plus, Search, Waves } from 'lucide-react';
 import type { EventPresentation, FriendsSnapshot, FriendsWorkEvent } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
 import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types';
@@ -27,6 +27,35 @@ function CoverCard({card}: {card?: Card}) {
     <span className="desktop-cover-copy"><small>{card.caption}</small><strong>{card.title}</strong>{card.summary && <span>{card.summary}</span>}</span>
     <ArrowUpRight aria-hidden="true"/>
   </button>;
+}
+function FeaturedShelf({ language, busy, children }: { language: AppLanguage; busy: boolean; children: ReactNode }) {
+  const t = uiText(language);
+  const track = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ previous: false, next: false });
+  useLayoutEffect(() => {
+    const node = track.current!;
+    const measure = () => {
+      const previous = node.scrollLeft > 1;
+      const next = node.scrollWidth - node.clientWidth - node.scrollLeft > 1;
+      setEdges(old => old.previous === previous && old.next === next ? old : { previous, next });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    node.addEventListener('scroll', measure, { passive: true });
+    return () => { observer.disconnect(); node.removeEventListener('scroll', measure); };
+  }, []);
+  const scroll = (direction: number) => {
+    const node = track.current;
+    if (node) node.scrollBy({ left: direction * node.clientWidth });
+  };
+  return <Shelf title={t('desktop.featured')}><div className="featured-carousel">
+    <div className="desktop-covers" aria-busy={busy} ref={track}>{children}</div>
+    <button className="featured-step" data-step="previous" type="button" aria-label={t('desktop.previousFeatured')}
+      disabled={!edges.previous} onClick={() => scroll(-1)}><ChevronLeft aria-hidden="true"/></button>
+    <button className="featured-step" data-step="next" type="button" aria-label={t('desktop.nextFeatured')}
+      disabled={!edges.next} onClick={() => scroll(1)}><ChevronRight aria-hidden="true"/></button>
+  </div></Shelf>;
 }
 function Shelf({title, open, children}: {title: string; open?: () => void; children: ReactNode}) {
   return <section className="desktop-shelf"><h2>{open ? <button type="button" onClick={open}>{title}<ChevronRight/></button> : title}</h2>{children}</section>;
@@ -100,9 +129,9 @@ export function DesktopHomeView(p: HomeProps) {
       <div><small>{t(`yourFriends.status.${selected.status}`)}</small><h1>{heading}</h1><p>{selected.presentation?.summary ?? selected.intent}</p></div>
     </header> : <h1>{heading}</h1>}
     {page.kind === 'overview' && <>
-      <Shelf title={t('desktop.featured')}><div className="desktop-covers" aria-busy={waitingForEvents}>
+      <FeaturedShelf language={language} busy={waitingForEvents}>
         <CoverCard card={lead}/><CoverCard card={assistant}/><CoverCard card={projectCard}/><CoverCard card={last}/>
-      </div></Shelf>
+      </FeaturedShelf>
       <Shelf title={eventLabel} open={() => onPage({kind:'events'})}><div className="desktop-rows">{waitingForEvents ? pendingRow : events.length ? eventRows(events.slice(0,6)) :
         <Row title={p.error ? t('desktop.retryEvents') : t('desktop.openAssistant')} detail={p.error ? undefined : p.assistantName} icon={<Waves/>} open={p.error ? p.retry : p.onAssistant}/>}</div></Shelf>
       <Shelf title={projectLabel} open={() => onPage({kind:'projects'})}><div className="desktop-rows">{projects.length ? projectRows(projects.slice(0,6)) : addProject}</div></Shelf>
