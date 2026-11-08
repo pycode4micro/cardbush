@@ -67,8 +67,11 @@ declare global {
       saveGlobalInstructions: (content: string, revision: string) => Promise<import('../backend/globalInstructions').GlobalInstructionsSnapshot>;
       rendererReady: () => Promise<void>;
       assistantMode?: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean, idlePage?: 'home' | 'explore') => Promise<{ floating: boolean; nextLaunch: boolean }>;
+      measureAssistantReplies?: (height: number) => void;
+      dragAssistantSurface?: (action: 'start' | 'move' | 'end', dx?: number, dy?: number) => void;
+      assistantSurface?: (surface: 'read' | import('../../electron/assistantSurface').AssistantSurface) => Promise<import('../../electron/assistantSurface').AssistantSurface>;
+      onAssistantSurface?: (listener: (surface: import('../../electron/assistantSurface').AssistantSurface) => void) => () => void;
       retainAssistantWindow?: (retained: boolean) => Promise<void>;
-      openAssistantWorkspace?: (page: 'team' | 'home' | 'settings') => Promise<void>;
       ensureTaskWorkspace: (sessionId: string) => Promise<string>;
       runtimeStartupStatus: () => Promise<RuntimeStartupStatus>;
       retryRuntimeStartup: () => Promise<RuntimeStartupStatus>;

@@ -2269,7 +2269,7 @@ function CardbushApp() {
             </PageNavigationScope.Provider>
           )}
           <section ref={mainStageRef} className="main-stage" aria-hidden={settingsVisible || undefined} inert={settingsVisible || !floating && (inspectorControlsVisible || drawerLayout && !sidebarCollapsed || compactLayout && inspectorOpen) ? true : undefined}>
-            <AssistantView compactProfileMenu={floating} active={floating || section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
+            <AssistantView floating={floating ? { returnToWorkspace: () => void inWorkspace(() => {}) } : undefined} active={floating || section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
               inspectorOpen={!floating && inspectorOpen} onToggleInspector={floating ? undefined : toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
               composerPortalTarget={!floating && section === 'assistant' && quickInputOpen ? quickInputTarget : null}
               subagentObservabilityAvailable={backendCapabilities.subagentObservability && backendCapabilities.subagentObservabilityProtocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL}

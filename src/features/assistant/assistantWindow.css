@@ -4,18 +4,3 @@
   overflow: hidden;
   height: 100dvh;
 }
-.resident-assistant > .assistant-view {
-  flex: 1;
-  min-height: 0;
-}
-.resident-assistant .resident-dialog {
-  max-height: calc(100dvh - 2rem);
-  max-width: calc(100vw - 2rem);
-  overflow: auto;
-}
-.resident-dialog > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}

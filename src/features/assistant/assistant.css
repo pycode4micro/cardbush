@@ -11,7 +11,7 @@
 .assistant-rename-dialog button[type=submit] { background:var(--text); color:var(--bg); }
 .assistant-rename-dialog [role=alert] { color:var(--danger,#d65c5c); font-size:13px; }
 .assistant-actions { display:flex; align-items:center; gap:4px; min-width:0; flex-shrink:0; }
-.assistant-composer-tools button,.assistant-desktop-close { border:1px solid var(--border, #8883); border-radius:8px; background:transparent; color:inherit; min-height:30px; padding:8px; cursor:pointer; }
+.assistant-composer-tools button { border:1px solid var(--border, #8883); border-radius:8px; background:transparent; color:inherit; min-height:30px; padding:8px; cursor:pointer; }
 .assistant-actions .settings-dropdown { width:auto; max-width:150px; min-width:0; }
 .assistant-actions .settings-dropdown-trigger { border:0; background:transparent; border-radius:8px; box-shadow:none; min-height:30px; padding:4px 7px; color:var(--text-soft); }
 .assistant-actions .settings-dropdown-trigger>span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -101,7 +101,6 @@
 .assistant-settings-dialog button[type=submit] { background:var(--text); color:var(--surface); min-width:70px; }
 @keyframes assistant-settings-enter { from { opacity:0; transform:translateY(6px) scale(.985); } to { opacity:1; transform:none; } }
 .assistant-desktop { flex:1; min-width:300px; position:relative; border-left:1px solid var(--border,#8883); }
-.assistant-desktop-close { position:absolute; top:10px; right:10px; z-index:2; }
 @media (max-width:900px) { .assistant-body:has(.assistant-desktop) { flex-direction:column; } .assistant-desktop { min-height:250px; } }
 .assistant-view { container:assistant-pane / inline-size; }
 @container assistant-pane (max-width:520px) {

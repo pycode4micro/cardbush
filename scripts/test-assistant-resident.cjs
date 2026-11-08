@@ -35,6 +35,9 @@ async function run() {
     throw Error('Timed out: ' + label);
   };
   app.setPath('appData', root); app.setPath('userData', root); app.setAppPath(project);
+  for (const key of ['desktop','documents','downloads']) {
+    const directory=path.join(root,key); fs.mkdirSync(directory,{recursive:true}); app.setPath(key,directory);
+  }
   // Persisted selection works without CLI flags and without opening a renderer first.
   fs.writeFileSync(path.join(root, 'assistant-resident.json'), JSON.stringify({ enabled: resident, language: 'en' }));
   const at = new Date(Date.now() + 28_000).toISOString();
@@ -76,7 +79,20 @@ async function run() {
     return { windows: BrowserWindow.getAllWindows().length, renderers: metrics.filter(p => p.type === 'Tab').length,
       workingSetMiB: Math.round(metrics.reduce((n, p) => n + p.memory.workingSetSize, 0) / 1024), ...processTree() };
   };
+  // Hold the real call before audio capture so the test exercises voice controls without a microphone.
+  const ipc=electron.ipcMain, handle=ipc.handle;
+  let audioGate;
+  ipc.handle=function(channel,listener) {
+    if (channel !== 'voice:settings') return handle.call(this,channel,listener);
+    return handle.call(this,channel,async (...args)=>{ await audioGate; return listener(...args); });
+  };
   require(path.join(project, 'dist-electron', 'bootstrap.js'));
+  ipc.handle=handle;
+  const holdAudioSettings = () => {
+    let release;
+    audioGate=new Promise(resolve=>{release=resolve;});
+    return ()=>{release();audioGate=undefined;};
+  };
   await wait(() => tray && menu, 'tray');
   const stats = {};
   if (resident) {
@@ -88,16 +104,18 @@ async function run() {
     if (process.platform === 'win32') assert.equal(stats.delivered.stdioSupervisors, 0, 'local reminders do not start stdio tool processes');
     notice.emit('click');
     const win = await wait(() => BrowserWindow.getAllWindows()[0], 'notification opened Assistant');
-    await wait(() => win.webContents.executeJavaScript('Boolean(document.querySelector(".resident-assistant .profile-trigger"))'), 'floating Assistant');
+    await wait(() => win.webContents.executeJavaScript('Boolean(document.querySelector(".resident-assistant .floating-capsule"))'), 'floating Assistant');
     assert.equal(win.isAlwaysOnTop(), true);
-    await wait(() => win.webContents.executeJavaScript('document.querySelector(".assistant-messages")?.innerText.includes("Resident reminder")'), 'same journal');
+    await wait(() => win.webContents.executeJavaScript('document.querySelector(".capsule-replies")?.innerText.includes("Resident reminder")'), 'same journal');
     assert.equal(await win.webContents.executeJavaScript('!!document.querySelector("[data-nav-section]")'), false);
     await sleep(1500); stats.open = take();
-    await win.webContents.executeJavaScript(`(() => { const n = document.querySelector('textarea'); if (!n) throw Error('missing composer');
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(n,'Unsent fixture draft'); n.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await win.webContents.executeJavaScript("document.querySelector('[data-action=compose]').click()");
+    await wait(()=>win.webContents.executeJavaScript("!!document.querySelector('.capsule-form input')"), 'inline editor');
+    await win.webContents.executeJavaScript(`(() => { const n = document.querySelector('.capsule-form input'); if (!n) throw Error('missing composer');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'Unsent fixture draft'); n.dispatchEvent(new Event('input',{bubbles:true})); })()`);
     await sleep(150); win.close(); await sleep(150); assert.ok(!win.isDestroyed() && !win.isVisible());
-    tray.emit('double-click'); assert.equal(await win.webContents.executeJavaScript('document.querySelector("textarea").value'), 'Unsent fixture draft');
-    await win.webContents.executeJavaScript(`(() => { const n = document.querySelector('textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(n,''); n.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    tray.emit('double-click'); assert.equal(await win.webContents.executeJavaScript('document.querySelector(".capsule-form input").value'), 'Unsent fixture draft');
+    await win.webContents.executeJavaScript(`(() => { const n = document.querySelector('.capsule-form input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,''); n.dispatchEvent(new Event('input',{bubbles:true})); })()`);
     await sleep(150);
     win.close(); await wait(() => win.isDestroyed(), 'release floating renderer');
     await wait(() => !app.getAppMetrics().some(p => p.type === 'Tab'), 'release renderer process');
@@ -136,7 +154,7 @@ async function run() {
     await sleep(1500); stats.open = take(); win.close(); await sleep(1500); stats.idle = take();
     assert.equal(stats.idle.windows, 1);
     win.show();
-    await require('./helpers/personal-profile.cjs')({ win, BrowserWindow, tray, wait, root, project });
+    await require('./helpers/personal-profile.cjs')({ win, BrowserWindow, tray, wait, root, project, holdAudioSettings });
   }
   fs.writeFileSync(path.join(root, 'metrics.json'), JSON.stringify(stats, null, 2));
   menu.items.at(-1).click();

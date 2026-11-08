@@ -1,4 +1,6 @@
-import { ProfileMenu } from '../profile/ProfileMenu';
+import { createPortal } from 'react-dom';
+import { FloatingAssistantCapsule } from './FloatingAssistantCapsule';
+import { useFloatingAssistant } from './useFloatingAssistant';
 import { AssistantEventsDialog } from './events/AssistantEventsDialog';
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
@@ -40,11 +42,11 @@ const sessionId = PERSONAL_ASSISTANT_SESSION;
 // Also hide transcripts saved by older versions, without deleting conversational memory.
 const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'sending' | 'accepted' | 'failed' };
-export function AssistantView({ active, language, compactProfileMenu = false, prepare, onManageHosts, composerControls,
+export function AssistantView({ active, language, floating, prepare, onManageHosts, composerControls,
   inspectorOpen = false, onToggleInspector, browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
-  active: boolean; language: string; compactProfileMenu?: boolean;
-  prepare(): Promise<ChatStreamRequest>; onManageHosts(): void;
-  composerControls: AssistantComposerControls;
+  active: boolean; language: string; floating?: { returnToWorkspace(): void; retainDraft?(value: boolean): void };
+  prepare(): Promise<ChatStreamRequest>; onManageHosts?(): void;
+  composerControls?: AssistantComposerControls;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
   composerPortalTarget?: HTMLElement | null; windowMaximized?: boolean; subagentObservabilityAvailable?: boolean;
 }) {
@@ -65,7 +67,7 @@ export function AssistantView({ active, language, compactProfileMenu = false, pr
   const sendingRequest = useRef<string | undefined>(undefined);
   const pageEntries = useMemo(() => [...entries.filter(isPageEntry), ...submitted
     .filter(item => !entries.some(entry => entry.id === item.entry.id)).map(item => item.entry)], [entries, submitted]);
-  const allTasks = useLoopSubagentTasks(sessionId, active && ready, active);
+  const allTasks = useLoopSubagentTasks(sessionId, active && !floating && ready, active && !floating);
   // Reset removes the journal; do not resurrect old tasks in a fresh conversation.
   const tasks = allTasks.filter(task => task.origin === 'subagent' && task.taskId && entries.length &&
     (task.createdAt || task.startedAt || '') >= entries[0].createdAt);
@@ -101,15 +103,21 @@ export function AssistantView({ active, language, compactProfileMenu = false, pr
       } });
     }).catch(() => { /* Model/configuration startup can complete after this render. */ });
     return () => { cancelled = true; };
-  }, [profile, language, composerControls.selectedModel, composerControls.availableModels, composerControls.permissionMode, composerControls.subagentPermissionRouting, composerControls.referencePlanMode, composerControls.disabledSkillNames]);
+  }, [profile, language, composerControls ? undefined : prepare, composerControls?.selectedModel, composerControls?.availableModels, composerControls?.permissionMode, composerControls?.subagentPermissionRouting, composerControls?.referencePlanMode, composerControls?.disabledSkillNames]);
   const entriesRef = useRef(entries); entriesRef.current = entries;
   const busyRef = useRef(busy); busyRef.current = busy;
   const cursor = useRef(0);
   const generation = useRef<number | undefined>(undefined);
   const refreshing = useRef<Promise<void> | undefined>(undefined);
+  const capsule = useFloatingAssistant(Boolean(floating), active, entries, generation.current);
+  const [capsuleFiles, setCapsuleFiles] = useState<string[]>([]);
+  const retainDraft = floating?.retainDraft;
+  useEffect(() => {
+    retainDraft?.(Boolean(draft || capsuleFiles.length || submitting));
+  }, [retainDraft, draft, capsuleFiles.length, submitting]);
   const chatBody = useRef<HTMLDivElement>(null), activeRef = useRef(active); activeRef.current = active;
   const scroller = useRef<HTMLDivElement>(null), composerDock = useRef<HTMLDivElement>(null);
-  const viewport = useAssistantViewport({ active, bodyRef: chatBody, dockRef: composerDock, scrollerRef: scroller, revision: lastPageEntry, portaled: Boolean(composerPortalTarget) });
+  const viewport = useAssistantViewport({ active: active && !floating, bodyRef: chatBody, dockRef: composerDock, scrollerRef: scroller, revision: lastPageEntry, portaled: Boolean(composerPortalTarget) });
   const summary = useConversationWorkSummary(chatBody, sessionId, inspectorOpen);
   const historyLoaded = useRef(false), animationTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [arriving, setArriving] = useState<Set<string>>(() => new Set());
@@ -123,6 +131,7 @@ export function AssistantView({ active, language, compactProfileMenu = false, pr
   useEffect(() => { if (!active) setArriving(new Set()); }, [active]);
   const voice = applicationVoiceSession();
   const callHere = useSyncExternalStore(voice.subscribe, () => voice.snapshot().mode === 'call' && Boolean(voice.snapshot().assistant));
+  const voiceInUse = useSyncExternalStore(voice.subscribe, () => voice.snapshot().mode !== 'idle');
   const initialize = useRef<Promise<unknown> | undefined>(undefined);
   const ensure = useCallback(() => initialize.current ??= assistantBackend.ensure(profile.name)
     .catch(error => { initialize.current = undefined; throw error; }), [profile.name]);
@@ -153,7 +162,7 @@ export function AssistantView({ active, language, compactProfileMenu = false, pr
     return refreshing.current;
   }, [animateEntries, closeMessageMenu, language]);
   useEffect(() => {
-    const reset = () => { sendingRequest.current = undefined; setSubmission(undefined); setSubmitted([]); setManagement(undefined); setDraft(''); setQuote(undefined); setReactions({}); closeMessageMenu(); setError(''); setRuntimeError(''); setRetry(null); setArriving(new Set()); void refresh().then(() => refresh()).catch(error => setError(String(error))); };
+    const reset = () => { sendingRequest.current = undefined; setSubmission(undefined); setSubmitted([]); setManagement(undefined); setCapsuleFiles([]); setDraft(''); setQuote(undefined); setReactions({}); closeMessageMenu(); setError(''); setRuntimeError(''); setRetry(null); setArriving(new Set()); void refresh().then(() => refresh()).catch(error => setError(String(error))); };
     window.addEventListener('cardbush:assistant-reset', reset);
     return () => window.removeEventListener('cardbush:assistant-reset', reset);
   }, [refresh, closeMessageMenu]);
@@ -234,7 +243,7 @@ export function AssistantView({ active, language, compactProfileMenu = false, pr
       if (version === assistantBackend.contextVersion()) setError(uiText(language)('assistantMessage.reactionFailed'));
     } finally { reactionPending.current = false; setReacting(false); }
   };
-  usePublishRegionConversation({ scope: localInspectorWorkspace('personal-assistant'), busy, error: error || runtimeError, messages: pageMessages, send }, active);
+  usePublishRegionConversation({ scope: localInspectorWorkspace('personal-assistant'), busy, error: error || runtimeError, messages: pageMessages, send }, active && !floating);
   const retryReply = async () => {
     viewport.prepareSend();
     setSubmission('retry'); setError(''); setRuntimeError('');
@@ -254,7 +263,6 @@ export function AssistantView({ active, language, compactProfileMenu = false, pr
     historyMessages: journalMessages(entriesRef.current.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busyRef.current });
   const [eventsOpen, setEventsOpen] = useState(false);
   const headerControls = <div className="assistant-actions">
-    {compactProfileMenu && <ProfileMenu compact language={language}/>}
     <div className="assistant-composer-tools">
       <button type="button" title={uiText(language)('teamSidebar.manageAgents')} onClick={onManageHosts}><UsersRound size={17}/></button>
     </div>
@@ -308,8 +316,23 @@ export function AssistantView({ active, language, compactProfileMenu = false, pr
       <span aria-hidden="true"/><span aria-hidden="true"/><span aria-hidden="true"/>
     </div>
   </div>;
+  const floatingView = floating && capsule.host && createPortal(
+      <FloatingAssistantCapsule language={language} composing={capsule.surface === 'compose'} unread={capsule.unread}
+        ready={ready} sending={submitting} calling={callHere} voiceBlocked={voiceInUse && !callHere} draft={draft} changeDraft={setDraft}
+        files={capsuleFiles} changeFiles={setCapsuleFiles} compose={() => void capsule.show('compose')}
+        collapse={() => void capsule.show('capsule')} open={() => void capsule.show('replies')} send={send}
+        repliesOpen={capsule.surface === 'replies'} replies={capsule.replies} error={error || runtimeError ? assistantErrorText(error || runtimeError, language) : ''}
+        returnToWorkspace={floating.returnToWorkspace}
+        toggleVoice={async () => {
+          if (callHere) { voice.end(); return; }
+          voice.update(target);
+          await voice.start('call');
+          if (voice.snapshot().error) { setError(voice.snapshot().error); void capsule.show('replies'); }
+        }}/>, capsule.host);
+  if (!composerControls) return <VoiceConversation target={target} language={language} disabled={!ready} active={active}>{floatingView}</VoiceConversation>;
   return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>
+    {floatingView}
     <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
       titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantBulb size={22} working={busy}/></span>}
       workspaceControl={headerControls} conversationContentAvailable={timeline.length > 0} workSummaryVisible={summary.showWorkSummary}

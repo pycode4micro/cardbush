@@ -1,3 +1,4 @@
+import { dragAssistantSurface, residentCapsuleSize, restoreAssistantFrame, sizeAssistantSurface, type AssistantSurface } from './assistantSurface';
 import { browserConnectionEnvironment } from './browserEnvironment';
 import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, windowsReleaseSupported, type TerminalRuntime } from '@cardbush/platform';
@@ -299,6 +300,18 @@ let tray: Tray | null = null;
 let assistantResident = false;
 let assistantNextLaunch = false;
 let floatingAssistant = false;
+let assistantSurface: AssistantSurface = 'capsule';
+let assistantReplyHeight = 96;
+function showAssistantSurface(surface: AssistantSurface) {
+  if (!mainWindow || (!floatingAssistant && !workspaceWindowState)) return;
+  assistantSurface = surface;
+  if (workspaceWindowState && process.platform === 'darwin') {
+    mainWindow.setBackgroundColor('#00000000');
+    mainWindow.contentView.setBackgroundColor('#00000000');
+  }
+  sizeAssistantSurface(mainWindow, surface, Boolean(workspaceWindowState), assistantReplyHeight);
+  sendToLiveRenderer(mainWindow, 'assistant:surface-changed', surface);
+}
 let residentReturnPage: 'home' | 'explore' = 'home';
 let workspaceWindowState: { bounds: Electron.Rectangle; maximized: boolean; fullscreen: boolean; alwaysOnTop: boolean } | undefined;
 let retainAssistantWindow = false;
@@ -604,14 +617,15 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' |
   const windowIcon = loadedWindowIcon.image;
   const floating = assistantResident && !options.workspace;
   const window = new BrowserWindow({
-    width: floating ? 500 : 1180,
-    height: floating ? 640 : 760,
-    minWidth: 480,
-    minHeight: 480,
-    ...(floating ? { alwaysOnTop: true, autoHideMenuBar: true } : mainWindowFrameOptions(process.platform)),
+    width: floating ? residentCapsuleSize.width : 1180,
+    height: floating ? residentCapsuleSize.height : 760,
+    minWidth: floating ? 1 : 480,
+    minHeight: floating ? 1 : 480,
+    ...(!floating && process.platform === 'darwin' ? { transparent: true } : {}),
+    ...(floating ? { frame: false, transparent: true, resizable: false, alwaysOnTop: true, autoHideMenuBar: true } : mainWindowFrameOptions(process.platform)),
     title: 'cardbush',
     icon: windowIcon,
-    backgroundColor: mainWindowThemeBackgrounds.dark,
+    backgroundColor: floating ? '#00000000' : mainWindowThemeBackgrounds.dark,
     backgroundMaterial: 'none',
     show: false,
     webPreferences: {
@@ -626,6 +640,7 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' |
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
   floatingAssistant = floating;
+  assistantSurface = 'capsule';
   workspaceWindowState = undefined;
   retainAssistantWindow = false;
   installAppSessionPermissions(window);
@@ -870,8 +885,8 @@ function applyMainWindowVisualMaterial(target: BrowserWindow, theme: AppThemeMod
   }
   lastMainWindowTheme = theme;
   const background = backgroundForMainWindowTheme(theme);
-  if (target === mainWindow && floatingAssistant) {
-    target.setBackgroundColor(background);
+  if (target === mainWindow && (floatingAssistant || workspaceWindowState && process.platform === 'darwin')) {
+    target.setBackgroundColor('#00000000');
     return;
   }
   let controller = windowAppearanceControllers.get(target);
@@ -1660,7 +1675,9 @@ function escapeXmlText(value: string) {
 }
 
 function activateSessionAttention(sessionId: string) {
-  if (assistantResident && sessionId === 'personal-assistant' && (!mainWindow || floatingAssistant)) { showMainWindow(); return; }
+  if (sessionId === 'personal-assistant' && (workspaceWindowState || assistantResident && (!mainWindow || floatingAssistant))) {
+    showMainWindow(); showAssistantSurface('replies'); return;
+  }
   if (sessionAttentionOpenQueue.enqueue(sessionId)) {
     publishSessionAttentionOpenAvailable();
   }
@@ -1701,7 +1718,7 @@ function syncAssistantResidency() {
     command: { kind: 'runtime.sync_assistant_residency', payload: {} } }).catch(error => console.warn('[assistant-mode]', error));
 }
 
-function openResidentWorkspace(page: 'team' | 'home' | 'settings' | 'explore') {
+function openResidentWorkspace(page: 'home' | 'explore') {
   if (!assistantResident) return;
   if (mainWindow && floatingAssistant) {
     if (retainAssistantWindow || desktopVoiceHost.hasActiveCall(mainWindow.webContents.id)) {
@@ -1784,7 +1801,7 @@ ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown
     workspaceWindowState = { bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullscreen: win.isFullScreen(), alwaysOnTop: win.isAlwaysOnTop() };
     if (workspaceWindowState.fullscreen) win.setFullScreen(false);
     if (workspaceWindowState.maximized) win.unmaximize();
-    win.setSize(500, 640);
+    showAssistantSurface('capsule');
     win.setAlwaysOnTop(true);
     win.show(); win.focus();
   } else if (action === 'workspace' && floatingAssistant) {
@@ -1792,12 +1809,42 @@ ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown
   } else if (action === 'workspace' && workspaceWindowState) {
     const previous = workspaceWindowState;
     workspaceWindowState = undefined;
+    restoreAssistantFrame(win);
+    if (process.platform === 'darwin') {
+      const background = backgroundForMainWindowTheme(lastMainWindowTheme);
+      win.setBackgroundColor(background); win.contentView.setBackgroundColor(background);
+    }
     win.setAlwaysOnTop(previous.alwaysOnTop);
     win.setBounds(previous.bounds);
     if (previous.maximized) win.maximize();
     if (previous.fullscreen) win.setFullScreen(true);
   } else if (!['read','workspace','float'].includes(String(action))) throw Error('invalid_assistant_mode');
   return { floating: floatingAssistant || Boolean(workspaceWindowState), nextLaunch: assistantNextLaunch };
+});
+ipcMain.on('assistant:reply-height', (event, height: unknown) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame ||
+      (!workspaceWindowState && !floatingAssistant) || assistantSurface !== 'replies' ||
+      typeof height !== 'number' || !Number.isFinite(height)) return;
+  const next = Math.max(48, Math.min(210, Math.ceil(height)));
+  if (next === assistantReplyHeight) return;
+  assistantReplyHeight = next;
+  sizeAssistantSurface(mainWindow, assistantSurface, Boolean(workspaceWindowState), next);
+});
+ipcMain.on('assistant:drag-surface', (event, action: unknown, dx: unknown, dy: unknown) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame ||
+      (!workspaceWindowState && !floatingAssistant)) return;
+  dragAssistantSurface(mainWindow, action, dx, dy);
+});
+ipcMain.handle('assistant:surface', (event, surface: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('invalid_window_sender');
+  if (surface === 'read') {
+    if (mainWindow && (floatingAssistant || workspaceWindowState)) sizeAssistantSurface(mainWindow, assistantSurface, Boolean(workspaceWindowState), assistantReplyHeight);
+    return assistantSurface;
+  }
+  if (surface !== 'capsule' && surface !== 'compose' && surface !== 'replies') throw Error('invalid_assistant_surface');
+  showAssistantSurface(surface);
+  return assistantSurface;
 });
 ipcMain.handle('assistant:window-retained', (event, retained: unknown) => {
   assertMainWindowSender(event.sender.id);
@@ -1807,11 +1854,6 @@ ipcMain.handle('assistant:window-retained', (event, retained: unknown) => {
   if (!retained && mainWindow && !mainWindow.isVisible() && !mainWindow.webContents.isLoadingMainFrame() &&
     !startupRevealFallback && !desktopVoiceHost.hasActiveCall(event.sender.id)) mainWindow.close();
 });
-ipcMain.handle('assistant:open-workspace', (event, page: unknown) => {
-  assertMainWindowSender(event.sender.id);
-  if (page === 'team' || page === 'home' || page === 'settings') openResidentWorkspace(page);
-});
-
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 ipcMain.handle('window:is-visible', event => {
   const target = BrowserWindow.fromWebContents(event.sender);

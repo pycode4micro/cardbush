@@ -30,9 +30,3 @@
 .profile-editor label { display: grid; gap: 7px; }
 .profile-editor :is(input,textarea) { width: 100%; box-sizing: border-box; padding: 9px 11px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .profile-editor textarea { resize: vertical; }
-
-.app[data-floating-assistant] > .desktop-shell { display: flex; }
-.app[data-floating-assistant] > .desktop-shell > :not(.main-stage),
-.app[data-floating-assistant] .window-frame :is(.desktop-menu-toggle,.window-brand,.window-history-controls) { display: none; }
-.app[data-floating-assistant] > .desktop-shell > .main-stage { position: relative; inset: auto; width: 100%; min-width: 0; max-width: none; flex: 1; display: flex; visibility: visible; transform: none; opacity: 1; pointer-events: auto; }
-.app[data-floating-assistant] .main-stage > :not(.assistant-view) { display: none; }

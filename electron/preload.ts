@@ -190,8 +190,15 @@ const desktopApi = {
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
   assistantMode: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean, idlePage?: 'home' | 'explore') =>
     ipcRenderer.invoke('assistant:mode', action, enabled, idlePage) as Promise<{ floating: boolean; nextLaunch: boolean }>,
+  measureAssistantReplies: (height: number) => ipcRenderer.send('assistant:reply-height', height),
+  dragAssistantSurface: (action: 'start' | 'move' | 'end', dx?: number, dy?: number) => ipcRenderer.send('assistant:drag-surface', action, dx, dy),
+  assistantSurface: (surface: 'read' | import('./assistantSurface').AssistantSurface) => ipcRenderer.invoke('assistant:surface', surface),
+  onAssistantSurface: (listener: (surface: import('./assistantSurface').AssistantSurface) => void) => {
+    const handle = (_event: Electron.IpcRendererEvent, surface: import('./assistantSurface').AssistantSurface) => listener(surface);
+    ipcRenderer.on('assistant:surface-changed', handle);
+    return () => { ipcRenderer.removeListener('assistant:surface-changed', handle); };
+  },
   retainAssistantWindow: (retained: boolean) => ipcRenderer.invoke('assistant:window-retained', retained) as Promise<void>,
-  openAssistantWorkspace: (page: 'team' | 'home' | 'settings') => ipcRenderer.invoke('assistant:open-workspace', page) as Promise<void>,
   ensureTaskWorkspace: (sessionId: string) =>
     ipcRenderer.invoke('workspace:ensure-task-directory', sessionId) as Promise<string>,
   runtimeStartupStatus: () =>

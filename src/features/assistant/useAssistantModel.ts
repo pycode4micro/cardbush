@@ -5,11 +5,15 @@ import type { AppLanguage, ManagedModelConfig, ReasoningLevel } from '../../type
 import { showUiError } from '../../shared/showUiError';
 import { resolveConversationModelId, selectConversationModel, useConversationModel } from '../settings/conversationModel';
 
+export function useAssistantModelSelection(models: ManagedModelConfig[], defaultModelId: string) {
+  useConversationModel(PERSONAL_ASSISTANT_SESSION);
+  return resolveConversationModelId(models, PERSONAL_ASSISTANT_SESSION, '', defaultModelId);
+}
+
 /** The composer and prepareAssistantRequest read the same assistant-owned selection. */
 export function useAssistantModel(models: ManagedModelConfig[], defaultModelId: string,
   saveReasoning: (id: string, effort: ReasoningEffort | null) => Promise<unknown>, language: AppLanguage) {
-  useConversationModel(PERSONAL_ASSISTANT_SESSION);
-  const selectedModel = resolveConversationModelId(models, PERSONAL_ASSISTANT_SESSION, '', defaultModelId);
+  const selectedModel = useAssistantModelSelection(models, defaultModelId);
   const config = models.find(model => model.id === selectedModel);
   const reasoningLevel: ReasoningLevel = resolveModelReasoningEffort(config ?? {}) ?? 'default';
   const onModelChange = useCallback((id: string) => {
