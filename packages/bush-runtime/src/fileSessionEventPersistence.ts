@@ -23,6 +23,7 @@ import { sessionEventSchema, type SessionEvent, type SessionHistoryRequest, type
 import type { SessionEventPersistence, SessionMetadataEntry } from "./sessionStore.js";
 
 const RECORD_PROTOCOL = "bush.session_event_record.v1" as const;
+const summaryReadConcurrency = 4;
 
 export interface SessionJournalRecoveryIssue {
   code: "truncated_tail_removed";
@@ -111,18 +112,23 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
     const files = await cacheFiles(this.#root, name => /^[a-f0-9]{64}\.jsonl$/.test(name));
     const present = new Set(files.map(file => file.path));
     for (const key of this.#summaries.keys()) if (!present.has(key)) this.#summaries.delete(key);
-    for (const file of files) {
-      signal?.throwIfAborted();
+    const readSummary = async (file: typeof files[number]) => {
       const cached = this.#summaries.get(file.path);
       const summary = cached?.size === file.bytes && cached.mtimeMs === file.mtimeMs
         ? cached.summary : await this.#readIndex.summary(file.path, signal);
       if (summary) {
-        summaries.push(structuredClone(summary));
         this.#summaries.delete(file.path);
         this.#summaries.set(file.path, { size: file.bytes, mtimeMs: file.mtimeMs, summary });
         while (this.#summaries.size > 1000) this.#summaries.delete(this.#summaries.keys().next().value!);
       }
+      return summary;
+    };
+    for (let start = 0; start < files.length; start += summaryReadConcurrency) {
+      signal?.throwIfAborted();
+      const batch = await Promise.all(files.slice(start, start + summaryReadConcurrency).map(readSummary));
+      for (const summary of batch) if (summary) summaries.push(structuredClone(summary));
     }
+    signal?.throwIfAborted();
     return summaries;
   }
 

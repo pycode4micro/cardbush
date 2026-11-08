@@ -33,7 +33,6 @@ document.documentElement.lang = zh ? 'zh-CN' : 'en';
 localStorage.setItem('cardbush_language_mode', language);
 localStorage.setItem('cardbush_pinned_conversation_ids', JSON.stringify(['planning']));
 localStorage.setItem('cardbush_app_center_v1', JSON.stringify({
-  shortcuts: ['builtin:plugins', 'builtin:automations', 'builtin:settings'], display: 'always',
   links: [
     { id: 'external:learn', title: 'Microsoft Learn', url: 'https://learn.microsoft.com/' },
     { id: 'external:github', title: 'GitHub', url: 'https://github.com/' },

@@ -66,7 +66,9 @@ declare global {
       readAgentInstructions: (projectDir?: string, workspaceDir?: string) => Promise<import('@cardbush/bush-product-agent').AgentInstructionDocument[]>;
       saveGlobalInstructions: (content: string, revision: string) => Promise<import('../backend/globalInstructions').GlobalInstructionsSnapshot>;
       rendererReady: () => Promise<void>;
-      assistantMode?: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean, idlePage?: 'home' | 'explore') => Promise<{ floating: boolean; nextLaunch: boolean }>;
+      onOpenDesktopHome?: (callback: () => void) => () => void;
+      onWorkspacePresence?: (callback: (present: boolean) => void) => () => void;
+      assistantMode?: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean) => Promise<{ floating: boolean; nextLaunch: boolean; hasWorkspace: boolean }>;
       measureAssistantReplies?: (height: number) => void;
       dragAssistantSurface?: (action: 'start' | 'move' | 'end', dx?: number, dy?: number) => void;
       assistantSurface?: (surface: 'read' | import('../../electron/assistantSurface').AssistantSurface) => Promise<import('../../electron/assistantSurface').AssistantSurface>;
@@ -156,7 +158,7 @@ declare global {
       onOpenSessionAttention: (
         callback: () => void,
       ) => () => void;
-      writeDebugLog: (scope: string, payload: unknown) => Promise<string>;
+      writeDebugLog: (scope: string, payload: unknown) => Promise<string | undefined>;
       windowScrollDiagnosticConfig?: () => Promise<import('../../electron/windowScrollDiagnostics').WindowScrollDiagnosticConfig | undefined>;
       onWindowScrollDiagnosticEvent?: (callback: (event: Record<string, unknown>) => void) => () => void;
       showErrorDialog: (error: { title: string; message: string }) => Promise<void>;

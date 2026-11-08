@@ -188,8 +188,17 @@ const desktopApi = {
     },
   },
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
-  assistantMode: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean, idlePage?: 'home' | 'explore') =>
-    ipcRenderer.invoke('assistant:mode', action, enabled, idlePage) as Promise<{ floating: boolean; nextLaunch: boolean }>,
+  onOpenDesktopHome: (callback: () => void) => {
+    ipcRenderer.on('workspace:open-home', callback);
+    return () => ipcRenderer.removeListener('workspace:open-home', callback);
+  },
+  onWorkspacePresence: (callback: (present: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, present: boolean) => callback(present);
+    ipcRenderer.on('workspace:presence', listener);
+    return () => ipcRenderer.removeListener('workspace:presence', listener);
+  },
+  assistantMode: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean) =>
+    ipcRenderer.invoke('assistant:mode', action, enabled) as Promise<{ floating: boolean; nextLaunch: boolean; hasWorkspace: boolean }>,
   measureAssistantReplies: (height: number) => ipcRenderer.send('assistant:reply-height', height),
   dragAssistantSurface: (action: 'start' | 'move' | 'end', dx?: number, dy?: number) => ipcRenderer.send('assistant:drag-surface', action, dx, dy),
   assistantSurface: (surface: 'read' | import('./assistantSurface').AssistantSurface) => ipcRenderer.invoke('assistant:surface', surface),
@@ -302,7 +311,7 @@ const desktopApi = {
     return () => ipcRenderer.removeListener('attention:open-session', listener);
   },
   writeDebugLog: (scope: string, payload: unknown) =>
-    ipcRenderer.invoke('debug:append-log', scope, payload) as Promise<string>,
+    ipcRenderer.invoke('debug:append-log', scope, payload) as Promise<string | undefined>,
   windowScrollDiagnosticConfig: () => ipcRenderer.invoke('debug:window-scroll-config'),
   onWindowScrollDiagnosticEvent: (callback: (event: Record<string, unknown>) => void) => {
     const listener = (_event: unknown, value: Record<string, unknown>) => callback(value);

@@ -4,6 +4,7 @@ import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
 import type { RecentListOutlet } from '../desktop/RecentConversationBar';
 import { ConversationRowContent } from '../desktop/RecentConversationBarView';
 import { ProfileMenu } from '../profile/ProfileMenu';
+import { SidebarApplications } from './SidebarApplications';
 import { setConversationsArchived, useConversationArchives } from './conversationArchives';
 import { showUiError } from '../../shared/showUiError';
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionMenuIcon } from '../chat/ConversationExtraction';
@@ -33,6 +34,7 @@ import {
   MicOff,
   VolumeX,
   Pin,
+  PinOff,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -187,7 +189,9 @@ type SidebarContextMenuState = {
   anchor?: HTMLButtonElement;
   focusFirst?: boolean;
   drawerHost?: HTMLElement | null;
+  trigger?: HTMLElement;
 };
+type SidebarMenuEvent = ReactMouseEvent | React.KeyboardEvent<HTMLElement>;
 
 type ConversationMenuOptions = {
   changeCount: number;
@@ -200,20 +204,6 @@ type ConversationMenuOptions = {
   onArchive: () => void;
   onDelete: () => void;
 };
-
-function sidebarContextMenuPosition(clientX: number, clientY: number, items: SidebarContextMenuItem[]) {
-  const padding = 8;
-  const menuWidth = Math.min(280, window.innerWidth - padding * 2);
-  const separators = items.filter((item, index) => index > 0 && item.separatorBefore).length;
-  const menuHeight = Math.min(window.innerHeight - padding * 2, Math.max(1, items.length) * 34 + separators * 21 + 18);
-  const pointerOffset = 2;
-  const targetX = clientX + pointerOffset;
-  const targetY = clientY + pointerOffset;
-  return {
-    x: Math.max(padding, Math.min(targetX, window.innerWidth - menuWidth - padding)),
-    y: Math.max(padding, Math.min(targetY, window.innerHeight - menuHeight - padding)),
-  };
-}
 
 import { AssistantBulb } from '../assistant/AssistantBulb';
 import { useAssistantActions } from '../assistant/useAssistantActions';
@@ -518,14 +508,17 @@ export const ChatSidebar = memo(function ChatSidebar({
   }, [closeMenus, contextMenu]);
 
   function openContextMenu(
-    event: ReactMouseEvent,
+    event: SidebarMenuEvent,
     id: string,
     items: SidebarContextMenuItem[],
   ) {
     event.preventDefault();
     event.stopPropagation();
-    const position = sidebarContextMenuPosition(event.clientX, event.clientY, items);
-    setContextMenu({ id, items, ...position, drawerHost: event.currentTarget.closest<HTMLElement>('.recent-turn-drawer') });
+    const trigger = event.currentTarget as HTMLElement;
+    const rect = trigger.getBoundingClientRect();
+    const x = 'clientX' in event ? event.clientX + 2 : rect.left;
+    const y = 'clientY' in event ? event.clientY + 2 : rect.bottom;
+    setContextMenu({ id, items, x, y, trigger, drawerHost: trigger.closest<HTMLElement>('.recent-turn-drawer') });
   }
 
   function runContextMenuItem(item: SidebarContextMenuItem) {
@@ -581,7 +574,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     return [
       {
         key: 'pin',
-        icon: <Pin size={15} />,
+        icon: project.pinned ? <PinOff/> : <Pin/>,
         label: project.pinned
           ? uiText(language)('chatSidebar.unpin')
           : uiText(language)('chatSidebar.pinProject'),
@@ -648,7 +641,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       },
       {
         key: 'pin',
-        icon: <Pin size={15} />,
+        icon: options.pinned ? <PinOff/> : <Pin/>,
         label: options.pinned
           ? uiText(language)('chatSidebar.unpinChat')
           : uiText(language)('chatSidebar.pinChat'),
@@ -858,6 +851,7 @@ export const ChatSidebar = memo(function ChatSidebar({
             {assistantProfile.microphoneMuted && <MicOff size={12} aria-label={uiText(language)('chatSidebar.microphoneMuted')}/>}
             {assistantProfile.outputMuted && <VolumeX size={12} aria-label={uiText(language)('chatSidebar.speechMuted')}/>}
           </span>}/>
+        <SidebarApplications language={language}/>
       </nav>
 
       <div className="sidebar-scroll" hidden={railCollapsed && !onExpandRail}>
@@ -1115,7 +1109,7 @@ function ProjectBlock({
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => Promise<boolean>;
   onConversationContextMenu: (
-    event: ReactMouseEvent,
+    event: SidebarMenuEvent,
     conversation: ConversationSummary,
     options: ConversationMenuOptions,
   ) => void;
@@ -1276,7 +1270,7 @@ function ConversationRow({
   changeReports?: ConversationChangeReport[];
   onOpenChanges?: () => void;
   onRename: (title: string) => Promise<boolean>;
-  onContextMenu?: (event: ReactMouseEvent, options: ConversationMenuOptions) => void;
+  onContextMenu?: (event: SidebarMenuEvent, options: ConversationMenuOptions) => void;
   onClick: () => void;
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -1356,6 +1350,11 @@ function ConversationRow({
       }}
       onContextMenu={(event) => { hoverPreview.close(); onContextMenu?.(event, menuOptions); }}
       onKeyDown={(event) => {
+        if (onContextMenu && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
+          hoverPreview.close();
+          onContextMenu(event, menuOptions);
+          return;
+        }
         if (keyboardShortcuts.matches('extractConversation', event) && !event.nativeEvent.isComposing) {
           event.preventDefault(); event.stopPropagation(); if (!remote) extraction?.open(conversation.id); return;
         }
@@ -1468,9 +1467,8 @@ function ConversationRow({
           event.currentTarget.blur();
         }}
         onKeyDown={(event) => event.stopPropagation()}
-        onContextMenu={(event) => event.stopPropagation()}
       >
-        <Pin size={14} />
+        {pinned ? <PinOff/> : <Pin/>}
       </button>}
       {quickActionsAvailable && !editingTitle && <button
         className="conversation-archive"
@@ -1483,12 +1481,8 @@ function ConversationRow({
           event.currentTarget.blur();
         }}
         onKeyDown={(event) => event.stopPropagation()}
-        onContextMenu={(event) => {
-          event.stopPropagation();
-          onContextMenu?.(event, menuOptions);
-        }}
       >
-        <Archive size={15} />
+        <Archive/>
       </button>}
     </div>
     <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} attention={running && attention?.kind === 'completed' ? undefined : attention} onRename={beginRename} />
@@ -1604,28 +1598,39 @@ function SidebarContextMenu({
     const node = ref.current;
     if (!node) return;
     setSubmenu(null);
+    // A translated drawer establishes a containing block for fixed descendants.
+    // Keep DOM ownership for light-dismiss, but position the menu in the viewport's top layer.
+    if (menu.drawerHost) node.showPopover();
     const anchor = menu.anchor?.getBoundingClientRect();
     let left = anchor ? anchor.right : menu.x;
     if (anchor && left + node.offsetWidth > window.innerWidth - 8) left = anchor.left - node.offsetWidth;
     node.style.left = Math.max(8, Math.min(left, window.innerWidth - node.offsetWidth - 8)) + 'px';
     node.style.top = Math.max(8, Math.min(anchor ? anchor.top - 8 : menu.y, window.innerHeight - node.offsetHeight - 8)) + 'px';
-    if (menu.focusFirst) node.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    if (menu.focusFirst) node.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
     else if (!menu.anchor) node.focus({ preventScroll: true });
+    return () => { if (node.matches(':popover-open')) node.hidePopover(); };
   }, [menu]);
   useEffect(() => {
     window.addEventListener('resize', onDismiss);
-    return () => window.removeEventListener('resize', onDismiss);
-  }, [onDismiss]);
+    const drawer = menu.drawerHost;
+    const dismissOnClose = (event: ToggleEvent) => { if (event.newState === 'closed') onDismiss(); };
+    drawer?.addEventListener('beforetoggle', dismissOnClose);
+    return () => {
+      window.removeEventListener('resize', onDismiss);
+      drawer?.removeEventListener('beforetoggle', dismissOnClose);
+    };
+  }, [onDismiss, menu.drawerHost]);
 
   function expand(item: SidebarContextMenuItem, anchor: HTMLButtonElement, focusFirst = false) {
     if (item.disabled || !item.children?.length) { setSubmenu(null); return; }
-    setSubmenu({ id: item.key, x: 0, y: 0, items: item.children, anchor, focusFirst });
+    setSubmenu({ id: item.key, x: 0, y: 0, items: item.children, anchor, focusFirst, drawerHost: menu.drawerHost });
   }
 
   return <>
     <div
       ref={ref}
       className="sidebar-context-menu"
+      popover={menu.drawerHost ? 'manual' : undefined}
       role="menu"
       tabIndex={-1}
       aria-label={menu.anchor?.textContent ?? undefined}
@@ -1647,6 +1652,7 @@ function SidebarContextMenu({
           if (item && buttons[current]) expand(item, buttons[current], true);
         } else if (event.key === 'ArrowLeft' || event.key === 'Escape') {
           event.preventDefault(); event.stopPropagation(); onClose();
+          menu.trigger?.focus({ preventScroll: true });
         } else if (event.key === 'Tab') {
           event.preventDefault(); onDismiss();
         }

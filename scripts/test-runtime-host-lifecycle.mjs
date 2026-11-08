@@ -10,7 +10,7 @@ const fakeElectron = { utilityProcess: { fork(_modulePath, _args, options) {
   assert.ok(Object.values(options.env).every(value => typeof value === 'string'), 'Electron requires string env values');
   const child = new EventEmitter();
   child.env = options.env;
-  child.kill = () => {};
+  child.kill = () => { child.killed = true; };
   child.postMessage = message => { child.lastMessage = message; };
   children.push(child);
   return child;
@@ -38,7 +38,7 @@ let readyNotifications = 0;
 const env = { CARDBUSH_EXECUTION_SANDBOX: undefined, FUTURE_OPTION: undefined, EMPTY: '', POLICY: 'required' };
 const controller = new RuntimeUtilityProcessController({ modulePath: 'unused-test-fixture', env, onReady: () => readyNotifications++ });
 const firstReady = controller.start();
-assert.deepEqual(children[0].env, { EMPTY: '', POLICY: 'required', CARDBUSH_RESOURCE_COORDINATION: 'desktop' });
+assert.deepEqual(children[0].env, { EMPTY: '', POLICY: 'required', CARDBUSH_RESOURCE_COORDINATION: 'desktop', CARDBUSH_RUNTIME_STARTUP_PROGRESS: '1' });
 assert.equal(Object.hasOwn(env, 'CARDBUSH_EXECUTION_SANDBOX'), true, 'the caller environment is not mutated');
 children[0].emit('message', readyMessage);
 await firstReady;
@@ -69,6 +69,30 @@ assert.equal(children.length,2,'cleanup must never restart a stopped host');
 controller.dispose();
 assert.equal((await controller.command({protocol,type:'command',operationId:'disposed',command:{kind:'test',payload:{}}})).error.code,'runtime_host_stopped');
 assert.equal(children.length,2,'late initialization callbacks must not resurrect a disposed controller');
+{
+  const phases = [];
+  const cold = new RuntimeUtilityProcessController({ modulePath: 'fixture', startupTimeoutMs: 1000,
+    onStartupProgress: stage => phases.push(stage) });
+  const boot = cold.start(), stalled = children.at(-1);
+  stalled.emit('spawn');
+  stalled.emit('message', { type: 'runtime_modules_loaded' });
+  await assert.rejects(boot, error => error.fact.code === 'runtime_host_startup_timeout' && error.fact.retryable && error.fact.details.stage === 'modules-loaded');
+  assert.deepEqual(phases, ['spawned', 'modules-loaded']);
+  assert.ok(stalled.killed);
+  const replacement = cold.start(), live = children.at(-1);
+  stalled.emit('message', readyMessage);
+  live.emit('message', readyMessage);
+  assert.equal((await replacement).type, 'ready');
+  cold.stop();
+  const badBoot = cold.start(), invalid = children.at(-1);
+  invalid.emit('message', {protocol,type:'protocol_error',error:{protocol:'bush.runtime_error.v1',kind:'protocol',
+    code:'invalid_ipc_message',message:'Invalid startup message',retryable:false,details:{}}});
+  await assert.rejects(badBoot, error => error.fact.code === 'invalid_ipc_message');
+  assert.ok(invalid.killed, 'an early protocol error is reported immediately and releases its worker');
+  const interrupted = cold.start();
+  cold.dispose();
+  await assert.rejects(interrupted, error => error.fact.code === 'runtime_host_stopped');
+}
 console.log('Runtime host lifecycle: pending stop, stale message/error/exit and replacement identity passed.');
 
 const {registerRuntimeHostIpc} = module.exports;

@@ -45,6 +45,7 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 const rendererWindow = new URLSearchParams(window.location.search).get('window');
+if (rendererWindow === 'assistant') document.documentElement.dataset.assistantWindow = '';
 const language = resolveUiLanguage(navigator.language);
 // Select the window before importing its state owners. Shadow
 // windows must not initialize or download the main workspace just to render.

@@ -1,5 +1,6 @@
 import { app, dialog, ipcMain, safeStorage, powerSaveBlocker, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
+import { uiText } from '@cardbush/platform/i18n';
 import { VoiceService } from './voiceService';
 import { WindowsVoice } from './windowsVoice';
 import { VoiceModelStore } from './voiceModelStore';
@@ -17,7 +18,7 @@ async function completeOrCancel<T>(operation: Promise<T>, cancelled: T): Promise
   catch (error) { if (error instanceof Error && error.name === 'VoiceCancelledError') return cancelled; throw error; }
 }
 
-export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime: { packaged: boolean; appPath: string; resourcesPath: string }, network: { download: typeof fetch; speech: typeof fetch; realtimeProxy: () => Promise<string>; realtimeDiagnostic?: (entry: RealtimeVoiceDiagnostic) => void; uiLanguage?: () => string; environment?: import('./realtimeVoiceService').RealtimeEnvironmentHost }) {
+export function registerVoiceIpc(windowForSender: (sender: Electron.WebContents) => BrowserWindow | null, runtime: { packaged: boolean; appPath: string; resourcesPath: string }, network: { download: typeof fetch; speech: typeof fetch; realtimeProxy: () => Promise<string>; realtimeDiagnostic?: (entry: RealtimeVoiceDiagnostic) => void; uiLanguage?: () => string; environment?: import('./realtimeVoiceService').RealtimeEnvironmentHost }) {
   let service: VoiceService | undefined;
   const models = new VoiceModelStore(path.join(app.getPath('userData'), 'voice-models'), network.download);
   const recognition = new SenseVoice(models, path.join(app.getPath('temp'), 'cardbush-voice'));
@@ -59,7 +60,7 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
     ...crypto,
   });
   const authorized = (event: IpcMainInvokeEvent) => {
-    const window = mainWindow();
+    const window = windowForSender(event.sender);
     if (!window || window.isDestroyed() || window.webContents !== event.sender || event.senderFrame !== event.sender.mainFrame) throw Error('Voice is only available in the main application.');
     if (!watched.has(event.sender.id)) {
       const owner = event.sender.id; watched.add(owner);
@@ -73,7 +74,10 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
     authorized(event);
     if (typeof active !== 'boolean') throw Error('Invalid call state.');
     if (!active) releaseCall(event.sender.id);
-    else if (!callBlockers.has(event.sender.id)) callBlockers.set(event.sender.id, powerSaveBlocker.start('prevent-app-suspension'));
+    else if (!callBlockers.has(event.sender.id)) {
+      if (callBlockers.size) throw Error(uiText(network.uiLanguage?.())('resident.otherVoiceCall'));
+      callBlockers.set(event.sender.id, powerSaveBlocker.start('prevent-app-suspension'));
+    }
   });
   ipcMain.handle('voice:realtime-settings', event => { authorized(event); return realtime.settings(); });
   ipcMain.handle('voice:realtime-save', (event, input) => { authorized(event); return realtime.save(input); });
@@ -96,7 +100,7 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
   ipcMain.handle('voice:choose-speech-path', async (event, kind) => {
     authorized(event);
     if (kind !== 'model' && kind !== 'python') throw Error('Invalid speech path kind.');
-    const result = await dialog.showOpenDialog(mainWindow()!, {
+    const result = await dialog.showOpenDialog(windowForSender(event.sender)!, {
       title: kind === 'model' ? '选择本地语音模型目录' : '选择已安装 qwen-tts 的 Python 解释器',
       properties: [kind === 'model' ? 'openDirectory' : 'openFile'],
       ...(kind === 'python' && process.platform === 'win32' ? { filters: [{ name: 'Python', extensions: ['exe'] }] } : {}),

@@ -5,7 +5,8 @@ import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Lightbulb, RotateCcw, X } from 'lucide-react';
 import { readAssistantProfile, saveAssistantProfile } from './assistantProfile';
-import { prepareAssistantAvatar, readAssistantAvatar, saveAssistantAvatar } from './assistantAvatar';
+import { readAssistantAvatar, saveAssistantAvatar } from './assistantAvatar';
+import { prepareAvatarImage } from '../../shared/avatarImage';
 
 export function AssistantSettingsDialog({ language, onClose }: { language: string; onClose(): void }) {
   const dialog = useRef<HTMLDialogElement>(null), nameInput = useRef<HTMLInputElement>(null), fileInput = useRef<HTMLInputElement>(null);
@@ -21,7 +22,7 @@ export function AssistantSettingsDialog({ language, onClose }: { language: strin
   const choose = async (file: File | undefined) => {
     if (!file) return;
     const id = ++request.current; setLoading(true); setError('');
-    try { const next = await prepareAssistantAvatar(file, language); if (id === request.current) setAvatar(next); }
+    try { const next = await prepareAvatarImage(file, language); if (id === request.current) setAvatar(next); }
     catch (error) { if (id === request.current) setError(error instanceof Error ? error.message : String(error)); }
     finally { if (id === request.current) setLoading(false); }
   };

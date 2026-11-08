@@ -166,14 +166,14 @@ test('native menus follow the App language, normalize locale tags and reject oth
   const bindings = { uiText, resolveUiLanguage: catalog.resolve,
     app: { isReady: () => true, getLocale: () => 'en-GB' },
     Menu: { buildFromTemplate: template => template }, tray: { setContextMenu: menu => menus.push(menu) },
-    showMainWindow: () => {}, requestAppQuit: () => {},
+    showWorkspaceHome: () => {}, showFloatingAssistant: () => {}, requestAppQuit: () => {},
     ipcMain: { handle: (_channel, callback) => { handler = callback; } },
-    assertMainWindowSender: id => { if (id !== 7) throw Error('Untrusted sender'); },
+    requireAppFrame: event => { if (event.sender.id !== 7) throw Error('Untrusted sender'); },
   };
   const code = 'let nativeUiLanguage;\n' + functions.join('\n') + '\n' + registration.getText(source) + '\nupdateTrayMenu();';
   new Function(...Object.keys(bindings), ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText)(...Object.values(bindings));
   const labels = () => menus.at(-1).map(item => item.label);
-  const expected = language => [uiText(language)('main.open'), uiText(language)('main.quit')];
+  const expected = language => [uiText(language)('resident.openHome'), uiText(language)('resident.openAssistant'), uiText(language)('main.quit')];
   assert.deepEqual(labels(), expected('en'));
   handler({ sender: { id: 7 } }, 'zh-CN');
   assert.deepEqual(labels(), expected('zh'));

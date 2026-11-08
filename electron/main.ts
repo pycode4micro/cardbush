@@ -1,4 +1,4 @@
-import { dragAssistantSurface, residentCapsuleSize, restoreAssistantFrame, sizeAssistantSurface, type AssistantSurface } from './assistantSurface';
+import { dragAssistantSurface, residentCapsuleSize, sizeAssistantSurface, type AssistantSurface } from './assistantSurface';
 import { browserConnectionEnvironment } from './browserEnvironment';
 import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, windowsReleaseSupported, type TerminalRuntime } from '@cardbush/platform';
@@ -299,21 +299,18 @@ const shadowWindowIdsByKey = new Map<string, number>();
 let tray: Tray | null = null;
 let assistantResident = false;
 let assistantNextLaunch = false;
-let floatingAssistant = false;
+let assistantWindow: BrowserWindow | null = null;
+let assistantWindowReady = false;
+let openHomeOnReady = false;
 let assistantSurface: AssistantSurface = 'capsule';
+let assistantAttachmentPicker: BrowserWindow | undefined;
 let assistantReplyHeight = 96;
 function showAssistantSurface(surface: AssistantSurface) {
-  if (!mainWindow || (!floatingAssistant && !workspaceWindowState)) return;
+  if (!assistantWindow || assistantWindow.isDestroyed()) return;
   assistantSurface = surface;
-  if (workspaceWindowState && process.platform === 'darwin') {
-    mainWindow.setBackgroundColor('#00000000');
-    mainWindow.contentView.setBackgroundColor('#00000000');
-  }
-  sizeAssistantSurface(mainWindow, surface, Boolean(workspaceWindowState), assistantReplyHeight);
-  sendToLiveRenderer(mainWindow, 'assistant:surface-changed', surface);
+  sizeAssistantSurface(assistantWindow, surface, assistantReplyHeight);
+  sendToLiveRenderer(assistantWindow, 'assistant:surface-changed', surface);
 }
-let residentReturnPage: 'home' | 'explore' = 'home';
-let workspaceWindowState: { bounds: Electron.Rectangle; maximized: boolean; fullscreen: boolean; alwaysOnTop: boolean } | undefined;
 let retainAssistantWindow = false;
 let residentBootTimer: ReturnType<typeof setTimeout> | undefined;
 const residentPreferencePath = () => path.join(app.getPath('userData'), 'assistant-resident.json');
@@ -615,17 +612,13 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' |
   }
   const loadedWindowIcon = loadCardbushIconWithSource(256);
   const windowIcon = loadedWindowIcon.image;
-  const floating = assistantResident && !options.workspace;
   const window = new BrowserWindow({
-    width: floating ? residentCapsuleSize.width : 1180,
-    height: floating ? residentCapsuleSize.height : 760,
-    minWidth: floating ? 1 : 480,
-    minHeight: floating ? 1 : 480,
-    ...(!floating && process.platform === 'darwin' ? { transparent: true } : {}),
-    ...(floating ? { frame: false, transparent: true, resizable: false, alwaysOnTop: true, autoHideMenuBar: true } : mainWindowFrameOptions(process.platform)),
+    width: 1180, height: 760, minWidth: 480, minHeight: 480,
+    ...(process.platform === 'darwin' ? { transparent: true } : {}),
+    ...mainWindowFrameOptions(process.platform),
     title: 'cardbush',
     icon: windowIcon,
-    backgroundColor: floating ? '#00000000' : mainWindowThemeBackgrounds.dark,
+    backgroundColor: mainWindowThemeBackgrounds.dark,
     backgroundMaterial: 'none',
     show: false,
     webPreferences: {
@@ -633,16 +626,13 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' |
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webviewTag: !floating,
-      backgroundThrottling: floating,
+      webviewTag: true,
+      backgroundThrottling: false,
     },
   });
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
-  floatingAssistant = floating;
-  assistantSurface = 'capsule';
-  workspaceWindowState = undefined;
-  retainAssistantWindow = false;
+  if (assistantWindow) sendToLiveRenderer(assistantWindow, 'workspace:presence', true);
   installAppSessionPermissions(window);
   windowScrollDiagnostics.set(window, new WindowScrollDiagnostics(window, appLogsDir()));
   window.setMenu(null);
@@ -699,16 +689,12 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' |
     }
     if (mainWindow === window) {
       mainWindow = null;
-      if (floating && assistantResident && !isQuitting && runtimeHostController) {
-        void runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
-          command: { kind: 'runtime.assistant_window_closed', payload: {} } }).catch(() => undefined);
-      }
+      if (assistantWindow && !isQuitting) sendToLiveRenderer(assistantWindow, 'workspace:presence', false);
     }
   });
 
   window.on('close', (event) => {
     if (!isQuitting) {
-      if (floating && !retainAssistantWindow && !desktopVoiceHost.hasActiveCall(window.webContents.id)) return;
       event.preventDefault();
       if (!window.isDestroyed()) {
         window.hide();
@@ -716,7 +702,7 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' |
     }
   });
 
-  loadRenderer(window, floating ? 'assistant' : 'main', options.workspace);
+  loadRenderer(window, 'main', options.workspace);
   return window;
 }
 
@@ -885,10 +871,6 @@ function applyMainWindowVisualMaterial(target: BrowserWindow, theme: AppThemeMod
   }
   lastMainWindowTheme = theme;
   const background = backgroundForMainWindowTheme(theme);
-  if (target === mainWindow && (floatingAssistant || workspaceWindowState && process.platform === 'darwin')) {
-    target.setBackgroundColor('#00000000');
-    return;
-  }
   let controller = windowAppearanceControllers.get(target);
   if (!controller) {
     controller = new WindowAppearanceController(target, process.platform, (error) => {
@@ -1292,7 +1274,8 @@ function updateTrayMenu() {
   if (!tray) return;
   const t = nativeText();
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: t('main.open'), click: showMainWindow },
+    { label: t('resident.openHome'), click: showWorkspaceHome },
+    { label: t('resident.openAssistant'), click: showFloatingAssistant },
     { label: t('main.quit'), click: requestAppQuit },
   ]));
 }
@@ -1601,7 +1584,8 @@ function showSessionAttentionNotification(value: unknown) {
     return { shown: false };
   }
   if (!sessionAttentionNotificationGate.accept(payload)) return { shown: false };
-  const shouldShow = mainWindow == null || !isWindowVisible(mainWindow) || !mainWindow.isFocused();
+  const assistantFocused = payload.sessionId === 'personal-assistant' && assistantWindow?.isFocused() && isWindowVisible(assistantWindow);
+  const shouldShow = !assistantFocused && (mainWindow == null || !isWindowVisible(mainWindow) || !mainWindow.isFocused());
   if (!shouldShow) {
     return { shown: false };
   }
@@ -1659,13 +1643,13 @@ function escapeXmlText(value: string) {
 }
 
 function activateSessionAttention(sessionId: string) {
-  if (sessionId === 'personal-assistant' && (workspaceWindowState || assistantResident && (!mainWindow || floatingAssistant))) {
-    showMainWindow(); showAssistantSurface('replies'); return;
+  if (sessionId === 'personal-assistant' && (assistantWindow?.isVisible() || assistantResident && !mainWindow)) {
+    showFloatingAssistant(); showAssistantSurface('replies'); return;
   }
   if (sessionAttentionOpenQueue.enqueue(sessionId)) {
     publishSessionAttentionOpenAvailable();
   }
-  showMainWindow();
+  showWorkspaceWindow();
   publishSessionAttentionOpenAvailable();
 }
 
@@ -1680,7 +1664,17 @@ function publishSessionAttentionOpenAvailable() {
 }
 
 function showMainWindow() {
-  if (assistantResident && !isQuitting) void startRuntimeServices().catch(() => undefined);
+  if (assistantResident && !mainWindow) showFloatingAssistant();
+  else showWorkspaceWindow();
+}
+
+function showWorkspaceWindow() {
+  if (isQuitting) return;
+  if (assistantResident) {
+    assistantResident = false;
+    syncAssistantResidency();
+    void startRuntimeServices().catch(() => undefined);
+  }
   if (browserConnectorLifecycle?.enabled && browserConnectorLifecycle.state === 'needs_repair') {
     void browserConnectorLifecycle.setEnabled(true).catch(error => console.warn('[chrome-connector] resume failed', error));
   }
@@ -1702,23 +1696,71 @@ function syncAssistantResidency() {
     command: { kind: 'runtime.sync_assistant_residency', payload: {} } }).catch(error => console.warn('[assistant-mode]', error));
 }
 
-function openResidentWorkspace(page: 'home' | 'explore') {
-  if (!assistantResident) return;
-  if (mainWindow && floatingAssistant) {
-    if (retainAssistantWindow || desktopVoiceHost.hasActiveCall(mainWindow.webContents.id)) {
-      showMainWindow();
-      void dialog.showMessageBox(mainWindow, { message: nativeText()('resident.finishBeforeSwitch') });
-      return;
+function showWorkspaceHome() {
+  const ready = mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame() && !startupRevealFallback;
+  if (!ready) openHomeOnReady = true;
+  showWorkspaceWindow();
+  if (ready && mainWindow) sendToLiveRenderer(mainWindow, 'workspace:open-home');
+}
+
+function showFloatingAssistant() {
+  if (isQuitting) return;
+  void startRuntimeServices().catch(() => undefined);
+  if (assistantWindow && !assistantWindow.isDestroyed()) {
+    if (assistantWindowReady) { assistantWindow.show(); assistantWindow.focus(); }
+    return;
+  }
+  const window = new BrowserWindow({
+    ...residentCapsuleSize, minWidth: 1, minHeight: 1,
+    frame: false, transparent: true, hasShadow: false, roundedCorners: false, thickFrame: false,
+    resizable: false, alwaysOnTop: true, skipTaskbar: true, autoHideMenuBar: true,
+    title: 'CardBush Assistant', backgroundColor: '#00000000', show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true,
+      sandbox: true, nodeIntegration: false, webviewTag: false, backgroundThrottling: true },
+  });
+  assistantWindow = window;
+  assistantSurface = 'capsule'; assistantReplyHeight = 96;
+  assistantWindowReady = false; retainAssistantWindow = false;
+  window.setMenu(null);
+  window.contentView.setBackgroundColor('#00000000');
+  installAppSessionPermissions(window);
+  installMainWindowNavigationGuard(window);
+  installMainRendererResilience(window);
+  sizeAssistantSurface(window, 'capsule', assistantReplyHeight);
+  const collapse = () => {
+    if (assistantWindow === window && assistantAttachmentPicker !== window && assistantSurface !== 'capsule' && !isQuitting) {
+      showAssistantSurface('capsule');
     }
-    mainWindow.destroy();
-  }
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    void startRuntimeServices().catch(() => undefined);
-    createWindow({ workspace: page });
-    assistantResident = false;
-    syncAssistantResidency();
-  }
-  else showMainWindow();
+  };
+  window.on('blur', collapse);
+  window.on('hide', collapse);
+  window.on('close', event => {
+    if (!isQuitting && (retainAssistantWindow || desktopVoiceHost.hasActiveCall(window.webContents.id))) {
+      event.preventDefault();
+      window.hide();
+    }
+  });
+  window.once('closed', () => {
+    if (window !== assistantWindow) return;
+    assistantWindow = null; assistantWindowReady = false; retainAssistantWindow = false;
+    if (assistantResident && !isQuitting) {
+      void runtimeHostController?.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+        command: { kind: 'runtime.assistant_window_closed', payload: {} } }).catch(() => undefined);
+    }
+  });
+  loadRenderer(window, 'assistant');
+}
+
+function appWindowForSender(sender: Electron.WebContents) {
+  if (mainWindow?.webContents === sender) return mainWindow;
+  if (assistantWindow?.webContents === sender) return assistantWindow;
+  return null;
+}
+
+function requireAppFrame(event: Electron.IpcMainInvokeEvent) {
+  const owner = appWindowForSender(event.sender);
+  if (!owner || owner.isDestroyed() || event.senderFrame !== event.sender.mainFrame) throw Error('invalid_window_sender');
+  return owner;
 }
 
 async function voiceEnvironmentCommand(kind: string, payload: unknown) {
@@ -1728,7 +1770,7 @@ async function voiceEnvironmentCommand(kind: string, payload: unknown) {
   if (response.type !== 'command_response' || !response.ok) throw Error('Environment unavailable.');
   return response.result;
 }
-const desktopVoiceHost = registerVoiceIpc(() => mainWindow, {
+const desktopVoiceHost = registerVoiceIpc(appWindowForSender, {
   packaged: cardbushRuntimeIsPackaged, appPath: app.getAppPath(), resourcesPath: process.resourcesPath,
 }, {
   // Use the shared download route: native net.fetch rejects manual redirects,
@@ -1744,11 +1786,12 @@ const desktopVoiceHost = registerVoiceIpc(() => mainWindow, {
   uiLanguage: () => nativeUiLanguage ?? app.getLocale(),
 });
 
-ipcMain.handle('window:minimize', () => {
-  mainWindow?.minimize();
+ipcMain.handle('window:minimize', event => {
+  requireAppFrame(event).minimize();
 });
 
-ipcMain.handle('window:toggle-maximize', () => {
+ipcMain.handle('window:toggle-maximize', event => {
+  if (requireAppFrame(event) !== mainWindow) return;
   if (mainWindow?.isMaximized()) {
     mainWindow.unmaximize();
   } else {
@@ -1756,89 +1799,53 @@ ipcMain.handle('window:toggle-maximize', () => {
   }
 });
 
-ipcMain.handle('window:close-to-tray', () => {
-  if (assistantResident && floatingAssistant) mainWindow?.close();
-  else mainWindow?.hide();
+ipcMain.handle('window:close-to-tray', event => {
+  const owner = requireAppFrame(event);
+  if (owner === assistantWindow) owner.close(); else owner.hide();
 });
-ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown, idlePage: unknown) => {
-  assertMainWindowSender(event.sender.id);
-  if (event.senderFrame !== event.sender.mainFrame) throw Error('invalid_window_sender');
-  const win = mainWindow!;
-  if (action === 'startup' && typeof enabled === 'boolean') {
-    await saveResidentPreference(enabled);
-  } else if (action === 'float' && !floatingAssistant && !workspaceWindowState) {
-    if ((idlePage === 'home' || idlePage === 'explore') && !desktopVoiceHost.hasActiveCall(win.webContents.id)) {
-      // An untouched workspace has no editor or browser state to retain.
-      residentReturnPage = idlePage;
-      setImmediate(() => {
-        if (win !== mainWindow || win.isDestroyed() || isQuitting) return;
-        assistantResident = true;
-        syncAssistantResidency();
-        win.destroy();
-        createWindow();
-      });
-      return { floating: true, nextLaunch: assistantNextLaunch };
-    }
-    workspaceWindowState = { bounds: win.getNormalBounds(), maximized: win.isMaximized(), fullscreen: win.isFullScreen(), alwaysOnTop: win.isAlwaysOnTop() };
-    if (workspaceWindowState.fullscreen) win.setFullScreen(false);
-    if (workspaceWindowState.maximized) win.unmaximize();
-    showAssistantSurface('capsule');
-    win.setAlwaysOnTop(true);
-    win.show(); win.focus();
-  } else if (action === 'workspace' && floatingAssistant) {
-    setImmediate(() => openResidentWorkspace(residentReturnPage));
-  } else if (action === 'workspace' && workspaceWindowState) {
-    const previous = workspaceWindowState;
-    workspaceWindowState = undefined;
-    restoreAssistantFrame(win);
-    if (process.platform === 'darwin') {
-      const background = backgroundForMainWindowTheme(lastMainWindowTheme);
-      win.setBackgroundColor(background); win.contentView.setBackgroundColor(background);
-    }
-    win.setAlwaysOnTop(previous.alwaysOnTop);
-    win.setBounds(previous.bounds);
-    if (previous.maximized) win.maximize();
-    if (previous.fullscreen) win.setFullScreen(true);
-  } else if (!['read','workspace','float'].includes(String(action))) throw Error('invalid_assistant_mode');
-  return { floating: floatingAssistant || Boolean(workspaceWindowState), nextLaunch: assistantNextLaunch };
+ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown) => {
+  const owner = requireAppFrame(event);
+  if (action === 'startup' && typeof enabled === 'boolean') await saveResidentPreference(enabled);
+  else if (action === 'float') showFloatingAssistant();
+  else if (action === 'workspace') showWorkspaceHome();
+  else if (action !== 'read') throw Error('invalid_assistant_mode');
+  return { floating: owner === assistantWindow, nextLaunch: assistantNextLaunch, hasWorkspace: Boolean(mainWindow) };
 });
 ipcMain.on('assistant:reply-height', (event, height: unknown) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame ||
-      (!workspaceWindowState && !floatingAssistant) || assistantSurface !== 'replies' ||
-      typeof height !== 'number' || !Number.isFinite(height)) return;
+  if (!assistantWindow || event.sender !== assistantWindow.webContents || event.senderFrame !== event.sender.mainFrame ||
+      assistantSurface !== 'replies' || typeof height !== 'number' || !Number.isFinite(height)) return;
   const next = Math.max(48, Math.min(210, Math.ceil(height)));
   if (next === assistantReplyHeight) return;
   assistantReplyHeight = next;
-  sizeAssistantSurface(mainWindow, assistantSurface, Boolean(workspaceWindowState), next);
+  sizeAssistantSurface(assistantWindow, assistantSurface, next);
 });
 ipcMain.on('assistant:drag-surface', (event, action: unknown, dx: unknown, dy: unknown) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame ||
-      (!workspaceWindowState && !floatingAssistant)) return;
-  dragAssistantSurface(mainWindow, action, dx, dy);
+  if (assistantWindow && event.sender === assistantWindow.webContents && event.senderFrame === event.sender.mainFrame)
+    dragAssistantSurface(assistantWindow, action, dx, dy);
 });
 ipcMain.handle('assistant:surface', (event, surface: unknown) => {
-  assertMainWindowSender(event.sender.id);
-  if (event.senderFrame !== event.sender.mainFrame) throw Error('invalid_window_sender');
+  const owner = requireAppFrame(event);
+  if (owner !== assistantWindow) throw Error('invalid_assistant_window');
   if (surface === 'read') {
-    if (mainWindow && (floatingAssistant || workspaceWindowState)) sizeAssistantSurface(mainWindow, assistantSurface, Boolean(workspaceWindowState), assistantReplyHeight);
+    sizeAssistantSurface(owner, assistantSurface, assistantReplyHeight);
     return assistantSurface;
   }
-  if (surface !== 'capsule' && surface !== 'compose' && surface !== 'replies') throw Error('invalid_assistant_surface');
+  if (surface !== 'capsule' && surface !== 'compose' && surface !== 'replies' && surface !== 'voice') throw Error('invalid_assistant_surface');
   showAssistantSurface(surface);
   return assistantSurface;
 });
 ipcMain.handle('assistant:window-retained', (event, retained: unknown) => {
-  assertMainWindowSender(event.sender.id);
-  if (!assistantResident || !floatingAssistant || typeof retained !== 'boolean') return;
+  const owner = requireAppFrame(event);
+  if (owner !== assistantWindow || typeof retained !== 'boolean') return;
   retainAssistantWindow = retained;
-  mainWindow?.webContents.setBackgroundThrottling(!retained);
-  if (!retained && mainWindow && !mainWindow.isVisible() && !mainWindow.webContents.isLoadingMainFrame() &&
-    !startupRevealFallback && !desktopVoiceHost.hasActiveCall(event.sender.id)) mainWindow.close();
+  owner.webContents.setBackgroundThrottling(!retained);
+  if (!retained && assistantWindowReady && !owner.isVisible() && !owner.webContents.isLoadingMainFrame() &&
+      !desktopVoiceHost.hasActiveCall(event.sender.id)) owner.close();
 });
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 ipcMain.handle('window:is-visible', event => {
   const target = BrowserWindow.fromWebContents(event.sender);
-  if (!target || (target !== mainWindow &&
+  if (!target || (target !== mainWindow && target !== assistantWindow &&
       target !== shadowWindows.get(event.sender.id)?.window) ||
       event.senderFrame !== event.sender.mainFrame) throw Error('Window visibility is only available to its application renderer.');
   return isWindowVisible(target);
@@ -1849,8 +1856,7 @@ ipcMain.handle('window:menu-action', (event, action: unknown, editTargetId: unkn
   executeWindowMenuAction(event, mainWindow, action, editTargetId, requestAppQuit));
 
 ipcMain.handle('window:restore-editor-focus', async (event, state: import('./rendererFocus').EditorFocusRequest) => {
-  const target = mainWindow?.webContents === event.sender
-    ? mainWindow : shadowWindows.get(event.sender.id)?.window ?? null;
+  const target = appWindowForSender(event.sender) ?? shadowWindows.get(event.sender.id)?.window ?? null;
   const wasFocused = !event.sender.isDestroyed() && event.sender.isFocused();
   const restored = await restoreEditorFocus(event, target, state);
   if (!wasFocused || state?.documentFocused === false || !restored) {
@@ -1923,17 +1929,29 @@ ipcMain.handle('attention:consume-open-session', (event) => {
   return sessionAttentionOpenQueue.consume();
 });
 
+const secondaryRendererLogScopes = new Set([
+  'renderer-lifecycle', 'realtime-voice', 'input-focus', 'ui-performance',
+  'inline-html-preview', 'shadow-window', 'scroll',
+]);
+
+function diagnosticsWindow(event: Electron.IpcMainInvokeEvent) {
+  const { sender, senderFrame } = event;
+  if (sender.isDestroyed() || !senderFrame || senderFrame.isDestroyed() || senderFrame.detached || senderFrame !== sender.mainFrame) return null;
+  const owner = appWindowForSender(sender) ?? shadowWindows.get(sender.id)?.window;
+  return owner && !owner.isDestroyed() && owner.webContents === sender ? owner : null;
+}
+
 ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
-  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
-    throw new Error('debug log is only available to the main window');
-  }
-  if (scope === 'window-scroll') return windowScrollDiagnostics.get(mainWindow)?.append(payload);
+  const owner = diagnosticsWindow(event);
+  if (!owner) throw new Error('invalid_window_sender');
+  if (scope === 'window-scroll') return windowScrollDiagnostics.get(owner)?.append(payload);
+  if (owner !== mainWindow && !secondaryRendererLogScopes.has(scope)) throw new Error('invalid_renderer_log_scope');
   return appendDebugLog(scope, payload);
 });
 
 ipcMain.handle('debug:window-scroll-config', (event) => {
-  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) return undefined;
-  return windowScrollDiagnostics.get(mainWindow)?.config;
+  const owner = diagnosticsWindow(event);
+  return owner ? windowScrollDiagnostics.get(owner)?.config : undefined;
 });
 
 let globalInstructionsStore: GlobalInstructionsStore | undefined;
@@ -1963,12 +1981,12 @@ ipcMain.handle('instructions:save-global', (event, content: string, revision: st
 });
 
 ipcMain.handle('app:runtime-startup-status', (event) => {
-  assertMainWindowSender(event.sender.id);
+  requireAppFrame(event);
   return { ...runtimeStartupStatus };
 });
 
 ipcMain.handle('app:set-ui-language', (event, language: unknown) => {
-  assertMainWindowSender(event.sender.id);
+  requireAppFrame(event);
   const next = resolveUiLanguage(language);
   if (next === nativeUiLanguage) return;
   nativeUiLanguage = next;
@@ -1986,12 +2004,20 @@ ipcMain.handle('app:show-error', (event, error: { title?: unknown; message?: unk
 });
 
 ipcMain.handle('app:retry-runtime', async (event) => {
-  assertMainWindowSender(event.sender.id);
+  requireAppFrame(event);
   await (runtimeServicesInitialization ?? startRuntimeServices(true));
   return { ...runtimeStartupStatus };
 });
 
 ipcMain.handle('app:renderer-ready', (event) => {
+  if (assistantWindow?.webContents === event.sender && event.senderFrame === event.sender.mainFrame) {
+    if (!assistantWindowReady) {
+      assistantWindowReady = true;
+      showAssistantSurface(assistantSurface);
+      assistantWindow.show();
+    }
+    return;
+  }
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow || sourceWindow == null || sourceWindow.isDestroyed()) {
     return;
@@ -2018,6 +2044,13 @@ ipcMain.handle('app:renderer-ready', (event) => {
   });
   if (packagedSmokeMode) return;
   sourceWindow.show();
+  if (openHomeOnReady) {
+    openHomeOnReady = false;
+    // Windows may honor the launcher's hidden startup state on the first ShowWindow call.
+    if (process.platform === 'win32' && !sourceWindow.isVisible()) sourceWindow.show();
+    sourceWindow.focus();
+    sendToLiveRenderer(sourceWindow, 'workspace:open-home');
+  }
   publishSessionAttentionOpenAvailable();
   // Windows can briefly restore the executable icon while creating the
   // taskbar button. Reapply once after the HWND has become visible.
@@ -2067,7 +2100,7 @@ ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode, optio
 });
 
 ipcMain.handle('filesystem:locations', (event) => {
-  assertMainWindowSender(event.sender.id);
+  requireAppFrame(event);
   return filesystemLocations();
 });
 
@@ -2178,6 +2211,11 @@ ipcMain.handle('chrome-connector:reveal-extension', (event) => {
 
 ipcMain.handle('cardbush-product-host:command', async (event, command: unknown) => {
   assertRuntimeRendererSender(event.sender.id);
+  if (event.sender === assistantWindow?.webContents) {
+    requireAppFrame(event);
+    const kind = (command as { kind?: string } | null)?.kind;
+    if (kind !== 'models.get' && kind !== 'model.resolve' && kind !== 'subagents.get' && kind !== 'mcp.get') throw Error('invalid_assistant_product_command');
+  }
   if (shadowWindows.has(event.sender.id)) {
     const kind = command && typeof command === 'object'
       ? String((command as Record<string, unknown>).kind ?? '')
@@ -2224,7 +2262,7 @@ ipcMain.handle(
       noProxy: string;
     },
   ) => {
-    assertMainWindowSender(event.sender.id);
+    requireAppFrame(event);
     await applyProxySettings(proxy);
     if (JSON.stringify(residentProxy) !== JSON.stringify(proxy)) {
       residentProxy = { ...proxy };
@@ -2314,15 +2352,21 @@ ipcMain.handle('app-center:open-local', async (event, target: unknown, language:
   }, process.platform, resolveUiLanguage(language));
 });
 
-ipcMain.handle('dialog:pick-attachments', async () => {
+ipcMain.handle('dialog:pick-attachments', async event => {
+  const owner = appWindowForSender(event.sender) ?? shadowWindows.get(event.sender.id)?.window;
+  if (!owner || event.senderFrame !== event.sender.mainFrame) throw Error('invalid_window_sender');
   const options: OpenDialogOptions = {
     title: nativeText()('main.select_attachments'),
     properties: ['openFile', 'multiSelections'],
   };
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, options)
-    : await dialog.showOpenDialog(options);
-  return result.canceled ? [] : result.filePaths;
+  if (owner === assistantAttachmentPicker) return [];
+  if (owner === assistantWindow) assistantAttachmentPicker = owner;
+  try {
+    const result = await dialog.showOpenDialog(owner, options);
+    return result.canceled ? [] : result.filePaths;
+  } finally {
+    if (assistantAttachmentPicker === owner) assistantAttachmentPicker = undefined;
+  }
 });
 
 let canvasFiles: import('./creationCanvasFiles.mjs', { with: { 'resolution-mode': 'import' } }).CreationCanvasFiles | undefined;
@@ -2386,7 +2430,8 @@ ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => 
 });
 
 ipcMain.handle('workspace:ensure-task-directory', async (event, sessionId: string) => {
-  assertMainWindowSender(event.sender.id);
+  const owner = requireAppFrame(event);
+  if (owner === assistantWindow && sessionId !== 'personal-assistant') throw Error('invalid_assistant_session');
   const normalizedSessionId = String(sessionId ?? '').trim();
   if (!normalizedSessionId) {
     throw new Error('Session ID is required for a task workspace.');
@@ -2469,7 +2514,11 @@ function embodiedHost() {
     catch (error) { await host.close(); throw error; }
   })().catch(error => { embodiedHostPromise = undefined; throw error; });
 }
-ipcMain.handle('embodied:command', async (event, input) => { assertMainWindowSender(event.sender.id); return (await embodiedHost()).command(input); });
+ipcMain.handle('embodied:command', async (event, input) => {
+  const owner = requireAppFrame(event);
+  if (owner === assistantWindow && input?.action !== 'assistant.save') throw Error('invalid_assistant_command');
+  return (await embodiedHost()).command(input);
+});
 app.on('before-quit', () => { void embodiedHostPromise?.then(host => host.close()).catch(() => {}); });
 
 let agentConnectionsPromise: Promise<import('./agentConnections.mjs', { with: { 'resolution-mode': 'import' } }).AgentConnectionManager> | undefined;
@@ -2970,6 +3019,7 @@ registerRuntimePluginUiIpc(ipcMain, {
   roots: productPluginRoots, configPath: productAppsConfigPath,
   window: () => mainWindow,
   assertSender: assertMainWindowSender,
+  assertCatalogReader: requireAppFrame,
 });
 
 ipcMain.handle('project:list-root', async (_, rootPath: string) => {
@@ -3612,7 +3662,7 @@ app.whenReady().then(async () => {
   const runtimeIpcModule = await import(pathToFileURL(path.join(__dirname, 'runtimeHostController.mjs')).href);
   runtimeHostIpc = runtimeIpcModule.registerRuntimeHostIpc(ipcMain, ensureRuntimeHostReady,
     (sender: Electron.WebContents) =>
-      (mainWindow != null && sender.id === mainWindow.webContents.id) || shadowWindows.has(sender.id));
+      Boolean(appWindowForSender(sender)) || shadowWindows.has(sender.id));
   try {
     if (platformFeatures(process.platform, process.arch).browserNativeConnector) await connectorLifecycle().restore();
   } catch (error) {
@@ -3676,6 +3726,7 @@ function publishRuntimeStartupStatus(next: RuntimeStartupStatus) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     sendToLiveRenderer(mainWindow, runtimeStartupStatusChannel, { ...next });
   }
+  if (assistantWindow) sendToLiveRenderer(assistantWindow, runtimeStartupStatusChannel, { ...next });
 }
 
 async function scheduleResidentBoot() {
@@ -3953,10 +4004,11 @@ async function initializeRuntimeHost() {
       'preparation',
     );
     abort.signal.throwIfAborted();
-    await withRuntimeStartupTimeout(Promise.all([
+    await Promise.all([
       runtimeStartupStep('worker-ready', () => controller.start()),
-      runtimeStartupStep('product-host', () => initializeProductHost(controller, abort.signal)),
-    ]), runtimeServicesStartupTimeoutMs, abort, 'services');
+      withRuntimeStartupTimeout(runtimeStartupStep('product-host', () => initializeProductHost(controller, abort.signal)),
+        runtimeServicesStartupTimeoutMs, abort, 'product-host'),
+    ]);
     abort.signal.throwIfAborted();
     await withRuntimeStartupTimeout(runtimeStartupStep('product-settings', async () => productHostController?.execute({
       protocol: 'cardbush.product_host_ipc.v1',
@@ -4007,7 +4059,9 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
     let runtimeWorkerReadySeen = false;
     const controller = new controllerModule.RuntimeUtilityProcessController({
       modulePath: path.join(__dirname, 'runtimeHostWorker.mjs'),
-      startupTimeoutMs: 12_000,
+      onStartupProgress: (stage: string, elapsedMs: number) => appendDebugLog('startup', {
+        stage: 'runtime-worker-progress', step: stage, elapsedMs, attempt: runtimeStartupStatus.attempt,
+      }),
       env: {
         CARDBUSH_ASSISTANT_BACKGROUND: assistantResident ? '1' : '0',
         ...process.env,
@@ -4083,10 +4137,10 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal, onAccepted: () => void) => {
         if (operation === 'assistant.is-resident') return assistantResident;
-        if (operation === 'assistant.is-background') return assistantResident && !mainWindow && !isQuitting;
+        if (operation === 'assistant.is-background') return assistantResident && !mainWindow && !assistantWindow && !isQuitting;
         if (operation === 'assistant.attention') {
           const notice = payload as { id: string; text?: string; interaction: boolean };
-          if (assistantResident && typeof notice?.id === 'string') return showSessionAttentionNotification({
+          if ((assistantResident || assistantWindow) && typeof notice?.id === 'string') return showSessionAttentionNotification({
             sessionId: 'personal-assistant', title: nativeText()('resident.notificationTitle'), turnId: notice.id,
             kind: notice.interaction ? 'interaction' : 'completed', interactionId: notice.id,
             body: notice.interaction ? nativeText()('resident.needsAttention') : notice.text,
@@ -4160,7 +4214,7 @@ async function runtimeStartupStep<T>(step: string, operation: () => Promise<T>):
 }
 
 function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number, abort: AbortController,
-  phase: 'preparation' | 'services' | 'settings'): Promise<T> {
+  phase: 'preparation' | 'product-host' | 'settings'): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       const error = new Error(
@@ -4169,15 +4223,21 @@ function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number, 
       error.code = 'runtime_services_startup_timeout';
       appendDebugLog('startup', { stage: 'runtime-phase-timeout', phase, timeoutMs, attempt: runtimeStartupStatus.attempt });
       abort.abort(error);
-      reject(error);
     }, timeoutMs);
+    const cancel = () => { clearTimeout(timer); reject(abort.signal.reason); };
+    if (abort.signal.aborted) cancel();
+    else abort.signal.addEventListener('abort', cancel, { once: true });
+    const cleanup = () => {
+      clearTimeout(timer);
+      abort.signal.removeEventListener('abort', cancel);
+    };
     operation.then(
       (value) => {
-        clearTimeout(timer);
+        cleanup();
         resolve(value);
       },
       (error) => {
-        clearTimeout(timer);
+        cleanup();
         reject(error);
       },
     );
@@ -4238,10 +4298,11 @@ async function initializeProductHost(controller: RuntimeHostController, signal: 
     requestClientCredentials: (input: Parameters<McpDesktopHost['requestClientCredentials']>[0], signal: AbortSignal) => mcpDesktop().requestClientCredentials(input, signal),
   }) as NonNullable<typeof productHostController>;
   disposeCapabilityCatalogWatcher?.();
+  const catalogConfigRoot = path.join(app.getPath('userData'), 'product-host', 'config');
   disposeCapabilityCatalogWatcher = watchCapabilityCatalog([
     ...productSkillRoots(),
     bundledPluginRoot, userPluginRoot,
-    path.join(app.getPath('userData'), 'product-host', 'config'),
+    catalogConfigRoot,
   ], () => {
     void refreshPluginUiNetwork().catch((error: unknown) => console.warn('[plugin-ui-network]', error));
     const notify = () => {
@@ -4253,7 +4314,7 @@ async function initializeProductHost(controller: RuntimeHostController, signal: 
     void productHostController?.refreshMcp().catch((error: unknown) => {
       console.warn('[capability-refresh]', error instanceof Error ? error.message : String(error));
     }).finally(notify);
-  });
+  }, catalogConfigRoot);
 }
 
 function legacyBushserverModelConfigPaths(): string[] {
@@ -5010,12 +5071,13 @@ function applyProxySettings(proxy: {
     try {
       await refreshPluginUiNetwork();
       // Async MCP scheduling replaces only connections whose effective route changed.
-      await productHostController?.refreshMcp();
+      // Startup applies the current routes when the worker is ready.
+      if (runtimeStartupStatus.phase === 'ready') await productHostController?.refreshMcp();
     }
     catch (error) {
       network.setModel(previous);
       await refreshPluginUiNetwork().catch(() => undefined);
-      await productHostController?.refreshMcp().catch(() => undefined);
+      if (runtimeStartupStatus.phase === 'ready') await productHostController?.refreshMcp().catch(() => undefined);
       throw error;
     }
   });
@@ -5090,7 +5152,7 @@ function assertMainWindowSender(senderId: number) {
 function assertRuntimeRendererSender(senderId: number) {
   if (
     (mainWindow != null && !mainWindow.isDestroyed() && mainWindow.webContents.id === senderId) ||
-    shadowWindows.has(senderId)
+    assistantWindow?.webContents.id === senderId || shadowWindows.has(senderId)
   ) {
     return;
   }

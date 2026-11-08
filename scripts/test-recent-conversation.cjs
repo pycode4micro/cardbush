@@ -170,7 +170,9 @@ async function run() {
   assert.equal(await read("document.querySelectorAll('.recent-turn-text').length"), 20, 'only the tail page is loaded initially');
   assert.equal(await read("document.querySelector('.recent-turn-text').textContent"), examples.get(45)[0]);
   await visible('[data-desktop-page="overview"]');
-  await wait(() => read("document.querySelector('.recent-tile img')?.naturalWidth > 0"), 'real image thumbnail');
+  await wait(() => read("document.querySelector('.recent-turn-attachment')?.naturalWidth > 0"), 'user attachment thumbnail');
+  assert.equal(await read("document.querySelector('[data-turn-message]').firstElementChild.classList.contains('recent-turn-text')"), true);
+  assert.ok(!(await read("document.querySelector('.recent-turn-scroll').textContent")).includes(examples.get(45)[1]), 'turn list omits assistant replies');
   assert.equal(await read("document.querySelector('.recent-bar-chat img') === null"), true, 'turn thumbnails stay in the turn list');
   fs.writeFileSync(path.join(project, 'tmp/recent-conversation-drawer.png'), (await win.webContents.capturePage()).toPNG());
   await click('.recent-turn-more');
@@ -269,8 +271,7 @@ async function run() {
   await click('[data-recent-tab=sessions]');
   const earlierRow = '[data-recent-session=local-earlier]';
   await visible(earlierRow);
-  await read("document.querySelector('[data-recent-session=local-earlier]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:1010,clientY:150}));void 0");
-  await click('[data-sidebar-menu-item=pin]');
+  await require('./helpers/recent-session-menu.cjs')({win, read, wait, visible, click, row: earlierRow});
   await visible('.sidebar .conversation-row .conversation-title');
   await click(earlierRow);
   await visible('[data-desktop-page=overview]');

@@ -68,6 +68,7 @@ export class IndividuationStore {
           hits INTEGER NOT NULL DEFAULT 0,misses INTEGER NOT NULL DEFAULT 0,metadata TEXT NOT NULL DEFAULT '{}');
         CREATE INDEX IF NOT EXISTS memory_kind ON memory_records(kind,updated DESC);
         CREATE TABLE IF NOT EXISTS personal_profile(id INTEGER PRIMARY KEY CHECK(id=1), preferred_name TEXT NOT NULL, habit_id TEXT);
+        CREATE TABLE IF NOT EXISTS personal_profile_avatar(profile_id INTEGER PRIMARY KEY REFERENCES personal_profile(id) ON DELETE CASCADE, image TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS memory_terms(record_id TEXT REFERENCES memory_records(id) ON DELETE CASCADE,term TEXT,PRIMARY KEY(term,record_id));
         CREATE TABLE IF NOT EXISTS memory_origins(record_id TEXT REFERENCES memory_records(id) ON DELETE CASCADE,owner TEXT,PRIMARY KEY(record_id,owner));
         CREATE TABLE IF NOT EXISTS memory_reviews(id TEXT PRIMARY KEY,outcome TEXT,reason TEXT,updated INTEGER);
@@ -116,7 +117,7 @@ export class IndividuationStore {
     db.exec('UPDATE memory_state SET revision=revision+1 WHERE id=1'); return {id,changed:true};
   }
   private profileState(db: DatabaseSync, now: number) {
-    const row = db.prepare('SELECT preferred_name,habit_id FROM personal_profile WHERE id=1').get();
+    const row = db.prepare('SELECT preferred_name,habit_id,image FROM personal_profile LEFT JOIN personal_profile_avatar ON profile_id=id WHERE id=1').get();
     if (!row) return { profile: null, habit: undefined };
     let habit = row.habit_id ? getMemoryRow(db, String(row.habit_id)) : undefined;
     const visited = new Set<string>();
@@ -126,7 +127,8 @@ export class IndividuationStore {
       habit = getMemoryRow(db, JSON.parse(habit.replaced_by)[0] ?? '');
     }
     if (habit && (habit.kind !== 'habit' || !activeMemory(habit, now))) habit = undefined;
-    return { profile: { preferredName: String(row.preferred_name), habits: habit?.text ?? '' }, habit };
+    return { profile: { preferredName: String(row.preferred_name), habits: habit?.text ?? '',
+      ...(typeof row.image === 'string' ? { avatar: row.image } : {}) }, habit };
   }
 
   async preferredName(signal?: AbortSignal): Promise<string | undefined> {
@@ -142,8 +144,8 @@ export class IndividuationStore {
   async savePersonalProfile(next: PersonalProfile, previous: PersonalProfile | null, signal?: AbortSignal) {
     return this.transaction((db, now) => {
       const { profile, habit } = this.profileState(db, now);
-      if (profile?.preferredName === next.preferredName && profile.habits === next.habits) return next;
-      if (previous?.preferredName !== profile?.preferredName || previous?.habits !== profile?.habits)
+      if (profile?.preferredName === next.preferredName && profile.habits === next.habits && profile.avatar === next.avatar) return next;
+      if (previous?.preferredName !== profile?.preferredName || previous?.habits !== profile?.habits || previous?.avatar !== profile?.avatar)
         throw new Error('personal_profile_changed');
       let id = habit?.id ?? null;
       if ((habit?.text ?? '') !== next.habits) {
@@ -160,6 +162,10 @@ export class IndividuationStore {
       }
       db.prepare('INSERT INTO personal_profile VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET preferred_name=excluded.preferred_name,habit_id=excluded.habit_id')
         .run(next.preferredName,id);
+      if (next.avatar !== profile?.avatar) {
+        if (next.avatar) db.prepare('INSERT INTO personal_profile_avatar(profile_id,image) VALUES(1,?) ON CONFLICT(profile_id) DO UPDATE SET image=excluded.image').run(next.avatar);
+        else db.prepare('DELETE FROM personal_profile_avatar WHERE profile_id=1').run();
+      }
       return next;
     },signal);
   }

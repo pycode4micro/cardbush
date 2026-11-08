@@ -27,6 +27,7 @@ import {
 
 export interface RuntimeHostControllerOptions {
   onReady?: () => void;
+  onStartupProgress?: (stage: 'spawned' | 'modules-loaded', elapsedMs: number) => void;
   onMcpHostRequest?: (operation: McpHostOperation, payload: unknown, signal: AbortSignal, onAccepted: () => void) => Promise<unknown>;
   modulePath: string;
   env?: NodeJS.ProcessEnv;
@@ -67,6 +68,7 @@ export class RuntimeUtilityProcessController {
   readonly #frameListeners = new Set<(message: RuntimeIpcOutboundMessage) => void>();
   #child?: UtilityProcess;
   #ready?: Promise<RuntimeIpcOutboundMessage>;
+  #cancelStartup?: (error: Error) => void;
   #disposed = false;
 
   constructor(options: RuntimeHostControllerOptions) {
@@ -84,8 +86,9 @@ export class RuntimeUtilityProcessController {
       const env = Object.fromEntries(
         Object.entries(this.#options.env ?? process.env).filter(([, value]) => value !== undefined),
       );
+      const startedAt = Date.now();
       const child = utilityProcess.fork(this.#options.modulePath, [], {
-        env: { ...env, CARDBUSH_RESOURCE_COORDINATION: 'desktop' },
+        env: { ...env, CARDBUSH_RESOURCE_COORDINATION: 'desktop', CARDBUSH_RUNTIME_STARTUP_PROGRESS: '1' },
         serviceName: 'CardBush Runtime Host',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -93,23 +96,33 @@ export class RuntimeUtilityProcessController {
       const hostRequests = new Map<string, AbortController>();
       const resources = new HostProcessResourceOwner();
       child.once('exit', () => { for (const request of hostRequests.values()) request.abort(); hostRequests.clear(); resources.close(); });
-      const startupTimeoutMs = Math.max(1_000, this.#options.startupTimeoutMs ?? 12_000);
+      let stage: 'launching' | 'spawned' | 'modules-loaded' = 'launching';
+      const startupTimeoutMs = Math.max(1_000, this.#options.startupTimeoutMs ?? 60_000);
       const startupTimeout = setTimeout(() => {
-        const failure = new RuntimeHostControllerError(
-          runtimeError(
-            'transport',
-            'runtime_host_startup_timeout',
-            `Runtime Utility Process did not become ready within ${startupTimeoutMs}ms.`,
-          ),
-        );
-        if (this.#child === child) {
-          this.#failAll(failure);
-          this.#child = undefined;
-          child.kill();
-        }
-        reject(failure);
+        if (this.#child !== child) return;
+        const fact = runtimeError('transport', 'runtime_host_startup_timeout',
+          `Runtime Utility Process did not become ready within ${startupTimeoutMs}ms (last startup stage: ${stage}).`,
+          undefined, { stage, timeoutMs: startupTimeoutMs });
+        failStartup(new RuntimeHostControllerError({ ...fact, retryable: true }));
       }, startupTimeoutMs);
-      const clearStartupTimeout = () => clearTimeout(startupTimeout);
+      const clearStartupTimeout = () => {
+        clearTimeout(startupTimeout);
+        if (this.#cancelStartup === cancelStartup) this.#cancelStartup = undefined;
+      };
+      const cancelStartup = (error: Error) => { clearStartupTimeout(); reject(error); };
+      this.#cancelStartup = cancelStartup;
+      const failStartup = (error: Error) => {
+        cancelStartup(error);
+        this.#failAll(error);
+        this.#child = undefined;
+        child.kill();
+      };
+      const progress = (next: 'spawned' | 'modules-loaded') => {
+        if (this.#child !== child || this.#cancelStartup !== cancelStartup || stage === 'modules-loaded') return;
+        stage = next;
+        this.#options.onStartupProgress?.(next, Date.now() - startedAt);
+      };
+      child.once('spawn', () => progress('spawned'));
       child.stdout?.on('data', (chunk) => {
         this.#options.onStdout?.(String(chunk));
       });
@@ -118,6 +131,7 @@ export class RuntimeUtilityProcessController {
       });
       child.on('message', (candidate) => {
         if (this.#child !== child) return;
+        if (candidate?.type === 'runtime_modules_loaded') { progress('modules-loaded'); return; }
         if (isMcpHostMessage(candidate)) {
           if (candidate.type === 'cancel') { hostRequests.get(candidate.id)?.abort(); return; }
           if (candidate.type === 'request') {
@@ -143,12 +157,12 @@ export class RuntimeUtilityProcessController {
             ? createProtocolVersionMismatchError(received)
             : runtimeError('protocol', 'invalid_runtime_host_message', errorMessage(error));
           const failure = new RuntimeHostControllerError(fact);
-          clearStartupTimeout();
-          reject(failure);
-          this.#failAll(failure);
+          if (this.#cancelStartup === cancelStartup) failStartup(failure);
+          else this.#failAll(failure);
           return;
         }
         if (message.type === 'ready') {
+          if (this.#cancelStartup !== cancelStartup) return;
           clearStartupTimeout();
           resolve(message);
           this.#options.onReady?.();
@@ -167,7 +181,8 @@ export class RuntimeUtilityProcessController {
           return;
         }
         const failure = new RuntimeHostControllerError(message.error);
-        this.#failAll(failure);
+        if (this.#cancelStartup === cancelStartup) failStartup(failure);
+        else this.#failAll(failure);
       });
       child.on('exit', (code) => {
         clearStartupTimeout();
@@ -188,7 +203,6 @@ export class RuntimeUtilityProcessController {
         }
       });
       child.on('error', (_type, location, report) => {
-        clearStartupTimeout();
         const failure = new RuntimeHostControllerError(
           runtimeError(
             'transport',
@@ -198,8 +212,9 @@ export class RuntimeUtilityProcessController {
             { report },
           ),
         );
-        reject(failure);
-        if (this.#child === child) this.#failAll(failure);
+        if (this.#child !== child) return;
+        if (this.#cancelStartup === cancelStartup) failStartup(failure);
+        else this.#failAll(failure);
       });
     });
     this.#ready = ready;
@@ -303,11 +318,13 @@ export class RuntimeUtilityProcessController {
 
   stop(): void {
     const child = this.#child;
+    const error = new RuntimeHostControllerError(runtimeError(
+      'transport', 'runtime_host_stopped', 'Runtime Utility Process was stopped.',
+    ));
+    this.#cancelStartup?.(error);
     this.#child = undefined;
     this.#ready = undefined;
-    this.#failAll(new RuntimeHostControllerError(runtimeError(
-      'transport', 'runtime_host_stopped', 'Runtime Utility Process was stopped.',
-    )));
+    this.#failAll(error);
     child?.kill();
   }
 

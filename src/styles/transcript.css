@@ -200,6 +200,7 @@
 
 .quick-context-handle {
   --context-tick-step: 9px;
+  --context-tick-stroke: 2px;
   position: absolute;
   inset: 0;
   width: 24px;
@@ -227,7 +228,9 @@
   z-index: 1;
   width: 100%;
   max-height: 100%;
-  height: calc(var(--context-visible-count) * var(--context-tick-step) + 20px);
+  height: calc(var(--context-visible-count) * var(--context-tick-step));
+  /* Keep the outgoing and incoming strokes from both peeking across the edges. */
+  clip-path: inset(calc(var(--context-tick-stroke) / 2) 0);
   padding: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -261,7 +264,7 @@
   left: 0;
   top: 50%;
   width: 7px;
-  height: 2px;
+  height: var(--context-tick-stroke);
   border-radius: 1px;
   background: color-mix(in srgb, var(--text-soft) 42%, transparent);
   transform: translateY(-50%);
@@ -500,7 +503,7 @@
 
 .quick-context-pre-test-feed {
   height: 100%;
-  padding: 28px max(38px, calc((100% - var(--chat-track-width)) / 2));
+  padding: 28px max(var(--chat-reading-gutter, 16px), calc((100% - var(--chat-track-width, 704px)) / 2));
   overflow-y: auto;
   scrollbar-width: thin;
 }

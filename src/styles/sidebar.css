@@ -794,6 +794,9 @@ body.sidebar-resizing .right-inspector {
   z-index: 2;
 }
 
+.conversation-pin, .conversation-archive { padding: 0; }
+.conversation-pin > svg, .conversation-archive > svg { width: 18px; height: 18px; flex: none; }
+
 .conversation-archive:hover,
 .conversation-pin:hover,
 .conversation-pin.is-pinned,
@@ -833,6 +836,7 @@ body.sidebar-resizing .right-inspector {
   position: fixed;
   z-index: 1400;
 }
+.sidebar-context-menu[popover] { inset: auto; margin: 0; }
 
 .sidebar-menu-button {
   box-sizing: border-box;
@@ -863,6 +867,9 @@ body.sidebar-resizing .right-inspector {
   height: 16px;
   flex: 0 0 16px;
   color: inherit;
+}
+.sidebar-menu-button:is([data-sidebar-menu-item="pin"],[data-sidebar-menu-item="archive"]) > svg {
+  width: 18px; height: 18px; flex-basis: 18px;
 }
 
 .sidebar-menu-button kbd {

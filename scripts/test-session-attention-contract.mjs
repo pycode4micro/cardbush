@@ -144,7 +144,8 @@ assert.match(
   'Notification navigation uses the shared conversation opener and waits for a known session',
 );
 assert.match(sidebar, /conversation-attention-indicator/);
-assert.match(storage, /已完成，待查看/);
+assert.match(storage, /uiText\(language\)\('sessionAttention\.completeNotViewed'\)/);
+assert.equal(JSON.parse(read('src','i18n','locales','zh.json')).messages['sessionAttention.completeNotViewed'], '已完成，待查看');
 assert.match(css, /\.conversation-attention-indicator\s*\{/);
 
 const transpiledRouting = ts.transpileModule(routing, {

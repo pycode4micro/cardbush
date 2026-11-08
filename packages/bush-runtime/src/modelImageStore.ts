@@ -2,7 +2,6 @@ import { blobCacheEntries, temporaryCacheEntries } from './cacheMaintenance.js';
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import sharp from "sharp";
 import { compressModelImage, MAX_MODEL_IMAGE_SOURCE_BYTES, MODEL_IMAGE_DECODER_OPTIONS } from "./modelImageCompression.js";
 import { openWorkspaceFile, withWorkspaceFileAccess } from './workspaceFileAccess.js';
 import type { BigIntStats } from 'node:fs';
@@ -241,6 +240,7 @@ async function imageMime(content: Buffer, signal?: AbortSignal): Promise<string>
     // Headers identify the format, not completeness. Decode every frame with
     // strict pixel checks and bounded resources. The tiny output is discarded;
     // validation never replaces the image or allocates a full raster in JS.
+    const { default: sharp } = await import("sharp");
     await sharp(content, { ...MODEL_IMAGE_DECODER_OPTIONS, animated: true })
       .resize({ width: 1, height: 1, fit: "fill", fastShrinkOnLoad: false })
       .timeout({ seconds: 15 }).raw().toBuffer();

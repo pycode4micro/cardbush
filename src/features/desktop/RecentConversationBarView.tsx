@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode, type Ref } from 'react';
-import { List, MessageSquare } from 'lucide-react';
+import { List } from 'lucide-react';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
 import { uiText } from '../../i18n';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
@@ -53,34 +53,31 @@ function RowTime({ at, language }: { at?: string; language: AppLanguage }) {
     : value.toLocaleDateString(language, { month: 'short', day: 'numeric' })}</time>;
 }
 
-function Tile({ source, number, label }: { source?: string; number?: number; label?: string }) {
+function TurnAttachment({ source }: { source: string }) {
   const [failed, setFailed] = useState('');
-  return <span className="recent-tile" aria-label={label}>
-    {source && failed !== source ? <img src={source} alt="" loading="lazy" decoding="async" onError={() => setFailed(source)}/>
-      : number != null ? number : <MessageSquare aria-hidden="true"/>}
-  </span>;
+  return failed === source ? null : <img className="recent-turn-attachment" src={source} alt="" loading="lazy" decoding="async" onError={() => setFailed(source)}/>;
 }
 
 export function ConversationRowContent({ title, conversation, language }: { title: string; conversation: ConversationSummary; language: AppLanguage }) {
-  return <><Tile/><span className="recent-row-copy"><strong>{title}</strong><small>{conversationDisplayTitle(conversation.preview.slice(0, 360))}</small></span>
+  return <><strong className="recent-row-copy">{title}</strong>
     <RowTime at={conversation.updatedAt} language={language}/></>;
 }
 
 export function TurnListView({ language, turns, select, loading, failed, loadingOlder, hasMore, more }: {
-  language: AppLanguage; turns: { message: ChatMessage; reply?: ChatMessage }[]; select(message: ChatMessage): void; loading: boolean; failed: boolean;
+  language: AppLanguage; turns: ChatMessage[]; select(message: ChatMessage): void; loading: boolean; failed: boolean;
   loadingOlder: boolean; hasMore: boolean; more(): void;
 }) {
   const t = uiText(language);
   return <div className="recent-turn-scroll" aria-busy={loading || loadingOlder}>
     {loading ? <p role="status">{t('common.loading')}</p> : !turns.length && !failed && <p>{t('recentBar.empty')}</p>}
-    {turns.length > 0 && <ol>{turns.map(({message, reply}) => {
+    {turns.length > 0 && <ol>{turns.map(message => {
       const title = conversationDisplayTitle(message.content.slice(0, 1000)) || message.attachments?.[0]?.name || t('quickContextRail.conversationTurn');
       const image = message.attachments?.find(item => item.type === 'image' && item.path)?.path;
       const number = message.turnSequence;
-      return <li key={message.id}><button type="button" data-turn-message={message.id} onClick={() => select(message)}>
-        <Tile source={image ? fileUrl(image) : undefined} number={number} label={number != null ? t('recentBar.number', {number}) : undefined}/>
-        <span className="recent-row-copy"><strong className="recent-turn-text">{title}</strong>
-          <small>{conversationDisplayTitle(reply?.content.slice(0, 360) ?? '') || t('quickContextRail.noReplyYet')}</small></span>
+      return <li key={message.id}><button type="button" data-turn-message={message.id} onClick={() => select(message)}
+        aria-description={number != null ? t('recentBar.number', {number}) : undefined}>
+        <strong className="recent-row-copy recent-turn-text">{title}</strong>
+        {image && <TurnAttachment source={fileUrl(image)}/>}
         <RowTime at={message.createdAt} language={language}/>
       </button></li>;
     })}</ol>}

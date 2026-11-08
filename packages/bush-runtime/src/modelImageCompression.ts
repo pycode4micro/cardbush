@@ -1,5 +1,3 @@
-import sharp from "sharp";
-
 // Pixel and byte limits are independent: vision tokens are not base64 tokens.
 // Keep enough resolution for screenshots while bounding each new observation.
 export const MODEL_IMAGE_MAX_EDGE = 4096;
@@ -16,6 +14,7 @@ export async function compressModelImage(content: Buffer, mime: string, signal?:
   content: Buffer; mime: string;
 }> {
   signal?.throwIfAborted();
+  const { default: sharp } = await import("sharp");
   const metadata = await sharp(content, MODEL_IMAGE_DECODER_OPTIONS).metadata();
   signal?.throwIfAborted();
   const width = metadata.autoOrient.width;

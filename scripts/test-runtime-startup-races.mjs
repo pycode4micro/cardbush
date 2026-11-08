@@ -76,7 +76,7 @@ function fixture(timeout = 2000) {
     platformFeatures: () => ({}), productAppsConfig: () => ({}), appLogsDir: () => '/logs',
     bundledProductSkillRoot: () => '/skills', legacyBushserverModelConfigPaths: () => [],
     clearApplicationCaches() {}, watchCapabilityCatalog: () => () => {}, syncBrowserConnectorPlugin: async () => {},
-    assertMainWindowSender() {}, assertRuntimeRendererSender() {},
+    assistantWindow: null, requireAppFrame() { return {}; }, assertMainWindowSender() {}, assertRuntimeRendererSender() {},
     randomUUID: (() => { let id = 0; return () => `operation-${++id}`; })(),
     ipcMain: { handle: (channel, fn) => ipc.set(channel, fn) },
     async loadModule(url) {
@@ -155,8 +155,8 @@ test('cold preparation cannot consume worker or settings readiness budgets', asy
   await flush();
   t.mock.timers.tick(700); f.gates.probe.resolve(); await flush();
   assert.equal(f.controllers.length, 1);
-  t.mock.timers.tick(700); await flush();
-  assert.equal(f.context.runtimeStartupStatus.phase, 'initializing', 'the worker still has its full readiness budget');
+  t.mock.timers.tick(18_000); await flush();
+  assert.equal(f.context.runtimeStartupStatus.phase, 'initializing', 'a cold worker can exceed both former deadlines after product startup');
   assert.equal(f.controllers[0].disposed, false);
   f.gates.worker.resolve(); await flush();
   t.mock.timers.tick(700); await flush();
@@ -167,7 +167,7 @@ test('cold preparation cannot consume worker or settings readiness budgets', asy
   assert.equal(result.error, undefined);
   assert.equal(result.controller, f.controllers[0]);
   assert.equal(f.context.runtimeStartupStatus.phase, 'ready');
-  assert.equal(f.context.runtimeStartupStatus.elapsedMs, 2100);
+  assert.equal(f.context.runtimeStartupStatus.elapsedMs, 19_400);
   assert.equal(f.context.runtimeStartupStatus.attempt, 1, 'slow preparation needs no retry');
   assert.deepEqual(f.context.dependentStarts, ['ready']);
 });
@@ -175,10 +175,18 @@ test('cold preparation cannot consume worker or settings readiness budgets', asy
 for (const stage of ['probe', 'management', 'browser', 'product-import', 'worker', 'apps']) {
   test(`timeout during ${stage} cannot publish an old host after retry`, async () => {
     const f = fixture(30); const oldGate = deferred(); f.gates[stage] = oldGate;
-    await assert.rejects(f.context.ensureRuntimeHostReady(), /did not become ready within 30ms/);
+    const outcome = assert.rejects(f.context.ensureRuntimeHostReady(), /did not become ready within 30ms/);
+    if (stage === 'worker') {
+      await flush();
+      oldGate.reject(Error('Runtime Utility Process did not become ready within 30ms (last startup stage: spawned).'));
+    }
+    await outcome;
     assert.equal(f.context.runtimeStartupStatus.phase, 'error');
-    const phase = stage === 'apps' ? 'settings' : ['worker', 'product-import'].includes(stage) ? 'services' : 'preparation';
-    assert.ok(f.context.startupSteps.some(entry => entry.stage === 'runtime-phase-timeout' && entry.phase === phase));
+    if (stage === 'worker') assert.ok(f.context.startupSteps.some(entry => entry.stage === 'runtime-step-failed' && entry.step === 'worker-ready'));
+    else {
+      const phase = stage === 'apps' ? 'settings' : stage === 'product-import' ? 'product-host' : 'preparation';
+      assert.ok(f.context.startupSteps.some(entry => entry.stage === 'runtime-phase-timeout' && entry.phase === phase));
+    }
     const oldControllers = [...f.controllers], oldManagers = [...f.managers], oldBrowserEndpoints = [...f.browserEndpoints];
     delete f.gates[stage]; f.context.runtimeServicesStartupTimeoutMs = 2000;
     await f.invoke('app:retry-runtime');

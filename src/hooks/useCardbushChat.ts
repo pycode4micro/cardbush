@@ -198,6 +198,7 @@ export function useCardbushChat(
     // The normal first-send persistence path owns the draft from then on.
     initialPreparedConversation?: ConversationSummary;
     viewActive?: boolean;
+    deferSkillDiscovery?: boolean;
     language?: AppLanguage;
     disabledSkillNames?: Set<string>;
     disabledToolNames?: Set<string>;
@@ -240,6 +241,7 @@ export function useCardbushChat(
   >(() => requestContext.initialPreparedConversation ? { [requestContext.initialPreparedConversation.id]: [] } : {});
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [initialListSettled, setInitialListSettled] = useState(false);
   const [messageHistoryLoadingIds, setMessageHistoryLoadingIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -748,6 +750,7 @@ export function useCardbushChat(
   useEffect(() => {
     let cancelled = false;
     if (requestContext.runtimeReady === false) {
+      setInitialListSettled(false);
       setLoading(false);
       return () => {
         cancelled = true;
@@ -792,14 +795,11 @@ export function useCardbushChat(
       } finally {
         if (!cancelled) {
           setLoading(false);
+          setInitialListSettled(true);
         }
       }
     }
     void load();
-    // Skills may take longer than session metadata; neither request blocks the UI or the other.
-    void fetchSkills().then(loaded => {
-      if (!cancelled) setSkills(loaded);
-    }).catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -1229,7 +1229,10 @@ export function useCardbushChat(
   useCapabilityCatalogRefresh(useCallback(async (isCurrent: () => boolean) => {
     const loaded = await fetchSkills();
     if (isCurrent()) setSkills(loaded);
-  }, []));
+  }, [fetchSkills]), {
+    enabled: requestContext.runtimeReady !== false && (!requestContext.deferSkillDiscovery || initialListSettled),
+    initial: true,
+  });
 
 
   const loadSkillDetail = useCallback(
@@ -1697,12 +1700,15 @@ export function useCardbushChat(
   // short turn has already finished. Preserve both updates and committed history.
   const automationHistoryRef = useRef(new Map<string, string>());
   useEffect(() => {
-    if (backend.scope || !window.cardbushDesktop?.automationCommand) return;
+    if (backend.scope || requestContext.runtimeReady === false || !window.cardbushDesktop?.automationCommand) return;
     let disposed = false, reading = false, dirty = false, timer = 0;
+    let listChanged = false;
     const refresh = async () => {
       if (disposed) return;
       if (reading) { dirty = true; return; }
       reading = true; dirty = false;
+      const reloadList = listChanged;
+      listChanged = false;
       try {
         const state = await window.cardbushDesktop!.automationCommand({ action: 'list' }) as import('@cardbush/bush-protocol').AutomationOverview;
         if (disposed) return;
@@ -1722,15 +1728,17 @@ export function useCardbushChat(
             const run = job.runs.at(-1);
             if (run && (run.sessionId ?? job.sessionId) === activeConversationId && run.status !== 'running' && run.status !== 'queued') automationHistoryRef.current.set(job.id, `${run.id}:${run.status}`);
           }
-        } else await reloadConversations();
+        } else if (reloadList) await reloadConversations();
       } catch { /* Startup and reconnect are retried on the next notification or focus. */ }
       finally { reading = false; if (dirty && !disposed) update(); }
     };
-    const update = () => { dirty = true; window.clearTimeout(timer); timer = window.setTimeout(() => void refresh(), 100); };
+    const update = () => { listChanged = true; dirty = true; window.clearTimeout(timer); timer = window.setTimeout(() => void refresh(), 100); };
     const unsubscribe = window.cardbushDesktop.onAutomationChanged?.(update);
-    window.addEventListener('focus', update); update();
+    window.addEventListener('focus', update);
+    // The initial session list already has an owner. Still reattach running jobs.
+    void refresh();
     return () => { disposed = true; window.clearTimeout(timer); unsubscribe?.(); window.removeEventListener('focus', update); };
-  }, [activeConversationId, refreshActiveSession, subscribeGoalTurn, reloadConversations]);
+  }, [backend.scope, requestContext.runtimeReady, activeConversationId, refreshActiveSession, subscribeGoalTurn, reloadConversations]);
 
   useEffect(() => {
     const sessionId = activeConversationId.trim();

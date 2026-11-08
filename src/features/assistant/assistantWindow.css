@@ -1,3 +1,7 @@
+html[data-assistant-window], html[data-assistant-window] :is(body, #root, .app.resident-assistant) {
+  background: transparent !important;
+  min-width: 0; min-height: 0;
+}
 .app.resident-assistant {
   display: flex;
   flex-direction: column;

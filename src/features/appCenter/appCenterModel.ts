@@ -7,7 +7,7 @@ import { normalizeWebApplications, type WebApplication } from '@cardbush/bush-pr
 export type AppCenterPreferences = { links: Array<{ id: string; title: string; url: string }>; localApps?: LocalApplication[]; webApps?: WebApplication[]; order?: string[] };
 export const defaultAppCenterPreferences: AppCenterPreferences = { links: [] };
 export type ApplicationEntry = { id: string; title: string; description: string; kind: 'builtin' | 'plugin' | 'external' | 'local' | 'web'; icon?: string;
-  target: string; plugin?: CardbushAppPlugin; componentId?: string; launch?: NonNullable<CardbushAppPlugin['components'][number]['app']>; shortcut?: 'openSettings' | 'openPlugins' | 'openAutomations' };
+  target: string; plugin?: CardbushAppPlugin; componentId?: string; launch?: NonNullable<CardbushAppPlugin['components'][number]['app']>; shortcut?: 'openPlugins' | 'openAutomations' };
 
 export function applicationLink(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 4096) return;
@@ -34,7 +34,6 @@ export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPl
   const entries: ApplicationEntry[] = [
     { id: 'builtin:plugins', kind: 'builtin', target: 'plugins', title: uiText(language)('appCenterModel.plugins'), description: uiText(language)('appCenterModel.discoverAndManageSkillsToolsAndPlugins'), shortcut: 'openPlugins' },
     { id: 'builtin:automations', kind: 'builtin', target: 'automations', title: uiText(language)('appCenterModel.automations'), description: uiText(language)('appCenterModel.calendarScheduledTasksAndResults'), shortcut: 'openAutomations' },
-    { id: 'builtin:settings', kind: 'builtin', target: 'settings', title: uiText(language)('common.settings'), description: uiText(language)('appCenterModel.modelsConnectionsAppearanceAndPreferences'), shortcut: 'openSettings' },
     { id: 'builtin:components', kind: 'builtin', target: 'components', title: uiText(language)('appCenterModel.components'), description: uiText(language)('appCenterModel.arrangeAndResizeBuiltInViewsAnd') },
     { id: 'builtin:team', kind: 'builtin', target: 'team', title: uiText(language)('appCenterModel.workflows'), description: uiText(language)('appCenterModel.buildWorkflowsThroughConversationAndInspectProgress') },
     { id: 'builtin:md-presentation', kind: 'builtin', target: 'md-presentation', title: uiText(language)('appCenterModel.create'), description: uiText(language)('appCenterModel.writeProjectMarkdownWithAnAgentAnd') },

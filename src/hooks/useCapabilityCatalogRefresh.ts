@@ -3,8 +3,10 @@ import { useEffect } from 'react';
 /** Refresh catalog state without reloading the conversation or an open editor. */
 export function useCapabilityCatalogRefresh(
   refresh: (isCurrent: () => boolean) => Promise<unknown>,
+  { enabled = true, initial = false }: { enabled?: boolean; initial?: boolean } = {},
 ) {
   useEffect(() => {
+    if (!enabled) return;
     let disposed = false;
     let generation = 0;
     let running = false;
@@ -31,6 +33,7 @@ export function useCapabilityCatalogRefresh(
     const unsubscribe = window.cardbushDesktop?.onCapabilityCatalogChanged?.(schedule);
     window.addEventListener('focus', schedule);
     document.addEventListener('visibilitychange', visible);
+    if (initial) queueMicrotask(() => void run());
     return () => {
       disposed = true;
       window.clearTimeout(timer);
@@ -38,5 +41,5 @@ export function useCapabilityCatalogRefresh(
       window.removeEventListener('focus', schedule);
       document.removeEventListener('visibilitychange', visible);
     };
-  }, [refresh]);
+  }, [refresh, enabled, initial]);
 }

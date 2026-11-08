@@ -27,6 +27,25 @@
 .profile-menu[data-compact] { width: auto; }
 .profile-menu[data-compact] .profile-trigger { padding: 3px; }
 .profile-menu[data-compact] .profile-popover { inset: auto 8px auto auto; top: calc(anchor(bottom) + 6px); width: 250px; }
-.profile-editor label { display: grid; gap: 7px; }
-.profile-editor :is(input,textarea) { width: 100%; box-sizing: border-box; padding: 9px 11px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
-.profile-editor textarea { resize: vertical; }
+.profile-symbol img, .profile-avatar img, .profile-photo-preview img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.settings-form-dialog.profile-editor { width: min(480px, calc(100vw - 24px)); border-radius: 14px; background: var(--surface-raised); }
+.profile-editor .settings-dialog-header { align-items: center; padding: 18px 22px; }
+.profile-editor .settings-dialog-header h2 { font-weight: 650; }
+.profile-editor .settings-dialog-body { padding: 0 22px 20px; }
+.profile-editor .settings-dialog-fields { gap: 18px; }
+.profile-editor .settings-field { font-size: 13px; font-weight: 550; }
+.profile-editor .settings-field :is(input,textarea) { font: inherit; font-weight: 400; border-radius: 7px; background: var(--surface); }
+.profile-editor .settings-field textarea { min-height: 74px; }
+.profile-editor small { color: var(--text-mid); font-size: 12px; font-weight: 400; line-height: 1.45; }
+.profile-photo-row { display: flex; align-items: center; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--border); }
+.profile-photo-preview { display: grid; flex: none; place-items: center; height: 64px; width: 64px; border-radius: 50%; color: var(--text-mid); background: var(--surface-hover); }
+.profile-photo-preview svg { width: 30px; height: 30px; stroke-width: 1.5; }
+.profile-photo-options { display: grid; gap: 7px; min-width: 0; }
+.profile-photo-options > div { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.profile-editor .settings-dialog-footer { padding: 12px 22px; }
+.profile-editor :is(.primary-button,.secondary-button,.profile-photo-remove) { min-height: 32px; padding: 5px 13px; border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer; }
+.profile-editor .secondary-button { color: var(--text); border: 1px solid var(--border); background: var(--surface); }
+.profile-editor .primary-button { color: var(--surface); border: 1px solid transparent; background: var(--text); }
+.profile-photo-remove { color: var(--text-mid); border: 0; background: transparent; }
+.profile-editor :is(.secondary-button,.profile-photo-remove):hover { background: var(--surface-hover); }
+.profile-editor button:disabled { cursor: default; opacity: .5; }

@@ -33,7 +33,7 @@ export function VoiceWave({ level, quiet }: { level: number; quiet: boolean }) {
   return <svg className="voice-call-wave" viewBox="0 0 600 32" preserveAspectRatio="none" aria-hidden="true"><path ref={path} d="M0,16 L600,16" vectorEffect="non-scaling-stroke"/></svg>;
 }
 
-export function VoiceComposerPanel({ session, language }: { session: VoiceSession; language: string }) {
+export function VoiceComposerPanel({ session, language, showVoicePicker = true }: { session: VoiceSession; language: string; showVoicePicker?: boolean }) {
   const state = useSyncExternalStore(session.subscribe, session.snapshot);
   const error = state.error || state.agentError;
   const connecting = state.phase === 'connecting' || state.reconnecting;
@@ -51,8 +51,8 @@ export function VoiceComposerPanel({ session, language }: { session: VoiceSessio
         : <VoiceWave level={audible ? state.outputLevel ?? 0 : state.muted || state.capturePaused ? 0 : state.level} quiet={Boolean(error || state.muted && !audible)}/>}
       {error ? <span className="voice-call-error" role="alert">{error}</span> : <span className="voice-call-status" role="status">{label}</span>}
     </div>
-    {state.realtimeSettings ? <RealtimeVoicePicker value={state.realtimeSettings} language={language} compact disabled={connecting||state.phase==='idle'} onChange={(voiceId,customVoices)=>session.selectRealtimeVoice(voiceId,customVoices)}/>
-      : !state.realtime && <div className="realtime-voice-picker" data-compact="true"><SettingsDropdown label={uiText(language)('realtimeVoiceOptions.voice')} value={state.voice} disabled={connecting} options={(['female','male'] as const).map(value=>({value,label:uiText(language)(value==='female'?'voiceSettingsPanel.female':'voiceSettingsPanel.male')}))} onChange={value=>void session.setVoice(value as 'female'|'male')}/></div>}
+    {showVoicePicker && (state.realtimeSettings ? <RealtimeVoicePicker value={state.realtimeSettings} language={language} compact disabled={connecting||state.phase==='idle'} onChange={(voiceId,customVoices)=>session.selectRealtimeVoice(voiceId,customVoices)}/>
+      : !state.realtime && <div className="realtime-voice-picker" data-compact="true"><SettingsDropdown label={uiText(language)('realtimeVoiceOptions.voice')} value={state.voice} disabled={connecting} options={(['female','male'] as const).map(value=>({value,label:uiText(language)(value==='female'?'voiceSettingsPanel.female':'voiceSettingsPanel.male')}))} onChange={value=>void session.setVoice(value as 'female'|'male')}/></div>)}
     <button type="button" className="voice-audio-toggle" aria-pressed={state.outputMuted}
       title={uiText(language)(state.outputMuted ? 'useAssistantActions.unmuteSpeech' : 'voiceComposerPanel.muteOutput')}
       aria-label={uiText(language)(state.outputMuted ? 'useAssistantActions.unmuteSpeech' : 'voiceComposerPanel.muteOutput')}

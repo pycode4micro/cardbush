@@ -3,9 +3,9 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import type { ModelRequest } from '@cardbush/bush-protocol';
 import { remoteResponseSchema } from '@cardbush/bush-protocol';
 import { z } from 'zod';
-import sharp from 'sharp';
 
 export async function normalizeWebImage(bytes: Buffer) {
+  const { default: sharp } = await import('sharp');
   const decoder = sharp(bytes, { limitInputPixels: 16_000_000, failOn: 'warning' });
   const info = await decoder.metadata();
   if (!['jpeg', 'png', 'webp'].includes(info.format ?? '') || (info.pages ?? 1) !== 1) throw new Error('Only still PNG, JPEG and WebP images are supported.');

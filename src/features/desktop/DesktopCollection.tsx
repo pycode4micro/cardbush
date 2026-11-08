@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types';
 import { uiText } from '../../i18n';
 import { useApplications } from '../appCenter/appCenterStore';
@@ -19,15 +19,17 @@ type Props = {
   onNew(): void; onAddProject(): void; onExplore(): void;
 };
 export function DesktopHome(props: Props) {
-  const { snapshot, error, refresh } = useEventExecution(props.ready && props.visible, props.page.kind === 'event' ? 1500 : 15000);
+  const needsEvents = props.page.kind === 'overview' || props.page.kind === 'events' || props.page.kind === 'event';
+  const { snapshot, error, refresh } = useEventExecution(props.ready && props.visible && needsEvents, props.page.kind === 'event' ? 1500 : 15000);
   const archived = useConversationArchives();
-  const components = useComponents().items.filter(item => !isBuiltinComponent(item));
+  const collection = useComponents();
+  const components = useMemo(() => collection.items.filter(item => !isBuiltinComponent(item)), [collection.items]);
   const profile = useAssistantProfile();
-  const projects = props.projects.filter(project => !project.archived);
-  const conversations = props.conversations.filter(item => !archived.has(item.id) && !item.metadata?.hidden)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const events = (snapshot?.events ?? []).filter(event => !event.archived)
-    .sort((a, b) => Number(b.status === 'waiting_user') - Number(a.status === 'waiting_user') || b.updatedAt.localeCompare(a.updatedAt));
+  const projects = useMemo(() => props.projects.filter(project => !project.archived), [props.projects]);
+  const conversations = useMemo(() => props.conversations.filter(item => !archived.has(item.id) && !item.metadata?.hidden)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [props.conversations, archived]);
+  const events = useMemo(() => (snapshot?.events ?? []).filter(event => !event.archived)
+    .sort((a, b) => Number(b.status === 'waiting_user') - Number(a.status === 'waiting_user') || b.updatedAt.localeCompare(a.updatedAt)), [snapshot?.events]);
   return <DesktopHomeView {...props} assistantName={profile.name} projects={projects} conversations={conversations}
     components={components} events={events} snapshot={snapshot} error={error || props.unavailable} retry={refresh}/>;
 }

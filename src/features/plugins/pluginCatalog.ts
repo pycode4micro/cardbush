@@ -57,9 +57,9 @@ const plugins = createCatalog<CardbushAppPlugin>(async () =>
 const commands = createCatalog<PluginCommandSummary>(() => window.cardbushDesktop?.pluginCommands?.() ?? Promise.resolve([]));
 const noSubscribe = () => () => {};
 
-export function usePluginCatalog(): CardbushAppPlugin[] {
+export function usePluginCatalog(enabled = true): CardbushAppPlugin[] {
   const host = useContext(ConversationHostContext);
-  const local = useSyncExternalStore(host ? noSubscribe : plugins.subscribe, plugins.snapshot, plugins.snapshot);
+  const local = useSyncExternalStore(host || !enabled ? noSubscribe : plugins.subscribe, plugins.snapshot, plugins.snapshot);
   return host?.plugins ?? local;
 }
 

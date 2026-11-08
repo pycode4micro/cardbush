@@ -1,17 +1,11 @@
 import { screen, type BrowserWindow, type Rectangle } from 'electron';
 
-export type AssistantSurface = 'capsule' | 'compose' | 'replies';
+export type AssistantSurface = 'capsule' | 'compose' | 'replies' | 'voice';
 const height = 40;
 const inset = 4;
+const desktopMargin = 12;
 const anchors = new WeakMap<BrowserWindow, { x: number; y: number }>();
-export const residentCapsuleSize = { width: 152, height: height + inset * 2 };
-
-export function restoreAssistantFrame(win: BrowserWindow) {
-  anchors.delete(win);
-  if (process.platform === 'win32' || process.platform === 'linux') win.setShape([]);
-  win.setResizable(true);
-  win.setMinimumSize(480, 480);
-}
+export const residentCapsuleSize = { width: 176, height: height + inset * 2 };
 
 function roundedRows(x: number, y: number, width: number, height: number, radius: number): Rectangle[] {
   const rows: Rectangle[] = [];
@@ -28,28 +22,27 @@ function fit(bounds: Rectangle, area = screen.getDisplayMatching(bounds).workAre
     y: Math.max(area.y, Math.min(bounds.y, area.y + area.height - bounds.height)) };
 }
 
-export function sizeAssistantSurface(win: BrowserWindow, mode: AssistantSurface, workspaceFrame: boolean, measuredReplyHeight: number) {
-  const before = win.getBounds();
-  const anchor = anchors.get(win) ?? { x: before.x, y: before.y };
+export function sizeAssistantSurface(win: BrowserWindow, mode: AssistantSurface, measuredReplyHeight: number) {
+  const saved = anchors.get(win);
+  const area = (saved ? screen.getDisplayNearestPoint(saved) : screen.getPrimaryDisplay()).workArea;
+  // Keep the last pixel of the lower right corner on its own display at monitor boundaries.
+  const anchor = saved ?? { x: area.x + area.width - desktopMargin - 1, y: area.y + area.height - desktopMargin - 1 };
   anchors.set(win, anchor);
-  const area = screen.getDisplayNearestPoint(anchor).workArea;
-  const captionBand = workspaceFrame && process.platform === 'win32' ? 40 : 0;
   const zoom = win.webContents.getZoomFactor();
   const dip = (pixels: number) => Math.round(pixels * zoom);
   const width = Math.min(area.width, dip(mode === 'capsule' ? residentCapsuleSize.width : 344));
-  const replyHeight = mode === 'replies' ? Math.min(dip(measuredReplyHeight), Math.max(1, area.height - captionBand - dip(residentCapsuleSize.height + 6))) : 0;
-  const targetHeight = dip(residentCapsuleSize.height) + captionBand + (replyHeight ? replyHeight + dip(6) : 0);
+  const replyHeight = mode === 'replies' ? Math.min(dip(measuredReplyHeight), Math.max(1, area.height - dip(residentCapsuleSize.height + 6))) : 0;
+  const targetHeight = dip(residentCapsuleSize.height) + (replyHeight ? replyHeight + dip(6) : 0);
   win.setMinimumSize(1, 1); win.setResizable(false);
-  win.setBounds(fit({ ...anchor, width, height: targetHeight }, area));
-  if (workspaceFrame && (process.platform === 'win32' || process.platform === 'linux')) {
-    // Retain the live workspace renderer. Only the pill and its reply sheet get
-    // native paint/input regions; Windows' caption buttons sit above those regions.
-    const client = win.getContentBounds(), outer = win.getBounds();
-    const x = client.x - outer.x + dip(inset);
-    const y = client.y - outer.y + client.height - targetHeight + captionBand + dip(inset);
-    const rowWidth = mode === 'compose' ? client.width : Math.min(client.width,dip(residentCapsuleSize.width));
-    const shape = roundedRows(x, y, rowWidth - 2 * dip(inset), dip(height), dip(height) / 2);
-    if (replyHeight) shape.push(...roundedRows(x, y + dip(height + 6), client.width - 2 * dip(inset), replyHeight, Math.min(dip(14),replyHeight/2)));
+  win.setBounds(fit({ x: anchor.x + 1 - width, y: anchor.y + 1 - targetHeight, width, height: targetHeight }, area));
+  if (process.platform === 'win32' || process.platform === 'linux') {
+    // Clip both the painted surface and native hit testing to the visible controls.
+    const client = win.getContentBounds();
+    const padding = dip(inset);
+    const rowWidth = mode === 'replies' ? Math.min(client.width, dip(residentCapsuleSize.width)) : client.width;
+    const shape = roundedRows(client.width - rowWidth + padding, client.height - padding - dip(height),
+      rowWidth - 2 * padding, dip(height), dip(height) / 2);
+    if (replyHeight) shape.push(...roundedRows(padding, padding, client.width - 2 * padding, replyHeight, Math.min(dip(14), replyHeight / 2)));
     win.setShape(shape);
   }
 }
@@ -62,6 +55,6 @@ export function dragAssistantSurface(win: BrowserWindow, action: unknown, dx: un
   if (!origin || action !== 'move' || typeof dx !== 'number' || typeof dy !== 'number' ||
       !Number.isSafeInteger(dx) || !Number.isSafeInteger(dy) || Math.abs(dx) > 65536 || Math.abs(dy) > 65536) return;
   const next = fit({ ...origin, x: origin.x + dx, y: origin.y + dy });
-  anchors.set(win, { x: next.x, y: next.y });
+  anchors.set(win, { x: next.x + next.width - 1, y: next.y + next.height - 1 });
   win.setPosition(next.x, next.y);
 }

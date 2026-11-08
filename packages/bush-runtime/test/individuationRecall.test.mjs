@@ -308,6 +308,13 @@ test('the registered profile shares one user-owned habit with recall, survives r
   assert.equal(found.memories[0].text,first.habits);
   const records=await store.list(on);
   assert.equal(records.records[0].origin,'user');
+  const photo={...first,avatar:'data:image/webp;base64,UklGRg=='};
+  await store.savePersonalProfile(photo,first);
+  assert.deepEqual(await saved.personalProfile(),photo);
+  await assert.rejects(saved.savePersonalProfile({...first,preferredName:'Stale'},first),/personal_profile_changed/);
+  await saved.savePersonalProfile(first,photo);
+  assert.deepEqual(await store.personalProfile(),first);
+  assert.equal((await saved.list(on)).records.length,1,'changing only the avatar does not add a habit');
   const changed={preferredName:'Jo',habits:'Prefer email.'};
   await saved.savePersonalProfile(changed,first);
   await saved.savePersonalProfile(changed,first);

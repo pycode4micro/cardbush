@@ -6,8 +6,21 @@ const key = 'cardbush_personal_assistant_v1';
 const listeners = new Set<() => void>();
 let working = false;
 export function setAssistantWorking(value: boolean) { if (working === value) return; working = value; listeners.forEach(listener => listener()); }
-export const useAssistantWorking = () => useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => working);
-let profile: AssistantProfile;
+function profileStorageChanged(event: StorageEvent) {
+  if (event.key && event.key !== key) return;
+  profile = undefined;
+  listeners.forEach(listener => listener());
+}
+function subscribe(listener: () => void) {
+  if (!listeners.size) window.addEventListener('storage', profileStorageChanged);
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) window.removeEventListener('storage', profileStorageChanged);
+  };
+}
+export const useAssistantWorking = () => useSyncExternalStore(subscribe, () => working);
+let profile: AssistantProfile | undefined;
 export function readAssistantProfile(): AssistantProfile {
   if (!profile) {
     try {
@@ -25,4 +38,4 @@ export function saveAssistantProfile(input: AssistantProfile) {
   localStorage.setItem(key, JSON.stringify(next)); profile = next;
   listeners.forEach(listener => listener());
 }
-export const useAssistantProfile = () => useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, readAssistantProfile);
+export const useAssistantProfile = () => useSyncExternalStore(subscribe, readAssistantProfile);

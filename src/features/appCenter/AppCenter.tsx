@@ -1,12 +1,14 @@
 import { uiText } from '../../i18n';
+import { fetchCardbushAppsConfiguration } from '../../backend/api';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Search, Settings, Trash2, UsersRound, X } from 'lucide-react';
+import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Search, Trash2, UsersRound, X } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import { PluginGlyph } from '../plugins/PluginGlyph';
 import { BrowserSiteIcon } from '../browser/BrowserSiteIcon';
 import { AppCenterSettingsMenu } from './AppCenterSettingsMenu';
+import { ConversationHostContext } from '../conversationHost';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { applicationCatalog, applicationLink, type ApplicationEntry } from './appCenterModel';
 import { OPEN_APPLICATION_EVENT, OPEN_APP_CENTER_EVENT, saveAppCenterPreferences, useAppCenterPreferences, useApplications } from './appCenterStore';
@@ -21,20 +23,22 @@ export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; siz
   if (app.kind === 'local') return app.icon && app.icon !== failedIcon
     ? <img className="composer-plugin-option-logo" src={app.icon} alt="" draggable={false} onError={() => setFailedIcon(app.icon ?? '')}/>
     : <AppWindow size={size} aria-hidden="true"/>;
-  const Icon = app.target === 'plugins' ? PluginIcon : app.target === 'automations' ? CalendarClock : app.target === 'components' ? Blocks : app.target === 'team' ? UsersRound : app.target === 'md-presentation' ? FileText : Settings;
+  const Icon = app.target === 'plugins' ? PluginIcon : app.target === 'automations' ? CalendarClock : app.target === 'components' ? Blocks : app.target === 'team' ? UsersRound : app.target === 'md-presentation' ? FileText : AppWindow;
   return <Icon size={size} aria-hidden="true" />;
 }
 
 export function useLaunchApplication() { return useContext(LaunchApplicationContext); }
 
-export function AppCenterProvider({ language, onNavigate, onExplore, children }: { language: AppLanguage; onExplore?: () => void; onNavigate: (app: ApplicationEntry, environmentId?: string) => void; children: ReactNode }) {
-  const apps = useApplications(language), prefs = useAppCenterPreferences();
+export function AppCenterProvider({ language, exploring = false, onNavigate, onExplore, children }: { language: AppLanguage; exploring?: boolean; onExplore?: () => void; onNavigate: (app: ApplicationEntry, environmentId?: string) => void; children: ReactNode }) {
   const [open, setOpen] = useState(false), [query, setQuery] = useState('');
+  const localCatalog = !useContext(ConversationHostContext);
+  const listening = exploring || open;
+  const apps = useApplications(language, listening), prefs = useAppCenterPreferences();
   const [link, setLink] = useState<{ id?: string; title: string; url: string } | null>(null), [error, setError] = useState('');
   const [selectingLocal, setSelectingLocal] = useState(false);
   const presence = useSoftPanelPresence(open, 200), dialog = useRef<HTMLDialogElement>(null), opener = useRef<HTMLElement | null>(null);
   const requestRevision = useRef(0);
-  const current = useRef({ apps, prefs, onNavigate }); current.current = { apps, prefs, onNavigate };
+  const current = useRef({ apps, prefs, onNavigate, listening }); current.current = { apps, prefs, onNavigate, listening };
   const show = useCallback(() => { if (!dialog.current?.open) opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setError(''); setOpen(true); }, []);
   const openApplication = useCallback(async (app: ApplicationEntry, environmentId?: string) => {
     opener.current = null; setOpen(false);
@@ -79,6 +83,10 @@ export function AppCenterProvider({ language, onNavigate, onExplore, children }:
           await api.connect(environmentId);
           const config = await api.call(environmentId, 'product.command', { kind: 'apps.get' }) as { plugins: CardbushAppPlugin[] };
           available = applicationCatalog(language, config.plugins, { ...current.current.prefs, links: [] });
+        } else if (localCatalog && !environmentId && typeof id === 'string' && id.startsWith('plugin:') &&
+          (!current.current.listening || !available.some(app => app.id === id))) {
+          const config = await fetchCardbushAppsConfiguration();
+          available = applicationCatalog(language, config.plugins, current.current.prefs);
         }
         if (revision !== requestRevision.current) return;
         const app = available.find(item => item.id === id);
@@ -88,7 +96,7 @@ export function AppCenterProvider({ language, onNavigate, onExplore, children }:
     };
     window.addEventListener(OPEN_APP_CENTER_EVENT, center); window.addEventListener(OPEN_APPLICATION_EVENT, application);
     return () => { requestRevision.current++; window.removeEventListener(OPEN_APP_CENTER_EVENT, center); window.removeEventListener(OPEN_APPLICATION_EVENT, application); };
-  }, [language, onExplore, show, openApplication]);
+  }, [language, localCatalog, onExplore, show, openApplication]);
   useEffect(() => {
     if (!presence.mounted) return;
     const node = dialog.current; node?.showModal();

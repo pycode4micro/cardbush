@@ -68,6 +68,7 @@ async function buildViews() {
   const { default: react } = await import('@vitejs/plugin-react');
   const entryId = '\0app-view-test.ts';
   const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx', 'src/features/chat/QuickContextRail.tsx',
+    'src/features/pre_test/QuickContextPreTest.tsx',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'terminal-task' ? ['src/features/tools/TerminalTaskStatus.tsx'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'runtime-readiness' ? [
       'src/shared/useRuntimeStartupStatus.ts', 'src/features/composer/Composer.tsx',
@@ -517,6 +518,10 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), [], 'no conversation title renderer errors');
       assert.deepEqual(errors, []);
       return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'quick-context-visual') {
+      await require('./helpers/quick-context-visual.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []); return;
     }
     if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-permissions', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'stream-follow', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center', 'composer-memory', 'team-composer'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');

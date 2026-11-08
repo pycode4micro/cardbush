@@ -13,10 +13,10 @@ import { previousUserName } from '../settings/appSettingsStore';
 import { ProfileEditor } from './ProfileEditor';
 
 type Props = {
-  language: string; ready: boolean; floating: boolean; prepare(): Promise<ChatStreamRequest>;
+  language: string; ready: boolean; prepare(): Promise<ChatStreamRequest>;
   settings(): void | Promise<void>; switchWindow(): Promise<void>; onDialogChange?(open: boolean): void; children: ReactNode;
 };
-export function ProfileCenter({ language, ready, floating, prepare, settings, switchWindow, onDialogChange, children }: Props) {
+export function ProfileCenter({ language, ready, prepare, settings, switchWindow, onDialogChange, children }: Props) {
   const t = uiText(language), assistant = useAssistantProfile();
   const [profile, setProfile] = useState<PersonalProfile | null>(null);
   const [dialog, show] = useState<ProfileAction>();
@@ -53,7 +53,7 @@ export function ProfileCenter({ language, ready, floating, prepare, settings, sw
     } catch { setError(action === 'edit' ? 'profile.loadFailed' : 'profile.modeFailed'); }
   };
   const close = () => show(undefined);
-  return <ProfileMenuContext.Provider value={{name:profile?.preferredName ?? '', floating, startup, open:refreshMode, select,
+  return <ProfileMenuContext.Provider value={{name:profile?.preferredName ?? '', avatar:profile?.avatar, startup, open:refreshMode, select,
     windowAvailable:Boolean(desktop?.assistantMode), webhookAvailable:Boolean(desktop?.webhooks)}}>
     {children}
     {dialog === 'edit' && <ProfileEditor language={language} initial={profile} suggestion={assistant.proactive?.recognition.address || previousUserName()}

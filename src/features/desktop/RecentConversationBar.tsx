@@ -5,7 +5,7 @@ import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types'
 import { useConversationArchives } from '../sidebar/conversationArchives';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { normalizeChatMessagesForDisplay } from '../chatMessages/transcript/messageProjection';
-import { indexContextTurns, quickTurnPreviewMessages } from '../chat/quickContextIndex';
+import { isContextGuidance } from '../chat/quickContextIndex';
 import { RecentConversationBarView, TurnListView, type RecentTab } from './RecentConversationBarView';
 import './recentConversationBar.css';
 
@@ -137,25 +137,21 @@ function TurnList({ language, sessionId, read, messages, page, earlier, select }
     return () => { active = false; };
   }, [sessionId, loaded, read, retry]);
 
-  const transcript = useMemo(() => indexContextTurns(normalizeChatMessagesForDisplay(messages ?? [])), [messages]);
   const turns = useMemo(() => {
     const seen = new Set<string>();
-    return transcript.turns.filter(message => {
+    return normalizeChatMessagesForDisplay(messages ?? []).filter(message => {
+      if (message.role !== 'user' || isContextGuidance(message)) return false;
       const key = message.turnId || message.id;
       if (seen.has(key)) return false;
       seen.add(key); return true;
     }).reverse();
-  }, [transcript]);
-  const visible = useMemo(() => turns.slice(0, limit).map(message => {
-    const reply = quickTurnPreviewMessages(transcript.messagesFor(message.id)).find(row => row.role === 'assistant');
-    return { message, reply };
-  }), [transcript, turns, limit]);
+  }, [messages]);
   const more = async () => {
     if (failed) { setRetry(value => value + 1); return; }
     if (turns.length <= limit && page.hasMore) await earlier(sessionId);
     setLimit(value => value + pageSize);
   };
-  return <TurnListView language={language} turns={visible} select={select}
+  return <TurnListView language={language} turns={turns.slice(0, limit)} select={select}
     loading={!loaded && !failed} failed={failed || Boolean(page.historyError)} loadingOlder={page.loadingOlder}
     hasMore={turns.length > limit || page.hasMore} more={more}/>;
 }

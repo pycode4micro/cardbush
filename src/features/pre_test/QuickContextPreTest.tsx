@@ -4,7 +4,7 @@ import { useState, type CSSProperties } from 'react';
 import type { AppLanguage, ChatMessage } from '../../types';
 import { QuickContextRail } from '../chat/QuickContextRail';
 
-const preTestMessages: ChatMessage[] = [
+const examples: ChatMessage[] = [
   user('pt-01', '我们需要修复输入框返回设置页时发生横向位移的问题，重点检查容器宽度和滚动条 gutter。'),
   assistant('pt-02', '我会先比较设置页和聊天页的布局约束，再检查 composer dock 是否重复预留了滚动条宽度。'),
   user('pt-03', '模型管理页面太拥挤，希望减少卡片层级，让模型名称、上下文窗口和当前状态更容易扫描。'),
@@ -26,6 +26,14 @@ const preTestMessages: ChatMessage[] = [
   user('pt-17', '展开历史会话后，希望可以直接跳回原位置，或者复制当时的回复。'),
   assistant('pt-18', '会话预览底部保留跳转和复制操作，输入新内容不会打断回看。'),
 ];
+
+const preTestMessages = Array.from({ length: 20 }, (_, index) => {
+  const offset = (index * 2) % examples.length;
+  const turnId = 'rail-test-' + (index + 1);
+  return examples.slice(offset, offset + 2).map(message => ({
+    ...message, turnId, id: turnId + '-' + message.role,
+  }));
+}).flat();
 
 export function isQuickContextPreTestEnabled() {
   const query = new URLSearchParams(window.location.search).get('pre_test');
@@ -53,10 +61,10 @@ export function QuickContextPreTest({ language }: { language: AppLanguage }) {
         <small>{uiText(language)('composerRuntimePreTest.localFixturesNoRuntimeRequired')}</small>
       </header>
       <div className="chat-body" style={style}>
-        <QuickContextRail language={language} messages={preTestMessages} />
-        <div className="quick-context-pre-test-feed">
+        <QuickContextRail language={language} messages={preTestMessages} maxVisibleTicks={5} traceViewport />
+        <div className="quick-context-pre-test-feed message-list">
           {preTestMessages.map((message) => (
-            <article className={message.role} key={message.id}>
+            <article className={message.role} key={message.id} data-message-role={message.role} data-message-id={message.id}>
               <small>{message.role === 'user' ? (uiText(language)('quickContextRail.you')) : 'CardBush'}</small>
               <p>{message.content}</p>
             </article>

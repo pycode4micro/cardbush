@@ -7,9 +7,10 @@ import { loadEnabledProductRuntimeRenderers, loadEnabledProductPlugins, type Plu
 export function registerRuntimePluginUiIpc(ipc: IpcMain, options: {
   dataRoot: () => string; roots: () => PluginRoot[]; configPath: () => string;
   window: () => BrowserWindow | null; assertSender: (id: number) => void;
+  assertCatalogReader?: (event: Electron.IpcMainInvokeEvent) => void;
 }) {
   ipc.handle('plugins:runtime-renderers', async event => {
-    options.assertSender(event.sender.id);
+    if (options.assertCatalogReader) options.assertCatalogReader(event); else options.assertSender(event.sender.id);
     return loadEnabledProductRuntimeRenderers(options.roots(), options.configPath());
   });
   ipc.handle('plugins:extension-file', async (event, input: { pluginId: string; action: 'import' | 'export' | 'reveal'; text?: string; name?: string; yaml?: string }) => {

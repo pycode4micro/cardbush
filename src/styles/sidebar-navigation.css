@@ -1,4 +1,13 @@
 /* The desktop rail keeps its navigation and profile reachable at icon width. */
+.sidebar-more-apps[aria-expanded=true] { background: var(--menu-hover); }
+.hover-preview.sidebar-app-flyout { width: 218px; padding: 5px; border-radius: var(--menu-radius); border-color: var(--menu-border); background: var(--menu-surface); box-shadow: var(--menu-shadow); }
+.sidebar-app-list { display: grid; max-height: min(360px, calc(100dvh - 24px)); overflow: auto; overscroll-behavior: contain; }
+.sidebar-app-list button { display: flex; gap: 10px; align-items: center; min-width: 0; min-height: 34px; padding: 6px 10px; background: transparent; color: var(--text); border: 0; border-radius: 5px; font: inherit; text-align: start; cursor: pointer; }
+.sidebar-app-list button:is(:hover,:focus-visible) { background: var(--menu-hover); }
+.sidebar-app-list button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sidebar-app-list button > span:first-child { display: grid; place-items: center; flex: none; }
+.sidebar-app-list :is(img,svg) { width: 17px; height: 17px; object-fit: contain; }
+.sidebar-app-list button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .desktop-shell[data-sidebar-layout] {
   --sidebar-rail-width: 48px;
   --rail-button-size: 36px;
@@ -67,4 +76,3 @@ html .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .deskt
   --sidebar-text-mid:var(--chrome-secondary);
   --sidebar-text-soft:var(--chrome-secondary);
 }
-.app[data-floating-assistant] .desktop-shell[data-sidebar-layout] { padding-inline-start: 0; }

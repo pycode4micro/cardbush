@@ -22,6 +22,7 @@ import { FileMemoScope } from '../chatMessages/FileMemoScope';
 import { HoverPreview, useHoverPreview } from '../../components/HoverPreview';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { contextTickWindow, indexContextTurns, quickTurnPreviewMessages } from './quickContextIndex';
+import { scrollDebug, scrollDebugEnabled } from './scrollDebug';
 
 type SelectedTurn = {
   message: ChatMessage;
@@ -36,6 +37,8 @@ export const QuickContextRail = memo(function QuickContextRail({
   hasEarlier = false,
   loadingEarlier = false,
   onLoadEarlier,
+  maxVisibleTicks = 96,
+  traceViewport = false,
 }: {
   language: AppLanguage;
   messages: ChatMessage[];
@@ -44,6 +47,8 @@ export const QuickContextRail = memo(function QuickContextRail({
   hasEarlier?: boolean;
   loadingEarlier?: boolean;
   onLoadEarlier?: () => void | Promise<unknown>;
+  maxVisibleTicks?: number;
+  traceViewport?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
   const panelId = useId();
@@ -57,7 +62,8 @@ export const QuickContextRail = memo(function QuickContextRail({
   const [remoteTurnMessages, setRemoteTurnMessages] = useState<ChatMessage[] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [railCapacity, setRailCapacity] = useState(72);
+  const tickLimit = Number.isFinite(maxVisibleTicks) ? Math.max(1, Math.min(96, Math.floor(maxVisibleTicks))) : 96;
+  const [railCapacity, setRailCapacity] = useState(Math.min(72, tickLimit));
   const [railOffset, setRailOffset] = useState(0);
   const [visibleUserMessageId, setVisibleUserMessageId] = useState('');
   const railRef = useRef<HTMLElement>(null);
@@ -94,7 +100,7 @@ export const QuickContextRail = memo(function QuickContextRail({
       const availableHeight = Math.max(0, handle.clientHeight - 20);
       const step = parseFloat(getComputedStyle(handle).getPropertyValue('--context-tick-step')) || 9;
       tickStepRef.current = step;
-      const nextCapacity = Math.max(2, Math.min(96, Math.floor(availableHeight / step)));
+      const nextCapacity = Math.min(tickLimit, Math.max(2, Math.floor(availableHeight / step)));
       setRailCapacity((current) => current === nextCapacity ? current : nextCapacity);
     };
     const resizeObserver = new ResizeObserver(updateCapacity);
@@ -105,7 +111,7 @@ export const QuickContextRail = memo(function QuickContextRail({
       resizeObserver.disconnect();
       chatBody.style.removeProperty('--chat-reading-gutter');
     };
-  }, [hasRailTurns]);
+  }, [hasRailTurns, tickLimit]);
 
   useEffect(() => {
     const ticks = ticksRef.current;
@@ -142,9 +148,11 @@ export const QuickContextRail = memo(function QuickContextRail({
     const ticks = ticksRef.current;
     if (!ticks || !railTurns.length) return;
     const previous = layoutRef.current, anchor = windowAnchorRef.current;
-    const current = railTurns[currentRailIndex]?.id ?? '';
+    const current = transcript.positions.has(visibleUserMessageId) ? visibleUserMessageId : '';
     const step = tickStepRef.current;
-    if (!previous || previous.session !== sessionId) {
+    // The reading anchor is measured after mount. Place its first window just
+    // as for a restored session, keeping earlier turns visible when they fit.
+    if (!previous || previous.session !== sessionId || (!previous.current && current && !browsingRef.current)) {
       browsingRef.current = false;
       ticks.scrollTop = Math.max(0, currentRailIndex - railCapacity + 1) * step;
     } else {
@@ -163,7 +171,28 @@ export const QuickContextRail = memo(function QuickContextRail({
     }
     layoutRef.current = { session: sessionId, current, signature: userSignature };
     rememberWindow();
-  }, [sessionId, currentRailIndex, userSignature, railCapacity]);
+  }, [sessionId, currentRailIndex, visibleUserMessageId, userSignature, railCapacity]);
+
+  useEffect(() => {
+    if (!traceViewport && !scrollDebugEnabled()) return;
+    const track = ticksRef.current;
+    if (!track || !track.clientHeight) return;
+    const bounds = track.getBoundingClientRect();
+    const mounted = Array.from(track.querySelectorAll<HTMLElement>('[data-turn-index]'));
+    const visible = mounted.filter(tick => {
+      const rect = tick.getBoundingClientRect();
+      const center = (rect.top + rect.bottom) / 2;
+      return center >= bounds.top && center < bounds.bottom;
+    });
+    const sample = {
+      total: railTurns.length, capacity: railCapacity, mounted: mounted.length, visible: visible.length,
+      firstTurn: visible.length ? Number(visible[0].dataset.turnIndex) + 1 : null,
+      lastTurn: visible.length ? Number(visible[visible.length - 1].dataset.turnIndex) + 1 : null,
+      scrollTop: track.scrollTop, maxScrollTop: track.scrollHeight - track.clientHeight, viewportHeight: track.clientHeight,
+    };
+    if (traceViewport && !scrollDebugEnabled()) console.debug('[cardbush:quick-context-viewport]', sample);
+    else scrollDebug('quick-context-viewport', sample);
+  }, [traceViewport, sessionId, railTurns.length, railCapacity, railOffset, tickWindow.start, tickWindow.end]);
 
   useLayoutEffect(() => {
     const index = focusRequestRef.current;
@@ -388,7 +417,7 @@ export const QuickContextRail = memo(function QuickContextRail({
             } else if (event.key === 'Escape') hoverPreview.close();
           }}
         >
-          <div className="quick-context-items" style={{ height: railTurns.length * tickStepRef.current + 20 }}>
+          <div className="quick-context-items" style={{ height: railTurns.length * tickStepRef.current }}>
           {visibleRailTurns.map((message, slot) => {
             const index = tickWindow.start + slot, isCurrentTurn = index === currentRailIndex;
             return (
@@ -396,7 +425,7 @@ export const QuickContextRail = memo(function QuickContextRail({
                 {...hoverPreview.triggerProps}
                 key={message.id}
                 message={message} language={language} index={index} count={railTurns.length}
-                top={index * tickStepRef.current + 10} summary={turnLabel(message)}
+                top={index * tickStepRef.current} summary={turnLabel(message)}
                 current={isCurrentTurn} previewing={hoveredMessage?.id === message.id}
                 expanded={panelView === 'detail' && selectedTurn?.message.id === message.id} panelId={panelId}
                 aria-describedby={hoveredMessage?.id === message.id ? hoverPreview.id : undefined}

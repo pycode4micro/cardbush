@@ -1,7 +1,6 @@
 import { tmpdir } from 'node:os';
 import { readAgentDesktopBridge, agentDesktopBridgeTransport, syncAgentDesktopBridgePolicy } from './agentDesktopBridge.mjs';
 import { z } from 'zod';
-import { createTurnTimeContext } from '@cardbush/bush-product-agent';
 import { parentPort as nodeParentPort } from 'node:worker_threads';
 import type { Serializable } from 'node:child_process';
 import {
@@ -16,6 +15,7 @@ import {
   REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   createProtocolVersionMismatchError,
+  createTurnTimeContext,
   decodeRuntimeIpcInboundMessage,
   extractRuntimeIpcProtocol,
   runtimeProviderBindingConfigSchema,
@@ -60,14 +60,7 @@ import {
   defaultProductSubagentConfig,
   readCardbushSearchResultLimit,
 } from '@cardbush/product-host';
-import {
-  FileProviderCapabilityStore,
-  InMemoryProviderCapabilityStore,
-  ModelProviderRegistry,
-  createModelProvider,
-  modelProviderCapabilityScope,
-  type ProviderCapabilityStore,
-} from '@cardbush/bush-provider-openai';
+import type { ModelProviderRegistry } from '@cardbush/bush-provider-openai';
 import {
   loadEnabledProductPluginSkillRoots,
   loadEnabledProductPluginMcpServers,
@@ -100,6 +93,8 @@ if (process.send && !process.parentPort && !nodeParentPort) process.once('discon
 
 const operations = new Map<string, AbortController>();
 const mcpHost = new McpHostBridge(message => parentPort.postMessage(message));
+// Older desktop controllers expect their first non-bridge message to be a Runtime frame.
+if (process.env.CARDBUSH_RUNTIME_STARTUP_PROGRESS === '1') process.parentPort?.postMessage({ type: 'runtime_modules_loaded' });
 if (process.env.CARDBUSH_RESOURCE_COORDINATION === 'desktop') {
   configureProcessResourceClient({
     async acquire(lifetime, signal, replace) {
@@ -138,7 +133,7 @@ const mcpOAuth = new McpOAuthCoordinator({
 }, url => mcpHost.request<void>('open-url', { url }), server => async (input, init) => (await pluginNetwork(server, init?.signal ?? undefined)).fetch(input, init));
 const subscriptions = new Map<string, AbortController>();
 let host: InMemoryRuntimeHost;
-let providers: ModelProviderRegistry;
+let providerRegistry: Promise<ModelProviderRegistry> | undefined;
 let mcp: McpClientManager;
 let mcpUpdate: Promise<unknown> = Promise.resolve();
 let effectiveMcp: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
@@ -311,25 +306,29 @@ async function streamEvents(
   }
 }
 
-function createEnvironmentProvider(
-  capabilityStore: ProviderCapabilityStore,
-): ModelProvider | undefined {
-  const apiKey = process.env.CARDBUSH_RUNTIME_PROVIDER_API_KEY?.trim();
-  if (!apiKey) return undefined;
-  const baseURL = process.env.CARDBUSH_RUNTIME_PROVIDER_BASE_URL?.trim() || undefined;
-  const config = {
-    apiKey,
-    baseURL,
-    timeoutMs: positiveInteger(
-      process.env.CARDBUSH_RUNTIME_PROVIDER_TIMEOUT_MS,
-      undefined,
-    ),
-  };
-  return createModelProvider({
-    ...config,
-    ...(hostNetworkAvailable ? { fetch: hostModelFetch } : {}),
-    capabilityStore,
-    capabilityScope: modelProviderCapabilityScope(config),
+// Opening the desktop or reading history needs neither model SDK. Concurrent binds,
+// token counts and turns must still resolve through the same immutable binding registry.
+function providers(): Promise<ModelProviderRegistry> {
+  return providerRegistry ??= import('@cardbush/bush-provider-openai').then(sdk => {
+    const capabilityStore = runtimeStateRoot
+      ? new sdk.FileProviderCapabilityStore(join(runtimeStateRoot, 'provider-capabilities.json'))
+      : new sdk.InMemoryProviderCapabilityStore();
+    const apiKey = process.env.CARDBUSH_RUNTIME_PROVIDER_API_KEY?.trim();
+    const fallback = apiKey && { apiKey, baseURL: process.env.CARDBUSH_RUNTIME_PROVIDER_BASE_URL?.trim() || undefined,
+      timeoutMs: positiveInteger(process.env.CARDBUSH_RUNTIME_PROVIDER_TIMEOUT_MS, undefined) };
+    const network = hostNetworkAvailable ? { fetch: hostModelFetch } : {};
+    return new sdk.ModelProviderRegistry({
+      ...((process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && !process.env.CARDBUSH_SERVICE_ID) || process.env.CARDBUSH_LOCAL_ACCOUNT_ACCESS === '1' ? {
+        chatGptAccess: (accountId, input) => mcpHost.request<string>('siwc.access-token', { accountId, rejectedToken: input.rejectedToken }, input.signal),
+      } : {}),
+      fallbackProvider: fallback ? sdk.createModelProvider({ ...fallback, ...network, capabilityStore,
+        capabilityScope: sdk.modelProviderCapabilityScope(fallback) }) : undefined,
+      createProvider: config => sdk.createModelProvider({ ...config, ...network }),
+      capabilityStore,
+    });
+  }).catch(error => {
+    providerRegistry = undefined;
+    throw error;
   });
 }
 
@@ -395,14 +394,15 @@ async function executeRuntimeCommand(
     return { accepted: true, drained: !host.hasActiveTurns() };
   }
   if (command.kind === UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND) {
-    return providers.upsert(runtimeProviderBindingConfigSchema.parse(command.payload));
+    return (await providers()).upsert(runtimeProviderBindingConfigSchema.parse(command.payload));
   }
   if (command.kind === 'runtime.siwc_account_changed') {
-    providers.invalidateChatGptAccount(z.object({ accountId: z.string().uuid() }).parse(command.payload).accountId);
+    const { accountId } = z.object({ accountId: z.string().uuid() }).parse(command.payload);
+    (await providerRegistry)?.invalidateChatGptAccount(accountId);
     return { accepted: true };
   }
   if (command.kind === REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND) {
-    return providers.remove(runtimeProviderBindingIdentitySchema.parse(command.payload));
+    return (await providers()).remove(runtimeProviderBindingIdentitySchema.parse(command.payload));
   }
   if (command.kind === APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND || command.kind === 'runtime.prepare_plugin_uninstall' || command.kind === 'runtime.prepare_plugin_update') {
     const operation = mcpUpdate.then(async () => {
@@ -838,18 +838,11 @@ const subagentPersistence = runtimeStateRoot
     })
   : undefined;
 
-const providerCapabilityStore = runtimeStateRoot
-  ? new FileProviderCapabilityStore(join(runtimeStateRoot, 'provider-capabilities.json'))
-  : new InMemoryProviderCapabilityStore();
-providers = new ModelProviderRegistry({
-  ...((process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && !process.env.CARDBUSH_SERVICE_ID) || process.env.CARDBUSH_LOCAL_ACCOUNT_ACCESS === '1' ? {
-    chatGptAccess: (accountId: string, input: { rejectedToken?: string; signal?: AbortSignal }) =>
-      mcpHost.request<string>('siwc.access-token', { accountId, rejectedToken: input.rejectedToken }, input.signal),
-  } : {}),
-  fallbackProvider: createEnvironmentProvider(providerCapabilityStore),
-  ...(hostNetworkAvailable ? { createProvider: config => createModelProvider({ ...config, fetch: hostModelFetch }) } : {}),
-  capabilityStore: providerCapabilityStore,
-});
+const modelProvider: ModelProvider = {
+  async estimateInputTokens(request, options) { return (await providers()).estimateInputTokens(request, options); },
+  async countInputTokens(request, options) { return (await providers()).countInputTokens(request, options); },
+  async *stream(request, options) { yield* (await providers()).stream(request, options); },
+};
 const usageLedgerPath = process.env.CARDBUSH_USAGE_LEDGER_PATH?.trim();
 if (usageLedgerPath && !isAbsolute(usageLedgerPath)) throw new Error('CARDBUSH_USAGE_LEDGER_PATH must be an absolute path.');
 const usageLedger = usageLedgerPath ? new UsageLedger(usageLedgerPath) : undefined;
@@ -946,7 +939,7 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 host = new InMemoryRuntimeHost({
   ...(desktopAssistant ? {
     prepareToolCatalog: prepareResidentTools,
-    onAssistantAttention: notice => { if (residentMode) void mcpHost.request('assistant.attention', notice).catch(error => console.warn('[assistant-notification]', error)); },
+    onAssistantAttention: notice => { void mcpHost.request('assistant.attention', notice).catch(error => console.warn('[assistant-notification]', error)); },
   } : {}),
   // Desktop, server Agent and CLI share this worker and compaction policy.
   // Product prompts no longer request tool_summary; reuse recorded tool facts.
@@ -972,7 +965,7 @@ host = new InMemoryRuntimeHost({
   loadSearchResultLimit,
   ...(hostNetworkAvailable ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),
   automation,
-  provider: usageLedger ? usageRecordingProvider(providers, usage => usageLedger.record(usage)) : providers,
+  provider: usageLedger ? usageRecordingProvider(modelProvider, usage => usageLedger.record(usage)) : modelProvider,
   toolRegistry,
   dataRoot: runtimeStateRoot,
   legacyCaptureCacheRoot: join(tmpdir(), 'cardbush-apps', 'captures'),

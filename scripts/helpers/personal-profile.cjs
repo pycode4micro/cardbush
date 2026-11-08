@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-module.exports = async ({win,BrowserWindow,tray,wait,root,project,holdAudioSettings}) => {
+module.exports = async ({win,BrowserWindow,openHome,openAssistant,wait,root,project,holdAudioSettings}) => {
   let current=win;
   const read=source=>current.webContents.executeJavaScript(source,true);
   const visible=selector=>wait(()=>read(`Boolean(document.querySelector(${JSON.stringify(selector)})?.checkVisibility())`),selector);
@@ -14,10 +14,23 @@ module.exports = async ({win,BrowserWindow,tray,wait,root,project,holdAudioSetti
   await wait(()=>read("!document.querySelector('[data-profile-action=startup]').disabled"),'profile menu ready');
   fs.writeFileSync(path.join(project,'tmp','personal-profile-menu.png'),(await current.webContents.capturePage()).toPNG());
   await click('[data-profile-action=edit]');await visible('.profile-editor');
+  const photo = fs.readFileSync(path.join(project,'src/features/desktop/art/fern.jpg')).toString('base64');
+  await read(`(() => { const bytes=Uint8Array.from(atob(${JSON.stringify(photo)}),c=>c.charCodeAt(0));
+    const files=new DataTransfer();files.items.add(new File([bytes],'photo.jpg',{type:'image/jpeg'}));
+    const picker=document.querySelector('.profile-editor input[type=file]');picker.files=files.files;
+    picker.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  await wait(()=>read("document.querySelector('.profile-photo-preview img')?.naturalWidth===256"),'previews the decoded and cropped photo');
   await read(`for(const [selector,text] of [['[name=preferredName]','Lin'],['[name=habits]','Send short updates on Fridays.']]){
     const input=document.querySelector(selector);Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input),'value').set.call(input,text);input.dispatchEvent(new Event('input',{bubbles:true}));}void 0`);
   await click('.profile-editor [type=submit]');
   await wait(()=>read("document.querySelector('.profile-trigger').textContent.includes('Lin') && !document.querySelector('.profile-editor')"),'registered profile saved');
+  assert.ok(await read("document.querySelector('.profile-symbol img')?.src.startsWith('data:image/webp;base64,')"));
+  await action('edit'); await visible('.profile-photo-preview img');
+  fs.writeFileSync(path.join(project,'tmp','personal-profile-editor.png'),(await current.webContents.capturePage()).toPNG());
+  await click('.profile-photo-remove'); await click('.profile-editor .settings-dialog-footer [type=button]');
+  assert.ok(await read("!!document.querySelector('.profile-symbol img')"),'Cancel keeps the saved photo');
+  await action('edit'); await visible('.profile-photo-preview img'); await click('.profile-photo-remove'); await click('.profile-editor [type=submit]');
+  await wait(()=>read("!document.querySelector('.profile-editor,.profile-symbol img,.profile-avatar img')"),'saving removal restores both default avatars');
   await action('webhook');await visible('.webhook-quick-dialog');await click('.webhook-quick-dialog .settings-dialog-header button');
   await action('events');await visible('.assistant-events-dialog');await click('.assistant-events-dialog .settings-dialog-header button');
   await menu();
@@ -25,8 +38,10 @@ module.exports = async ({win,BrowserWindow,tray,wait,root,project,holdAudioSetti
   await click('[data-profile-action=startup]');
   await wait(()=>JSON.parse(fs.readFileSync(path.join(root,'assistant-resident.json'),'utf8')).enabled,'persist next launch');
   await action('float');
-  await wait(()=>win.isDestroyed(),'idle workspace released');
-  current=await wait(()=>BrowserWindow.getAllWindows().find(w=>!w.isDestroyed()),'lightweight window');
+  const workspaceBounds = win.getBounds();
+  const findCapsule = () => BrowserWindow.getAllWindows().find(w=>w!==win && !w.isDestroyed() && w.webContents.getURL().includes('window=assistant'));
+  current=await wait(findCapsule,'separate lightweight window');
+  assert.ok(win.isVisible(), 'opening the capsule keeps the original workspace visible');
   const bell = '.floating-capsule [data-action=replies]';
   await visible(bell); assert.ok(current.isAlwaysOnTop());
   await require('./floating-capsule.cjs')({current, read, click, visible, wait, project, holdAudioSettings});
@@ -34,21 +49,31 @@ module.exports = async ({win,BrowserWindow,tray,wait,root,project,holdAudioSetti
   assert.ok(!await read("document.querySelector('.assistant-view')"), 'the resident renderer never mounts the old chat panel');
   current.close();
   await wait(()=>current.isDestroyed(),'release the live-switched floating renderer when idle');
-  tray.emit('double-click');
-  current=await wait(()=>BrowserWindow.getAllWindows().find(w=>!w.isDestroyed()),'reopen from tray');
-  await visible(bell); await click(bell); await click('.capsule-replies [data-action=workspace]');
-  current=await wait(()=>BrowserWindow.getAllWindows().find(w=>!w.isDestroyed()&&!w.webContents.getURL().includes('window=assistant')),'return to workspace');
+  openAssistant();
+  current=await wait(findCapsule,'reopen capsule from tray');
+  await visible(bell); win.hide(); await click('.floating-capsule [data-action=workspace]');
+  await wait(()=>win.isVisible() && current.isVisible(),'capsule opens Home alongside itself');
+  const capsule=current;
+  assert.deepEqual(win.getBounds(),workspaceBounds);
+  current=win;
   await visible('[data-nav-section=chat]'); await click('[data-nav-section=chat]');
   const composer = '.main-stage .chat-panel:not(.assistant-view) textarea[data-composer-input]';
   await visible(composer);
   await read(`window.profileWorkspaceDraft=document.querySelector(${JSON.stringify(composer)});Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(profileWorkspaceDraft,'Retain this workspace draft');profileWorkspaceDraft.dispatchEvent(new Event('input',{bubbles:true}));void 0`);
-  await action('float'); await visible(bell);
-  assert.ok(current.getSize()[0] < 200,'retaining the live workspace also uses the capsule');
-  await click(bell); await visible('.capsule-replies');
-  assert.ok(current.isAlwaysOnTop());
-  await click('.capsule-replies [data-action=workspace]');
-  await wait(()=>!current.isAlwaysOnTop(),'return from active workspace float');
+  await action('float');
+  assert.equal(findCapsule(),capsule,'reopening reuses the existing capsule');
+  assert.ok(capsule.isAlwaysOnTop() && capsule.isVisible() && win.isVisible());
+  await read('window.cardbushDesktop.voice.setCallActive(true)');
+  try {
+    await assert.rejects(capsule.webContents.executeJavaScript('window.cardbushDesktop.voice.setCallActive(true)'), /another CardBush window|另一个 CardBush/);
+  } finally { await read('window.cardbushDesktop.voice.setCallActive(false)'); }
   assert.equal(await read("profileWorkspaceDraft.isConnected && profileWorkspaceDraft.value==='Retain this workspace draft'"),true);
+  win.hide(); openHome();
+  await visible('[data-desktop-page=overview]');
+  assert.ok(capsule.isVisible() && win.isVisible(),'tray Home restores the workspace alongside the capsule');
+  await click('[data-history-action=back]'); await visible(composer);
+  assert.equal(await read(`(window.profileWorkspaceDraft=document.querySelector(${JSON.stringify(composer)})).value`),'Retain this workspace draft');
+  capsule.close();
   await action('edit'); await visible('.profile-editor');
   assert.deepEqual(await read("[document.querySelector('[name=preferredName]').value, document.querySelector('[name=habits]').value]"),['Lin','Send short updates on Fridays.']);
   await click('.profile-editor .settings-dialog-header button');

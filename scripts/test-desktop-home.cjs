@@ -57,6 +57,20 @@ async function verify() {
   await click('[data-history-action=back]'); await wait("!!document.querySelector('.desktop-detail-heading')");
   await capture('event'); await click('[data-history-action=back]'); await active('overview');
   await click('[data-nav-section=explore]'); await active('explore'); await capture('explore');
+  assert.equal(await js("Array.from(document.querySelectorAll('.desktop-explore .desktop-row strong')).some(node=>node.textContent==='设置')"), false);
+  const more = '.sidebar-more-apps', flyout = '.sidebar-app-flyout:popover-open';
+  const hover = async selector => {
+    const point = await js(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()`);
+    win.webContents.sendInputEvent({type:'mouseMove', ...point});
+  };
+  await hover(more);
+  await wait(`!!document.querySelector('${flyout}')`);
+  assert.equal(await js("!!document.querySelector('[data-sidebar-app=\"builtin:settings\"]')"), false);
+  await hover('[data-sidebar-app="builtin:automations"]'); await sleep(350);
+  assert.ok(await js(`!!document.querySelector('${flyout}')`),'the pointer can cross from the rail into the list');
+  await click('[data-sidebar-app="builtin:automations"]');
+  await wait("!document.querySelector('.desktop-explore,.sidebar-app-flyout:popover-open') && !!document.querySelector('.automation-panel')");
+  await click('[data-nav-section=explore]'); await active('explore');
   assert.equal(await js("document.querySelector('.desktop-explore > h1')?.nextElementSibling?.matches('.desktop-filter')"), true, 'search immediately follows the Explore title');
   await js(`(()=>{const n=document.querySelector('.desktop-filter input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'xyz-no-match');n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await wait("!document.querySelector('.desktop-explore .desktop-row')");
@@ -69,6 +83,15 @@ async function verify() {
   win.setMinimumSize(420,500);win.setSize(650,720);
   await wait("innerWidth < 760"); await capture('home-narrow-dark');
   assert.ok(await js("document.querySelector('.desktop-library').scrollWidth<=document.querySelector('.desktop-library').clientWidth+1"));
+  await js("document.querySelector('.sidebar-more-apps').focus();void 0");
+  const press = keyCode => {
+    for (const type of ['keyDown','keyUp']) win.webContents.sendInputEvent({type,keyCode});
+  };
+  press('Down'); await wait("document.activeElement?.dataset.sidebarApp==='builtin:plugins'");
+  press('Down'); await wait("document.activeElement?.dataset.sidebarApp==='builtin:automations'");
+  assert.ok(await js(`(() => {const r=document.querySelector('${flyout}').getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight;})()`));
+  await capture('sidebar-apps');
+  press('Escape'); await wait("!document.querySelector('.sidebar-app-flyout:popover-open') && document.activeElement.matches('.sidebar-more-apps')");
   console.log('Desktop Home passed: event card, authored detail and history, Explore search, project drill-down, flat rail, dark/narrow layout.');
   app.quit();
 }

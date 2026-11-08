@@ -296,7 +296,7 @@ assert.doesNotMatch(
 );
 assert.match(
   quickContextSource,
-  /Math\.max\(2, Math\.min\(96, Math\.floor\(availableHeight \/ step\)\)\)/,
+  /Math\.min\(tickLimit, Math\.max\(2, Math\.floor\(availableHeight \/ step\)\)\)/,
   'The context rail must cap rendered ticks to the available physical height',
 );
 assert.match(

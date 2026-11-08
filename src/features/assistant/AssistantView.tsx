@@ -42,15 +42,17 @@ const sessionId = PERSONAL_ASSISTANT_SESSION;
 // Also hide transcripts saved by older versions, without deleting conversational memory.
 const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'sending' | 'accepted' | 'failed' };
-export function AssistantView({ active, language, floating, prepare, onManageHosts, composerControls,
+export function AssistantView({ active, language, floating, prepare, ownsConfiguration = true, onManageHosts, composerControls,
   inspectorOpen = false, onToggleInspector, browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
   active: boolean; language: string; floating?: { returnToWorkspace(): void; retainDraft?(value: boolean): void };
-  prepare(): Promise<ChatStreamRequest>; onManageHosts?(): void;
+  prepare(): Promise<ChatStreamRequest>; ownsConfiguration?: boolean; onManageHosts?(): void;
   composerControls?: AssistantComposerControls;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
   composerPortalTarget?: HTMLElement | null; windowMaximized?: boolean; subagentObservabilityAvailable?: boolean;
 }) {
   const profile = useAssistantProfile();
+  const hasOpened = useRef(active);
+  useEffect(() => { if (active) hasOpened.current = true; }, [active]);
   const [entries, setEntries] = useState<ConversationEntry[]>([]), [ready, setReady] = useState(false);
   const [submitted, setSubmitted] = useState<SubmittedMessage[]>([]);
   const [messageMenu, setMessageMenu] = useState<AssistantMessageMenuTarget>();
@@ -94,6 +96,7 @@ export function AssistantView({ active, language, floating, prepare, onManageHos
   const prepareRef = useRef(prepare); prepareRef.current = prepare;
   useEffect(() => {
     let cancelled = false;
+    if (!ownsConfiguration) return;
     void prepareRef.current().then(config => {
       if (!cancelled) return window.cardbushDesktop?.embodied?.command({ action: 'assistant.save', input: {
         profile, language, modelId: config.modelConfig?.id || config.model,
@@ -103,7 +106,7 @@ export function AssistantView({ active, language, floating, prepare, onManageHos
       } });
     }).catch(() => { /* Model/configuration startup can complete after this render. */ });
     return () => { cancelled = true; };
-  }, [profile, language, composerControls ? undefined : prepare, composerControls?.selectedModel, composerControls?.availableModels, composerControls?.permissionMode, composerControls?.subagentPermissionRouting, composerControls?.referencePlanMode, composerControls?.disabledSkillNames]);
+  }, [ownsConfiguration, profile, language, composerControls ? undefined : prepare, composerControls?.selectedModel, composerControls?.availableModels, composerControls?.permissionMode, composerControls?.subagentPermissionRouting, composerControls?.referencePlanMode, composerControls?.disabledSkillNames]);
   const entriesRef = useRef(entries); entriesRef.current = entries;
   const busyRef = useRef(busy); busyRef.current = busy;
   const cursor = useRef(0);
@@ -131,6 +134,9 @@ export function AssistantView({ active, language, floating, prepare, onManageHos
   useEffect(() => { if (!active) setArriving(new Set()); }, [active]);
   const voice = applicationVoiceSession();
   const callHere = useSyncExternalStore(voice.subscribe, () => voice.snapshot().mode === 'call' && Boolean(voice.snapshot().assistant));
+  useEffect(() => {
+    if (capsule.surface === 'voice' && !callHere) void window.cardbushDesktop?.assistantSurface?.('capsule');
+  }, [capsule.surface, callHere]);
   const voiceInUse = useSyncExternalStore(voice.subscribe, () => voice.snapshot().mode !== 'idle');
   const initialize = useRef<Promise<unknown> | undefined>(undefined);
   const ensure = useCallback(() => initialize.current ??= assistantBackend.ensure(profile.name)
@@ -318,17 +324,16 @@ export function AssistantView({ active, language, floating, prepare, onManageHos
   </div>;
   const floatingView = floating && capsule.host && createPortal(
       <FloatingAssistantCapsule language={language} composing={capsule.surface === 'compose'} unread={capsule.unread}
-        ready={ready} sending={submitting} calling={callHere} voiceBlocked={voiceInUse && !callHere} draft={draft} changeDraft={setDraft}
+        ready={ready} sending={submitting} calling={callHere} voiceOpen={capsule.surface === 'voice'} voiceBlocked={voiceInUse && !callHere} draft={draft} changeDraft={setDraft}
         files={capsuleFiles} changeFiles={setCapsuleFiles} compose={() => void capsule.show('compose')}
         collapse={() => void capsule.show('capsule')} open={() => void capsule.show('replies')} send={send}
         repliesOpen={capsule.surface === 'replies'} replies={capsule.replies} error={error || runtimeError ? assistantErrorText(error || runtimeError, language) : ''}
         returnToWorkspace={floating.returnToWorkspace}
-        toggleVoice={async () => {
-          if (callHere) { voice.end(); return; }
-          voice.update(target);
-          await voice.start('call');
-          if (voice.snapshot().error) { setError(voice.snapshot().error); void capsule.show('replies'); }
+        openVoice={() => {
+          if (!callHere) { voice.update(target); void voice.start('call'); }
+          void capsule.show('voice');
         }}/>, capsule.host);
+  if (!active && !hasOpened.current) return null;
   if (!composerControls) return <VoiceConversation target={target} language={language} disabled={!ready} active={active}>{floatingView}</VoiceConversation>;
   return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>

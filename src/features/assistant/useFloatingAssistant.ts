@@ -16,6 +16,11 @@ export function useFloatingAssistant(floating: boolean, active: boolean, entries
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [focused, setFocused] = useState(() => document.hasFocus() && !document.hidden);
   const [receipt, setReceipt] = useState(readReceipt);
+  useEffect(() => {
+    const sync = (event: StorageEvent) => { if (!event.key || event.key === readKey) setReceipt(readReceipt()); };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, []);
   useLayoutEffect(() => {
     if (!floating) { setSurface('capsule'); setHost(null); return; }
     let live = true, changed = false;
@@ -38,6 +43,7 @@ export function useFloatingAssistant(floating: boolean, active: boolean, entries
     if (generation === undefined || !active) return;
     const reading = focused && (!floating || surface === 'replies');
     if (!reading && receipt?.generation === generation) return;
+    if (receipt && (receipt.generation > generation || receipt.generation === generation && receipt.at > (latest?.createdAt ?? ''))) return;
     if (receipt?.generation === generation && receipt.id === (latest?.id ?? '')) return;
     const next = { generation, id: latest?.id ?? '', at: latest?.createdAt ?? '' };
     localStorage.setItem(readKey, JSON.stringify(next)); setReceipt(next);

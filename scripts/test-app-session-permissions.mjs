@@ -30,6 +30,17 @@ test('web content never delegates external app links to the OS', () => {
   }
 });
 
+test('workspace and floating Assistant share audio permission only for their live top frames', () => {
+  const {host, check} = fixture();
+  const capsule = {getURL: () => 'file:///app/index.html?window=assistant', session:host.session};
+  let closed = false;
+  installAppSessionPermissions({isDestroyed: () => closed, webContents:capsule});
+  const media = (contents, isMainFrame = true) => check(contents,'media','',{isMainFrame,requestingUrl:contents.getURL(),mediaType:'audio'});
+  assert.ok(media(host) && media(capsule));
+  assert.equal(media(capsule,false),false);
+  closed=true; assert.equal(media(capsule),false); assert.ok(media(host));
+});
+
 test('app microphone remains restricted to the trusted main frame', () => {
   const { host, check, request } = fixture();
   for (const [contents, isMainFrame, requestingUrl, mediaType, expected] of [

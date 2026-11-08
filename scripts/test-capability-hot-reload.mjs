@@ -33,7 +33,7 @@ const update = () => {
       servers: await loadEnabledProductPluginMcpServers(roots, configPath) });
   }).catch(error => errors.push(error));
 };
-const dispose = watchCapabilityCatalog([plugins, skills, config], update);
+const dispose = watchCapabilityCatalog([plugins, skills, config], update, config);
 const until = async (predicate, label) => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -44,6 +44,11 @@ const until = async (predicate, label) => {
 };
 try {
   await until(() => manager.snapshot()?.applicationState === 'applied', 'initial empty catalog');
+  const initialChanges = changes;
+  await mkdir(join(config, 'apps.json.lock'));
+  await rm(join(config, 'apps.json.lock'), { recursive: true });
+  await new Promise(resolve => setTimeout(resolve, 500));
+  assert.equal(changes, initialChanges, 'an unchanged product configuration must not trigger discovery when its lock turns over');
   await mkdir(join(skills, 'live-skill'), { recursive: true });
   await writeFile(join(skills, 'live-skill', 'SKILL.md'), '---\nname: live-skill\ndescription: live fixture\n---\nHello');
   await until(() => listedSkills.some(skill => skill.name === 'live-skill'), 'new Skill in previously missing root');

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { commandInvocation, createPlatformContext, findExecutable } from '@cardbush/platform';
-import { loadCommandSandboxConfiguration, resolveLinuxSandboxExecutable, resolveProcessResourceHost, spawnResourceManagedProcess, windowsInterpreterRoots } from '@cardbush/bush-runtime';
+import { loadCommandSandboxConfiguration, resolveLinuxSandboxExecutable, resolveProcessResourceHost, spawnResourceManagedProcess, windowsInterpreterRoots } from '@cardbush/bush-runtime/processes';
 import type { SandboxSetupStatus } from './sandboxTypes.js';
 
 const exec = promisify(execFile);

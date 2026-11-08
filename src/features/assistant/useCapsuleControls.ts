@@ -1,15 +1,15 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
 
 export type CapsuleInput = {
-  composing: boolean; repliesOpen: boolean; ready: boolean; sending: boolean;
+  composing: boolean; voiceOpen: boolean; repliesOpen: boolean; ready: boolean; sending: boolean;
   draft: string; changeDraft(value: string): void; files: string[]; changeFiles(files: string[]): void;
   collapse(): void; send(text: string): Promise<boolean>;
 };
 
 export function useCapsuleControls(p: CapsuleInput) {
   const input = useRef<HTMLInputElement>(null);
-  const launcher = useRef<HTMLButtonElement>(null);
-  const wasComposing = useRef(false);
+  const toolbar = useRef<HTMLDivElement>(null);
+  const previous = useRef<'compose' | 'voice' | undefined>(undefined);
   const sheet = useRef<HTMLElement>(null);
   const [limit, setLimit] = useState(30);
   useLayoutEffect(() => {
@@ -46,10 +46,17 @@ export function useCapsuleControls(p: CapsuleInput) {
     window.cardbushDesktop?.dragAssistantSurface?.('end');
   };
   useLayoutEffect(() => {
-    if (p.composing) input.current?.focus();
-    else if (wasComposing.current) launcher.current?.focus({preventScroll:true});
-    wasComposing.current = p.composing;
-  }, [p.composing]);
+    if (p.composing) {
+      previous.current = 'compose';
+      input.current?.focus();
+    } else if (p.voiceOpen) {
+      previous.current = 'voice';
+      toolbar.current?.querySelector('button')?.focus({preventScroll:true});
+    } else if (previous.current) {
+      if (document.hasFocus()) toolbar.current?.querySelector<HTMLButtonElement>(`[data-action="${previous.current}"]`)?.focus({preventScroll:true});
+      previous.current = undefined;
+    }
+  }, [p.composing, p.voiceOpen]);
   const submit = async () => {
     if (!p.ready || p.sending || (!p.draft.trim() && !p.files.length)) return;
     const text = [p.draft, ...p.files.map(path => '@"' + path + '"')].filter(Boolean).join('\n');
@@ -63,5 +70,5 @@ export function useCapsuleControls(p: CapsuleInput) {
     } catch { setFailed(true); }
     input.current?.focus();
   };
-  return {input, launcher, sheet, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach};
+  return {input, toolbar, sheet, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach};
 }

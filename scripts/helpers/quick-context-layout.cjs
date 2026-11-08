@@ -224,5 +224,6 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
     document.querySelector('.context-layout-inspector').remove(); delete document.body.dataset.contextLayoutTest;
     if (contextClipboardDescriptor) Object.defineProperty(navigator, 'clipboard', contextClipboardDescriptor);
     else delete navigator.clipboard;`);
+  await require('./quick-context-visual.cjs')({run, until, pause, window, root});
   console.log('Quick context layout passed: retained turn previews, copy, jump, session isolation, split-pane widths, live resize, short window, expanded composer, themes, scroll isolation and quiet hover.');
 };

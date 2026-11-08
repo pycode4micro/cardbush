@@ -286,9 +286,7 @@ function CardbushApp() {
   );
   const [appSettings, setAppSettings] = useAppSettings();
   const requestedWorkspace = new URLSearchParams(window.location.search).get('workspace');
-  const [floating, setFloating] = useState(false);
   const [section, setSection] = useState<AppSection>(requestedWorkspace === 'team' || requestedWorkspace === 'explore' ? requestedWorkspace : 'home');
-  const workspaceVisited = useRef(false);
   const [homePage, setHomePage] = useState<HomePage>({ kind: 'overview' });
   const { compactLayout, drawerLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
@@ -333,7 +331,7 @@ function CardbushApp() {
   useCapabilityCatalogRefresh(useCallback(async isCurrent => {
     const capabilities = await fetchBackendCapabilities();
     if (isCurrent()) setBackendCapabilities(capabilities);
-  }, []));
+  }, []), { enabled: runtimeStartup.phase === 'ready', initial: true });
   const [modelConfigSyncReady, setModelConfigSyncReady] = useState(false);
   const [backendDefaultModelId, setBackendDefaultModelId] = useState(() => window.localStorage.getItem('cardbush.selected_model') ?? '');
   const lastSavedModelConfigSignatureRef = useRef('');
@@ -364,24 +362,6 @@ function CardbushApp() {
     document.documentElement.lang = language;
     void window.cardbushDesktop?.setUiLanguage?.(language).catch(error => console.warn('Native UI language update failed', error));
   }, [language]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchBackendCapabilities()
-      .then((capabilities) => {
-        if (!cancelled) {
-          setBackendCapabilities(capabilities);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setBackendCapabilities(defaultBackendCapabilities);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -490,6 +470,7 @@ function CardbushApp() {
     modelsReady: modelConfigSyncReady,
     runtimeReady: runtimeStartup.phase === 'ready',
     viewActive: section === 'chat',
+    deferSkillDiscovery: section === 'home' && !settingsOpen,
     language,
     disabledSkillNames,
     standardImageInputEnabled: visualInputEnabled,
@@ -1892,14 +1873,7 @@ function CardbushApp() {
   }, [drawerLayout, collapseSidebar]);
   const markSettingsReady = useCallback(() => setSettingsReady(true), []);
   const settingsVisible = settingsOpen && settingsReady;
-  usePageEntrance(mainStageRef, section === 'home' ? JSON.stringify(homePage) : section, !settingsVisible && !floating, { animateOnMount: false });
-
-  useEffect(() => {
-    const preloadTimer = window.setTimeout(() => {
-      void loadSettingsViewModule().catch(() => undefined);
-    }, 0);
-    return () => window.clearTimeout(preloadTimer);
-  }, []);
+  usePageEntrance(mainStageRef, section === 'home' ? JSON.stringify(homePage) : section, !settingsVisible, { animateOnMount: false });
 
   const toggleSkillEnabled = useCallback((skillName: string, enabled: boolean) => {
     setDisabledSkillNames((current) => {
@@ -1960,17 +1934,10 @@ function CardbushApp() {
     openChangeReviewInspector(conversationId);
     if (drawerLayout) collapseSidebar();
   }, [openChangeReviewInspector, drawerLayout, collapseSidebar]);
-  useEffect(() => {
-    if ((section !== 'home' && section !== 'explore') || settingsOpen || retainedInspectorTabs.length)
-      workspaceVisited.current = true;
-  }, [section, settingsOpen, retainedInspectorTabs.length]);
-  const inWorkspace = async (action: () => void) => {
-    if (floating) {
-      await window.cardbushDesktop!.assistantMode!('workspace');
-      setFloating(false);
-    }
-    action();
-  };
+  useEffect(() => window.cardbushDesktop?.onOpenDesktopHome?.(() => {
+    setSettingsOpen(false);
+    handleSidebarSectionChange('home');
+  }), [handleSidebarSectionChange]);
   const handleSidebarOpenSettings = useCallback(() => {
     openSettings();
   }, [openSettings]);
@@ -1992,7 +1959,7 @@ function CardbushApp() {
     onOpenConversation: handlePreviousConversation,
   });
   const [chatActionsTarget, setChatActionsTarget] = useState<HTMLSpanElement | null>(null);
-  const chatActionsSlot = section === 'chat' && !settingsOpen && !floating
+  const chatActionsSlot = section === 'chat' && !settingsOpen
     ? <span className="window-chat-actions no-drag" ref={setChatActionsTarget}/> : null;
   const [recentList, setRecentList] = useState<RecentListOutlet | null>(null);
   const hasWorkspaceSidebar = settingsOpen || (section !== 'team' && section !== 'md-presentation');
@@ -2108,25 +2075,15 @@ function CardbushApp() {
       data-translucent-sidebar={appearance.translucentSidebar}
       data-window-material-preference={windowMaterial}
       data-desktop-workspace=""
-      data-floating-assistant={floating || undefined}
       data-pointer-cursor={appearance.pointerCursor}
       data-diff-indicators={appearance.diffIndicators}
     >
-      <ProfileCenter language={language} ready={runtimeStartup.phase === 'ready'} floating={floating} prepare={chat.prepareAssistantRequest}
-        settings={() => inWorkspace(() => openSettings())}
-        switchWindow={async () => {
-          const idlePage = !workspaceVisited.current && !chat.processingConversationIds.size && !Object.values(draftsByConversation).some(Boolean)
-            && ((section === 'home' && homePage.kind === 'overview') || section === 'explore') ? section : undefined;
-          const mode = await window.cardbushDesktop!.assistantMode!(floating ? 'workspace' : 'float', undefined, idlePage);
-          setFloating(mode.floating);
-          if (mode.floating) setSettingsOpen(false);
-        }}>
-      <AppCenterProvider language={language} onExplore={openExplore} onNavigate={(application, environmentId) => {
+      <ProfileCenter language={language} ready={runtimeStartup.phase === 'ready'} prepare={chat.prepareAssistantRequest}
+        settings={() => openSettings()} switchWindow={async () => { await window.cardbushDesktop!.assistantMode!('float'); }}>
+      <AppCenterProvider language={language} exploring={section === 'explore' && !settingsVisible} onExplore={openExplore} onNavigate={(application, environmentId) => {
 
         if (application.kind === 'web') { setSettingsOpen(false); openInspectorTarget({ target: application.target, title: application.title }); return; }
         if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins'); return; }
-        if (environmentId && application.kind === 'builtin' && application.target === 'settings') { openSettings(); return; }
-        if (application.target === 'settings' && application.kind === 'builtin') { handleSidebarOpenSettings(); return; }
         setSettingsOpen(false);
         if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
         else setSection(application.target === 'automations' ? 'automations' : application.target === 'components' ? 'components' : application.target === 'team' ? 'team' : application.target === 'md-presentation' ? 'md-presentation' : 'plugins');
@@ -2136,7 +2093,7 @@ function CardbushApp() {
       <WindowFrame
         language={language}
         sidebarCollapsed={sidebarCollapsed}
-        menus={floating ? [] : windowMenus}
+        menus={windowMenus}
         onBack={pageNavigation.canGoBack ? pageNavigation.back : settingsOpen ? () => setSettingsOpen(false) : undefined}
         onForward={pageNavigation.canGoForward ? pageNavigation.forward : undefined}
         onInspectorHistory={(direction, tabId = activeInspectorTabIdentity) => {
@@ -2147,12 +2104,12 @@ function CardbushApp() {
         }}
         onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
       >
-        {!floating && <RecentConversationBar
+        <RecentConversationBar
           key={currentPage.section} actions={chatActionsSlot}
           language={language} conversation={recentConversation} conversations={chat.conversations}
           transcripts={chat.messagesByConversation} onRecentList={setRecentList}
           pageFor={chat.historyPages.forSession} read={chat.loadSessionHistory}
-          earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>}
+          earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>
       </WindowFrame>
       {conversationSearch.open && <ConversationSearchDialog
         language={language}
@@ -2268,19 +2225,19 @@ function CardbushApp() {
             </Suspense>
             </PageNavigationScope.Provider>
           )}
-          <section ref={mainStageRef} className="main-stage" aria-hidden={settingsVisible || undefined} inert={settingsVisible || !floating && (inspectorControlsVisible || drawerLayout && !sidebarCollapsed || compactLayout && inspectorOpen) ? true : undefined}>
-            <AssistantView floating={floating ? { returnToWorkspace: () => void inWorkspace(() => {}) } : undefined} active={floating || section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
-              inspectorOpen={!floating && inspectorOpen} onToggleInspector={floating ? undefined : toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
-              composerPortalTarget={!floating && section === 'assistant' && quickInputOpen ? quickInputTarget : null}
+          <section ref={mainStageRef} className="main-stage" aria-hidden={settingsVisible || undefined} inert={settingsVisible || (inspectorControlsVisible || drawerLayout && !sidebarCollapsed || compactLayout && inspectorOpen) ? true : undefined}>
+            <AssistantView active={section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
+              inspectorOpen={inspectorOpen} onToggleInspector={toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
+              composerPortalTarget={section === 'assistant' && quickInputOpen ? quickInputTarget : null}
               subagentObservabilityAvailable={backendCapabilities.subagentObservability && backendCapabilities.subagentObservabilityProtocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL}
               composerControls={{ ...assistantModel, availableModels,
-                onConfigureModels: () => { void inWorkspace(() => openSettings('models')).catch(error => showUiError(uiText(language)('profile.modeFailed'), errorMessage(error))); }, referencePlanMode: chat.referencePlanMode, onReferencePlanModeChange: chat.setReferencePlanMode,
+                onConfigureModels: () => openSettings('models'), referencePlanMode: chat.referencePlanMode, onReferencePlanModeChange: chat.setReferencePlanMode,
                 permissionMode: chat.permissionMode, onPermissionModeChange: chat.setPermissionMode,
                 subagentPermissionRouting: chat.subagentPermissionRouting, onSubagentPermissionRoutingChange: chat.setSubagentPermissionRouting,
                 reasoningLevelAvailable: backendCapabilities.reasoningLevelSelection,
                 reasoningLevels: backendCapabilities.reasoningLevels,
                 skills: chat.skills, disabledSkillNames, onToggleSkill: toggleSkillEnabled }}
-              onManageHosts={() => { void inWorkspace(() => { showTeamWorkspaceTab('agents'); setSection('team'); }).catch(error => showUiError(uiText(language)('profile.modeFailed'), errorMessage(error))); }}/>
+              onManageHosts={() => { showTeamWorkspaceTab('agents'); setSection('team'); }}/>
               <HtmlComponentContext.Provider value={{ revision: chat.activeConversationId || '__new__', sessionId: chat.activeConversationId, language, running: chat.sending,
                 draft: activeDraft, notice: chat.error || chat.notice || undefined,
                 selectSuggestion: suggestion => { if (suggestion.sessionId) openConversation(suggestion.sessionId); else setActiveDraft(suggestion.text); },

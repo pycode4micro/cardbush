@@ -31,8 +31,8 @@ export function installWebApplication(info: WebApplicationInfo) {
   return app;
 }
 export function useAppCenterPreferences() { return useSyncExternalStore(subscribe, () => raw === undefined ? read() : cached, () => defaultAppCenterPreferences); }
-export function useApplications(language: AppLanguage) {
-  const plugins = usePluginCatalog(), preferences = useAppCenterPreferences();
+export function useApplications(language: AppLanguage, enabled = true) {
+  const plugins = usePluginCatalog(enabled), preferences = useAppCenterPreferences();
   return useMemo(() => applicationCatalog(language, plugins, preferences), [language, plugins, preferences]);
 }
 export const OPEN_APPLICATION_EVENT = 'cardbush-open-application';

@@ -13,33 +13,58 @@ const helpers = ['mergeLoadedConversationsPreservingLocalTitles', 'shouldAutoTit
 const compiled = ts.transpileModule([...helpers, effect.getText(source)].join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
+const skillEffect = hook.body.statements.find(node => ts.isExpressionStatement(node) &&
+  ts.isCallExpression(node.expression) && node.expression.expression.getText(source) === 'useCapabilityCatalogRefresh');
+const skillCode = ts.transpileModule(skillEffect.getText(source), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const row = (id, title = id) => ({ id, title });
-function fixture(initial = {}, prepared = {}) {
+function fixture(initial = {}, prepared = {}, deferSkillDiscovery = false) {
   const state = { conversations: [], active: '', messages: {}, skills: [], error: null, loading: true, ...initial };
   const sessions = deferred(), skills = deferred();
   const context = {
-    requestContext: { runtimeReady: true }, conversationsRef: { current: state.conversations },
+    requestContext: { runtimeReady: true, deferSkillDiscovery }, initialListSettled: false, conversationsRef: { current: state.conversations },
     activeConversationIdRef: { current: state.active }, messagesByConversationRef: { current: state.messages },
-    preparedConversationsRef: { current: prepared }, fetchConversations: () => sessions.promise, fetchSkills: () => skills.promise,
+    preparedConversationsRef: { current: prepared }, fetchConversations: () => sessions.promise,
+    fetchSkills: () => { state.skillReads++; return skills.promise; },
     conversationListRevisionRef: { current: 0 },
     useEffect: fn => { context.cancel = fn(); }, errorMessage: String,
+    useCallback: fn => fn,
+    setInitialListSettled(value) { context.initialListSettled = value; vm.runInNewContext(skillCode, context); },
+    useCapabilityCatalogRefresh(refresh, { enabled, initial }) {
+      if (enabled && initial && !state.skillReads) void refresh(() => !state.cancelled);
+    },
   };
   for (const [setter, field] of Object.entries({ setConversations: 'conversations', setActiveConversationId: 'active',
     setMessagesByConversation: 'messages', setSkills: 'skills', setError: 'error', setLoading: 'loading' })) {
     context[setter] = value => { state[field] = typeof value === 'function' ? value(state[field]) : value; };
   }
+  state.skillReads = 0;
   vm.runInNewContext(compiled, context);
-  return { state, sessions, skills, cancel: () => context.cancel() };
+  vm.runInNewContext(skillCode, context);
+  return { state, sessions, skills,
+    openComposer() { context.requestContext.deferSkillDiscovery = false; vm.runInNewContext(skillCode, context); },
+    cancel: () => { state.cancelled = true; context.cancel(); } };
 }
 
 const independent = fixture();
+assert.equal(independent.state.skillReads, 1, 'an open composer can load Skills immediately');
 independent.sessions.resolve([row('history')]); await flush();
 assert.equal(independent.state.loading, false, 'conversation readiness must not wait for Skills');
 assert.equal(independent.state.conversations[0].id, 'history');
 independent.skills.resolve([{ name: 'late-skill' }]); await flush();
 assert.equal(independent.state.skills[0].name, 'late-skill');
+
+const home = fixture({}, {}, true);
+assert.equal(home.state.skillReads, 0, 'Home gives the initial list priority over Skills');
+home.sessions.resolve([row('first')]); await flush();
+assert.equal(home.state.conversations[0].id, 'first');
+assert.equal(home.state.skillReads, 1, 'background discovery starts after the first list settles');
+
+const opened = fixture({}, {}, true);
+opened.openComposer();
+assert.equal(opened.state.skillReads, 1, 'opening the composer promotes discovery while the session list is pending');
+opened.sessions.resolve([]); await flush();
 
 const old = row('old', 'Original'), removed = row('removed');
 const draft = fixture({ active: 'writing', messages: { writing: [] } }, { writing: row('writing') });

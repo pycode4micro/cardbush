@@ -110,6 +110,7 @@ export type MemoryHistory = z.infer<typeof memoryHistorySchema>;
 export const personalProfileSchema = z.object({
   preferredName: z.string().trim().max(80),
   habits: z.string().trim().max(1600),
+  avatar: z.string().max(360000).regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/).optional(),
 }).strict();
 export type PersonalProfile = z.infer<typeof personalProfileSchema>;
 export const personalProfileUpdateSchema = z.object({
