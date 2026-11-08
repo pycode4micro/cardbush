@@ -1996,6 +1996,9 @@ function CardbushApp() {
     enabled: section === 'chat' && !settingsOpen && !conversationSearch.open,
     onOpenConversation: handlePreviousConversation,
   });
+  const [chatActionsTarget, setChatActionsTarget] = useState<HTMLSpanElement | null>(null);
+  const chatActionsSlot = section === 'chat' && !settingsOpen && !floating
+    ? <span className="window-chat-actions no-drag" ref={setChatActionsTarget}/> : null;
   const [recentList, setRecentList] = useState<RecentListOutlet | null>(null);
   const hasWorkspaceSidebar = settingsOpen || (section !== 'team' && section !== 'md-presentation');
   const showChatRail = sidebarCollapsed || hasWorkspaceSidebar;
@@ -2149,12 +2152,12 @@ function CardbushApp() {
         }}
         onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
       >
-        {!floating && recentConversation && <RecentConversationBar
-          key={currentPage.section}
+        {!floating && recentConversation ? <RecentConversationBar
+          key={currentPage.section} actions={chatActionsSlot}
           language={language} conversation={recentConversation} conversations={chat.conversations} inConversation={section === 'chat' && !settingsOpen}
           transcripts={chat.messagesByConversation} onRecentList={setRecentList}
           pageFor={chat.historyPages.forSession} read={chat.loadSessionHistory}
-          earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>}
+          earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/> : chatActionsSlot}
       </WindowFrame>
       {conversationSearch.open && <ConversationSearchDialog
         language={language}
@@ -2299,6 +2302,8 @@ function CardbushApp() {
             : section === 'assistant' ? null : section === 'chat' ? (
               <ComposerPortalContext.Provider value={quickInputOpen ? quickInputTarget : null}>
               <ChatPanel
+                headerActionsTarget={chatActionsSlot ? chatActionsTarget : null}
+                workSummaryAvailable={!inspectorControlsVisible && !(compactLayout && inspectorOpen)}
                 browserTabs={composerBrowserTabs}
                 language={language}
                 theme={theme}

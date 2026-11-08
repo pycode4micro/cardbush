@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { uiText } from '../../i18n';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
 import { useConversationArchives } from '../sidebar/conversationArchives';
@@ -47,12 +47,13 @@ export type RecentListOutlet = {
 type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
 type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
 type Props = HistoryActions & {
+  actions?: ReactNode;
   language: AppLanguage; conversation: ConversationSummary; conversations: ConversationSummary[]; inConversation?: boolean;
   transcripts: Record<string, ChatMessage[]>; pageFor(id: string): Page;
   open(id: string, message?: ChatMessage): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ language, conversation, conversations, inConversation = false, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
+export function RecentConversationBar({ actions, language, conversation, conversations, inConversation = false, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<RecentTab>('turns');
   const [selectedId, setSelectedId] = useState('');
@@ -97,7 +98,7 @@ export function RecentConversationBar({ language, conversation, conversations, i
     setSelectedId(id); setTab('turns');
     panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="turns"]')?.focus({ preventScroll: true });
   }, []);
-  return <RecentConversationBarView language={language} title={name(current)} cover={cover} output={output} selectedTitle={name(selected)} panelId={id}
+  return <RecentConversationBarView actions={actions} language={language} title={name(current)} cover={cover} output={output} selectedTitle={name(selected)} panelId={id}
     previous={previous && (() => switchConversation(previous))} next={next && (() => switchConversation(next))}
     panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={() => enter(current.id)}
     onToggle={value => { setExpanded(value); if (!value) { setTab('turns'); setSelectedId(''); } }}>

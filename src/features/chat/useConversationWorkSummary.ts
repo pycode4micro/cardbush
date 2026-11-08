@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useState, type FocusEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { useHoverPreview } from '../../components/HoverPreview';
 
 /** Shared header summary placement and dismissal for every conversation surface. */
 export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement | null>, activeConversationId: string, inspectorOpen: boolean) {
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
   const [widePane, setWidePane] = useState(false);
   const [pinnedLayout, setPinnedLayout] = useState(false);
@@ -15,9 +16,7 @@ export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement
   const workSummaryPresence = useSoftPanelPresence(showWorkSummary);
   const updateWorkSummaryLayout = useCallback((anchor?: HTMLElement | null) => {
     const chatBody = chatBodyRef.current;
-    const toggle = anchor ?? chatBody
-      ?.closest('.chat-panel')
-      ?.querySelector<HTMLElement>('[data-work-summary-toggle]');
+    const toggle = anchor ?? toggleRef.current;
     if (!chatBody || !toggle) return;
     const bodyBounds = chatBody.getBoundingClientRect();
     const toggleBounds = toggle.getBoundingClientRect();
@@ -98,7 +97,7 @@ export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement
       if (!workSummaryVisible) setPinnedLayout(true);
       setWorkSummaryVisible(value => !value);
     },
-    workSummaryHoverProps: { ...hover.triggerProps, 'aria-describedby': undefined,
+    workSummaryHoverProps: { ref: toggleRef, ...hover.triggerProps, 'aria-describedby': undefined,
       'aria-controls': showWorkSummary ? hover.id : undefined,
       'data-summary-preview': Boolean(hover.anchor) && !workSummaryVisible },
     keepWorkSummaryOpenUntil: hover.keepOpenUntil,

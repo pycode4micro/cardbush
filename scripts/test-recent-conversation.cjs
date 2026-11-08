@@ -144,12 +144,45 @@ async function run() {
   await click('[data-turn-message="' + targetId + '"]');
   const offset = () => read("(() => { const t=document.querySelector('[data-message-id=\"" + targetId + "\"]'); return t?.checkVisibility() ? t.getBoundingClientRect().top - t.closest('.message-list').getBoundingClientRect().top : null; })()");
   await wait(async () => { const value = await offset(); return typeof value === 'number' && value >= -3 && value < 80; }, 'selected older turn visible').catch(async error => {
-    const details = await read("({page:document.querySelector('[data-desktop-page]')?.dataset.desktopPage,title:document.querySelector('.topbar h1')?.textContent,scroll:document.querySelector('.message-list')?.scrollTop,first:document.querySelector('[data-message-role=user]')?.dataset.messageId,rows:document.querySelectorAll('[data-message-role=user]').length,focus:document.activeElement?.className})");
+    const details = await read("({page:document.querySelector('[data-desktop-page]')?.dataset.desktopPage,title:document.querySelector('.recent-chat-copy strong')?.textContent,scroll:document.querySelector('.message-list')?.scrollTop,first:document.querySelector('[data-message-role=user]')?.dataset.messageId,rows:document.querySelectorAll('[data-message-role=user]').length,focus:document.activeElement?.className})");
     throw new Error(JSON.stringify({ targetId, offset: await offset(), ...details }), { cause: error });
   });
   await pause(300);
   assert.ok(Math.abs((await offset()) - 16) < 30, 'the target stays in view after layout settles');
+  await visible('.main-stage .chat-panel[role=region]');
+  assert.equal(await read("!!document.querySelector('.main-stage .chat-panel[role=region] > .topbar')"), false, 'the transcript starts directly below the window toolbar');
+  const summary = '.window-frame [data-work-summary-toggle]', inspector = '.window-frame [data-inspector-toggle]';
+  const toolbarFits = () => read(`(() => {
+    const bounds = selector => document.querySelector(selector)?.getBoundingClientRect();
+    const summary = bounds('.window-frame [data-work-summary-toggle]');
+    const inspector = bounds('.window-frame [data-inspector-toggle]');
+    const list = bounds('.recent-bar-list');
+    const title = bounds('.recent-bar-chat');
+    if (!title?.width || !summary?.width || !inspector?.width || !list?.width) return false;
+    if (title.right > summary.left + 1) return false;
+    const centerY = rect => rect.top + rect.height / 2;
+    return summary.right <= inspector.left + 1 && inspector.right <= list.left + 1 &&
+      Math.abs(centerY(inspector) - centerY(list)) < 2 && list.right <= innerWidth;
+  })()`);
+  assert.ok(await toolbarFits(), 'summary and inspector sit immediately before the list');
+  await click(summary);
+  await visible('.conversation-work-summary');
+  await click(summary);
+  await click(inspector);
+  await visible('.right-inspector');
+  await wait(() => read("document.querySelector('.window-frame [data-inspector-toggle]')?.getAttribute('aria-expanded') === 'true'"), 'title bar controls the real inspector');
+  await click(inspector);
+  for (const width of [900, 640, 480]) {
+    win.setContentSize(width, 720);
+    await wait(() => read('innerWidth === ' + width), 'chat window resized to ' + width);
+    await wait(toolbarFits, 'chat controls fit at ' + width + ' pixels');
+  }
+  win.setContentSize(1160, 740);
+  await pause(400);
+  fs.writeFileSync(path.join(project, 'tmp/chat-titlebar-actions.png'), (await win.webContents.capturePage()).toPNG());
+  win.setContentSize(1400, 800);
   await click('[data-nav-section=explore]');
+  assert.equal(await read("!!document.querySelector('.window-chat-actions')"), false, 'chat-only controls leave with the conversation');
   await click('.recent-bar-list');
   await visible('[data-desktop-page=explore]');
   await visible('.recent-turn-text');
@@ -161,9 +194,7 @@ async function run() {
   await click('[data-recent-step=' + direction + ']');
   await wait(async () => await title() !== '设计评审记录', 'in chat, transport switches the active conversation');
   const otherTitle = await title();
-  await wait(() => read("Array.from(document.querySelectorAll('.main-stage .topbar h1')).some(h => h.checkVisibility() && h.textContent === " + JSON.stringify(otherTitle) + ")"), 'the conversation and title bar agree').catch(async cause => {
-    throw Error('Expected ' + otherTitle + ', got ' + await read("Array.from(document.querySelectorAll('.topbar h1')).map(h=>h.textContent).join(', ')"), {cause});
-  });
+  await wait(() => read("document.querySelector('.main-stage .chat-panel[role=region]')?.getAttribute('aria-label') === " + JSON.stringify(otherTitle)), 'the active chat and title bar agree');
   await click('[data-recent-step=' + (direction === 'previous' ? 'next' : 'previous') + ']');
   await wait(async () => await title() === '设计评审记录', 'return to the original conversation');
   // Browsing another session does not change the page or register it as visited.
@@ -236,6 +267,13 @@ async function run() {
     await click('[data-nav-section=home]'); await visible('[data-desktop-page=overview]'); await pause(300);
     assert.deepEqual(await read('pageEntrances'),[], 'reduced motion skips the transition');
   } finally { win.webContents.debugger.detach(); }
+  await read("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['local-navigation-test','local-earlier','local-empty']));window.dispatchEvent(new Event('cardbush-conversation-archives-changed'));void 0");
+  await click('[data-nav-section=chat]');
+  await visible(inspector);
+  assert.equal(await read("!!document.querySelector('.recent-bar')"), false, 'a fresh chat can open the inspector with no recent sessions');
+  await click(inspector);
+  await visible('.right-inspector');
+  await click(inspector);
   console.log('Workspace navigation passed: compact rail and caption alignment, Explore without a management button, section/category entrance and reduced motion.');
   console.log('Recent conversation navigation passed: Home and Explore, paging and exact turn, resume, Escape, reload, empty state, archive and narrow layout.');
   app.quit();

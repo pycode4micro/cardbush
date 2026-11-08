@@ -1,5 +1,6 @@
+import { createPortal } from 'react-dom';
 import { uiText } from '../i18n';
-import { NotebookText, PanelRightOpen } from 'lucide-react';
+import { NotebookText, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import type { AppLanguage } from '../types';
 import type { HTMLAttributes, ReactNode } from 'react';
 import { conversationDisplayTitle } from '../shared/conversationTitle';
@@ -14,6 +15,7 @@ export function TopBar({
   workSummaryHoverProps,
   onToggleInspector,
   workspaceControl,
+  actionsTarget,
   titleIcon,
 }: {
   title: string;
@@ -25,13 +27,11 @@ export function TopBar({
   workSummaryHoverProps?: HTMLAttributes<HTMLButtonElement>;
   onToggleInspector?: () => void;
   workspaceControl?: ReactNode;
+  actionsTarget?: HTMLElement | null;
   titleIcon?: ReactNode;
 }) {
-  const displayTitle = conversationDisplayTitle(title);
-  return (
-    <div className="topbar">
-      {titleIcon}
-      <h1 title={displayTitle}>{displayTitle}</h1>
+  const actions = (
+    <>
       {workspaceControl}
       {conversationContentAvailable && onToggleWorkSummary && (
         <button
@@ -46,18 +46,25 @@ export function TopBar({
           <NotebookText size={15} />
         </button>
       )}
-      {!inspectorOpen && onToggleInspector && <button
+      {onToggleInspector && (!inspectorOpen || actionsTarget) && <button
         className="topbar-inspector-action icon-only"
         type="button"
         data-inspector-toggle
         data-shortcut="toggleInspector"
         onClick={() => onToggleInspector()}
-        aria-label={uiText(language)('topBar.expandSidebar')}
-        aria-expanded={false}
+        aria-label={uiText(language)(inspectorOpen ? 'app.closeInspector' : 'topBar.expandSidebar')}
+        aria-expanded={inspectorOpen}
         aria-controls="right-inspector"
       >
-        <PanelRightOpen size={15} />
+        {inspectorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
       </button>}
-    </div>
+    </>
   );
+  if (actionsTarget !== undefined) return actionsTarget ? createPortal(actions, actionsTarget) : null;
+  const displayTitle = conversationDisplayTitle(title);
+  return <div className="topbar">
+    {titleIcon}
+    <h1 title={displayTitle}>{displayTitle}</h1>
+    {actions}
+  </div>;
 }

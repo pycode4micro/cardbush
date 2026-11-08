@@ -124,6 +124,7 @@ import {
   ConversationConnectionNotice,
 } from './ChatStatusViews';
 import { WelcomeComposer } from './WelcomeComposer';
+import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { TopBar } from '../../components/TopBar';
 import { InteractionCard } from '../interactions/InteractionCard';
 import { useConversationComposerLayout } from './useConversationComposerLayout';
@@ -231,6 +232,7 @@ export function ChatPanel({
   draft,
   onDraftChange,
   headerActions,
+  headerActionsTarget,
   composerAccessory,
   welcomeWorkspaceControl,
   transcriptFooter,
@@ -350,6 +352,7 @@ export function ChatPanel({
   draft: string;
   onDraftChange: (value: string) => void;
   headerActions?: ReactNode;
+  headerActionsTarget?: HTMLElement | null;
   composerAccessory?: ReactNode;
   welcomeWorkspaceControl?: ReactNode;
   transcriptFooter?: ReactNode;
@@ -2432,6 +2435,8 @@ export function ChatPanel({
     </QuickInputStatus>}
     <div
       hidden={progressive}
+      role={headerActionsTarget !== undefined ? 'region' : undefined}
+      aria-label={headerActionsTarget !== undefined ? conversationDisplayTitle(title) : undefined}
       className={`chat-panel${!embedded ? ' composer-layout-managed' : ''}${composerAnchored ? ' composer-anchored' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
       data-composer-after-send={composerFlow.afterSend}
       data-conversation-output={composerFlow.output}
@@ -2444,6 +2449,7 @@ export function ChatPanel({
         workSummaryHoverProps={workSummaryHoverProps}
         inspectorOpen={inspectorOpen}
         workspaceControl={headerActions}
+        actionsTarget={headerActionsTarget}
         onToggleWorkSummary={workSummaryAvailable && renderMessages.length > 0
           ? toggleWorkSummary
           : undefined}

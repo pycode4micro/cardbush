@@ -8,9 +8,9 @@ import defaultArtwork from './art/prism.jpg';
 
 export type RecentTab = 'turns' | 'sessions';
 
-export function RecentConversationBarView({ language, title, output, cover, previous, next, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
+export function RecentConversationBarView({ actions, language, title, output, cover, previous, next, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
   language: AppLanguage; title: string; output: string; cover?: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
-  previous?: () => void; next?: () => void;
+  actions?: ReactNode; previous?: () => void; next?: () => void;
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; onOpen(): void; children: ReactNode;
 }) {
   const t = uiText(language), tabId = useId();
@@ -31,8 +31,11 @@ export function RecentConversationBarView({ language, title, output, cover, prev
         onError={() => { if (source && artwork === source) setFailedCover(source); }}/></span>
       <span className="recent-chat-copy"><strong>{title}</strong>{output && <small id={panelId + '-output'}>{output}</small>}</span>
     </button>
-    <button className="recent-bar-list no-drag" type="button" popoverTarget={panelId}
-      aria-controls={panelId} aria-expanded={expanded} aria-label={t('recentBar.navigator')} title={t('recentBar.navigator')}><List/></button>
+    <div className="recent-bar-actions">
+      {actions}
+      <button className="recent-bar-list no-drag" type="button" popoverTarget={panelId}
+        aria-controls={panelId} aria-expanded={expanded} aria-label={t('recentBar.navigator')} title={t('recentBar.navigator')}><List/></button>
+    </div>
     <aside className="recent-turn-drawer no-drag" ref={panelRef} id={panelId} popover="auto"
       aria-label={t('recentBar.navigator')} onToggle={event => onToggle(event.newState === 'open')}>
       <div className="recent-tabs" role="tablist" aria-label={t('recentBar.navigator')} onKeyDown={event => {
