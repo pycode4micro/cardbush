@@ -18,7 +18,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const history=views.usePageNavigation(page,next=>{navVisits.push(next);setPage(next);},next=>!navDeleted.has(next.id));
       window.navHistory=history;window.navSetPage=setPage;window.navRefresh=()=>setRevision(value=>value+1);
       const back=history.canGoBack?history.back:undefined,forward=history.canGoForward?history.forward:undefined;
-      const menus=views.applicationMenus('zh',{newConversation:navNoop,openSettings:navNoop,showShortcuts:navNoop,openDiagnostics:navNoop,toggleSidebar:navNoop,toggleInspector:navNoop,search:navNoop,openBrowser:navNoop,back,forward},{sidebarVisible:true,inspectorVisible:false,native:false,externalLinks:false});
+      const menus=views.applicationMenus('zh',{newConversation:navNoop,openSettings:navNoop,showShortcuts:navNoop,openDiagnostics:navNoop,toggleSidebar:navNoop,toggleInspector:navNoop,search:navNoop,openBrowser:navNoop,forward},{sidebarVisible:true,inspectorVisible:false,native:false,externalLinks:false});
       return h(views.PageNavigationContext.Provider,{value:history},h(views.PageNavigationScope.Provider,{value:'main:'+page.section},
         h(views.WindowFrame,{language:'zh',sidebarCollapsed:false,onToggleSidebar:navNoop,onBack:back,onForward:forward,menus,onError:error=>failures.push(String(error))}),
         h('nav',{id:'test-nav'},['chat','plugins','settings','automations','agents'].map(section=>h('button',{key:section,onClick:()=>setPage({section,id:section==='chat'?'a':section==='agents'?'cloud-a':undefined})},section))),
@@ -42,9 +42,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'plugin detail');
   await back(); await until("document.querySelector('[data-plugin-page=catalog]')?.checkVisibility()", 'Back restores plugin catalog');
   await forward(); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'Forward restores plugin detail');
-  await run("navClick('返回插件')"); await until("document.querySelector('[data-plugin-page=catalog]')?.checkVisibility()", 'in-page back uses same history');
+  await back(); await until("document.querySelector('[data-plugin-page=catalog]')?.checkVisibility()", 'window Back restores the parent view');
   assert.equal(await run("!navHistory.canGoForward"), false);
-  await forward(); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'forward branch survives in-page back');
+  await forward(); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'Forward restores the child after Back');
   await run("navClick('settings')"); await route('settings');
   await run("navClick('appearance')"); await route('appearance');
   await run("navClick('runtime')"); await route('runtime');
@@ -101,11 +101,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'market plugin');
   await run("navClick('chat')"); await route('chat');
   await run("navClick('plugins')"); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 're-enter plugin detail');
-  await run("navClick('返回市场')");
-  await until("document.querySelector('[data-plugin-page=marketplace]')?.checkVisibility()", 'named return stays in marketplace after re-entry');
+  await back();
+  await route('chat');
+  await back();
+  await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'Back restores the original market detail');
+  await back();
+  await until("document.querySelector('[data-plugin-page=marketplace]')?.checkVisibility()", 'Back restores the original marketplace');
   assert.equal(await run("JSON.parse(document.querySelector('#current-route').textContent).section"), 'plugins');
   await forward(); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'Forward preserves the plugin detail');
-  await run("navClick('返回市场')"); await until("document.querySelector('[data-plugin-page=marketplace]')?.checkVisibility()", 'market again');
+  await back(); await until("document.querySelector('[data-plugin-page=marketplace]')?.checkVisibility()", 'market again');
   await run(`
     const select=document.querySelector('.plugin-market-controls select');
     select.value='custom';select.dispatchEvent(new Event('change',{bubbles:true}));
@@ -119,14 +123,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
   `);
   await run("document.querySelector('.plugin-market-grid button').click()");
   await until("document.querySelector('.plugin-market-error')?.textContent.includes('fixture preview failed')", 'failed preview');
-  assert.equal(await run("document.querySelector('.plugin-market-page > .plugin-back').textContent"), '返回市场', 'failed preview keeps its parent label');
-  await run("navClick('返回市场')");
+  assert.equal(await run("!document.querySelector('[data-history-action=back]').disabled"), true, 'failed preview can return through the window control');
+  await back();
   await until("!document.querySelector('.plugin-market-error')&&!document.querySelector('.plugin-market-grid button').disabled", 'return after failed preview');
   assert.equal(await run("document.querySelector('.plugin-market-controls select').value"), 'custom');
   assert.equal(await run("document.querySelector('.plugin-market-page .plugin-search input').value"), 'external');
   await run("navPreviewFails=false;navPreviewSlow=true;document.querySelector('.plugin-market-grid button').click()");
   await until("typeof navFinishPreview==='function'", 'pending preview');
-  await run("navClick('返回市场')");
+  await back();
   await until("!document.querySelector('.plugin-market-grid button').disabled", 'leave pending preview');
   await run("navFinishPreview();navPreviewSlow=false"); await pause(50);
   assert.equal(await run("!!document.querySelector('.plugin-market-detail')"), false, 'late detail cannot navigate after returning');
@@ -134,18 +138,28 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!!document.querySelector('.plugin-market-detail')", 'successful preview');
   await run("navClick('chat')"); await route('chat');
   await run("navClick('plugins')"); await until("!!document.querySelector('.plugin-market-detail')", 're-enter external preview');
-  await run("navClick('返回市场')");
+  await back();
+  await route('chat');
+  await back();
+  await until("!!document.querySelector('.plugin-market-detail')", 'Back restores the earlier preview');
+  await back();
   await until("!document.querySelector('.plugin-market-detail')&&document.querySelector('.plugin-market-grid button')&&!document.querySelector('.plugin-market-grid button').disabled", 'external preview returns to its market');
   assert.equal(await run("document.querySelector('.plugin-market-controls select').value"), 'custom');
-  await run("navClick('返回插件')");
-  await until("document.querySelector('[data-plugin-page=catalog]')?.checkVisibility()", 'named return bypasses source and preview history');
+  await back();
+  await until("document.querySelector('.plugin-market-controls select')?.value==='builtin'", 'Back restores the prior source');
+  await back();
+  await until("document.querySelector('[data-plugin-page=catalog]')?.checkVisibility()", 'Back restores the plugin catalog');
   await run("document.querySelector('button[title=管理]').click()");
   await until("document.querySelector('[data-plugin-page=manage]')?.checkVisibility()", 'plugin management');
   await run("document.querySelector('.plugin-manage-list .plugin-featured-main').click()");
   await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'management detail');
   await run("navClick('chat')"); await route('chat');
   await run("navClick('plugins')"); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 're-enter management detail');
-  await run("navClick('返回管理')");
+  await back();
+  await route('chat');
+  await back();
+  await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'earlier management detail');
+  await back();
   await until("document.querySelector('[data-plugin-page=manage]')?.checkVisibility()", 'returns to management');
   console.log('Page navigation UI passed: real plugin details, scoped returns, shared Back/Forward, automation tabs, local/remote routes, shortcuts, StrictMode, remounts and refresh isolation.');
 };

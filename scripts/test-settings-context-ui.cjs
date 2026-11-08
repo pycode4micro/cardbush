@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
       'src/features/appearance/appearancePreferences.ts', 'src/features/appearance/useAppearanceRuntime.ts',
       'src/features/notificationSound.ts',
       'src/features/shortcuts/keyboardShortcuts.ts',
-      'src/components/WindowSidebarToggle.tsx', 'src/components/SidebarResizer.tsx',
+      'src/components/WindowFrame.tsx', 'src/components/WindowSidebarToggle.tsx', 'src/components/SidebarResizer.tsx',
       'src/components/GlobalTooltip.tsx',
       'src/hooks/useSoftPanelPresence.ts', 'src/features/sidebar/ChatSidebar.tsx',
       'src/features/sidebar/conversationArchives.ts',
@@ -123,7 +123,7 @@ app.whenReady().then(async () => {
       window.settingsProps = { active: true, onReady: noop, language: 'zh', languageMode: 'zh', systemLanguage: 'zh', themePreference: 'dark',
         settings: { conversationStyle: views.readConversationStyle(), managedModelConfigs: [fixtureModel, { ...fixtureModel, id: 'vision', modelName: 'deepseek-v4-flash-vision-exp' }], terminal: { runtime: 'powershell' }, browser: {}, proxy: { mode:'none', httpProxy:'', httpsProxy:'', noProxy:'' }, thinking: {visible:true}, guidance: {deliveryMode:'queue'}, user: {}, font: {} },
         selectedModel: 'fixture', availableModels: [fixtureModel], backendCapabilities: {terminalRuntimes:['powershell','wsl'], runtimeAssetResetCategories:[], browserPrivacyMode:false, reasoningStream:true}, runtimeBusy: false, conversations: [], skills: [], disabledSkillNames: new Set(),
-        initialSection: 'instructions', initialPluginTab: 'plugins', onBack: noop,
+        initialSection: 'instructions', initialPluginTab: 'plugins',
         onThemePreferenceChange: value => { settingsProps.themePreference = value; renderSettings(); },
         onLanguageModeChange: value => { settingsProps.languageMode = value; renderSettings(); },
         onSettingsChange: fn => { settingsProps.settings = fn(settingsProps.settings); localStorage.setItem(views.APPEARANCE_STORAGE_KEY, JSON.stringify(views.normalizeAppearance(settingsProps.settings.appearance))); views.saveConversationStyle(settingsProps.settings.conversationStyle); renderSettings(); }, onUseModel: noop, onSidebarWidthChange: noop,
@@ -144,10 +144,10 @@ app.whenReady().then(async () => {
         const variables = views.appearanceVariables(appearance, theme, settingsProps.settings.importedThemeStyle, settingsProps.settings.font.family);
         return h('div', { className: 'app theme-' + theme, 'data-translucent-sidebar': appearance.translucentSidebar, 'data-pointer-cursor': appearance.pointerCursor, 'data-diff-indicators': appearance.diffIndicators, style: { width: '100vw', height: '100vh', minWidth: 0, '--sidebar-width': width + 'px', ...variables } },
           h(views.GlobalTooltip),
-          h('header', { className: 'window-frame window-drag' }, h(views.WindowSidebarToggle, {
+          h('header', { className: 'window-frame window-drag' }, h(views.WindowBackButton, { language:'zh', fallback:active ? ()=>setActive(false) : undefined }), h(views.WindowSidebarToggle, {
             language: 'zh', collapsed, onToggle: () => setCollapsed(value => !value),
           })),
-          h(views.SettingsView, { ...settingsProps, active, onBack: () => setActive(false),
+          h(views.SettingsView, { ...settingsProps, active,
             sidebarCollapsed: collapsed, sidebarPresence: presence, sidebarWidth: width,
             onSidebarWidthChange: setWidth, onSidebarCollapse: () => setCollapsed(true),
           }),
@@ -192,7 +192,7 @@ app.whenReady().then(async () => {
       for (let attempt = 0; attempt < 2; attempt++) {
         await edit('.settings-search input', '没有这项设置');
         await until("!!document.querySelector('.settings-search-empty')");
-        await click('返回应用'); await until("!!document.querySelector('.settings-inactive')");
+        await run("document.querySelector('[data-history-action=back]').click()"); await until("!!document.querySelector('.settings-inactive')");
         await run('setSettingsActive(true)');
         await until("document.querySelector('.settings-search input').value==='' && document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='general'");
         assert.equal(await run("document.querySelector('.settings-navigation').scrollTop"), 0);
@@ -201,14 +201,14 @@ app.whenReady().then(async () => {
       await click('诊断与关于');
       await run("document.querySelector('.settings-navigation').scrollTop=document.querySelector('.settings-navigation').scrollHeight");
       await until("document.querySelector('.settings-navigation').scrollTop>0");
-      await click('返回应用'); await until("!!document.querySelector('.settings-inactive')");
+      await run("document.querySelector('[data-history-action=back]').click()"); await until("!!document.querySelector('.settings-inactive')");
       await run('setSettingsActive(true)');
       await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='general' && document.querySelector('.settings-navigation').scrollTop===0");
       assert.equal(await run("document.querySelector('[name=guidance-delivery-mode]').value"), 'immediate', 'moving settings retains user preferences');
       fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
       win.webContents.invalidate(); await pause(120);
       fs.writeFileSync(path.join(root, 'tmp/settings-general-navigation.png'), (await win.webContents.capturePage()).toPNG());
-      await click('返回应用'); await until("!!document.querySelector('.settings-inactive')");
+      await run("document.querySelector('[data-history-action=back]').click()"); await until("!!document.querySelector('.settings-inactive')");
       await run("settingsProps.initialSection='shortcuts'; setSettingsActive(true); renderSettings()");
       await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='shortcuts'");
       assert.equal(await run("document.querySelector('.settings-search input').value"), '', 'explicit settings destinations remain supported');

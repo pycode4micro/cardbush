@@ -41,7 +41,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await until(`settingsSidebarState.width === ${width}`);
   }
 
-  await run("document.querySelector('.settings-sidebar .back-button').click()");
+  assert.equal(await run("!!document.querySelector('.settings-sidebar .back-button')"), false, 'no second return in settings');
+  await run("document.querySelector('[data-history-action=back]').click()");
   await until("!settingsSidebarState.active && document.querySelector('.desktop-shell .sidebar')?.getBoundingClientRect().width === 320");
   await toggle();
   await until('!settingsSidebarState.mounted');

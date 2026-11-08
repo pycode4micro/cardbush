@@ -1,7 +1,8 @@
+import { WindowBackTarget } from '../navigation/WindowBackTarget';
 import type { MessageKey } from '../../i18n';
 import { uiText } from '../../i18n';
 import { PluginMarketCard } from './PluginMarketCard';
-import { ArrowLeft, Check, Download, FolderOpen, LoaderCircle, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
+import { Check, Download, FolderOpen, LoaderCircle, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PluginMarketCatalog, PluginMarketPreview, PluginMarketSource, PluginMarketInstallProgress } from '../../../electron/pluginMarketplaceTypes';
 import type { AppLanguage } from '../../types';
@@ -174,10 +175,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     {(networkError(failure) || marketRateLimited(failure)) && onOpenNetwork && <button className="plugin-back" type="button" onClick={onOpenNetwork}><Settings size={15}/>{uiText(language)('pluginMarketplacePanel.proxySettings')}</button>}
     <details><summary>{uiText(language)('messageBubble.errorDetails')}</summary><code>{failure}</code></details></div>;
   return <div className="plugin-market-page plugin-catalog-page">
-    <button className="plugin-back" type="button" disabled={busy === 'install'} onClick={() => {
-      generation.current++;
-      setError(''); navigateBack();
-    }}><ArrowLeft size={17} />{previewTarget ? (uiText(language)('pluginManagementPanel.backToMarketplace')) : (uiText(language)('pluginManagementPanel.backToPlugins'))}</button>
+    <WindowBackTarget usePageHistory disabled={busy === 'install'} onBack={() => { generation.current++; setError(''); navigateBack(); }}/>
     <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (uiText(language)('pluginMarketplacePanel.pluginMarketplaces'))}</h2>
       <p>{preview ? preview.description : (uiText(language)('pluginMarketplacePanel.installSkillsToolsAndAutomationsFromCustom'))}</p></div>
       {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy) || !bridge} onClick={() => { setSourceError(''); setAddOpen(true); }} aria-haspopup="dialog"><Plus size={16} />{uiText(language)('pluginMarketplacePanel.addSource')}</button>}</header>

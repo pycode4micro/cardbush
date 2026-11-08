@@ -43,7 +43,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
         messages:[{id:'user',role:'user',content:'Cover fixture',createdAt:'2026-09-30T00:00:00Z'}],availableModels:[{id:'fixture',provider:'fixture',modelName:'fixture',enabled:true}]});
       window.coverUpdate=patch=>setProps(current=>({...current,...patch}));
       window.coverProps=props;
-      return h(React.Fragment,null,h('div',{style:{height:46}},h(views.WindowSidebarToggle,{language:'zh',collapsed:sidebarCollapsed,onToggle:()=>setSidebarCollapsed(value=>!value)})),
+      return h(React.Fragment,null,h('div',{style:{height:46}},h(views.WindowBackButton,{language:'zh'}),h(views.WindowSidebarToggle,{language:'zh',collapsed:sidebarCollapsed,onToggle:()=>setSidebarCollapsed(value=>!value)})),
         preview&&h(views.ImagePreviewDialog,{language:'zh',image:{name:'Preview fixture',src:'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="80" height="80"%3E%3Crect width="80" height="80" fill="teal"/%3E%3C/svg%3E'},onClose:()=>setPreview(false)}),
         h('main',{className:'desktop-shell'+(windowMaximized?' window-maximized':' window-restored')+(sidebarCollapsed?' sidebar-is-collapsed':'')+(covered?' inspector-covered':conversationCovered?' inspector-conversation-covered':''),style:{'--sidebar-width':'280px'}},
           h(views.CompactSidebarBackdrop,{visible:covered&&!sidebarCollapsed,language:'zh',onClose:()=>setSidebarCollapsed(true)}),
@@ -188,7 +188,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   fs.writeFileSync(path.join(root,'tmp','inspector-cover-quick-input.png'),(await window.webContents.capturePage()).toPNG());
   await require('./quick-input-preview.cjs')({run,until,pause,window,root});
   await require('./quick-input-drag.cjs')({run,until,pause,window,root,guestId});
-  await run('coverUpdate({draft:"return draft"});document.querySelector(".inspector-cover-back").click()');
+  await run('coverUpdate({draft:"return draft"});document.querySelector("[data-history-action=back]:enabled").click()');
   await until('!document.querySelector(".inspector-covered") && !!document.querySelector(".main-stage textarea[data-composer-input]")','Back returns composer to conversation');
   assert.equal(await run('document.querySelector(".main-stage textarea[data-composer-input]").value'),'return draft');
   assert.ok(await run('document.querySelector(".main-stage .message-list").textContent.includes("检查完成，这是本次回复。")'),'expanded conversation shows the reply');
@@ -196,7 +196,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.body.classList.contains("right-inspector-resizing")'),false);
   await until('localStorage.getItem("cardbush.inspector_split_width")==="500"','restored usable split is observed before covering it again');
   await run('coverWorkspace.setSidebarCollapsed(false);coverWorkspace.setInspectorWidth(innerWidth)');
-  await until('coverWorkspace.conversationCovered && !!document.querySelector(".inspector-cover-back")','oversized docked width exposes recovery capsule');
+  await until('coverWorkspace.conversationCovered && !!document.querySelector("[data-history-action=back]:enabled")','oversized docked width exposes recovery capsule');
   assert.equal(await run('coverWorkspace.inspectorCover'),false,'recovery also works without explicit cover mode');
   assert.equal(await run('getComputedStyle(document.querySelector(".right-inspector-resizer")).display'),'none','a hidden conversation has no second nonfunctional divider');
   assert.equal(await run('getComputedStyle(document.querySelector(".right-inspector")).borderLeftWidth'),'0px','no duplicate line next to the sidebar');
@@ -205,33 +205,33 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('!!document.querySelector(".inspector-quick-input textarea")','recovered quick input');
   assert.equal(await run('document.querySelector(".inspector-quick-input textarea").value'),'return draft','recovery keeps conversation draft');
   fs.writeFileSync(path.join(root,'tmp','inspector-recovery-capsule.png'),(await window.webContents.capturePage()).toPNG());
-  await run('document.querySelector(".inspector-cover-back").click()');
-  await until('document.querySelector(".main-stage").clientWidth>=340 && !document.querySelector(".inspector-cover-back")','Back restores usable split');
+  await run('document.querySelector("[data-history-action=back]:enabled").click()');
+  await until('document.querySelector(".main-stage").clientWidth>=340 && !document.querySelector("[data-history-action=back]:enabled")','Back restores usable split');
   await pause(300);
   assert.equal(await run('!coverWorkspace.conversationCovered && document.querySelector(".main-stage").clientWidth>=340'),true,'restore stays expanded after the layout animation');
   assert.equal(await run('coverWorkspace.inspectorWidth'),500,'Back restores last usable width');
   await run('coverWorkspace.setInspectorWidth(innerWidth)');
-  await until('!!document.querySelector(".inspector-cover-back")','cover again');
+  await until('!!document.querySelector("[data-history-action=back]:enabled")','cover again');
   await run('coverWorkspace.setInspectorOpen(false)');
-  await until('!document.querySelector(".inspector-cover-back")','closed inspector has no stale capsule');
+  await until('!document.querySelector("[data-history-action=back]:enabled")','closed inspector has no stale capsule');
   await pause(320);
   assert.equal(await run('document.querySelector(".right-inspector").inert'),true,'closed inspector cannot receive input');
   assert.equal(await run('document.querySelector(".right-inspector").getBoundingClientRect().width'),0,'closed inspector releases its layout space');
   assert.equal(guest.isDestroyed(),false,'closed inspector retains its native page past the exit animation');
   await run('coverWorkspace.setInspectorOpen(true)');
-  await until('!!document.querySelector(".inspector-cover-back")','opening with remembered large width offers recovery');
+  await until('!!document.querySelector("[data-history-action=back]:enabled")','opening with remembered large width offers recovery');
   assert.equal(await run('document.querySelector(".right-inspector-tab-page.active webview").getWebContentsId()'),guestId,'reopening reuses the native page');
   // An oversized width from a larger monitor must restore a usable split.
   await run('renderView(h(CoverFixture,{key:"saved-width",startSidebarCollapsed:false}))');
-  await until('document.querySelector(".main-stage").clientWidth>=340 && !document.querySelector(".inspector-cover-back")','saved width fits the current window without hiding chat');
+  await until('document.querySelector(".main-stage").clientWidth>=340 && !document.querySelector("[data-history-action=back]:enabled")','saved width fits the current window without hiding chat');
   assert.equal(await run('document.querySelector(".main-stage textarea[data-composer-input]").value'),'keep draft');
   await run('coverWorkspace.enterInspectorCover()'); await pause();
   window.setSize(640,800); await pause();
   await clickSidebar();await pause(300);
   assert.ok(await run('(()=>{const r=document.querySelector(".sidebar").getBoundingClientRect();return r.width>200&&r.right<innerWidth&&document.querySelector(".sidebar").contains(document.elementFromPoint(r.left+40,r.top+20));})()'),'cover drawer remains reachable in a narrow window');
   await run('document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true}))');await pause(250);
-  await run('document.querySelector(".inspector-cover-back").click()');
-  await until('!coverWorkspace.inspectorOpen && !document.querySelector(".inspector-cover-back")','narrow Back closes pane when split cannot fit');
+  await run('document.querySelector("[data-history-action=back]:enabled").click()');
+  await until('!coverWorkspace.inspectorOpen && !document.querySelector("[data-history-action=back]:enabled")','narrow Back closes pane when split cannot fit');
   const retainedGuest=await run('document.querySelector("webview").getWebContentsId()');
   for(const width of [900,640]) {
     window.setSize(width,800); await pause(300);

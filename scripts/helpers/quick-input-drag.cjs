@@ -49,7 +49,7 @@ module.exports = async ({ run, until, pause, window, root, guestId }) => {
     await until('dragGuidance.length===1', 'quick input can send queued guidance');
     assert.deepEqual(await run('dragGuidance'), [{id:'queued-one',mode:'interrupt_and_continue'}]);
     assert.deepEqual(await run(`Array.from(document.querySelector('.inspector-cover-capsule').children,button=>button.className)`),
-      ['inspector-cover-back','inspector-cover-drag','inspector-cover-input-toggle'], 'drag handle is between Back and Input');
+      ['inspector-cover-drag','inspector-cover-input-toggle'], 'capsule contains only the drag handle and input');
     await pause(100);
     const viewport = await run('({width:innerWidth,height:innerHeight,top:document.querySelector(".desktop-shell").getBoundingClientRect().top})');
     for (const [label,x,y] of [['top-left',20,viewport.top+20],['top-right',viewport.width-20,viewport.top+20],

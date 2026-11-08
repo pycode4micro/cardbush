@@ -180,7 +180,7 @@ export function AutomationRunPanel({ jobId, runId, language, active = true, onOp
         {detail && isAutomationResult(detail.run) && <button type="button" disabled={readBusy} onClick={() => void toggleRead()}>{detail.run.readAt ? <Mail size={14}/> : <Check size={14}/>} {detail.run.readAt ? (uiText(language)('automationPanel.markUnread')) : (uiText(language)('automationPanel.markRead'))}</button>}
       </div></header>
     {detail && detail.job.sessionId !== detail.sessionId && <div className="automation-run-source">
-      {detail.sourceSession ? <button type="button" title={detail.sourceSession.title} onClick={() => onOpenConversation(detail.sourceSession!.id)}><MessageSquare size={13}/>{uiText(language)('automationRunPanel.backToSourceConversation')}</button>
+      {detail.sourceSession ? <button type="button" title={detail.sourceSession.title} onClick={() => onOpenConversation(detail.sourceSession!.id)}><MessageSquare size={13}/>{uiText(language)('common.openSourceConversation')}</button>
         : <span>{uiText(language)('automationRunPanel.sourceConversationDeletedExecutionResultRetained')}</span>}
     </div>}
     <div className="automation-run-transcript message-list" ref={scroll} onScroll={event => { const node = event.currentTarget; follow.current = node.scrollHeight - node.clientHeight - node.scrollTop < 70; }}>

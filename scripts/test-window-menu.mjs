@@ -52,7 +52,7 @@ function Fixture(){
     toggleSidebar,toggleInspector:()=>setPreview(value=>!value),search:action('search'),openBrowser:action('browser'),
     focusBrowserAddress:preview?action('address'):undefined,reloadBrowser:preview?action('reload'):undefined,
     openReview:action('review'),openHistory:action('history'),previousConversation:nav.canGoPrevious?nav.previous:undefined,
-    back:nav.canGoBack?nav.goBack:undefined,forward:nav.canGoForward?nav.goForward:undefined},
+    forward:nav.canGoForward?nav.goForward:undefined},
     {sidebarVisible:sidebar,inspectorVisible:preview,native:true,externalLinks:true});
   return <div className={'app theme-'+theme} style={{height:'100vh'}}><WindowFrame language={language} sidebarCollapsed={!sidebar}
     onToggleSidebar={toggleSidebar} menus={menus} onBack={nav.canGoBack?nav.goBack:undefined} onForward={nav.canGoForward?nav.goForward:undefined}

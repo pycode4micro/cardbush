@@ -9,8 +9,7 @@
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-.deferred-module-notice button,
-.settings-module-back {
+.deferred-module-notice button {
   flex: none;
   padding: 4px 10px;
   color: var(--text);
@@ -74,8 +73,6 @@
   .window-frame { gap: 4px; padding-left: 6px; }
   .window-frame[data-native-controls="true"] { padding-left: calc(6px + env(titlebar-area-x, 0px)); }
   .window-spacer { min-width: 12px; }
-  .window-frame-menu-group { gap: 0; }
-  .frame-chip.window-frame-menu-trigger { padding-inline: 6px; }
   .window-sidebar-toggle { width: 28px; }
   .window-sidebar-track { transform: translateX(-100%); }
 }

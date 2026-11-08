@@ -20,7 +20,7 @@ type Actions = {
   toggleSidebar: () => void; toggleInspector: () => void; search: () => void;
   openBrowser: () => void; focusBrowserAddress?: () => void; reloadBrowser?: () => void;
   openReview?: () => void; openHistory?: () => void; openShadow?: () => void;
-  previousConversation?: () => void; back?: () => void; forward?: () => void;
+  previousConversation?: () => void; forward?: () => void;
 };
 
 /** Menu items route to existing application actions; no parallel command backend. */
@@ -71,7 +71,6 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       ] }, separator,
       item('search', 'applicationMenus.find', actions.search, 'searchConversations', { shortcutHandledElsewhere: true }),
       item('previousConversation', 'keyboardShortcuts.switchToPreviousChat', actions.previousConversation, 'previousConversation', { shortcutHandledElsewhere: true }),
-      item('back', 'windowFrame.back', actions.back, 'navigateBack', { shortcutHandledElsewhere: true }),
       item('forward', 'app.forward', actions.forward, 'navigateForward', { shortcutHandledElsewhere: true }), separator,
       native('zoomIn', 'image.zoomInHint', 'appZoomIn'),
       native('zoomOut', 'image.zoomOutHint', 'appZoomOut'),

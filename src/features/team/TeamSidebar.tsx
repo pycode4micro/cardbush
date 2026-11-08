@@ -1,13 +1,13 @@
 import { uiText } from '../../i18n';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Plus, GitBranch, Files, FolderOpen, History, RefreshCw, Search, UsersRound } from 'lucide-react';
+import { Plus, GitBranch, Files, FolderOpen, History, RefreshCw, Search, UsersRound } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import { refreshTeamWorkspace, useTeamWorkspace } from './teamWorkspaceStore';
 import { requestTeamDocument, showTeamWorkspaceTab, useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
 import { AppCenterDock } from '../appCenter/AppCenter';
 import './team-workspace.css';
 
-export function NativeTeamSidebar({ language, onBack, onSelect, softVisible = true }: { language: AppLanguage; onBack?: () => void; onSelect?: () => void; onOpenSettings?: () => void; softVisible?: boolean }) {
+export function NativeTeamSidebar({ language, onSelect, softVisible = true }: { language: AppLanguage; onSelect?: () => void; onOpenSettings?: () => void; softVisible?: boolean }) {
   const state = useTeamWorkspace(), navigation = useTeamWorkspaceNavigation();
   const [searchOpen, setSearchOpen] = useState(false), [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
@@ -22,7 +22,6 @@ export function NativeTeamSidebar({ language, onBack, onSelect, softVisible = tr
   return <aside className={`sidebar native-team-sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`} aria-label={uiText(language)('creationCanvasApp.team')}>
     <div className="sidebar-panel-content team-sidebar-content">
       <header className="team-sidebar-heading"><h2>{uiText(language)('appCenterModel.workflows')}</h2>
-        <button type="button" onClick={onBack} aria-label={uiText(language)('canvasSidebar.backToChats')} title={uiText(language)('canvasSidebar.backToChats')}><ArrowLeft size={16}/></button>
         <button type="button" aria-label={uiText(language)('teamSidebar.searchWorkflows')} aria-expanded={searchOpen} onClick={() => { setSearchOpen(value => !value); setQuery(''); }}><Search size={16}/></button>
       </header>
       <button type="button" className="team-new-document" disabled={navigation.busy} onClick={() => { setQuery(''); requestTeamDocument({ kind: 'create' }); onSelect?.(); }}><Plus size={16}/>{uiText(language)('teamWorkflowLibrary.newWorkflow')}</button>

@@ -1,6 +1,7 @@
+import { WindowBackTarget } from '../navigation/WindowBackTarget';
 import { uiText } from '../../i18n';
 import { lazy, Suspense } from 'react';
-import { ArrowLeft, FileText } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import type { CanvasSnapshot } from '@cardbush/bush-protocol';
 import { bushItPageName, useBushItPages } from '../mdPresentation/bushItPageStore';
 import { sameFile } from '../mdPresentation/creationFiles';
@@ -21,7 +22,7 @@ export function CanvasMarkdownWorkspace({ snapshot, itemId, pageId, language, se
 
   return <div className="canvas-document-workspace">
     <nav className="canvas-document-tabs" aria-label={uiText(language)('canvasMarkdownWorkspace.canvasDocuments')}>
-      <button type="button" onClick={onBack}><ArrowLeft size={15}/>{uiText(language)('canvasMarkdownWorkspace.canvas')}</button>
+      <WindowBackTarget onBack={onBack}/>
       {snapshot.document.items.filter(editableCanvasMarkdown).map(item => {
         const document = item.kind === 'file' ? pages.pages.find(page => page.file && sameFile(page.file.path, canvasFileTarget(item.source, snapshot.path))) : undefined;
         const title = document?.source.trim() ? bushItPageName(document, language) : item.title || (uiText(language)('canvasMarkdownWorkspace.untitledDocument'));

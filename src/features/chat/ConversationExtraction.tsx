@@ -134,7 +134,7 @@ export function ConversationExtractionProvider({ activeSessionId, contextWindowT
         <label>{uiText(language)('conversationExtraction.excerpt_range')}<select value={draft.mode} disabled={draft.busy || !draft.preview} onChange={event => {
           if (event.target.value === 'select') choose(); else setDraft({ ...draft, mode: 'default', keys: defaultKeys(draft.preview!) });
         }}><option value="default">{uiText(language)('conversationExtraction.default_last_5_turns')}</option><option value="select">{uiText(language)('conversationExtraction.select')}</option></select></label>
-        {draft.mode === 'select' && <button type="button" className="extract-select-again" disabled={draft.busy} onClick={choose}>{uiText(language)('conversationExtraction.return_to_the_conversation_to_adjust_the')}</button>}
+        {draft.mode === 'select' && <button type="button" className="extract-select-again" disabled={draft.busy} onClick={choose}>{uiText(language)('conversationExtraction.adjustSelection')}</button>}
         <p className="extract-hint">{uiText(language)('conversationExtraction.extract_saved_turns_using_background_summaries_when')}</p>
         <div className={`extract-budget${count(draft) > limit ? ' over' : ''}`} role="status">
           {uiText(language)('extraction.budget', { count: draft.keys.length, used: count(draft).toLocaleString(language), limit: limit.toLocaleString(language) })}<small>{draft.preview?.tokenMethod || uiText(language)('conversationExtraction.reading_conversation')}{uiText(language)('extraction.budgetFraction')}</small>
@@ -153,7 +153,7 @@ export function ConversationExtractionProvider({ activeSessionId, contextWindowT
     {draft?.selecting && createPortal(<div className="extract-selection-bar" role="region" aria-label={uiText(language)('conversationExtraction.conversation_excerpt_selection')}>
       <span>{uiText(language)('extraction.conservativeBudget', { count: draft.keys.length, used: count(draft).toLocaleString(language), limit: limit.toLocaleString(language) })}</span>
       {draft.error && <span className="extract-error" role="alert">{draft.error}</span>}
-      {draft.sessionId !== activeSessionId && <button type="button" onClick={() => onOpen(draft.sessionId)}>{uiText(language)('conversationExtraction.return_to_source_conversation')}</button>}
+      {draft.sessionId !== activeSessionId && <button type="button" onClick={() => onOpen(draft.sessionId)}>{uiText(language)('common.openSourceConversation')}</button>}
       <button type="button" onClick={() => setDraft({ ...draft, keys: [], error: undefined })}>{uiText(language)('conversationExtraction.clear_selection')}</button>
       <button type="button" onClick={close}>{uiText(language)('agentConnectionForm.cancel')}</button>
       <button type="button" className="primary" onClick={() => setDraft({ ...draft, selecting: false })}>{uiText(language)('conversationExtraction.finish_selection')}</button>

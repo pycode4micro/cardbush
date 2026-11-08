@@ -157,6 +157,7 @@ export function WorkspaceLocationPicker({
   );
 
   return <div className={`ssh-dialog-backdrop${anchor ? ' workspace-picker-backdrop' : ''}`}
+    data-editing-connection={editingConnection || undefined}
     onMouseDown={event => { if (event.target === event.currentTarget && !busy) onSelect(undefined); }}>
     <div className={`ssh-dialog workspace-picker${projectView ? ' workspace-picker-project' : ''}${anchor ? ' workspace-picker-anchored' : ''}`} ref={dialog} tabIndex={-1}
       role="dialog" aria-modal="true" aria-label={locationView ? t('workspace.location') : t('workspace.selectProject')}

@@ -133,12 +133,12 @@ app.whenReady().then(async () => {
       views.useWindowAppearance(theme, themePreference === 'custom' ? 'dark' : themePreference, material, undefined, themePreference === 'custom');
       return h('div', { className: 'app ' + ('theme-' + theme), style: { '--sidebar-width':'252px' } },
         h(views.WindowFrame, { language:'zh', sidebarCollapsed:collapsed, onToggleSidebar:() => setCollapsed(!collapsed),
-          onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
+          onBack:settings ? () => setSettings(false) : undefined, onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
             {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
             {id:'material',label:'切换材质',onSelect:() => setMaterial(material === 'auto' ? 'solid' : 'auto')},
           ]}] }),
         h('main', { className: settings ? 'settings-shell' : 'desktop-shell' },
-          settings ? h('aside', { className:'settings-sidebar' }, h('button', { className:'back-button', onClick:() => setSettings(false) }, '返回应用'), h('button', { className:'settings-nav active' }, '个性化')) :
+          settings ? h('aside', { className:'settings-sidebar' }, h('button', { className:'settings-nav active' }, '个性化')) :
           h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},
             softVisible:!collapsed, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,
             onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:()=>setSettings(true) }),

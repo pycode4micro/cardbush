@@ -32,11 +32,17 @@ app.whenReady().then(async () => {
     await pause();
   };
   const key = (value, options = {}) => run(`(document.activeElement??document.body).dispatchEvent(new KeyboardEvent('keydown',${JSON.stringify({key:value,bubbles:true,cancelable:true,...options})}))`);
-  const menu = async id => { await click(`[data-menu-trigger="${id}"]`); await until(`document.querySelector('[data-menu-trigger="${id}"]')?.getAttribute('aria-expanded')==='true' && Boolean(document.querySelector('[role="menu"]'))`, `menu ${id} opened`); };
+  const menu = async id => {
+    await click('.desktop-menu-toggle');
+    await until("!!document.querySelector('.window-frame-menu-popover [data-menu-trigger]')");
+    await click(`[data-menu-trigger="${id}"]`);
+    await until(`document.querySelector('[data-menu-trigger="${id}"]')?.getAttribute('aria-expanded')==='true'`, `menu ${id} opened`);
+  };
   const item = async id => { await click(`[data-menu-item="${id}"]`); await until(`!document.querySelector('[role="menu"]')`); };
   try {
     await win.loadFile(path.join(directory, 'ui', 'index.html'));
-    await until(`document.querySelectorAll('[data-menu-trigger]').length===4`);
+    await until(`!!document.querySelector('.desktop-menu-toggle')`);
+    assert.equal(await run(`document.querySelectorAll('[data-menu-trigger]').length`), 0, 'categories are only mounted inside the open application menu');
     // Exercise :focus styling without raising a test window on the user's desktop.
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
@@ -151,6 +157,8 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({type:'mouseMove',x:600,y:260}); await pause();
     // Native offscreen pointer coordinates can lag a resize. This case tests
     // menu geometry; pointer opening is exercised above at the settled size.
+    await run(`document.querySelector('.desktop-menu-toggle').click();void 0`);
+    await until(`!!document.querySelector('[data-menu-trigger="view"]')`);
     await run(`document.querySelector('[data-menu-trigger="view"]').focus()`);
     await key('ArrowDown');
     await until(`document.querySelector('[data-menu-trigger="view"]').getAttribute('aria-expanded')==='true'`);

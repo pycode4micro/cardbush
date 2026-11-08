@@ -1,13 +1,13 @@
 import { localizedContent } from '../../i18n';
 import { uiText } from '../../i18n';
 import { useState } from 'react';
-import { ArrowLeft, ExternalLink, RefreshCw, Search, UserRound, ShieldCheck } from 'lucide-react';
+import { ExternalLink, RefreshCw, Search, UserRound, ShieldCheck } from 'lucide-react';
 import type { AccountAction, AccountProvider, ManagedAccount } from '@cardbush/bush-protocol';
 import { useAccounts } from './useAccounts';
 import { ChatGptWelcome } from './ChatGptWelcome';
 import './accounts.css';
 
-export function AccountsPanel({ language, onBack }: { language: string; onBack?: () => void }) {
+export function AccountsPanel({ language }: { language: string }) {
 
   const { snapshot, error, busy, execute, refresh } = useAccounts(language);
   const [query, setQuery] = useState(''), [linkError, setLinkError] = useState('');
@@ -22,7 +22,6 @@ export function AccountsPanel({ language, onBack }: { language: string; onBack?:
   };
   return <div className="accounts-page">
     <ChatGptWelcome language={language}/>
-    {onBack && <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={16}/>{uiText(language)('accountsPanel.backToPlugin')}</button>}
     <header className="accounts-heading"><div><h2>{uiText(language)('accountsPanel.accounts')}</h2><p>{uiText(language)('accountsPanel.manageSignInAndSeeWhichApps')}</p></div>
       <button type="button" className="account-button" aria-label={uiText(language)('accountsPanel.refreshAccounts')} onClick={() => void refresh()}><RefreshCw size={17}/></button></header>
     <label className="accounts-search"><Search size={17}/><input aria-label={uiText(language)('accountsPanel.searchAccountProviders')} value={query} onChange={event => setQuery(event.target.value)} placeholder={uiText(language)('accountsPanel.searchProvidersOrCapabilities')}/></label>

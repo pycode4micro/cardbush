@@ -72,3 +72,4 @@
 .agent-chat .agent-job, .agent-chat .agent-job-status, .agent-chat .agent-subagents { width: min(100%, var(--chat-track-width)); margin-left: auto; margin-right: auto; }
 
 :is(.agents-view, .agent-workspace)[hidden] { display: none; }
+.agents-modal-backdrop[data-managing-ssh] { top: var(--window-frame-height, 0px); }

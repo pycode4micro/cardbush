@@ -86,6 +86,7 @@ window.fixtureClient = {
   getSubagentTask:async()=>{window.taskReads++;return structuredClone(window.runtimeTask);},
   getSession:async id=>({sessionId:id,revision:1,metadata:{title:'源会话'},turns:[],supersededMessageIds:[]}),
   createSession:async()=>{window.shadowCreates++;}, deleteSession:async()=>{window.shadowDeletes++;},
+  getLiveSession:async id=>({sessionId:id,revision:1,metadata:{title:'源会话'},turns:[{turnId:'first',turnSequence:1,messages:[]}],supersededMessageIds:[]}),
   getConversationSession:async()=>null,
 };
 window.cardbushDesktop = {

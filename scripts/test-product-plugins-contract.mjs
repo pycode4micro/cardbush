@@ -224,9 +224,9 @@ assert.match(managementSource, /import \{ usePluginNavigation, type PluginPage a
 assert.match(managementSource, /document\.addEventListener\('pointerdown', closeFromOutside, true\)/);
 assert.match(managementSource, /activeTab === 'apps'/);
 assert.match(managementSource, /activeTab === 'mcp'/);
-assert.match(managementSource, /uiText\(language\)\('pluginManagementPanel\.backToPlugins'\)/);
-assert.equal(uiText('zh')('pluginManagementPanel.backToPlugins'), '返回插件');
-assert.equal(uiText('en')('pluginManagementPanel.backToPlugins'), 'Back to plugins');
+assert.match(managementSource, /<WindowBackTarget usePageHistory onBack=\{back\}/);
+assert.equal(uiText('zh')('windowFrame.back'), '返回');
+assert.equal(uiText('en')('windowFrame.back'), 'Back');
 assert.match(managementSource, /scope === 'public' \? plugin\.source === 'bundled' : plugin\.source === 'user'/);
 assert.match(managementSource, /setScope\('personal'\)/);
 assert.match(managementSource, /skill\.sourceLabel/);

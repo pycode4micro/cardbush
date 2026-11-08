@@ -294,31 +294,11 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   z-index: 1090;
 }
 
-.window-frame-menu-group {
-  position: relative;
-  align-self: stretch;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.window-frame-menu {
-  position: relative;
-  height: 100%;
-  display: inline-flex;
-  align-items: center;
-}
-
-.frame-chip.window-frame-menu-trigger {
-  width: auto;
-  padding: 0 10px;
-  white-space: nowrap;
-}
-
-.window-frame-menu-trigger[aria-expanded="true"] {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-}
+.desktop-menu-toggle { display:inline-grid; place-items:center; width:29px; padding:0; }
+.desktop-menu-toggle svg { width:17px; height:17px; }
+.window-frame-menu-group { display:flex; border-bottom:1px solid var(--menu-border); padding:0 5px 5px; margin-bottom:4px; }
+.window-frame-menu { flex:1; }
+.window-frame-menu-popover .frame-chip.window-frame-menu-trigger { justify-content:center; padding:4px 8px; border-radius:4px; }
 
 .window-frame-menu-popover {
   outline: none;

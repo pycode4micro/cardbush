@@ -35,8 +35,8 @@ module.exports = async ({ run, until, pause, win, root }) => {
   await click('.plugin-detail-primary', '安装并启用');
   await until("document.querySelector('.plugin-detail-primary')?.textContent.includes('已安装')", 'shared installation and activation finish');
   assert.equal(await run('marketInstalls'), 1);assert.equal(await run('marketApps.plugins[0].enabled'), true);
-  await click('.plugin-market-page > .plugin-back', '返回市场');
-  await click('.plugin-market-page > .plugin-back', '返回插件');
+  await run("document.querySelector('[data-history-action=back]:enabled').click()");
+  await run("document.querySelector('[data-history-action=back]:enabled').click()");
   await until("document.querySelector('.plugin-hub')?.textContent.includes('Shared plugin fixture')", 'installed plugin is in common catalog');
   await run("openFixtureSettings('b');undefined;");
   await until("document.querySelector('.plugin-hub')?.textContent.includes('Shared plugin fixture')", 'another Agent entry keeps the same installed plugins');

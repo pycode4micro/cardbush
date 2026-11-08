@@ -30,7 +30,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
           menus:views.applicationMenus('zh',actions,{sidebarVisible:!layout.sidebarCollapsed,inspectorVisible:inspector,native:false,externalLinks:false}),onError:noop}),
         settings && h(views.SettingsView,{active:true,onReady:noop,themePreference:theme,language:'zh',languageMode:'zh',systemLanguage:'zh',settings:compactSettings,
           selectedModel:'fixture',availableModels:[],backendCapabilities:{terminalRuntimes:['powershell'],runtimeAssetCategories:[]},runtimeBusy:false,conversations:[],skills:[],disabledSkillNames:new Set(),
-          initialSection:'runtime',initialPluginTab:'plugins',onBack:()=>setSettings(false),onThemePreferenceChange:noop,onLanguageModeChange:noop,
+          initialSection:'runtime',initialPluginTab:'plugins',onThemePreferenceChange:noop,onLanguageModeChange:noop,
           onSettingsChange:noop,onUseModel:noop,sidebarCollapsed:layout.sidebarCollapsed,compactLayout:layout.compactLayout,sidebarPresence:presence,sidebarWidth:272,
           onSidebarCollapse:close,onSidebarWidthChange:noop,onToggleSkill:noop,onReloadSkills:async()=>[],onLoadSkillDetail:async()=>({})}),
         h('main',{className:'desktop-shell'+(layout.sidebarCollapsed?' sidebar-is-collapsed':'')+(settings?' app-content-suspended':''),inert:settings},
@@ -69,8 +69,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.equal(await run('compactState.sidebarCollapsed'), true, JSON.stringify(await run('({width:innerWidth,height:innerHeight,compact:compactState.compactLayout, media:matchMedia("(max-width: 760px)").matches, errors:failures})')));
     await fits('.window-frame'); await fits('.welcome-input-stack'); await fits('.composer-footer');
     await fits('.composer-actions button:last-child');
-    await fits('.window-frame-menu-group');
-    assert.ok(await run("document.querySelector('.window-frame-menu-group').getBoundingClientRect().right <= document.querySelector('.window-frame').getBoundingClientRect().right - parseFloat(getComputedStyle(document.querySelector('.window-frame')).paddingRight)"), 'menus avoid native caption buttons');
+    await fits('.desktop-menu-toggle');
+    assert.ok(await run("document.querySelector('.desktop-menu-toggle').getBoundingClientRect().right <= document.querySelector('.window-frame').getBoundingClientRect().right - parseFloat(getComputedStyle(document.querySelector('.window-frame')).paddingRight)"), 'menus avoid native caption buttons');
     assert.equal(await run('document.documentElement.scrollWidth <= innerWidth'), true, 'no page horizontal overflow');
   }
   await run("document.querySelector('.window-sidebar-toggle').click()");

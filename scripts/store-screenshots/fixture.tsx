@@ -142,7 +142,7 @@ function Screen() {
           themePreference: 'light', settings, selectedModel: model.id, availableModels: [model],
           backendCapabilities: { terminalRuntimes: ['powershell'], runtimeAssetResetCategories: [], browserPrivacyMode: false, reasoningStream: true },
           runtimeBusy: false, conversations, projects, skills: [], disabledSkillNames: new Set(), initialSection: 'browser',
-          initialPluginTab: 'plugins', onBack: noop, onThemePreferenceChange: noop, onLanguageModeChange: noop,
+          initialPluginTab: 'plugins', onThemePreferenceChange: noop, onLanguageModeChange: noop,
           onSettingsChange: noop, onUseModel: noop, onSidebarWidthChange: noop, onToggleSkill: noop,
           onReloadSkills: async () => [], onLoadSkillDetail: async () => null, visualInputAvailable: false,
           visualInputEnabled: false, onVisualInputEnabledChange: noop, sidebarCollapsed: false,

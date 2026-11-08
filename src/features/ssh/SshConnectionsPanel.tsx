@@ -1,6 +1,7 @@
+import { WindowBackTarget } from '../navigation/WindowBackTarget';
 import { uiText } from '../../i18n';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Folder, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
+import { Folder, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
 import type { SshConnection, SshConnectionInput, SshTestResult } from '@cardbush/bush-protocol';
 import type { AppLanguage, ProjectItem } from '../../types';
 import './ssh.css';
@@ -58,7 +59,7 @@ export function SshConnectionsPanel({language,projects=[],compact=false,onEditin
       {result?.id===connection.id&&<div className="ssh-wide" role="status">{result.value.ok?<p>{uiText(language)('sshConnectionsPanel.connected')}{result.value.directory}</p>:<><p className="ssh-error">{result.value.error}</p>{result.value.fingerprint&&<code>{result.value.fingerprint}</code>}{result.value.needsTrust&&<button type="button" disabled={busy} onClick={()=>void run(async()=>{await api!.save({...connection,fingerprint:result.value.fingerprint});await testConnection(connection.id);})}>{uiText(language)('sshConnectionsPanel.trustThisHostFingerprintAndConnect')}</button>}</>}</div>}
     </div>)}
     {form&&<form className="ssh-form" onSubmit={event=>{event.preventDefault();void run(async()=>{await api!.save(form);setForm(null);});}}>
-      <div className="ssh-form-heading">{compact&&<button type="button" disabled={busy} aria-label={uiText(language)('sshConnectionsPanel.backToConnections')} onClick={()=>{setForm(null);setError('');}}><ArrowLeft size={16}/></button>}<h4>{form.id?(uiText(language)('sshConnectionsPanel.editConnection')):(uiText(language)('sshConnectionsPanel.addConnection'))}</h4></div>
+      <div className="ssh-form-heading">{compact&&<WindowBackTarget disabled={busy} onBack={()=>{setForm(null);setError('');}}/>}<h4>{form.id?(uiText(language)('sshConnectionsPanel.editConnection')):(uiText(language)('sshConnectionsPanel.addConnection'))}</h4></div>
       <label>{uiText(language)('agentConnectionForm.name')}<input autoFocus required value={form.name} onChange={event=>change({name:event.target.value})} placeholder={uiText(language)('sshConnectionsPanel.developmentServer')}/></label>
       <div className="ssh-form-pair"><label>{uiText(language)('sshConnectionsPanel.host')}<input required disabled={!!form.id} value={form.host} onChange={event=>change({host:event.target.value})} placeholder={uiText(language)('sshConnectionsPanel.192_168_1_10')}/></label><label>{uiText(language)('sshConnectionsPanel.port')}<input required disabled={!!form.id} type="number" min="1" max="65535" value={form.port} onChange={event=>change({port:Number(event.target.value)})}/></label></div>
       <label>{uiText(language)('pluginManagementPanel.user')}<input required disabled={!!form.id} value={form.username} onChange={event=>change({username:event.target.value})} autoComplete="off"/></label>

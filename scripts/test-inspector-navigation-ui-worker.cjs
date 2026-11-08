@@ -126,8 +126,10 @@ app.whenReady().then(async () => {
     await read('window.fileNode=document.querySelector(".markdown-inspector-preview"); window.initialFileReads=fileReads; void 0');
     await click('#add');
     const browserTab = await read('navigation.activeId');
-    await until('document.querySelector("webview")?.getWebContentsId?.()>0 && document.querySelector(".right-inspector-tab-page.active .right-inspector-preview.ready")');
-    await read('window.browserId=document.querySelector("webview").getWebContentsId(); void 0');
+    await until('!!document.querySelector(".right-inspector-tab-page.active .inspector-new-tab-page")');
+    await read('window.browserGuest=document.querySelector(".right-inspector-tab-page.active webview"); browserGuest.src="data:text/html,Navigation%20fixture"; void 0');
+    await until('!!document.querySelector(".right-inspector-tab-page.active .right-inspector-preview.ready:not(.showing-start-page)") && browserGuest.getWebContentsId()>0');
+    await read('window.browserId=browserGuest.getWebContentsId(); void 0');
     await click('#add'); await click('.right-inspector-tab-page.active [data-inspector-action="review"]');
     await until('document.querySelectorAll(".change-review-file-item").length===2');
     await read('document.querySelectorAll(".change-review-file-item")[1].click(); window.reviewNode=document.querySelector(".change-review-dialog"); void 0');
@@ -152,7 +154,7 @@ app.whenReady().then(async () => {
     await select(fileTab);
     assert.equal(await read('document.querySelector(".markdown-inspector-preview")===fileNode && fileReads===initialFileReads'),true,'file preview stays mounted and is not re-read');
     await select(browserTab);
-    assert.equal(await read('document.querySelector("webview").getWebContentsId()===browserId'),true,'history must not recreate the browser guest');
+    assert.equal(await read('document.querySelector(".right-inspector-tab-page.active webview").getWebContentsId()===browserId'),true,'history must not recreate the browser guest');
 
     await click('#add'); await click('.right-inspector-tab-page.active [data-inspector-action="shadow"]');
     await until('document.querySelector(".shadow-window-shell textarea") && !document.querySelector(".shadow-window-shell textarea").disabled');

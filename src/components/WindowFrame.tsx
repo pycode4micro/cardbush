@@ -6,6 +6,7 @@ import { WindowSidebarToggle } from './WindowSidebarToggle';
 import { useKeyboardShortcuts } from '../features/shortcuts/useKeyboardShortcuts';
 import { windowMenuItems, type ApplicationMenu, type WindowMenuEntry, type WindowMenuItem } from '../features/windowMenu/applicationMenus';
 import { captureMenuFocus } from '../features/windowMenu/menuFocus';
+import { useWindowBack } from '../features/navigation/WindowBackTarget';
 import { useWindowHistoryInput } from '../features/navigation/useWindowHistoryInput';
 import type { HistoryDirection } from '../../electron/shortcutBinding';
 
@@ -18,11 +19,12 @@ type Props = {
 };
 
 export function WindowFrame(props: Props) {
-  const { language, sidebarCollapsed, onToggleSidebar, menus, onBack } = props;
+  const { language, sidebarCollapsed, onToggleSidebar, menus } = props;
+  const onBack = useWindowBack(props.onBack);
 
   const nativeControls = window.cardbushDesktop?.platform === 'win32';
   const shortcuts = useKeyboardShortcuts();
-  useWindowHistoryInput(props, shortcuts.overrides);
+  useWindowHistoryInput({ ...props, onBack }, shortcuts.overrides);
   const [maximized, setMaximized] = useState(false);
   const [open, setOpen] = useState<OpenMenu | null>(null);
   const [submenu, setSubmenu] = useState<OpenMenu | null>(null);
@@ -112,13 +114,12 @@ export function WindowFrame(props: Props) {
   function switchMenu(delta: number) {
     const index = menus.findIndex(menu => menu.id === open?.id);
     const menu = menus[(index + delta + menus.length) % menus.length];
-    const anchor = root.current?.querySelector<HTMLElement>(`[data-menu-trigger="${menu.id}"]`);
-    if (anchor) void openMenu(menu.id, anchor, 'first');
+    if (open) void openMenu(menu.id, open.anchor, 'first');
   }
 
   function onMenuKey(event: ReactKeyboardEvent, entries: WindowMenuEntry[], nested: boolean) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-menu-item]:not(:disabled)'));
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
     const item = entries.find(entry => !('separator' in entry) && entry.id === buttons[index]?.dataset.menuItem);
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
@@ -142,7 +143,24 @@ export function WindowFrame(props: Props) {
   const activeMenu = menus.find(menu => menu.id === open?.id);
   const activeSubmenu = activeMenu?.items.find((item): item is WindowMenuItem => !('separator' in item) && item.id === submenu?.id);
   const popup = (entries: WindowMenuEntry[], position: OpenMenu, nested: boolean, label: string) =>
-    <MenuPopup key={position.id} position={position} nested={nested} label={label} onKeyDown={event => onMenuKey(event, entries, nested)}>
+    <MenuPopup key={nested ? position.id : 'application-menu'} position={position} nested={nested} label={label} onKeyDown={event => onMenuKey(event, entries, nested)}>
+      {!nested && (<div className="window-frame-menu-group no-drag" role="menubar" aria-label={uiText(language)('windowFrame.applicationMenu')}>
+        {menus.map(menu => <div className="window-frame-menu" key={menu.id}>
+          <button className="frame-chip window-frame-menu-trigger no-drag" type="button" role="menuitem"
+            data-menu-trigger={menu.id} aria-haspopup="menu" aria-expanded={open?.id === menu.id}
+            onPointerDown={event => event.preventDefault()}
+            onClick={event => void openMenu(menu.id, position.anchor, event.detail === 0 ? 'first' : undefined)}
+            onKeyDown={event => {
+              if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key)) event.stopPropagation();
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); void openMenu(menu.id, position.anchor, event.key === 'ArrowUp' ? 'last' : 'first'); }
+              else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault();
+                const index = menus.indexOf(menu), delta = event.key === 'ArrowRight' ? 1 : -1;
+                root.current?.querySelector<HTMLElement>(`[data-menu-trigger="${menus[(index + delta + menus.length) % menus.length].id}"]`)?.focus();
+              }
+            }}>{menu.label}</button>
+        </div>)}
+      </div>)}
       {entries.map((entry, index) => 'separator' in entry ? <div className="window-menu-separator" role="separator" key={'separator-' + index} /> :
         <button key={entry.id} data-menu-item={entry.id} data-shortcut={entry.shortcut} title={entry.label} type="button" disabled={entry.disabled}
           role={entry.checked === undefined ? 'menuitem' : 'menuitemcheckbox'} aria-checked={entry.checked}
@@ -169,7 +187,7 @@ export function WindowFrame(props: Props) {
       setMenuInput('pointer');
       // Mouse movement takes over from keyboard navigation without leaving
       // the previously focused row highlighted elsewhere in the menu.
-      const item = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[data-menu-item]') : null;
+      const item = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[data-menu-item], [data-menu-trigger]') : null;
       if (item && !item.disabled) item.focus({ preventScroll: true });
       else {
         const popup = event.target instanceof Element ? event.target.closest<HTMLElement>('[role="menu"]') : null;
@@ -182,32 +200,17 @@ export function WindowFrame(props: Props) {
         setMenuInput('keyboard');
       }
     }}>
-    <div className="window-history-controls no-drag">
-      <button type="button" className="frame-chip" data-history-action="back" disabled={!onBack}
-        aria-label={uiText(language)('windowFrame.back')} title={uiText(language)('windowFrame.back')} data-shortcut="navigateBack"
-        onClick={() => { close(); onBack?.(); }}><ArrowLeft size={15}/></button>
-    </div>
+    <WindowBackButton language={language} fallback={props.onBack} beforeBack={close}/>
     <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
     {menus.length > 0 && <button type="button" className="frame-chip desktop-menu-toggle no-drag" aria-label={uiText(language)('windowFrame.applicationMenu')}
       aria-haspopup="menu" aria-expanded={Boolean(open)} onPointerDown={event => event.preventDefault()}
+      onKeyDown={event => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault(); void openMenu(menus[0].id, event.currentTarget, event.key === 'ArrowDown' ? 'first' : 'last');
+        }
+      }}
       onClick={event => open ? close() : void openMenu(menus[0].id, event.currentTarget, event.detail === 0 ? 'first' : undefined)}><MoreHorizontal/></button>}
-    <div className="window-frame-menu-group no-drag" data-expanded={Boolean(open)} role="menubar" aria-label={uiText(language)('windowFrame.applicationMenu')}>
-      {menus.map(menu => <div className="window-frame-menu" key={menu.id}>
-        <button className="frame-chip window-frame-menu-trigger no-drag" type="button" role="menuitem"
-          data-menu-trigger={menu.id} aria-haspopup="menu" aria-expanded={open?.id === menu.id}
-          onPointerDown={event => event.preventDefault()}
-          onClick={event => open?.id === menu.id ? close() : void openMenu(menu.id, event.currentTarget, event.detail === 0 ? 'first' : undefined)}
-          onPointerEnter={event => { if (open && open.id !== menu.id) void openMenu(menu.id, event.currentTarget); }}
-          onKeyDown={event => {
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); void openMenu(menu.id, event.currentTarget, event.key === 'ArrowUp' ? 'last' : 'first'); }
-            else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-              event.preventDefault();
-              const index = menus.indexOf(menu), delta = event.key === 'ArrowRight' ? 1 : -1;
-              root.current?.querySelector<HTMLElement>(`[data-menu-trigger="${menus[(index + delta + menus.length) % menus.length].id}"]`)?.focus();
-            }
-          }}>{menu.label}</button>
-      </div>)}
-    </div>
+
     {open && <div className="window-menu-dismiss-layer no-drag" aria-hidden="true" onPointerDown={event => { event.preventDefault(); close(); }} />}
     {open && activeMenu && popup(activeMenu.items, open, false, activeMenu.label)}
     {submenu && activeSubmenu?.children && popup(activeSubmenu.children, submenu, true, activeSubmenu.label)}
@@ -219,6 +222,15 @@ export function WindowFrame(props: Props) {
       <WindowButton label={uiText(language)('common.close')} glyph="close" danger onClick={() => window.cardbushDesktop?.closeToTray()} />
     </>}
   </header>;
+}
+
+export function WindowBackButton({ language, fallback, beforeBack }: { language: AppLanguage; fallback?: () => void; beforeBack?: () => void }) {
+  const onBack = useWindowBack(fallback);
+  return <div className="window-history-controls no-drag">
+    <button type="button" className="frame-chip" data-history-action="back" disabled={!onBack}
+      aria-label={uiText(language)('windowFrame.back')} title={uiText(language)('windowFrame.back')} data-shortcut="navigateBack"
+      onClick={() => { beforeBack?.(); onBack?.(); }}><ArrowLeft size={15}/></button>
+  </div>;
 }
 
 function MenuPopup({ position, nested, label, children, onKeyDown }: {
@@ -236,7 +248,7 @@ function MenuPopup({ position, nested, label, children, onKeyDown }: {
     menu.style.left = Math.max(8, left) + 'px';
     menu.style.top = Math.max(36, Math.min(nested ? rect.top : rect.bottom + 4, window.innerHeight - height - 8)) + 'px';
     if (position.initialFocus) {
-      const items = menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+      const items = menu.querySelectorAll<HTMLButtonElement>('[data-menu-item]:not(:disabled)');
       (position.initialFocus === 'last' ? items[items.length - 1] : items[0])?.focus({ preventScroll: true });
     } else if (!nested) {
       // Keep Escape and arrow keys available without selecting a menu item.

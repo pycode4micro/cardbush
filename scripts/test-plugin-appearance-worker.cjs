@@ -88,19 +88,19 @@ app.whenReady().then(async () => {
     await contrast('.plugin-prompt-showcase > button');
     await capture('plugin-detail-light.png');
     await click('管理账号'); await page('accounts');
-    await click('返回插件'); await page('plugin');
-    await click('返回市场'); await page('marketplace');
+    await read('document.querySelector("[data-history-action=back]").click();void 0'); await page('plugin');
+    await read('document.querySelector("[data-history-action=back]").click();void 0'); await page('marketplace');
     assert.equal(await read('active()===marketBefore'), true, 'marketplace state stays mounted through nested accounts');
     assert.equal(await read('active().querySelector(".plugin-search input").value'), 'chrome');
     assert.equal(await read('document.querySelector(".settings-content").scrollTop===marketScroll'), true, 'restores marketplace scroll');
     assert.equal(await read('document.activeElement===active().querySelector(".plugin-featured-main")'), true, 'restores keyboard focus');
-    await click('返回插件'); await page('catalog');
+    await read('document.querySelector("[data-history-action=back]").click();void 0'); await page('catalog');
 
     await click('管理'); await page('manage');
     await read(`active().querySelectorAll('[role=tab]')[1].click()`);
     await input('.plugin-search input', 'chrome');
     await read(`active().querySelector('.plugin-featured-main').click()`); await page('plugin');
-    await click('返回管理'); await page('manage');
+    await read('document.querySelector("[data-history-action=back]").click();void 0'); await page('manage');
     assert.equal(await read('active().querySelector("[aria-selected=true]").textContent.includes("应用")'), true);
     assert.equal(await read('active().querySelector(".plugin-search input").value'), 'chrome');
     await input('.plugin-search input', '');
@@ -113,7 +113,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.activeElement===mcpOpener'),true,'closing MCP restores list focus');
     await page('manage');
     assert.equal(await read('active().querySelector("[aria-selected=true]").textContent.includes("MCP")'), true);
-    await click('插件'); await page('catalog');
+    await read('document.querySelector("[data-history-action=back]").click();void 0'); await page('catalog');
 
     await read(`Array.from(active().querySelectorAll('.plugin-added-card')).find(b=>b.textContent.includes('Personal Tools')).click()`); await page('plugin');
     await until('!!active().querySelector(".plugin-mcp-advanced")');
@@ -129,7 +129,7 @@ app.whenReady().then(async () => {
     await read(`document.querySelector('.app').className='app theme-dark'`);
     await capture('plugin-detail-dark.png');
     await read(`document.querySelector('.app').className='app theme-bright'`);
-    await click('返回插件'); await page('catalog'); await click('市场'); await page('marketplace');
+    await read('document.querySelector("[data-history-action=back]").click();void 0'); await page('catalog'); await click('市场'); await page('marketplace');
     await until('!active().querySelector(".plugin-install-button").disabled');
     await click('添加来源');
     await input('.plugin-market-source-dialog input', 'https://github.com/fixture/plugins');
@@ -137,7 +137,7 @@ app.whenReady().then(async () => {
     await until('active().innerText.includes("示例市场") && !active().querySelector(".plugin-install-button").disabled');
     await read(`marketSlow=true;active().querySelector('.plugin-featured-main').click()`);
     await until('typeof finishMarketPreview === "function"');
-    await click('返回市场'); await page('marketplace');
+    await read('document.querySelector("[data-history-action=back]").click();void 0'); await page('marketplace');
     await read('finishMarketPreview()');
     await new Promise(resolve=>setTimeout(resolve,100));
     assert.equal(await read('!!active().querySelector(".plugin-market-detail")'), false, 'cancelled preview must not navigate back into detail');

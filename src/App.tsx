@@ -233,19 +233,15 @@ const LazySettingsView = recoverableLazy('settings', async () => {
   return { default: module.SettingsView };
 }, (props, retry) => <SettingsModuleFallback {...props} retry={retry} />);
 
-function SettingsModuleFallback({ active, onReady, onBack, language, retry }: {
+function SettingsModuleFallback({ active, onReady, language, retry }: {
   active: boolean;
   onReady: () => void;
-  onBack: () => void;
   language: AppLanguage;
   retry: () => void;
 }) {
   useEffect(onReady, [onReady]);
   return <main className={`settings-shell${active ? '' : ' settings-inactive'}`} aria-hidden={!active} inert={!active}>
     <section className="settings-content">
-      <button type="button" className="settings-module-back" onClick={onBack}>
-        {uiText(language)('app.backToApp')}
-      </button>
       <DeferredModuleNotice language={language} retry={retry} />
     </section>
   </main>;
@@ -2051,7 +2047,6 @@ function CardbushApp() {
       ? () => { setSettingsOpen(false); openWorkSummaryTab({ kind: 'turn-history', sessionId: chat.activeConversationId }, activeStartTabId); } : undefined,
     openShadow: inspectorShadowAvailable ? () => { setSettingsOpen(false); openShadowInspectorTab(); } : undefined,
     previousConversation: conversationNavigation.canGoPrevious ? conversationNavigation.previous : undefined,
-    back: pageNavigation.canGoBack ? pageNavigation.back : undefined,
     forward: pageNavigation.canGoForward ? pageNavigation.forward : undefined,
   }, { sidebarVisible: !sidebarCollapsed, inspectorVisible: inspectorOpen && !settingsOpen,
     native: Boolean(window.cardbushDesktop?.executeWindowMenuAction), externalLinks: Boolean(window.cardbushDesktop?.openExternal) });
@@ -2096,7 +2091,7 @@ function CardbushApp() {
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={toggleSidebar}
         menus={windowMenus}
-        onBack={pageNavigation.canGoBack ? pageNavigation.back : undefined}
+        onBack={pageNavigation.canGoBack ? pageNavigation.back : settingsOpen ? () => setSettingsOpen(false) : undefined}
         onForward={pageNavigation.canGoForward ? pageNavigation.forward : undefined}
         onInspectorHistory={(direction, tabId = activeInspectorTabIdentity) => {
           if (!visibleInspectorTabIds.has(tabId)) return;
@@ -2148,7 +2143,6 @@ function CardbushApp() {
             initialSection={settingsInitialSection}
             onSectionChange={setSettingsInitialSection}
             initialPluginTab={settingsPluginTab}
-            onBack={() => setSettingsOpen(false)}
             onThemePreferenceChange={setThemePreference}
             onLanguageModeChange={setLanguageMode}
             onSettingsChange={updateAppSettings}
@@ -2185,13 +2179,12 @@ function CardbushApp() {
               {section === 'team' ? (
                 <NativeTeamSidebar
                   language={language}
-                  onBack={() => setSection('chat')}
                   onOpenSettings={() => openSettings()}
                   softVisible={sidebarPresence.visible}
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}
                 />
               ) : section === 'md-presentation' ? (
-                <CanvasSidebar language={language} onBack={() => setSection('chat')} softVisible={sidebarPresence.visible}
+                <CanvasSidebar language={language} softVisible={sidebarPresence.visible}
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}/>
               ) : (
                 <ChatSidebar

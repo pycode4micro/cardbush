@@ -92,15 +92,6 @@
   }
 }
 
-.back-button {
-  width: 100%;
-  min-height: 38px;
-  margin-bottom: 12px;
-  padding: 0 10px;
-  justify-content: flex-start;
-  border-radius: 10px;
-}
-
 .settings-navigation,
 .settings-nav-group {
   display: grid;

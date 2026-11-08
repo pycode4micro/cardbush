@@ -120,7 +120,7 @@ module.exports = async ({run,until,pause,window,root}) => {
   await run("document.querySelector('.workspace-project-chip').click()");await until("document.body.textContent.includes('选择本地文件夹')",'local projects');await run("clickText('选择本地文件夹')");await until("selected.at(-1)==='D:/local-project'",'local selection');
   window.setContentSize(480, 640);
   for (const theme of ['dark', 'bright']) {
-    await run(`saved=[];viewTheme='theme-${theme}';renderView(h(views.WorkspaceLocationPicker,{key:'compact-'+viewTheme,language:'zh',remote:true,onSelect:()=>{}}));undefined;`);
+    await run(`saved=[];viewTheme='theme-${theme}';renderView(h(React.Fragment,null,h('header',{className:'window-frame'},h(views.WindowBackButton,{language:'zh'})),h(views.WorkspaceLocationPicker,{key:'compact-'+viewTheme,language:'zh',remote:true,onSelect:()=>{}})));undefined;`);
     await until("!!document.querySelector('.workspace-picker')",'empty SSH picker');
     await run("clickText('管理 SSH 连接')");
     await until("!!document.querySelector('.ssh-compact-add')",'compact add action');
@@ -146,7 +146,7 @@ module.exports = async ({run,until,pause,window,root}) => {
     await until("document.querySelector('.workspace-picker-fields select')?.value==='new-server'",'new connection becomes available');
     await run("clickText('编辑')");await until("!!document.querySelector('.ssh-form')",'compact edit');
     assert.equal(await run("document.querySelectorAll('.ssh-settings-compact .ssh-connection').length"),0,'editing has its own uncluttered space');
-    await run(`document.querySelector('button[aria-label="返回连接列表"]').click()`);
+    await run(`(() => { const button=document.querySelector('[data-history-action=back]:enabled'), rect=button.getBoundingClientRect(); const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2); if (!button.contains(hit)) throw Error('Title bar Back is covered'); button.click(); })()`);
     await until("!document.querySelector('.ssh-form')&&!!document.querySelector('.ssh-connection')",'return to saved connections');
     await run("window.connectedPicker=document.querySelector('.workspace-picker');clickText('测试')");
     await until("document.body.textContent.includes('信任此主机指纹并连接')",'first connection needs trust');

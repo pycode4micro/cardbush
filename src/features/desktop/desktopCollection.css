@@ -95,11 +95,6 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 }
 
 
-.desktop-menu-toggle { display:none; }
-.app[data-desktop-workspace] .desktop-menu-toggle { display:inline-grid; place-items:center; width:29px; padding:0; }
-.desktop-menu-toggle svg { width:17px; height:17px; }
-.app[data-desktop-workspace] .window-frame-menu-group[data-expanded="false"] { display:none; }
-.app[data-desktop-workspace] .window-frame-menu-group[data-expanded="true"] { background:var(--menu-surface); border-radius:5px; }
 .app[data-desktop-workspace] .window-sidebar-toggle { width:max-content; }
 .app[data-desktop-workspace] .window-sidebar-toggle:not(:hover):not(:focus-visible) .window-sidebar-track { transform:none; }
 .app[data-desktop-workspace] .settings-page-header h2 { font-size:clamp(25px,2.4vw,36px); letter-spacing:-.04em; }

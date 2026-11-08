@@ -16,7 +16,7 @@ try {
       lib: { entry: resolve('scripts/fixtures/conversation-extraction.tsx'), formats: ['es'] } } });
   const outputs = (Array.isArray(result) ? result : [result]).flatMap(item => item.output);
   const entry = outputs.find(item => item.type === 'chunk' && item.isEntry); assert.ok(entry);
-  await writeFile(join(directory, 'index.html'), `<!doctype html><html><head><meta charset="utf-8">${outputs.filter(item => item.type === 'asset' && item.fileName.endsWith('.css')).map(item => `<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script type="module" src="${entry.fileName}"></script></body></html>`);
+  await writeFile(join(directory, 'index.html'), `<!doctype html><html lang="zh"><head><meta charset="utf-8">${outputs.filter(item => item.type === 'asset' && item.fileName.endsWith('.css')).map(item => `<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script type="module" src="${entry.fileName}"></script></body></html>`);
   await writeFile(join(directory, 'preload.cjs'), `const { contextBridge, ipcRenderer } = require('electron');
 const command = (action, input = {}) => ipcRenderer.invoke('extract', {action, ...input});
 contextBridge.exposeInMainWorld('cardbushDesktop', { showErrorDialog: payload => command('error', payload), conversationExtracts: {

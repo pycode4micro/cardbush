@@ -112,7 +112,6 @@
 .ssh-settings button > svg { flex-shrink: 0; }
 .ssh-form-heading { display: flex; align-items: center; gap: 10px; }
 .ssh-form-heading h4 { font-size: 14px; }
-.ssh-form-heading > button { padding: 4px; border: 0; background: transparent; }
 .ssh-form-actions { justify-content: flex-end; }
 .ssh-form-actions > button { white-space: nowrap; }
 .workspace-picker .workspace-picker-management { padding: 0; }
@@ -193,3 +192,4 @@
 .workspace-picker-project .workspace-picker-search { margin: 0 6px 6px; }
 .workspace-picker-project .workspace-picker-section-label { padding: 4px 14px; }
 .workspace-picker-project .workspace-picker-separator { margin: 6px 0; }
+.ssh-dialog-backdrop[data-editing-connection] { top: var(--window-frame-height, 0px); }

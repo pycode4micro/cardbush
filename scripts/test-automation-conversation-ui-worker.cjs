@@ -17,10 +17,10 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll("table").length===1');
     assert.equal(await read('document.querySelectorAll("table").length'),1,'real conversation Markdown renders');
     assert.equal(await read('calls.some(call=>call.action==="mark_read")'),false,'opening does not acknowledge');
-    await click('返回来源会话'); assert.deepEqual(await read('opened'), ['source']);
+    await click('打开来源会话'); assert.deepEqual(await read('opened'), ['source']);
     await read('delete detail.sourceSession; notify()');
     await until('document.body.innerText.includes("来源会话已删除")');
-    assert.equal(await read('Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="返回来源会话")'), false);
+    assert.equal(await read('Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="打开来源会话")'), false);
     await click('标记已读'); await until('!!detail.run.readAt'); await click('标记未读'); await until('!detail.run.readAt');
     await read(`(()=>{const input=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'解释这两项');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await click('发送追问'); await until('document.body.innerText.includes("正在解释结果")');

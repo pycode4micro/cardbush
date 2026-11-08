@@ -37,7 +37,9 @@ module.exports = async ({ run, until, window: win, root, click }) => {
   `);
   await click('数据与维护');
   await until("document.querySelectorAll('.runtime-asset-category-grid input').length === 2 && !document.querySelector('.runtime-asset-reset-actions button').disabled");
-  await run("document.querySelector('.runtime-asset-reset-panel').closest('details').open = true; document.querySelector('.runtime-asset-paths').open = true");
+  await run("document.querySelector('.runtime-asset-reset-panel').closest('details').open = true");
+  await until("!!document.querySelector('.runtime-asset-paths')");
+  await run("document.querySelector('.runtime-asset-paths').open = true");
   assert.deepEqual(await run("Array.from(document.querySelectorAll('.runtime-asset-category-grid strong')).map(node => node.textContent)"), ['Prompts', 'Skills']);
   assert.doesNotMatch(await run('document.body.innerText'), /\bTeams\b|Agent Profiles|legacy\/team|legacy\/profiles/);
   assert.equal(await run("!!document.querySelector('.runtime-asset-restart-required')"), false, 'Plugin-only cached reset results must not block bundled maintenance.');

@@ -1,3 +1,4 @@
+import { WindowBackTarget } from '../navigation/WindowBackTarget';
 import { uiText } from '../../i18n';
 import { useEffect, useState, type FormEvent } from 'react';
 import { LoaderCircle, Unplug, X } from 'lucide-react';
@@ -30,8 +31,8 @@ export function AgentConnectionForm({ language, initial, onClose, onSave, onRemo
       sshTunnel: tunneled ? { connectionId, remoteHost: initial?.sshTunnel?.remoteHost ?? '127.0.0.1', remotePort } : null }); }
     catch (error) { setError(agentErrorText(error)); } finally { setBusy(false); }
   }
-  if (managingSsh) return <div className="agents-modal-backdrop"><div className="agents-modal agents-form" role="dialog" aria-modal="true" aria-label={uiText(language)('agentConnectionForm.ssh')}>
-    <header><h2>{uiText(language)('agentConnectionForm.sshConnections')}</h2><button type="button" onClick={() => setManagingSsh(false)}>{uiText(language)('agentConnectionForm.backToAgentSettings')}</button></header>
+  if (managingSsh) return <div className="agents-modal-backdrop" data-managing-ssh><div className="agents-modal agents-form" role="dialog" aria-modal="true" aria-label={uiText(language)('agentConnectionForm.ssh')}>
+    <header><h2>{uiText(language)('agentConnectionForm.sshConnections')}</h2><WindowBackTarget onBack={() => setManagingSsh(false)}/><button type="button" onClick={onClose} aria-label={uiText(language)('common.close')}><X size={18}/></button></header>
     <div className="agents-modal-body"><SshConnectionsPanel language={language} compact onConnected={id => { setConnectionId(id); setManagingSsh(false); }}/></div>
   </div></div>;
   return <div className="agents-modal-backdrop"><form className="agents-modal agents-form" role="dialog" aria-modal="true" aria-label={title} onSubmit={submit}>

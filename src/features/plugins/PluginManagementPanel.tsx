@@ -1,3 +1,4 @@
+import { WindowBackTarget } from '../navigation/WindowBackTarget';
 import { uiText, localizedContent } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useSettingsHost } from '../settings/SettingsHostContext';
@@ -13,7 +14,6 @@ import { DEFAULT_SEARCH_RESULT_LIMIT, defaultPluginProxy, type PluginProxySettin
 import { AccountsPanel } from '../accounts/AccountsPanel';
 import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
 import {
-  ArrowLeft,
   Check,
   ChevronDown,
   ChevronRight,
@@ -390,20 +390,14 @@ export function PluginManagementPanel({
     finally { setBusy(''); }
   };
   const proxyMatches = (name: string, id: string) => `${name} ${id}`.toLocaleLowerCase().includes(proxyQuery.trim().toLocaleLowerCase());
-  const renderPage = (page: Page, parent?: Page) => {
+  const renderPage = (page: Page) => {
   const selectedPlugin = page.kind === 'plugin' ? plugins.find(plugin => plugin.id === page.pluginId) : undefined;
-  const backLabel = parent?.kind === 'marketplace' ? (uiText(language)('pluginManagementPanel.backToMarketplace'))
-    : parent?.kind === 'manage' ? (uiText(language)('pluginManagementPanel.backToManagement'))
-    : (uiText(language)('pluginManagementPanel.backToPlugins'));
-
   if (page.kind === 'mcp') return <div className="plugin-mcp-settings">
-    <button type="button" className="plugin-back" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
     {renderMcp?.(page.serverId)}
   </div>;
 
   if (presentation === 'network' || page.kind === 'network') return <div className="plugin-detail-page plugin-network-page">
     {presentation !== 'network' && <>
-    <button type="button" className="plugin-back" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
     <header className="plugin-catalog-heading"><h2>{uiText(language)('pluginManagementPanel.pluginSettings')}</h2></header>
     {configuration && <PluginSearchSettings language={language} value={configuration.searchResultLimit ?? DEFAULT_SEARCH_RESULT_LIMIT}
       busy={Boolean(busy)} onSave={saveSearchLimit}/>}
@@ -432,7 +426,7 @@ export function PluginManagementPanel({
     </>}
     {error && <p className="plugin-market-error" role="alert">{error}</p>}
   </div>;
-  if (!host.remote && page.kind === 'accounts') return <AccountsPanel language={language} onBack={back}/>;
+  if (!host.remote && page.kind === 'accounts') return <AccountsPanel language={language}/>;
   if (page.kind === 'marketplace') {
     return <><PluginMarketplacePanel language={language}
       onOpenNetwork={() => setMarketProxyOpen(true)}
@@ -456,12 +450,11 @@ export function PluginManagementPanel({
   }
   if (!host.remote && page.kind === 'workspace') {
     const plugin = plugins.find(item => item.id === page.pluginId);
-    return <div className="plugin-workspace-page"><button className="plugin-back" type="button" onClick={back}><ArrowLeft size={17}/>{uiText(language)('accountsPanel.backToPlugin')}</button>
+    return <div className="plugin-workspace-page">
       {plugin?.installed && plugin.enabled ? <RuntimePluginWorkspace id={page.extensionId} language={language}/> : <p>{uiText(language)('pluginManagementPanel.enableThisPluginFirst')}</p>}
     </div>;
   }
   if (page.kind === 'plugin' && !selectedPlugin) return <div className="plugin-detail-page">
-    <button className="plugin-back" type="button" onClick={back}><ArrowLeft size={17}/>{backLabel}</button>
     <p role="status">{uiText(language)('pluginManagementPanel.thisPluginIsNoLongerAvailableReturn')}</p>
   </div>;
   if (selectedPlugin) {
@@ -478,8 +471,6 @@ export function PluginManagementPanel({
         onManageAccounts={() => setPage({ kind: 'accounts', pluginId: selectedPlugin.id })}
         busy={Boolean(busy)}
         error={error}
-        onBack={back}
-        backLabel={backLabel}
         onReplace={replacePlugin}
         onPersist={(plugin, message) => configuration && void persist({
           ...configuration,
@@ -498,7 +489,6 @@ export function PluginManagementPanel({
         loading={busy === `skill:${page.skillName}`}
         error={error}
         enabled={!disabledSkillNames.has(page.skillName)}
-        onBack={back}
         onToggle={(enabled) => onToggleSkill(page.skillName, enabled)}
       />
     );
@@ -519,7 +509,6 @@ export function PluginManagementPanel({
         onRefreshMcp={() => void loadConnections()}
         busy={Boolean(busy)}
         onQuery={setQuery}
-        onBack={back}
         onOpen={(plugin) => setPage({ kind: 'plugin', pluginId: plugin.id })}
         onPersist={(next, message) => void persist(next, 'manage', message)}
         onUninstall={plugin => void uninstallPlugin(plugin)}
@@ -631,7 +620,10 @@ export function PluginManagementPanel({
       const hidden = index !== entries.length - 1;
       return <div key={entry.id} className="plugin-navigation-page" data-plugin-page={entry.page.kind}
         hidden={hidden} inert={hidden} aria-hidden={hidden}>
-        <PageNavigationScope.Provider value={`${navigationScope}:plugin:${entry.id}`}>{renderPage(entry.page, entries[index - 1]?.page)}</PageNavigationScope.Provider>
+        <PageNavigationScope.Provider value={`${navigationScope}:plugin:${entry.id}`}>
+          {!hidden && index > 0 && entry.page.kind !== 'marketplace' && <WindowBackTarget usePageHistory onBack={back}/>}
+          {renderPage(entry.page)}
+        </PageNavigationScope.Provider>
       </div>;
     })}
     {mcpDialog && renderMcp?.(mcpDialog.serverId, { dialogOnly: true, onClose: () => { setMcpDialog(null); void loadConnections(); } })}
@@ -812,7 +804,7 @@ function SkillCatalogCard({ language, skill, enabled, onOpen, onToggle }: {
   );
 }
 
-function PluginManagementList({ language, initialTab, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, onRefreshMcp, query, busy, onQuery, onBack, onOpen, onPersist, onUninstall, error }: {
+function PluginManagementList({ language, initialTab, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, onRefreshMcp, query, busy, onQuery, onOpen, onPersist, onUninstall, error }: {
   onUninstall: (plugin: CardbushAppPlugin) => void;
   error: string;
   language: AppLanguage;
@@ -827,7 +819,6 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
   query: string;
   busy: boolean;
   onQuery: (value: string) => void;
-  onBack: () => void;
   onOpen: (plugin: CardbushAppPlugin) => void;
   onPersist: (configuration: CardbushAppsConfiguration, message: string) => void;
 }) {
@@ -851,7 +842,6 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
   };
   return (
     <div className="plugin-manage-page">
-      <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{uiText(language)('appCenterModel.plugins')}</button>
       <div className="plugin-manage-tabs" role="tablist">
         <button className={activeTab === 'plugins' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'plugins'} onClick={() => setActiveTab('plugins')}>{uiText(language)('appCenterModel.plugins')} <em>{installed.length}</em></button>
         <button className={activeTab === 'apps' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'apps'} onClick={() => setActiveTab('apps')}>{uiText(language)('pluginManagementPanel.apps')} <em>{appCount}</em></button>
@@ -913,7 +903,7 @@ function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; lan
   </span>;
 }
 
-function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, backLabel, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
+function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
   onOpenWorkspace: (id: string) => void;
   onOpenPrompt?: (prompt: string) => void;
   onUninstall: () => void;
@@ -925,8 +915,6 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
   plugin: CardbushAppPlugin;
   busy: boolean;
   error: string;
-  onBack: () => void;
-  backLabel: string;
   onReplace: (plugin: CardbushAppPlugin) => void;
   onPersist: (plugin: CardbushAppPlugin, message: string) => void;
 }) {
@@ -934,7 +922,6 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, 
   const presentation = pluginPresentation(plugin, language);
   return (
     <div className="plugin-detail-page">
-      <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{backLabel}</button>
       <header className="plugin-detail-hero">
         <PluginLogo plugin={plugin} large />
         <div><h2>{plugin.name}</h2><p>{presentation.description}</p></div>
@@ -999,9 +986,8 @@ export function PluginHookTrust({ plugin, language, busy, onPersist }: {
   </section>;
 }
 
-function SkillDetailPage({ language, skill, loading, error, enabled, onBack, onToggle }: { language: AppLanguage; skill: SkillSummary | SkillDetail | null; loading: boolean; error: string; enabled: boolean; onBack: () => void; onToggle: (enabled: boolean) => void }) {
+function SkillDetailPage({ language, skill, loading, error, enabled, onToggle }: { language: AppLanguage; skill: SkillSummary | SkillDetail | null; loading: boolean; error: string; enabled: boolean; onToggle: (enabled: boolean) => void }) {
   return <div className="plugin-detail-page">
-    <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{uiText(language)('pluginManagementPanel.backToSkills')}</button>
     {error && <p className="plugin-hub-error" role="alert">{error}</p>}
     {loading ? <div className="plugin-detail-loading"><LoaderCircle className="spin" />{uiText(language)('pluginManagementPanel.loadingSkill')}</div> : skill ? <>
       <header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.displayName || skill.name}</h2><p>{localizedContent({ zh: skill.descriptionZh, en: skill.description }, language)}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header>

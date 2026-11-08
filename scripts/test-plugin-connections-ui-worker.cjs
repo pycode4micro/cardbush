@@ -19,6 +19,7 @@ app.whenReady().then(async()=>{
  };
  const until=async script=>{const end=Date.now()+5000;while(!(await read(script))){if(Date.now()>end)throw Error('Timed out: '+script+'; '+await read('document.body.innerText'));await new Promise(r=>setTimeout(r,25))}};
  const click=label=>read(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(label)}&&b.checkVisibility()).click()`);
+ const back=()=>read('document.querySelector("[data-history-action=back]:enabled").click();void 0');
  const advanced=async open=>{await read(`(()=>{const details=document.querySelector('.plugin-mcp-advanced');if(details.open!==${open})details.querySelector('summary').click();})()`);await until(`document.querySelector('.plugin-mcp-advanced').open===${open}`)};
  const search=value=>read(`(()=>{const input=Array.from(document.querySelectorAll('.plugin-search input')).find(input=>input.checkVisibility());Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
  try{
@@ -46,7 +47,7 @@ app.whenReady().then(async()=>{
   await until('document.querySelector(".plugin-manage-page").checkVisibility()');
   assert.equal(await read('document.querySelectorAll(".plugin-manage-list .plugin-uninstall-button").length'),0,'bundled components only offer disable');
   assert.equal(await read('JSON.stringify(fixtureOverview.servers)'),await read('standaloneBeforeUninstall'));
-  await click('插件');await until('!document.querySelector(".plugin-add-button").disabled');
+  await back();await until('!document.querySelector(".plugin-add-button").disabled');
   assert.equal(await read('Array.from(document.querySelectorAll(".plugin-added-card")).some(button=>button.textContent.includes("Personal Tools"))'),false);
   const reinstall=async()=>{
     await read('fixtureApps={...fixtureApps,revision:fixtureApps.revision+1,plugins:[...fixtureApps.plugins,{...structuredClone(savedPlugin),config:{}}]};listeners.forEach(fn=>fn())');
@@ -61,7 +62,7 @@ app.whenReady().then(async()=>{
   assert.equal(await read('document.querySelectorAll(".plugin-manage-list .plugin-switch")[2].disabled'),true);
   await read('uninstallApplyError=false;document.querySelector(".plugin-uninstall-button").click()');
   await until('fixtureApps.plugins.length===2&&!document.querySelector(".plugin-uninstall-button")&&Array.from(document.querySelectorAll(".plugin-manage-list .plugin-switch")).every(button=>!button.disabled)');
-  await click('插件');await until('!document.querySelector(".plugin-add-button").disabled');
+  await back();await until('!document.querySelector(".plugin-add-button").disabled');
   await reinstall();await read('localNotifications=[]');
   console.log('Plugin uninstall UI passed: detail/list actions, incomplete removal, duplicate prevention, package disappearance, reinstall and bundled protection.');
   const chooseDropdown=async(selector,value)=>{
@@ -109,7 +110,7 @@ app.whenReady().then(async()=>{
   assert.deepEqual(await read('Array.from(document.querySelector(".plugin-proxy-settings").querySelectorAll(".settings-dropdown-option")).map(item=>item.value)'),['model','none','system','manual']);
   // Selecting a discrete global mode must persist without a second Save click.
   await setProxyMode('system');await savedGlobal('system');
-  await click('返回插件');await click('设置');
+  await back();await click('设置');
   assert.equal(await read('document.querySelector(".plugin-proxy-settings .settings-dropdown-trigger").value'),'system','reopening retains an automatically saved choice');
   const unchangedProxyRevision=await read('fixtureApps.revision');
   await setProxyMode('system');
@@ -122,7 +123,7 @@ app.whenReady().then(async()=>{
   const failedRefreshRevision=await read('fixtureApps.revision');
   await read('proxySyncFails=false');await click('保存代理设置');await savedGlobal('system');
   assert.ok(await read('fixtureApps.revision')>failedRefreshRevision,'retry requests application again even if disk already has the chosen proxy');
-  await click('返回插件');await click('设置');
+  await back();await click('设置');
   assert.equal(await read('document.querySelector(".plugin-proxy-settings .settings-dropdown-trigger").value'),'system','activation failure does not restore a stale default');
   await setProxyMode('manual');await until('document.querySelectorAll(".plugin-proxy-fields input").length===3');
   await click('保存代理设置');await until('document.body.innerText.includes("请至少填写一个代理地址")');
@@ -137,7 +138,7 @@ app.whenReady().then(async()=>{
   win.setSize(1000,820);await click('保存代理设置');await until('fixtureApps.proxy?.mode==="manual"');
   assert.equal(await read('fixtureApps.plugins.every(plugin=>plugin.config.proxy===undefined)&&fixtureOverview.servers.every(server=>server.proxy===undefined)'),true,'saving the global proxy never materializes per-item overrides');
   assert.equal(await read('Array.from(document.querySelectorAll(".plugin-proxy-row .settings-dropdown-trigger")).every(select=>select.value==="inherit"&&select.textContent==="使用默认（手动代理）")'),true,'inherited rows show the current global proxy without individual saves');
-  await click('返回插件');await until('!!document.querySelector(".plugin-added-card")');
+  await back();await until('!!document.querySelector(".plugin-added-card")');
   await read('Array.from(document.querySelectorAll(".plugin-added-card")).find(b=>b.textContent.includes("Personal Tools")).click()');
   await until('!!document.querySelector(".plugin-proxy-section")');
   await read('document.querySelector(".plugin-proxy-section summary").click()');
@@ -146,7 +147,7 @@ app.whenReady().then(async()=>{
   for(const mode of ['none','system','model']) {await setProxyMode(mode);await click('保存代理设置');await until(`fixtureApps.plugins.find(p=>p.id==='personal.tools').config.proxy?.mode===${JSON.stringify(mode)}`);assert.equal(await read('fixtureApps.proxy.mode'),'manual');}
   await capture('plugin-proxy-individual.png');
   await setProxyMode('inherit');await click('保存代理设置');await until('fixtureApps.plugins.find(p=>p.id==="personal.tools").config.proxy===undefined');
-  await click('返回插件');await click('设置');await setProxyMode('model');await savedGlobal('model');
+  await back();await click('设置');await setProxyMode('model');await savedGlobal('model');
   assert.deepEqual(await read('Array.from(document.querySelectorAll("[data-proxy-scope]")).map(item=>item.dataset.proxyScope)'),['plugin:computer-use','plugin:chrome','plugin:personal.tools','mcp:blender']);
   const rowMode=(scope,mode)=>chooseDropdown(`[data-proxy-scope="${scope}"] .settings-dropdown-trigger`,mode);
   const rowSave=scope=>read(`document.querySelector('[data-proxy-scope="${scope}"] .plugin-install-button').click()`);
@@ -213,7 +214,7 @@ app.whenReady().then(async()=>{
   win.setSize(1000,820);await setProxyMode('model');await savedGlobal('model');
   console.log('Proxy inheritance and refresh passed: automatic global saves, failure/readback/retry, current-draft apply, filtered rows, remount persistence, stale-read fencing and retained editors.');
   console.log('Proxy list passed: plugin and MCP rows, independent saves, search with retained drafts, failure/retry, manual expansion and reset.');
-  await click('返回插件');await until('!document.querySelector(".plugin-add-button").disabled');
+  await back();await until('!document.querySelector(".plugin-add-button").disabled');
   console.log('Plugin proxy UI passed: default, four choices, scoped override, inheritance reset, validation, persistence and narrow layout.');
   await read('setUnifiedNetwork(true)');await click('设置');await until('!!document.querySelector(".settings-link-row")');
   assert.equal(await read('!!document.querySelector(".plugin-proxy-settings")'),false,'catalog settings link to the shared proxy owner');
@@ -292,7 +293,7 @@ app.whenReady().then(async()=>{
   assert.match(await read('document.querySelector(".plugin-detail-page").textContent'),/请审查当前修改并说明依据/);
   win.setSize(460,900);await capture('plugin-skill-policy.png');
   assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'Skill policies and suggested prompts fit narrow screens');
-  win.setSize(1000,820);await click('返回技能');await click('插件');
+  win.setSize(1000,820);await back();await click('插件');
   await until('document.querySelectorAll(".plugin-added-card").length===4');
   assert.equal(await read('document.querySelectorAll(".plugin-added-card").length'),4,'standalone MCP and personal plugins appear together');
   assert.equal(await read('getComputedStyle(document.querySelector(".plugin-added-copy strong")).opacity'),'1','names readable without hover');
@@ -382,7 +383,7 @@ app.whenReady().then(async()=>{
   await read('publishAccount("signed_in")');await until('document.querySelector(".openai-account-panel [role=status]").textContent==="已登录"');
   assert.equal(await read('!!document.querySelector(".openai-account-options")'),false,'plugin detail links to central account management');
   await click('管理账号');await until('!!document.querySelector(".accounts-page")');
-  await click('返回插件');await until('!!document.querySelector(".plugin-mcp-settings")');
+  await back();await until('!!document.querySelector(".plugin-mcp-settings")');
   assert.ok(await read('document.querySelector(".plugin-detail-hero").textContent.includes("Personal Tools")'),'return restores the originating plugin');
   await advanced(false);
   await read('fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,servers:[...fixtureOverview.snapshot.servers,{id:"plugin_personal_tools_echo",health:"configuration_required",lastError:"fixture app not authorized",tools:[]}]}}');
@@ -549,7 +550,7 @@ app.whenReady().then(async()=>{
   assert.equal(await read('mcpAnswers.at(-1).answer.action'),'cancel');
   console.log('MCP interface passed: scoped settings, save failure, manual login failure state, cancellation, typed forms, URL/sign-in consent and task ownership.');
   if (process.env.CARDBUSH_PLUGIN_SETTINGS_ONLY === '1') { win.destroy(); app.exit(0); return; }
-  await click('返回插件');
+  await back();
   await new Promise(r=>setTimeout(r,150));
   writeFileSync(resolve('tmp/plugin-connections.png'),(await win.webContents.capturePage()).toPNG());
   await click('个人');
@@ -567,7 +568,7 @@ app.whenReady().then(async()=>{
   assert.match(await read('Array.from(document.querySelectorAll(".plugin-manage-list article")).find(item=>item.textContent.includes("由 Chrome 管理")).textContent'),/已连接 · 15 个工具/);
   await read('Array.from(document.querySelectorAll(".plugin-manage-list button")).find(b=>b.textContent.includes("由 Chrome 管理")).click()');
   await until('document.querySelector(".plugin-detail-hero h2")?.textContent==="Chrome"');
-  await click('返回管理');
+  await back();
   await click('添加 MCP 服务');assert.equal(await read('opened.at(-1)'),'new');
   await read('fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,applicationState:"pending",applicationPhase:"connecting",pendingServerIds:["plugin_personal_tools_echo"]}};refreshFixture()');
   await until('document.querySelector(".plugin-manage-list")?.textContent.includes("重新连接中")');
@@ -589,7 +590,7 @@ app.whenReady().then(async()=>{
   // A new connection configured during a conversation appears on a catalog event.
   await read('fixtureOverview={...fixtureOverview,servers:[...fixtureOverview.servers,{id:"new-service",name:"New MCP",description:"",enabled:false,transport:"stdio"}]};refreshFixture()');
   await until('document.querySelectorAll(".plugin-manage-list article").length===5');
-  await click('插件');
+  await back();
   win.setSize(430,820);
   }
   await read('window.marketAddedBefore=document.querySelectorAll(".plugin-added-card").length');
@@ -602,7 +603,7 @@ app.whenReady().then(async()=>{
   await until('document.querySelector(".plugin-market-page")&&document.body.innerText.includes("chrome")');
   await read('Array.from(document.querySelectorAll(".plugin-market-page article button")).find(b=>b.textContent.includes("chrome")).click()');
   await until('document.querySelector(".plugin-detail-hero h2")?.textContent==="Chrome"');
-  await click('返回市场');
+  await back();
   await until('!Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="添加来源").disabled');
   await read('window.marketGridTop=document.querySelector(".plugin-market-grid").getBoundingClientRect().top;Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="添加来源").focus()');
   await click('添加来源');
@@ -655,7 +656,7 @@ app.whenReady().then(async()=>{
   const open=label=>read(`Array.from(document.querySelectorAll('article button')).find(b=>b.checkVisibility()&&b.textContent.includes(${JSON.stringify(label)})).click()`);
   await open('hook-example');await until('document.querySelector(".plugin-market-issues")');
   assert.equal(await read('document.querySelector(".plugin-detail-primary").disabled'),true,'unsupported Claude components cannot install');
-  await click('返回市场');await search('claude');
+  await back();await search('claude');
   await until('document.querySelectorAll(".plugin-market-grid article").length===1');
   await read('marketPreviewReads=0;marketRateLimitUntil=Date.now()+2000');
   await open('claude-example');
@@ -681,7 +682,7 @@ app.whenReady().then(async()=>{
   await read('marketInstallSlow=true');await click('安装并启用');
   await until('document.querySelector(".plugin-market-install-progress")?.textContent.includes("36.0 MiB / 60.0 MiB")');
   assert.equal(await read('document.querySelector("progress").getAttribute("value")'),String(36*1024*1024));
-  assert.equal(await read('document.querySelector(".plugin-back").disabled'),true,'installation keeps the active details page in place');
+  assert.equal(await read('document.querySelector("[data-history-action=back]").disabled'),true,'installation keeps the active details page in place');
   win.setSize(430,820);await until('window.innerWidth<450');
   await read('document.querySelector(".plugin-market-install-progress").scrollIntoView({block:"center"})');
   assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'download progress fits narrow windows');
@@ -700,7 +701,7 @@ app.whenReady().then(async()=>{
   await read('marketSaveFails=false');await click('重试启用');
   await until('document.querySelector(".plugin-detail-primary").textContent.includes("已安装")');
   assert.equal(await read('marketInstalls'),1,'activation retries never repeat file installation');
-  await click('返回市场');await read('marketMissingVariables=true');await open('claude-example');
+  await back();await read('marketMissingVariables=true');await open('claude-example');
   await until('document.body.innerText.includes("可安装，使用前需配置")');
   assert.equal(await read('document.querySelector(".plugin-detail-primary").disabled'),false,'missing environment variables do not block installation');
   await click('安装，稍后配置');
@@ -710,10 +711,10 @@ app.whenReady().then(async()=>{
   assert.equal(await read('marketInstalls'),2);
   await capture('plugin-marketplace-configure-later.png');
   await read('marketMissingVariables=false');
-  await click('返回市场');await search('');await read('marketCached=true');await click('刷新市场');
+  await back();await search('');await read('marketCached=true');await click('刷新市场');
   await until('document.body.innerText.includes("当前显示缓存目录")');
   await read('marketSlow=true');await open('claude-example');
-  await until('typeof finishMarketPreview==="function"');await click('返回市场');await click('返回插件');
+  await until('typeof finishMarketPreview==="function"');await back();await back();
   await read('finishMarketPreview()');
   await until('document.querySelectorAll(".plugin-added-card").length===marketAddedBefore+1');
   assert.equal(await read('!!document.querySelector(".plugin-market-detail")'),false,'late preview does not reopen marketplace after navigating away');

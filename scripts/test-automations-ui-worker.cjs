@@ -39,7 +39,7 @@ app.whenReady().then(async () => {
     await click('立即执行'); await until('document.querySelector(".automation-state").textContent==="执行中"');
     assert.equal(await read('Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="编辑").disabled'),true);
     await click('停止'); await until('document.querySelector("summary").textContent.includes("已停止")');
-    await click('返回来源会话'); assert.deepEqual(await read('opened'),['session']);
+    await click('打开来源会话'); assert.deepEqual(await read('opened'),['session']);
     await click('编辑'); await field('触发方式','event'); await field('事件','PostToolUseFailure'); await field('工具名称','terminal_exec');
     await read('failSave=true'); await click('保存自动化'); await until('!!document.querySelector("[role=alert]")');
     assert.ok(await read('!!document.querySelector(".automation-form")'),'failed save retains the draft');

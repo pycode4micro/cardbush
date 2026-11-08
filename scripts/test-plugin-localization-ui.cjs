@@ -44,7 +44,7 @@ app.whenReady().then(async () => {
         assert.equal(await read("document.querySelector('.plugin-long-description').textContent"), expected.longDescription);
         for (const prompt of expected.defaultPrompt) assert.ok(await read(`document.querySelector('.plugin-prompt-showcase').textContent.includes(${JSON.stringify(prompt)})`));
       }
-      await read("[...document.querySelectorAll('.plugin-detail-page .plugin-back')].find(button=>button.checkVisibility()).click()");
+      await read("document.querySelector('[data-history-action=back]').click()");
       await until("document.querySelector('.plugin-catalog-page').checkVisibility()");
     }
     assert.equal(await read('JSON.stringify(fixtureApps)'), original, 'language changes do not save translated text into plugin configuration');

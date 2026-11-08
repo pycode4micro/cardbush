@@ -1,3 +1,4 @@
+import { WindowBackTarget } from './navigation/WindowBackTarget';
 import { useUiLanguage } from '../i18n/react';
 import { uiText, formatMessageList } from '../i18n';
 import { modelRequestHeaders } from '@cardbush/bush-protocol';
@@ -36,7 +37,6 @@ import {
   BarChart3,
   Bell,
   Brain,
-  ArrowLeft,
   Check,
   CheckCircle2,
   Clipboard,
@@ -163,7 +163,6 @@ export function SettingsView({
   initialSection,
   onSectionChange,
   initialPluginTab,
-  onBack,
   onThemePreferenceChange,
   onLanguageModeChange,
   onSettingsChange,
@@ -207,7 +206,6 @@ export function SettingsView({
   initialSection: SettingsSection;
   onSectionChange?: (section: SettingsSection) => void;
   initialPluginTab: 'plugins' | 'skills';
-  onBack: () => void;
   onThemePreferenceChange: (value: ThemePreference) => void;
   onLanguageModeChange: (value: AppLanguageMode) => void;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
@@ -248,7 +246,7 @@ export function SettingsView({
     ...group, sections: group.sections.filter(id => settingsSectionMatchesQuery(id, settingsQuery)),
   })).filter(group => group.sections.length > 0);
   const [toast, setToast] = useState('');
-  const [pluginMcpTarget, setPluginMcpTarget] = usePageState<{ serverId?: string } | null>('mcp-target', null);
+  const [pluginMcpTarget, setPluginMcpTarget, returnToMcpTarget] = usePageState<{ serverId?: string } | null>('mcp-target', null);
   useLayoutEffect(() => {
     onReady();
   }, [onReady]);
@@ -517,10 +515,7 @@ export function SettingsView({
     if (effectiveSection === 'mcp') {
       return pluginMcpTarget ? (
         <div className="plugin-mcp-settings">
-          <button className="plugin-back" type="button" onClick={() => setPluginMcpTarget(null)}>
-            <ArrowLeft size={17} />
-            {uiText(language)('pluginManagementPanel.backToPlugins')}
-          </button>
+          <WindowBackTarget usePageHistory onBack={() => returnToMcpTarget(null)}/>
           <McpServersPanel
             initialServerId={pluginMcpTarget.serverId}
             initialCreate={!pluginMcpTarget.serverId}
@@ -598,10 +593,6 @@ export function SettingsView({
       <aside className={`sidebar settings-sidebar soft-panel-motion ${sidebarPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
         aria-hidden={!sidebarPresence.visible} inert={sidebarPresence.visible ? undefined : true}>
         <div className="sidebar-panel-content">
-        <button className="back-button" type="button" onClick={onBack}>
-          <ArrowLeft size={18} />
-          {uiText(language)('app.backToApp')}
-        </button>
         <label className="settings-search">
           <Search size={15} aria-hidden="true" />
           <input value={settingsQuery} onChange={event => setSettingsQuery(event.target.value)}
