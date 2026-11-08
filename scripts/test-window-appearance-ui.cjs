@@ -166,18 +166,19 @@ app.whenReady().then(async () => {
     // Electron's getter serializes RGB for a normal HWND and drops alpha.
     assert.match(win.getBackgroundColor(), /^#000000(?:00)?$/);
     const checkTransparency = async () => {
+      const paint = selector => run(`(() => {
+        const computed = getComputedStyle(document.querySelector(${JSON.stringify(selector)}));
+        const context = document.createElement('canvas').getContext('2d');
+        context.fillStyle = computed.backgroundColor;
+        context.fillRect(0, 0, 1, 1);
+        return { alpha: context.getImageData(0, 0, 1, 1).data[3], image: computed.backgroundImage };
+      })()`);
       for (const selector of ['html','body','#root','.app','.desktop-shell','.window-frame','.sidebar']) {
-        const style = await run(`(() => {
-          const computed = getComputedStyle(document.querySelector(${JSON.stringify(selector)}));
-          const context = document.createElement('canvas').getContext('2d');
-          context.fillStyle = computed.backgroundColor;
-          context.fillRect(0, 0, 1, 1);
-          return { alpha: context.getImageData(0, 0, 1, 1).data[3], image: computed.backgroundImage };
-        })()`);
+        const style = await paint(selector);
         assert.equal(style.image, 'none', `${selector} must not cover native material with a gradient`);
         assert.ok(style.alpha < 255, `${selector} must expose native material`);
       }
-      assert.match(await run("getComputedStyle(document.querySelector('.main-stage')).backgroundColor"), /^rgb\(/);
+      assert.equal((await paint('.main-stage')).alpha, 255, 'the reading surface stays opaque');
     };
     await checkTransparency();
     await run("dispatchEvent(new Event('focus')); dispatchEvent(new Event('pageshow')); document.dispatchEvent(new Event('visibilitychange'))");
@@ -204,6 +205,7 @@ app.whenReady().then(async () => {
     assert.equal(win.getBackgroundColor().toLowerCase(), backgrounds.dark);
     assert.equal(await run("getComputedStyle(document.querySelector('.window-frame'),'::before').backdropFilter"), 'none');
     assert.equal(await run("getComputedStyle(document.querySelector('.recent-art-tint')).display"), 'none');
+    assert.equal(await run("getComputedStyle(document.querySelector('.main-stage')).backgroundImage"), 'none');
     await run("changeAppearance('dark')");
     await until("document.documentElement.dataset.windowMaterial === 'mica'", 'restored');
     reducedTransparency = true; refresh();

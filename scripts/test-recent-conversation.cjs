@@ -124,7 +124,12 @@ async function run() {
     const glass = await material();
     assert.match(glass.bar, /blur\(/);
     assert.match(glass.drawer, /blur\(/);
-    assert.equal(await read("getComputedStyle(document.querySelector('.desktop-shell')).backgroundColor === getComputedStyle(document.querySelector('.desktop-library')).backgroundColor"), true, 'drawer blur has a continuous backing across the rail');
+    const continuous = await read(`(() => {
+      const color = selector => getComputedStyle(document.querySelector(selector)).backgroundColor;
+      const stage = color('.main-stage'), library = color('.desktop-library');
+      return stage === color('.desktop-shell') && (library === stage || library === 'rgba(0, 0, 0, 0)');
+    })()`);
+    assert.ok(continuous, 'drawer blur has a continuous backing across the rail');
     assert.notEqual(glass.tint, 'none');
   }
   win.webContents.debugger.attach('1.3');

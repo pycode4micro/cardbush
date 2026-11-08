@@ -35,12 +35,16 @@ exports.inspect = async ({ win, read, click, wait, pause, project }) => {
     })()`);
     const image = await win.webContents.capturePage(), size = image.getSize(), pixels = image.toBitmap();
     const scale = size.width / report.viewportWidth;
-    const sample = fraction => {
-      const x = Math.floor((report.railWidth - 34) * scale), y = Math.floor(report.railHeight * fraction * scale);
+    const sample = (fraction, left = report.railWidth - 34) => {
+      const x = Math.floor(left * scale), y = Math.floor(report.railHeight * fraction * scale);
       const i = 4 * (size.width * y + x);
       // A transparent native backdrop is composed by DWM after this renderer capture.
       return [pixels[i + 2], pixels[i + 1], pixels[i], pixels[i + 3]];
     };
+    if (report.layout === 'docked') {
+      report.pageEdge = [sample(.17, report.railWidth + 12), sample(.88, report.railWidth + 12)];
+      report.readingSurface = [sample(.17, report.viewportWidth - 46), sample(.88, report.viewportWidth - 46)];
+    }
     report.upperRGBA = sample(.17);
     report.lowerRGBA = sample(.88);
     reports.push(report);
@@ -54,7 +58,14 @@ exports.inspect = async ({ win, read, click, wait, pause, project }) => {
   }
   const docked = await snapshot('docked chat');
   assert.equal(docked.layout, 'docked');
-  if (translucent) assert.equal(docked.filter, 'none', 'docked chrome exposes the native material directly');
+  if (translucent) {
+    assert.equal(docked.filter, 'none', 'docked chrome exposes the native material directly');
+    const [upper, lower] = docked.pageEdge;
+    assert.ok(upper[0] > lower[0] + 12 && lower[2] > upper[2] + 12, 'both wallpaper bands continue across the rail onto the page');
+    const [top, bottom] = docked.readingSurface;
+    assert.ok(top.every((value, i) => Math.abs(value - bottom[i]) <= 2), 'the main reading area is uniform including behind the composer');
+    assert.equal(top[3], 255);
+  }
 
   win.setContentSize(1160, 740);
   await wait(() => read("!!document.querySelector('.desktop-shell[data-sidebar-layout=drawer].sidebar-is-collapsed')"), 'drawer layout');
@@ -70,8 +81,8 @@ exports.inspect = async ({ win, read, click, wait, pause, project }) => {
   }
 
   if (!drawer.reduce) {
-    const previous = await read("document.querySelector('.main-stage').style.backgroundColor");
-    const pageColor = color => read("document.querySelector('.main-stage').style.backgroundColor = " + JSON.stringify(color));
+    const previous = await read("document.querySelector('.main-stage').style.background");
+    const pageColor = color => read("document.querySelector('.main-stage').style.background = " + JSON.stringify(color));
     try {
       await pageColor('#da8042');
       await pause(150);
@@ -94,6 +105,7 @@ exports.inspect = async ({ win, read, click, wait, pause, project }) => {
     const opaque = await snapshot('reduced transparency');
     assert.equal(opaque.filter, 'none');
     assert.equal(opaque.wallpaperLayer, false);
+    assert.equal(await read("getComputedStyle(document.querySelector('.main-stage')).backgroundImage"), 'none', 'reduced transparency restores a solid page');
     assert.equal(opaque.upperRGBA[3], 255, 'the drawer is opaque when transparency is reduced');
   } finally { win.webContents.debugger.detach(); }
   fs.writeFileSync(path.join(project, 'tmp', 'sidebar-material-check.json'), JSON.stringify(reports, null, 2));

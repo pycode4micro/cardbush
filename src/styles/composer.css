@@ -315,8 +315,8 @@
   background:
     linear-gradient(
       to bottom,
-      color-mix(in srgb, var(--surface) 96%, transparent),
-      color-mix(in srgb, var(--surface) 99%, transparent)
+      color-mix(in srgb, var(--reading-input, var(--surface)) 96%, transparent),
+      color-mix(in srgb, var(--reading-input, var(--surface)) 99%, transparent)
     );
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 24px;
@@ -380,7 +380,7 @@
 }
 
 .theme-dark .composer-surface {
-  background: color-mix(in srgb, var(--surface-strong) 94%, var(--text) 6%);
+  background: color-mix(in srgb, var(--reading-input, var(--surface-strong)) 94%, var(--text) 6%);
   border-color: color-mix(in srgb, var(--text) 8%, transparent);
   box-shadow: 0 3px 12px color-mix(in srgb, var(--shadow) 45%, transparent);
 }
